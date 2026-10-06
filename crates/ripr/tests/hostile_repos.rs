@@ -671,12 +671,11 @@ fn damaged_git_state_names_the_cause_and_a_repair() -> Result<(), String> {
         (
             "corrupt object",
             |root| {
-                let head = Command::new("git")
-                    .current_dir(root)
-                    .args(["rev-parse", "HEAD"])
-                    .output()
-                    .map_err(|e| format!("git rev-parse failed: {e}"))?;
-                let sha = String::from_utf8_lossy(&head.stdout).trim().to_string();
+                // `repo` leaves `feat` checked out as a loose ref.
+                let sha = fs::read_to_string(root.join(".git/refs/heads/feat"))
+                    .map_err(|e| format!("feat ref missing: {e}"))?
+                    .trim()
+                    .to_string();
                 let object = root.join(".git/objects").join(&sha[..2]).join(&sha[2..]);
                 let mut permissions = fs::metadata(&object)
                     .map_err(|e| format!("object missing: {e}"))?
