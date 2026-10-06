@@ -7008,6 +7008,8 @@ name = "infect/propagate fail-closed (parts A, B, C)"
 spec = "docs/specs/RIPR-SPEC-0096-infect-propagate-fail-closed.md"
 tests = [
   "crates/ripr/src/analysis/classify/infection.rs::tests::wildcard_discard_is_infection_unknown_even_with_related_tests",
+  "crates/ripr/src/analysis/classify/infection.rs::tests::predicate_infection_does_not_compare_char_literals_with_numeric_boundaries",
+  "crates/ripr/src/analysis/classify/infection.rs::tests::predicate_infection_names_the_boundary_when_tests_pass_no_literals",
   "crates/ripr/src/analysis/classify/infection.rs::tests::typed_wildcard_discard_is_infection_unknown",
   "crates/ripr/src/analysis/classify/infection.rs::tests::named_binding_is_not_a_discard_stays_yes",
   "crates/ripr/src/analysis/classify/infection.rs::tests::return_value_read_into_tail_stays_exposed",
@@ -13066,6 +13068,8 @@ tests = [
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::an_outcome_settling_attribute_is_the_refusal_wherever_it_sits",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_definition_covering_the_test_outranks_a_may_rebind_site_elsewhere",
   "crates/ripr/src/analysis/classify/reveal.rs::tests::name_only_relations_stop_crediting_beside_a_reach_bearing_one",
+  "crates/ripr/src/analysis/classifier/evidence.rs::tests::preferred_refusal_note_puts_a_non_limit_owner_call_first",
+  "crates/ripr/src/analysis/classifier/finding.rs::tests::refused_assertion_next_step_offers_a_static_limit_only_for_a_limit_refusal",
   "crates/ripr/tests/owner_pin_execution.rs::owner_pin_matched_static_and_runtime_controls",
   "crates/ripr/tests/owner_pin_execution.rs::macro_use_module_admission_matches_runtime",
 ]
