@@ -56,6 +56,22 @@ fn run_ripr(current_dir: &Path, args: &[&str]) -> Result<Output, String> {
         .map_err(|error| format!("spawn ripr {args:?} in {}: {error}", current_dir.display()))
 }
 
+/// [`run_ripr`] with one child-scoped environment override. The variable is
+/// set on the child only, so parallel tests never observe it.
+fn run_ripr_with_env(
+    current_dir: &Path,
+    args: &[&str],
+    env_key: &str,
+    env_value: &str,
+) -> Result<Output, String> {
+    Command::new(env!("CARGO_BIN_EXE_ripr"))
+        .current_dir(current_dir)
+        .args(args)
+        .env(env_key, env_value)
+        .output()
+        .map_err(|error| format!("spawn ripr {args:?} in {}: {error}", current_dir.display()))
+}
+
 fn assert_success(output: &Output, label: &str) -> Result<(), String> {
     if output.status.success() {
         return Ok(());
@@ -1733,6 +1749,61 @@ fn relative_root_follow_ups(base: &Path, bash: &Path) -> Result<(), String> {
     }
     if journey.launch_dir.join("target").exists() {
         return Err("a pasted command wrote into the foreign directory".to_string());
+    }
+    Ok(())
+}
+
+/// #5301 item 1: the repair before phase builds the classified-seam
+/// inventory once and shares it across packet, start, and snapshot. The
+/// opt-in latency trace prints exactly one `phase=total` line per inventory
+/// load, so one such line proves the shared load; the pre-fix code prints
+/// three. The shared load has no on-disk effect by design (the duplicate
+/// loads were byte-identical), so the trace, whose wire shape the
+/// `resource_cost` unit tests pin, is the honest oracle here rather than an
+/// artifact comparison.
+#[test]
+fn repair_before_phase_builds_one_shared_inventory() -> Result<(), String> {
+    let Some(bash) = shell_prerequisite()? else {
+        return Ok(());
+    };
+    let base = unique_temp_workspace("before-shared-inventory");
+    let result = before_phase_builds_one_shared_inventory(&base, &bash);
+    cleanup(&base);
+    result
+}
+
+fn before_phase_builds_one_shared_inventory(base: &Path, bash: &Path) -> Result<(), String> {
+    let root = base.join("selected root");
+    let (journey, _) = start_journey_at_root(&root, bash)?;
+    // The repair before phase refuses a checkout whose build directory is
+    // not Git-ignored, as on the relative-root journey.
+    std::fs::write(root.join(".gitignore"), "/target/\n")
+        .map_err(|error| format!("write .gitignore: {error}"))?;
+    fixture_git_ok(&root, &["add", ".gitignore"])
+        .map_err(|error| format!("fixture git add: {error}"))?;
+    commit_fixture(&root, "ignore the build directory")?;
+    let output = run_ripr_with_env(
+        &journey.launch_dir,
+        &[
+            "agent",
+            "repair",
+            "--root",
+            &journey.root_arg,
+            "--seam-id",
+            &journey.seam_id,
+            "--phase",
+            "before",
+        ],
+        "RIPR_REPO_EXPOSURE_LATENCY_TRACE",
+        "1",
+    )?;
+    assert_success(&output, "ripr agent repair --phase before")?;
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let totals = stderr.matches("phase=total ").count();
+    if totals != 1 {
+        return Err(format!(
+            "before phase ran {totals} inventory loads, expected 1:\n{stderr}"
+        ));
     }
     Ok(())
 }
