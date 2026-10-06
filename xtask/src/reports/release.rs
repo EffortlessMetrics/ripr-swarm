@@ -3938,11 +3938,13 @@ mod tests {
         if release_readiness_status(&checks) != "fail" {
             return Err("an unbumped release commit did not fail the rollup".to_string());
         }
-        let changelog = "# Changelog\n\n## Unreleased\n\n## 0.10.0 - Title\n## 0.1.0\n";
+        let changelog =
+            "# Changelog\n\n## Unreleased\n\n## 0.11.0-rc.1\n## 0.10.0 - Title\n## 0.1.0\n";
         for (version, expected) in [
             ("0.10.0", true),
             ("0.1.0", true),
             ("0.11.0", false),
+            ("0.11.0-rc.1", true),
             ("0.1", false),
         ] {
             if changelog_has_release_heading(changelog, version) != expected {
