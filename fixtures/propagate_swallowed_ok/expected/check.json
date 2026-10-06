@@ -11,6 +11,18 @@
   "findings": [
     {
       "id": "probe:src_lib.rs:call_deletion:f297c803",
+      "canonical_gap_id": "gap:rust:src/lib.rs:impl Ledger::apply:call_deletion:call_deletion:self.persist_amount*9_.ok",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:impl Ledger::apply:call_deletion:call_deletion:self.persist_amount*9_.ok",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "impl Ledger::apply",
+        "behavior_kind": "call_deletion",
+        "probe_kind": "call_deletion",
+        "normalized_discriminator": "self.persist_amount*9_.ok"
+
+      },
       "classification": "propagation_unknown",
       "severity": "note",
       "confidence": 0.66,

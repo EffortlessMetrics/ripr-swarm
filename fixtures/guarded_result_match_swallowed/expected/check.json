@@ -11,6 +11,18 @@
   "findings": [
     {
       "id": "probe:src_lib.rs:error_path:94d13aee",
+      "canonical_gap_id": "gap:rust:src/lib.rs:expect_ready:error_variant:error_path:err_parseerror_invaliddata",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:expect_ready:error_variant:error_path:err_parseerror_invaliddata",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "expect_ready",
+        "behavior_kind": "error_variant",
+        "probe_kind": "error_path",
+        "normalized_discriminator": "err_parseerror_invaliddata"
+
+      },
       "classification": "reachable_unrevealed",
       "severity": "warning",
       "confidence": 0.79,
@@ -158,6 +170,18 @@
     },
     {
       "id": "probe:src_lib.rs:return_value:1f4cb0e7",
+      "canonical_gap_id": "gap:rust:src/lib.rs:expect_ready:return_value:return_value:err_parseerror_invaliddata",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:expect_ready:return_value:return_value:err_parseerror_invaliddata",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "expect_ready",
+        "behavior_kind": "return_value",
+        "probe_kind": "return_value",
+        "normalized_discriminator": "err_parseerror_invaliddata"
+
+      },
       "classification": "reachable_unrevealed",
       "severity": "warning",
       "confidence": 0.79,

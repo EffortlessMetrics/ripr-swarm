@@ -1837,7 +1837,7 @@ pub(crate) fn apply_pilot_seam_budget(
         .and_then(|(limit, source)| apply_pilot_seam_budget_inner(classified, limit, source, keep)))
 }
 
-fn apply_pilot_seam_budget_inner(
+pub(crate) fn apply_pilot_seam_budget_inner(
     classified: &mut Vec<super::seam_classification::ClassifiedSeam>,
     limit: usize,
     source: SeamLimitSource,

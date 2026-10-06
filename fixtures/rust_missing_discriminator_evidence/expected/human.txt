@@ -13,6 +13,7 @@ Start here:
   File: fixtures/rust_missing_discriminator_evidence/input/src/lib.rs:9
   Static exposure: weak (weakly_exposed, warning, confidence 0.92)
   Why weak: a related test reaches this change but does not observe the exact changed value
+  Canonical gap: gap:rust:src/lib.rs:classify_boundary:call_deletion:call_deletion:err_pricingerror_other
   Changed behavior: Err(PricingError::Other)
   Missing discriminator (1 of 2): PricingError::Other
   Related test: tests/pricing.rs:4 rejects_boundary (assertion too weak to tell the old behavior from the new)

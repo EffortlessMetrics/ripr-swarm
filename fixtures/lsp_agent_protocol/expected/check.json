@@ -11,6 +11,18 @@
   "findings": [
     {
       "id": "probe:src_lib.rs:static_unknown:401a7bb9",
+      "canonical_gap_id": "gap:rust:src/lib.rs:agent_protocol_boundary:static_unknown:static_unknown:value+2",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:agent_protocol_boundary:static_unknown:static_unknown:value+2",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "agent_protocol_boundary",
+        "behavior_kind": "static_unknown",
+        "probe_kind": "static_unknown",
+        "normalized_discriminator": "value+2"
+
+      },
       "classification": "static_unknown",
       "severity": "note",
       "confidence": 0.50,

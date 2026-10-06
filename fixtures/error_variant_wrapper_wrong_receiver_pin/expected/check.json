@@ -11,6 +11,18 @@
   "findings": [
     {
       "id": "probe:src_lib.rs:call_deletion:0fc3c3da",
+      "canonical_gap_id": "gap:rust:src/lib.rs:impl ParserA::parse_summary:call_deletion:call_deletion:try_parse_summary_raw_.map_err_into_into",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:impl ParserA::parse_summary:call_deletion:call_deletion:try_parse_summary_raw_.map_err_into_into",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "impl ParserA::parse_summary",
+        "behavior_kind": "call_deletion",
+        "probe_kind": "call_deletion",
+        "normalized_discriminator": "try_parse_summary_raw_.map_err_into_into"
+
+      },
       "classification": "weakly_exposed",
       "severity": "warning",
       "confidence": 0.92,

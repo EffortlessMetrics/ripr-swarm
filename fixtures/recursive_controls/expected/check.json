@@ -11,6 +11,18 @@
   "findings": [
     {
       "id": "probe:src_lib.rs:predicate:326a2e10",
+      "canonical_gap_id": "gap:rust:src/lib.rs:classify_cycle:predicate_boundary:predicate:final_label==lit6f74686572",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:classify_cycle:predicate_boundary:predicate:final_label==lit6f74686572",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "classify_cycle",
+        "behavior_kind": "predicate_boundary",
+        "probe_kind": "predicate",
+        "normalized_discriminator": "final_label==lit6f74686572"
+
+      },
       "classification": "weakly_exposed",
       "severity": "warning",
       "confidence": 0.92,
@@ -103,6 +115,18 @@
     },
     {
       "id": "probe:src_lib.rs:predicate:09d1d10a",
+      "canonical_gap_id": "gap:rust:src/lib.rs:classify_deep:predicate_boundary:predicate:final_label==lit6f74686572",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:classify_deep:predicate_boundary:predicate:final_label==lit6f74686572",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "classify_deep",
+        "behavior_kind": "predicate_boundary",
+        "probe_kind": "predicate",
+        "normalized_discriminator": "final_label==lit6f74686572"
+
+      },
       "classification": "weakly_exposed",
       "severity": "warning",
       "confidence": 0.92,
@@ -195,6 +219,18 @@
     },
     {
       "id": "probe:src_lib.rs:predicate:35db27fb",
+      "canonical_gap_id": "gap:rust:src/lib.rs:classify_computed:predicate_boundary:predicate:final_label==lit6f74686572",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:classify_computed:predicate_boundary:predicate:final_label==lit6f74686572",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "classify_computed",
+        "behavior_kind": "predicate_boundary",
+        "probe_kind": "predicate",
+        "normalized_discriminator": "final_label==lit6f74686572"
+
+      },
       "classification": "weakly_exposed",
       "severity": "warning",
       "confidence": 0.92,
@@ -287,6 +323,18 @@
     },
     {
       "id": "probe:src_lib.rs:predicate:6f663a44",
+      "canonical_gap_id": "gap:rust:src/lib.rs:classify_ambiguous:predicate_boundary:predicate:final_label==lit6f74686572",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:classify_ambiguous:predicate_boundary:predicate:final_label==lit6f74686572",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "classify_ambiguous",
+        "behavior_kind": "predicate_boundary",
+        "probe_kind": "predicate",
+        "normalized_discriminator": "final_label==lit6f74686572"
+
+      },
       "classification": "weakly_exposed",
       "severity": "warning",
       "confidence": 0.92,

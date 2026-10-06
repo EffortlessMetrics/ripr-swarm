@@ -13,6 +13,7 @@ Start here:
   File: fixtures/observation_unverified_return_value/input/src/lib.rs:2
   Static exposure: weak (weakly_exposed, warning, confidence 0.92)
   Why weak: a related test reaches this change but does not observe the exact changed value
+  Canonical gap: gap:rust:src/lib.rs:compute_score:return_value:return_value:base*2
   Changed behavior: base * 2
   Missing discriminator: No strong discriminator was detected
   Related test: tests/score_tests.rs:4 result_is_positive (assertion too weak to tell the old behavior from the new)

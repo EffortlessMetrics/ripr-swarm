@@ -11,6 +11,18 @@
   "findings": [
     {
       "id": "probe:src_lib.rs:field_construction:66b24106",
+      "canonical_gap_id": "gap:rust:src/lib.rs:default_config:field_construction:field_construction:retries_1",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:default_config:field_construction:field_construction:retries_1",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "default_config",
+        "behavior_kind": "field_construction",
+        "probe_kind": "field_construction",
+        "normalized_discriminator": "retries_1"
+
+      },
       "classification": "weakly_exposed",
       "severity": "warning",
       "confidence": 0.92,
@@ -116,6 +128,18 @@
     },
     {
       "id": "probe:src_lib.rs:return_value:8ed284d1",
+      "canonical_gap_id": "gap:rust:src/lib.rs:default_config:return_value:return_value:retries",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:default_config:return_value:return_value:retries",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "default_config",
+        "behavior_kind": "return_value",
+        "probe_kind": "return_value",
+        "normalized_discriminator": "retries"
+
+      },
       "classification": "propagation_unknown",
       "severity": "note",
       "confidence": 0.66,

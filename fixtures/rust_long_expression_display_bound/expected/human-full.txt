@@ -19,6 +19,7 @@ Probe
   family: predicate
   delta:  control
   owner:  src/lib.rs::blocking_reason
+  canonical gap: gap:rust:src/lib.rs:blocking_reason:predicate_boundary:predicate:decisions.iter_.filter_d_d.decision==lit626c6f636b696e67_.count==0
 
 Static exposure
   propagation_unknown (note, confidence 0.66)

@@ -1060,7 +1060,9 @@ The evidence-first fields are additive in schema `0.2`:
   that it runs as the standard macro. `weak_assertion`: the matched oracle is
   weak or smoke-only. `missing_input`: on a predicate probe, the oracle
   observes the behavior but no input reaches the boundary value in
-  `missing_discriminators` (the `left == right` entry).
+  `missing_discriminators` (the `left == right` entry); on a match-arm probe,
+  no related test's input selects the changed arm (the
+  `No related test call selects arm` entry, RIPR-SPEC-0229).
   `missing_exact_assertion`: no assertion pins the exact error variant or
   constructed field value named in `missing_discriminators`.
   `observation_unconfirmed`: the oracle has the right shape but ripr could not
@@ -1718,14 +1720,23 @@ JSON fields:
   language-qualified behavioral gap when the producer can name one without
   relying on line numbers alone. Python preview values use
   `gap:python:<path>:<owner>:<behavior_kind>:<probe_kind>:<normalized_discriminator>`.
-  Static-limit findings may omit this field until a non-actionable gap-state
-  projection exists.
+  Rust findings use the same shape with the `gap:rust:` language token, the
+  workspace-relative file, and the module-qualified owner
+  (`gap:rust:<path>:<owner>:<behavior_kind>:<probe_kind>:<normalized_discriminator>`,
+  #5268): the normalized discriminator is derived from the changed line
+  itself, so a comparison seam names the same equality boundary the
+  classifier's missing-discriminator statement renders. Static-limit
+  findings and probes with no owner identity may omit this field until a
+  non-actionable gap-state projection exists.
 - `canonical_gap_group_size` is the number of raw findings in the current
   report that share the same `canonical_gap_id`, or omitted when no canonical
   gap identity is assigned.
 - `canonical_gap` is an additive optional object that carries the identity
   parts used to derive `canonical_gap_id`: `id`, `language`, `file`, `owner`,
-  `behavior_kind`, `probe_kind`, and `normalized_discriminator`.
+  `behavior_kind`, `probe_kind`, and `normalized_discriminator`. The
+  normalized discriminator is an identity, not an establishment claim: a
+  producer-named missing discriminator keeps the typed
+  `missing_discriminator` refusal ahead of a populated gap.
 - `probe.owner` is an additive optional stable owner identifier emitted when a
   preview-language adapter populated a changed owner. Python preview owners use
   `python:<path>::<owner>`, for example
@@ -7906,12 +7917,27 @@ Success payload (200-level result object, no `protocol_version`,
   NOT the immutable snapshot-handle contract reserved for #1602; the
   `riprAgent` capability advertises `snapshot_handles: false` until that
   contract lands. `null` when the snapshot carries no generation identity.
+- `seam_evidence_identity` — the current snapshot's seam evidence identity
+  (`{"snapshot_id": ...}`). Pass it as `evidence_identity` when continuing a
+  listed seam `canonical_id` through `ripr.collectContext` or
+  `ripr.collectEvidenceContext`; the seam routes reject a seam id cited
+  without it on a current snapshot (#6848).
 - `selected_count` / `omitted_count` / `total_count` — diagnostic-budget
   counts from the committed delivery selection.
 - `selected` — `[{canonical_id, document}]` for every delivered diagnostic
   (already bounded by the workspace item budget). `canonical_id` is the
-  diagnostic's budget identity (its `diagnostic_id`, gap, finding or seam id);
-  the diagnostic's own `data` carries the ids `ripr.collectContext` takes.
+  producer identity the continuation route resolves: the finding's probe id
+  (`data.finding_id`) for finding diagnostics, the seam id for seam
+  diagnostics, and the ledger-canonical gap id for gap-ledger diagnostics.
+  Every listed finding, seam, or gap canonical id is accepted by
+  `ripr.collectContext` (#6848): finding ids directly, seam ids together
+  with this envelope's `seam_evidence_identity` as `evidence_identity`,
+  gap-ledger ids through the ledger route. Producer-less disclosures (the
+  diff-scope guard) fall back to a deterministic `location:` id with no
+  `ripr.collectContext` continuation; their content is the workspace-status
+  limitation surface. The finding id follows the canonical group's current
+  primary, so a gap's listed id can change when a new primary probe rotates
+  in; the id listed by a given snapshot always resolves for that snapshot.
 - `omitted` — `[{canonical_id, reason}]` for withheld diagnostics, at most
   200 entries. `reason` is `profile_filtered`, `document_item_limit`,
   `workspace_item_limit`, or `serialized_byte_limit`.

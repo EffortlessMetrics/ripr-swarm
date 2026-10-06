@@ -11,6 +11,18 @@
   "findings": [
     {
       "id": "probe:src_lib.rs:call_deletion:934aa430",
+      "canonical_gap_id": "gap:rust:src/lib.rs:process_order:call_deletion:call_deletion:notifier.send_order_id",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:process_order:call_deletion:call_deletion:notifier.send_order_id",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "process_order",
+        "behavior_kind": "call_deletion",
+        "probe_kind": "call_deletion",
+        "normalized_discriminator": "notifier.send_order_id"
+
+      },
       "classification": "exposed",
       "severity": "info",
       "confidence": 1.00,
@@ -92,6 +104,18 @@
     },
     {
       "id": "probe:src_lib.rs:side_effect:95da2a37",
+      "canonical_gap_id": "gap:rust:src/lib.rs:process_order:side_effect:side_effect:notifier.send_order_id",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:process_order:side_effect:side_effect:notifier.send_order_id",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "process_order",
+        "behavior_kind": "side_effect",
+        "probe_kind": "side_effect",
+        "normalized_discriminator": "notifier.send_order_id"
+
+      },
       "classification": "exposed",
       "severity": "info",
       "confidence": 1.00,

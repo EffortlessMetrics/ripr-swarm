@@ -396,9 +396,11 @@ pub(super) fn finding_diagnostics_by_uri_with_profile(
         );
         // Producer authority: reaching this point means the finding passed
         // `finding_is_visible_in_profile`. The delivery budget consumes this
-        // explicit ordinary-finding signal after the more specific
-        // gap/seam/preview authorities; it must not infer eligibility from
-        // diagnostic shape or identity.
+        // explicit ordinary-finding signal after the more specific gap/seam
+        // family authorities; it must not infer eligibility from diagnostic
+        // shape or identity. A preview finding's
+        // `preview_actionability.repair_packet_ready` gates the repair-packet
+        // surface (code actions), not this delivery signal (#6847).
         if let Some(data) = diagnostic
             .data
             .as_mut()

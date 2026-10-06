@@ -11,6 +11,20 @@ are scoped or reviewed.
 
 ### Changed
 
+- LSP: TypeScript, JavaScript, and Perl preview findings the producer
+  admitted (`delivery_eligible`) now publish as advisory diagnostics in both
+  diagnostic profiles even while the shared repair-packet validator still
+  fails the packet; packet readiness keeps gating the code-action surface
+  only, and `diagnosticProfile = "full"` delivers what it documents
+  (#6847). `ripr/listActionableItems` canonical ids are now the producer
+  identities `ripr.collectContext` resolves — the probe `finding_id` for
+  findings, `seam_id` for seams — instead of the projection-local
+  `finding:<hash>`/canonical gap ids it previously listed and rejected with
+  `-32602`; the envelope adds `seam_evidence_identity` for the seam
+  continuation. RIPR-SPEC-0126's producer-signal precedence is corrected to
+  match: the preview packet verdict gates the repair-packet surface, not
+  diagnostic delivery (#6848).
+
 - Predicate same-test pairing no longer treats a boundary literal buried
   inside an argument expression as a boundary input. `gate(if false { 10 }
   else { 50 })` and `gate(std::cmp::max(10, 50))` fall back to

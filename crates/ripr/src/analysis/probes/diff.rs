@@ -805,14 +805,28 @@ fn nearby_removed_line(
                 || lines_are_adjacent(line.new_side_line, run_start)
         })
         .collect::<Vec<_>>();
-    nearby
-        .iter()
-        .find(|line| {
-            let removed_tokens = extract_identifier_tokens(&line.text);
-            !added_tokens.is_empty()
-                && added_tokens
-                    .iter()
-                    .any(|token| removed_tokens.iter().any(|other| other == token))
+    // A match arm whose pattern stands unchanged on a removed line is that
+    // arm's original: a qualified enum name is shared by every arm of a
+    // multi-line hunk, so the token rule alone pairs later arms with the
+    // first removed arm.
+    let arm_pattern = |text: &str| {
+        text.split_once("=>")
+            .map(|(pattern, _)| pattern.split_whitespace().collect::<Vec<_>>().join(" "))
+    };
+    let same_arm = arm_pattern(added).and_then(|pattern| {
+        nearby
+            .iter()
+            .find(|line| arm_pattern(&line.text).as_ref() == Some(&pattern))
+    });
+    same_arm
+        .or_else(|| {
+            nearby.iter().find(|line| {
+                let removed_tokens = extract_identifier_tokens(&line.text);
+                !added_tokens.is_empty()
+                    && added_tokens
+                        .iter()
+                        .any(|token| removed_tokens.iter().any(|other| other == token))
+            })
         })
         .or_else(|| nearby.first())
         .map(|line| line.text.trim().to_string())
@@ -1783,6 +1797,39 @@ mod tests {
     // Regression: an added line adjacent to a removed line that shares no
     // identifier token must still fall back to that *nearby* removed line
     // (not `None`, and not an unrelated line from elsewhere in the file).
+    #[test]
+    fn match_arm_body_change_pairs_with_its_own_removed_arm() {
+        let line = |line: usize, text: &str| ChangedLine {
+            line,
+            new_side_line: line,
+            text: text.to_string(),
+        };
+        let changed = ChangedFile {
+            path: PathBuf::from("src/lib.rs"),
+            added_lines: vec![
+                line(3, "        Kind::Alpha => 4,"),
+                line(4, "        Kind::Beta => 5,"),
+                line(5, "        Kind::Gamma => 6,"),
+            ],
+            removed_lines: vec![
+                line(3, "        Kind::Alpha => 1,"),
+                line(3, "        Kind::Beta  =>  2,"),
+                line(3, "        Kind::Gamma => 3,"),
+            ],
+        };
+        // Every removed arm shares `Kind`; the arm with the same pattern is
+        // the original, whatever its position or spacing.
+        assert_eq!(
+            nearby_removed_line(4, "        Kind::Beta => 5,", &changed),
+            Some("Kind::Beta  =>  2,".to_string())
+        );
+        // A changed pattern keeps the token rule.
+        assert_eq!(
+            nearby_removed_line(4, "        Kind::Delta => 5,", &changed),
+            Some("Kind::Alpha => 1,".to_string())
+        );
+    }
+
     #[test]
     fn probes_for_file_falls_back_to_nearby_removed_line_without_token_match() {
         let changed = ChangedFile {

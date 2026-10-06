@@ -13,6 +13,7 @@ Start here:
   File: fixtures/guarded_result_match_sibling_variant/input/src/lib.rs:9
   Static exposure: weak (weakly_exposed, warning, confidence 0.92)
   Why weak: a related test reaches this change but does not observe the exact changed value
+  Canonical gap: gap:rust:src/lib.rs:expect_ready:error_variant:error_path:err_parseerror_invaliddata
   Changed behavior: return Err(ParseError::InvalidData)
   Missing discriminator (1 of 2): ParseError::InvalidData
   Related test: tests/protocol.rs:4 pins_the_sibling_variant_of_the_changed_owner (no assertion pins `ParseError::InvalidData`)

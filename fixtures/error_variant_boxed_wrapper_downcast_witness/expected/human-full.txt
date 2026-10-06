@@ -18,6 +18,7 @@ Probe
   family: error_path
   delta:  value
   owner:  src/lib.rs::try_parse_summary
+  canonical gap: gap:rust:src/lib.rs:try_parse_summary:error_variant:error_path:err_parsesummaryerror_malformedsource
 
 Static exposure
   exposed (info, confidence 1.00)
@@ -49,6 +50,7 @@ Probe
   family: return_value
   delta:  value
   owner:  src/lib.rs::try_parse_summary
+  canonical gap: gap:rust:src/lib.rs:try_parse_summary:return_value:return_value:err_parsesummaryerror_malformedsource
 
 Static exposure
   exposed (info, confidence 1.00)
@@ -80,6 +82,7 @@ Probe
   family: error_path
   delta:  value
   owner:  src/lib.rs::try_parse_summary
+  canonical gap: gap:rust:src/lib.rs:try_parse_summary:error_variant:error_path:err_parsesummaryerror_malformedsource
 
 Static exposure
   exposed (info, confidence 1.00)
@@ -111,6 +114,7 @@ Probe
   family: return_value
   delta:  value
   owner:  src/lib.rs::try_parse_summary
+  canonical gap: gap:rust:src/lib.rs:try_parse_summary:return_value:return_value:err_parsesummaryerror_malformedsource
 
 Static exposure
   exposed (info, confidence 1.00)
@@ -628,6 +632,7 @@ Probe
   family: error_path
   delta:  value
   owner:  src/lib.rs::theme_summary
+  canonical gap: gap:rust:src/lib.rs:theme_summary:error_variant:error_path:try_theme_summary_raw_.map_err_into_into
 
 Static exposure
   reachable_unrevealed (warning, confidence 0.79)
@@ -664,6 +669,7 @@ Probe
   family: return_value
   delta:  value
   owner:  src/lib.rs::theme_summary
+  canonical gap: gap:rust:src/lib.rs:theme_summary:return_value:return_value:try_theme_summary_raw_.map_err_into_into
 
 Static exposure
   reachable_unrevealed (warning, confidence 0.79)

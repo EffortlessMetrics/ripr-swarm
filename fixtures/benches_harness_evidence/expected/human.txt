@@ -13,6 +13,7 @@ Start here:
   File: fixtures/benches_harness_evidence/input/src/lib.rs:2
   Static exposure: no path (no_static_path, warning, confidence 0.35)
   Why no path: no related test was found that reaches this change
+  Canonical gap: gap:rust:src/lib.rs:price:predicate_boundary:predicate:amount==100
   Changed behavior: amount > 100
   Missing discriminator (1 of 4): No detected boundary input for the changed predicate
   Next step: ripr found no static test path to this change — this is not a coverage assessment. A

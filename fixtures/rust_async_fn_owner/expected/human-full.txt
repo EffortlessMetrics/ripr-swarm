@@ -18,6 +18,7 @@ Probe
   family: predicate
   delta:  control
   owner:  src/lib.rs::fetch_limit
+  canonical gap: gap:rust:src/lib.rs:fetch_limit:predicate_boundary:predicate:capacity==threshold
 
 Static exposure
   propagation_unknown (note, confidence 0.43)

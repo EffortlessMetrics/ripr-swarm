@@ -18,6 +18,7 @@ Probe
   family: return_value
   delta:  value
   owner:  src/lib.rs::impl Iterator for WhileSome::size_hint
+  canonical gap: gap:rust:src/lib.rs:impl Iterator for WhileSome::size_hint:return_value:return_value:0_some_self.remaining
 
 Static exposure
   exposed (info, confidence 1.00)
@@ -46,6 +47,7 @@ Probe
   family: return_value
   delta:  value
   owner:  src/lib.rs::impl Iterator for WhileSome::size_hint
+  canonical gap: gap:rust:src/lib.rs:impl Iterator for WhileSome::size_hint:return_value:return_value:0_none
 
 Static exposure
   weakly_exposed (warning, confidence 0.66)
