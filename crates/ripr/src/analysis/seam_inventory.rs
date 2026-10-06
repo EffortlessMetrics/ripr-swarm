@@ -3353,6 +3353,27 @@ pub fn future_tail(x: u32) -> impl Future<Output = ()> {
 pub fn checked(x: u32) -> Result<(), CodeError> {
     commit(x)
 }
+
+pub fn loop_value(x: u32) -> u32 {
+    let found = loop {
+        break search(x);
+    };
+    let tagged = 'outer: {
+        for step in 0..x {
+            if step > 2 {
+                break 'outer probe(step);
+            }
+        }
+        0
+    };
+    loop {
+        break flush(x);
+    }
+    while x > 0 {
+        break;
+    }
+    found + tagged
+}
 "#;
         let index = index_from_files(&[(path.clone(), source)])?;
         let seams = inventory_seams_from_index(std::slice::from_ref(&path), &index);
@@ -3364,6 +3385,7 @@ pub fn checked(x: u32) -> Result<(), CodeError> {
         let mut expected = vec![
             "announce(d)".to_string(),
             "drop_me(x)".to_string(),
+            "flush(x)".to_string(),
             "lock(d)".to_string(),
             "reset(x)".to_string(),
             "spaced(x)".to_string(),
@@ -3408,6 +3430,8 @@ pub fn checked(x: u32) -> Result<(), CodeError> {
             "finish(total)",
             "Ok(finish(total))",
             "commit(x)",
+            "search(x)",
+            "probe(step)",
         ] {
             assert!(
                 consumed.contains(&call),

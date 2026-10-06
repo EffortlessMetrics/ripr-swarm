@@ -1584,7 +1584,8 @@ fn push_call_deletion_probe_shape(
 /// Whether a call's value feeds a consumer: a condition or scrutinee, a
 /// named binding, an operand, an argument, a receiver, a field or index
 /// base, an element, or the function's non-unit return (through block
-/// tails, `if` branches and match arms). Deleting such a call does not
+/// tails, `if` branches, match arms and `break` out of a `loop` or labeled
+/// block). Deleting such a call does not
 /// compile, so no mutant answers the repo-scope `call_presence` question;
 /// the consumer's own seam carries the behavior (#6677). Any other
 /// position, including a statement, `let _ =`, `_ =`, a `_`-prefixed
@@ -1620,6 +1621,15 @@ fn call_value_is_consumed(call: &ra_ap_syntax::SyntaxNode) -> bool {
                 }
             }
             K::FN => return fn_returns_value(&parent),
+            // `break f()` supplies the value of its `loop` or labeled block,
+            // so that expression's own position decides.
+            K::BREAK_EXPR => match break_value_target(&parent) {
+                Some(target) => {
+                    node = target;
+                    continue;
+                }
+                None => return false,
+            },
             // `return f();` in a unit function still compiles as `return;`.
             K::RETURN_EXPR => return returning_fn_returns_value(&parent),
             // `_ = f();` discards the value like `let _ = f();`.
@@ -1725,6 +1735,40 @@ fn returning_fn_returns_value(return_expr: &ra_ap_syntax::SyntaxNode) -> bool {
         }
     }
     false
+}
+
+/// The `loop` or labeled block whose value a `break` supplies. A `break`
+/// out of `while` or `for`, or one whose target is not found before a
+/// closure, async block or function boundary, has no value target.
+fn break_value_target(break_expr: &ra_ap_syntax::SyntaxNode) -> Option<ra_ap_syntax::SyntaxNode> {
+    use ra_ap_syntax::SyntaxKind as K;
+    let wanted = ast::BreakExpr::cast(break_expr.clone())?
+        .lifetime()
+        .map(|lifetime| lifetime.syntax().text().to_string());
+    for ancestor in break_expr.ancestors().skip(1) {
+        let label = || {
+            ancestor
+                .children()
+                .find_map(ast::Label::cast)
+                .and_then(|label| label.lifetime())
+                .map(|lifetime| lifetime.syntax().text().to_string())
+        };
+        match ancestor.kind() {
+            K::FN | K::CLOSURE_EXPR => return None,
+            K::BLOCK_EXPR
+                if ast::BlockExpr::cast(ancestor.clone())
+                    .is_some_and(|block| block.async_token().is_some()) =>
+            {
+                return None;
+            }
+            K::BLOCK_EXPR if wanted.is_some() && label() == wanted => return Some(ancestor),
+            K::LOOP_EXPR | K::WHILE_EXPR | K::FOR_EXPR if wanted.is_none() || label() == wanted => {
+                return (ancestor.kind() == K::LOOP_EXPR).then_some(ancestor);
+            }
+            _ => {}
+        }
+    }
+    None
 }
 
 /// `let _ = f()` and `let _unused = f()` keep the call only for its effect.
