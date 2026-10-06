@@ -49,10 +49,12 @@ pub(crate) const DOCTOR_FAILED_LINE: &str =
 /// render one. Unusable roots are never probed for work-tree changes.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum DoctorFirstCommand {
-    /// `root_directory` failed while git runs: recommend the recovery action
-    /// with `--root` guidance that distinguishes a missing path from an
-    /// existing non-directory, and never probe the work tree (#4531, #5101).
-    /// No check command is named: none can run here (#5252 item 3).
+    /// `root_directory` failed: recommend the recovery action with `--root`
+    /// guidance that distinguishes a missing path from an existing
+    /// non-directory, and never probe the work tree (#4531, #5101). No
+    /// check command is named: none can run here (#5252 item 3), whatever
+    /// the git state, because `check` validates an explicit `--root`
+    /// through `ensure_command_root` before reading any `--diff` input.
     MissingRoot,
     /// `git_repository` failed while git itself runs: the repository-free scan
     /// is the only route that can run here.
@@ -87,9 +89,12 @@ impl DoctorFirstCommand {
     /// probe runs: a missing root (#4531) must not be probed for work-tree
     /// changes — the probe would print a raw git failure for a problem the
     /// checks above already name — and a root Git refuses must not be sent to
-    /// `ripr check`, which cannot run there. A git binary that cannot run
-    /// still outranks the repository state (#4735), because `--diff PATH`
-    /// does not need git.
+    /// `ripr check`, which cannot run there. Root usability outranks git
+    /// availability: `check` validates an explicit `--root` through
+    /// `ensure_command_root` before reading any `--diff` input, so a failed
+    /// `root_directory` recommends recovery even on a gitless host. A git
+    /// binary that cannot run still outranks the repository state (#4735),
+    /// because `--diff PATH` does not need git — only a directory.
     pub(crate) fn resolve_for_report(
         report: &DoctorReport,
         dirty_worktree: impl FnOnce() -> bool,
@@ -101,15 +106,11 @@ impl DoctorFirstCommand {
                 .any(|check| check.name == name && check.status == DoctorCheckStatus::Pass)
         };
         if !passed("root_directory") {
-            // #5010 renders the lossless root spelling for recovery, so the
-            // route stays runnable; only the work-tree probe is withheld
-            // (#4531). Gitless hosts keep the `--diff` route, which does not
-            // need the root to exist.
-            if git_tool_can_run(report) {
-                Self::MissingRoot
-            } else {
-                Self::SavedDiff
-            }
+            // #5010 renders the lossless root spelling for recovery, and the
+            // work-tree probe stays withheld (#4531). No `--diff` route is
+            // kept: it renders with the same explicit `--root`, which
+            // `ensure_command_root` rejects before the diff is read.
+            Self::MissingRoot
         } else if !git_tool_can_run(report) {
             Self::SavedDiff
         } else if !passed("git_repository") {
@@ -3452,8 +3453,22 @@ mod tests {
                 probed = true;
                 true
             }),
-            DoctorFirstCommand::SavedDiff,
-            "a gitless host still routes the missing root to the --diff recovery"
+            DoctorFirstCommand::MissingRoot,
+            "a missing root recommends recovery even when git cannot run: the --diff route renders with the same explicit --root, which ensure_command_root rejects before the diff is read"
+        );
+        let mut file_root_gitless = DoctorReport::new(".");
+        file_root_gitless.add_check(
+            "root_directory",
+            DoctorStatus::Fail,
+            Some("root is not a directory".to_string()),
+        );
+        assert_eq!(
+            DoctorFirstCommand::resolve_for_report(&file_root_gitless, || {
+                probed = true;
+                true
+            }),
+            DoctorFirstCommand::MissingRoot,
+            "a file root recommends recovery even when git cannot run"
         );
         let mut missing_root_git = DoctorReport::new(".");
         missing_root_git.add_check(
