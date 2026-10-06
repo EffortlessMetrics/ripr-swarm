@@ -775,6 +775,18 @@ pub(crate) fn constant_offset_operand(operand: &str) -> Option<(&str, i128)> {
     Some((name, sign * magnitude))
 }
 
+/// A plain decimal constant value (`NamedConstant::Value`) plus a signed
+/// offset, rendered in decimal; `None` when the value is not a plain
+/// decimal integer or the sum overflows (#6671).
+pub(crate) fn offset_integer_value(declared: &str, offset: i128) -> Option<String> {
+    if !is_integer_literal(declared.trim()) {
+        return None;
+    }
+    parse_integer_literal(declared)?
+        .checked_add(offset)
+        .map(|value| value.to_string())
+}
+
 /// True when one call argument names the constant `name` itself, bare or
 /// through a plain path (`DISCOUNT_THRESHOLD`, `&DISCOUNT_THRESHOLD`,
 /// `pricing::DISCOUNT_THRESHOLD`).

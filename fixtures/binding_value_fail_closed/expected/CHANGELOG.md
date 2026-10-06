@@ -129,3 +129,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — binding_value_fail_closed (9)
+
+Reason:
+RIPR-SPEC-0001 unresolved boundary input (#6674, #6693): an operand ripr cannot map to related-test inputs reads infection_unknown 'Changed boundary input is unresolved' instead of a missing equality discriminator with 'observed values: unknown'; no exposed finding
+
+Command:
+`cargo xtask goldens bless binding_value_fail_closed --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

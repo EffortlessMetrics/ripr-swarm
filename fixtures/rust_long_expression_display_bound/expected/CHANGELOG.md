@@ -251,3 +251,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — rust_long_expression_display_bound (11)
+
+Reason:
+RIPR-SPEC-0001 unresolved boundary input (#6674): the closure comparison cannot be cut into boundary operands, so the boundary is unresolved (infection_unknown) instead of a garbled missing discriminator; before/after wrapping unchanged
+
+Command:
+`cargo xtask goldens bless rust_long_expression_display_bound --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

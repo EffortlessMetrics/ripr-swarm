@@ -2,12 +2,12 @@ ripr static RIPR exposure analysis
 mode: fast
 root: fixtures/rust_long_expression_display_bound/input
 
-Summary: 1 probe(s), 0 exposed, 0 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 1 propagation_unknown, 0 static_unknown; 1 of 1 finding(s) unsuppressed
+Summary: 1 probe(s), 0 exposed, 0 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 1 infection_unknown, 0 propagation_unknown, 0 static_unknown; 1 of 1 finding(s) unsuppressed
 
 Analysis outcome: findings below (analysis complete; complete_with_findings).
   Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 probe(s), 1 finding(s).
 
-NOTE fixtures/rust_long_expression_display_bound/input/src/lib.rs:10
+WARNING fixtures/rust_long_expression_display_bound/input/src/lib.rs:10
   id: probe:src_lib.rs:predicate:9b6a6cdb
 
 Changed
@@ -21,27 +21,27 @@ Probe
   owner:  src/lib.rs::blocking_reason
 
 Static exposure
-  propagation_unknown (note, confidence 0.66)
+  infection_unknown (warning, confidence 0.66)
 
 Evidence
   - reach yes: Related tests appear to reach blocking_reason: single_blocking_decision_reports_its_reason
-  - infection weak: Related tests contain input values, but the equality-boundary discriminator is missing
+  - infection unknown: Changed boundary input is unresolved: the changed comparison's operands are not ones ripr can map to the related tests' inputs, so it cannot tell which side of the boundary a test reaches; activation/infection is unknown
   - propagation unknown: Propagation is not statically obvious from syntax-first analysis
   - observation yes: A related test observes a value or effect near the changed behavior
-  - discriminator missing: `decisions.iter().filter(|d| d.decision == "blocking").count() == 0`; related oracle: Strong oracle found: exact value or pattern assertion
+  - discriminator not established (infection_unknown); related oracle: Strong oracle found: exact value or pattern assertion
   - related test src/lib.rs:25 single_blocking_decision_reports_its_reason uses strong exact value oracle: assert_eq!(blocking_reason(&decisions, "unknown"), "stale_baseline");
   - source assertion argument value "stale_baseline" at line 27
   - source function argument value fallback = "unknown" at line 27
 
 Weakness
-  - No clear propagation path from changed behavior to an observable sink
-  - missing discriminator decisions.iter().filter(|d| d.decision == "blocking").count() == 0: No related test call uses decisions.iter().filter(|d| d.decision equal to "blocking").count() == 0; observed decisions.iter().filter(|d| d.decision values: unknown; target "blocking").count() == 0 value: "blocking"
+  - Changed boundary input is unresolved: the changed comparison's operands are not ones ripr can map to the related tests' inputs, so it cannot tell which side of the boundary a test reaches; activation/infection is unknown
+  - No detected boundary input for the changed predicate
 
 Stop reasons:
-  - propagation_evidence_unknown — ripr could not tell whether the changed value flows to something a test observes
+  - infection_evidence_unknown — ripr could not tell whether a test input reaches a value that makes the change matter
 
 Next step
-  Escalate to real mutation testing or deep static analysis for this probe.
+  Add a targeted boundary or negative-path test, or teach ripr about the fixture/builder in ripr.toml.
 Drill in:
   ripr explain --root fixtures/rust_long_expression_display_bound/input --diff fixtures/rust_long_expression_display_bound/diff.patch --mode fast probe:src_lib.rs:predicate:9b6a6cdb
   ripr context --root fixtures/rust_long_expression_display_bound/input --diff fixtures/rust_long_expression_display_bound/diff.patch --mode fast --at probe:src_lib.rs:predicate:9b6a6cdb

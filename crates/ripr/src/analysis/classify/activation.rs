@@ -951,25 +951,41 @@ fn missing_boundary_discriminator(
             && crate::analysis::value_resolution::constant_operand_name(operand).is_none()
             && crate::analysis::value_resolution::constant_offset_operand(operand).is_none()
     };
-    // Only a boundary with a readable side is in scope: when neither side
-    // has a value (`out.len() != data.len() / 2`) there is no boundary
-    // value to abstain about, and the existing route stays unchanged.
-    let left_unknown = unknown(&left, left_parameter.as_deref(), left_resolved.as_ref());
-    let right_unknown = unknown(&right, right_parameter.as_deref(), right_resolved.as_ref());
-    let unknown_operand = match (left_unknown, right_unknown) {
-        (true, false) => Some(left.as_str()),
-        (false, true) => Some(right.as_str()),
-        _ => None,
-    };
+    // When neither side has a value (`out.len() != data.len() / 2`) no
+    // row says which side of the boundary a test reaches either, so both
+    // operands are named and the boundary stays unresolved.
+    let unknown_operands = [
+        (&left, left_parameter.as_deref(), left_resolved.as_ref()),
+        (&right, right_parameter.as_deref(), right_resolved.as_ref()),
+    ]
+    .into_iter()
+    .filter(|(operand, parameter, resolved)| unknown(operand, *parameter, *resolved))
+    .map(|(operand, _, _)| operand.as_str())
+    .collect::<Vec<_>>();
     if let Some(reason) = unresolved_boundary_input(
         owner,
         &parameters,
         related_tests,
         helper_chain,
-        unknown_operand,
+        &unknown_operands,
         [left_parameter.as_deref(), right_parameter.as_deref()],
     ) {
         *unresolved = Some(reason);
+        return None;
+    }
+    // An offset constant whose value ripr cannot see (`LIMIT - 2` with a
+    // computed, suffixed, or non-decimal `LIMIT`) has no boundary value a
+    // test can match, and a test naming `LIMIT` is not the offset boundary
+    // by identity, so no repair would be recognized (#6671).
+    if let Some(constant) = right_constant
+        .as_ref()
+        .filter(|constant| constant.offset != 0 && constant.lookup.value().is_none())
+    {
+        *unresolved = Some(format!(
+            "boundary operand `{right}` offsets constant `{}`, whose value ripr cannot see statically ({}), so it cannot tell which side of the boundary a test reaches",
+            constant.name,
+            constant.lookup.limitation()
+        ));
         return None;
     }
     // A local boundary that no row evaluates (a single-line `let`, or an
@@ -1063,21 +1079,34 @@ fn unresolved_boundary_input(
     parameters: &[String],
     related_tests: &[&TestSummary],
     helper_chain: Option<&super::helper_transfer::HelperChain>,
-    unknown_operand: Option<&str>,
+    unknown_operands: &[&str],
     operand_parameters: [Option<&str>; 2],
 ) -> Option<String> {
-    if let Some(unmapped) = unknown_operand {
+    if !unknown_operands.is_empty() {
         // A predicate the operand splitter cannot cut cleanly (a `let`
         // statement, a closure with its own comparison) is not named.
-        if !is_simple_operand(unmapped) {
+        if !unknown_operands
+            .iter()
+            .all(|operand| is_simple_operand(operand))
+        {
             return Some(
                 "the changed comparison's operands are not ones ripr can map to the related tests' inputs, so it cannot tell which side of the boundary a test reaches"
                     .to_string(),
             );
         }
-        return Some(format!(
-            "boundary operand `{unmapped}` is a local or computed value ripr cannot map to the related tests' inputs, so it cannot tell which side of the boundary a test reaches"
-        ));
+        return Some(match unknown_operands {
+            [unmapped] => format!(
+                "boundary operand `{unmapped}` is a local or computed value ripr cannot map to the related tests' inputs, so it cannot tell which side of the boundary a test reaches"
+            ),
+            _ => format!(
+                "boundary operands {} are local or computed values ripr cannot map to the related tests' inputs, so it cannot tell which side of the boundary a test reaches",
+                unknown_operands
+                    .iter()
+                    .map(|operand| format!("`{operand}`"))
+                    .collect::<Vec<_>>()
+                    .join(" and ")
+            ),
+        });
     }
     let computed = computed_input_parameters(owner, parameters, related_tests, helper_chain);
     let parameter = operand_parameters
@@ -1375,7 +1404,8 @@ fn call_values_for_owner(
 /// `call_values_for_owner` uses: direct owner calls when a test calls the
 /// owner, otherwise the entry calls of the resolved helper chain carried
 /// down the hops where a hop passes its caller's parameter straight
-/// through. Such an argument yields no input row (it is not an exact
+/// through, plus the target of any hop argument that is itself computed
+/// (`owner(x + 1)`). Such an argument yields no input row (it is not an exact
 /// value), yet the call may still sit on the boundary, so a boundary over
 /// one of these parameters is unresolved rather than missing (#6672).
 fn computed_input_parameters(
@@ -1418,7 +1448,11 @@ fn computed_input_parameters(
     let Some(entry) = chain.hops.last() else {
         return Vec::new();
     };
-    let (_, mut computed) = computed_for(&entry.caller.name, &function_parameters(&entry.caller));
+    let (entry_called, mut computed) =
+        computed_for(&entry.caller.name, &function_parameters(&entry.caller));
+    if !entry_called {
+        return Vec::new();
+    }
     for step in (0..chain.hops.len()).rev() {
         let hop = &chain.hops[step];
         let target_parameters: Vec<String> = if step == 0 {
@@ -1426,11 +1460,18 @@ fn computed_input_parameters(
         } else {
             function_parameters(&chain.hops[step - 1].caller)
         };
+        // A hop argument is computed when it carries a computed caller
+        // parameter straight through, or computes its value itself
+        // (`owner(x + 1)`): `bind_helper_argument` stops the transfer at
+        // either, so the target parameter gets no exact row.
         computed = hop
             .arguments
             .iter()
             .enumerate()
-            .filter(|(_, argument)| computed.iter().any(|name| name == argument.trim()))
+            .filter(|(_, argument)| {
+                is_computed_value_expression(argument)
+                    || computed.iter().any(|name| name == argument.trim())
+            })
             .filter_map(|(idx, _)| target_parameters.get(idx).cloned())
             .collect();
     }
@@ -1783,8 +1824,11 @@ fn visible_operand(operand: &str, constant: Option<&BoundaryConstant>) -> Option
         // RIPR-SPEC-0001 named-constant rule plus a bounded integer
         // offset: `CURRENT - 2` with `const CURRENT: u32 = 7;` is 5,
         // never the offset literal 2 (#6671).
-        let base = declared.replace('_', "").parse::<i128>().ok()?;
-        base.checked_add(constant.offset)?.to_string()
+        // `NamedConstant::Value` holds only a plain decimal literal; a
+        // suffixed, hex, octal, or binary initializer (`10u32`, `0x10`)
+        // is `Opaque`, never reaches here, and the offset boundary then
+        // stays unresolved rather than parsed from a guess.
+        crate::analysis::value_resolution::offset_integer_value(declared, constant.offset)?
     };
     Some(ExactOperand {
         provenance: format!("constant {operand} = {value} (same-file const)"),
@@ -3618,25 +3662,20 @@ assert_eq!(input.amount, 100);"#
         let test = test_with_call("score_uses_other_value", "score(9);");
         let probe = probe(ProbeFamily::Predicate, "threshold > limit");
 
-        let activation = activation_evidence(
-            &probe,
-            Some(&owner),
-            &[&test],
-            &[],
-            None,
-            &crate::analysis::rust_index::RustIndex::default(),
-            false,
-        );
+        let gathered = boundary_input(&owner, &probe, &[&test]);
 
-        assert_eq!(activation.missing_discriminators.len(), 1);
-        assert_eq!(
-            activation.missing_discriminators[0].value,
-            "threshold == limit"
-        );
+        // Neither operand maps to an input row, so no row says which side
+        // of the boundary the test reaches: unresolved, not a missing
+        // `threshold == limit` input (CodeRabbit review on #6796).
         assert!(
-            activation.missing_discriminators[0]
-                .reason
-                .contains("observed threshold values: unknown")
+            gathered.activation.missing_discriminators.is_empty(),
+            "{:?}",
+            gathered.activation.missing_discriminators
+        );
+        let reason = gathered.unresolved_boundary.unwrap_or_default();
+        assert!(
+            reason.contains("boundary operands `threshold` and `limit`"),
+            "got {reason:?}"
         );
     }
 
@@ -3975,6 +4014,148 @@ assert_eq!(input.amount, 100);"#
             reason.contains("computed argument for `amount`"),
             "got {reason:?}"
         );
+    }
+
+    #[test]
+    fn given_computed_helper_hop_argument_then_boundary_is_unresolved_not_missing() {
+        // CodeRabbit review on #6796: the test calls `entry(9)` with a
+        // literal, `entry` forwards to `inner(x)`, and `inner` calls the
+        // owner as `score(y + 1)`. Row transfer stops at `y + 1`, so the
+        // compared parameter is unreadable, not missing.
+        let owner = function("pub fn score(amount: u32) -> bool {\n    10 <= amount\n}");
+        let mut inner = function("pub fn inner(y: u32) -> bool {\n    score(y + 1)\n}");
+        inner.name = "inner".to_string();
+        let mut entry = function("pub fn entry(x: u32) -> bool {\n    inner(x)\n}");
+        entry.name = "entry".to_string();
+        let chain_with = |owner_argument: &str| super::super::helper_transfer::HelperChain {
+            hops: vec![
+                super::super::helper_transfer::HelperHop {
+                    caller: inner.clone(),
+                    call_text: format!("score({owner_argument})"),
+                    arguments: vec![owner_argument.to_string()],
+                },
+                super::super::helper_transfer::HelperHop {
+                    caller: entry.clone(),
+                    call_text: "inner(x)".to_string(),
+                    arguments: vec!["x".to_string()],
+                },
+            ],
+            stop_above: None,
+        };
+        let mut test = test_with_call("entry_boundary", "assert!(entry(9));");
+        test.calls[0].name = "entry".to_string();
+        let run = |chain: &super::super::helper_transfer::HelperChain, test: &TestSummary| {
+            activation_and_boundary_input(
+                &probe(ProbeFamily::Predicate, "10 <= amount"),
+                Some(&owner),
+                &[test],
+                &[],
+                Some(chain),
+                &crate::analysis::rust_index::RustIndex::default(),
+                false,
+                None,
+            )
+        };
+
+        let computed = run(&chain_with("y + 1"), &test);
+        assert!(computed.activation.missing_discriminators.is_empty());
+        let reason = computed.unresolved_boundary.unwrap_or_default();
+        assert!(
+            reason.contains("computed argument for `amount`"),
+            "got {reason:?}"
+        );
+
+        // Negative control: a straight pass-through binds the literal row,
+        // so the off-boundary input keeps the actionable missing input.
+        let straight = run(&chain_with("y"), &test);
+        assert_eq!(straight.unresolved_boundary, None);
+        assert_eq!(straight.activation.missing_discriminators.len(), 1);
+
+        // A chain no related test enters says nothing about computed
+        // arguments: the computed hop is out of scope.
+        let mut unrelated = test.clone();
+        unrelated.calls[0].name = "other".to_string();
+        let unentered = run(&chain_with("y + 1"), &unrelated);
+        assert_eq!(unentered.unresolved_boundary, None);
+    }
+
+    #[test]
+    fn given_both_boundary_operands_unreadable_then_boundary_is_unresolved_not_missing() {
+        // CodeRabbit review on #6796: exact rows exist, but neither
+        // `out.count_ones()` nor `data.count_ones() / 2` folds from them,
+        // so no row says which side of the boundary a test reaches.
+        let owner = function(
+            "pub fn score(out: u32, data: u32) -> bool {\n    out.count_ones() != data.count_ones() / 2\n}",
+        );
+        let test = test_with_call("score_boundary", "assert!(score(4, 8));");
+        let gathered = boundary_input(
+            &owner,
+            &probe(
+                ProbeFamily::Predicate,
+                "out.count_ones() != data.count_ones() / 2",
+            ),
+            &[&test],
+        );
+
+        assert!(
+            gathered.activation.missing_discriminators.is_empty(),
+            "{:?}",
+            gathered.activation.missing_discriminators
+        );
+        let reason = gathered.unresolved_boundary.unwrap_or_default();
+        assert!(
+            reason.contains("boundary operands `out.count_ones()` and `data.count_ones() / 2`"),
+            "got {reason:?}"
+        );
+    }
+
+    #[test]
+    fn given_offset_of_opaque_constant_then_boundary_is_unresolved_not_missing() {
+        // #6671 with gemini's review on #6796: `LIMIT - 2` over a
+        // suffixed or hex `LIMIT` has no visible value. It is neither
+        // read as 2 nor parsed from a guess, and since naming `LIMIT` is
+        // not the offset boundary by identity, no missing input is named.
+        for declaration in ["const LIMIT: i32 = 10i32;", "const LIMIT: i32 = 0x10;"] {
+            let owner = function("pub fn score(amount: i32) -> bool {\n    amount > LIMIT - 2\n}");
+            let mut index = crate::analysis::rust_index::RustIndex::default();
+            index.insert_file_only(
+                PathBuf::from("src/lib.rs"),
+                crate::analysis::facts::FileFacts {
+                    path: PathBuf::from("src/lib.rs"),
+                    source: format!("{declaration}\n{}", owner.body),
+                    ..Default::default()
+                },
+            );
+            let tests = [
+                test_with_call("score_boundary", "score(2);"),
+                test_with_call("score_boundary", "score(LIMIT);"),
+            ];
+            let related = tests.iter().collect::<Vec<_>>();
+            let gathered = activation_and_boundary_input(
+                &probe(ProbeFamily::Predicate, "amount > LIMIT - 2"),
+                Some(&owner),
+                &related,
+                &[],
+                None,
+                &index,
+                false,
+                None,
+            );
+            assert!(
+                !has_observed_boundary_equality(&gathered.activation),
+                "{declaration}"
+            );
+            assert!(
+                gathered.activation.missing_discriminators.is_empty(),
+                "{declaration}: {:?}",
+                gathered.activation.missing_discriminators
+            );
+            let reason = gathered.unresolved_boundary.unwrap_or_default();
+            assert!(
+                reason.contains("offsets constant `LIMIT`"),
+                "{declaration}: got {reason:?}"
+            );
+        }
     }
 
     #[test]

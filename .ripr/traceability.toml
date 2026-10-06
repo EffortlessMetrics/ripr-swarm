@@ -98,7 +98,11 @@ tests = [
   "crates/ripr/src/analysis/classify/infection.rs::tests::unresolved_boundary_input_is_unknown_not_weak",
   "crates/ripr/src/analysis/classify/infection.rs::tests::computed_comparison_operand_is_not_its_contained_literal",
   "crates/ripr/src/analysis/classify/activation.rs::tests::given_constant_minus_offset_boundary_then_boundary_is_the_offset_value_not_the_offset",
-  "crates/ripr/src/analysis/value_resolution/tests.rs::constant_offset_operands_name_the_constant_and_signed_offset"
+  "crates/ripr/src/analysis/value_resolution/tests.rs::constant_offset_operands_name_the_constant_and_signed_offset",
+  "crates/ripr/src/analysis/value_resolution/tests.rs::offset_integer_values_add_only_to_plain_decimal_constants",
+  "crates/ripr/src/analysis/classify/activation.rs::tests::given_computed_helper_hop_argument_then_boundary_is_unresolved_not_missing",
+  "crates/ripr/src/analysis/classify/activation.rs::tests::given_both_boundary_operands_unreadable_then_boundary_is_unresolved_not_missing",
+  "crates/ripr/src/analysis/classify/activation.rs::tests::given_offset_of_opaque_constant_then_boundary_is_unresolved_not_missing"
 ]
 fixtures = [
   "fixtures/benches_harness_evidence",

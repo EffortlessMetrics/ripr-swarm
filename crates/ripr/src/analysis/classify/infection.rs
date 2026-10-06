@@ -161,25 +161,99 @@ pub(in crate::analysis) fn infection_evidence_with_boundary_input(
 /// does not compare against the literal it contains, so its literals are
 /// not the boundary: `CURRENT - 2 > version` never compares against `2`
 /// (#6671). Such an operand contributes nothing and the boundary stays
-/// unknown unless another operand spells it. A predicate that is not one
-/// comparison keeps every literal it contains.
+/// unknown unless another operand spells it. A compound predicate
+/// (`&&`/`||`) is cut into its top-level conditions and each comparison
+/// is read the same way; a condition that is not a comparison keeps its
+/// literals. A predicate with no computed comparison operand anywhere
+/// keeps every literal it contains.
 fn boundary_literals(expression: &str) -> Vec<String> {
-    let Some((left, right)) = comparison_operands(expression)
-        .filter(|_| !expression.contains("&&") && !expression.contains("||"))
-    else {
-        return extract_literals(expression);
-    };
-    if !is_computed_value_expression(&left) && !is_computed_value_expression(&right) {
+    let mut any_computed = false;
+    let mut literals = Vec::new();
+    for condition in boolean_conditions(expression) {
+        // A condition that is not a comparison (`flag`, a `let` binding,
+        // a closure call) keeps its literals, as before #6671.
+        let Some((left, right)) = comparison_operands(condition) else {
+            literals.extend(extract_literals(condition));
+            continue;
+        };
+        for operand in [left, right] {
+            if is_computed_value_expression(&operand) {
+                any_computed = true;
+            } else {
+                literals.extend(extract_literals(&operand));
+            }
+        }
+    }
+    if !any_computed {
         return extract_literals(expression);
     }
-    let mut literals = [left, right]
-        .iter()
-        .filter(|operand| !is_computed_value_expression(operand))
-        .flat_map(|operand| extract_literals(operand))
-        .collect::<Vec<_>>();
     literals.sort();
     literals.dedup();
     literals
+}
+
+/// The top-level conditions of a boolean predicate: `a > 1 && (b < 2 ||
+/// c)` -> `a > 1`, `b < 2`, `c`. Enclosing parentheses and a leading `!`
+/// are peeled before cutting; `&&`/`||` inside strings, comments, nested
+/// parentheses, brackets, or braces are not cuts.
+fn boolean_conditions(expression: &str) -> Vec<&str> {
+    let mut condition = expression.trim();
+    loop {
+        let unwrapped = condition.trim_start_matches('!').trim();
+        match unwrapped
+            .strip_prefix('(')
+            .and_then(|inner| inner.strip_suffix(')'))
+            .filter(|inner| balanced(inner))
+        {
+            Some(inner) => condition = inner.trim(),
+            None => break,
+        }
+    }
+    let masked = crate::analysis::language::mask_rust_comments_and_strings(condition);
+    let bytes = masked.as_bytes();
+    let mut depth = 0usize;
+    let mut start = 0usize;
+    let mut cuts = Vec::new();
+    let mut idx = 0usize;
+    while idx < bytes.len() {
+        match bytes[idx] {
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' => depth = depth.saturating_sub(1),
+            b'&' | b'|' if depth == 0 && bytes.get(idx + 1) == Some(&bytes[idx]) => {
+                cuts.push(&condition[start..idx]);
+                idx += 2;
+                start = idx;
+                continue;
+            }
+            _ => {}
+        }
+        idx += 1;
+    }
+    if cuts.is_empty() {
+        return vec![condition];
+    }
+    cuts.push(&condition[start..]);
+    cuts.into_iter().flat_map(boolean_conditions).collect()
+}
+
+/// Whether every parenthesis in `text` closes inside it, so `(a) && (b)`
+/// is not mistaken for one parenthesized condition.
+fn balanced(text: &str) -> bool {
+    let masked = crate::analysis::language::mask_rust_comments_and_strings(text);
+    let mut depth = 0i32;
+    for ch in masked.chars() {
+        match ch {
+            '(' => depth += 1,
+            ')' => {
+                depth -= 1;
+                if depth < 0 {
+                    return false;
+                }
+            }
+            _ => {}
+        }
+    }
+    depth == 0
 }
 
 fn unresolved_boundary_summary(reason: &str) -> String {
@@ -496,6 +570,32 @@ mod tests {
         assert!(boundary_literals("s.len() < 2 + 2").is_empty());
         assert_eq!(boundary_literals("amount * 2 > 100"), vec!["100"]);
         assert_eq!(boundary_literals("amount > 10"), vec!["10"]);
+        // Compound predicates (CodeRabbit review on #6796): each
+        // comparison is read alone, so a literal inside a computed
+        // operand is never the boundary of the whole condition.
+        assert_eq!(
+            boundary_literals("amount > 10 && total < base * 3"),
+            vec!["10"]
+        );
+        assert!(boundary_literals("(count < 2 + 2) || flag").is_empty());
+        // A closure default is not a comparison operand: unchanged.
+        assert_eq!(
+            boundary_literals("let end = input.rfind(delim).map_or_else(|| 1, |idx| idx);"),
+            vec!["1"]
+        );
+        assert_eq!(
+            boundary_literals("!(limit - 1 >= used) && used != 0"),
+            vec!["0"]
+        );
+        // No computed operand anywhere keeps every literal, as before.
+        assert_eq!(
+            boundary_literals("amount > 10 && total < 20"),
+            vec!["10", "20"]
+        );
+        let compound = probe(ProbeFamily::Predicate, "ready && total < base * 3");
+        let test = test_with_literals(&["3"]);
+        let evidence = infection_evidence(&compound, &[&test], &ActivationEvidence::default());
+        assert_eq!(evidence.state, StageState::Unknown);
         let probe = probe(ProbeFamily::Predicate, "CURRENT - 2 > manifest.version");
         let test = test_with_literals(&["2", "4", "5"]);
         let evidence = infection_evidence(&probe, &[&test], &ActivationEvidence::default());

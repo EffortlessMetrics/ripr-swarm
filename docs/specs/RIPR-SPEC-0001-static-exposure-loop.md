@@ -209,7 +209,9 @@ argument that applies a binary arithmetic or bitwise operator
 (`order_discount(base + 1)`) or repeats an array element (`&[b'f'; 16]`, whose
 `16` is a length) yields no input value, and a comparison operand that does so
 (`CURRENT - 2 > version`, `s.len() < 2 + 2`) contributes no boundary literal,
-so `CURRENT - 2` is never read as the boundary `2`.
+so `CURRENT - 2` is never read as the boundary `2`. A compound condition
+(`&&`, `||`) is read one top-level comparison at a time, so a literal inside a
+computed operand of one comparison is not the boundary of the whole condition.
 
 Unresolved boundary input example:
 
@@ -224,9 +226,11 @@ for _ in hex {
 An input RIPR cannot read is not a missing input. When a changed comparison's
 operand is neither a parameter, a value the bounded evaluator folds from a
 related test's exact inputs, a literal, nor a named constant (a local
-accumulator such as `count`, `s.len()`, `name.split_whitespace().count()`), or
-when a related test feeds the compared parameter a computed argument, no input
-row says which side of the boundary a test reaches. RIPR does not name a
+accumulator such as `count`, `s.len()`, `name.split_whitespace().count()`),
+including when neither operand is readable (`out.len() != data.len() / 2`), or
+when a related test feeds the compared parameter a computed argument, directly
+or through a resolved helper hop whose call-site argument is computed
+(`score(y + 1)`), no input row says which side of the boundary a test reaches. RIPR does not name a
 missing equality discriminator for it; `ripr check` reports `infection
 unknown` with `Changed boundary input is unresolved` and the operand or
 parameter it could not read. Exact inputs that all sit off the boundary keep
@@ -262,7 +266,10 @@ owner's own source file through the shared named-constant lookup in
   resolves to the constant's value plus the offset when the constant itself
   resolves (`const CURRENT: u32 = 7;` makes `CURRENT - 2` the boundary `5`);
   the offset literal alone is never the boundary, and a test argument naming
-  the constant is not the offset boundary by identity;
+  the constant is not the offset boundary by identity; when the constant's
+  value is not a plain decimal literal (`10u32`, `0x10`, a computed
+  initializer), the offset boundary is unresolved (`infection unknown`), not a
+  missing input;
 - a constant declared once with a computed or suffixed initializer keeps the
   missing equality-boundary discriminator, and its reason says RIPR cannot see
   the constant's value and that passing the constant itself is recognized;
@@ -297,6 +304,10 @@ Fixture coverage:
 - `computed_comparison_operand_is_not_its_contained_literal`
 - `given_constant_minus_offset_boundary_then_boundary_is_the_offset_value_not_the_offset`
 - `constant_offset_operands_name_the_constant_and_signed_offset`
+- `offset_integer_values_add_only_to_plain_decimal_constants`
+- `given_computed_helper_hop_argument_then_boundary_is_unresolved_not_missing`
+- `given_both_boundary_operands_unreadable_then_boundary_is_unresolved_not_missing`
+- `given_offset_of_opaque_constant_then_boundary_is_unresolved_not_missing`
 - `fixtures/boundary_named_constant`
 - `same_file_constant_boundary_is_observed_at_its_literal_value`
 - `argument_naming_the_constant_is_the_boundary_by_identity`
