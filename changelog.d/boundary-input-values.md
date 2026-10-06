@@ -3,12 +3,15 @@
   counter such as `count`, `s.len()`, a counted local, or both sides of
   `out.len() != data.len() / 2`) now reads `infection_unknown` with "Changed
   boundary input is unresolved" instead of a missing equality discriminator
-  with "observed values: unknown"
+  with "observed values: unknown". A finding that read
+  `propagation_unknown` (severity `note`) and now reads `infection_unknown`
+  rises to severity `warning` in SARIF and GitHub annotations; one that read
+  `weakly_exposed` stays `warning`
   ([#6674](https://github.com/EffortlessMetrics/ripr-swarm/issues/6674),
   [#6693](https://github.com/EffortlessMetrics/ripr-swarm/issues/6693)).
-- A computed test argument such as `order_discount(base + 1)` or
-  `&[b'f'; 16]` is no longer read as one of its literals; a boundary whose
-  compared parameter receives one with a definite value (its variables bound
+- A computed test argument such as `order_discount(base + 1)`,
+  `.amount(base + 10)`, `16usize - 1`, `1 << 4` or `&[b'f'; 16]` is no
+  longer read as one of its literals; a boundary whose compared parameter receives one with a definite value (its variables bound
   to exact test values or constants), directly or through a helper hop such
   as `score(y + 1)`, stays unresolved instead of a missing input
   ([#6672](https://github.com/EffortlessMetrics/ripr-swarm/issues/6672)).

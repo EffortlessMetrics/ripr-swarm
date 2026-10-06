@@ -384,3 +384,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — typescript_limitation_custom_matcher (13)
+
+Reason:
+RIPR-SPEC-0224: record test_assertion_admission evidence for TypeScript related tests without a recognized assertion (#5524)
+
+Command:
+`cargo xtask goldens bless typescript_limitation_custom_matcher --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

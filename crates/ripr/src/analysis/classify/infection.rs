@@ -30,6 +30,14 @@ pub(in crate::analysis) fn infection_evidence_with_boundary_input(
             let test_literals = related_tests
                 .iter()
                 .flat_map(|test| test.literals.iter().map(|literal| literal.value.clone()))
+                // A number, a char (`'x'`) and a byte (`b'x'`) share no
+                // comparable boundary in this report, so only literals of a
+                // kind the changed boundary uses count.
+                .filter(|literal| {
+                    probe_literals
+                        .iter()
+                        .any(|boundary| literal_kind(boundary) == literal_kind(literal))
+                })
                 .collect::<Vec<_>>();
             // Only a literal that flows into the changed owner's inputs can
             // activate the boundary. The activation authority separates
@@ -127,7 +135,10 @@ pub(in crate::analysis) fn infection_evidence_with_boundary_input(
                 StageEvidence::new(
                     StageState::Unknown,
                     Confidence::Low,
-                    "Related tests use opaque fixtures; activation/infection is unknown",
+                    format!(
+                        "Related tests pass no literal ripr can compare with the changed boundary [{}] (inputs are strings, computed values or fixtures); activation/infection is unknown",
+                        probe_literals.join(", ")
+                    ),
                 )
             }
         }
@@ -276,6 +287,12 @@ fn unresolved_boundary_summary(reason: &str) -> String {
     format!("Changed boundary input is unresolved: {reason}; activation/infection is unknown")
 }
 
+/// Numeric, char or byte: (quoted, byte-prefixed).
+fn literal_kind(literal: &str) -> (bool, bool) {
+    let quoted = literal.ends_with('\'');
+    (quoted, quoted && literal.starts_with("b'"))
+}
+
 /// Why a changed predicate with no literal boundary stays unknown. A
 /// boundary that names a constant says so: ripr could not see that
 /// constant's value in the owner's file (or it is declared more than once),
@@ -413,7 +430,7 @@ mod tests {
     }
 
     #[test]
-    fn predicate_infection_reports_opaque_fixture_when_literals_are_missing() {
+    fn predicate_infection_names_the_boundary_when_tests_pass_no_literals() {
         let probe = probe(ProbeFamily::Predicate, "value > 10");
         let test = test_with_literals(&[]);
         let evidence = infection_evidence(&probe, &[&test], &ActivationEvidence::default());
@@ -421,8 +438,27 @@ mod tests {
         assert_eq!(evidence.state, StageState::Unknown);
         assert_eq!(
             evidence.summary,
-            "Related tests use opaque fixtures; activation/infection is unknown"
+            "Related tests pass no literal ripr can compare with the changed boundary [10] (inputs are strings, computed values or fixtures); activation/infection is unknown"
         );
+    }
+
+    #[test]
+    fn predicate_infection_does_not_compare_char_literals_with_numeric_boundaries() {
+        let numeric = probe(ProbeFamily::Predicate, "value > 1");
+        let chars = test_with_literals(&["'x'", "b','"]);
+        let evidence = infection_evidence(&numeric, &[&chars], &ActivationEvidence::default());
+        assert_eq!(evidence.state, StageState::Unknown);
+        assert!(
+            evidence
+                .summary
+                .starts_with("Related tests pass no literal")
+        );
+
+        // A byte boundary counts byte literals only, not the char `'x'`.
+        let byte = probe(ProbeFamily::Predicate, "digit > b'9'");
+        let evidence = infection_evidence(&byte, &[&chars], &ActivationEvidence::default());
+        assert_eq!(evidence.state, StageState::Weak);
+        assert!(evidence.summary.contains("[b',']"), "{}", evidence.summary);
     }
 
     #[test]
@@ -608,6 +644,46 @@ mod tests {
             Some("boundary operand `name.len()` is a local or computed value"),
         );
         assert_eq!(exact.state, StageState::Yes);
+    }
+
+    #[test]
+    fn literal_kind_filter_reads_only_the_spelled_boundary_literals() {
+        // Merge of #6796 with the literal-kind filter: test literals are
+        // kept by the kind of the boundary literals left after computed
+        // operands are dropped. With no boundary literal left the stage is
+        // unknown before any test literal is consulted, so dropping every
+        // test literal never turns into a weak "no match" claim.
+        let computed = probe(ProbeFamily::Predicate, "ready && total < base * 3");
+        let numeric = test_with_literals(&["3", "4"]);
+        let evidence = infection_evidence(&computed, &[&numeric], &ActivationEvidence::default());
+        assert_eq!(evidence.state, StageState::Unknown);
+        assert!(
+            evidence.summary.contains("no literal boundary"),
+            "{}",
+            evidence.summary
+        );
+
+        // A spelled boundary beside a computed one compares only literals
+        // of its own kind: a char literal is not a numeric input.
+        let mixed = probe(ProbeFamily::Predicate, "amount > 10 && total < base * 3");
+        let chars = test_with_literals(&["'x'", "3"]);
+        let evidence = infection_evidence(&mixed, &[&chars], &ActivationEvidence::default());
+        assert_eq!(evidence.state, StageState::Weak);
+        assert!(
+            evidence.summary.contains("Tests have literals [3]"),
+            "{}",
+            evidence.summary
+        );
+        let only_chars = test_with_literals(&["'x'"]);
+        let evidence = infection_evidence(&mixed, &[&only_chars], &ActivationEvidence::default());
+        assert_eq!(evidence.state, StageState::Unknown);
+        assert!(
+            evidence.summary.starts_with(
+                "Related tests pass no literal ripr can compare with the changed boundary [10]"
+            ),
+            "{}",
+            evidence.summary
+        );
     }
 
     #[test]

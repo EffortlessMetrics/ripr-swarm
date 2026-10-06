@@ -4,11 +4,11 @@ Spec: RIPR-SPEC-0219. Corpus version: 2026-10-04.8. Cases: 203.
 
 | Rate | Count | Rate |
 | --- | --- | --- |
-| False verdicts (all cases) | 62/203 | 0.3054 |
-| False actionable (of discriminated) | 56/106 | 0.5283 |
+| False verdicts (all cases) | 61/203 | 0.3005 |
+| False actionable (of discriminated) | 55/106 | 0.5189 |
 | False exposed (of not fully discriminated) | 6/97 | 0.0619 |
 | False silent (of not fully discriminated) | 0/97 | 0.0000 |
-| Ideal verdict | 79/203 | 0.3892 |
+| Ideal verdict | 80/203 | 0.3941 |
 | Abstained (limited or silent where acceptable) | 62/203 | 0.3054 |
 | Findings with a contradiction | 2/278 | 0.0072 |
 
@@ -17,7 +17,7 @@ By subject origin. Authored cases are written to fill cells the upstream cases l
 | Origin | Cases | False verdicts | False actionable | False exposed | False silent | Ideal | Abstained |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | authored | 169 | 55/169 | 49/86 | 6/83 | 0/83 | 74/169 | 40/169 |
-| upstream | 34 | 7/34 | 7/20 | 0/14 | 0/14 | 5/34 | 22/34 |
+| upstream | 34 | 6/34 | 6/20 | 0/14 | 0/14 | 6/34 | 22/34 |
 
 | Case | Origin | Truth | Ideal | Observed | Classes | Outcome | Changed since labeling | Contradictions |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -30,7 +30,7 @@ By subject origin. Authored cases are written to fill cells the upstream cases l
 | `semver-digit-upper` | upstream | partially_discriminated | gap | limited | infection_unknown | abstained | no | none |
 | `semver-max-comparators` | upstream | partially_discriminated | gap | limited | no_static_path | abstained | no | none |
 | `semver-caret-zero-minor` | upstream | partially_discriminated | gap | limited | no_static_path | abstained | no | none |
-| `hex-from-hex-odd-variant` | upstream | discriminated | credited | gap | reachable_unrevealed, weakly_exposed | false_actionable | no | none |
+| `hex-from-hex-odd-variant` | upstream | discriminated | credited | credited | exposed | ideal | yes | none |
 | `hex-decode-slice-odd` | upstream | discriminated | credited | limited | infection_unknown | abstained | yes | none |
 | `hex-decode-slice-length` | upstream | partially_discriminated | gap | limited | infection_unknown | abstained | yes | none |
 | `hex-encode-slice-length` | upstream | partially_discriminated | gap | limited | infection_unknown | abstained | yes | none |

@@ -47,7 +47,7 @@ map is:
 | `ripr gate evaluate` | `schema_version` | `0.1` |
 | `ripr doctor --json` | `schema_version` | `0.3` |
 | `ripr diff --json` (`kind: "ripr_diff"`) | `schema_version` | `0.1` |
-| `ripr check --format repo-exposure-json` | `schema_version` | `0.3` |
+| `ripr check --format repo-exposure-json` | `schema_version` | `0.4` |
 | `ripr rerun --json` | `schema_version` | `ripr-targeted-rerun-v1` |
 | `ripr agent packet` and `ripr check --format agent-seam-packets-json` | `schema_version` | `0.5` |
 | `ripr agent brief` | `schema_version` | `0.1` |
@@ -2855,7 +2855,7 @@ introduced by RIPR-SPEC-0005. The artifact lands at
 
 ```json
 {
-  "schema_version": "0.1",
+  "schema_version": "0.2",
   "artifact": { "...": "see Repo Exposure Report — producer identity envelope" },
   "scope": "repo",
   "seams": [
@@ -2864,6 +2864,9 @@ introduced by RIPR-SPEC-0005. The artifact lands at
       "kind": "predicate_boundary",
       "file": "src/pricing.rs",
       "line": 88,
+      "column": 12,
+      "end_line": 88,
+      "end_column": 41,
       "owner": "src/pricing.rs::discounted_total",
       "expression": "amount >= discount_threshold",
       "required_discriminator": {
@@ -2880,7 +2883,7 @@ introduced by RIPR-SPEC-0005. The artifact lands at
 
 Field contract:
 
-- `schema_version` — currently `"0.1"`. Bumping requires updating this section,
+- `schema_version` — currently `"0.2"`. Bumping requires updating this section,
   the renderer (`crates/ripr/src/output/repo_seams.rs`), and any downstream
   consumers in lockstep. The top-level `artifact` envelope below is additive
   and keeps this version, per the repo-exposure envelope (#2203) and
@@ -2909,6 +2912,15 @@ Field contract:
 - `file` — repo-root-relative Unix-separator path (no leading `./`).
 - `line` — 1-based start line for human display only. Not part of the seam ID
   hash; `byte_offset` is the canonical position field internally.
+- `column`, `end_line`, `end_column` — 1-based parser-owned span geometry
+  (columns count Unicode scalar values from the line start plus one; the
+  end is exclusive),
+  matching cargo-mutants span columns for calibration joins. Present only when
+  span geometry was available; absent on legacy or span-less entries, which
+  consumers must treat as line-only. Match-arm seams are span-less by policy:
+  the parser records the `match`/`=>` token range while the seam describes a
+  wider construct, so no span is emitted rather than a misleading one. Not
+  part of the seam ID hash.
 - `owner` — fully-qualified module/symbol path of the enclosing function.
   Backslashes from native paths are normalized to forward slashes before
   hashing. Test functions (e.g., `#[test] fn` inside `#[cfg(test)] mod tests`)
@@ -3185,7 +3197,7 @@ Consumers must not treat limited artifacts as canonical actionable counts.
 
 ```json
 {
-  "schema_version": "0.3",
+  "schema_version": "0.4",
   "scope": "repo",
   "metrics": {
     "seams_total": 9355,
@@ -3208,6 +3220,9 @@ Consumers must not treat limited artifacts as canonical actionable counts.
       "kind": "predicate_boundary",
       "file": "src/pricing.rs",
       "line": 88,
+      "column": 12,
+      "end_line": 88,
+      "end_column": 41,
       "owner": "src/pricing.rs::discounted_total",
       "expression": "amount >= discount_threshold",
       "grip_class": "weakly_gripped",
@@ -3436,15 +3451,17 @@ Consumers must not treat limited artifacts as canonical actionable counts.
 
 Field contract:
 
-- `schema_version` — currently `"0.3"`. Bumping requires updating this
+- `schema_version` — currently `"0.4"`. Bumping requires updating this
   section, the renderer (`crates/ripr/src/output/repo_exposure.rs`), and
   any downstream consumers in lockstep. `0.1` → `0.2`: per-related-test
   entries gained `relation_reason` and `relation_confidence` fields
   (`analysis/related-test-precision-v1`). `0.2` -> `0.3`: seams gained
   the additive `evidence_record` projection (`RIPR-SPEC-0021`) while
-  preserving existing top-level seam fields. `relation_reason` is an
-  additive string enum within `0.3`; `helper_owner_call` extends the
-  existing relation taxonomy without changing the field shape.
+  preserving existing top-level seam fields. `0.3` → `0.4`: seams gained
+  the additive `column` / `end_line` / `end_column` span coordinates
+  (#5336). `relation_reason` is an additive string enum within `0.3`;
+  `helper_owner_call` extends the existing relation taxonomy without
+  changing the field shape.
 - `scope` — always `"repo"`.
 - `run_status` — always present; one of `"complete"` or
   `"seam_limit_applied"`. `"complete"` means the run analyzed all
@@ -3515,6 +3532,9 @@ Field contract:
   `strongly_gripped`, `weakly_gripped`, `ungripped`, `reachable_unrevealed`,
   `activation_unknown`, `propagation_unknown`, `observation_unknown`,
   `discrimination_unknown`, `opaque`, `intentional`, `suppressed`.
+- `seams[].column`, `seams[].end_line`, `seams[].end_column` — same span
+  contract as `repo-seams.json` (1-based, character columns, end-exclusive,
+  present only when geometry was available). Added in `0.4` (#5336).
 - `seams[].evidence` — per-stage `StageState` strings: `yes`, `weak`,
   `no`, `unknown`, `opaque`, `not_applicable`.
 - `seams[].related_tests_total` — number of related tests the analyzer
@@ -4099,7 +4119,7 @@ runtime execution.
     "root": ".",
     "source": "repo-exposure-json",
     "repo_exposure_mode": "instant",
-    "repo_exposure_schema_version": "0.3",
+    "repo_exposure_schema_version": "0.4",
     "repo_exposure_generation": {
       "command": "target/debug/ripr check --root . --mode instant --format repo-exposure-json",
       "timeout_ms": 120000,
@@ -17249,7 +17269,7 @@ JSON shape:
 
 ```jsonc
 {
-  "schema_version": "0.1",
+  "schema_version": "0.2",
   "scope": "repo",
   "status": "advisory",
   "metrics": {
@@ -17257,7 +17277,11 @@ JSON shape:
     "mutants_total": 8,
     "matched_total": 6,
     "ambiguous_file_line_total": 1,
+    "ambiguous_span_overlap_total": 0,
     "unmatched_mutants_total": 1,
+    "unmatched_reason_counts": {
+      "no_containing_seam": 1
+    },
     "static_without_runtime_total": 113,
     "runtime_outcome_counts": {
       "caught": 5,
@@ -17390,30 +17414,70 @@ JSON shape:
       ]
     }
   ],
-  "unmatched_mutants": [],
+  "ambiguous_span_overlap_matches": [],
+  "unmatched_mutants": [
+    {
+      "mutant_id": "src/display.rs:20:17: replace + with - in fmt",
+      "seam_id": null,
+      "file": "src/display.rs",
+      "line": 20,
+      "column": 17,
+      "end_line": 20,
+      "end_column": 18,
+      "mutation_operator": "-",
+      "runtime_outcome": "caught",
+      "duration": null,
+      "test_command": null,
+      "unmatched_reason": "no_containing_seam",
+      "line_seams": [
+        {
+          "seam_id": "8828427428828b64",
+          "seam_kind": "call_presence",
+          "file": "src/display.rs",
+          "line": 20,
+          "column": 19,
+          "end_line": 20,
+          "end_column": 37,
+          "seam_grip_class": "ungripped",
+          "oracle_kind": "unknown",
+          "oracle_strength": "unknown",
+          "observed_values": [],
+          "missing_discriminators": []
+        }
+      ]
+    }
+  ],
   "static_without_runtime_sample": []
 }
 ```
 
 Field contract:
 
-- `schema_version` — currently `"0.1"`.
+- `schema_version` — currently `"0.2"`. 0.2 added `span_containment`,
+  `ambiguous_span_overlap_*`, `unmatched_reason` and runtime span fields.
 - `status` — always `"advisory"`; this report does not block CI by default.
 - `metrics.static_seams_total` — count of seams imported from
   `repo-exposure.json`.
 - `metrics.mutants_total` — count of runtime mutation records imported from the
   supplied JSON.
 - `metrics.matched_total` — runtime records joined to a static seam.
-- `metrics.ambiguous_file_line_total` — runtime records whose normalized
-  file/line matched multiple static seams and were therefore not assigned to a
-  single seam.
+- `metrics.ambiguous_file_line_total` — runtime records the file/line
+  fallback could not assign: several candidates on the record's line (seams
+  without a span when the record has a span that no seam contains; every seam
+  on the line when the record has no complete span).
+- `metrics.ambiguous_span_overlap_total` — runtime records contained by two or
+  more innermost seam spans that are equal or cross, so no unique seam holds
+  the mutated range.
 - `metrics.unmatched_mutants_total` — runtime records that could not be joined
-  by `seam_id` or file/line.
+  by `seam_id`, span containment, or file/line.
+- `metrics.unmatched_reason_counts` — unmatched records keyed by
+  `unmatched_reason`.
 - `metrics.static_without_runtime_total` — static seams with no definitive or
   ambiguous runtime record in this import.
 - `metrics.runtime_outcome_counts` — counts keyed by normalized runtime outcome
   label from the imported data.
-- `metrics.join_method_counts` — counts for `seam_id` and `file_line` joins.
+- `metrics.join_method_counts` — counts for `seam_id`, `span_containment`,
+  and `file_line` joins.
 - `agreement.static_gap_and_runtime_signal` — static gap seams that also have at
   least one matched runtime gap signal in this import.
 - `agreement.static_gap_without_runtime_signal` — static gap seams with no
@@ -17443,7 +17507,21 @@ Field contract:
   static gap joined only to runtime-clean labels, or `no_runtime_data` when no
   usable runtime signal was available for the static gap in this import.
 - `matches[].join_method` — `seam_id` when the runtime record carries a matching
-  seam/probe ID; otherwise `file_line` when normalized path and line match.
+  seam/probe ID; otherwise `span_containment` when the runtime record carries a
+  complete cargo-mutants span and exactly one innermost seam span in the same
+  file contains it (half-open, compared as `(line, column)`, on any line of a
+  multi-line seam); otherwise `file_line` when no seam span contains the
+  record and normalized path and line match exactly one seam without a span.
+  Span-less seams never displace a containment match, and a seam span that
+  does not contain the record is never joined to it by sharing its line.
+  Runtime records without a complete span join by file and line over every
+  seam on the line. See RIPR-SPEC-0006 for the precedence.
+- `matches[].static.column`, `end_line`, `end_column` and the same fields on
+  runtime rows — 1-based character columns with an exclusive end, present
+  only when that side carries a complete span.
+- runtime rows' `span_status` — `"conflicting_runtime_location"` when merged
+  records for one mutant carried different complete spans, files or lines; the span
+  is dropped and the record is unmatched unless its `seam_id` joins it.
 - `matches[].static` — static seam evidence copied from `repo-exposure.json`:
   seam identity, class, strongest visible oracle kind/strength, observed values,
   and missing discriminators.
@@ -17455,13 +17533,25 @@ Field contract:
   `contradicts_static_clean`, or `no_runtime_data`. Runtime-inconclusive labels
   map to `no_runtime_data` because they provide no usable support or
   contradiction for the static claim.
-- `ambiguous_file_line_matches[]` — runtime records that matched multiple
-  static seams by normalized file/line. These records are intentionally not
-  assigned to `matches[]` without a stronger seam/probe ID.
-- `ambiguous_file_line_matches[].confidence_label` — always
+- `ambiguous_file_line_matches[]` — runtime records the file/line fallback
+  matched to several seams on their line. These records are intentionally not
+  assigned to `matches[]` without a stronger seam/probe ID or span.
+- `ambiguous_span_overlap_matches[]` — runtime records contained by equal or
+  crossing innermost seam spans, with the runtime span and every candidate
+  seam's span. No candidate is chosen by order, length or ID.
+- `ambiguous_file_line_matches[].confidence_label` and
+  `ambiguous_span_overlap_matches[].confidence_label` — always
   `ambiguous_runtime_join`; ambiguous joins do not raise or lower confidence for
   any candidate seam.
 - `unmatched_mutants[]` — runtime records that did not match a static seam.
+- `unmatched_mutants[].unmatched_reason` — `no_location` (no file or no
+  line), `conflicting_runtime_location` (merged duplicates disagreed on span,
+  file or line, so only a `seam_id` can join the record), `no_seam_on_line` (no seam
+  on the line and no seam span to compare), or `no_containing_seam` (complete
+  spans on both sides and none contains the record).
+- `unmatched_mutants[].line_seams` — for `no_containing_seam`, the seams that
+  start on the record's line, with their spans, so the refused same-line join
+  can be checked.
 - `static_without_runtime_sample[]` — capped sample of static seams with no
   definitive or ambiguous runtime data in this import. Use
   `static_without_runtime_total` for the full count.
@@ -17721,7 +17811,7 @@ targeted-rerun receipt shape:
     "direct_call_names": ["discounted_total"]
   },
   "cache": {
-    "schema_version": "1.28",
+    "schema_version": "1.30",
     "reuse_state": "reused_file_facts",
     "file_fact_status": "hits_2_misses_0_corrupt_0_store_errors_0",
     "hits": 2,
@@ -17732,7 +17822,7 @@ targeted-rerun receipt shape:
     "recomputation_reasons": ["selected_test_scope_recomputed"],
     "invalidation_status": "not_available",
     "input_fingerprint": {
-      "schema_version": "1.39",
+      "schema_version": "1.41",
       "analyzer_version": "0.11.0+0123456789abcdef0123456789abcdef01234567",
       "workspace_root_hash": "…",
       "files_content_hash": "…",

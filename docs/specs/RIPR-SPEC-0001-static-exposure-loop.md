@@ -222,9 +222,11 @@ an oracle, not an input, so it must not produce `infection yes`; RIPR reports
 owner's inputs. A `mut`, shadowed, string, or computed binding is not an
 exact input value.
 
-A computed argument or operand is not the literal it contains. An owner-call
-argument that applies a binary arithmetic or bitwise operator
-(`order_discount(base + 1)`) or repeats an array element (`&[b'f'; 16]`, whose
+A computed argument or operand is not the literal it contains. An owner-call,
+table-row, or builder-method argument that applies a binary arithmetic,
+bitwise, or shift operator (`order_discount(base + 1)`, `.amount(base + 10)`,
+`1 << 4`, `16usize - 1`; a sign is a float exponent only directly after the
+`e`/`E` of a decimal mantissa such as `1e-5`) or repeats an array element (`&[b'f'; 16]`, whose
 `16` is a length) yields no input value, and a comparison operand that does so
 (`CURRENT - 2 > version`, `s.len() < 2 + 2`) contributes no boundary literal,
 so `CURRENT - 2` is never read as the boundary `2`. A compound condition
@@ -261,6 +263,10 @@ parameter it could not read. A test input literal that merely equals a
 literal in the comparison does not credit such a boundary; only an exact
 observed equality does. Exact inputs that all sit off the boundary keep
 the missing equality discriminator.
+
+The human report's "Why unknown" line for `infection_unknown` says the change
+"reaches a sink" only when the propagation stage is `yes`; otherwise it says
+no sink the change reaches was established.
 
 Named-constant boundary example:
 
@@ -348,6 +354,11 @@ Fixture coverage:
 - `given_offset_of_opaque_constant_then_boundary_is_unresolved_not_missing`
 - `free_identifiers_name_only_the_variables_an_expression_reads`
 - `unresolved_boundary_input_is_not_credited_by_a_matching_input_literal`
+- `literal_kind_filter_reads_only_the_spelled_boundary_literals`
+- `suffixed_or_shifted_arguments_are_computed_end_to_end`
+- `table_and_builder_lines_skip_computed_arguments`
+- `given_counted_local_boundary_then_boundary_is_unresolved_not_missing`
+- `infection_unknown_hint_claims_a_sink_only_when_propagation_is_yes`
 - `fixtures/boundary_named_constant`
 - `same_file_constant_boundary_is_observed_at_its_literal_value`
 - `argument_naming_the_constant_is_the_boundary_by_identity`

@@ -265,7 +265,7 @@ fn value_facts_for_test(test: &TestSummary, owner_fn: Option<&FunctionSummary>) 
         let line_number = test.start_line + offset;
         let trimmed = line.trim();
         if looks_like_table_row(trimmed) {
-            for value in scalar_values(trimmed) {
+            for value in spelled_scalar_values(trimmed) {
                 facts.push(ValueFact {
                     line: line_number,
                     text: trimmed.to_string(),
@@ -275,7 +275,7 @@ fn value_facts_for_test(test: &TestSummary, owner_fn: Option<&FunctionSummary>) 
             }
         }
         if looks_like_builder_method(trimmed) {
-            for value in scalar_values(trimmed) {
+            for value in spelled_scalar_values(trimmed) {
                 facts.push(ValueFact {
                     line: line_number,
                     text: trimmed.to_string(),
@@ -2174,10 +2174,8 @@ pub(in crate::analysis) fn is_computed_value_expression(text: &str) -> bool {
     let masked = crate::analysis::language::mask_rust_comments_and_strings(text);
     let chars: Vec<char> = masked.chars().collect();
     let mut bracket_depth = 0usize;
-    // The last non-space character and whether the token it ends is a
-    // number (for the `1e-5` exponent sign).
+    // The last non-space character.
     let mut previous: Option<char> = None;
-    let mut previous_token_numeric = false;
     let mut idx = 0usize;
     while idx < chars.len() {
         let ch = chars[idx];
@@ -2191,7 +2189,6 @@ pub(in crate::analysis) fn is_computed_value_expression(text: &str) -> bool {
             };
             if chars.get(close) == Some(&'\'') {
                 previous = Some('\'');
-                previous_token_numeric = false;
                 idx = close + 1;
                 continue;
             }
@@ -2204,15 +2201,15 @@ pub(in crate::analysis) fn is_computed_value_expression(text: &str) -> bool {
             '[' => bracket_depth += 1,
             ']' => bracket_depth = bracket_depth.saturating_sub(1),
             ';' if bracket_depth > 0 => return true,
+            // `1 << 4`, `x >> 1`: shifts compute a value too.
+            '<' | '>' if operand_before && after == Some(ch) => return true,
             '+' | '-' | '*' | '/' | '%' | '^' | '&' | '|' if operand_before => {
                 // `->` (return type), `&&`/`||` (boolean, not a value).
                 let not_value_operator = matches!(
                     (ch, after),
                     ('-', Some('>')) | ('&', Some('&')) | ('|', Some('|'))
                 );
-                let exponent_sign = matches!(ch, '+' | '-')
-                    && matches!(previous, Some('e' | 'E'))
-                    && previous_token_numeric;
+                let exponent_sign = matches!(ch, '+' | '-') && is_float_exponent_sign(&chars, idx);
                 if !not_value_operator && !exponent_sign {
                     return true;
                 }
@@ -2220,17 +2217,35 @@ pub(in crate::analysis) fn is_computed_value_expression(text: &str) -> bool {
             _ => {}
         }
         if !ch.is_whitespace() {
-            let continues_token = previous
-                .is_some_and(|prev| prev.is_ascii_alphanumeric() || prev == '_' || prev == '.')
-                && (ch.is_ascii_alphanumeric() || ch == '_' || ch == '.');
-            if !continues_token {
-                previous_token_numeric = ch.is_ascii_digit();
-            }
             previous = Some(ch);
         }
         idx += 1;
     }
     false
+}
+
+/// Whether the sign at `sign` is a decimal float exponent's (`1e-5`,
+/// `2.5E+3`): it immediately follows the `e`/`E` of a token that is a
+/// decimal mantissa. `16usize - 1`, `2isize + 1` and `0xFE - 1` end in an
+/// `e`/`E` that is a suffix or a hex digit, so their signs are operators.
+fn is_float_exponent_sign(chars: &[char], sign: usize) -> bool {
+    let Some(exponent) = sign.checked_sub(1) else {
+        return false;
+    };
+    if !matches!(chars[exponent], 'e' | 'E') {
+        return false;
+    }
+    let mut start = exponent;
+    while start > 0
+        && (chars[start - 1].is_ascii_alphanumeric() || matches!(chars[start - 1], '_' | '.'))
+    {
+        start -= 1;
+    }
+    let mantissa = &chars[start..exponent];
+    mantissa.first().is_some_and(char::is_ascii_digit)
+        && mantissa
+            .iter()
+            .all(|ch| ch.is_ascii_digit() || matches!(ch, '_' | '.'))
 }
 
 fn comparable_value(value: &str) -> String {
@@ -2418,6 +2433,40 @@ fn split_top_level_args(text: &str) -> Vec<String> {
         args.push(arg.to_string());
     }
     args
+}
+
+/// `scalar_values` of a table-row or builder line, skipping every
+/// argument that computes its value (`.amount(base + 10)` passes neither
+/// `10` nor `base`; `[b'f'; 16]`'s `16` is a length), the same
+/// RIPR-SPEC-0001 rule owner-call arguments follow (#6672). The line is
+/// cut at `,`, `(`, `)`, `{` and `}`; a bracketed `[...]` stays whole.
+fn spelled_scalar_values(line: &str) -> Vec<String> {
+    let masked = crate::analysis::language::mask_rust_comments_and_strings(line);
+    let mut values = Vec::new();
+    let mut bracket_depth = 0usize;
+    let mut start = 0usize;
+    let mut segments = Vec::new();
+    for (offset, byte) in masked.bytes().enumerate() {
+        match byte {
+            b'[' => bracket_depth += 1,
+            b']' => bracket_depth = bracket_depth.saturating_sub(1),
+            b',' | b'(' | b')' | b'{' | b'}' if bracket_depth == 0 => {
+                segments.push(line.get(start..offset).unwrap_or_default());
+                start = offset + 1;
+            }
+            _ => {}
+        }
+    }
+    segments.push(line.get(start..).unwrap_or_default());
+    for segment in segments {
+        if segment.trim().is_empty() || is_computed_value_expression(segment) {
+            continue;
+        }
+        values.extend(scalar_values(segment));
+    }
+    values.sort();
+    values.dedup();
+    values
 }
 
 fn scalar_values(text: &str) -> Vec<String> {
@@ -4242,6 +4291,14 @@ assert_eq!(input.amount, 100);"#
             "Some(base + 1)",
             "&[b'f'; 16]",
             "[0u8; 4]",
+            // A literal suffix or hex digit `e`/`E` is not a float exponent.
+            "16usize - 1",
+            "16usize-1",
+            "2isize + 1",
+            "0xFE - 1",
+            "0x1E-1",
+            "1 << 4",
+            "x >> 1",
         ] {
             assert!(
                 is_computed_value_expression(computed),
@@ -4335,6 +4392,73 @@ assert_eq!(input.amount, 100);"#
         );
         assert_eq!(gathered.unresolved_boundary, None);
         assert_eq!(gathered.activation.missing_discriminators.len(), 1);
+    }
+
+    #[test]
+    fn suffixed_or_shifted_arguments_are_computed_end_to_end() {
+        // Review on #6796: `5usize - 1` once read as the literal 1 (the
+        // `e` of `usize` passed for a float exponent), which credited the
+        // boundary `1 <= amount` with an input the test never passes.
+        let owner = function("pub fn score(amount: u32) -> bool {\n    1 <= amount\n}");
+        let credit = test_with_body_calls(
+            "assert!(score(5usize - 1));\nassert!(score(1 << 4));",
+            &[
+                (10, "assert!(score(5usize - 1));"),
+                (11, "assert!(score(1 << 4));"),
+            ],
+        );
+        let gathered = boundary_input(
+            &owner,
+            &probe(ProbeFamily::Predicate, "1 <= amount"),
+            &[&credit],
+        );
+        assert!(!has_observed_boundary_equality(&gathered.activation));
+        assert!(
+            owner_input_values(&gathered.activation).is_empty(),
+            "{:?}",
+            gathered.activation.observed_values
+        );
+        assert!(
+            gathered
+                .unresolved_boundary
+                .as_deref()
+                .is_some_and(|reason| reason.contains("computed argument for `amount`")),
+            "{:?}",
+            gathered.unresolved_boundary
+        );
+
+        // The false-gap half: `16usize - 1` is 15, the boundary; it is a
+        // definite unreadable input, so the boundary is unresolved rather
+        // than missing beside the exact off-boundary row 20.
+        let owner = function("pub fn score(amount: u32) -> bool {\n    15 <= amount\n}");
+        let gap = test_with_body_calls(
+            "assert!(score(16usize - 1));\nassert!(score(20));",
+            &[
+                (10, "assert!(score(16usize - 1));"),
+                (11, "assert!(score(20));"),
+            ],
+        );
+        let gathered = boundary_input(
+            &owner,
+            &probe(ProbeFamily::Predicate, "15 <= amount"),
+            &[&gap],
+        );
+        assert!(gathered.activation.missing_discriminators.is_empty());
+        assert!(gathered.unresolved_boundary.is_some());
+    }
+
+    #[test]
+    fn table_and_builder_lines_skip_computed_arguments() {
+        // Review on #6796: `.amount(base + 10)` passes neither 10 nor
+        // `base`, and `[b'f'; 16]`'s 16 is a length.
+        assert!(spelled_scalar_values(".amount(base + 10)").is_empty());
+        assert!(spelled_scalar_values("(&[b'f'; 16], true),").contains(&"true".to_string()));
+        assert!(!spelled_scalar_values("(&[b'f'; 16], true),").contains(&"16".to_string()));
+        assert_eq!(
+            spelled_scalar_values("(10, Some(-5), \"a, b\"),"),
+            scalar_values("(10, Some(-5), \"a, b\"),")
+        );
+        assert_eq!(spelled_scalar_values(".amount(10)"), vec!["10".to_string()]);
     }
 
     #[test]
@@ -4586,6 +4710,45 @@ assert_eq!(input.amount, 100);"#
         let reason = gathered.unresolved_boundary.unwrap_or_default();
         assert!(
             reason.contains("boundary operand `s.len()`"),
+            "got {reason:?}"
+        );
+    }
+
+    #[test]
+    fn given_counted_local_boundary_then_boundary_is_unresolved_not_missing() {
+        // #6693's counted-local shape: `letters` counts the input's words,
+        // and the tests pass "" and "Ada Lovelace" (both sides). ripr does
+        // not fold the count, so it abstains instead of naming a missing
+        // `letters == 0` input. Only this abstain fallback is delivered;
+        // folding the count into a witness is not.
+        let mut owner = function(
+            "pub fn initials(name: &str) -> String {\n    let letters = name.split_whitespace().count();\n    if letters == 0 {\n        return String::new();\n    }\n    name.to_string()\n}",
+        );
+        owner.end_line = 7;
+        let mut predicate = probe(ProbeFamily::Predicate, "letters == 0");
+        predicate.location.line = 3;
+        let test = test_with_body_calls(
+            "assert_eq!(initials(\"\"), \"\");\nassert_eq!(initials(\"Ada Lovelace\"), \"AL\");",
+            &[
+                (10, "assert_eq!(initials(\"\"), \"\");"),
+                (11, "assert_eq!(initials(\"Ada Lovelace\"), \"AL\");"),
+            ],
+        );
+        let mut test = test;
+        for call in &mut test.calls {
+            call.name = "initials".to_string();
+        }
+        owner.name = "initials".to_string();
+        let gathered = boundary_input(&owner, &predicate, &[&test]);
+
+        assert!(
+            gathered.activation.missing_discriminators.is_empty(),
+            "{:?}",
+            gathered.activation.missing_discriminators
+        );
+        let reason = gathered.unresolved_boundary.unwrap_or_default();
+        assert!(
+            reason.contains("boundary operand `letters`"),
             "got {reason:?}"
         );
     }

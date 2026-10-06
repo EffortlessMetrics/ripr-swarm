@@ -123,6 +123,11 @@ pub(crate) struct TypeScriptTest {
     /// outside the test body and to detect shadowed constructor names; owner
     /// calls and assertions must still sit in `body_text`.
     pub(crate) scope_bindings: Vec<TypeScriptScopeBinding>,
+    /// Whether the test's assertion state is established: a recognized
+    /// assertion, an established absence of anything assertion-like, or
+    /// something assertion-like RIPR cannot resolve (#5524). An empty
+    /// `assertions` vector alone is never authority for "no assertion".
+    pub(crate) assertion_admission: TypeScriptAssertionAdmission,
 }
 
 /// One name an enclosing test scope binds, resolved to its innermost scope.

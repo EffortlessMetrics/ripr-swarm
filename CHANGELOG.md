@@ -227,6 +227,17 @@ are scoped or reviewed.
   from the global `-v` claim. The default `More:` line and `cmd:help`
   `json_support: true` already landed with #5398; the exhaustive screen
   was still a discovery dead end (#5266 residual).
+- Calibration: `ripr calibrate cargo-mutants` keeps each cargo-mutants
+  mutant's complete source span and joins it to the seam whose
+  `repo-exposure-json` 0.4 span contains it (`join_method:
+  "span_containment"`). The unique innermost containing seam wins, so a line
+  holding several seams no longer leaves its mutants ambiguous; equal or
+  crossing spans are reported as `ambiguous_span_overlap_matches`; a mutant
+  that no seam span contains is unmatched with `unmatched_reason:
+  "no_containing_seam"` instead of being paired with a seam that only shares
+  its line. Span-less seams and span-less runtime records keep the file/line
+  join. The calibration report is `schema_version` 0.2 (#5336, #5485,
+  #5486).
 - Calibration: `ripr calibrate cargo-mutants` reads real cargo-mutants
   `mutants.out` output. Outcomes nested under `scenario.Mutant` with
   `CaughtMutant`/`MissedMutant`/`Timeout`/`Unviable` summaries now import as
@@ -627,6 +638,14 @@ are scoped or reviewed.
   feature and target activation is not established statically; `self::`
   and `super::` parameter paths still refuse (#5453).
 
+- Calibration: `repo-exposure-json` seams (schema `0.4`) and `repo-seams`
+  seams (schema `0.2`) now carry the parser-owned span coordinates
+  `column`, `end_line`, and `end_column` (1-based character columns, exclusive
+  end) when span geometry is available, matching cargo-mutants span columns
+  for calibration joins. Seam IDs are unchanged; span-less entries omit the
+  fields and consumers must treat them as line-only. `agent verify`
+  requires the current `0.4` envelope, so regenerate snapshots rather than
+  hand-editing versions (#5336).
 - Verdict corpus: 2 atuin cases (90f590b9) that the mutation spot-check
   reported as strongly gripped with every mutant missed. Neither is credited
   in diff mode: `context.rs:40` reads a gap (ideal), and `otel/enabled.rs:62`

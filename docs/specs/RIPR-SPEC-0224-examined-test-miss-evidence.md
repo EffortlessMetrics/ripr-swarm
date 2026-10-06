@@ -91,6 +91,26 @@ developer who disagreed had to re-derive the analysis.
   test with its verdict and checked assertion, what a test would need to change
   the verdict (gap classes only), and the meaning of each stop reason.
 
+### Assertion admission prerequisite (Python, TypeScript)
+
+Python and TypeScript record no miss yet. Before a producer (#5491, #5495)
+may write a `no_assertion` miss, each extracted test carries an assertion
+admission state, computed fail-closed from the test's syntax:
+
+- `recognized_assertion_present`: the oracle extractor credited an assertion.
+- `extraction_complete_no_assertion`: every callee and value in the test, its
+  hooks and its file or `describe` setup resolves to something known not to
+  assert. Only this state may later justify a `no_assertion` miss.
+- `assertion_like_present_but_unresolved`: anything else, including custom
+  matchers, helpers, third-party callees, `throw`, rejected promises,
+  `done(err)` and asserting setup.
+
+A related test whose state is not `recognized_assertion_present` adds the
+evidence line `test_assertion_admission: <state> (<test>)` to its finding.
+The line is evidence only: it changes no verdict, ranking, miss or
+actionability. Blind spots the scan cannot see (conftest and setup files,
+runner plugins) are tracked in #6657 and #6889.
+
 ## Required Evidence
 
 - A unit test that a test whose assertions match nothing is listed as
@@ -111,8 +131,8 @@ developer who disagreed had to re-derive the analysis.
   unknown is RIPR-SPEC-0221's admission rule.
 - Splitting `assertion_not_credited` into proven-inert and admission-unproven
   cases; that needs the typed admission refusal from #5359.
-- Python and TypeScript producers, which record no miss yet (#5491, #5495),
-  and richer Perl reasons that need row-owned facts (#5562).
+- Python and TypeScript miss producers (#5491, #5495); only their admission
+  prerequisite is specified here. Richer Perl reasons that need row-owned facts (#5562).
 
 ## Acceptance Examples
 
@@ -147,6 +167,11 @@ developer who disagreed had to re-derive the analysis.
   data, and MCP gap evidence; no projected decision reads `miss`.
 - `crates/ripr/src/output/human/explain.rs::tests` — an unconfirmed row is not
   labelled a miss.
+- `crates/ripr/src/analysis/language/python/python_tests.rs` and
+  `crates/ripr/src/analysis/language/typescript/admission_tests.rs`
+  (`assertion_admission_separates_no_assertion_from_unresolved_assertion_like_forms`)
+  — table tests separating established no-assertion from unresolved
+  assertion-like forms.
 - Golden fixtures under `fixtures/*/expected/` — rendered parity.
 
 ## Implementation Mapping
@@ -157,6 +182,7 @@ developer who disagreed had to re-derive the analysis.
 | `crates/ripr/src/analysis/classify/reveal.rs` | retain examined tests; set assertion-level misses; ranking |
 | `crates/ripr/src/analysis/classifier/finding.rs` | class-level misses |
 | `crates/ripr/src/analysis/language/perl/mod.rs` | Perl v1 `observation_unconfirmed` rows |
+| `crates/ripr/src/analysis/language/{python,typescript}/admission.rs` | fail-closed assertion admission state per extracted test |
 | `crates/ripr/src/output/related_test_miss.rs` | the one prose and label owner |
 | `crates/ripr/src/output/human/{sections,evidence_lines,explain}.rs`, `output/json/report.rs`, `lsp/{hover,diagnostics}.rs`, `mcp/gaps.rs` | projections |
 
