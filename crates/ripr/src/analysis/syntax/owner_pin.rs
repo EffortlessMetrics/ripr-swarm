@@ -744,8 +744,9 @@ fn local_empty_macros(root: &SyntaxNode) -> BTreeMap<String, ast::MacroRules> {
 }
 
 /// Whether every `return` in `item` (one function's text) leaves that
-/// function: the text parses cleanly and no `return` sits inside a closure
-/// or an `async` block, where it would end only that inner body.
+/// function: the text parses cleanly and no `return` sits inside a closure,
+/// an `async` or `const` block, or a nested `fn` item, where it would end
+/// only that inner body.
 pub(crate) fn returns_leave_the_function(item: &str) -> bool {
     parse_clean_source_file(item).is_some_and(|parse| {
         parse
@@ -754,12 +755,16 @@ pub(crate) fn returns_leave_the_function(item: &str) -> bool {
             .descendants()
             .filter(|node| ast::ReturnExpr::can_cast(node.kind()))
             .all(|node| {
-                !node.ancestors().any(|parent| {
-                    ast::ClosureExpr::can_cast(parent.kind())
-                        || ast::BlockExpr::cast(parent).is_some_and(|block| {
-                            block.async_token().is_some() || block.const_token().is_some()
-                        })
-                })
+                node.ancestors()
+                    .filter(|parent| ast::Fn::can_cast(parent.kind()))
+                    .count()
+                    <= 1
+                    && !node.ancestors().any(|parent| {
+                        ast::ClosureExpr::can_cast(parent.kind())
+                            || ast::BlockExpr::cast(parent).is_some_and(|block| {
+                                block.async_token().is_some() || block.const_token().is_some()
+                            })
+                    })
             })
     })
 }

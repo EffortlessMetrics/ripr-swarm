@@ -412,6 +412,11 @@ fn an_early_return_is_pinned_when_it_is_the_only_source_of_its_value() {
         "fn f(x: u64) -> Option<u64> {\n    let c = || {\n        return None;\n    };\n    Some(x)\n}",
         // A macro may hide a `return`.
         "fn f(x: u64) -> Option<u64> {\n    if x == 1 {\n        return None;\n    }\n    bail_if!(x);\n    Some(x)\n}",
+        // A `return` in an `async` or `const` block, or a nested `fn`, ends
+        // only that inner body.
+        "fn f(x: u64) -> Option<u64> {\n    let _ = async {\n        return None;\n    };\n    Some(x)\n}",
+        "fn f(x: u64) -> Option<u64> {\n    let _ = const {\n        return None;\n    };\n    Some(x)\n}",
+        "fn f(x: u64) -> Option<u64> {\n    fn g() -> Option<u64> {\n        return None;\n    }\n    Some(x)\n}",
     ] {
         let changed = "return None;";
         let at = body.find(changed).unwrap_or(0);
@@ -420,6 +425,50 @@ fn an_early_return_is_pinned_when_it_is_the_only_source_of_its_value() {
             "{body}"
         );
     }
+}
+
+#[test]
+fn an_early_err_return_needs_to_be_the_only_err_source() {
+    for body in [
+        // A second `return Err(..)` is another source of `Err`.
+        "fn f(x: i32) -> Result<i32, E> {\n    if x < 0 {\n        return Err(E::Negative);\n    }\n    if x == 0 {\n        return Err(E::Zero);\n    }\n    Ok(x)\n}",
+        // `?` can produce `Err` too.
+        "fn f(x: i32) -> Result<i32, E> {\n    if x < 0 {\n        return Err(E::Negative);\n    }\n    Ok(g(x)?)\n}",
+    ] {
+        let changed = "return Err(E::Negative);";
+        let at = body.find(changed).unwrap_or(0);
+        assert!(
+            return_path_gate(body, changed, body[..at].matches('\n').count()).is_none(),
+            "{body}"
+        );
+    }
+}
+
+#[test]
+fn an_early_return_pin_admits_only_the_value_that_return_produces() {
+    // End to end: the gate is what keeps a pin on the other exits' value
+    // from crediting a changed `return None;` it never reaches.
+    let lib = "pub fn whole(x: u64, unit: u64) -> Option<u64> {\n    if unit == 0 || x % unit != 0 { return None; }\n    Some(x / unit)\n}\n";
+    let tests = "use demo::whole;\n\n#[test]\nfn wholes() {\n    assert_eq!(whole(3, 2), None);\n    assert_eq!(whole(4, 2), Some(2));\n    assert_eq!(whole(3, 2), Option::None);\n    assert_eq!(whole(3, 2), NONE);\n}\n";
+    let none_index = index(&[(LIB, lib), (TESTS, tests)]);
+    let pin = establish(&none_index, "whole", "return None;");
+    assert!(pin.is_some());
+    let Some(pin) = pin else { return };
+    assert_eq!(
+        admitted_texts(&none_index, &pin),
+        vec!["assert_eq!(whole(3, 2), None);".to_string()]
+    );
+
+    let lib = "pub enum E { Negative }\n\npub fn checked(x: i32) -> Result<i32, E> {\n    if x < 0 { return Err(E::Negative); }\n    Ok(x * 2)\n}\n";
+    let tests = "use demo::{checked, E};\n\n#[test]\nfn checks() {\n    assert_eq!(checked(-1), Err(E::Negative));\n    assert_eq!(checked(2), Ok(4));\n}\n";
+    let err_index = index(&[(LIB, lib), (TESTS, tests)]);
+    let pin = establish(&err_index, "checked", "return Err(E::Negative);");
+    assert!(pin.is_some());
+    let Some(pin) = pin else { return };
+    assert_eq!(
+        admitted_texts(&err_index, &pin),
+        vec!["assert_eq!(checked(-1), Err(E::Negative));".to_string()]
+    );
 }
 
 #[test]
@@ -961,6 +1010,111 @@ fn weight_refusal_under(
         "the test's assertions must parse"
     );
     OwnerPinSyntax::default().refusal(test, &test.assertions[0], &index)
+}
+
+#[test]
+fn a_crate_local_site_another_crate_can_compile_stays_workspace_wide() {
+    use crate::analysis::facts::{RustIncludeLimitation, SourceRoleProvenanceEdge};
+    let tests = "use demo::weight;\n#[test]\nfn weighs() { assert_eq!(weight(4), 12); }\n";
+    let shadow = "macro_rules! assert_eq { ($a:expr, $b:expr) => {} }";
+    let edge = |parent: &str, child: &str, kind| SourceRoleProvenanceEdge {
+        kind,
+        parent: PathBuf::from(parent),
+        child: PathBuf::from(child),
+        declaration: String::new(),
+        line: 1,
+        requires_test: false,
+    };
+    let refused = |helper: &str,
+                   edges: Vec<SourceRoleProvenanceEdge>,
+                   include_target: bool,
+                   unresolved_include: bool| {
+        let mut index = index(&[(LIB, WEIGHT_LIB), (TESTS, tests)]);
+        let mut facts = summarize_file(PathBuf::from(helper), shadow.to_string());
+        facts.role_provenance.edges = edges;
+        index.insert_file_only(PathBuf::from(helper), facts);
+        if include_target {
+            index.include_targets.insert(PathBuf::from(helper));
+        }
+        if unresolved_include {
+            index.include_limitations.push(RustIncludeLimitation {
+                parent: PathBuf::from("tests/a.rs"),
+                line: 1,
+                expression: "include!(concat!(env!(\"CARGO_MANIFEST_DIR\"), \"/tests/common.rs\"))"
+                    .to_string(),
+                reason_code: "rust_include_unresolved".to_string(),
+            });
+        }
+        let test = index
+            .tests()
+            .iter()
+            .find(|test| test.file == Path::new(TESTS));
+        test.and_then(|test| OwnerPinSyntax::default().refusal(test, &test.assertions[0], &index))
+            .is_some()
+    };
+    // Controls: a root of its own, or a module of `src/lib.rs`, is another
+    // crate than the test's.
+    assert!(!refused("tests/common.rs", Vec::new(), false, false));
+    assert!(!refused(
+        "src/util.rs",
+        vec![edge(
+            LIB,
+            "src/util.rs",
+            SourceRoleProvenanceEdgeKind::Module
+        )],
+        false,
+        false
+    ));
+    // `include!` pastes the fragment into every includer, edge or not.
+    assert!(refused("tests/common.rs", Vec::new(), true, false));
+    assert!(refused(
+        "tests/common.rs",
+        vec![edge(
+            "tests/a.rs",
+            "tests/common.rs",
+            SourceRoleProvenanceEdgeKind::Include
+        )],
+        false,
+        false
+    ));
+    // An unresolved `include!` anywhere may be pulling in an edge-less file.
+    assert!(refused("tests/common.rs", Vec::new(), false, true));
+    // A shared `tests/common/mod.rs` keeps only its first owner's edge, but
+    // every `tests/*.rs` that declares it compiles its own copy.
+    assert!(refused(
+        "tests/common/mod.rs",
+        vec![edge(
+            "tests/alpha.rs",
+            "tests/common/mod.rs",
+            SourceRoleProvenanceEdgeKind::Module
+        )],
+        false,
+        false
+    ));
+}
+
+#[test]
+fn a_withheld_crate_roots_private_glob_is_routed_by_root() {
+    let packages = BTreeSet::from(["core".to_string()]);
+    let mut withheld = WithheldMacroBindings::default();
+    let root = Path::new("e/src/lib.rs");
+    assert!(!withheld.absorb(
+        root,
+        "use proptest::prelude::*;",
+        &packages,
+        &Default::default()
+    ));
+    assert!(withheld.trusted.is_empty() && !withheld.any_name);
+    assert!(
+        withheld
+            .by_root
+            .get(root)
+            .is_some_and(|names| names.contains("assert_eq"))
+    );
+    // A glob may shadow any name, so a test file's local empty macros stay
+    // ambiguous in named mode, as the full scan's empty-macro check is not
+    // routed by crate.
+    assert!(withheld.root_any_name);
 }
 
 #[test]

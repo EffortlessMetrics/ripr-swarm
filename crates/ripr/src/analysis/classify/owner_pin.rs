@@ -99,6 +99,11 @@ pub(in crate::analysis) struct OwnerPinSyntax {
 pub(in crate::analysis) struct WithheldMacroBindings {
     /// Some withheld file may shadow any macro name.
     any_name: bool,
+    /// A crate-local site routed by root may shadow any macro name. The
+    /// trusted set stays per root, but a test file's local empty-macro names
+    /// are refused workspace-wide, as the full scan's empty-macro check
+    /// reads every indexed file without crate routing.
+    root_any_name: bool,
     /// Trusted macro names withheld files may shadow.
     trusted: BTreeSet<String>,
     /// The first withheld site per trusted name, so a refusal can still
@@ -130,6 +135,7 @@ impl WithheldMacroBindings {
             macro_binding_scan(source, packages, NON_RETURNING_MACROS, &drop_in_verified)
         {
             if let Some(root) = root.as_ref().filter(|_| site.crate_local) {
+                self.root_any_name |= site.kind.binds_any_name();
                 self.by_root
                     .entry(root.clone())
                     .or_default()
@@ -331,8 +337,7 @@ impl OwnerPinSyntax {
                     )
                 })
                 .chain(
-                    self.withheld
-                        .any_name
+                    (self.withheld.any_name || self.withheld.root_any_name)
                         .then(|| names.clone())
                         .into_iter()
                         .flatten(),
@@ -394,16 +399,40 @@ type WorkspaceMacroSites = BTreeMap<(String, Option<PathBuf>), Option<(PathBuf, 
 /// `src/bin/*.rs`, `tests/*.rs`, `benches/*.rs`, `examples/*.rs`,
 /// `build.rs`) and every module edge to it resolved. `None` keeps a
 /// binding workspace-wide: an unlinked file may belong to any crate.
+///
+/// A file another crate can also compile is never charged to one root:
+/// an `include!` fragment (its text lands in every includer, with or
+/// without a recorded edge), a shared integration-test helper whose
+/// provenance keeps only the first of several `tests/*.rs` owners, and,
+/// while any `include!` is unresolved in the workspace, an edge-less file
+/// that the unresolved include may be pulling in.
 fn target_root(file: &Path, index: &RustIndex) -> Option<PathBuf> {
     let facts = index.files().get(file)?;
-    if facts.role_provenance.earliest_unresolved_reason.is_some() {
+    let provenance = &facts.role_provenance;
+    if provenance.earliest_unresolved_reason.is_some()
+        || index.include_targets.contains(file)
+        || provenance
+            .edges
+            .iter()
+            .any(|edge| edge.kind == SourceRoleProvenanceEdgeKind::Include)
+        || (provenance.edges.is_empty() && !index.include_limitations.is_empty())
+    {
         return None;
     }
-    let root = facts
-        .role_provenance
+    let root = provenance
         .edges
         .first()
         .map_or_else(|| file.to_path_buf(), |edge| edge.parent.clone());
+    // `tests/common/mod.rs` (or `tests/common.rs`) declared by several
+    // integration-test roots composes under the first owner only.
+    if root != file
+        && root
+            .parent()
+            .and_then(Path::file_name)
+            .is_some_and(|directory| directory == "tests")
+    {
+        return None;
+    }
     let names: Vec<&str> = root
         .iter()
         .map(|part| part.to_str().unwrap_or_default())
@@ -1142,7 +1171,7 @@ fn return_path_gate(body: &str, expression: &str, changed_line: usize) -> Option
         if has_unbounded_macro(inner) {
             return None;
         }
-        return early_return_gate(body, inner, inner_text, &changed, &spans_changed_line);
+        return early_return_gate(body, inner, inner_text, changed, &spans_changed_line);
     }
     if has_unbounded_macro(inner) || evaluates_conditionally(&mask_comments_and_strings(changed)) {
         return None;
