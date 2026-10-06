@@ -136,7 +136,9 @@ These native receipts are also accepted as-is:
   a different mutant set or a different cargo-mutants run reports "not
   comparable" with both populations, because the pooled rate can move with
   no verdict changing. Repository order does not matter. A receipt
-  repository missing any of these fields is refused.
+  repository without a name, revision or mutant-set digest, or with
+  non-string arguments, is refused. An unrecorded cargo-mutants version stays
+  `null` and matches only another `null`.
   The receipt also carries the precision of `ripr pilot`'s top ten
   recommendations per repository (a recommendation is confirmed when a mutant
   on its line, or else in its function's body, was missed).
