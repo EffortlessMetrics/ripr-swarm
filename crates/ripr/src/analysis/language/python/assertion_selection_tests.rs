@@ -700,3 +700,86 @@ fn changed_raise_class_is_independent_of_assertion_order() -> Result<(), String>
     );
     Ok(())
 }
+
+/// A strong sibling-field assertion the selector passes over is not a known
+/// oracle for the changed field, so it does not suppress the property-based
+/// or opaque-helper limit (#5572): suppression reads the selected assertion.
+#[test]
+fn passed_over_sibling_field_assertion_does_not_suppress_test_side_limits() {
+    let owners = extract_owners(Path::new("src/calc.py"), OWNER_SOURCE);
+    let changed = "        self.total = amount";
+    let property_source = "import pytest\nfrom hypothesis import given, strategies as st\nfrom src.calc import f\n\n@given(st.integers())\ndef test_f(value):\n    order = f(value)\n    assert order.count == 1\n    assert order.total > 0\n";
+    let helper_source = "import pytest\nfrom src.calc import f\n\ndef test_f():\n    order = f(5)\n    assert order.count == 1\n    assert order.total > 0\n    assert_valid(order)\n";
+    let property_tests = extract_tests(Path::new("tests/test_calc.py"), property_source);
+    let helper_tests = extract_tests(Path::new("tests/test_calc.py"), helper_source);
+    assert_eq!(property_tests.len(), 1);
+    assert_eq!(helper_tests.len(), 1);
+    assert_eq!(
+        shapes(&property_tests[0]),
+        vec![(FIELD, STRONG), (FIELD, WEAK)]
+    );
+    assert_eq!(
+        shapes(&helper_tests[0]),
+        vec![
+            (FIELD, STRONG),
+            (FIELD, WEAK),
+            (
+                PythonOracleShape::UnknownCustomHelper,
+                OracleStrength::Unknown
+            )
+        ]
+    );
+    let focus = PythonAssertionFocus::for_change(ProbeFamily::FieldConstruction, changed, None);
+    assert_eq!(
+        selected(&property_tests[0], &focus),
+        Some("assert order.total > 0")
+    );
+    let property_candidates =
+        super::related_tests::related_test_candidates(&owners[0], &property_tests);
+    let helper_candidates =
+        super::related_tests::related_test_candidates(&owners[0], &helper_tests);
+    assert_eq!(property_candidates.len(), 1);
+    assert_eq!(helper_candidates.len(), 1);
+    assert_eq!(
+        static_limit_for_change(changed, &owners[0], &property_candidates).map(|limit| limit.kind),
+        Some(StaticLimitKind::PropertyBasedTest)
+    );
+    assert_eq!(
+        static_limit_for_change(changed, &owners[0], &helper_candidates).map(|limit| limit.kind),
+        Some(StaticLimitKind::OpaqueCustomAssertionHelper)
+    );
+    // Control: a strong assertion on the changed field itself suppresses
+    // the property-based and opaque-helper limits.
+    let strong_property = extract_tests(
+        Path::new("tests/test_calc.py"),
+        &property_source.replace("order.total > 0", "order.total == 5"),
+    );
+    let strong_helper = extract_tests(
+        Path::new("tests/test_calc.py"),
+        &helper_source.replace("order.total > 0", "order.total == 5"),
+    );
+    assert_eq!(
+        shapes(&strong_property[0]),
+        vec![(FIELD, STRONG), (FIELD, STRONG)]
+    );
+    assert_eq!(
+        static_limit_for_change(
+            changed,
+            &owners[0],
+            &super::related_tests::related_test_candidates(&owners[0], &strong_property)
+        )
+        .map(|limit| limit.kind),
+        // The `@given` parameter is still an unresolved fixture input, a
+        // separate limit; the property-based limit itself is suppressed.
+        Some(StaticLimitKind::UnresolvedPytestFixture)
+    );
+    assert_eq!(
+        static_limit_for_change(
+            changed,
+            &owners[0],
+            &super::related_tests::related_test_candidates(&owners[0], &strong_helper)
+        )
+        .map(|limit| limit.kind),
+        None
+    );
+}

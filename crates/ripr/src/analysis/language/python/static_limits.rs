@@ -1,4 +1,4 @@
-use super::assertion_selection::PythonAssertionFocus;
+use super::assertion_selection::{PythonAssertionFocus, select_relevant_assertion};
 use super::probe_shape::classify_probe_shape;
 use super::related_tests::{
     PythonRelatedCandidate, body_calls_owner, dunder_method_class, is_python_identifier_char,
@@ -486,11 +486,18 @@ fn related_candidates_have_property_based_test_limit(
         .filter(|candidate| candidate.relation.uses_oracle())
         .any(|candidate| {
             test_uses_property_based_inputs(candidate.test)
-                && !candidate.test.assertions.iter().any(|assertion| {
-                    focus.admits(assertion)
-                        && assertion.oracle_strength.rank() >= OracleStrength::Strong.rank()
-                })
+                && !selected_assertion_is_strong(candidate.test, focus)
         })
+}
+
+/// Whether the assertion the rows select for this test is a strong oracle.
+/// A strong sibling-field or other-family assertion the selector passes over
+/// is not a known oracle for this change, so it never suppresses a
+/// test-side limit (#5572).
+fn selected_assertion_is_strong(test: &PythonTest, focus: &PythonAssertionFocus) -> bool {
+    select_relevant_assertion(&test.assertions, Some(focus))
+        .assertion()
+        .is_some_and(|assertion| assertion.oracle_strength.rank() >= OracleStrength::Strong.rank())
 }
 
 fn test_uses_property_based_inputs(test: &PythonTest) -> bool {
@@ -595,14 +602,16 @@ fn related_candidates_have_opaque_custom_assertion_limit(
         .iter()
         .filter(|candidate| candidate.relation.uses_oracle())
     {
-        for assertion in &candidate.test.assertions {
-            if assertion.oracle_shape == PythonOracleShape::UnknownCustomHelper {
-                has_opaque_helper = true;
-            } else if focus.admits(assertion)
-                && assertion.oracle_strength.rank() >= OracleStrength::Strong.rank()
-            {
-                has_known_strong_oracle = true;
-            }
+        if candidate
+            .test
+            .assertions
+            .iter()
+            .any(|assertion| assertion.oracle_shape == PythonOracleShape::UnknownCustomHelper)
+        {
+            has_opaque_helper = true;
+        }
+        if selected_assertion_is_strong(candidate.test, focus) {
+            has_known_strong_oracle = true;
         }
     }
 

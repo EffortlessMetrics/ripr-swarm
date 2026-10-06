@@ -30,6 +30,7 @@ pub(super) fn classify_probe_shape(line_text: &str) -> (ProbeFamily, DeltaKind) 
         || trimmed == "raise"
         || trimmed.starts_with("try:")
         || trimmed.starts_with("except ")
+        || trimmed.starts_with("except:")
         || trimmed.starts_with("except* ")
         || trimmed.starts_with("finally:")
         || (trimmed.starts_with("with ") && trimmed.contains("raises("))

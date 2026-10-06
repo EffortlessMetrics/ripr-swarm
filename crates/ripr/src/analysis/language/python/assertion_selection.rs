@@ -118,8 +118,8 @@ impl PythonAssertionFocus {
     }
 
     /// Whether `assertion` can observe this change at all (the family
-    /// filter). Static-limit suppression reads the same filter, so a
-    /// wrong-family strong assertion never hides a limit.
+    /// filter). Static-limit suppression reads the selection built on this
+    /// filter, so a wrong-family strong assertion never hides a limit.
     pub(super) fn admits(&self, assertion: &PythonAssertion) -> bool {
         self.error_handler_line || shape_matches_family(assertion.oracle_shape, &self.family)
     }
