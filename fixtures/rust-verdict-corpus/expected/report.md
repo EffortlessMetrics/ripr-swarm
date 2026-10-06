@@ -4,11 +4,11 @@ Spec: RIPR-SPEC-0219. Corpus version: 2026-10-04.8. Cases: 203.
 
 | Rate | Count | Rate |
 | --- | --- | --- |
-| False verdicts (all cases) | 64/203 | 0.3153 |
-| False actionable (of discriminated) | 58/106 | 0.5472 |
+| False verdicts (all cases) | 62/203 | 0.3054 |
+| False actionable (of discriminated) | 56/106 | 0.5283 |
 | False exposed (of not fully discriminated) | 6/97 | 0.0619 |
 | False silent (of not fully discriminated) | 0/97 | 0.0000 |
-| Ideal verdict | 81/203 | 0.3990 |
+| Ideal verdict | 83/203 | 0.4089 |
 | Abstained (limited or silent where acceptable) | 58/203 | 0.2857 |
 | Findings with a contradiction | 2/278 | 0.0072 |
 
@@ -17,7 +17,7 @@ By subject origin. Authored cases are written to fill cells the upstream cases l
 | Origin | Cases | False verdicts | False actionable | False exposed | False silent | Ideal | Abstained |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | authored | 169 | 57/169 | 51/86 | 6/83 | 0/83 | 73/169 | 39/169 |
-| upstream | 34 | 7/34 | 7/20 | 0/14 | 0/14 | 8/34 | 19/34 |
+| upstream | 34 | 5/34 | 5/20 | 0/14 | 0/14 | 10/34 | 19/34 |
 
 | Case | Origin | Truth | Ideal | Observed | Classes | Outcome | Changed since labeling | Contradictions |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -48,8 +48,8 @@ By subject origin. Authored cases are written to fill cells the upstream cases l
 | `semver-digits-ten` | upstream | partially_discriminated | gap | limited | no_static_path | abstained | no | none |
 | `semver-req-separator` | upstream | discriminated | credited | limited | no_static_path | abstained | no | none |
 | `strsim-sorensen-dice-equal` | upstream | discriminated | credited | gap | weakly_exposed | false_actionable | no | none |
-| `bytesize-as-kib-div` | upstream | discriminated | credited | gap | weakly_exposed | false_actionable | no | none |
-| `bytesize-as-mb-div` | upstream | discriminated | credited | gap | weakly_exposed | false_actionable | no | none |
+| `bytesize-as-kib-div` | upstream | discriminated | credited | credited | exposed | ideal | yes | none |
+| `bytesize-as-mb-div` | upstream | discriminated | credited | credited | exposed | ideal | yes | none |
 | `bytesize-as-kb-div` | upstream | not_discriminated | gap | limited | no_static_path | abstained | no | no_static_path_with_related_tests |
 | `bytesize-as-mib-div` | upstream | not_discriminated | gap | limited | no_static_path | abstained | no | no_static_path_with_related_tests |
 | `strsim-jaro-winkler-threshold-shift` | upstream | partially_discriminated | gap | gap | weakly_exposed | ideal | no | none |
