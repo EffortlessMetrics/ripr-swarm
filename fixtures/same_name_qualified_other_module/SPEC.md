@@ -19,9 +19,9 @@ never called, so no mutant of it can fail a test.
 
 ## Then
 
-The change reads as a gap with weak reach: no test is seen calling
-`a::render`, and `doubles_two` is listed only because it shares the file.
-The qualified call `b::render(..)` names `b::render`, so it is not a direct
+The change reads as `no_static_path`: no test is seen calling `a::render`,
+and `doubles_two` is excluded from the related tests (`related_tests_total:
+0`). The qualified call `b::render(..)` names `b::render`, so it is not a
 call of the changed function.
 
 ## Must Not
