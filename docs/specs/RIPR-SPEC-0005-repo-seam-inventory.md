@@ -44,8 +44,9 @@ facts built from existing test/oracle analysis.
 `discrimination_unknown`, `opaque`, `intentional`, `suppressed`).
 
 A `call_presence` seam asks whether tests notice that a call is gone. It is
-emitted only for a call whose value is discarded: a call statement, `let _ =`
-or a `_`-prefixed binding, a closure body, or the tail of a unit function. A
+emitted only for a call whose value is discarded: a call statement, `let _ =`,
+`_ =` or a `_`-prefixed binding, a closure or async block body, the tail of a
+unit function, or `return f()` in a unit function. A
 call whose value feeds a consumer (a condition or scrutinee, a named binding,
 an operand, an argument, a receiver, a field or index base, an element, a
 `for` iterable, or a non-unit return through block tails, `if` branches and

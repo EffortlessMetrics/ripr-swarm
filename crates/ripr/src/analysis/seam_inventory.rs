@@ -3334,6 +3334,25 @@ pub fn parse_code(s: &str, log: &mut Vec<u32>) -> Result<u32, CodeError> {
 pub fn tail_discarded(x: u32) {
     record(x)
 }
+
+pub fn early_unit_return(x: u32) {
+    if x == 0 {
+        return reset(x);
+    }
+    _ = drop_me(x);
+}
+
+pub fn spaced_unit(x: u32) -> ( ) {
+    spaced(x)
+}
+
+pub fn future_tail(x: u32) -> impl Future<Output = ()> {
+    async move { work(x).await }
+}
+
+pub fn checked(x: u32) -> Result<(), CodeError> {
+    commit(x)
+}
 "#;
         let index = index_from_files(&[(path.clone(), source)])?;
         let seams = inventory_seams_from_index(std::slice::from_ref(&path), &index);
@@ -3344,7 +3363,11 @@ pub fn tail_discarded(x: u32) {
             .collect::<Vec<_>>();
         let mut expected = vec![
             "announce(d)".to_string(),
+            "drop_me(x)".to_string(),
             "lock(d)".to_string(),
+            "reset(x)".to_string(),
+            "spaced(x)".to_string(),
+            "work(x)".to_string(),
             "log.push(c)".to_string(),
             "notify(d)".to_string(),
             "record(x)".to_string(),
@@ -3384,6 +3407,7 @@ pub fn tail_discarded(x: u32) {
             "ready()",
             "finish(total)",
             "Ok(finish(total))",
+            "commit(x)",
         ] {
             assert!(
                 consumed.contains(&call),

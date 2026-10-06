@@ -1587,8 +1587,9 @@ fn push_call_deletion_probe_shape(
 /// tails, `if` branches and match arms). Deleting such a call does not
 /// compile, so no mutant answers the repo-scope `call_presence` question;
 /// the consumer's own seam carries the behavior (#6677). Any other
-/// position, including a statement, `let _ =`, a `_`-prefixed binding and a
-/// closure body, reads as unconsumed so the `call_presence` seam is kept.
+/// position, including a statement, `let _ =`, `_ =`, a `_`-prefixed
+/// binding, a closure or async block body and a `return` from a unit
+/// function, reads as unconsumed so the `call_presence` seam is kept.
 fn call_value_is_consumed(call: &ra_ap_syntax::SyntaxNode) -> bool {
     use ra_ap_syntax::SyntaxKind as K;
     let mut node = call.clone();
@@ -1599,8 +1600,17 @@ fn call_value_is_consumed(call: &ra_ap_syntax::SyntaxNode) -> bool {
             | K::AWAIT_EXPR
             | K::REF_EXPR
             | K::CAST_EXPR
-            | K::BLOCK_EXPR
             | K::MATCH_ARM_LIST => {}
+            // An async block's tail is the future's output, not the
+            // enclosing function's value; read it as unconsumed like a
+            // closure body.
+            K::BLOCK_EXPR => {
+                if ast::BlockExpr::cast(parent.clone())
+                    .is_some_and(|block| block.async_token().is_some())
+                {
+                    return false;
+                }
+            }
             K::STMT_LIST => {
                 let is_tail = ast::StmtList::cast(parent.clone())
                     .and_then(|list| list.tail_expr())
@@ -1609,11 +1619,17 @@ fn call_value_is_consumed(call: &ra_ap_syntax::SyntaxNode) -> bool {
                     return false;
                 }
             }
-            K::FN => {
-                return ast::Fn::cast(parent)
-                    .and_then(|function| function.ret_type())
-                    .and_then(|ret| ret.ty())
-                    .is_some_and(|ty| ty.syntax().text().to_string().trim() != "()");
+            K::FN => return fn_returns_value(&parent),
+            // `return f();` in a unit function still compiles as `return;`.
+            K::RETURN_EXPR => return returning_fn_returns_value(&parent),
+            // `_ = f();` discards the value like `let _ = f();`.
+            K::BIN_EXPR => {
+                let discards = ast::BinExpr::cast(parent.clone()).is_some_and(|expr| {
+                    matches!(expr.op_kind(), Some(ast::BinaryOp::Assignment { op: None }))
+                        && matches!(expr.lhs(), Some(ast::Expr::UnderscoreExpr(_)))
+                        && expr.rhs().is_some_and(|rhs| rhs.syntax() == &node)
+                });
+                return !discards;
             }
             K::IF_EXPR | K::WHILE_EXPR => {
                 let is_condition = parent
@@ -1652,14 +1668,12 @@ fn call_value_is_consumed(call: &ra_ap_syntax::SyntaxNode) -> bool {
             }
             K::MATCH_GUARD
             | K::LET_EXPR
-            | K::BIN_EXPR
             | K::PREFIX_EXPR
             | K::ARG_LIST
             | K::METHOD_CALL_EXPR
             | K::CALL_EXPR
             | K::FIELD_EXPR
             | K::INDEX_EXPR
-            | K::RETURN_EXPR
             | K::RECORD_EXPR_FIELD
             | K::TUPLE_EXPR
             | K::ARRAY_EXPR
@@ -1676,6 +1690,39 @@ fn call_value_is_consumed(call: &ra_ap_syntax::SyntaxNode) -> bool {
             _ => return false,
         }
         node = parent;
+    }
+    false
+}
+
+/// Whether a function declares a non-unit return type. `()` written with
+/// spaces or comments is still unit.
+fn fn_returns_value(function: &ra_ap_syntax::SyntaxNode) -> bool {
+    ast::Fn::cast(function.clone())
+        .and_then(|function| function.ret_type())
+        .and_then(|ret| ret.ty())
+        .is_some_and(|ty| match ty {
+            ast::Type::TupleType(tuple) => tuple.fields().next().is_some(),
+            _ => true,
+        })
+}
+
+/// Whether the function a `return` leaves returns a value. A `return`
+/// inside a closure or async block leaves that body instead, whose type is
+/// not checked here, so it reads as unconsumed.
+fn returning_fn_returns_value(return_expr: &ra_ap_syntax::SyntaxNode) -> bool {
+    use ra_ap_syntax::SyntaxKind as K;
+    for ancestor in return_expr.ancestors().skip(1) {
+        match ancestor.kind() {
+            K::FN => return fn_returns_value(&ancestor),
+            K::CLOSURE_EXPR => return false,
+            K::BLOCK_EXPR
+                if ast::BlockExpr::cast(ancestor.clone())
+                    .is_some_and(|block| block.async_token().is_some()) =>
+            {
+                return false;
+            }
+            _ => {}
+        }
     }
     false
 }
