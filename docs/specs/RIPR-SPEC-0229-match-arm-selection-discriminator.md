@@ -20,11 +20,13 @@ Linked plan:
 
 Linked issues:
 
-- #5432 (unknown-not-a-gap rule 3 withholds the canonical sibling-arm gap)
+- #5432 (a proposed unknown-not-a-gap rule 3 withheld the canonical
+  sibling-arm gap; that rule was dropped, #6666)
 
 Linked PRs:
 
-- #5416 (unknown, not a gap: rule 3 `rust_oracle_target_unresolved`)
+- #5416 (unknown, not a gap, RIPR-SPEC-0240; its proposed rule 3
+  `rust_oracle_target_unresolved` was dropped, #6666)
 - #5638 (first implementation; see Implementation Status)
 
 Support-tier impact:
@@ -59,9 +61,10 @@ Three wrong outcomes follow:
 
 1. **Correct gaps abstain.** `fixtures/match_arm_blind` has one test,
    `assert_eq!(reason(Some(5)), 6)`, and an added `None => 0` arm. No test
-   selects `None`. Under #5416 rule 3 a strong nearest oracle with no named
-   missing discriminator is withheld as `static_unknown`
-   (`rust_oracle_target_unresolved`), so a real gap reads as an analyzer limit.
+   selects `None`. With no named missing discriminator the gap has no
+   stated cause, and a rule that withholds a strong nearest oracle without one
+   (#5416's proposed rule 3, `rust_oracle_target_unresolved`, dropped for this
+   reason in #6666) reads the real gap as an analyzer limit.
    #5432 counts 24 findings across the `match_arm_*`,
    `error_path_diagnostic_*` and `owner_return_pin_identity_traps` fixtures
    on the same route.
@@ -127,16 +130,16 @@ selects the changed arm, activation emits one missing discriminator:
 Observed values keep their constructor (`Some(5)`, not `5`).
 
 The finding keeps its gap (`weakly_exposed` when a related test holds an
-oracle on the result, `reachable_unrevealed` when none does). Because a
-missing discriminator is named, the #5416 unknown-not-a-gap rule 3 does not
-withhold it.
+oracle on the result, `reachable_unrevealed` when none does), now with a
+named cause.
 
 When the change is to the arm's pattern rather than its body, the arm is
 named only when no resolved call selects it under either the original or
 the changed pattern: an input that moved between arms is a discriminator.
 
 When any related call is unresolved, or a guard blocks the decision, no
-missing discriminator is named. Rule 3 then applies unchanged.
+missing discriminator is named, and the finding keeps the class it would
+have without one.
 
 ### Crediting the selected arm
 
@@ -165,8 +168,7 @@ variant token in an assertion does not confirm the arm. This closes the
 expected-side confirmation in Problem item 3. When any related call is
 unresolved, token matching does not confirm the arm either: only a resolved
 selecting call with an exact oracle confirms, and otherwise the finding
-stays below `exposed` (under the #5416 unknown-not-a-gap rule 3 it reads
-`static_unknown` when its nearest oracle is strong).
+stays below `exposed`.
 
 ### Decisions
 
@@ -278,12 +280,11 @@ implies but does not spell out:
 ## Required Evidence
 
 - `fixtures/match_arm_blind` reads `weakly_exposed` with a missing
-  discriminator whose `value` is `None`, on main and with the #5416
-  unknown-not-a-gap rules applied.
+  discriminator whose `value` is `None`, on main and with RIPR-SPEC-0240
+  applied (0240 does not touch `weakly_exposed`).
 - A selected-arm control (`assert_eq!(reason(None), 0)`) reads `exposed`.
-- An unresolved-input control reads no named missing discriminator; with
-  the #5416 unknown-not-a-gap rules applied it reads `static_unknown` with
-  `rust_oracle_target_unresolved`.
+- An unresolved-input control reads no named missing discriminator and is
+  not upgraded.
 - A guarded-arm control reads no named missing discriminator.
 - The expected-side trap reads below `exposed`.
 - Golden drift on the #5432 list is reviewed row by row: each finding that
@@ -310,8 +311,7 @@ the diff changes `None => 1` to `None => 0`.
    `Some(5)`.
 2. Test `assert_eq!(reason(None), 0)`: `exposed`.
 3. Test `let x = make(); assert_eq!(reason(x), 6)`: no named missing
-   discriminator; `static_unknown` / `rust_oracle_target_unresolved` under
-   the #5416 unknown-not-a-gap rule 3.
+   discriminator; stays below `exposed`.
 4. `match k { Kind::A => 1, _ => 2 }`, the diff changes `_ => 0` to `_ => 2`, test
    `assert_eq!(f(Kind::A), 1)`: `weakly_exposed`; missing discriminator
    `value` `_`.
@@ -325,8 +325,7 @@ the diff changes `None => 1` to `None => 0`.
    `weakly_exposed`; missing discriminator `value` `1..=9`.
 8. Same `match`, the diff changes the pattern `1..=8` to `1..=9`. Test
    `assert_eq!(f(5), "digit")`: not `exposed` (5 selects the arm under both
-   patterns) and no missing discriminator is named, so with a strong oracle
-   the #5416 unknown-not-a-gap rule 3 reads it `static_unknown`. Naming the
+   patterns) and no missing discriminator is named. Naming the
    boundary input (`9`) as missing, as RIPR-SPEC-0186 does for predicates,
    is a follow-up.
    Test `assert_eq!(f(9), "digit")`: `exposed` (9 moved from `_` to the
@@ -350,8 +349,6 @@ the diff changes `None => 1` to `None => 0`.
   helper).
 - Planned: fixtures for examples 3, 7, 8 and 9 once ranges and `let`
   arguments are implemented.
-- Planned: a `gap_admission` test showing rule 3 keeps the gap once the arm is
-  named.
 
 ## Implementation Mapping
 
@@ -371,8 +368,6 @@ the diff changes `None => 1` to `None => 0`.
   `crates/ripr/src/output/related_test_miss.rs`: an examined test of a named
   arm misses an input (`missing_input`, "no test input selects arm"), not an
   exact assertion (RIPR-SPEC-0224).
-- `crates/ripr/src/analysis/classify/gap_admission.rs` (#5416): no change;
-  rule 3 already keeps a gap with a named missing discriminator.
 
 ## Metrics
 

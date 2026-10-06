@@ -26,8 +26,8 @@ Start here:
     - 4 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
-  ripr explain --root fixtures/unsafe_boundary_probe/input --diff fixtures/unsafe_boundary_probe/diff.patch --mode fast probe:src_lib.rs:static_unknown:eff3c10e
-  ripr context --root fixtures/unsafe_boundary_probe/input --diff fixtures/unsafe_boundary_probe/diff.patch --mode fast --at probe:src_lib.rs:static_unknown:eff3c10e
+  ripr explain --root <cwd>/fixtures/unsafe_boundary_probe/input --diff <cwd>/fixtures/unsafe_boundary_probe/diff.patch --mode fast probe:src_lib.rs:static_unknown:eff3c10e
+  ripr context --root <cwd>/fixtures/unsafe_boundary_probe/input --diff <cwd>/fixtures/unsafe_boundary_probe/diff.patch --mode fast --at probe:src_lib.rs:static_unknown:eff3c10e
 
 Hidden:
   2 lower-priority finding(s) omitted from default human output.

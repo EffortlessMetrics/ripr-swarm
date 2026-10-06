@@ -232,6 +232,19 @@ Updated:
 ## Pending — guarded_result_match_sibling_variant (18)
 
 Reason:
+RIPR-SPEC-0116: the check drill-in binds --root to the resolved repository (#3948); goldens carry the <cwd>/ placeholder
+
+Command:
+`cargo xtask goldens bless guarded_result_match_sibling_variant --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — guarded_result_match_sibling_variant (19)
+
+Reason:
 RIPR-SPEC-0005: return Err(X) keeps one error_path probe, on the Err(X) constructor (#6914); the finding class is unchanged, only its expression and probe id move from the return span to the constructor
 
 Command:

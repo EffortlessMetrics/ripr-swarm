@@ -34,9 +34,33 @@ fn equality_boundary_discounts() {
 "#;
 
 fn run_ripr(current_dir: &Path, args: &[&str]) -> Result<Output, String> {
-    Command::new(env!("CARGO_BIN_EXE_ripr"))
-        .current_dir(current_dir)
-        .args(args)
+    run_ripr_with_env_opt(current_dir, args, None)
+}
+
+/// [`run_ripr`] with one child-scoped environment override. The variable is
+/// set on the child only, so parallel tests never observe it.
+fn run_ripr_with_env(
+    current_dir: &Path,
+    args: &[&str],
+    env_key: &str,
+    env_value: &str,
+) -> Result<Output, String> {
+    run_ripr_with_env_opt(current_dir, args, Some((env_key, env_value)))
+}
+
+/// The one spawn site behind [`run_ripr`] and [`run_ripr_with_env`], so the
+/// file keeps a single direct-spawn construction for the `ripr` binary.
+fn run_ripr_with_env_opt(
+    current_dir: &Path,
+    args: &[&str],
+    env_override: Option<(&str, &str)>,
+) -> Result<Output, String> {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_ripr"));
+    command.current_dir(current_dir).args(args);
+    if let Some((key, value)) = env_override {
+        command.env(key, value);
+    }
+    command
         .output()
         .map_err(|error| format!("spawn ripr {args:?} in {}: {error}", current_dir.display()))
 }
@@ -331,6 +355,25 @@ fn start_before_after(
 
 fn run_after(journey: &Journey) -> Result<Output, String> {
     run_after_attempt(&journey.root, &journey.root_arg, &journey.attempt_id)
+}
+
+fn run_after_with_env(journey: &Journey, env_key: &str, env_value: &str) -> Result<Output, String> {
+    run_ripr_with_env(
+        &journey.root,
+        &[
+            "agent",
+            "repair",
+            "--json",
+            "--root",
+            &journey.root_arg,
+            "--attempt",
+            &journey.attempt_id,
+            "--phase",
+            "after",
+        ],
+        env_key,
+        env_value,
+    )
 }
 
 fn run_after_attempt(root: &Path, root_arg: &str, attempt_id: &str) -> Result<Output, String> {
@@ -1066,5 +1109,45 @@ fn b6_invalid_packet_and_manifest_are_rejected_before_any_receipt() -> Result<()
         &manifest_journey.attempt_id,
         "invalid attempt manifest",
     )?;
+    Ok(())
+}
+
+/// #6917: the traced after phase labels its state recapture
+/// `reevaluate_*`, never `baseline_*`, so stderr aggregated by phase
+/// attributes the recapture to the after phase. The before-phase trace
+/// contract (spans present when enabled, silent otherwise, `--json`
+/// stdout intact) is pinned by
+/// `repair_before_phase_emits_persist_trace_when_enabled`.
+#[test]
+fn b6_after_phase_labels_recapture_spans() -> Result<(), String> {
+    let (journey, _owned) = start_before("agentic-b6-reevaluate-trace")?;
+    add_in_surface_test(&journey.root)?;
+    let after = run_after_with_env(&journey, "RIPR_PERSIST_LATENCY_TRACE", "1")?;
+    if !after.status.success() {
+        return Err(format!(
+            "in-surface after-phase must succeed for the trace oracle:\n{}",
+            combined_output(&after)
+        ));
+    }
+    let stderr = String::from_utf8_lossy(&after.stderr);
+    // The after phase captures more than once (verdict plus finish paths),
+    // so the oracle is the label on every capture, not the capture count.
+    for span in [
+        "phase=reevaluate_git_inventory ",
+        "phase=reevaluate_worktree_identity ",
+        "phase=reevaluate_index_records ",
+        "phase=reevaluate_stability_recheck ",
+    ] {
+        if stderr.matches(span).count() < 1 {
+            return Err(format!(
+                "traced after phase must print {span}at least once:\n{stderr}"
+            ));
+        }
+    }
+    if stderr.contains("phase=baseline_") {
+        return Err(format!(
+            "traced after phase must not emit baseline_* spans:\n{stderr}"
+        ));
+    }
     Ok(())
 }

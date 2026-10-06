@@ -27,10 +27,10 @@ Start here:
     - 12 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
-  ripr explain --root fixtures/guarded_result_match_swallowed/input --diff fixtures/guarded_result_match_swallowed/diff.patch --mode fast probe:src_lib.rs:error_path:bcd75653
-  ripr context --root fixtures/guarded_result_match_swallowed/input --diff fixtures/guarded_result_match_swallowed/diff.patch --mode fast --at probe:src_lib.rs:error_path:bcd75653
+  ripr explain --root <cwd>/fixtures/guarded_result_match_swallowed/input --diff <cwd>/fixtures/guarded_result_match_swallowed/diff.patch --mode fast probe:src_lib.rs:error_path:bcd75653
+  ripr context --root <cwd>/fixtures/guarded_result_match_swallowed/input --diff <cwd>/fixtures/guarded_result_match_swallowed/diff.patch --mode fast --at probe:src_lib.rs:error_path:bcd75653
 Write a test for it:
-  ripr agent stub --root fixtures/guarded_result_match_swallowed/input --at src/lib.rs:9
+  ripr agent stub --root <cwd>/fixtures/guarded_result_match_swallowed/input --at src/lib.rs:9
 
 Hidden:
   1 lower-priority finding(s) omitted from default human output.

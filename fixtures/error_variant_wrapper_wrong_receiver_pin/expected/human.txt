@@ -24,8 +24,8 @@ Start here:
     - 9 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
-  ripr explain --root fixtures/error_variant_wrapper_wrong_receiver_pin/input --diff fixtures/error_variant_wrapper_wrong_receiver_pin/diff.patch --mode fast probe:src_lib.rs:call_deletion:0fc3c3da
-  ripr context --root fixtures/error_variant_wrapper_wrong_receiver_pin/input --diff fixtures/error_variant_wrapper_wrong_receiver_pin/diff.patch --mode fast --at probe:src_lib.rs:call_deletion:0fc3c3da
+  ripr explain --root <cwd>/fixtures/error_variant_wrapper_wrong_receiver_pin/input --diff <cwd>/fixtures/error_variant_wrapper_wrong_receiver_pin/diff.patch --mode fast probe:src_lib.rs:call_deletion:0fc3c3da
+  ripr context --root <cwd>/fixtures/error_variant_wrapper_wrong_receiver_pin/input --diff <cwd>/fixtures/error_variant_wrapper_wrong_receiver_pin/diff.patch --mode fast --at probe:src_lib.rs:call_deletion:0fc3c3da
 
 Hidden:
   1 lower-priority finding(s) omitted from default human output.

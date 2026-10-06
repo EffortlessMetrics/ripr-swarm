@@ -34,6 +34,7 @@
 //! either direction; the verdict stays with the existing oracle rules and the
 //! finding carries a named `boundary_activation: unresolved` limitation.
 
+use super::assertion_selection::{PythonAssertionFocus, select_relevant_assertion};
 use super::discriminators::{is_literal_python_model_field_value, python_string_literal_value};
 use super::module_constants::PythonModuleConstant;
 use super::no_behavior::{
@@ -42,8 +43,7 @@ use super::no_behavior::{
 };
 use super::related_tests::{
     PythonRelatedCandidate, import_source_module_matches_owner, is_python_identifier_char,
-    owner_module_callees, owner_module_paths, python_text_hides_code, strongest_assertion,
-    test_body_binds_local,
+    owner_module_callees, owner_module_paths, python_text_hides_code, test_body_binds_local,
 };
 use super::{PythonOwner, PythonTest};
 use crate::domain::{OracleStrength, OwnerKind, ValueContext, ValueFact};
@@ -85,6 +85,7 @@ pub(super) fn python_boundary_evidence(
     line_text: &str,
     owner: &PythonOwner,
     related_candidates: &[PythonRelatedCandidate<'_>],
+    focus: &PythonAssertionFocus,
 ) -> Option<PythonBoundaryEvidence> {
     let condition = predicate_condition(line_text);
     let operators = relational_operators(&condition);
@@ -114,7 +115,7 @@ pub(super) fn python_boundary_evidence(
         })
         .cloned()
         .collect();
-    let rows = strong_owner_call_rows(owner, &constants, related_candidates);
+    let rows = strong_owner_call_rows(owner, &constants, related_candidates, focus);
     let mut observed_values: Vec<ValueFact> = rows
         .iter()
         .flat_map(|row| {
@@ -492,6 +493,7 @@ fn strong_owner_call_rows(
     owner: &PythonOwner,
     constants: &[PythonModuleConstant],
     related_candidates: &[PythonRelatedCandidate<'_>],
+    focus: &PythonAssertionFocus,
 ) -> Vec<CallRow> {
     let (method_call, skip) = match owner.owner_kind {
         Some(OwnerKind::Method) => (true, 1),
@@ -512,9 +514,13 @@ fn strong_owner_call_rows(
         if !candidate.relation.uses_oracle() {
             continue;
         }
-        let strong = strongest_assertion(&candidate.test.assertions).is_some_and(|assertion| {
-            assertion.oracle_strength.rank() >= OracleStrength::Strong.rank()
-        });
+        // A strong row is one whose family-selected assertion (#5572) is
+        // strong: the same assertion the finding's row displays.
+        let strong = select_relevant_assertion(&candidate.test.assertions, Some(focus))
+            .assertion()
+            .is_some_and(|assertion| {
+                assertion.oracle_strength.rank() >= OracleStrength::Strong.rank()
+            });
         if !strong {
             continue;
         }

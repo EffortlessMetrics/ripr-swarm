@@ -26,8 +26,8 @@ Start here:
     - 4 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
-  ripr explain --root fixtures/multi_hunk_removed_line_wrong_target/input --diff fixtures/multi_hunk_removed_line_wrong_target/diff.patch --mode fast probe:src_lib.rs:static_unknown:17e03c34
-  ripr context --root fixtures/multi_hunk_removed_line_wrong_target/input --diff fixtures/multi_hunk_removed_line_wrong_target/diff.patch --mode fast --at probe:src_lib.rs:static_unknown:17e03c34
+  ripr explain --root <cwd>/fixtures/multi_hunk_removed_line_wrong_target/input --diff <cwd>/fixtures/multi_hunk_removed_line_wrong_target/diff.patch --mode fast probe:src_lib.rs:static_unknown:17e03c34
+  ripr context --root <cwd>/fixtures/multi_hunk_removed_line_wrong_target/input --diff <cwd>/fixtures/multi_hunk_removed_line_wrong_target/diff.patch --mode fast --at probe:src_lib.rs:static_unknown:17e03c34
 
 Hidden:
   3 lower-priority finding(s) omitted; 2 base-side evidence, not candidate edit targets.

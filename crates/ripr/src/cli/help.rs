@@ -395,13 +395,13 @@ mod tests {
     }
     use super::{
         AGENT_BRIEF_HELP, AGENT_CARD_HELP, AGENT_HELP, AGENT_PACKET_HELP, AGENT_RECEIPT_HELP,
-        AGENT_REVIEW_SUMMARY_HELP, AGENT_START_HELP, AGENT_STATUS_HELP, AGENT_VERIFY_HELP,
-        ANNOTATIONS_HELP, ASSISTANT_LOOP_HELP, BASELINE_HELP, CACHE_CLEAR_HELP, CACHE_STATUS_HELP,
-        CALIBRATE_HELP, CHECK_HELP, CONFIG_HELP, CONTEXT_HELP, COVERAGE_GRIP_HELP, DIFF_HELP,
-        DOCTOR_HELP, EVIDENCE_HEALTH_HELP, EXPLAIN_HELP, FEEDBACK_EXPORT_HELP,
-        FEEDBACK_RECORD_HELP, FIRST_ACTION_HELP, FIRST_PR_HELP, GATE_HELP, HELP, HELP_ALL,
-        IMPACTED_EVIDENCE_HELP, INIT_HELP, LSP_HELP, OUTCOME_HELP, PILOT_HELP, PLUS_HELP,
-        POLICY_HELP, PR_COMMENTS_HELP, PR_EVIDENCE_HELP, PR_LEDGER_HELP, PR_REVIEW_HELP,
+        AGENT_REPAIR_HELP, AGENT_REVIEW_SUMMARY_HELP, AGENT_START_HELP, AGENT_STATUS_HELP,
+        AGENT_VERIFY_HELP, ANNOTATIONS_HELP, ASSISTANT_LOOP_HELP, BASELINE_HELP, CACHE_CLEAR_HELP,
+        CACHE_STATUS_HELP, CALIBRATE_HELP, CHECK_HELP, CONFIG_HELP, CONTEXT_HELP,
+        COVERAGE_GRIP_HELP, DIFF_HELP, DOCTOR_HELP, EVIDENCE_HEALTH_HELP, EXPLAIN_HELP,
+        FEEDBACK_EXPORT_HELP, FEEDBACK_RECORD_HELP, FIRST_ACTION_HELP, FIRST_PR_HELP, GATE_HELP,
+        HELP, HELP_ALL, IMPACTED_EVIDENCE_HELP, INIT_HELP, LSP_HELP, OUTCOME_HELP, PILOT_HELP,
+        PLUS_HELP, POLICY_HELP, PR_COMMENTS_HELP, PR_EVIDENCE_HELP, PR_LEDGER_HELP, PR_REVIEW_HELP,
         PR_SUMMARY_HELP, REPORTS_HELP, RERUN_HELP, REVIEW_COMMENTS_HELP, SWARM_HELP,
         SWARM_INGEST_HELP, SWARM_QUEUE_HELP, ZERO_HELP, print_agent_brief_help,
         print_agent_card_help, print_agent_help, print_agent_packet_help, print_agent_receipt_help,
@@ -636,6 +636,16 @@ mod tests {
         // index scope, so a caller can predict the wall-clock difference.
         assert!(CHECK_HELP.contains("Cost class: whole-workspace modes"));
         assert!(CHECK_HELP.contains("order of magnitude longer"));
+    }
+
+    #[test]
+    fn repair_help_names_the_persist_latency_trace_env() {
+        // #6897, same #4946(d) rule as the check surface: every env var a
+        // repair user can set is documented on the same
+        // "Environment variables:" surface.
+        assert!(AGENT_REPAIR_HELP.contains("RIPR_PERSIST_LATENCY_TRACE"));
+        assert!(AGENT_REPAIR_HELP.contains("emits diagnostic persist-phase"));
+        assert!(AGENT_REPAIR_HELP.contains("Presence enables"));
     }
 
     #[test]

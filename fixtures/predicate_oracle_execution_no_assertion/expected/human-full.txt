@@ -43,5 +43,5 @@ Weakness
 Next step
   Add a meaningful assertion that observes the changed value, branch, error, field, event, or side effect.
 Drill in:
-  ripr explain --root fixtures/predicate_oracle_execution_no_assertion/input --diff fixtures/predicate_oracle_execution_no_assertion/diff.patch --mode fast probe:src_lib.rs:predicate:c80557eb
-  ripr context --root fixtures/predicate_oracle_execution_no_assertion/input --diff fixtures/predicate_oracle_execution_no_assertion/diff.patch --mode fast --at probe:src_lib.rs:predicate:c80557eb
+  ripr explain --root <cwd>/fixtures/predicate_oracle_execution_no_assertion/input --diff <cwd>/fixtures/predicate_oracle_execution_no_assertion/diff.patch --mode fast probe:src_lib.rs:predicate:c80557eb
+  ripr context --root <cwd>/fixtures/predicate_oracle_execution_no_assertion/input --diff <cwd>/fixtures/predicate_oracle_execution_no_assertion/diff.patch --mode fast --at probe:src_lib.rs:predicate:c80557eb

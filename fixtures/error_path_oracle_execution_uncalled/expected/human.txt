@@ -28,10 +28,10 @@ Start here:
     - 6 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
-  ripr explain --root fixtures/error_path_oracle_execution_uncalled/input --diff fixtures/error_path_oracle_execution_uncalled/diff.patch --mode fast probe:src_lib.rs:error_path:fedbf836
-  ripr context --root fixtures/error_path_oracle_execution_uncalled/input --diff fixtures/error_path_oracle_execution_uncalled/diff.patch --mode fast --at probe:src_lib.rs:error_path:fedbf836
+  ripr explain --root <cwd>/fixtures/error_path_oracle_execution_uncalled/input --diff <cwd>/fixtures/error_path_oracle_execution_uncalled/diff.patch --mode fast probe:src_lib.rs:error_path:fedbf836
+  ripr context --root <cwd>/fixtures/error_path_oracle_execution_uncalled/input --diff <cwd>/fixtures/error_path_oracle_execution_uncalled/diff.patch --mode fast --at probe:src_lib.rs:error_path:fedbf836
 Write a test for it:
-  ripr agent stub --root fixtures/error_path_oracle_execution_uncalled/input --at src/lib.rs:5
+  ripr agent stub --root <cwd>/fixtures/error_path_oracle_execution_uncalled/input --at src/lib.rs:5
 
 Hidden:
   All 1 omitted finding(s) are base-side evidence, not candidate edit targets.

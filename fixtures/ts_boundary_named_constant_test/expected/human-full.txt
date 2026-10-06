@@ -74,8 +74,8 @@ TypeScript repair packet (advisory)
 Next step
   TypeScript preview advisory: changed behavior is observed under a strong oracle; verify the assertion targets the changed boundary value.
 Drill in:
-  ripr explain --root fixtures/ts_boundary_named_constant_test/input --diff fixtures/ts_boundary_named_constant_test/diff.patch --mode fast probe:src_pricing.ts:typescript_preview:129143e0
-  ripr context --root fixtures/ts_boundary_named_constant_test/input --diff fixtures/ts_boundary_named_constant_test/diff.patch --mode fast --at probe:src_pricing.ts:typescript_preview:129143e0
+  ripr explain --root <cwd>/fixtures/ts_boundary_named_constant_test/input --diff <cwd>/fixtures/ts_boundary_named_constant_test/diff.patch --mode fast probe:src_pricing.ts:typescript_preview:129143e0
+  ripr context --root <cwd>/fixtures/ts_boundary_named_constant_test/input --diff <cwd>/fixtures/ts_boundary_named_constant_test/diff.patch --mode fast --at probe:src_pricing.ts:typescript_preview:129143e0
 
 INFO src/pricing.ts:11
   id: probe:src_pricing.ts:typescript_preview:1c8a3e62
@@ -142,8 +142,8 @@ TypeScript repair packet (advisory)
 Next step
   TypeScript preview advisory: changed behavior is observed under a strong oracle; verify the assertion targets the changed boundary value.
 Drill in:
-  ripr explain --root fixtures/ts_boundary_named_constant_test/input --diff fixtures/ts_boundary_named_constant_test/diff.patch --mode fast probe:src_pricing.ts:typescript_preview:1c8a3e62
-  ripr context --root fixtures/ts_boundary_named_constant_test/input --diff fixtures/ts_boundary_named_constant_test/diff.patch --mode fast --at probe:src_pricing.ts:typescript_preview:1c8a3e62
+  ripr explain --root <cwd>/fixtures/ts_boundary_named_constant_test/input --diff <cwd>/fixtures/ts_boundary_named_constant_test/diff.patch --mode fast probe:src_pricing.ts:typescript_preview:1c8a3e62
+  ripr context --root <cwd>/fixtures/ts_boundary_named_constant_test/input --diff <cwd>/fixtures/ts_boundary_named_constant_test/diff.patch --mode fast --at probe:src_pricing.ts:typescript_preview:1c8a3e62
 
 
 Note: 1 TypeScript file analyzed under preview support — preview evidence is advisory and may be incomplete. Treat its findings as advisory, not Rust-grade.

@@ -308,9 +308,12 @@ pub(crate) struct CachedSeamLimitInfo {
 /// predecessor proximity-only confirmation after that semantic change.
 /// `1.40`: probe shapes gain the parser-owned end byte (#5336); old fact
 /// entries lack span geometry and must cold-recompute.
-/// `1.41`: `return Err(X)` keeps one error_path shape, on the `Err(X)`
-/// constructor (#6914); entries carrying the `return`-span twin must miss.
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.41";
+/// `1.41`: asserted-Err guarded matches (#6673), `ok_or(Variant)?` owner
+/// propagation (#6695) and the sibling-variant reveal gate change oracle
+/// facts, error-path witnesses and confirmations.
+/// `1.42`: `return Err(X)` and `Err(Error::X(..))` keep one error_path
+/// shape on the outer `Err(..)` constructor (#6914).
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.42";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -390,8 +393,9 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.41";
 /// `0.45`: same #6633 match-arm confirmation transition as full `1.39`.
 /// `0.46`: seams gain optional span geometry (#5336), same semantic
 /// transition as full `1.40`.
-/// `0.47`: same single error_path transition as full `1.41` (#6914).
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.47";
+/// `0.47`: same asserted-Err/`ok_or?` transition as full `1.41`.
+/// `0.48`: same single error_path transition as full `1.42`.
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.48";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -473,8 +477,9 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.47";
 /// `0.45`: same #6633 match-arm confirmation transition as full `1.39`.
 /// `0.46`: seams gain optional span geometry (#5336), same semantic
 /// transition as full `1.40`.
-/// `0.47`: same single error_path transition as full `1.41` (#6914).
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.47";
+/// `0.47`: same asserted-Err/`ok_or?` transition as full `1.41`.
+/// `0.48`: same single error_path transition as full `1.42`.
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.48";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -627,9 +632,13 @@ pub(crate) const COUNT_CACHE_SCHEMA_VERSION: &str = "0.2";
 /// `1.30`: files that only parse as Rust 2021 (`gen` identifiers) are
 /// parser-backed, and literal facts include char and byte literals (#5359).
 /// Earlier lexical-fallback and literal facts must miss.
-/// `1.31`: `return Err(X)` no longer stores a second error_path probe
-/// shape spanning the `return` (#6914).
-pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.31";
+/// `1.31`: the guarded-match scan emits the #6673 asserted-Err form
+/// (diverging Ok arm, exact assertion Err arm), and a `return`/tail
+/// `x.ok_or(Type::Variant)?` line now produces an ErrorPath probe shape
+/// (#6695); `1.30` facts lack both.
+/// `1.32`: `return Err(X)` and `Err(Error::X(..))` produce one ErrorPath
+/// shape, on the outer `Err(..)` constructor (#6914).
+pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.32";
 
 /// Keep the best-effort classified-seam cache from turning a successful live
 /// analysis into an unbounded post-analysis stall on large repos. Larger live
@@ -3908,8 +3917,9 @@ mod tests {
         // 1.28 -> 1.29: probe shapes gain the parser-owned end byte (#5336).
         // 1.29 -> 1.30: Rust 2021 parse fallback and char/byte literal
         // facts (#5359).
-        // 1.30 -> 1.31: one error_path shape per `return Err(X)` (#6914).
-        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.31");
+        // 1.30 -> 1.31: the #6673 asserted-Err guarded-match form.
+        // 1.31 -> 1.32: one ErrorPath shape per error constructor (#6914).
+        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.32");
         // 1.4 -> 1.5: metadata-sourced harness validation (#3634) flips
         // verdicts for workspaces the manifest emulation approximated.
         // 1.5 -> 1.6: the #3636 reachability authority excludes
@@ -3965,8 +3975,10 @@ mod tests {
         // keeps at most weak oracle credit and keeps the gap open (#6026).
         // 1.38: compose #5713 with landed #6701; refuse both predecessors.
         // 1.39 -> 1.40: probe shapes gain the parser-owned end byte (#5336).
-        // 1.40 -> 1.41: one error_variant seam per `return Err(X)` (#6914).
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.41");
+        // 1.41: #6673 asserted-Err pins, #6695 ok_or propagation and the
+        // sibling-variant reveal gate.
+        // 1.41 -> 1.42: one error_path shape per error constructor (#6914).
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.42");
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
         // for the sharded and compact envelopes.
@@ -3999,9 +4011,10 @@ mod tests {
         // as the outer cache (#6026).
         // 0.44: same combined #5713/#6701 transition as full 1.38.
         // 0.45 -> 0.46: seams gain optional span geometry (#5336).
-        // 0.46 -> 0.47: same single error_path transition (#6914).
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.47");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.47");
+        // 0.47: same #6673/#6695 transition as full 1.41.
+        // 0.47 -> 0.48: same #6914 transition as full 1.42.
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.48");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.48");
     }
 
     #[test]

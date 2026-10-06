@@ -1629,6 +1629,11 @@ fn has_error_path_text(text: &str) -> bool {
         || text.contains("map_err")
         || text.contains("bail!")
         || text.contains("anyhow!")
+        // #6695: a `return`/tail `x.ok_or(Type::Variant)?` returns that error.
+        // Same fail-closed reader as the seam identity, so `E::Bad` is
+        // recognised without an `Error` suffix (PR #6786 review, Devin).
+        || (text.contains(".ok_or")
+            && crate::analysis::classify::changed_error_variant(text).is_some())
 }
 
 fn has_effect_text(text: &str) -> bool {
