@@ -4,20 +4,20 @@ Spec: RIPR-SPEC-0219. Corpus version: 2026-10-04.8. Cases: 203.
 
 | Rate | Count | Rate |
 | --- | --- | --- |
-| False verdicts (all cases) | 63/203 | 0.3103 |
-| False actionable (of discriminated) | 57/106 | 0.5377 |
+| False verdicts (all cases) | 60/203 | 0.2956 |
+| False actionable (of discriminated) | 54/106 | 0.5094 |
 | False exposed (of not fully discriminated) | 6/97 | 0.0619 |
 | False silent (of not fully discriminated) | 0/97 | 0.0000 |
-| Ideal verdict | 81/203 | 0.3990 |
-| Abstained (limited or silent where acceptable) | 59/203 | 0.2906 |
+| Ideal verdict | 80/203 | 0.3941 |
+| Abstained (limited or silent where acceptable) | 63/203 | 0.3103 |
 | Findings with a contradiction | 2/273 | 0.0073 |
 
 By subject origin. Authored cases are written to fill cells the upstream cases leave empty, so only the upstream rates describe real-world tests.
 
 | Origin | Cases | False verdicts | False actionable | False exposed | False silent | Ideal | Abstained |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| authored | 169 | 57/169 | 51/86 | 6/83 | 0/83 | 73/169 | 39/169 |
-| upstream | 34 | 6/34 | 6/20 | 0/14 | 0/14 | 8/34 | 20/34 |
+| authored | 169 | 55/169 | 49/86 | 6/83 | 0/83 | 74/169 | 40/169 |
+| upstream | 34 | 5/34 | 5/20 | 0/14 | 0/14 | 6/34 | 23/34 |
 
 | Case | Origin | Truth | Ideal | Observed | Classes | Outcome | Changed since labeling | Contradictions |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -31,9 +31,9 @@ By subject origin. Authored cases are written to fill cells the upstream cases l
 | `semver-max-comparators` | upstream | partially_discriminated | gap | limited | no_static_path | abstained | no | none |
 | `semver-caret-zero-minor` | upstream | partially_discriminated | gap | limited | no_static_path | abstained | no | none |
 | `hex-from-hex-odd-variant` | upstream | discriminated | credited | credited | exposed | ideal | yes | none |
-| `hex-decode-slice-odd` | upstream | discriminated | credited | gap | weakly_exposed | false_actionable | yes | none |
-| `hex-decode-slice-length` | upstream | partially_discriminated | gap | gap | weakly_exposed | ideal | yes | none |
-| `hex-encode-slice-length` | upstream | partially_discriminated | gap | gap | weakly_exposed | ideal | yes | none |
+| `hex-decode-slice-odd` | upstream | discriminated | credited | limited | infection_unknown | abstained | yes | none |
+| `hex-decode-slice-length` | upstream | partially_discriminated | gap | limited | infection_unknown | abstained | yes | none |
+| `hex-encode-slice-length` | upstream | partially_discriminated | gap | limited | infection_unknown | abstained | yes | none |
 | `itoa-two-digit-tail` | upstream | not_discriminated | gap | limited | no_static_path | abstained | no | none |
 | `regex-syntax-word-byte` | upstream | partially_discriminated | gap | gap | weakly_exposed | ideal | no | none |
 | `regex-syntax-max-scalar-two-byte` | upstream | discriminated | credited | gap | weakly_exposed | false_actionable | no | none |
@@ -109,16 +109,16 @@ By subject origin. Authored cases are written to fill cells the upstream cases l
 | `tokens-inner-rate-macro-reach` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | no | none |
 | `tokens-inner-bonus-test-macro-call` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | no | none |
 | `tokens-add-fee-integration-api` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | no | none |
-| `tokens-ext-start-map-or-binding` | authored | partially_discriminated | gap | limited | propagation_unknown | abstained | no | none |
-| `tokens-fits-binding-predicate` | authored | discriminated | credited | limited | propagation_unknown | abstained | no | none |
-| `tokens-long-flag-strip-prefix` | authored | discriminated | credited | gap | exposed, weakly_exposed | false_actionable | yes | none |
+| `tokens-ext-start-map-or-binding` | authored | partially_discriminated | gap | limited | infection_unknown | abstained | yes | none |
+| `tokens-fits-binding-predicate` | authored | discriminated | credited | limited | infection_unknown | abstained | yes | none |
+| `tokens-long-flag-strip-prefix` | authored | discriminated | credited | credited | exposed, infection_unknown | ideal | yes | none |
 | `tokens-byte-at-unsafe-fn` | authored | discriminated | credited | gap | static_unknown, weakly_exposed | false_actionable | no | none |
 | `shop-score-imported-across-crates` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | no | none |
 | `shop-rebate-same-name-other-crate` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | no | none |
 | `shop-discount-path-dependent-test` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | no | none |
 | `shop-item-cents-trait-method` | authored | discriminated | credited | credited | exposed | ideal | no | none |
 | `shop-item-total-associated-vs-free` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | no | none |
-| `shop-tier-gold-arm-unreached` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | no | none |
+| `shop-tier-gold-arm-unreached` | authored | not_discriminated | gap | gap | infection_unknown, weakly_exposed | ideal | yes | none |
 | `shop-cart-add-other-collection-observed` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | no | none |
 | `shop-quote-total-result-field` | authored | discriminated | credited | credited | exposed | ideal | no | none |
 | `shop-cap-literal-only-expected` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | no | none |
@@ -209,7 +209,7 @@ By subject origin. Authored cases are written to fill cells the upstream cases l
 | `grid-loop-property` | authored | partially_discriminated | gap | limited | static_unknown | abstained | no | none |
 | `grid-loop-helper` | authored | discriminated | credited | limited | static_unknown | abstained | no | none |
 | `grid-loop-none` | authored | partially_discriminated | gap | limited | static_unknown | abstained | no | none |
-| `grid-early-exact` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | no | none |
+| `grid-early-exact` | authored | discriminated | credited | limited | infection_unknown | abstained | yes | none |
 | `grid-early-table` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | no | none |
 | `grid-early-property` | authored | partially_discriminated | gap | gap | weakly_exposed | ideal | no | none |
 | `grid-early-helper` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | no | none |
@@ -219,10 +219,10 @@ By subject origin. Authored cases are written to fill cells the upstream cases l
 | `grid-try-property` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | no | none |
 | `grid-try-helper` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | no | none |
 | `grid-try-none` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | no | none |
-| `grid-iter-exact` | authored | discriminated | credited | gap | propagation_unknown, weakly_exposed | false_actionable | no | none |
+| `grid-iter-exact` | authored | discriminated | credited | gap | infection_unknown, weakly_exposed | false_actionable | yes | none |
 | `grid-iter-table` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | no | none |
 | `grid-iter-property` | authored | partially_discriminated | gap | gap | propagation_unknown, weakly_exposed | ideal | no | none |
-| `grid-iter-helper` | authored | discriminated | credited | gap | propagation_unknown, weakly_exposed | false_actionable | no | none |
+| `grid-iter-helper` | authored | discriminated | credited | gap | infection_unknown, weakly_exposed | false_actionable | yes | none |
 | `grid-iter-none` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | no | none |
 
 Non-claims:
