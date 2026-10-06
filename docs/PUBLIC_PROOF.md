@@ -37,7 +37,7 @@ The page is generated. A unit test that CI requires fails when the page no longe
 | Trust | Commands that exit 0 when pointed at a missing repository | 0 commands | <= 0 commands | meets the bar | -2 commands since c6ccf9d (was 2 commands) |
 | Trust | Hostile-repository journeys (odd file names, symlink loops, shallow clones, submodules) where ripr neither finds nor refuses cleanly | 0 journeys | <= 0 journeys | meets the bar | no earlier measurement |
 | Trust | Findings or seams whose own evidence contradicts itself | 0 findings | <= 0 findings | meets the bar | -1 finding since c6ccf9d (was 1 finding) |
-| Trust | Wrong verdicts on hand-checked changes from real repositories | **14.7%** | <= 5.0% | below the bar | first receipt (verdict corpus, upstream cases only; all 203 cases: 29.6%) |
+| Trust | Wrong verdicts on hand-checked changes from real repositories | **14.7%** | <= 5.0% | below the bar | first receipt (verdict corpus, upstream cases only; all 203 cases: 29.1%) |
 | Trust | Hand-checked edits the crate's tests fully catch that ripr still flags as a gap | **62.3%** | <= 5.0% | below the bar | no earlier measurement |
 | Trust | Hand-checked edits where ripr gives no specific verdict | **28.6%** | <= 20.0% | below the bar | no earlier measurement |
 | Trust | Hand-checked edits the crate's tests miss that ripr reports as fine (counterweight to abstaining less) | 0.0% | <= 0.0% | meets the bar | no earlier measurement |
@@ -80,8 +80,8 @@ Not measured, and why:
 
 Each line below is computed from the receipts above. Detail sections follow.
 
-- **Wrong gaps.** On changes from real repositories ripr reported a gap on 5 of 20 whose tests caught every listed mutant (25.0%): `regex-syntax-max-scalar-two-byte`, `semver-op-greater-eq`, `strsim-sorensen-dice-equal`, `bytesize-as-kib-div`, `bytesize-as-mb-div`. On the authored cases, which were written to fill empty corpus cells, it did so on 49 of 86 (57.0%).
-- **Mostly unsure.** On real-repository changes it abstained on 23 of 34 cases (67.7%); on the authored cases, 40 of 169 (23.7%). Abstaining is the safe failure, but each abstention is a change ripr gave the developer no help on.
+- **Wrong gaps.** On changes from real repositories ripr reported a gap on 5 of 20 whose tests caught every listed mutant (25.0%): `regex-syntax-max-scalar-two-byte`, `semver-op-greater-eq`, `strsim-sorensen-dice-equal`, `bytesize-as-kib-div`, `bytesize-as-mb-div`. On the authored cases, which were written to fill empty corpus cells, it did so on 48 of 86 (55.8%).
+- **Mostly unsure.** On real-repository changes it abstained on 24 of 34 cases (70.6%); on the authored cases, 42 of 169 (24.9%). Abstaining is the safe failure, but each abstention is a change ripr gave the developer no help on.
 - **Real mutants disagree with "no test would notice".** Of 23 mutants on seams ripr called ungripped, real mutation testing caught 22 that ripr said nothing would catch; ripr agreed on 1. The 12 recorded examples are all in: semver.
 - **Thin ground truth.** Only 37 of 1745 mutants (2.1%) enter an agreement rate. 174 join a ripr seam precisely, and 137 of those still do not enter a rate.
 - **Cold `ripr pilot` to first useful result.** Worst repository: ripr-swarm at 77.6 s; the bar is at most 30.0 s.
@@ -146,18 +146,18 @@ Only the upstream cases come from real repositories. The authored cases were wri
 
 | Rate | All cases | Upstream (real repositories) | Authored |
 | --- | --- | --- | --- |
-| False verdicts (all cases) | 60/203 (29.6%) | 5/34 (14.7%) | 55/169 (32.5%) |
-| False actionable (of discriminated) | 54/106 (50.9%) | 5/20 (25.0%) | 49/86 (57.0%) |
+| False verdicts (all cases) | 59/203 (29.1%) | 5/34 (14.7%) | 54/169 (31.9%) |
+| False actionable (of discriminated) | 53/106 (50.0%) | 5/20 (25.0%) | 48/86 (55.8%) |
 | False exposed (of not fully discriminated) | 6/97 (6.2%) | 0/14 (0.0%) | 6/83 (7.2%) |
 | False silent (of not fully discriminated) | 0/97 (0.0%) | 0/14 (0.0%) | 0/83 (0.0%) |
-| Ideal verdict | 80/203 (39.4%) | 6/34 (17.6%) | 74/169 (43.8%) |
-| Abstained (limited or silent where acceptable) | 63/203 (31.0%) | 23/34 (67.7%) | 40/169 (23.7%) |
+| Ideal verdict | 78/203 (38.4%) | 5/34 (14.7%) | 73/169 (43.2%) |
+| Abstained (limited or silent where acceptable) | 66/203 (32.5%) | 24/34 (70.6%) | 42/169 (24.9%) |
 | Findings with a contradiction | 2/273 (0.7%) | not split by origin | not split by origin |
 
 | Case | Origin | Truth | Ideal | Observed | Static classes | Outcome | Contradictions |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| `serde-format-u8-hundreds` | upstream | discriminated | credited | limited | static_unknown | abstained | none |
-| `serde-format-u8-tens` | upstream | discriminated | credited | limited | propagation_unknown | abstained | none |
+| `serde-format-u8-hundreds` | upstream | discriminated | credited | limited | infection_unknown | abstained | none |
+| `serde-format-u8-tens` | upstream | discriminated | credited | limited | infection_unknown | abstained | none |
 | `semver-caret-minor-ge` | upstream | discriminated | credited | limited | no_static_path | abstained | none |
 | `semver-tilde-pre-ge` | upstream | discriminated | credited | limited | infection_unknown, propagation_unknown | abstained | none |
 | `semver-less-pre` | upstream | discriminated | credited | limited | infection_unknown, propagation_unknown | abstained | none |
@@ -187,7 +187,7 @@ Only the upstream cases come from real repositories. The authored cases were wri
 | `bytesize-as-mb-div` | upstream | discriminated | credited | gap | weakly_exposed | false_actionable | none |
 | `bytesize-as-kb-div` | upstream | not_discriminated | gap | limited | no_static_path | abstained | no_static_path_with_related_tests |
 | `bytesize-as-mib-div` | upstream | not_discriminated | gap | limited | no_static_path | abstained | no_static_path_with_related_tests |
-| `strsim-jaro-winkler-threshold-shift` | upstream | partially_discriminated | gap | gap | weakly_exposed | ideal | none |
+| `strsim-jaro-winkler-threshold-shift` | upstream | partially_discriminated | gap | limited | infection_unknown | abstained | none |
 | `atuin-ai-history-output-capability` | upstream | not_discriminated | gap | gap | infection_unknown, weakly_exposed | ideal | none |
 | `atuin-otel-traces-suffix-not` | upstream | not_discriminated | gap | limited | infection_unknown | abstained | none |
 | `pricing-gold-threshold` | authored | discriminated | credited | credited | exposed | ideal | none |
@@ -309,7 +309,7 @@ Only the upstream cases come from real repositories. The authored cases were wri
 | `grid-boundary-helper` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | none |
 | `grid-boundary-none` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | none |
 | `grid-equality-exact` | authored | discriminated | credited | credited | exposed | ideal | none |
-| `grid-equality-table` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | none |
+| `grid-equality-table` | authored | discriminated | credited | gap | infection_unknown, weakly_exposed | false_actionable | none |
 | `grid-equality-property` | authored | partially_discriminated | gap | limited | infection_unknown, propagation_unknown | abstained | none |
 | `grid-equality-helper` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | none |
 | `grid-equality-none` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | none |
@@ -345,8 +345,8 @@ Only the upstream cases come from real repositories. The authored cases were wri
 | `grid-loop-helper` | authored | discriminated | credited | limited | static_unknown | abstained | none |
 | `grid-loop-none` | authored | partially_discriminated | gap | limited | static_unknown | abstained | none |
 | `grid-early-exact` | authored | discriminated | credited | limited | infection_unknown | abstained | none |
-| `grid-early-table` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | none |
-| `grid-early-property` | authored | partially_discriminated | gap | gap | weakly_exposed | ideal | none |
+| `grid-early-table` | authored | discriminated | credited | limited | infection_unknown | abstained | none |
+| `grid-early-property` | authored | partially_discriminated | gap | limited | infection_unknown | abstained | none |
 | `grid-early-helper` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | none |
 | `grid-early-none` | authored | partially_discriminated | gap | gap | weakly_exposed | ideal | none |
 | `grid-try-exact` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | none |
@@ -356,7 +356,7 @@ Only the upstream cases come from real repositories. The authored cases were wri
 | `grid-try-none` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | none |
 | `grid-iter-exact` | authored | discriminated | credited | gap | infection_unknown, weakly_exposed | false_actionable | none |
 | `grid-iter-table` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | none |
-| `grid-iter-property` | authored | partially_discriminated | gap | gap | propagation_unknown, weakly_exposed | ideal | none |
+| `grid-iter-property` | authored | partially_discriminated | gap | gap | infection_unknown, weakly_exposed | ideal | none |
 | `grid-iter-helper` | authored | discriminated | credited | gap | infection_unknown, weakly_exposed | false_actionable | none |
 | `grid-iter-none` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | none |
 

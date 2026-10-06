@@ -4,25 +4,25 @@ Spec: RIPR-SPEC-0219. Corpus version: 2026-10-04.8. Cases: 203.
 
 | Rate | Count | Rate |
 | --- | --- | --- |
-| False verdicts (all cases) | 60/203 | 0.2956 |
-| False actionable (of discriminated) | 54/106 | 0.5094 |
+| False verdicts (all cases) | 59/203 | 0.2906 |
+| False actionable (of discriminated) | 53/106 | 0.5000 |
 | False exposed (of not fully discriminated) | 6/97 | 0.0619 |
 | False silent (of not fully discriminated) | 0/97 | 0.0000 |
-| Ideal verdict | 80/203 | 0.3941 |
-| Abstained (limited or silent where acceptable) | 63/203 | 0.3103 |
+| Ideal verdict | 78/203 | 0.3842 |
+| Abstained (limited or silent where acceptable) | 66/203 | 0.3251 |
 | Findings with a contradiction | 2/273 | 0.0073 |
 
 By subject origin. Authored cases are written to fill cells the upstream cases leave empty, so only the upstream rates describe real-world tests.
 
 | Origin | Cases | False verdicts | False actionable | False exposed | False silent | Ideal | Abstained |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| authored | 169 | 55/169 | 49/86 | 6/83 | 0/83 | 74/169 | 40/169 |
-| upstream | 34 | 5/34 | 5/20 | 0/14 | 0/14 | 6/34 | 23/34 |
+| authored | 169 | 54/169 | 48/86 | 6/83 | 0/83 | 73/169 | 42/169 |
+| upstream | 34 | 5/34 | 5/20 | 0/14 | 0/14 | 5/34 | 24/34 |
 
 | Case | Origin | Truth | Ideal | Observed | Classes | Outcome | Changed since labeling | Contradictions |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| `serde-format-u8-hundreds` | upstream | discriminated | credited | limited | static_unknown | abstained | yes | none |
-| `serde-format-u8-tens` | upstream | discriminated | credited | limited | propagation_unknown | abstained | no | none |
+| `serde-format-u8-hundreds` | upstream | discriminated | credited | limited | infection_unknown | abstained | yes | none |
+| `serde-format-u8-tens` | upstream | discriminated | credited | limited | infection_unknown | abstained | yes | none |
 | `semver-caret-minor-ge` | upstream | discriminated | credited | limited | no_static_path | abstained | no | none |
 | `semver-tilde-pre-ge` | upstream | discriminated | credited | limited | infection_unknown, propagation_unknown | abstained | no | none |
 | `semver-less-pre` | upstream | discriminated | credited | limited | infection_unknown, propagation_unknown | abstained | no | none |
@@ -52,7 +52,7 @@ By subject origin. Authored cases are written to fill cells the upstream cases l
 | `bytesize-as-mb-div` | upstream | discriminated | credited | gap | weakly_exposed | false_actionable | no | none |
 | `bytesize-as-kb-div` | upstream | not_discriminated | gap | limited | no_static_path | abstained | no | no_static_path_with_related_tests |
 | `bytesize-as-mib-div` | upstream | not_discriminated | gap | limited | no_static_path | abstained | no | no_static_path_with_related_tests |
-| `strsim-jaro-winkler-threshold-shift` | upstream | partially_discriminated | gap | gap | weakly_exposed | ideal | no | none |
+| `strsim-jaro-winkler-threshold-shift` | upstream | partially_discriminated | gap | limited | infection_unknown | abstained | yes | none |
 | `atuin-ai-history-output-capability` | upstream | not_discriminated | gap | gap | infection_unknown, weakly_exposed | ideal | no | none |
 | `atuin-otel-traces-suffix-not` | upstream | not_discriminated | gap | limited | infection_unknown | abstained | no | none |
 | `pricing-gold-threshold` | authored | discriminated | credited | credited | exposed | ideal | no | none |
@@ -174,7 +174,7 @@ By subject origin. Authored cases are written to fill cells the upstream cases l
 | `grid-boundary-helper` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | no | none |
 | `grid-boundary-none` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | no | none |
 | `grid-equality-exact` | authored | discriminated | credited | credited | exposed | ideal | yes | none |
-| `grid-equality-table` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | no | none |
+| `grid-equality-table` | authored | discriminated | credited | gap | infection_unknown, weakly_exposed | false_actionable | yes | none |
 | `grid-equality-property` | authored | partially_discriminated | gap | limited | infection_unknown, propagation_unknown | abstained | no | none |
 | `grid-equality-helper` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | no | none |
 | `grid-equality-none` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | no | none |
@@ -210,8 +210,8 @@ By subject origin. Authored cases are written to fill cells the upstream cases l
 | `grid-loop-helper` | authored | discriminated | credited | limited | static_unknown | abstained | no | none |
 | `grid-loop-none` | authored | partially_discriminated | gap | limited | static_unknown | abstained | no | none |
 | `grid-early-exact` | authored | discriminated | credited | limited | infection_unknown | abstained | yes | none |
-| `grid-early-table` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | no | none |
-| `grid-early-property` | authored | partially_discriminated | gap | gap | weakly_exposed | ideal | no | none |
+| `grid-early-table` | authored | discriminated | credited | limited | infection_unknown | abstained | yes | none |
+| `grid-early-property` | authored | partially_discriminated | gap | limited | infection_unknown | abstained | yes | none |
 | `grid-early-helper` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | no | none |
 | `grid-early-none` | authored | partially_discriminated | gap | gap | weakly_exposed | ideal | no | none |
 | `grid-try-exact` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | no | none |
@@ -221,7 +221,7 @@ By subject origin. Authored cases are written to fill cells the upstream cases l
 | `grid-try-none` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | no | none |
 | `grid-iter-exact` | authored | discriminated | credited | gap | infection_unknown, weakly_exposed | false_actionable | yes | none |
 | `grid-iter-table` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | no | none |
-| `grid-iter-property` | authored | partially_discriminated | gap | gap | propagation_unknown, weakly_exposed | ideal | no | none |
+| `grid-iter-property` | authored | partially_discriminated | gap | gap | infection_unknown, weakly_exposed | ideal | yes | none |
 | `grid-iter-helper` | authored | discriminated | credited | gap | infection_unknown, weakly_exposed | false_actionable | yes | none |
 | `grid-iter-none` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | no | none |
 
