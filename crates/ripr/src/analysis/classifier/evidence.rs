@@ -53,6 +53,9 @@ pub(in crate::analysis) struct AssertionRefusalNote {
     pub(in crate::analysis) location: String,
     pub(in crate::analysis) reason: String,
     pub(in crate::analysis) calls_owner: bool,
+    /// Whether the refusal is a limit of ripr's own reading rather than a
+    /// shape that can keep the assertion from running (RIPR-SPEC-0240).
+    pub(in crate::analysis) is_analyzer_limit: bool,
 }
 
 impl ClassifiedProbeEvidence {
@@ -387,6 +390,7 @@ impl ClassifiedProbeEvidence {
                             ),
                             reason: refusal.describe(),
                             calls_owner,
+                            is_analyzer_limit: refusal.is_analyzer_limit(),
                         };
                         if calls_owner {
                             return Some(note);

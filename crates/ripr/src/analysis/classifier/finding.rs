@@ -53,8 +53,15 @@ pub(in crate::analysis) fn build_finding(
         && !context.owner_assertion_shaped
     {
         Some(match &evidence.assertion_refusal {
-            Some(note) if note.calls_owner => format!(
+            Some(note) if note.calls_owner && note.is_analyzer_limit => format!(
                 "ripr did not credit the {}; the \"not credited\" note says why. If that assertion does run as the standard macro, this is a static limit, not a missing test: confirm with a real mutation run. Otherwise move the check onto a path that always runs.",
+                note.location
+            ),
+            // #6903: an ignored, cfg-off, conditional or rebound assertion is
+            // not a limit of ripr's reading, so offering a static-limit
+            // reading would let the reader dismiss a real gap.
+            Some(note) if note.calls_owner => format!(
+                "ripr did not credit the {}; the \"not credited\" note says why. That shape can keep the assertion from checking the change, so this is not a static limit: make the check run on every default test run, as the standard `assert_eq!`.",
                 note.location
             ),
             _ => "Establish that the test is collected and enabled, that the assertion runs on its executed path, and that it resolves to the intended standard macro, then check the changed returned value.".to_string(),
