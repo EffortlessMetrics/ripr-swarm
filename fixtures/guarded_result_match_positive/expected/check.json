@@ -10,7 +10,7 @@
   },
   "findings": [
     {
-      "id": "probe:src_lib.rs:error_path:bcd75653",
+      "id": "probe:src_lib.rs:error_path:94d13aee",
       "canonical_gap_id": "gap:rust:src/lib.rs:expect_ready:error_variant:error_path:err_parseerror_invaliddata",
       "canonical_gap_group_size": 1,
       "canonical_gap": {
@@ -27,12 +27,12 @@
       "severity": "info",
       "confidence": 1.00,
       "probe": {
-        "id": "probe:src_lib.rs:error_path:bcd75653",
+        "id": "probe:src_lib.rs:error_path:94d13aee",
         "family": "error_path",
         "delta": "value",
         "file": "./src/lib.rs",
         "line": 9,
-        "expression": "Err(ParseError::InvalidData)"
+        "expression": "return Err(ParseError::InvalidData)"
        },
       "ripr": {
         "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach expect_ready: rejects_short_payload_with_variant_pattern, rejects_unready_kind_with_exact_error_routing"},

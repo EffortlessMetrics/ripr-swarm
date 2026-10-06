@@ -10,7 +10,7 @@
   },
   "findings": [
     {
-      "id": "probe:src_lib.rs:error_path:56dfc2fa",
+      "id": "probe:src_lib.rs:error_path:e01f0ca9",
       "canonical_gap_id": "gap:rust:src/lib.rs:try_parse:error_variant:error_path:err_parseerror_malformedsource",
       "canonical_gap_group_size": 1,
       "canonical_gap": {
@@ -27,12 +27,12 @@
       "severity": "warning",
       "confidence": 0.92,
       "probe": {
-        "id": "probe:src_lib.rs:error_path:56dfc2fa",
+        "id": "probe:src_lib.rs:error_path:e01f0ca9",
         "family": "error_path",
         "delta": "value",
         "file": "./src/lib.rs",
         "line": 9,
-        "expression": "Err(ParseError::MalformedSource)"
+        "expression": "return Err(ParseError::MalformedSource)"
        },
       "ripr": {
         "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach try_parse: rejects_at_sign, try_parse_variant_is_distinct, malformedsource_variant_is_distinct"},

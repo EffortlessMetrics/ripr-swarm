@@ -10,7 +10,7 @@
   },
   "findings": [
     {
-      "id": "probe:src_lib.rs:error_path:73f40059",
+      "id": "probe:src_lib.rs:error_path:e4b7f445",
       "canonical_gap_id": "gap:rust:src/lib.rs:validate:error_variant:error_path:err_parseerror_toolong_name.len",
       "canonical_gap_group_size": 1,
       "canonical_gap": {
@@ -27,12 +27,12 @@
       "severity": "warning",
       "confidence": 0.66,
       "probe": {
-        "id": "probe:src_lib.rs:error_path:73f40059",
+        "id": "probe:src_lib.rs:error_path:e4b7f445",
         "family": "error_path",
         "delta": "value",
         "file": "./src/lib.rs",
         "line": 12,
-        "expression": "Err(ParseError::TooLong(name.len()))"
+        "expression": "return Err(ParseError::TooLong(name.len()))"
        },
       "ripr": {
         "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach validate: too_long_name_rejected_with_exact_variant"},

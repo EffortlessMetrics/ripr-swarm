@@ -1,4 +1,4 @@
-use super::super::rust_index::{RustIndex, find_owner_function};
+use super::super::rust_index::{RustIndex, find_owner_function, is_error_path_twin};
 use super::SeededProbe;
 use super::expectations::{expected_sinks, required_oracles};
 use super::family::family_for_probe_shape;
@@ -27,6 +27,10 @@ pub(crate) fn probes_for_repo_file_seeded(
     };
 
     for shape in &facts.probe_shapes {
+        // #6914: one error behavior, one repo probe.
+        if is_error_path_twin(shape, &facts.probe_shapes, &facts.source) {
+            continue;
+        }
         let family = family_for_probe_shape(shape.kind);
 
         // #3284: harness-role functions never enter the production

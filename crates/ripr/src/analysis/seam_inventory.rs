@@ -2315,6 +2315,9 @@ pub(crate) fn inventory_seams_from_index(
         // instead of rescanning the source per seam.
         let line_starts = build_line_starts(&facts.source);
         for shape in &facts.probe_shapes {
+            if rust_index::is_error_path_twin(shape, &facts.probe_shapes, &facts.source) {
+                continue;
+            }
             let Some(seam) =
                 build_seam_from_shape(path, shape, &owners, &facts.source, &line_starts)
             else {

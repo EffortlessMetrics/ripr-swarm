@@ -240,6 +240,84 @@ pub(in crate::analysis) fn summarize_file(path: PathBuf, text: String) -> FileFa
     }
 }
 
+/// True when an ErrorPath shape is a twin of another ErrorPath shape for the
+/// same error behavior, so repository inventory keeps one of them (#6914).
+///
+/// The parser keeps both shapes because diff synthesis needs each one: a
+/// change to only the `return` line of a multi-line `return Err(X)` reaches
+/// the error path through the `return` span, and a change to only the
+/// constructor line through the `Err(X)` span. Inventory keeps the
+/// constructor and drops:
+/// - the `return` wrapped around it (`return Err(X)`, `return (Err(X))`);
+/// - the payload call inside an `Err(..)` (`Err(Error::X(off))`).
+///
+/// The relation reads source bytes between the two spans, never `text`,
+/// which is a trimmed display snippet.
+pub(crate) fn is_error_path_twin(
+    shape: &ProbeShapeFact,
+    shapes: &[ProbeShapeFact],
+    source: &str,
+) -> bool {
+    if shape.kind != ProbeShapeKind::ErrorPath {
+        return false;
+    }
+    shapes.iter().any(|other| {
+        other.kind == ProbeShapeKind::ErrorPath
+            && (returns_error_constructor(shape, other, source)
+                || is_err_payload(shape, other, source))
+    })
+}
+
+/// `outer` is `return` (and parentheses) around exactly `inner`.
+fn returns_error_constructor(outer: &ProbeShapeFact, inner: &ProbeShapeFact, source: &str) -> bool {
+    let Some((prefix, suffix)) = surrounding_source(outer, inner, source) else {
+        return false;
+    };
+    let prefix = prefix.trim_end_matches(|c: char| c == '(' || c.is_whitespace());
+    let suffix_is_closing = suffix.chars().all(|c| c == ')' || c.is_whitespace());
+    prefix == "return" && suffix_is_closing
+}
+
+/// `inner` is the whole argument of an `Err(..)` constructor `outer`.
+fn is_err_payload(inner: &ProbeShapeFact, outer: &ProbeShapeFact, source: &str) -> bool {
+    let Some((prefix, suffix)) = surrounding_source(outer, inner, source) else {
+        return false;
+    };
+    let Some(callee) = prefix.trim_end().strip_suffix('(') else {
+        return false;
+    };
+    let callee = callee.trim_end();
+    // `Err::<T, E>(..)`: drop the turbofish before reading the name.
+    let callee = match callee.rfind("::<") {
+        Some(turbofish) if callee.ends_with('>') => callee.get(..turbofish).unwrap_or(callee),
+        _ => callee,
+    };
+    let named_err = callee
+        .rsplit(|c: char| !(c.is_alphanumeric() || c == '_'))
+        .next()
+        .is_some_and(|name| name == "Err");
+    named_err && suffix.trim() == ")"
+}
+
+/// Source text of `outer` before and after `inner`, when `inner` is a
+/// strictly smaller span inside `outer`.
+fn surrounding_source<'a>(
+    outer: &ProbeShapeFact,
+    inner: &ProbeShapeFact,
+    source: &'a str,
+) -> Option<(&'a str, &'a str)> {
+    let nested = outer.start_byte <= inner.start_byte
+        && inner.end_byte <= outer.end_byte
+        && (outer.start_byte, outer.end_byte) != (inner.start_byte, inner.end_byte);
+    if !nested {
+        return None;
+    }
+    Some((
+        source.get(outer.start_byte..inner.start_byte)?,
+        source.get(inner.end_byte..outer.end_byte)?,
+    ))
+}
+
 pub fn find_owner_function<'a>(
     index: &'a RustIndex,
     file: &Path,

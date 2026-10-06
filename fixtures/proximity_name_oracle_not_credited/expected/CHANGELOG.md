@@ -153,15 +153,3 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
-
-## Pending — proximity_name_oracle_not_credited (14)
-
-Reason:
-RIPR-SPEC-0005: return Err(X) keeps one error_path probe, on the Err(X) constructor (#6914); the finding class is unchanged, only its expression and probe id move from the return span to the constructor
-
-Command:
-`cargo xtask goldens bless proximity_name_oracle_not_credited --reason "..."`
-
-Updated:
-- `expected/check.json`
-- `expected/human.txt`

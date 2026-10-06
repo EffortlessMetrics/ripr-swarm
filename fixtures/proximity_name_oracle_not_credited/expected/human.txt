@@ -14,7 +14,7 @@ Start here:
   Static exposure: weak (weakly_exposed, warning, confidence 0.92)
   Why weak: a related test reaches this change but does not observe the exact changed value
   Canonical gap: gap:rust:src/lib.rs:try_parse:error_variant:error_path:err_parseerror_malformedsource
-  Changed behavior: Err(ParseError::MalformedSource)
+  Changed behavior: return Err(ParseError::MalformedSource)
   Missing discriminator (1 of 2): ParseError::MalformedSource
   Related test (1 of 3): tests/parse.rs:4 rejects_at_sign (assertion too weak to tell the old behavior from the new)
   Next step: Assert the exact error variant or payload instead of only is_err().
@@ -24,8 +24,8 @@ Start here:
     - 9 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
-  ripr explain --root <cwd>/fixtures/proximity_name_oracle_not_credited/input --diff <cwd>/fixtures/proximity_name_oracle_not_credited/diff.patch --mode fast probe:src_lib.rs:error_path:56dfc2fa
-  ripr context --root <cwd>/fixtures/proximity_name_oracle_not_credited/input --diff <cwd>/fixtures/proximity_name_oracle_not_credited/diff.patch --mode fast --at probe:src_lib.rs:error_path:56dfc2fa
+  ripr explain --root <cwd>/fixtures/proximity_name_oracle_not_credited/input --diff <cwd>/fixtures/proximity_name_oracle_not_credited/diff.patch --mode fast probe:src_lib.rs:error_path:e01f0ca9
+  ripr context --root <cwd>/fixtures/proximity_name_oracle_not_credited/input --diff <cwd>/fixtures/proximity_name_oracle_not_credited/diff.patch --mode fast --at probe:src_lib.rs:error_path:e01f0ca9
 Write a test for it:
   ripr agent stub --root <cwd>/fixtures/proximity_name_oracle_not_credited/input --at src/lib.rs:9
 
