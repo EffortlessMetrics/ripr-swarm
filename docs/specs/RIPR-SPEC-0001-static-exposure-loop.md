@@ -231,9 +231,21 @@ index, block or `?`, as in `name.len() + 10`, `{ x } + 1` or `parse(s)? - 1`)
 or repeats an array element (`&[b'f'; 16]`, whose `16` is a length) yields no
 input value. A table-row or builder line is split at top-level commas with
 full `()`/`[]`/`{}` depth, and a char or byte literal such as `','` or `b'('`
-is one value, never a delimiter, so `(',', true)` passes `','`. A related
-test whose table-row or builder line nests deeper than 32 levels leaves the
-changed boundary unresolved; its values are not read. A comparison
+is one value, never a delimiter, so `(',', true)` passes `','`. Below the
+line itself, only a constructor or variant whose last path segment is
+UpperCamel (`Some(10)`, `Token::Num(5)`, `Case { n: 1 }`), `vec![..]`, or a
+bare tuple or array passes its contents through; a method call
+(`x.min(10)`, `10.min(x)`), a lowercase function or macro call, an index, or
+a block computes its argument. A table-row or builder line nested deeper than
+32 levels is not read. It leaves the changed boundary unresolved only when its
+test also calls the owner (or the helper chain's entry) with an argument that
+is not an exact value, and only after the exact owner calls show no boundary
+input, so a deep row feeding something else hides neither a credited
+`score(10)` nor a missing input beside `score(20)`. When the owner is called
+but every call passes only computed arguments, a compared operand that is
+neither a parameter, a literal, nor a constant (a local counter `count`) is
+unresolved, so a stray test literal such as an array length never reads as a
+weak gap. A comparison
 operand that computes its value (`CURRENT - 2 > version`, `s.len() < 2 + 2`)
 contributes no boundary literal, so `CURRENT - 2` is never read as the
 boundary `2`. A compound condition
@@ -367,6 +379,8 @@ Fixture coverage:
 - `char_literal_table_rows_are_owner_inputs_end_to_end`
 - `computed_builder_argument_is_not_credited_end_to_end`
 - `deeply_nested_table_line_is_unreadable_not_a_crash`
+- `computed_only_call_with_local_counter_boundary_is_unknown_not_weak`
+- `method_call_builder_argument_is_not_credited_end_to_end`
 - `given_counted_local_boundary_then_boundary_is_unresolved_not_missing`
 - `infection_unknown_hint_claims_a_sink_only_when_propagation_is_yes`
 - `fixtures/boundary_named_constant`

@@ -825,10 +825,6 @@ fn missing_boundary_discriminator(
     let parameters = function_parameters(owner);
     let (left, right) =
         oriented_comparison_operands(owner, &parameters, &probe.expression, probe.location.line)?;
-    if let Some(reason) = unreadable_spelled_line_reason(related_tests) {
-        *unresolved = Some(reason);
-        return None;
-    }
     let call_values = call_values_for_owner(owner, &parameters, related_tests, helper_chain);
     if call_values.is_empty() {
         // Every related call passes only computed arguments (#6672): the
@@ -843,7 +839,40 @@ fn missing_boundary_discriminator(
         *unresolved = computed_input_parameters(owner, &parameters, related_tests, helper_chain)
             .into_iter()
             .find(|parameter| compared.iter().flatten().any(|name| name == parameter))
-            .map(|parameter| computed_argument_reason(&parameter));
+            .map(|parameter| computed_argument_reason(&parameter))
+            .or_else(|| {
+                // The owner is called, but only with arguments ripr cannot
+                // read (`score(&[b'f'; 16])`): a compared operand that is
+                // neither a parameter, a literal, nor a constant (a local
+                // counter `count`) has no row to evaluate it under, so it is
+                // unreadable rather than missing (Devin review on #6796).
+                let unknown_operands = [&left, &right]
+                    .into_iter()
+                    .filter(|operand| {
+                        boundary_operand_parameter(owner, &parameters, operand).is_none()
+                            && literal_operand_value(operand).is_none()
+                            && crate::analysis::value_resolution::constant_operand_name(operand)
+                                .is_none()
+                            && crate::analysis::value_resolution::constant_offset_operand(operand)
+                                .is_none()
+                    })
+                    .map(String::as_str)
+                    .collect::<Vec<_>>();
+                (!unknown_operands.is_empty()
+                    && owner_is_called(owner, related_tests, helper_chain))
+                .then(|| {
+                    unresolved_boundary_input(
+                        owner,
+                        &parameters,
+                        related_tests,
+                        helper_chain,
+                        &unknown_operands,
+                        [None, None],
+                    )
+                })
+                .flatten()
+            })
+            .or_else(|| unreadable_spelled_line_reason(owner, related_tests, helper_chain));
         return None;
     }
     let left_parameter = boundary_operand_parameter(owner, &parameters, &left);
@@ -942,6 +971,12 @@ fn missing_boundary_discriminator(
             .is_empty()
         });
     if equality_observed || constant_named {
+        return None;
+    }
+    // A deep table or builder line that may feed the owner hides its
+    // inputs; only after the exact calls above found no boundary input.
+    if let Some(reason) = unreadable_spelled_line_reason(owner, related_tests, helper_chain) {
+        *unresolved = Some(reason);
         return None;
     }
     // #6674/#6693: an input ripr cannot read is not a missing input. When
@@ -1134,6 +1169,22 @@ fn unresolved_boundary_input(
         .flatten()
         .find(|parameter| computed.iter().any(|name| name == parameter))?;
     Some(computed_argument_reason(parameter))
+}
+
+/// Whether a related test calls the owner, or the resolved helper chain's
+/// entry function.
+fn owner_is_called(
+    owner: &FunctionSummary,
+    related_tests: &[&TestSummary],
+    helper_chain: Option<&super::helper_transfer::HelperChain>,
+) -> bool {
+    let entry_name = helper_chain
+        .and_then(|chain| chain.hops.last())
+        .map(|hop| hop.caller.name.as_str());
+    related_tests.iter().any(|test| {
+        test.body_calls()
+            .any(|call| call.name == owner.name || Some(call.name.as_str()) == entry_name)
+    })
 }
 
 /// An operand the comparison splitter cut cleanly: no statement keyword,
@@ -2500,11 +2551,33 @@ fn spelled_line_is_unreadable(line: &str) -> bool {
     false
 }
 
-/// The reason a changed boundary is unresolved when a related test holds a
-/// table-row or builder line too deeply nested to read.
-fn unreadable_spelled_line_reason(related_tests: &[&TestSummary]) -> Option<String> {
+/// The reason a changed boundary is unresolved when a related test that
+/// may feed the owner from its rows holds a table-row or builder line too
+/// deeply nested to read. Only a test that calls the owner (or the helper
+/// chain's entry) with an argument that is not an exact value (`score(n)`
+/// over a row, `score(req.amount)`) reads its inputs from such lines; a
+/// test whose owner calls are all exact (`score(20)`) is read from those
+/// calls, so a deep row it feeds elsewhere does not hide its input.
+fn unreadable_spelled_line_reason(
+    owner: &FunctionSummary,
+    related_tests: &[&TestSummary],
+    helper_chain: Option<&super::helper_transfer::HelperChain>,
+) -> Option<String> {
+    let entry_name = helper_chain
+        .and_then(|chain| chain.hops.last())
+        .map(|hop| hop.caller.name.as_str());
     related_tests
         .iter()
+        .filter(|test| {
+            test.body_calls().any(|call| {
+                (call.name == owner.name || Some(call.name.as_str()) == entry_name)
+                    && call_arguments(&call.text, &call.name).is_some_and(|arguments| {
+                        arguments
+                            .iter()
+                            .any(|argument| owner_argument_values(test, argument).is_empty())
+                    })
+            })
+        })
         .flat_map(|test| test.body.lines())
         .map(str::trim)
         .any(|line| {
@@ -2533,7 +2606,14 @@ fn collect_spelled_values(text: &str, values: &mut Vec<String>, depth: usize) {
             continue;
         }
         let shape = argument_shape(argument, argument_structure);
-        if shape.array_repeat || is_computed_value_expression(&shape.outside) {
+        // Below the line itself, a group read through a call (`x.min(10)`,
+        // `parse(10)`, `rows[0]`, a block) computes the argument's value;
+        // only a constructor or a bare tuple/array passes its contents
+        // through. The line's own groups are its setters and rows.
+        if shape.array_repeat
+            || (depth > 0 && !shape.all_groups_transparent)
+            || is_computed_value_expression(&shape.outside)
+        {
             continue;
         }
         values.extend(scalar_values(&shape.outside));
@@ -2611,6 +2691,50 @@ struct ArgumentShape<'a> {
     groups: Vec<&'a str>,
     /// A top-level `[value; length]`.
     array_repeat: bool,
+    /// Every top-level group passes its contents through as values: see
+    /// [`group_is_transparent`].
+    all_groups_transparent: bool,
+}
+
+/// Whether the group opened by `opener` after `prefix` passes its contents
+/// through as values: a bare tuple or array (`(10, true)`, `[1, 2]`), a
+/// constructor or variant whose last path segment is UpperCamel
+/// (`Some(10)`, `Ok(1)`, `Token::Num(3)`, `Case { n: 1 }`), or `vec![..]`.
+/// A method call (`x.min(10)`, `10.min(x)`), a lowercase function or
+/// macro (`parse(10)`, `format!(..)`), an index (`rows[0]`), a bare block
+/// (`{ x }`) or a call on a call computes its value instead.
+fn group_is_transparent(prefix: &str, opener: u8) -> bool {
+    let prefix = prefix.trim_end();
+    let Some(last) = prefix.chars().last() else {
+        return opener != b'{';
+    };
+    if last == '!' {
+        let name = prefix[..prefix.len() - 1]
+            .rsplit(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_'))
+            .next()
+            .unwrap_or_default();
+        return name == "vec" && opener != b'{';
+    }
+    if !(last.is_ascii_alphanumeric() || last == '_') {
+        // `(`, `,`, `&`, `=` before the group: a bare tuple or array. A
+        // call on a call (`f(x)(1)`, `rows[0](1)`), a generic call
+        // (`f::<T>(1)`) or a bare block is not.
+        return !matches!(last, ')' | ']' | '}' | '>' | '?') && opener != b'{';
+    }
+    let ident_start = prefix
+        .char_indices()
+        .rev()
+        .take_while(|(_, ch)| ch.is_ascii_alphanumeric() || *ch == '_')
+        .last()
+        .map_or(prefix.len(), |(idx, _)| idx);
+    let ident = &prefix[ident_start..];
+    let method = prefix[..ident_start].trim_end().ends_with('.');
+    !method
+        && opener != b'['
+        && ident
+            .chars()
+            .next()
+            .is_some_and(|ch| ch.is_ascii_uppercase())
 }
 
 fn argument_shape<'a>(argument: &'a str, structure: &[u8]) -> ArgumentShape<'a> {
@@ -2621,10 +2745,13 @@ fn argument_shape<'a>(argument: &'a str, structure: &[u8]) -> ArgumentShape<'a> 
     let mut cursor = 0usize;
     let mut group_start = 0usize;
     let mut opener = b'(';
+    let mut all_groups_transparent = true;
     for (offset, byte) in structure.iter().enumerate() {
         match byte {
             b'(' | b'[' | b'{' => {
                 if depth == 0 {
+                    all_groups_transparent &=
+                        group_is_transparent(argument.get(..offset).unwrap_or_default(), *byte);
                     outside.push_str(argument.get(cursor..=offset).unwrap_or_default());
                     group_start = offset + 1;
                     opener = *byte;
@@ -2651,6 +2778,7 @@ fn argument_shape<'a>(argument: &'a str, structure: &[u8]) -> ArgumentShape<'a> 
         outside,
         groups,
         array_repeat,
+        all_groups_transparent,
     }
 }
 
@@ -4690,6 +4818,37 @@ assert_eq!(input.amount, 100);"#
             spelled_scalar_values("[(1, true), (2, false)],"),
             strings(&["1", "2", "false", "true"])
         );
+
+        // Devin review on #6796: a group read through a call computes the
+        // argument; only constructors and bare tuples/arrays pass through.
+        for computed in [
+            ".amount(x.min(10))",
+            ".amount(base.saturating_add(10))",
+            ".amount(parse(10))",
+            ".amount(format!(\"{}\", 10))",
+            ".amount(rows[10])",
+            ".amount({ 10 })",
+        ] {
+            assert!(spelled_scalar_values(computed).is_empty(), "{computed}");
+        }
+        assert_eq!(spelled_scalar_values("(10.min(x), 3),"), strings(&["3"]));
+        assert_eq!(spelled_scalar_values(".amount(Some(10))"), strings(&["10"]));
+        assert_eq!(
+            spelled_scalar_values("(10, true),"),
+            strings(&["10", "true"])
+        );
+        assert_eq!(
+            spelled_scalar_values("(Case { n: 1 }, 2),"),
+            strings(&["1", "2"])
+        );
+        assert_eq!(
+            spelled_scalar_values("(Ok(4), Token::Num(5)),"),
+            strings(&["4", "5"])
+        );
+        assert_eq!(
+            spelled_scalar_values(".with_items(vec![6, 7])"),
+            strings(&["6", "7"])
+        );
     }
 
     #[test]
@@ -4707,14 +4866,15 @@ assert_eq!(input.amount, 100);"#
         assert!(!spelled_line_is_unreadable(&shallow));
         assert_eq!(spelled_scalar_values(&shallow), vec!["1".to_string()]);
 
+        // A test that feeds the owner from its rows (`score(n)`) cannot be
+        // read past the deep line, so the boundary is unresolved.
         let owner = function("pub fn score(amount: u32) -> bool {\n    amount > 10\n}");
-        let body = format!("let rows = [\n{line},\n];\nassert!(score(20));");
-        let test = test_with_body_calls(&body, &[(13, "assert!(score(20));")]);
-        let gathered = boundary_input(
-            &owner,
-            &probe(ProbeFamily::Predicate, "amount > 10"),
-            &[&test],
-        );
+        let gap = probe(ProbeFamily::Predicate, "amount > 10");
+        let body =
+            format!("let rows = [\n{line},\n];\nfor (n, _) in rows {{ assert!(score(n)); }}");
+        let test =
+            test_with_body_calls(&body, &[(13, "for (n, _) in rows { assert!(score(n)); }")]);
+        let gathered = boundary_input(&owner, &gap, &[&test]);
         assert!(gathered.activation.missing_discriminators.is_empty());
         assert!(
             gathered
@@ -4723,6 +4883,38 @@ assert_eq!(input.amount, 100);"#
                 .is_some_and(|reason| reason.contains("nests deeper than")),
             "{:?}",
             gathered.unresolved_boundary
+        );
+
+        // Devin review on #6796: a deep row feeding something else does not
+        // hide exact owner calls. `score(10)` stays credited ...
+        let body = format!("let rows = [\n{line},\n];\nother(rows);\nassert!(score(10));");
+        let test = test_with_body_calls(&body, &[(14, "assert!(score(10));")]);
+        let gathered = boundary_input(&owner, &gap, &[&test]);
+        assert!(
+            gathered.unresolved_boundary.is_none(),
+            "{:?}",
+            gathered.unresolved_boundary
+        );
+        assert!(has_observed_boundary_equality(&gathered.activation));
+        assert!(gathered.activation.missing_discriminators.is_empty());
+
+        // ... and `score(20)` keeps its missing equality discriminator.
+        let body = format!("let rows = [\n{line},\n];\nother(rows);\nassert!(score(20));");
+        let test = test_with_body_calls(&body, &[(14, "assert!(score(20));")]);
+        let gathered = boundary_input(&owner, &gap, &[&test]);
+        assert!(
+            gathered.unresolved_boundary.is_none(),
+            "{:?}",
+            gathered.unresolved_boundary
+        );
+        assert!(
+            gathered
+                .activation
+                .missing_discriminators
+                .iter()
+                .any(|fact| fact.value.contains("==")),
+            "{:?}",
+            gathered.activation.missing_discriminators
         );
     }
 
@@ -4991,15 +5183,20 @@ assert_eq!(input.amount, 100);"#
         );
 
         // With only computed arguments there is no row at all: no missing
-        // input is named, and since `hex` is not a compared operand the
-        // computed-argument reason stays out of scope.
+        // input is named. `hex` is not a compared operand, so the
+        // computed-argument reason stays out of scope, but the compared
+        // local `count` is still unreadable (Devin review on #6796).
         let computed_only = test_with_body_calls(
             "assert!(!score(&[b'f'; 16]));",
             &[(10, "assert!(!score(&[b'f'; 16]));")],
         );
         let gathered = boundary_input(&owner, &predicate, &[&computed_only]);
         assert!(gathered.activation.missing_discriminators.is_empty());
-        assert_eq!(gathered.unresolved_boundary, None);
+        let reason = gathered.unresolved_boundary.unwrap_or_default();
+        assert!(
+            reason.contains("boundary operand `count`"),
+            "got {reason:?}"
+        );
     }
 
     #[test]
@@ -5065,5 +5262,87 @@ assert_eq!(input.amount, 100);"#
             reason.contains("boundary operand `letters`"),
             "got {reason:?}"
         );
+    }
+
+    #[test]
+    fn computed_only_call_with_local_counter_boundary_is_unknown_not_weak() {
+        // Devin review on #6796: the only owner call passes a computed
+        // array (`&[b'f'; 16]`), so no row exists, and the compared `count`
+        // is a local counter. The stray length literal 16 must not read as
+        // a weak boundary gap: the boundary is unresolved, infection unknown.
+        let mut owner = function(
+            "pub fn too_long(hex: &[u8]) -> bool {\n    let mut count = 0;\n    for _ in hex {\n        count += 1;\n    }\n    16 < count\n}",
+        );
+        owner.name = "too_long".to_string();
+        owner.end_line = 7;
+        let mut predicate = probe(ProbeFamily::Predicate, "16 < count");
+        predicate.location.line = 6;
+        let mut test = test_with_body_calls(
+            "assert!(!too_long(&[b'f'; 16]));",
+            &[(10, "assert!(!too_long(&[b'f'; 16]));")],
+        );
+        for call in &mut test.calls {
+            call.name = "too_long".to_string();
+        }
+        test.literals = vec![LiteralFact {
+            line: 10,
+            value: "16".to_string(),
+        }];
+        let gathered = boundary_input(&owner, &predicate, &[&test]);
+        assert!(gathered.activation.missing_discriminators.is_empty());
+        assert!(
+            gathered
+                .unresolved_boundary
+                .as_deref()
+                .is_some_and(|reason| reason.contains("boundary operand `count`")),
+            "{:?}",
+            gathered.unresolved_boundary
+        );
+        let infection = super::super::infection::infection_evidence_with_boundary_input(
+            &predicate,
+            &[&test],
+            &gathered.activation,
+            gathered.unresolved_boundary.as_deref(),
+        );
+        assert_eq!(
+            infection.state,
+            StageState::Unknown,
+            "{}",
+            infection.summary
+        );
+
+        // Control: with no owner call at all the operand rule does not
+        // fire (no call says the inputs exist but are unreadable).
+        let mut uncalled = test.clone();
+        uncalled.calls.clear();
+        let gathered = boundary_input(&owner, &predicate, &[&uncalled]);
+        assert!(
+            gathered.unresolved_boundary.is_none(),
+            "{:?}",
+            gathered.unresolved_boundary
+        );
+    }
+
+    #[test]
+    fn method_call_builder_argument_is_not_credited_end_to_end() {
+        // Devin review on #6796 (#6918 case a): `.amount(x.min(10))`
+        // passes no 10, so `amount > 10` is not credited.
+        let owner = function("pub fn score(amount: u32) -> bool {\n    amount > 10\n}");
+        let body = "let request = Request::builder()\n.amount(x.min(10))\n.build();\nassert!(score(request.amount));";
+        let mut test = test_with_body_calls(body, &[]);
+        test.literals = vec![LiteralFact {
+            line: 11,
+            value: "10".to_string(),
+        }];
+        let probe = probe(ProbeFamily::Predicate, "amount > 10");
+        let gathered = boundary_input(&owner, &probe, &[&test]);
+        assert!(owner_input_values(&gathered.activation).is_empty());
+        let infection = super::super::infection::infection_evidence_with_boundary_input(
+            &probe,
+            &[&test],
+            &gathered.activation,
+            gathered.unresolved_boundary.as_deref(),
+        );
+        assert_ne!(infection.state, StageState::Yes, "{}", infection.summary);
     }
 }
