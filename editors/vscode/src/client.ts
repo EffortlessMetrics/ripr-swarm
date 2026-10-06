@@ -114,6 +114,26 @@ const SHOW_OUTPUT_ACTION = 'Show Output';
 const SELECT_WORKSPACE_ROOT_ACTION = 'Select Workspace Root';
 
 const RIPR_FILE_LANGUAGES = new Set(RIPR_DOCUMENT_SELECTORS.map((selector) => selector.language));
+// Editor selector language -> ripr.toml [languages] enablement name. The
+// server's `typescript` entry covers the JavaScript variants
+// (docs/CONFIGURATION.md, `[languages]`).
+const RIPR_ENABLEMENT_LANGUAGE_BY_SELECTOR_LANGUAGE: Readonly<Record<string, string>> = {
+  rust: 'rust',
+  typescript: 'typescript',
+  typescriptreact: 'typescript',
+  javascript: 'typescript',
+  javascriptreact: 'typescript',
+  python: 'python'
+};
+// Preview languages the editor routes but the server analyzes only once they
+// are listed in ripr.toml [languages] enabled (#6846).
+const ROUTED_PREVIEW_ENABLEMENT_LANGUAGES: ReadonlyArray<string> = [
+  ...new Set(
+    RIPR_DOCUMENT_SELECTORS.map((selector) => RIPR_ENABLEMENT_LANGUAGE_BY_SELECTOR_LANGUAGE[selector.language]).filter(
+      (language) => language !== undefined && language !== 'rust'
+    )
+  )
+];
 const RIPR_RELATED_TEST_LANGUAGE_BY_EXTENSION = new Map<string, 'rust' | 'typescript' | 'python'>([
   ['.rs', 'rust'],
   ['.ts', 'typescript'],
@@ -3879,6 +3899,24 @@ function isRefreshLifecycleLog(message: string): boolean {
     || message.startsWith('ripr analysis refresh failed');
 }
 
+function routedPreviewLanguagesNotEnabled(enabledLanguageNames: string[] | undefined): string[] {
+  if (!enabledLanguageNames) {
+    return [];
+  }
+  return ROUTED_PREVIEW_ENABLEMENT_LANGUAGES.filter((language) => !enabledLanguageNames.includes(language));
+}
+
+// Names the ripr.toml [languages] enablement mechanism for a zero-diagnostics
+// refresh, mirroring the no-enabled-languages branch (#6846).
+function routedPreviewEnablementLine(enabledLanguageNames: string[] | undefined): string {
+  const notEnabled = routedPreviewLanguagesNotEnabled(enabledLanguageNames);
+  if (notEnabled.length === 0) {
+    return 'If a preview language routed by the editor stays silent, confirm it is listed in ripr.toml [languages] enabled, then run ripr: Restart Server.';
+  }
+  const names = notEnabled.join(' and ');
+  return `${names} ${notEnabled.length === 1 ? 'is' : 'are'} routed by the editor but missing from ripr.toml [languages] enabled, so such files produce no diagnostics; add the language to [languages] enabled (for example enabled = ["rust", "typescript"]), then run ripr: Restart Server.`;
+}
+
 function statusFromRefreshCompletedMessage(message: string): RiprStatusState {
   const diagnostics = numberField(message, 'diagnostics');
   const enabledLanguages = numberField(message, 'enabled_languages');
@@ -3997,11 +4035,12 @@ function statusFromRefreshCompletedMessage(message: string): RiprStatusState {
       kind: 'noActionableSeams',
       summary: 'ripr analysis completed with no actionable seam diagnostics.',
       enabledLanguages: enabledLanguageNames,
-      nextStep: 'If this is unexpected, save files, confirm the workspace root and enabled languages, then run ripr: Show Output.',
+      nextStep: 'If this is unexpected, save files, confirm the workspace root, and check ripr.toml [languages] enabled for the open file, then run ripr: Show Output.',
       detail: [
         message,
         'No ripr seam diagnostics were published for the last saved workspace state.',
         'Enabled languages determine which saved files can produce diagnostics; disabled or unavailable preview languages stay silent.',
+        routedPreviewEnablementLine(enabledLanguageNames),
         'If you expected diagnostics, confirm the file is saved, the workspace root is correct, and the language is enabled and available in this ripr build.'
       ].join('\n')
     };

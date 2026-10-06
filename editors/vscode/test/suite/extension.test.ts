@@ -21,7 +21,13 @@ import {
 import { compatibleLspEvidence } from './testCompatibility';
 
 suite('Extension Smoke', () => {
-  suiteSetup(async () => {
+  suiteSetup(async function (this: Mocha.Context) {
+    // Activation awaits full server start: candidate compatibility probe
+    // (START_TIMEOUT_MS = 10s), client start, and configureTestServer may
+    // await five config updates. A single real-server test below needs 11s+
+    // on this host, so the hook's share of the global 10s budget cannot hold
+    // (#6845); give the hook a generous budget like the real-server tests.
+    this.timeout(120000);
     await cleanupEditorGapSmokeFiles();
     await configureTestServer();
     await activateExtension();
@@ -1380,6 +1386,15 @@ suite('Extension Smoke', () => {
       assert.ok(String(context.status.tooltip).includes('disabled or unavailable preview languages stay silent'));
       assert.ok(String(context.status.tooltip).includes('enabled and available in this ripr build'));
       assert.ok(String(context.status.tooltip).includes('Evidence freshness: current saved-workspace status reported by server refresh'));
+      // The zero-diagnostics branch must name the enablement mechanism for
+      // routed-but-disabled preview languages, not just "enabled languages"
+      // generically (#6846).
+      assert.ok(
+        String(context.status.tooltip).includes('routed by the editor but missing from ripr.toml [languages] enabled'),
+        String(context.status.tooltip)
+      );
+      assert.ok(String(context.status.tooltip).includes('typescript and python'), String(context.status.tooltip));
+      assert.ok(String(context.status.tooltip).includes('then run ripr: Restart Server'));
 
       context.client.emitNotification('window/logMessage', {
         message: 'ripr analysis refresh completed in 42 ms: generation=1, diagnostics=0, files=0, findings=0, seam_diagnostics=0, enabled_languages=0, enabled_language_names=, published_files=0, cleared_files=0'
