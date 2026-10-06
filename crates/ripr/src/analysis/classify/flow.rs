@@ -263,6 +263,20 @@ fn predicate_flow_sinks(
     Vec::new()
 }
 
+/// The declared name of one generic parameter item (`E: From<X>` -> `E`,
+/// `const N: usize` -> `N`); `None` for a lifetime or an empty item.
+fn generic_item_name(item: &str) -> Option<&str> {
+    let item = item.trim();
+    let item = item.strip_prefix("const ").unwrap_or(item).trim_start();
+    if item.starts_with('\'') {
+        return None;
+    }
+    let end = item
+        .find(|character: char| !(character.is_ascii_alphanumeric() || character == '_'))
+        .unwrap_or(item.len());
+    (end > 0).then(|| &item[..end])
+}
+
 /// Identifier-like tokens (`amount`, `threshold`, …) referenced by a predicate
 /// expression such as `amount >= threshold`. Used to require that a forward
 /// text scan for a flow sink only credits a line that plausibly derives from
@@ -811,17 +825,28 @@ fn error_path_sink_text(probe: &Probe, owner_fn: Option<&FunctionSummary>) -> St
 /// enum the `ok_or` variant belongs to (PR #6786 review, Devin). `?`
 /// converts the error through `From` when the owner returns another error
 /// type (`Inner::Bad` becomes `Outer::Wrapped`), so the variant is the
-/// owner's returned error only when the types agree. Compared by the final
-/// path segment; a type alias (`Result<T>`, `io::Result<T>`, `Result<T,
-/// Error>` naming an alias), `Self`, a generic or an unparsed signature
-/// answers `false` (fail-closed).
+/// owner's returned error only when the types agree. The variant's enum path
+/// and the error type must be textually equal after dropping one leading
+/// `crate::` or `self::` (a final-segment match let `other::E::Bad` pass for
+/// an owner returning a different `E`; PR #6786 review, CodeRabbit). A type
+/// alias (`Result<T>`, `io::Result<T>`, `Result<T, Error>` naming an alias),
+/// an imported-path spelling difference, `Self`, a `fn`-level generic
+/// parameter of that name, or an unparsed signature answers `false`
+/// (fail-closed).
 fn owner_error_type_names_variant_enum(owner_fn: Option<&FunctionSummary>, variant: &str) -> bool {
+    fn local_path(path: &str) -> &str {
+        let path = path.trim();
+        path.strip_prefix("crate::")
+            .or_else(|| path.strip_prefix("self::"))
+            .unwrap_or(path)
+    }
     let Some(function) = owner_fn else {
         return false;
     };
-    let Some(enum_name) = variant.rsplit("::").nth(1) else {
+    let Some((enum_path, _)) = variant.rsplit_once("::") else {
         return false;
     };
+    let enum_path = local_path(enum_path);
     let Some(returned) = super::owner_pin::declared_return_type(&function.body) else {
         return false;
     };
@@ -852,12 +877,55 @@ fn owner_error_type_names_variant_enum(owner_fn: Option<&FunctionSummary>, varia
     let [_, error_type] = parts.as_slice() else {
         return false;
     };
-    let error_type = error_type.trim();
+    let error_type = local_path(error_type);
     !error_type.is_empty()
         && error_type.chars().all(|character| {
             character.is_ascii_alphanumeric() || character == '_' || character == ':'
         })
-        && error_type.rsplit("::").next() == Some(enum_name)
+        && error_type == enum_path
+        && fn_generic_parameters(&function.body).is_some_and(|names| !names.contains(&error_type))
+}
+
+/// The names a `fn` header's own generic parameter list declares
+/// (`fn parse<'a, E: From<X>, const N: usize>` -> `["E", "N"]`); lifetimes
+/// are skipped. `Some(vec![])` when the name is followed directly by `(`;
+/// `None` when the header cannot be read (fail-closed for the caller).
+fn fn_generic_parameters(definition: &str) -> Option<Vec<&str>> {
+    let masked_fn = definition.find("fn ")?;
+    let after_fn = definition[masked_fn + "fn ".len()..].trim_start();
+    let name_len = after_fn
+        .find(|character: char| !(character.is_ascii_alphanumeric() || character == '_'))
+        .unwrap_or(after_fn.len());
+    let rest = after_fn[name_len..].trim_start();
+    if rest.starts_with('(') {
+        return Some(Vec::new());
+    }
+    let generics = rest.strip_prefix('<')?;
+    let mut names = Vec::new();
+    let mut depth = 0i32;
+    let mut item_start = 0;
+    let mut previous = ' ';
+    for (offset, character) in generics.char_indices() {
+        let arrow = previous == '-';
+        previous = character;
+        match character {
+            // The `>` of a `Fn(..) -> T` bound's arrow closes nothing.
+            '>' if arrow => {}
+            '<' | '(' | '[' => depth += 1,
+            ')' | ']' => depth -= 1,
+            '>' if depth == 0 => {
+                names.extend(generic_item_name(&generics[item_start..offset]));
+                return Some(names);
+            }
+            '>' => depth -= 1,
+            ',' if depth == 0 => {
+                names.extend(generic_item_name(&generics[item_start..offset]));
+                item_start = offset + 1;
+            }
+            _ => {}
+        }
+    }
+    None
 }
 
 /// Whether a `?` on the probe's line returns from the owner function: the
@@ -1770,7 +1838,52 @@ mod tests {
                     .all(|sink| sink.text != "Result::Err(Inner::Bad)"),
                 "{signature}: {sinks:?}"
             );
+            // The fallback sink flow does emit cannot complete the witness
+            // through the generic identity rule either.
+            let witness = super::super::propagation_witness::current_path_witness(&probe, &sinks);
+            let evidence = propagation_evidence_with_witness(&probe, &sinks, witness.as_ref());
+            assert_ne!(
+                evidence.state,
+                StageState::Yes,
+                "{signature}: {}",
+                evidence.summary
+            );
         }
+        // A same-named enum in another module, and a `fn`-level generic that
+        // shadows the crate enum's name, are different error types.
+        for (definition, variant) in [
+            (
+                "pub fn parse(x: Option<u8>) -> Result<u8, E> {\n    let v = x.ok_or(other::E::Bad)?;\n    Ok(v)\n}",
+                "other::E::Bad",
+            ),
+            (
+                "pub fn parse<E: From<crate::E>>(x: Option<u8>) -> Result<u8, E> {\n    let v = x.ok_or(crate::E::Bad)?;\n    Ok(v)\n}",
+                "crate::E::Bad",
+            ),
+            (
+                "pub fn parse<'a, E>(x: Option<&'a u8>) -> Result<u8, E> {\n    let v = x.ok_or(E::Bad)?;\n    Ok(*v)\n}",
+                "E::Bad",
+            ),
+            (
+                "pub fn parse<F: Fn(u8) -> u8, E>(x: Option<u8>, f: F) -> Result<u8, E> {\n    let v = x.ok_or(E::Bad)?;\n    Ok(f(v))\n}",
+                "E::Bad",
+            ),
+        ] {
+            let owner = ok_or_owner(definition);
+            assert!(
+                !owner_error_type_names_variant_enum(Some(&owner), variant),
+                "{definition}"
+            );
+        }
+        // `crate::` on either side is the same local path.
+        let owner = ok_or_owner(
+            "pub fn parse(x: Option<u8>) -> Result<u8, crate::E> {\n    let v = x.ok_or(E::Bad)?;\n    Ok(v)\n}",
+        );
+        assert!(owner_error_type_names_variant_enum(Some(&owner), "E::Bad"));
+        assert!(owner_error_type_names_variant_enum(
+            Some(&owner),
+            "crate::E::Bad"
+        ));
         // Nested generics in the success type still split at the right comma.
         let owner = ok_or_owner(
             "pub fn parse(x: Option<u8>) -> Result<Vec<(u8, u8)>, crate::Inner> {\n    let v = x.ok_or(Inner::Bad)?;\n    Ok(vec![(v, v)])\n}",

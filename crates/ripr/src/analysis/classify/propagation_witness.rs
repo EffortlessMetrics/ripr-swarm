@@ -146,8 +146,14 @@ pub(in crate::analysis) fn current_path_witness(
         sink.owner.as_ref() == Some(&owner)
             && sink.kind != FlowSinkKind::Unknown
             && family_accepts_sink(&probe.family, &sink.kind)
+            // A line the strict `ok_or?` reader parses completes only through
+            // the owner-checked sink. When flow refused that sink (a closure,
+            // a converting owner error type), its fallback text sink must not
+            // complete through the generic identity rule (PR #6786 review,
+            // CodeRabbit).
             && (is_question_mark_sink(sink)
-                || (source_sink_tokens_overlap(&probe.expression, &sink.text)
+                || (question_mark_sink.is_none()
+                    && source_sink_tokens_overlap(&probe.expression, &sink.text)
                     && !opaque_path_text(&probe.expression)
                     && !opaque_path_text(&sink.text)))
     })?;

@@ -629,7 +629,9 @@ pub(crate) const COUNT_CACHE_SCHEMA_VERSION: &str = "0.2";
 /// parser-backed, and literal facts include char and byte literals (#5359).
 /// Earlier lexical-fallback and literal facts must miss.
 /// `1.31`: the guarded-match scan emits the #6673 asserted-Err form
-/// (diverging Ok arm, exact assertion Err arm); `1.30` facts lack it.
+/// (diverging Ok arm, exact assertion Err arm), and a `return`/tail
+/// `x.ok_or(Type::Variant)?` line now produces an ErrorPath probe shape
+/// (#6695); `1.30` facts lack both.
 pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.31";
 
 /// Keep the best-effort classified-seam cache from turning a successful live

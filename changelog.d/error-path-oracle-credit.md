@@ -6,8 +6,9 @@
 - Rust: a changed `helper(..).ok_or(Type::Variant)?` (or
   `.ok_or_else(|| Type::Variant)?`) in the owner's body now counts as
   returning that error from the owner when the owner returns
-  `Result<_, Type>`; a `?` that converts to another error type is not
-  counted. A test that pins
+  `Result<_, Type>` with the same type path; a `?` that converts to
+  another error type, or names a same-named enum from another module, is
+  not counted and cannot complete the propagation evidence. A test that pins
   `Err(Type::Variant)` on the owner call reads `exposed`. A test that pins a
   different variant gets no credit, and a `?` inside a closure or `async`
   block is not counted (#6695).

@@ -34,9 +34,18 @@ pub(in crate::analysis) fn exact_error_variant(text: &str) -> Option<String> {
 /// When both readers find a variant and they differ (a nested
 /// `x.map(|_| Err(E::V)).ok_or(E::W)?`), the line names two errors and the
 /// identity is opaque: `None` (fail-closed, PR #6786 review).
+///
+/// A line that spells `.ok_or` beside an `Err(..)` construction names its
+/// error through two routes; unless every qualified variant on it is the
+/// constructed one (`Err(E::V).or_else(|_| x.ok_or(E::W))?` is not), the
+/// identity is opaque too.
 pub(in crate::analysis) fn changed_error_variant(text: &str) -> Option<String> {
     match (exact_error_variant(text), question_mark_error_variant(text)) {
         (Some(constructed), Some(returned)) => (constructed == returned).then_some(constructed),
+        (Some(constructed), None) if text.contains(".ok_or") => enum_variant_values(text)
+            .iter()
+            .all(|value| *value == constructed)
+            .then_some(constructed),
         (constructed, returned) => constructed.or(returned),
     }
 }
@@ -164,6 +173,20 @@ mod tests {
         assert_eq!(
             changed_error_variant("let v = x.ok_or(E::W)?;").as_deref(),
             Some("E::W")
+        );
+        // `.ok_or` beside an `Err(..)` with a different variant, where the
+        // ok_or reader itself refuses the shape.
+        assert_eq!(
+            changed_error_variant("let v = Err(E::V).or_else(|_| x.ok_or(E::W))?;"),
+            None
+        );
+        assert_eq!(
+            changed_error_variant("let v = x.ok_or(E::W).and(Err(E::V))?;"),
+            None
+        );
+        assert_eq!(
+            changed_error_variant("let v = Err(E::V).or_else(|_| x.ok_or(E::V))?;").as_deref(),
+            Some("E::V")
         );
     }
 

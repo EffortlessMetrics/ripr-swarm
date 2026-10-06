@@ -414,3 +414,156 @@ fn issue_6695_sibling_owner_call_pin_does_not_expose_the_changed_ok_or() -> Resu
     assert!(exposed.is_empty(), "{exposed:?}");
     Ok(())
 }
+
+// ---- PR #6786 round 6: refused `ok_or?` lines must not complete ----------
+//
+// When flow refuses the owner-level `ok_or?` sink (a converting owner error
+// type, a closure, a same-named enum from another module), the fallback
+// text sink must not complete the witness through the generic identity
+// rule. Each test pins `Err(<owner enum>::Bad)` through a different branch,
+// so the changed `ok_or` line is never what the test observes.
+const CONVERTING_SOURCE: &str = r#"#[derive(Debug, PartialEq)]
+pub enum Inner {
+    Bad,
+    Gone,
+}
+
+#[derive(Debug, PartialEq)]
+pub enum Outer {
+    Bad,
+    Missing,
+}
+
+impl From<Inner> for Outer {
+    fn from(_: Inner) -> Self {
+        Outer::Missing
+    }
+}
+
+pub fn parse(x: Option<u8>, strict: bool) -> Result<u8, Outer> {
+    if strict {
+        return Err(Outer::Bad);
+    }
+    let v = x.ok_or(Inner::Bad)?;
+    Ok(v)
+}
+"#;
+const CLOSURE_SOURCE: &str = r#"#[derive(Debug, PartialEq)]
+pub enum E {
+    Bad,
+    Gone,
+}
+
+pub fn parse(xs: &[Option<u8>]) -> Result<u8, E> {
+    let ok_count = xs
+        .iter()
+        .map(|x| -> Result<u8, E> {
+            let v = x.ok_or(E::Bad)?;
+            Ok(v)
+        })
+        .filter(Result::is_ok)
+        .count();
+    if ok_count == 0 {
+        return Err(E::Bad);
+    }
+    Ok(ok_count as u8)
+}
+"#;
+const OTHER_MODULE_SOURCE: &str = r#"pub mod other {
+    #[derive(Debug, PartialEq)]
+    pub enum E {
+        Bad,
+        Gone,
+    }
+}
+
+#[derive(Debug, PartialEq)]
+pub enum E {
+    Bad,
+    Missing,
+}
+
+impl From<other::E> for E {
+    fn from(_: other::E) -> Self {
+        E::Missing
+    }
+}
+
+pub fn parse(x: Option<u8>, strict: bool) -> Result<u8, E> {
+    if strict {
+        return Err(E::Bad);
+    }
+    let v = x.ok_or(other::E::Bad)?;
+    Ok(v)
+}
+"#;
+
+fn refused_ok_or_case(
+    source: &str,
+    fragment: &str,
+    old_variant: &str,
+    new_variant: &str,
+    test_body: &str,
+    uses: &str,
+) -> Result<(), String> {
+    let line = source
+        .lines()
+        .position(|text| text.contains(fragment))
+        .map(|index| index + 1)
+        .ok_or_else(|| format!("fixture has no `{fragment}` line"))?;
+    let new_line = source.lines().nth(line - 1).unwrap_or_default();
+    let old_line = new_line.replace(new_variant, old_variant);
+    let diff = single_line_diff(source, line, &old_line);
+    let test = format!(
+        "use error_path_sibling_variant::{{{uses}}};\n\n#[test]\nfn pinned_through_another_branch() {{\n    {test_body};\n}}\n"
+    );
+    let repo = TempRepo::create(source, &test, &diff)?;
+    let output = repo.check()?;
+    let finding = changed_error_path(&output, line, fragment)?;
+    assert_ne!(
+        finding.class,
+        ExposureClass::Exposed,
+        "`{fragment}` must not read exposed; discriminator={:?} propagate={:?}",
+        finding.ripr.reveal.discriminate,
+        finding.ripr.propagate
+    );
+    let exposed = exposed_on_line(&output, line);
+    assert!(exposed.is_empty(), "{exposed:?}");
+    Ok(())
+}
+
+#[test]
+fn ok_or_converted_by_the_owner_error_type_does_not_read_exposed() -> Result<(), String> {
+    refused_ok_or_case(
+        CONVERTING_SOURCE,
+        "x.ok_or(Inner::Bad)",
+        "Inner::Gone",
+        "Inner::Bad",
+        "assert_eq!(parse(None, true), Err(Outer::Bad))",
+        "Outer, parse",
+    )
+}
+
+#[test]
+fn ok_or_inside_a_closure_does_not_read_exposed() -> Result<(), String> {
+    refused_ok_or_case(
+        CLOSURE_SOURCE,
+        "x.ok_or(E::Bad)",
+        "E::Gone",
+        "E::Bad",
+        "assert_eq!(parse(&[None]), Err(E::Bad))",
+        "E, parse",
+    )
+}
+
+#[test]
+fn ok_or_of_a_same_named_enum_in_another_module_does_not_read_exposed() -> Result<(), String> {
+    refused_ok_or_case(
+        OTHER_MODULE_SOURCE,
+        "x.ok_or(other::E::Bad)",
+        "other::E::Gone",
+        "other::E::Bad",
+        "assert_eq!(parse(None, true), Err(E::Bad))",
+        "E, parse",
+    )
+}

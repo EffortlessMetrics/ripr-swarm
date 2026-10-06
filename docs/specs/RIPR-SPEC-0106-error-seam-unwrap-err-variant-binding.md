@@ -150,10 +150,18 @@ variant, exactly as for `return Err(Type::Variant)`:
   masks comments, strings and char literals (`'}'`), keeping lifetimes
   and labels as code.
 - The sink also requires the owner's declared return type to be
-  `Result<_, E>` with `E` naming the variant's enum (final path segment).
-  `?` converts the error through `From` when the owner returns another
-  error type, so a converting owner, a `Result<T>`/`io::Result<T>` alias,
-  an aliased or generic `E`, or an unparsed signature gets no exact sink.
+  `Result<_, E>` with `E` textually equal to the variant's enum path after
+  dropping one leading `crate::` or `self::` (`other::E::Bad` does not match
+  an owner returning `E`). `?` converts the error through `From` when the
+  owner returns another error type, so a converting owner, a
+  `Result<T>`/`io::Result<T>` alias, an aliased or imported spelling of
+  `E`, a `fn`-level generic parameter named `E`, or an unparsed signature
+  gets no exact sink. A generic parameter declared on an enclosing `impl`
+  is not visible to this lexical check.
+- A line the strict `ok_or?` reader parses completes its witness only
+  through that owner-checked sink. When flow refuses the sink (closure,
+  converting owner, mismatched enum path), the fallback error-text sink it
+  emits instead does not complete through the generic identity rule.
 - The propagation witness takes the owner-checked `ok_or?` sink as an
   established edge only when the line constructs no literal `Err(..)`:
   a line with both forms gets the ordinary, unchecked error text sink and
@@ -168,7 +176,10 @@ variant, exactly as for `return Err(Type::Variant)`:
   `error_path_variant_path` reads it, so a test pinning a sibling variant
   (`Err(Type::Other)`) does not confirm the line. When the line holds
   both a literal `Err(..)` and a terminal `ok_or(..)?` naming different
-  variants, the identity is opaque (`None`). Repo mode builds `ErrorPath`
+  variants, the identity is opaque (`None`); so is a line that spells
+  `.ok_or` beside an `Err(..)` and names any other qualified variant
+  (`Err(E::V).or_else(|_| x.ok_or(E::W))?`). Repo mode does not yet apply
+  the owner error-type check (#6915). Repo mode builds `ErrorPath`
   seams only from `return` and tail expressions (and calls)
   (`syntax/ra.rs`); `has_error_path_text` recognises a return/tail
   `x.ok_or(Type::Variant)?` through the same reader (so a short enum such
