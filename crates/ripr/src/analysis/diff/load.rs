@@ -1221,9 +1221,15 @@ fn run_git_diff_bytes(
                  and the base ref, then re-run.",
                 crate::terminal_text::terminal_safe(range.to_string())
             )
-        } else if ["unable to unpack", "inflate:", "bad object", "corrupt", "loose object"]
-            .iter()
-            .any(|marker| stderr.contains(marker))
+        } else if [
+            "unable to unpack",
+            "inflate:",
+            "bad object",
+            "corrupt",
+            "loose object",
+        ]
+        .iter()
+        .any(|marker| stderr.contains(marker))
         {
             " Git reports a damaged object store; run `git fsck`, restore the missing objects \
              (for example `git fetch`), then re-run."
