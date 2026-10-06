@@ -1303,8 +1303,8 @@ fn extract_parser_probe_shapes(
             );
         }
         // `Err(Error::X(off))`: the inner variant call is the payload of the
-        // enclosing error constructor, which already carries the shape.
-        if has_error_path_text(&call_text) && !is_error_path_call_argument(&call_expr, text) {
+        // enclosing `Err(..)` constructor, which already carries the shape.
+        if has_error_path_text(&call_text) && !is_err_constructor_argument(&call_expr) {
             push_probe_shape(
                 &mut shapes,
                 line_index,
@@ -1590,20 +1590,26 @@ fn returns_error_path_call(return_expr: &ast::ReturnExpr, text: &str) -> bool {
     has_error_path_text(&slice_text(text, range.start(), range.end()))
 }
 
-/// True when `call` is a direct argument of an enclosing call that is itself
-/// marked as an error path, so one error behavior keeps one shape (#6914).
-fn is_error_path_call_argument(call: &ast::CallExpr, text: &str) -> bool {
-    let Some(outer) = call
+/// True when `call` is a direct argument of an enclosing `Err(..)`
+/// constructor, so one error behavior keeps one shape (#6914). Only `Err`
+/// counts: any enclosing call's text contains its arguments' error text, so
+/// testing that text would also fold `pick(Err(A), Err(B))` into one shape.
+fn is_err_constructor_argument(call: &ast::CallExpr) -> bool {
+    let Some(ast::Expr::PathExpr(callee)) = call
         .syntax()
         .parent()
         .and_then(ast::ArgList::cast)
         .and_then(|args| args.syntax().parent())
         .and_then(ast::CallExpr::cast)
+        .and_then(|outer| outer.expr())
     else {
         return false;
     };
-    let range = outer.syntax().text_range();
-    has_error_path_text(&slice_text(text, range.start(), range.end()))
+    callee
+        .path()
+        .and_then(|path| path.segment())
+        .and_then(|segment| segment.name_ref())
+        .is_some_and(|name| name.text() == "Err")
 }
 
 fn call_is_argument(call: &ast::CallExpr) -> bool {
@@ -2262,6 +2268,9 @@ pub fn validate(value: i32) -> Result<i32, String> {
             "    if s.len() > 3 { return (Err(Error::Long)); }\n",
             "    if s == \"x\" { return s.parse::<u8>().map_err(Error::from); }\n",
             "    if s == \"y\" { return Err(Error::Bad(s.len())); }\n",
+            "    if s == \"z\" { return pick(s, Err(Error::A), Err(Error::B)); }\n",
+            "    if s == \"w\" { return wrap(Error::Bad(1)); }\n",
+            "    let v = s.first().ok_or(Error::Bad(2))?;\n",
             "    Ok(1)\n",
             "}\n",
         );
@@ -2296,6 +2305,16 @@ pub fn validate(value: i32) -> Result<i32, String> {
             on_line(5, ProbeShapeKind::ErrorPath),
             vec!["Err(Error::Bad(s.len()))"]
         );
+        // Arguments of a call that is not `Err(..)` keep their own shapes:
+        // two error constructors are two error behaviors.
+        let pick = on_line(6, ProbeShapeKind::ErrorPath);
+        assert!(pick.contains(&"Err(Error::A)".to_string()), "{pick:?}");
+        assert!(pick.contains(&"Err(Error::B)".to_string()), "{pick:?}");
+        let wrap = on_line(7, ProbeShapeKind::ErrorPath);
+        assert!(wrap.contains(&"Error::Bad(1)".to_string()), "{wrap:?}");
+        // A method argument is not a call argument list.
+        let ok_or = on_line(8, ProbeShapeKind::ErrorPath);
+        assert!(ok_or.contains(&"Error::Bad(2)".to_string()), "{ok_or:?}");
         // A returned `map_err` chain is not a call the call loop marks, so
         // the `return` stays the line's only error_path.
         assert_eq!(
