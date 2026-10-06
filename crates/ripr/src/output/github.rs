@@ -184,7 +184,10 @@ pub(crate) fn render_with_config(output: &CheckOutput, config: &RiprConfig) -> S
                 format!(
                     "{}{message}",
                     unplaced_location_prefix(
-                        &display_path,
+                        // The stable path encodes a literal `%` as `%25`;
+                        // `escape_data` encodes it once more, so show the
+                        // `%` itself. `%XX` markers for non-UTF-8 bytes stay.
+                        &display_path.replace("%25", "%"),
                         &finding.probe.location.line.to_string()
                     )
                 ),
@@ -816,6 +819,21 @@ mod tests {
         assert!(
             !rendered.contains('\u{1b}') && !rendered.contains('\u{202e}'),
             "raw control text must not survive: {rendered:?}"
+        );
+    }
+
+    #[test]
+    fn render_unplaced_location_shows_a_literal_percent_once() {
+        // Stable path text encodes `%` as `%25` and `escape_data` encodes it
+        // again; the message must still read as the original name.
+        let mut output = output_with_unknown_finding();
+        output.findings[0].probe.location.file = PathBuf::from("src/100%\u{1b}.rs");
+
+        let rendered = render(&output);
+
+        assert!(
+            rendered.contains("not placed): src/100%25\\u{1b}.rs:13. "),
+            "GitHub decodes %25 to a single %: {rendered}"
         );
     }
 
