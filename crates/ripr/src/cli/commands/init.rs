@@ -76,16 +76,34 @@ fn unanalyzed_root_warning(root: &Path) -> Option<String> {
 
 /// Warn before configuring a directory that is not a Git work tree: the
 /// generated workflow and Next steps assume branch-based analysis, which has
-/// no branch to compare outside a repository. The shared bounded probe
-/// decides; anything it cannot verify as a work tree warns, since the
-/// configuration is written either way.
+/// no branch to compare outside a repository. The verdict is doctor's
+/// three-way work-tree probe: only an established outside is named as one.
+/// A refused repository keeps its repair instead of being told it lies
+/// outside a repository, and a probe that never answered says Git could
+/// not confirm the state. Advisory either way: the configuration is
+/// written regardless.
 fn non_git_root_warning(root: &Path) -> Option<String> {
-    match crate::git::probe_work_tree_root(root) {
-        Ok(crate::git::WorkTreeRootProbe::Root)
-        | Ok(crate::git::WorkTreeRootProbe::InsideWorkTree) => None,
-        _ => Some(format!(
-            "ripr: warning: the root `{}` is not inside a Git work tree. The generated configuration analyzes branches against their default branch, so `ripr check` has no branch to compare until this directory is inside a repository.",
-            output::path::human_path(root)
+    non_git_root_warning_for_probe(root, output::doctor::work_tree_probe(root))
+}
+
+/// The warning dispatch, split from the probe call so every wording branch
+/// pins without arranging a refused Git or a missing binary.
+fn non_git_root_warning_for_probe(
+    root: &Path,
+    probe: Option<output::doctor::WorkTreeProbe>,
+) -> Option<String> {
+    use output::doctor::WorkTreeProbe;
+    let shown = output::path::human_path(root);
+    match probe {
+        Some(WorkTreeProbe::Inside) => None,
+        Some(WorkTreeProbe::Outside) => Some(format!(
+            "ripr: warning: the root `{shown}` is not inside a Git work tree. The generated configuration analyzes branches against their default branch, so `ripr check` has no branch to compare until this directory is inside a repository."
+        )),
+        Some(WorkTreeProbe::Refused(repair)) => Some(format!(
+            "ripr: warning: Git could not confirm the root `{shown}` is inside a work tree ({repair}). The generated configuration analyzes branches against their default branch, so confirm the directory is inside a repository or `ripr check` has no branch to compare."
+        )),
+        None => Some(format!(
+            "ripr: warning: Git could not confirm the root `{shown}` is inside a work tree (the probe did not answer; Git may be unavailable or the spawn timed out). The generated configuration analyzes branches against their default branch, so confirm the directory is inside a repository or `ripr check` has no branch to compare."
         )),
     }
 }
@@ -636,6 +654,49 @@ mod tests {
         assert_eq!(non_git_root_warning(&root), None);
         std::fs::remove_dir_all(&root).map_err(|err| format!("cleanup: {err}"))?;
         Ok(())
+    }
+
+    #[test]
+    fn non_git_root_warning_names_only_the_established_outside() {
+        use output::doctor::WorkTreeProbe;
+        let root = Path::new("some-dir");
+
+        let outside =
+            non_git_root_warning_for_probe(root, Some(WorkTreeProbe::Outside)).unwrap_or_default();
+        assert!(
+            outside.contains("is not inside a Git work tree"),
+            "{outside}"
+        );
+
+        // A refused repository keeps its repair; it is never told it lies
+        // outside a repository.
+        let refused = non_git_root_warning_for_probe(
+            root,
+            Some(WorkTreeProbe::Refused(
+                "run `git config --global --add safe.directory /srv/repo`".to_string(),
+            )),
+        )
+        .unwrap_or_default();
+        assert!(refused.contains("could not confirm"), "{refused}");
+        assert!(refused.contains("safe.directory"), "{refused}");
+        assert!(
+            !refused.contains("is not inside a Git work tree"),
+            "{refused}"
+        );
+
+        // A probe that never answered says so instead of claiming a state.
+        let silent = non_git_root_warning_for_probe(root, None).unwrap_or_default();
+        assert!(silent.contains("could not confirm"), "{silent}");
+        assert!(silent.contains("did not answer"), "{silent}");
+        assert!(
+            !silent.contains("is not inside a Git work tree"),
+            "{silent}"
+        );
+
+        assert_eq!(
+            non_git_root_warning_for_probe(root, Some(WorkTreeProbe::Inside)),
+            None
+        );
     }
 
     fn options(root: &Path) -> InitOptions {

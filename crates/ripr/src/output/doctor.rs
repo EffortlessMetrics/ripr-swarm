@@ -904,14 +904,16 @@ pub(crate) fn rust_toolchain_scope(
 /// different state from git running and reporting no work tree, and only the
 /// second one has a repair the user can act on. `rev-parse` exiting nonzero
 /// is git answering, so that arm reports `false` rather than the unknown.
-enum WorkTreeProbe {
+/// Shared with `init`, whose non-repo warning needs the same three-way
+/// verdict (#5252 item 7).
+pub(crate) enum WorkTreeProbe {
     Inside,
     Outside,
     /// Git refused the repository for its owner (#4530); carries the repair.
     Refused(String),
 }
 
-fn work_tree_probe(root: &Path) -> Option<WorkTreeProbe> {
+pub(crate) fn work_tree_probe(root: &Path) -> Option<WorkTreeProbe> {
     let output = crate::git::run_git_output_with_deadline(
         root,
         &["rev-parse", "--is-inside-work-tree"],
