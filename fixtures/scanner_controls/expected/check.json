@@ -11,16 +11,16 @@
   "findings": [
     {
       "id": "probe:src_lib.rs:predicate:f4ed635d",
-      "canonical_gap_id": "gap:rust:src/lib.rs:classify_bound:predicate_boundary:predicate:final_state==text",
+      "canonical_gap_id": "gap:rust:src/lib.rs:classify_bound:predicate_boundary:predicate:final_state==lit74657874",
       "canonical_gap_group_size": 1,
       "canonical_gap": {
-        "id": "gap:rust:src/lib.rs:classify_bound:predicate_boundary:predicate:final_state==text",
+        "id": "gap:rust:src/lib.rs:classify_bound:predicate_boundary:predicate:final_state==lit74657874",
         "language": "rust",
         "file": "src/lib.rs",
         "owner": "classify_bound",
         "behavior_kind": "predicate_boundary",
         "probe_kind": "predicate",
-        "normalized_discriminator": "final_state==text"
+        "normalized_discriminator": "final_state==lit74657874"
 
       },
       "classification": "weakly_exposed",
@@ -148,16 +148,16 @@
     },
     {
       "id": "probe:src_lib.rs:predicate:10d9563b",
-      "canonical_gap_id": "gap:rust:src/lib.rs:classify_trim:predicate_boundary:predicate:final_state==text",
+      "canonical_gap_id": "gap:rust:src/lib.rs:classify_trim:predicate_boundary:predicate:final_state==lit74657874",
       "canonical_gap_group_size": 1,
       "canonical_gap": {
-        "id": "gap:rust:src/lib.rs:classify_trim:predicate_boundary:predicate:final_state==text",
+        "id": "gap:rust:src/lib.rs:classify_trim:predicate_boundary:predicate:final_state==lit74657874",
         "language": "rust",
         "file": "src/lib.rs",
         "owner": "classify_trim",
         "behavior_kind": "predicate_boundary",
         "probe_kind": "predicate",
-        "normalized_discriminator": "final_state==text"
+        "normalized_discriminator": "final_state==lit74657874"
 
       },
       "classification": "weakly_exposed",
@@ -285,16 +285,16 @@
     },
     {
       "id": "probe:src_lib.rs:predicate:df1a9a22",
-      "canonical_gap_id": "gap:rust:src/lib.rs:classify_computed:predicate_boundary:predicate:final_state==text",
+      "canonical_gap_id": "gap:rust:src/lib.rs:classify_computed:predicate_boundary:predicate:final_state==lit74657874",
       "canonical_gap_group_size": 1,
       "canonical_gap": {
-        "id": "gap:rust:src/lib.rs:classify_computed:predicate_boundary:predicate:final_state==text",
+        "id": "gap:rust:src/lib.rs:classify_computed:predicate_boundary:predicate:final_state==lit74657874",
         "language": "rust",
         "file": "src/lib.rs",
         "owner": "classify_computed",
         "behavior_kind": "predicate_boundary",
         "probe_kind": "predicate",
-        "normalized_discriminator": "final_state==text"
+        "normalized_discriminator": "final_state==lit74657874"
 
       },
       "classification": "weakly_exposed",
@@ -422,16 +422,16 @@
     },
     {
       "id": "probe:src_lib.rs:predicate:ab4a8a0d",
-      "canonical_gap_id": "gap:rust:src/lib.rs:classify_bare:predicate_boundary:predicate:final_state==text",
+      "canonical_gap_id": "gap:rust:src/lib.rs:classify_bare:predicate_boundary:predicate:final_state==lit74657874",
       "canonical_gap_group_size": 1,
       "canonical_gap": {
-        "id": "gap:rust:src/lib.rs:classify_bare:predicate_boundary:predicate:final_state==text",
+        "id": "gap:rust:src/lib.rs:classify_bare:predicate_boundary:predicate:final_state==lit74657874",
         "language": "rust",
         "file": "src/lib.rs",
         "owner": "classify_bare",
         "behavior_kind": "predicate_boundary",
         "probe_kind": "predicate",
-        "normalized_discriminator": "final_state==text"
+        "normalized_discriminator": "final_state==lit74657874"
 
       },
       "classification": "weakly_exposed",

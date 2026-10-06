@@ -13,7 +13,7 @@ Start here:
   File: fixtures/helper_chain_multi_hop/input/src/lib.rs:2
   Static exposure: unknown (static_unknown, note, confidence 0.50)
   Why unknown: the analysis could not determine a static exposure state
-  Canonical gap: gap:rust:src/lib.rs:first_char:static_unknown:static_unknown:let_head=input.chars_.next_.map_or_c_c
+  Canonical gap: gap:rust:src/lib.rs:first_char:static_unknown:static_unknown:let_head=input.chars_.next_.map_or_lit3f_c_c
   Changed behavior: let head = input.chars().next().map_or('?', |c| c);
   Analyzer limit: No strong discriminator was detected
   Related test: tests/classify.rs:4 leading_space_classifies_other

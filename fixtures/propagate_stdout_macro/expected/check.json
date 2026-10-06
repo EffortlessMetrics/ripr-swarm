@@ -11,16 +11,16 @@
   "findings": [
     {
       "id": "probe:src_lib.rs:call_deletion:75eda2b6",
-      "canonical_gap_id": "gap:rust:src/lib.rs:report:call_deletion:call_deletion:println!amount_is_amount*9",
+      "canonical_gap_id": "gap:rust:src/lib.rs:report:call_deletion:call_deletion:println!lit616d6f756e74206973207b7d_amount*9",
       "canonical_gap_group_size": 1,
       "canonical_gap": {
-        "id": "gap:rust:src/lib.rs:report:call_deletion:call_deletion:println!amount_is_amount*9",
+        "id": "gap:rust:src/lib.rs:report:call_deletion:call_deletion:println!lit616d6f756e74206973207b7d_amount*9",
         "language": "rust",
         "file": "src/lib.rs",
         "owner": "report",
         "behavior_kind": "call_deletion",
         "probe_kind": "call_deletion",
-        "normalized_discriminator": "println!amount_is_amount*9"
+        "normalized_discriminator": "println!lit616d6f756e74206973207b7d_amount*9"
 
       },
       "classification": "propagation_unknown",
@@ -95,16 +95,16 @@
     },
     {
       "id": "probe:src_lib.rs:side_effect:ea1b97e6",
-      "canonical_gap_id": "gap:rust:src/lib.rs:report:side_effect:side_effect:println!amount_is_amount*9",
+      "canonical_gap_id": "gap:rust:src/lib.rs:report:side_effect:side_effect:println!lit616d6f756e74206973207b7d_amount*9",
       "canonical_gap_group_size": 1,
       "canonical_gap": {
-        "id": "gap:rust:src/lib.rs:report:side_effect:side_effect:println!amount_is_amount*9",
+        "id": "gap:rust:src/lib.rs:report:side_effect:side_effect:println!lit616d6f756e74206973207b7d_amount*9",
         "language": "rust",
         "file": "src/lib.rs",
         "owner": "report",
         "behavior_kind": "side_effect",
         "probe_kind": "side_effect",
-        "normalized_discriminator": "println!amount_is_amount*9"
+        "normalized_discriminator": "println!lit616d6f756e74206973207b7d_amount*9"
 
       },
       "classification": "propagation_unknown",

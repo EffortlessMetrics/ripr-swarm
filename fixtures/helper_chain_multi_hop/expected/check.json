@@ -11,16 +11,16 @@
   "findings": [
     {
       "id": "probe:src_lib.rs:static_unknown:ea96a27d",
-      "canonical_gap_id": "gap:rust:src/lib.rs:first_char:static_unknown:static_unknown:let_head=input.chars_.next_.map_or_c_c",
+      "canonical_gap_id": "gap:rust:src/lib.rs:first_char:static_unknown:static_unknown:let_head=input.chars_.next_.map_or_lit3f_c_c",
       "canonical_gap_group_size": 1,
       "canonical_gap": {
-        "id": "gap:rust:src/lib.rs:first_char:static_unknown:static_unknown:let_head=input.chars_.next_.map_or_c_c",
+        "id": "gap:rust:src/lib.rs:first_char:static_unknown:static_unknown:let_head=input.chars_.next_.map_or_lit3f_c_c",
         "language": "rust",
         "file": "src/lib.rs",
         "owner": "first_char",
         "behavior_kind": "static_unknown",
         "probe_kind": "static_unknown",
-        "normalized_discriminator": "let_head=input.chars_.next_.map_or_c_c"
+        "normalized_discriminator": "let_head=input.chars_.next_.map_or_lit3f_c_c"
 
       },
       "classification": "static_unknown",

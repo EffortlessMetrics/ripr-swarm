@@ -12,7 +12,7 @@ Start here:
   Safe next action: no non-exposed diff finding was selected. This is not runtime proof, coverage adequacy, or mutation confirmation.
   File: fixtures/scanner_positive/input/src/lib.rs:16
   Static exposure: exposed (info, confidence 1.00)
-  Canonical gap: gap:rust:src/lib.rs:classify:predicate_boundary:predicate:final_state==text
+  Canonical gap: gap:rust:src/lib.rs:classify:predicate_boundary:predicate:final_state==lit74657874
   Changed behavior: if final_state == "text" {
   Related test (1 of 2): tests/classify.rs:4 plain_word_is_word
   Evidence: reach yes · infection yes · propagation yes · observation yes · discriminator yes

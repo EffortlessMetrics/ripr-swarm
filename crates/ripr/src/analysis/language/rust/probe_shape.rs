@@ -100,7 +100,54 @@ fn normalize_rust_gap_discriminator(probe_family: &ProbeFamily, expression: &str
         ProbeFamily::MatchArm => strip_match_arm_arrow(text),
         _ => text.to_string(),
     };
-    rust_gap_key_text(&stripped)
+    rust_gap_key_text(&encode_rust_string_literals(&stripped))
+}
+
+/// Encode Rust string and char literals into collision-free key tokens
+/// (`"a b"` -> `lit612062`): a literal's exact bytes carry the discriminating
+/// input, so whitespace collapsing or `_`-joins must never merge two distinct
+/// literals (`"a b"` vs `"a_b"` name different test inputs and different
+/// gaps). Each literal becomes `lit` plus the lowercase hex of its inner
+/// bytes; text outside literals is copied through unchanged, and an
+/// unterminated quote passes through, deterministically.
+fn encode_rust_string_literals(text: &str) -> String {
+    let bytes = text.as_bytes();
+    let mut output = String::with_capacity(text.len());
+    let mut copied = 0_usize;
+    let mut index = 0_usize;
+    while index < bytes.len() {
+        let quote = bytes[index];
+        if (quote == b'"' || quote == b'\'') && bytes[index + 1..].contains(&quote) {
+            let mut cursor = index + 1;
+            let mut terminator = None;
+            while cursor < bytes.len() {
+                if bytes[cursor] == b'\\' && cursor + 1 < bytes.len() {
+                    cursor += 2;
+                    continue;
+                }
+                if bytes[cursor] == quote {
+                    terminator = Some(cursor);
+                    break;
+                }
+                cursor += 1;
+            }
+            if let Some(end) = terminator {
+                // `index` and `end + 1` sit on ASCII quote bytes, so both are
+                // char boundaries and the plain-text slices stay lossless.
+                output.push_str(&text[copied..index]);
+                output.push_str("lit");
+                for byte in &bytes[index + 1..end] {
+                    output.push_str(&format!("{byte:02x}"));
+                }
+                index = end + 1;
+                copied = index;
+                continue;
+            }
+        }
+        index += 1;
+    }
+    output.push_str(&text[copied..]);
+    output
 }
 
 fn strip_predicate_statement(text: &str) -> String {
@@ -315,5 +362,39 @@ mod tests {
     #[test]
     fn empty_key_text_falls_back_to_unknown() {
         assert_eq!(rust_gap_key_text("   ()  "), "unknown");
+    }
+
+    // #5268 review: two distinct string predicates name two different test
+    // inputs, so their literal contents must survive the key normalization
+    // byte-exactly and the derived ids must never collide (a shared id would
+    // merge their LSP canonical groups and MCP lookups).
+    #[test]
+    fn distinct_string_literals_never_share_one_gap_identity() -> Result<(), String> {
+        let spaced = gap_for(
+            Path::new("src/lib.rs"),
+            Some(owner("src/lib.rs", "classify")),
+            &ProbeFamily::Predicate,
+            "if s == \"a b\" {",
+        )?;
+        let underscored = gap_for(
+            Path::new("src/lib.rs"),
+            Some(owner("src/lib.rs", "classify")),
+            &ProbeFamily::Predicate,
+            "if s == \"a_b\" {",
+        )?;
+        assert_eq!(spaced.normalized_discriminator, "s==lit612062");
+        assert_eq!(underscored.normalized_discriminator, "s==lit615f62");
+        assert_ne!(spaced.id, underscored.id);
+        assert_ne!(spaced.normalized_discriminator, "s==a_b");
+        Ok(())
+    }
+
+    #[test]
+    fn non_ascii_text_outside_literals_stays_lossless() -> Result<(), String> {
+        // The literal encoder copies non-literal text by exact slice, so
+        // multibyte characters keep their bytes (never byte-as-char mojibake).
+        let encoded = encode_rust_string_literals("check árrow == \"x\"");
+        assert!(encoded.starts_with("check árrow == lit78"));
+        Ok(())
     }
 }

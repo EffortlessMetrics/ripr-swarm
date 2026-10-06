@@ -11,16 +11,16 @@
   "findings": [
     {
       "id": "probe:src_lib.rs:predicate:c2e7eb02",
-      "canonical_gap_id": "gap:rust:src/lib.rs:classify:predicate_boundary:predicate:final_label==beta",
+      "canonical_gap_id": "gap:rust:src/lib.rs:classify:predicate_boundary:predicate:final_label==lit62657461",
       "canonical_gap_group_size": 1,
       "canonical_gap": {
-        "id": "gap:rust:src/lib.rs:classify:predicate_boundary:predicate:final_label==beta",
+        "id": "gap:rust:src/lib.rs:classify:predicate_boundary:predicate:final_label==lit62657461",
         "language": "rust",
         "file": "src/lib.rs",
         "owner": "classify",
         "behavior_kind": "predicate_boundary",
         "probe_kind": "predicate",
-        "normalized_discriminator": "final_label==beta"
+        "normalized_discriminator": "final_label==lit62657461"
 
       },
       "classification": "exposed",

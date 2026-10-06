@@ -13,7 +13,7 @@ Start here:
   File: fixtures/match_arm_controls/input/src/lib.rs:14
   Static exposure: weak (weakly_exposed, warning, confidence 0.92)
   Why weak: a related test reaches this change, but no test input tells the old and new behavior apart
-  Canonical gap: gap:rust:src/lib.rs:classify_computed:predicate_boundary:predicate:final_label==beta
+  Canonical gap: gap:rust:src/lib.rs:classify_computed:predicate_boundary:predicate:final_label==lit62657461
   Changed behavior: if final_label == "beta" {
   Missing discriminator: final_label == "beta"
   Related test: tests/classify.rs:4 computed_label_is_word (no test input reaches `final_label == "beta"`)

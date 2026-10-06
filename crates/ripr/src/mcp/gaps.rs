@@ -404,10 +404,13 @@ pub(crate) fn budget_items(
 }
 
 /// Extract the canonical item id from a `ripr://gap/{id}` resource URI.
-/// Returns `None` for any other URI, including the exact status resource.
+///
+/// The producer gap id embeds a workspace-relative path (Python, and since
+/// #5268 Rust), so the suffix is read whole: the `ripr://gap/` prefix alone
+/// routes the URI, and only an empty suffix fails. Returns `None` for any
+/// other URI, including the exact status resource.
 pub(crate) fn gap_resource_id(uri: &str) -> Option<&str> {
-    uri.strip_prefix("ripr://gap/")
-        .filter(|id| !id.is_empty() && !id.contains('/'))
+    uri.strip_prefix("ripr://gap/").filter(|id| !id.is_empty())
 }
 
 /// Extract the snapshot id from a `ripr://snapshot/{id}` resource URI.
@@ -979,12 +982,33 @@ mod tests {
         for other in [
             "ripr://workspace/status",
             "ripr://gap/",
-            "ripr://gap/a/b",
             "ripr://snapshot/",
             "https://example.com/gap/x",
         ] {
             assert_eq!(gap_resource_id(other), None, "{other}");
         }
         assert_eq!(snapshot_resource_id("ripr://gap/x"), None);
+    }
+
+    /// #5268 review: the producer gap id embeds a workspace-relative path,
+    /// so the advertised `ripr://gap/{id}` resource must parse the suffix
+    /// whole — a nested-file Rust (or Python) finding's resource link has to
+    /// resolve to the same id its tool calls address. The snapshot grammar
+    /// stays single-segment.
+    #[test]
+    fn gap_resource_route_reads_a_nested_producer_gap_id_whole() {
+        let nested = "gap:rust:src/lib.rs:discount:predicate_boundary:predicate:amount==fee";
+        assert_eq!(
+            gap_resource_id(&format!("ripr://gap/{nested}")),
+            Some(nested)
+        );
+        assert_eq!(
+            crate::mcp::repair_card::repair_card_resource_id(&format!(
+                "ripr://repair-card/{nested}"
+            )),
+            Some(nested)
+        );
+        // A snapshot id never carries a path, so its grammar stays strict.
+        assert_eq!(snapshot_resource_id("ripr://snapshot/a/b"), None);
     }
 }

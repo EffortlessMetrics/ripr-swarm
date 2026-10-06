@@ -91,11 +91,12 @@ pub(crate) struct SeamCardBinding {
 }
 
 /// Extract the canonical item id from a `ripr://repair-card/{id}` resource
-/// URI. The grammar matches the gap template exactly: one non-empty path
-/// segment with no further separators.
+/// URI. The canonical id embeds a workspace-relative path (Python, and
+/// since #5268 Rust), so the suffix is read whole: the `ripr://repair-card/`
+/// prefix alone routes the URI, and only an empty suffix fails.
 pub(crate) fn repair_card_resource_id(uri: &str) -> Option<&str> {
     uri.strip_prefix("ripr://repair-card/")
-        .filter(|id| !id.is_empty() && !id.contains('/'))
+        .filter(|id| !id.is_empty())
 }
 
 /// Bind the repair-card producers into one committing snapshot. This runs
@@ -574,10 +575,17 @@ mod tests {
             repair_card_resource_id("ripr://repair-card/gap:test:1"),
             Some("gap:test:1")
         );
+        // #5268 review: a producer canonical id embeds a workspace-relative
+        // path, so the suffix is read whole and a nested id must resolve.
+        assert_eq!(
+            repair_card_resource_id(
+                "ripr://repair-card/gap:rust:src/lib.rs:discount:predicate_boundary:predicate:amount==fee"
+            ),
+            Some("gap:rust:src/lib.rs:discount:predicate_boundary:predicate:amount==fee")
+        );
         for other in [
             "ripr://workspace/status",
             "ripr://repair-card/",
-            "ripr://repair-card/a/b",
             "ripr://gap/gap:test:1",
             "https://example.com/repair-card/x",
         ] {

@@ -93,3 +93,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — recursive_positive (9)
+
+Reason:
+RIPR-SPEC-0045: review fix #5268 - quoted string/char literals are now byte-encoded in the Rust gap discriminator key so distinct predicates never share one identity; golden-drift.json shows zero semantic flips on the re-run
+
+Command:
+`cargo xtask goldens bless recursive_positive --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

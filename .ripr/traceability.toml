@@ -4090,6 +4090,17 @@ tests = [
   "xtask/src/main.rs::tests::evidence_quality_trend_reports_finding_alignment_presentation_text_deltas",
   "xtask/src/main.rs::tests::evidence_quality_benchmark_corpus_is_valid",
   "xtask/src/main.rs::tests::dogfood_finding_alignment_scenarios_have_checked_receipts",
+  "crates/ripr/src/analysis/language/rust/mod.rs::tests::diff_analysis_populates_the_canonical_gap_identity",
+  "crates/ripr/src/analysis/language/rust/mod.rs::tests::repo_analysis_populates_the_canonical_gap_identity",
+  "crates/ripr/src/analysis/language/rust/mod.rs::tests::static_limited_finding_keeps_canonical_gap_none",
+  "crates/ripr/src/analysis/language/rust/probe_shape.rs::tests::predicate_comparison_names_the_rendered_equality_boundary",
+  "crates/ripr/src/analysis/language/rust/probe_shape.rs::tests::distinct_string_literals_never_share_one_gap_identity",
+  "crates/ripr/src/analysis/language/rust/probe_shape.rs::tests::non_ascii_text_outside_literals_stays_lossless",
+  "crates/ripr/src/mcp/gaps.rs::tests::populated_rust_gap_opens_the_discriminator_gate_only_when_nothing_is_missing",
+  "crates/ripr/src/mcp/gaps.rs::tests::gap_resource_route_reads_a_nested_producer_gap_id_whole",
+  "crates/ripr/src/analysis/witness/tests.rs::populated_canonical_gap_is_the_required_discriminator_source",
+  "crates/ripr/src/app/repair_card_handoff.rs::tests::rust_producer_gap_does_not_bind_a_seam_witness_by_id_coincidence",
+  "crates/ripr/tests/agentic_bench_mcp.rs::b4_mcp_rust_canonical_gap_reaches_the_repair_transaction",
 ]
 fixtures = [
   "fixtures/benches_harness_evidence",
@@ -4104,6 +4115,14 @@ code = [
   "crates/ripr/src/lsp/diagnostics.rs",
   "crates/ripr/src/lsp/state.rs",
   "crates/ripr/src/lsp/backend.rs",
+  "crates/ripr/src/analysis/classify/mod.rs",
+  "crates/ripr/src/analysis/language/rust/mod.rs",
+  "crates/ripr/src/analysis/language/rust/probe_shape.rs",
+  "crates/ripr/src/analysis/witness/adapters.rs",
+  "crates/ripr/src/app/repair_card_handoff.rs",
+  "crates/ripr/src/mcp/gaps.rs",
+  "crates/ripr/src/mcp/repair_card.rs",
+  ".allow/spec-system/slices/finding-canonical-gap-rust.v1.toml",
   "xtask/src/main.rs",
 ]
 outputs = [

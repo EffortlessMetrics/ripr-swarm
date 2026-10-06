@@ -13,7 +13,7 @@ Start here:
   File: fixtures/recursive_controls/input/src/lib.rs:12
   Static exposure: weak (weakly_exposed, warning, confidence 0.92)
   Why weak: a related test reaches this change, but no test input tells the old and new behavior apart
-  Canonical gap: gap:rust:src/lib.rs:classify_cycle:predicate_boundary:predicate:final_label==other
+  Canonical gap: gap:rust:src/lib.rs:classify_cycle:predicate_boundary:predicate:final_label==lit6f74686572
   Changed behavior: if final_label == "other" {
   Missing discriminator: final_label == "other"
   Related test: tests/classify.rs:4 cycle_label_is_blank (no test input reaches `final_label == "other"`)

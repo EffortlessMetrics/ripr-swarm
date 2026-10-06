@@ -13,7 +13,7 @@ Start here:
   File: fixtures/propagate_log_message/input/src/lib.rs:2
   Static exposure: unrevealed (reachable_unrevealed, warning, confidence 0.79)
   Why unrevealed: a related test reaches this change, but no assertion observes the changed behavior
-  Canonical gap: gap:rust:src/lib.rs:report:call_deletion:call_deletion:log_info!amount_is_amount*9
+  Canonical gap: gap:rust:src/lib.rs:report:call_deletion:call_deletion:log_info!lit616d6f756e74206973207b7d_amount*9
   Changed behavior: log::info!("amount is {}", amount * 9);
   Missing discriminator (1 of 3): No detected assertion observes the changed value, error, field, or effect
   Related test: tests/report_tests.rs:4 report_does_not_panic (has no assertion)
