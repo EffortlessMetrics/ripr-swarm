@@ -311,7 +311,11 @@ pub(crate) struct CachedSeamLimitInfo {
 /// `1.41`: asserted-Err guarded matches (#6673), `ok_or(Variant)?` owner
 /// propagation (#6695) and the sibling-variant reveal gate change oracle
 /// facts, error-path witnesses and confirmations.
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.41";
+/// `1.42`: a boundary whose inputs ripr cannot read (unmapped or computed
+/// operands, computed test or hop arguments, an opaque `CONST ± N`) reads
+/// infection unknown instead of a missing discriminator (#6674, #6693,
+/// #6672, #6671); old entries would replay the weak missing-input class.
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.42";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -392,7 +396,8 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.41";
 /// `0.46`: seams gain optional span geometry (#5336), same semantic
 /// transition as full `1.40`.
 /// `0.47`: same asserted-Err/`ok_or?` transition as full `1.41`.
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.47";
+/// `0.48`: same unresolved-boundary-input transition as full `1.42`.
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.48";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -475,7 +480,8 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.47";
 /// `0.46`: seams gain optional span geometry (#5336), same semantic
 /// transition as full `1.40`.
 /// `0.47`: same asserted-Err/`ok_or?` transition as full `1.41`.
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.47";
+/// `0.48`: same unresolved-boundary-input transition as full `1.42`.
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.48";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -3970,7 +3976,9 @@ mod tests {
         // 1.39 -> 1.40: probe shapes gain the parser-owned end byte (#5336).
         // 1.41: #6673 asserted-Err pins, #6695 ok_or propagation and the
         // sibling-variant reveal gate.
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.41");
+        // 1.41 -> 1.42: unresolved boundary inputs read infection unknown
+        // (#6674, #6693, #6672, #6671).
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.42");
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
         // for the sharded and compact envelopes.
@@ -4004,8 +4012,9 @@ mod tests {
         // 0.44: same combined #5713/#6701 transition as full 1.38.
         // 0.45 -> 0.46: seams gain optional span geometry (#5336).
         // 0.47: same #6673/#6695 transition as full 1.41.
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.47");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.47");
+        // 0.47 -> 0.48: same unresolved-boundary-input transition as 1.42.
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.48");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.48");
     }
 
     #[test]
