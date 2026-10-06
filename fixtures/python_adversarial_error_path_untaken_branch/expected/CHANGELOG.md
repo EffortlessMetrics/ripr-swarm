@@ -373,6 +373,58 @@ Updated:
 ## Pending — python_adversarial_error_path_untaken_branch (15)
 
 Reason:
+RIPR-SPEC-0224: the only assertion observes another behavior family, so the row shows no oracle instead of a wrong-family one (#5572); class, stages, missing discriminator and repair placement unchanged
+
+Command:
+`cargo xtask goldens bless python_adversarial_error_path_untaken_branch --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — python_adversarial_error_path_untaken_branch (16)
+
+Reason:
+RIPR-SPEC-0224 'Family-relevant assertion selection (Python)': the no-family-relevant row surfaces alignment_reason no_family_relevant_assertion (never delegated) and the missing/observe prose names the exact_value assertion the test has (#5572)
+
+Command:
+`cargo xtask goldens bless python_adversarial_error_path_untaken_branch --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — python_adversarial_error_path_untaken_branch (17)
+
+Reason:
+RIPR-SPEC-0140: issue 5988 populates identity.config_identity from the canonical finding-affecting config fingerprint whenever a ripr.toml is loaded, so fixtures that load one record it (single-field intended flip, formatting-only 1-line drift)
+
+Command:
+`cargo xtask goldens bless python_adversarial_error_path_untaken_branch --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — python_adversarial_error_path_untaken_branch (17)
+
+Reason:
+RIPR-SPEC-0140: issue 5988 review repair publishes the fingerprint of the exact loaded ripr.toml text in identity.config_identity, so fixtures that load one record the text fingerprint (single-field intended flip, formatting-only 1-line drift)
+
+Command:
+`cargo xtask goldens bless python_adversarial_error_path_untaken_branch --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — python_adversarial_error_path_untaken_branch (17)
+
+Reason:
 RIPR-SPEC-0116: the check drill-in binds --root to the resolved repository (#3948); goldens carry the <cwd>/ placeholder
 
 Command:

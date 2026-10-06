@@ -111,6 +111,40 @@ The line is evidence only: it changes no verdict, ranking, miss or
 actionability. Blind spots the scan cannot see (conftest and setup files,
 runner plugins) are tracked in #6657 and #6889.
 
+### Family-relevant assertion selection (Python)
+
+A Python miss producer (#5491) must read the assertion a finding actually
+judged. Each related test therefore projects one assertion selected for the
+changed line, not its strongest assertion overall (#5572):
+
+1. Keep the assertions whose oracle shape can observe the changed probe
+   family. Value families (return value, field construction) never take an
+   exception assertion; an error path never takes a normal-value assertion or
+   a mock expectation, except on a changed `try:`, `except` or `finally:` line,
+   where the handler's result is observed by any assertion. Predicates and
+   effects admit every shape.
+2. Rank an assertion on the changed sink first (for a field change whose
+   changed attribute or dict key is known, a sibling-field assertion ranks
+   last), then the strongest, then a family-preferred shape, then a whole
+   value over a `len(...)` aggregate, then shape, then the later source line,
+   then text. Extractor traversal order never decides.
+3. The row, the `test_oracle` evidence, sink alignment, the error-path,
+   boundary and changed-default gates, and test-side static limits all read
+   that one selection. A strong assertion of another family never suppresses
+   a static limit.
+4. A test whose assertions all observe another family shows no oracle, adds
+   `test_oracle_shape: no_<family>_relevant_assertion (<test>)`, and its
+   finding's prose names the kind of the strongest assertion it does have.
+
+Class and stages may move only where the strength-only pick was wrong-family
+or depended on source order. Delegation stays fail-closed: a weakly exposed
+finding with a no-family-relevant row surfaces `alignment_reason:
+no_family_relevant_assertion`, and one whose row now shows a different
+assertion than the strength-only pick surfaces
+`other_behavior_assertion_passed_over`. The gap ledger never delegates either
+reason, so no repair card becomes agent-packet eligible because of this
+selection.
+
 ## Required Evidence
 
 - A unit test that a test whose assertions match nothing is listed as
@@ -172,6 +206,15 @@ runner plugins) are tracked in #6657 and #6889.
   (`assertion_admission_separates_no_assertion_from_unresolved_assertion_like_forms`)
   — table tests separating established no-assertion from unresolved
   assertion-like forms.
+- `crates/ripr/src/analysis/language/python/assertion_selection_tests.rs` —
+  the family-relevant selection controls (each required control, parsed
+  inventories, reordering, stronger orthogonal assertions, single assertions,
+  handler lines, the later-line tie-break, static-limit suppression, and the
+  classified row and evidence sharing one selection).
+- `crates/ripr/src/app/tests/python_family_selection_packets.rs` — end-to-end
+  check output through the gap ledger: no-family-relevant and passed-over
+  cards are never agent-packet eligible, and a changed raise keeps its class
+  in either assertion order.
 - Golden fixtures under `fixtures/*/expected/` — rendered parity.
 
 ## Implementation Mapping
@@ -184,6 +227,9 @@ runner plugins) are tracked in #6657 and #6889.
 | `crates/ripr/src/analysis/language/perl/mod.rs` | Perl v1 `observation_unconfirmed` rows |
 | `crates/ripr/src/analysis/language/{python,typescript}/admission.rs` | fail-closed assertion admission state per extracted test |
 | `crates/ripr/src/output/related_test_miss.rs` | the one prose and label owner |
+| `crates/ripr/src/analysis/language/python/assertion_selection.rs` | family-relevant assertion selection per related test |
+| `crates/ripr/src/analysis/language/python/{classify,related_tests,boundary,no_behavior,static_limits}.rs`, `python/repo/evidence.rs` | consumers of the one selection; non-delegatable alignment reasons |
+| `crates/ripr/src/output/gap_decision_ledger.rs` | never delegates `no_family_relevant_assertion` or `other_behavior_assertion_passed_over` |
 | `crates/ripr/src/output/human/{sections,evidence_lines,explain}.rs`, `output/json/report.rs`, `lsp/{hover,diagnostics}.rs`, `mcp/gaps.rs` | projections |
 
 ## Metrics

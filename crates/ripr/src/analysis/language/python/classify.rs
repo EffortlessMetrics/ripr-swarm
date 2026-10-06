@@ -1,3 +1,7 @@
+use super::assertion_selection::{
+    PythonAssertionFocus, PythonAssertionSelection, select_relevant_assertion,
+    strength_only_assertion,
+};
 use super::boundary::{BoundaryActivation, python_boundary_evidence};
 use super::discriminators::python_missing_discriminators;
 use super::no_behavior::{
@@ -10,16 +14,16 @@ use super::probe_shape::{
     python_infection_evidence, python_propagation_evidence,
 };
 use super::related_tests::{
-    find_related_tests, python_repair_placement, related_test_candidates, strongest_assertion,
+    python_repair_placement, related_test_candidates, related_tests_for_candidates,
     verify_command_for_test,
 };
 use super::sink_alignment::{SinkAlignment, classify_sink_alignment_with_old};
-use super::static_limits::{implicit_dunder_dispatch_limit, static_limit_for_change};
+use super::static_limits::{implicit_dunder_dispatch_limit, static_limit_for_focused_change};
 use super::transitive_reach::apply_python_no_static_path_limit;
 use super::{
     PythonOracleShape, PythonOwner, PythonTest, fingerprint_probe_id, normalize_expression,
-    owner_for_changed_line, python_recommended_next_step, python_weak_missing_summary,
-    stop_reason_for_python_static_limit,
+    owner_for_changed_line, python_no_family_relevant_missing_summary,
+    python_recommended_next_step, python_weak_missing_summary, stop_reason_for_python_static_limit,
 };
 use crate::domain::{
     Confidence, ExposureClass, Finding, LanguageId as DomainLanguageId, LanguageStatus,
@@ -150,16 +154,55 @@ pub(super) fn classify_change_with_context(
     {
         return None;
     }
+    let (family, delta) = classify_probe_shape(line_text);
+    // The changed line's probe family (and, for a field change, its changed
+    // field) selects which assertion of each related test this finding judges
+    // (#5572). Every consumer below — the public rows, sink alignment, the
+    // error-path / boundary / changed-default gates and the `test_oracle`
+    // evidence — reads that one selection.
+    let focus = PythonAssertionFocus::for_change(family.clone(), line_text, old_line_text);
     let related_candidates = related_test_candidates(owner, all_tests);
-    let related = find_related_tests(owner, all_tests);
+    let related = related_tests_for_candidates(&related_candidates, Some(&focus));
     let alignment =
         classify_sink_alignment_with_old(owner, line_text, old_line_text, &related, all_tests);
-    let static_limit = static_limit_for_change(line_text, owner, &related_candidates)
-        .or_else(|| implicit_dunder_dispatch_limit(owner, all_tests, &related_candidates));
-    let (family, delta) = classify_probe_shape(line_text);
+    let static_limit =
+        static_limit_for_focused_change(line_text, &focus, owner, &related_candidates)
+            .or_else(|| implicit_dunder_dispatch_limit(owner, all_tests, &related_candidates));
     let has_oracle_eligible_relation = related_candidates
         .iter()
         .any(|candidate| candidate.relation.uses_oracle());
+    // The strongest assertion of an oracle-eligible related test whose every
+    // assertion observes another behavior family (#5572). Such a row has no
+    // oracle for this change; the finding names what it does observe, and
+    // its repair card is never delegated.
+    let other_family_kind = related_candidates
+        .iter()
+        .filter(|candidate| candidate.relation.uses_oracle())
+        .filter(|candidate| {
+            select_relevant_assertion(&candidate.test.assertions, Some(&focus))
+                == PythonAssertionSelection::NoFamilyRelevant
+        })
+        .filter_map(|candidate| {
+            select_relevant_assertion(&candidate.test.assertions, None).assertion()
+        })
+        .max_by_key(|assertion| assertion.oracle_strength.rank())
+        .map(|assertion| assertion.oracle_kind.clone());
+    // Whether any oracle-eligible row projects a different assertion than the
+    // pre-#5572 strength-only pick. Delegation stays fail-closed for such a
+    // finding: its rows are not the rows the delegation rules were established on.
+    let selection_moved = related_candidates
+        .iter()
+        .filter(|candidate| candidate.relation.uses_oracle())
+        .any(|candidate| {
+            let selected =
+                select_relevant_assertion(&candidate.test.assertions, Some(&focus)).assertion();
+            let strength_only = strength_only_assertion(&candidate.test.assertions);
+            match (selected, strength_only) {
+                (Some(selected), Some(strength_only)) => !std::ptr::eq(selected, strength_only),
+                (None, None) => false,
+                _ => true,
+            }
+        });
     let strongest_strength = related
         .iter()
         .map(|test| test.oracle_strength.rank())
@@ -195,6 +238,7 @@ pub(super) fn classify_change_with_context(
         no_behavior.multi_line_def_header_line,
         owner,
         &related_candidates,
+        &focus,
     );
     let changed_default_exercised_ok = changed_default_override.is_none();
 
@@ -210,7 +254,7 @@ pub(super) fn classify_change_with_context(
     // activation either way; that case keeps the oracle verdict and carries a
     // named `boundary_activation_unresolved` limitation instead.
     let boundary = (static_limit.is_none() && matches!(family, ProbeFamily::Predicate))
-        .then(|| python_boundary_evidence(line_text, owner, &related_candidates))
+        .then(|| python_boundary_evidence(line_text, owner, &related_candidates, &focus))
         .flatten();
     let boundary_gap = boundary
         .as_ref()
@@ -350,7 +394,12 @@ pub(super) fn classify_change_with_context(
             StageState::Yes,
             StageState::Weak,
             StageState::Weak,
-            vec![python_weak_missing_summary(owner, &family, &strongest_kind)],
+            vec![match &other_family_kind {
+                Some(other_kind) if strongest_strength <= OracleStrength::Unknown.rank() => {
+                    python_no_family_relevant_missing_summary(owner, &family, other_kind)
+                }
+                _ => python_weak_missing_summary(owner, &family, &strongest_kind),
+            }],
         )
     };
     if let Some(limit) = &static_limit {
@@ -371,6 +420,20 @@ pub(super) fn classify_change_with_context(
         alignment
     } else {
         SinkAlignment::unknown(alignment.changed_sink.clone())
+    };
+    // Repair delegation stays fail-closed under family selection (#5572,
+    // RIPR-SPEC-0224): a weakly exposed finding with a row that has no
+    // family-relevant assertion, or whose row now shows a different assertion
+    // than the strength-only pick, gets a reason the gap ledger never
+    // delegates. `oracle_alignment` keeps what the selected assertions show.
+    let surfaced_alignment = if !matches!(class, ExposureClass::WeaklyExposed) {
+        surfaced_alignment
+    } else if other_family_kind.is_some() {
+        surfaced_alignment.with_reason("no_family_relevant_assertion")
+    } else if selection_moved {
+        surfaced_alignment.with_reason("other_behavior_assertion_passed_over")
+    } else {
+        surfaced_alignment
     };
 
     let id_path: String = file
@@ -493,11 +556,18 @@ pub(super) fn classify_change_with_context(
     let observe = StageEvidence::new(
         observe_state,
         Confidence::Low,
-        format!(
-            "Strongest extracted Python oracle kind: `{}` (rank {})",
-            strongest_kind.as_str(),
-            strongest_strength
-        ),
+        match &other_family_kind {
+            Some(other_kind) if strongest_strength <= OracleStrength::Unknown.rank() => format!(
+                "No related Python assertion observes the changed {}; the strongest related assertion observes another behavior (`{}`).",
+                family.as_str().replace('_', " "),
+                other_kind.as_str()
+            ),
+            _ => format!(
+                "Strongest extracted Python oracle kind: `{}` (rank {})",
+                strongest_kind.as_str(),
+                strongest_strength
+            ),
+        },
     );
     let discriminate_summary = if let Some(limit) = &static_limit {
         format!(
@@ -632,9 +702,11 @@ pub(super) fn classify_change_with_context(
                 test.name
             ));
         }
-        if candidate.relation.uses_oracle()
-            && let Some(assertion) = strongest_assertion(&test.assertions)
-        {
+        let selection = candidate
+            .relation
+            .uses_oracle()
+            .then(|| select_relevant_assertion(&test.assertions, Some(&focus)));
+        if let Some(PythonAssertionSelection::Selected(assertion)) = selection {
             evidence.push(format!(
                 "test_oracle: {} {} ({})",
                 assertion.oracle_kind.as_str(),
@@ -648,6 +720,14 @@ pub(super) fn classify_change_with_context(
                     test.name
                 ));
             }
+        } else if let Some(PythonAssertionSelection::NoFamilyRelevant) = selection {
+            // Assertions exist, but each observes another behavior family;
+            // none is credited for this change (#5572).
+            evidence.push(format!(
+                "test_oracle_shape: no_{}_relevant_assertion ({})",
+                focus.family().as_str(),
+                test.name
+            ));
         } else if candidate.relation.uses_oracle() {
             evidence.push(format!("test_oracle_shape: reach_only ({})", test.name));
             // No recognized assertion is not the same as no assertion: say

@@ -3869,7 +3869,7 @@ fn find_related_tests_matches_import_alias_call() {
         "from src.pricing import apply_discount as discount\n\ndef test_discount_alias():\n    assert discount(100) == 90\n",
     );
 
-    let related = find_related_tests(&owners[0], &tests);
+    let related = find_related_tests(&owners[0], &tests, None);
 
     assert_eq!(related.len(), 1);
     assert_eq!(related[0].name, "test_discount_alias");
