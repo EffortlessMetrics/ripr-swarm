@@ -67,23 +67,31 @@ pub(super) fn parse_mutation_outcomes_json(
     let mut records = Vec::new();
     collect_mutation_outcome_records(&value, &mut records);
     let mut records = super::merge_mutation_outcome_records(records);
-    records.sort_by(|left, right| {
-        left.seam_id
-            .cmp(&right.seam_id)
-            .then(left.file.cmp(&right.file))
-            .then(left.line.cmp(&right.line))
-            .then(left.mutation_operator.cmp(&right.mutation_operator))
-            .then(left.runtime_outcome.cmp(&right.runtime_outcome))
-            // Records without a mutant ID can share every field above; the
-            // span, ID and run details keep output independent of input
-            // order.
-            .then(left.span.map(span_key).cmp(&right.span.map(span_key)))
-            .then(left.mutant_id.cmp(&right.mutant_id))
-            .then(left.duration.cmp(&right.duration))
-            .then(left.test_command.cmp(&right.test_command))
-            .then(left.span_conflict.cmp(&right.span_conflict))
-    });
+    records.sort_by(compare_outcome_records);
     Ok(records)
+}
+
+/// Total order over merged records, so report output never depends on input
+/// order. `span_conflict` is last: merging by mutant ID means two records
+/// rarely share every earlier field, but the order must still be total.
+fn compare_outcome_records(
+    left: &MutationOutcomeRecord,
+    right: &MutationOutcomeRecord,
+) -> std::cmp::Ordering {
+    left.seam_id
+        .cmp(&right.seam_id)
+        .then(left.file.cmp(&right.file))
+        .then(left.line.cmp(&right.line))
+        .then(left.mutation_operator.cmp(&right.mutation_operator))
+        .then(left.runtime_outcome.cmp(&right.runtime_outcome))
+        // Records without a mutant ID can share every field above; the
+        // span, ID and run details keep output independent of input
+        // order.
+        .then(left.span.map(span_key).cmp(&right.span.map(span_key)))
+        .then(left.mutant_id.cmp(&right.mutant_id))
+        .then(left.duration.cmp(&right.duration))
+        .then(left.test_command.cmp(&right.test_command))
+        .then(left.span_conflict.cmp(&right.span_conflict))
 }
 
 fn span_key(span: RuntimeSpan) -> ((usize, usize), (usize, usize)) {
@@ -362,6 +370,52 @@ fn usize_field_any(object: &serde_json::Map<String, Value>, keys: &[&str]) -> Op
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn record_order_breaks_late_ties_on_run_details_then_span_conflict() {
+        let base = MutationOutcomeRecord {
+            mutant_id: None,
+            seam_id: None,
+            file: Some("src/a.rs".to_string()),
+            line: Some(5),
+            span: None,
+            span_conflict: false,
+            mutation_operator: "replace".to_string(),
+            runtime_outcome: "missed".to_string(),
+            duration: Some("1s".to_string()),
+            test_command: Some("cargo test".to_string()),
+        };
+        let conflicted = MutationOutcomeRecord {
+            span_conflict: true,
+            ..base.clone()
+        };
+        let other_command = MutationOutcomeRecord {
+            test_command: Some("cargo nextest".to_string()),
+            span_conflict: true,
+            ..base.clone()
+        };
+        let slower = MutationOutcomeRecord {
+            duration: Some("2s".to_string()),
+            ..base.clone()
+        };
+        use std::cmp::Ordering::{Equal, Greater, Less};
+        // Records equal on every earlier field order by span_conflict alone.
+        assert_eq!(compare_outcome_records(&base, &conflicted), Less);
+        assert_eq!(compare_outcome_records(&conflicted, &base), Greater);
+        assert_eq!(compare_outcome_records(&base, &base.clone()), Equal);
+        // test_command outranks span_conflict, and duration outranks both.
+        assert_eq!(compare_outcome_records(&base, &other_command), Greater);
+        assert_eq!(compare_outcome_records(&conflicted, &slower), Less);
+
+        let mut records = vec![
+            slower.clone(),
+            conflicted.clone(),
+            other_command.clone(),
+            base.clone(),
+        ];
+        records.sort_by(compare_outcome_records);
+        assert_eq!(records, vec![other_command, base, conflicted, slower]);
+    }
 
     #[test]
     fn parses_nested_mutant_location_and_span_shapes() -> Result<(), String> {
