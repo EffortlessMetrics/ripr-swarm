@@ -121,9 +121,9 @@ official SDK transport:
 - Every served file path (list summaries, gap locations, related-test
   files, fix sites) renders relative to the analyzed workspace root,
   tolerating producer spelling drift (canonicalized `\\?\` prefixes,
-  mixed separators, Windows case drift); absolute host paths never appear
-  on the wire. A file the root does not contain keeps its full stable
-  spelling. Root-relative evidence is what keeps the snapshot identity
+  mixed separators, Windows case drift); a file under the root never
+  appears as an absolute host path. A file the root does not contain keeps
+  its full stable spelling. Root-relative evidence is what keeps the snapshot identity
   portable across checkouts (#5254 item 6).
 - `ripr_get_gap` and `ripr://gap/{canonical_id}` return one canonical
   item's complete bounded evidence bound to its snapshot identity:

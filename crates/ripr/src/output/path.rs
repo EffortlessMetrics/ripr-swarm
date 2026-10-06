@@ -75,8 +75,11 @@ pub(crate) fn repository_relative_path_text_on(root: &Path, file: &Path, windows
 /// file is not under the root, the root is not absolute, or the remainder is
 /// empty.
 fn strip_windows_root_prefix_text(root_text: &str, file_text: &str) -> Option<String> {
-    let root_segments = windows_root_segments(root_text)?;
-    let file_segments = windows_path_segments(file_text);
+    // Both sides must be absolute: a relative file whose first segments
+    // happen to equal a UNC server/share (or a drive-relative `C:foo`
+    // shape) must keep its spelling, not lose real components.
+    let root_segments = windows_absolute_segments(root_text)?;
+    let file_segments = windows_absolute_segments(file_text)?;
     if root_segments.len() >= file_segments.len() {
         return None;
     }
@@ -91,9 +94,9 @@ fn strip_windows_root_prefix_text(root_text: &str, file_text: &str) -> Option<St
 /// Split a Windows path into comparable segments: separators unified,
 /// verbatim drive/UNC prefixes reduced to their plain form. Returns `None`
 /// for anything that is not an absolute drive-letter or `//` path, so
-/// relative roots keep the fallback spelling. Other `//?/` forms keep their
+/// relative inputs keep the fallback spelling. Other `//?/` forms keep their
 /// spelling and can only match byte-identically.
-fn windows_root_segments(path_text: &str) -> Option<Vec<String>> {
+fn windows_absolute_segments(path_text: &str) -> Option<Vec<String>> {
     let unified = path_text.replace('\\', "/");
     let plain = strip_windows_verbatim_prefix(&unified).unwrap_or(unified);
     let absolute = is_windows_drive_path(&plain) || plain.starts_with("//");
@@ -107,18 +110,6 @@ fn windows_root_segments(path_text: &str) -> Option<Vec<String>> {
             .map(str::to_string)
             .collect(),
     )
-}
-
-/// Split the file side with the same normalization; rootedness is decided by
-/// the segment comparison against the root, not here.
-fn windows_path_segments(path_text: &str) -> Vec<String> {
-    let unified = path_text.replace('\\', "/");
-    let plain = strip_windows_verbatim_prefix(&unified).unwrap_or(unified);
-    plain
-        .split('/')
-        .filter(|segment| !segment.is_empty())
-        .map(str::to_string)
-        .collect()
 }
 
 /// Reduce a verbatim prefix to its plain form: `//?/X:` becomes `X:`,
@@ -447,6 +438,49 @@ mod tests {
         assert_eq!(
             repository_relative_path_text_on(Path::new("/repo"), Path::new("/REPO/f.rs"), false),
             "/REPO/f.rs"
+        );
+        // A relative file keeps its spelling even when its first segments
+        // collide with a UNC server/share: rootedness is verified on both
+        // sides, not just the root.
+        assert_eq!(
+            repository_relative_path_text_on(
+                Path::new(r"\\server\share"),
+                Path::new("server/share/src/lib.rs"),
+                true
+            ),
+            "server/share/src/lib.rs"
+        );
+    }
+
+    /// Native verification through the production entry point: on Windows a
+    /// verbatim producer path strips against a plain root via the real
+    /// host-native `Path` parsing, not just the emulated-text matrix.
+    #[cfg(windows)]
+    #[test]
+    fn relative_path_text_strips_verbatim_producer_paths_natively_on_windows() {
+        let drive = "F:";
+        let root_text = format!(r"{drive}\repo");
+        let verbatim_text = format!(r"\\?\{drive}\repo\src\lib.rs");
+        assert_eq!(
+            super::repository_relative_path_text(Path::new(&root_text), Path::new(&verbatim_text)),
+            "src/lib.rs"
+        );
+    }
+
+    /// The Unix-native counterpart: a verbatim-looking spelling is an
+    /// ordinary filename there, so the production entry point keeps it.
+    #[cfg(unix)]
+    #[test]
+    fn relative_path_text_keeps_verbatim_spellings_natively_on_unix() {
+        let drive = "F:";
+        let root_text = "/repo".to_string();
+        let verbatim_looking = format!(r"\\?\{drive}\repo\src\lib.rs");
+        assert_eq!(
+            super::repository_relative_path_text(
+                Path::new(&root_text),
+                Path::new(&verbatim_looking)
+            ),
+            verbatim_looking.replace('\\', "/")
         );
     }
 }
