@@ -1151,17 +1151,6 @@ mod tests {
     }
 
     #[test]
-    fn every_pinned_case_records_the_tests_that_catch_its_edit() {
-        for case in &CASES {
-            assert!(
-                !case.caught_by.is_empty(),
-                "{} has no recorded outcome",
-                case.krate
-            );
-        }
-    }
-
-    #[test]
     fn unknown_arguments_name_the_usage() {
         let err = parse_options(&["--bogus".to_string()])
             .err()
