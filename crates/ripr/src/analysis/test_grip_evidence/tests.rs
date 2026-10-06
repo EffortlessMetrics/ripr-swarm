@@ -1753,6 +1753,56 @@ fn given_whole_literal_or_later_shadow_when_test_hits_boundary_then_grip_closes(
     Ok(())
 }
 
+/// #6677: dropping `call_presence` for a consumed call must leave the
+/// consumer's own seam to carry the behavior. The shape is rust-hex's
+/// `serialize_upper`: a let-bound call feeding a tail call. An exact output
+/// assertion grips that tail; an `is_empty` check does not.
+#[test]
+fn given_consumed_call_when_consumer_tail_is_asserted_then_consumer_seam_carries_the_grip()
+-> Result<(), String> {
+    let prod_src = "pub fn upper_hex(data: &[u8]) -> String {\n    let s = encode_upper(data);\n    finish(&s)\n}\n";
+    for (assertion, expect_strong) in [
+        ("assert_eq!(upper_hex(&[1, 10]), \"010A\");", true),
+        ("assert!(!upper_hex(&[1, 10]).is_empty());", false),
+    ] {
+        let tests_src = format!("#[test]\nfn upper() {{ {assertion} }}\n");
+        let index = index_from_files(&[
+            (PathBuf::from("src/lib.rs"), prod_src),
+            (PathBuf::from("tests/hex.rs"), tests_src.as_str()),
+        ])?;
+        let seams = inventory_seams_from_index(&[PathBuf::from("src/lib.rs")], &index);
+        let consumed = seams.iter().find(|seam| {
+            seam.kind() == SeamKind::CallPresence
+                && seam.expression().trim() == "encode_upper(data)"
+        });
+        if let Some(seam) = consumed {
+            return Err(format!("consumed call kept a call_presence seam: {seam:?}"));
+        }
+        let consumer = seams
+            .iter()
+            .find(|seam| seam.kind() == SeamKind::ReturnValue)
+            .ok_or_else(|| format!("expected the tail's return_value seam, got {seams:?}"))?;
+        if consumer.expression().trim() != "finish(&s)" {
+            return Err(format!(
+                "fixture parsed the wrong consumer: `{}`",
+                consumer.expression()
+            ));
+        }
+        let evidence = evidence_for_seam(consumer, &index);
+        if evidence.related_tests.is_empty() {
+            return Err(format!("`{assertion}` should relate to the consumer seam"));
+        }
+        let class = crate::analysis::seam_classification::classify_seam(consumer, &evidence);
+        if (class == SeamGripClass::StronglyGripped) != expect_strong {
+            return Err(format!(
+                "`{assertion}` graded the consumer {}, expected strongly gripped: {expect_strong}",
+                class.as_str()
+            ));
+        }
+    }
+    Ok(())
+}
+
 #[test]
 fn given_boundary_seam_when_test_uses_equal_value_and_exact_assertion_then_discriminate_evidence_is_yes()
 -> Result<(), String> {
