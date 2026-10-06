@@ -32,7 +32,10 @@ use super::seam_cache::{
 #[cfg(test)]
 use super::seam_classification::SeamGripClassCounts;
 use super::seam_classification::{self, ClassifiedSeam};
-use super::seams::{ExpectedSink, RepoSeam, RequiredDiscriminator, SeamKind};
+use super::seams::{
+    ExpectedSink, RepoSeam, RequiredDiscriminator, SeamKind, build_line_starts,
+    byte_span_to_lines_with_starts,
+};
 use super::test_grip_evidence;
 use super::workspace;
 use crate::analysis::cancellation;
@@ -892,6 +895,7 @@ pub(crate) fn inventory_changed_test_classified_seams_at_with_config_node(
 ) -> Result<TargetedTestClassifiedSeamInventory, TargetedTestInventoryError> {
     let state = collect_workspace_state(root, config)?;
     let workspace_cache_key = state.cache_key();
+    let changed_test_key = inventory_scope_key(changed_test);
     let changed_test = normalized_inventory_path(changed_test);
     let mut cached = rust_index::build_index_from_loaded_files_with_cache_and_test_harnesses(
         &state.workspace_root,
@@ -914,7 +918,7 @@ pub(crate) fn inventory_changed_test_classified_seams_at_with_config_node(
         .index
         .tests()
         .iter()
-        .filter(|test| normalized_inventory_path(&test.file) == changed_test)
+        .filter(|test| inventory_scope_key(&test.file) == changed_test_key)
         .filter(|test| test_node.is_none_or(|node| test.name == node))
         .collect::<Vec<_>>();
     if selected_tests.is_empty() {
@@ -1179,29 +1183,30 @@ fn no_impact_changed_path_fallback(
     config: &RiprConfig,
     context: &workspace::SourceRoleContext,
 ) -> Option<NoImpactFallbackReason> {
-    let corpus: BTreeSet<String> = rust_files
+    let corpus: BTreeSet<Vec<u8>> = rust_files
         .iter()
-        .map(|path| normalized_inventory_path(path))
+        .map(|path| inventory_scope_key(path))
         .collect();
     let as_set = |paths: &BTreeSet<PathBuf>| {
         paths
             .iter()
-            .map(|path| normalized_inventory_path(path))
+            .map(|path| inventory_scope_key(path))
             .collect::<BTreeSet<_>>()
     };
     let production_like = as_set(config.analysis().production_like_targets());
     let declared_tests = as_set(&context.declared_test_targets);
     let declared_benches = as_set(&context.declared_bench_targets);
-    let harness_targets: BTreeSet<String> = config
+    let harness_targets: BTreeSet<Vec<u8>> = config
         .analysis()
         .test_harnesses()
         .iter()
-        .map(|registration| normalized_inventory_path(registration.target.as_path()))
+        .map(|registration| inventory_scope_key(registration.target.as_path()))
         .collect();
     let suppressions = normalized_inventory_path(config.suppressions().path());
     for changed in changed_files {
         let normalized = normalized_inventory_path(changed);
-        if corpus.contains(&normalized) {
+        let key = inventory_scope_key(changed);
+        if corpus.contains(&key) {
             // Indexed corpus member: any change reaches the index or
             // its test-grip evidence, whatever the role.
             return Some(rust_change_reason(workspace::classify_with(
@@ -1209,17 +1214,17 @@ fn no_impact_changed_path_fallback(
                 context,
             )));
         }
-        if production_like.contains(&normalized) {
+        if production_like.contains(&key) {
             return Some(NoImpactFallbackReason::ChangedRustSource);
         }
-        if harness_targets.contains(&normalized) {
+        if harness_targets.contains(&key) {
             return Some(NoImpactFallbackReason::ChangedTestOrHarness);
         }
         // Declared target membership precedes the extension check: a
         // deleted declared test target is no longer in the corpus, yet
         // its role authority moved, which the extension branch alone
         // would report as an ordinary test change.
-        if declared_tests.contains(&normalized) || declared_benches.contains(&normalized) {
+        if declared_tests.contains(&key) || declared_benches.contains(&key) {
             return Some(NoImpactFallbackReason::ChangedSourceRoleAuthority);
         }
         if is_rust_source_file_name(&normalized) {
@@ -1487,11 +1492,11 @@ fn inventory_diff_scoped_classified_seams_inner(
     let total_production_files = production_files.len();
     let production_file_set = production_files
         .iter()
-        .map(|path| normalized_inventory_path(path))
+        .map(|path| inventory_scope_key(path))
         .collect::<BTreeSet<_>>();
     let changed_file_set = changed_files
         .iter()
-        .map(|path| normalized_inventory_path(path))
+        .map(|path| inventory_scope_key(path))
         .filter(|path| production_file_set.contains(path))
         .collect::<BTreeSet<_>>();
 
@@ -1532,17 +1537,17 @@ fn inventory_diff_scoped_classified_seams_inner(
 
     let scoped_production_files = production_files
         .iter()
-        .filter(|path| scoped_file_set.contains(&normalized_inventory_path(path)))
+        .filter(|path| scoped_file_set.contains(&inventory_scope_key(path)))
         .cloned()
         .collect::<Vec<_>>();
     let changed_production_files = production_files
         .iter()
-        .filter(|path| changed_file_set.contains(&normalized_inventory_path(path)))
+        .filter(|path| changed_file_set.contains(&inventory_scope_key(path)))
         .cloned()
         .collect::<Vec<_>>();
     let immediate_caller_files = production_files
         .iter()
-        .filter(|path| caller_file_set.contains(&normalized_inventory_path(path)))
+        .filter(|path| caller_file_set.contains(&inventory_scope_key(path)))
         .cloned()
         .collect::<Vec<_>>();
 
@@ -1686,10 +1691,10 @@ fn classify_seams_owned_retaining(
 
 fn immediate_caller_file_set(
     index: &RustIndex,
-    production_file_set: &BTreeSet<String>,
-    changed_file_set: &BTreeSet<String>,
+    production_file_set: &BTreeSet<Vec<u8>>,
+    changed_file_set: &BTreeSet<Vec<u8>>,
     changed_owner_names: &[String],
-) -> BTreeSet<String> {
+) -> BTreeSet<Vec<u8>> {
     let owner_call_names = changed_owner_names
         .iter()
         .filter_map(|owner| owner.rsplit("::").next())
@@ -1706,7 +1711,7 @@ fn immediate_caller_file_set(
         .iter()
         .filter(|function| !function.source_role.is_evidence_role())
         .filter_map(|function| {
-            let file = normalized_inventory_path(&function.file);
+            let file = inventory_scope_key(&function.file);
             (production_file_set.contains(&file)
                 && !changed_file_set.contains(&file)
                 && function
@@ -1723,6 +1728,62 @@ fn normalized_inventory_path(path: &Path) -> String {
         .replace('\\', "/")
         .trim_start_matches("./")
         .to_string()
+}
+
+/// Lossless scope identity for inventory set membership (#6884): the same
+/// slash normalization and `./` strip as [`normalized_inventory_path`],
+/// computed on the path's exact bytes, so two names differing only in
+/// invalid UTF-8 bytes (Unix) or lone surrogates (Windows) never merge.
+/// Display and role consumers keep the lossy string; only set
+/// construction and probing use this key.
+fn inventory_scope_key(path: &Path) -> Vec<u8> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStrExt;
+        normalize_scope_key_bytes(path.as_os_str().as_bytes())
+    }
+    #[cfg(not(unix))]
+    {
+        use std::os::windows::ffi::OsStrExt;
+        // Wide units round-trip WTF-8 losslessly; flatten little-endian
+        // so the key stays a plain byte string on every platform.
+        let units: Vec<u16> = path
+            .as_os_str()
+            .encode_wide()
+            .map(|unit| {
+                if unit == u16::from(b'\\') {
+                    u16::from(b'/')
+                } else {
+                    unit
+                }
+            })
+            .collect();
+        let mut stripped = &units[..];
+        while let Some(rest) = stripped.strip_prefix(&[u16::from(b'.'), u16::from(b'/')]) {
+            stripped = rest;
+        }
+        stripped
+            .iter()
+            .flat_map(|unit| unit.to_le_bytes())
+            .collect()
+    }
+}
+
+#[cfg(unix)]
+fn normalize_scope_key_bytes(bytes: &[u8]) -> Vec<u8> {
+    let mut key: Vec<u8> = bytes
+        .iter()
+        .map(|byte| if *byte == b'\\' { b'/' } else { *byte })
+        .collect();
+    // Repeatedly, like `trim_start_matches`: `././x` keys as `x`.
+    let mut start = 0;
+    while key.get(start..).is_some_and(|rest| rest.starts_with(b"./")) {
+        start += 2;
+    }
+    if start > 0 {
+        key.drain(..start);
+    }
+    key
 }
 
 /// Return the effective seam limit and its source.
@@ -2246,9 +2307,17 @@ pub(crate) fn inventory_seams_from_index(
         let Some(facts) = index.files().get(path) else {
             continue;
         };
+        if facts.probe_shapes.is_empty() {
+            continue;
+        }
         let owners = rust_index::FileOwnerLookup::new(facts.functions.iter());
+        // One line index per file: span derivation reuses it for every shape
+        // instead of rescanning the source per seam.
+        let line_starts = build_line_starts(&facts.source);
         for shape in &facts.probe_shapes {
-            let Some(seam) = build_seam_from_shape(path, shape, &owners) else {
+            let Some(seam) =
+                build_seam_from_shape(path, shape, &owners, &facts.source, &line_starts)
+            else {
                 continue;
             };
             seams.push(seam);
@@ -2286,6 +2355,8 @@ fn build_seam_from_shape(
     path: &Path,
     shape: &ProbeShapeFact,
     owners: &rust_index::FileOwnerLookup<'_>,
+    source: &str,
+    line_starts: &[usize],
 ) -> Option<RepoSeam> {
     let kind = seam_kind_from_probe_shape(shape.kind)?;
     let owner_fact = owners.owner(shape.start_line)?;
@@ -2303,7 +2374,7 @@ fn build_seam_from_shape(
     let expression = shape.text.clone();
     let required_discriminator = required_discriminator_for(kind, &expression);
     let expected_sink = expected_sink_for(kind);
-    Some(RepoSeam::new(
+    let seam = RepoSeam::new(
         path,
         owner,
         kind,
@@ -2312,7 +2383,26 @@ fn build_seam_from_shape(
         expression,
         required_discriminator,
         expected_sink,
-    ))
+    );
+    // Span geometry is additional precision: when derivation fails (stale or
+    // mismatched source), the seam keeps line-only behavior rather than
+    // carrying wrong coordinates. Match-arm shapes are line-only by policy:
+    // the parser records the `match`/`=>` token range while the seam
+    // describes the scrutinee/arm construct, so a token span would bound the
+    // wrong source (#5451 review).
+    if shape.kind == ProbeShapeKind::MatchArm {
+        return Some(seam);
+    }
+    match byte_span_to_lines_with_starts(
+        source,
+        line_starts,
+        shape.start_line,
+        shape.start_byte,
+        shape.end_byte,
+    ) {
+        Some(span) => Some(seam.with_span(span)),
+        None => Some(seam),
+    }
 }
 
 fn seam_kind_from_probe_shape(kind: ProbeShapeKind) -> Option<SeamKind> {
@@ -2936,6 +3026,48 @@ pub fn discounted_total(amount: i32, threshold: i32) -> i32 {
                 "predicate seam owner should contain discounted_total, got {}",
                 predicate_seam.owner()
             ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn given_match_and_predicate_shapes_when_repo_inventory_runs_then_only_predicate_has_span()
+    -> Result<(), String> {
+        // Match-arm shapes record the `match`/`=>` token range while the seam
+        // describes the scrutinee/arm construct, so match seams stay
+        // line-only; predicate shapes cover their condition and carry spans.
+        let path = PathBuf::from("src/classify.rs");
+        let source = r#"pub fn classify(n: i32) -> &'static str {
+    if n >= 0 { "nonneg" } else { "neg" }
+}
+pub fn name(n: i32) -> &'static str {
+    match n {
+        0 => "zero",
+        _ => "other",
+    }
+}
+"#;
+        let index = index_from_files(&[(path.clone(), source)])?;
+        let seams = inventory_seams_from_index(&[path], &index);
+        let predicate = seams
+            .iter()
+            .find(|s| s.kind() == SeamKind::PredicateBoundary)
+            .ok_or_else(|| "missing predicate seam".to_string())?;
+        let span = predicate
+            .span()
+            .ok_or_else(|| "predicate seam must carry a span".to_string())?;
+        assert_eq!((span.start_line, span.start_column), (2, 8));
+        assert_eq!((span.end_line, span.end_column), (2, 14));
+        for seam in seams.iter().filter(|s| s.kind() == SeamKind::MatchArm) {
+            if seam.span().is_some() {
+                return Err(format!(
+                    "match-arm seam must stay line-only, got {:?}",
+                    seam.span()
+                ));
+            }
+        }
+        if !seams.iter().any(|s| s.kind() == SeamKind::MatchArm) {
+            return Err("expected at least one match-arm seam".to_string());
         }
         Ok(())
     }
@@ -3566,6 +3698,7 @@ pub fn classify(amount: i32, service: &mut Service) -> Result<Quote, Error> {
                     start_line: 2,
                     end_line: 2,
                     start_byte: 16,
+                    end_byte: 26,
                     kind: ProbeShapeKind::UnsafeBoundary,
                     text: "owner_body".into(),
                 }],
@@ -3618,6 +3751,7 @@ pub fn classify(amount: i32, service: &mut Service) -> Result<Quote, Error> {
                     start_line: 11,
                     end_line: 11,
                     start_byte: 120,
+                    end_byte: 126,
                     kind: ProbeShapeKind::Predicate,
                     text: "x >= 0".into(),
                 }],
@@ -5031,6 +5165,151 @@ marker = "libtest_mimic::Trial"
         }
         let _ = std::fs::remove_dir_all(&root);
         Ok(())
+    }
+
+    #[test]
+    fn scoped_sets_match_exactly_one_valid_sibling() -> Result<(), String> {
+        // Portable control for the invalid-byte regression below: with
+        // ordinary names, scoping one sibling never pulls in the other.
+        // Green before and after #6884; it proves the fixture harness.
+        let root = make_tempdir("exact-sibling-scope")?;
+        no_impact_layout(&root)?;
+        write_file(&root.join("src/first.rs"), "pub fn a() -> i32 { 1 }\n")?;
+        write_file(&root.join("src/second.rs"), "pub fn b() -> i32 { 2 }\n")?;
+        let config = RiprConfig::default();
+        let inventory = inventory_diff_scoped_classified_seams_at_with_config(
+            &root,
+            &config,
+            &[PathBuf::from("src/first.rs")],
+            &[],
+        )?;
+        let _ = std::fs::remove_dir_all(&root);
+        let names: Vec<_> = inventory
+            .changed_production_files
+            .iter()
+            .filter_map(|path| path.file_name().map(|name| name.to_string_lossy()))
+            .collect();
+        if names != ["first.rs"] {
+            return Err(format!(
+                "scope must hold exactly the changed file: {names:?}"
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn scoped_sets_strip_repeated_dot_slash_prefixes() -> Result<(), String> {
+        // Parity with `trim_start_matches`: a `././`-prefixed change scopes
+        // exactly like its bare counterpart (#6887 review). Portable: the
+        // rule holds on every host.
+        let root = make_tempdir("repeated-prefix-scope")?;
+        no_impact_layout(&root)?;
+        write_file(&root.join("src/first.rs"), "pub fn a() -> i32 { 1 }\n")?;
+        let config = RiprConfig::default();
+        let inventory = inventory_diff_scoped_classified_seams_at_with_config(
+            &root,
+            &config,
+            &[PathBuf::from("././src/first.rs")],
+            &[],
+        )?;
+        let _ = std::fs::remove_dir_all(&root);
+        let names: Vec<_> = inventory
+            .changed_production_files
+            .iter()
+            .filter_map(|path| path.file_name().map(|name| name.to_string_lossy()))
+            .collect();
+        if names != ["first.rs"] {
+            return Err(format!("repeated prefix must scope the file: {names:?}"));
+        }
+        Ok(())
+    }
+
+    /// Two files differing only in invalid UTF-8 bytes must not merge in
+    /// scope: scoping one leaves its sibling out (#6884). Unix-only:
+    /// only Unix admits invalid-byte file names.
+    #[cfg(unix)]
+    #[test]
+    fn scoped_sets_keep_invalid_byte_names_distinct() -> Result<(), String> {
+        use std::ffi::{OsStr, OsString};
+        use std::os::unix::ffi::{OsStrExt, OsStringExt};
+
+        let root = make_tempdir("invalid-byte-scope")?;
+        no_impact_layout(&root)?;
+        let first = PathBuf::from(OsString::from_vec(b"src/pricing_\xff.rs".to_vec()));
+        let second = PathBuf::from(OsString::from_vec(b"src/pricing_\xfe.rs".to_vec()));
+        write_file(&root.join(&first), "pub fn a() -> i32 { 1 }\n")?;
+        write_file(&root.join(&second), "pub fn b() -> i32 { 2 }\n")?;
+        let config = RiprConfig::default();
+        let inventory = inventory_diff_scoped_classified_seams_at_with_config(
+            &root,
+            &config,
+            std::slice::from_ref(&first),
+            &[],
+        )?;
+        let _ = std::fs::remove_dir_all(&root);
+        let names: Vec<&OsStr> = inventory
+            .changed_production_files
+            .iter()
+            .filter_map(|path| path.file_name())
+            .collect();
+        // Exact `OsStr` comparison: a lossy rendering would merge the
+        // witnesses the same way the bug does.
+        if names != [OsStr::from_bytes(b"pricing_\xff.rs")] {
+            return Err(format!(
+                "scope must hold exactly the changed invalid-byte file: {names:?}"
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn scope_key_matches_the_lossy_normalizations() {
+        // Same slash and `./` rules as the lossy rendering, on every host;
+        // distinct spellings stay distinct. Property-shaped because the key
+        // encoding itself is platform-native (bytes vs wide units).
+        assert_eq!(
+            inventory_scope_key(Path::new(r"src\lib.rs")),
+            inventory_scope_key(Path::new("src/lib.rs"))
+        );
+        assert_eq!(
+            inventory_scope_key(Path::new("./src/lib.rs")),
+            inventory_scope_key(Path::new("src/lib.rs"))
+        );
+        // Repeated prefixes strip entirely, like `trim_start_matches`.
+        assert_eq!(
+            inventory_scope_key(Path::new("././src/lib.rs")),
+            inventory_scope_key(Path::new("src/lib.rs"))
+        );
+        assert_ne!(
+            inventory_scope_key(Path::new("src/a.rs")),
+            inventory_scope_key(Path::new("src/b.rs"))
+        );
+    }
+
+    /// Lone surrogates stay distinct in scope keys. Non-Unix-only: only
+    /// there do paths admit them.
+    #[cfg(not(unix))]
+    #[test]
+    fn scope_key_keeps_lone_surrogates_distinct() {
+        use std::ffi::OsString;
+        use std::os::windows::ffi::OsStringExt;
+
+        let first = PathBuf::from(OsString::from_wide(&[
+            0x0073, 0xD800, 0x002E, 0x0072, 0x0073,
+        ]));
+        let second = PathBuf::from(OsString::from_wide(&[
+            0x0073, 0xD801, 0x002E, 0x0072, 0x0073,
+        ]));
+        assert_ne!(inventory_scope_key(&first), inventory_scope_key(&second));
+        assert_ne!(
+            inventory_scope_key(&first),
+            inventory_scope_key(Path::new("s.rs"))
+        );
+        // The old lossy key merges these witnesses; the scope key must not.
+        assert_eq!(
+            normalized_inventory_path(&first),
+            normalized_inventory_path(&second)
+        );
     }
 
     #[test]

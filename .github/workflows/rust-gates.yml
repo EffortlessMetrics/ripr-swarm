@@ -199,6 +199,13 @@ jobs:
         id: workspace_check
         run: cargo check --workspace --all-targets
 
+      # Feature-gated test modules (lang-perl and other previews) compile only
+      # under their features; without this step two green PRs can break main
+      # together (#6854, #6879).
+      - name: All-features ripr target check
+        id: all_features_check
+        run: cargo check -p ripr --all-targets --all-features
+
       - name: Strict workspace Clippy
         id: clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
@@ -371,6 +378,7 @@ jobs:
           PROCESS_POLICY_RESULT: ${{ steps.process_policy.outcome }}
           NETWORK_POLICY_RESULT: ${{ steps.network_policy.outcome }}
           WORKSPACE_CHECK_RESULT: ${{ steps.workspace_check.outcome }}
+          ALL_FEATURES_CHECK_RESULT: ${{ steps.all_features_check.outcome }}
           CLIPPY_RESULT: ${{ steps.clippy.outcome }}
           RUST_TESTS_RESULT: ${{ steps.rust-tests.outcome }}
           GOLDENS_RESULT: ${{ steps.goldens.outcome }}
@@ -392,6 +400,7 @@ jobs:
             printf '| process_policy | %s |\n' "${PROCESS_POLICY_RESULT:-not_reported}"
             printf '| network_policy | %s |\n' "${NETWORK_POLICY_RESULT:-not_reported}"
             printf '| workspace_check | %s |\n' "${WORKSPACE_CHECK_RESULT:-not_reported}"
+            printf '| all_features_check | %s |\n' "${ALL_FEATURES_CHECK_RESULT:-not_reported}"
             printf '| clippy | %s |\n' "${CLIPPY_RESULT:-not_reported}"
             printf '| rust-tests | %s |\n' "${RUST_TESTS_RESULT:-not_reported}"
             printf '| goldens | %s |\n' "${GOLDENS_RESULT:-not_reported}"
