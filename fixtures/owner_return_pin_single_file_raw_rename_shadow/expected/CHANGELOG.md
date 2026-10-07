@@ -24,3 +24,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — owner_return_pin_single_file_raw_rename_shadow (3)
+
+Reason:
+RIPR-SPEC-0197: adopt upstream same-span before/after rendering for human-full (#5745)
+
+Command:
+`cargo xtask goldens bless owner_return_pin_single_file_raw_rename_shadow --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

@@ -11,7 +11,7 @@ WARNING ./src/lib.rs:17
   id: probe:src_lib.rs:field_construction:721bb1ba
 
 Changed
-  before: start: self.end,
+  before: start: self.end
   after:  start: self.start
 
 Probe
