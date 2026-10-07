@@ -1,0 +1,45 @@
+{
+  "case_id": "vitest-orders-order-field-strict-equal",
+  "subject_id": "authored-ts-vitest-orders",
+  "diff": "cases/vitest-orders-order-field-strict-equal.diff",
+  "anchor": {
+    "file": "src/order.ts",
+    "line": 11
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "field_construction",
+  "test_shape": "vitest_expect_tostrictequal_object",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "npx vitest run",
+    "toolchain": "node 22.22.0; vitest 5.0.3; typescript 5.9; @stryker-mutator/core 10.0.0 (vitest runner)",
+    "mutants": [
+      {
+        "replacement": "total: unitPrice / qty,",
+        "mutated_line": "total: unitPrice / qty,",
+        "outcome": "tests_failed",
+        "failing_test": "builds the full line",
+        "equivalence_review": "not equivalent: 4 / 3 differs from 3 * 4 = 12"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "The rewrite swaps the factors of the total field; the test pins the whole returned object with toStrictEqual({ sku, qty: 3, total: 12 }), so the only Stryker mutant (unitPrice / qty = 1.33) fails it. ripr reports exposed with an exact_value/strong oracle on the anchor. Note: the test was first written inside describe(); Stryker 10's vitest runner then reported this mutant as not detected although a manual vitest run fails it, so the test is kept at top level.",
+  "labeling_observation": {
+    "ripr_commit": "1273096",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

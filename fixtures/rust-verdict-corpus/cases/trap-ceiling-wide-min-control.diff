@@ -1,0 +1,11 @@
+diff --git a/src/ceilings.rs b/src/ceilings.rs
+index 5902291..b4b8813 100644
+--- a/src/ceilings.rs
++++ b/src/ceilings.rs
+@@ -1,5 +1,5 @@
+ pub fn ceiling(base: u32) -> u32 {
+-    base * 41
++    41 * base
+ }
+ 
+ #[cfg(test)]

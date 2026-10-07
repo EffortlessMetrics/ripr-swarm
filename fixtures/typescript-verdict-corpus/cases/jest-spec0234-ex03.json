@@ -1,0 +1,45 @@
+{
+  "case_id": "jest-spec0234-ex03",
+  "subject_id": "authored-ts-jest-oracles",
+  "diff": "cases/jest-spec0234-ex03.diff",
+  "anchor": {
+    "file": "src/priceEx03.ts",
+    "line": 3
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "return_value",
+  "test_shape": "jest_expect_tomatchsnapshot_committed",
+  "hard_case": "snapshot oracle: the pinned value lives in a committed __snapshots__ file the static reader does not open",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "npx jest --ci --runInBand",
+    "toolchain": "node 22.22.0; jest 30.5.2; ts-jest 29.4.14; typescript 5.9; @stryker-mutator/core 10.0.0",
+    "mutants": [
+      {
+        "replacement": "return amount - 20;",
+        "mutated_line": null,
+        "outcome": "tests_failed",
+        "failing_test": "priceEx03",
+        "equivalence_review": "not equivalent: the edit is the spec's behavior change (140 becomes 130 for amount 150)"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "The committed snapshot stores 140 for priceEx03(150); under jest --ci the edit's 130 mismatches the snapshot and the test fails. ripr reports weakly_exposed with snapshot / medium and typescript_snapshot_discriminator_unresolved, so it under-credits a real discriminator (a gap verdict on a discriminated case); this is the spec's intended reading, not a defect of the corpus. (spec says today weakly_exposed, snapshot / medium; ripr matches it) Spec cells: RIPR-SPEC-0234 example 3",
+  "labeling_observation": {
+    "ripr_commit": "1273096",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

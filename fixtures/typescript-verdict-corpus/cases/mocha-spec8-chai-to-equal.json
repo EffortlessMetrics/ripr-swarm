@@ -1,0 +1,45 @@
+{
+  "case_id": "mocha-spec8-chai-to-equal",
+  "subject_id": "authored-ts-mocha-ledger",
+  "diff": "cases/mocha-spec8-chai-to-equal.diff",
+  "anchor": {
+    "file": "src/lib.ts",
+    "line": 3
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "return_value",
+  "test_shape": "mocha_chai_expect_to_equal_exact",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "npx mocha",
+    "toolchain": "node 22.22.0; mocha 12.0.3; chai 6.3.0; tsx 4.23.15 (tsx/cjs via .mocharc.json); typescript 5.9; @stryker-mutator/core 10.0.0 (command runner over `npx mocha`; @stryker-mutator/mocha-runner cannot load mocha 12)",
+    "mutants": [
+      {
+        "replacement": "return amount - 20;",
+        "mutated_line": null,
+        "outcome": "tests_failed",
+        "failing_test": "price price",
+        "equivalence_review": "not equivalent: price(150) becomes 130 instead of 140"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "The base fixture `price` with chai `expect(price(150)).to.equal(140)` (pre-change value) pins the discounted amount, so the `- 10` -> `- 20` change fails the test. ripr reports `exposed` (exact_value/strong, direct_owner_call), matching the spec's unchanged expectation. Spec cells: RIPR-SPEC-0234 example 8",
+  "labeling_observation": {
+    "ripr_commit": "1273096",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

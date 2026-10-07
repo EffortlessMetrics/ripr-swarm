@@ -1,0 +1,45 @@
+{
+  "case_id": "mocha-memo-throw-message",
+  "subject_id": "authored-ts-mocha-ledger",
+  "diff": "cases/mocha-memo-throw-message.diff",
+  "anchor": {
+    "file": "src/memo.ts",
+    "line": 3
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "error_path",
+  "test_shape": "mocha_chai_expect_to_throw_message_string",
+  "hard_case": "chai `.to.throw(\"msg\")` checks that the thrown message includes the string, so it discriminates the message, yet ripr grades every chai `.to.throw(...)` as broad_error.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "npx mocha",
+    "toolchain": "node 22.22.0; mocha 12.0.3; chai 6.3.0; tsx 4.23.15 (tsx/cjs via .mocharc.json); typescript 5.9; @stryker-mutator/core 10.0.0 (command runner over `npx mocha`; @stryker-mutator/mocha-runner cannot load mocha 12)",
+    "mutants": [
+      {
+        "replacement": "throw new Error(\"\");",
+        "mutated_line": "throw new Error(\"\");",
+        "outcome": "tests_failed",
+        "failing_test": "parseMemo rejects an empty memo with its message",
+        "equivalence_review": "not equivalent: the empty message does not include \"memo required\""
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "The throw line changes only its quote style. `expect(() => parseMemo(\"\")).to.throw(\"memo required\")` requires the message to contain that text, so the StringLiteral mutant fails. ripr reports `weakly_exposed` with the related test as broad_error/weak, under-crediting a discriminating chai message check.",
+  "labeling_observation": {
+    "ripr_commit": "1273096",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

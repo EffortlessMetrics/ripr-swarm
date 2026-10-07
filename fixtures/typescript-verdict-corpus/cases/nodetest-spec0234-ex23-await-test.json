@@ -1,0 +1,45 @@
+{
+  "case_id": "nodetest-spec0234-ex23-await-test",
+  "subject_id": "authored-ts-nodetest-billing",
+  "diff": "cases/nodetest-spec0234-ex23-await-test.diff",
+  "anchor": {
+    "file": "src/lib.ts",
+    "line": 3
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "return_value",
+  "test_shape": "nodetest_esm_await_test_assert_equal",
+  "hard_case": "top-level `await test(...)` in an ESM test file is not registered by ripr today",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "node --import tsx --test test/*.test.ts",
+    "toolchain": "node 22.22.0; tsx 4.23.15; node:test + node:assert (built in); @stryker-mutator/core 10.0.0 (command runner)",
+    "mutants": [
+      {
+        "replacement": "return amount - 20;",
+        "mutated_line": null,
+        "outcome": "tests_failed",
+        "failing_test": "price",
+        "equivalence_review": "not equivalent: behavior_change edit; price(150) becomes 130 instead of 140"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "The stored subject is the RIPR-SPEC-0234 base fixture (`return amount - 10`), and the test is the example's ESM shape `await test(\"price\", () => { assert.equal(price(150), 140); })` with `assert` from `node:assert/strict` (stored value 140 so the spec's 130 for `amount - 20` is the changed value). The edit to `amount - 20` fails the test. ripr reports `no_static_path` (\"No test references `price(`\"), an abstention against a discriminated truth; the spec's intended verdict is `exposed`. Spec cells: RIPR-SPEC-0234 example 23 (spec says today `no_static_path`; matches).",
+  "labeling_observation": {
+    "ripr_commit": "1273096",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "no_static_path"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

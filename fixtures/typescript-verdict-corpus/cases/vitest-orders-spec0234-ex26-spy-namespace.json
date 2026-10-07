@@ -1,0 +1,44 @@
+{
+  "case_id": "vitest-orders-spec0234-ex26-spy-namespace",
+  "subject_id": "authored-ts-vitest-orders",
+  "diff": "cases/vitest-orders-spec0234-ex26-spy-namespace.diff",
+  "anchor": {
+    "file": "src/priceEx26.ts",
+    "line": 3
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "return_value",
+  "test_shape": "vitest_spyon_namespace_fabricated_return",
+  "hard_case": "vi.spyOn replaces the owner on the module namespace with a fabricated return value",
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "npx vitest run",
+    "toolchain": "node 22.22.0; vitest 5.0.3; typescript 5.9; @stryker-mutator/core 10.0.0 (vitest runner)",
+    "mutants": [
+      {
+        "replacement": "return amount - 20;",
+        "mutated_line": null,
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: price(150) becomes 130 instead of 140, but the spy never calls the real owner"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "The test does import * as lib, vi.spyOn(lib, \"priceEx26\").mockReturnValue(130) and expect(lib.priceEx26(150)).toBe(130); vitest 5 allowed spying on the ESM namespace, so no restructuring was needed, but the assertion reads lib.priceEx26 rather than a bare imported price as in the spec text. The real owner never runs, so the change passes. ripr reports weakly_exposed with typescript_spy_fabricated_observer and oracle unknown, matching the spec. Spec cells: RIPR-SPEC-0234 example 26",
+  "labeling_observation": {
+    "ripr_commit": "1273096",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

@@ -34,6 +34,14 @@ id = "rust-corpus"
 paths = ["target/ripr/reports/rust-corpus-smoke.json", "target/ripr/reports/rust-corpus-smoke.md", "target/ripr/reports/dx-scoreboard.json", "target/ripr/reports/dx-scoreboard.md"]
 
 [[artifact_family]]
+id = "pilot-ranking"
+paths = ["target/ripr/reports/pilot-ranking.json", "target/ripr/reports/pilot-ranking.md", "target/ripr/reports/dx-scoreboard.json", "target/ripr/reports/dx-scoreboard.md"]
+
+[[artifact_family]]
+id = "first-run-install"
+paths = ["target/ripr/first-run/first-run.json", "target/ripr/first-run/first-run-rows.jsonl", "target/ripr/first-run/first-run.md", "target/ripr/first-run/install_published.stderr.log", "target/ripr/reports/dx-scoreboard.json", "target/ripr/reports/dx-scoreboard.md"]
+
+[[artifact_family]]
 id = "public-badge-endpoints"
 paths = ["badges/*.json", "target/ripr/reports/repo-ripr-badge*.json", "target/ripr/reports/repo-ripr-badges.md"]
 
@@ -52,7 +60,7 @@ id = "rust"
 posture = "required"
 workflow = ".github/workflows/rust-gates.yml"
 jobs = ["rust-gates"]
-commands = ["cargo fmt --check", "cargo check --workspace --all-targets", "cargo clippy --workspace --all-targets -- -D warnings", "cargo nextest run --workspace --profile ci", "cargo test --workspace --doc"]
+commands = ["cargo fmt --check", "cargo check --workspace --all-targets", "cargo check -p ripr --all-targets --all-features", "cargo clippy --workspace --all-targets -- -D warnings", "cargo nextest run --workspace --profile ci", "cargo test --workspace --doc"]
 estimated_lem = 12
 artifact_families = []
 description = "Reusable required Rust compile, lint, nextest, and doctest contract invoked by the routed lane."
@@ -62,7 +70,7 @@ id = "routed-rust-small"
 posture = "required"
 workflow = ".github/workflows/routed-rust.yml"
 jobs = ["Ripr Rust Small Result"]
-commands = ["cargo fmt --check", "cargo check --workspace --all-targets", "cargo clippy --workspace --all-targets -- -D warnings", "cargo nextest run --workspace --profile ci", "cargo test --workspace --doc", "cargo xtask precommit", "cargo xtask check-evidence-promotion-honesty", "cargo xtask check-agent-skills", "cargo xtask check-dependencies", "cargo xtask check-process-policy", "cargo xtask check-network-policy", "cargo xtask goldens check", "cargo xtask fixtures"]
+commands = ["cargo fmt --check", "cargo check --workspace --all-targets", "cargo check -p ripr --all-targets --all-features", "cargo clippy --workspace --all-targets -- -D warnings", "cargo nextest run --workspace --profile ci", "cargo test --workspace --doc", "cargo xtask precommit", "cargo xtask check-evidence-promotion-honesty", "cargo xtask check-agent-skills", "cargo xtask check-dependencies", "cargo xtask check-process-policy", "cargo xtask check-network-policy", "cargo xtask goldens check", "cargo xtask fixtures"]
 estimated_lem = 12
 artifact_families = ["ripr-evidence"]
 description = "Swarm Rust Small result gate routed through CX53, CX43, or GitHub-hosted fallback."
@@ -142,7 +150,7 @@ id = "dx-scoreboard"
 posture = "advisory"
 workflow = ".github/workflows/dx-scoreboard.yml"
 jobs = ["scoreboard"]
-commands = ["cargo xtask dx-scoreboard --clone --include-heavy --baseline metrics/dx-scoreboard/baseline.json --gate"]
+commands = ["cargo xtask dx-scoreboard --clone --include-heavy --corpus-dir \"$RUNNER_TEMP/dx-scoreboard-corpus\" --baseline metrics/dx-scoreboard/baseline.json --gate"]
 estimated_lem = 40
 artifact_families = ["dx-scoreboard"]
 description = "Nightly developer-experience scoreboards on the pinned real-repository corpus; fails only when a metric regresses past its margin against the committed baseline or an instrument breaks."
@@ -152,10 +160,40 @@ id = "rust-corpus"
 posture = "advisory"
 workflow = ".github/workflows/rust-corpus.yml"
 jobs = ["corpus"]
-commands = ["cargo build --release -p ripr --bin ripr", "cargo xtask rust-corpus fetch --allow-network --tier \"$TIER\"", "cargo xtask rust-corpus smoke --tier \"$TIER\" --ripr target/release/ripr", "cargo xtask dx-scoreboard --boards corpus --ingest target/ripr/reports/rust-corpus-smoke.json --baseline \"metrics/dx-scoreboard/corpus-$TIER-baseline.json\" --gate"]
+commands = ["cargo build --release -p ripr --bin ripr", "cargo xtask rust-corpus fetch --allow-network --tier \"$TIER\" --root \"$RUNNER_TEMP/rust-corpus\"", "cargo xtask rust-corpus smoke --tier \"$TIER\" --ripr target/release/ripr --root \"$RUNNER_TEMP/rust-corpus\"", "cargo xtask dx-scoreboard --boards corpus --ingest target/ripr/reports/rust-corpus-smoke.json --baseline \"metrics/dx-scoreboard/corpus-$TIER-baseline.json\" --gate"]
 estimated_lem = 30
 artifact_families = ["rust-corpus"]
 description = "Shared Rust corpus: fast tier on demand, full tier nightly; fails only when a repository that analyzed in the committed baseline stops analyzing or cannot be fetched."
+
+[[lane]]
+id = "pilot-ranking"
+posture = "advisory"
+workflow = ".github/workflows/pilot-ranking.yml"
+jobs = ["ranking"]
+commands = ["cargo build --release -p ripr --bin ripr", "cargo xtask pilot-ranking fetch --allow-network", "cargo xtask pilot-ranking score --ripr target/release/ripr", "cargo xtask dx-scoreboard --boards ranking --ingest target/ripr/reports/pilot-ranking.json --baseline metrics/dx-scoreboard/pilot-ranking-baseline.json --gate"]
+estimated_lem = 15
+artifact_families = ["pilot-ranking"]
+description = "Pilot ranking answer key: nightly, on demand, and at draft-to-ready on pilot ranking or seam grading changes; fails only when pooled top-5 or top-10 precision, scored share or function diversity regresses past its margin against the committed baseline, or a pinned crate cannot be fetched."
+
+[[lane]]
+id = "first-run-install"
+posture = "advisory"
+workflow = ".github/workflows/first-run-install.yml"
+jobs = ["first-run"]
+commands = ["cargo xtask first-run --install-published", "cargo xtask dx-scoreboard --boards first_run --ingest target/ripr/first-run/first-run-rows.jsonl", "cargo xtask dx-scoreboard --boards first_run --ingest target/ripr/first-run/first-run-rows.jsonl --baseline metrics/dx-scoreboard/first-run-baseline.json --gate"]
+estimated_lem = 15
+artifact_families = ["first-run-install"]
+description = "First-run install: nightly and on demand only; times a cold crates.io install and the first-run walk on ubuntu-latest and, once a same-runner baseline is committed, fails when install time, time to first useful result or friction regresses past its margin."
+
+[[lane]]
+id = "public-proof"
+posture = "advisory"
+workflow = ".github/workflows/public-proof.yml"
+jobs = ["drift"]
+commands = ["cargo xtask public-proof --check"]
+estimated_lem = 5
+artifact_families = []
+description = "Public proof page drift: nightly, on demand, and at draft-to-ready on a scoreboard, benchmark-manifest, receipt or page change (verdict corpus row PRs are left out; the page is a corpus snapshot); fails when docs/PUBLIC_PROOF.md differs from its receipts or a receipt differs from its canonical source, and lists the page lines a refresh would change."
 
 [[lane]]
 id = "vscode-compile"

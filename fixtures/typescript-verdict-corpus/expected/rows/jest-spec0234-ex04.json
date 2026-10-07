@@ -1,0 +1,22 @@
+{
+  "case_id": "jest-spec0234-ex04",
+  "subject_id": "authored-ts-jest-oracles",
+  "origin": "authored",
+  "anchor": "src/priceEx04.ts:3",
+  "behavior_family": "return_value",
+  "test_shape": "jest_call_without_assertion",
+  "hard_case": false,
+  "truth": "not_discriminated",
+  "ideal_verdict": "gap",
+  "observed_verdict": "gap",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "weakly_exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

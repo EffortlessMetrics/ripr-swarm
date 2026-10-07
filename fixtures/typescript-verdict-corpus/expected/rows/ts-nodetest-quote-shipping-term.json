@@ -1,0 +1,22 @@
+{
+  "case_id": "ts-nodetest-quote-shipping-term",
+  "subject_id": "authored-ts-nodetest-pricing",
+  "origin": "authored",
+  "anchor": "src/pricing.ts:60",
+  "behavior_family": "field_construction",
+  "test_shape": "node_assert_deep_equal_one_branch",
+  "hard_case": false,
+  "truth": "not_discriminated",
+  "ideal_verdict": "gap",
+  "observed_verdict": "credited",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "exposed"
+  ],
+  "outcome": "false_exposed",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

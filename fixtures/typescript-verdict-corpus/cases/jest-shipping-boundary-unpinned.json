@@ -1,0 +1,65 @@
+{
+  "case_id": "jest-shipping-boundary-unpinned",
+  "subject_id": "authored-ts-jest-checkout",
+  "diff": "cases/jest-shipping-boundary-unpinned.diff",
+  "anchor": {
+    "file": "src/shipping.ts",
+    "line": 2
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "jest_expect_tobe_boundary_unpinned",
+  "hard_case": null,
+  "truth": {
+    "state": "partially_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "npx jest --ci --runInBand",
+    "toolchain": "node 22.22.0; jest 30.5.2, ts-jest 29.4.14, typescript 5.9; @stryker-mutator/core 10.0.0 (jest runner, mutate restricted to the anchor line)",
+    "mutants": [
+      {
+        "replacement": "if (true) {",
+        "mutated_line": "if (true) {",
+        "outcome": "tests_failed",
+        "failing_test": "light parcels pay the base fee",
+        "equivalence_review": "not equivalent: the result no longer depends on the compared value"
+      },
+      {
+        "replacement": "if (false) {",
+        "mutated_line": "if (false) {",
+        "outcome": "tests_failed",
+        "failing_test": "heavy parcels pay the surcharge",
+        "equivalence_review": "not equivalent: the result no longer depends on the compared value"
+      },
+      {
+        "replacement": "if (20 <= weight) {",
+        "mutated_line": "if (20 <= weight) {",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: the result differs at the boundary value"
+      },
+      {
+        "replacement": "if (20 >= weight) {",
+        "mutated_line": "if (20 >= weight) {",
+        "outcome": "tests_failed",
+        "failing_test": "light parcels pay the base fee",
+        "equivalence_review": "not equivalent: the result differs at the boundary value"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "The tests use weights 5 and 50 only, so the off-by-one `20 <= weight` mutant passes while the constant and flipped mutants fail. ripr reports weakly_exposed on the anchor, the ideal gap.",
+  "labeling_observation": {
+    "ripr_commit": "1273096",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

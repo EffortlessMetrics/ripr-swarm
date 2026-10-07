@@ -1,0 +1,101 @@
+{
+  "subject_id": "authored-ts-mocha-ledger",
+  "origin": "authored",
+  "version_label": "authored@2026-10-04",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": ".mocharc.json",
+      "sha256": "53e49e0c2ea96ebdae40dd09504536971ec5fd0c7719c9629fe8c61ec5b222f9"
+    },
+    {
+      "path": "package.json",
+      "sha256": "f58a8e204b06fbf1f4effa82cbd6edba87e6be897116db9d75444a2c5b5ae23a"
+    },
+    {
+      "path": "ripr.toml",
+      "sha256": "27f3758ca9cce54d063a7f0daddc95f0940433563d4869a9e5a7c622ae961381"
+    },
+    {
+      "path": "src/bonus.ts",
+      "sha256": "9b21f2aaefdd087210309367a51f2f8af9ae95c65ad0a4cbc50f4376aee118d8"
+    },
+    {
+      "path": "src/entry.ts",
+      "sha256": "94dca87be3d6e45f16069a87329e87ad10fd12188954680f01d9fee20bd5d045"
+    },
+    {
+      "path": "src/fee.ts",
+      "sha256": "fc53d0b6f181c5b856bf09d4511068efec900f03afbfab9c458cde77554748c9"
+    },
+    {
+      "path": "src/hours.ts",
+      "sha256": "9d0ae724256fef43a8166e5652ec794562a8df472fa81e50a3c8421c52640772"
+    },
+    {
+      "path": "src/lib.ts",
+      "sha256": "63c7d5318ac14712d5a45e9eeadce2d07ed7a2d1af706abc4a0957c7a5016355"
+    },
+    {
+      "path": "src/limit.ts",
+      "sha256": "6c1f28b37c6ed94e22cef52b488e52718471a0df92c3ac819c405b6a9c81f214"
+    },
+    {
+      "path": "src/memo.ts",
+      "sha256": "76da409759bd9f0ec072db25f438db9fc2ff975ffb5f5e4e351825bb10578e85"
+    },
+    {
+      "path": "src/parse.ts",
+      "sha256": "6324e454905496ab746ee94ece16a3f91a577d6ca1440311877623f7a2aaa69c"
+    },
+    {
+      "path": "src/quote.ts",
+      "sha256": "e7b211790e48d38a485e6d78f16ebde012e99ed70cee2076e911a2470142a7c1"
+    },
+    {
+      "path": "src/reserve.ts",
+      "sha256": "f6e218a479df7e54e01ab3bb8806fd72c291f6a8b51eff355acece99bdf1b015"
+    },
+    {
+      "path": "test/bonus.test.ts",
+      "sha256": "2599fde18fe7e8b0ad0d48ee6f95494f97944b02e5eb3c160e0ad22956b78f88"
+    },
+    {
+      "path": "test/entry.test.ts",
+      "sha256": "b6c7e00ff36b06896de22e3e211dd26246c66cf049ac33a402d66376bb55a4a5"
+    },
+    {
+      "path": "test/fee.test.ts",
+      "sha256": "78a844ec634413384b3075f464c33fdd142f6429654921ab261988b733695499"
+    },
+    {
+      "path": "test/hours.test.ts",
+      "sha256": "9c62336808f50d24d86020fe47e8c36ce3213b3e313fb7f69ef43cb493bfe887"
+    },
+    {
+      "path": "test/lib.test.ts",
+      "sha256": "a6f0adad2f153536d3de75bd4833befde9a62b7b1441e0b42c11999df0674de9"
+    },
+    {
+      "path": "test/limit.test.ts",
+      "sha256": "935ea12f641d70fcd46c0266a30d364254209ed4a6a0db566f024af0c48dbb98"
+    },
+    {
+      "path": "test/memo.test.ts",
+      "sha256": "fe16b249c4103f57e6793ea7ca3142aa7de6f9cf83ce98d06ade86fe3510efce"
+    },
+    {
+      "path": "test/parse.test.ts",
+      "sha256": "ddecc9eea092ce2032b931c720ddf6d489f316a5b0bed37cdbc14da5664ac394"
+    },
+    {
+      "path": "test/quote.test.ts",
+      "sha256": "7ae1a622cce88d8726e1e6a211bd4197e8a6cdfc9de5c985d470ec3dd18497b3"
+    },
+    {
+      "path": "test/reserve.test.ts",
+      "sha256": "f121d230cb356af52b2b85acf300899f669204187bf822b0195ab63bc7872cca"
+    }
+  ]
+}

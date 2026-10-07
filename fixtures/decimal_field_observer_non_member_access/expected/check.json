@@ -11,6 +11,18 @@
   "findings": [
     {
       "id": "probe:src_lib.rs:field_construction:66b24106",
+      "canonical_gap_id": "gap:rust:src/lib.rs:default_config:field_construction:field_construction:retries_1",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:default_config:field_construction:field_construction:retries_1",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "default_config",
+        "behavior_kind": "field_construction",
+        "probe_kind": "field_construction",
+        "normalized_discriminator": "retries_1"
+
+      },
       "classification": "reachable_unrevealed",
       "severity": "warning",
       "confidence": 0.79,
@@ -18,7 +30,7 @@
         "id": "probe:src_lib.rs:field_construction:66b24106",
         "family": "field_construction",
         "delta": "value",
-        "file": "fixtures/decimal_field_observer_non_member_access/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 7,
         "expression": "retries: 1,"
        },
@@ -82,6 +94,18 @@
     },
     {
       "id": "probe:src_lib.rs:return_value:4b922ba9",
+      "canonical_gap_id": "gap:rust:src/lib.rs:default_config:return_value:return_value:config_timeout_secs_30_retries_1",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:default_config:return_value:return_value:config_timeout_secs_30_retries_1",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "default_config",
+        "behavior_kind": "return_value",
+        "probe_kind": "return_value",
+        "normalized_discriminator": "config_timeout_secs_30_retries_1"
+
+      },
       "classification": "reachable_unrevealed",
       "severity": "warning",
       "confidence": 0.79,
@@ -89,7 +113,7 @@
         "id": "probe:src_lib.rs:return_value:4b922ba9",
         "family": "return_value",
         "delta": "value",
-        "file": "fixtures/decimal_field_observer_non_member_access/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 7,
         "expression": "Config {\n        timeout_secs: 30,\n        retries: 1,\n    }"
        },

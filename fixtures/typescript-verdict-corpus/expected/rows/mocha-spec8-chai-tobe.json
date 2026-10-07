@@ -1,0 +1,22 @@
+{
+  "case_id": "mocha-spec8-chai-tobe",
+  "subject_id": "authored-ts-mocha-ledger",
+  "origin": "authored",
+  "anchor": "src/quote.ts:3",
+  "behavior_family": "return_value",
+  "test_shape": "mocha_chai_expect_tobe_nonexistent_matcher_swallowed",
+  "hard_case": true,
+  "truth": "not_discriminated",
+  "ideal_verdict": "gap",
+  "observed_verdict": "credited",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "exposed"
+  ],
+  "outcome": "false_exposed",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

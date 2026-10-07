@@ -17,6 +17,7 @@
 
 mod dependent_scope;
 pub(crate) mod oracles;
+mod probe_shape;
 pub(crate) mod probes;
 
 pub(crate) use probes::{changed_let_binding, mask_rust_comments_and_strings};
@@ -55,7 +56,28 @@ mod lexical_test_grip;
 /// real headroom for module splits while still failing closed on genuinely
 /// oversized external scopes; constrained operators retain the
 /// `RIPR_MAX_DIFF_INDEX_FILES` override.
-const DIFF_INDEX_FILE_LIMIT: usize = 1200;
+///
+/// Raised from 1200 to 10,000 once the dependent-scope narrowing (#5320)
+/// moved the speed bound to [`DIFF_NARROW_INDEX_FILES`]. This guard now only
+/// protects memory: measured diff runs cost about 0.1 to 0.35 MB per indexed
+/// file (wasm-bindgen's 1,781-file `web-sys` selection 183 MB, bevy deep
+/// 1,927 files 700 MB, a synthetic 16,000-file crate 493 MB), so 10,000 files
+/// stays within a 7 GB hosted runner at the measured worst rate.
+const DIFF_INDEX_FILE_LIMIT: usize = 10_000;
+
+/// Default size above which a Draft/Fast selection narrows its dependent
+/// packages (`RIPR_DIFF_DEPENDENT_SCOPE=auto`) and at which the on-demand
+/// reach widening stops. It bounds time, not memory: on nushell a full
+/// 1,838-file selection takes about 4x as long as the narrowed one with the
+/// same findings. A selection that stays above it after narrowing (a changed
+/// package that alone is larger) runs anyway, up to the hard
+/// [`DIFF_INDEX_FILE_LIMIT`] guard.
+const DIFF_NARROW_INDEX_FILES: usize = 1200;
+
+/// Env override for [`DIFF_NARROW_INDEX_FILES`]. The effective value never
+/// exceeds the effective `RIPR_MAX_DIFF_INDEX_FILES` limit, so lowering the
+/// hard limit keeps narrowing below it exactly as before.
+const DIFF_NARROW_INDEX_FILES_ENV: &str = "RIPR_DIFF_NARROW_INDEX_FILES";
 
 /// Hard analysis-cost guard for the repo-scoped path (#2109): the diff path
 /// caps its working set at [`DIFF_INDEX_FILE_LIMIT`], and the repo path now
@@ -108,8 +130,71 @@ const NO_TESTS_INFECTION_SUMMARY: &str =
 const NO_STATICALLY_REACHABLE_TEST_PATH_INFECTION_SUMMARY: &str =
     "No statically reachable test path was found, so activation/infection cannot be estimated";
 
+/// The `diff_scope_oversized` refusal for an index of `files` Rust files.
+fn diff_scope_oversized_error(files: usize, scope_limit: usize) -> String {
+    format!(
+        "diff_scope_oversized: {files} indexed Rust files exceed the \
+         {DIFF_INDEX_FILE_LIMIT_ENV} limit ({scope_limit}); analysis was not run to \
+         protect runner memory. Repair route: reduce the diff scope, run a narrower \
+         mode, or raise the limit via {DIFF_INDEX_FILE_LIMIT_ENV}=<number>."
+    )
+}
+
 fn diff_index_file_limit() -> Result<usize, String> {
-    diff_index_file_limit_from_env(std::env::var(DIFF_INDEX_FILE_LIMIT_ENV))
+    diff_index_file_limit_from_env(diff_limit_env(DIFF_INDEX_FILE_LIMIT_ENV))
+}
+
+fn diff_narrow_index_files(hard_limit: usize) -> Result<usize, String> {
+    diff_narrow_index_files_from_env(diff_limit_env(DIFF_NARROW_INDEX_FILES_ENV), hard_limit)
+}
+
+#[cfg(test)]
+std::thread_local! {
+    // Thread-owned so parallel tests never see each other's limits.
+    static FORCED_DIFF_LIMIT_ENV: std::cell::RefCell<Vec<(&'static str, String)>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// The diff limit env var `name`, or a value a test forced on this thread.
+fn diff_limit_env(name: &'static str) -> Result<String, std::env::VarError> {
+    #[cfg(test)]
+    {
+        let forced = FORCED_DIFF_LIMIT_ENV.with(|forced| {
+            forced
+                .borrow()
+                .iter()
+                .find(|(forced_name, _)| *forced_name == name)
+                .map(|(_, value)| value.clone())
+        });
+        if let Some(value) = forced {
+            return Ok(value);
+        }
+    }
+    std::env::var(name)
+}
+
+/// Run `work` with the diff limit env vars in `values` forced on this
+/// thread, so a test drives the real lookups without touching the process
+/// environment.
+#[cfg(test)]
+fn with_forced_diff_limit_env<T>(values: &[(&'static str, &str)], work: impl FnOnce() -> T) -> T {
+    FORCED_DIFF_LIMIT_ENV.with(|forced| {
+        *forced.borrow_mut() = values
+            .iter()
+            .map(|(name, value)| (*name, (*value).to_string()))
+            .collect();
+    });
+    let result = work();
+    FORCED_DIFF_LIMIT_ENV.with(|forced| forced.borrow_mut().clear());
+    result
+}
+
+fn diff_narrow_index_files_from_env(
+    value: Result<String, std::env::VarError>,
+    hard_limit: usize,
+) -> Result<usize, String> {
+    positive_limit_from_env(DIFF_NARROW_INDEX_FILES_ENV, DIFF_NARROW_INDEX_FILES, value)
+        .map(|narrow| narrow.min(hard_limit))
 }
 
 /// Admit only Git-tracked open paths. Discovery excludes symlinks and
@@ -184,6 +269,288 @@ fn repo_index_file_limit_from_env(
 /// join it: an open file the selection already holds counts once.
 fn selection_with_open_files(selected: &[PathBuf], open: &BTreeSet<PathBuf>) -> usize {
     selected.len() + open.iter().filter(|file| !selected.contains(file)).count()
+}
+
+/// Drops the files that hold tests and that no Cargo target's module tree
+/// reaches (#6965). rustc never compiles such a file, so its tests never
+/// run. A changed file is dropped when its own #4435 orphan check already
+/// proved it unreached; an unchanged one when the walk below does. A file
+/// that spells neither `test` nor the last segment of a built-in test
+/// attribute or configured harness marker cannot register one (`#[test]`,
+/// `#[quickcheck]`, `proptest!`, a registered `#[myco::spec]`) and is kept.
+///
+/// The module-tree walk parses every module of a package, so it runs only
+/// for suspects: test files whose module name no loaded file of their
+/// package declares outside a line comment, and no loaded file spells as a
+/// path, and target roots in a package that turns Cargo's
+/// target discovery off. Anything else keeps its tests without a walk.
+///
+/// The drop inherits the walk's unmodeled cases (module_graph.rs header): a
+/// package outside the analyzed root that reaches in through `#[path]` or a
+/// `[[test]] path`, and `mod Foo;` resolving to `foo.rs` on a
+/// case-insensitive file system. Either can cost a compiled test its credit.
+fn drop_unreached_test_files(
+    root: &Path,
+    source_role_context: &workspace::SourceRoleContext,
+    changed_rust_paths: &[PathBuf],
+    test_harnesses: &[crate::config::TestHarnessRegistration],
+    loaded_files: Vec<(PathBuf, Vec<u8>)>,
+) -> Vec<(PathBuf, Vec<u8>)> {
+    // `#[quickcheck]` or a registered `myco::spec` need not spell `test`
+    // (#6984 review), so every test-producing attribute's last segment also
+    // marks a test file.
+    let mut needles = vec![b"test".as_slice()];
+    needles.extend(
+        crate::analysis::facts::BUILT_IN_TEST_ATTRIBUTE_PATHS
+            .iter()
+            .copied()
+            .chain(test_harnesses.iter().map(|harness| harness.marker.as_str()))
+            .filter_map(|marker| marker.rsplit("::").next())
+            .filter(|segment| !segment.is_empty())
+            .map(str::as_bytes),
+    );
+    let holds_tests = |bytes: &[u8]| needles.iter().any(|needle| contains_bytes(bytes, needle));
+    let changed = changed_rust_paths
+        .iter()
+        .map(|path| workspace::normalize_path(path))
+        .collect::<BTreeSet<_>>();
+    let mut mentioned = None;
+    let mut manifests = BTreeMap::new();
+    let mut discovery_off = BTreeMap::new();
+    let suspects = loaded_files
+        .iter()
+        .filter(|(path, bytes)| {
+            !changed.contains(&workspace::normalize_path(path)) && holds_tests(bytes)
+        })
+        .filter(|(path, _)| {
+            let mentioned = mentioned
+                .get_or_insert_with(|| mentioned_module_names(root, &loaded_files, &mut manifests));
+            may_be_unreached(root, path, mentioned, &mut manifests, &mut discovery_off)
+        })
+        .map(|(path, _)| path.as_path())
+        .collect::<Vec<_>>();
+    // A changed file the #4435 walk already proved unreached seeds no
+    // probe, but its tests would still relate to the other changed files:
+    // a new test file whose `mod` was forgotten is the common case.
+    let mut orphans = source_role_context
+        .module_graph_orphans
+        .iter()
+        .map(|path| workspace::normalize_path(path))
+        .filter(|path| changed.contains(path))
+        // The production-like opt-in still seeds probes for an orphan, and
+        // those probes need the file's owners in the index (#4586).
+        .filter(|path| !workspace::seeds_diff_probes(Path::new(path), source_role_context))
+        .filter(|path| {
+            loaded_files.iter().any(|(loaded, bytes)| {
+                workspace::normalize_path(loaded) == *path && holds_tests(bytes)
+            })
+        })
+        .collect::<BTreeSet<_>>();
+    if !suspects.is_empty() {
+        let mut probe = source_role_context.clone();
+        probe.module_graph_orphans.clear();
+        workspace::apply_module_graph_evidence(root, &mut probe, suspects);
+        orphans.extend(
+            probe
+                .module_graph_orphans
+                .iter()
+                .map(|path| workspace::normalize_path(path)),
+        );
+    }
+    if orphans.is_empty() {
+        return loaded_files;
+    }
+    loaded_files
+        .into_iter()
+        .filter(|(path, _)| !orphans.contains(&workspace::normalize_path(path)))
+        .collect()
+}
+
+fn contains_bytes(haystack: &[u8], needle: &[u8]) -> bool {
+    // `windows(0)` panics; every haystack contains the empty needle.
+    if needle.is_empty() {
+        return true;
+    }
+    haystack
+        .windows(needle.len())
+        .any(|window| window == needle)
+}
+
+/// The module names the loaded files mention: `mod <name>` declarations,
+/// keyed by the declaring file's package, and every file stem spelled
+/// before `.rs` in a string (`#[path]`, `include!`), which may cross
+/// packages. A textual over-approximation: it only decides which files
+/// skip the walk, so a miss costs a walk and never a verdict.
+#[derive(Default)]
+struct MentionedModules {
+    declared: BTreeMap<Option<PathBuf>, BTreeSet<String>>,
+    path_stems: BTreeSet<String>,
+}
+
+impl MentionedModules {
+    fn mentions(&self, package: &Option<PathBuf>, name: &str) -> bool {
+        self.path_stems.contains(name)
+            || self
+                .declared
+                .get(package)
+                .is_some_and(|names| names.contains(name))
+    }
+}
+
+/// The nearest directory at or above `path`'s parent that holds a
+/// `Cargo.toml`, relative to `root`; `None` when none does.
+fn owning_manifest_dir(
+    root: &Path,
+    path: &Path,
+    manifests: &mut BTreeMap<PathBuf, bool>,
+) -> Option<PathBuf> {
+    path.ancestors().skip(1).find_map(|dir| {
+        let has_manifest = *manifests
+            .entry(dir.to_path_buf())
+            .or_insert_with(|| root.join(dir).join("Cargo.toml").is_file());
+        has_manifest.then(|| dir.to_path_buf())
+    })
+}
+
+fn mentioned_module_names(
+    root: &Path,
+    loaded_files: &[(PathBuf, Vec<u8>)],
+    manifests: &mut BTreeMap<PathBuf, bool>,
+) -> MentionedModules {
+    let is_ident = |byte: u8| byte.is_ascii_alphanumeric() || byte == b'_';
+    let mut mentioned = MentionedModules::default();
+    for (path, bytes) in loaded_files {
+        let package = owning_manifest_dir(root, path, manifests);
+        for (at, _) in bytes.windows(3).enumerate().filter(|(_, w)| *w == b"mod") {
+            if at > 0 && is_ident(bytes[at - 1]) {
+                continue;
+            }
+            // A commented-out declaration (`// mod used_tests;`) is how a
+            // file often becomes an orphan; it must not spare the walk.
+            let line_start = bytes[..at]
+                .iter()
+                .rposition(|byte| *byte == b'\n')
+                .map_or(0, |position| position + 1);
+            if contains_bytes(&bytes[line_start..at], b"//") {
+                continue;
+            }
+            let rest = &bytes[at + 3..];
+            let skipped = rest
+                .iter()
+                .take_while(|byte| byte.is_ascii_whitespace())
+                .count();
+            if skipped == 0 {
+                continue;
+            }
+            let ident = &rest[skipped..];
+            let ident = ident.strip_prefix(b"r#").unwrap_or(ident);
+            let name = ident
+                .iter()
+                .take_while(|byte| is_ident(**byte))
+                .copied()
+                .collect::<Vec<_>>();
+            if !name.is_empty() {
+                mentioned
+                    .declared
+                    .entry(package.clone())
+                    .or_default()
+                    .insert(String::from_utf8_lossy(&name).into_owned());
+            }
+        }
+        for (at, _) in bytes.windows(4).enumerate().filter(|(_, w)| *w == b".rs\"") {
+            let start = bytes[..at]
+                .iter()
+                .rposition(|byte| matches!(byte, b'/' | b'\\' | b'"'))
+                .map_or(0, |position| position + 1);
+            mentioned
+                .path_stems
+                .insert(String::from_utf8_lossy(&bytes[start..at]).into_owned());
+        }
+    }
+    mentioned
+}
+
+/// Whether `path` could be a file no target reaches: a module file whose
+/// name nothing mentions, or a target root (`tests/x.rs`) in a package whose
+/// manifest sets `autotests`, `autobenches` or `autoexamples = false`.
+///
+/// One cost cut that changes no verdict: `src/bin/x.rs` is never a suspect,
+/// because the walk always counts it as a production root and could only
+/// pay for a parse it cannot turn into a verdict. A file under a `src/tests/`
+/// module directory is an ordinary module file: no manifest sits beside that
+/// `tests/`, so the module-name check below decides (#6979).
+fn may_be_unreached(
+    root: &Path,
+    path: &Path,
+    mentioned: &MentionedModules,
+    manifests: &mut BTreeMap<PathBuf, bool>,
+    discovery_off: &mut BTreeMap<PathBuf, Option<bool>>,
+) -> bool {
+    let Some(file_name) = path.file_name().and_then(|name| name.to_str()) else {
+        return false;
+    };
+    let parent = path.parent().unwrap_or_else(|| Path::new(""));
+    let parent_name = parent.file_name().and_then(|name| name.to_str());
+    let grandparent_name = parent
+        .parent()
+        .and_then(Path::file_name)
+        .and_then(|name| name.to_str());
+    let is_target_dir = |name: Option<&str>| matches!(name, Some("tests" | "benches" | "examples"));
+    // A target root: `tests/x.rs`, or `tests/x/main.rs` (and the bench and
+    // example twins).
+    let package_dir = if is_target_dir(parent_name) {
+        Some(parent.parent().unwrap_or(Path::new("")))
+    } else if file_name == "main.rs" && is_target_dir(grandparent_name) {
+        parent.parent().and_then(Path::parent)
+    } else {
+        None
+    };
+    // `src/tests/x.rs` sits under a module directory named `tests`, not a
+    // target directory: with no manifest beside it, it is an ordinary module
+    // file and takes the module-name check below (#6979).
+    if let Some(package_dir) = package_dir {
+        // `None`: no manifest beside the directory, so it is not a target
+        // directory. Read through the committed-source overlay, as the walk
+        // does, so a committed-history diff sees the committed manifest.
+        let discovery = *discovery_off
+            .entry(package_dir.to_path_buf())
+            .or_insert_with(|| {
+                // The same reading `evidence_roots` applies: only an explicit
+                // `auto* = false` turns discovery off. An unparsable manifest
+                // leaves the walk nothing to prove.
+                committed_source::read_source_bytes(root, &package_dir.join("Cargo.toml"))
+                    .ok()
+                    .flatten()
+                    .map(|bytes| {
+                        String::from_utf8(bytes)
+                            .ok()
+                            .and_then(|text| toml::from_str::<toml::Value>(&text).ok())
+                            .is_some_and(|manifest| {
+                                let package = manifest.get("package");
+                                ["autotests", "autobenches", "autoexamples"]
+                                    .iter()
+                                    .any(|key| {
+                                        package
+                                            .and_then(|package| package.get(*key))
+                                            .and_then(toml::Value::as_bool)
+                                            == Some(false)
+                                    })
+                            })
+                    })
+            });
+        if let Some(off) = discovery {
+            return off;
+        }
+    }
+    if parent_name == Some("bin") && grandparent_name == Some("src") {
+        return false;
+    }
+    let module_name = match file_name {
+        "lib.rs" | "main.rs" | "build.rs" => return false,
+        "mod.rs" => parent_name.unwrap_or_default(),
+        _ => file_name.trim_end_matches(".rs"),
+    };
+    !mentioned.mentions(&owning_manifest_dir(root, path, manifests), module_name)
 }
 
 /// Fail closed when a repo-scoped working set exceeds the guard (#2109).
@@ -338,6 +705,13 @@ pub struct PartialDiffScope {
     /// Exact selected file paths (normalized, forward-slash, repo-relative),
     /// in deterministic selection order.
     pub selected_files: Vec<String>,
+    /// Exact changed file paths (same normalization) that the diff contained
+    /// but the selected partition did NOT analyze (#5998). The per-document
+    /// LSP status needs the names, not only the lower-bound counts, to report
+    /// an opened document outside the partition as `not_analyzed` instead of
+    /// silently `clean`/`served`. Mirrors `selected_files` sizing: it holds
+    /// only what the parsed diff already retained, and no renderer lists it.
+    pub unselected_files: Vec<String>,
     /// Changed-line count across the selected partition.
     pub selected_changed_lines: usize,
     /// Lower-bound count of changed-line files that were NOT inspected.
@@ -363,13 +737,22 @@ impl PartialDiffScope {
     pub const GATE_ELIGIBILITY: &'static str = "ineligible";
     /// The widen instruction every partial-result surface shares: the
     /// smallest budget values that admit the next file, stopping budget
+    /// first, then the CLI-shaped "re-run" tail. See
+    /// [`Self::budget_raise_instruction`] for the budget assignment itself.
+    pub(crate) fn widen_instruction(&self) -> String {
+        format!("{}, then re-run", self.budget_raise_instruction())
+    }
+
+    /// The budget-raise instruction every partial-result surface shares: the
+    /// smallest budget values that admit the next file, stopping budget
     /// first. Raising a budget only just above its current value can select
     /// the same partition again, so the minimums come from the selector:
     /// one more file than was selected, and the selected line count plus the
     /// next file's lines. When no enabled file was left out (an oversized
     /// first file analyzed alone), the line minimum is the selected line
-    /// count, which makes the run complete.
-    pub(crate) fn widen_instruction(&self) -> String {
+    /// count, which makes the run complete. No run-shape tail: the caller
+    /// names the route (a CLI re-run, or an LSP sidecar restart, #5999).
+    pub(crate) fn budget_raise_instruction(&self) -> String {
         let next_lines = self.next_file_changed_lines.unwrap_or(0);
         let file_min = self
             .selected_files
@@ -391,12 +774,12 @@ impl PartialDiffScope {
         if raises.is_empty() {
             // Unreachable for a selector-built scope; keep a usable route.
             return format!(
-                "raise {} above {}, then re-run",
+                "raise {} above {}",
                 self.stop_reason.budget_env(),
                 self.stopping_budget()
             );
         }
-        format!("raise {}, then re-run", raises.join(" and "))
+        format!("raise {}", raises.join(" and "))
     }
 
     /// Disclosure naming the only continuation route (decision 6): raise the
@@ -433,6 +816,16 @@ impl PartialDiffScope {
     pub(crate) fn selects(&self, path: &Path) -> bool {
         let normalized = normalize_changed_path(path);
         self.selected_files.contains(&normalized)
+    }
+
+    /// Whether `path` (any spelling) names a changed file the run left
+    /// outside the selected partition (#5998): the file has changed lines
+    /// this analysis never inspected, so "no diagnostics" for it is not a
+    /// clean result. `false` for paths the diff did not change — an opened
+    /// unchanged file legitimately has no line-local findings.
+    pub(crate) fn changed_outside_partition(&self, path: &Path) -> bool {
+        let normalized = normalize_changed_path(path);
+        !self.selected_files.contains(&normalized) && self.unselected_files.contains(&normalized)
     }
 }
 
@@ -723,6 +1116,18 @@ fn select_partial_diff_partition_with_identity(
         .iter()
         .map(|candidate| candidate.normalized_path.clone())
         .collect();
+    // The complement of the selection over the parsed diff (#5998): every
+    // changed file the partition did NOT analyze, by name, so per-document
+    // status can report an opened file outside the partition honestly.
+    // Selection never duplicates candidates, so a membership test over the
+    // selected names yields the exact complement in selector order.
+    let selected_set: std::collections::BTreeSet<&str> =
+        selected_files.iter().map(|path| path.as_str()).collect();
+    let unselected_files: Vec<String> = candidates
+        .iter()
+        .filter(|candidate| !selected_set.contains(candidate.normalized_path.as_str()))
+        .map(|candidate| candidate.normalized_path.clone())
+        .collect();
     let mut selected_sorted = selected_files.clone();
     selected_sorted.sort();
     let diff_identity = diff_identity_from_changed_files(identity_files);
@@ -739,6 +1144,7 @@ fn select_partial_diff_partition_with_identity(
         line_budget: budgets.line_budget,
         budget_disclosures: budgets.disclosures.clone(),
         selected_files,
+        unselected_files,
         selected_changed_lines: selected_lines,
         uninspected_files_lower_bound: total_files.saturating_sub(selected.len()),
         uninspected_changed_lines_lower_bound: total_lines.saturating_sub(selected_lines),
@@ -820,6 +1226,8 @@ fn apply_probe_and_oracle_limits(
     oracles::apply_wrapper_error_binding_limit(finding, probe);
     probes::attach_changed_binding_predicate_evidence(finding, binding_relation);
     oracles::apply_cross_language_limit(finding, probe, index);
+    // RIPR-SPEC-0240 runs last so a producer-named limit keeps its finding.
+    classify::withhold_unsupported_gap(finding);
 }
 
 /// Whether [`apply_rust_no_static_path_limit`] searches for a witness: a
@@ -1341,6 +1749,7 @@ impl RustAdapter {
         let mut dependent_scope = None;
         let mut withheld_macro_bindings = classify::WithheldMacroBindings::default();
         let scope_limit = diff_index_file_limit()?;
+        let narrow_limit = diff_narrow_index_files(scope_limit)?;
         // Open saved Rust documents are index-only inputs. They do not seed
         // changed-file probes, package expansion, or findings. Admit only
         // discovered, analyzable files, then apply the ordinary index budget.
@@ -1356,7 +1765,7 @@ impl RustAdapter {
         let scope_mode = dependent_scope::DependentScopeMode::from_env()?;
         if !dependent_package_roots.is_empty()
             && full_selection < analyzable_rust_files.len()
-            && scope_mode.narrows(full_selection, scope_limit)
+            && scope_mode.narrows(full_selection, narrow_limit)
         {
             let seeded_changed_files = analyzable_changed_files
                 .iter()
@@ -1380,6 +1789,11 @@ impl RustAdapter {
                     &core_roots,
                     &manifest_dir_prefixes,
                 );
+                // Narrowing keeps the changed packages whole, so a core over
+                // the hard limit is refused before its index is built.
+                if core_files.len() > scope_limit {
+                    return Err(diff_scope_oversized_error(core_files.len(), scope_limit));
+                }
                 if core_files.len() < index_files.len() {
                     let query = dependent_scope::admission_query(
                         &options.root,
@@ -1412,13 +1826,7 @@ impl RustAdapter {
         // constrained runner's memory (#1023): a too-large index is a named
         // limited state with a repair route, not an analysis result.
         if index_files.len() > scope_limit {
-            return Err(format!(
-                "diff_scope_oversized: {} indexed Rust files exceed the \
-                 {DIFF_INDEX_FILE_LIMIT_ENV} limit ({scope_limit}); analysis was not run to \
-                 protect runner memory. Repair route: reduce the diff scope, run a narrower \
-                 mode, or raise the limit via {DIFF_INDEX_FILE_LIMIT_ENV}=<number>.",
-                index_files.len()
-            ));
+            return Err(diff_scope_oversized_error(index_files.len(), scope_limit));
         }
         // Load files into memory and use the content-addressed per-file fact
         // cache. This avoids re-parsing unchanged files with ra_ap_syntax on
@@ -1448,7 +1856,17 @@ impl RustAdapter {
             })
             .filter_map(Result::transpose)
             .collect::<Result<Vec<_>, String>>()?;
-        let cached = rust_index::build_index_from_loaded_files_with_cache_and_test_harnesses(
+        // #6965: a file holding tests that no Cargo target's module tree
+        // reaches is never compiled, so its tests are not evidence. Only a complete walk proves a file unreached (#4435);
+        // anything less keeps the file.
+        let loaded_files = drop_unreached_test_files(
+            &options.root,
+            &source_role_context,
+            &changed_rust_paths,
+            &options.test_harnesses,
+            loaded_files,
+        );
+        let cached = rust_index::build_analysis_index_from_loaded_files(
             &options.root,
             &loaded_files,
             &options.test_harnesses,
@@ -1639,7 +2057,7 @@ impl RustAdapter {
                 let reach = match dependent_scope.as_mut() {
                     Some(scope) if needs_no_static_path_limit(&finding) => {
                         match owner_name_from_id(&probe.owner, &probe.location.file) {
-                            Some(owner) => scope.reach_index(&owner, &index, scope_limit)?,
+                            Some(owner) => scope.reach_index(&owner, &index, narrow_limit)?,
                             None => dependent_scope::ReachIndex::Main,
                         }
                     }
@@ -1706,6 +2124,22 @@ impl RustAdapter {
                     &index,
                     binding_relation.as_ref(),
                 );
+                // #5268: the producer names the canonical gap identity from
+                // the changed-line evidence it already holds, after the
+                // finding's typed static limitation is settled (mirroring the
+                // Python producer's `static_limit.is_none()` gate). A
+                // static-limited finding keeps `canonical_gap: None`, so the
+                // MCP readiness refusal stays `static_limitation`; a finding
+                // without a derivable discriminator keeps the typed refusal
+                // too — no evidence is manufactured here.
+                if finding.static_limit_kind.is_none() {
+                    finding.canonical_gap = probe_shape::canonical_rust_gap_for(
+                        &changed.path,
+                        probe.owner.as_ref(),
+                        &probe.family,
+                        &probe.expression,
+                    );
+                }
                 push_retained_finding(&mut findings, finding);
             }
         }
@@ -2050,7 +2484,7 @@ impl RustAdapter {
                 Ok((file.clone(), bytes))
             })
             .collect::<Result<Vec<_>, String>>()?;
-        let cached = rust_index::build_index_from_loaded_files_with_cache_and_test_harnesses(
+        let cached = rust_index::build_analysis_index_from_loaded_files(
             &options.root,
             &loaded_rust_files,
             &options.test_harnesses,
@@ -2122,6 +2556,16 @@ impl RustAdapter {
                     &transitive_reach,
                 );
                 apply_probe_and_oracle_limits(&mut finding, &probe, &index, None);
+                // #5268: same producer-owned canonical gap identity as the
+                // diff loop, behind the same typed static-limitation gate.
+                if finding.static_limit_kind.is_none() {
+                    finding.canonical_gap = probe_shape::canonical_rust_gap_for(
+                        path,
+                        probe.owner.as_ref(),
+                        &probe.family,
+                        &probe.expression,
+                    );
+                }
                 push_retained_finding(&mut findings, finding);
             }
         }
@@ -2154,20 +2598,22 @@ impl RustAdapter {
 #[cfg(test)]
 mod tests {
     use super::{
-        DIFF_CHANGED_RUST_LINE_LIMIT, DIFF_INDEX_FILE_LIMIT, GeneratedRustSources,
+        DIFF_CHANGED_RUST_LINE_LIMIT, DIFF_INDEX_FILE_LIMIT, DIFF_INDEX_FILE_LIMIT_ENV,
+        DIFF_NARROW_INDEX_FILES, DIFF_NARROW_INDEX_FILES_ENV, GeneratedRustSources,
         PARTIAL_DIFF_FILE_BUDGET_DEFAULT, PARTIAL_DIFF_FILE_BUDGET_ENV,
         PARTIAL_DIFF_LANGUAGE_TIER_VERSION, PARTIAL_DIFF_LINE_BUDGET_DEFAULT,
         PARTIAL_DIFF_LINE_BUDGET_ENV, PARTIAL_DIFF_SELECTION_VERSION, PartialDiffBudgets,
         PartialDiffScope, PartialDiffStopReason, REPO_INDEX_FILE_LIMIT, REPO_INDEX_FILE_LIMIT_ENV,
         RustAdapter, apply_probe_and_oracle_limits, changed_rust_line_count, dependent_scope,
         diff_changed_rust_line_limit_from_env, diff_identity_from_changed_files,
-        diff_index_file_limit_from_env, enforce_changed_rust_line_limit,
-        enforce_repo_index_file_limit, is_binary_source_path, is_cargo_binary_invocation,
-        is_generated_rust_file, is_generated_rust_file_with_patterns,
-        limitations_for_absent_changed_files, partial_diff_budgets_from_env,
-        partition_canonical_form, replace_witnessed_no_path_infection_summary,
-        repo_index_file_limit_from_env, select_partial_diff_partition,
-        select_partial_diff_partition_with_identity, selection_with_open_files, sha256_hex,
+        diff_index_file_limit_from_env, diff_narrow_index_files_from_env,
+        enforce_changed_rust_line_limit, enforce_repo_index_file_limit, is_binary_source_path,
+        is_cargo_binary_invocation, is_diff_scope_oversized, is_generated_rust_file,
+        is_generated_rust_file_with_patterns, limitations_for_absent_changed_files,
+        partial_diff_budgets_from_env, partition_canonical_form,
+        replace_witnessed_no_path_infection_summary, repo_index_file_limit_from_env,
+        select_partial_diff_partition, select_partial_diff_partition_with_identity,
+        selection_with_open_files, sha256_hex, with_forced_diff_limit_env,
     };
     use crate::analysis::cancellation;
     use crate::analysis::diff::{ChangedFile, ChangedLine};
@@ -2215,8 +2661,10 @@ mod tests {
         )?;
         write(
             &root.join("src/lib.rs"),
-            "pub fn gate_state(flag: bool) -> bool {\n    if flag { true } else { false }\n}\n",
+            "pub fn gate_state(flag: bool) -> bool {\n    if flag { true } else { false }\n}\n\n#[cfg(test)]\nmod tests;\n",
         )?;
+        // Declared, so cargo compiles the changed test file (#6979).
+        write(&root.join("src/tests/mod.rs"), "mod gate_state_tests;\n")?;
         write(
             &root.join("src/tests/gate_state_tests.rs"),
             "#[test]\nfn exact_gate_state() {\n    assert_eq!(gate_state(true), true);\n}\n",
@@ -2226,10 +2674,13 @@ mod tests {
              new file mode 100644\n\
              --- /dev/null\n\
              +++ b/src/lib.rs\n\
-             @@ -0,0 +1,3 @@\n\
+             @@ -0,0 +1,6 @@\n\
              +pub fn gate_state(flag: bool) -> bool {\n\
              +    if flag { true } else { false }\n\
              +}\n\
+             +\n\
+             +#[cfg(test)]\n\
+             +mod tests;\n\
              diff --git a/src/tests/gate_state_tests.rs b/src/tests/gate_state_tests.rs\n\
              new file mode 100644\n\
              --- /dev/null\n\
@@ -2252,6 +2703,7 @@ mod tests {
                 include_unchanged_tests: true,
                 resolve_tsconfig_paths: false,
                 perl_facts_path: None,
+                perl_producer_failure: None,
                 git_timeout: None,
                 git_candidate: None,
                 production_like_targets: Default::default(),
@@ -2319,6 +2771,139 @@ mod tests {
                 "pub fn discount(total: i32) -> i32 {\n    if total >= 100 { total / 10 } else { 0 }\n}\n",
             )?;
         }
+        Ok(())
+    }
+
+    // #5268: the diff producer names the canonical gap identity from the
+    // changed-line evidence it already holds, behind the finding's typed
+    // static-limitation gate.
+    #[test]
+    fn diff_analysis_populates_the_canonical_gap_identity() -> Result<(), String> {
+        let root = temp_root("canonical-gap-diff")?;
+        write_pricing_crate(&root, true)?;
+        let changed_files = diff::parse_unified_diff(pricing_threshold_diff());
+        let result = RustAdapter.analyze_diff(
+            &AnalysisOptions {
+                root: root.clone(),
+                base: None,
+                diff_file: None,
+                mode: AnalysisMode::Ready,
+                resolved_subject_identity: None,
+                open_rust_index_paths: Default::default(),
+                include_unchanged_tests: true,
+                resolve_tsconfig_paths: false,
+                perl_facts_path: None,
+                perl_producer_failure: None,
+                git_timeout: None,
+                git_candidate: None,
+                production_like_targets: Default::default(),
+                test_harnesses: Vec::new(),
+            },
+            &OraclePolicy::default(),
+            &changed_files,
+        )?;
+        let finding = result
+            .findings
+            .iter()
+            .find(|finding| {
+                finding.probe.owner.is_some() && finding.probe.family == ProbeFamily::Predicate
+            })
+            .ok_or_else(|| format!("missing owned predicate finding: {:?}", result.findings))?;
+        let gap = finding
+            .canonical_gap
+            .as_ref()
+            .ok_or_else(|| "the diff producer must populate the canonical gap".to_string())?;
+        assert_eq!(gap.language, "rust");
+        assert_eq!(gap.file, "src/lib.rs");
+        assert_eq!(gap.owner, "discount");
+        assert_eq!(gap.behavior_kind, "predicate_boundary");
+        assert_eq!(gap.probe_kind, "predicate");
+        // The changed comparison renders its equality boundary: the same
+        // discriminator text the classifier's missing-discriminator
+        // statement renders for the seam.
+        assert_eq!(gap.normalized_discriminator, "total==100");
+        assert_eq!(
+            gap.id,
+            "gap:rust:src/lib.rs:discount:predicate_boundary:predicate:total==100"
+        );
+        fs::remove_dir_all(root).map_err(|error| format!("remove fixture: {error}"))?;
+        Ok(())
+    }
+
+    #[test]
+    fn static_limited_finding_keeps_canonical_gap_none() -> Result<(), String> {
+        // The macro-guarded value-propagation limitation is a typed static
+        // limitation on the finding itself, so the canonical gap stays
+        // withheld exactly like the Python producer withholds it — the MCP
+        // readiness refusal stays `static_limitation`, not a language gap.
+        let (root, result) = binding_value_crate(
+            "canonical-gap-static-limited",
+            3,
+            "    let end = input.rfind(delim).map_or(0, |idx| idx);",
+            "    let end = input.rfind(delim).map_or(1, |idx| idx);",
+            "    ensure!(end == start);",
+        )?;
+        let finding = result
+            .findings
+            .iter()
+            .find(|finding| finding.static_limit_kind.is_some())
+            .ok_or_else(|| format!("missing static-limited finding: {:?}", result.findings))?;
+        assert_eq!(
+            finding
+                .static_limit_kind
+                .as_ref()
+                .map(StaticLimitKind::as_str),
+            Some("rust_value_propagation_unresolved")
+        );
+        assert!(
+            finding.canonical_gap.is_none(),
+            "a static-limited finding must keep canonical_gap None: {:?}",
+            finding.canonical_gap
+        );
+        fs::remove_dir_all(root).map_err(|error| format!("remove fixture: {error}"))?;
+        Ok(())
+    }
+
+    #[test]
+    fn repo_analysis_populates_the_canonical_gap_identity() -> Result<(), String> {
+        let root = temp_root("canonical-gap-repo")?;
+        write_pricing_crate(&root, true)?;
+        let result = RustAdapter.analyze_repo(
+            &AnalysisOptions {
+                root: root.clone(),
+                base: None,
+                diff_file: None,
+                mode: AnalysisMode::Ready,
+                resolved_subject_identity: None,
+                open_rust_index_paths: Default::default(),
+                include_unchanged_tests: true,
+                resolve_tsconfig_paths: false,
+                perl_facts_path: None,
+                perl_producer_failure: None,
+                git_timeout: None,
+                git_candidate: None,
+                production_like_targets: Default::default(),
+                test_harnesses: Vec::new(),
+            },
+            &OraclePolicy::default(),
+        )?;
+        let finding = result
+            .findings
+            .iter()
+            .find(|finding| finding.probe.owner.is_some())
+            .ok_or_else(|| format!("missing owned repo finding: {:?}", result.findings))?;
+        let gap = finding
+            .canonical_gap
+            .as_ref()
+            .ok_or_else(|| "the repo producer must populate the canonical gap".to_string())?;
+        assert_eq!(gap.language, "rust");
+        assert_eq!(gap.file, "src/lib.rs");
+        assert_eq!(gap.owner, "discount");
+        assert_eq!(
+            gap.id, "gap:rust:src/lib.rs:discount:predicate_boundary:predicate:total==100",
+            "diff and repo producers must derive the same identity for the same seam"
+        );
+        fs::remove_dir_all(root).map_err(|error| format!("remove fixture: {error}"))?;
         Ok(())
     }
 
@@ -2531,6 +3116,7 @@ mod tests {
             include_unchanged_tests: true,
             resolve_tsconfig_paths: false,
             perl_facts_path: None,
+            perl_producer_failure: None,
             git_timeout: None,
             git_candidate: None,
             production_like_targets: Default::default(),
@@ -3154,6 +3740,86 @@ mod tests {
         Ok(())
     }
 
+    /// The narrowing threshold, not the memory guard, decides when Auto
+    /// narrows and how far reach widening searches, and both values arrive
+    /// through the real env lookups. A threshold of 2 under a generous
+    /// guard narrows and names the 2-file threshold; the same threshold
+    /// under a 1-file guard is clamped and the run is refused.
+    #[test]
+    fn auto_narrows_at_the_threshold_and_refuses_at_the_guard() -> Result<(), String> {
+        use dependent_scope::DependentScopeMode;
+        let root = temp_root("dependent-scope-narrow-threshold")?;
+        write_dependent_scope_workspace(&root, UNRELATED_E_SOURCE)?;
+
+        let (findings, main, _) = with_forced_diff_limit_env(
+            &[
+                (DIFF_INDEX_FILE_LIMIT_ENV, "100"),
+                (DIFF_NARROW_INDEX_FILES_ENV, "2"),
+            ],
+            || scoped_findings(&root, DependentScopeMode::Auto),
+        )?;
+        let main = slash_paths(&main.ok_or("auto must narrow over the threshold")?);
+        assert_eq!(main, ["a/src/lib.rs", "b/src/lib.rs"], "main index");
+        assert!(
+            findings.contains("over the 2-file narrowing threshold"),
+            "reach search must stop at the narrowing threshold: {findings}"
+        );
+
+        let (unforced, unforced_main, _) =
+            with_forced_diff_limit_env(&[(DIFF_INDEX_FILE_LIMIT_ENV, "100")], || {
+                scoped_findings(&root, DependentScopeMode::Auto)
+            })?;
+        assert!(
+            unforced_main.is_none(),
+            "control: the default threshold keeps the full selection"
+        );
+        assert!(!unforced.contains("narrowing threshold"), "{unforced}");
+
+        let refused = with_forced_diff_limit_env(
+            &[
+                (DIFF_INDEX_FILE_LIMIT_ENV, "1"),
+                (DIFF_NARROW_INDEX_FILES_ENV, "2"),
+            ],
+            || scoped_findings(&root, DependentScopeMode::Auto),
+        );
+        match refused {
+            Err(error) => assert!(is_diff_scope_oversized(&error), "{error}"),
+            Ok(_) => return Err("a 1-file guard must refuse the run".to_string()),
+        }
+        Ok(())
+    }
+
+    /// A changed package over the memory guard is refused before narrowing
+    /// builds its core index: narrowing keeps the changed packages whole, so
+    /// no admission can make them fit.
+    #[test]
+    fn auto_refuses_a_core_over_the_guard_before_building_it() -> Result<(), String> {
+        use dependent_scope::DependentScopeMode;
+        let root = temp_root("dependent-scope-core-over-guard")?;
+        write_dependent_scope_workspace(&root, UNRELATED_E_SOURCE)?;
+        write(
+            &root.join("a/src/extra.rs"),
+            "pub fn extra() -> u8 {\n    2\n}\n",
+        )?;
+
+        let refused = with_forced_diff_limit_env(&[(DIFF_INDEX_FILE_LIMIT_ENV, "1")], || {
+            scoped_findings(&root, DependentScopeMode::Auto)
+        });
+        match refused {
+            Err(error) => assert!(
+                is_diff_scope_oversized(&error) && error.starts_with("diff_scope_oversized: 2 "),
+                "{error}"
+            ),
+            Ok(_) => return Err("a two-file core must not fit a 1-file guard".to_string()),
+        }
+        assert_eq!(
+            dependent_scope::observed_main_files(),
+            None,
+            "the refusal must come before dependent admission runs"
+        );
+        Ok(())
+    }
+
     /// #5320: an owner whose caller closure exceeds the limit names the
     /// unsearched reach only when the main index finds no witness itself,
     /// and (#5450) the closure stops before parsing past the limit. A
@@ -3303,7 +3969,9 @@ mod tests {
         let gauge_test = "#[test]\nfn gauge_pins_both_arms() {\n    \
                           assert_eq!(scope_a::quarble_gauge(true), true);\n    \
                           assert_eq!(scope_a::quarble_gauge(false), false);\n}\n";
-        let glob_e = "use proptest::prelude::*;\n\npub fn unrelated() -> u8 {\n    1\n}\n";
+        // A re-exported glob is workspace-wide; a private one at a crate
+        // root reaches only that crate (#5352), checked below.
+        let glob_e = "pub use proptest::prelude::*;\n\npub fn unrelated() -> u8 {\n    1\n}\n";
 
         let root = temp_root("dependent-scope-macro-bindings")?;
         write_dependent_scope_workspace(&root, glob_e)?;
@@ -3324,11 +3992,70 @@ mod tests {
         write_dependent_scope_workspace(&plain_root, UNRELATED_E_SOURCE)?;
         write(&plain_root.join("a/tests/gauge_tests.rs"), gauge_test)?;
         let (plain_full, _, _) = scoped_findings(&plain_root, DependentScopeMode::Full)?;
-        let rooted = |text: &str, root: &Path| text.replace(&root.display().to_string(), "<root>");
+        // `scoped_findings` Debug-renders paths, so on Windows the text holds
+        // the root with escaped (`\\`) separators that the raw `display()`
+        // spelling never matches; normalize both spellings (#6983).
+        let rooted = |text: &str, root: &Path| {
+            let raw = root.display().to_string();
+            let escaped = raw.replace('\\', "\\\\");
+            text.replace(&escaped, "<root>").replace(&raw, "<root>")
+        };
         assert_ne!(
             rooted(&plain_full, &plain_root),
             rooted(&full, &root),
             "the withheld glob must change the full closure's decision"
+        );
+
+        let private_root = temp_root("dependent-scope-macro-bindings-private")?;
+        write_dependent_scope_workspace(
+            &private_root,
+            "use proptest::prelude::*;\n\npub fn unrelated() -> u8 {\n    1\n}\n",
+        )?;
+        write(&private_root.join("a/tests/gauge_tests.rs"), gauge_test)?;
+        let (private_full, _, _) = scoped_findings(&private_root, DependentScopeMode::Full)?;
+        let (private_named, private_main, _) =
+            scoped_findings(&private_root, DependentScopeMode::NameAdmitted)?;
+        let private_main = slash_paths(&private_main.ok_or("the named mode must narrow")?);
+        assert!(
+            !private_main.contains(&"e/src/lib.rs".to_string()),
+            "the private glob's crate root must stay withheld: {private_main:?}"
+        );
+        assert_eq!(
+            private_named, private_full,
+            "a withheld crate root's private glob must be routed like the full closure's"
+        );
+        assert_eq!(
+            rooted(&private_full, &private_root),
+            rooted(&plain_full, &plain_root),
+            "a private glob in another crate's root must not refuse this crate's tests"
+        );
+
+        // #6909: a `cfg_attr` path has no static target, so the full index
+        // stops routing crate-local sites; the named mode must admit the
+        // file rather than route its private glob from the withheld side.
+        let path_root = temp_root("dependent-scope-macro-bindings-cfg-attr-path")?;
+        write_dependent_scope_workspace(
+            &path_root,
+            "use proptest::prelude::*;\n\n#[cfg_attr(unix, path = \"unix.rs\")]\nmod platform;\n\n\
+             pub fn unrelated() -> u8 {\n    1\n}\n",
+        )?;
+        write(&path_root.join("a/tests/gauge_tests.rs"), gauge_test)?;
+        let (path_full, _, _) = scoped_findings(&path_root, DependentScopeMode::Full)?;
+        let (path_named, path_main, _) =
+            scoped_findings(&path_root, DependentScopeMode::NameAdmitted)?;
+        let path_main = slash_paths(&path_main.ok_or("the named mode must narrow")?);
+        assert!(
+            path_main.contains(&"e/src/lib.rs".to_string()),
+            "a `cfg_attr` path must admit its file: {path_main:?}"
+        );
+        assert_ne!(
+            rooted(&path_full, &path_root),
+            rooted(&plain_full, &plain_root),
+            "fixture premise: the unresolvable path keeps the private glob workspace-wide"
+        );
+        assert_eq!(
+            path_named, path_full,
+            "a crate root with a `cfg_attr` path must be decided like the full closure"
         );
         Ok(())
     }
@@ -3423,6 +4150,7 @@ mod tests {
                 include_unchanged_tests: true,
                 resolve_tsconfig_paths: false,
                 perl_facts_path: None,
+                perl_producer_failure: None,
                 git_timeout: None,
                 git_candidate: None,
                 production_like_targets: Default::default(),
@@ -3576,6 +4304,7 @@ mod tests {
                     include_unchanged_tests: true,
                     resolve_tsconfig_paths: false,
                     perl_facts_path: None,
+                    perl_producer_failure: None,
                     git_timeout: None,
                     git_candidate: None,
                     production_like_targets: Default::default(),
@@ -3690,6 +4419,7 @@ mod tests {
                 include_unchanged_tests: true,
                 resolve_tsconfig_paths: false,
                 perl_facts_path: None,
+                perl_producer_failure: None,
                 git_timeout: None,
                 git_candidate: None,
                 production_like_targets: Default::default(),
@@ -3866,6 +4596,7 @@ fn absent_delimiter_boundary_returns_head() {
                 include_unchanged_tests: true,
                 resolve_tsconfig_paths: false,
                 perl_facts_path: None,
+                perl_producer_failure: None,
                 git_timeout: None,
                 git_candidate: None,
                 production_like_targets: Default::default(),
@@ -3948,14 +4679,45 @@ fn absent_delimiter_boundary_returns_head() {
 
     #[test]
     fn diff_index_file_limit_defaults_when_unset() {
-        // Independent decision pin: the guard-raise set the measured default
-        // to 1200 (repo growth evidence); a revert of the constant must fail
-        // here rather than silently re-hide under the 800 default.
-        assert_eq!(DIFF_INDEX_FILE_LIMIT, 1200);
+        // Independent decision pin: the memory guard is 10,000 files and the
+        // time-bounding narrowing threshold stays at the measured 1200. A
+        // revert that folds them back together must fail here.
+        assert_eq!(DIFF_INDEX_FILE_LIMIT, 10_000);
+        assert_eq!(DIFF_NARROW_INDEX_FILES, 1200);
         assert_eq!(
             diff_index_file_limit_from_env(Err(VarError::NotPresent)),
             Ok(DIFF_INDEX_FILE_LIMIT)
         );
+        assert_eq!(
+            diff_narrow_index_files_from_env(Err(VarError::NotPresent), DIFF_INDEX_FILE_LIMIT),
+            Ok(DIFF_NARROW_INDEX_FILES)
+        );
+    }
+
+    #[test]
+    fn diff_narrow_index_files_never_exceeds_the_hard_limit() {
+        // A lowered hard limit keeps narrowing at or below it, as before
+        // the split; a raised threshold is honoured up to the hard limit.
+        assert_eq!(
+            diff_narrow_index_files_from_env(Err(VarError::NotPresent), 40),
+            Ok(40)
+        );
+        assert_eq!(
+            diff_narrow_index_files_from_env(Ok("3000".to_string()), 2000),
+            Ok(2000)
+        );
+        assert_eq!(
+            diff_narrow_index_files_from_env(Ok(" 300 ".to_string()), 2000),
+            Ok(300)
+        );
+        for bad in ["0", "lots"] {
+            let result = diff_narrow_index_files_from_env(Ok(bad.to_string()), 2000);
+            assert!(
+                matches!(&result, Err(err) if err.contains(DIFF_NARROW_INDEX_FILES_ENV)
+                    && err.contains("positive integer")),
+                "{bad:?} must be rejected by name, got {result:?}"
+            );
+        }
     }
 
     #[test]
@@ -4934,6 +5696,7 @@ fn absent_delimiter_boundary_returns_head() {
                 include_unchanged_tests: true,
                 resolve_tsconfig_paths: false,
                 perl_facts_path: None,
+                perl_producer_failure: None,
                 git_timeout: None,
                 git_candidate: None,
                 production_like_targets: Default::default(),
@@ -5045,7 +5808,7 @@ fn absent_delimiter_boundary_returns_head() {
             file: PathBuf::from("tests/cli.rs"),
             start_line: 12,
             end_line: 18,
-            body: r#"Command::new(env!("CARGO_BIN_EXE_worker")).output().unwrap();"#.to_string(),
+            body: r#"Command::new(env!("CARGO_BIN_EXE_worker")).output().unwrap();"#.into(),
             calls: Vec::new(),
             assertions: Vec::new(),
             literals: Vec::new(),
@@ -5398,6 +6161,7 @@ fn absent_delimiter_boundary_returns_head() {
             include_unchanged_tests: true,
             resolve_tsconfig_paths: false,
             perl_facts_path: None,
+            perl_producer_failure: None,
             git_timeout: None,
             git_candidate: None,
             production_like_targets: Default::default(),
@@ -5508,6 +6272,7 @@ fn absent_delimiter_boundary_returns_head() {
                 include_unchanged_tests: true,
                 resolve_tsconfig_paths: false,
                 perl_facts_path: None,
+                perl_producer_failure: None,
                 git_timeout: None,
                 git_candidate: None,
                 production_like_targets: Default::default(),
@@ -5598,6 +6363,7 @@ fn absent_delimiter_boundary_returns_head() {
                 include_unchanged_tests: true,
                 resolve_tsconfig_paths: false,
                 perl_facts_path: None,
+                perl_producer_failure: None,
                 git_timeout: None,
                 git_candidate: None,
                 production_like_targets: Default::default(),
@@ -5679,6 +6445,7 @@ fn absent_delimiter_boundary_returns_head() {
                 include_unchanged_tests: true,
                 resolve_tsconfig_paths: false,
                 perl_facts_path: None,
+                perl_producer_failure: None,
                 git_timeout: None,
                 git_candidate: None,
                 production_like_targets: Default::default(),
@@ -5746,6 +6513,7 @@ fn absent_delimiter_boundary_returns_head() {
                 include_unchanged_tests: true,
                 resolve_tsconfig_paths: false,
                 perl_facts_path: None,
+                perl_producer_failure: None,
                 git_timeout: None,
                 git_candidate: None,
                 production_like_targets: Default::default(),
@@ -5802,6 +6570,7 @@ fn absent_delimiter_boundary_returns_head() {
                 include_unchanged_tests: true,
                 resolve_tsconfig_paths: false,
                 perl_facts_path: None,
+                perl_producer_failure: None,
                 git_timeout: None,
                 git_candidate: None,
                 production_like_targets: Default::default(),
@@ -5893,6 +6662,283 @@ fn absent_delimiter_boundary_returns_head() {
             "an undeclared src file must not seed: {files:?}"
         );
         assert_eq!(orphan_limitation_paths(&result), vec!["src/unused.rs"]);
+        fs::remove_dir_all(root).map_err(|error| format!("remove fixture: {error}"))?;
+        Ok(())
+    }
+
+    /// The related test names of the finding anchored in `file`.
+    fn related_test_names(
+        root: &Path,
+        result: &crate::analysis::language::LanguageDiffResult,
+        file: &str,
+    ) -> Vec<String> {
+        result
+            .findings
+            .iter()
+            .filter(|finding| {
+                let path = &finding.probe.location.file;
+                path.strip_prefix(root).unwrap_or(path).to_string_lossy() == file
+            })
+            .flat_map(|finding| finding.related_tests.iter().map(|test| test.name.clone()))
+            .collect()
+    }
+
+    const ORPHAN_TEST_SOURCE: &str = "use crate::used::discount;\n\n#[test]\nfn discount_applies() {\n    assert_eq!(discount(150), 140);\n}\n";
+
+    #[test]
+    fn diff_analysis_ignores_tests_in_a_file_no_module_declares() -> Result<(), String> {
+        // #6965: `src/used_tests.rs` pins the changed function, but no `mod`
+        // names it, so rustc never compiles it and its test never runs.
+        // Declaring the same file (the control) restores the relation.
+        for declared in [false, true] {
+            let root = temp_root(if declared {
+                "module-graph-declared-test-file"
+            } else {
+                "module-graph-orphan-test-file"
+            })?;
+            write(
+                &root.join("Cargo.toml"),
+                "[package]\nname='shop'\nversion='0.1.0'\nedition='2021'\n",
+            )?;
+            // The orphan's lib spells the declaration only in a comment,
+            // which must not spare it the walk (#6984 review).
+            let lib = if declared {
+                "pub mod used;\n\n#[cfg(test)]\nmod used_tests;\n"
+            } else {
+                "pub mod used;\n\n// #[cfg(test)]\n// mod used_tests;\n"
+            };
+            write(&root.join("src/lib.rs"), lib)?;
+            write(&root.join("src/used.rs"), DISCOUNT_SOURCE)?;
+            write(&root.join("src/used_tests.rs"), ORPHAN_TEST_SOURCE)?;
+
+            let result = module_graph_diff(&root, &predicate_change_diff("src/used.rs"))?;
+
+            let related = related_test_names(&root, &result, "src/used.rs");
+            assert_eq!(
+                related.iter().any(|name| name == "discount_applies"),
+                declared,
+                "declared={declared}: {related:?}"
+            );
+            fs::remove_dir_all(root).map_err(|error| format!("remove fixture: {error}"))?;
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn diff_analysis_ignores_an_orphan_under_a_src_tests_module_directory() -> Result<(), String> {
+        // #6979: `src/tests/` is a module directory, not a Cargo test target.
+        // `src/tests/mod.rs` never declares `used_tests`, so rustc never
+        // compiles `src/tests/used_tests.rs`. The layout owner must be the
+        // package (manifest beside `src/`), not `src/` itself, or the walk
+        // finds no manifest there and fails closed. Declaring the file in
+        // `src/tests/mod.rs` (the control) restores the relation.
+        for declared in [false, true] {
+            let root = temp_root(if declared {
+                "module-graph-declared-src-tests-file"
+            } else {
+                "module-graph-orphan-src-tests-file"
+            })?;
+            write(
+                &root.join("Cargo.toml"),
+                "[package]\nname='shop'\nversion='0.1.0'\nedition='2021'\n",
+            )?;
+            write(
+                &root.join("src/lib.rs"),
+                "pub mod used;\n\n#[cfg(test)]\nmod tests;\n",
+            )?;
+            write(&root.join("src/used.rs"), DISCOUNT_SOURCE)?;
+            let tests_mod = if declared { "mod used_tests;\n" } else { "" };
+            write(&root.join("src/tests/mod.rs"), tests_mod)?;
+            write(&root.join("src/tests/used_tests.rs"), ORPHAN_TEST_SOURCE)?;
+
+            let result = module_graph_diff(&root, &predicate_change_diff("src/used.rs"))?;
+
+            let related = related_test_names(&root, &result, "src/used.rs");
+            assert_eq!(
+                related.iter().any(|name| name == "discount_applies"),
+                declared,
+                "declared={declared}: {related:?}"
+            );
+            fs::remove_dir_all(root).map_err(|error| format!("remove fixture: {error}"))?;
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn diff_analysis_ignores_a_new_test_file_whose_mod_was_forgotten() -> Result<(), String> {
+        // #6984 review: the diff adds `src/used_tests.rs` beside the changed
+        // function but no `mod` declares it, so it never compiles. Its own
+        // orphan check stops its probes; its tests must not relate to
+        // `src/used.rs` either. Declaring it (the control) relates them.
+        for declared in [false, true] {
+            let root = temp_root(if declared {
+                "module-graph-declared-new-test-file"
+            } else {
+                "module-graph-orphan-new-test-file"
+            })?;
+            write(
+                &root.join("Cargo.toml"),
+                "[package]\nname='shop'\nversion='0.1.0'\nedition='2021'\n",
+            )?;
+            let lib = if declared {
+                "pub mod used;\n\n#[cfg(test)]\nmod used_tests;\n"
+            } else {
+                "pub mod used;\n"
+            };
+            write(&root.join("src/lib.rs"), lib)?;
+            write(&root.join("src/used.rs"), DISCOUNT_SOURCE)?;
+            write(&root.join("src/used_tests.rs"), ORPHAN_TEST_SOURCE)?;
+            let added = ORPHAN_TEST_SOURCE
+                .lines()
+                .map(|line| format!("+{line}\n"))
+                .collect::<String>();
+            let diff = format!(
+                "{}diff --git a/src/used_tests.rs b/src/used_tests.rs\n\
+                 new file mode 100644\n\
+                 --- /dev/null\n\
+                 +++ b/src/used_tests.rs\n\
+                 @@ -0,0 +1,{} @@\n{added}",
+                predicate_change_diff("src/used.rs"),
+                ORPHAN_TEST_SOURCE.lines().count(),
+            );
+
+            let result = module_graph_diff(&root, &diff)?;
+
+            let related = related_test_names(&root, &result, "src/used.rs");
+            assert_eq!(
+                related.iter().any(|name| name == "discount_applies"),
+                declared,
+                "declared={declared}: {related:?}"
+            );
+            fs::remove_dir_all(root).map_err(|error| format!("remove fixture: {error}"))?;
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn a_changed_orphan_opted_in_as_production_like_stays_indexed() {
+        // #6984 review: an opted-in target seeds probes even when no module
+        // tree reaches it, so dropping it would leave those probes without
+        // owners (a false `no_static_path`). Without the opt-in it drops.
+        let file = PathBuf::from("src/support.rs");
+        let loaded = vec![(file.clone(), b"#[test]\nfn check() {}\n".to_vec())];
+        for opted_in in [false, true] {
+            let mut context = crate::analysis::workspace::SourceRoleContext::empty();
+            context.module_graph_orphans.insert(file.clone());
+            if opted_in {
+                context.production_like_targets.insert(file.clone());
+            }
+            let kept = super::drop_unreached_test_files(
+                Path::new("."),
+                &context,
+                std::slice::from_ref(&file),
+                &[],
+                loaded.clone(),
+            );
+            assert_eq!(kept.len(), usize::from(opted_in), "opted_in={opted_in}");
+        }
+    }
+
+    #[test]
+    fn an_unreached_file_of_quickcheck_tests_drops() {
+        // #6984 review: `#[quickcheck]` is a built-in test attribute that
+        // never spells `test`. A file without any test attribute stays.
+        let file = PathBuf::from("src/props.rs");
+        let mut context = crate::analysis::workspace::SourceRoleContext::empty();
+        context.module_graph_orphans.insert(file.clone());
+        for (source, kept) in [
+            (
+                &b"#[quickcheck]\nfn holds(x: u32) -> bool { x == x }\n"[..],
+                0,
+            ),
+            (&b"#[inline]\nfn holds(x: u32) -> bool { x == x }\n"[..], 1),
+        ] {
+            let loaded = vec![(file.clone(), source.to_vec())];
+            let remaining = super::drop_unreached_test_files(
+                Path::new("."),
+                &context,
+                std::slice::from_ref(&file),
+                &[],
+                loaded,
+            );
+            assert_eq!(remaining.len(), kept);
+        }
+    }
+
+    #[test]
+    fn an_unreached_file_of_registered_attribute_tests_drops() {
+        // #6984 review: a registered marker that never spells `test` still
+        // marks the file as holding tests. Without the registration the
+        // file holds no tests and stays.
+        let file = PathBuf::from("tests/contracts.rs");
+        let loaded = vec![(file.clone(), b"#[myco::spec]\nfn check() {}\n".to_vec())];
+        let harness = crate::config::TestHarnessRegistration {
+            registration_id: "contracts".to_string(),
+            target: file.clone(),
+            kind: crate::config::TestHarnessKind::RegisteredAttribute,
+            adapter: crate::config::TestHarnessAdapter::ExactAttributeV1,
+            marker: "myco::spec".to_string(),
+        };
+        let mut context = crate::analysis::workspace::SourceRoleContext::empty();
+        context.module_graph_orphans.insert(file.clone());
+        for registered in [false, true] {
+            let harnesses = if registered {
+                vec![harness.clone()]
+            } else {
+                Vec::new()
+            };
+            let kept = super::drop_unreached_test_files(
+                Path::new("."),
+                &context,
+                std::slice::from_ref(&file),
+                &harnesses,
+                loaded.clone(),
+            );
+            assert_eq!(
+                kept.len(),
+                usize::from(!registered),
+                "registered={registered}"
+            );
+        }
+    }
+
+    #[test]
+    fn diff_analysis_ignores_integration_tests_autotests_false_leaves_unbuilt() -> Result<(), String>
+    {
+        // #6965: with `autotests = false` Cargo builds only declared test
+        // targets. `tests/unbuilt.rs` is never built; `tests/registered.rs`
+        // is declared by name alone and keeps its default path.
+        let root = temp_root("module-graph-autotests-off")?;
+        write(
+            &root.join("Cargo.toml"),
+            "[package]\nname='shop'\nversion='0.1.0'\nedition='2021'\nautotests=false\n\n[[test]]\nname='registered'\n",
+        )?;
+        write(&root.join("src/lib.rs"), "pub mod used;\n")?;
+        write(&root.join("src/used.rs"), DISCOUNT_SOURCE)?;
+        write(
+            &root.join("tests/unbuilt.rs"),
+            "use shop::used::discount;\n\n#[test]\nfn discount_applies_unbuilt() {\n    assert_eq!(discount(150), 140);\n}\n",
+        )?;
+        write(
+            &root.join("tests/registered.rs"),
+            "use shop::used::discount;\n\n#[test]\nfn discount_applies_registered() {\n    assert_eq!(discount(150), 140);\n}\n",
+        )?;
+
+        let result = module_graph_diff(&root, &predicate_change_diff("src/used.rs"))?;
+
+        let related = related_test_names(&root, &result, "src/used.rs");
+        assert!(
+            related
+                .iter()
+                .any(|name| name == "discount_applies_registered"),
+            "the declared test target must relate: {related:?}"
+        );
+        assert!(
+            !related
+                .iter()
+                .any(|name| name == "discount_applies_unbuilt"),
+            "a test autotests=false leaves unbuilt must not relate: {related:?}"
+        );
         fs::remove_dir_all(root).map_err(|error| format!("remove fixture: {error}"))?;
         Ok(())
     }
@@ -6335,6 +7381,7 @@ fn absent_delimiter_boundary_returns_head() {
                 include_unchanged_tests: true,
                 resolve_tsconfig_paths: false,
                 perl_facts_path: None,
+                perl_producer_failure: None,
                 git_timeout: None,
                 git_candidate: None,
                 production_like_targets: Default::default(),
@@ -6421,6 +7468,7 @@ fn absent_delimiter_boundary_returns_head() {
                 include_unchanged_tests: true,
                 resolve_tsconfig_paths: false,
                 perl_facts_path: None,
+                perl_producer_failure: None,
                 git_timeout: None,
                 git_candidate: None,
                 production_like_targets: Default::default(),
@@ -6558,6 +7606,7 @@ fn absent_delimiter_boundary_returns_head() {
                 include_unchanged_tests: true,
                 resolve_tsconfig_paths: false,
                 perl_facts_path: None,
+                perl_producer_failure: None,
                 git_timeout: None,
                 git_candidate: None,
                 production_like_targets: Default::default(),
@@ -6693,6 +7742,7 @@ fn absent_delimiter_boundary_returns_head() {
                 include_unchanged_tests: true,
                 resolve_tsconfig_paths: false,
                 perl_facts_path: None,
+                perl_producer_failure: None,
                 git_timeout: None,
                 git_candidate: None,
                 production_like_targets: Default::default(),
@@ -6806,6 +7856,7 @@ fn absent_delimiter_boundary_returns_head() {
                 include_unchanged_tests: true,
                 resolve_tsconfig_paths: false,
                 perl_facts_path: None,
+                perl_producer_failure: None,
                 git_timeout: None,
                 git_candidate: None,
                 production_like_targets: production_like,
@@ -6888,7 +7939,7 @@ fn absent_delimiter_boundary_returns_head() {
             file: PathBuf::from("src/lib.rs"),
             start_line: 1,
             end_line: 5,
-            body: "pub fn exported_fn(raw: &str) -> Result<(), Box<dyn std::error::Error>> { try_parse(raw).map_err(Into::into) }".to_string(),
+            body: "pub fn exported_fn(raw: &str) -> Result<(), Box<dyn std::error::Error>> { try_parse(raw).map_err(Into::into) }".into(),
             calls: vec![],
             returns: vec![],
             literals: vec![],

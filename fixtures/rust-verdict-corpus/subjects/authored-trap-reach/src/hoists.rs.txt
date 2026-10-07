@@ -1,0 +1,15 @@
+pub fn hoist(base: u32) -> u32 {
+    base * 49
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn hoist_runs_in_a_scoped_worker() {
+        std::thread::scope(|s| {
+            s.spawn(|| assert_eq!(hoist(2), 98));
+        });
+    }
+}

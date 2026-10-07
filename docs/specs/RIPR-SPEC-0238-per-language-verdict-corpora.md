@@ -57,35 +57,39 @@ describe different analyzers.
 ## Behavior
 
 Each language has its own corpus directory, `fixtures/<language>-verdict-corpus`,
-with the same layout, schema (`ripr_verdict_corpus.v1`), label law, truth
-table, verdict projection and scoring as RIPR-SPEC-0219.
+with the per-record layout, schema (`ripr_verdict_corpus.v1`), label law,
+truth table, verdict projection, scoring and per-case expected rows of
+RIPR-SPEC-0219. The directory name is the corpus's language; `corpus.json`
+carries no language field. `check-all` (RIPR-SPEC-0219) already finds and
+gates every such directory, writes each non-Rust report under
+`target/ripr/reports/verdict-corpus/<language>/` and runs each language's
+cases under `target/ripr/verdict-corpus/<language>/`.
 
-`corpus.json` carries a `language`: one of `rust`, `typescript`, `python`,
-`perl`. An absent `language` reads as `rust`, so the Rust corpus is
-unchanged. The validator refuses any other value.
+`cargo xtask verdict-corpus validate|check|report|bless|split` take
+`--language <language>` and act on `fixtures/<language>-verdict-corpus`;
+without it they act on the Rust corpus, as before. A language name that
+cannot be a directory component, or that names no directory holding a
+`corpus.json`, is refused before anything runs. `check-all` refuses
+`--language`, since it checks every corpus. A drifted `check` names the
+`bless --language <language>` command that re-blesses it, and a report's
+`report.md` title names its language.
 
-`cargo xtask verdict-corpus validate|check|report` take
-`--language <language>` (default `rust`) and read
-`fixtures/<language>-verdict-corpus`. A directory whose `corpus.json` declares
-a different language is refused, so one language's corpus can never be
-scored under another's name. Rust keeps its run path
-(`target/ripr/verdict-corpus/`) and report path
-(`target/ripr/reports/verdict-corpus/`); every other language nests under
-`<language>/` in both, so two corpora never share a run copy or a report.
-Because Rust case runs sit beside those language directories, a case id
-that names a corpus language is refused.
-The re-bless hint a drifted check prints names the `--language` it needs.
+Two RIPR-SPEC-0219 label rules exist so `verdict-corpus relabel` can replay
+a Rust case: the test command must be a `cargo` command, and a failing test
+must be one Rust test name. `relabel` replays the Rust corpus only, so those
+two rules apply only to a corpus in `rust-verdict-corpus` (or in a directory
+not named `<language>-verdict-corpus`, which keeps the Rust rules). Another
+language records the command it ran, and each failing test is one test title:
+one non-empty trimmed line, which may hold spaces and commas, as jest and
+`node:test` titles do. Every other rule, `mutated_line` included, applies to
+every language.
 
-The report for a non-Rust corpus names its `language` in `report.json` and in
-the `report.md` title. The Rust report omits the field and keeps its title,
-so its expected report keeps its bytes.
-
-Each language's expected report is that language's regression gate: any
-verdict change fails `check` until the expected report is re-blessed with the
-reason in the PR. Developer-experience scoreboard metrics read each
-language's false-actionable, false-exposed and false-silent rates from its
-committed expected report (`file:` sources), so the scoreboard gate compares
-the committed rates against its baseline; it does not re-run the corpus.
+Each language's expected rows are that language's regression gate: any
+verdict change fails `check` until the rows are re-blessed with the reason in
+the PR. Developer-experience scoreboard metrics derive each language's
+false-actionable, false-exposed and false-silent rates from its committed
+rows (`verdict-corpus:` sources), so the scoreboard gate compares the
+committed rates against its baseline; it does not re-run the corpus.
 
 ### TypeScript corpus
 
@@ -105,15 +109,13 @@ labeling toolchain and test command each case names.
 
 ## Required Evidence
 
-- A corpus without `language` reads as Rust and its rendered report has no
-  `language` field and the Rust title.
-- A non-Rust corpus names its language in both report files.
-- The validator refuses an undeclared language.
-- The validator refuses a case id that names a corpus language.
-- `--language` maps each language to its own directory and run paths and
-  refuses anything else; a directory declaring another language is refused.
+- `--language` maps a language to its own corpus directory and refuses a
+  name that is not a directory component or that names no corpus.
+- Only a Rust corpus holds labels to cargo test commands and Rust test
+  names; a non-Rust corpus accepts a recorded command and a test title with
+  spaces and commas, and still refuses a multi-line, padded or empty title.
 - Each committed non-Rust corpus validates, contains both truth directions,
-  and its expected report agrees with its labels row by row.
+  and its expected rows agree with its labels row by row.
 
 ## Non-Goals
 
@@ -125,32 +127,28 @@ labeling toolchain and test command each case names.
 ## Acceptance Examples
 
 - `cargo xtask verdict-corpus check` with no `--language` scores
-  `fixtures/rust-verdict-corpus` and compares against its unchanged expected
-  report.
+  `fixtures/rust-verdict-corpus` against its unchanged expected rows.
 - `cargo xtask verdict-corpus check --language typescript` scores
   `fixtures/typescript-verdict-corpus`, writes
-  `target/ripr/reports/verdict-corpus/typescript/report.{json,md}`, and on
-  drift names `report --language typescript --out
-  fixtures/typescript-verdict-corpus/expected` as the re-bless command.
-- `--language typescript` pointed at a directory whose `corpus.json` says
-  `rust` fails before any case runs.
+  `target/ripr/reports/verdict-corpus/typescript/report.{json,md}` under a
+  `TypeScript verdict corpus report` title, and on drift names
+  `cargo xtask verdict-corpus bless --language typescript`.
+- `--language cobol` fails before any case runs, naming the missing
+  `fixtures/cobol-verdict-corpus/corpus.json`.
 
 ## Test Mapping
 
 Tests live in `xtask/src/reports/verdict_corpus_tests.rs`:
 
-- `a_corpus_without_a_language_is_rust_and_its_report_keeps_its_bytes`
-- `a_non_rust_corpus_names_its_language_in_both_reports`
-- `validator_rejects_an_undeclared_language`
-- `validator_rejects_a_case_named_after_a_corpus_language`
-- `each_language_owns_its_corpus_directory_and_run_paths`
-- `a_language_directory_must_declare_that_language`
-- `committed_typescript_corpus_is_valid_and_its_report_agrees_with_its_labels`
+- `language_names_its_own_corpus_directory_and_nothing_else`
+- `only_a_rust_corpus_holds_labels_to_cargo_commands_and_rust_test_names`
+- `committed_typescript_corpus_is_valid_and_its_rows_agree_with_its_labels`
 
 ## Implementation Mapping
 
-- `xtask/src/reports/verdict_corpus.rs` owns the language field, the
-  `--language` selection, and per-language paths.
+- `xtask/src/reports/verdict_corpus.rs` owns the `--language` selection
+  and the Rust-only replay label rules; RIPR-SPEC-0219's `check-all` owns
+  corpus discovery and per-language run and report paths.
 - `fixtures/<language>-verdict-corpus/` holds each language's corpus.
 
 ## Metrics

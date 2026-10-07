@@ -1,0 +1,149 @@
+{
+  "subject_id": "authored-ts-jest-oracles",
+  "origin": "authored",
+  "version_label": "authored@2026-10-04",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "jest.config.js",
+      "sha256": "06ffef8b53b4cb850f7bf2691d6fe2f3ad3bce674d2aa636ad1e29dcd22152a5"
+    },
+    {
+      "path": "package.json",
+      "sha256": "6b2852408cb1de6a5b64a5e4c91e8774b9b2979e334bcaab3f7e1d3e61447e88"
+    },
+    {
+      "path": "ripr.toml",
+      "sha256": "27f3758ca9cce54d063a7f0daddc95f0940433563d4869a9e5a7c622ae961381"
+    },
+    {
+      "path": "src/parseEx12.ts",
+      "sha256": "b29e7cce4e97cdb7d6aeaa8ae7a9c967225945edf291859e9582eb710f8a348f"
+    },
+    {
+      "path": "src/parseEx13.ts",
+      "sha256": "d3b488e4ceb4334c2ce2ba503c12471124a8fc025cc43f0529bf5ccf22fa1f3d"
+    },
+    {
+      "path": "src/parseEx13g.ts",
+      "sha256": "4f5a54be4be54f6eef786b90e441616371597ca2d2f121b34306856d18221028"
+    },
+    {
+      "path": "src/parseEx13t.ts",
+      "sha256": "06b81dce7e59aedd328c166de0e690cb1f95b25514430d00aa5233ce0f0b06b5"
+    },
+    {
+      "path": "src/priceEx01.ts",
+      "sha256": "3d92a172345a40b315ff22c60bc434bb444cc67d69646dafca8bbcb8a9740855"
+    },
+    {
+      "path": "src/priceEx02.ts",
+      "sha256": "0e2c7f85895c38e497ab5a6406cbd0f5b845a0362ad3ac614b9d019321e0419e"
+    },
+    {
+      "path": "src/priceEx03.ts",
+      "sha256": "1ddc2b61479127a55d137188b82f80b9cd216755233c42269462fb4c572914b0"
+    },
+    {
+      "path": "src/priceEx04.ts",
+      "sha256": "b969105fac514a81714d223ab03bca40576de75c8a86aea72d82c09348c8139c"
+    },
+    {
+      "path": "src/priceEx05.ts",
+      "sha256": "c2571074deb889d00d1ac2eef5841406f2c0aa783c4ab4f16243a5cbe0d9f0ae"
+    },
+    {
+      "path": "src/priceEx06.ts",
+      "sha256": "e79488e2e9b04e93307bde9f4c2624fbc1ef2fb786ad534db0f1fde6fe48e0a3"
+    },
+    {
+      "path": "src/priceEx07.ts",
+      "sha256": "aff720f067d3288e6f2e62393a4078a331d4cb1320ddb393b0026bf83ae11f68"
+    },
+    {
+      "path": "src/priceEx10.ts",
+      "sha256": "80aff8e235a7d462210cead7d6d7470da45d586768b29244ff4674941651de50"
+    },
+    {
+      "path": "src/priceEx11.ts",
+      "sha256": "d302cb52603eb521bdc07ecb9c3695166cbc9590985cc0aedd3b77b156559e6e"
+    },
+    {
+      "path": "src/priceEx15.ts",
+      "sha256": "acfcd34373acc7e6b0d1938715636ad7404e895aff1ee3361a8fc888e5bf1856"
+    },
+    {
+      "path": "src/priceEx16.ts",
+      "sha256": "84db0895d714b66a403828600004e7391f1491f3d785ad93d455c4c5b8b64d29"
+    },
+    {
+      "path": "test/__snapshots__/priceEx03.test.ts.snap",
+      "sha256": "4f75e28a8e86ad22ab5374cbc9dfc71d6f9bd78b134bfb71d310b81c340f6fe6"
+    },
+    {
+      "path": "test/otherEx16.test.ts",
+      "sha256": "1e8be3c28a88ab09fc5a8cda7b9828bbf12369662f26aa9fb7875a7cd252430e"
+    },
+    {
+      "path": "test/parseEx12.test.ts",
+      "sha256": "a1db81aaa6acb109a74de16fc11c31e3bcee35152125a2e7fbeb67da51a75932"
+    },
+    {
+      "path": "test/parseEx13.test.ts",
+      "sha256": "79d368cf565c9efa6794d5287d94e0cdb1ed3a5dd3518c6662e20939c4b18f7b"
+    },
+    {
+      "path": "test/parseEx13g.test.ts",
+      "sha256": "d46071bfe491ed28f0883941392bac17adfc16a91fec0fca3bcc56cb95c3ee58"
+    },
+    {
+      "path": "test/parseEx13t.test.ts",
+      "sha256": "652c5411daa2a958d0848c53391b6cfe46a5e3d2378307c0d1976bbf3cc65ed0"
+    },
+    {
+      "path": "test/priceEx01.test.ts",
+      "sha256": "c522f8e92a4b5483b8c26475578c7dcc24f1aa4bc479c6d472d5af4cf180fa8c"
+    },
+    {
+      "path": "test/priceEx02.test.ts",
+      "sha256": "0f0eb8f838e6685df91a9f45b065fbc4f8a1274e3f5b92f0372de7bfa169826b"
+    },
+    {
+      "path": "test/priceEx03.test.ts",
+      "sha256": "95f4239695af66a9086d21d66cc11d38aa50d8283f9bfa772aca3299aaed0054"
+    },
+    {
+      "path": "test/priceEx04.test.ts",
+      "sha256": "218543398b6827e576cd638411fab0f69514b2858a01d4ba148072a9a86ea25a"
+    },
+    {
+      "path": "test/priceEx05.test.ts",
+      "sha256": "1ba4439441293274c264021708c5b445533de024c295a84ccb2ac4335841a94b"
+    },
+    {
+      "path": "test/priceEx06.test.ts",
+      "sha256": "08b464871e5e4c8d7a17f7f843e9fb46d9c2cc9b0685babe35e558605f0a3098"
+    },
+    {
+      "path": "test/priceEx07.test.ts",
+      "sha256": "3e67e5993866c3845cc41e1027618b83c8ee10754ca95340ed922d06cf1dad88"
+    },
+    {
+      "path": "test/priceEx10.test.ts",
+      "sha256": "7b5d0185b60154f1ae03cf66b44b0d453e3f2fbb5a15e8fa294fd64aeb234d00"
+    },
+    {
+      "path": "test/priceEx11.test.ts",
+      "sha256": "1692e82800482fa5cae40f629eb25d7a5efb94a4d4539d2d9f62593d09595903"
+    },
+    {
+      "path": "test/priceEx15.test.ts",
+      "sha256": "17a0e3ee0c82c9d1c54202881782337e6d4a4add0cda812274f04015f6b2efc8"
+    },
+    {
+      "path": "tsconfig.json",
+      "sha256": "f6cc3423554323dafa1e27b7726571abbb8f612680393f198b11ce352aace598"
+    }
+  ]
+}

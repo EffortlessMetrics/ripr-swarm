@@ -48,17 +48,29 @@ Stryker's mutant set. All 185 mutant outcomes were then replayed by
 applying each mutant by hand and running the case's test command; every one
 agreed.
 
+## Layout
+
+The per-record layout of RIPR-SPEC-0219: `corpus.json` holds the header,
+each subject is `subjects/<subject_id>.json` beside its package, each case
+is `cases/<case_id>.json` beside its `cases/<case_id>.diff`, and the
+expected state is one `expected/rows/<case_id>.json` per case. Each
+behavior-preserving mutant names its `mutated_line`, the anchor line with
+the mutant applied, which is the line the replay below wrote. Test commands
+are the npm commands each case ran and failing tests are test titles, so
+`verdict-corpus relabel`, which replays cargo commands, does not run on this
+corpus.
+
 ## When
 
 `cargo xtask verdict-corpus check --language typescript` applies each edit
 to a run-owned copy, runs `ripr check --json`, and projects the anchored
-findings to one verdict.
+findings to one verdict. The required gate's `verdict-corpus check-all`
+checks this corpus with every other.
 
 ## Then
 
 Each case scores as ideal, abstained, false actionable, false exposed, or
-false silent, and the report must equal `expected/report.json` and
-`expected/report.md`.
+false silent, and every row must equal its file under `expected/rows/`.
 
 ## Must Not
 
@@ -78,7 +90,15 @@ every label.
 
 ## Refreshing
 
-When a ripr change moves a verdict, `check` fails and names the first
-differing line. Re-run the case's mutants against the stored subject before
-re-blessing with
-`cargo xtask verdict-corpus report --language typescript --out fixtures/typescript-verdict-corpus/expected`.
+When a ripr change moves a verdict, `check` fails and names each moved row.
+Re-run the case's mutants against the stored subject before re-blessing with
+`cargo xtask verdict-corpus bless --language typescript`.
+
+## Relabel history
+
+The boundary relabel of 2026-10-04 (#6686, `a985857`) moved twelve
+boundary cases: their `behavior_preserving_rewrite` edits became operand
+swaps such as `age >= 18` to `18 <= age`, which are equivalent for every
+input including fractions and NaN, and their mutants were re-listed for
+the new line and replayed. The layout migration that followed
+(per-case files, `mutated_line` from the replayed lines) moved no row.

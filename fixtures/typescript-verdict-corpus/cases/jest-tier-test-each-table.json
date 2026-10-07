@@ -1,0 +1,66 @@
+{
+  "case_id": "jest-tier-test-each-table",
+  "subject_id": "authored-ts-jest-checkout",
+  "diff": "cases/jest-tier-test-each-table.diff",
+  "anchor": {
+    "file": "src/tier.ts",
+    "line": 2
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "jest_test_each_table_boundary_pinned",
+  "hard_case": "the boundary rows live in a test.each table",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "npx jest --ci --runInBand",
+    "toolchain": "node 22.22.0; jest 30.5.2, ts-jest 29.4.14, typescript 5.9; @stryker-mutator/core 10.0.0 (jest runner, mutate restricted to the anchor line)",
+    "mutants": [
+      {
+        "replacement": "if (true) {",
+        "mutated_line": "if (true) {",
+        "outcome": "tests_failed",
+        "failing_test": "999 points earn silver",
+        "equivalence_review": "not equivalent: the result no longer depends on the compared value"
+      },
+      {
+        "replacement": "if (false) {",
+        "mutated_line": "if (false) {",
+        "outcome": "tests_failed",
+        "failing_test": "1000 points earn gold",
+        "equivalence_review": "not equivalent: the result no longer depends on the compared value"
+      },
+      {
+        "replacement": "if (1000 < points) {",
+        "mutated_line": "if (1000 < points) {",
+        "outcome": "tests_failed",
+        "failing_test": "1000 points earn gold",
+        "equivalence_review": "not equivalent: the result differs at the boundary value"
+      },
+      {
+        "replacement": "if (1000 > points) {",
+        "mutated_line": "if (1000 > points) {",
+        "outcome": "tests_failed",
+        "failing_test": "999 points earn silver",
+        "equivalence_review": "not equivalent: the result differs at the boundary value"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "The test.each table pins 999 and 1000, so every mutant of `1000 <= points` fails a row. ripr reports weakly_exposed on the anchor, a false actionable gap.",
+  "labeling_observation": {
+    "ripr_commit": "1273096",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

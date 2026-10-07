@@ -1,0 +1,45 @@
+{
+  "case_id": "vitest-orders-spec0234-ex09a-vitest-import",
+  "subject_id": "authored-ts-vitest-orders",
+  "diff": "cases/vitest-orders-spec0234-ex09a-vitest-import.diff",
+  "anchor": {
+    "file": "src/priceEx09a.ts",
+    "line": 3
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "return_value",
+  "test_shape": "vitest_imported_expect_tobe_exact",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "npx vitest run",
+    "toolchain": "node 22.22.0; vitest 5.0.3; typescript 5.9; @stryker-mutator/core 10.0.0 (vitest runner)",
+    "mutants": [
+      {
+        "replacement": "return amount - 20;",
+        "mutated_line": null,
+        "outcome": "tests_failed",
+        "failing_test": "price",
+        "equivalence_review": "not equivalent: price(150) becomes 130 instead of 140"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "Stored pre-change code returns amount - 10 and the test (expect/test imported from \"vitest\") asserts expect(priceEx09a(150)).toBe(140); the diff to amount - 20 makes it 130 and the test fails. ripr reports exposed with exact_value/strong. The @playwright/test import variant is not realized (package not installed). Spec cells: RIPR-SPEC-0234 example 9",
+  "labeling_observation": {
+    "ripr_commit": "1273096",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

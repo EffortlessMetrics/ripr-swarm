@@ -1,0 +1,45 @@
+{
+  "case_id": "mocha-spec14-chai-throw-string",
+  "subject_id": "authored-ts-mocha-ledger",
+  "diff": "cases/mocha-spec14-chai-throw-string.diff",
+  "anchor": {
+    "file": "src/parse.ts",
+    "line": 3
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "error_path",
+  "test_shape": "mocha_chai_expect_to_throw_message_string",
+  "hard_case": "chai `.to.throw(\"empty\")` is a message-inclusion check that discriminates the message change; the spec grades it broad_error/weak.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "npx mocha",
+    "toolchain": "node 22.22.0; mocha 12.0.3; chai 6.3.0; tsx 4.23.15 (tsx/cjs via .mocharc.json); typescript 5.9; @stryker-mutator/core 10.0.0 (command runner over `npx mocha`; @stryker-mutator/mocha-runner cannot load mocha 12)",
+    "mutants": [
+      {
+        "replacement": "throw new Error(\"blank\");",
+        "mutated_line": null,
+        "outcome": "tests_failed",
+        "failing_test": "parse parse",
+        "equivalence_review": "not equivalent: the thrown message changes from \"empty\" to \"blank\""
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "Stored pre-change, `parse(\"\")` throws `new Error(\"empty\")` and the test asserts `expect(() => parse(\"\")).to.throw(\"empty\")`; the diff changes the message to \"blank\", which no longer includes \"empty\", so the test fails. ripr reports `weakly_exposed` with broad_error/weak, matching the spec text but under-crediting a discriminating oracle. Spec cells: RIPR-SPEC-0234 example 14",
+  "labeling_observation": {
+    "ripr_commit": "1273096",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

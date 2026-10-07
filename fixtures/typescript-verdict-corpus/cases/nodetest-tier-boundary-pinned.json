@@ -1,0 +1,66 @@
+{
+  "case_id": "nodetest-tier-boundary-pinned",
+  "subject_id": "authored-ts-nodetest-billing",
+  "diff": "cases/nodetest-tier-boundary-pinned.diff",
+  "anchor": {
+    "file": "src/tier.ts",
+    "line": 2
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "nodetest_assert_strictequal_boundary_pinned",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "node --import tsx --test test/*.test.ts",
+    "toolchain": "node 22.22.0; tsx 4.23.15; node:test + node:assert (built in); @stryker-mutator/core 10.0.0 (command runner)",
+    "mutants": [
+      {
+        "replacement": "if (true) {",
+        "mutated_line": "if (true) {",
+        "outcome": "tests_failed",
+        "failing_test": "gold starts exactly at 500 points",
+        "equivalence_review": "not equivalent: returns gold for 499"
+      },
+      {
+        "replacement": "if (false) {",
+        "mutated_line": "if (false) {",
+        "outcome": "tests_failed",
+        "failing_test": "gold starts exactly at 500 points",
+        "equivalence_review": "not equivalent: returns basic for 500"
+      },
+      {
+        "replacement": "if (500 < points) {",
+        "mutated_line": "if (500 < points) {",
+        "outcome": "tests_failed",
+        "failing_test": "gold starts exactly at 500 points",
+        "equivalence_review": "not equivalent: differs at points == 500"
+      },
+      {
+        "replacement": "if (500 > points) {",
+        "mutated_line": "if (500 > points) {",
+        "outcome": "tests_failed",
+        "failing_test": "gold starts exactly at 500 points",
+        "equivalence_review": "not equivalent: inverts the predicate"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "`if (points >= 500)` rewritten to the exactly equivalent `if (500 <= points)`. The test pins both sides of the boundary with `assert.strictEqual` from `node:assert/strict` (499 -> basic, 500 -> gold), so every Stryker mutant failed. ripr reports `exposed` (exact_value/strong, boundary witnessed by memberTier(500)), matching the truth.",
+  "labeling_observation": {
+    "ripr_commit": "1273096",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

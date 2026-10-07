@@ -1,0 +1,33 @@
+{
+  "subject_id": "authored-ts-vitest-cart",
+  "origin": "authored",
+  "version_label": "authored@127309619",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "package.json",
+      "sha256": "2eb751753774aab7a0fd1dfdca6184b6dada8ba7545d22844807e09f832f2b22"
+    },
+    {
+      "path": "ripr.toml",
+      "sha256": "27f3758ca9cce54d063a7f0daddc95f0940433563d4869a9e5a7c622ae961381"
+    },
+    {
+      "path": "src/cart.ts",
+      "sha256": "f4cf7edc06496e2a757b17828c3da2038d37867702884f823c628cfa36b73426"
+    },
+    {
+      "path": "src/index.ts",
+      "sha256": "e2cab9786feacb1e9ad5021b79e3fb76857619a8658a0325ea005aac9a5d0d03"
+    },
+    {
+      "path": "test/cart.test.ts",
+      "sha256": "6ef25329c85bae850321f9507cc5bf2cee90eab48d9ff967d57525c7760789c4"
+    },
+    {
+      "path": "tsconfig.json",
+      "sha256": "09bdf63ee5798e8387796d3a50b6c9ce249e67c25e23e9878cb36205877819cc"
+    }
+  ]
+}

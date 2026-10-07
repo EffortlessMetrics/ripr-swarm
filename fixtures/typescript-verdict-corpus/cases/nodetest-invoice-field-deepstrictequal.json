@@ -1,0 +1,45 @@
+{
+  "case_id": "nodetest-invoice-field-deepstrictequal",
+  "subject_id": "authored-ts-nodetest-billing",
+  "diff": "cases/nodetest-invoice-field-deepstrictequal.diff",
+  "anchor": {
+    "file": "src/invoice.ts",
+    "line": 10
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "field_construction",
+  "test_shape": "nodetest_assert_deepstrictequal_object",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "node --import tsx --test test/*.test.ts",
+    "toolchain": "node 22.22.0; tsx 4.23.15; node:test + node:assert (built in); @stryker-mutator/core 10.0.0 (command runner)",
+    "mutants": [
+      {
+        "replacement": "total: 5 - amount,",
+        "mutated_line": "total: 5 - amount,",
+        "outcome": "tests_failed",
+        "failing_test": "invoice adds the flat handling fee",
+        "equivalence_review": "not equivalent: gives -35 instead of 45 for amount 40"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "The returned object's `total: amount + 5` field line is rewritten to `total: 5 + amount`. `assert.deepStrictEqual` on the whole returned object pins total 45, so the only mutant (`5 - amount`) failed. ripr reports `exposed` (exact_value/strong, high confidence), matching the truth.",
+  "labeling_observation": {
+    "ripr_commit": "1273096",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

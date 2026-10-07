@@ -1,0 +1,13 @@
+diff --git a/src/notices.rs b/src/notices.rs
+index 2438ad2..0e7bc32 100644
+--- a/src/notices.rs
++++ b/src/notices.rs
+@@ -3,7 +3,7 @@ pub fn ready() -> bool {
+ }
+ 
+ pub fn scale(value: u32) -> u32 {
+-    value * 2
++    value + value
+ }
+ 
+ #[cfg(test)]

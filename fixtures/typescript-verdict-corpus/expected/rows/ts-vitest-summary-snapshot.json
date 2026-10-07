@@ -1,0 +1,22 @@
+{
+  "case_id": "ts-vitest-summary-snapshot",
+  "subject_id": "authored-ts-vitest-cart",
+  "origin": "authored",
+  "anchor": "src/cart.ts:53",
+  "behavior_family": "return_value",
+  "test_shape": "vitest_inline_snapshot",
+  "hard_case": true,
+  "truth": "discriminated",
+  "ideal_verdict": "credited",
+  "observed_verdict": "gap",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "weakly_exposed"
+  ],
+  "outcome": "false_actionable",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

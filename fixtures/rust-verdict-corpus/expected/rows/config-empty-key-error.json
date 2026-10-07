@@ -1,0 +1,22 @@
+{
+  "case_id": "config-empty-key-error",
+  "subject_id": "authored-config",
+  "origin": "authored",
+  "anchor": "src/lib.rs:54",
+  "behavior_family": "error_path",
+  "test_shape": "integration_test_is_err_only",
+  "hard_case": false,
+  "truth": "not_discriminated",
+  "ideal_verdict": "gap",
+  "observed_verdict": "gap",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "weakly_exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": [],
+  "findings_scored": 3,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

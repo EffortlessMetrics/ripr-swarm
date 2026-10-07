@@ -3,6 +3,48 @@
 This log captures repo knowledge that should survive individual PRs and chat
 sessions. It is intentionally short and actionable.
 
+## 2026-10-07: Out-of-line shadows live at parent roots, and owner-side gates fire first (#6950)
+
+The module-declaration producer emits top-level `mod` declarations only, so
+a recorded parent edge's scope is always the parent file's root: reasoning
+about inline modules enclosing a `mod` declaration is vacuous against real
+provenance. A test-local shadow in a parent file therefore sits at the
+parent root, and only the owner's own root (a root-level owner in that
+file) is exempt.
+
+Separately, the owner-side pin gates fail closed before the test-side
+receiver check ever runs: `derived_equality` refuses a type declared in
+two files (rule 6), and method competition refuses a compiling shadow
+method (rules 1-2). The #6950 code-reading traced only the test-side
+check; the end-to-end fail-open was in reach (`direct_owner_call`), not
+the pin. Reproduce a trust hole end-to-end before designing the fix, and
+keep honest fixtures compiling: a `tests/` child naming parent items
+breaks dual crate-root compilation, while `src/`-nested layouts compile.
+
+## 2026-10-06: The MCP tool envelope is a wire cost, not a free re-render (#6021)
+
+Serializing the same document twice into one tool response — pretty
+`content[0].text` plus `structuredContent` — made the wire response ~2.4x
+the compact document, so a listing the document guard approved at 65 KB
+died `result_too_large` at the 128 KiB bound after every budget layer had
+passed. Zero-finding fixtures cannot witness this; it needs hundreds of
+items. The envelope is now the calibration owner: compact text always,
+`structuredContent` only while the complete envelope measures under the
+bound, typed failure past that, and `ripr_list_gaps` byte-fills pages to
+`MAX_TOOL_DOCUMENT_BYTES` (half the response bound — worst-case JSON
+escaping doubles the text copy). When changing a wire shape, measure the
+final envelope, not the document.
+## 2026-10-07: Windows spawn and path spellings that tests must not assume (#6855)
+
+Windows `CreateProcess` resolves the executable through the parent's PATH
+and ignores the child's custom `PATH`, so restricting `PATH` to an empty
+directory never produces a missing-binary spawn failure on Windows (probed:
+bare `git` still spawns, exit 0). Force the miss with a deterministically
+absent absolute program instead. Separately, Git for Windows rejects
+verbatim path arguments (`worktree add` fails with "could not create
+leading directories"), so fixture setup must pass a plain or relative path
+even when the fixture root itself is verbatim.
+
 ## 2026-10-04: Operand-position error lexemes are not error observers (#5255)
 
 `assert_eq!((rdr.len(), error_count), (10, 0))` observes a successful length
@@ -18,6 +60,20 @@ must stay `weakly_exposed`, matching `error_path_diagnostic_error`. Existing
 sites (diagnostic operand stripping, guarded owner-result matches, exact-variant
 pins, Python's typed-oracle gate) do not scan identifier lexemes. Do not reopen
 #4748.
+
+## 2026-10-04: cancellation is the token's observed abort, not a phrase (#4860)
+
+Analysis checkpoints render `analysis cancelled: <Kind>` and the text then
+travels through ~120 `Result<_, String>` call sites, where callers wrap it.
+The LSP refresh wrapped it as `workspace analysis failed: ...`, so its
+`starts_with("analysis cancelled:")` check read a real deadline abort as an
+analysis failure. Decide cancellation from
+`AnalysisCancellationToken::observed_abort()`: the recorded kind, set only
+once a checkpoint handed it to the work. A recorded reason that no checkpoint
+saw is not an outcome, because the work failed or finished on its own.
+Inside `CoreError` code (git invocation, diff load) the abort is the typed
+`CoreError::AnalysisCancelled`. `is_cancellation_error(&str)` is test-only
+and asserts rendered wording.
 
 ## 2026-10-04: Initialize-session `ping` is the method name, not `params._meta` (#6022)
 
@@ -119,6 +175,15 @@ selectors, but do not trim the file part or reject interior whitespace. Walk
 slash-split rewrite dropped Windows drive-relative and rooted identities.
 Paths remain the limitation-path rule: they are identities, not prose. Do not
 add a second filesystem authority in a renderer or `lsp/diagnostics.rs`.
+
+## 2026-10-04: `Path::is_file()` is not `ripr.toml` presence (#5404)
+
+`Path::is_file()` follows symlinks. After `load_for_root` started treating a
+dangling `ripr.toml` as present-but-unreadable, workspace status and the two
+Python repair config-profile checks still used `is_file()`, so they reported
+built-in defaults. Use `config_present_at_root` / `config_entry_present`
+(`symlink_metadata`) at every presence site. Keep a dangling-link control per
+site that must not say defaults while `load_for_root` names `ripr.toml`.
 
 ## 2026-10-03: record-count sharding is not a byte bound (#4999)
 
@@ -307,6 +372,40 @@ Do not absorb helper credit (#4574), proximity-only oracles (#4486), or
 bare-name method relation (#4760) into this pairing gate. Pairing reuses
 activation's `==` facts so a same-test oracle that already infected through
 a named constant or helper hop stays `exposed`.
+
+## 2026-10-05: A boundary literal buried in an argument expression is a false `exposed` (#6668)
+
+Same-test pairing reused `owner_argument_values`, which collects every scalar
+token inside the argument text. `assert_eq!(gate(if false { 10 } else { 50 }),
+true)` and `assert_eq!(gate(std::cmp::max(10, 50)), true)` therefore paired as
+boundary inputs even though both calls evaluate to 50; the `10 <= value` →
+`10 < value` mutant still passes. Bool-owner `assert!(gate(..))` pins inherit
+the same matcher. Pairing now admits an argument only when it is the literal
+itself, a named local bound to that literal, or a call infection already
+recorded as `==` the boundary. Do not "fix" this by changing
+`owner_argument_values` / `scalar_values` (those remain the activation
+authority; #5638 / #5359). Activation `==` fallback is refused when the
+compared argument is compound, not when an unrelated extra argument is
+(`gate(LIMIT, make_context())` still pairs) or when the compared argument
+is a path-qualified constant (`bulk_rate(parcels::BULK_ITEMS)`). When a
+compared operand is a local alias rather than a parameter name, activation
+fallback fail-closes to the whole argument list so a buried literal in the
+aliased slot cannot restore pairing. The reverse direction, helper-built
+inputs that read as gaps, is #6615.
+
+## 2026-10-07: A reassigned boundary binding is a stale pairing, not an observed result (#7004)
+
+Same-test pairing kept a `let`-bound boundary name live until a re-`let`
+shadowed it. `let mut got = gate(10); got = true; assert_eq!(got, true)`
+therefore paired the assertion with a call whose result it no longer
+observed, promoting the predicate toward `exposed`. A post-`let`
+reassignment, compound assignment, or `&mut` borrow now voids the binding
+fail-closed. `let mut` alone still pairs, and a mutation before the
+boundary `let` does not void the fresh binding. Compound assignment voids
+even when the shift preserves the value (`got += 1`): without value
+analysis the rule cannot tell a preserving shift from a destroying one
+(`*= 0`), so it fail-closes. Do not "fix" this with dataflow; alias and
+field/index mutation stay unmodeled by design.
 
 ## 2026-09-29: Whole-object equality is not an effect observer of a different collection (#4575)
 

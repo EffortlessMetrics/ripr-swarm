@@ -1,0 +1,58 @@
+{
+  "case_id": "trap-halve-empty-table",
+  "subject_id": "authored-trap-kit",
+  "diff": "cases/trap-halve-empty-table.diff",
+  "anchor": {
+    "file": "src/tables.rs",
+    "line": 2
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "assert_in_loop_over_empty_table",
+  "hard_case": "The table-driven loop iterates a zero-length array, so its assert_eq! never executes. Today ripr refuses every assertion in a table loop, so this trap mainly guards a future table-loop rule: it must not credit an empty table.",
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "value * 2",
+        "mutated_line": "value * 2",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: replaces `value >> 1` with `value * 2`, which changes the result, but no executed assertion observes it"
+      },
+      {
+        "replacement": "value % 2",
+        "mutated_line": "value % 2",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: replaces `value >> 1` with `value % 2`, which changes the result, but no executed assertion observes it"
+      },
+      {
+        "replacement": "value / 3",
+        "mutated_line": "value / 3",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: replaces `value >> 1` with `value / 3`, which changes the result, but no executed assertion observes it"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "halve_table loops over `let cases: [(u32, u32); 0] = []`, so halve is never called. Adversarial shape (assertion that never runs).",
+  "labeling_observation": {
+    "ripr_commit": "6487826",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "reachable_unrevealed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

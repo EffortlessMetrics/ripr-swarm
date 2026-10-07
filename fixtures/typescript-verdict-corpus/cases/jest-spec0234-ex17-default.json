@@ -1,0 +1,45 @@
+{
+  "case_id": "jest-spec0234-ex17-default",
+  "subject_id": "authored-ts-jest-relations",
+  "diff": "cases/jest-spec0234-ex17-default.diff",
+  "anchor": {
+    "file": "src/priceDefault.ts",
+    "line": 3
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "return_value",
+  "test_shape": "jest_default_import_same_name_tobe",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "npx jest --ci",
+    "toolchain": "node 22.22.0; jest 30.5.2, ts-jest 29.4.14, typescript 5.9; @stryker-mutator/core 10.0.0",
+    "mutants": [
+      {
+        "replacement": "return amount - 20;",
+        "mutated_line": null,
+        "outcome": "tests_failed",
+        "failing_test": "priceDefault",
+        "equivalence_review": "not equivalent: behavior_change edit (the spec's diff); changes the returned/passed value for amount > 100"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "The test default-imports `priceDefault` under its own name and pins `expect(priceDefault(150)).toBe(140)`; the edit `amount - 10` -> `amount - 20` makes it return 130 and the test fails. ripr reports `exposed` via `direct_owner_call` with an `exact_value` oracle. (matches spec: exposed). Spec cells: RIPR-SPEC-0234 example 17",
+  "labeling_observation": {
+    "ripr_commit": "1273096",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

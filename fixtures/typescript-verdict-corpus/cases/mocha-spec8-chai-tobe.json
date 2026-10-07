@@ -1,0 +1,44 @@
+{
+  "case_id": "mocha-spec8-chai-tobe",
+  "subject_id": "authored-ts-mocha-ledger",
+  "diff": "cases/mocha-spec8-chai-tobe.diff",
+  "anchor": {
+    "file": "src/quote.ts",
+    "line": 3
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "return_value",
+  "test_shape": "mocha_chai_expect_tobe_nonexistent_matcher_swallowed",
+  "hard_case": "The spec writes chai `expect(price(150)).toBe(130)` as a test, but chai's proxy throws `Invalid Chai property: toBe` so that test can never pass. To keep a green suite the statement sits in try/catch with the error swallowed; at runtime it asserts nothing, which is the spec's intent (no assertion). The try wrapper is a realization artifact ripr may treat differently from a bare statement.",
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "npx mocha",
+    "toolchain": "node 22.22.0; mocha 12.0.3; chai 6.3.0; tsx 4.23.15 (tsx/cjs via .mocharc.json); typescript 5.9; @stryker-mutator/core 10.0.0 (command runner over `npx mocha`; @stryker-mutator/mocha-runner cannot load mocha 12)",
+    "mutants": [
+      {
+        "replacement": "return amount - 20;",
+        "mutated_line": null,
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: quotePrice(150) becomes 130 instead of 140"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "The stored test runs `expect(quotePrice(150)).toBe(140)` under chai's expect inside try/catch. The `.toBe` access throws and the catch swallows it, so nothing is asserted and the `- 10` -> `- 20` edit passes. ripr reports `exposed`, crediting `expect(...).toBe(...)` as exact_value/strong (spec target weakly_exposed; spec today exposed; ripr matches today). Spec cells: RIPR-SPEC-0234 example 8",
+  "labeling_observation": {
+    "ripr_commit": "1273096",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

@@ -1,7 +1,7 @@
 <!-- section: Added -->
-- Verdict corpus: `cargo xtask verdict-corpus validate|check|report` take
-  `--language <rust|typescript|python|perl>` and read
-  `fixtures/<language>-verdict-corpus`, so each language keeps its own
-  runtime-labeled cases, expected report and regression gate. A corpus
-  without `language` is Rust, and the Rust report keeps its bytes
-  (RIPR-SPEC-0238, #6686).
+- Verdict corpus: `cargo xtask verdict-corpus validate|check|report|bless|split`
+  take `--language <language>` and act on
+  `fixtures/<language>-verdict-corpus`, so each language's corpus can be
+  validated, checked and re-blessed on its own; without it they act on the
+  Rust corpus. Only the Rust corpus holds labels to replayable cargo test
+  commands and Rust test names (RIPR-SPEC-0238, #6686).

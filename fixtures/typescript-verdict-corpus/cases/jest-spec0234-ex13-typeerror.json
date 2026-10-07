@@ -1,0 +1,44 @@
+{
+  "case_id": "jest-spec0234-ex13-typeerror",
+  "subject_id": "authored-ts-jest-oracles",
+  "diff": "cases/jest-spec0234-ex13-typeerror.diff",
+  "anchor": {
+    "file": "src/parseEx13t.ts",
+    "line": 3
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "error_path",
+  "test_shape": "jest_expect_tothrow_specific_error_class",
+  "hard_case": "class-only payload on a message-only change: the class is pinned but the changed message is not",
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "npx jest --ci --runInBand",
+    "toolchain": "node 22.22.0; jest 30.5.2; ts-jest 29.4.14; typescript 5.9; @stryker-mutator/core 10.0.0",
+    "mutants": [
+      {
+        "replacement": "throw new TypeError(\"blank\");",
+        "mutated_line": null,
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: the edit is the spec's behavior change (the thrown message \"empty\" becomes \"blank\")"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "The stored code throws TypeError(\"empty\"); toThrow(TypeError) pins only the class, so changing the message to \"blank\" survives. ripr reports exposed with exact_error_variant / strong, which the spec keeps on purpose (its listed open over-credit for a class-only payload on a message-only change), so this is false exposure against runtime truth. (spec says today exposed, exact_error_variant / strong; ripr matches it) Spec cells: RIPR-SPEC-0234 example 13 (TypeError variant)",
+  "labeling_observation": {
+    "ripr_commit": "1273096",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

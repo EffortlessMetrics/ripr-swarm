@@ -1,0 +1,22 @@
+{
+  "case_id": "ts-nodetest-gold-threshold",
+  "subject_id": "authored-ts-nodetest-pricing",
+  "origin": "authored",
+  "anchor": "src/pricing.ts:12",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "node_assert_strict_equal_far_from_boundary",
+  "hard_case": false,
+  "truth": "partially_discriminated",
+  "ideal_verdict": "gap",
+  "observed_verdict": "gap",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "weakly_exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

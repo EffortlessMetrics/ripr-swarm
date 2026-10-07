@@ -1,0 +1,22 @@
+{
+  "case_id": "jest-quantity-tothrow-message",
+  "subject_id": "authored-ts-jest-checkout",
+  "origin": "authored",
+  "anchor": "src/quantity.ts:3",
+  "behavior_family": "error_path",
+  "test_shape": "jest_expect_tothrow_message",
+  "hard_case": false,
+  "truth": "discriminated",
+  "ideal_verdict": "credited",
+  "observed_verdict": "credited",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

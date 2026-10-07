@@ -1,0 +1,51 @@
+{
+  "case_id": "spec0227-check-guard-split-tests",
+  "subject_id": "authored-spec0227-4",
+  "diff": "cases/spec0227-check-guard-split-tests.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 10
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "predicate_side_flip",
+  "test_shape": "edge_call_and_far_is_err_in_separate_tests",
+  "hard_case": null,
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "if len > 256 { return Err(E::TooLong); }",
+        "mutated_line": "if len > 256 { return Err(E::TooLong); }",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: check_split(256) returns Ok(256)"
+      },
+      {
+        "replacement": "if len >= 255 { return Err(E::TooLong); }",
+        "mutated_line": "if len >= 255 { return Err(E::TooLong); }",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: check_split(255) returns Err(TooLong)"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "split_touches_the_edge calls check_split(256) without observing it and split_refuses_far checks only 300, so neither shift is noticed. Spec cells: RIPR-SPEC-0227 example 4, RIPR-SPEC-0186.",
+  "labeling_observation": {
+    "ripr_commit": "7b3deeb",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

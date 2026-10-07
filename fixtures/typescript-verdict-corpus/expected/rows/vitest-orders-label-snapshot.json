@@ -1,0 +1,22 @@
+{
+  "case_id": "vitest-orders-label-snapshot",
+  "subject_id": "authored-ts-vitest-orders",
+  "origin": "authored",
+  "anchor": "src/label.ts:2",
+  "behavior_family": "return_value",
+  "test_shape": "vitest_tomatchsnapshot_committed_snap",
+  "hard_case": true,
+  "truth": "partially_discriminated",
+  "ideal_verdict": "gap",
+  "observed_verdict": "gap",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "weakly_exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

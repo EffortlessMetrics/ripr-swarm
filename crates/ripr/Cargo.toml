@@ -78,7 +78,7 @@ rmcp = { version = "=3.5.0", default-features = false, features = ["server", "tr
 # integer literals in the Python AST. `location` is required so the
 # AST carries span information for the upcoming fact extractor.
 rustpython-parser = { version = "0.4", optional = true, default-features = false, features = ["location", "num-bigint"] }
-serde = { version = "1", features = ["derive"] }
+serde = { version = "1", features = ["derive", "rc"] }
 serde_json = "1"
 sha2 = "0.10"
 toml = "1"

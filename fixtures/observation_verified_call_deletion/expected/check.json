@@ -11,6 +11,18 @@
   "findings": [
     {
       "id": "probe:src_lib.rs:call_deletion:c13d820a",
+      "canonical_gap_id": "gap:rust:src/lib.rs:store_result:call_deletion:call_deletion:cache.insert_lit726573756c745f6b6579_result",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:store_result:call_deletion:call_deletion:cache.insert_lit726573756c745f6b6579_result",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "store_result",
+        "behavior_kind": "call_deletion",
+        "probe_kind": "call_deletion",
+        "normalized_discriminator": "cache.insert_lit726573756c745f6b6579_result"
+
+      },
       "classification": "exposed",
       "severity": "info",
       "confidence": 1.00,
@@ -18,7 +30,7 @@
         "id": "probe:src_lib.rs:call_deletion:c13d820a",
         "family": "call_deletion",
         "delta": "effect",
-        "file": "fixtures/observation_verified_call_deletion/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 15,
         "expression": "cache.insert(\"result_key\", result)"
        },
@@ -92,6 +104,18 @@
     },
     {
       "id": "probe:src_lib.rs:side_effect:4c5f48f0",
+      "canonical_gap_id": "gap:rust:src/lib.rs:store_result:side_effect:side_effect:cache.insert_lit726573756c745f6b6579_result",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:store_result:side_effect:side_effect:cache.insert_lit726573756c745f6b6579_result",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "store_result",
+        "behavior_kind": "side_effect",
+        "probe_kind": "side_effect",
+        "normalized_discriminator": "cache.insert_lit726573756c745f6b6579_result"
+
+      },
       "classification": "exposed",
       "severity": "info",
       "confidence": 1.00,
@@ -99,7 +123,7 @@
         "id": "probe:src_lib.rs:side_effect:4c5f48f0",
         "family": "side_effect",
         "delta": "effect",
-        "file": "fixtures/observation_verified_call_deletion/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 15,
         "expression": "cache.insert(\"result_key\", result)"
        },

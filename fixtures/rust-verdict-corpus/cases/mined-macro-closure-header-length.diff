@@ -1,0 +1,13 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 9ea04c7..c1f4e98 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -36,7 +36,7 @@ pub enum Status {
+ /// Parses a frame header: a version byte, then a length byte.
+ pub fn header(bytes: &[u8]) -> Status {
+     match bytes {
+-        [1, len, ..] => Status::Complete(*len as usize + 2),
++        [1, len, ..] => Status::Complete(2 + *len as usize),
+         [2, ..] => Status::Complete(1),
+         _ => Status::Partial,
+     }
