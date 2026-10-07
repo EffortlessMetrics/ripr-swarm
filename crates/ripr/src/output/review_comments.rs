@@ -2,8 +2,8 @@ use crate::agent::command_specs::command_displays_are_complete;
 use crate::agent::loop_commands::{
     WORKFLOW_AFTER_SNAPSHOT_ARTIFACT, WORKFLOW_AGENT_BRIEF_ARTIFACT,
     WORKFLOW_AGENT_VERIFY_ARTIFACT, WORKFLOW_ANALYSIS_OUTCOME_ARTIFACT,
-    WORKFLOW_BEFORE_SNAPSHOT_ARTIFACT, agent_brief_command, agent_verify_command,
-    check_analysis_outcome_command_with_base, display_path, shell_arg,
+    WORKFLOW_BEFORE_SNAPSHOT_ARTIFACT, display_path, portable_agent_brief_command,
+    portable_agent_verify_command, portable_check_analysis_outcome_command_with_base, shell_arg,
 };
 use crate::analysis::ClassifiedSeam;
 use crate::analysis::canonical_gap::canonical_gap_identity;
@@ -944,19 +944,19 @@ fn review_recommendation_json(
     let llm_guidance = if target_unresolved {
         json!({
             "prompt": limitation_prompt(navigation_target.as_ref()),
-            "command": agent_brief_command(&root_display, seam_id, WORKFLOW_AGENT_BRIEF_ARTIFACT),
+            "command": portable_agent_brief_command(&root_display, seam_id, WORKFLOW_AGENT_BRIEF_ARTIFACT),
         })
     } else if gap_state == "actionable" {
         json!({
             "prompt": llm_prompt(&recommended.file, nearest.map(|test| test.test_name.as_str()), missing_value.as_deref()),
-            "command": agent_brief_command(&root_display, seam_id, WORKFLOW_AGENT_BRIEF_ARTIFACT),
-            "analysis_outcome_command": check_analysis_outcome_command_with_base(
+            "command": portable_agent_brief_command(&root_display, seam_id, WORKFLOW_AGENT_BRIEF_ARTIFACT),
+            "analysis_outcome_command": portable_check_analysis_outcome_command_with_base(
                 &root_display,
                 Some(base),
                 "draft",
                 WORKFLOW_ANALYSIS_OUTCOME_ARTIFACT,
             ),
-            "verify_command": agent_verify_command(
+            "verify_command": portable_agent_verify_command(
                 &root_display,
                 WORKFLOW_BEFORE_SNAPSHOT_ARTIFACT,
                 WORKFLOW_AFTER_SNAPSHOT_ARTIFACT,
@@ -971,12 +971,12 @@ fn review_recommendation_json(
                 }
                 limitation => limitation_prompt_for(limitation),
             },
-            "command": agent_brief_command(&root_display, seam_id, WORKFLOW_AGENT_BRIEF_ARTIFACT),
+            "command": portable_agent_brief_command(&root_display, seam_id, WORKFLOW_AGENT_BRIEF_ARTIFACT),
         })
     } else {
         json!({
             "prompt": "No repair packet is available for this finding. Inspect the producer-owned evidence and policy state before taking action.",
-            "command": agent_brief_command(&root_display, seam_id, WORKFLOW_AGENT_BRIEF_ARTIFACT),
+            "command": portable_agent_brief_command(&root_display, seam_id, WORKFLOW_AGENT_BRIEF_ARTIFACT),
         })
     };
 
@@ -2439,11 +2439,14 @@ mod tests {
             .pointer("/comments/0/llm_guidance/verify_command")
             .and_then(Value::as_str)
             .ok_or("exact-line card omitted its verify command")?;
-        if project_cwd_text(verify)
-            != "ripr agent verify --root . --before target/ripr/workflow/before.repo-exposure.json --after target/ripr/workflow/after.repo-exposure.json --json > <cwd>/target/ripr/workflow/agent-verify.json"
+        // #4000: the card keeps the portable `--root .`, so its redirect
+        // stays relative to that same root rather than naming the renderer's
+        // checkout (often a CI runner) that the PR reader does not have.
+        if verify
+            != "ripr agent verify --root . --before target/ripr/workflow/before.repo-exposure.json --after target/ripr/workflow/after.repo-exposure.json --json > target/ripr/workflow/agent-verify.json"
         {
             return Err(format!(
-                "exact-line card must persist root-anchored verification: {verify}"
+                "exact-line card must persist root-relative verification: {verify}"
             ));
         }
         Ok(())

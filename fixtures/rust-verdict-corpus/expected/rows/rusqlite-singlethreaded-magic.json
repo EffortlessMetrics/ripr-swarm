@@ -1,0 +1,20 @@
+{
+  "case_id": "rusqlite-singlethreaded-magic",
+  "subject_id": "rusqlite",
+  "origin": "upstream",
+  "anchor": "src/inner_connection.rs:434",
+  "behavior_family": "predicate",
+  "test_shape": "unit_test_public_api_indirect",
+  "hard_case": true,
+  "truth": "discriminated",
+  "ideal_verdict": "credited",
+  "observed_verdict": "limited",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "no_static_path",
+    "static_unknown"
+  ],
+  "outcome": "abstained",
+  "contradictions": []
+}

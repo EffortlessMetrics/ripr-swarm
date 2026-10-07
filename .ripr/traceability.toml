@@ -1002,6 +1002,7 @@ tests = [
   "crates/ripr/tests/cli_smoke.rs::pilot_keeps_rust_output_byte_identical_when_rust_seams_exist",
   "crates/ripr/tests/cli_smoke.rs::pilot_ranks_and_labels_seams_in_the_current_change",
   "crates/ripr/tests/cli_smoke.rs::pilot_says_it_withholds_the_seam_on_the_current_change",
+  "crates/ripr/tests/cli_smoke.rs::pilot_ranks_the_current_change_past_the_inventory_seam_limit",
   "crates/ripr/src/output/outcome/mod.rs::tests::targeted_test_outcome_report_buckets_seam_movement",
   "crates/ripr/src/output/outcome/mod.rs::tests::targeted_test_outcome_json_and_markdown_are_structured",
   "crates/ripr/src/output/outcome/mod.rs::tests::targeted_test_outcome_from_repo_exposure_json_parses_static_evidence",
@@ -12485,6 +12486,11 @@ tests = [
   "xtask/src/reports/verdict_corpus_tests.rs::build_report_counts_rates_over_the_right_denominators",
   "xtask/src/reports/verdict_corpus_tests.rs::contradiction_counts_use_one_per_finding_unit",
   "xtask/src/reports/verdict_corpus_tests.rs::stored_paths_keep_vendored_rust_out_of_the_workspace",
+  "xtask/src/reports/verdict_corpus_tests.rs::corpus_records_load_in_file_name_order_and_must_match_their_ids",
+  "xtask/src/reports/verdict_corpus_tests.rs::split_moves_the_one_file_layout_into_records_without_loss",
+  "xtask/src/reports/verdict_corpus_tests.rs::drift_names_moved_missing_and_stale_rows_and_a_subset_compares_only_its_rows",
+  "xtask/src/reports/verdict_corpus_tests.rs::validator_rejects_a_case_that_borrows_another_cases_diff",
+  "xtask/src/reports/verdict_corpus_tests.rs::check_all_finds_every_language_corpus_and_refuses_one_without_a_header",
   "xtask/src/reports/verdict_corpus_tests.rs::validator_requires_a_replayable_mutated_line_that_changes_the_anchor",
   "xtask/src/reports/verdict_corpus_tests.rs::validator_refuses_a_mutated_line_on_a_behavior_change",
   "xtask/src/reports/verdict_corpus_tests.rs::validator_refuses_a_test_command_the_replay_cannot_run",
@@ -12510,8 +12516,8 @@ code = [
   "xtask/src/reports/verdict_corpus_relabel.rs",
 ]
 outputs = [
-  "fixtures/rust-verdict-corpus/expected/report.json",
-  "fixtures/rust-verdict-corpus/expected/report.md",
+  "fixtures/rust-verdict-corpus/expected/summary.json",
+  "fixtures/rust-verdict-corpus/expected/rows",
 ]
 metrics = [
   "verdict_corpus_false_verdict_rate",
@@ -13224,4 +13230,37 @@ metrics = [
   "unit_test_pass_rate",
   "golden_fixture_pass_rate",
   "verdict_corpus_false_actionable_rate",
+]
+
+[[behavior]]
+id = "RIPR-SPEC-0241"
+name = "check --json refusal envelope"
+spec = "docs/specs/RIPR-SPEC-0241-check-json-refusal-envelope.md"
+tests = [
+  "crates/ripr/tests/cli_smoke.rs::check_json_unresolvable_base_emits_refusal_envelope",
+  "crates/ripr/tests/cli_smoke.rs::check_json_unusable_root_emits_repository_root_unusable",
+  "crates/ripr/tests/cli_smoke.rs::check_json_malformed_config_emits_redacted_refusal",
+  "crates/ripr/tests/cli_smoke.rs::check_json_malformed_suppression_policy_emits_refusal",
+  "crates/ripr/tests/cli_smoke.rs::check_json_unmigrated_analysis_failure_emits_analysis_failed",
+  "crates/ripr/tests/cli_smoke.rs::check_json_timeout_and_bad_base_have_distinct_identities",
+  "crates/ripr/tests/cli_smoke.rs::check_json_success_carries_no_refusal_shape",
+  "crates/ripr/tests/cli_smoke.rs::check_json_argv_usage_errors_stay_prose_only",
+  "crates/ripr/tests/cli_smoke/check_artifact_stdin.rs::python_stdin_artifact_refusal_preserves_named_recovery",
+  "crates/ripr/tests/cli_smoke/check_artifact_stdin.rs::javascript_stdin_artifact_refusal_preserves_named_recovery",
+  "crates/ripr/tests/cli_smoke/implicit_git_root.rs::git_launch_failure_stops_root_discovery_with_consumer_recovery",
+  "crates/ripr/src/cli/commands/check.rs::config_load_refusal_without_any_config_entry_falls_back",
+]
+fixtures = []
+code = [
+  "crates/ripr/src/cli/commands/check.rs",
+  "crates/ripr/src/core_error.rs",
+  "crates/ripr/src/output/limited_check.rs",
+  "crates/ripr/src/analysis/diff/load.rs",
+  "crates/ripr/src/app.rs",
+  "crates/ripr/src/app/check.rs",
+  "crates/ripr/src/app/progress.rs",
+]
+outputs = []
+metrics = [
+  "unit_test_pass_rate",
 ]

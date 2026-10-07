@@ -1,0 +1,52 @@
+{
+  "case_id": "tokens-recursive-label-arm",
+  "subject_id": "authored-tokens",
+  "diff": "cases/tokens-recursive-label-arm.diff",
+  "anchor": {
+    "file": "src/scan.rs",
+    "line": 25
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "match_arm",
+  "test_shape": "recursive_helper_arm_assert_eq",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "\"b\" => label_of(\"c\"),",
+        "mutated_line": "\"b\" => label_of(\"c\"),",
+        "outcome": "tests_failed",
+        "failing_test": "scan::tests::b_describes_as_alpha",
+        "equivalence_review": "not equivalent: b describes as <other>"
+      },
+      {
+        "replacement": "\"b\" => \"beta\",",
+        "mutated_line": "\"b\" => \"beta\",",
+        "outcome": "tests_failed",
+        "failing_test": "scan::tests::b_describes_as_alpha",
+        "equivalence_review": "not equivalent: b describes as <beta>"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "describe(\"b\") is pinned to <alpha>, which the b arm reaches only by recursing into the a arm. Spec cells: RIPR-SPEC-0165.",
+  "labeling_observation": {
+    "ripr_commit": "b0c6ef6",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

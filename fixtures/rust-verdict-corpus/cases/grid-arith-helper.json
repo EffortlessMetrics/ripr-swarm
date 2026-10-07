@@ -1,0 +1,52 @@
+{
+  "case_id": "grid-arith-helper",
+  "subject_id": "authored-grid-arith",
+  "diff": "cases/grid-arith-helper.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 16
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "helper_wrapped_assert",
+  "hard_case": "The assert_eq! inside a local check_* helper is refused by owner-pin admission (RIPR-SPEC-0197 rule 1: not in the test's own body; #6482).",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "tip - bill",
+        "mutated_line": "tip - bill",
+        "outcome": "tests_failed",
+        "failing_test": "tests::tip_is_added",
+        "equivalence_review": "not equivalent: tip_is_added fails on it"
+      },
+      {
+        "replacement": "tip * bill",
+        "mutated_line": "tip * bill",
+        "outcome": "tests_failed",
+        "failing_test": "tests::tip_is_added",
+        "equivalence_review": "not equivalent: tip_is_added fails on it"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "Grid cell: arithmetic (operands swapped; mutants replace the operator, as cargo-mutants does) x helper_wrapped_assert. The test routes every assertion through a local check_* helper; 2 of 2 listed mutants fail cargo test. Spec cells: RIPR-SPEC-0197, RIPR-SPEC-0231.",
+  "labeling_observation": {
+    "ripr_commit": "1273096",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

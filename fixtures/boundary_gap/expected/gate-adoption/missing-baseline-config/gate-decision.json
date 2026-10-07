@@ -37,7 +37,7 @@
     "analyzer_version": "0.0.0+pinned-golden-analyzer-version",
     "inputs": {
       "pr_guidance": {
-        "content_hash": "sha256:4d2e9d996edf994ca4f557534065749477aeb1fd945859612f73bec1338072c5"
+        "content_hash": "sha256:120f08c01081cde77c5a7ea0b778ee9fd226abf4e73c9b88b7fc2c6f30b3be1a"
       }
     }
   },

@@ -1,0 +1,52 @@
+{
+  "case_id": "tokens-scanner-state-arm",
+  "subject_id": "authored-tokens",
+  "diff": "cases/tokens-scanner-state-arm.diff",
+  "anchor": {
+    "file": "src/scan.rs",
+    "line": 15
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "match_arm",
+  "test_shape": "scanner_final_state_assert_eq",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "(State::Space, _) => State::Space,",
+        "mutated_line": "(State::Space, _) => State::Space,",
+        "outcome": "tests_failed",
+        "failing_test": "scan::tests::scanner_ends_in_the_last_state",
+        "equivalence_review": "not equivalent: \"a b\" ends in Space"
+      },
+      {
+        "replacement": "(State::Space, _) => State::Start,",
+        "mutated_line": "(State::Space, _) => State::Start,",
+        "outcome": "tests_failed",
+        "failing_test": "scan::tests::scanner_ends_in_the_last_state",
+        "equivalence_review": "not equivalent: \"a b\" ends in Start"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "final_state(\"a b\") is pinned to Word, and only the (Space, _) arm can produce it after the space. Spec cells: RIPR-SPEC-0163.",
+  "labeling_observation": {
+    "ripr_commit": "b0c6ef6",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

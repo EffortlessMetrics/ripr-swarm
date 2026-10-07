@@ -42,10 +42,23 @@ impl SharedGrips {
     /// keep the tests of windows its consumer already discarded. Records a
     /// retained seam still holds stay shared.
     pub(crate) fn release_unheld(&mut self) {
+        // A group whose first spelling is unheld but whose alternate is held
+        // is rekeyed on that alternate, so the first record is freed too.
+        let mut rekeyed = Vec::new();
         self.records.retain(|first, others| {
             others.retain(|grip| Arc::strong_count(grip) > 1);
-            Arc::strong_count(first) > 1 || !others.is_empty()
+            if Arc::strong_count(first) > 1 {
+                return true;
+            }
+            if !others.is_empty() {
+                rekeyed.push(std::mem::take(others));
+            }
+            false
         });
+        for mut others in rekeyed {
+            let first = others.remove(0);
+            self.records.insert(first, others);
+        }
     }
 
     fn find(&self, grip: &RelatedTestGrip) -> Option<Arc<RelatedTestGrip>> {

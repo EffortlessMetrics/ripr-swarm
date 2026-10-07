@@ -1,0 +1,19 @@
+{
+  "case_id": "config-bool-false-arm",
+  "subject_id": "authored-config",
+  "origin": "authored",
+  "anchor": "src/lib.rs:91",
+  "behavior_family": "return_value",
+  "test_shape": "integration_test_assert_eq_one_branch",
+  "hard_case": false,
+  "truth": "not_discriminated",
+  "ideal_verdict": "gap",
+  "observed_verdict": "gap",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "weakly_exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": []
+}

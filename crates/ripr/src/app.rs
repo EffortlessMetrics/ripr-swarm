@@ -74,7 +74,7 @@ pub(crate) const PERL_FACT_PACKET_SCHEMA: &str = "ripr-perl-facts-v1";
 /// version string moves.
 pub(crate) const AGENT_SEAM_PACKET_SCHEMA_VERSION: &str = "0.5";
 pub(crate) use crate::analysis::repair_route::repair_route_readiness;
-pub(crate) use check::check_with_progress;
+pub(crate) use check::check_with_progress_core;
 #[cfg(test)]
 pub(crate) use check::check_workspace_repo_with_origins;
 #[cfg(test)]
