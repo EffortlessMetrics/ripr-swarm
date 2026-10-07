@@ -320,6 +320,32 @@ fn inherent_method_needs_a_receiver_of_its_own_type() {
 }
 
 #[test]
+fn an_inline_constructor_types_the_receiver_like_a_binding() {
+    // bytesize's `assert_eq!(ByteSize::b(3).as_whole_units(2), None)`.
+    let lib = "pub struct Stack {\n    items: Vec<u32>,\n}\n\nimpl Stack {\n    pub fn new() -> Self {\n        Stack { items: Vec::new() }\n    }\n\n    pub fn with(n: u32) -> Stack {\n        Stack { items: vec![n] }\n    }\n\n    pub fn depth(&self) -> usize {\n        self.items.len() + 1\n    }\n}\n";
+    let changed = "self.items.len() + 1";
+    for (call, admitted) in [
+        ("Stack::new().depth()", 1),
+        ("Stack::with(3).depth()", 1),
+        // A constructor ripr cannot see returns some other type.
+        ("Stack::items_of(3).depth()", 0),
+        ("Vec::<u32>::new().depth()", 0),
+        // Something chained after the owner call is not its return value.
+        ("Stack::new().depth().pow(2)", 0),
+        ("Stack::new().clone().depth()", 0),
+    ] {
+        let tests = format!(
+            "use demo::Stack;\n\n#[test]\nfn depth_counts() {{\n    assert_eq!({call}, 1);\n}}\n"
+        );
+        let index = index(&[(LIB, lib), (TESTS, &tests)]);
+        let pin = establish(&index, "depth", changed);
+        assert!(pin.is_some());
+        let Some(pin) = pin else { return };
+        assert_eq!(admitted_texts(&index, &pin).len(), admitted, "{call}");
+    }
+}
+
+#[test]
 fn bare_call_names_only_a_module_level_function() {
     // B2: `decode(..)` in a test names the free function, so an associated
     // `Codec::decode` owner never takes a bare call.
@@ -371,6 +397,111 @@ fn bare_call_is_defeated_by_another_free_function_or_a_local_binding() {
 fn gate(body: &str, changed: &str) -> Option<ReturnPathGate> {
     let at = body.rfind(changed.trim_end_matches(';')).unwrap_or(0);
     return_path_gate(body, changed, body[..at].matches('\n').count())
+}
+
+#[test]
+fn an_early_return_is_pinned_when_it_is_the_only_source_of_its_value() {
+    // bytesize's `as_whole_units`: the one `return None` is the only `None`.
+    assert!(matches!(
+        gate(
+            "fn f(&self, unit: u64) -> Option<u64> {\n    if unit == 0 || self.0 % unit != 0 {\n        return None;\n    }\n    Some(self.0 / unit)\n}",
+            "return None;"
+        ),
+        Some(ReturnPathGate::Exact("None"))
+    ));
+    assert!(matches!(
+        gate(
+            "fn f(x: i32) -> Result<i32, E> {\n    if x < 0 {\n        return Err(E::Negative);\n    }\n    if x == 0 {\n        return Ok(0);\n    }\n    Ok(x * 2)\n}",
+            "return Err(E::Negative);"
+        ),
+        Some(ReturnPathGate::Head("Err"))
+    ));
+    for body in [
+        // A second `return None` is another source of `None`.
+        "fn f(x: u64) -> Option<u64> {\n    if x == 1 {\n        return None;\n    }\n    if x == 2 {\n        return None;\n    }\n    Some(x)\n}",
+        // `?` can produce `None` too.
+        "fn f(x: u64) -> Option<u64> {\n    if x == 1 {\n        return None;\n    }\n    Some(g(x)?)\n}",
+        // The tail can produce `None`.
+        "fn f(x: u64) -> Option<u64> {\n    if x == 1 {\n        return None;\n    }\n    if x > 2 { Some(x) } else { None }\n}",
+        "fn f(x: u64) -> Option<u64> {\n    if x == 1 {\n        return None;\n    }\n    lookup(x)\n}",
+        // A `return` inside a closure leaves only the closure.
+        "fn f(x: u64) -> Option<u64> {\n    let c = || {\n        return None;\n    };\n    Some(x)\n}",
+        // A macro may hide a `return`.
+        "fn f(x: u64) -> Option<u64> {\n    if x == 1 {\n        return None;\n    }\n    bail_if!(x);\n    Some(x)\n}",
+        // A `return` in an `async` or `const` block, or a nested `fn`, ends
+        // only that inner body.
+        "fn f(x: u64) -> Option<u64> {\n    let _ = async {\n        return None;\n    };\n    Some(x)\n}",
+        "fn f(x: u64) -> Option<u64> {\n    let _ = const {\n        return None;\n    };\n    Some(x)\n}",
+        "fn f(x: u64) -> Option<u64> {\n    fn g() -> Option<u64> {\n        return None;\n    }\n    Some(x)\n}",
+    ] {
+        let changed = "return None;";
+        let at = body.find(changed).unwrap_or(0);
+        assert!(
+            return_path_gate(body, changed, body[..at].matches('\n').count()).is_none(),
+            "{body}"
+        );
+    }
+}
+
+#[test]
+fn an_early_err_return_needs_to_be_the_only_err_source() {
+    for body in [
+        // A second `return Err(..)` is another source of `Err`.
+        "fn f(x: i32) -> Result<i32, E> {\n    if x < 0 {\n        return Err(E::Negative);\n    }\n    if x == 0 {\n        return Err(E::Zero);\n    }\n    Ok(x)\n}",
+        // `?` can produce `Err` too.
+        "fn f(x: i32) -> Result<i32, E> {\n    if x < 0 {\n        return Err(E::Negative);\n    }\n    Ok(g(x)?)\n}",
+    ] {
+        let changed = "return Err(E::Negative);";
+        let at = body.find(changed).unwrap_or(0);
+        assert!(
+            return_path_gate(body, changed, body[..at].matches('\n').count()).is_none(),
+            "{body}"
+        );
+    }
+    // A pin on one branch of a conditional `Err` never evaluates the other.
+    for (body, changed) in [
+        (
+            "fn f(x: i32) -> Result<i32, E> {\n    if x < 0 {\n        return Err(if x == -1 { E::A } else { E::B });\n    }\n    Ok(x)\n}",
+            "return Err(if x == -1 { E::A } else { E::B });",
+        ),
+        (
+            "fn f(x: i32) -> Result<i32, E> {\n    if x < 0 {\n        return Err(match x { -1 => E::A, _ => E::B });\n    }\n    Ok(x)\n}",
+            "return Err(match x { -1 => E::A, _ => E::B });",
+        ),
+    ] {
+        let at = body.find(changed).unwrap_or(0);
+        assert!(
+            return_path_gate(body, changed, body[..at].matches('\n').count()).is_none(),
+            "{body}"
+        );
+    }
+}
+
+#[test]
+fn an_early_return_pin_admits_only_the_value_that_return_produces() {
+    // End to end: the gate is what keeps a pin on the other exits' value
+    // from crediting a changed `return None;` it never reaches.
+    let lib = "pub fn whole(x: u64, unit: u64) -> Option<u64> {\n    if unit == 0 || x % unit != 0 { return None; }\n    Some(x / unit)\n}\n";
+    let tests = "use demo::whole;\n\n#[test]\nfn wholes() {\n    assert_eq!(whole(3, 2), None);\n    assert_eq!(whole(4, 2), Some(2));\n    assert_eq!(whole(3, 2), Option::None);\n    assert_eq!(whole(3, 2), NONE);\n}\n";
+    let none_index = index(&[(LIB, lib), (TESTS, tests)]);
+    let pin = establish(&none_index, "whole", "return None;");
+    assert!(pin.is_some());
+    let Some(pin) = pin else { return };
+    assert_eq!(
+        admitted_texts(&none_index, &pin),
+        vec!["assert_eq!(whole(3, 2), None);".to_string()]
+    );
+
+    let lib = "pub enum E { Negative }\n\npub fn checked(x: i32) -> Result<i32, E> {\n    if x < 0 { return Err(E::Negative); }\n    Ok(x * 2)\n}\n";
+    let tests = "use demo::{checked, E};\n\n#[test]\nfn checks() {\n    assert_eq!(checked(-1), Err(E::Negative));\n    assert_eq!(checked(2), Ok(4));\n}\n";
+    let err_index = index(&[(LIB, lib), (TESTS, tests)]);
+    let pin = establish(&err_index, "checked", "return Err(E::Negative);");
+    assert!(pin.is_some());
+    let Some(pin) = pin else { return };
+    assert_eq!(
+        admitted_texts(&err_index, &pin),
+        vec!["assert_eq!(checked(-1), Err(E::Negative));".to_string()]
+    );
 }
 
 #[test]
@@ -897,9 +1028,17 @@ fn owner_pin_macro_ambiguity_in_other_files_and_run_memo() {
             &syntax
         ));
     }
+    // The private `use std::fs::write;` binds only in the test's own crate.
     assert_eq!(
         syntax.ambiguous_macro_bindings.borrow().as_ref(),
-        Some(&BTreeSet::from(["write".to_string()]))
+        Some(&BTreeSet::new())
+    );
+    assert_eq!(
+        syntax.crate_macro_bindings.borrow().as_ref(),
+        Some(&BTreeMap::from([(
+            PathBuf::from(TESTS),
+            BTreeSet::from(["write".to_string()])
+        )]))
     );
     assert_eq!(syntax.by_file.borrow().len(), 1);
 }
@@ -996,6 +1135,299 @@ fn weight_refusal_under(
         "the test's assertions must parse"
     );
     OwnerPinSyntax::default().refusal(test, &test.assertions[0], &index)
+}
+
+#[test]
+fn a_crate_local_site_another_crate_can_compile_stays_workspace_wide() {
+    use crate::analysis::facts::{RustIncludeLimitation, SourceRoleProvenanceEdge};
+    let tests = "use demo::weight;\n#[test]\nfn weighs() { assert_eq!(weight(4), 12); }\n";
+    let shadow = "macro_rules! assert_eq { ($a:expr, $b:expr) => {} }";
+    let edge = |parent: &str, child: &str, kind| SourceRoleProvenanceEdge {
+        kind,
+        parent: PathBuf::from(parent),
+        child: PathBuf::from(child),
+        declaration: String::new(),
+        line: 1,
+        requires_test: false,
+    };
+    let refused = |helper: &str,
+                   edges: Vec<SourceRoleProvenanceEdge>,
+                   include_target: bool,
+                   unresolved_include: bool| {
+        let mut index = index(&[(LIB, WEIGHT_LIB), (TESTS, tests)]);
+        let mut facts = summarize_file(PathBuf::from(helper), shadow.to_string());
+        facts.role_provenance.edges = edges;
+        index.insert_file_only(PathBuf::from(helper), facts);
+        if include_target {
+            index.include_targets.insert(PathBuf::from(helper));
+        }
+        if unresolved_include {
+            index.include_limitations.push(RustIncludeLimitation {
+                parent: PathBuf::from("tests/a.rs"),
+                line: 1,
+                expression: "include!(concat!(env!(\"CARGO_MANIFEST_DIR\"), \"/tests/common.rs\"))"
+                    .to_string(),
+                reason_code: "rust_include_unresolved".to_string(),
+            });
+        }
+        let test = index
+            .tests()
+            .iter()
+            .find(|test| test.file == Path::new(TESTS));
+        test.and_then(|test| OwnerPinSyntax::default().refusal(test, &test.assertions[0], &index))
+            .is_some()
+    };
+    // Controls: a root of its own, or a module of `src/lib.rs`, is another
+    // crate than the test's.
+    assert!(!refused("tests/common.rs", Vec::new(), false, false));
+    assert!(!refused(
+        "src/util.rs",
+        vec![edge(
+            LIB,
+            "src/util.rs",
+            SourceRoleProvenanceEdgeKind::Module
+        )],
+        false,
+        false
+    ));
+    // `include!` pastes the fragment into every includer, edge or not.
+    assert!(refused("tests/common.rs", Vec::new(), true, false));
+    assert!(refused(
+        "src/bin/frag.rs",
+        vec![edge(
+            "src/bin/a.rs",
+            "src/bin/frag.rs",
+            SourceRoleProvenanceEdgeKind::Include
+        )],
+        false,
+        false
+    ));
+    // An unresolved `include!` anywhere may be pulling in any file.
+    assert!(refused("tests/common.rs", Vec::new(), false, true));
+    assert!(refused(
+        "src/util.rs",
+        vec![edge(
+            LIB,
+            "src/util.rs",
+            SourceRoleProvenanceEdgeKind::Module
+        )],
+        false,
+        true
+    ));
+    // A shared `tests/common/mod.rs` keeps only its first owner's edge, but
+    // every `tests/*.rs` that declares it compiles its own copy.
+    assert!(refused(
+        "tests/common/mod.rs",
+        vec![edge(
+            "tests/alpha.rs",
+            "tests/common/mod.rs",
+            SourceRoleProvenanceEdgeKind::Module
+        )],
+        false,
+        false
+    ));
+}
+
+#[test]
+fn a_module_child_of_an_ambiguous_include_fragment_stays_workspace_wide() -> Result<(), String> {
+    // Real composition: `src/lib.rs` is included by two binaries, so the
+    // include resolver leaves it without a parent and its `asserts` child
+    // composes under it as if it were a crate root of its own.
+    let shadowed = include_fragment_refusal(
+        "shadow",
+        LIB_WITH_ASSERTS,
+        "macro_rules! assert_eq { ($a:expr, $b:expr) => {} }\n",
+    )?;
+    assert!(matches!(
+        shadowed,
+        Some(AssertionRefusal::Syntax(
+            AssertionContextRefusal::MacroBinding(_)
+        ))
+    ));
+    // Control: the same layout whose module defines no macro raises no
+    // macro-binding refusal.
+    let plain = include_fragment_refusal("plain", LIB_WITH_ASSERTS, "pub fn g() {}\n")?;
+    assert!(!matches!(
+        plain,
+        Some(AssertionRefusal::Syntax(
+            AssertionContextRefusal::MacroBinding(_)
+        ))
+    ));
+    Ok(())
+}
+
+const LIB_WITH_ASSERTS: &str = "#[macro_use]\nmod asserts;\npub fn f() -> u32 {\n    1\n}\n";
+
+fn include_fragment_refusal(
+    label: &str,
+    lib: &str,
+    asserts: &str,
+) -> Result<Option<AssertionRefusal>, String> {
+    let root = std::env::temp_dir().join(format!(
+        "ripr-owner-pin-include-fragment-{label}-{}",
+        std::process::id()
+    ));
+    let files = [
+        (
+            "Cargo.toml",
+            "[package]\nname = \"demo\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        ),
+        ("src/lib.rs", lib),
+        ("src/asserts.rs", asserts),
+        (
+            "src/main.rs",
+            "include!(\"lib.rs\");\nfn main() {}\n#[cfg(test)]\nmod tests;\n",
+        ),
+        (
+            "src/bin/tool.rs",
+            "include!(\"../lib.rs\");\nfn main() {}\n",
+        ),
+        (
+            "src/tests.rs",
+            "#[test]\nfn t() {\n    assert_eq!(super::f(), 1);\n}\n",
+        ),
+    ];
+    let mut paths = Vec::new();
+    for (path, text) in files {
+        let full = root.join(path);
+        if let Some(parent) = full.parent() {
+            std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+        }
+        std::fs::write(&full, text).map_err(|error| error.to_string())?;
+        if path.ends_with(".rs") {
+            paths.push(PathBuf::from(path));
+        }
+    }
+    let index = crate::analysis::facts::build_index(&root, &paths);
+    let _ = std::fs::remove_dir_all(&root);
+    let index = index?;
+    assert!(
+        !index.include_limitations.is_empty(),
+        "the two includers must leave `src/lib.rs` unresolved"
+    );
+    let test = index
+        .tests()
+        .iter()
+        .find(|test| test.file == Path::new("src/tests.rs"))
+        .ok_or("the fixture test must be indexed")?;
+    let assertion = test
+        .assertions
+        .first()
+        .ok_or("the fixture assertion must be indexed")?;
+    Ok(OwnerPinSyntax::default().refusal(test, assertion, &index))
+}
+
+#[test]
+fn an_unresolvable_path_attribute_or_lexical_fallback_disables_root_routing() {
+    let tests = "use demo::weight;\n#[test]\nfn weighs() { assert_eq!(weight(4), 12); }\n";
+    let base = index(&[(LIB, WEIGHT_LIB), (TESTS, tests)]);
+    assert_eq!(
+        TargetRoots::new(&base).root(Path::new(TESTS), &base),
+        Some(PathBuf::from(TESTS))
+    );
+    // `#[cfg_attr(.., path = "..")]` has no static target, so its file
+    // records no module edge and could look like a root of its own.
+    let declaring = "#[cfg_attr(unix, path = \"unix.rs\")]\nmod platform;\n";
+    let unknown = index(&[
+        (LIB, WEIGHT_LIB),
+        (TESTS, tests),
+        ("src/main.rs", declaring),
+    ]);
+    assert!(
+        unknown
+            .files()
+            .get(Path::new("src/main.rs"))
+            .is_some_and(|facts| facts
+                .module_declarations
+                .iter()
+                .any(|declaration| declaration.path_target == ModulePathTarget::Unknown)),
+        "the fixture must declare an unresolvable `#[path]`"
+    );
+    assert_eq!(
+        TargetRoots::new(&unknown).root(Path::new(TESTS), &unknown),
+        None
+    );
+    let mut fallback = index(&[(LIB, WEIGHT_LIB), (TESTS, tests)]);
+    let mut facts = summarize_file(PathBuf::from("src/other.rs"), String::new());
+    facts.used_lexical_fallback = true;
+    fallback.insert_file_only(PathBuf::from("src/other.rs"), facts);
+    assert_eq!(
+        TargetRoots::new(&fallback).root(Path::new(TESTS), &fallback),
+        None
+    );
+}
+
+#[test]
+fn a_withheld_crate_roots_private_glob_is_routed_by_root() {
+    let packages = BTreeSet::from(["core".to_string()]);
+    let mut withheld = WithheldMacroBindings::default();
+    let root = Path::new("e/src/lib.rs");
+    assert!(!withheld.absorb(
+        root,
+        "use proptest::prelude::*;",
+        &packages,
+        &Default::default()
+    ));
+    assert!(withheld.trusted.is_empty() && !withheld.any_name);
+    assert!(
+        withheld
+            .by_root
+            .get(root)
+            .is_some_and(|names| names.contains("assert_eq"))
+    );
+    // A glob may shadow any name, so a test file's local empty macros stay
+    // ambiguous in named mode, as the full scan's empty-macro check is not
+    // routed by crate.
+    assert!(withheld.root_any_name);
+}
+
+#[test]
+fn a_crate_local_binding_in_another_target_does_not_reach_the_test() {
+    let tests = "use demo::weight;\n#[test]\nfn weighs() { assert_eq!(weight(4), 12); }\n";
+    // humantime's `benches/datetime_format.rs`: a bench is its own crate.
+    for other in [
+        ("benches/b.rs", "#[macro_use]\nextern crate bencher;"),
+        ("benches/b.rs", "use other::assert_eq;"),
+        ("benches/b.rs", "use other::*;"),
+        (
+            "examples/e.rs",
+            "macro_rules! assert_eq { ($a:expr, $b:expr) => {} }",
+        ),
+        ("build.rs", "#![no_implicit_prelude]"),
+    ] {
+        assert_eq!(weight_refusal(tests, &[other]), None, "{other:?}");
+    }
+    // Exported or re-exported bindings, and files ripr cannot place in a
+    // recognized target root, still reach every test.
+    for other in [
+        (
+            "benches/b.rs",
+            "#[macro_export] macro_rules! assert_eq { ($a:expr, $b:expr) => {} }",
+        ),
+        ("benches/b.rs", "pub use other::assert_eq;"),
+        // An unresolved `#[macro_use] mod` may `#[macro_export]` its macros.
+        ("benches/b.rs", "#[macro_use]\nmod generated;"),
+        ("src/tests/b.rs", "#[macro_use]\nextern crate bencher;"),
+        ("src/other.rs", "#[macro_use]\nextern crate bencher;"),
+    ] {
+        assert!(
+            matches!(
+                weight_refusal(tests, &[other]),
+                Some(AssertionRefusal::Syntax(
+                    AssertionContextRefusal::MacroBinding(_)
+                ))
+            ),
+            "{other:?}"
+        );
+    }
+    // The test's own crate keeps the binding.
+    let own = format!("#[macro_use]\nextern crate bencher;\n{tests}");
+    assert!(matches!(
+        weight_refusal(&own, &[]),
+        Some(AssertionRefusal::Syntax(
+            AssertionContextRefusal::MacroBinding(_)
+        ))
+    ));
 }
 
 #[test]
@@ -1442,7 +1874,8 @@ fn trusted_macro_scan_skips_files_only_once_every_name_is_ambiguous() {
         ),
     ] {
         let index = index(&files);
-        let (ambiguous, _) = trusted_macro_sites_in(&index, &unresolved);
+        let (ambiguous, _, _) =
+            trusted_macro_sites_in(&index, &TargetRoots::new(&index), &unresolved);
         assert_eq!(ambiguous, full_scan(&index), "{files:?}");
         assert_eq!(
             ambiguous.len() == NON_RETURNING_MACROS.len(),
@@ -2021,6 +2454,7 @@ fn binding_refusal(kind: Option<MacroBindingKind>) -> AssertionRefusal {
                     line: 3,
                     kind,
                     scope: None,
+                    crate_local: false,
                 },
             )
         }),
