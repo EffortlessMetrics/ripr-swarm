@@ -14,6 +14,7 @@ use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+mod side_flip;
 mod tuple_match;
 
 pub(in crate::analysis) struct ClassifiedProbeEvidence {
@@ -318,6 +319,8 @@ impl ClassifiedProbeEvidence {
 
         let discriminate =
             tuple_match::discrimination(context, &observe, &discriminate).unwrap_or(discriminate);
+        let discriminate =
+            side_flip::discrimination(context, &observe, &discriminate).unwrap_or(discriminate);
         // #4828: a boundary-class probe may not read `exposed` by taking a
         // boundary input from one test and a discriminating oracle from
         // another. Infection and discrimination stay independently scored;

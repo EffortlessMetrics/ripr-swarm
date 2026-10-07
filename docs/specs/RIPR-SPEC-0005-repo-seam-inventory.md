@@ -404,6 +404,14 @@ Per-packet canonical/evidence commands remain outside this bounded claim.
 See `docs/OUTPUT_SCHEMA.md` for the additive fields and
 static evidence boundaries (#4000).
 
+## Later Amendment
+
+RIPR-SPEC-0236 (2026-10-04) owns the order in which `classify_seam` maps
+stage evidence to a grip class, and numbers the rules other specs cite
+(rule 1: reach `no` gives `ungripped`; rule 2: any `opaque` stage gives
+`opaque`). In that order only `weakly_gripped` needs established
+activation (`activate == yes`); `reachable_unrevealed` does not.
+
 ## Metrics
 
 Proposed metrics to track as the implementation lands:
