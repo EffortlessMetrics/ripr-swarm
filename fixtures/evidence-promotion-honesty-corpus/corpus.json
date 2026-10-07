@@ -4206,6 +4206,129 @@
           "class": "weakly_exposed"
         }
       ]
+    },
+    {
+      "id": "rust_predicate_pairing_reassigned_binding",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/predicate_pairing_reassigned_binding",
+      "vector": "boundary_binding_reassigned_before_assertion",
+      "probe_family": "predicate",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "expected_oracle",
+          "kind": "exact_value",
+          "strength": "strong"
+        },
+        {
+          "type": "expected_related_test",
+          "name": "rebound",
+          "file": "tests/rebound.rs",
+          "line": 4,
+          "kind": "exact_value",
+          "strength": "strong"
+        },
+        {
+          "type": "maximum_class",
+          "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
+      "id": "rust_predicate_pairing_compound_assigned_binding",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/predicate_pairing_compound_assigned_binding",
+      "vector": "boundary_binding_compound_assigned_before_assertion",
+      "probe_family": "predicate",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "expected_oracle",
+          "kind": "exact_value",
+          "strength": "strong"
+        },
+        {
+          "type": "expected_related_test",
+          "name": "compounded",
+          "file": "tests/compounded.rs",
+          "line": 4,
+          "kind": "exact_value",
+          "strength": "strong"
+        },
+        {
+          "type": "maximum_class",
+          "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
+      "id": "rust_predicate_pairing_mutably_borrowed_binding",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/predicate_pairing_mutably_borrowed_binding",
+      "vector": "boundary_binding_mutably_borrowed_before_assertion",
+      "probe_family": "predicate",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "expected_oracle",
+          "kind": "exact_value",
+          "strength": "strong"
+        },
+        {
+          "type": "expected_related_test",
+          "name": "borrowed",
+          "file": "tests/borrowed.rs",
+          "line": 4,
+          "kind": "exact_value",
+          "strength": "strong"
+        },
+        {
+          "type": "maximum_class",
+          "class": "weakly_exposed"
+        }
+      ]
     }
   ]
 }

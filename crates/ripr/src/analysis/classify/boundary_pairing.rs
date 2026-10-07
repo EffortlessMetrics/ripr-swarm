@@ -173,23 +173,44 @@ fn boundary_bound_locals(
     activation: &ActivationEvidence,
 ) -> Vec<String> {
     // Last binding of a name wins so `let got = gate(10); let got = gate(100)`
-    // does not keep the shadowed boundary result.
+    // does not keep the shadowed boundary result. A post-let mutation
+    // (`got = ...`, `got += ...`, `&mut got`) voids the binding fail-closed:
+    // the assertion no longer observes the boundary call's result (#7004).
     let mut last: Vec<(String, bool)> = Vec::new();
     for (offset, line) in test.body.lines().enumerate() {
-        let Some(name) = let_binding_name(line) else {
-            continue;
-        };
-        let line_number = test.start_line + offset;
-        let call = CallFact {
-            line: line_number,
-            name: owner.name.clone(),
-            text: line.trim().to_string(),
-        };
-        let is_boundary = owner_call_activates_boundary(probe, owner, test, &call, activation);
-        if let Some(existing) = last.iter_mut().find(|(bound, _)| bound == &name) {
-            existing.1 = is_boundary;
-        } else {
-            last.push((name, is_boundary));
+        let bound = let_binding_name(line);
+        if let Some(name) = bound.as_deref() {
+            let line_number = test.start_line + offset;
+            let call = CallFact {
+                line: line_number,
+                name: owner.name.clone(),
+                text: line.trim().to_string(),
+            };
+            let is_boundary = owner_call_activates_boundary(probe, owner, test, &call, activation);
+            if let Some(existing) = last.iter_mut().find(|(tracked, _)| tracked == name) {
+                existing.1 = is_boundary;
+            } else {
+                last.push((name.to_string(), is_boundary));
+            }
+        }
+        // Mask first so a quoted or commented `got = ...` cannot void the
+        // binding. `let_binding_name` only matches a line-start `let`, so
+        // the defining `let name = ...` occurrence always sits in the first
+        // `;` segment; later segments on the same line still void it.
+        let masked = crate::analysis::extract::mask_comments_and_strings(line);
+        let segments: Vec<&str> = masked.split(';').collect();
+        for (tracked, live) in last.iter_mut() {
+            if !*live {
+                continue;
+            }
+            let skip_defining = bound.as_deref() == Some(tracked.as_str());
+            if segments
+                .iter()
+                .skip(usize::from(skip_defining))
+                .any(|segment| segment_mutates_bound_name(segment, tracked))
+            {
+                *live = false;
+            }
         }
     }
     last.into_iter()
@@ -220,6 +241,65 @@ fn let_binding_name(line: &str) -> Option<String> {
     let (before_eq, _) = after.split_once('=')?;
     let before_eq = before_eq.trim();
     (before_eq.is_empty() || before_eq.starts_with(':')).then_some(name)
+}
+
+/// True when the masked `;` segment reassigns or mutably borrows `name`
+/// (#7004): `got = ...`, any compound assignment (`got += ...`), or
+/// `&mut got`. Comparisons (`==`), match arms (`=>`), method calls, field
+/// projections, and moves into a new `let` do not mutate. The defining
+/// `let name = ...` occurrence reads as an assignment; the caller skips it.
+fn segment_mutates_bound_name(segment: &str, name: &str) -> bool {
+    if name.is_empty() {
+        return false;
+    }
+    let mut from = 0usize;
+    while from < segment.len() {
+        let Some(rel) = segment
+            .get(from..)
+            .and_then(|rest| find_ident_at(rest, name))
+        else {
+            return false;
+        };
+        let at = from + rel;
+        if assigned_after(segment, at + name.len()) || mutably_borrowed_before(segment, at) {
+            return true;
+        }
+        from = at + 1;
+    }
+    false
+}
+
+/// True when the identifier ending at `end` is assigned: followed by `=`
+/// (but not `==` or `=>`) or by a compound assignment operator.
+fn assigned_after(segment: &str, end: usize) -> bool {
+    let rest = segment.get(end..).unwrap_or("").trim_start();
+    if let Some(after_eq) = rest.strip_prefix('=') {
+        return !after_eq.starts_with('=') && !after_eq.starts_with('>');
+    }
+    rest.starts_with("<<=")
+        || rest.starts_with(">>=")
+        || rest.as_bytes().first().is_some_and(|&op| {
+            matches!(op, b'+' | b'-' | b'*' | b'/' | b'%' | b'&' | b'|' | b'^')
+                && rest.as_bytes().get(1) == Some(&b'=')
+        })
+}
+
+/// True when the identifier starting at `at` is mutably borrowed: preceded
+/// by the keyword `mut` (itself preceded by `&`), skipping whitespace.
+fn mutably_borrowed_before(segment: &str, at: usize) -> bool {
+    let before = segment.get(..at).unwrap_or("").trim_end();
+    let Some(before_mut) = before.strip_suffix("mut") else {
+        return false;
+    };
+    // `mut` must be the keyword, not the tail of a longer identifier.
+    if before_mut
+        .as_bytes()
+        .last()
+        .is_some_and(|byte| byte.is_ascii_alphanumeric() || *byte == b'_')
+    {
+        return false;
+    }
+    before_mut.trim_end().as_bytes().last() == Some(&b'&')
 }
 
 fn owner_call_activates_boundary(
@@ -1336,6 +1416,201 @@ mod tests {
             ),
             "let got: bool = gate(10); assert_eq!(got, true) must pair"
         );
+    }
+
+    #[test]
+    fn reassigned_boundary_binding_does_not_pair() {
+        let probe = predicate_probe("input >= 10");
+        let owner = gate_owner();
+        let mut rebound = test_summary(
+            "rebound",
+            "let mut got = gate(10);\ngot = true;\nassert_eq!(got, true);",
+            vec![call("gate", "let mut got = gate(10);")],
+            vec![exact("assert_eq!(got, true);")],
+            &["10"],
+        );
+        rebound.calls[0].line = 1;
+        rebound.assertions[0].line = 3;
+        rebound.end_line = 4;
+        assert!(
+            !pairing_with_admitted_oracles(
+                &probe,
+                Some(&owner),
+                &[&rebound],
+                &ActivationEvidence::default(),
+            ),
+            "asserting a binding reassigned after the boundary call must not pair"
+        );
+        let same_line = test_summary(
+            "same_line_rebound",
+            "let got = gate(10); got = true; assert_eq!(got, true);",
+            vec![call("gate", "let got = gate(10);")],
+            vec![exact("assert_eq!(got, true);")],
+            &["10"],
+        );
+        assert!(
+            !pairing_with_admitted_oracles(
+                &probe,
+                Some(&owner),
+                &[&same_line],
+                &ActivationEvidence::default(),
+            ),
+            "a same-line post-let reassignment voids the binding too"
+        );
+    }
+
+    #[test]
+    fn compound_assigned_boundary_binding_does_not_pair() {
+        let probe = predicate_probe("input >= 10");
+        let owner = gate_owner();
+        let mut compounded = test_summary(
+            "compounded",
+            "let mut got = gate(10);\ngot |= true;\nassert_eq!(got, true);",
+            vec![call("gate", "let mut got = gate(10);")],
+            vec![exact("assert_eq!(got, true);")],
+            &["10"],
+        );
+        compounded.calls[0].line = 1;
+        compounded.assertions[0].line = 3;
+        compounded.end_line = 4;
+        assert!(
+            !pairing_with_admitted_oracles(
+                &probe,
+                Some(&owner),
+                &[&compounded],
+                &ActivationEvidence::default(),
+            ),
+            "asserting a binding compound-assigned after the boundary call must not pair"
+        );
+    }
+
+    #[test]
+    fn mutably_borrowed_boundary_binding_does_not_pair() {
+        let probe = predicate_probe("input >= 10");
+        let owner = gate_owner();
+        let mut borrowed = test_summary(
+            "borrowed",
+            "let mut got = gate(10);\nlet r = &mut got;\n*r = true;\nassert_eq!(got, true);",
+            vec![call("gate", "let mut got = gate(10);")],
+            vec![exact("assert_eq!(got, true);")],
+            &["10"],
+        );
+        borrowed.calls[0].line = 1;
+        borrowed.assertions[0].line = 4;
+        borrowed.end_line = 5;
+        assert!(
+            !pairing_with_admitted_oracles(
+                &probe,
+                Some(&owner),
+                &[&borrowed],
+                &ActivationEvidence::default(),
+            ),
+            "asserting a binding mutably borrowed after the boundary call must not pair"
+        );
+    }
+
+    #[test]
+    fn unmutated_let_mut_binding_still_pairs() {
+        let probe = predicate_probe("input >= 10");
+        let owner = gate_owner();
+        let mut bound = test_summary(
+            "bound_mut",
+            "let mut got = gate(10);\nassert_eq!(got, true);",
+            vec![call("gate", "let mut got = gate(10);")],
+            vec![exact("assert_eq!(got, true);")],
+            &["10"],
+        );
+        bound.calls[0].line = 1;
+        bound.assertions[0].line = 2;
+        bound.end_line = 3;
+        assert!(
+            pairing_with_admitted_oracles(
+                &probe,
+                Some(&owner),
+                &[&bound],
+                &ActivationEvidence::default(),
+            ),
+            "let mut alone must not void the binding"
+        );
+        let mut rebound_then_bound = test_summary(
+            "rebound_then_bound",
+            "let mut got = false;\ngot = true;\nlet got = gate(10);\nassert_eq!(got, true);",
+            vec![call("gate", "let got = gate(10);")],
+            vec![exact("assert_eq!(got, true);")],
+            &["10"],
+        );
+        rebound_then_bound.calls[0].line = 3;
+        rebound_then_bound.assertions[0].line = 4;
+        rebound_then_bound.end_line = 5;
+        assert!(
+            pairing_with_admitted_oracles(
+                &probe,
+                Some(&owner),
+                &[&rebound_then_bound],
+                &ActivationEvidence::default(),
+            ),
+            "a mutation before the boundary let must not void the fresh binding"
+        );
+    }
+
+    #[test]
+    fn segment_mutation_detector_reads_assignments_and_borrows() {
+        for mutation in [
+            "got = true",
+            "got=true",
+            "got = 1",
+            "got += 1",
+            "got -= 1",
+            "got *= 2",
+            "got /= 2",
+            "got %= 2",
+            "got &= mask",
+            "got |= flag",
+            "got ^= mask",
+            "got <<= 1",
+            "got >>= 1",
+            "*got = true",
+            "foo(); got = true",
+        ] {
+            assert!(
+                segment_mutates_bound_name(mutation, "got"),
+                "{mutation} must void got"
+            );
+        }
+        for borrow in [
+            "&mut got",
+            "&mut  got",
+            "& mut got",
+            "foo(&mut got)",
+            "let r = &mut got",
+        ] {
+            assert!(
+                segment_mutates_bound_name(borrow, "got"),
+                "{borrow} must void got"
+            );
+        }
+        for innocent in [
+            "assert_eq!(got, true)",
+            "assert!(got == true)",
+            "assert!(got != true)",
+            "if got { true } else { false }",
+            "match x { got => true }",
+            "let x = got",
+            "foo(got)",
+            "got.foo()",
+            "&got",
+            "got + 1 == 2",
+            "0..got",
+        ] {
+            assert!(
+                !segment_mutates_bound_name(innocent, "got"),
+                "{innocent} must not void got"
+            );
+        }
+        assert!(!segment_mutates_bound_name("got0 = true", "got"));
+        assert!(!segment_mutates_bound_name("mygot = true", "got"));
+        assert!(!segment_mutates_bound_name("", "got"));
+        assert!(!segment_mutates_bound_name("got = true", ""));
     }
 
     #[test]
