@@ -296,10 +296,17 @@ the changed line (`string.len() >= MAX`). In that case the producer cuts
 `before` to the same span of the old line (`string.len() > MAX`), so the
 `Changed` block does not set a whole old line (`if string.len() > MAX {`)
 against one expression (#6995). The cut is made only when the edit falls
-inside the shape. Otherwise, and for every other family (match arms keep the
-whole old arm because their consumers parse it), `before` keeps the whole
-old line. The same `before` reaches the MCP `changed_behavior.before` field
-and the LSP diagnostic witness.
+inside the shape. A match arm whose head changed (`x if x <= 10 =>` from
+`x if x < 10 => panic!(..)`) is cut the same way to its old head (#7020). An
+arm whose body changed keeps the whole old arm, because the edit falls
+outside the head shape and the arm consumers parse the old body. An old line
+with a second `=>` (two arms on one line, or a nested match in the body) is
+never cut: arm selection cannot tell which arm changed there and keeps that
+arm's selection unknown. A changed `match` scrutinee is cut the same way
+(`match kind` rather than `match kind {`). In every
+other case, and for other families, `before` keeps the whole old line. The
+same `before` reaches the MCP `changed_behavior.before` field and the LSP
+diagnostic witness.
 
 ### Terminal safety
 

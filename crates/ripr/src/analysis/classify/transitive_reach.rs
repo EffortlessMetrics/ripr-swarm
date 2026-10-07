@@ -380,7 +380,7 @@ impl<'a> ReachGraph<'a> {
     /// that calls the owner or a reaching name is a free function, or is an
     /// associated function the test calls on a receiver resolved to its
     /// `impl` self type (constructor, annotation, UFCS or struct literal; see
-    /// `method_call_resolves_to_impl_type`, which fails closed on an
+    /// `method_call_resolves_to_impl_type_in`, which fails closed on an
     /// unresolved receiver). When no such function is found (an index without
     /// impl segments, or a depth edge), the entry counts as corroborated,
     /// which keeps the plain file-order selection. This only ranks witnesses;
@@ -416,7 +416,7 @@ impl<'a> ReachGraph<'a> {
     }
 
     /// Whether test `test_index` calls `method` on a receiver resolved to
-    /// `impl_type`; see `method_call_resolves_to_impl_type`.
+    /// `impl_type`; see `method_call_resolves_to_impl_type_in`.
     fn test_calls_on_type(&self, test_index: usize, method: &str, impl_type: &str) -> bool {
         let (Some(test), Some(masked), Some(checks)) = (
             self.all_tests.get(test_index),
