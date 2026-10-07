@@ -7000,7 +7000,16 @@ tests = [
   "crates/ripr/src/analysis/classifier/evidence.rs::tests::caller_walk_ignores_owner_names_in_comments_and_strings_on_the_call_line",
   "crates/ripr/src/analysis/classifier/evidence.rs::tests::owner_parameters_are_read_from_a_multiline_signature",
   "crates/ripr/src/analysis/classify/reveal.rs::tests::a_type_qualified_expected_call_reaches_only_through_its_own_type",
-  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::return_path_gate_reads_the_tail_past_a_comment"
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::return_path_gate_reads_the_tail_past_a_comment",
+  "crates/ripr/src/analysis/classify/effect_carrier/tests.rs::ledger_carrier_bounds_written_fields_and_readers",
+  "crates/ripr/src/analysis/classify/effect_carrier/tests.rs::whole_object_equality_confirms_only_when_it_can_hold_the_written_field",
+  "crates/ripr/src/analysis/classify/effect_carrier/tests.rs::unbounded_effects_keep_the_part_c_reading",
+  "crates/ripr/src/analysis/classify/effect_carrier/tests.rs::a_mutating_reader_called_by_the_test_carries_the_written_state",
+  "crates/ripr/src/analysis/classify/effect_carrier/tests.rs::path_calls_and_ref_mut_patterns_keep_the_part_c_reading",
+  "crates/ripr/src/analysis/classify/effect_carrier/tests.rs::primitive_and_std_path_calls_do_not_count_as_fixture_helpers",
+  "crates/ripr/src/analysis/classify/effect_carrier/tests.rs::escapes_found_in_review_keep_the_part_c_reading",
+  "crates/ripr/src/analysis/classify/effect_carrier/tests.rs::partial_indexes_user_field_types_and_handed_receivers_keep_the_part_c_reading",
+  "crates/ripr/src/analysis/classify/reveal.rs::tests::a_refused_effect_carrier_withholds_only_the_whole_object_observer"
 ]
 fixtures = [
   "fixtures/benches_harness_evidence",
@@ -7025,7 +7034,8 @@ fixtures = [
 code = [
   "crates/ripr/src/analysis/classify/reveal.rs",
   "crates/ripr/src/analysis/classifier/evidence.rs",
-  "crates/ripr/src/analysis/classify/owner_pin.rs"
+  "crates/ripr/src/analysis/classify/owner_pin.rs",
+  "crates/ripr/src/analysis/classify/effect_carrier.rs"
 ]
 outputs = [
   "docs/specs/RIPR-SPEC-0094-observation-unverified-guard-generalization.md",
