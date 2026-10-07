@@ -88,12 +88,15 @@ pub(crate) fn render_finding_digest_with_config(
         // discriminator a test could supply. Label it as the limitation it
         // is when no real discriminator is missing; keep the
         // discriminator label whenever one exists.
+        // #7071: a weak finding whose reach witness ripr could not trace
+        // carries the limit's prose here, not a discriminator.
         let label = if finding.class == ExposureClass::Exposed {
             "Discriminator (observed, advisory)"
-        } else if matches!(
+        } else if (matches!(
             finding.class,
             ExposureClass::PropagationUnknown | ExposureClass::StaticUnknown
-        ) && finding.activation.missing_discriminators.is_empty()
+        ) || untraced_reach_weak_finding(finding))
+            && finding.activation.missing_discriminators.is_empty()
         {
             "Analyzer limit"
         } else {
@@ -224,6 +227,20 @@ fn compact_discriminator_token(finding: &Finding) -> &'static str {
 /// This is the *digest* policy: the digest shows one selected finding and routes
 /// the reader to `--format human-full`, so losing detail here is recoverable.
 /// The full form must not use it — see [`wrapped_fragment`].
+/// A `weakly_exposed` finding whose only reach is proximity and whose
+/// transitive or macro reach witness ripr could not trace (#7071): it names
+/// a limit, so it claims no missing test.
+pub(super) fn untraced_reach_weak_finding(finding: &Finding) -> bool {
+    finding.class == ExposureClass::WeaklyExposed
+        && finding.stop_reasons.iter().any(|reason| {
+            matches!(
+                reason,
+                crate::domain::StopReason::TransitiveReachUnresolved
+                    | crate::domain::StopReason::MacroReachUnresolved
+            )
+        })
+}
+
 pub(super) fn one_line(value: &str) -> String {
     let collapsed = value.split_whitespace().collect::<Vec<_>>().join(" ");
     if collapsed.chars().count() <= LINE_BUDGET {

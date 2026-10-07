@@ -2343,6 +2343,40 @@ mod tests {
         );
     }
 
+    // #7071: a proximity-only weak finding whose reach witness ripr could
+    // not trace renders its limit as an analyzer limit with no test route.
+    #[test]
+    fn untraced_reach_weak_finding_renders_an_analyzer_limit() {
+        let mut finding = sample_finding();
+        finding.class = ExposureClass::WeaklyExposed;
+        finding.stop_reasons = vec![crate::domain::StopReason::MacroReachUnresolved];
+        finding.static_limit_kind = Some(crate::domain::StaticLimitKind::RustMacroReachUnresolved);
+        finding.missing = vec![
+            crate::domain::StaticLimitKind::RustMacroReachUnresolved
+                .describe()
+                .to_string(),
+        ];
+        finding.activation.missing_discriminators = Vec::new();
+        let digest = super::sections::render_finding_digest_with_config(
+            &finding,
+            &crate::config::RiprConfig::default(),
+            Path::new("."),
+        );
+        assert!(
+            digest.contains("  Analyzer limit: A test may reach"),
+            "{digest}"
+        );
+        assert!(!digest.contains("Missing discriminator"), "{digest}");
+        // The same class without the reach stop reason keeps the gap label.
+        finding.stop_reasons.clear();
+        let digest = super::sections::render_finding_digest_with_config(
+            &finding,
+            &crate::config::RiprConfig::default(),
+            Path::new("."),
+        );
+        assert!(digest.contains("  Missing discriminator:"), "{digest}");
+    }
+
     // #3317 follow-up (RIPR-SPEC-0162): the why-hint must not assert the
     // propagation the class marks unknown, and unknown-class limitation
     // prose renders under the Analyzer limit label — while a real

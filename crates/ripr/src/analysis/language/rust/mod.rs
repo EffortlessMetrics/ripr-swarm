@@ -1240,9 +1240,8 @@ fn needs_proximity_reach_limit(finding: &Finding) -> bool {
         && finding.static_limit_kind.is_none()
         && finding.ripr.reach.state == crate::domain::StageState::Weak
         && !finding.related_tests.is_empty()
-        // The list is capped, but owner-calling relations rank above
-        // proximity ones, so a capped list of proximity rows dropped none;
-        // reach `weak` already rules them out.
+        // The list is capped; reach `weak` was computed from the full
+        // relation set, so no dropped row calls the owner.
         && finding.related_tests.iter().all(|test| {
             test.relation_reason
                 .is_some_and(classify::is_proximity_only)

@@ -262,14 +262,7 @@ pub(crate) fn render_human_triage(
             if finding.class != ExposureClass::Exposed
                 && finding.static_limit_kind
                     != Some(StaticLimitKind::RustAssertionContextUnresolved)
-                && !(finding.class == ExposureClass::WeaklyExposed
-                    && finding.stop_reasons.iter().any(|reason| {
-                        matches!(
-                            reason,
-                            crate::domain::StopReason::TransitiveReachUnresolved
-                                | crate::domain::StopReason::MacroReachUnresolved
-                        )
-                    }))
+                && !super::sections::untraced_reach_weak_finding(finding)
                 && matches!(
                     finding.probe.family,
                     ProbeFamily::Predicate

@@ -55,7 +55,7 @@ This slice names the limitation honestly:
 ### Trigger condition
 
 After the direct-call classifier returns `ExposureClass::NoStaticPath` with empty `related_tests`
-(or `WeaklyExposed` with only proximity relations, #7071; see RIPR-SPEC-0117),
+(or `WeaklyExposed` with `weak` reach and only proximity relations, #7071; see RIPR-SPEC-0117),
 the Rust adapter runs a bounded BFS walk over the lexical call facts in the RustIndex:
 
 1. Collect all tests from the index (unit + integration).
