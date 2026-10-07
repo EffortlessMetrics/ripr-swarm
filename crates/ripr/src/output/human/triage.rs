@@ -266,10 +266,12 @@ pub(crate) fn render_human_triage(
             // #5355: a Rust gap gets the one-step route to a runnable test.
             // A gap withheld because ripr could not read the related
             // assertions (RIPR-SPEC-0240) claims no missing test, so it gets
-            // no test-writing route either.
+            // no test-writing route either, and neither does a weak finding
+            // whose reach witness ripr could not trace (#7071).
             if finding.class != ExposureClass::Exposed
                 && finding.static_limit_kind
                     != Some(StaticLimitKind::RustAssertionContextUnresolved)
+                && !super::sections::untraced_reach_weak_finding(finding)
                 && matches!(
                     finding.probe.family,
                     ProbeFamily::Predicate
