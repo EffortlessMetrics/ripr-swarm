@@ -3895,6 +3895,31 @@ mod tests {
         }
     }
 
+    /// #7053 review: a macro that declares `trait r#Render` shadows `Render`
+    /// (the raw prefix does not change the name).
+    #[test]
+    fn given_macro_declares_raw_identifier_owner_trait_then_name_only_relation() {
+        let body = "assert_eq!((-0.0f64).render(), \"\");";
+        let source = format!(
+            "pub trait Render {{ fn render(&self) -> String; }}\nimpl Render for f64 {{ fn render(&self) -> String {{ String::new() }} }}\n\n#[cfg(test)]\nmod tests {{\n    macro_rules! shadow {{ () => {{ trait r#Render {{ fn render(&self) -> String; }} }}; }}\n    shadow!();\n    #[test]\n    fn t() {{ {body} }}\n}}\n"
+        );
+        let line = source.matches('\n').count() - 1;
+        let owner = impl_function("src/lib.rs", "render", "impl Render for f64");
+        let mut test = test_with_call("src/lib.rs", "t", body, "render");
+        test.start_line = line;
+        test.end_line = line;
+        let mut index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions: vec![owner.clone()],
+            tests: vec![test],
+            ..Default::default()
+        });
+        with_source(&mut index, "src/lib.rs", &source);
+        let probe = probe("src/lib.rs", "String::new()");
+        let related = find_related_tests(&probe, Some(&owner), &index, true, None, None);
+        assert_eq!(related.len(), 1);
+        assert_eq!(related[0].1, RelationReason::WeakTokenSubstring);
+    }
+
     /// #7053: a generic production trait (`impl Render<f64> for Meters`) is
     /// shadowed by a test-local `trait Render<T>` just the same.
     #[test]

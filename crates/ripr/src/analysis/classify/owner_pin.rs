@@ -3773,10 +3773,10 @@ fn module_item_names(item: &ast::Item, base: &str, kind: ShadowKind) -> bool {
     matches!(
         item,
         ast::Item::MacroRules(_) | ast::Item::MacroDef(_) | ast::Item::MacroCall(_)
-    ) && declares_trait(
-        &mask_comments_and_strings(&item.syntax().text().to_string()),
-        base,
-    )
+    ) && {
+        let text = mask_comments_and_strings(&item.syntax().text().to_string());
+        declares_trait(&text, base) || declares_trait(&text, &format!("r#{base}"))
+    }
 }
 
 /// Whether a direct module item declares the type name `base` (`r#Window`
