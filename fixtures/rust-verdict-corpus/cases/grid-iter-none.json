@@ -18,12 +18,14 @@
     "mutants": [
       {
         "replacement": "prices.iter().map(|&p| p + 100).sum()",
+        "mutated_line": "prices.iter().map(|&p| p + 100).sum()",
         "outcome": "tests_passed",
         "failing_test": null,
         "equivalence_review": "not equivalent: total_cents(&[1, 2]) is 203 instead of 300"
       },
       {
         "replacement": "prices.iter().map(|&p| p / 100).sum()",
+        "mutated_line": "prices.iter().map(|&p| p / 100).sum()",
         "outcome": "tests_passed",
         "failing_test": null,
         "equivalence_review": "not equivalent: total_cents(&[1, 2]) is 0 instead of 300"

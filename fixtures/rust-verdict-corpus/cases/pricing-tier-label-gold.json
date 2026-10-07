@@ -18,12 +18,14 @@
     "mutants": [
       {
         "replacement": "Tier::Gold => \"Gold\".to_string(),",
+        "mutated_line": "Tier::Gold => \"Gold\".to_string(),",
         "outcome": "tests_failed",
         "failing_test": "tests::tier_labels_are_lowercase_names",
         "equivalence_review": "not equivalent: the Gold label reads \"Gold\" instead of \"gold\""
       },
       {
         "replacement": "Tier::Gold => String::new(),",
+        "mutated_line": "Tier::Gold => String::new(),",
         "outcome": "tests_failed",
         "failing_test": "tests::tier_labels_are_lowercase_names",
         "equivalence_review": "not equivalent: the Gold label is empty instead of \"gold\""

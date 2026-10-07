@@ -18,12 +18,14 @@
     "mutants": [
       {
         "replacement": "\"warning\" | \"warn\" => Ok(LogLevel::Info),",
+        "mutated_line": "\"warning\" | \"warn\" => Ok(LogLevel::Info),",
         "outcome": "tests_failed",
         "failing_test": "every_log_level_spelling_parses",
         "equivalence_review": "not equivalent: \"warn\" parses as Info instead of Warn"
       },
       {
         "replacement": "\"warning\" => Ok(LogLevel::Warn),",
+        "mutated_line": "\"warning\" => Ok(LogLevel::Warn),",
         "outcome": "tests_failed",
         "failing_test": "every_log_level_spelling_parses",
         "equivalence_review": "not equivalent: \"WARN\" (lowercased to \"warn\") becomes UnknownLogLevel"

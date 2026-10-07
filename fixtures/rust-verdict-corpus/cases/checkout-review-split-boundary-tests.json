@@ -18,12 +18,14 @@
     "mutants": [
       {
         "replacement": "total > 1000",
+        "mutated_line": "total > 1000",
         "outcome": "tests_passed",
         "failing_test": null,
         "equivalence_review": "not equivalent: exactly 1000 no longer needs review"
       },
       {
         "replacement": "total >= 999",
+        "mutated_line": "total >= 999",
         "outcome": "tests_passed",
         "failing_test": null,
         "equivalence_review": "not equivalent: 999 starts needing review"

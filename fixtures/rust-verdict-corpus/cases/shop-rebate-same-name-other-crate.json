@@ -18,12 +18,14 @@
     "mutants": [
       {
         "replacement": "total / 20",
+        "mutated_line": "total / 20",
         "outcome": "tests_passed",
         "failing_test": null,
         "equivalence_review": "not equivalent: pricing::rebate(200) becomes 10"
       },
       {
         "replacement": "total * 10",
+        "mutated_line": "total * 10",
         "outcome": "tests_passed",
         "failing_test": null,
         "equivalence_review": "not equivalent: pricing::rebate(200) becomes 2000"

@@ -18,12 +18,14 @@
     "mutants": [
       {
         "replacement": "if points > 5000 {",
+        "mutated_line": "if points > 5000 {",
         "outcome": "tests_failed",
         "failing_test": "tests::tiers_change_exactly_at_their_thresholds",
         "equivalence_review": "not equivalent: 5000 points becomes Silver instead of Gold"
       },
       {
         "replacement": "if points > 4998 {",
+        "mutated_line": "if points > 4998 {",
         "outcome": "tests_failed",
         "failing_test": "tests::tiers_change_exactly_at_their_thresholds",
         "equivalence_review": "not equivalent: 4999 points becomes Gold instead of Silver"

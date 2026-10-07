@@ -18,12 +18,14 @@
     "mutants": [
       {
         "replacement": "qty + price",
+        "mutated_line": "qty + price",
         "outcome": "tests_failed",
         "failing_test": "tests::three_at_seven_costs_twenty_one",
         "equivalence_review": "not equivalent: three_at_seven_costs_twenty_one fails on it"
       },
       {
         "replacement": "qty / price",
+        "mutated_line": "qty / price",
         "outcome": "tests_failed",
         "failing_test": "tests::three_at_seven_costs_twenty_one",
         "equivalence_review": "not equivalent: three_at_seven_costs_twenty_one fails on it"

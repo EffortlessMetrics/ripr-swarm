@@ -18,12 +18,14 @@
     "mutants": [
       {
         "replacement": "let port: u16 = text.trim().parse().unwrap_or(0);",
+        "mutated_line": "let port: u16 = text.trim().parse().unwrap_or(0);",
         "outcome": "tests_failed",
         "failing_test": "tests::port_parses_and_rejects_words",
         "equivalence_review": "not equivalent: port_parses_and_rejects_words fails on it"
       },
       {
         "replacement": "let port: u16 = text.trim().parse().unwrap_or(8080);",
+        "mutated_line": "let port: u16 = text.trim().parse().unwrap_or(8080);",
         "outcome": "tests_failed",
         "failing_test": "tests::port_parses_and_rejects_words",
         "equivalence_review": "not equivalent: port_parses_and_rejects_words fails on it"

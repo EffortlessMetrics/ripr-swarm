@@ -18,12 +18,14 @@
     "mutants": [
       {
         "replacement": "if otel_url.path().ends_with(\"/v1/traces\") == true {",
+        "mutated_line": "if otel_url.path().ends_with(\"/v1/traces\") == true {",
         "outcome": "tests_passed",
         "failing_test": null,
         "equivalence_review": "not equivalent with --features profiling-traced: ATUIN_OTEL=http://host:4318 exports to http://host:4318/ instead of .../v1/traces, and a URL already ending in /v1/traces gets /v1/traces/v1/traces. Equivalent (dead code) in the spot-check's --workspace build: enabled.rs is behind #[cfg(feature = \"profiling-traced\")], a non-default feature no workspace member enables, so the file is not compiled there."
       },
       {
         "replacement": "if true {",
+        "mutated_line": "if true {",
         "outcome": "tests_passed",
         "failing_test": null,
         "equivalence_review": "not equivalent with --features profiling-traced: a URL already ending in /v1/traces gets the suffix twice."

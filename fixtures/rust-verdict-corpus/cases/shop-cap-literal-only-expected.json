@@ -18,12 +18,14 @@
     "mutants": [
       {
         "replacement": "if value > 20 {",
+        "mutated_line": "if value > 20 {",
         "outcome": "tests_passed",
         "failing_test": null,
         "equivalence_review": "not equivalent: 15 is no longer capped"
       },
       {
         "replacement": "if value > 11 {",
+        "mutated_line": "if value > 11 {",
         "outcome": "tests_passed",
         "failing_test": null,
         "equivalence_review": "not equivalent: 11 is no longer capped"

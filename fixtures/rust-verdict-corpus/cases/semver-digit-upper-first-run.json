@@ -18,6 +18,7 @@
     "mutants": [
       {
         "replacement": "digit >= b'9'",
+        "mutated_line": null,
         "outcome": "tests_failed",
         "failing_test": "test_basic",
         "equivalence_review": "the edit itself: '9' is no longer a digit"

@@ -18,18 +18,21 @@
     "mutants": [
       {
         "replacement": "sum -= w;",
+        "mutated_line": "sum -= w;",
         "outcome": "tests_failed",
         "failing_test": "tests::three_parcels_weigh_twelve",
         "equivalence_review": "not equivalent: three_parcels_weigh_twelve fails on it"
       },
       {
         "replacement": "sum *= w;",
+        "mutated_line": "sum *= w;",
         "outcome": "tests_failed",
         "failing_test": "tests::three_parcels_weigh_twelve",
         "equivalence_review": "not equivalent: three_parcels_weigh_twelve fails on it"
       },
       {
         "replacement": "(delete the statement)",
+        "mutated_line": "",
         "outcome": "tests_failed",
         "failing_test": "tests::three_parcels_weigh_twelve",
         "equivalence_review": "not equivalent: three_parcels_weigh_twelve fails on it"

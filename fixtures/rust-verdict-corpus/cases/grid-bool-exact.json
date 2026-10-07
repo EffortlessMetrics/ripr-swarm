@@ -18,18 +18,21 @@
     "mutants": [
       {
         "replacement": "in_stock || paid",
+        "mutated_line": "in_stock || paid",
         "outcome": "tests_failed",
         "failing_test": "tests::ships_only_when_paid_and_in_stock",
         "equivalence_review": "not equivalent: ships_only_when_paid_and_in_stock fails on it"
       },
       {
         "replacement": "true",
+        "mutated_line": "true",
         "outcome": "tests_failed",
         "failing_test": "tests::ships_only_when_paid_and_in_stock",
         "equivalence_review": "not equivalent: ships_only_when_paid_and_in_stock fails on it"
       },
       {
         "replacement": "false",
+        "mutated_line": "false",
         "outcome": "tests_failed",
         "failing_test": "tests::ships_only_when_paid_and_in_stock",
         "equivalence_review": "not equivalent: ships_only_when_paid_and_in_stock fails on it"

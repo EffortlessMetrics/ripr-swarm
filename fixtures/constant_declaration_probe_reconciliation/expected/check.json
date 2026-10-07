@@ -18,7 +18,7 @@
         "id": "probe:src_lib.rs:static_unknown:c48715e6",
         "family": "static_unknown",
         "delta": "unknown",
-        "file": "fixtures/constant_declaration_probe_reconciliation/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 1,
         "expression": "pub(crate) const OBSERVATION_SCHEMA_GENERATION: u32 = 3;"
        },

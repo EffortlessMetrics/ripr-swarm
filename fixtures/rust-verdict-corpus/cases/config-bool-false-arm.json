@@ -18,12 +18,14 @@
     "mutants": [
       {
         "replacement": "\"0\" | \"false\" | \"no\" | \"off\" => Some(true),",
+        "mutated_line": "\"0\" | \"false\" | \"no\" | \"off\" => Some(true),",
         "outcome": "tests_passed",
         "failing_test": null,
         "equivalence_review": "not equivalent: parse_bool(\"no\") returns Some(true) instead of Some(false)"
       },
       {
         "replacement": "\"0\" | \"false\" | \"no\" | \"off\" => None,",
+        "mutated_line": "\"0\" | \"false\" | \"no\" | \"off\" => None,",
         "outcome": "tests_passed",
         "failing_test": null,
         "equivalence_review": "not equivalent: parse_bool(\"no\") returns None instead of Some(false)"

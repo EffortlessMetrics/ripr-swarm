@@ -18,12 +18,14 @@
     "mutants": [
       {
         "replacement": "5",
+        "mutated_line": "5",
         "outcome": "tests_failed",
         "failing_test": "tests::doubling_the_sample",
         "equivalence_review": "not equivalent: the sample doubles to 10"
       },
       {
         "replacement": "0",
+        "mutated_line": "0",
         "outcome": "tests_failed",
         "failing_test": "tests::doubling_the_sample",
         "equivalence_review": "not equivalent: the sample doubles to 0"

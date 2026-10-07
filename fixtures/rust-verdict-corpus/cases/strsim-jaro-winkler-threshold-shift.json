@@ -18,21 +18,24 @@
     "mutants": [
       {
         "replacement": "0.75 < sim",
+        "mutated_line": "if 0.75 < sim {",
         "outcome": "tests_failed",
         "failing_test": "tests::jaro_winkler_length_of_one",
         "equivalence_review": "not equivalent: pairs with jaro in (0.7, 0.75] lose the prefix bonus, e.g. Dinsdale/D."
       },
       {
         "replacement": "0.65 < sim",
+        "mutated_line": "if 0.65 < sim {",
         "outcome": "tests_passed",
         "failing_test": null,
         "equivalence_review": "not equivalent: jaro(\"abcd\", \"abxy\") = 0.667 gains the prefix bonus (0.667 becomes 0.733)."
       },
       {
         "replacement": "0.7 > sim",
+        "mutated_line": "if 0.7 > sim {",
         "outcome": "tests_failed",
-        "failing_test": "tests::jaro_winkler_diff_no_transposition, tests::jaro_winkler_diff_short, tests::jaro_winkler_diff_with_transposition (+6 more)",
-        "equivalence_review": "not equivalent: the prefix bonus applies only to dissimilar pairs."
+        "failing_test": "tests::jaro_winkler_diff_no_transposition",
+        "equivalence_review": "not equivalent: the prefix bonus applies only to dissimilar pairs; observed failing tests: tests::jaro_winkler_diff_no_transposition, tests::jaro_winkler_diff_short, tests::jaro_winkler_diff_with_transposition (+6 more)"
       }
     ]
   },

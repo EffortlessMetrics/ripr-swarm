@@ -18,12 +18,14 @@
     "mutants": [
       {
         "replacement": "try_parse_x(raw).map_err(|_| ParseXError::EmptySource)",
+        "mutated_line": "try_parse_x(raw).map_err(|_| ParseXError::EmptySource)",
         "outcome": "tests_failed",
         "failing_test": "tests::try_parse_x_pins_malformed_source",
         "equivalence_review": "not equivalent: malformed input reports EmptySource"
       },
       {
         "replacement": "Ok(try_parse_x(raw).unwrap_or(0))",
+        "mutated_line": "Ok(try_parse_x(raw).unwrap_or(0))",
         "outcome": "tests_failed",
         "failing_test": "tests::try_parse_x_pins_malformed_source",
         "equivalence_review": "not equivalent: malformed input parses as Ok(0)"

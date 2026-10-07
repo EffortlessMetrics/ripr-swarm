@@ -18,18 +18,21 @@
     "mutants": [
       {
         "replacement": "points -= r;",
+        "mutated_line": "points -= r;",
         "outcome": "tests_failed",
         "failing_test": "tests::rolls_add_up",
         "equivalence_review": "not equivalent: rolls_add_up fails on it"
       },
       {
         "replacement": "points *= r;",
+        "mutated_line": "points *= r;",
         "outcome": "tests_failed",
         "failing_test": "tests::rolls_add_up",
         "equivalence_review": "not equivalent: rolls_add_up fails on it"
       },
       {
         "replacement": "(delete the statement)",
+        "mutated_line": "",
         "outcome": "tests_failed",
         "failing_test": "tests::rolls_add_up",
         "equivalence_review": "not equivalent: rolls_add_up fails on it"

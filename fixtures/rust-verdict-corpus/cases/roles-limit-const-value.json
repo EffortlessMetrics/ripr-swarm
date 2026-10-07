@@ -18,12 +18,14 @@
     "mutants": [
       {
         "replacement": "pub const LIMIT: u32 = 11;",
+        "mutated_line": "pub const LIMIT: u32 = 11;",
         "outcome": "tests_failed",
         "failing_test": "tests::the_limit_is_ten",
         "equivalence_review": "not equivalent: 11 falls within the limit"
       },
       {
         "replacement": "pub const LIMIT: u32 = 9;",
+        "mutated_line": "pub const LIMIT: u32 = 9;",
         "outcome": "tests_failed",
         "failing_test": "tests::the_limit_is_ten",
         "equivalence_review": "not equivalent: 10 falls outside the limit"

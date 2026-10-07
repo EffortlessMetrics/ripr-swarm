@@ -18,12 +18,14 @@
     "mutants": [
       {
         "replacement": "self.history.push(amount + 1);",
+        "mutated_line": "self.history.push(amount + 1);",
         "outcome": "tests_failed",
         "failing_test": "tests::record_appends_the_amount",
         "equivalence_review": "not equivalent: the history holds 6"
       },
       {
         "replacement": "let _ = amount;",
+        "mutated_line": "let _ = amount;",
         "outcome": "tests_failed",
         "failing_test": "tests::record_appends_the_amount",
         "equivalence_review": "not equivalent: the history stays empty"

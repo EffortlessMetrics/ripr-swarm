@@ -18,12 +18,14 @@
     "mutants": [
       {
         "replacement": "tip - bill",
+        "mutated_line": "tip - bill",
         "outcome": "tests_failed",
         "failing_test": "tests::tip_is_added",
         "equivalence_review": "not equivalent: tip_is_added fails on it"
       },
       {
         "replacement": "tip * bill",
+        "mutated_line": "tip * bill",
         "outcome": "tests_failed",
         "failing_test": "tests::tip_is_added",
         "equivalence_review": "not equivalent: tip_is_added fails on it"

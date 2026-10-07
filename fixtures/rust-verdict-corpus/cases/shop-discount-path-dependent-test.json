@@ -18,12 +18,14 @@
     "mutants": [
       {
         "replacement": "total - 6",
+        "mutated_line": "total - 6",
         "outcome": "tests_failed",
         "failing_test": "order_total_takes_the_discount",
         "equivalence_review": "not equivalent: order_total(50) becomes 44"
       },
       {
         "replacement": "total + 5",
+        "mutated_line": "total + 5",
         "outcome": "tests_failed",
         "failing_test": "order_total_takes_the_discount",
         "equivalence_review": "not equivalent: order_total(50) becomes 55"

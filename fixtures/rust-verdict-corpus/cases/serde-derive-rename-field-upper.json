@@ -18,12 +18,14 @@
     "mutants": [
       {
         "replacement": "str::to_ascii_lowercase(field)",
+        "mutated_line": "UpperCase => str::to_ascii_lowercase(field),",
         "outcome": "tests_failed",
         "failing_test": "internals::case::rename_fields",
         "equivalence_review": "not equivalent: UPPERCASE renames produce lowercase"
       },
       {
         "replacement": "field.to_owned()",
+        "mutated_line": "UpperCase => field.to_owned(),",
         "outcome": "tests_failed",
         "failing_test": "internals::case::rename_fields",
         "equivalence_review": "not equivalent: UPPERCASE renames keep the original case"

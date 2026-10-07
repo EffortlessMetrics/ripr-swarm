@@ -18,12 +18,14 @@
     "mutants": [
       {
         "replacement": "\"b\" => label_of(\"c\"),",
+        "mutated_line": "\"b\" => label_of(\"c\"),",
         "outcome": "tests_failed",
         "failing_test": "scan::tests::b_describes_as_alpha",
         "equivalence_review": "not equivalent: b describes as <other>"
       },
       {
         "replacement": "\"b\" => \"beta\",",
+        "mutated_line": "\"b\" => \"beta\",",
         "outcome": "tests_failed",
         "failing_test": "scan::tests::b_describes_as_alpha",
         "equivalence_review": "not equivalent: b describes as <beta>"

@@ -18,12 +18,14 @@
     "mutants": [
       {
         "replacement": "cmp.pre >= ver.pre",
+        "mutated_line": "cmp.pre >= ver.pre",
         "outcome": "tests_failed",
         "failing_test": "test_less_than",
         "equivalence_review": "not equivalent: <1.2.3-beta starts matching itself"
       },
       {
         "replacement": "cmp.pre != ver.pre",
+        "mutated_line": "cmp.pre != ver.pre",
         "outcome": "tests_failed",
         "failing_test": "test_less_than",
         "equivalence_review": "not equivalent: later prereleases start matching"

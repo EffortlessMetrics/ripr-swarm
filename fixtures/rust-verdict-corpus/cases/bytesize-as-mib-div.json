@@ -13,14 +13,15 @@
   "truth": {
     "state": "not_discriminated",
     "method": "runtime_mutant_kill",
-    "test_command": "cargo test",
+    "test_command": "cargo test -- --skip alloc_tests::string_round_trip",
     "toolchain": "rustc 1.97.0 (2d8144b78 2026-07-07), x86_64-unknown-linux-gnu",
     "mutants": [
       {
         "replacement": "self.0 as f64 % (MIB as f64)",
+        "mutated_line": "self.0 as f64 % (MIB as f64)",
         "outcome": "tests_passed",
         "failing_test": null,
-        "equivalence_review": "not equivalent: as_mib returns the remainder instead of the quotient for any size of at least 1 MiB."
+        "equivalence_review": "not equivalent: as_mib returns the remainder instead of the quotient for any size of at least 1 MiB; the quickcheck property alloc_tests::string_round_trip is skipped because it fails on some random inputs with or without the edit (1 of 5 replays on rustc 1.97.0), and it never calls the changed method"
       }
     ]
   },

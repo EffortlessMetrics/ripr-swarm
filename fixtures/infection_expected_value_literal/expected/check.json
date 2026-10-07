@@ -11,6 +11,18 @@
   "findings": [
     {
       "id": "probe:src_lib.rs:predicate:14f80bce",
+      "canonical_gap_id": "gap:rust:src/lib.rs:fragile_fee:predicate_boundary:predicate:weight_grams==2_000",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:fragile_fee:predicate_boundary:predicate:weight_grams==2_000",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "fragile_fee",
+        "behavior_kind": "predicate_boundary",
+        "probe_kind": "predicate",
+        "normalized_discriminator": "weight_grams==2_000"
+
+      },
       "classification": "weakly_exposed",
       "severity": "warning",
       "confidence": 0.92,
@@ -18,7 +30,7 @@
         "id": "probe:src_lib.rs:predicate:14f80bce",
         "family": "predicate",
         "delta": "control",
-        "file": "fixtures/infection_expected_value_literal/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 19,
         "expression": "weight_grams >= 2_000"
        },
@@ -112,6 +124,18 @@
     },
     {
       "id": "probe:src_lib.rs:predicate:a97c7c7c",
+      "canonical_gap_id": "gap:rust:src/lib.rs:bulky_fee:predicate_boundary:predicate:volume_litres==50",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:bulky_fee:predicate_boundary:predicate:volume_litres==50",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "bulky_fee",
+        "behavior_kind": "predicate_boundary",
+        "probe_kind": "predicate",
+        "normalized_discriminator": "volume_litres==50"
+
+      },
       "classification": "exposed",
       "severity": "info",
       "confidence": 1.00,
@@ -119,7 +143,7 @@
         "id": "probe:src_lib.rs:predicate:a97c7c7c",
         "family": "predicate",
         "delta": "control",
-        "file": "fixtures/infection_expected_value_literal/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 28,
         "expression": "volume_litres >= 50"
        },

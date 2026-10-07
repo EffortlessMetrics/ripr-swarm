@@ -18,12 +18,14 @@
     "mutants": [
       {
         "replacement": "unsafe { sku.get_unchecked(start.saturating_sub(1)..sku.len()) }",
+        "mutated_line": "unsafe { sku.get_unchecked(start.saturating_sub(1)..sku.len()) }",
         "outcome": "tests_passed",
         "failing_test": null,
         "equivalence_review": "not equivalent: sku_variant(\"BOLT-M8\") returns \"-M8\" instead of \"M8\""
       },
       {
         "replacement": "unsafe { sku.get_unchecked(sku.len()..sku.len()) }",
+        "mutated_line": "unsafe { sku.get_unchecked(sku.len()..sku.len()) }",
         "outcome": "tests_failed",
         "failing_test": "tests::dashed_skus_have_a_variant",
         "equivalence_review": "not equivalent: sku_variant(\"BOLT-M8\") returns \"\" instead of \"M8\""

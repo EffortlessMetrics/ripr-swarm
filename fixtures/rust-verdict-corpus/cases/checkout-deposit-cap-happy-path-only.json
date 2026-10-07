@@ -18,12 +18,14 @@
     "mutants": [
       {
         "replacement": "return Err(PayError::Frozen);",
+        "mutated_line": "return Err(PayError::Frozen);",
         "outcome": "tests_passed",
         "failing_test": null,
         "equivalence_review": "not equivalent: a large deposit reports Frozen"
       },
       {
         "replacement": "return Ok(amount);",
+        "mutated_line": "return Ok(amount);",
         "outcome": "tests_passed",
         "failing_test": null,
         "equivalence_review": "not equivalent: a large deposit is accepted"

@@ -18,12 +18,14 @@
     "mutants": [
       {
         "replacement": "total + 16",
+        "mutated_line": "total + 16",
         "outcome": "tests_failed",
         "failing_test": "public_total_adds_the_fee",
         "equivalence_review": "not equivalent: public_total(3) becomes 46"
       },
       {
         "replacement": "total - 15",
+        "mutated_line": "total - 15",
         "outcome": "tests_failed",
         "failing_test": "public_total_adds_the_fee",
         "equivalence_review": "not equivalent: public_total(3) becomes 15"

@@ -18,15 +18,17 @@
     "mutants": [
       {
         "replacement": "0 > i",
+        "mutated_line": "if 0 > i {",
         "outcome": "tests_failed",
         "failing_test": "test_multiple",
         "equivalence_review": "not equivalent: the ', ' separator is never written between comparators."
       },
       {
         "replacement": "0 <= i",
+        "mutated_line": "if 0 <= i {",
         "outcome": "tests_failed",
-        "failing_test": "test_basic, test_cargo3202, test_exact (+3 more)",
-        "equivalence_review": "not equivalent: a leading ', ' is written before the first comparator."
+        "failing_test": "test_basic",
+        "equivalence_review": "not equivalent: a leading ', ' is written before the first comparator; observed failing tests: test_basic, test_cargo3202, test_exact (+3 more)"
       }
     ]
   },

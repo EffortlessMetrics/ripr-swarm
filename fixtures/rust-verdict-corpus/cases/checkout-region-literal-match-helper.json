@@ -18,12 +18,14 @@
     "mutants": [
       {
         "replacement": "\"north\" => \"S\",",
+        "mutated_line": "\"north\" => \"S\",",
         "outcome": "tests_failed",
         "failing_test": "rates::tests::north_is_labeled",
         "equivalence_review": "not equivalent: north labels as zone-S"
       },
       {
         "replacement": "\"north\" => \"\",",
+        "mutated_line": "\"north\" => \"\",",
         "outcome": "tests_failed",
         "failing_test": "rates::tests::north_is_labeled",
         "equivalence_review": "not equivalent: north labels as zone-"

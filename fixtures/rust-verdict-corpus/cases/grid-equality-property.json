@@ -18,18 +18,21 @@
     "mutants": [
       {
         "replacement": "b != a",
+        "mutated_line": "b != a",
         "outcome": "tests_failed",
         "failing_test": "tests::same_currency_is_reflexive",
         "equivalence_review": "not equivalent: same_currency_is_reflexive fails on it"
       },
       {
         "replacement": "true",
+        "mutated_line": "true",
         "outcome": "tests_passed",
         "failing_test": null,
         "equivalence_review": "not equivalent: same_currency(\"USD\", \"EUR\") becomes true; reflexivity only checks equal pairs"
       },
       {
         "replacement": "false",
+        "mutated_line": "false",
         "outcome": "tests_failed",
         "failing_test": "tests::same_currency_is_reflexive",
         "equivalence_review": "not equivalent: same_currency_is_reflexive fails on it"

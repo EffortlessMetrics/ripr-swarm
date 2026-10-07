@@ -18,12 +18,14 @@
     "mutants": [
       {
         "replacement": "",
+        "mutated_line": "",
         "outcome": "tests_failed",
         "failing_test": "tests::history_records_every_movement_in_order",
         "equivalence_review": "not equivalent: shipping leaves no Shipped event, so history() holds only the Received event"
       },
       {
         "replacement": "self.log.push(Event::Received { sku: sku.to_owned(), qty });",
+        "mutated_line": "self.log.push(Event::Received { sku: sku.to_owned(), qty });",
         "outcome": "tests_failed",
         "failing_test": "tests::history_records_every_movement_in_order",
         "equivalence_review": "not equivalent: a shipment is logged as Received { qty: 2 } instead of Shipped { qty: 2 }"

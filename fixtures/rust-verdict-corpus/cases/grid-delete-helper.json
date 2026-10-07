@@ -18,18 +18,21 @@
     "mutants": [
       {
         "replacement": "(delete the statement)",
+        "mutated_line": "",
         "outcome": "tests_failed",
         "failing_test": "tests::writes_are_counted",
         "equivalence_review": "not equivalent: writes_are_counted fails on it"
       },
       {
         "replacement": "self.writes -= 1;",
+        "mutated_line": "self.writes -= 1;",
         "outcome": "tests_failed",
         "failing_test": "tests::writes_are_counted",
         "equivalence_review": "not equivalent: writes_are_counted fails on it"
       },
       {
         "replacement": "self.writes *= 1;",
+        "mutated_line": "self.writes *= 1;",
         "outcome": "tests_failed",
         "failing_test": "tests::writes_are_counted",
         "equivalence_review": "not equivalent: writes_are_counted fails on it"

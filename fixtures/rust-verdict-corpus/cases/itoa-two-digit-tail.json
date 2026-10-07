@@ -18,12 +18,14 @@
     "mutants": [
       {
         "replacement": "remain >= 11",
+        "mutated_line": "if remain >= 11 {",
         "outcome": "tests_passed",
         "failing_test": null,
         "equivalence_review": "not equivalent: a trailing 10 is written as ':'"
       },
       {
         "replacement": "remain >= 9",
+        "mutated_line": "if remain >= 9 {",
         "outcome": "tests_passed",
         "failing_test": null,
         "equivalence_review": "not equivalent: a trailing 9 is written as \"09\""

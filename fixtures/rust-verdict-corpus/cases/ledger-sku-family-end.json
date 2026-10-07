@@ -18,12 +18,14 @@
     "mutants": [
       {
         "replacement": "let end = sku.find('-').unwrap_or_else(|| 0);",
+        "mutated_line": "let end = sku.find('-').unwrap_or_else(|| 0);",
         "outcome": "tests_failed",
         "failing_test": "tests::sku_family_is_the_text_before_the_first_dash",
         "equivalence_review": "not equivalent: sku_family(\"WASHER\") returns \"\" instead of \"WASHER\""
       },
       {
         "replacement": "let end = sku.find('_').unwrap_or_else(|| sku.len());",
+        "mutated_line": "let end = sku.find('_').unwrap_or_else(|| sku.len());",
         "outcome": "tests_failed",
         "failing_test": "tests::sku_family_is_the_text_before_the_first_dash",
         "equivalence_review": "not equivalent: sku_family(\"BOLT-M8\") returns \"BOLT-M8\" instead of \"BOLT\""

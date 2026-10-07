@@ -18,18 +18,21 @@
     "mutants": [
       {
         "replacement": "daemon_enabled || cfg!(feature = \"daemon\")",
+        "mutated_line": "daemon_enabled || cfg!(feature = \"daemon\")",
         "outcome": "tests_passed",
         "failing_test": null,
         "equivalence_review": "not equivalent in the test build: `-p atuin-ai -p atuin` (like --workspace) unifies atuin's default `daemon` feature onto atuin-ai (fingerprint features [daemon, default, tree-sitter]), so cfg! is true, the original returns daemon_enabled and this mutant returns true; it differs whenever settings.daemon.enabled is false. (With cfg! false, under plain `-p atuin-ai`, it returns daemon_enabled instead of false, also non-equivalent.)"
       },
       {
         "replacement": "true",
+        "mutated_line": "true",
         "outcome": "tests_passed",
         "failing_test": null,
         "equivalence_review": "not equivalent in the test build (cfg! true): returns true when daemon_enabled is false, advertising client_v1_atuin_output with no daemon."
       },
       {
         "replacement": "false",
+        "mutated_line": "false",
         "outcome": "tests_passed",
         "failing_test": null,
         "equivalence_review": "not equivalent in the test build (cfg! true): returns false when daemon_enabled is true, dropping the atuin_output capability. It IS equivalent under plain `cargo test -p atuin-ai` (no daemon feature: the original is constant false), so that build cannot be used as truth for this mutant."

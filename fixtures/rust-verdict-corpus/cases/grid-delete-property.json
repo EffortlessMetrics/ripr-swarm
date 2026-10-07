@@ -18,18 +18,21 @@
     "mutants": [
       {
         "replacement": "(delete the statement)",
+        "mutated_line": "",
         "outcome": "tests_passed",
         "failing_test": null,
         "equivalence_review": "not equivalent: reads stays 0; an unchanged count still satisfies reads >= before"
       },
       {
         "replacement": "self.reads -= 1;",
+        "mutated_line": "self.reads -= 1;",
         "outcome": "tests_failed",
         "failing_test": "tests::reads_never_decrease",
         "equivalence_review": "not equivalent: 0 - 1 overflows and panics before the assertion runs"
       },
       {
         "replacement": "self.reads *= 1;",
+        "mutated_line": "self.reads *= 1;",
         "outcome": "tests_passed",
         "failing_test": null,
         "equivalence_review": "not equivalent: reads stays 0; an unchanged count still satisfies reads >= before"

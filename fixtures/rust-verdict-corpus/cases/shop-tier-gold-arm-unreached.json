@@ -18,12 +18,14 @@
     "mutants": [
       {
         "replacement": "p if p > 100 => Tier::Gold,",
+        "mutated_line": "p if p > 100 => Tier::Gold,",
         "outcome": "tests_passed",
         "failing_test": null,
         "equivalence_review": "not equivalent: exactly 100 points drops to Silver"
       },
       {
         "replacement": "p if p >= 100 => Tier::Bronze,",
+        "mutated_line": "p if p >= 100 => Tier::Bronze,",
         "outcome": "tests_passed",
         "failing_test": null,
         "equivalence_review": "not equivalent: 100+ points become Bronze"

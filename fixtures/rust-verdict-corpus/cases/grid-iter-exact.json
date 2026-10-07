@@ -18,18 +18,21 @@
     "mutants": [
       {
         "replacement": "xs.iter().filter(|&&x| x >= 0).count()",
+        "mutated_line": "xs.iter().filter(|&&x| x >= 0).count()",
         "outcome": "tests_failed",
         "failing_test": "tests::counts_two_positive",
         "equivalence_review": "not equivalent: counts_two_positive fails on it"
       },
       {
         "replacement": "xs.iter().filter(|&&x| x < 0).count()",
+        "mutated_line": "xs.iter().filter(|&&x| x < 0).count()",
         "outcome": "tests_failed",
         "failing_test": "tests::counts_two_positive",
         "equivalence_review": "not equivalent: counts_two_positive fails on it"
       },
       {
         "replacement": "xs.iter().filter(|&&x| x == 0).count()",
+        "mutated_line": "xs.iter().filter(|&&x| x == 0).count()",
         "outcome": "tests_failed",
         "failing_test": "tests::counts_two_positive",
         "equivalence_review": "not equivalent: counts_two_positive fails on it"

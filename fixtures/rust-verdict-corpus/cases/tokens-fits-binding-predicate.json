@@ -18,12 +18,14 @@
     "mutants": [
       {
         "replacement": "let end = text.len() + 1;",
+        "mutated_line": "let end = text.len() + 1;",
         "outcome": "tests_failed",
         "failing_test": "flow::tests::fits_is_inclusive",
         "equivalence_review": "not equivalent: abc no longer fits width 3"
       },
       {
         "replacement": "let end = text.len() - 1;",
+        "mutated_line": "let end = text.len() - 1;",
         "outcome": "tests_failed",
         "failing_test": "flow::tests::fits_is_inclusive",
         "equivalence_review": "not equivalent: abcd fits width 3"

@@ -18,12 +18,14 @@
     "mutants": [
       {
         "replacement": "points * 4",
+        "mutated_line": "points * 4",
         "outcome": "tests_failed",
         "failing_test": "score_triples_points",
         "equivalence_review": "not equivalent: score(7) becomes 28"
       },
       {
         "replacement": "points + 3",
+        "mutated_line": "points + 3",
         "outcome": "tests_failed",
         "failing_test": "score_triples_points",
         "equivalence_review": "not equivalent: score(7) becomes 10"

@@ -18,12 +18,14 @@
     "mutants": [
       {
         "replacement": "(delete the statement)",
+        "mutated_line": "",
         "outcome": "tests_failed",
         "failing_test": "account::tests::deposits_add_to_the_balance",
         "equivalence_review": "not equivalent: the balance stays 0"
       },
       {
         "replacement": "self.balance -= amount;",
+        "mutated_line": "self.balance -= amount;",
         "outcome": "tests_failed",
         "failing_test": "account::tests::deposits_add_to_the_balance",
         "equivalence_review": "not equivalent: the balance becomes -150"

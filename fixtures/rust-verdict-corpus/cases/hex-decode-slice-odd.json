@@ -18,6 +18,7 @@
     "mutants": [
       {
         "replacement": "data.len() % 2 == 2",
+        "mutated_line": "if data.len() % 2 == 2 {",
         "outcome": "tests_failed",
         "failing_test": "test::test_decode_to_slice",
         "equivalence_review": "not equivalent: odd input is never rejected as OddLength"

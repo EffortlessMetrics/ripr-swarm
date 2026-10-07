@@ -18,12 +18,14 @@
     "mutants": [
       {
         "replacement": "total: units * 11,",
+        "mutated_line": "total: units * 11,",
         "outcome": "tests_failed",
         "failing_test": "tests::quote_total_is_ten_per_unit",
         "equivalence_review": "not equivalent: three units total 33"
       },
       {
         "replacement": "total: units,",
+        "mutated_line": "total: units,",
         "outcome": "tests_failed",
         "failing_test": "tests::quote_total_is_ten_per_unit",
         "equivalence_review": "not equivalent: three units total 3"

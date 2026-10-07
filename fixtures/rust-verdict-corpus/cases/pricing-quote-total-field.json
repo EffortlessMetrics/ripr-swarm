@@ -18,12 +18,14 @@
     "mutants": [
       {
         "replacement": "total_cents: subtotal,",
+        "mutated_line": "total_cents: subtotal,",
         "outcome": "tests_passed",
         "failing_test": null,
         "equivalence_review": "not equivalent: quote(1_000, 1, 0) totals 1000 instead of 1499 because shipping is dropped"
       },
       {
         "replacement": "total_cents: shipping,",
+        "mutated_line": "total_cents: shipping,",
         "outcome": "tests_failed",
         "failing_test": "tests::quote_combines_discount_and_shipping",
         "equivalence_review": "not equivalent: quote(2_500, 4, 6_000) totals 0 instead of 9000"

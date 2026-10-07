@@ -18,12 +18,14 @@
     "mutants": [
       {
         "replacement": "self.units * 100",
+        "mutated_line": "self.units * 100",
         "outcome": "tests_failed",
         "failing_test": "tests::item_cents_are_per_unit",
         "equivalence_review": "not equivalent: two units cost 200"
       },
       {
         "replacement": "self.units + 125",
+        "mutated_line": "self.units + 125",
         "outcome": "tests_failed",
         "failing_test": "tests::item_cents_are_per_unit",
         "equivalence_review": "not equivalent: two units cost 127"

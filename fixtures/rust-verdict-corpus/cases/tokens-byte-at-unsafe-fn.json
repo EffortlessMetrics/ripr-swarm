@@ -18,12 +18,14 @@
     "mutants": [
       {
         "replacement": "0",
+        "mutated_line": "0",
         "outcome": "tests_failed",
         "failing_test": "raw::tests::byte_at_reads_the_index",
         "equivalence_review": "not equivalent: every byte reads as 0"
       },
       {
         "replacement": "*bytes.get_unchecked(0)",
+        "mutated_line": "*bytes.get_unchecked(0)",
         "outcome": "tests_failed",
         "failing_test": "raw::tests::byte_at_reads_the_index",
         "equivalence_review": "not equivalent: index 1 reads index 0"

@@ -18,12 +18,14 @@
     "mutants": [
       {
         "replacement": "let start = path.rfind('.').map_or(0, |i| i + 2);",
+        "mutated_line": "let start = path.rfind('.').map_or(0, |i| i + 2);",
         "outcome": "tests_failed",
         "failing_test": "flow::tests::extension_starts_after_the_dot",
         "equivalence_review": "not equivalent: the extension starts one byte late"
       },
       {
         "replacement": "let start = path.rfind('.').map_or(1, |i| i + 1);",
+        "mutated_line": "let start = path.rfind('.').map_or(1, |i| i + 1);",
         "outcome": "tests_passed",
         "failing_test": null,
         "equivalence_review": "not equivalent: a path without a dot starts at 1, but no test passes one"

@@ -18,12 +18,14 @@
     "mutants": [
       {
         "replacement": "return Err(PayError::Frozen);",
+        "mutated_line": "return Err(PayError::Frozen);",
         "outcome": "tests_failed",
         "failing_test": "payment::tests::a_large_refund_hits_the_limit",
         "equivalence_review": "not equivalent: a large refund reports Frozen"
       },
       {
         "replacement": "return Ok(amount);",
+        "mutated_line": "return Ok(amount);",
         "outcome": "tests_failed",
         "failing_test": "payment::tests::a_large_refund_hits_the_limit",
         "equivalence_review": "not equivalent: a large refund succeeds"

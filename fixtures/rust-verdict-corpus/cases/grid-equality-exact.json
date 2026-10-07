@@ -18,18 +18,21 @@
     "mutants": [
       {
         "replacement": "\"admin\" != role",
+        "mutated_line": "\"admin\" != role",
         "outcome": "tests_failed",
         "failing_test": "tests::only_admin_is_admin",
         "equivalence_review": "not equivalent: only_admin_is_admin fails on it"
       },
       {
         "replacement": "true",
+        "mutated_line": "true",
         "outcome": "tests_failed",
         "failing_test": "tests::only_admin_is_admin",
         "equivalence_review": "not equivalent: only_admin_is_admin fails on it"
       },
       {
         "replacement": "false",
+        "mutated_line": "false",
         "outcome": "tests_failed",
         "failing_test": "tests::only_admin_is_admin",
         "equivalence_review": "not equivalent: only_admin_is_admin fails on it"

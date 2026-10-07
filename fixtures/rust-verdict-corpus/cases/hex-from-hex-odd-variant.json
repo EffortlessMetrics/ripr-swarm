@@ -18,6 +18,7 @@
     "mutants": [
       {
         "replacement": "Self::Error::InvalidStringLength",
+        "mutated_line": "return Err(Self::Error::InvalidStringLength);",
         "outcome": "tests_failed",
         "failing_test": "test::test_invalid_length",
         "equivalence_review": "not equivalent: odd-length input reports the wrong error variant"

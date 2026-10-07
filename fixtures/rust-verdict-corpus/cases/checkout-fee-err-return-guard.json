@@ -18,12 +18,14 @@
     "mutants": [
       {
         "replacement": "amount * 25",
+        "mutated_line": "amount * 25",
         "outcome": "tests_failed",
         "failing_test": "fees::tests::check_fee_returns_an_err_on_mismatch",
         "equivalence_review": "not equivalent: check_fee(500) becomes 12500"
       },
       {
         "replacement": "amount / 5",
+        "mutated_line": "amount / 5",
         "outcome": "tests_failed",
         "failing_test": "fees::tests::check_fee_returns_an_err_on_mismatch",
         "equivalence_review": "not equivalent: check_fee(500) becomes 100"

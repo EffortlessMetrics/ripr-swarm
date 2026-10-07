@@ -18,12 +18,14 @@
     "mutants": [
       {
         "replacement": "self.shipped_total = qty as u64;",
+        "mutated_line": "self.shipped_total = qty as u64;",
         "outcome": "tests_passed",
         "failing_test": null,
         "equivalence_review": "not equivalent: shipping 3 then 4 leaves a total of 4 instead of 7"
       },
       {
         "replacement": "self.shipped_total -= qty as u64;",
+        "mutated_line": "self.shipped_total -= qty as u64;",
         "outcome": "tests_failed",
         "failing_test": "tests::history_records_every_movement_in_order",
         "equivalence_review": "not equivalent: shipping 3 from a zero total underflows and panics in the debug test build instead of recording 3"

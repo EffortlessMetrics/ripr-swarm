@@ -18,18 +18,21 @@
     "mutants": [
       {
         "replacement": "None",
+        "mutated_line": "None",
         "outcome": "tests_failed",
         "failing_test": "tests::first_word_table",
         "equivalence_review": "not equivalent: first_word_table fails on it"
       },
       {
         "replacement": "Some(\"\")",
+        "mutated_line": "Some(\"\")",
         "outcome": "tests_failed",
         "failing_test": "tests::first_word_table",
         "equivalence_review": "not equivalent: first_word_table fails on it"
       },
       {
         "replacement": "Some(\"xyzzy\")",
+        "mutated_line": "Some(\"xyzzy\")",
         "outcome": "tests_failed",
         "failing_test": "tests::first_word_table",
         "equivalence_review": "not equivalent: first_word_table fails on it"

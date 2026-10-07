@@ -18,12 +18,14 @@
     "mutants": [
       {
         "replacement": "String::new()",
+        "mutated_line": "String::new()",
         "outcome": "tests_passed",
         "failing_test": null,
         "equivalence_review": "not equivalent: slug(\"Hello World\") is empty instead of hello-world; an empty string has no spaces or capitals"
       },
       {
         "replacement": "\"xyzzy\".into()",
+        "mutated_line": "\"xyzzy\".into()",
         "outcome": "tests_passed",
         "failing_test": null,
         "equivalence_review": "not equivalent: every slug is xyzzy, which has no spaces or capitals"

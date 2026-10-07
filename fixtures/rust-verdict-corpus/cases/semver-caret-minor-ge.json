@@ -18,12 +18,14 @@
     "mutants": [
       {
         "replacement": "minor < ver.minor",
+        "mutated_line": "return minor < ver.minor;",
         "outcome": "tests_failed",
         "failing_test": "test_caret",
         "equivalence_review": "not equivalent: ^1.2 stops matching 1.2.x"
       },
       {
         "replacement": "minor == ver.minor",
+        "mutated_line": "return minor == ver.minor;",
         "outcome": "tests_failed",
         "failing_test": "test_caret",
         "equivalence_review": "not equivalent: ^1.2 stops matching 1.3.0"

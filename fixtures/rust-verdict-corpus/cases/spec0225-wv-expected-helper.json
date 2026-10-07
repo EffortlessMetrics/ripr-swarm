@@ -18,12 +18,14 @@
     "mutants": [
       {
         "replacement": "retries: n + 2,",
+        "mutated_line": "retries: n + 2,",
         "outcome": "tests_failed",
         "failing_test": "tests::builds_config",
         "equivalence_review": "not equivalent: build(3) yields retries 5 instead of 4"
       },
       {
         "replacement": "retries: n,",
+        "mutated_line": "retries: n,",
         "outcome": "tests_failed",
         "failing_test": "tests::builds_config",
         "equivalence_review": "not equivalent: build(3) yields retries 3 instead of 4"

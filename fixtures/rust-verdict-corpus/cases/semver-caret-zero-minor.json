@@ -18,12 +18,14 @@
     "mutants": [
       {
         "replacement": "1 < minor",
+        "mutated_line": "} else if 1 < minor {",
         "outcome": "tests_failed",
         "failing_test": "test_caret",
         "equivalence_review": "not equivalent: ^0.1.x loses its minor-pinned branch"
       },
       {
         "replacement": "0 <= minor",
+        "mutated_line": "} else if 0 <= minor {",
         "outcome": "tests_passed",
         "failing_test": null,
         "equivalence_review": "not equivalent: ^0.0.1 starts matching 0.0.2"

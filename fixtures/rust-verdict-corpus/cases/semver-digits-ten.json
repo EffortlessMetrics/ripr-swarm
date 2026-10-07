@@ -18,15 +18,17 @@
     "mutants": [
       {
         "replacement": "10 >= val",
+        "mutated_line": "if 10 >= val {",
         "outcome": "tests_passed",
         "failing_test": null,
         "equivalence_review": "not equivalent: digits(10) returns 1, so format!(\"{:>8}\", Version::new(10, 0, 0)) pads one column too many; no test formats a padded version with a component equal to 10."
       },
       {
         "replacement": "10 == val",
+        "mutated_line": "if 10 == val {",
         "outcome": "tests_failed",
-        "failing_test": "test_version::test_align (stack overflow aborts the test binary)",
-        "equivalence_review": "not equivalent: digits recurses until the value divides down to exactly 10, so components such as 1, 2 and 3 recurse forever and overflow the stack."
+        "failing_test": "test_version::test_align",
+        "equivalence_review": "not equivalent: digits recurses until the value divides down to exactly 10, so components such as 1, 2 and 3 recurse forever and overflow the stack; observed failing tests: test_version::test_align (stack overflow aborts the test binary)"
       }
     ]
   },

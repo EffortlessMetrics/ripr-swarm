@@ -18,12 +18,14 @@
     "mutants": [
       {
         "replacement": "name.len() > 2",
+        "mutated_line": "name.len() > 2",
         "outcome": "tests_failed",
         "failing_test": "flow::tests::long_flags_have_two_letters",
         "equivalence_review": "not equivalent: --ab stops being long"
       },
       {
         "replacement": "name.len() >= 1",
+        "mutated_line": "name.len() >= 1",
         "outcome": "tests_failed",
         "failing_test": "flow::tests::long_flags_have_two_letters",
         "equivalence_review": "not equivalent: --a becomes long"

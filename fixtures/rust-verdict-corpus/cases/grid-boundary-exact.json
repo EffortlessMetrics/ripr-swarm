@@ -18,12 +18,14 @@
     "mutants": [
       {
         "replacement": "18 < age",
+        "mutated_line": "18 < age",
         "outcome": "tests_failed",
         "failing_test": "tests::eighteen_is_adult_and_seventeen_is_not",
         "equivalence_review": "not equivalent: eighteen_is_adult_and_seventeen_is_not fails on it"
       },
       {
         "replacement": "18 > age",
+        "mutated_line": "18 > age",
         "outcome": "tests_failed",
         "failing_test": "tests::eighteen_is_adult_and_seventeen_is_not",
         "equivalence_review": "not equivalent: eighteen_is_adult_and_seventeen_is_not fails on it"

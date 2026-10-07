@@ -18,12 +18,14 @@
     "mutants": [
       {
         "replacement": "height + width",
+        "mutated_line": "height + width",
         "outcome": "tests_failed",
         "failing_test": "tests::area_table",
         "equivalence_review": "not equivalent: area_table fails on it"
       },
       {
         "replacement": "height / width",
+        "mutated_line": "height / width",
         "outcome": "tests_failed",
         "failing_test": "tests::area_table",
         "equivalence_review": "not equivalent: area_table fails on it"

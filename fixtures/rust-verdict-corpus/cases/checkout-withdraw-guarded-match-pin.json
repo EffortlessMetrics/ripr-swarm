@@ -18,12 +18,14 @@
     "mutants": [
       {
         "replacement": "return Err(PayError::Limit);",
+        "mutated_line": "return Err(PayError::Limit);",
         "outcome": "tests_failed",
         "failing_test": "payment::tests::overdrawing_reports_insufficient",
         "equivalence_review": "not equivalent: overdrawing reports Limit"
       },
       {
         "replacement": "return Ok(0);",
+        "mutated_line": "return Ok(0);",
         "outcome": "tests_failed",
         "failing_test": "payment::tests::overdrawing_reports_insufficient",
         "equivalence_review": "not equivalent: overdrawing succeeds"

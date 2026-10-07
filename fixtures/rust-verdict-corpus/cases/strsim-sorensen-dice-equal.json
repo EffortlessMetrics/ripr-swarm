@@ -18,6 +18,7 @@
     "mutants": [
       {
         "replacement": "b != a",
+        "mutated_line": "if b != a {",
         "outcome": "tests_failed",
         "failing_test": "tests::sorensen_dice_all",
         "equivalence_review": "not equivalent: different strings return 1.0 and equal strings fall through to the bigram count."

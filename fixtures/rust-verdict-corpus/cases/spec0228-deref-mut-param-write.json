@@ -18,12 +18,14 @@
     "mutants": [
       {
         "replacement": "*p = v + 1;",
+        "mutated_line": "*p = v + 1;",
         "outcome": "tests_failed",
         "failing_test": "tests::store_writes_through_the_reference",
         "equivalence_review": "not equivalent: x becomes 6"
       },
       {
         "replacement": "*p = 0;",
+        "mutated_line": "*p = 0;",
         "outcome": "tests_failed",
         "failing_test": "tests::store_writes_through_the_reference",
         "equivalence_review": "not equivalent: x stays 0"

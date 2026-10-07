@@ -18,18 +18,21 @@
     "mutants": [
       {
         "replacement": "balance -= d;",
+        "mutated_line": "balance -= d;",
         "outcome": "tests_failed",
         "failing_test": "tests::deposits_never_lower_the_balance",
         "equivalence_review": "not equivalent: 0 - 1 overflows and panics before the assertion runs"
       },
       {
         "replacement": "balance *= d;",
+        "mutated_line": "balance *= d;",
         "outcome": "tests_passed",
         "failing_test": null,
         "equivalence_review": "not equivalent: the balance stays 0 for every deposit list; 0 >= 0 still holds"
       },
       {
         "replacement": "(delete the statement)",
+        "mutated_line": "",
         "outcome": "tests_passed",
         "failing_test": null,
         "equivalence_review": "not equivalent: the balance stays 0 for every deposit list; 0 >= 0 still holds"

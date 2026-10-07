@@ -18,12 +18,14 @@
     "mutants": [
       {
         "replacement": "count > 100",
+        "mutated_line": "count > 100",
         "outcome": "tests_failed",
         "failing_test": "limits::tests::bulk_starts_at_one_hundred",
         "equivalence_review": "not equivalent: exactly 100 is no longer bulk"
       },
       {
         "replacement": "count >= 99",
+        "mutated_line": "count >= 99",
         "outcome": "tests_failed",
         "failing_test": "limits::tests::bulk_starts_at_one_hundred",
         "equivalence_review": "not equivalent: 99 becomes bulk"

@@ -18,18 +18,21 @@
     "mutants": [
       {
         "replacement": "if a >= b { return x + 1 }",
+        "mutated_line": "if a >= b { return x + 1 }",
         "outcome": "tests_passed",
         "failing_test": null,
         "equivalence_review": "not equivalent: bump(1, 1, x) returns x + 1"
       },
       {
         "replacement": "if a < b { return x + 1 }",
+        "mutated_line": "if a < b { return x + 1 }",
         "outcome": "tests_failed",
         "failing_test": "tests::t",
         "equivalence_review": "not equivalent: bump(2, 1, 7) returns 7"
       },
       {
         "replacement": "if a > b { return x + 2 }",
+        "mutated_line": "if a > b { return x + 2 }",
         "outcome": "tests_failed",
         "failing_test": "tests::t",
         "equivalence_review": "not equivalent: bump(2, 1, 7) returns 9"

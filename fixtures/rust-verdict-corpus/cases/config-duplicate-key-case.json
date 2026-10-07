@@ -18,6 +18,7 @@
     "mutants": [
       {
         "replacement": "if pairs.iter().any(|(seen, _)| seen.eq_ignore_ascii_case(key)) {",
+        "mutated_line": null,
         "outcome": "tests_passed",
         "failing_test": null,
         "equivalence_review": "the edit itself: \"port = 1\\nPort = 2\" is rejected as DuplicateKey instead of yielding both pairs"

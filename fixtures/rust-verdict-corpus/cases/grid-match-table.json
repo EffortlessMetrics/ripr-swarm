@@ -18,12 +18,14 @@
     "mutants": [
       {
         "replacement": "(delete the match arm)",
+        "mutated_line": "",
         "outcome": "tests_failed",
         "failing_test": "tests::http_class_table",
         "equivalence_review": "not equivalent: http_class_table fails on it"
       },
       {
         "replacement": "0x3 => \"success\",",
+        "mutated_line": "0x3 => \"success\",",
         "outcome": "tests_failed",
         "failing_test": "tests::http_class_table",
         "equivalence_review": "not equivalent: http_class_table fails on it"

@@ -18,6 +18,7 @@
     "mutants": [
       {
         "replacement": "Err(_) => Err(ConfigError::InvalidPort {",
+        "mutated_line": null,
         "outcome": "tests_passed",
         "failing_test": null,
         "equivalence_review": "the edit itself: parse_port(\"0\") returns Ok(0) instead of InvalidPort"

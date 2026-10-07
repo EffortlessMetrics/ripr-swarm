@@ -18,18 +18,21 @@
     "mutants": [
       {
         "replacement": "count -= line.split_whitespace().count();",
+        "mutated_line": "count -= line.split_whitespace().count();",
         "outcome": "tests_failed",
         "failing_test": "tests::word_count_table",
         "equivalence_review": "not equivalent: word_count_table fails on it"
       },
       {
         "replacement": "count *= line.split_whitespace().count();",
+        "mutated_line": "count *= line.split_whitespace().count();",
         "outcome": "tests_failed",
         "failing_test": "tests::word_count_table",
         "equivalence_review": "not equivalent: word_count_table fails on it"
       },
       {
         "replacement": "(delete the statement)",
+        "mutated_line": "",
         "outcome": "tests_failed",
         "failing_test": "tests::word_count_table",
         "equivalence_review": "not equivalent: word_count_table fails on it"

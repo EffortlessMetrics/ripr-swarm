@@ -18,12 +18,14 @@
     "mutants": [
       {
         "replacement": "(State::Space, _) => State::Space,",
+        "mutated_line": "(State::Space, _) => State::Space,",
         "outcome": "tests_failed",
         "failing_test": "scan::tests::scanner_ends_in_the_last_state",
         "equivalence_review": "not equivalent: \"a b\" ends in Space"
       },
       {
         "replacement": "(State::Space, _) => State::Start,",
+        "mutated_line": "(State::Space, _) => State::Start,",
         "outcome": "tests_failed",
         "failing_test": "scan::tests::scanner_ends_in_the_last_state",
         "equivalence_review": "not equivalent: \"a b\" ends in Start"

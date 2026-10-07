@@ -404,6 +404,15 @@ fn committed_corpus_is_valid_and_measures_both_error_directions() -> Result<(), 
     Ok(())
 }
 
+/// Position of the first committed case matching `matches`, in assembled order.
+fn case_index(matches: impl Fn(&Value) -> bool) -> Result<usize, String> {
+    let raw = corpus_value(&repo_corpus_dir())?;
+    raw["cases"]
+        .as_array()
+        .and_then(|cases| cases.iter().position(matches))
+        .ok_or_else(|| "the committed corpus has no matching case".to_string())
+}
+
 fn tampered(edit: impl Fn(&mut Value)) -> Result<Vec<String>, String> {
     let dir = repo_corpus_dir();
     let mut raw = corpus_value(&dir)?;
@@ -422,6 +431,86 @@ fn validator_rejects_a_label_that_contradicts_its_mutant_outcomes() -> Result<()
         violations
             .iter()
             .any(|v| v.contains("does not follow from")),
+        "{violations:#?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn validator_requires_a_replayable_mutated_line_that_changes_the_anchor() -> Result<(), String> {
+    // The split layout assembles cases in file-name order, so locate the
+    // serde case by id rather than by position.
+    let i = case_index(|case| case["case_id"] == json!("serde-format-u8-hundreds"))?;
+    let missing = tampered(|raw| {
+        if let Some(mutant) = raw["cases"][i]["truth"]["mutants"][0].as_object_mut() {
+            mutant.remove("mutated_line");
+        }
+    })?;
+    assert!(
+        missing.iter().any(|v| v.contains("has no mutated_line")),
+        "{missing:#?}"
+    );
+    // The serde case edits `if n >= 100 {` to `if n > 99 {`; replaying that same
+    // line is a mutant that changes nothing.
+    let no_op = tampered(|raw| {
+        raw["cases"][i]["truth"]["mutants"][0]["mutated_line"] = json!("if n > 99 {");
+    })?;
+    assert!(
+        no_op
+            .iter()
+            .any(|v| v.contains("equals the edited anchor line")),
+        "{no_op:#?}"
+    );
+    let listed = tampered(|raw| {
+        raw["cases"][i]["truth"]["mutants"][0]["failing_test"] = json!("a, b (+3 more)");
+    })?;
+    assert!(
+        listed.iter().any(|v| v.contains("is not one test name")),
+        "{listed:#?}"
+    );
+    // Each half of the rule separately: an interior newline, and padding
+    // that would slip a no-op past the trimmed-anchor comparison.
+    for bad in ["if n > 100 {\nx", " if n > 99 {"] {
+        let shaped = tampered(|raw| {
+            raw["cases"][i]["truth"]["mutants"][0]["mutated_line"] = json!(bad);
+        })?;
+        assert!(
+            shaped
+                .iter()
+                .any(|v| v.contains("must be one trimmed line")),
+            "{bad:?}: {shaped:#?}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn validator_refuses_a_test_command_the_replay_cannot_run() -> Result<(), String> {
+    for command in [
+        "cargo test --manifest-path /elsewhere/Cargo.toml",
+        "make test",
+    ] {
+        let refused = tampered(|raw| {
+            raw["cases"][0]["truth"]["test_command"] = json!(command);
+        })?;
+        assert!(
+            refused.iter().any(|v| v.contains("cannot be replayed")),
+            "{command}: {refused:#?}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn validator_refuses_a_mutated_line_on_a_behavior_change() -> Result<(), String> {
+    let index = case_index(|case| case["edit_kind"] == json!("behavior_change"))?;
+    let violations = tampered(|raw| {
+        raw["cases"][index]["truth"]["mutants"][0]["mutated_line"] = json!("x");
+    })?;
+    assert!(
+        violations
+            .iter()
+            .any(|v| v.contains("whose mutant is the edit itself")),
         "{violations:#?}"
     );
     Ok(())

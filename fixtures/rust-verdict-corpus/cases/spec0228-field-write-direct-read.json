@@ -18,12 +18,14 @@
     "mutants": [
       {
         "replacement": "self.count += 2;",
+        "mutated_line": "self.count += 2;",
         "outcome": "tests_failed",
         "failing_test": "tests::tick_adds_one",
         "equivalence_review": "not equivalent: count becomes 2, not 1"
       },
       {
         "replacement": "self.count += 0;",
+        "mutated_line": "self.count += 0;",
         "outcome": "tests_failed",
         "failing_test": "tests::tick_adds_one",
         "equivalence_review": "not equivalent: count stays 0"

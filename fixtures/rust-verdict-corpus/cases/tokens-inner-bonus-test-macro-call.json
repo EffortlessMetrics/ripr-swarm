@@ -18,12 +18,14 @@
     "mutants": [
       {
         "replacement": "x + 5",
+        "mutated_line": "x + 5",
         "outcome": "tests_failed",
         "failing_test": "reach::tests::bonus_adds_four",
         "equivalence_review": "not equivalent: call_bonus!(1) becomes 6"
       },
       {
         "replacement": "x * 4",
+        "mutated_line": "x * 4",
         "outcome": "tests_failed",
         "failing_test": "reach::tests::bonus_adds_four",
         "equivalence_review": "not equivalent: call_bonus!(1) becomes 4"

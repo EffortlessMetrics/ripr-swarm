@@ -18,12 +18,14 @@
     "mutants": [
       {
         "replacement": "x * 4",
+        "mutated_line": "x * 4",
         "outcome": "tests_failed",
         "failing_test": "reach::tests::outer_triples",
         "equivalence_review": "not equivalent: outer(4) becomes 16"
       },
       {
         "replacement": "x + 3",
+        "mutated_line": "x + 3",
         "outcome": "tests_failed",
         "failing_test": "reach::tests::outer_triples",
         "equivalence_review": "not equivalent: outer(4) becomes 7"

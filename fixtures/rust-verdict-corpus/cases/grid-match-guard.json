@@ -18,18 +18,21 @@
     "mutants": [
       {
         "replacement": "n if true => -1,",
+        "mutated_line": "n if true => -1,",
         "outcome": "tests_failed",
         "failing_test": "tests::signs_of_three_values",
         "equivalence_review": "not equivalent: signs_of_three_values fails on it"
       },
       {
         "replacement": "n if false => -1,",
+        "mutated_line": "n if false => -1,",
         "outcome": "tests_failed",
         "failing_test": "tests::signs_of_three_values",
         "equivalence_review": "not equivalent: signs_of_three_values fails on it"
       },
       {
         "replacement": "n if 0 >= n => -1,",
+        "mutated_line": "n if 0 >= n => -1,",
         "outcome": "tests_failed",
         "failing_test": "tests::signs_of_three_values",
         "equivalence_review": "not equivalent: signs_of_three_values fails on it"

@@ -18,12 +18,14 @@
     "mutants": [
       {
         "replacement": "str::to_ascii_uppercase(variant)",
+        "mutated_line": "LowerCase => str::to_ascii_uppercase(variant),",
         "outcome": "tests_failed",
         "failing_test": "internals::case::rename_variants",
         "equivalence_review": "not equivalent: lowercase renames produce uppercase"
       },
       {
         "replacement": "variant.to_owned()",
+        "mutated_line": "LowerCase => variant.to_owned(),",
         "outcome": "tests_failed",
         "failing_test": "internals::case::rename_variants",
         "equivalence_review": "not equivalent: lowercase renames keep the original case"

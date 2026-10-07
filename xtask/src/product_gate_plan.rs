@@ -24,6 +24,7 @@ pub(crate) const TEST_RUNNER_CONTRACT: &str = "canonical_nextest_plus_cargo_doc"
 pub(crate) enum ProductGateId {
     Formatting,
     WorkspaceCheck,
+    AllFeaturesCheck,
     Clippy,
     WorkspaceTests,
     WorkspaceDocTests,
@@ -42,6 +43,7 @@ impl ProductGateId {
         match self {
             Self::Formatting => "product.rust.formatting",
             Self::WorkspaceCheck => "product.rust.workspace_check",
+            Self::AllFeaturesCheck => "product.rust.all_features_check",
             Self::Clippy => "product.rust.clippy",
             Self::WorkspaceTests => "product.rust.workspace_tests",
             Self::WorkspaceDocTests => "product.rust.workspace_doc_tests",
@@ -222,6 +224,14 @@ fn product_gate_definitions() -> Vec<ProductGateDefinition> {
             "cargo check --workspace --all-targets",
             "the workspace type-checks",
             "does not prove tests observe changed behavior",
+        ),
+        gate(
+            ProductGateId::AllFeaturesCheck,
+            ProductGateRole::Required,
+            rust.clone(),
+            "cargo check -p ripr --all-targets --all-features",
+            "feature-gated ripr targets, including tests, type-check",
+            "does not run or lint feature-gated tests",
         ),
         gate(
             ProductGateId::Clippy,

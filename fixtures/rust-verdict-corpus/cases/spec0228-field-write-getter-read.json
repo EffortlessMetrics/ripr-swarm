@@ -18,12 +18,14 @@
     "mutants": [
       {
         "replacement": "self.count += 2;",
+        "mutated_line": "self.count += 2;",
         "outcome": "tests_failed",
         "failing_test": "tests::advance_reads_back_through_the_getter",
         "equivalence_review": "not equivalent: count() returns 2"
       },
       {
         "replacement": "self.count += 0;",
+        "mutated_line": "self.count += 0;",
         "outcome": "tests_failed",
         "failing_test": "tests::advance_reads_back_through_the_getter",
         "equivalence_review": "not equivalent: count() returns 0"

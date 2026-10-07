@@ -18,12 +18,14 @@
     "mutants": [
       {
         "replacement": "count > DAILY_LIMIT",
+        "mutated_line": "count > DAILY_LIMIT",
         "outcome": "tests_failed",
         "failing_test": "limits::tests::the_daily_limit_is_inclusive",
         "equivalence_review": "not equivalent: exactly DAILY_LIMIT is no longer over"
       },
       {
         "replacement": "count >= DAILY_LIMIT - 1",
+        "mutated_line": "count >= DAILY_LIMIT - 1",
         "outcome": "tests_failed",
         "failing_test": "limits::tests::the_daily_limit_is_inclusive",
         "equivalence_review": "not equivalent: DAILY_LIMIT - 1 becomes over the limit"

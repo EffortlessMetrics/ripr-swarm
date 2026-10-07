@@ -18,6 +18,7 @@
     "mutants": [
       {
         "replacement": "patch > ver.patch",
+        "mutated_line": "return patch > ver.patch;",
         "outcome": "tests_failed",
         "failing_test": "test_multiple",
         "equivalence_review": "not equivalent: >1.2.3 starts matching 1.2.2 and stops matching 1.2.4"

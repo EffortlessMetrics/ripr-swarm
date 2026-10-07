@@ -18,18 +18,21 @@
     "mutants": [
       {
         "replacement": "(delete the statement)",
+        "mutated_line": "",
         "outcome": "tests_failed",
         "failing_test": "tests::miss_table",
         "equivalence_review": "not equivalent: miss_table fails on it"
       },
       {
         "replacement": "self.misses -= 1;",
+        "mutated_line": "self.misses -= 1;",
         "outcome": "tests_failed",
         "failing_test": "tests::miss_table",
         "equivalence_review": "not equivalent: miss_table fails on it"
       },
       {
         "replacement": "self.misses *= 1;",
+        "mutated_line": "self.misses *= 1;",
         "outcome": "tests_failed",
         "failing_test": "tests::miss_table",
         "equivalence_review": "not equivalent: miss_table fails on it"

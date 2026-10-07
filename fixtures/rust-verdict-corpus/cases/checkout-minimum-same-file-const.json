@@ -18,12 +18,14 @@
     "mutants": [
       {
         "replacement": "count <= MIN_ORDER",
+        "mutated_line": "count <= MIN_ORDER",
         "outcome": "tests_failed",
         "failing_test": "limits::tests::the_minimum_is_exclusive",
         "equivalence_review": "not equivalent: exactly MIN_ORDER counts as below"
       },
       {
         "replacement": "count < MIN_ORDER - 1",
+        "mutated_line": "count < MIN_ORDER - 1",
         "outcome": "tests_failed",
         "failing_test": "limits::tests::the_minimum_is_exclusive",
         "equivalence_review": "not equivalent: MIN_ORDER - 1 is no longer below"

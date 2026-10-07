@@ -18,12 +18,14 @@
     "mutants": [
       {
         "replacement": "xs.iter().map(|&x| x + 2).collect()",
+        "mutated_line": "xs.iter().map(|&x| x + 2).collect()",
         "outcome": "tests_failed",
         "failing_test": "tests::doubled_table",
         "equivalence_review": "not equivalent: doubled_table fails on it"
       },
       {
         "replacement": "xs.iter().map(|&x| x / 2).collect()",
+        "mutated_line": "xs.iter().map(|&x| x / 2).collect()",
         "outcome": "tests_failed",
         "failing_test": "tests::doubled_table",
         "equivalence_review": "not equivalent: doubled_table fails on it"

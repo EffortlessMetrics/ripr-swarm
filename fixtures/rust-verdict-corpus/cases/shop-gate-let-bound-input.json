@@ -18,12 +18,14 @@
     "mutants": [
       {
         "replacement": "value > 10",
+        "mutated_line": "value > 10",
         "outcome": "tests_failed",
         "failing_test": "tests::ten_passes_the_gate",
         "equivalence_review": "not equivalent: 10 no longer passes"
       },
       {
         "replacement": "value >= 9",
+        "mutated_line": "value >= 9",
         "outcome": "tests_failed",
         "failing_test": "tests::ten_passes_the_gate",
         "equivalence_review": "not equivalent: 9 passes"

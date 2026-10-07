@@ -18,12 +18,14 @@
     "mutants": [
       {
         "replacement": "days.iter().any(|&d| d >= 30)",
+        "mutated_line": "days.iter().any(|&d| d >= 30)",
         "outcome": "tests_failed",
         "failing_test": "tests::overdue_after_thirty_days",
         "equivalence_review": "not equivalent: overdue_after_thirty_days fails on it"
       },
       {
         "replacement": "days.iter().any(|&d| d < 30)",
+        "mutated_line": "days.iter().any(|&d| d < 30)",
         "outcome": "tests_failed",
         "failing_test": "tests::overdue_after_thirty_days",
         "equivalence_review": "not equivalent: overdue_after_thirty_days fails on it"

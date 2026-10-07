@@ -18,12 +18,14 @@
     "mutants": [
       {
         "replacement": "b'9' <= digit",
+        "mutated_line": "if digit < b'0' || b'9' <= digit {",
         "outcome": "tests_failed",
         "failing_test": "test_basic",
         "equivalence_review": "not equivalent: '9' stops being a digit"
       },
       {
         "replacement": "b':' < digit",
+        "mutated_line": "if digit < b'0' || b':' < digit {",
         "outcome": "tests_passed",
         "failing_test": null,
         "equivalence_review": "not equivalent: ':' becomes a digit with value 10, but no test parses a ':' right after a number"

@@ -1,6 +1,6 @@
 # RIPR-SPEC-0229: Match-arm selection names the unselected arm
 
-Status: proposed
+Status: accepted
 
 Owner: product / analysis
 
@@ -20,11 +20,14 @@ Linked plan:
 
 Linked issues:
 
-- #5432 (unknown-not-a-gap rule 3 withholds the canonical sibling-arm gap)
+- #5432 (a proposed unknown-not-a-gap rule 3 withheld the canonical
+  sibling-arm gap; that rule was dropped, #6666)
 
 Linked PRs:
 
-- #5416 (unknown, not a gap: rule 3 `rust_oracle_target_unresolved`)
+- #5416 (unknown, not a gap, RIPR-SPEC-0240; its proposed rule 3
+  `rust_oracle_target_unresolved` was dropped, #6666)
+- #5638 (first implementation; see Implementation Status)
 
 Support-tier impact:
 
@@ -58,9 +61,10 @@ Three wrong outcomes follow:
 
 1. **Correct gaps abstain.** `fixtures/match_arm_blind` has one test,
    `assert_eq!(reason(Some(5)), 6)`, and an added `None => 0` arm. No test
-   selects `None`. Under #5416 rule 3 a strong nearest oracle with no named
-   missing discriminator is withheld as `static_unknown`
-   (`rust_oracle_target_unresolved`), so a real gap reads as an analyzer limit.
+   selects `None`. With no named missing discriminator the gap has no
+   stated cause, and a rule that withholds a strong nearest oracle without one
+   (#5416's proposed rule 3, `rust_oracle_target_unresolved`, dropped for this
+   reason in #6666) reads the real gap as an analyzer limit.
    #5432 counts 24 findings across the `match_arm_*`,
    `error_path_diagnostic_*` and `owner_return_pin_identity_traps` fixtures
    on the same route.
@@ -126,16 +130,16 @@ selects the changed arm, activation emits one missing discriminator:
 Observed values keep their constructor (`Some(5)`, not `5`).
 
 The finding keeps its gap (`weakly_exposed` when a related test holds an
-oracle on the result, `reachable_unrevealed` when none does). Because a
-missing discriminator is named, the #5416 unknown-not-a-gap rule 3 does not
-withhold it.
+oracle on the result, `reachable_unrevealed` when none does), now with a
+named cause.
 
 When the change is to the arm's pattern rather than its body, the arm is
 named only when no resolved call selects it under either the original or
 the changed pattern: an input that moved between arms is a discriminator.
 
 When any related call is unresolved, or a guard blocks the decision, no
-missing discriminator is named. Rule 3 then applies unchanged.
+missing discriminator is named, and the finding keeps the class it would
+have without one.
 
 ### Crediting the selected arm
 
@@ -164,8 +168,7 @@ variant token in an assertion does not confirm the arm. This closes the
 expected-side confirmation in Problem item 3. When any related call is
 unresolved, token matching does not confirm the arm either: only a resolved
 selecting call with an exact oracle confirms, and otherwise the finding
-stays below `exposed` (under the #5416 unknown-not-a-gap rule 3 it reads
-`static_unknown` when its nearest oracle is strong).
+stays below `exposed`.
 
 ### Decisions
 
@@ -191,15 +194,97 @@ rejected alternative. Any can be reversed later without touching the rest.
    needs. Rejected: name the selection in the discriminate summary but keep the
    existing token rule for credit.
 
+### Implementation Status
+
+#5638 implements the Behavior above for a subset of the grammar. Everything
+outside the subset reads as not provable, which never names an arm and never
+credits one.
+
+Implemented:
+
+- integer, char, bool, and cooked or raw string literals, compared by value;
+- enum variant paths, qualified or bare imported, including `Some`, `None`,
+  `Ok` and `Err`, when the payload is only `_`, `..` or bare bindings;
+- or-patterns of these, and a top-level `_` or bare binding;
+- first-match order: a guarded earlier arm blocks selection, and an earlier
+  arm that provably matches means the input selects another arm;
+- a changed pattern earns no selection credit, and names the arm only when
+  neither the original nor the changed pattern selects any observed input.
+  A pattern whose alternatives were only reordered (`"CA" | "MX"` to
+  `"MX" | "CA"`) takes the same inputs and reads as unchanged.
+  A changed arm's original is the adjacent removed arm with the same
+  pattern, else the first adjacent removed line sharing a token. A
+  qualified enum name is such a token for every arm of a multi-line hunk,
+  so a token-paired original counts as read only when it shares an
+  alternative with the changed pattern. A token-paired original that
+  shares one may still be another arm of the hunk; the arm is then named
+  against that arm's pattern;
+- selection outranks tokens whenever the scrutinee is a direct owner input.
+  A test that never names the owner (it reaches it only through a wrapper)
+  passes no input to read, so its assertion tokens confirm as they did
+  before selection (#6297, `match_arm_proximity_wrapper_confirms`). An
+  owner imported under an alias in the test's file, or a file whose imports
+  were not read, counts as naming it. A wrapper-only test whose expected
+  side names a sibling variant therefore still confirms, as on main.
+
+Not yet implemented (each reads as not provable):
+
+- integer ranges, tuple patterns, refutable payload subpatterns and `@`;
+- arguments resolved through an immutable `let` in the test;
+- credit through a `let` binding of the call (RIPR-SPEC-0186 pairing);
+- credit for an input that moved between arms with unequal literal results.
+
+The implementation adds these fail-closed conditions, which the Behavior
+implies but does not spell out:
+
+- a `self` receiver is a scrutinee like a parameter, when it cannot change
+  before the `match` (a `mut self`, `&mut self`, `self: &mut Self` or
+  `self: Pin<&mut Self>` receiver used anywhere else refuses);
+- a free owner called through a path (`a::reason(..)`) is read only when
+  the path starts with `crate`, `self`, `super`, `Self`, the owner's impl
+  type, or the indexed root package or its lib target (a `pub use`
+  re-export under that root is not resolved);
+- selection credit requires the `match` to be the owner body's first
+  unconditional expression, since a nested, short-circuited or
+  early-returned match may never run;
+- a test that may reach the owner through a helper (at any depth) or a
+  non-standard macro (however its `!` is spaced) has an unresolved call;
+- a test whose file imports a foreign same-named function, or whose package
+  defines one, has an unresolved call;
+- a qualified input whose type is neither `Self` nor the scrutinee's type
+  is unresolved, as is one whose path above the type starts outside the
+  workspace roots (`other_crate::RenameRule::LowerCase`). An owner name
+  that is not unique in a complete workspace establishes nothing;
+- a bare variant input (`LowerCase`) is unresolved when the test's file
+  imports that name from a path whose type segment is not the scrutinee's
+  type, renames an import to it, or glob-imports another type's variants
+  (`use other::OtherRule::*`). A bare or type-qualified input
+  (`RenameRule::LowerCase`) is also unresolved when the file imports its
+  leading name from outside the workspace roots
+  (`use other_crate::RenameRule;`). A module glob in a test file
+  (`use other_crate::prelude::*`) is not read and stays a known gap;
+- a bare lowercase pattern (`target =>`) is a binding only when the owner's
+  file declares no `const` or `static` of that name, imports no item by
+  that name, and has no glob import of a module, since Rust compares a
+  pattern that names a constant by value;
+- only an `assert_eq!` operand confirms a selected arm: any `assert_ne!`
+  form (`debug_assert_ne!`, `prop_assert_ne!`) passes for many arm results
+  (`assert_ne!(reason(None), 2)` holds whether the arm yields 0 or 1);
+- an `assert_eq!` whose every operand names the owner
+  (`assert_eq!(reason(None), (reason(None)))`) never confirms, nor does
+  any assertion in a test that binds an owner call's result with `let`,
+  since that value may stand on the expected side and move with the arm.
+  The module-glob rule for bindings above is broad: a `use super::*` in an
+  inline test module of the owner's file demotes every binding arm there.
+
 ## Required Evidence
 
 - `fixtures/match_arm_blind` reads `weakly_exposed` with a missing
-  discriminator whose `value` is `None`, on main and with the #5416
-  unknown-not-a-gap rules applied.
+  discriminator whose `value` is `None`, on main and with RIPR-SPEC-0240
+  applied (0240 does not touch `weakly_exposed`).
 - A selected-arm control (`assert_eq!(reason(None), 0)`) reads `exposed`.
-- An unresolved-input control reads no named missing discriminator; with
-  the #5416 unknown-not-a-gap rules applied it reads `static_unknown` with
-  `rust_oracle_target_unresolved`.
+- An unresolved-input control reads no named missing discriminator and is
+  not upgraded.
 - A guarded-arm control reads no named missing discriminator.
 - The expected-side trap reads below `exposed`.
 - Golden drift on the #5432 list is reviewed row by row: each finding that
@@ -226,8 +311,7 @@ the diff changes `None => 1` to `None => 0`.
    `Some(5)`.
 2. Test `assert_eq!(reason(None), 0)`: `exposed`.
 3. Test `let x = make(); assert_eq!(reason(x), 6)`: no named missing
-   discriminator; `static_unknown` / `rust_oracle_target_unresolved` under
-   the #5416 unknown-not-a-gap rule 3.
+   discriminator; stays below `exposed`.
 4. `match k { Kind::A => 1, _ => 2 }`, the diff changes `_ => 0` to `_ => 2`, test
    `assert_eq!(f(Kind::A), 1)`: `weakly_exposed`; missing discriminator
    `value` `_`.
@@ -241,8 +325,7 @@ the diff changes `None => 1` to `None => 0`.
    `weakly_exposed`; missing discriminator `value` `1..=9`.
 8. Same `match`, the diff changes the pattern `1..=8` to `1..=9`. Test
    `assert_eq!(f(5), "digit")`: not `exposed` (5 selects the arm under both
-   patterns) and no missing discriminator is named, so with a strong oracle
-   the #5416 unknown-not-a-gap rule 3 reads it `static_unknown`. Naming the
+   patterns) and no missing discriminator is named. Naming the
    boundary input (`9`) as missing, as RIPR-SPEC-0186 does for predicates,
    is a follow-up.
    Test `assert_eq!(f(9), "digit")`: `exposed` (9 moved from `_` to the
@@ -255,21 +338,36 @@ the diff changes `None => 1` to `None => 0`.
 
 - `fixtures/match_arm_blind` (example 1, with the arm added rather than
   changed; the expected result is the same)
-- Planned: one fixture or verdict-corpus case per acceptance example 2 to 9.
-- Planned: `crates/ripr/src/analysis/classify/activation.rs` unit tests for
-  each grammar element, guard blocking, first-match order and unresolved
-  arguments.
-- Planned: a `gap_admission` test showing rule 3 keeps the gap once the arm is
-  named.
+- `fixtures/match_arm_selected_credit` (example 2, with the arm added)
+- `fixtures/match_arm_expected_side_trap` (example 6)
+- `crates/ripr/src/analysis/classify/arm_selection.rs` unit tests: grammar
+  elements, first-match order (examples 4 and 5), changed patterns, unread
+  inputs, matches the call may skip, mutable typed receivers and foreign
+  call paths.
+- `crates/ripr/tests/match_arm_unselected_identity.rs`: owner identity
+  (foreign imports, a foreign call path, a shadowing closure, a two-level
+  helper).
+- Planned: fixtures for examples 3, 7, 8 and 9 once ranges and `let`
+  arguments are implemented.
 
 ## Implementation Mapping
 
+- `crates/ripr/src/analysis/classify/arm_selection.rs`: pattern and input
+  reading, scrutinee binding and first-match selection.
 - `crates/ripr/src/analysis/classify/activation.rs`: selection facts and the
   `match_arm` missing discriminator; keep constructors on observed values.
+- `crates/ripr/src/analysis/classify/infection.rs`: an unselected arm reads
+  weak infection.
+- `crates/ripr/src/analysis/classifier/evidence.rs`: selector gating and the
+  owner-identity defeats for a named arm.
 - `crates/ripr/src/analysis/classify/reveal.rs`: selection confirmation and
   the selection-outranks-tokens gate.
-- `crates/ripr/src/analysis/classify/gap_admission.rs` (#5416): no change;
-  rule 3 already keeps a gap with a named missing discriminator.
+- `crates/ripr/src/analysis/probes/diff.rs`: a changed arm pairs with the
+  removed arm of the same pattern.
+- `crates/ripr/src/domain/probe.rs` (`input_boundary_fact`) and
+  `crates/ripr/src/output/related_test_miss.rs`: an examined test of a named
+  arm misses an input (`missing_input`, "no test input selects arm"), not an
+  exact assertion (RIPR-SPEC-0224).
 
 ## Metrics
 

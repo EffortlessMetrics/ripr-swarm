@@ -18,12 +18,14 @@
     "mutants": [
       {
         "replacement": "let year: i32 = text.parse().unwrap_or(0);",
+        "mutated_line": "let year: i32 = text.parse().unwrap_or(0);",
         "outcome": "tests_failed",
         "failing_test": "tests::years_parse",
         "equivalence_review": "not equivalent: years_parse fails on it"
       },
       {
         "replacement": "let year: i32 = text.parse().unwrap_or(1970);",
+        "mutated_line": "let year: i32 = text.parse().unwrap_or(1970);",
         "outcome": "tests_failed",
         "failing_test": "tests::years_parse",
         "equivalence_review": "not equivalent: years_parse fails on it"

@@ -18,12 +18,14 @@
     "mutants": [
       {
         "replacement": "self.state = JobState::Idle;",
+        "mutated_line": "self.state = JobState::Idle;",
         "outcome": "tests_failed",
         "failing_test": "tests::finish_marks_done",
         "equivalence_review": "not equivalent: state is Idle, not Done"
       },
       {
         "replacement": "self.state = JobState::Running;",
+        "mutated_line": "self.state = JobState::Running;",
         "outcome": "tests_failed",
         "failing_test": "tests::finish_marks_done",
         "equivalence_review": "not equivalent: state stays Running"

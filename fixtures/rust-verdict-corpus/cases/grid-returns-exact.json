@@ -18,12 +18,14 @@
     "mutants": [
       {
         "replacement": "String::new()",
+        "mutated_line": "String::new()",
         "outcome": "tests_failed",
         "failing_test": "tests::greets_by_name",
         "equivalence_review": "not equivalent: greets_by_name fails on it"
       },
       {
         "replacement": "\"xyzzy\".into()",
+        "mutated_line": "\"xyzzy\".into()",
         "outcome": "tests_failed",
         "failing_test": "tests::greets_by_name",
         "equivalence_review": "not equivalent: greets_by_name fails on it"

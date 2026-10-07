@@ -18,12 +18,14 @@
     "mutants": [
       {
         "replacement": "available: qty,",
+        "mutated_line": "available: qty,",
         "outcome": "tests_passed",
         "failing_test": null,
         "equivalence_review": "not equivalent: shipping 9 of 4 reports available 9 instead of 4"
       },
       {
         "replacement": "available: 0,",
+        "mutated_line": "available: 0,",
         "outcome": "tests_passed",
         "failing_test": null,
         "equivalence_review": "not equivalent: shipping 9 of 4 reports available 0 instead of 4"

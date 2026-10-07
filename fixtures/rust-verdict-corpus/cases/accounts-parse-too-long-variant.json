@@ -18,18 +18,21 @@
     "mutants": [
       {
         "replacement": "return Err(ParseError::Empty);",
+        "mutated_line": "return Err(ParseError::Empty);",
         "outcome": "tests_passed",
         "failing_test": null,
         "equivalence_review": "not equivalent: too-long text reports Empty"
       },
       {
         "replacement": "return Err(ParseError::TooLong(0));",
+        "mutated_line": "return Err(ParseError::TooLong(0));",
         "outcome": "tests_passed",
         "failing_test": null,
         "equivalence_review": "not equivalent: the reported length is 0"
       },
       {
         "replacement": "return Ok(0);",
+        "mutated_line": "return Ok(0);",
         "outcome": "tests_failed",
         "failing_test": "parse::tests::too_many_digits_are_refused",
         "equivalence_review": "not equivalent: thirteen digits parse as 0"

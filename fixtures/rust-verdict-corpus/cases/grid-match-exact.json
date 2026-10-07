@@ -18,12 +18,14 @@
     "mutants": [
       {
         "replacement": "(delete the match arm)",
+        "mutated_line": "",
         "outcome": "tests_failed",
         "failing_test": "tests::canada_is_zone_two",
         "equivalence_review": "not equivalent: canada_is_zone_two fails on it"
       },
       {
         "replacement": "\"MX\" | \"CA\" => 1,",
+        "mutated_line": "\"MX\" | \"CA\" => 1,",
         "outcome": "tests_failed",
         "failing_test": "tests::canada_is_zone_two",
         "equivalence_review": "not equivalent: canada_is_zone_two fails on it"

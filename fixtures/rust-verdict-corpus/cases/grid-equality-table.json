@@ -18,12 +18,14 @@
     "mutants": [
       {
         "replacement": "day % 7 != 6 || day % 7 == 0",
+        "mutated_line": "day % 7 != 6 || day % 7 == 0",
         "outcome": "tests_failed",
         "failing_test": "tests::weekend_table",
         "equivalence_review": "not equivalent: weekend_table fails on it"
       },
       {
         "replacement": "day % 7 == 6 || day % 7 != 0",
+        "mutated_line": "day % 7 == 6 || day % 7 != 0",
         "outcome": "tests_failed",
         "failing_test": "tests::weekend_table",
         "equivalence_review": "not equivalent: weekend_table fails on it"

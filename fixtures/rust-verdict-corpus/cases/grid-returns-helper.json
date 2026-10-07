@@ -18,18 +18,21 @@
     "mutants": [
       {
         "replacement": "vec![]",
+        "mutated_line": "vec![]",
         "outcome": "tests_failed",
         "failing_test": "tests::tags_are_trimmed",
         "equivalence_review": "not equivalent: tags_are_trimmed fails on it"
       },
       {
         "replacement": "vec![String::new()]",
+        "mutated_line": "vec![String::new()]",
         "outcome": "tests_failed",
         "failing_test": "tests::tags_are_trimmed",
         "equivalence_review": "not equivalent: tags_are_trimmed fails on it"
       },
       {
         "replacement": "vec![\"xyzzy\".into()]",
+        "mutated_line": "vec![\"xyzzy\".into()]",
         "outcome": "tests_failed",
         "failing_test": "tests::tags_are_trimmed",
         "equivalence_review": "not equivalent: tags_are_trimmed fails on it"

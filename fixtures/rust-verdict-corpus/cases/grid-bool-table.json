@@ -18,18 +18,21 @@
     "mutants": [
       {
         "replacement": "large && flagged",
+        "mutated_line": "large && flagged",
         "outcome": "tests_failed",
         "failing_test": "tests::review_table",
         "equivalence_review": "not equivalent: review_table fails on it"
       },
       {
         "replacement": "true",
+        "mutated_line": "true",
         "outcome": "tests_failed",
         "failing_test": "tests::review_table",
         "equivalence_review": "not equivalent: review_table fails on it"
       },
       {
         "replacement": "false",
+        "mutated_line": "false",
         "outcome": "tests_failed",
         "failing_test": "tests::review_table",
         "equivalence_review": "not equivalent: review_table fails on it"

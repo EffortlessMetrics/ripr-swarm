@@ -18,18 +18,21 @@
     "mutants": [
       {
         "replacement": "if 100 >= total {",
+        "mutated_line": "if 100 >= total {",
         "outcome": "tests_failed",
         "failing_test": "tests::small_orders_get_no_discount",
         "equivalence_review": "not equivalent: small_orders_get_no_discount fails on it"
       },
       {
         "replacement": "if true {",
+        "mutated_line": "if true {",
         "outcome": "tests_failed",
         "failing_test": "tests::small_orders_get_no_discount",
         "equivalence_review": "not equivalent: small_orders_get_no_discount fails on it"
       },
       {
         "replacement": "if false {",
+        "mutated_line": "if false {",
         "outcome": "tests_failed",
         "failing_test": "tests::small_orders_get_no_discount",
         "equivalence_review": "not equivalent: small_orders_get_no_discount fails on it"

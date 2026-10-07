@@ -18,12 +18,14 @@
     "mutants": [
       {
         "replacement": "y != 0 && x == 0",
+        "mutated_line": "y != 0 && x == 0",
         "outcome": "tests_failed",
         "failing_test": "tests::origin_is_zero_zero",
         "equivalence_review": "not equivalent: origin_is_zero_zero fails on it"
       },
       {
         "replacement": "y == 0 && x != 0",
+        "mutated_line": "y == 0 && x != 0",
         "outcome": "tests_failed",
         "failing_test": "tests::origin_is_zero_zero",
         "equivalence_review": "not equivalent: origin_is_zero_zero fails on it"

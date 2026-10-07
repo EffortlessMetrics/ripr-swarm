@@ -18,24 +18,28 @@
     "mutants": [
       {
         "replacement": "!banned || has_ticket",
+        "mutated_line": "!banned || has_ticket",
         "outcome": "tests_failed",
         "failing_test": "tests::no_ticket_never_enters",
         "equivalence_review": "not equivalent: no_ticket_never_enters fails on it"
       },
       {
         "replacement": "banned && has_ticket",
+        "mutated_line": "banned && has_ticket",
         "outcome": "tests_passed",
         "failing_test": null,
         "equivalence_review": "not equivalent: can_enter(true, false) becomes false; the property only tries has_ticket = false"
       },
       {
         "replacement": "true",
+        "mutated_line": "true",
         "outcome": "tests_failed",
         "failing_test": "tests::no_ticket_never_enters",
         "equivalence_review": "not equivalent: no_ticket_never_enters fails on it"
       },
       {
         "replacement": "false",
+        "mutated_line": "false",
         "outcome": "tests_passed",
         "failing_test": null,
         "equivalence_review": "not equivalent: can_enter(true, false) becomes false"

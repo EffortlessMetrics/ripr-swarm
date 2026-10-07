@@ -18,9 +18,10 @@
     "mutants": [
       {
         "replacement": "SQLITE_SINGLETHREADED_MUTEX_MAGIC != mutex_ptr as usize",
+        "mutated_line": "let is_singlethreaded = SQLITE_SINGLETHREADED_MUTEX_MAGIC != mutex_ptr as usize;",
         "outcome": "tests_failed",
-        "failing_test": "busy::test::test_default_busy (133 lib tests fail; every test that opens a Connection)",
-        "equivalence_review": "not equivalent: a real mutex pointer is never 8, so every connection open returns SqliteSingleThreadedMode."
+        "failing_test": "busy::test::test_default_busy",
+        "equivalence_review": "not equivalent: a real mutex pointer is never 8, so every connection open returns SqliteSingleThreadedMode; observed failing tests: busy::test::test_default_busy (133 lib tests fail; every test that opens a Connection)"
       }
     ]
   },

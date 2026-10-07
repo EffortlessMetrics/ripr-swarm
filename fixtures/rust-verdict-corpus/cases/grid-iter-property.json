@@ -18,12 +18,14 @@
     "mutants": [
       {
         "replacement": "ages.iter().filter(|&&a| a > 18).count()",
+        "mutated_line": "ages.iter().filter(|&&a| a > 18).count()",
         "outcome": "tests_passed",
         "failing_test": null,
         "equivalence_review": "not equivalent: count_adults(&[18]) is 0 instead of 1; the property only uses age 40"
       },
       {
         "replacement": "ages.iter().filter(|&&a| a < 18).count()",
+        "mutated_line": "ages.iter().filter(|&&a| a < 18).count()",
         "outcome": "tests_failed",
         "failing_test": "tests::all_adult_groups_count_fully",
         "equivalence_review": "not equivalent: all_adult_groups_count_fully fails on it"

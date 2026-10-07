@@ -18,18 +18,21 @@
     "mutants": [
       {
         "replacement": "(delete the statement)",
+        "mutated_line": "",
         "outcome": "tests_passed",
         "failing_test": null,
         "equivalence_review": "not equivalent: evictions stays 0 instead of 1"
       },
       {
         "replacement": "self.evictions -= 1;",
+        "mutated_line": "self.evictions -= 1;",
         "outcome": "tests_failed",
         "failing_test": "tests::eviction_smoke",
         "equivalence_review": "not equivalent: 0 - 1 overflows; the smoke test fails only because the debug build panics"
       },
       {
         "replacement": "self.evictions *= 1;",
+        "mutated_line": "self.evictions *= 1;",
         "outcome": "tests_passed",
         "failing_test": null,
         "equivalence_review": "not equivalent: evictions stays 0 instead of 1"

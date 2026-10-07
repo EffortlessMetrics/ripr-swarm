@@ -9,4 +9,5 @@
   and `corpus_version` is gone, so parallel case PRs add files instead of
   conflicting on shared arrays. New `check --cases <id,...>` for the inner
   loop, `bless` to re-bless, and `split` to migrate a branch written against
-  the one-file layout.
+  the one-file layout. The public-proof page assembles its
+  verdict receipt from `expected/` (#6658).

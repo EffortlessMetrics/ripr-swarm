@@ -18,12 +18,14 @@
     "mutants": [
       {
         "replacement": "let value: u8 = text.trim_end_matches('%').parse().unwrap_or(0);",
+        "mutated_line": "let value: u8 = text.trim_end_matches('%').parse().unwrap_or(0);",
         "outcome": "tests_failed",
         "failing_test": "tests::percent_table",
         "equivalence_review": "not equivalent: percent_table fails on it"
       },
       {
         "replacement": "let value: u8 = text.trim_end_matches('%').parse().unwrap_or(100);",
+        "mutated_line": "let value: u8 = text.trim_end_matches('%').parse().unwrap_or(100);",
         "outcome": "tests_failed",
         "failing_test": "tests::percent_table",
         "equivalence_review": "not equivalent: percent_table fails on it"

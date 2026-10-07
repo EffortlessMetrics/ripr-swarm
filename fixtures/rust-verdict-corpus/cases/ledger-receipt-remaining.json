@@ -18,12 +18,14 @@
     "mutants": [
       {
         "replacement": "remaining: available,",
+        "mutated_line": "remaining: available,",
         "outcome": "tests_failed",
         "failing_test": "tests::shipping_returns_a_receipt_and_lowers_stock",
         "equivalence_review": "not equivalent: shipping 3 of 10 reports remaining 10 instead of 7"
       },
       {
         "replacement": "remaining: qty,",
+        "mutated_line": "remaining: qty,",
         "outcome": "tests_failed",
         "failing_test": "tests::shipping_returns_a_receipt_and_lowers_stock",
         "equivalence_review": "not equivalent: shipping 3 of 10 reports remaining 3 instead of 7"

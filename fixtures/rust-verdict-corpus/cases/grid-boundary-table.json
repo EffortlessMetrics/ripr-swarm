@@ -18,12 +18,14 @@
     "mutants": [
       {
         "replacement": "5_000 < cents",
+        "mutated_line": "5_000 < cents",
         "outcome": "tests_failed",
         "failing_test": "tests::free_shipping_table",
         "equivalence_review": "not equivalent: free_shipping_table fails on it"
       },
       {
         "replacement": "5_000 > cents",
+        "mutated_line": "5_000 > cents",
         "outcome": "tests_failed",
         "failing_test": "tests::free_shipping_table",
         "equivalence_review": "not equivalent: free_shipping_table fails on it"

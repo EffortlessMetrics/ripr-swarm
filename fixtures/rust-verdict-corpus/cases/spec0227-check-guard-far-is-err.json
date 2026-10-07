@@ -18,12 +18,14 @@
     "mutants": [
       {
         "replacement": "if len > 256 { return Err(E::TooLong); }",
+        "mutated_line": "if len > 256 { return Err(E::TooLong); }",
         "outcome": "tests_passed",
         "failing_test": null,
         "equivalence_review": "not equivalent: check_far(256) returns Ok(256)"
       },
       {
         "replacement": "if len >= 255 { return Err(E::TooLong); }",
+        "mutated_line": "if len >= 255 { return Err(E::TooLong); }",
         "outcome": "tests_passed",
         "failing_test": null,
         "equivalence_review": "not equivalent: check_far(255) returns Err(TooLong)"

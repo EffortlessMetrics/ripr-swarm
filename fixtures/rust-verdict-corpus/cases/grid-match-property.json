@@ -18,12 +18,14 @@
     "mutants": [
       {
         "replacement": "(delete the match arm)",
+        "mutated_line": "",
         "outcome": "tests_failed",
         "failing_test": "tests::neighbours_cost_less_than_overseas",
         "equivalence_review": "not equivalent: neighbours_cost_less_than_overseas fails on it"
       },
       {
         "replacement": "\"DE\" | \"FR\" => 1,",
+        "mutated_line": "\"DE\" | \"FR\" => 1,",
         "outcome": "tests_passed",
         "failing_test": null,
         "equivalence_review": "not equivalent: postage_zone(\"FR\") is 1 instead of 2, still below the overseas zone 3"

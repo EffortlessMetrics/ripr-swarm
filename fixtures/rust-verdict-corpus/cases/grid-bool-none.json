@@ -18,18 +18,21 @@
     "mutants": [
       {
         "replacement": "attempts_left || timed_out",
+        "mutated_line": "attempts_left || timed_out",
         "outcome": "tests_passed",
         "failing_test": null,
         "equivalence_review": "not equivalent: should_retry(true, false) becomes true"
       },
       {
         "replacement": "true",
+        "mutated_line": "true",
         "outcome": "tests_passed",
         "failing_test": null,
         "equivalence_review": "not equivalent: should_retry(true, false) becomes true"
       },
       {
         "replacement": "false",
+        "mutated_line": "false",
         "outcome": "tests_passed",
         "failing_test": null,
         "equivalence_review": "not equivalent: should_retry(true, true) becomes false"

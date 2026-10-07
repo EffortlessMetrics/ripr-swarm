@@ -18,18 +18,21 @@
     "mutants": [
       {
         "replacement": "false != hidden",
+        "mutated_line": "false != hidden",
         "outcome": "tests_failed",
         "failing_test": "tests::hidden_items_are_not_visible",
         "equivalence_review": "not equivalent: hidden_items_are_not_visible fails on it"
       },
       {
         "replacement": "true",
+        "mutated_line": "true",
         "outcome": "tests_failed",
         "failing_test": "tests::hidden_items_are_not_visible",
         "equivalence_review": "not equivalent: hidden_items_are_not_visible fails on it"
       },
       {
         "replacement": "false",
+        "mutated_line": "false",
         "outcome": "tests_failed",
         "failing_test": "tests::hidden_items_are_not_visible",
         "equivalence_review": "not equivalent: hidden_items_are_not_visible fails on it"

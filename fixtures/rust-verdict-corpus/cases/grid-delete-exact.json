@@ -18,18 +18,21 @@
     "mutants": [
       {
         "replacement": "(delete the statement)",
+        "mutated_line": "",
         "outcome": "tests_failed",
         "failing_test": "tests::one_hit_counts_one",
         "equivalence_review": "not equivalent: one_hit_counts_one fails on it"
       },
       {
         "replacement": "self.hits -= 1;",
+        "mutated_line": "self.hits -= 1;",
         "outcome": "tests_failed",
         "failing_test": "tests::one_hit_counts_one",
         "equivalence_review": "not equivalent: one_hit_counts_one fails on it"
       },
       {
         "replacement": "self.hits *= 1;",
+        "mutated_line": "self.hits *= 1;",
         "outcome": "tests_failed",
         "failing_test": "tests::one_hit_counts_one",
         "equivalence_review": "not equivalent: one_hit_counts_one fails on it"

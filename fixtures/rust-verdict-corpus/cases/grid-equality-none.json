@@ -18,18 +18,21 @@
     "mutants": [
       {
         "replacement": "443 != port",
+        "mutated_line": "443 != port",
         "outcome": "tests_passed",
         "failing_test": null,
         "equivalence_review": "not equivalent: is_default_port(443) becomes false"
       },
       {
         "replacement": "true",
+        "mutated_line": "true",
         "outcome": "tests_passed",
         "failing_test": null,
         "equivalence_review": "not equivalent: is_default_port(8080) becomes true"
       },
       {
         "replacement": "false",
+        "mutated_line": "false",
         "outcome": "tests_passed",
         "failing_test": null,
         "equivalence_review": "not equivalent: is_default_port(443) becomes false"

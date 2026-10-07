@@ -18,18 +18,21 @@
     "mutants": [
       {
         "replacement": "sent -= p;",
+        "mutated_line": "sent -= p;",
         "outcome": "tests_failed",
         "failing_test": "tests::bytes_sent_smoke",
         "equivalence_review": "not equivalent: 0 - 512 overflows; the smoke test fails only because the debug build panics"
       },
       {
         "replacement": "sent *= p;",
+        "mutated_line": "sent *= p;",
         "outcome": "tests_passed",
         "failing_test": null,
         "equivalence_review": "not equivalent: bytes_sent(&[512, 1024]) is 0 instead of 1536"
       },
       {
         "replacement": "(delete the statement)",
+        "mutated_line": "",
         "outcome": "tests_passed",
         "failing_test": null,
         "equivalence_review": "not equivalent: bytes_sent(&[512, 1024]) is 0 instead of 1536"

@@ -18,12 +18,14 @@
     "mutants": [
       {
         "replacement": "x",
+        "mutated_line": "x",
         "outcome": "tests_failed",
         "failing_test": "reach::tests::score_doubles_the_stepped_magnitude",
         "equivalence_review": "not equivalent: score(-3) becomes -4"
       },
       {
         "replacement": "-x",
+        "mutated_line": "-x",
         "outcome": "tests_passed",
         "failing_test": null,
         "equivalence_review": "not equivalent: positive inputs are negated, but the only test passes -3"

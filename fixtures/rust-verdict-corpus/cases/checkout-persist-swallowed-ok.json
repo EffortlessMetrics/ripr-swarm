@@ -18,12 +18,14 @@
     "mutants": [
       {
         "replacement": "store.save(units * 2).ok();",
+        "mutated_line": "store.save(units * 2).ok();",
         "outcome": "tests_failed",
         "failing_test": "store::tests::persist_stores_three_per_unit",
         "equivalence_review": "not equivalent: 2 units store 4"
       },
       {
         "replacement": "(delete the statement)",
+        "mutated_line": "",
         "outcome": "tests_failed",
         "failing_test": "store::tests::persist_stores_three_per_unit",
         "equivalence_review": "not equivalent: nothing is stored"

@@ -18,6 +18,7 @@
     "mutants": [
       {
         "replacement": "pub const FLAT_SHIPPING_CENTS: u64 = 599;",
+        "mutated_line": null,
         "outcome": "tests_passed",
         "failing_test": null,
         "equivalence_review": "the edit itself: an order under 5000 cents is charged 599 instead of 499"

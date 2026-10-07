@@ -18,9 +18,10 @@
     "mutants": [
       {
         "replacement": "bytes <= unit",
+        "mutated_line": null,
         "outcome": "tests_failed",
         "failing_test": "tests::test_display",
-        "equivalence_review": "the edit itself: exactly one unit formats as \"1024 B\" instead of \"1.0 KiB\""
+        "equivalence_review": "the edit itself: exactly one unit formats as the raw byte count instead of one unit (\"1000 B\" instead of \"1.0 KB\" in test_display; \"1024 B\" instead of \"1.0 kiB\" in test_to_string_as)"
       }
     ]
   },

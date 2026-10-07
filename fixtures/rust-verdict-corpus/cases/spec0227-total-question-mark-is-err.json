@@ -18,12 +18,14 @@
     "mutants": [
       {
         "replacement": "let d = digit(c).unwrap_or(0);",
+        "mutated_line": "let d = digit(c).unwrap_or(0);",
         "outcome": "tests_failed",
         "failing_test": "tests::non_digit_is_refused",
         "equivalence_review": "not equivalent: total(\"x\") returns Ok(0)"
       },
       {
         "replacement": "let d = digit(c).unwrap_or(1);",
+        "mutated_line": "let d = digit(c).unwrap_or(1);",
         "outcome": "tests_failed",
         "failing_test": "tests::non_digit_is_refused",
         "equivalence_review": "not equivalent: total(\"x\") returns Ok(1)"

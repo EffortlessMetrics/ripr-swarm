@@ -18,12 +18,14 @@
     "mutants": [
       {
         "replacement": "crc: 0,",
+        "mutated_line": "crc: 0,",
         "outcome": "tests_passed",
         "failing_test": null,
         "equivalence_review": "not equivalent: the crc of b\"abcd\" is not 0"
       },
       {
         "replacement": "crc: crc(body) ^ 1,",
+        "mutated_line": "crc: crc(body) ^ 1,",
         "outcome": "tests_passed",
         "failing_test": null,
         "equivalence_review": "not equivalent: every crc flips its low bit"

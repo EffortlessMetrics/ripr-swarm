@@ -18,12 +18,14 @@
     "mutants": [
       {
         "replacement": "x * 6",
+        "mutated_line": "x * 6",
         "outcome": "tests_failed",
         "failing_test": "reach::tests::deep_multiplies_by_seven",
         "equivalence_review": "not equivalent: deep(2) becomes 12"
       },
       {
         "replacement": "x + 7",
+        "mutated_line": "x + 7",
         "outcome": "tests_failed",
         "failing_test": "reach::tests::deep_multiplies_by_seven",
         "equivalence_review": "not equivalent: deep(2) becomes 9"

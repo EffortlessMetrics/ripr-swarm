@@ -18,12 +18,14 @@
     "mutants": [
       {
         "replacement": "self.items.push(x + 1);",
+        "mutated_line": "self.items.push(x + 1);",
         "outcome": "tests_failed",
         "failing_test": "tests::add_pushes_the_item",
         "equivalence_review": "not equivalent: items is [5]"
       },
       {
         "replacement": "self.items.push(0);",
+        "mutated_line": "self.items.push(0);",
         "outcome": "tests_failed",
         "failing_test": "tests::add_pushes_the_item",
         "equivalence_review": "not equivalent: items is [0]"

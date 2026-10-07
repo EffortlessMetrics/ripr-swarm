@@ -18,12 +18,14 @@
     "mutants": [
       {
         "replacement": "let _ = store.put(units * 8);",
+        "mutated_line": "let _ = store.put(units * 8);",
         "outcome": "tests_failed",
         "failing_test": "store::tests::record_stores_nine_per_unit",
         "equivalence_review": "not equivalent: 3 units store 24"
       },
       {
         "replacement": "(delete the statement)",
+        "mutated_line": "",
         "outcome": "tests_failed",
         "failing_test": "store::tests::record_stores_nine_per_unit",
         "equivalence_review": "not equivalent: nothing is stored"

@@ -18,6 +18,7 @@
     "mutants": [
       {
         "replacement": "Tier::Gold => 15,",
+        "mutated_line": null,
         "outcome": "tests_failed",
         "failing_test": "tests::discounts_apply_per_tier",
         "equivalence_review": "the edit itself: Gold customers get 15 percent off, so 10000 cents becomes 8500 instead of 9000"

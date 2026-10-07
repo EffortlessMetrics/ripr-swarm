@@ -18,12 +18,14 @@
     "mutants": [
       {
         "replacement": "if name.len() != 0 {",
+        "mutated_line": "if name.len() != 0 {",
         "outcome": "tests_failed",
         "failing_test": "tests::initial_table",
         "equivalence_review": "not equivalent: initial_table fails on it"
       },
       {
         "replacement": "if true {",
+        "mutated_line": "if true {",
         "outcome": "tests_failed",
         "failing_test": "tests::initial_table",
         "equivalence_review": "not equivalent: initial_table fails on it"

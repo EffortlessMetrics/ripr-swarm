@@ -10,8 +10,9 @@
   "ideal_verdict": "credited",
   "observed_verdict": "gap",
   "followed_retarget": false,
-  "changed_since_labeling": false,
+  "changed_since_labeling": true,
   "observed_classifications": [
+    "infection_unknown",
     "weakly_exposed"
   ],
   "outcome": "false_actionable",

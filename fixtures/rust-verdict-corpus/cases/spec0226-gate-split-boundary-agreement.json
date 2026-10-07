@@ -18,12 +18,14 @@
     "mutants": [
       {
         "replacement": "pub fn gate(input: u32) -> bool { input > 10 }",
+        "mutated_line": "pub fn gate(input: u32) -> bool { input > 10 }",
         "outcome": "tests_passed",
         "failing_test": null,
         "equivalence_review": "not equivalent: gate(10) turns false"
       },
       {
         "replacement": "pub fn gate(input: u32) -> bool { input < 10 }",
+        "mutated_line": "pub fn gate(input: u32) -> bool { input < 10 }",
         "outcome": "tests_failed",
         "failing_test": "tests::far",
         "equivalence_review": "not equivalent: the comparison is inverted, so gate(100) turns false"

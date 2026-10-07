@@ -18,6 +18,7 @@
     "mutants": [
       {
         "replacement": "Some(&b'>') == bytes.get(1)",
+        "mutated_line": "if Some(&b'>') == bytes.get(1) {",
         "outcome": "tests_failed",
         "failing_test": "test_digit_after_wildcard",
         "equivalence_review": "not equivalent: \">=1.0\" parses as Greater"

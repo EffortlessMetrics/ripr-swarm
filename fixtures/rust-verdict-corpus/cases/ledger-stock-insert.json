@@ -18,15 +18,17 @@
     "mutants": [
       {
         "replacement": "self.stock.insert(sku.to_owned(), available);",
+        "mutated_line": "self.stock.insert(sku.to_owned(), available);",
         "outcome": "tests_failed",
         "failing_test": "tests::shipping_below_threshold_flags_low_stock",
-        "equivalence_review": "not equivalent: shipping 3 of 10 leaves 10 on hand instead of 7"
+        "equivalence_review": "not equivalent: shipping 8 of 10 leaves 10 on hand, so the SKU is not flagged low (and shipping 3 of 10 leaves 10 instead of 7)"
       },
       {
         "replacement": "",
+        "mutated_line": "",
         "outcome": "tests_failed",
         "failing_test": "tests::shipping_below_threshold_flags_low_stock",
-        "equivalence_review": "not equivalent: with the insert removed, shipping 3 of 10 leaves 10 on hand instead of 7"
+        "equivalence_review": "not equivalent: with the insert removed, shipping 8 of 10 leaves 10 on hand, so the SKU is not flagged low (and shipping 3 of 10 leaves 10 instead of 7)"
       }
     ]
   },

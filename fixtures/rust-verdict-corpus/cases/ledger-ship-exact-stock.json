@@ -18,6 +18,7 @@
     "mutants": [
       {
         "replacement": "if qty >= available {",
+        "mutated_line": null,
         "outcome": "tests_passed",
         "failing_test": null,
         "equivalence_review": "the edit itself: shipping all 10 of 10 units is refused as Insufficient instead of succeeding with remaining 0"

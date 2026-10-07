@@ -18,12 +18,14 @@
     "mutants": [
       {
         "replacement": "(delete the match arm)",
+        "mutated_line": "",
         "outcome": "tests_failed",
         "failing_test": "tests::suits_have_colors",
         "equivalence_review": "not equivalent: suits_have_colors fails on it"
       },
       {
         "replacement": "'S' | 'C' => \"red\",",
+        "mutated_line": "'S' | 'C' => \"red\",",
         "outcome": "tests_failed",
         "failing_test": "tests::suits_have_colors",
         "equivalence_review": "not equivalent: suits_have_colors fails on it"

@@ -2406,7 +2406,19 @@ pub(crate) fn classify_change_with_alias_state(
         .find(|owner| line >= owner.start_line && line <= owner.end_line)?;
     let related_candidates =
         related_test_candidates(owner, all_tests, workspace_root, reexport_index, alias_map);
-    let related = find_related_tests(owner, all_tests, workspace_root, reexport_index, alias_map);
+    // The changed line's probe family selects which assertion of each
+    // related test the public row shows (#5525, RIPR-SPEC-0224): the same
+    // `ts_oracle_kind_matches_seam` filter that `strongest_family_matching_oracle`
+    // applies below, so a row never displays a wrong-family assertion while
+    // classification judges another.
+    let probe_shape = classify_probe_shape_detail(line_text);
+    let related = related_tests_for_candidates(
+        &related_candidates,
+        owner,
+        alias_map,
+        workspace_root,
+        Some(&probe_shape.family),
+    );
     let bun_array_buffer_facts = collect_related_bun_array_buffer_facts(&related_candidates);
     let bun_bridge_hints = collect_related_bun_bridge_hints(&bun_array_buffer_facts);
     let mock_paths =
@@ -2479,7 +2491,6 @@ pub(crate) fn classify_change_with_alias_state(
     // static_limit_kind, or repair_packet_ready. At most one assertion's
     // metadata is emitted (the strongest, by oracle_strength rank) to avoid
     // redundant evidence.
-    let probe_shape = classify_probe_shape_detail(line_text);
     let oracle_metadata_lines: Vec<String> = collect_oracle_metadata_evidence_lines(
         &probe_shape.family,
         &related_candidates,
@@ -2870,6 +2881,34 @@ pub(crate) fn classify_change_with_alias_state(
             candidate.relation.as_str(),
             candidate.test.name
         ));
+    }
+    // No recognized assertion is not the same as no assertion: an
+    // oracle-eligible related test without one says which it is (#5524).
+    for candidate in related_candidates.iter().filter(|candidate| {
+        candidate.relation.uses_oracle()
+            && candidate.test.assertion_admission != TypeScriptAssertionAdmission::Recognized
+    }) {
+        evidence.push(format!(
+            "test_assertion_admission: {} ({})",
+            candidate.test.assertion_admission.as_str(),
+            candidate.test.name
+        ));
+    }
+    // A row whose family-relevant assertion carries a different strength than
+    // the strength-only pick says so (#5525). The repair-packet projection
+    // reads this disclosure and keeps the finding non-delegatable: its target
+    // row and inferred verify command are chosen by row strength, so a moved
+    // row must never make a card newly agent-packet eligible (RIPR-SPEC-0224).
+    for candidate in related_candidates.iter().filter(|candidate| {
+        candidate_observes_owner_call(candidate, owner, alias_map, workspace_root)
+    }) {
+        if let Some(moved) = row_projection_move(&candidate.test.assertions, &probe_shape.family) {
+            evidence.push(format!(
+                "typescript_assertion_selection: {} ({})",
+                moved.evidence_value(&probe_shape.family),
+                candidate.test.name
+            ));
+        }
     }
     // Resolved from the probe's own delta evidence (#3281) before the probe
     // moves into the finding: TypeScript probes are seeded from head-side

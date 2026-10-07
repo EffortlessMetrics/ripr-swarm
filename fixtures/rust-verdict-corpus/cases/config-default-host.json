@@ -18,6 +18,7 @@
     "mutants": [
       {
         "replacement": "host: \"localhost\".to_string(),",
+        "mutated_line": null,
         "outcome": "tests_passed",
         "failing_test": null,
         "equivalence_review": "the edit itself: load(\"\") yields host \"localhost\" instead of \"127.0.0.1\""

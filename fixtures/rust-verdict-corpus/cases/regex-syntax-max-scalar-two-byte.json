@@ -18,12 +18,14 @@
     "mutants": [
       {
         "replacement": "2 => 0x7FE",
+        "mutated_line": "2 => 0x7FE,",
         "outcome": "tests_failed",
         "failing_test": "utf8::tests::bmp",
         "equivalence_review": "not equivalent: U+07FF is no longer two-byte encodable"
       },
       {
         "replacement": "2 => 0x800",
+        "mutated_line": "2 => 0x800,",
         "outcome": "tests_failed",
         "failing_test": "utf8::tests::bmp",
         "equivalence_review": "not equivalent: U+0800 becomes two-byte encodable"

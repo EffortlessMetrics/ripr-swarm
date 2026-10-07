@@ -18,18 +18,21 @@
     "mutants": [
       {
         "replacement": "if 0 != total {",
+        "mutated_line": "if 0 != total {",
         "outcome": "tests_failed",
         "failing_test": "tests::ratio_smoke",
         "equivalence_review": "not equivalent: ratio(1, 0) skips the guard and divides by zero; the smoke test fails only on the panic"
       },
       {
         "replacement": "if true {",
+        "mutated_line": "if true {",
         "outcome": "tests_passed",
         "failing_test": null,
         "equivalence_review": "not equivalent: ratio(3, 4) is 0 instead of 75"
       },
       {
         "replacement": "if false {",
+        "mutated_line": "if false {",
         "outcome": "tests_failed",
         "failing_test": "tests::ratio_smoke",
         "equivalence_review": "not equivalent: ratio(1, 0) divides by zero; the smoke test fails only on the panic"

@@ -18,12 +18,14 @@
     "mutants": [
       {
         "replacement": "50 < score",
+        "mutated_line": "50 < score",
         "outcome": "tests_failed",
         "failing_test": "tests::pass_mark_is_fifty",
         "equivalence_review": "not equivalent: pass_mark_is_fifty fails on it"
       },
       {
         "replacement": "50 > score",
+        "mutated_line": "50 > score",
         "outcome": "tests_failed",
         "failing_test": "tests::pass_mark_is_fifty",
         "equivalence_review": "not equivalent: pass_mark_is_fifty fails on it"

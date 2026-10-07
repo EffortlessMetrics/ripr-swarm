@@ -18,12 +18,14 @@
     "mutants": [
       {
         "replacement": "n > 10",
+        "mutated_line": "} else if n > 10 {",
         "outcome": "tests_failed",
         "failing_test": "ser::impls::test_format_u8",
         "equivalence_review": "not equivalent: 10 takes the one-digit branch and writes ':'"
       },
       {
         "replacement": "n > 8",
+        "mutated_line": "} else if n > 8 {",
         "outcome": "tests_failed",
         "failing_test": "ser::impls::test_format_u8",
         "equivalence_review": "not equivalent: 9 takes the two-digit branch and writes \"09\""

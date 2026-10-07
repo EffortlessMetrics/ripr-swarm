@@ -18,12 +18,14 @@
     "mutants": [
       {
         "replacement": "return Err(ConfigError::EmptyKey { line: idx });",
+        "mutated_line": "return Err(ConfigError::EmptyKey { line: idx });",
         "outcome": "tests_passed",
         "failing_test": null,
         "equivalence_review": "not equivalent: \"= 5\" reports EmptyKey { line: 0 } instead of line 1"
       },
       {
         "replacement": "return Err(ConfigError::MissingEquals { line: line_no });",
+        "mutated_line": "return Err(ConfigError::MissingEquals { line: line_no });",
         "outcome": "tests_passed",
         "failing_test": null,
         "equivalence_review": "not equivalent: \"= 5\" reports MissingEquals instead of EmptyKey"

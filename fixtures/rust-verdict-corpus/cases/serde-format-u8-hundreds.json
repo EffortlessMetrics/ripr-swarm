@@ -18,12 +18,14 @@
     "mutants": [
       {
         "replacement": "n > 100",
+        "mutated_line": "if n > 100 {",
         "outcome": "tests_failed",
         "failing_test": "ser::impls::test_format_u8",
         "equivalence_review": "not equivalent: 100 takes the two-digit branch and indexes the table past its end"
       },
       {
         "replacement": "n > 98",
+        "mutated_line": "if n > 98 {",
         "outcome": "tests_failed",
         "failing_test": "ser::impls::test_format_u8",
         "equivalence_review": "not equivalent: 99 takes the three-digit branch and writes a leading zero"
