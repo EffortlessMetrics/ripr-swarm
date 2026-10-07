@@ -39,7 +39,7 @@
       "limited"
     ]
   },
-  "reasoning": "low_stock_is_flagged asserts only the bool; stderr is not captured, so both mutants pass. Spec cells: RIPR-SPEC-0096 eprintln! is non-escaping.",
+  "reasoning": "low_stock_is_flagged asserts only the bool; no test reads stderr, so both mutants pass. Spec cells: RIPR-SPEC-0096 eprintln! is non-escaping.",
   "labeling_observation": {
     "ripr_commit": "128f794f6",
     "full_checkout_verdict": "gap",

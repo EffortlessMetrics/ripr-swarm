@@ -1,7 +1,7 @@
 {
   "subject_id": "authored-spec-confirm",
   "origin": "authored",
-  "version_label": "authored 2026-10-07 for spec cells with no runtime-truth case (RIPR-SPEC-0005, 0094, 0096, 0197)",
+  "version_label": "authored 2026-10-07 for spec cells with no runtime-truth case (RIPR-SPEC-0005, 0094, 0096, 0197); labeled with log 0.4.34",
   "license": "MIT OR Apache-2.0",
   "shared_corpus": null,
   "retained_files": [

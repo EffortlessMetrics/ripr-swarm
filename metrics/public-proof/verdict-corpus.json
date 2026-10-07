@@ -378,7 +378,7 @@
     {
       "anchor": "src/lib.rs:120",
       "behavior_family": "field_construction",
-      "case_id": "cell-0005-same-name-owner-untested",
+      "case_id": "cell-0005-same-name-owner-unreached",
       "changed_since_labeling": false,
       "contradictions": [],
       "followed_retarget": false,

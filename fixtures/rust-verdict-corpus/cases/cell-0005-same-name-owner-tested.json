@@ -9,7 +9,7 @@
   "edit_kind": "behavior_preserving_rewrite",
   "behavior_family": "field_construction",
   "test_shape": "same_name_owner_glob_import",
-  "hard_case": "Twin of cell-0005-same-name-owner-untested: the edit is in retail::price_quote, which the glob-imported bare call does reach.",
+  "hard_case": "Twin of cell-0005-same-name-owner-unreached: the edit is in retail::price_quote, which the glob-imported bare call does reach.",
   "truth": {
     "state": "discriminated",
     "method": "runtime_mutant_kill",

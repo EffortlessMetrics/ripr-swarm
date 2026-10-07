@@ -1,5 +1,5 @@
 {
-  "case_id": "cell-0005-same-name-owner-untested",
+  "case_id": "cell-0005-same-name-owner-unreached",
   "subject_id": "authored-spec-confirm",
   "origin": "authored",
   "anchor": "src/lib.rs:120",

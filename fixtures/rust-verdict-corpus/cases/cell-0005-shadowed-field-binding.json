@@ -21,14 +21,14 @@
         "mutated_line": "total: 15 + items,",
         "outcome": "tests_passed",
         "failing_test": null,
-        "equivalence_review": "not equivalent"
+        "equivalence_review": "not equivalent: bundle(3).total becomes 18 instead of 45"
       },
       {
         "replacement": "total: 15 * items + 1,",
         "mutated_line": "total: 15 * items + 1,",
         "outcome": "tests_passed",
         "failing_test": null,
-        "equivalence_review": "not equivalent"
+        "equivalence_review": "not equivalent: bundle(3).total becomes 46 instead of 45"
       }
     ]
   },

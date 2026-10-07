@@ -40,7 +40,7 @@
       "silent"
     ]
   },
-  "reasoning": "bonus_beats_the_multiplier_and_is_twelve fails on both mutants through assert_eq!(b, 12); the b > MULTIPLIER assert alone would pass the +1 mutant. Spec cells: RIPR-SPEC-0094 oracle_confirmation_mixed.",
+  "reasoning": "bonus_beats_the_multiplier_and_is_twelve fails on both mutants through assert_eq!(b, 12); the b > MULTIPLIER assert alone would pass both (13 and 7 are above 3). Spec cells: RIPR-SPEC-0094 oracle_confirmation_mixed.",
   "labeling_observation": {
     "ripr_commit": "128f794f6",
     "full_checkout_verdict": "gap",

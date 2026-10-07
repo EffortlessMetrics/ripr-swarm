@@ -1,7 +1,7 @@
 {
-  "case_id": "cell-0005-same-name-owner-untested",
+  "case_id": "cell-0005-same-name-owner-unreached",
   "subject_id": "authored-spec-confirm",
-  "diff": "cases/cell-0005-same-name-owner-untested.diff",
+  "diff": "cases/cell-0005-same-name-owner-unreached.diff",
   "anchor": {
     "file": "src/lib.rs",
     "line": 120
@@ -21,14 +21,14 @@
         "mutated_line": "total: 8 + items,",
         "outcome": "tests_passed",
         "failing_test": null,
-        "equivalence_review": "not equivalent"
+        "equivalence_review": "not equivalent: wholesale::price_quote(3).total becomes 11 instead of 24"
       },
       {
         "replacement": "total: 8 * items + 1,",
         "mutated_line": "total: 8 * items + 1,",
         "outcome": "tests_passed",
         "failing_test": null,
-        "equivalence_review": "not equivalent"
+        "equivalence_review": "not equivalent: wholesale::price_quote(3).total becomes 25 instead of 24"
       }
     ]
   },
