@@ -1,0 +1,59 @@
+{
+  "case_id": "grid-returns-table",
+  "subject_id": "authored-grid-returns",
+  "diff": "cases/grid-returns-table.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 8
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value",
+  "test_shape": "table_driven_loop",
+  "hard_case": "The assert_eq! sits inside a for loop over a let-bound array of literal rows; RIPR-SPEC-0197 admits it because a non-empty constant-row table runs its body at least once (#5328). Before that rule the loop body was refused as possibly running zero times.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "None",
+        "mutated_line": "None",
+        "outcome": "tests_failed",
+        "failing_test": "tests::first_word_table",
+        "equivalence_review": "not equivalent: first_word_table fails on it"
+      },
+      {
+        "replacement": "Some(\"\")",
+        "mutated_line": "Some(\"\")",
+        "outcome": "tests_failed",
+        "failing_test": "tests::first_word_table",
+        "equivalence_review": "not equivalent: first_word_table fails on it"
+      },
+      {
+        "replacement": "Some(\"xyzzy\")",
+        "mutated_line": "Some(\"xyzzy\")",
+        "outcome": "tests_failed",
+        "failing_test": "tests::first_word_table",
+        "equivalence_review": "not equivalent: first_word_table fails on it"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "Grid cell: return value (body rewritten; mutants replace it with cargo-mutants' default values) x table_driven_loop. The test loops over a table of (input, expected) rows and assert_eqs each; 3 of 3 listed mutants fail cargo test. Spec cells: RIPR-SPEC-0197.",
+  "labeling_observation": {
+    "ripr_commit": "1273096",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

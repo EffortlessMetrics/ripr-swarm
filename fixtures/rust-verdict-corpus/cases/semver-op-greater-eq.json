@@ -1,0 +1,45 @@
+{
+  "case_id": "semver-op-greater-eq",
+  "subject_id": "semver",
+  "diff": "cases/semver-op-greater-eq.diff",
+  "anchor": {
+    "file": "src/parse.rs",
+    "line": 272
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "predicate",
+  "test_shape": "integration_test_public_api",
+  "hard_case": "ripr reports reachable_unrevealed although the requirement-parsing tests discriminate '>=' from '>'. Until #5424 the finding named no related test and carried the reach_yes_without_related_tests contradiction.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "Some(&b'>') == bytes.get(1)",
+        "mutated_line": "if Some(&b'>') == bytes.get(1) {",
+        "outcome": "tests_failed",
+        "failing_test": "test_digit_after_wildcard",
+        "equivalence_review": "not equivalent: \">=1.0\" parses as Greater"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "Requirement parsing tests fail when '>=' parses as '>'. ripr reports reachable_unrevealed (a gap), a false actionable verdict.",
+  "labeling_observation": {
+    "ripr_commit": "a7a089e",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "reachable_unrevealed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

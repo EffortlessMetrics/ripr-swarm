@@ -12,6 +12,7 @@ crates/ripr/src/domain/**|crate::cli|domain must not import CLI adapters
 crates/ripr/src/domain/**|crate::lsp|domain must not import LSP adapters
 crates/ripr/src/domain/**|crate::output|domain must not import output renderers
 crates/ripr/src/domain/**|serde_json|domain must not know JSON rendering
+!crates/ripr/src/domain/next_action.rs|serde_json|#6304: cfg(test) wire-spelling assertions verify the governed spellings ARE the serde form - the serialized value is the discriminator under test; production selection code never touches serde_json
 crates/ripr/src/output/**|check_workspace|output must not orchestrate analysis use cases
 crates/ripr/src/output/**|collect_context|output must not orchestrate context use cases
 crates/ripr/src/output/**|explain_finding|output must not orchestrate explain use cases

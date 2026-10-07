@@ -420,6 +420,46 @@ scope = "in"
 id = "RIPR-SPEC-0231"
 scope = "in"
 
+# Statically contradicted exact-value oracles
+[[spec]]
+id = "RIPR-SPEC-0233"
+scope = "in"
+
+# Perl fact-packet classification
+[[spec]]
+id = "RIPR-SPEC-0235"
+scope = "out"
+reason = "non-Rust language or packaging surface"
+
+# Seam grip classification order
+[[spec]]
+id = "RIPR-SPEC-0236"
+scope = "in"
+
+# Pilot seam ranking
+[[spec]]
+id = "RIPR-SPEC-0237"
+scope = "out"
+reason = "pilot presentation ordering, not an analyzer verdict"
+
+# Python oracle and reach rules
+[[spec]]
+id = "RIPR-SPEC-0238"
+scope = "out"
+reason = "non-Rust language or packaging surface"
+
+# `ripr plus` last-good receipt
+[[spec]]
+id = "RIPR-SPEC-0239"
+scope = "out"
+reason = "CLI, command or receipt contract, not an analyzer verdict"
+
+# TypeScript oracle and reach rules
+[[spec]]
+id = "RIPR-SPEC-0243"
+scope = "out"
+reason = "non-Rust language or packaging surface"
+
 # In-scope specs that corpus cases cite but whose acceptance examples are
 # prose, not numbered. Reported as `unmeasured_specs`; never counted.
 

@@ -16,7 +16,7 @@
 //! elsewhere, so it travels as `rust_excluded_file_count` and renders in all
 //! three surfaces; `None` keeps default-scope output byte-identical.
 
-use crate::agent::loop_commands::shell_path;
+use crate::agent::loop_commands::{bound_root_path, root_path_display, shell_arg};
 use crate::domain::LanguageId;
 use crate::output::repo_exposure::{PythonRepoExposureGuidance, TsFullRepoGuidance};
 use std::path::{Path, PathBuf};
@@ -258,7 +258,12 @@ fn route_for(
         file_count,
         available,
         enabled: enabled_languages.contains(&config_language),
-        command: Some(format!("ripr check --root {}", shell_path(root))),
+        // The route is pasted after the pilot report, often from another
+        // directory, so it names the repository pilot analyzed (#4000).
+        command: Some(format!(
+            "ripr check --root {}",
+            shell_arg(&root_path_display(&bound_root_path(root)))
+        )),
         guidance_category,
         guidance,
     }

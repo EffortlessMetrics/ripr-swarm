@@ -1,0 +1,11 @@
+diff --git a/src/scaling.rs b/src/scaling.rs
+index bf813d6..ed53cce 100644
+--- a/src/scaling.rs
++++ b/src/scaling.rs
+@@ -1,5 +1,5 @@
+ pub fn score(hits: u32) -> u32 {
+-    hits * 3 + 1
++    1 + hits * 3
+ }
+ 
+ #[cfg(test)]

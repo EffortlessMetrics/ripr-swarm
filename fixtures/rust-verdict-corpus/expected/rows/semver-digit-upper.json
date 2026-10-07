@@ -1,0 +1,22 @@
+{
+  "case_id": "semver-digit-upper",
+  "subject_id": "semver",
+  "origin": "upstream",
+  "anchor": "src/parse.rs:166",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "integration_test_public_api",
+  "hard_case": true,
+  "truth": "partially_discriminated",
+  "ideal_verdict": "gap",
+  "observed_verdict": "limited",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "infection_unknown"
+  ],
+  "outcome": "abstained",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

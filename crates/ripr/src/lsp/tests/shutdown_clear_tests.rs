@@ -613,6 +613,37 @@ fn shutdown_after_root_change_publishes_no_duplicates() -> Result<(), String> {
             .await?;
             let _ = status;
             transition_drain.append(&mut stashed);
+            // A polled `root_changed` status can arrive before the
+            // transition's clear notifications: the status travels the
+            // request/response path while the clears travel the
+            // notification path, and the two are not ordered with each
+            // other. Matching the status therefore must not assert the
+            // clears were already observed (#6988: the clear for the
+            // tracked URI was sent but still in flight when the status
+            // matched). Drain (bounded) until every tracked URI shows
+            // its empty clear; the missing-check below still fails when
+            // a clear never arrives.
+            let clear_deadline = tokio::time::Instant::now() + Duration::from_secs(30);
+            while tracked.iter().any(|uri| {
+                !transition_drain
+                    .iter()
+                    .filter_map(publish_diagnostics_of)
+                    .any(|(published, count)| published == *uri && count == 0)
+            }) {
+                let remaining =
+                    clear_deadline.saturating_duration_since(tokio::time::Instant::now());
+                if remaining.is_zero() {
+                    break;
+                }
+                let message =
+                    match tokio::time::timeout(remaining, read_lsp_message(&mut client.reader))
+                        .await
+                    {
+                        Ok(Ok(message)) => message,
+                        _ => break,
+                    };
+                transition_drain.push(message);
+            }
             let transition_publishes: Vec<(String, usize)> = transition_drain
                 .iter()
                 .filter_map(publish_diagnostics_of)

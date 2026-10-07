@@ -182,6 +182,7 @@ mod tests {
                 role: "inspection".to_string(),
                 display: "ripr agent packet --root . --seam-id seam:demo --json".to_string(),
             }),
+            canonical_next_action: None,
             selected_basis: None,
             rejected_alternatives: Vec::new(),
             attempt: None,

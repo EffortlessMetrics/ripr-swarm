@@ -105,6 +105,26 @@ stale metadata
 -> keep, repair, suppress with reason, or remove when resolved
 ```
 
+`review_after` may be `unix_ms:<millis>` or a `YYYY-MM-DD` calendar date.
+RFC3339 datetimes (`YYYY-MM-DDTHH:MM:SSZ` or with a numeric offset; `t`/`z`
+case-insensitive) convert to a UTC calendar date before comparison with the UTC
+run date; a `T`/`t` suffix that is not a complete RFC3339 value is `unknown`.
+Leap seconds are accepted only as `23:59:60` UTC, including offset forms such as
+`1990-12-31T15:59:60-08:00`; other `*:60` values are `unknown`. Impossible
+calendar dates (including February 31 and 29 February on a non-leap year) are
+`unknown`. Calendar deadlines are compared with the UTC run date taken from
+`generated_at`. A supplied deadline that cannot be compared is counted as
+`unknown` and warned; it is not reported as `current`.
+
+No binary command writes `owner` or `review_after`: `baseline create` records
+them as `null` (with a default `reason` and the creation timestamp), and
+shrink-only `baseline update` preserves existing entries. Review ownership and
+deadlines are operator-set ledger content: set or refresh `review_after` by
+editing the baseline ledger, in either accepted format above. The deadline is
+evaluated only when `owner`, `reason`, `created_at`, and `review_after` are all
+present; a deadline set on an incomplete record still reports as
+`missing_metadata`, never as `stale` or `current`.
+
 Use shrink-only refreshes after focused tests move evidence:
 
 ```bash

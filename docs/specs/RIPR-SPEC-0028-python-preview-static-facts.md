@@ -86,6 +86,43 @@ RIPR-SPEC-0026 owner-kind vocabulary explicitly adds a class value.
 
 ## Test and Assertion Facts
 
+Known pytest skip/skipif/xfail marks and unittest controls in runner-honored
+placements retain a related pointer but cannot contribute an oracle or boundary
+input. Function-level unittest skip wraps the function under either runner;
+unittest class skip flags and expected-failure metadata qualify only TestCase
+tests. Those flags do not suppress ordinary pytest assertions. The relation is
+`test_activation_unestablished`. Conditions are not evaluated: even a visible
+false conditional skip remains uncertain within this bounded static contract.
+Imported decorator aliases use the last explicit binding in the declaration-time
+module/class scope, before test-body imports or later imports can shadow them.
+A canonical-looking name explicitly imported from another module is not a
+framework control. Unresolved canonical spellings remain conservative; arbitrary
+assignment rebinding is not evaluated.
+Unaliased dotted imports bind their root (`import unittest.mock` binds
+`unittest`); explicit aliases bind the alias. Method body lookup keeps
+its separate module/global scope; class-local imports are not method globals.
+When no independent eligible test supplies a relation, report
+`decorator_indirection` with the test activation reason and emit no repair
+packet. A separate active test can still supply its own evidence. Module-level
+`pytestmark`, dynamic `skipTest`, custom decorator semantics and imported-base
+activation remain outside this rule.
+
+Oracle admission does not prove the absence of side effects. Expected-failure
+bodies may execute, conditional skips may be inactive, and a pytest-skipped
+function can be called directly by an active test or helper. The existing
+whole-module constant-rebinding veto therefore remains conservative, including
+writes in marked bodies. Independent active assertions retain their own oracle
+identity; resolving their boundary still requires constants unaffected by
+potential writes. Proving nonexecution of body effects requires a separate
+execution-effect model.
+
+Curated upstream `native_cases` in the existing Python real-repo corpus record
+independent behavior/test-understanding controls without implying an analyzer
+run. The ItsDangerous future-age case retains immutable upstream source/license,
+the real defect/fix, original pytest fixture closure, a weak alternate observer,
+skip and expected-failure controls. Native evidence does not establish current
+static classifications, installed journeys, or support-tier promotion.
+
 Test discovery:
 
 - `pytest` test functions with the default `test` name prefix at module level
@@ -138,16 +175,17 @@ exception assertions, dict/object field assertions, output assertions through
 status-code and exit-code assertions, broad smoke assertions, reach-only tests,
 mock expectations, and custom `assert_*` helpers.
 
-- bare `assert expr` → smoke oracle
-- `assert a == b` and `assert a != b` → exact-value oracle (for `==`) or
-  smoke-style negative oracle (for `!=`, recorded as broad)
-- `assert isinstance(value, SomeType)` → broad-type oracle
-- `pytest.raises(...)` context manager → error-path oracle
-- `self.assertEqual(a, b)` and `assertNotEqual` → exact-value oracle
-- `self.assertRaises(...)` → error-path oracle
-- `self.assertTrue(...)` / `assertFalse(...)` → smoke oracle
+- bare `assert expr` â†’ smoke oracle
+- `assert a == b` â†’ exact-value oracle; `assert a != b` and other
+  non-equality comparisons â†’ relational check, weak
+- `assert isinstance(value, SomeType)` â†’ relational check, weak
+- `pytest.raises(...)` context manager â†’ error-path oracle
+- `self.assertEqual(a, b)` â†’ exact-value oracle; `assertNotEqual` â†’
+  relational check, weak
+- `self.assertRaises(...)` â†’ error-path oracle
+- `self.assertTrue(...)` / `assertFalse(...)` â†’ smoke oracle
 - `mock.assert_called*` family (`assert_called_once_with`,
-  `assert_called_with`, `assert_called`, `assert_not_called`) →
+  `assert_called_with`, `assert_called`, `assert_not_called`) â†’
   side-effect/call oracle
 - `unittest.mock` patches recognised syntactically as call-context only
 
@@ -302,7 +340,10 @@ values defined in RIPR-SPEC-0026:
   way the syntax-first adapter cannot follow; simple route decorators such as
   `@app.get(...)`, `@api.post(...)`, or `@router.api_route(...)` may be treated
   as static route metadata when the changed behavior itself is a supported
-  repair shape)
+  repair shape; `functools.lru_cache` (bare or called with arguments), and
+  bare `functools.cache` / `functools.cached_property`, including the same
+  names qualified as `functools.*`, are not this limit when they bind from
+  `functools`)
 - `mocked_module` (e.g., `@patch(...)`, `patch.object(...)` (#4565) or `monkeypatch.setattr(...)`
   observed at the related-test call site)
 - `opaque_custom_assertion_helper` (e.g., a related test observes the changed
@@ -355,7 +396,7 @@ spine as other languages:
   through unresolved control, object, or side-effect flow
 - revealability: the strongest extracted pytest or unittest oracle and whether
   it discriminates the changed behavior. A strong oracle is credited as
-  discriminating — and the finding classified `exposed` — only when its
+  discriminating â€” and the finding classified `exposed` â€” only when its
   assertion observes the changed sink: it must reference the changed owner (by
   name or import alias) or a changed-sink identifier/literal from the changed
   line. A strong oracle that reaches the owner but observes a *different* value
@@ -455,15 +496,15 @@ not credit `exposed`, via four additive optional output fields. They are a pure
 read-out: the boolean the classifier uses is derived from the surfaced
 `oracle_alignment`, so the visible value can never disagree with the decision.
 
-- `changed_sink` — the comma-joined significant tokens of the changed line.
-- `observed_sink` — the strongest related oracle's assertion text.
-- `oracle_alignment` — a controlled enum mapping to the existing branches:
+- `changed_sink` â€” the comma-joined significant tokens of the changed line.
+- `observed_sink` â€” the strongest related oracle's assertion text.
+- `oracle_alignment` â€” a controlled enum mapping to the existing branches:
   `direct` / `alias` / `changed_sink_token` appear only on `exposed` findings
   (strong oracle observes the owner name, an import alias, or a changed-sink
   token); `orthogonal` appears only on the fail-closed `weakly_exposed` branch
   (strong oracle observes a different sink); `unknown` covers every other
   finding (no strong oracle, or a `<module>` owner with no usable token).
-- `alignment_reason` — a stable snake_case token explaining the value
+- `alignment_reason` â€” a stable snake_case token explaining the value
   (e.g. `strong_oracle_observes_different_sink`).
   `strong_oracle_observes_owner_call_through_module` (`direct`) credits a free
   function whose strong oracle calls it through a module-identified spelling
@@ -511,6 +552,10 @@ can show:
 - fixtures proving static-limit Python findings fail closed as `static_unknown`
   with typed stop reasons and no repair recommendation or canonical repair-gap
   ID
+- a fixture proving `functools.lru_cache` / `cache` / `cached_property` do not
+  emit `decorator_indirection`, so a memoized owner with a direct exact test is
+  credited and a twin whose test misses the change remains a gap, while `@retry`
+  stays limited
 - fixtures proving the first repair classes carry activation-level missing
   discriminators for predicate boundaries, return values, exception paths,
   field/object values, and output/log/call effects
@@ -629,6 +674,27 @@ Expected static evidence:
 - probe emits `static_limit_kind = "decorator_indirection"`; finding
   stays conservative.
 
+Functools memoization is not decorator indirection:
+
+```python
+from functools import lru_cache
+
+@lru_cache
+def format_year(year):
+    return "%03d" % (year % 100)
+
+@lru_cache(maxsize=None)
+def century_index(year):
+    return year % 1000
+```
+
+Expected static evidence:
+
+- neither owner emits `decorator_indirection`;
+- a direct exact-value test on `format_year` can credit the owner;
+- a related test that reaches `century_index` without observing the
+  changed return remains a gap.
+
 Simple route decorator repair:
 
 ```python
@@ -653,6 +719,13 @@ Default-prefix regression cases live in
 module functions, pytest methods, unittest methods, and async definitions;
 exclude near-miss names and helpers; and check that collected tests retain
 framework-specific selectors and relate only to the referenced owner.
+
+Functools memoization transparency (`lru_cache` / `cache` /
+`cached_property`) is covered by
+`crates/ripr/src/analysis/language/python/static_limits.rs` tests and
+`fixtures/python_functools_memoization_not_indirection`. Arbitrary
+decorators such as `@retry` remain limited via
+`fixtures/python_decorator_indirection_limit`.
 
 Follow-up fixtures and tests cover the owner, test, assertion, related
 test, probe, and static-limit cases listed under Required Evidence, plus
@@ -717,6 +790,15 @@ Follow-up implementation belongs to Campaign 27 work item
 and additive output metadata land first under RIPR-SPEC-0026 work items.
 This spec PR records the per-language contract; no analyzer behavior
 changes in the spec PR.
+
+## Later Amendment
+
+RIPR-SPEC-0238 (2026-10-04) owns the Python assertion table, per-test
+oracle selection, the error-path gate, relation order and static-limit
+precedence. It corrects three oracle lines in place above: `!=`,
+`isinstance` and `assertNotEqual` were listed as broad, broad-type and
+exact-value oracles, but the code records all three as
+`relational_check` / weak, and no broad-type kind exists.
 
 ## Metrics
 

@@ -1,0 +1,70 @@
+name: First-run install
+
+# Times what a developer who has never used ripr does first: a cold
+# `cargo install ripr --locked` from crates.io, then the first-run walk
+# against pinned third-party crates. Feeds the `first_run` scoreboard
+# (first_run.install_seconds, time to first useful result, friction) and
+# compares it with metrics/dx-scoreboard/first-run-baseline.json. Advisory and
+# late: nightly and on demand only, never on a pull request, so per-PR CI stays
+# light. It does not use the Rust cache because a warm cache would hide the
+# very compile time it measures.
+#
+# The baseline must come from this runner class (ubuntu-latest). Until
+# metrics/dx-scoreboard/first-run-baseline.json is committed the lane runs
+# ungated and only uploads the report; to start gating, dispatch this workflow,
+# review the dx-scoreboard.json artifact, and commit it as that baseline file.
+# Wall-time metrics compare only against a baseline from the same runner class.
+# While ungated, a failed install still leaves the job green (the receipt records
+# the failed row); only the gated run fails the job on it.
+# The timed install runs under its own CARGO_HOME (see `cargo xtask first-run`),
+# so crates downloaded while building xtask do not shorten install_seconds (#6803).
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "41 7 * * *"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: first-run-install-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  first-run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Walk the first-run path against the published ripr
+        run: cargo xtask first-run --install-published
+
+      - name: Record the scoreboard without a baseline
+        if: hashFiles('metrics/dx-scoreboard/first-run-baseline.json') == ''
+        run: cargo xtask dx-scoreboard --boards first_run --ingest target/ripr/first-run/first-run-rows.jsonl
+
+      - name: Compare with the baseline
+        if: hashFiles('metrics/dx-scoreboard/first-run-baseline.json') != ''
+        run: >-
+          cargo xtask dx-scoreboard --boards first_run
+          --ingest target/ripr/first-run/first-run-rows.jsonl
+          --baseline metrics/dx-scoreboard/first-run-baseline.json
+          --gate
+
+      - name: Upload first-run reports
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: first-run-install
+          path: |
+            target/ripr/first-run/first-run.*
+            target/ripr/first-run/first-run-rows.jsonl
+            target/ripr/first-run/install_published.stderr.log
+            target/ripr/reports/dx-scoreboard.*
+          if-no-files-found: warn

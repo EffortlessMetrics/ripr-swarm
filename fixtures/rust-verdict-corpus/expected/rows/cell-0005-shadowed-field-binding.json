@@ -1,0 +1,22 @@
+{
+  "case_id": "cell-0005-shadowed-field-binding",
+  "subject_id": "authored-spec-confirm",
+  "origin": "authored",
+  "anchor": "src/lib.rs:90",
+  "behavior_family": "field_construction",
+  "test_shape": "shadowed_binding_overwrites_field",
+  "hard_case": true,
+  "truth": "not_discriminated",
+  "ideal_verdict": "gap",
+  "observed_verdict": "credited",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "exposed"
+  ],
+  "outcome": "false_exposed",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

@@ -4,4 +4,4 @@
   message or test source holding ESC/OSC sequences, BEL, a bare CR or a bidi
   override previously reached the terminal verbatim and could clear the screen,
   retitle the window or reorder what the reader saw. Newlines and tabs are
-  kept; JSON and SARIF are unchanged.
+  kept; JSON and SARIF are unchanged (#6302).

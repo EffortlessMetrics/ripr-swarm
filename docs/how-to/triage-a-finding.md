@@ -39,6 +39,42 @@ add or repair the test. If the analyzer appears to align the wrong entities,
 capture the exact finding id, source location, command, and current commit when
 filing the analyzer follow-up.
 
+### Read the examined tests
+
+A finding lists the related tests ripr examined (up to a bounded number),
+including ones whose assertions did not match. Each line gives the test file, line and name, then why that
+test did not count as noticing the change being wrong, or what ripr could not confirm about it:
+
+```text
+related test tests/it.rs:3 discount_runs uses none unknown oracle; misses: has no assertion
+```
+
+`ripr explain` repeats the list under "Why this verdict". In JSON the same
+facts are `related_tests[].miss` (a controlled value) and `related_tests[].why`
+(the sentence). Both are omitted when ripr recorded no reason, for example for
+the test that catches an `exposed` change. A populated `observation_unconfirmed`
+is an unknown, not an established miss. The reason does not change the
+finding's class. Use it to choose a follow-up from the table below. Rust findings carry it today. Python and TypeScript findings do not yet, and
+Perl findings carry only `observation_unconfirmed`, on a narrow set of
+weakly exposed rows. `no_call_path`,
+`no_assertion`, `assertion_not_observing` and `assertion_not_credited` can
+appear under any class, because they describe a single test. The other values
+appear only under `weakly_exposed` and `reachable_unrevealed`.
+On an `exposed` finding, a row with a miss only explains why that test did not
+help; act on it only if you are working on that test, because another test
+already supplies the discriminator.
+
+| `why` reads | `miss` value | What to do |
+| --- | --- | --- |
+| no call to the changed code found | `no_call_path` | The test is linked by name or file location only. Check that it is the right test; if it is, call the owner from it. |
+| has no assertion | `no_assertion` | Check that the test reaches the changed owner through its public path (a test linked only by name may not), then add an assertion on the changed value. If it does not reach the owner, fix the call or use the test that does. |
+| asserts, but not on the changed value | `assertion_not_observing` | Check that the test reaches the changed owner through its public path (a test linked only by name may not), then move or add the assertion so it observes the changed value, error or field. If it does not reach the owner, fix the call or use the test that does. |
+| assertion not credited: ripr could not establish that it runs as the standard macro | `assertion_not_credited` | An assertion exists, but ripr could not confirm it is the standard `assert!` family (a same-named local macro, for example), and it does not yet say whether the assertion is inert. Read the macro. If it expands to a real check, file an analyzer follow-up; if not, use the standard macro. |
+| assertion too weak to tell the old behavior from the new | `weak_assertion` | Replace `is_ok`, `unwrap` or a broad comparison with the exact expected value. |
+| ripr could not confirm that this assertion observes the changed behavior | `observation_unconfirmed` | This is an unknown, not a found miss: an assertion may already exist. Check by hand whether it observes the changed value before changing the test; if it does, treat it as an analyzer gap and file a follow-up. |
+| no test input reaches `<boundary>` | `missing_input` | Add a case whose input is the boundary value named. |
+| no assertion pins `<value>` | `missing_exact_assertion` | Assert the exact value named, such as the error variant or field. |
+
 ## 3. Choose fix, follow-up, or suppression
 
 - **Fix the behavior gap** when the changed behavior lacks a meaningful test.
