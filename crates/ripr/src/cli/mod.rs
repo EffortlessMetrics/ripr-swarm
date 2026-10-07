@@ -137,24 +137,50 @@ fn run_command(mut args: Vec<String>) -> Result<(), CommandError> {
     // first side-effecting step (workflow execution and attempt publication),
     // so a lock loser fails closed without producing any workflow artifacts.
     let before_attempt = before_repair_attempt(&args)?;
-    let _before_lock = before_attempt
-        .as_ref()
-        .map(|options| lock_before_repair_attempt(&options.root))
-        .transpose()?;
     if let Some(options) = before_attempt {
-        let seam_id = options.seam_id.as_deref().ok_or_else(|| {
-            "before-phase repair attempt is missing its seam identity".to_string()
-        })?;
-        let identity = crate::app::repair_attempt::BeforeRepairAttemptIdentity::prepare(
-            &options.root,
-            seam_id,
-        )?;
-        commands::run_before_repair_with_identity(options.clone(), &identity)?;
-        persist_before_repair_attempt(&options, &identity)?;
+        drive_before_phase(options)?;
     } else {
         execute::execute(parse::parse_args(args)?)?;
     }
     Ok(())
+}
+
+/// Drive one before phase through the locked publication path: serialize
+/// against concurrent before phases, prepare the attempt identity, run the
+/// shared workflow, and persist the attempt. Shared by the advanced
+/// `agent repair --phase before` spelling and the task-first `ripr repair`
+/// façade (#6305), so both produce the same attempt from the same subject.
+/// Returns the published attempt id so the façade can name the started
+/// attempt when its follow-on card render fails (#7032).
+pub(in crate::cli) fn drive_before_phase(
+    options: agent::AgentRepairOptions,
+) -> Result<String, CommandError> {
+    let (attempt_id, stdout_document) = drive_before_phase_deferring_stdout(options)?;
+    // The advanced spelling prints its success document immediately; only
+    // the façade holds stdout across its follow-on card render (#7032).
+    print!("{stdout_document}");
+    Ok(attempt_id)
+}
+
+/// The publication path of [`drive_before_phase`] with the success stdout
+/// returned instead of printed: the published attempt id plus the exact
+/// document the immediate route would have written. The task-first façade
+/// composes this with its card render so `cmd:repair` can keep
+/// `EXIT_TYPED_REFUSAL_EMPTY_STDOUT` honest when the card refuses after
+/// the attempt already exists (#7032).
+pub(in crate::cli) fn drive_before_phase_deferring_stdout(
+    options: agent::AgentRepairOptions,
+) -> Result<(String, String), CommandError> {
+    let _before_lock = lock_before_repair_attempt(&options.root)?;
+    let seam_id = options
+        .seam_id
+        .as_deref()
+        .ok_or_else(|| "before-phase repair attempt is missing its seam identity".to_string())?;
+    let identity =
+        crate::app::repair_attempt::BeforeRepairAttemptIdentity::prepare(&options.root, seam_id)?;
+    commands::run_before_repair_with_identity(options.clone(), &identity)?;
+    let stdout_document = persist_before_repair_attempt(&options, &identity)?;
+    Ok((identity.attempt_id().to_string(), stdout_document))
 }
 
 /// Serialize before-phase execution and attempt publication per repository.
@@ -208,10 +234,15 @@ fn before_repair_attempt(args: &[String]) -> Result<Option<agent::AgentRepairOpt
     }
 }
 
+/// Publish one before attempt and return its success stdout: the exact
+/// document the caller prints (or holds, façade-side, until its follow-on
+/// card renders). Composing the document without printing keeps one owner
+/// for the bytes, so the immediate and deferred routes cannot drift
+/// (#7032).
 fn persist_before_repair_attempt(
     options: &agent::AgentRepairOptions,
     identity: &crate::app::repair_attempt::BeforeRepairAttemptIdentity,
-) -> Result<(), String> {
+) -> Result<String, String> {
     let persist_started = Instant::now();
     let root = &options.root;
     let seam_id = options
@@ -373,25 +404,22 @@ fn persist_before_repair_attempt(
     if let Some(form) = &next_powershell {
         eprintln!("ripr: attempt next command (PowerShell): {form}");
     }
-    print!(
-        "{}",
-        commands::before_phase_stdout(
-            &packet_text,
-            &agent_packet.display().to_string(),
-            options.json,
-            &continuation,
-        )?
-    );
+    let mut stdout_document = commands::before_phase_stdout(
+        &packet_text,
+        &agent_packet.display().to_string(),
+        options.json,
+        &continuation,
+    )?;
     if !options.json {
-        println!(
-            "Next, after the test edit: {}",
+        stdout_document.push_str(&format!(
+            "Next, after the test edit: {}\n",
             result.manifest.next_command
-        );
+        ));
         if let Some(form) = &next_powershell {
-            println!("(PowerShell) {form}");
+            stdout_document.push_str(&format!("(PowerShell) {form}\n"));
         }
     }
-    Ok(())
+    Ok(stdout_document)
 }
 
 #[cfg(test)]

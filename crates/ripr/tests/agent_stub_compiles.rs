@@ -724,24 +724,27 @@ fn check_prints_no_stub_route_when_it_analyzed_other_bytes_than_the_disk() -> Re
     git(&streams, &root, &["commit", "-qm", "base"])?;
     std::fs::write(&lib, source(">=")).map_err(|error| error.to_string())?;
     git(&streams, &root, &["commit", "-qam", "change boundary"])?;
-    let check = |root: &Path| -> Result<String, String> {
+    let check = |root: &Path, extra: &[&str]| -> Result<String, String> {
         let mut check = ripr_command();
         isolate_from_outer_repo(&mut check)
             .args(["check", "--root"])
             .arg(root)
-            .args(["--base", "HEAD~1"]);
+            .args(["--base", "HEAD~1"])
+            .args(extra);
         let output = run_bounded(check, &streams, "check", Duration::from_mins(2))?;
         Ok(String::from_utf8_lossy(&output.stdout).to_string())
     };
 
     // Clean tree: HEAD is the disk, so the route is offered.
-    let clean = check(&root)?;
+    let clean = check(&root, &[])?;
     assert!(clean.contains("src/lib.rs:2"), "{clean}");
     assert!(clean.contains("Write a test for it:"), "{clean}");
 
-    // An uncommitted edit: HEAD was analyzed, the disk differs.
+    // An uncommitted edit with a forced committed-history read: HEAD was
+    // analyzed, the disk differs. `--committed` is load-bearing: the
+    // dirty-tree default would read the working tree (the disk) instead.
     std::fs::write(&lib, source("<")).map_err(|error| error.to_string())?;
-    let dirty = check(&root)?;
+    let dirty = check(&root, &["--committed"])?;
     assert!(dirty.contains("src/lib.rs:2"), "{dirty}");
     assert!(
         !dirty.contains("Write a test for it:") && !dirty.contains("No test stub here"),

@@ -86,6 +86,7 @@ Updated:
 
 Reason:
 RIPR-SPEC-0122 #5471: stub route printed only when the resolver yields a stub, with --kind; refusal or nothing otherwise (merge re-bless)
+RIPR-SPEC-0117: rust_macro_reach_unresolved description no longer claims the class stays no_static_path (#7071)
 
 Command:
 `cargo xtask goldens bless property_macro_noop_proptest --reason "..."`

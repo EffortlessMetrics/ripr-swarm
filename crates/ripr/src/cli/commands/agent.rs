@@ -621,7 +621,9 @@ fn resolve_agent_receipt_out_path(root: &Path, out: &Path) -> Result<PathBuf, St
     Ok(base.join(out))
 }
 
-fn run_agent_status(options: AgentStatusOptions) -> Result<(), String> {
+/// Shared with the task-first `ripr status` façade (#6305): both spellings
+/// build and render the same status services.
+pub(in crate::cli) fn run_agent_status(options: AgentStatusOptions) -> Result<(), String> {
     ensure_command_root(&options.root, "agent status")?;
 
     // The report inspects the fixed `target/ripr/workflow` and
@@ -735,7 +737,10 @@ pub(in crate::cli) fn run_before_repair_with_identity(
     run_agent_repair_with_identity(options, Some(identity))
 }
 
-fn run_agent_repair_with_identity(
+/// Shared with the task-first `ripr continue` façade (#6305): both
+/// spellings run the same after-phase service with the same refusal
+/// recording and artifact resolution.
+pub(in crate::cli) fn run_agent_repair_with_identity(
     options: AgentRepairOptions,
     identity: Option<&crate::app::repair_attempt::BeforeRepairAttemptIdentity>,
 ) -> Result<(), CommandError> {

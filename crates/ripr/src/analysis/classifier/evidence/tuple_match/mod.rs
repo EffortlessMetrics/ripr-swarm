@@ -26,3 +26,6 @@ pub(super) fn discrimination(
         }
     })
 }
+
+// RIPR-SPEC-0227 rule 3b reuses the parsed-source and current-file authorities.
+pub(super) use direct::{parsed, same_current_file};

@@ -2140,6 +2140,35 @@ mod tests {
     }
 
     #[test]
+    fn classify_review_requires_the_complete_record_before_deadline_evaluation() {
+        // Operator-facing contract (docs/RIPR_ZERO_REPORTING_WORKFLOW.md,
+        // "Age And Refresh Baselines"): review ownership and deadlines are
+        // operator-set ledger content, and a hand-set deadline is evaluated
+        // only when the whole review record is present. An incomplete record
+        // stays missing_metadata instead of guessing stale or current.
+        let complete = complete_review("2026-01-01");
+        for field in ["owner", "reason", "created_at", "review_after"] {
+            let mut record = complete.clone();
+            match field {
+                "owner" => record.owner = None,
+                "reason" => record.reason = None,
+                "created_at" => record.created_at = None,
+                _ => record.review_after = None,
+            }
+            assert_eq!(
+                classify_review(Some(record), RUN_AT_2026_10_05_NOON),
+                MetadataState::Missing,
+                "review metadata missing `{field}` stays missing_metadata, never stale or current"
+            );
+        }
+        assert_eq!(
+            classify_review(None, RUN_AT_2026_10_05_NOON),
+            MetadataState::Missing,
+            "a baseline entry without any review object is missing_metadata"
+        );
+    }
+
+    #[test]
     fn unix_ms_to_iso_day_uses_utc_civil_date() {
         assert_eq!(unix_ms_to_iso_day(0).as_deref(), Some("1970-01-01"));
         assert_eq!(
