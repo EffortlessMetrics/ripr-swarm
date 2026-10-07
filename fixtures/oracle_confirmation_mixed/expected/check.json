@@ -11,6 +11,18 @@
   "findings": [
     {
       "id": "probe:src_lib.rs:call_deletion:ed1574df",
+      "canonical_gap_id": "gap:rust:src/lib.rs:analyze_diff:call_deletion:call_deletion:record_effect_rows",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:analyze_diff:call_deletion:call_deletion:record_effect_rows",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "analyze_diff",
+        "behavior_kind": "call_deletion",
+        "probe_kind": "call_deletion",
+        "normalized_discriminator": "record_effect_rows"
+
+      },
       "classification": "weakly_exposed",
       "severity": "warning",
       "confidence": 0.92,
@@ -18,7 +30,7 @@
         "id": "probe:src_lib.rs:call_deletion:ed1574df",
         "family": "call_deletion",
         "delta": "effect",
-        "file": "fixtures/oracle_confirmation_mixed/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 2,
         "expression": "record_effect(rows)"
        },
@@ -82,7 +94,7 @@
           "relation_reason": "same_test_file",
           "relation_confidence": "medium",
           "miss": "observation_unconfirmed",
-          "why": "assertion does not mention the changed expression"
+          "why": "ripr could not confirm that this assertion observes the changed behavior"
         },
         {
           "name": "unrelated_exact_oracle",

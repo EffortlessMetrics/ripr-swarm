@@ -229,8 +229,19 @@ changes `self.count += 2` to `self.count += 1`.
 - Existing: `fixtures/python_field_assignment_shape` (parity reference),
   `fixtures/observation_verified_side_effect`,
   `fixtures/observation_unverified_side_effect`.
-- Planned: one fixture or verdict-corpus case per acceptance example.
+- Verdict corpus: 10 cases `spec0228-*` in
+  `fixtures/rust-verdict-corpus/corpus.json`, one per buildable acceptance
+  example, each naming its example in its reasoning and labeled with runtime
+  mutant truth.
 - Planned: probe extraction unit tests for `=` and `op=` on field paths.
+- Probe boundary (#6676, #6675): `lexical.rs`
+  `let_binding_type_annotations_are_not_field_construction` and
+  `struct_literal_fields_keep_field_construction_beside_let_bindings` keep a
+  `let` binding's `: Type` annotation out of `field_construction` while real
+  struct-literal fields keep it; `diff.rs`
+  `reordered_replacement_does_not_repeat_the_removed_static_unknown` drops the
+  removed side's `static_unknown` for a pure operand reorder only when the
+  added side's probe carries the removed text as its `before`.
 
 ## Implementation Mapping
 

@@ -123,6 +123,11 @@ pub(crate) struct TypeScriptTest {
     /// outside the test body and to detect shadowed constructor names; owner
     /// calls and assertions must still sit in `body_text`.
     pub(crate) scope_bindings: Vec<TypeScriptScopeBinding>,
+    /// Whether the test's assertion state is established: a recognized
+    /// assertion, an established absence of anything assertion-like, or
+    /// something assertion-like RIPR cannot resolve (#5524). An empty
+    /// `assertions` vector alone is never authority for "no assertion".
+    pub(crate) assertion_admission: TypeScriptAssertionAdmission,
 }
 
 /// One name an enclosing test scope binds, resolved to its innermost scope.
@@ -285,10 +290,136 @@ impl TypeScriptRelationKind {
     }
 }
 
+/// What one related candidate establishes about the path from its test to
+/// the changed owner (#5523).
+///
+/// [`TypeScriptRelationKind`] stays the relation's provenance: why the test
+/// was linked at all. This disposition records what the same relation and
+/// identity gates found about whether the test's apparent owner call reaches
+/// the changed owner. It is computed once, when the candidate is built, by
+/// `owner_path_disposition` in `related_tests.rs`, and consumers read it
+/// instead of re-running shadow, import, mock, spy or source-text checks.
+///
+/// Three groups keep their meaning apart:
+///
+/// - established or present paths: [`Self::TrustedOwnerPath`] and
+///   [`Self::ModuleEntryPath`];
+/// - unknown: [`Self::OwnerNameCallUnanchored`], [`Self::HeuristicOnly`] and
+///   [`Self::UnresolvedAliasOrReexport`] say nothing about a mismatch;
+/// - affirmative mismatch: the four `Rejected*` states are positive evidence
+///   that the apparent call does not reach the changed owner.
+///
+/// The disposition never promotes a relation and never changes its rank or
+/// confidence; it only names what the gates already decided.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum TypeScriptOwnerPathDisposition {
+    /// A trusted relation calls (or reads) the owner itself.
+    TrustedOwnerPath,
+    /// The test calls a same-module entry that reaches the owner: the path is
+    /// present, but whether each test's assertions observe the owner's effect
+    /// stays unresolved.
+    ModuleEntryPath,
+    /// A heuristic-linked test calls a function of the owner's name, none of
+    /// the disposition's gates found a mismatch, and no declaration anchors
+    /// the name to the owner. A same-name binding in an enclosing `describe`
+    /// scope is not one of those gates yet (`enclosing_scope_shadows` only
+    /// refuses the direct relation), so such a test also lands here.
+    OwnerNameCallUnanchored,
+    /// Proximity or name evidence only: the test does not call the owner name.
+    HeuristicOnly,
+    /// A body-local declaration of the owner name shadows the call.
+    RejectedLocalShadow,
+    /// An import or body-local destructure binds the owner name to a source
+    /// that resolves to a different module or binding.
+    RejectedUnrelatedImportOrDestructure,
+    /// The test mocks the owner's own module.
+    RejectedOwnerModuleMock,
+    /// The test spies on the owner name and fabricates the spy's value.
+    RejectedSpyFabrication,
+    /// The owner name is bound through an import or `require` specifier the
+    /// resolver cannot place: neither the owner nor an established other module.
+    UnresolvedAliasOrReexport,
+}
+
+impl TypeScriptOwnerPathDisposition {
+    /// Whether the candidate's assertions may be read as observing an
+    /// owner-name call (the legacy `candidate_observes_owner_call` answer).
+    ///
+    /// Present and unanchored paths are readable; heuristic-only, every
+    /// affirmative rejection, and an unresolved binding are not — the
+    /// unresolved case keeps today's withheld reading (#5523 changes no
+    /// result).
+    pub(crate) fn observes_owner_call(self) -> bool {
+        match self {
+            Self::TrustedOwnerPath | Self::ModuleEntryPath | Self::OwnerNameCallUnanchored => true,
+            Self::HeuristicOnly
+            | Self::RejectedLocalShadow
+            | Self::RejectedUnrelatedImportOrDestructure
+            | Self::RejectedOwnerModuleMock
+            | Self::RejectedSpyFabrication
+            | Self::UnresolvedAliasOrReexport => false,
+        }
+    }
+}
+
+/// Whether one related test exercises a changed predicate boundary (#5527).
+///
+/// Computed per candidate from the same parsing, owner-call identity,
+/// constant resolution and position rules as the finding-wide boundary
+/// witness, which is the reduction "any row is `Witnessed`". One row's
+/// witness never stands in for another row: a mixed finding keeps a
+/// `MissedBoundary` row beside a `Witnessed` one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum TypeScriptPredicateActivation {
+    /// The changed line is not a predicate, so there is no boundary to hit.
+    NotApplicable,
+    /// A strong, pinned, family-matching assertion observes an owner call
+    /// that carries the boundary input, and its expected side is live: the
+    /// row's share of the RIPR-SPEC-0027 boundary witness.
+    Witnessed,
+    /// An owner call in the test carries the boundary input, but no
+    /// assertion that could discriminate the change witnesses it (weak or
+    /// unpinned, self-comparing, dead expected side, or unobserved call).
+    /// The input is present, so this is never a missing input.
+    ReachedWithoutDiscriminator,
+    /// The owner module pins the boundary input statically (the
+    /// `typescript_boundary_input` / `_parameters` fact), and every owner
+    /// call the test makes passes a plain integer input off it. The only
+    /// state that may support a row-owned missing input.
+    MissedBoundary,
+    /// Static evidence cannot place the test relative to the boundary: an
+    /// untrusted or shadowed owner path, an unparsed or underived boundary,
+    /// a computed or absent input, or an owner reference that is not a
+    /// plain call. Never a missing input.
+    Unresolved,
+}
+
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct TypeScriptRelatedCandidate<'a> {
     pub(crate) test: &'a TypeScriptTest,
     pub(crate) relation: TypeScriptRelationKind,
+    /// Set only by `related_tests::related_candidate`, from the same gates
+    /// that assigned `relation`.
+    owner_path: TypeScriptOwnerPathDisposition,
+}
+
+impl<'a> TypeScriptRelatedCandidate<'a> {
+    pub(super) fn with_owner_path(
+        test: &'a TypeScriptTest,
+        relation: TypeScriptRelationKind,
+        owner_path: TypeScriptOwnerPathDisposition,
+    ) -> Self {
+        Self {
+            test,
+            relation,
+            owner_path,
+        }
+    }
+
+    /// What this candidate establishes about the changed owner (#5523).
+    pub(crate) fn owner_path(&self) -> TypeScriptOwnerPathDisposition {
+        self.owner_path
+    }
 }
 
 /// Assertion shape extracted from a single `expect(actual).matcher(...)`

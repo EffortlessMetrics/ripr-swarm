@@ -51,7 +51,7 @@ pub enum CommandError {
 }
 
 impl CommandError {
-    /// The human-readable error message, reported on stderr unchanged.
+    /// The raw error message; `Display` is the terminal-safe rendering.
     pub fn message(&self) -> &str {
         match self {
             Self::Failure(message) | Self::Decision(message) => message,
@@ -73,9 +73,14 @@ impl From<String> for CommandError {
     }
 }
 
+/// Display is what reaches stderr, and messages quote repository text (config
+/// values, paths, refs), so control and bidi characters print as `\u{XX}`.
+/// [`CommandError::message`] stays the raw value for programmatic callers.
 impl std::fmt::Display for CommandError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str(self.message())
+        formatter.write_str(&crate::output::human::terminal_safe(
+            self.message().to_string(),
+        ))
     }
 }
 
@@ -89,6 +94,7 @@ use crate::agent::loop_commands::{
 use crate::app::repair_attempt::BeforeArtifactSource;
 use std::fs::File;
 use std::path::Path;
+use std::time::Instant;
 
 pub fn run(args: Vec<String>) -> Result<(), CommandError> {
     let outcome = run_command(args);
@@ -206,6 +212,7 @@ fn persist_before_repair_attempt(
     options: &agent::AgentRepairOptions,
     identity: &crate::app::repair_attempt::BeforeRepairAttemptIdentity,
 ) -> Result<(), String> {
+    let persist_started = Instant::now();
     let root = &options.root;
     let seam_id = options
         .seam_id
@@ -306,6 +313,10 @@ fn persist_before_repair_attempt(
         },
         identity,
     )?;
+    // The persist total stops at publication: everything below is success
+    // narration and stdout rendering, and a slow stdout reader must not
+    // inflate the persistence measurement (#6917).
+    crate::edit_cage::trace_persist_latency("persist_before_attempt", persist_started.elapsed());
     // The before-phase success stdout is one document, printed only after the
     // attempt is published, so a refusal above is never preceded by a success
     // document. With `--json` it is the packet envelope carrying the additive
@@ -326,9 +337,19 @@ fn persist_before_repair_attempt(
             binding.verified.attempt_id, binding.verified.selection_digest
         );
     }
-    eprintln!(
-        "ripr: before phase complete. Next: add or strengthen one focused test (leave production code unchanged), then run the --attempt command printed below. Editing any file outside that one test surface fails the attempt terminally."
-    );
+    if policy.inline_test_module_target {
+        // #5210: the cage admits only new test functions inserted into the
+        // target's inline test module, so "strengthen" an existing test, or
+        // any other byte of the production file, would fail the attempt.
+        eprintln!(
+            "ripr: before phase complete. Next: add one new focused test function inside the existing `#[cfg(test)]` module of {} (leave production code, the module declaration, and existing tests unchanged), then run the --attempt command printed below. Any other edit fails the attempt terminally.",
+            policy.selected_target.path()
+        );
+    } else {
+        eprintln!(
+            "ripr: before phase complete. Next: add or strengthen one focused test (leave production code unchanged), then run the --attempt command printed below. Editing any file outside that one test surface fails the attempt terminally."
+        );
+    }
     eprintln!(
         "ripr: keep this command's output out of the checkout: the edit cage counts a file you redirect it into (for example `> packet.json` or `2> before.err`) as an edit outside the test surface. The packet is already at target/ripr/workflow/agent-packet.json; to keep a copy, redirect under target/ripr/ or outside the repository. The same applies to the after phase."
     );
@@ -336,7 +357,13 @@ fn persist_before_repair_attempt(
         "ripr: repair attempt {} is awaiting the focused test edit",
         result.manifest.repair_attempt_id.as_str()
     );
-    eprintln!("ripr: attempt manifest: {}", result.manifest_path.display());
+    eprintln!(
+        "{}",
+        crate::output::human::terminal_safe(format!(
+            "ripr: attempt manifest: {}",
+            result.manifest_path.display()
+        ))
+    );
     eprintln!(
         "ripr: attempt next command: {}",
         result.manifest.next_command
@@ -370,6 +397,13 @@ fn persist_before_repair_attempt(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn command_error_display_escapes_control_text_but_message_stays_raw() {
+        let err = CommandError::Failure("bad value \u{1b}[2J\u{202e}x".to_string());
+        assert_eq!(err.to_string(), "bad value \\u{1b}[2J\\u{202e}x");
+        assert_eq!(err.message(), "bad value \u{1b}[2J\u{202e}x");
+    }
 
     fn args(values: &[&str]) -> Vec<String> {
         values.iter().map(|value| value.to_string()).collect()

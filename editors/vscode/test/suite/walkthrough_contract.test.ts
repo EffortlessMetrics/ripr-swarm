@@ -91,6 +91,21 @@ suite('Walkthrough Contribution Contract', () => {
     assert.deepStrictEqual(actual, EXPECTED_FLOW);
   });
 
+  test('the open-file step names ripr.toml [languages] enablement and scopes completion to Rust', () => {
+    const media = fs.readFileSync(path.join(extensionRoot, 'walkthrough', 'open-file.md'), 'utf8');
+    assert.ok(media.includes('ripr.toml'), 'open-file walkthrough must name ripr.toml as the enablement surface');
+    assert.ok(media.includes('[languages]'), 'open-file walkthrough must name the [languages] table');
+    assert.ok(/enabled\s*=\s*\[/.test(media), 'open-file walkthrough must show the enabled = [...] shape');
+    assert.ok(media.includes('Restart Server'), 'open-file walkthrough must name the reload behavior');
+    assert.ok(
+      media.includes('This step completes when the active editor shows a Rust file'),
+      'open-file walkthrough must scope completion honestly to Rust files'
+    );
+    const readme = fs.readFileSync(path.join(extensionRoot, 'README.md'), 'utf8');
+    assert.ok(readme.includes('ripr.toml'), 'README onboarding must name ripr.toml as the enablement surface');
+    assert.ok(readme.includes('[languages]'), 'README onboarding must name the [languages] table');
+  });
+
   test('onContext events reject empty expressions and undocumented keys in every clause', () => {
     assert.ok(
       !DOCUMENTED_ON_CONTEXT_KEYS.has('workspaceTrusted'),

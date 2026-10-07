@@ -76,8 +76,8 @@ wire value that `ripr check` emits for the same witness. Trait dispatch has
 no `static_limit_kind` value and reads `(trait dispatch)`.
 
 RIPR-SPEC-0005 rule 2 (any stage `opaque` gives `opaque`) then classifies
-the seam `opaque`. It is not headline-eligible, pilot ranks it after every
-gap class, the LSP shows it at information severity, and its evidence
+the seam `opaque`. It is not headline-eligible, pilot withholds it from the
+ranking and counts it as a static limitation (#5497), the LSP shows it at information severity, and its evidence
 record carries the reach summary as an `opaque_static_evidence` limitation.
 
 When none fires, reach stays `no` and the seam stays `ungripped`.

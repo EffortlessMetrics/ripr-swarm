@@ -366,4 +366,20 @@ Lower-level `start`, `brief`, `packet`, `verify`, `receipt`, `status`, and
 `review-summary` commands remain available for explicit control and debugging.
 The repair command does not generate or apply tests, execute mutation testing,
 or declare the repository safe to merge.
+
+Repair scope: the edit target must match the test-surface path
+convention (`tests`/`test` paths, `*_test`/`*_tests`, `test_*`, and
+TypeScript test-file conventions), and the cage authorizes it whole-file.
+Inline `#[cfg(test)]` modules don't qualify their file: a repository
+whose only tests are inline in non-test-surface files is permanently out
+of repair scope — the repair workflow consumes only file-level cage
+authority. The before phase refuses such seams before creating anything.
+
+Environment variables:
+  RIPR_PERSIST_LATENCY_TRACE  When present, emits diagnostic persist-phase
+                                    trace lines for baseline capture, attempt
+                                    publication, and after-phase state
+                                    recapture. Presence enables tracing even
+                                    if the value is empty or 0; it does not
+                                    change any verdict.
 "#;

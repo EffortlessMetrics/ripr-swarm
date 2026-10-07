@@ -9,10 +9,11 @@ Created: 2026-06-14
 Linked issues:
 
 - #1168
+- #6695 (`ok_or(Variant)?` propagation, Part C)
 
 Linked PRs:
 
-- None yet
+- #6786
 
 Support-tier impact:
 
@@ -104,8 +105,9 @@ though both share the `CalcError` qualifier token.
 
 Implementation:
 
-- **Diff-mode** (`classify/reveal.rs`): `error_path_variant_token` extracts the
-  post-`::` uppercase component of the probe's required error expression. In
+- **Diff-mode** (`classify/reveal.rs`): `error_path_variant_path` extracts the
+  probe's required error path; its post-`::` uppercase component is the
+  variant token. In
   `assertion_matches_probe_detail`, when the probe family is `ErrorPath` and the
   assertion kind is `ExactErrorVariant` and `error_path_variant` is `Some`, the
   match is restricted to assertions whose text contains the specific variant
@@ -117,6 +119,108 @@ Implementation:
   `error_variant_oracle_matches_seam_variant`, which parses both the
   `RequiredDiscriminator::ErrorVariant { variant }` on the seam and the
   oracle assertion text and rejects a mismatch.
+
+### Part C — `ok_or(Variant)?` returns the variant from the owner (#6695)
+
+A changed statement `let d = helper(c).ok_or(Type::Variant)?;` (or
+`.ok_or_else(|| Type::Variant)?`) returns `Err(Type::Variant)` from the
+owner when the helper yields `None`. The changed error's identity is that
+variant, exactly as for `return Err(Type::Variant)`:
+
+- `text::question_mark_error_variant` reads the variant only when the
+  line holds exactly one `.ok_or(`/`.ok_or_else(` call at delimiter depth
+  zero, its `?` directly follows the call and ends the statement, no `|`
+  sits at depth zero before it, and the argument is one qualified variant
+  path (upper-case final segment, optional single payload) — for
+  `ok_or_else`, the body of a parameterless `||` thunk. Every other shape
+  (a call or `.into()` argument, a bare imported variant name, a second
+  conversion on the line, `?.field`, a closure head) reads `None`.
+- The ErrorPath flow sink becomes `Result::Err(Type::Variant)` only when
+  `flow::question_mark_returns_from_owner` confirms, over the masked
+  owner body, that the line is the changed expression and that no
+  enclosing delimiter between the owner's body brace and the line opens
+  a closure (`|`), an `async`/`try`/`move`/`gen` block, a nested item
+  (`fn`/`impl`/`mod`/..), a macro body (`!`), or a call argument list —
+  in each of those the `?` returns from something other than the owner.
+  The probe line's own statement head (the text since the last `{`, `}`
+  or `;`) must pass the same plain-head test, so a braceless closure head
+  on the previous line (`let f = |c|` with the `?` body below) also
+  refuses. `plain_block_head` rejects any head containing `!`, so a block
+  opened after a macro call on the same head fails closed too. The scan
+  masks comments, strings and char literals (`'}'`), keeping lifetimes
+  and labels as code.
+- The sink also requires the owner's declared return type to be
+  `Result<_, E>` with `E` textually equal to the variant's enum path after
+  dropping one leading `crate::` or `self::` (`other::E::Bad` does not match
+  an owner returning `E`). `?` converts the error through `From` when the
+  owner returns another error type, so a converting owner, a
+  `Result<T>`/`io::Result<T>` alias, an aliased or imported spelling of
+  `E`, a `fn`-level generic parameter named `E`, or an unparsed signature
+  gets no exact sink. A generic parameter declared on an enclosing `impl`
+  is not visible to this lexical check.
+- A line the strict `ok_or?` reader parses completes its witness only
+  through that owner-checked sink. When flow refuses the sink (closure,
+  converting owner, mismatched enum path), the fallback error-text sink it
+  emits instead does not complete through the generic identity rule.
+- The propagation witness takes the owner-checked `ok_or?` sink as an
+  established edge only when the line constructs no literal `Err(..)`:
+  a line with both forms gets the ordinary, unchecked error text sink and
+  the ordinary edge rule.
+- With that sink, the propagation witness edge is established and
+  complete (the `||` thunk is the argument's own constant, not an opaque
+  path), so an exact `Err(Type::Variant)` pin on the owner call can read
+  `exposed`.
+- Part B applies to the same variant in both modes through one identity
+  owner, `text::changed_error_variant` (`exact_error_variant`, falling
+  back to `question_mark_error_variant`). Diff mode: reveal's
+  `error_path_variant_path` reads it, so a test pinning a sibling variant
+  (`Err(Type::Other)`) does not confirm the line. When the line holds
+  both a literal `Err(..)` and a terminal `ok_or(..)?` naming different
+  variants, the identity is opaque (`None`); so is a line that spells
+  `.ok_or` beside an `Err(..)` and names any other qualified variant
+  (`Err(E::V).or_else(|_| x.ok_or(E::W))?`). Repo mode does not yet apply
+  the owner error-type check (#6915). Repo mode builds `ErrorPath`
+  seams only from `return` and tail expressions (and calls)
+  (`syntax/ra.rs`); `has_error_path_text` recognises a return/tail
+  `x.ok_or(Type::Variant)?` through the same reader (so a short enum such
+  as `E::Bad` is covered), and a `let d = ..?;` statement is not a repo
+  seam:
+  `seam_inventory::required_discriminator_for` stores the variant as the
+  `ErrorVariant` seam's identity, and
+  `guarded_result_oracle_matches_seam_variant` compares a return-value
+  seam's guarded pins against it, so a sibling pin does not discriminate
+  those seams either.
+- Part B's sibling gate covers every assertion kind, not only
+  `ExactErrorVariant`: an assertion that spells the changed error's enum
+  only through sibling variant paths (an `exact_value`
+  `assert!(matches!(e, Type::Other))` inside a match arm) shares just the
+  enum qualifier with the changed line. It does not match an `error_path`
+  probe and confirms no variant-carrying family
+  (`reveal::names_only_sibling_variants`, PR #6786 review).
+  Limits: the gate needs a qualified changed path (`Type::Variant`); a
+  changed error spelled through an alias, `Self::Variant`, or a
+  glob-imported bare variant has no enum qualifier and falls through to
+  the earlier behaviour. An alternation such as
+  `matches!(e, Type::A | Type::Changed)` names the changed variant and
+  counts as naming it.
+
+On an `.ok_or_else(|| Type::Variant)?` line the probe extractor also
+emits a `predicate` probe, because it reads the parameterless closure head
+`||` as a logical-OR operator. That probe predates this part. It keeps
+reading `infection_unknown` ("no literal boundary was visible"), which is
+a non-actionable unknown, not a gap, and this part does not change it.
+
+Part B also covers the turbofish constructor: `exact_error_variant`
+reads `Err::<T, E>(Type::Variant)` and `Result::Err::<T, E>(..)` like
+`Err(Type::Variant)`, and the witness compares error identities with
+either turbofish removed (nested generics balanced). Before,
+that spelling carried no variant, so a sibling-variant pin from another
+test of the same owner could confirm it and read `exposed`.
+
+A related honesty fix: the witness's opaque-path check names an FFI
+boundary only for an `ffi` identifier word (`std::ffi::CStr`, `ffi_call`),
+not for the letters `ffi` inside a word, which refused every witness for
+variants such as `PayError::Insufficient` (#6673).
 
 ## Non-Goals
 
@@ -170,19 +274,25 @@ issue sanctions is the typed static limitation
   `try_parse_summary` seam `return Err(ParseSummaryError::MalformedSource);`
   classifies `exposed` with `exact_error_variant` / `strong` — credited only
   through the pre-existing variant-bound path, with no wrapper heuristics.
-- Wrapper `map_err(Into::into)` seam: classifies `weakly_exposed`, never
-  `exposed`; lexical confirmation is refused by construction (every overlap
-  between the seam expression and witness text is token coincidence), and the
-  finding carries `static_limit_kind: wrapper_error_binding_unresolved` with
-  limitation evidence naming the unresolved `Into`/`From`-through-`Box` edge.
-  The downcast witness and the typed sibling test are still listed as related,
-  but the emitted guidance no longer prescribes an assertion the suite may
-  already contain.
-- Fail-closed companions in the same input stay `weakly_exposed` trivially: a
+- Wrapper `map_err(Into::into)` seams with asserting observers classify
+  `weakly_exposed`, never `exposed`; lexical confirmation is refused by
+  construction (every overlap between the seam expression and witness text is
+  token coincidence), and the finding carries
+  `static_limit_kind: wrapper_error_binding_unresolved` with limitation
+  evidence naming the unresolved `Into`/`From`-through-`Box` edge. The downcast
+  witness and the typed sibling test are still listed as related, but the
+  emitted guidance no longer prescribes an assertion the suite may already
+  contain.
+- Asserting fail-closed companions in the same input stay `weakly_exposed`: a
   wrong-sibling downcast witness, an unrelated-enum downcast witness, a broad
-  `is_err()`-only observer, a stringified conversion
-  (`map_err(|error| error.to_string().into())`), and an ignored `matches!`
-  result.
+  `is_err()`-only observer, and a stringified conversion
+  (`map_err(|error| error.to_string().into())`).
+- The ignored `matches!` result in `theme_summary` is not an asserting observer.
+  Its wrapper `error_path` and `return_value` findings classify
+  `reachable_unrevealed`, retain a `no_assertion` consumer and `unknown` / `none`
+  oracle metadata, and recommend adding an assertion. Secondary missing text
+  may retain the unresolved wrapper-binding context while the optional
+  `static_limit_kind` and `static_limitation` fields are absent.
 - Companion fixtures: `fixtures/error_variant_boxed_wrapper_fail_closed`
   (all-weak source for the wrong-sibling and unrelated-enum shapes) and
   `fixtures/error_variant_wrapper_{callee_only_pin,foreign_pin,
@@ -216,6 +326,12 @@ Tests in `crates/ripr/src/analysis/extract/oracles/` and
 | `is_unwrap_err_bound_error_assertion_upgrades_named_variant` | Fixture 1 positive |
 | `generic_assertion_on_bound_var_not_upgraded` | Fixture 3 generic |
 | `sibling_variant_assertion_does_not_match_tool_large_probe` | Fixture 2 sibling |
+| `question_mark_error_variant_reads_ok_or_and_ok_or_else` | Part C recognition |
+| `question_mark_error_variant_refuses_every_other_shape` | Part C fail-closed shapes |
+| `question_mark_ok_or_in_the_owner_body_is_a_complete_error_witness` | Part C propagation |
+| `question_mark_ok_or_inside_a_closure_or_async_block_is_not_owner_propagation` | Part C enclosure negatives |
+| `ffi_boundary_is_an_identifier_word_not_a_substring` | Part C opaque-path fix |
+| `exact_error_variant_reads_turbofish_and_qualified_constructors` | Part B turbofish binding |
 
 ## Acceptance Examples
 
@@ -261,6 +377,9 @@ Evidence
 | Sibling-variant guard — diff-mode | `crates/ripr/src/analysis/classify/reveal.rs` |
 | Sibling-variant guard — repo-exposure | `crates/ripr/src/analysis/test_grip_evidence.rs` |
 | `enum_variant_values`, `exact_error_variant` re-exported | `crates/ripr/src/analysis/classify/mod.rs` |
+| Part C `question_mark_error_variant` | `crates/ripr/src/analysis/classify/text/error_variant.rs` |
+| Part C owner-enclosure gate and error sink | `crates/ripr/src/analysis/classify/flow.rs` |
+| Part C established witness edge, FFI word check | `crates/ripr/src/analysis/classify/propagation_witness.rs` |
 | Spec registration | `policy/doc-artifacts.toml`, `docs/specs/README.md` |
 | Traceability | `.ripr/traceability.toml` |
 

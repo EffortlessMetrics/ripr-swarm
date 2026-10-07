@@ -129,6 +129,12 @@ hold:
 Then activation clears the `FieldValue` missing discriminator for `f` and the
 finding may read `exposed`, subject to every other stage.
 
+RIPR-SPEC-0197 rule 6 (clone field pins, #6692) consumes rules 3 and 4 for a
+field of a hand-written `Clone::clone` literal compared with its own receiver.
+The "No credit" list below, including its separate-binding bullet, governs
+this spec's literal comparisons; it does not govern rule 6's receiver, whose
+independence rule 6 gates itself.
+
 ### No credit
 
 The finding does not read `exposed` from whole-value equality when:
@@ -232,7 +238,10 @@ The diff changes `retries: n + 2` to `retries: n + 1` in `build`; `Config` deriv
 - Existing: `fixtures/observation_verified_field_construction`,
   `fixtures/observation_unverified_field_construction`,
   `fixtures/rust_field_construction_token_coincidence`.
-- Planned: one fixture or verdict-corpus case per acceptance example.
+- Verdict corpus: 17 cases `spec0225-*` in
+  `fixtures/rust-verdict-corpus/corpus.json`, one per buildable acceptance
+  example, each naming its example in its reasoning and labeled with runtime
+  mutant truth.
 - Planned: oracle classifier unit tests for braces outside struct-literal
   operands.
 

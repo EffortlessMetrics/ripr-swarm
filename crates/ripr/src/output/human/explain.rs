@@ -6,7 +6,7 @@
 //! verdict, and spells out each stop reason.
 
 use crate::domain::{
-    ExposureClass, Finding, OracleStrength, RelatedTest, RelatedTestMiss, StopReason,
+    ExposureClass, Finding, OracleStrength, ProbeFamily, RelatedTest, RelatedTestMiss, StopReason,
     exact_assertion_fact, input_boundary_fact,
 };
 use crate::output::path::display_path;
@@ -88,7 +88,10 @@ pub(crate) fn render_verdict_explanation(finding: &Finding) -> String {
 /// What ripr concluded about one assertion row.
 fn row_verdict(row: &RelatedTest, finding: &Finding) -> String {
     match related_test_miss_reason(row, &finding.activation.missing_discriminators) {
-        Some(why) => format!("misses: {why}"),
+        Some(why) => format!(
+            "{}: {why}",
+            crate::output::related_test_miss::related_test_miss_label(row)
+        ),
         None => match &row.oracle {
             Some(_) => format!(
                 "{} {} oracle",
@@ -182,10 +185,15 @@ fn verdict_changers(finding: &Finding) -> Vec<String> {
     }
     // A missing discriminator is a need whether or not any listed test got
     // far enough to be judged on it. A predicate boundary is an input a test
-    // must use; an error variant or field value is an assertion it must make.
+    // must use, as is an unselected match arm (RIPR-SPEC-0229); an error
+    // variant or field value is an assertion it must make.
     let facts = &finding.activation.missing_discriminators;
     if let Some(fact) = input_boundary_fact(facts, &finding.probe.family) {
-        push(format!("use an input that reaches `{}`", fact.value));
+        push(if finding.probe.family == ProbeFamily::MatchArm {
+            format!("use an input that selects arm `{} =>`", fact.value)
+        } else {
+            format!("use an input that reaches `{}`", fact.value)
+        });
     }
     if let Some(fact) = exact_assertion_fact(facts, &finding.probe.family) {
         push(format!("assert the exact `{}`", fact.value));
@@ -221,6 +229,9 @@ fn stop_reason_meaning(reason: &StopReason) -> &'static str {
         }
         StopReason::MacroReachUnresolved => {
             "a test may reach this through a macro ripr does not expand"
+        }
+        StopReason::GapEvidenceUnresolved => {
+            "a related test asserts, but ripr could not tie that assertion to this change"
         }
     }
 }
@@ -283,5 +294,42 @@ mod tests {
             text.contains("      checked: assert_eq!(parse(\"a\"), Ok(1))\n"),
             "{text}"
         );
+    }
+    #[test]
+    fn an_unselected_arm_is_an_input_to_select_not_an_assertion_to_make() {
+        let mut finding = sample_perl_finding();
+        finding.probe.family = ProbeFamily::MatchArm;
+        finding.activation.missing_discriminators = vec![MissingDiscriminatorFact {
+            value: "Kind::Beta".to_string(),
+            reason: "No related test call selects arm `Kind::Beta =>`; observed `k` values: `Kind::Alpha`"
+                .to_string(),
+            flow_sink: None,
+        }];
+        let text = render_verdict_explanation(&finding);
+        assert!(
+            text.contains("use an input that selects arm `Kind::Beta =>`"),
+            "{text}"
+        );
+        assert!(!text.contains("assert the exact `Kind::Beta`"), "{text}");
+    }
+
+    /// #5508: a Perl row whose observation ripr could not confirm is an
+    /// unknown, so the explanation does not introduce it as a miss.
+    #[test]
+    fn an_unconfirmed_observation_is_not_labelled_a_miss() {
+        let mut finding = sample_perl_finding();
+        finding.related_tests = vec![row(
+            "is(My::App::discount(100), 10, 'discount threshold')",
+            OracleStrength::Strong,
+            RelatedTestMiss::ObservationUnconfirmed,
+        )];
+        let text = render_verdict_explanation(&finding);
+        assert!(
+            text.contains(
+                "  - tests/parse.rs:7 parses_empty: unconfirmed: ripr could not confirm that this assertion observes the changed behavior\n"
+            ),
+            "{text}"
+        );
+        assert!(!text.contains("misses: ripr could not confirm"), "{text}");
     }
 }

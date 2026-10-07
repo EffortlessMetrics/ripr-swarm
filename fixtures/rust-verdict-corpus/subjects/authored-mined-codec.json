@@ -1,0 +1,17 @@
+{
+  "subject_id": "authored-mined-codec",
+  "origin": "authored",
+  "version_label": "authored 2026-10-05 from test shapes mined in real crates (rust-base64, uuid, toml_writer, rust-url)",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "Cargo.toml",
+      "sha256": "e597b266e6fa73b02a876acef701536717784ceedb911d825ea786cc8eed1ecb"
+    },
+    {
+      "path": "src/lib.rs",
+      "sha256": "e1b8d464b73ba9b71134068286e6908cf9f5dd3d8d29cf60767eecf8f91baba7"
+    }
+  ]
+}

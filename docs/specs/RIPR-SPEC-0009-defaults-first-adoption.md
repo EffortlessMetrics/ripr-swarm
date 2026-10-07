@@ -186,6 +186,46 @@ close with that route instead of the Rust before/after snapshot commands. When
 Rust seams exist, the human output is unchanged and other languages are listed
 only in `pilot-summary.json` `language_routes` (#3906).
 
+Pilot's ranking is repo-wide, but a developer who just ran `ripr check` on a
+branch reads its top recommendation as the next step for that change. Pilot
+therefore loads the current change (the default base, resolved as `ripr check`
+resolves it, against the live working tree when it has uncommitted tracked
+changes, otherwise `<base>...HEAD`), ranks actionable seams on its changed
+lines first, and says in the terminal, Markdown and
+`pilot-summary.json` (`current_change`) whether the top recommendation is part
+of the change. When the change has no ranked seam, pilot says the
+recommendation is elsewhere in the repo, says why no seam on the change ranks
+(pilot withholds its seams as static limitations, they are already gripped,
+intentional or suppressed, the seam limit left seams unanalyzed, the change is
+in a file pilot's repo-wide ranking leaves out by design (a Cargo build script,
+repository automation under `xtask/`, or a crate source declared outside
+`src`, which only diff analysis covers, also named after a reason drawn from
+the change's analyzed seams; #6944), or no seam
+pilot analyzed is on a changed line), and names `ripr check` for the change
+itself, with `--worktree` when the change is uncommitted, since plain `ripr
+check` reads committed history only. When the repo-exposure seam limit cuts
+the inventory, pilot classifies the seams on the change's lines on their own,
+within what is left of its deadline, and adds the ones the cut dropped, so they
+still rank change-first and count as analyzed; the seam-limit caveat about the
+change then no longer applies. If that classification fails or runs out of
+time, pilot says so on stderr, keeps the caveat and still completes. When
+pilot added any such seam, its `repo-exposure.json` is written without the
+comparable `artifact` identity, because `ripr check` never classifies those
+seams (#6943). The terminal and Markdown "Inspected" block names the scope:
+change-first with a change, otherwise the whole repository, with a short reason
+when the change could not be loaded. With no change, or when the diff cannot be
+loaded, the ranking is unchanged, the human output differs only by that scope
+line, and a failed load never fails pilot (#1169).
+
+When a seam limit (the repo-exposure inventory limit or the pilot seam budget)
+cut the classified seams before ranking, `pilot-summary.md` must say so under
+"What Was Inspected": it names how many seams were ranked out of the outermost
+total (when both limits cut, the budget's analyzed count over the inventory's
+total), reads the actionable count as
+"at least N", and reads each "Also in this function" count as "at least N",
+because seams past the cut were never counted (#6602). Without a limit, the
+wording is unchanged.
+
 The pilot command must remain advisory. It should not edit source files,
 generate tests, run mutation testing, or enable CI blocking policy.
 It should also be bounded for interactive first runs: if analysis exceeds the
@@ -389,6 +429,47 @@ then the terminal and Markdown output are unchanged and pilot-summary.json
 lists the other languages under language_routes with state supplementary.
 ```
 
+### Pilot says whether its top recommendation is part of the current change
+
+```text
+Given a branch whose committed or uncommitted change touches a ranked seam,
+when a user runs ripr pilot,
+then that seam ranks ahead of better-classed seams elsewhere and pilot says the
+top recommendation is part of the current change.
+
+Given a branch whose change touches no ranked seam,
+when a user runs ripr pilot,
+then pilot says the top recommendation is elsewhere in the repo, not part of
+the current change, and names ripr check for the change itself.
+
+Given a branch whose changed lines hold only seams pilot withholds as static
+limitations (opaque or an unknown class),
+when a user runs ripr pilot,
+then pilot says it withholds the seams on the change and why, rather than that
+no seam pilot analyzed is on a changed line, and `withheld_seams_in_change` counts them.
+
+Given a branch whose only Rust change is in a Cargo build script,
+when a user runs ripr pilot,
+then pilot names the build script and says its repo-wide ranking leaves it
+out, rather than that no seam pilot analyzed is on a changed line.
+
+Given a repository past the inventory seam limit whose changed lines hold
+seams the limit cut,
+when a user runs ripr pilot,
+then pilot classifies the change's files on their own, ranks those seams
+change-first and counts them as analyzed.
+
+Given a change that exists only as uncommitted edits in the working tree,
+when a user runs ripr pilot and the top recommendation is not part of it,
+then the ripr check command pilot names carries --worktree.
+
+Given no current change, or a root where the diff cannot be loaded,
+when a user runs ripr pilot,
+then the ranking is unchanged, the terminal and Markdown name the whole
+repository as pilot's scope, and pilot-summary.json records current_change
+state no_change or unavailable.
+```
+
 ### Outcome is public CLI
 
 ```text
@@ -484,7 +565,21 @@ Current tests and reports that support the contract:
 - `crates/ripr/tests/cli_smoke.rs::check_repo_badge_plus_json_emits_repo_scope_metadata`
 - `crates/ripr/src/output/pilot/tests.rs::pilot_ranking_prefers_actionable_class_order_before_tie_breakers`
 - `crates/ripr/src/output/pilot/tests.rs::pilot_ranking_uses_evidence_tie_breakers_then_stable_location`
+- `crates/ripr/src/output/pilot/tests.rs::pilot_ranking_admits_gap_classes_only`
+- `crates/ripr/src/output/pilot/tests.rs::pilot_summary_ranks_a_true_gap_ahead_of_withheld_limitations`
+- `crates/ripr/src/output/pilot/tests.rs::pilot_summary_with_only_limitations_is_not_a_clean_result`
+- `crates/ripr/tests/cli_smoke.rs::pilot_withholds_static_limitations_and_keeps_a_true_gap`
 - `crates/ripr/src/output/pilot/tests.rs::pilot_ranking_excludes_solved_governed_classes`
+- `crates/ripr/src/output/pilot/tests.rs::pilot_ranking_puts_seams_in_the_current_change_first`
+- `crates/ripr/src/output/pilot/tests.rs::pilot_current_change_matches_the_seam_span_and_new_side_lines`
+- `crates/ripr/src/output/pilot/tests.rs::pilot_renderers_say_whether_the_top_recommendation_is_in_the_current_change`
+- `crates/ripr/tests/cli_smoke.rs::pilot_ranks_and_labels_seams_in_the_current_change`
+- `crates/ripr/src/output/pilot/tests.rs::pilot_ranking_takes_one_seam_per_owner_before_a_second`
+- `crates/ripr/src/output/pilot/tests.rs::pilot_ranking_spreads_owners_without_crossing_class_order`
+- `crates/ripr/src/output/pilot/tests.rs::pilot_summary_md_counts_an_owners_unlisted_seams_once`
+- `crates/ripr/src/output/pilot/tests.rs::pilot_summary_md_marks_owner_counts_as_lower_bounds_after_a_seam_limit`
+- `crates/ripr/src/output/pilot/tests.rs::pilot_ranking_counts_owner_rounds_across_classes`
+- `crates/ripr/src/output/pilot/tests.rs::pilot_summary_md_names_unlisted_seams_on_an_owners_first_pick_only`
 - `crates/ripr/src/output/pilot/tests.rs::pilot_summary_json_contains_config_state_artifacts_and_next_commands`
 - `crates/ripr/src/output/pilot/tests.rs::pilot_summary_md_spells_out_first_screen_recommendation`
 - `crates/ripr/src/output/pilot/tests.rs::pilot_terminal_prints_top_test_and_follow_up_commands`

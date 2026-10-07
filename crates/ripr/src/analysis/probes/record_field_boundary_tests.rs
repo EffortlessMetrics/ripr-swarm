@@ -4,8 +4,7 @@
 use super::classify::parser_probe_shapes_for_changed_line;
 use super::diff::probes_for_file;
 use crate::analysis::diff::{ChangedFile, ChangedLine};
-use crate::analysis::extract::PROBE_SHAPE_UNSAFE_BOUNDARY;
-use crate::analysis::rust_index::RustIndex;
+use crate::analysis::rust_index::{ProbeShapeKind, RustIndex};
 use crate::analysis::syntax::{RaRustSyntaxAdapter, RustSyntaxAdapter};
 use crate::domain::{Probe, ProbeFamily};
 use std::collections::BTreeMap;
@@ -103,7 +102,7 @@ fn nested_record_declaration_retains_its_unsafe_boundary() -> Result<(), String>
     let boundary = facts
         .probe_shapes
         .iter()
-        .find(|shape| shape.kind == PROBE_SHAPE_UNSAFE_BOUNDARY)
+        .find(|shape| shape.kind == ProbeShapeKind::UnsafeBoundary)
         .cloned()
         .ok_or_else(|| "fixture has no unsafe boundary".to_string())?;
     let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
@@ -143,5 +142,214 @@ fn shared_record_definition_and_body_keep_the_real_initializer() -> Result<(), S
         }),
         "shared declaration line erased executable field evidence: {probes:?}"
     );
+    Ok(())
+}
+
+/// Real RA summary and diff probes for one replaced line, so the probe sees
+/// the removed text the diff pairs with it.
+fn probes_for_replaced_line(
+    source: &str,
+    line: usize,
+    removed: &str,
+) -> Result<Vec<Probe>, String> {
+    probes_for_replaced_block(source, line, &[removed])
+}
+
+/// Real RA summary and diff probes for a block replacing `removed.len()`
+/// lines starting at `first_line`. Like the diff parser, every removed line
+/// carries the new-side coordinate where the added run starts.
+fn probes_for_replaced_block(
+    source: &str,
+    first_line: usize,
+    removed: &[&str],
+) -> Result<Vec<Probe>, String> {
+    let path = PathBuf::from("src/lib.rs");
+    let added_lines = (first_line..first_line + removed.len())
+        .map(|line| {
+            source
+                .lines()
+                .nth(line.saturating_sub(1))
+                .map(|text| ChangedLine {
+                    line,
+                    new_side_line: line,
+                    text: text.to_string(),
+                })
+                .ok_or_else(|| format!("fixture has no line {line}"))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let facts = RaRustSyntaxAdapter.summarize_file(&path, source)?;
+    let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+        files: BTreeMap::from([(path.clone(), facts)]),
+        ..Default::default()
+    });
+    let changed = ChangedFile {
+        path,
+        added_lines,
+        removed_lines: removed
+            .iter()
+            .enumerate()
+            .map(|(offset, text)| ChangedLine {
+                line: first_line + offset,
+                new_side_line: first_line,
+                text: (*text).to_string(),
+            })
+            .collect(),
+    };
+    Ok(probes_for_file(Path::new("."), &changed, &index))
+}
+
+fn field_construction_expressions(probes: &[Probe]) -> Vec<&str> {
+    probes
+        .iter()
+        .filter(|probe| probe.family == ProbeFamily::FieldConstruction)
+        .map(|probe| probe.expression.as_str())
+        .collect()
+}
+
+const ONE_LINE_ID: &str = "pub struct Id {\n    counter: u32,\n    version: u8,\n}\npub fn new_v1() -> Id {\n    Id { counter: 0x00ab_cdef, version: 0x1 }\n}\n";
+
+#[test]
+fn one_line_struct_literal_probes_the_edited_field_not_its_neighbour() -> Result<(), String> {
+    // #6731: `counter` sorts first, but only `version` changed.
+    let probes = probes_for_replaced_line(
+        ONE_LINE_ID,
+        6,
+        "    Id { counter: 0x00ab_cdef, version: 1 }",
+    )?;
+    assert_eq!(
+        field_construction_expressions(&probes),
+        vec!["version: 0x1"],
+        "{probes:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_field_text_inside_a_longer_removed_value_is_not_unchanged() -> Result<(), String> {
+    // `version: 0x1` occurs inside the removed `version: 0x10`, but that
+    // field still changed; only a whole-token match counts as unchanged.
+    let probes = probes_for_replaced_line(
+        ONE_LINE_ID,
+        6,
+        "    Id { counter: 0x00ab_cdef, version: 0x10 }",
+    )?;
+    assert_eq!(
+        field_construction_expressions(&probes),
+        vec!["version: 0x1"],
+        "{probes:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_removed_comment_repeating_the_new_field_does_not_mark_it_unchanged() -> Result<(), String> {
+    // The old line's comment already reads `version: 0x2`; only code counts
+    // as the unchanged field, so the edited `version` stays the subject.
+    let source = "pub struct Id {\n    counter: u32,\n    version: u8,\n}\npub fn new_v2() -> Id {\n    Id { counter: 0x00ab_cdef, version: 0x2 } // version: 0x2\n}\n";
+    let probes = probes_for_replaced_line(
+        source,
+        6,
+        "    Id { counter: 0x00ab_cdef, version: 0x1 } // version: 0x2",
+    )?;
+    assert_eq!(
+        field_construction_expressions(&probes),
+        vec!["version: 0x2"],
+        "{probes:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn adjacent_replaced_literals_pair_with_their_own_removed_lines() -> Result<(), String> {
+    // Both removed lines share the `Id` token with both added lines. The
+    // second added line must compare against the second removed line, where
+    // `b: 2` is new, not the first, where `b: 2` already appeared.
+    let source = "pub struct Id {\n    a: u8,\n    b: u8,\n}\npub fn pair() -> (Id, Id) {\n    (\n        Id { a: 0, b: 4 },\n        Id { a: 1, b: 2 },\n    )\n}\n";
+    let probes = probes_for_replaced_block(
+        source,
+        7,
+        &["        Id { a: 0, b: 2 },", "        Id { a: 1, b: 3 },"],
+    )?;
+    // Removed-side probes (no `after`) are out of scope here.
+    let added_side = probes
+        .iter()
+        .filter(|probe| probe.after.is_some())
+        .cloned()
+        .collect::<Vec<_>>();
+    assert_eq!(
+        field_construction_expressions(&added_side),
+        vec!["b: 4", "b: 2"],
+        "{probes:?}"
+    );
+    let befores = added_side
+        .iter()
+        .map(|probe| probe.before.as_deref())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        befores,
+        vec![Some("Id { a: 0, b: 2 },"), Some("Id { a: 1, b: 3 },")],
+        "{probes:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_field_matching_another_literal_on_the_same_line_is_still_edited() -> Result<(), String> {
+    // Only the first literal's `version` changed, to the text the second
+    // literal already had. The old line holds one `version: 2`, the new line
+    // two, so the first literal's `version: 2` is new.
+    let source = "pub struct Id {\n    counter: u8,\n    version: u8,\n}\npub fn pair() -> (Id, Id) {\n    (Id { counter: 0, version: 2 }, Id { counter: 1, version: 2 })\n}\n";
+    let probes = probes_for_replaced_line(
+        source,
+        6,
+        "    (Id { counter: 0, version: 1 }, Id { counter: 1, version: 2 })",
+    )?;
+    assert_eq!(
+        field_construction_expressions(&probes),
+        vec!["version: 2"],
+        "{probes:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_field_that_was_the_head_of_a_longer_value_is_still_edited() -> Result<(), String> {
+    // The old `flag: foo && bar` begins with the new `flag: foo`, but the
+    // field's value changed; the untouched `enabled: true` is not the subject.
+    let source = "pub struct Packet {\n    flag: bool,\n    enabled: bool,\n}\npub fn packet(foo: bool) -> Packet {\n    Packet { flag: foo, enabled: true }\n}\n";
+    let probes =
+        probes_for_replaced_line(source, 6, "    Packet { flag: foo && bar, enabled: true }")?;
+    assert_eq!(
+        field_construction_expressions(&probes),
+        vec!["flag: foo"],
+        "{probes:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn an_unchanged_call_beside_an_operator_still_reads_unchanged() -> Result<(), String> {
+    // The whole-unit rule is for record fields only. `f(a)` follows `=` and
+    // precedes `+`, yet it is the same call on both lines; `g(b)` is the edit.
+    let source = "fn f(v: u8) -> u8 { v }\nfn g(v: u8) -> u8 { v }\npub fn sum(a: u8, b: u8) -> u8 {\n    let x = f(a) + g(b);\n    x\n}\n";
+    let path = PathBuf::from("src/lib.rs");
+    let facts = RaRustSyntaxAdapter.summarize_file(&path, source)?;
+    let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+        files: BTreeMap::from([(path.clone(), facts)]),
+        ..Default::default()
+    });
+    let shapes = super::classify::parser_probe_shapes_for_changed_line_against(
+        &index,
+        &path,
+        4,
+        "let x = f(a) + g(b);",
+        Some("let x = f(a) + g(c);"),
+    );
+    let calls = shapes
+        .iter()
+        .filter(|shape| shape.family == ProbeFamily::CallDeletion)
+        .map(|shape| shape.text)
+        .collect::<Vec<_>>();
+    assert_eq!(calls, vec!["g(b)"], "{calls:?}");
     Ok(())
 }

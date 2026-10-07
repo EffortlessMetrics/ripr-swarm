@@ -12,6 +12,7 @@ This report joins static seam evidence to supplied cargo-mutants runtime data. R
 | mutants_total | 8 |
 | matched_total | 6 |
 | ambiguous_file_line_total | 1 |
+| ambiguous_span_overlap_total | 0 |
 | unmatched_mutants_total | 1 |
 | static_without_runtime_total | 1 |
 
@@ -30,7 +31,8 @@ Precision notes:
 - runtime gap signals are imported runtime labels such as missed, survived, not_caught, or uncaught
 - runtime clean signals are imported runtime labels such as caught or timeout
 - static_gap_without_runtime_signal includes static gap seams with no matched runtime gap signal in this import
-- ambiguous file/line runtime gap signals are counted as runtime_inconclusive until a seam_id or unambiguous location is available
+- runtime records with a complete span join by span_containment to the unique innermost static seam whose span contains the mutated range; with no containing span they fall back to file and line over seams without a span, and records without a complete span join by file and line
+- ambiguous runtime gap signals (ambiguous_file_line: the file/line fallback found several seams on the line; ambiguous_span_overlap: equal or crossing innermost seam spans) are counted as runtime_inconclusive until a seam_id or unambiguous location is available
 
 ### Runtime signals without static gaps
 
@@ -72,11 +74,15 @@ Precision notes:
 | --- | --- | --- | --- | --- |
 | `m-ambiguous-file-line` | src/pricing.rs:70 | missed | `ambiguous_runtime_join` | `cal-ambiguous-candidate-a`, `cal-ambiguous-candidate-b` |
 
+## Ambiguous Span Overlaps
+
+No runtime mutant span was contained by equal or crossing innermost seam spans.
+
 ## Unmatched Runtime Mutants
 
-| Location | Mutation operator | Runtime outcome | Test command |
-| --- | --- | --- | --- |
-| src/pricing.rs:99 | replace arithmetic expression | missed | cargo test external_runtime_signal |
+| Location | Mutation operator | Runtime outcome | Reason | Test command |
+| --- | --- | --- | --- | --- |
+| src/pricing.rs:99 | replace arithmetic expression | missed | `no_seam_on_line` | cargo test external_runtime_signal |
 
 ## Static Seams Without Runtime Data
 

@@ -3,23 +3,30 @@ use super::{
     repo_seams, sarif, suppressions,
 };
 use crate::analysis;
+use crate::analysis::resource_cost::trace_latency_phase;
 use crate::app::causal_projection::CausalDeltaArtifact;
-use crate::app::{AnalysisProgressSink, CheckOutput, FindingDrillIn, repo_inventory_with_progress};
+use crate::app::{
+    AnalysisProgressSink, CheckDiffProvenance, CheckOutput, FindingDrillIn,
+    repo_inventory_with_progress,
+};
 use crate::config::RiprConfig;
 use crate::output::repo_exposure::TsFullRepoGuidance;
 use std::collections::BTreeMap;
+use std::time::Instant;
 
 /// Path (relative to the analyzed workspace root) where the
 /// test-efficiency report is expected when rendering `ripr+` badge formats.
 const TEST_EFFICIENCY_REPORT_RELATIVE: &str = "target/ripr/reports/test-efficiency.json";
 
 /// Repo-relative report path the public `ripr` badge projection names as its
-/// source (RIPR-SPEC-0066 `source_report`). The repo-badge pipeline writes
-/// the canonical-actionable-gap projection into this artifact.
+/// source (RIPR-SPEC-0066 `source_report`). The repo-badge render persists
+/// the canonical-actionable-gap projection at this path inside the analyzed
+/// workspace (#6610), so the pointer the artifact carries always resolves.
 const REPO_RIPR_BADGE_SOURCE_REPORT: &str = "target/ripr/reports/repo-ripr-badge.json";
 
 /// Repo-relative report path the public `ripr+` badge projection names as its
-/// source (RIPR-SPEC-0066 `source_report`).
+/// source (RIPR-SPEC-0066 `source_report`). Persisted by the producing
+/// native repo-badge-plus render, like the `ripr` badge path (#6610).
 const REPO_RIPR_PLUS_BADGE_SOURCE_REPORT: &str = "target/ripr/reports/repo-ripr-plus-badge.json";
 
 pub(crate) fn render_check_with_config(
@@ -42,8 +49,12 @@ pub(crate) fn render_check_with_config_and_progress(
     progress: Option<&dyn AnalysisProgressSink>,
 ) -> Result<String, String> {
     match format {
-        OutputFormat::Human => Ok(human::render_bounded_with_config(output, config)),
-        OutputFormat::HumanFull => Ok(human::render_full_with_config(output, config)),
+        OutputFormat::Human => Ok(human::terminal_safe(human::render_bounded_with_config(
+            output, config,
+        ))),
+        OutputFormat::HumanFull => Ok(human::terminal_safe(human::render_full_with_config(
+            output, config,
+        ))),
         OutputFormat::Json => {
             // Fail-closed budget resolution (#5203): an unparseable
             // `RIPR_CHECK_FINDINGS_BYTES` aborts the run, never rendering.
@@ -66,8 +77,14 @@ pub(crate) fn render_check_with_config_and_progress(
             progress,
             || ripr_repo_canonical_actionable_summary(output, config),
             |(mut summary, limit_info)| {
-                attach_repo_badge_projection(&mut summary, limit_info.as_ref());
-                Ok(badge::render_native_json(&summary))
+                Ok(render_native_badge_with_persisted_source_report(
+                    &mut summary,
+                    &output.root,
+                    REPO_RIPR_BADGE_SOURCE_REPORT,
+                    |summary, source| {
+                        attach_repo_badge_projection(summary, limit_info.as_ref(), source)
+                    },
+                ))
             },
         ),
         OutputFormat::BadgeShields => {
@@ -78,7 +95,14 @@ pub(crate) fn render_check_with_config_and_progress(
             progress,
             || ripr_repo_canonical_actionable_summary(output, config),
             |(mut summary, limit_info)| {
-                attach_repo_badge_projection(&mut summary, limit_info.as_ref());
+                // Shields output carries exactly four fields and no
+                // `source_report` member, so the pointer needs no persisted
+                // artifact here; the count state is the fresh run's.
+                attach_repo_badge_projection(
+                    &mut summary,
+                    limit_info.as_ref(),
+                    Some(REPO_RIPR_BADGE_SOURCE_REPORT),
+                );
                 Ok(badge::render_shields_json(&summary))
             },
         ),
@@ -86,6 +110,21 @@ pub(crate) fn render_check_with_config_and_progress(
             let (mut summary, limit_info) =
                 ripr_plus_summary_from_disk(output, format.is_repo_scope(), config)?;
             maybe_attach_repo_plus_projection(&mut summary, output, format, limit_info.as_ref());
+            if format.is_repo_scope() && summary.projection.is_some() {
+                return Ok(render_native_badge_with_persisted_source_report(
+                    &mut summary,
+                    &output.root,
+                    REPO_RIPR_PLUS_BADGE_SOURCE_REPORT,
+                    |summary, source| {
+                        maybe_attach_repo_plus_projection_with_source(
+                            summary,
+                            output,
+                            limit_info.as_ref(),
+                            source,
+                        )
+                    },
+                ));
+            }
             Ok(badge::render_native_json(&summary))
         }
         OutputFormat::BadgePlusShields | OutputFormat::RepoBadgePlusShields => {
@@ -97,7 +136,15 @@ pub(crate) fn render_check_with_config_and_progress(
         OutputFormat::RepoSeamsJson => repo_inventory_with_progress(
             progress,
             || analysis::inventory_seams_at_with_config(&output.root, config),
-            |seams| Ok(repo_seams::render_repo_seams_json(&seams)),
+            |seams| {
+                let context = crate::agent::artifact::RepoExposureArtifactContext::for_repo_seams(
+                    output.root.clone(),
+                    output.mode.as_str().to_string(),
+                    output.base.clone(),
+                    config,
+                )?;
+                repo_seams::render_repo_seams_json_with_context(&seams, &context)
+            },
         ),
         OutputFormat::RepoSeamsMd => repo_inventory_with_progress(
             progress,
@@ -182,7 +229,10 @@ pub(crate) fn render_check_with_config_and_progress(
                 let (causal_projection, causal_projection_warning) =
                     CausalDeltaArtifact::load_optional(&output.root);
                 if let Some(warning) = causal_projection_warning {
-                    eprintln!("ripr agent packets: {warning}");
+                    eprintln!(
+                        "{}",
+                        human::terminal_safe(format!("ripr agent packets: {warning}"))
+                    );
                 }
                 Ok(
                     agent_seam_packets::render_agent_seam_packets_json_with_causal_and_outcome(
@@ -228,13 +278,14 @@ pub(crate) fn render_check_with_config_and_navigation_and_progress(
     config: &RiprConfig,
     drill_in: Option<&FindingDrillIn>,
     progress: Option<&dyn AnalysisProgressSink>,
+    provenance: CheckDiffProvenance,
 ) -> Result<String, String> {
     match format {
-        OutputFormat::Human => Ok(human::render_bounded_with_config_and_navigation(
-            output, config, drill_in,
+        OutputFormat::Human => Ok(human::terminal_safe(
+            human::render_bounded_with_config_and_navigation(output, config, drill_in, provenance),
         )),
-        OutputFormat::HumanFull => Ok(human::render_full_with_config_and_navigation(
-            output, config, drill_in,
+        OutputFormat::HumanFull => Ok(human::terminal_safe(
+            human::render_full_with_config_and_navigation(output, config, drill_in),
         )),
         _ => render_check_with_config_and_progress(output, format, config, progress),
     }
@@ -246,7 +297,10 @@ pub(crate) fn detect_ts_full_repo_guidance_pub(
     root: &std::path::Path,
     classified: &[crate::analysis::ClassifiedSeam],
 ) -> Option<TsFullRepoGuidance> {
-    detect_ts_full_repo_guidance(root, classified)
+    let started = Instant::now();
+    let guidance = detect_ts_full_repo_guidance(root, classified);
+    trace_latency_phase("guidance_ts_detect", "ok", started.elapsed());
+    guidance
 }
 
 /// Public re-export for CLI callers that drive the streaming JSON path directly.
@@ -254,7 +308,10 @@ pub(crate) fn detect_python_repo_exposure_guidance_pub(
     root: &std::path::Path,
     classified: &[crate::analysis::ClassifiedSeam],
 ) -> Option<repo_exposure::PythonRepoExposureGuidance> {
-    detect_python_repo_exposure_guidance(root, classified)
+    let started = Instant::now();
+    let guidance = detect_python_repo_exposure_guidance(root, classified);
+    trace_latency_phase("guidance_python_detect", "ok", started.elapsed());
+    guidance
 }
 
 /// Detect whether a TypeScript diff-first guidance disclosure should fire.
@@ -367,20 +424,44 @@ fn maybe_attach_repo_plus_projection(
     format: &OutputFormat,
     limit_info: Option<&analysis::SeamLimitInfo>,
 ) {
-    let report_present = output.root.join(TEST_EFFICIENCY_REPORT_RELATIVE).exists();
-    if format.is_repo_scope() && report_present {
-        match limit_info {
-            Some(limit) => badge::attach_public_projection_with_run_status(
-                summary,
-                REPO_RIPR_PLUS_BADGE_SOURCE_REPORT,
-                "limited_seam_cap",
-                Some(format!(
-                    "seam limit applied: analyzed {} of {} seams; unscanned seams are not counted",
-                    limit.analyzed, limit.total
-                )),
-            ),
-            None => badge::attach_public_projection(summary, REPO_RIPR_PLUS_BADGE_SOURCE_REPORT),
-        }
+    if format.is_repo_scope() && output.root.join(TEST_EFFICIENCY_REPORT_RELATIVE).exists() {
+        maybe_attach_repo_plus_projection_with_source(
+            summary,
+            output,
+            limit_info,
+            Some(REPO_RIPR_PLUS_BADGE_SOURCE_REPORT),
+        );
+    }
+}
+
+/// `maybe_attach_repo_plus_projection` with the caller-resolved
+/// `source_report` (#6610): the native repo-badge-plus render reattaches with
+/// `None` when the named report could not be persisted.
+fn maybe_attach_repo_plus_projection_with_source(
+    summary: &mut badge::BadgeSummary,
+    output: &CheckOutput,
+    limit_info: Option<&analysis::SeamLimitInfo>,
+    source_report: Option<&str>,
+) {
+    if !output.root.join(TEST_EFFICIENCY_REPORT_RELATIVE).exists() {
+        return;
+    }
+    match limit_info {
+        Some(limit) => badge::attach_public_projection_with_optional_source(
+            summary,
+            source_report,
+            "limited_seam_cap",
+            Some(format!(
+                "seam limit applied: analyzed {} of {} seams; unscanned seams are not counted",
+                limit.analyzed, limit.total
+            )),
+        ),
+        None => match source_report {
+            Some(source) => badge::attach_public_projection(summary, source),
+            None => {
+                badge::attach_public_projection_with_optional_source(summary, None, "full", None)
+            }
+        },
     }
 }
 
@@ -431,23 +512,82 @@ fn ripr_repo_canonical_actionable_summary(
 
 /// The seam-native repo badge's public projection, honoring the producing
 /// walk's completeness: a capped inventory projects `limited` (with the cap
-/// named) instead of a count that would read as a full-scan result.
+/// named) instead of a count that would read as a full-scan result. The
+/// caller resolves `source_report` (#6610): the canonical report path when
+/// this run persists it, `None` (projection fails closed to `unknown`) when
+/// it could not.
 fn attach_repo_badge_projection(
     summary: &mut badge::BadgeSummary,
     limit_info: Option<&analysis::SeamLimitInfo>,
+    source_report: Option<&str>,
 ) {
     match limit_info {
-        Some(limit) => badge::attach_public_projection_with_run_status(
+        Some(limit) => badge::attach_public_projection_with_optional_source(
             summary,
-            REPO_RIPR_BADGE_SOURCE_REPORT,
+            source_report,
             "limited_seam_cap",
             Some(format!(
                 "seam limit applied: analyzed {} of {} seams; unscanned seams are not counted",
                 limit.analyzed, limit.total
             )),
         ),
-        None => badge::attach_public_projection(summary, REPO_RIPR_BADGE_SOURCE_REPORT),
+        None => match source_report {
+            Some(source) => badge::attach_public_projection(summary, source),
+            None => {
+                badge::attach_public_projection_with_optional_source(summary, None, "full", None)
+            }
+        },
     }
+}
+
+/// Renders the native repo badge and makes its `public_projection.source_report`
+/// pointer real (#6610): the exact rendered bytes are persisted at the
+/// canonical repo-relative report path inside the analyzed workspace, so the
+/// provenance the artifact claims always resolves — including when a CI
+/// pipeline redirects stdout elsewhere. When the workspace cannot be
+/// written, the projection is reattached with no source and the artifact
+/// fails closed to the RIPR-SPEC-0066 `unknown` state instead of naming a
+/// report the run did not produce.
+fn render_native_badge_with_persisted_source_report(
+    summary: &mut badge::BadgeSummary,
+    root: &std::path::Path,
+    source_report: &str,
+    attach: impl Fn(&mut badge::BadgeSummary, Option<&str>),
+) -> String {
+    attach(summary, Some(source_report));
+    let rendered = badge::render_native_json(summary);
+    if write_workspace_report(root, source_report, &rendered) {
+        return rendered;
+    }
+    attach(summary, None);
+    badge::render_native_json(summary)
+}
+
+/// Persists `text` at `relative` (root-relative, forward slashes) inside the
+/// analyzed workspace, creating parent directories. `false` when the write
+/// fails; the caller decides the honest degraded rendering.
+fn write_workspace_report(root: &std::path::Path, relative: &str, text: &str) -> bool {
+    let path = root.join(relative);
+    let Some(parent) = path.parent() else {
+        return false;
+    };
+    if let Err(err) = std::fs::create_dir_all(parent) {
+        eprintln!(
+            "ripr: could not create report directory {}: {err}",
+            parent.display()
+        );
+        return false;
+    }
+    // The house atomic writer (review on #6788): a failed or interrupted
+    // write leaves the previous report untouched, and a destination that is
+    // not a regular file (for example a symlinked report leaf) is refused
+    // rather than written through — the degraded projection then discloses
+    // `unknown` instead of claiming the unrefreshed file.
+    if let Err(err) = crate::output::file_write::write(&path, text.as_bytes()) {
+        eprintln!("ripr: could not persist report {}: {err}", path.display());
+        return false;
+    }
+    true
 }
 
 fn ripr_plus_summary_from_disk(
@@ -461,7 +601,10 @@ fn ripr_plus_summary_from_disk(
             "missing {}; provide test-efficiency JSON before requesting a measured ripr+ badge; see docs/BADGE_ADOPTION.md",
             report_path.display()
         );
-        eprintln!("ripr: {warning}; rendering neutral ripr+ badge");
+        eprintln!(
+            "{}",
+            human::terminal_safe(format!("ripr: {warning}; rendering neutral ripr+ badge"))
+        );
         return Ok((
             missing_test_efficiency_badge_summary(repo_scope, config, warning),
             None,
@@ -594,7 +737,7 @@ mod tests {
         let seams_md =
             render_check_with_config(&output, &OutputFormat::RepoSeamsMd, &RiprConfig::default())?;
 
-        assert!(seams_json.contains("\"schema_version\": \"0.1\""));
+        assert!(seams_json.contains("\"schema_version\": \"0.2\""));
         assert!(seams_json.contains("over_threshold"));
         assert!(seams_md.contains("over_threshold"));
         remove_temp_root(&output.root)?;
@@ -676,7 +819,7 @@ mod tests {
         let sarif =
             render_check_with_config(&output, &OutputFormat::RepoSarif, &RiprConfig::default())?;
 
-        assert!(exposure_json.contains("\"schema_version\": \"0.3\""));
+        assert!(exposure_json.contains("\"schema_version\": \"0.4\""));
         assert!(exposure_json.contains("over_threshold"));
         let exposure_summary = render_check_with_config(
             &output,
@@ -894,7 +1037,9 @@ fn happy_path_passes() {
         Ok(())
     }
 
+    use super::REPO_RIPR_BADGE_SOURCE_REPORT;
     use super::attach_repo_badge_projection;
+    use super::render_native_badge_with_persisted_source_report;
     use crate::output::badge;
 
     /// #5263 review: a seam-capped classified inventory must not project a
@@ -913,7 +1058,11 @@ fn happy_path_passes() {
             total: 501,
             source: crate::analysis::SeamLimitSource::Default,
         };
-        attach_repo_badge_projection(&mut summary, Some(&limit));
+        attach_repo_badge_projection(
+            &mut summary,
+            Some(&limit),
+            Some(REPO_RIPR_BADGE_SOURCE_REPORT),
+        );
         let projection = summary
             .projection
             .as_ref()
@@ -938,6 +1087,137 @@ fn happy_path_passes() {
             "the limited reason must name the cap: {:?}",
             projection.limited_reason
         );
+        Ok(())
+    }
+
+    /// #6610: the repo badge's `public_projection.source_report` names
+    /// `target/ripr/reports/repo-ripr-badge.json`, so the producing stdout
+    /// run must persist that artifact inside the analyzed workspace. A bare
+    /// stdout run that named the file without writing it made every
+    /// dereferencing consumer hit ENOENT with no way to tell "stale" from
+    /// "never written".
+    #[test]
+    fn repo_badge_stdout_run_persists_the_source_report_it_names() -> Result<(), String> {
+        let output = check_output_with_temp_seam_workspace(Vec::new())?;
+
+        let rendered = render_check_with_config(
+            &output,
+            &OutputFormat::RepoBadgeJson,
+            &RiprConfig::default(),
+        )?;
+
+        let report_path = output.root.join("target/ripr/reports/repo-ripr-badge.json");
+        let persisted = std::fs::read_to_string(&report_path)
+            .map_err(|err| format!("the named source report must exist: {err}"))?;
+        assert_eq!(
+            persisted, rendered,
+            "the persisted source report must be the exact rendered bytes"
+        );
+
+        remove_temp_root(&output.root)?;
+        Ok(())
+    }
+
+    /// #6610: when the analyzed workspace cannot take the named report (here
+    /// `target` is a regular file, so the report directory cannot be created),
+    /// the projection must not claim it. The fail-closed machinery resolves
+    /// `source_report: null` to the `unknown` state (RIPR-SPEC-0066
+    /// reject-list) instead of an actionable count whose provenance pointer
+    /// does not resolve.
+    #[test]
+    fn repo_badge_projection_degrades_to_unknown_when_the_report_cannot_be_persisted()
+    -> Result<(), String> {
+        let output = check_output_with_temp_seam_workspace(Vec::new())?;
+        // A regular file at `target` blocks `create_dir_all(target/ripr/reports)`.
+        std::fs::write(output.root.join("target"), b"not a directory")
+            .map_err(|err| format!("write target sentinel: {err}"))?;
+
+        let rendered = render_check_with_config(
+            &output,
+            &OutputFormat::RepoBadgeJson,
+            &RiprConfig::default(),
+        )?;
+
+        assert!(
+            rendered.contains("\"source_report\": null"),
+            "an unpersistable pointer must degrade to null: {rendered}"
+        );
+        assert!(
+            rendered.contains("\"state\": \"unknown\""),
+            "a missing source report resolves to the unknown state: {rendered}"
+        );
+        assert!(
+            rendered.contains("\"actionable_count\": null"),
+            "the unknown state never carries a count: {rendered}"
+        );
+        assert!(
+            !rendered.contains("repo-ripr-badge.json"),
+            "no report path may be claimed when none was written: {rendered}"
+        );
+
+        let _ = std::fs::remove_file(output.root.join("target"));
+        remove_temp_root(&output.root)?;
+        Ok(())
+    }
+
+    /// #6610: the repo-scoped `ripr+` badge names
+    /// `target/ripr/reports/repo-ripr-plus-badge.json`; the producing native
+    /// run persists it the same way.
+    #[test]
+    fn repo_badge_plus_stdout_run_persists_the_source_report_it_names() -> Result<(), String> {
+        let output = check_output_with_temp_report_workspace(Vec::new())?;
+
+        let rendered = render_check_with_config(
+            &output,
+            &OutputFormat::RepoBadgePlusJson,
+            &RiprConfig::default(),
+        )?;
+
+        assert!(rendered.contains("\"public_projection\""), "{rendered}");
+        let report_path = output
+            .root
+            .join("target/ripr/reports/repo-ripr-plus-badge.json");
+        let persisted = std::fs::read_to_string(&report_path)
+            .map_err(|err| format!("the named ripr+ source report must exist: {err}"))?;
+        assert_eq!(persisted, rendered, "persisted bytes must equal stdout");
+
+        remove_temp_root(&output.root)?;
+        Ok(())
+    }
+
+    /// #6610: the persisted native badge helper keeps its pointer claim only
+    /// when the write succeeded; a failed write flips the same summary to the
+    /// unknown state without re-deriving the walk.
+    #[test]
+    fn persisted_source_report_helper_degrades_on_write_failure() -> Result<(), String> {
+        let mut summary =
+            badge::ripr_canonical_actionable_gap_badge_summary(&[], badge::BadgePolicy::default());
+        let blocker = std::env::temp_dir().join(format!(
+            "ripr-badge-source-blocker-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::write(&blocker, b"not a directory")
+            .map_err(|err| format!("write blocker file: {err}"))?;
+
+        let rendered = render_native_badge_with_persisted_source_report(
+            &mut summary,
+            &blocker,
+            "reports/repo-ripr-badge.json",
+            |summary, source| {
+                attach_repo_badge_projection(summary, None, source);
+            },
+        );
+
+        assert!(
+            rendered.contains("\"source_report\": null"),
+            "write failure must degrade to a null pointer: {rendered}"
+        );
+        assert!(rendered.contains("\"state\": \"unknown\""), "{rendered}");
+        let _ = std::fs::remove_file(&blocker);
         Ok(())
     }
 
@@ -1319,6 +1599,7 @@ fn happy_path_passes() {
             no_scope_provided: false,
             unanalyzed_working_tree: false,
             untracked_working_tree_source_paths: Vec::new(),
+            unlinked_python_tests: None,
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,

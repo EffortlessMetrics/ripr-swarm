@@ -1,0 +1,316 @@
+{
+  "schema_version": "work_issues.v1",
+  "issues": [
+    {
+      "number": 9102,
+      "title": "Bound the rust JSON formatter receipts",
+      "state": "open",
+      "lifecycle_disposition": "qualified_one_pr",
+      "campaigns": [
+        "campaign-rust-repair"
+      ],
+      "blocked_by": [],
+      "requirement_refs": [],
+      "semantic_paths": [
+        "crates/ripr/src/output/json/formatter.rs"
+      ],
+      "conflict_resources": [
+        "output-contract:rust-json"
+      ],
+      "accepted_contracts": [
+        "RIPR-SPEC-0200"
+      ],
+      "contract_state": "accepted",
+      "single_agent_preferred": false,
+      "regression_risks": [],
+      "honesty_risk": "moderate",
+      "proof_cost": "low",
+      "review_ci_cost": "low"
+    },
+    {
+      "number": 9101,
+      "title": "Fix rust JSON report golden drift",
+      "state": "open",
+      "lifecycle_disposition": "qualified_one_pr",
+      "campaigns": [
+        "campaign-rust-repair"
+      ],
+      "blocked_by": [],
+      "requirement_refs": [],
+      "semantic_paths": [
+        "crates/ripr/src/output/json/report.rs"
+      ],
+      "conflict_resources": [
+        "output-contract:rust-json"
+      ],
+      "accepted_contracts": [
+        "RIPR-SPEC-0200"
+      ],
+      "contract_state": "accepted",
+      "single_agent_preferred": false,
+      "regression_risks": [
+        "golden re-blessing could mask a wrong result; the repair must re-justify each touched golden"
+      ],
+      "honesty_risk": "high",
+      "proof_cost": "moderate",
+      "review_ci_cost": "moderate",
+      "readiness_source": "RIPR-SPEC-0200"
+    },
+    {
+      "number": 9103,
+      "title": "Emit workflow receipts under the bounded budget",
+      "state": "open",
+      "lifecycle_disposition": "qualified_one_pr",
+      "campaigns": [
+        "campaign-rust-repair"
+      ],
+      "blocked_by": [],
+      "requirement_refs": [],
+      "semantic_paths": [
+        ".github/workflows/ci.yml"
+      ],
+      "conflict_resources": [
+        "workflow:ci-small"
+      ],
+      "accepted_contracts": [
+        "RIPR-SPEC-0201"
+      ],
+      "contract_state": "accepted",
+      "single_agent_preferred": false,
+      "regression_risks": [],
+      "honesty_risk": "low",
+      "proof_cost": "moderate",
+      "review_ci_cost": "low"
+    },
+    {
+      "number": 9104,
+      "title": "Consume the cargo-allow graph in the portfolio compiler",
+      "state": "open",
+      "lifecycle_disposition": "blocked",
+      "campaigns": [
+        "campaign-rust-repair"
+      ],
+      "blocked_by": [
+        {
+          "kind": "external_dependency",
+          "reference": "cargo-allow#upstream-0.9",
+          "description": "the upstream cargo-allow release must land before the graph can be consumed"
+        }
+      ],
+      "requirement_refs": [
+        "REQ-allow-graph"
+      ],
+      "semantic_paths": [
+        "xtask/src/work_portfolio.rs"
+      ],
+      "conflict_resources": [],
+      "accepted_contracts": [],
+      "contract_state": "draft",
+      "single_agent_preferred": false,
+      "regression_risks": []
+    },
+    {
+      "number": 9105,
+      "title": "Implement duplicate-family grouping for requirement A",
+      "state": "open",
+      "lifecycle_disposition": "qualified_one_pr",
+      "campaigns": [
+        "campaign-rust-repair"
+      ],
+      "blocked_by": [],
+      "requirement_refs": [
+        "REQ-dup-family"
+      ],
+      "semantic_paths": [
+        "crates/ripr/src/domain/summary.rs"
+      ],
+      "conflict_resources": [],
+      "accepted_contracts": [
+        "RIPR-SPEC-0202"
+      ],
+      "contract_state": "accepted",
+      "single_agent_preferred": false,
+      "regression_risks": [],
+      "honesty_risk": "moderate",
+      "proof_cost": "low",
+      "review_ci_cost": "low"
+    },
+    {
+      "number": 9106,
+      "title": "Resolve requirement A through the app seam",
+      "state": "open",
+      "lifecycle_disposition": "qualified_one_pr",
+      "campaigns": [
+        "campaign-rust-repair"
+      ],
+      "blocked_by": [],
+      "requirement_refs": [
+        "REQ-dup-family"
+      ],
+      "semantic_paths": [
+        "crates/ripr/src/domain/summary.rs",
+        "crates/ripr/src/app.rs"
+      ],
+      "conflict_resources": [],
+      "accepted_contracts": [
+        "RIPR-SPEC-0202"
+      ],
+      "contract_state": "accepted",
+      "single_agent_preferred": false,
+      "regression_risks": [],
+      "honesty_risk": "moderate",
+      "proof_cost": "low",
+      "review_ci_cost": "low"
+    },
+    {
+      "number": 9107,
+      "title": "Repair the seam inventory latency cache",
+      "state": "open",
+      "lifecycle_disposition": "qualified_one_pr",
+      "campaigns": [
+        "campaign-rust-repair"
+      ],
+      "blocked_by": [],
+      "requirement_refs": [],
+      "semantic_paths": [
+        "crates/ripr/src/analysis/seams.rs"
+      ],
+      "conflict_resources": [],
+      "accepted_contracts": [
+        "RIPR-SPEC-0203"
+      ],
+      "contract_state": "accepted",
+      "single_agent_preferred": false,
+      "regression_risks": [],
+      "honesty_risk": "low",
+      "proof_cost": "low",
+      "review_ci_cost": "low"
+    },
+    {
+      "number": 9108,
+      "title": "Unregistered lane for the doctor command",
+      "state": "open",
+      "lifecycle_disposition": "qualified_one_pr",
+      "campaigns": [
+        "campaign-rust-repair"
+      ],
+      "blocked_by": [],
+      "requirement_refs": [],
+      "semantic_paths": [
+        "xtask/src/main.rs"
+      ],
+      "conflict_resources": [],
+      "accepted_contracts": [
+        "RIPR-SPEC-0204"
+      ],
+      "contract_state": "accepted",
+      "single_agent_preferred": false,
+      "regression_risks": [],
+      "honesty_risk": "low",
+      "proof_cost": "low",
+      "review_ci_cost": "low"
+    },
+    {
+      "number": 9109,
+      "title": "Reconcile the merged preview fix",
+      "state": "open",
+      "lifecycle_disposition": "merged_pending_closeout",
+      "campaigns": [
+        "campaign-rust-repair"
+      ],
+      "blocked_by": [],
+      "requirement_refs": [],
+      "semantic_paths": [
+        "crates/ripr/src/output/preview.rs"
+      ],
+      "conflict_resources": [],
+      "accepted_contracts": [
+        "RIPR-SPEC-0205"
+      ],
+      "contract_state": "accepted",
+      "single_agent_preferred": false,
+      "regression_risks": [],
+      "honesty_risk": "moderate",
+      "proof_cost": "low",
+      "review_ci_cost": "low"
+    },
+    {
+      "number": 1693,
+      "title": "Preview projection honesty follow-ups",
+      "state": "open",
+      "lifecycle_disposition": "qualified_one_pr",
+      "campaigns": [
+        "campaign-editor-ux"
+      ],
+      "blocked_by": [],
+      "requirement_refs": [
+        "REQ-editor-preview"
+      ],
+      "semantic_paths": [
+        "editors/vscode/src/preview.ts"
+      ],
+      "conflict_resources": [
+        "output-contract:preview-panel"
+      ],
+      "accepted_contracts": [
+        "RIPR-SPEC-0206"
+      ],
+      "contract_state": "accepted",
+      "single_agent_preferred": false,
+      "regression_risks": [],
+      "honesty_risk": "high",
+      "proof_cost": "moderate",
+      "review_ci_cost": "moderate"
+    },
+    {
+      "number": 9202,
+      "title": "Fix editor badge label casing",
+      "state": "open",
+      "lifecycle_disposition": "qualified_one_pr",
+      "campaigns": [
+        "campaign-editor-ux"
+      ],
+      "blocked_by": [],
+      "requirement_refs": [
+        "REQ-editor-badges"
+      ],
+      "semantic_paths": [
+        "editors/vscode/src/badge.ts"
+      ],
+      "conflict_resources": [],
+      "accepted_contracts": [
+        "RIPR-SPEC-0207"
+      ],
+      "contract_state": "accepted",
+      "single_agent_preferred": true,
+      "regression_risks": [],
+      "honesty_risk": "low",
+      "proof_cost": "low",
+      "review_ci_cost": "low"
+    },
+    {
+      "number": 9301,
+      "title": "Docs polish umbrella",
+      "state": "closed",
+      "lifecycle_disposition": "completed",
+      "campaigns": [
+        "campaign-doc-polish"
+      ],
+      "blocked_by": [],
+      "requirement_refs": [],
+      "semantic_paths": [
+        "docs/POLISH.md"
+      ],
+      "conflict_resources": [],
+      "accepted_contracts": [
+        "RIPR-SPEC-0208"
+      ],
+      "contract_state": "accepted",
+      "single_agent_preferred": false,
+      "regression_risks": [],
+      "honesty_risk": "low",
+      "proof_cost": "low",
+      "review_ci_cost": "low"
+    }
+  ]
+}

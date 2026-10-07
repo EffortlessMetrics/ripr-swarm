@@ -1,0 +1,44 @@
+//! A four-digit code parser: a length guard, then one helper call per digit.
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum CodeError {
+    Short,
+    NotDigit,
+}
+
+fn digit(c: char) -> Option<u32> {
+    c.to_digit(10)
+}
+
+pub fn parse_code(s: &str) -> Result<u32, CodeError> {
+    if s.len() < 4 {
+        return Err(CodeError::Short);
+    }
+    let mut value = 0;
+    for c in s.chars().take(4) {
+        let d = digit(c).ok_or(CodeError::NotDigit)?;
+        value = value * 10 + d;
+    }
+    Ok(value)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn four_digits_parse_to_their_value() {
+        assert_eq!(parse_code("1234"), Ok(1234));
+        assert_eq!(parse_code("0907"), Ok(907));
+    }
+
+    #[test]
+    fn three_characters_are_too_short() {
+        assert_eq!(parse_code("123"), Err(CodeError::Short));
+    }
+
+    #[test]
+    fn a_letter_is_not_a_digit() {
+        assert_eq!(parse_code("12x4"), Err(CodeError::NotDigit));
+    }
+}

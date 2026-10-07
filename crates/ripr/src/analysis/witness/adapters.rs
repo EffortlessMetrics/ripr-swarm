@@ -12,6 +12,7 @@ use crate::domain::{
     Finding, LanguageId, LanguageStatus, ProbeFamily, RelatedTest, RelationReason,
     SourceCurrentness, StopReason,
 };
+use std::sync::Arc;
 
 /// Declared adapter input identity. Completeness is never inferred from
 /// producer facts that do not carry it.
@@ -538,7 +539,7 @@ fn split_finding_relations(
 }
 
 fn split_repo_relations(
-    related: &[RelatedTestGrip],
+    related: &[Arc<RelatedTestGrip>],
 ) -> (Vec<RelationWitness>, Vec<RelationWitness>) {
     let mut candidate = Vec::new();
     let mut established = Vec::new();
@@ -675,7 +676,7 @@ fn attach_discrimination_facts(
     }
 }
 
-fn repo_target(related: &[RelatedTestGrip], non_claims: &mut Vec<String>) -> TargetState {
+fn repo_target(related: &[Arc<RelatedTestGrip>], non_claims: &mut Vec<String>) -> TargetState {
     let mut identities: Vec<String> = related
         .iter()
         .filter_map(|test| {

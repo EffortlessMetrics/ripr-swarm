@@ -1,0 +1,16 @@
+pub fn widen(width: u32) -> u32 {
+    width + 4
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn widen_adds_the_margin() {
+        let before = 10;
+        let after = widen(before);
+        assert_eq!(before, 10);
+        let _ = after;
+    }
+}

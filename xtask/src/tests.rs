@@ -3,6 +3,8 @@
 //! body moved verbatim; test names and module path (`crate::tests`) are
 //! unchanged.
 
+mod discarded_matcher_honesty;
+
 /// Best-effort temp-dir teardown for tests. The `io::Result` is matched
 /// with `if let` so a `#[must_use]` cleanup failure is an explicit ignore.
 fn ignore_remove_dir_all(path: impl AsRef<std::path::Path>) {
@@ -1458,6 +1460,7 @@ fn evidence_promotion_semantic_assertions_retain_related_test_identity() -> Resu
             line: 8,
             kind: "relational_check".to_string(),
             strength: "weak".to_string(),
+            relation_reason: None,
         },
     ];
     let original: serde_json::Value = serde_json::from_str(include_str!(
@@ -1507,6 +1510,69 @@ fn evidence_promotion_semantic_assertions_retain_related_test_identity() -> Resu
     assert!(!inspect(&missing).is_empty());
     missing["findings"] = serde_json::json!([]);
     assert!(!inspect(&missing).is_empty());
+    Ok(())
+}
+
+#[test]
+fn evidence_promotion_related_test_relation_pin_is_optional_and_exact() -> Result<(), String> {
+    let assertion_with_relation = |relation_reason: Option<&str>| {
+        vec![
+            super::EvidencePromotionSemanticAssertion::ExpectedRelatedTest {
+                name: "observes_score".to_string(),
+                file: "src/lib.rs".to_string(),
+                line: 8,
+                kind: "relational_check".to_string(),
+                strength: "weak".to_string(),
+                relation_reason: relation_reason.map(str::to_string),
+            },
+        ]
+    };
+    let original: serde_json::Value = serde_json::from_str(include_str!(
+        "../../fixtures/wildcard_oracle_wildcard_original/expected/check.json"
+    ))
+    .map_err(|err| format!("invalid canonical wildcard golden: {err}"))?;
+    let human =
+        include_str!("../../fixtures/wildcard_oracle_wildcard_original/expected/human-full.txt");
+    let inspect = |assertions: &[_], json: &serde_json::Value| {
+        super::evidence_promotion_semantic_violations(
+            "related_test_relation",
+            Some("fixtures/wildcard_oracle_wildcard_original"),
+            assertions,
+            json,
+            Some(human),
+            true,
+        )
+    };
+    // The canonical golden relates via `direct_owner_call`.
+    assert!(inspect(&assertion_with_relation(None), &original).is_empty());
+    assert!(
+        inspect(
+            &assertion_with_relation(Some("direct_owner_call")),
+            &original
+        )
+        .is_empty()
+    );
+    assert!(
+        !inspect(
+            &assertion_with_relation(Some("weak_token_substring")),
+            &original
+        )
+        .is_empty()
+    );
+    // A re-blessed relation flips the pin.
+    let mut weak = original.clone();
+    weak["findings"][0]["related_tests"][0]["relation_reason"] =
+        serde_json::json!("weak_token_substring");
+    assert!(
+        inspect(
+            &assertion_with_relation(Some("weak_token_substring")),
+            &weak
+        )
+        .is_empty()
+    );
+    assert!(!inspect(&assertion_with_relation(Some("direct_owner_call")), &weak).is_empty());
+    // Absent pins stay backward compatible.
+    assert!(inspect(&assertion_with_relation(None), &weak).is_empty());
     Ok(())
 }
 
@@ -4726,7 +4792,7 @@ fn write_editor_first_run_actions(root: &Path, case: &str, titles: &[&str]) {
                     },
                     "arguments": if *title == "Copy first repair packet" {
                         serde_json::json!([{
-                            "packet": "RIPR first repair packet\nGap identity: gap:test\nSuggested action:\n- Add one focused assertion.\nVerify command:\nripr agent verify --root . --json\nReceipt command:\nripr agent receipt --root . --json\nLimits and non-claims:\n- Static editor evidence only."
+                            "packet": "RIPR first repair packet\nGap identity: gap:test\nSuggested action:\n- Add one focused assertion.\nVerify command:\nripr agent verify --root <root> --json\nReceipt command:\nripr agent receipt --root <root> --json\nLimits and non-claims:\n- Static editor evidence only."
                         }])
                     } else {
                         serde_json::json!([])
@@ -5435,6 +5501,52 @@ fn editor_gap_cockpit_fixture_case_guard_accepts_actionable_contract() -> Result
     super::validate_editor_gap_cockpit_fixture_case(&root, "rust_actionable", &mut violations)?;
 
     assert_eq!(violations, Vec::<String>::new());
+    Ok(())
+}
+
+/// #4001 control 12: a checked-in editor projection must name the selected
+/// workspace; a portable `--root .` command is a violation.
+#[test]
+fn editor_gap_cockpit_fixture_case_guard_rejects_portable_root_commands() -> Result<(), String> {
+    let root = temp_dir("editor-gap-cockpit-portable-root");
+    write_editor_gap_case_expected(
+        &root,
+        "rust_actionable",
+        r#"{
+  "diagnostics": [
+    {
+      "data": {
+        "language": "rust",
+        "language_status": "stable",
+        "canonical_gap_id": "gap:rust:pricing",
+        "receipt_command": "ripr agent receipt --root . --json"
+      }
+    }
+  ]
+}
+"#,
+        r#"{
+  "actions": [
+    {"title": "Inspect gap: copy repair packet", "command": "ripr.copyAgentPacketCommand", "arguments": [{"command": "ripr agent packet"}]},
+    {"title": "Write targeted test: open best related test", "command": "ripr.openRelatedTest", "arguments": [{"uri": "file:///repo/tests/pricing.rs"}]},
+    {"title": "Verify after test: copy verify command", "command": "ripr.copyAgentVerifyCommand", "arguments": [{"command": "ripr agent verify --root <root> --json"}]},
+    {"title": "Review result: copy receipt command", "command": "ripr.copyAgentReceiptCommand", "arguments": [{"command": "ripr agent receipt --root <root> --json"}]},
+    {"title": "Refresh Analysis - Saved Workspace Check", "command": "ripr.refresh"}
+  ]
+}
+"#,
+        "# Hover\n\n## Evidence boundary\n\n## Gap state\n\n- verify: `ripr agent verify --root ./sub --json`\n\n## Limits\n",
+    );
+
+    let mut violations = Vec::new();
+    super::validate_editor_gap_cockpit_fixture_case(&root, "rust_actionable", &mut violations)?;
+
+    // Only the diagnostics file carries `--root .`; `<root>` and `./sub` pass.
+    assert_eq!(violations.len(), 1, "{violations:?}");
+    assert!(
+        violations[0].contains("lsp-diagnostics.json") && violations[0].contains("--root ."),
+        "{violations:?}"
+    );
     Ok(())
 }
 
@@ -11117,6 +11229,41 @@ fn routed_rust_ready_event_matrix_withholds_draft_and_label_context() {
         routed_rust_ready_event_contract_violations(&cancellation_disabled)
     );
 
+    let uncancellable_fallback = workflow.replace("      !cancelled() &&", "      always() &&");
+    assert_ne!(
+        uncancellable_fallback, workflow,
+        "fixture must actually swap the hosted fallback condition"
+    );
+    assert!(
+        routed_rust_ready_event_contract_violations(&uncancellable_fallback)
+            .iter()
+            .any(|violation| violation.contains("`rust-github`") && violation.contains("always()")),
+        "a job-level always() on an implementation job must fail: it survives Ready-run cancellation: {:?}",
+        routed_rust_ready_event_contract_violations(&uncancellable_fallback)
+    );
+
+    let spaced_uppercase = workflow.replace("      !cancelled() &&", "      Always () &&");
+    assert!(
+        routed_rust_ready_event_contract_violations(&spaced_uppercase)
+            .iter()
+            .any(|violation| violation.contains("`rust-github`")),
+        "expression names are case-insensitive and may carry spaces: {:?}",
+        routed_rust_ready_event_contract_violations(&spaced_uppercase)
+    );
+
+    let step_level_cleanup = workflow.replace(
+        "    uses: ./.github/workflows/rust-gates.yml\n    with:\n      runner-config: '\"ubuntu-latest\"'",
+        "    uses: ./.github/workflows/rust-gates.yml\n    # cleanup may use always()\n    with:\n      runner-config: '\"ubuntu-latest\"'",
+    );
+    assert_ne!(step_level_cleanup, workflow, "fixture must add the comment");
+    assert!(
+        !routed_rust_ready_event_contract_violations(&step_level_cleanup)
+            .iter()
+            .any(|violation| violation.contains("must not use `always()`")),
+        "always() outside the job condition must not be rejected: {:?}",
+        routed_rust_ready_event_contract_violations(&step_level_cleanup)
+    );
+
     let shared_group = workflow.replace(
         "  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}-${{ github.event_name }}",
         "  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}",
@@ -11930,6 +12077,20 @@ fn pr_summary_lists_top_level_plans_as_docs_evidence() {
     let body = pr_summary_body(&changes);
 
     assert!(body.contains("- `plans/campaign-27/lane3-editor-preview-routing.md (??)`"));
+    assert!(body.contains("Evidence/support delta:"));
+    assert!(body.contains("Docs:"));
+}
+
+#[test]
+fn pr_summary_lists_changelog_fragments_as_docs_evidence() {
+    let changes = vec![ChangedPath {
+        path: "changelog.d/6000-cli-fix.md".to_string(),
+        statuses: BTreeSet::from(["A".to_string()]),
+    }];
+
+    let body = pr_summary_body(&changes);
+
+    assert!(body.contains("- `changelog.d/6000-cli-fix.md (A)`"));
     assert!(body.contains("Evidence/support delta:"));
     assert!(body.contains("Docs:"));
 }
@@ -49966,6 +50127,152 @@ fn mutation_calibration_directory_input_combines_outcomes_and_mutants() -> Resul
     assert_eq!(mutants.len(), 1);
     assert_eq!(mutants[0].file, Some("src/pricing.rs".to_string()));
     assert_eq!(mutants[0].runtime_outcome, "caught");
+    Ok(())
+}
+
+/// Shapes copied from a cargo-mutants 27.1.0 `mutants.out` (rust-hex), combined
+/// the way `read_mutation_input_json` combines `outcomes.json` and
+/// `mutants.json`. The xtask command must not keep a second importer that
+/// reads every outcome as `unknown` (#5374).
+#[test]
+fn mutation_calibration_imports_cargo_mutants_27_1_scenario_mutant_summaries() -> Result<(), String>
+{
+    let runtime_json = r#"[
+  {
+    "outcomes": [
+      {"scenario": "Baseline", "summary": "Success"},
+      {
+        "scenario": {"Mutant": {
+          "name": "src/lib.rs:101:9: replace next -> Option<Self::Item> with None",
+          "package": "hex",
+          "file": "src/lib.rs",
+          "function": {"function_name": "next", "span": {"start": {"line": 99, "column": 5}, "end": {"line": 109, "column": 6}}},
+          "span": {"start": {"line": 101, "column": 9}, "end": {"line": 108, "column": 10}},
+          "replacement": "None",
+          "genre": "FnValue"
+        }},
+        "summary": "CaughtMutant"
+      },
+      {
+        "scenario": {"Mutant": {
+          "name": "src/lib.rs:104:43: replace >> with << in next",
+          "package": "hex",
+          "file": "src/lib.rs",
+          "span": {"start": {"line": 104, "column": 43}, "end": {"line": 104, "column": 45}},
+          "replacement": "<<",
+          "genre": "BinaryOperator"
+        }},
+        "summary": "MissedMutant"
+      },
+      {
+        "scenario": {"Mutant": {
+          "name": "src/lib.rs:110:1: replace timeout_mutant with ()",
+          "package": "hex",
+          "file": "src/lib.rs",
+          "span": {"start": {"line": 110, "column": 1}, "end": {"line": 110, "column": 2}},
+          "replacement": "()",
+          "genre": "FnValue"
+        }},
+        "summary": "Timeout"
+      },
+      {
+        "scenario": {"Mutant": {
+          "name": "src/lib.rs:111:1: replace unviable_mutant with ()",
+          "package": "hex",
+          "file": "src/lib.rs",
+          "span": {"start": {"line": 111, "column": 1}, "end": {"line": 111, "column": 2}},
+          "replacement": "()",
+          "genre": "FnValue"
+        }},
+        "summary": "Unviable"
+      }
+    ],
+    "total_mutants": 4,
+    "caught": 1,
+    "missed": 1,
+    "timeout": 1,
+    "unviable": 1
+  },
+  [
+    {
+      "name": "src/lib.rs:101:9: replace next -> Option<Self::Item> with None",
+      "package": "hex",
+      "file": "src/lib.rs",
+      "span": {"start": {"line": 101, "column": 9}, "end": {"line": 108, "column": 10}},
+      "replacement": "None",
+      "genre": "FnValue"
+    },
+    {
+      "name": "src/lib.rs:104:43: replace >> with << in next",
+      "package": "hex",
+      "file": "src/lib.rs",
+      "span": {"start": {"line": 104, "column": 43}, "end": {"line": 104, "column": 45}},
+      "replacement": "<<",
+      "genre": "BinaryOperator"
+    },
+    {
+      "name": "src/lib.rs:110:1: replace timeout_mutant with ()",
+      "package": "hex",
+      "file": "src/lib.rs",
+      "span": {"start": {"line": 110, "column": 1}, "end": {"line": 110, "column": 2}},
+      "replacement": "()",
+      "genre": "FnValue"
+    },
+    {
+      "name": "src/lib.rs:111:1: replace unviable_mutant with ()",
+      "package": "hex",
+      "file": "src/lib.rs",
+      "span": {"start": {"line": 111, "column": 1}, "end": {"line": 111, "column": 2}},
+      "replacement": "()",
+      "genre": "FnValue"
+    }
+  ]
+]"#;
+
+    let mutants = parse_mutation_outcomes_json(runtime_json)?;
+
+    assert_eq!(
+        mutants.len(),
+        4,
+        "Baseline must not become a record, and the four mutants must merge to one each: {mutants:?}"
+    );
+    assert!(
+        mutants
+            .iter()
+            .all(|record| record.runtime_outcome != "unknown"),
+        "xtask mutation-calibration must not import cargo-mutants 27.1 outcomes as unknown: {mutants:?}"
+    );
+
+    let caught = mutants
+        .iter()
+        .find(|record| record.line == Some(101))
+        .ok_or_else(|| "line 101 mutant should be imported".to_string())?;
+    assert_eq!(caught.file.as_deref(), Some("src/lib.rs"));
+    assert_eq!(caught.runtime_outcome, "caught");
+    assert_eq!(caught.mutation_operator, "None");
+    assert_eq!(
+        caught.mutant_id.as_deref(),
+        Some("src/lib.rs:101:9: replace next -> Option<Self::Item> with None")
+    );
+
+    let missed = mutants
+        .iter()
+        .find(|record| record.line == Some(104))
+        .ok_or_else(|| "line 104 mutant should be imported".to_string())?;
+    assert_eq!(missed.runtime_outcome, "missed");
+    assert_eq!(missed.mutation_operator, "<<");
+
+    let timeout = mutants
+        .iter()
+        .find(|record| record.line == Some(110))
+        .ok_or_else(|| "line 110 timeout mutant should be imported".to_string())?;
+    assert_eq!(timeout.runtime_outcome, "timeout");
+
+    let unviable = mutants
+        .iter()
+        .find(|record| record.line == Some(111))
+        .ok_or_else(|| "line 111 unviable mutant should be imported".to_string())?;
+    assert_eq!(unviable.runtime_outcome, "unviable");
     Ok(())
 }
 

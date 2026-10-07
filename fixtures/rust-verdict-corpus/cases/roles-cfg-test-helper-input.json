@@ -1,0 +1,50 @@
+{
+  "case_id": "roles-cfg-test-helper-input",
+  "subject_id": "authored-roles",
+  "diff": "cases/roles-cfg-test-helper-input.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 19
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "test_helper_value",
+  "test_shape": "cfg_test_helper_feeds_assert_eq",
+  "hard_case": "The edit is inside a #[cfg(test)] helper, which RIPR-SPEC-0153 gives an evidence role: ripr seeds no production probe, so silent is the expected reading.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "5",
+        "mutated_line": "5",
+        "outcome": "tests_failed",
+        "failing_test": "tests::doubling_the_sample",
+        "equivalence_review": "not equivalent: the sample doubles to 10"
+      },
+      {
+        "replacement": "0",
+        "mutated_line": "0",
+        "outcome": "tests_failed",
+        "failing_test": "tests::doubling_the_sample",
+        "equivalence_review": "not equivalent: the sample doubles to 0"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "sample() feeds doubled() in an assert_eq! against 8, so changing the helper's value fails the test. Spec cells: RIPR-SPEC-0153, RIPR-SPEC-0169.",
+  "labeling_observation": {
+    "ripr_commit": "b0c6ef6",
+    "full_checkout_verdict": "silent",
+    "full_checkout_classifications": [],
+    "excerpt_parity": "matched"
+  }
+}

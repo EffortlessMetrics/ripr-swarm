@@ -1,0 +1,22 @@
+{
+  "case_id": "spec0225-wv-expected-reads-result-field",
+  "subject_id": "authored-spec0225-12",
+  "origin": "authored",
+  "anchor": "src/lib.rs:11",
+  "behavior_family": "field_construction_tautology",
+  "test_shape": "expected_literal_reads_owner_result_field",
+  "hard_case": true,
+  "truth": "not_discriminated",
+  "ideal_verdict": "gap",
+  "observed_verdict": "credited",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "exposed"
+  ],
+  "outcome": "false_exposed",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

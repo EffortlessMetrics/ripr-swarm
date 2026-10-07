@@ -1,0 +1,22 @@
+{
+  "subject_id": "strsim",
+  "upstream": "https://github.com/rapidfuzz/strsim-rs",
+  "commit": "dacc84c0dc61eff0ee0ff66962bcf2e17018ad26",
+  "version_label": "master@dacc84c",
+  "license": "MIT",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "Cargo.toml",
+      "sha256": "3915cdcd5b4381dca961eca95621a5ef297694c02d1dea995b2262c3db8bb4c3"
+    },
+    {
+      "path": "LICENSE",
+      "sha256": "1e697ce8d21401fbf1bddd9b5c3fd4c4c79ae1e3bdf51f81761c85e11d5a89cd"
+    },
+    {
+      "path": "src/lib.rs",
+      "sha256": "dbbee90724d9ed59185d0882c46bfbcaa6ffff4755d29663ee8acc9c542057c1"
+    }
+  ]
+}

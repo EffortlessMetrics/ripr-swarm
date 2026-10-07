@@ -10,7 +10,7 @@
       "worktree": "dirty"
     },
     "canonicalization": "raw_json_placeholder_v1",
-    "content_sha256": "sha256:4163ffea3caf6394a74f1665275e7a60f752144f4630869527aaa32663cf3ecd",
+    "content_sha256": "sha256:58c7e5fa04681e537b4af56cf5c770fa933e396001b9be46e0b5746ab71e7582",
     "kind": "repo_exposure",
     "producer": {
       "tool": "ripr",
@@ -39,10 +39,13 @@
     "weakly_gripped": 1
   },
   "run_status": "complete",
-  "schema_version": "0.3",
+  "schema_version": "0.4",
   "scope": "repo",
   "seams": [
     {
+      "column": 8,
+      "end_column": 36,
+      "end_line": 2,
       "evidence": {
         "activate": "yes",
         "discriminate": "yes",

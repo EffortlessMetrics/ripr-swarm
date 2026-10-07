@@ -38,16 +38,24 @@ pub(crate) const INPUT_SCHEMA_VERSION: &str = "ripr-dx-scoreboard-input-v1";
 const FIRST_RUN_SCHEMA_VERSION: &str = "first_run.v1";
 /// Receipt written by the mutation spot-check (real cargo-mutants outcomes
 /// joined to ripr seams); converted on ingest.
-const MUTATION_SPOT_CHECK_SCHEMA_VERSION: &str = "ripr-mutation-spot-check-v1";
+const MUTATION_SPOT_CHECK_SCHEMA_VERSION: &str = "ripr-mutation-spot-check-v2";
+/// v1 spot-check receipts paired mutants with seams by operator text on a
+/// shared line. Their `seam_precise` counts and rates describe a different
+/// population from v2's canonical joins, so ingest refuses them rather than
+/// trending one against the other.
+const MUTATION_SPOT_CHECK_V1_SCHEMA_VERSION: &str = "ripr-mutation-spot-check-v1";
 /// One JSON object per line from the first-run walk's scoreboard export.
 const FIRST_RUN_ROW_SCHEMA_VERSION: &str = "first_run_row.v1";
 const RUST_CORPUS_SMOKE_SCHEMA_VERSION: &str = "ripr-rust-corpus-smoke-v1";
+/// Receipt written by `cargo xtask pilot-ranking score` (pilot's top picks
+/// judged against the checked-in mutation answer key); converted on ingest.
+const PILOT_RANKING_SCHEMA_VERSION: &str = super::pilot_ranking::RECEIPT_SCHEMA_VERSION;
 /// Row metrics that carry their own per-step `budget`.
 const FIRST_RUN_BUDGETED: [&str; 3] = ["secs", "stdout_lines", "workflow_lines"];
 const DEFAULT_CONFIG: &str = "benchmarks/dx_scoreboard/scoreboards.toml";
 const DEFAULT_CORPUS_DIR: &str = "target/ripr/dx-scoreboard/corpus";
 const DEFAULT_TIMEOUT_MS: u64 = 900_000;
-const BOARDS: [&str; 7] = [
+const BOARDS: [&str; 8] = [
     "speed",
     "ci",
     "trust",
@@ -55,6 +63,7 @@ const BOARDS: [&str; 7] = [
     "first_run",
     "agent",
     "corpus",
+    "ranking",
 ];
 
 const USAGE: &str = "usage: cargo xtask dx-scoreboard [--config <path>] [--boards <list>] [--repo <id>]... [--include-heavy] [--corpus-dir <dir>] [--clone] [--ripr-bin <path>] [--ingest <file>]... [--baseline <report.json>] [--gate] [--timeout-ms <n>]
@@ -63,7 +72,7 @@ Measures the developer-experience scoreboards declared in
 benchmarks/dx_scoreboard/scoreboards.toml and writes
 target/ripr/reports/dx-scoreboard.{json,md}.
 
-  --boards <list>     comma-separated subset of speed,ci,trust,paste,first_run,agent,corpus
+  --boards <list>     comma-separated subset of speed,ci,trust,paste,first_run,agent,corpus,ranking
   --repo <id>         limit corpus measurements to these corpus ids
   --include-heavy     also measure corpus entries marked heavy
   --corpus-dir <dir>  where pinned corpus checkouts live
@@ -203,13 +212,51 @@ pub(crate) fn dx_scoreboard(args: &[String]) -> Result<(), String> {
     let json_text = serde_json::to_string_pretty(&report)
         .map_err(|err| format!("serialize dx scoreboard: {err}"))?;
     crate::write_report("dx-scoreboard.json", &format!("{json_text}\n"))?;
-    crate::write_report("dx-scoreboard.md", &render_markdown(&report))?;
+    let markdown = render_markdown(&report);
+    crate::write_report("dx-scoreboard.md", &markdown)?;
     println!("Wrote target/ripr/reports/dx-scoreboard.json");
     println!("Wrote target/ripr/reports/dx-scoreboard.md");
+    publish_to_actions(&json_text, &markdown);
     if options.gate && report["gate"]["status"].as_str() == Some("fail") {
         return Err(gate_failure_message(&report));
     }
     Ok(())
+}
+
+/// On GitHub Actions the report also goes to the run summary and, in a
+/// collapsed group, to the job log. Artifacts are not reachable from every
+/// reader, and a hosted-runner baseline is rebuilt from this JSON.
+fn publish_to_actions(json_text: &str, markdown: &str) {
+    let Some(summary) = std::env::var_os("GITHUB_STEP_SUMMARY") else {
+        return;
+    };
+    // A summary write failure must not replace the gate decision; the
+    // reports are already on disk and uploaded.
+    if let Err(err) = append_step_summary(Path::new(&summary), markdown) {
+        eprintln!("dx-scoreboard: step summary not written: {err}");
+    }
+    // Report details carry child stderr; stop-commands keeps any `##[...]`
+    // text in it from being read as a workflow command.
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.as_nanos());
+    let token = format!("dx-scoreboard-{}-{nanos}", std::process::id());
+    println!("::group::dx-scoreboard.json");
+    println!("::stop-commands::{token}");
+    println!("{json_text}");
+    println!("::{token}::");
+    println!("::endgroup::");
+}
+
+pub(crate) fn append_step_summary(path: &Path, markdown: &str) -> Result<(), String> {
+    use std::io::Write as _;
+    let mut file = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+        .map_err(|err| format!("open step summary {}: {err}", path.display()))?;
+    file.write_all(markdown.as_bytes())
+        .map_err(|err| format!("write step summary {}: {err}", path.display()))
 }
 
 /// A baseline must be an earlier dx-scoreboard report; any other JSON would
@@ -404,7 +451,8 @@ pub(crate) fn parse_config(text: &str) -> Result<Config, String> {
         let source_ok = metric.source == "measured"
             || metric.source == "pending"
             || metric.source.starts_with("ingest:")
-            || metric.source.starts_with("file:");
+            || metric.source.starts_with("file:")
+            || metric.source.starts_with("verdict-corpus:");
         if !source_ok {
             return Err(format!(
                 "metric `{}` has unknown source `{}`",
@@ -469,6 +517,11 @@ pub(crate) fn parse_ingest(value: &Value, config: &Config) -> Result<Vec<Sample>
         let converted = mutation_spot_check_to_input(value)?;
         return parse_ingest(&converted, config);
     }
+    if value["schema_version"].as_str() == Some(MUTATION_SPOT_CHECK_V1_SCHEMA_VERSION) {
+        return Err(format!(
+            "{MUTATION_SPOT_CHECK_V1_SCHEMA_VERSION} receipts scored operator-text pairings, which {MUTATION_SPOT_CHECK_SCHEMA_VERSION} replaced with canonical seam_id and span-containment joins; re-run `cargo xtask mutation-spot-check` to produce a comparable receipt"
+        ));
+    }
     if value["schema_version"].as_str() == Some(FIRST_RUN_ROW_SCHEMA_VERSION) {
         let converted = first_run_rows_to_input(value)?;
         return parse_ingest(&converted, config);
@@ -477,9 +530,13 @@ pub(crate) fn parse_ingest(value: &Value, config: &Config) -> Result<Vec<Sample>
         let converted = rust_corpus_smoke_to_input(value)?;
         return parse_ingest(&converted, config);
     }
+    if value["schema_version"].as_str() == Some(PILOT_RANKING_SCHEMA_VERSION) {
+        let converted = pilot_ranking_to_input(value)?;
+        return parse_ingest(&converted, config);
+    }
     if value["schema_version"].as_str() != Some(INPUT_SCHEMA_VERSION) {
         return Err(format!(
-            "schema_version must be one of `{INPUT_SCHEMA_VERSION}`, `{FIRST_RUN_SCHEMA_VERSION}`, `{MUTATION_SPOT_CHECK_SCHEMA_VERSION}`, `{RUST_CORPUS_SMOKE_SCHEMA_VERSION}`, or `{FIRST_RUN_ROW_SCHEMA_VERSION}` JSON Lines"
+            "schema_version must be one of `{INPUT_SCHEMA_VERSION}`, `{FIRST_RUN_SCHEMA_VERSION}`, `{MUTATION_SPOT_CHECK_SCHEMA_VERSION}`, `{RUST_CORPUS_SMOKE_SCHEMA_VERSION}`, `{PILOT_RANKING_SCHEMA_VERSION}`, or `{FIRST_RUN_ROW_SCHEMA_VERSION}` JSON Lines"
         ));
     }
     let source = value["source"]
@@ -559,19 +616,35 @@ pub(crate) fn parse_ingest(value: &Value, config: &Config) -> Result<Vec<Sample>
 /// - unknown verdicts: cases whose verdict is a `*_unknown` class.
 pub(crate) fn first_run_to_input(value: &Value) -> Result<Value, String> {
     let setup = value["setup"].as_array().map(Vec::as_slice).unwrap_or(&[]);
+    // An empty array is the install-failed walk; a missing or non-array value
+    // is a malformed receipt and must not pass as one.
     let cases = value["cases"]
         .as_array()
-        .filter(|cases| !cases.is_empty())
-        .ok_or("first_run.v1 receipt needs a non-empty cases array")?;
-    let install_secs: Option<f64> = setup
+        .map(Vec::as_slice)
+        .ok_or("first_run.v1 receipt needs a cases array")?;
+    let install_steps: Vec<&Value> = setup
         .iter()
         .filter(|step| {
             step["step"]
                 .as_str()
                 .is_some_and(|name| name.contains("install"))
         })
+        .collect();
+    let install_secs: Option<f64> = install_steps
+        .iter()
         .filter_map(|step| step["secs"].as_f64())
         .reduce(|a, b| a + b);
+    // A walk whose install failed writes no cases but keeps the timed install
+    // step; that receipt still carries the install sample.
+    if cases.is_empty() && install_steps.is_empty() {
+        return Err("first_run.v1 receipt needs a non-empty cases array".to_string());
+    }
+    // A partial sum would let a slow install look fast, so one untimed
+    // install step leaves the row incomplete.
+    let install_timed = install_steps.iter().all(|step| step["secs"].is_number());
+    let install_failed = install_steps
+        .iter()
+        .find(|step| step["exit"].as_i64().is_some_and(|code| code != 0));
     let ripr = value["ripr"].as_str().unwrap_or("unknown ripr");
     let friction_in = |steps: &[Value]| -> usize {
         steps
@@ -611,6 +684,24 @@ pub(crate) fn first_run_to_input(value: &Value) -> Result<Value, String> {
             "completed": reached,
         }));
     }
+    // An install step with no duration at all is an incomplete sample, not an
+    // absent one, so a previously timed install cannot silently drop out.
+    if !install_steps.is_empty() {
+        rows.push(json!({
+            "id": "first_run.install_seconds",
+            "value": install_secs.unwrap_or(0.0),
+            "completed": install_timed && install_secs.is_some() && install_failed.is_none(),
+        }));
+    }
+    if cases.is_empty() {
+        // Install-only walk: case-dependent metrics stay absent.
+        return Ok(json!({
+            "schema_version": INPUT_SCHEMA_VERSION,
+            "source": "first-run",
+            "evidence": format!("first_run.v1 receipt for {ripr}, install only (no cases ran)"),
+            "metrics": rows,
+        }));
+    }
     rows.push(json!({"id": "first_run.friction_events", "value": friction}));
     rows.push(json!({"id": "first_run.unknown_verdicts", "value": unknown}));
     Ok(json!({
@@ -639,6 +730,8 @@ pub(crate) fn first_run_to_input(value: &Value) -> Result<Value, String> {
 /// - unknown verdicts: `verdict` rows of an `*_unknown` class. The verdict
 ///   list is the sample detail, so a change is listed for review and does not
 ///   fail the gate;
+/// - install seconds: the timed install steps in `_setup`, gated against the
+///   baseline so a slower compile or download is a regression on its own;
 /// - time to first useful result per case: install plus every step through
 ///   the first `check` that exited 0, only when the walk timed an install.
 ///
@@ -757,9 +850,6 @@ pub(crate) fn first_run_rows_to_input(value: &Value) -> Result<Value, String> {
                 }
                 cases
             });
-    if cases.is_empty() {
-        return Err("first_run_row.v1 input has no case rows outside _setup".to_string());
-    }
     let failed: Vec<String> = steps
         .iter()
         .filter_map(|s| match s.exit {
@@ -776,6 +866,15 @@ pub(crate) fn first_run_rows_to_input(value: &Value) -> Result<Value, String> {
         .iter()
         .filter(|s| s.case == "_setup" && s.step.contains("install"))
         .all(|s| s.secs.is_some());
+    let install_ok = steps
+        .iter()
+        .filter(|s| s.case == "_setup" && s.step.contains("install"))
+        .all(|s| s.exit == Some(0.0));
+    // A walk whose install failed writes no case rows; its install timing and
+    // failed step are still worth ingesting.
+    if cases.is_empty() && install.is_none() {
+        return Err("first_run_row.v1 input has no case rows outside _setup".to_string());
+    }
     let list = |items: &[String]| {
         if items.is_empty() {
             "none".to_string()
@@ -787,9 +886,22 @@ pub(crate) fn first_run_rows_to_input(value: &Value) -> Result<Value, String> {
     let mut out = vec![
         json!({"id": "first_run.failed_steps", "value": failed.len(), "evidence": list(&failed)}),
         json!({"id": "first_run.over_budget_steps", "value": over.len(), "evidence": list(&over)}),
-        json!({"id": "first_run.friction_events", "value": friction}),
-        json!({"id": "first_run.unknown_verdicts", "value": unknown, "evidence": format!("verdicts: {}", list(&verdicts))}),
     ];
+    // An install-only walk ran no cases, so a zero here would read as "no
+    // friction, no unknown verdicts" rather than "not measured".
+    if !cases.is_empty() {
+        out.push(json!({"id": "first_run.friction_events", "value": friction}));
+        out.push(json!({"id": "first_run.unknown_verdicts", "value": unknown, "evidence": format!("verdicts: {}", list(&verdicts))}));
+    }
+    if let Some(install) = install {
+        // The install alone, so a slower compile is visible even when the
+        // walk after it stays fast.
+        out.push(json!({
+            "id": "first_run.install_seconds",
+            "value": install,
+            "completed": install_timed && install_ok,
+        }));
+    }
     for case in &cases {
         let mine: Vec<&Step> = steps.iter().filter(|s| &s.case == case).collect();
         // A step without a `secs` row has no duration; summing it as zero
@@ -922,14 +1034,284 @@ pub(crate) fn rust_corpus_smoke_to_input(value: &Value) -> Result<Value, String>
     }))
 }
 
-/// Convert a `ripr-mutation-spot-check-v1` receipt into scoreboard rows:
+/// v1 spot-check rows measured operator-text pairings, a different population
+/// from v2's canonical joins, so a baseline row compares only when every one
+/// of its samples names the v2 receipt (each row's evidence does).
+fn from_spot_check_v2(base_row: &Value) -> bool {
+    base_row["samples"].as_array().is_some_and(|samples| {
+        !samples.is_empty()
+            && samples.iter().all(|sample| {
+                sample["detail"]
+                    .as_str()
+                    .is_some_and(|detail| detail.contains(MUTATION_SPOT_CHECK_SCHEMA_VERSION))
+            })
+    })
+}
+
+/// Opens the population suffix on every spot-check row's evidence. Everything
+/// before it is text this module writes, so the first occurrence is the
+/// marker, and everything after it is one JSON array.
+const POPULATION_MARKER: &str = " population=";
+
+/// One repository of a spot-check population, as a structured value so
+/// distinct argument vectors stay distinct: its name, checkout revision,
+/// cargo-mutants version, the digest of the mutant set the rates were
+/// computed over, and the cargo-mutants arguments (`null` when a supplied
+/// `mutants.out` did not record them).
+fn population_member(repo: &Value) -> Option<Value> {
+    let name = repo["name"].as_str().filter(|name| !name.is_empty())?;
+    let revision = repo["revision"]
+        .as_str()
+        .filter(|revision| !revision.is_empty())?;
+    let mutant_set = repo["mutant_set_sha256"]
+        .as_str()
+        .filter(|digest| !digest.is_empty())?;
+    let args = match &repo["cargo_mutants_args"] {
+        Value::Null => Value::Null,
+        Value::Array(args) if args.iter().all(Value::is_string) => Value::Array(args.clone()),
+        _ => return None,
+    };
+    let version = match &repo["cargo_mutants_version"] {
+        Value::Null => Value::Null,
+        Value::String(version) if !version.is_empty() => json!(version),
+        _ => return None,
+    };
+    // A shorter timeout turns slow caught mutants into timeouts, which are
+    // unscoreable, so it moves the pooled rate like a selection change.
+    let timeout = match &repo["mutant_timeout_secs"] {
+        Value::Null => Value::Null,
+        Value::Number(secs) if secs.as_u64().is_some_and(|secs| secs > 0) => json!(secs),
+        _ => return None,
+    };
+    Some(json!({
+        "name": name,
+        "revision": revision,
+        "cargo_mutants_version": version,
+        "mutant_set_sha256": mutant_set,
+        "cargo_mutants_args": args,
+        "mutant_timeout_secs": timeout,
+    }))
+}
+
+/// The population a spot-check row was measured over, decoded from the
+/// evidence of each of its samples. `None` when a sample predates the suffix,
+/// does not decode, or disagrees with another sample, so none of those can
+/// pass as a known population.
+fn has_unknown_cargo_mutants_version(population: Option<&Value>) -> bool {
+    population.and_then(Value::as_array).is_some_and(|members| {
+        members
+            .iter()
+            .any(|member| member["cargo_mutants_version"].is_null())
+    })
+}
+
+fn spot_check_population(row: &Value) -> Option<Value> {
+    let samples = row["samples"].as_array()?;
+    let mut populations = samples.iter().map(|sample| {
+        let detail = sample["detail"].as_str()?;
+        let start = detail.find(POPULATION_MARKER)? + POPULATION_MARKER.len();
+        serde_json::from_str::<Value>(&detail[start..])
+            .ok()
+            .filter(Value::is_array)
+    });
+    let first = populations.next()??;
+    populations
+        .all(|population| population.as_ref() == Some(&first))
+        .then_some(first)
+}
+
+/// Convert a `ripr-pilot-ranking-v1` receipt (`cargo xtask pilot-ranking
+/// score`) into pooled `ranking` rows: precision of pilot's top 5 and top 10,
+/// the share of top-10 picks a label could judge, the share of top-10 picks
+/// whose function no higher pick named, and the number of top-10 picks.
+///
+/// Scored share sits beside precision because precision can rise by making
+/// picks unjudgeable, and the pick count because it can rise by ranking
+/// fewer seams. A receipt that lost or skipped a repository measured a
+/// different population than its baseline, so every row is incomplete (lost
+/// completion to the gate) rather than a rate compared as like for like.
+pub(crate) fn pilot_ranking_to_input(value: &Value) -> Result<Value, String> {
+    let corpus = value["corpus_version"].as_str().unwrap_or("unknown");
+    let unavailable = value["unavailable_repos"]
+        .as_u64()
+        .ok_or("pilot-ranking receipt needs unavailable_repos as a non-negative integer")?;
+    let total = value["repos_total"]
+        .as_u64()
+        .filter(|total| *total > 0 && unavailable <= *total)
+        .ok_or(
+            "pilot-ranking receipt needs a positive repos_total no smaller than unavailable_repos",
+        )?;
+    let complete = unavailable == 0 && value["status"].as_str() == Some("complete");
+    let mut rows = Vec::new();
+    for (metric, cut, field) in [
+        ("ranking.pilot_precision_top5", "top5", "precision"),
+        ("ranking.pilot_precision_top10", "top10", "precision"),
+        ("ranking.pilot_scored_share_top10", "top10", "scored_share"),
+        (
+            "ranking.pilot_distinct_function_share_top10",
+            "top10",
+            "distinct_function_share",
+        ),
+        ("ranking.pilot_picks_top10", "top10", "picks"),
+        ("ranking.pilot_confirmed_top5", "top5", "confirmed"),
+        ("ranking.pilot_refuted_top5", "top5", "refuted"),
+        ("ranking.pilot_confirmed_top10", "top10", "confirmed"),
+        ("ranking.pilot_refuted_top10", "top10", "refuted"),
+    ] {
+        let entry = &value["pooled"][cut];
+        let count = |key: &str| {
+            entry[key]
+                .as_u64()
+                .ok_or_else(|| format!("pilot-ranking pooled.{cut} needs {key}"))
+        };
+        let (picks, confirmed, refuted) = (count("picks")?, count("confirmed")?, count("refuted")?);
+        let distinct = count("distinct_functions")?;
+        // How much of this cut's precision rests on the coarse line and owner
+        // tiers. The split must account for exactly the cut's judged picks.
+        let tiers = match entry.get("by_tier") {
+            None => String::new(),
+            Some(by_tier) => {
+                let mut judged = 0;
+                let mut parts = Vec::new();
+                for tier in ["seam", "line", "owner"] {
+                    let tally = |verdict: &str| by_tier[tier][verdict].as_u64().unwrap_or(0);
+                    let (tier_confirmed, tier_judged) =
+                        (tally("confirmed"), tally("confirmed") + tally("refuted"));
+                    judged += tier_judged;
+                    parts.push(format!("{tier} {tier_confirmed}/{tier_judged}"));
+                }
+                if judged != confirmed + refuted {
+                    return Err(format!(
+                        "pilot-ranking pooled.{cut}.by_tier judges {judged} picks, not the cut's {}",
+                        confirmed + refuted
+                    ));
+                }
+                format!(" (by tier: {})", parts.join(", "))
+            }
+        };
+        if confirmed + refuted > picks || distinct > picks {
+            return Err(format!(
+                "pilot-ranking pooled.{cut} counts more confirmed, refuted or distinct picks than its {picks} picks"
+            ));
+        }
+        // The rate is derived from the validated counts, so a receipt whose
+        // stated ratio disagrees with its own counts cannot pass the gate.
+        let ratio = |numerator: u64, denominator: u64| {
+            (denominator > 0).then(|| numerator as f64 / denominator as f64)
+        };
+        let counted = matches!(field, "picks" | "confirmed" | "refuted");
+        let rate = match field {
+            "picks" => Some(picks as f64),
+            "confirmed" => Some(confirmed as f64),
+            "refuted" => Some(refuted as f64),
+            "precision" => ratio(confirmed, confirmed + refuted),
+            "scored_share" => ratio(confirmed + refuted, picks),
+            _ => ratio(distinct, picks),
+        };
+        if !counted {
+            let stated = entry[field].as_f64();
+            let agrees = match (stated, rate) {
+                (None, None) => entry[field].is_null(),
+                (Some(stated), Some(rate)) => (stated - rate).abs() < 1e-9,
+                _ => false,
+            };
+            if !agrees {
+                return Err(format!(
+                    "pilot-ranking pooled.{cut}.{field} is {}, but its counts give {}",
+                    entry[field],
+                    rate.map_or_else(|| "null".to_string(), |rate| rate.to_string())
+                ));
+            }
+        }
+        let mut evidence = if field == "distinct_function_share" {
+            format!("{distinct} distinct functions in {picks} picks")
+        } else {
+            format!("{confirmed} confirmed, {refuted} refuted of {picks} picks{tiers}")
+        };
+        evidence.push_str(&format!(
+            " over {} of {total} repositories, corpus {corpus}",
+            total - unavailable
+        ));
+        if !complete {
+            evidence.push_str(&format!(
+                "; {unavailable} repositories unavailable or not selected, so this run is not comparable"
+            ));
+        }
+        // The corpus identity is the row's repository, so a baseline taken
+        // on another answer key shares no repository with this run and is
+        // reported uncompared instead of compared as the same population.
+        rows.push(json!({
+            "id": metric,
+            "repo": format!("pilot-ranking corpus {corpus}"),
+            "value": rate.unwrap_or(0.0),
+            "completed": complete && rate.is_some(),
+            "evidence": evidence,
+        }));
+    }
+    Ok(json!({
+        "schema_version": INPUT_SCHEMA_VERSION,
+        "source": "pilot-ranking",
+        "evidence": format!("ripr-pilot-ranking-v1 receipt, corpus {corpus}, {total} repositories"),
+        "metrics": rows,
+    }))
+}
+
+/// The repositories a pilot precision covers, so a row measured over a
+/// different population than its baseline says so in its evidence.
+fn pilot_repos(pilot: &Value) -> String {
+    let names = pilot["repos"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|repo| repo["name"].as_str())
+        .collect::<Vec<_>>();
+    if names.is_empty() {
+        "unrecorded repositories".to_string()
+    } else {
+        names.join(", ")
+    }
+}
+
+/// Scored pilot recommendations per judge tier, so the scoreboard row shows
+/// how much of its precision rests on the coarse `line` and `owner` tiers.
+fn pilot_tier_split(pilot: &Value) -> String {
+    ["seam", "line", "owner"]
+        .iter()
+        .map(|tier| {
+            let count = |verdict: &str| {
+                pilot
+                    .pointer(&format!("/by_tier/{tier}/{verdict}"))
+                    .and_then(Value::as_u64)
+                    .unwrap_or(0)
+            };
+            format!(
+                "{tier} {}/{}",
+                count("confirmed"),
+                count("confirmed") + count("refuted")
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// Convert a `ripr-mutation-spot-check-v2` receipt into scoreboard rows:
 ///
 /// - discriminator claim agreement: when ripr says a test discriminates the
-///   seam, the share of seam-precise mutants a real run caught;
+///   seam, the share of canonical precise mutants a real run caught;
 /// - gap claim agreement: when ripr says no test discriminates, the share of
-///   seam-precise mutants a real run missed (the rest are false gaps);
-/// - join coverage: seam-precise joins over all mutants, because agreement
-///   rates only speak for the mutants that could be joined to a seam.
+///   canonical precise mutants a real run missed (the rest are false gaps);
+/// - join coverage: canonical precise records over every runtime record,
+///   because agreement rates only speak for the mutants that could be joined
+///   to a seam by `seam_id` or span containment;
+/// - pilot top-recommendation precision: of `ripr pilot`'s top seams that a
+///   real mutant scores, the share where a mutant was missed (receipts written
+///   before the pilot section existed simply omit the row).
+///
+/// Rates pool every repository, so each row's evidence ends with the
+/// population it measured (every repository's name, revision, cargo-mutants
+/// version, mutant-set digest and arguments). A baseline over a different population is not
+/// compared: swapping a repository moves a pooled rate without any verdict
+/// changing (#6311).
 pub(crate) fn mutation_spot_check_to_input(value: &Value) -> Result<Value, String> {
     let families = value["scored_families"]
         .as_object()
@@ -960,7 +1342,9 @@ pub(crate) fn mutation_spot_check_to_input(value: &Value) -> Result<Value, Strin
         rows.push(json!({
             "id": metric,
             "value": rate,
-            "evidence": format!("{scored} seam-precise mutants scored"),
+            "evidence": format!(
+                "{MUTATION_SPOT_CHECK_SCHEMA_VERSION}: {scored} canonical precise mutants scored"
+            ),
         }));
     }
     let repos = value["repos"]
@@ -968,15 +1352,28 @@ pub(crate) fn mutation_spot_check_to_input(value: &Value) -> Result<Value, Strin
         .filter(|repos| !repos.is_empty())
         .ok_or("mutation spot-check receipt needs a non-empty repos array")?;
     let (mut joined, mut mutants) = (0_u64, 0_u64);
+    let mut population = Vec::new();
     for (index, repo) in repos.iter().enumerate() {
-        let precise = repo["pairings"]["seam_precise"].as_u64();
-        let total = repo["calibration_metrics"]["mutants_total"].as_u64();
+        population.push(population_member(repo).ok_or_else(|| {
+            format!(
+                "mutation spot-check repo {} needs a name, revision, mutant_set_sha256 and cargo_mutants_args (an array of strings, or null when unrecorded), so its rates can be tied to the population they measured",
+                index + 1
+            )
+        })?);
+        let precise = repo["pairings"]["canonical_precise"].as_u64();
+        let total = repo["pairings"]["records_total"].as_u64();
         let (Some(precise), Some(total)) = (precise, total) else {
             return Err(format!(
-                "mutation spot-check repo {} needs pairings.seam_precise and calibration_metrics.mutants_total",
+                "mutation spot-check repo {} needs pairings.canonical_precise and pairings.records_total",
                 index + 1
             ));
         };
+        if repo["calibration_metrics"]["mutants_total"].as_u64() != Some(total) {
+            return Err(format!(
+                "mutation spot-check repo {} accounts for {total} records but calibration_metrics.mutants_total differs",
+                index + 1
+            ));
+        }
         if precise > total {
             return Err(format!(
                 "mutation spot-check repo {} joins {precise} of only {total} mutants",
@@ -986,11 +1383,50 @@ pub(crate) fn mutation_spot_check_to_input(value: &Value) -> Result<Value, Strin
         joined += precise;
         mutants += total;
     }
+    // Older receipts carry no pilot section; a present one must say how many
+    // recommendations it scored, so a malformed receipt fails instead of
+    // reading as not measured.
+    let pilot = &value["pilot_top_recommendations"];
+    let scored = if pilot.is_null() {
+        0
+    } else {
+        pilot["scored"].as_u64().ok_or(
+            "mutation spot-check pilot_top_recommendations needs scored as a non-negative integer",
+        )?
+    };
+    // A run that lost a repository's pilot ranking measured a different
+    // population than the baseline, so it publishes no pilot row rather
+    // than a precision the regression gate would compare as like for like.
+    let unavailable = match &pilot["unavailable_repos"] {
+        Value::Null => 0,
+        count => count.as_u64().ok_or(
+            "mutation spot-check pilot_top_recommendations needs unavailable_repos as a non-negative integer",
+        )?,
+    };
+    if scored > 0 && unavailable == 0 {
+        let precision = pilot["precision"]
+            .as_f64()
+            .filter(|rate| (0.0..=1.0).contains(rate))
+            .ok_or(
+                "mutation spot-check pilot_top_recommendations needs precision between 0 and 1",
+            )?;
+        rows.push(json!({
+            "id": "trust.pilot_top_recommendation_precision",
+            "value": precision,
+            "evidence": format!(
+                "{MUTATION_SPOT_CHECK_SCHEMA_VERSION}: {scored} pilot recommendations scored ({}) over {}",
+                pilot_tier_split(pilot),
+                pilot_repos(pilot)
+            ),
+        }));
+    }
     if mutants > 0 {
         rows.push(json!({
             "id": "trust.mutation_join_coverage",
             "value": joined as f64 / mutants as f64,
-            "evidence": format!("{joined} of {mutants} mutants joined seam-precise"),
+            "evidence": format!(
+                "{MUTATION_SPOT_CHECK_SCHEMA_VERSION}: {joined} of {mutants} mutants joined canonically and scoreable"
+            ),
         }));
     }
     // Rates pool every repository, and a repository run with extra
@@ -1012,13 +1448,16 @@ pub(crate) fn mutation_spot_check_to_input(value: &Value) -> Result<Value, Strin
     } else {
         String::new()
     };
+    population.sort_by_key(Value::to_string);
+    let population = format!("{POPULATION_MARKER}{}", Value::Array(population));
     for row in &mut rows {
         if let Some(Value::String(evidence)) = row.get_mut("evidence") {
             evidence.push_str(&caveat);
+            evidence.push_str(&population);
         }
     }
     let evidence = format!(
-        "ripr-mutation-spot-check-v1 receipt, {} repositories{caveat}",
+        "{MUTATION_SPOT_CHECK_SCHEMA_VERSION} receipt, {} repositories{caveat}",
         repos.len()
     );
     Ok(json!({
@@ -1029,13 +1468,19 @@ pub(crate) fn mutation_spot_check_to_input(value: &Value) -> Result<Value, Strin
     }))
 }
 
-/// Metrics read from committed receipts (`file:<path>#<json.path>`). The
-/// referenced object uses the judged-panel `{numerator, denominator}` shape;
-/// a zero denominator is `not_measured`, not a perfect rate.
+/// Metrics read from committed receipts (`file:<path>#<json.path>`) or from
+/// a verdict corpus's committed rows (`verdict-corpus:<corpus dir>#<rate>`,
+/// the summary derived as `verdict-corpus check` derives it). The referenced
+/// object uses the judged-panel `{numerator, denominator}` shape; a zero
+/// denominator is `not_measured`, not a perfect rate.
 fn file_samples(config: &Config, boards: &[String]) -> Result<Vec<Sample>, String> {
     let mut samples = Vec::new();
     for metric in &config.metric {
         if !boards.contains(&metric.board) {
+            continue;
+        }
+        if let Some(reference) = metric.source.strip_prefix("verdict-corpus:") {
+            samples.push(verdict_corpus_sample(metric, reference));
             continue;
         }
         let Some(reference) = metric.source.strip_prefix("file:") else {
@@ -1065,6 +1510,36 @@ fn file_samples(config: &Config, boards: &[String]) -> Result<Vec<Sample>, Strin
         samples.push(sample);
     }
     Ok(samples)
+}
+
+fn verdict_corpus_sample(metric: &MetricDef, reference: &str) -> Sample {
+    let (dir, pointer) = reference.split_once('#').unwrap_or((reference, ""));
+    // A missing corpus is not measured; a corpus that exists but whose rows
+    // do not parse is a failed instrument, as an unparsable `file:` receipt is.
+    if !Path::new(dir).join("corpus.json").is_file() {
+        let err = format!("{dir}/corpus.json is missing");
+        return Sample {
+            metric: metric.id.clone(),
+            repo: None,
+            outcome: SampleOutcome::NotMeasured,
+            detail: match &metric.pending_reason {
+                Some(reason) => format!("{err}; {reason}"),
+                None => err,
+            },
+        };
+    }
+    let report = super::verdict_corpus::expected_report(Path::new(dir)).and_then(|report| {
+        serde_json::to_value(&report).map_err(|err| format!("render {dir} report: {err}"))
+    });
+    match report {
+        Ok(json) => ratio_sample(&metric.id, dir, pointer, &json),
+        Err(err) => Sample {
+            metric: metric.id.clone(),
+            repo: None,
+            outcome: SampleOutcome::Failed,
+            detail: err,
+        },
+    }
 }
 
 pub(crate) fn ratio_sample(metric: &str, path: &str, pointer: &str, json: &Value) -> Sample {
@@ -1639,6 +2114,34 @@ pub(crate) fn compare_with_baseline(
     let Some(base_row) = base_row else {
         return json!({"comparable": false, "reason": "metric absent from baseline"});
     };
+    if def.source == "ingest:mutation-spot-check" {
+        if !from_spot_check_v2(base_row) {
+            return json!({
+                "comparable": false,
+                "value": base_row["value"],
+                "reason": format!(
+                    "baseline was not ingested from a {MUTATION_SPOT_CHECK_SCHEMA_VERSION} receipt"
+                ),
+            });
+        }
+        // A pooled rate over other repositories, revisions or cargo-mutants
+        // runs is a different population, not a trend.
+        let before = spot_check_population(base_row);
+        let now = spot_check_population(row);
+        // An unrecorded cargo-mutants version could hide an instrument
+        // change, so it matches nothing, not even another unrecorded one.
+        if before.is_none() || before != now || has_unknown_cargo_mutants_version(now.as_ref()) {
+            return json!({
+                "comparable": false,
+                "value": base_row["value"],
+                "reason": format!(
+                    "baseline measured population {}; this run measured {}",
+                    before.map_or_else(|| "unrecorded".to_string(), |p| p.to_string()),
+                    now.map_or_else(|| "unrecorded".to_string(), |p| p.to_string()),
+                ),
+            });
+        }
+    }
     // Samples with a repository are judged per repository below.
     let incomplete = |r: &Value| {
         r["samples"].as_array().is_some_and(|samples| {

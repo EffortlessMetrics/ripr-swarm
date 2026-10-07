@@ -7,7 +7,7 @@ Summary: 2 probe(s), 0 exposed, 1 weakly_exposed, 0 reachable_unrevealed, 0 no_s
 Analysis outcome: findings below (analysis complete; complete_with_findings).
   Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 2 probe(s), 2 finding(s).
 
-WARNING fixtures/error_path_diagnostic_escaped/input/src/lib.rs:5
+WARNING ./src/lib.rs:5
   id: probe:src_lib.rs:error_path:fedbf836
 
 Changed
@@ -18,6 +18,7 @@ Probe
   family: error_path
   delta:  value
   owner:  src/lib.rs::read_all
+  canonical gap: gap:rust:src/lib.rs:read_all:error_variant:error_path:let_n=rdr.read_mut_buf
 
 Static exposure
   weakly_exposed (warning, confidence 0.92)
@@ -29,7 +30,7 @@ Evidence
   - observation yes: A related test observes a value or effect near the changed behavior
   - discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)
   - local flow reaches error variant: let n = rdr.read(&mut buf)? (line 5)
-  - related test src/lib.rs:14 reads_successfully uses strong exact value oracle: assert_eq!(rdr.len(), 10, "read /"error/", (panic)"); misses: assertion does not mention the changed expression
+  - related test src/lib.rs:14 reads_successfully uses strong exact value oracle: assert_eq!(rdr.len(), 10, "read /"error/", (panic)"); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
   - source assertion argument value 10 at line 17
   - source assertion argument value "read /"error/", (panic)" at line 18
   - source assertion argument value 10 at line 18
@@ -40,10 +41,10 @@ Weakness
 Next step
   Assert the exact error variant or payload instead of only is_err().
 Drill in:
-  ripr explain --root fixtures/error_path_diagnostic_escaped/input --diff fixtures/error_path_diagnostic_escaped/diff.patch --mode fast probe:src_lib.rs:error_path:fedbf836
-  ripr context --root fixtures/error_path_diagnostic_escaped/input --diff fixtures/error_path_diagnostic_escaped/diff.patch --mode fast --at probe:src_lib.rs:error_path:fedbf836
+  ripr explain --root <cwd>/fixtures/error_path_diagnostic_escaped/input --diff <cwd>/fixtures/error_path_diagnostic_escaped/diff.patch --mode fast probe:src_lib.rs:error_path:fedbf836
+  ripr context --root <cwd>/fixtures/error_path_diagnostic_escaped/input --diff <cwd>/fixtures/error_path_diagnostic_escaped/diff.patch --mode fast --at probe:src_lib.rs:error_path:fedbf836
 
-NOTE fixtures/error_path_diagnostic_escaped/input/src/lib.rs:5
+NOTE ./src/lib.rs:5
   id: probe:src_lib.rs:static_unknown:afc04379
 
 Changed
@@ -55,6 +56,7 @@ Probe
   family: static_unknown
   delta:  unknown
   owner:  src/lib.rs::read_all
+  canonical gap: gap:rust:src/lib.rs:read_all:static_unknown:static_unknown:let_n=rdr.read_mut_buf_.unwrap_or_0
 
 Static exposure
   static_unknown (note, confidence 0.50)
@@ -81,5 +83,5 @@ Stop reasons:
 Next step
   Escalate to real mutation testing or deep static analysis for this probe.
 Drill in:
-  ripr explain --root fixtures/error_path_diagnostic_escaped/input --diff fixtures/error_path_diagnostic_escaped/diff.patch --mode fast probe:src_lib.rs:static_unknown:afc04379
-  ripr context --root fixtures/error_path_diagnostic_escaped/input --diff fixtures/error_path_diagnostic_escaped/diff.patch --mode fast --at probe:src_lib.rs:static_unknown:afc04379
+  ripr explain --root <cwd>/fixtures/error_path_diagnostic_escaped/input --diff <cwd>/fixtures/error_path_diagnostic_escaped/diff.patch --mode fast probe:src_lib.rs:static_unknown:afc04379
+  ripr context --root <cwd>/fixtures/error_path_diagnostic_escaped/input --diff <cwd>/fixtures/error_path_diagnostic_escaped/diff.patch --mode fast --at probe:src_lib.rs:static_unknown:afc04379

@@ -287,6 +287,7 @@ Changes connect diff input to owners and behavior hints:
   "range": {"start_line": 15, "start_column": 7, "end_line": 15, "end_column": 24},
   "behavior_hint": "predicate_boundary",
   "changed_text_digest": "sha256:...",
+  "missing_discriminator": "$amount == $threshold at the changed boundary",
   "provenance_refs": ["prov:diff:1"]
 }
 ```
@@ -305,6 +306,24 @@ Changes connect diff input to owners and behavior hints:
 
 `behavior_hint` is an input hint only. RIPR decides infection and canonical gap
 state after evidence routing.
+
+`missing_discriminator` is optional. When present, it is the concrete,
+producer-supplied discriminator for the changed behavior (what a new test
+would have to observe, e.g. `"$amount == $threshold"`). It is the canonical
+channel that lets a spec-following packet form a referenceable canonical Perl
+gap: RIPR uses it as the `missing_discriminator` component of the gap
+identity key (see [RIPR-derived identities](#ripr-derived-identities)),
+projects it as the finding's `normalized_discriminator`, and restates it in
+the finding's missing-discriminator evidence instead of suppressing it. A
+blank value does not count as a supplied discriminator.
+
+For compatibility with packets produced before this field was specified,
+RIPR also accepts a concrete discriminator encoded as a `changed_text_digest`
+value with the literal `discriminator:` prefix (e.g.
+`"changed_text_digest": "discriminator:$amount == $threshold"`). When both
+channels are present, the `missing_discriminator` field wins. Producers
+should emit the field; the prefix form is a compatibility channel, not a
+second documented schema.
 
 ### Tests
 
@@ -585,6 +604,13 @@ identity key is:
 ```text
 owner_id + behavior_hint + missing_discriminator + assertion_shape
 ```
+
+The `missing_discriminator` component comes from the change fact's
+`missing_discriminator` field (the documented channel, see
+[Changes](#changes)); packets that instead use the compatibility
+`discriminator:`-prefixed `changed_text_digest` form the identical key. A
+packet that supplies neither carries only the generic behavior-hint label in
+that component, and RIPR must not present such a gap as producer-grounded.
 
 The key must not include line ranges, array positions, `change_id`, test IDs,
 host paths, temp paths, or timestamps. A line move or changed `change_id` for

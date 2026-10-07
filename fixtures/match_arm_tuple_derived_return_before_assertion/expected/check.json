@@ -11,6 +11,18 @@
   "findings": [
     {
       "id": "probe:src_lib.rs:match_arm:802442a0",
+      "canonical_gap_id": "gap:rust:src/lib.rs:terminalize_proof:match_arm:match_arm:true_false",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:terminalize_proof:match_arm:match_arm:true_false",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "terminalize_proof",
+        "behavior_kind": "match_arm",
+        "probe_kind": "match_arm",
+        "normalized_discriminator": "true_false"
+
+      },
       "classification": "weakly_exposed",
       "severity": "warning",
       "confidence": 0.92,
@@ -18,7 +30,7 @@
         "id": "probe:src_lib.rs:match_arm:802442a0",
         "family": "match_arm",
         "delta": "control",
-        "file": "fixtures/match_arm_tuple_derived_return_before_assertion/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 27,
         "expression": "(true, false) =>"
        },
@@ -122,7 +134,7 @@
           "relation_reason": "direct_owner_call",
           "relation_confidence": "high",
           "miss": "observation_unconfirmed",
-          "why": "assertion does not mention the changed expression"
+          "why": "ripr could not confirm that this assertion observes the changed behavior"
         },
         {
           "name": "request_only_projection_observes_join",
@@ -134,7 +146,7 @@
           "relation_reason": "direct_owner_call",
           "relation_confidence": "high",
           "miss": "observation_unconfirmed",
-          "why": "assertion does not mention the changed expression"
+          "why": "ripr could not confirm that this assertion observes the changed behavior"
         },
         {
           "name": "request_only_projection_observes_join",
@@ -146,7 +158,7 @@
           "relation_reason": "direct_owner_call",
           "relation_confidence": "high",
           "miss": "observation_unconfirmed",
-          "why": "assertion does not mention the changed expression"
+          "why": "ripr could not confirm that this assertion observes the changed behavior"
         }
       ],
       "stop_reasons": [],
@@ -159,6 +171,18 @@
     },
     {
       "id": "probe:src_lib.rs:match_arm:210aa0af",
+      "canonical_gap_id": "gap:rust:src/lib.rs:terminalize_proof:match_arm:match_arm:true_false=>lit726571756573745f6964656e746974795f7631",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:terminalize_proof:match_arm:match_arm:true_false=>lit726571756573745f6964656e746974795f7631",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "terminalize_proof",
+        "behavior_kind": "match_arm",
+        "probe_kind": "match_arm",
+        "normalized_discriminator": "true_false=>lit726571756573745f6964656e746974795f7631"
+
+      },
       "classification": "weakly_exposed",
       "severity": "warning",
       "confidence": 0.92,
@@ -166,7 +190,7 @@
         "id": "probe:src_lib.rs:match_arm:210aa0af",
         "family": "match_arm",
         "delta": "control",
-        "file": "fixtures/match_arm_tuple_derived_return_before_assertion/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 27,
         "expression": "(true, false) => \"request_identity_v1\","
        },
@@ -270,7 +294,7 @@
           "relation_reason": "direct_owner_call",
           "relation_confidence": "high",
           "miss": "observation_unconfirmed",
-          "why": "assertion does not mention the changed expression"
+          "why": "ripr could not confirm that this assertion observes the changed behavior"
         },
         {
           "name": "request_only_projection_observes_join",
@@ -282,7 +306,7 @@
           "relation_reason": "direct_owner_call",
           "relation_confidence": "high",
           "miss": "observation_unconfirmed",
-          "why": "assertion does not mention the changed expression"
+          "why": "ripr could not confirm that this assertion observes the changed behavior"
         },
         {
           "name": "request_only_projection_observes_join",
@@ -294,7 +318,7 @@
           "relation_reason": "direct_owner_call",
           "relation_confidence": "high",
           "miss": "observation_unconfirmed",
-          "why": "assertion does not mention the changed expression"
+          "why": "ripr could not confirm that this assertion observes the changed behavior"
         }
       ],
       "stop_reasons": [],

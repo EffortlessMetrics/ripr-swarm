@@ -1,0 +1,22 @@
+{
+  "case_id": "spec0227-check-guard-edge-is-err-only",
+  "subject_id": "authored-spec0227-2",
+  "origin": "authored",
+  "anchor": "src/lib.rs:10",
+  "behavior_family": "predicate_side_flip",
+  "test_shape": "single_is_err_at_edge",
+  "hard_case": true,
+  "truth": "partially_discriminated",
+  "ideal_verdict": "gap",
+  "observed_verdict": "gap",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "weakly_exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": [],
+  "findings_scored": 3,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}
