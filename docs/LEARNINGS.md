@@ -3,6 +3,17 @@
 This log captures repo knowledge that should survive individual PRs and chat
 sessions. It is intentionally short and actionable.
 
+## 2026-10-07: Windows spawn and path spellings that tests must not assume (#6855)
+
+Windows `CreateProcess` resolves the executable through the parent's PATH
+and ignores the child's custom `PATH`, so restricting `PATH` to an empty
+directory never produces a missing-binary spawn failure on Windows (probed:
+bare `git` still spawns, exit 0). Force the miss with a deterministically
+absent absolute program instead. Separately, Git for Windows rejects
+verbatim path arguments (`worktree add` fails with "could not create
+leading directories"), so fixture setup must pass a plain or relative path
+even when the fixture root itself is verbatim.
+
 ## 2026-10-04: Operand-position error lexemes are not error observers (#5255)
 
 `assert_eq!((rdr.len(), error_count), (10, 0))` observes a successful length
