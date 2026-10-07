@@ -40,7 +40,7 @@
       "silent"
     ]
   },
-  "reasoning": "tests/test_version_req.rs checks >1.2 against 1.3, 2.0, 1.2, 1.1 and 0.9 through helper loops over the public matches. The >= mutant is left out: the line runs only when the majors differ, where >= and > agree. Spec cells: RIPR-SPEC-0118 example 3.",
+  "reasoning": "tests/test_version_req.rs checks >1.2 against 1.3, 2.0, 1.2, 1.1 and 0.9 through helper loops over the public matches. The >= mutant is left out: the line runs only when the majors differ, where >= and > agree. Spec cells: RIPR-SPEC-0118 example 3, as an analogue: the same reach shape (integration helper loops over public matches) with a behavior-preserving rewrite of the major-version return instead of the spec's patch-guard change.",
   "labeling_observation": {
     "ripr_commit": "2059890",
     "full_checkout_verdict": "limited",

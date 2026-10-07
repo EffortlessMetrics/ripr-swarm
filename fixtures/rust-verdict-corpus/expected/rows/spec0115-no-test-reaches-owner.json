@@ -1,6 +1,6 @@
 {
-  "case_id": "spec0114-no-test-reaches-owner",
-  "subject_id": "authored-spec0114-3",
+  "case_id": "spec0115-no-test-reaches-owner",
+  "subject_id": "authored-spec0115-3",
   "origin": "authored",
   "anchor": "src/lib.rs:4",
   "behavior_family": "return_value_arithmetic",

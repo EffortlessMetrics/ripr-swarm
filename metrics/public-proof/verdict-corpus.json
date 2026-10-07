@@ -3652,27 +3652,6 @@
       "truth": "discriminated"
     },
     {
-      "anchor": "src/lib.rs:4",
-      "behavior_family": "return_value_arithmetic",
-      "case_id": "spec0114-no-test-reaches-owner",
-      "changed_since_labeling": false,
-      "contradictions": [
-        "no_static_path_with_related_tests"
-      ],
-      "followed_retarget": false,
-      "hard_case": false,
-      "ideal_verdict": "gap",
-      "observed_classifications": [
-        "no_static_path"
-      ],
-      "observed_verdict": "limited",
-      "origin": "authored",
-      "outcome": "abstained",
-      "subject_id": "authored-spec0114-3",
-      "test_shape": "unrelated_test_only",
-      "truth": "not_discriminated"
-    },
-    {
       "anchor": "src/lib.rs:12",
       "behavior_family": "return_value_arithmetic",
       "case_id": "spec0114-test-calls-owner-macro",
@@ -3709,6 +3688,27 @@
       "subject_id": "authored-spec0115-1",
       "test_shape": "integration_test_public_api_to_private_owner",
       "truth": "discriminated"
+    },
+    {
+      "anchor": "src/lib.rs:4",
+      "behavior_family": "return_value_arithmetic",
+      "case_id": "spec0115-no-test-reaches-owner",
+      "changed_since_labeling": false,
+      "contradictions": [
+        "no_static_path_with_related_tests"
+      ],
+      "followed_retarget": false,
+      "hard_case": false,
+      "ideal_verdict": "gap",
+      "observed_classifications": [
+        "no_static_path"
+      ],
+      "observed_verdict": "limited",
+      "origin": "authored",
+      "outcome": "abstained",
+      "subject_id": "authored-spec0115-3",
+      "test_shape": "unrelated_test_only",
+      "truth": "not_discriminated"
     },
     {
       "anchor": "src/lib.rs:8",

@@ -32,7 +32,7 @@
       "limited"
     ]
   },
-  "reasoning": "test_comparator_parse checks only caret and >= inputs through assert_to_string, so the Exact arm never runs; the edit makes it unreachable and '=1.2' parses as caret, and no test notices. Spec cells: RIPR-SPEC-0224 example 1.",
+  "reasoning": "test_comparator_parse checks only caret and >= inputs through assert_to_string, so the Exact arm never runs; the edit makes it unreachable and '=1.2' parses as caret, and no test notices. Spec cells: RIPR-SPEC-0224 example 1, as an analogue: here the > arm precedes the Exact arm, so the edit only makes Exact unreachable, whereas in real semver op() checks = first and the same edit would also reparse > inputs.",
   "labeling_observation": {
     "ripr_commit": "2059890",
     "full_checkout_verdict": "gap",

@@ -339,9 +339,9 @@ Only the upstream cases come from real repositories. The authored cases were wri
 | `sibling-pin-insufficient-matches-arm` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | none |
 | `spec0114-direct-unit-test` | authored | discriminated | credited | credited | exposed | ideal | none |
 | `spec0114-helper-chain-public-api` | authored | discriminated | credited | limited | infection_unknown, propagation_unknown | abstained | none |
-| `spec0114-no-test-reaches-owner` | authored | not_discriminated | gap | limited | no_static_path | abstained | no_static_path_with_related_tests |
 | `spec0114-test-calls-owner-macro` | authored | discriminated | credited | limited | no_static_path | abstained | none |
 | `spec0115-integration-outer-inner` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | none |
+| `spec0115-no-test-reaches-owner` | authored | not_discriminated | gap | limited | no_static_path | abstained | no_static_path_with_related_tests |
 | `spec0117-external-std-macro` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | none |
 | `spec0117-lexical-path-beside-macro` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | none |
 | `spec0117-macro-names-owner` | authored | discriminated | credited | limited | no_static_path | abstained | none |

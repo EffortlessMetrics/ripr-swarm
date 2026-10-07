@@ -1,7 +1,7 @@
 {
-  "case_id": "spec0114-no-test-reaches-owner",
-  "subject_id": "authored-spec0114-3",
-  "diff": "cases/spec0114-no-test-reaches-owner.diff",
+  "case_id": "spec0115-no-test-reaches-owner",
+  "subject_id": "authored-spec0115-3",
+  "diff": "cases/spec0115-no-test-reaches-owner.diff",
   "anchor": {
     "file": "src/lib.rs",
     "line": 4
