@@ -483,11 +483,14 @@ rule only for an assertion whose context was admitted.
    names the owner, or is related by a direct or helper owner call) without
    naming `f` (whole-struct equality, a snapshot, a helper that asserts), and a
    pinning test with a condition, match, loop, closure, early exit or `?`,
-   where a pin may not run. A pinning test must hold only the receiver
-   bindings and assertions that read receivers through plain fields: a
+   where a pin may not run. A pinning test must hold only receiver bindings
+   that are a bare owner call (no chained transform such as
+   `.with_coupon(..)`) and assertions that call nothing and read receivers
+   through plain fields: a helper inside an assertion, a
    whole-result check (`assert_eq!(q, expected)`, a method call, a helper
    such as `check_quote(&q)`), a second owner result, an attribute such as
-   `#[cfg(..)]`, or the owner named in an assertion keeps the credit. Anything else ripr cannot read (a nested expression, a repeated
+   `#[cfg(..)]`, or the owner named in an assertion keeps the credit.
+   Anything else ripr cannot read (a nested expression, a repeated
    initializer text) keeps it too.
 
 ### Bool-owner pins

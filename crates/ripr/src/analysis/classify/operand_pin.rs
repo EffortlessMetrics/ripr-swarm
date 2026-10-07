@@ -329,7 +329,11 @@ fn only_bindings_and_field_reads(body: &str, receivers: &[&str], owner_name: &st
                 let name = rest.split(['=', ':']).next().unwrap_or_default().trim();
                 return receivers.contains(&name);
             }
+            // The macro's own parenthesis is the only call allowed: a helper
+            // inside an assertion (`assert_eq!(make_quote(1_000, 1), ..)`)
+            // may run the owner and see the operand.
             statement.starts_with("assert")
+                && statement.matches('(').count() == 1
                 && whole_word_count(statement, owner_name) == 0
                 && !receivers
                     .iter()
@@ -382,8 +386,37 @@ fn bound_once_from_owner_call(body: &str, receiver: &str, owner_name: &str) -> b
     let [value] = bindings.as_slice() else {
         return false;
     };
-    let callee = value.trim().split('(').next().unwrap_or_default().trim();
+    let value = value.split_once("//").map_or(*value, |(code, _)| code);
+    let value = value.trim().trim_end_matches(';').trim_end();
+    let Some(open) = value.find('(') else {
+        return false;
+    };
+    // The call must be the whole initializer: a chained transform
+    // (`quote(100, 1).with_coupon(50)`) can make the pins agree without the
+    // owner's own result doing so.
+    if matching_paren(value, open) != Some(value.len() - 1) {
+        return false;
+    }
+    let callee = value[..open].trim();
     callee == owner_name || callee.rsplit("::").next() == Some(owner_name)
+}
+
+/// The byte index of the `)` closing the `(` at `open`.
+fn matching_paren(text: &str, open: usize) -> Option<usize> {
+    let mut depth = 0usize;
+    for (at, ch) in text[open..].char_indices() {
+        match ch {
+            '(' => depth += 1,
+            ')' => {
+                depth = depth.checked_sub(1)?;
+                if depth == 0 {
+                    return Some(open + at);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
 }
 
 /// Whether `body` holds a construct that may skip or repeat a statement:
@@ -757,7 +790,28 @@ mod tests {
 
         assert_eq!(found, None);
         assert_eq!(method, None);
+        let helper_in_assertion = pin(&[test_with(&[
+            "let q = quote(2_500, 4);",
+            "assert_eq!(q.subtotal_cents, 9_000);",
+            "assert_eq!(q.total_cents, 9_000);",
+            "assert_eq!(make_quote(1_000, 1), expected_quote());",
+        ])]);
+        let owner_in_assertion = pin(&[test_with(&[
+            "let q = quote(2_500, 4);",
+            "assert_eq!(q.subtotal_cents, 9_000);",
+            "assert_eq!(q.total_cents, 9_000);",
+            "assert_eq!(quote(1_000, 1).tier, Tier::Standard);",
+        ])]);
+        let transformed = pin(&[test_with(&[
+            "let q = quote(2_500, 4).with_coupon(500);",
+            "assert_eq!(q.subtotal_cents, 9_000);",
+            "assert_eq!(q.total_cents, 9_000);",
+        ])]);
+
         assert_eq!(helper, None);
+        assert_eq!(helper_in_assertion, None);
+        assert_eq!(owner_in_assertion, None);
+        assert_eq!(transformed, None);
         assert_eq!(second_result, None);
         assert!(other_field.is_some());
         assert!(in_fn.is_some());
