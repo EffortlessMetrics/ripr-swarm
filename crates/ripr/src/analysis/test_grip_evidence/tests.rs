@@ -4006,6 +4006,111 @@ fn given_free_fn_when_test_calls_it_bare_then_direct_owner_call_and_activated() 
     Ok(())
 }
 
+/// #6713 review: a helper that calls only the associated
+/// `Widget::render_unit` is not a helper-owner edge of the free
+/// `render_unit`, so a test calling only the helper neither relates nor
+/// activates the free function. The control spells the free call in the
+/// helper and keeps both.
+#[test]
+fn given_free_fn_when_helper_calls_only_same_named_associated_fn_then_no_helper_owner_credit()
+-> Result<(), String> {
+    let helper_evidence =
+        |helper_body: &str| -> Result<(StageState, Vec<(String, RelationReason)>), String> {
+            let prod_src = r#"
+pub fn render_unit(size: u64) -> u64 {
+    size * 2
+}
+
+pub struct Widget;
+
+impl Widget {
+    pub fn render_unit(size: u64) -> u64 {
+        size + 1
+    }
+}
+"#;
+            let support = PathBuf::from("tests/support.rs");
+            let support_src =
+                format!("pub fn check_render_unit() -> u64 {{\n    {helper_body}\n}}\n");
+            let tests = PathBuf::from("tests/widget_tests.rs");
+            let tests_src = r#"
+use support::check_render_unit;
+
+#[test]
+fn renders_through_helper() {
+    assert_eq!(check_render_unit(), 11);
+}
+"#;
+            let index = index_from_files(&[
+                (PathBuf::from("src/widget.rs"), prod_src),
+                (support, support_src.as_str()),
+                (tests, tests_src),
+            ])?;
+            let seams = inventory_seams_from_index(&[PathBuf::from("src/widget.rs")], &index);
+            let free_render = seams
+                .iter()
+                .find(|s| s.kind() == SeamKind::ReturnValue && s.expression() == "size * 2")
+                .ok_or_else(|| "free render_unit return seam present".to_string())?;
+            let evidence = evidence_for_seam(free_render, &index);
+            let labels = evidence
+                .related_tests
+                .iter()
+                .map(|g| (g.test_name.clone(), g.relation_reason))
+                .collect::<Vec<_>>();
+            Ok((evidence.activate.state, labels))
+        };
+
+    let (activation, labels) = helper_evidence("Widget::render_unit(10)")?;
+    assert!(
+        labels.iter().all(|(_, reason)| !matches!(
+            reason,
+            RelationReason::DirectOwnerCall | RelationReason::HelperOwnerCall
+        )),
+        "a helper calling only Widget::render_unit is not an owner edge of the free fn: {labels:?}"
+    );
+    assert_ne!(
+        activation,
+        StageState::Yes,
+        "the associated call's arguments are not the free fn's activation values"
+    );
+
+    let (activation, labels) = helper_evidence("render_unit(10)")?;
+    assert!(
+        labels
+            .iter()
+            .any(|(_, reason)| *reason == RelationReason::HelperOwnerCall),
+        "a helper spelling the free call keeps the helper-owner relation: {labels:?}"
+    );
+    assert_eq!(activation, StageState::Yes);
+    Ok(())
+}
+
+/// #6713 review, grip mode: a nested `fn kb(..)` declaration in the test
+/// body defines the name, it does not call it, so it cannot restore the
+/// direct relation or the activation the associated-only call lost.
+#[test]
+fn given_free_fn_when_test_declares_same_named_fn_then_not_strongly_gripped() -> Result<(), String>
+{
+    let (evidence, class) = free_kb_return_evidence(
+        "fn kb(x: u64) -> u64 { x * 3 }\nassert_eq!(ByteSize::kb(1), ByteSize(1_000));",
+    )?;
+    assert!(
+        evidence
+            .related_tests
+            .iter()
+            .all(|g| g.relation_reason != RelationReason::DirectOwnerCall),
+        "a nested fn declaration is not a call of the free kb: {:?}",
+        evidence.related_tests
+    );
+    assert_ne!(evidence.activate.state, StageState::Yes);
+    assert_ne!(
+        class,
+        crate::analysis::seams::SeamGripClass::StronglyGripped,
+        "{evidence:?}"
+    );
+    Ok(())
+}
+
 /// #6713: a boundary test through a same-named associated function
 /// (`Gate::over(100, 100)`) does not pin the free `over`'s equality
 /// boundary; the control spells the free call.

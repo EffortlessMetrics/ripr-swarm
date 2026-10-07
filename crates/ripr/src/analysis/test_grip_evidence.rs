@@ -551,13 +551,30 @@ fn activate_evidence(
         (!requires_concrete_activation_values(seam)).then(|| assertion_target_tokens(seam));
     let helper_value_insensitive_owner_call = !owner_name.is_empty()
         && !requires_concrete_activation_values(seam)
-        && related.iter().any(|indexed| {
-            has_owner_call_via_one_hop_helper(indexed, owner_name)
-                || has_owner_call_via_target_affinity(
-                    indexed,
-                    owner_name,
-                    target_affinity_tokens.as_ref(),
-                )
+        && owner_fn.is_some_and(|owner_fn| {
+            let free_owner = owner_fn.impl_context == FunctionImplContext::Free;
+            related.iter().any(|indexed| {
+                if free_owner {
+                    indexed
+                        .free_spelling_helper_owner_call_names
+                        .contains(owner_name)
+                        || (indexed
+                            .free_spelling_target_affinity_owner_call_names
+                            .contains(owner_name)
+                            && has_owner_call_via_target_affinity(
+                                indexed,
+                                owner_name,
+                                target_affinity_tokens.as_ref(),
+                            ))
+                } else {
+                    has_owner_call_via_one_hop_helper(indexed, owner_name)
+                        || has_owner_call_via_target_affinity(
+                            indexed,
+                            owner_name,
+                            target_affinity_tokens.as_ref(),
+                        )
+                }
+            })
         });
     let ambiguous_constructor_field_owner = !owner_name.is_empty()
         && related
@@ -1350,18 +1367,35 @@ fn compact_activate_evidence(
         (!requires_concrete_activation_values(seam)).then(|| assertion_target_tokens(seam));
     // A free owner is called only by a bare or module-qualified spelling:
     // `ByteSize::kb(100)` activates the associated `kb`, not the free one
-    // beside it (#6713).
+    // beside it (#6713). The helper and target-affinity arms read the
+    // free-spelling projections for a free owner, so a helper calling only
+    // `Type::name(..)` cannot activate the free `name` (#6713 review).
     let free_owner = owner_fn.is_some_and(|owner| owner.impl_context == FunctionImplContext::Free);
     let direct_owner_call = !owner_name.is_empty()
         && related.iter().any(|indexed| {
-            (indexed.call_names.contains(owner_name)
-                && (!free_owner || test_calls_free_function(indexed.test, owner_name)))
-                || indexed.helper_owner_call_names.contains(owner_name)
-                || has_owner_call_via_target_affinity(
-                    indexed,
-                    owner_name,
-                    target_affinity_tokens.as_ref(),
-                )
+            if free_owner {
+                (indexed.call_names.contains(owner_name)
+                    && test_calls_free_function(indexed.test, owner_name))
+                    || indexed
+                        .free_spelling_helper_owner_call_names
+                        .contains(owner_name)
+                    || (indexed
+                        .free_spelling_target_affinity_owner_call_names
+                        .contains(owner_name)
+                        && has_owner_call_via_target_affinity(
+                            indexed,
+                            owner_name,
+                            target_affinity_tokens.as_ref(),
+                        ))
+            } else {
+                indexed.call_names.contains(owner_name)
+                    || indexed.helper_owner_call_names.contains(owner_name)
+                    || has_owner_call_via_target_affinity(
+                        indexed,
+                        owner_name,
+                        target_affinity_tokens.as_ref(),
+                    )
+            }
         });
     let ambiguous_constructor_field_owner = !owner_name.is_empty()
         && related

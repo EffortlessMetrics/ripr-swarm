@@ -1,6 +1,7 @@
 use super::*;
 use crate::analysis::classify::{
-    impl_self_type_name, method_call_resolves_to_impl_type, test_calls_free_function,
+    call_text_may_call_free_function, impl_self_type_name, method_call_resolves_to_impl_type,
+    test_calls_free_function,
 };
 use crate::analysis::facts::FunctionImplContext;
 use std::sync::Arc;
@@ -256,7 +257,17 @@ pub(super) fn match_helper_owner_call(
     if owner.name.is_empty() {
         return;
     }
-    let Some(indices) = context.tests_by_helper_owner_call_name.get(&owner.name) else {
+    // A free owner is reached through a helper only when the helper body
+    // spells a bare or module-qualified call of it; a helper calling only
+    // `Type::name(..)` never credits the free `name` beside it (#6713).
+    let indices = if owner.free_function {
+        context
+            .tests_by_free_helper_owner_call_name
+            .get(&owner.name)
+    } else {
+        context.tests_by_helper_owner_call_name.get(&owner.name)
+    };
+    let Some(indices) = indices else {
         return;
     };
     for test_index in indices {
@@ -284,10 +295,15 @@ pub(super) fn match_target_affinity_owner_call(
     {
         return;
     }
-    let Some(indices) = context
-        .tests_by_target_affinity_owner_call_name
-        .get(&owner.name)
-    else {
+    let Some(indices) = (if owner.free_function {
+        context
+            .tests_by_free_target_affinity_owner_call_name
+            .get(&owner.name)
+    } else {
+        context
+            .tests_by_target_affinity_owner_call_name
+            .get(&owner.name)
+    }) else {
         return;
     };
     for test_index in indices {

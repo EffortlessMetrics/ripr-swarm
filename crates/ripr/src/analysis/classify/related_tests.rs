@@ -2660,11 +2660,20 @@ pub(in crate::analysis) fn test_calls_free_function(test: &TestSummary, name: &s
         return false;
     }
     // Captured calls are single lines; the body is the fallback for a call
-    // the call facts did not capture.
+    // the call facts did not capture. A `name(` token inside an opaque
+    // property macro is macro-internal syntax, not a call the test makes,
+    // so the fallback excludes those ranges exactly as
+    // [`body_contains_owner_call`] does (#6713 review).
     test.calls
         .iter()
         .any(|call| call.name == name && call_text_may_call_free_function(&call.text, name))
-        || free_function_call_start_in(&mask_comments_and_strings(&test.body), name).is_some()
+        || free_function_call_start_in(&mask_comments_and_strings(&test.body), name).is_some_and(
+            |at| {
+                !crate::analysis::extract::property_macros::opaque_property_macros(&test.body)
+                    .iter()
+                    .any(|item| item.range.contains(&at))
+            },
+        )
 }
 
 /// Whether one captured call's raw source text spells a free-function call
@@ -2789,6 +2798,11 @@ pub(in crate::analysis) fn is_free_function_call_at(text: &str, at: usize, name:
             before -= 1;
         }
         if before > 0 && bytes[before - 1] == b'.' {
+            return false;
+        }
+        // A nested `fn name(` declaration defines the name, it does not
+        // call it, so it never establishes a free call (#6713 review).
+        if ident_ending_at(text, before) == Some("fn") {
             return false;
         }
         if before >= 2 && bytes[before - 2] == b':' && bytes[before - 1] == b':' {
@@ -3404,6 +3418,66 @@ mod tests {
     fn given_free_fn_when_test_calls_same_named_method_then_name_only_relation() {
         assert_eq!(
             free_kb_relation("let size = Units;\nassert_eq!(size.kb(), 1000);"),
+            vec![RelationReason::WeakTokenSubstring]
+        );
+    }
+
+    /// #6713 review: a nested `fn kb(..)` declaration defines the name, it
+    /// does not call it, so it cannot restore the direct free-owner relation
+    /// over a same-named type-path call.
+    #[test]
+    fn given_free_fn_when_test_declares_same_named_fn_then_name_only_relation() {
+        // Reader level: the declaration is not a free call, a later real
+        // call still is.
+        assert!(!text_has_free_function_call(
+            "fn kb(x: u64) -> u64 { x }",
+            "kb"
+        ));
+        assert!(!text_has_free_function_call(
+            "fn  kb (x: u64) -> u64 { x }",
+            "kb"
+        ));
+        assert!(text_has_free_function_call(
+            "unsafe fn kb(x: u64) { }\nassert_eq!(kb(1), 1000);",
+            "kb"
+        ));
+        // Relation mode: declaration plus a type-path call stays weak.
+        assert_eq!(
+            free_kb_relation("fn kb(x: u64) -> u64 { x }\nassert_eq!(ByteSize::kb(1), 1000);"),
+            vec![RelationReason::WeakTokenSubstring]
+        );
+    }
+
+    /// #6713 review: a bare `name(` token inside an opaque property macro is
+    /// macro-internal syntax, not a call the test makes, so it cannot
+    /// restore the direct free-owner relation over a same-named type-path
+    /// call — the same exclusion `body_contains_owner_call` already applies.
+    #[test]
+    fn given_free_fn_when_bare_token_is_inside_opaque_property_macro_then_name_only_relation() {
+        let assertion_line = "assert_eq!(ByteSize::kb(2), 1000);";
+        let body = format!(
+            "{assertion_line}\nproptest!(|input in 0u8..10| {{ prop_assert_eq!(kb(input), 1000); }});"
+        );
+        // The captured call is the ordinary associated-call line; the bare
+        // token only exists inside the opaque macro range of the body.
+        let owner = free_function("src/lib.rs", "kb");
+        let mut method = impl_function("src/lib.rs", "kb", "impl ByteSize");
+        method.impl_context = FunctionImplContext::Impl {
+            self_type: "ByteSize".to_string(),
+        };
+        let mut test = test_with_call("tests/units.rs", "test_comparison", &body, "kb");
+        test.calls[0].text = assertion_line.to_string();
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions: vec![owner.clone(), method],
+            tests: vec![test],
+            ..Default::default()
+        });
+        let probe = probe("src/lib.rs", "size.into() * KB");
+        assert_eq!(
+            find_related_tests(&probe, Some(&owner), &index, true, None, None)
+                .into_iter()
+                .map(|(_, reason)| reason)
+                .collect::<Vec<_>>(),
             vec![RelationReason::WeakTokenSubstring]
         );
     }
