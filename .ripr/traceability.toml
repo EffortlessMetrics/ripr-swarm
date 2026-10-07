@@ -7525,6 +7525,9 @@ tests = [
   "crates/ripr/src/analysis/classify/related_tests.rs::tests::given_unknown_container_owner_when_test_only_calls_receiver_qualified_then_direct_owner_call",
   "crates/ripr/src/analysis/classify/related_tests.rs::tests::given_free_function_owner_when_test_calls_turbofish_then_direct_owner_call",
   "crates/ripr/src/analysis/classify/related_tests.rs::tests::given_free_function_owner_when_call_computes_range_bound_then_direct_owner_call",
+  "crates/ripr/src/analysis/classify/related_tests.rs::tests::given_free_function_owner_when_receiver_dot_is_spaced_then_name_only_relation",
+  "crates/ripr/src/analysis/classify/related_tests.rs::tests::given_free_function_owner_when_turbofish_is_uncalled_then_name_only_relation",
+  "crates/ripr/src/analysis/classify/related_tests.rs::tests::given_free_function_owner_when_match_is_only_a_nested_fn_then_name_only_relation",
 ]
 fixtures = [
   "fixtures/wildcard_oracle_wildcard_original",
