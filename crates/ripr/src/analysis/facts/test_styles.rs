@@ -292,9 +292,7 @@ fn cfg_test_module_walk(lines: &[&str], mut at_line: impl FnMut(usize, bool)) ->
                     module_opened = true;
                 }
                 '}' => {
-                    if scopes.pop() == Some(true) {
-                        cfg_test_scopes -= 1;
-                    }
+                    cfg_test_scopes -= usize::from(scopes.pop() == Some(true));
                 }
                 _ => {}
             }
