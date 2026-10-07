@@ -11,4 +11,4 @@
   `constant` value context instead of `enum_variant`; ambiguous all-caps
   paths such as `Kind::ON` or `Limits::MAX_LEN` keep `enum_variant`. Evidence-health
   `observed_value_context_counts` gains a `constant` bucket, and the
-  classified-seam cache generations move to `1.34` / `0.40` (#5357).
+  classified-seam cache generations move to `1.46` / `0.52` (#5357).
