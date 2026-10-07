@@ -2875,7 +2875,8 @@ fn an_outcome_settling_attribute_is_the_refusal_wherever_it_sits() {
 fn the_workspace_site_is_the_first_rebinding_in_path_order_else_the_first_site() {
     // The workspace scan runs per file on the rayon pool; the reported site
     // must still be the first rebinding in path order, or failing that the
-    // first may-rebind site, whatever order the files finish in.
+    // first may-rebind site, whatever order the files finish in. That site
+    // decides whether the refusal is an analyzer limit (RIPR-SPEC-0240).
     let plain = "use demo::weight;\n#[test]\nfn weighs() { assert_eq!(weight(4), 12); }\n";
     let macro_use = "fn a() {}\n#[macro_use]\nextern crate other;\n";
     let definition = "#[macro_export]\nmacro_rules! assert_eq { ($a:expr, $b:expr) => {}; }\n";
