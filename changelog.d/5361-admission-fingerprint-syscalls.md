@@ -1,0 +1,1 @@
+- Performance: test-target admission reads each shared directory once per admission and skips `realpath` when no entry on the path is a symlink, cutting the filesystem calls behind a cold `ripr pilot`. The currentness check still runs on every admission (#5361).
