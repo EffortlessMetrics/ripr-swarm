@@ -2768,7 +2768,7 @@ fn shared_grips_keep_every_semantic_field_distinct() -> Result<(), String> {
         (
             "test_target",
             RelatedTestGrip {
-                test_target: Some(target),
+                test_target: Some(target.clone()),
                 ..base.clone()
             },
         ),
@@ -2825,6 +2825,25 @@ fn shared_grips_keep_every_semantic_field_distinct() -> Result<(), String> {
             "{field}: a repeat of the variant must share it"
         );
     }
+    // Two present targets that differ only in their identity stay distinct.
+    let other_target = TestTargetEvidence::from_index(
+        crate::domain::SymbolId("tests/f.rs::f_works_too".to_string()),
+        PathBuf::from("tests/f.rs"),
+        3,
+        TestKind::Integration,
+        RelationReason::DirectOwnerCall,
+        "sha256:workspace".to_string(),
+    );
+    let with_target = context.share_grip(RelatedTestGrip {
+        test_target: Some(target),
+        ..base.clone()
+    });
+    let with_other = context.share_grip(RelatedTestGrip {
+        test_target: Some(other_target),
+        ..base.clone()
+    });
+    assert_ne!(*with_target, *with_other, "fixture targets must differ");
+    assert!(!Arc::ptr_eq(&with_target, &with_other));
     assert!(Arc::ptr_eq(&shared_base, &context.share_grip(base)));
     Ok(())
 }
@@ -2881,9 +2900,13 @@ fn window_boundaries_keep_a_held_second_spelling_shared() -> Result<(), String> 
         relation_reason: RelationReason::DirectOwnerCall,
         relation_confidence: RelationConfidence::High,
     };
-    drop(context.share_grip(grip("tests/f.rs")));
+    let plain = Arc::downgrade(&context.share_grip(grip("tests/f.rs")));
     let dotted = context.share_grip(grip("tests/./f.rs"));
     context.clear_window_memos();
+    assert!(
+        plain.upgrade().is_none(),
+        "an unheld first spelling must be released even while a second is held"
+    );
     assert!(Arc::ptr_eq(
         &dotted,
         &context.share_grip(grip("tests/./f.rs"))
