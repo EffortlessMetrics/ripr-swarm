@@ -115,16 +115,19 @@ pub(crate) fn probes_for_file_with_relations(
                     text: canonical_text.clone(),
                 };
                 let before = removed_before(shape.start_line, &canonical_text, changed);
-                // #6995: a predicate's `after` is the parser shape, not the
-                // whole line, so cut the same span from the old line. Match
-                // arms keep the whole old arm: their consumers parse it.
-                let before = if shape.family == ProbeFamily::Predicate {
-                    before.map(|line| {
-                        removed_span_of_shape(text, &canonical_text, &line).unwrap_or(line)
-                    })
-                } else {
-                    before
-                };
+                // #6995: a predicate's or arm head's `after` is the parser
+                // shape, not the whole line, so cut the same span from the
+                // old line. #7020: the arm consumers that parse `before` as a
+                // whole arm (`tuple_match`) need an arm whose body changed;
+                // a body edit falls outside the head shape and is never cut.
+                let before =
+                    if matches!(shape.family, ProbeFamily::Predicate | ProbeFamily::MatchArm) {
+                        before.map(|line| {
+                            removed_span_of_shape(text, &canonical_text, &line).unwrap_or(line)
+                        })
+                    } else {
+                        before
+                    };
                 let probe = build_probe(
                     &build_context,
                     &canonical_line,
@@ -1180,10 +1183,10 @@ mod tests {
         assert_eq!(probe.before.as_deref(), Some("string.len() > MAX_LEN"));
     }
 
-    /// #6995: a match arm keeps the whole old arm as `before`, because the
-    /// arm consumers (`tuple_match`) parse its body too.
+    /// #7020: an edit inside a match arm's head cuts `before` to the old
+    /// head (`x if x < 10 =>`), so the arm body does not read as deleted.
     #[test]
-    fn match_arm_before_keeps_the_whole_old_arm() {
+    fn match_arm_head_edit_cuts_before_to_the_old_head() {
         let probes = single_shape_probes(
             "x if x <= 10 => panic!(\"old\"),",
             "x if x < 10 => panic!(\"old\"),",
@@ -1196,7 +1199,28 @@ mod tests {
             .find(|probe| probe.family == ProbeFamily::MatchArm);
         assert_eq!(
             arm.and_then(|probe| probe.before.as_deref()),
-            Some("x if x < 10 => panic!(\"old\"),"),
+            Some("x if x < 10 =>"),
+            "{probes:?}"
+        );
+    }
+
+    /// #7020: a body edit falls outside the head shape, so `before` keeps
+    /// the whole old arm that `tuple_match` parses for its old result.
+    #[test]
+    fn match_arm_body_edit_keeps_the_whole_old_arm() {
+        let probes = single_shape_probes(
+            "(true, false) => \"new\",",
+            "(true, false) => \"old\",",
+            ProbeShapeKind::MatchArm,
+            "(true, false) =>",
+        );
+
+        let arm = probes
+            .iter()
+            .find(|probe| probe.family == ProbeFamily::MatchArm);
+        assert_eq!(
+            arm.and_then(|probe| probe.before.as_deref()),
+            Some("(true, false) => \"old\","),
             "{probes:?}"
         );
     }
