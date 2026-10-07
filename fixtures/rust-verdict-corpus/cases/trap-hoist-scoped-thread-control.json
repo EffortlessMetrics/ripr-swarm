@@ -1,0 +1,59 @@
+{
+  "case_id": "trap-hoist-scoped-thread-control",
+  "subject_id": "authored-trap-reach",
+  "diff": "cases/trap-hoist-scoped-thread-control.diff",
+  "anchor": {
+    "file": "src/hoists.rs",
+    "line": 2
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "assert_in_scoped_thread",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "base * 50",
+        "mutated_line": "base * 50",
+        "outcome": "tests_failed",
+        "failing_test": "hoists::tests::hoist_runs_in_a_scoped_worker",
+        "equivalence_review": "not equivalent: replaces `49 * base` with `base * 50`, which changes the result"
+      },
+      {
+        "replacement": "base + 49",
+        "mutated_line": "base + 49",
+        "outcome": "tests_failed",
+        "failing_test": "hoists::tests::hoist_runs_in_a_scoped_worker",
+        "equivalence_review": "not equivalent: replaces `49 * base` with `base + 49`, which changes the result"
+      },
+      {
+        "replacement": "base * 48",
+        "mutated_line": "base * 48",
+        "outcome": "tests_failed",
+        "failing_test": "hoists::tests::hoist_runs_in_a_scoped_worker",
+        "equivalence_review": "not equivalent: replaces `49 * base` with `base * 48`, which changes the result"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "Negative control for trap-boost-detached-thread: the spawned assert runs inside std::thread::scope, which joins every worker and re-raises its panic, so hoist_runs_in_a_scoped_worker fails for each mutant.",
+  "labeling_observation": {
+    "ripr_commit": "fce75e1",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "reachable_unrevealed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

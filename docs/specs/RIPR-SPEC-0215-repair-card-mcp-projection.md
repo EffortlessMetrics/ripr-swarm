@@ -147,9 +147,10 @@ and without execution authority (ADR 0022):
   through the shared read-only inventory.
 - No session-transaction projection on the card; in-memory repairs stay
   behind `ripr_prepare_repair` / `ripr_get_repair_attempt`.
-- No project-local policy or configuration loading; the inventory and the
-  evidence facts both run with built-in defaults
-  (`detected_not_loaded`).
+- No adapter-side configuration loading. From #6825 on, the card's seam
+  inventory and evidence facts consume the same resolved workspace
+  configuration `ripr_refresh` commits with the findings — no provider
+  configuration, and no adapter-owned policy decisions anywhere.
 - No card re-assembly, readiness re-derivation, or evidence upgrade in the
   adapter; the shared assembly authority is the only card builder.
 - No custom LSP request expansion; MCP and LSP remain peers over shared

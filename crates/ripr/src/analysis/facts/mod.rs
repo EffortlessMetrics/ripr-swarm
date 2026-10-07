@@ -2,14 +2,17 @@ mod build;
 use build::MissAttribution;
 pub(crate) use build::{RUST_SOURCE_NOT_UTF8_REASON, rust_source_text};
 pub(crate) mod cfg_predicates;
+pub(crate) mod drop_in;
 mod harness_registry;
 mod includes;
 mod index;
+pub(crate) mod member_crates;
 mod model;
 mod parameterized_tests;
 mod role_composition;
 mod test_helpers;
 mod test_styles;
+pub(crate) use test_styles::BUILT_IN_TEST_ATTRIBUTE_PATHS;
 
 use std::path::{Path, PathBuf};
 
@@ -155,7 +158,7 @@ pub use model::{
     HarnessSubjectClaim, HarnessSubjectFact, LetBindingFact, LiteralFact, ModuleDeclarationFact,
     ModulePathTarget, OracleFact, ProbeShapeFact, ProbeShapeKind, ResolvedIncludeParent,
     ReturnFact, RustIncludeLimitation, RustIndex, SourceRoleProvenance, SourceRoleProvenanceEdge,
-    SourceRoleProvenanceEdgeKind, TestFact, TestSummary, UnresolvedPropertyMacroFact,
+    SourceRoleProvenanceEdgeKind, SourceText, TestFact, TestSummary, UnresolvedPropertyMacroFact,
 };
 // Hot evidence loops hash each indexed file once and validate by digest.
 pub(crate) use model::WorkspaceFileAuthority;

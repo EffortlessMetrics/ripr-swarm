@@ -525,7 +525,7 @@ fn extract_rstest_cases_preserves_string_literal_whitespace() {
         file: std::path::PathBuf::from("tests/x.rs"),
         start_line: 1,
         end_line: 1,
-        body: "fn t(input: &str) { check(input); }".to_string(),
+        body: "fn t(input: &str) { check(input); }".into(),
         calls: Vec::new(),
         assertions: Vec::new(),
         literals: Vec::new(),
@@ -597,7 +597,7 @@ fn allowed_builder_method_names_includes_required_discriminator_tokens() {
         file: std::path::PathBuf::from("tests/x.rs"),
         start_line: 1,
         end_line: 1,
-        body: String::new(),
+        body: String::new().into(),
         calls: Vec::new(),
         assertions: Vec::new(),
         literals: Vec::new(),
@@ -898,7 +898,7 @@ fn extract_rstest_cases_maps_case_rows_to_case_marked_parameters_only() {
         file: std::path::PathBuf::from("src/lib.rs"),
         start_line: 1,
         end_line: 1,
-        body: "fn t(fixture: Db, #[case] x: u32, #[values(vec![1])] v: Vec<u8>, #[case] mut expected: bool) { assert_eq!(gate(x), expected); }".to_string(),
+        body: "fn t(fixture: Db, #[case] x: u32, #[values(vec![1])] v: Vec<u8>, #[case] mut expected: bool) { assert_eq!(gate(x), expected); }".into(),
         calls: Vec::new(),
         assertions: Vec::new(),
         literals: Vec::new(),
@@ -939,7 +939,7 @@ fn case_columns_stay_aligned_past_a_pattern_parameter() {
         end_line: 1,
         body:
             "fn far_above(#[case] ref _label: u32, #[case] amount: u32) { assert!(gate(amount)); }"
-                .to_string(),
+                .into(),
         calls: Vec::new(),
         assertions: Vec::new(),
         literals: Vec::new(),
@@ -970,7 +970,7 @@ fn case_value_not_credited_past_a_shadowing_let_after_a_url_string() {
         file: std::path::PathBuf::from("src/lib.rs"),
         start_line: 1,
         end_line: 1,
-        body: "fn rebound_after_url(#[case] amount: u32) { let _url = \"http://example\"; let amount = amount + 1; gate(amount); }".to_string(),
+        body: "fn rebound_after_url(#[case] amount: u32) { let _url = \"http://example\"; let amount = amount + 1; gate(amount); }".into(),
         calls: Vec::new(),
         assertions: Vec::new(),
         literals: Vec::new(),
@@ -995,7 +995,7 @@ fn rstest_case_test(name: &str, body: &str) -> TestSummary {
         file: std::path::PathBuf::from("src/lib.rs"),
         start_line: 1,
         end_line: 1,
-        body: body.to_string(),
+        body: body.into(),
         calls: Vec::new(),
         assertions: Vec::new(),
         literals: Vec::new(),
@@ -1052,4 +1052,46 @@ fn case_value_not_credited_when_the_test_body_does_not_parse() {
         test_case_bound_literals(&test, "amount"),
         Vec::<String>::new()
     );
+}
+
+#[test]
+fn constant_offset_operands_name_the_constant_and_signed_offset() {
+    // #6671: `CURRENT - 2` offsets CURRENT by -2; it is never the literal 2.
+    assert_eq!(
+        constant_offset_operand("CURRENT - 2"),
+        Some(("CURRENT", -2))
+    );
+    assert_eq!(
+        constant_offset_operand("LIMIT+1_000"),
+        Some(("LIMIT", 1000))
+    );
+    assert_eq!(constant_offset_operand("Self::MAX - 1"), Some(("MAX", -1)));
+    assert_eq!(constant_offset_operand("CURRENT"), None);
+    assert_eq!(constant_offset_operand("current - 2"), None);
+    assert_eq!(constant_offset_operand("CURRENT - OTHER"), None);
+    assert_eq!(constant_offset_operand("CURRENT - 2u32"), None);
+    assert_eq!(constant_offset_operand("CURRENT - 2 - 1"), None);
+    assert_eq!(constant_offset_operand("2 + CURRENT"), None);
+}
+
+#[test]
+fn offset_integer_values_add_only_to_plain_decimal_constants() {
+    // #6671 review: the offset applies to a plain decimal value only. A
+    // suffixed or non-decimal initializer is never a `NamedConstant::Value`
+    // and is refused here too, so no boundary is parsed from a guess.
+    assert_eq!(offset_integer_value("7", -2).as_deref(), Some("5"));
+    assert_eq!(offset_integer_value("1_000", 1).as_deref(), Some("1001"));
+    assert_eq!(offset_integer_value("-3", -2).as_deref(), Some("-5"));
+    assert_eq!(offset_integer_value("10u32", -2), None);
+    assert_eq!(offset_integer_value("0x10", -2), None);
+    assert_eq!(offset_integer_value("0b10", 1), None);
+    assert_eq!(offset_integer_value(&i128::MAX.to_string(), 1), None);
+    assert!(matches!(
+        named_constant("const LIMIT: u32 = 0x10;\n", "LIMIT"),
+        NamedConstant::Opaque
+    ));
+    assert!(matches!(
+        named_constant("const LIMIT: u32 = 10u32;\n", "LIMIT"),
+        NamedConstant::Opaque
+    ));
 }

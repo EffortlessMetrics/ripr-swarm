@@ -3,6 +3,8 @@
 //! body moved verbatim; test names and module path (`crate::tests`) are
 //! unchanged.
 
+mod discarded_matcher_honesty;
+
 /// Best-effort temp-dir teardown for tests. The `io::Result` is matched
 /// with `if let` so a `#[must_use]` cleanup failure is an explicit ignore.
 fn ignore_remove_dir_all(path: impl AsRef<std::path::Path>) {
@@ -1458,6 +1460,7 @@ fn evidence_promotion_semantic_assertions_retain_related_test_identity() -> Resu
             line: 8,
             kind: "relational_check".to_string(),
             strength: "weak".to_string(),
+            relation_reason: None,
         },
     ];
     let original: serde_json::Value = serde_json::from_str(include_str!(
@@ -1507,6 +1510,69 @@ fn evidence_promotion_semantic_assertions_retain_related_test_identity() -> Resu
     assert!(!inspect(&missing).is_empty());
     missing["findings"] = serde_json::json!([]);
     assert!(!inspect(&missing).is_empty());
+    Ok(())
+}
+
+#[test]
+fn evidence_promotion_related_test_relation_pin_is_optional_and_exact() -> Result<(), String> {
+    let assertion_with_relation = |relation_reason: Option<&str>| {
+        vec![
+            super::EvidencePromotionSemanticAssertion::ExpectedRelatedTest {
+                name: "observes_score".to_string(),
+                file: "src/lib.rs".to_string(),
+                line: 8,
+                kind: "relational_check".to_string(),
+                strength: "weak".to_string(),
+                relation_reason: relation_reason.map(str::to_string),
+            },
+        ]
+    };
+    let original: serde_json::Value = serde_json::from_str(include_str!(
+        "../../fixtures/wildcard_oracle_wildcard_original/expected/check.json"
+    ))
+    .map_err(|err| format!("invalid canonical wildcard golden: {err}"))?;
+    let human =
+        include_str!("../../fixtures/wildcard_oracle_wildcard_original/expected/human-full.txt");
+    let inspect = |assertions: &[_], json: &serde_json::Value| {
+        super::evidence_promotion_semantic_violations(
+            "related_test_relation",
+            Some("fixtures/wildcard_oracle_wildcard_original"),
+            assertions,
+            json,
+            Some(human),
+            true,
+        )
+    };
+    // The canonical golden relates via `direct_owner_call`.
+    assert!(inspect(&assertion_with_relation(None), &original).is_empty());
+    assert!(
+        inspect(
+            &assertion_with_relation(Some("direct_owner_call")),
+            &original
+        )
+        .is_empty()
+    );
+    assert!(
+        !inspect(
+            &assertion_with_relation(Some("weak_token_substring")),
+            &original
+        )
+        .is_empty()
+    );
+    // A re-blessed relation flips the pin.
+    let mut weak = original.clone();
+    weak["findings"][0]["related_tests"][0]["relation_reason"] =
+        serde_json::json!("weak_token_substring");
+    assert!(
+        inspect(
+            &assertion_with_relation(Some("weak_token_substring")),
+            &weak
+        )
+        .is_empty()
+    );
+    assert!(!inspect(&assertion_with_relation(Some("direct_owner_call")), &weak).is_empty());
+    // Absent pins stay backward compatible.
+    assert!(inspect(&assertion_with_relation(None), &weak).is_empty());
     Ok(())
 }
 
@@ -11115,6 +11181,41 @@ fn routed_rust_ready_event_matrix_withholds_draft_and_label_context() {
             .any(|violation| violation.contains("cancel-in-progress")),
         "disabling Ready-run cancellation must fail: {:?}",
         routed_rust_ready_event_contract_violations(&cancellation_disabled)
+    );
+
+    let uncancellable_fallback = workflow.replace("      !cancelled() &&", "      always() &&");
+    assert_ne!(
+        uncancellable_fallback, workflow,
+        "fixture must actually swap the hosted fallback condition"
+    );
+    assert!(
+        routed_rust_ready_event_contract_violations(&uncancellable_fallback)
+            .iter()
+            .any(|violation| violation.contains("`rust-github`") && violation.contains("always()")),
+        "a job-level always() on an implementation job must fail: it survives Ready-run cancellation: {:?}",
+        routed_rust_ready_event_contract_violations(&uncancellable_fallback)
+    );
+
+    let spaced_uppercase = workflow.replace("      !cancelled() &&", "      Always () &&");
+    assert!(
+        routed_rust_ready_event_contract_violations(&spaced_uppercase)
+            .iter()
+            .any(|violation| violation.contains("`rust-github`")),
+        "expression names are case-insensitive and may carry spaces: {:?}",
+        routed_rust_ready_event_contract_violations(&spaced_uppercase)
+    );
+
+    let step_level_cleanup = workflow.replace(
+        "    uses: ./.github/workflows/rust-gates.yml\n    with:\n      runner-config: '\"ubuntu-latest\"'",
+        "    uses: ./.github/workflows/rust-gates.yml\n    # cleanup may use always()\n    with:\n      runner-config: '\"ubuntu-latest\"'",
+    );
+    assert_ne!(step_level_cleanup, workflow, "fixture must add the comment");
+    assert!(
+        !routed_rust_ready_event_contract_violations(&step_level_cleanup)
+            .iter()
+            .any(|violation| violation.contains("must not use `always()`")),
+        "always() outside the job condition must not be rejected: {:?}",
+        routed_rust_ready_event_contract_violations(&step_level_cleanup)
     );
 
     let shared_group = workflow.replace(

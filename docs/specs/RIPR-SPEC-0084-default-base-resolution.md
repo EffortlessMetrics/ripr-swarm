@@ -135,7 +135,10 @@ base, the Git failure text is kept and followed by its cause: a shallow
 clone (repair: `git fetch --unshallow`, or `fetch-depth: 0` on
 `actions/checkout`) or unrelated histories (repair: a `--base` on HEAD's
 history). An explicit base that does not resolve in a shallow clone names
-the unshallow repair instead of `git fetch origin`.
+the unshallow repair; otherwise the repair follows the repo's own remote
+configuration (a remote-qualified ref names its configured remote, a
+remote-less repo gets the add-remote step) instead of prescribing `origin`
+(#5252 item 8).
 
 Commands that take both revisions (`diff`, `review-comments`) verify the
 head the same way: an unresolvable `--head` fails with ripr's named message

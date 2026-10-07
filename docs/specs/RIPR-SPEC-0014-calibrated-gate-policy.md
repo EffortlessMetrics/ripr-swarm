@@ -540,6 +540,12 @@ Calibrated gates must not:
 - A severe RIPR gap with a safe Rust predicate/operator fact emits a bounded
   targeted-mutation candidate; unsupported or ambiguous seam families emit a
   named `static_limitation` instead.
+- `impacted_evidence` refusing missing or invalid PR evidence removes only the
+  `latest.{json,md}` outputs that existed, unchanged, when the run started.
+  If either output appeared or changed since then, both are left in place and
+  reported, and an output whose metadata cannot be read is reported as a
+  cleanup failure. `--check` removes nothing. The stamp is taken before the
+  evidence is read; the check and the removal are not atomic (#5307).
 
 ## Test Mapping
 
@@ -552,6 +558,10 @@ Initial implementation should add tests for:
 - `pr_evidence` candidate and limitation projection for targeted mutation;
 - `impacted_evidence` preserves the same targeted-mutation route without
   executing a mutation engine;
+- `impacted_evidence` refusal cleanup keeps outputs a concurrent run wrote,
+  removes outputs that predate the run, and reports unreadable stamps
+  (`crates/ripr/src/app/impacted_evidence.rs::tests::output_written_while_evidence_is_read_is_left_by_the_real_run`
+  and the `refus*`/`*partner*`/`*unreadable*` tests beside it);
 - high-confidence candidate filtering;
 - configured severity and suppression behavior;
 - missing and malformed input reports;

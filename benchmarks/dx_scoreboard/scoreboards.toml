@@ -8,6 +8,8 @@
 # `source` says where the number comes from:
 #   measured          the command measures it on this host
 #   file:<path>       read from a committed receipt in this repository
+#   verdict-corpus:<dir>#<rate>
+#                     derived from a verdict corpus's committed expected rows
 #   ingest:<kind>     supplied by `--ingest <file>` from another harness
 #   pending           no instrument yet; always reported as not_measured
 #
@@ -196,8 +198,8 @@ target = 0.05
 regression_pct = 0
 regression_floor = 0.02
 runner_dependent = false
-source = "file:fixtures/rust-verdict-corpus/expected/report.json#false_verdict_rate"
-pending_reason = "fixtures/rust-verdict-corpus/expected/report.json is missing; restore it from main; `cargo xtask verdict-corpus check` reports any drift"
+source = "verdict-corpus:fixtures/rust-verdict-corpus#false_verdict_rate"
+pending_reason = "the rates are derived from fixtures/rust-verdict-corpus/expected/rows; restore the corpus from main; `cargo xtask verdict-corpus check` reports any drift"
 
 [[metric]]
 id = "trust.verdict_corpus_false_actionable"
@@ -209,8 +211,8 @@ target = 0.05
 regression_pct = 0
 regression_floor = 0.02
 runner_dependent = false
-source = "file:fixtures/rust-verdict-corpus/expected/report.json#false_actionable_rate"
-pending_reason = "fixtures/rust-verdict-corpus/expected/report.json is missing; restore it from main; `cargo xtask verdict-corpus check` reports any drift"
+source = "verdict-corpus:fixtures/rust-verdict-corpus#false_actionable_rate"
+pending_reason = "the rates are derived from fixtures/rust-verdict-corpus/expected/rows; restore the corpus from main; `cargo xtask verdict-corpus check` reports any drift"
 
 [[metric]]
 id = "trust.verdict_corpus_abstention"
@@ -222,8 +224,8 @@ target = 0.2
 regression_pct = 0
 regression_floor = 0.02
 runner_dependent = false
-source = "file:fixtures/rust-verdict-corpus/expected/report.json#abstention_rate"
-pending_reason = "fixtures/rust-verdict-corpus/expected/report.json is missing; restore it from main; `cargo xtask verdict-corpus check` reports any drift"
+source = "verdict-corpus:fixtures/rust-verdict-corpus#abstention_rate"
+pending_reason = "the rates are derived from fixtures/rust-verdict-corpus/expected/rows; restore the corpus from main; `cargo xtask verdict-corpus check` reports any drift"
 
 [[metric]]
 id = "trust.verdict_corpus_false_silent"
@@ -235,8 +237,8 @@ target = 0
 regression_pct = 0
 regression_floor = 0
 runner_dependent = false
-source = "file:fixtures/rust-verdict-corpus/expected/report.json#false_silent_rate"
-pending_reason = "fixtures/rust-verdict-corpus/expected/report.json is missing; restore it from main; `cargo xtask verdict-corpus check` reports any drift"
+source = "verdict-corpus:fixtures/rust-verdict-corpus#false_silent_rate"
+pending_reason = "the rates are derived from fixtures/rust-verdict-corpus/expected/rows; restore the corpus from main; `cargo xtask verdict-corpus check` reports any drift"
 
 [[metric]]
 id = "trust.verdict_corpus_false_exposed"
@@ -248,8 +250,8 @@ target = 0
 regression_pct = 0
 regression_floor = 0
 runner_dependent = false
-source = "file:fixtures/rust-verdict-corpus/expected/report.json#false_exposed_rate"
-pending_reason = "fixtures/rust-verdict-corpus/expected/report.json is missing; restore it from main; `cargo xtask verdict-corpus check` reports any drift"
+source = "verdict-corpus:fixtures/rust-verdict-corpus#false_exposed_rate"
+pending_reason = "the rates are derived from fixtures/rust-verdict-corpus/expected/rows; restore the corpus from main; `cargo xtask verdict-corpus check` reports any drift"
 
 [[metric]]
 id = "trust.discriminator_claim_agreement"
@@ -359,8 +361,9 @@ unit = "s"
 direction = "lower_is_better"
 # A proposed bar, not a measured limit: 0.10.0 took 128 s and a 0.11.0 dev
 # build about 640 s on one container (#5311). The prebuilt archive route is
-# not timed by the walk yet. The regression rule applies only once a baseline
-# sample is committed; the nightly run does not ingest first-run receipts yet.
+# not timed by the walk yet. `first-run-install.yml` records this nightly; the
+# regression rule applies once metrics/dx-scoreboard/first-run-baseline.json
+# is committed from a ubuntu-latest run of that workflow.
 target = 120
 regression_pct = 25
 regression_floor = 30
