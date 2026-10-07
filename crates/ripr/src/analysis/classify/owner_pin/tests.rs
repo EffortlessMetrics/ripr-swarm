@@ -3076,6 +3076,29 @@ fn a_definition_covering_the_test_outranks_a_may_rebind_site_elsewhere() {
     assert!(only_macro_use.is_some_and(|refusal| refusal.is_analyzer_limit()));
 }
 
+/// #5830: a comment between the last statement and the tail (`// SAFETY:`
+/// before an `unsafe` block) is not part of the tail.
+#[test]
+fn return_path_gate_reads_the_tail_past_a_comment() {
+    let body = "fn family(sku: &str) -> &str {\n    let end = sku.find('-').unwrap_or(sku.len());\n    // SAFETY: `end` is a char boundary.\n    unsafe { sku.get_unchecked(..end) }\n}";
+    assert!(matches!(
+        gate(body, "unsafe { sku.get_unchecked(..end) }"),
+        Some(ReturnPathGate::Any)
+    ));
+    // The comment does not make a different tail match: the changed text
+    // sits on an earlier line, and the tail after the comment differs.
+    let other_tail = "fn family(sku: &str) -> &str {\n    let head = unsafe { sku.get_unchecked(..1) };\n    // SAFETY: `head` is a char boundary.\n    unsafe { sku.get_unchecked(head.len()..) }\n}";
+    assert!(gate(other_tail, "unsafe { sku.get_unchecked(..1) }").is_none());
+    // Masking hides string contents, so a same-length payload on the
+    // changed line must still match the real tail text (#6970 review).
+    let payload = "fn f() -> Result<&'static str, ()> {\n    // note\n    Ok(\"actual\")\n}";
+    assert!(matches!(
+        return_path_gate(payload, "Ok(\"actual\")", 2),
+        Some(ReturnPathGate::Any)
+    ));
+    assert!(return_path_gate(payload, "Ok(\"expect\")", 2).is_none());
+}
+
 #[test]
 fn a_shared_owner_pin_syntax_names_each_tests_own_covering_site() {
     // Two inline modules rebind `assert_eq!` at different lines. The memo is

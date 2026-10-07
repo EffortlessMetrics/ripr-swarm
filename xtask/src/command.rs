@@ -1050,7 +1050,7 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
             "target/ripr/reports/verdict-corpus/report.{json,md} or --out <dir>; target/ripr/verdict-corpus/rust/",
             false,
             false,
-            "Runs ripr check on each labeled case's retained excerpt in parallel, scores the anchored verdict against its stored runtime-mutant truth label, writes false-verdict and contradiction rates, and fails naming each case whose row drifts from fixtures/rust-verdict-corpus/expected/rows/<case>.json, plus summary.json and stale rows on a whole-corpus run. --cases checks only the named rows. Runs no mutation testing.",
+            "Runs ripr check on each labeled case's retained excerpt in parallel, scores the anchored verdict against its stored runtime-mutant truth label, writes false-verdict and contradiction rates, and fails naming each case whose row drifts from fixtures/rust-verdict-corpus/expected/rows/<case>.json, plus missing rows and stale files (a leftover summary.json among them; the summary is derived from the rows) on a whole-corpus run. --cases checks only the named rows. Runs no mutation testing.",
         ),
         command_entry(
             "verdict-corpus check-all",
@@ -1071,10 +1071,10 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
         command_entry(
             "verdict-corpus bless",
             "mutating",
-            "fixtures/rust-verdict-corpus/expected/{summary.json,rows/<case>.json}",
+            "fixtures/rust-verdict-corpus/expected/rows/<case>.json",
             false,
             false,
-            "Runs the whole corpus and replaces the reviewed expected state: summary.json and one row file per case, removing rows of deleted cases. Use it only when a verdict change is intended, and state why each moved row changed in the PR.",
+            "Runs the whole corpus and replaces the reviewed expected state: one row file per case, removing rows of deleted cases. The aggregate rates are derived from the rows, not committed. Use it only when a verdict change is intended, and state why each moved row changed in the PR.",
         ),
         command_entry(
             "verdict-corpus split",
