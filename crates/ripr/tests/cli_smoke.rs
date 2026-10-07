@@ -15277,6 +15277,41 @@ fn pilot_names_a_changed_build_script_its_ranking_leaves_out() -> Result<(), Str
     Ok(())
 }
 
+/// #6987: with Rust disabled neither `ripr check` nor pilot analyzes Rust,
+/// so pilot must not name a changed build script as one `ripr check`
+/// covers. The same fixture with Rust enabled names it (the test above).
+#[test]
+#[cfg(feature = "lang-python")]
+fn pilot_names_no_build_script_when_rust_is_disabled() -> Result<(), String> {
+    let build = "fn main() {\n    let level = std::env::var(\"OPT_LEVEL\").map(|v| v.len()).unwrap_or(0);\n    if level > 2 {\n        println!(\"cargo:rustc-cfg=fast\");\n    }\n}\n";
+    let root = pilot_language_fixture_repo(
+        "pilot-build-script-rust-disabled",
+        &[
+            (
+                "Cargo.toml",
+                "[package]\nname = \"shop\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+            ),
+            ("ripr.toml", "[languages]\nenabled = [\"python\"]\n"),
+            ("build.rs", build),
+            (
+                "src/lib.rs",
+                "pub fn discounted(amount: u32) -> u32 {\n    if amount > 100 { amount - 10 } else { amount }\n}\n",
+            ),
+        ],
+        ("build.rs", &build.replace("level > 2", "level >= 2")),
+    )?;
+    let out_dir = unique_temp_workspace("pilot-build-script-rust-disabled-out");
+    let (stdout, md, summary, _) = run_pilot_language_fixture(&root, &out_dir)?;
+    // Precondition: the change is loaded, so only the Rust gate can keep
+    // the build script unnamed.
+    assert_eq!(summary["current_change"]["state"], "changed", "{summary}");
+    assert!(!stdout.contains("build.rs"), "{stdout}");
+    assert!(!md.contains("build.rs"), "{md}");
+    ignore_remove_dir_all(&root);
+    ignore_remove_dir_all(&out_dir);
+    Ok(())
+}
+
 #[test]
 fn pilot_ranks_and_labels_seams_in_the_current_change() -> Result<(), String> {
     let lib = "pub fn discounted(amount: u32) -> u32 {\n    if amount > 100 { amount - 10 } else { amount }\n}\n\npub fn is_digit(byte: u8) -> bool {\n    byte >= b'0' && byte <= b'9'\n}\n";

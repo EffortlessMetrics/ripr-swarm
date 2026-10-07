@@ -2576,6 +2576,36 @@ fn pilot_names_changed_files_its_ranking_leaves_out() {
         terminal.contains("so it is a static limitation, not a gap; the change also includes build.rs, a Cargo build script, which pilot's repo-wide ranking leaves out.\n"),
         "{terminal}"
     );
+
+    // #6987: with the seam-limit caveat as well, the diff-only clause comes
+    // first and the caveat still closes the sentence.
+    let opaque = classified_with(
+        SeamGripClass::Opaque,
+        "src/lib.rs",
+        3,
+        Vec::new(),
+        Vec::new(),
+    );
+    let limit = crate::analysis::SeamLimitInfo {
+        analyzed: 3,
+        total: 7,
+        source: crate::analysis::SeamLimitSource::Default,
+    };
+    let limited = PilotCurrentChange::from_diff_text(
+        Path::new("."),
+        Some("origin/main".to_string()),
+        &diff(&["build.rs", "src/lib.rs"]),
+    )
+    .with_diff_only_files(vec![(
+        PathBuf::from("build.rs"),
+        DiffOnlySource::BuildScript,
+    )])
+    .with_seams_counted(&[opaque], Some(&limit));
+    let (terminal, _) = render(&limited);
+    assert!(
+        terminal.contains("not a gap; the change also includes build.rs, a Cargo build script, which pilot's repo-wide ranking leaves out, but the seam limit left 4 of 7 seams unanalyzed, so the change may have seams pilot did not see.\n"),
+        "{terminal}"
+    );
 }
 
 #[test]
