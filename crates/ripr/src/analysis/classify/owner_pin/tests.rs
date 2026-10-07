@@ -3336,6 +3336,60 @@ fn whole_value_admits(lib: &str, owner_name: &str, body: &str) -> bool {
     pin.is_some_and(|pin| !admitted_texts(&index, &pin).is_empty())
 }
 
+/// `CONFIG_LIB` plus a method owner returning a `Self { .. }` tail and an
+/// owner returning `Some(..)` against a declared `Option<Config>`.
+const CONFIG_VARIANTS_LIB: &str = r#"
+impl Config {
+    pub fn bumped(&self, n: u32) -> Self {
+        Self {
+            retries: n + 1,
+            name: "x".into(),
+            count: Count(n),
+        }
+    }
+}
+
+pub fn maybe(n: u32) -> Option<Config> {
+    Some(Config {
+        retries: n + 1,
+        name: "x".into(),
+        count: Count(n),
+    })
+}
+"#;
+
+/// #7066 review: the `Self { .. }` tail of a method resolves to the impl's
+/// type and pins through a typed receiver; a `Some(..)` tail pins only
+/// against `Some(..)` of the literal, not `Ok(..)` or the bare literal.
+#[test]
+fn a_whole_value_field_pin_reads_self_tails_methods_and_option_wrappers() {
+    let lib = format!("{CONFIG_LIB}{CONFIG_VARIANTS_LIB}");
+    let literal = r#"Config { retries: 4, name: "x".into(), count: Count(3) }"#;
+    let base = r#"let base = Config { retries: 0, name: "y".into(), count: Count(0) };"#;
+    assert!(whole_value_admits(
+        &lib,
+        "bumped",
+        &format!("{base}\nassert_eq!(base.bumped(3), {literal});")
+    ));
+    // The receiver must type as the impl's `Config`.
+    assert!(!whole_value_admits(
+        &lib,
+        "bumped",
+        &format!("let base = load();\nassert_eq!(base.bumped(3), {literal});")
+    ));
+    assert!(whole_value_admits(
+        &lib,
+        "maybe",
+        &format!("assert_eq!(maybe(3), Some({literal}));")
+    ));
+    for body in [
+        format!("assert_eq!(maybe(3), Ok({literal}));"),
+        format!("assert_eq!(maybe(3), {literal});"),
+    ] {
+        assert!(!whole_value_admits(&lib, "maybe", &body), "{body}");
+    }
+}
+
 /// RIPR-SPEC-0225 acceptance examples 1, 3 and 4: a whole-value literal
 /// that names the changed field with an independent value pins it,
 /// directly, through `Ok(..)` and through a once-used `let` of the owner
@@ -3383,7 +3437,7 @@ assert_eq!(c, Config { retries: c.retries, name: "x".into(), count: Count(3) });
         format!("let c = build(3);\nlet r = c.retries;\nassert_eq!(c, {literal});\nlet _ = r;"),
         format!("let c = build(3);\nlet c = build(4);\nassert_eq!(c, {literal});"),
         format!("assert_eq!(build(3), Some({literal}));"),
-        format!("assert_eq!(build(3), Other {{ retries: 4 }});"),
+        "assert_eq!(build(3), Other { retries: 4 });".to_string(),
         r#"assert_eq!(build(3), Config { retries, name: "x".into(), count: Count(3) });"#
             .to_string(),
         r#"assert_eq!(build(3), Config { retries: RETRIES, name: "x".into(), count: Count(3) });"#
@@ -3419,6 +3473,14 @@ assert_eq!(c, Config { retries: c.retries, name: "x".into(), count: Count(3) });
         CONFIG_LIB,
         "build",
         &format!("{{ let c = build(3); }}\nassert_eq!(c, {literal});")
+    ));
+    // #7066 review: a fn renamed to a CamelCase alias is still computed.
+    let helper = CONFIG_LIB.to_string() + "pub fn four() -> u32 {\n    4\n}\n";
+    assert!(!whole_value_admits(
+        &helper,
+        "build",
+        r#"use demo::four as Four;
+assert_eq!(build(3), Config { retries: Four(), name: "x".into(), count: Count(3) });"#
     ));
 }
 

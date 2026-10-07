@@ -2206,7 +2206,7 @@ impl WholeValueField {
                 .is_some_and(|value| independent_value(&value, self.field_is_string))
             && !literal.syntax().descendants().any(|node| {
                 ast::NameRef::cast(node)
-                    .is_some_and(|name| self.computed_names.contains(&*name.text()))
+                    .is_some_and(|name| self.computed_names.contains(name.text()))
             })
     }
 }
@@ -2294,13 +2294,15 @@ fn independent_value(value: &ast::Expr, string_field: bool) -> bool {
 }
 
 /// CamelCase names of `const`, `static` and `fn` items anywhere in the
-/// workspace. Naming lints only warn on them, so [`constructor_path`]'s
+/// workspace, and CamelCase `use .. as` aliases (`use crate::four as Four;`
+/// names a fn). Naming lints only warn on them, so [`constructor_path`]'s
 /// case test alone cannot tell `Limits::Max` (a constant) from `Mode::Fast`.
+/// An alias of a real type or variant is refused too, which fails closed.
 fn camel_case_value_items(index: &RustIndex) -> BTreeSet<String> {
     let mut names = BTreeSet::new();
     for facts in index.files().values() {
         let masked = mask_comments_and_strings(&facts.source);
-        for keyword in ["const", "static", "fn"] {
+        for keyword in ["const", "static", "fn", "as"] {
             for start in whole_word_offsets(&masked, keyword) {
                 let rest = masked[start + keyword.len()..].trim_start();
                 let rest = rest.strip_prefix("mut ").map_or(rest, str::trim_start);
