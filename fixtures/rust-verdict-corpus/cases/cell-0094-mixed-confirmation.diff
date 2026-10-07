@@ -1,0 +1,13 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 8840c6e..3c47364 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -12,7 +12,7 @@ pub fn compute_score(x: i64) -> i64 {
+ 
+ /// Return value whose weak assert names the constant and whose exact assert does not.
+ pub fn bonus(points: u32) -> u32 {
+-    points * MULTIPLIER
++    MULTIPLIER * points
+ }
+ 
+ /// Logs through the `log` facade; its only test is a smoke call.

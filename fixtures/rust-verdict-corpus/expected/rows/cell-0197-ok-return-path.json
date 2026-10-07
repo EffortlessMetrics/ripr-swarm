@@ -1,0 +1,19 @@
+{
+  "case_id": "cell-0197-ok-return-path",
+  "subject_id": "authored-spec-confirm",
+  "origin": "authored",
+  "anchor": "src/lib.rs:184",
+  "behavior_family": "error_propagation_question_mark",
+  "test_shape": "unit_test_assert_eq_ok",
+  "hard_case": true,
+  "truth": "discriminated",
+  "ideal_verdict": "credited",
+  "observed_verdict": "credited",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": []
+}
