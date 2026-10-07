@@ -85,10 +85,10 @@ pub(crate) fn root_path_display(path: &Path) -> String {
 /// anchoring and typed recovery (`agent::command_specs`).
 pub(crate) fn bound_root_path(root_path: &Path) -> PathBuf {
     if root_path.is_absolute() {
-        lexically_clean(root_path)
+        clean_bound_path(root_path)
     } else {
         let base = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-        lexically_clean(&base.join(root_path))
+        clean_bound_path(&base.join(root_path))
     }
 }
 
@@ -119,12 +119,12 @@ pub(crate) fn root_display(root: &str) -> String {
 pub(crate) fn anchored_redirect_target(root: &str, out_path: &str) -> String {
     let out = Path::new(out_path);
     if out.is_absolute() {
-        return root_path_display(&lexically_clean(out));
+        return root_path_display(&clean_bound_path(out));
     }
     // The root keeps its native characters (#4287); only the root-relative
     // remainder is rendered with stable separators.
     let root = bound_root_path(Path::new(root));
-    let target = lexically_clean(&root.join(out));
+    let target = clean_bound_path(&root.join(out));
     match target.strip_prefix(&root) {
         Ok(rest) if rest.as_os_str().is_empty() => root_path_display(&root),
         Ok(rest) => format!(
@@ -150,6 +150,53 @@ pub(crate) fn portable_redirect_target(root: &str, out_path: &str) -> String {
         return anchored_redirect_target(root, out_path);
     }
     root_path_display(&lexically_clean(&root_path.join(out_path)))
+}
+
+/// [`lexically_clean`] for a path a generated command will hand to the
+/// operating system (#6960): the bound root and its redirect targets. On Unix
+/// the kernel follows a symlink before it applies the next `..`, so
+/// `link/../repo` names the sibling of the link's target, not of the link.
+/// A `..` that follows an existing symlink is therefore kept, and every later
+/// `..` with it, so the printed path resolves to the directory the producer
+/// read. Only an existing path is inspected; a component that does not exist
+/// yet (a redirect target) cannot be a symlink and cleans lexically. Windows
+/// resolves `..` lexically before the filesystem sees the path, so there this
+/// is exactly [`lexically_clean`].
+pub(crate) fn clean_bound_path(path: &Path) -> PathBuf {
+    let mut cleaned = PathBuf::new();
+    let is_absolute = path.is_absolute();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => match cleaned.components().next_back() {
+                Some(Component::Normal(_)) if !is_symlink(&cleaned) => {
+                    cleaned.pop();
+                }
+                Some(Component::Normal(_) | Component::ParentDir) => {
+                    cleaned.push(component.as_os_str());
+                }
+                _ if !is_absolute => cleaned.push(component.as_os_str()),
+                _ => {}
+            },
+            Component::Normal(_) | Component::RootDir | Component::Prefix(_) => {
+                cleaned.push(component.as_os_str());
+            }
+        }
+    }
+    if cleaned.as_os_str().is_empty() {
+        PathBuf::from(".")
+    } else {
+        cleaned
+    }
+}
+
+/// Whether `path` is an existing symlink the kernel would follow before a
+/// later `..` (Unix only; see [`clean_bound_path`]).
+fn is_symlink(path: &Path) -> bool {
+    cfg!(unix)
+        && std::fs::symlink_metadata(path)
+            .map(|metadata| metadata.file_type().is_symlink())
+            .unwrap_or(false)
 }
 
 /// Drop `.` segments and resolve `..` lexically (no filesystem I/O: the
@@ -668,6 +715,67 @@ mod tests {
             Path::new(&anchored_redirect_target(".", "target/out.json")).is_absolute(),
             "anchored target must be absolute"
         );
+    }
+
+    /// #6960: the kernel follows a symlink before it applies the next `..`.
+    /// A bound root and its redirect anchor keep a `..` that follows an
+    /// existing symlink, so the printed path resolves to the directory the
+    /// producer read. Lexical cleaning would name a different checkout.
+    #[cfg(unix)]
+    #[test]
+    fn bound_root_keeps_a_parent_segment_after_a_symlink() -> Result<(), String> {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|err| err.to_string())?
+            .as_nanos();
+        let base =
+            std::env::temp_dir().join(format!("ripr-symlink-root-{}-{nonce}", std::process::id()));
+        for dir in ["outside/child", "outside/repo", "work/repo"] {
+            std::fs::create_dir_all(base.join(dir)).map_err(|err| err.to_string())?;
+        }
+        std::os::unix::fs::symlink(base.join("outside/child"), base.join("work/link"))
+            .map_err(|err| err.to_string())?;
+        let through_link = base.join("work/link/../repo");
+        let canonical = |path: &Path| std::fs::canonicalize(path).map_err(|err| err.to_string());
+        // Fixture: the two spellings really name different checkouts.
+        assert_eq!(
+            canonical(&through_link)?,
+            canonical(&base.join("outside/repo"))?
+        );
+        assert_eq!(lexically_clean(&through_link), base.join("work/repo"));
+
+        let bound = bound_root_path(&through_link);
+        let chained = bound_root_path(&base.join("work/link/../../outside/repo"));
+        let plain = bound_root_path(&base.join("work/repo/../repo/./"));
+        let redirect = anchored_redirect_target(&through_link.to_string_lossy(), "target/out.json");
+        let bound_canonical = canonical(&bound)?;
+        let chained_canonical = canonical(&chained)?;
+        std::fs::remove_dir_all(&base).map_err(|err| err.to_string())?;
+
+        assert_eq!(
+            bound, through_link,
+            "the symlink's `..` must survive binding"
+        );
+        assert_eq!(
+            bound_canonical.file_name(),
+            Some(std::ffi::OsStr::new("repo"))
+        );
+        assert!(
+            bound_canonical.ends_with("outside/repo"),
+            "bound root must resolve to the analyzed checkout: {bound_canonical:?}"
+        );
+        assert_eq!(chained, base.join("work/link/../../outside/repo"));
+        assert!(chained_canonical.ends_with("outside/repo"));
+        assert_eq!(
+            plain,
+            base.join("work/repo"),
+            "a real directory still cleans"
+        );
+        assert_eq!(
+            redirect,
+            format!("{}/target/out.json", through_link.to_string_lossy())
+        );
+        Ok(())
     }
 
     /// #3999: a bound root renders as one absolute `--root` that agrees with
