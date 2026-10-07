@@ -12,6 +12,7 @@ mod parameterized_tests;
 mod role_composition;
 mod test_helpers;
 mod test_styles;
+pub(crate) use test_styles::BUILT_IN_TEST_ATTRIBUTE_PATHS;
 
 use std::path::{Path, PathBuf};
 
