@@ -448,10 +448,6 @@ fn owner_call_argument_lists(text: &str, name: &str) -> Vec<(usize, Vec<String>)
     lists
 }
 
-fn owner_call_count(text: &str, name: &str) -> usize {
-    owner_call_argument_lists(text, name).len()
-}
-
 fn contains_ident(text: &str, name: &str) -> bool {
     find_ident_at(text, name).is_some()
 }

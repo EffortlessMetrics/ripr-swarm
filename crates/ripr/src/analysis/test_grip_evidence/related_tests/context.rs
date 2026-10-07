@@ -458,7 +458,7 @@ impl<'a> CompactGripContext<'a> {
                         local_function_names,
                     ),
                 );
-                let mut free_spelling_target_affinity_owner_call_names =
+                let free_spelling_target_affinity_owner_call_names =
                     free_spelling_target_affinity_owner_call_names_for_test(
                         test,
                         &call_names,
@@ -1797,7 +1797,7 @@ pub(in crate::analysis::test_grip_evidence) fn helper_owner_calls_by_module_path
 pub(in crate::analysis::test_grip_evidence) fn production_helper_owner_calls_by_package(
     helpers: &HelperOwnerCallsByFile,
 ) -> HelperOwnerCallsByPackage {
-    let mut by_package = helper_owner_calls_grouped_by_package(helpers);
+    let by_package = helper_owner_calls_grouped_by_package(helpers);
     by_package
         .into_iter()
         .filter_map(|(package, helper_sets)| {
