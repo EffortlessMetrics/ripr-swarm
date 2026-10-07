@@ -1356,8 +1356,14 @@ pub(crate) fn diff_only_rust_files(
     changed_files: &[PathBuf],
 ) -> Vec<(PathBuf, workspace::DiffOnlySource)> {
     let generated = super::language::GeneratedRustSources::for_repo(root, &config.languages().rust);
+    // Only files `ripr check` can index: a changed path missing from the
+    // working tree (sparse checkout, deleted since the diff) or a symlink is
+    // refused by Rust discovery, so check has no probes for it either.
     let candidates = changed_files
         .iter()
+        .filter(|path| {
+            std::fs::symlink_metadata(root.join(path)).is_ok_and(|meta| meta.file_type().is_file())
+        })
         .filter(|path| !generated.contains(path))
         .collect::<Vec<_>>();
     if candidates.is_empty() {
@@ -3571,6 +3577,15 @@ pub fn classify(amount: i32, service: &mut Service) -> Result<Quote, Error> {
             .map(|(path, _)| PathBuf::from(path))
             .filter(|path| path.extension().is_some_and(|ext| ext == "rs"))
             .collect::<Vec<_>>();
+        // A changed path absent from the working tree is not named.
+        let mut changed = changed;
+        changed.push(PathBuf::from("xtask/src/absent.rs"));
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(root.join("build.rs"), root.join("xtask/src/link.rs"))
+                .map_err(|err| format!("symlink: {err}"))?;
+            changed.push(PathBuf::from("xtask/src/link.rs"));
+        }
         let named = diff_only_rust_files(&root, &RiprConfig::default(), &changed);
         let _ = std::fs::remove_dir_all(&temp);
         assert_eq!(
