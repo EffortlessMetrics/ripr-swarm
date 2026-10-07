@@ -356,9 +356,85 @@ fn timed_with_envs(
     args: &[String],
     envs: &[(&str, &str)],
 ) -> Result<StepResult, String> {
+    #[cfg(test)]
+    if let Some(fake) = intercept_timed_launch(cwd, name, program, args, envs) {
+        return Ok(fake);
+    }
     let started = Instant::now();
     let captured = capture_output_in_dir_with_envs(program, args, cwd, name, envs, &[])?;
     Ok(step_result(name, program, args, started, captured))
+}
+
+#[cfg(test)]
+struct TimedLaunch {
+    name: String,
+    cwd: PathBuf,
+    program: String,
+    args: Vec<String>,
+    envs: Vec<(String, String)>,
+}
+
+#[cfg(test)]
+thread_local! {
+    static TIMED_LAUNCHES: std::cell::RefCell<Option<Vec<TimedLaunch>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(test)]
+struct RecordingTimedLaunches;
+
+#[cfg(test)]
+impl Drop for RecordingTimedLaunches {
+    fn drop(&mut self) {
+        TIMED_LAUNCHES.with(|slot| {
+            *slot.borrow_mut() = None;
+        });
+    }
+}
+
+#[cfg(test)]
+fn start_recording_timed_launches() -> RecordingTimedLaunches {
+    TIMED_LAUNCHES.with(|slot| {
+        *slot.borrow_mut() = Some(Vec::new());
+    });
+    RecordingTimedLaunches
+}
+
+#[cfg(test)]
+fn take_recorded_timed_launches() -> Vec<TimedLaunch> {
+    TIMED_LAUNCHES.with(|slot| slot.borrow_mut().take().unwrap_or_default())
+}
+
+#[cfg(test)]
+fn intercept_timed_launch(
+    cwd: &Path,
+    name: &str,
+    program: &str,
+    args: &[String],
+    envs: &[(&str, &str)],
+) -> Option<StepResult> {
+    TIMED_LAUNCHES.with(|slot| {
+        let mut slot = slot.borrow_mut();
+        let launches = slot.as_mut()?;
+        launches.push(TimedLaunch {
+            name: name.to_string(),
+            cwd: cwd.to_path_buf(),
+            program: program.to_string(),
+            args: args.to_vec(),
+            envs: envs
+                .iter()
+                .map(|(key, value)| ((*key).to_string(), (*value).to_string()))
+                .collect(),
+        });
+        Some(StepResult {
+            name: name.to_string(),
+            command: format!("{program} {}", args.join(" ")).trim().to_string(),
+            exit: Some(0),
+            secs: 0.0,
+            stdout: String::new(),
+            stderr: String::new(),
+        })
+    })
 }
 
 fn step_result(
@@ -1195,16 +1271,29 @@ mod tests {
     fn the_published_install_child_gets_an_isolated_cargo_home_under_out() -> Result<(), String> {
         let out = std::env::temp_dir().join(format!("first-run-cargo-home-{}", std::process::id()));
         let _ = fs::remove_dir_all(&out);
-        prepare_out_dir(&out)?;
-
-        let spec = published_install_spec(&out);
-        let envs = spec.env_pairs();
-        let cargo_home = envs
+        let _recording = start_recording_timed_launches();
+        // Fake the install child so this does not `cargo install`. `--version`
+        // then fails because the binary was not written; the launch record is
+        // already captured.
+        let _ = run(&[
+            "--install-published".to_string(),
+            "--out".to_string(),
+            out.display().to_string(),
+        ]);
+        let launches = take_recorded_timed_launches();
+        let install = launches
             .iter()
-            .find(|(key, _)| *key == "CARGO_HOME")
-            .map(|(_, value)| PathBuf::from(*value))
+            .find(|launch| launch.name == "install_published")
+            .ok_or_else(|| "run() did not launch install_published".to_string())?;
+
+        let cargo_home = install
+            .envs
+            .iter()
+            .find(|(key, _)| key == "CARGO_HOME")
+            .map(|(_, value)| PathBuf::from(value))
             .ok_or_else(|| "install child has no CARGO_HOME override".to_string())?;
 
+        assert_eq!(install.program, "cargo");
         assert_eq!(cargo_home, out.join("cargo-home"));
         assert!(
             cargo_home.starts_with(&out),
@@ -1225,13 +1314,16 @@ mod tests {
             "CARGO_HOME must start absent after prepare_out_dir so cargo creates a fresh home"
         );
         assert!(
-            envs.iter()
-                .all(|(key, _)| *key != "RUSTUP_HOME" && *key != "PATH"),
-            "RUSTUP_HOME and PATH must stay inherited so the toolchain resolves: {envs:?}"
+            install
+                .envs
+                .iter()
+                .all(|(key, _)| key != "RUSTUP_HOME" && key != "PATH"),
+            "RUSTUP_HOME and PATH must stay inherited so the toolchain resolves: {:?}",
+            install.envs
         );
-        assert_eq!(spec.cwd, std::env::temp_dir());
+        assert_eq!(install.cwd, std::env::temp_dir());
         assert_eq!(
-            spec.args,
+            install.args,
             vec![
                 "install".into(),
                 "ripr".into(),
@@ -1240,7 +1332,15 @@ mod tests {
                 out.join("install-root").display().to_string(),
             ]
         );
+        let spec = published_install_spec(&out);
         assert_eq!(spec.install_root, out.join("install-root"));
+        assert_eq!(
+            install.envs,
+            spec.env_pairs()
+                .into_iter()
+                .map(|(key, value)| (key.to_string(), value.to_string()))
+                .collect::<Vec<_>>()
+        );
 
         let _ = fs::remove_dir_all(&out);
         Ok(())
