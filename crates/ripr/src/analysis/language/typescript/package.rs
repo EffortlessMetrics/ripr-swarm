@@ -604,14 +604,26 @@ fn detect_framework_signals(pkg_json: &str) -> Vec<TsFramework> {
     signals
 }
 
+/// Node CLI options that consume the NEXT token as their value (`node
+/// --require tests/bootstrap.js server.js`). A value token is not the entry
+/// point, so it must not be judged as one (#7041 review). Options whose value
+/// is attached with `=` start with `-` and are skipped by the flag rule.
+const NODE_VALUE_CONSUMING_OPTIONS: [&str; 5] = [
+    "-r",
+    "--require",
+    "--import",
+    "--loader",
+    "--experimental-loader",
+];
+
 /// Does the lowercased `scripts.test` value invoke the `node` binary directly
 /// on a test file?
 ///
 /// Matches a whitespace-delimited `node` / `node.exe` token whose first
-/// positional argument (flag tokens skipped) names a test file: either a
-/// basename carrying a `.test.`/`.spec.` infix before a JS/TS extension, or a
-/// path through a conventional test directory (`test`, `tests`, `__tests__`) —
-/// for example `node test/pricing.test.mjs` or
+/// positional argument (flag tokens and option-value tokens skipped) names a
+/// test file: either a basename carrying a `.test.`/`.spec.` infix before a
+/// JS/TS extension, or a path through a conventional test directory (`test`,
+/// `tests`, `__tests__`) — for example `node test/pricing.test.mjs` or
 /// `node --experimental-strip-types test/foo.ts` (#6826). Every `node`
 /// invocation in a composite script is inspected (`node scripts/setup.js &&
 /// node test/pricing.test.mjs` resolves), while a node invocation whose entry
@@ -622,6 +634,7 @@ fn detect_framework_signals(pkg_json: &str) -> Vec<TsFramework> {
 /// stays fail-closed on the manifest text only.
 fn node_script_targets_test_file(test_script: &str) -> bool {
     let mut tokens = test_script.split_whitespace();
+    let mut pending_option_value = false;
     while let Some(token) = tokens.next() {
         if token != "node" && token != "node.exe" {
             continue;
@@ -632,6 +645,12 @@ fn node_script_targets_test_file(test_script: &str) -> bool {
         // invoke node again, so keep scanning the remaining tokens.
         for arg in tokens.by_ref() {
             if arg.starts_with('-') {
+                pending_option_value = NODE_VALUE_CONSUMING_OPTIONS.contains(&arg);
+                continue;
+            }
+            if pending_option_value {
+                // This token is the option's value, not the entry point.
+                pending_option_value = false;
                 continue;
             }
             if script_token_names_test_file(arg) {
@@ -1201,6 +1220,19 @@ mod tests {
         // on the suite file: every node invocation is inspected, so the second
         // one still resolves node:test (#7041 review).
         let pkg = r#"{"scripts":{"test":"node scripts/setup.js && node test/pricing.test.mjs"}}"#;
+        assert_eq!(detect_framework(pkg), Some(TsFramework::NodeTest));
+    }
+
+    #[test]
+    fn detect_framework_option_value_is_not_the_node_entry_point() {
+        // `node --require tests/bootstrap.js server.js`: the preload path is
+        // the option's VALUE, not the entry point, so it must not credit
+        // node:test when the real entry is not test-shaped (#7041 review).
+        let pkg = r#"{"scripts":{"test":"node --require tests/bootstrap.js server.js"}}"#;
+        assert_eq!(detect_framework(pkg), None);
+        // An option value must not mask a genuine test entry either.
+        let pkg =
+            r#"{"scripts":{"test":"node --require tests/bootstrap.js test/pricing.test.mjs"}}"#;
         assert_eq!(detect_framework(pkg), Some(TsFramework::NodeTest));
     }
 
