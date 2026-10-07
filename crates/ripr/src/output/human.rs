@@ -5,15 +5,17 @@ pub(crate) use crate::terminal_text::terminal_safe;
 use std::collections::BTreeSet;
 use std::path::Path;
 
-/// RIPR-SPEC-0112 disclosure. Committed-history diffs (an explicit `--base`
-/// or the resolved default base) read every source and test file as committed
-/// at `HEAD`, so uncommitted edits and new files count neither in the diff nor
-/// as test evidence. `--worktree` (RIPR-SPEC-0116) is the remedy for the
+/// RIPR-SPEC-0112 disclosure. A committed-history diff (forced with
+/// `--committed`; a dirty tree is otherwise read as a working tree by default,
+/// RIPR-SPEC-0116) reads every source and test file as committed at `HEAD`,
+/// so uncommitted edits and new files count neither in the diff nor as test
+/// evidence. Dropping `--committed`, or `--worktree`, is the remedy for the
 /// tracked subset — the wording matches `check --help`, which documents
-/// "staged and unstaged tracked edits" (#5258).
+/// "staged and unstaged tracked edits" (#5258). Committing works too, but
+/// staging alone does not change a committed-history diff.
 const UNANALYZED_WORKING_TREE_NOTE: &str = "\nNote: uncommitted source and test changes were not analyzed; \
-`ripr check` reads each file as committed at HEAD; add `--worktree` to include staged and \
-unstaged tracked edits (for example `ripr check --worktree`).\n";
+this run read each file as committed at HEAD; drop `--committed` (or pass `--worktree`) to \
+include staged and unstaged tracked edits (for example `ripr check --worktree`).\n";
 
 /// #5258: untracked files are invisible to the committed diff AND to
 /// `--worktree` (it diffs tracked edits only), so the note must name the
@@ -29,25 +31,34 @@ fn unanalyzed_working_tree_note(output: &CheckOutput) -> String {
     if untracked.is_empty() {
         return UNANALYZED_WORKING_TREE_NOTE.to_string();
     }
-    const NAMED_PATHS: usize = 3;
-    let named = untracked
-        .iter()
-        .take(NAMED_PATHS)
-        .map(|path| escape_terminal_display(path))
-        .collect::<Vec<_>>();
-    let more = untracked.len().saturating_sub(NAMED_PATHS);
-    let listing = if more > 0 {
-        format!("{} and {more} more", named.join(", "))
-    } else {
-        named.join(", ")
-    };
+    let listing = crate::output::analyzed_revisions::name_paths(untracked, escape_terminal_display);
     format!(
-        "\nNote: uncommitted source and test changes were not analyzed; `ripr check` reads each \
+        "\nNote: uncommitted source and test changes were not analyzed; this run read each \
          file as committed at HEAD, and `--worktree` adds staged and unstaged tracked edits only. \
          Untracked files ({listing}) are invisible to both; stage them first (`git add <paths>`, \
          or `git add -N <paths>` intent-to-add makes a new file visible to `--worktree`) and \
          rerun `ripr check --worktree`, or pass `--diff PATH`.\n"
     )
+}
+
+/// The working-tree disclosure for this run, if any: the RIPR-SPEC-0112
+/// note on a committed-history run with unanalyzed edits, or, on a
+/// working-tree read (RIPR-SPEC-0116), the untracked-files note naming the
+/// routed files the working-tree diff does not contain. The second never
+/// offers `--worktree`, which is already in effect.
+fn render_working_tree_disclosure(out: &mut String, output: &CheckOutput) {
+    if output.unanalyzed_working_tree {
+        out.push_str(&unanalyzed_working_tree_note(output));
+        return;
+    }
+    if crate::output::analyzed_revisions::is_working_tree_read(output)
+        && let Some(message) = crate::output::analyzed_revisions::working_tree_untracked_message(
+            &output.untracked_working_tree_source_paths,
+            escape_terminal_display,
+        )
+    {
+        out.push_str(&format!("\nNote: {message}\n"));
+    }
 }
 
 /// Render the bounded triage report in the default human-readable CLI format.
@@ -77,6 +88,17 @@ pub(crate) fn render_bounded_with_config(output: &CheckOutput, config: &RiprConf
 /// range), name the compared base instead of claiming no scope was
 /// provided; only a run with no established base keeps the legacy note.
 fn render_no_scope_note(output: &CheckOutput) -> String {
+    // RIPR-SPEC-0116: a working-tree read diffs the merge base of the base
+    // and HEAD against the working tree, not `<base>...HEAD`.
+    if let Some(base) = output.base.as_deref()
+        && crate::output::analyzed_revisions::is_working_tree_read(output)
+    {
+        return format!(
+            "\nNote: the working tree has no changed tracked files against `{base}` (diff from \
+             the merge base of `{base}` and HEAD to the working tree), so there was nothing to \
+             analyze. An empty result here means no tracked behavior changed against it.\n",
+        );
+    }
     if let Some(base) = output.base.as_deref() {
         format!(
             "\nNote: `{base}...HEAD` contains no changed files, so there was nothing to analyze. \
@@ -111,9 +133,7 @@ pub(crate) fn render_bounded_with_config_and_navigation(
         if output.no_scope_provided && !output.unanalyzed_working_tree {
             out.push_str(&render_no_scope_note(output));
         }
-        if output.unanalyzed_working_tree {
-            out.push_str(&unanalyzed_working_tree_note(output));
-        }
+        render_working_tree_disclosure(&mut out, output);
         render_preview_language_advisories(&mut out, output);
         render_language_runs(&mut out, output);
         return out;
@@ -122,9 +142,7 @@ pub(crate) fn render_bounded_with_config_and_navigation(
     let triage = triage::select_human_triage(output, config);
     triage::render_human_triage(&mut out, &triage, output, config, drill_in, provenance);
     render_all_no_path_disclosure(&mut out, output);
-    if output.unanalyzed_working_tree {
-        out.push_str(&unanalyzed_working_tree_note(output));
-    }
+    render_working_tree_disclosure(&mut out, output);
     render_preview_language_advisories(&mut out, output);
     render_language_runs(&mut out, output);
     out
@@ -168,9 +186,7 @@ pub(crate) fn render_full_with_config_and_navigation(
         // RIPR-SPEC-0112: disclose when a committed-history diff left uncommitted working-tree
         // changes were NOT analyzed. An empty result here does NOT mean those changes
         // are covered — they were excluded from the committed-history diff.
-        if output.unanalyzed_working_tree {
-            out.push_str(&unanalyzed_working_tree_note(output));
-        }
+        render_working_tree_disclosure(&mut out, output);
         render_preview_language_advisories(&mut out, output);
         render_language_runs(&mut out, output);
         return out;
@@ -220,21 +236,50 @@ pub(crate) fn render_full_with_config_and_navigation(
     // RIPR-SPEC-0112: disclose when a committed-history diff left uncommitted working-tree
     // changes were NOT analyzed. Fires whether or not the committed diff had findings —
     // those uncommitted edits are still unanalyzed regardless.
-    if output.unanalyzed_working_tree {
-        out.push_str(&unanalyzed_working_tree_note(output));
-    }
+    render_working_tree_disclosure(&mut out, output);
     render_preview_language_advisories(&mut out, output);
     render_language_runs(&mut out, output);
     out
 }
 
+/// Name the analyzed base and head (RIPR-SPEC-0116 amendment): a live
+/// repository diff names its base ref and commit and whether it ended at
+/// `HEAD` or at the working tree; a candidate-tree subject names its two
+/// trees. A diff read from a file or stdin carries no revisions ripr could
+/// verify, so its header is unchanged.
+fn render_analyzed_revisions(out: &mut String, output: &CheckOutput) {
+    use crate::output::analyzed_revisions::{base_label, head_label};
+    if let Some(revisions) = output.analyzed_revisions.as_ref() {
+        out.push_str(&format!(
+            "base: {}\nhead: {}\n",
+            base_label(revisions),
+            head_label(revisions)
+        ));
+        return;
+    }
+    if let Some(subject) = output
+        .analysis_outcome
+        .as_ref()
+        .and_then(|outcome| outcome.identity.git_candidate_subject.as_ref())
+    {
+        let short = |id: &str| id.get(..7).unwrap_or(id).to_string();
+        out.push_str(&format!(
+            "base: tree {}\nhead: candidate tree {}\n",
+            short(&subject.base_tree),
+            short(&subject.candidate_tree)
+        ));
+    }
+}
+
 fn render_header_summary(output: &CheckOutput) -> String {
     let mut out = String::new();
     out.push_str(&format!(
-        "ripr static RIPR exposure analysis\nmode: {}\nroot: {}\n\n",
+        "ripr static RIPR exposure analysis\nmode: {}\nroot: {}\n",
         output.mode.as_str(),
         output.root.display()
     ));
+    render_analyzed_revisions(&mut out, output);
+    out.push('\n');
     // #4322: the only per-run denominator line a human sees must match the
     // finding vocabulary. All seven classes render with their canonical
     // `ExposureClass::as_str()` tokens (no `weak`/`unrevealed` abbreviations,
@@ -907,6 +952,7 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         };
 
         let rendered = render(&output);
@@ -939,6 +985,7 @@ mod tests {
             language_runs: Vec::new(),
             no_scope_provided: false,
             unanalyzed_working_tree: true,
+            analyzed_revisions: None,
             untracked_working_tree_source_paths: vec![
                 "src/new.rs".to_string(),
                 "tests/new.rs".to_string(),
@@ -966,7 +1013,8 @@ mod tests {
             "{rendered}"
         );
         assert!(
-            !rendered.contains("add `--worktree` to include staged and unstaged tracked edits"),
+            !rendered
+                .contains("(or pass `--worktree`) to include staged and unstaged tracked edits"),
             "the tracked-only remedy must not stand in for the staging repair: {rendered}"
         );
     }
@@ -989,6 +1037,7 @@ mod tests {
             language_runs: Vec::new(),
             no_scope_provided: false,
             unanalyzed_working_tree: true,
+            analyzed_revisions: None,
             untracked_working_tree_source_paths: vec!["src/\u{1b}[31mevil.rs".to_string()],
             unlinked_python_tests: None,
             suppression: None,
@@ -1025,6 +1074,7 @@ mod tests {
             language_runs: Vec::new(),
             no_scope_provided: false,
             unanalyzed_working_tree: true,
+            analyzed_revisions: None,
             untracked_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
             suppression: None,
@@ -1036,7 +1086,7 @@ mod tests {
 
         assert!(
             rendered
-                .contains("add `--worktree` to include staged and unstaged tracked edits (for example `ripr check --worktree`)"),
+                .contains("drop `--committed` (or pass `--worktree`) to include staged and unstaged tracked edits (for example `ripr check --worktree`)"),
             "{rendered}"
         );
         assert!(!rendered.contains("Untracked files"), "{rendered}");
@@ -1072,6 +1122,7 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         };
 
         let rendered = render(&output);
@@ -1128,6 +1179,7 @@ mod tests {
             }),
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         };
 
         let rendered = render(&output);
@@ -1173,6 +1225,7 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         };
 
         let rendered = render(&output);
@@ -1244,6 +1297,7 @@ mod tests {
             suppression: None,
             analysis_outcome: Some(outcome),
             partial_scope: None,
+            analyzed_revisions: None,
         })
     }
 
@@ -1321,6 +1375,7 @@ mod tests {
             suppression: None,
             analysis_outcome: Some(outcome),
             partial_scope: None,
+            analyzed_revisions: None,
         })
     }
 
@@ -1387,6 +1442,7 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         };
 
         let rendered = render(&output);
@@ -1467,6 +1523,7 @@ mod tests {
                 suppression: None,
                 analysis_outcome: None,
                 partial_scope: None,
+                analyzed_revisions: None,
             };
             let rendered = render(&output);
             assert!(
@@ -1512,6 +1569,7 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         };
 
         let rendered = render(&output);
@@ -1557,6 +1615,7 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         };
 
         let rendered = render(&output);
@@ -2083,6 +2142,7 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         };
 
         let rendered = render(&output);
@@ -2128,6 +2188,7 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         };
 
         let rendered = render(&output);
@@ -2180,6 +2241,7 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         };
 
         let rendered = render(&output);
@@ -2232,6 +2294,7 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         };
 
         let rendered = render(&output);
@@ -2262,6 +2325,7 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         };
 
         let rendered = render(&output);
@@ -2270,6 +2334,129 @@ mod tests {
         assert!(rendered.contains("State: nothing in scope (missing_scope)"));
         assert!(rendered.contains("provide an analysis scope"));
         assert!(rendered.contains("No diff-derived static exposure probes found."));
+    }
+
+    fn empty_live_output(no_scope_provided: bool) -> CheckOutput {
+        CheckOutput {
+            harness_projections: Vec::new(),
+            schema_version: "0.1".to_string(),
+            tool: "ripr".to_string(),
+            mode: Mode::Draft,
+            root: PathBuf::from("repo"),
+            base: Some("main".to_string()),
+            summary: Summary::default(),
+            findings: vec![],
+            preview_language_advisories: Vec::new(),
+            language_runs: Vec::new(),
+            no_scope_provided,
+            unanalyzed_working_tree: false,
+            untracked_working_tree_source_paths: Vec::new(),
+            unlinked_python_tests: None,
+            suppression: None,
+            analysis_outcome: None,
+            partial_scope: None,
+            analyzed_revisions: Some(crate::analysis::AnalyzedRevisions {
+                base_ref: "main".to_string(),
+                base_commit: Some("1a2b3c4d5e6f".to_string()),
+                merge_base_commit: None,
+                head_commit: Some("1a2b3c4d5e6f".to_string()),
+                working_tree: true,
+            }),
+        }
+    }
+
+    /// RIPR-SPEC-0116: an empty working-tree read names the
+    /// merge-base-to-working-tree diff, not `main...HEAD`, never offers
+    /// `--worktree` (already in effect), and names untracked routed files the
+    /// working-tree diff cannot contain. A committed-history read keeps the
+    /// `main...HEAD` wording, so the oracle discriminates the branch.
+    #[test]
+    fn empty_working_tree_read_describes_the_working_tree_and_names_untracked_files() {
+        let mut output = empty_live_output(true);
+        output.untracked_working_tree_source_paths = vec!["src/new.rs".to_string()];
+        let rendered = render(&output);
+        assert!(
+            rendered.contains("head: working tree (uncommitted changes on HEAD 1a2b3c4)\n"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains(
+                "Note: the working tree has no changed tracked files against `main` (diff from the merge base of `main` and HEAD to the working tree), so there was nothing to analyze."
+            ),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains(
+                "Safe next action: the working tree has no changed tracked files against `main`; make a change, or `git add -N <path>` a new file, and re-run."
+            ),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains(
+                "Note: Untracked files (src/new.rs) are not in the working-tree diff, which covers tracked files only"
+            ),
+            "{rendered}"
+        );
+        assert!(!rendered.contains("main...HEAD"), "{rendered}");
+        assert!(!rendered.contains("`--worktree`"), "{rendered}");
+
+        let mut committed = empty_live_output(true);
+        if let Some(revisions) = committed.analyzed_revisions.as_mut() {
+            revisions.working_tree = false;
+        }
+        committed.untracked_working_tree_source_paths = vec!["src/new.rs".to_string()];
+        let committed_rendered = render(&committed);
+        assert!(
+            committed_rendered.contains("`main...HEAD` contains no changed files"),
+            "{committed_rendered}"
+        );
+        assert!(
+            committed_rendered.contains("add `--worktree` to include uncommitted tracked edits"),
+            "{committed_rendered}"
+        );
+        assert!(
+            !committed_rendered.contains("not in the working-tree diff"),
+            "{committed_rendered}"
+        );
+    }
+
+    /// A candidate-tree subject has no live revisions; the header names its
+    /// two trees from the outcome identity.
+    #[test]
+    fn candidate_tree_header_names_base_and_candidate_trees() -> Result<(), String> {
+        use crate::analysis_outcome::{
+            AnalysisIdentity, AnalysisOutcome, AnalysisOutcomeCounts, AnalysisOutcomeKind,
+            GitCandidateSubjectIdentity,
+        };
+        let mut output = empty_live_output(false);
+        output.base = None;
+        output.analyzed_revisions = None;
+        output.analysis_outcome = Some(AnalysisOutcome::new(
+            AnalysisOutcomeKind::CompleteNoFindings,
+            AnalysisIdentity {
+                git_candidate_subject: Some(GitCandidateSubjectIdentity {
+                    subject_kind: "tree_to_tree".to_string(),
+                    base_tree: "aaaaaaa1111111".to_string(),
+                    candidate_tree: "bbbbbbb2222222".to_string(),
+                    diff_identity: "sha256:00".to_string(),
+                }),
+                ..AnalysisIdentity::default()
+            },
+            AnalysisOutcomeCounts {
+                changed_file_count: 1,
+                changed_line_count: 1,
+                candidate_line_count: 1,
+                probe_count: 1,
+                finding_count: 0,
+            },
+            Vec::new(),
+        )?);
+        let rendered = render(&output);
+        assert!(
+            rendered.contains("root: repo\nbase: tree aaaaaaa\nhead: candidate tree bbbbbbb\n"),
+            "{rendered}"
+        );
+        Ok(())
     }
 
     #[test]
@@ -2304,6 +2491,7 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         };
 
         let rendered = render(&output);
@@ -2828,6 +3016,7 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         }
     }
 
@@ -2928,6 +3117,7 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         };
 
         let rendered = render(&output);
@@ -2974,6 +3164,7 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         };
 
         let rendered =
@@ -3076,6 +3267,7 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         };
 
         let rendered =
@@ -3146,6 +3338,7 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         };
 
         let rendered = unbound_repo_root(super::render_bounded_with_config_and_navigation(
@@ -3200,6 +3393,7 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         };
 
         let rendered = unbound_repo_root(super::render_full_with_config_and_navigation(
@@ -3272,6 +3466,7 @@ mod tests {
             }),
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         };
         unbound_repo_root(super::render_full_with_config_and_navigation(
             &output,
@@ -3381,6 +3576,7 @@ mod tests {
             }),
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         };
 
         let rendered = render(&output);
@@ -3429,6 +3625,7 @@ mod tests {
             }),
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         };
 
         let rendered = render(&output);
@@ -3473,6 +3670,7 @@ mod tests {
                 next_file_changed_lines: Some(60),
                 partition_identity: "c".repeat(64),
             }),
+            analyzed_revisions: None,
         };
 
         for rendered in [
@@ -3560,6 +3758,7 @@ mod tests {
                 next_file_changed_lines,
                 partition_identity: "c".repeat(64),
             }),
+            analyzed_revisions: None,
         }
     }
 
@@ -3668,6 +3867,7 @@ mod tests {
                 next_file_changed_lines: Some(60),
                 partition_identity: "c".repeat(64),
             }),
+            analyzed_revisions: None,
         };
 
         let rendered =
@@ -4665,6 +4865,7 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         }
     }
 
@@ -4824,6 +5025,7 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         };
 
         let rendered = render(&output);
@@ -4868,6 +5070,7 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         };
 
         let rendered = render(&output);
@@ -4916,6 +5119,7 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         };
 
         let rendered = render(&output);
@@ -4957,6 +5161,7 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         };
 
         let rendered = render(&output);
@@ -4996,6 +5201,7 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         };
 
         let rendered = render(&output);
@@ -5083,6 +5289,7 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         };
 
         let rendered = render(&output);
@@ -5173,6 +5380,7 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         };
 
         let rendered = render(&output);
@@ -5225,6 +5433,7 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         };
 
         let rendered = render(&output);
@@ -5263,6 +5472,7 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         };
 
         let rendered = render(&output);
@@ -5302,6 +5512,7 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         };
 
         let rendered = render(&output);
@@ -5345,6 +5556,7 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         };
 
         let rendered = render(&output);
@@ -5393,6 +5605,7 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         }
     }
 
@@ -5497,6 +5710,7 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         };
         let flat = |output: &CheckOutput| {
             render(output)
@@ -5560,6 +5774,7 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         };
 
         let rendered = render(&output);
@@ -5611,6 +5826,7 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         };
 
         let rendered = render(&output);
@@ -5666,6 +5882,7 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         };
 
         // The note wraps at the terminal width; compare its words.
@@ -5757,6 +5974,7 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         };
 
         let rendered = render(&output);
@@ -5801,6 +6019,7 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         };
 
         let rendered = render(&output);
@@ -5839,6 +6058,7 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         };
 
         let rendered = render(&output);
@@ -5874,6 +6094,7 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         };
 
         let rendered = render(&output);
@@ -5906,6 +6127,7 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         };
 
         let rendered = render(&output);
@@ -5943,6 +6165,7 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         };
 
         let rendered = render(&output);
@@ -5979,6 +6202,7 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         };
 
         let rendered = render(&output);
@@ -6026,6 +6250,7 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         };
 
         let rendered = render(&output);
@@ -6090,6 +6315,7 @@ mod tests {
                 suppression: None,
                 analysis_outcome: None,
                 partial_scope: None,
+                analyzed_revisions: None,
             })
         };
 

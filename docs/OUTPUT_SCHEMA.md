@@ -2121,15 +2121,20 @@ requires no disclosure.
 
 - `scope_status` — always `"no_scope_provided"` for machine filtering
 - `category` — always `"no_scope_disclosure"` for machine filtering
-- `why` — advisory rationale, not a stable key. When a default base was resolved, it names the compared ref and empty range; without a resolved base it names an explicit `BASE` placeholder to replace with an existing ref. Consumers must use structured scope and base fields for decisions.
+- `why` — advisory rationale, not a stable key. When a default base was resolved, it names the compared ref and empty range (on a working-tree read, the merge-base-to-working-tree range rather than `<base>...HEAD`, RIPR-SPEC-0116); without a resolved base it names an explicit `BASE` placeholder to replace with an existing ref. Consumers must use structured scope and base fields for decisions.
 
 ### `unanalyzed_working_tree` (top-level additive boolean, RIPR-SPEC-0112)
 
 Added as an additive optional top-level boolean. Emitted (as `true`) only when
 ALL of the following are true:
 
-1. The analyzed diff was committed history: `ripr check --base <rev>`, or a
-   bare `ripr check` that resolved the default base (#3888).
+1. The analyzed diff was committed history: `ripr check --committed` (with
+   an explicit `--base <rev>` or the resolved default base). Since the
+   RIPR-SPEC-0116 amendment a dirty tree is otherwise analyzed as a working
+   tree, so without `--committed` this field fires when the only uncommitted
+   changes are untracked files (they never select the working tree), or when
+   the dirtiness probe could not run and the run fell back to committed
+   history.
 2. None of `--diff <file>`, `--worktree`, or `--candidate-tree` was supplied,
    and the format is not repo-scope.
 3. At least one file a language adapter reads (a source or test file) has
@@ -2139,8 +2144,8 @@ ALL of the following are true:
 
 Absent (not emitted) when `false`. Does not bump `schema_version`.
 
-This field closes the false-clean gap where `ripr check --base HEAD` (or a bare
-`ripr check` on the default branch) with an uncommitted `.rs` edit returns 0 probes and exit 0 — a result that is honest
+This field closes the false-clean gap where `ripr check --committed --base HEAD`
+with an uncommitted tracked `.rs` edit returns 0 probes and exit 0 — a result that is honest
 for the committed diff but misleading if the user assumes it covers their
 working-tree change. When `unanalyzed_working_tree: true` is present, the
 result is NOT a clean pass for the uncommitted changes.
@@ -2157,6 +2162,58 @@ edited README does not count), when `--diff <file>` or
 tracked edits in the analyzed diff. When the committed-content probe cannot
 run, the check fails with the git step named instead of analyzing mixed
 content.
+
+### `untracked_working_tree_source_paths` (top-level additive array, RIPR-SPEC-0116 amendment)
+
+Added as an additive optional top-level array of path strings. Emitted only
+when at least one routed source or test file is untracked in the live
+repository, on both committed-history and working-tree reads: committed
+history reads every file as committed, and the working-tree diff covers
+tracked files only, so in both cases the named files were not analyzed.
+Absent (not emitted) when the list is empty. Does not bump `schema_version`.
+
+This is the machine-readable form of the human and GitHub untracked-files
+notes (#5258, RIPR-SPEC-0112). Without it, a working-tree JSON report with
+zero findings reads as complete while routed files were silently excluded,
+because `unanalyzed_working_tree` stays absent on working-tree reads.
+
+Example:
+
+```json
+"untracked_working_tree_source_paths": ["src/new.rs"]
+```
+
+### `base_commit`, `merge_base_commit`, and `head` (top-level additive, RIPR-SPEC-0116 amendment)
+
+A run that diffs the live repository names the base and head it analyzed.
+Beside the existing `base` ref:
+
+- `base_commit` — full commit id of `base`. Absent when it could not be
+  resolved.
+- `merge_base_commit` — full commit id the diff started from, emitted only
+  when it differs from `base_commit` (both diff sources start from the merge
+  base of the base and `HEAD`).
+- `head.source` — `"commit"` when the diff ended at `HEAD` (committed
+  history) or `"working_tree"` when it ended at the working tree (staged and
+  unstaged tracked edits on top of `HEAD`; the dirty-tree default or
+  `--worktree`).
+- `head.commit` — full commit id of `HEAD`. Absent when `HEAD` is unborn or
+  could not be resolved.
+
+All three are absent for `--diff` file and stdin input (no revisions ripr can
+verify) and for `--candidate-tree` runs, whose trees are in
+`analysis_outcome.outcome.identity.git_candidate_subject`. Does not bump
+`schema_version`. The SARIF run `properties` carry the same `base`,
+`base_commit`, `merge_base_commit`, and `head` fields.
+
+```json
+"base": "origin/main",
+"base_commit": "50370181c7bf20f7b960045780ebe7a979357bf0",
+"head": {
+  "source": "working_tree",
+  "commit": "50370181c7bf20f7b960045780ebe7a979357bf0"
+}
+```
 
 ### `suppression_policy` and suppressed findings (top-level additive, #1441)
 

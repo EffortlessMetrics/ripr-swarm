@@ -226,7 +226,16 @@ pub(crate) fn render_human_triage(
         // (a default base was resolved and compared) — the honest action is
         // to change something, not to provide a scope.
         NextActionCheckCase::ScopeMissing => {
-            if let Some(base) = output.base.as_deref() {
+            // RIPR-SPEC-0116: a working-tree read already includes staged
+            // and unstaged tracked edits, so `--worktree` is no remedy there;
+            // only untracked files (intent-to-add) or a new edit can add scope.
+            if let Some(base) = output.base.as_deref()
+                && crate::output::analyzed_revisions::is_working_tree_read(output)
+            {
+                out.push_str(&format!(
+                    "  Safe next action: the working tree has no changed tracked files against `{base}`; make a change, or `git add -N <path>` a new file, and re-run.\n"
+                ));
+            } else if let Some(base) = output.base.as_deref() {
                 // "tracked" (#5258): `--worktree` diffs tracked edits only,
                 // so the line must not promise it covers untracked files.
                 out.push_str(&format!(
@@ -963,6 +972,7 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         }
     }
 
