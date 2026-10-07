@@ -2981,8 +2981,14 @@ fn test_imports_same_name_twin(
     {
         return false;
     }
+    // `super`/`self` are not resolved against the test's module, so the
+    // twin must also be the only definition whose path ends in the imported
+    // module path, and the owner's must not.
+    let suffix = format!("::{}::{owner_name}", segments.join("::"));
     let twin = format!("{file}::{}::{owner_name}", segments.join("::"));
-    twin != owner_id && same_name_ids.contains(&twin.as_str())
+    let mut matching = same_name_ids.iter().filter(|id| id.ends_with(&suffix));
+    matches!((matching.next(), matching.next()), (Some(only), None) if *only == twin)
+        && !owner_id.ends_with(&suffix)
 }
 
 /// True when `body` mentions `owner_name` immediately followed by `(`.
@@ -3169,6 +3175,15 @@ mod tests {
             &["src/lib.rs::legacy::retail::price_quote", owner],
         ));
         assert!(undecided("tests/quote.rs", owner, &ids));
+        // `super::retail` from `pricing::tests` names `pricing::retail`.
+        assert!(undecided(
+            "src/lib.rs",
+            "src/lib.rs::pricing::retail::price_quote",
+            &[
+                "src/lib.rs::retail::price_quote",
+                "src/lib.rs::pricing::retail::price_quote"
+            ],
+        ));
         assert!(!undecided("/work/repo/src/lib.rs", owner, &ids));
     }
 
