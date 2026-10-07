@@ -1213,8 +1213,8 @@ fn drift_names_moved_missing_and_stale_rows_and_a_subset_compares_only_its_rows(
         "{drift:?}"
     );
 
-    // A `--cases a-case` run reads only that row, so b-case's move and the
-    // summary are out of its scope.
+    // A `--cases a-case` run reads only that row, so b-case's move is out of
+    // its scope.
     let mut subset = corpus.clone();
     select_cases(&mut subset, &["a-case".to_string()])?;
     let mut subset_report = scored_report(&subset)?;
@@ -1222,11 +1222,12 @@ fn drift_names_moved_missing_and_stale_rows_and_a_subset_compares_only_its_rows(
     subset_report.rows[0].observed_verdict = Verdict::Credited;
     assert_eq!(expected_drift(&expected, &subset_report, false)?.len(), 1);
 
-    // A whole-corpus run also needs every row present, no extra files and
-    // the same summary.
+    // A whole-corpus run also needs every row present and no extra files; a
+    // committed summary is one of them, since the summary is derived.
     fs::remove_file(expected.join("rows/a-case.json")).map_err(|err| err.to_string())?;
     crate::tests::write(&expected.join("rows/gone-case.json"), "{}\n");
     crate::tests::write(&expected.join("report.json"), "{}\n");
+    crate::tests::write(&expected.join("summary.json"), "{}\n");
     let drift = expected_drift(&expected, &report, true)?;
     assert!(
         drift.iter().any(|d| d.contains("no expected row")),
@@ -1240,17 +1241,17 @@ fn drift_names_moved_missing_and_stale_rows_and_a_subset_compares_only_its_rows(
         drift.iter().any(|d| d.contains("expected/report.json")),
         "{drift:?}"
     );
-    let mut fewer = corpus.clone();
-    select_cases(&mut fewer, &["b-case".to_string()])?;
-    let drift = expected_drift(&expected, &scored_report(&fewer)?, true)?;
     assert!(
-        drift.iter().any(|d| d.contains("summary.json")),
+        drift
+            .iter()
+            .any(|d| d.contains("expected/summary.json is not part of the expected state")),
         "{drift:?}"
     );
 
-    // bless restores exactly the expected state.
+    // bless restores exactly the expected state and writes no summary.
     bless(&expected, &report)?;
     assert!(expected_drift(&expected, &report, true)?.is_empty());
+    assert!(!expected.join("summary.json").exists());
     let unknown = select_cases(&mut corpus.clone(), &["no-such-case".to_string()])
         .err()
         .unwrap_or_default();
@@ -1292,4 +1293,68 @@ fn one_test_name_accepts_a_doctest_name_and_refuses_lists() {
     ] {
         assert!(!is_one_test_name(bad), "{bad:?}");
     }
+}
+
+#[test]
+fn summary_derived_from_blessed_rows_equals_the_run_summary() -> Result<(), String> {
+    let dir = per_record_corpus("verdict-derived-summary", &["a-case", "b-case"])?;
+    let corpus = load_corpus(&dir)?;
+    // One case carries a self-contradicting finding and a summary-count
+    // mismatch, so the contradiction rate and per-code counts are non-trivial.
+    let clean = finding("reachable_unrevealed", 10, "candidate_current");
+    let mut exposed = clean.clone();
+    exposed["classification"] = json!("exposed");
+    let contradicted = json!({
+        "summary": {"findings": 3},
+        "findings": [clean, exposed],
+    });
+    let checks: Vec<(String, Value)> = corpus
+        .cases
+        .iter()
+        .enumerate()
+        .map(|(index, case)| {
+            let check = if index == 0 {
+                contradicted.clone()
+            } else {
+                json!({"findings": []})
+            };
+            (case.case_id.clone(), check)
+        })
+        .collect();
+    let report = build_report(&corpus, &checks, &BTreeMap::new())?;
+    assert!(
+        report.contradiction_rate.denominator > 0 && !report.contradictions_by_code.is_empty(),
+        "fixture must exercise the contradiction counts: {:?}",
+        report.contradictions_by_code
+    );
+    bless(&dir.join("expected"), &report)?;
+    let derived = expected_report(&dir)?;
+    assert_eq!(
+        render_report_json(&derived)?,
+        render_report_json(&report)?,
+        "the summary rebuilt from the row files must equal the run's"
+    );
+    // A row that drops its counts no longer parses, so a stale row cannot
+    // silently zero the contradiction rate.
+    let row_path = dir.join("expected/rows/a-case.json");
+    let mut row = parse_json(&row_path)?;
+    if let Some(object) = row.as_object_mut() {
+        object.remove("findings_scored");
+    }
+    crate::tests::write(
+        &row_path,
+        &serde_json::to_string_pretty(&row).map_err(|err| err.to_string())?,
+    );
+    let err = expected_report(&dir).err().unwrap_or_default();
+    assert!(err.contains("findings_scored"), "{err}");
+
+    // A case without its row fails instead of shrinking the denominators.
+    bless(&dir.join("expected"), &report)?;
+    fs::remove_file(dir.join("expected/rows/b-case.json")).map_err(|err| err.to_string())?;
+    let err = expected_report(&dir).err().unwrap_or_default();
+    assert!(
+        err.contains("missing rows") && err.contains("b-case"),
+        "{err}"
+    );
+    Ok(())
 }
