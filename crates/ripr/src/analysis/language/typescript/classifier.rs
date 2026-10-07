@@ -3062,6 +3062,45 @@ pub(crate) fn ts_oracle_kind_matches_seam(
 /// owner-name call. Oracle classification is independent of relation credit —
 /// the exposure decision separately consumes `has_oracle_eligible_relation`,
 /// so a heuristic-only relation can never promote here.
+/// RIPR-SPEC-0243 rule 10 under rule 4's message-only guard: a literal
+/// message check that also matches the old message passes on both
+/// versions, so it reads `broad_error` / weak for this change. Returns the
+/// tests with those assertions downgraded, or `None` when none needs it.
+fn tests_with_message_guard(
+    tests: &[TypeScriptTest],
+    change: &MessageOnlyChange,
+) -> Option<Vec<TypeScriptTest>> {
+    let fails_guard = |assertion: &TypeScriptAssertion| {
+        assertion.error_payload.as_ref().is_some_and(|payload| {
+            payload.kind.is_message_check() && !message_check_tells_change_apart(payload, change)
+        })
+    };
+    if !tests
+        .iter()
+        .any(|test| test.assertions.iter().any(fails_guard))
+    {
+        return None;
+    }
+    Some(
+        tests
+            .iter()
+            .map(|test| {
+                let mut test = test.clone();
+                for assertion in &mut test.assertions {
+                    if fails_guard(assertion) {
+                        assertion.oracle_kind = OracleKind::BroadError;
+                        assertion.oracle_strength = OracleStrength::Weak;
+                        assertion.error_payload = None;
+                        assertion.expected_value_or_variant = None;
+                        assertion.oracle_confidence = OracleConfidence::Low;
+                    }
+                }
+                test
+            })
+            .collect(),
+    )
+}
+
 pub(crate) fn strongest_family_matching_oracle(
     probe_family: &ProbeFamily,
     candidates: &[TypeScriptRelatedCandidate<'_>],
@@ -3123,6 +3162,7 @@ pub(crate) fn classify_change(
         file,
         line,
         line_text,
+        None,
         owners,
         all_tests,
         workspace_root,
@@ -3136,14 +3176,18 @@ pub(crate) fn classify_change(
 /// (#4106-B) so the `typescript_path_alias_unresolved` advice names the real
 /// fail-closed cause (missing / unparseable / `extends` / unreadable
 /// config) instead of telling the user to enable a flag that is already on.
+///
+/// `old_line_text` is the removed line paired with this one, when the diff
+/// replaced it in place; it feeds the RIPR-SPEC-0243 message-only guard.
 #[allow(
     clippy::too_many_arguments,
-    reason = "9 structurally-distinct context tokens; bundling forces heap allocation; count is stable"
+    reason = "10 structurally-distinct context tokens; bundling forces heap allocation; count is stable"
 )]
 pub(crate) fn classify_change_with_alias_state(
     file: &Path,
     line: usize,
     line_text: &str,
+    old_line_text: Option<&str>,
     owners: &[TypeScriptOwner],
     all_tests: &[TypeScriptTest],
     workspace_root: Option<&Path>,
@@ -3156,6 +3200,14 @@ pub(crate) fn classify_change_with_alias_state(
         .iter()
         .filter(|owner| normalized_path(&owner.file) == changed_file)
         .find(|owner| line >= owner.start_line && line <= owner.end_line)?;
+    let guarded_tests;
+    let all_tests = match old_line_text.and_then(|old| message_only_change(old, line_text)) {
+        Some(change) => {
+            guarded_tests = tests_with_message_guard(all_tests, &change);
+            guarded_tests.as_deref().unwrap_or(all_tests)
+        }
+        None => all_tests,
+    };
     let related_candidates =
         related_test_candidates(owner, all_tests, workspace_root, reexport_index, alias_map);
     // The changed line's probe family selects which assertion of each

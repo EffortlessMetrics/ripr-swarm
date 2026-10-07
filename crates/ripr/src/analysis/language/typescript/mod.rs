@@ -63,6 +63,9 @@ mod classifier;
 mod discovery;
 #[cfg(test)]
 mod line_index_tests;
+mod message_check;
+#[cfg(test)]
+mod message_check_tests;
 mod module_entries;
 #[cfg(test)]
 mod new_declaration_tests;
@@ -102,6 +105,7 @@ pub(crate) use bounded_read::*;
 pub(crate) use bun_bridge::*;
 pub(crate) use classifier::*;
 pub(crate) use discovery::*;
+pub(crate) use message_check::*;
 pub(crate) use module_entries::*;
 pub(crate) use oracle::*;
 pub(crate) use owners::*;
@@ -501,10 +505,16 @@ impl TypeScriptAdapter {
                 {
                     continue;
                 }
+                let paired_removed = changed
+                    .removed_lines
+                    .iter()
+                    .find(|removed| removed.new_side_line == added.line)
+                    .map(|removed| removed.text.as_str());
                 if let Some(mut finding) = classify_change_with_alias_state(
                     &changed.path,
                     added.line,
                     &added.text,
+                    paired_removed,
                     &all_owners,
                     &all_tests,
                     Some(&options.root),
