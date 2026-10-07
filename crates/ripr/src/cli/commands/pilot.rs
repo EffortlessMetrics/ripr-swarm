@@ -229,22 +229,6 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
     // changed seam pilot cannot recommend is not kept: it would displace an
     // actionable seam and leave nothing to recommend.
     let current_change = load_pilot_current_change(&input, git_timeout);
-    // #6944: name the changed files `ripr check` analyzes but the repo
-    // inventory leaves out (build scripts, `xtask/`, roots outside `src`),
-    // so a change there is not read as a change with no seams. Without Rust
-    // enabled neither command analyzes them, so there is nothing to name.
-    let current_change = if rust_enabled {
-        let diff_only = name_diff_only_files(
-            &input.root,
-            &config,
-            &current_change,
-            spent_timeout_ms.saturating_sub(elapsed_ms(analysis_started)),
-            !options.quiet,
-        );
-        current_change.with_diff_only_files(diff_only)
-    } else {
-        current_change
-    };
     // #6943: the inventory seam limit cuts before the change is known, so on
     // a large repo it can drop the very seams the developer changed. Classify
     // the change's own files in what is left of pilot's deadline and add its
@@ -258,6 +242,23 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
         spent_timeout_ms.saturating_sub(elapsed_ms(analysis_started)),
         !options.quiet,
     );
+    // #6944: name the changed files `ripr check` analyzes but the repo
+    // inventory leaves out (build scripts, `xtask/`, roots outside `src`),
+    // so a change there is not read as a change with no seams. It runs after
+    // the change's own classification, so this explanation never spends the
+    // deadline that ranks changed seams. Without Rust enabled neither
+    // command analyzes these files, so there is nothing to name.
+    let current_change = if rust_enabled {
+        let diff_only = name_diff_only_files(
+            &input.root,
+            &config,
+            &current_change,
+            spent_timeout_ms.saturating_sub(elapsed_ms(analysis_started)),
+        );
+        current_change.with_diff_only_files(diff_only)
+    } else {
+        current_change
+    };
     let folded = current_change.fold_classified_change(
         &mut classified,
         &mut inventory_limit_info,
@@ -432,17 +433,26 @@ fn classify_change_past_seam_limit(
 /// pilot's deadline: the module-graph evidence behind them can read the
 /// whole corpus. A late or failed lookup names nothing, so pilot keeps the
 /// plain "no seam pilot analyzed" reason rather than naming a file it did
-/// not establish.
+/// not establish. The miss is reported on stderr even under `--quiet`,
+/// which silences progress, not failures.
 fn name_diff_only_files(
     root: &Path,
     config: &RiprConfig,
     change: &output::pilot::PilotCurrentChange,
     remaining_ms: u64,
-    announce: bool,
 ) -> Vec<(PathBuf, analysis::DiffOnlySource)> {
     let files = change.changed_rust_files();
-    if files.is_empty() || remaining_ms == 0 {
+    if files.is_empty() {
         return Vec::new();
+    }
+    let missed = || {
+        eprintln!(
+            "ripr pilot: could not check the current change for build scripts or xtask files within its deadline"
+        );
+        Vec::new()
+    };
+    if remaining_ms == 0 {
+        return missed();
     }
     let (root, config) = (root.to_path_buf(), config.clone());
     match run_pilot_analysis_with_timeout(
@@ -452,14 +462,7 @@ fn name_diff_only_files(
         move || Ok(analysis::diff_only_rust_files(&root, &config, &files)),
     ) {
         Ok(PilotAnalysisResult::Complete(named)) => named,
-        Ok(PilotAnalysisResult::TimedOut) | Err(_) => {
-            if announce {
-                eprintln!(
-                    "ripr: pilot could not check the current change for build scripts or xtask files within its deadline"
-                );
-            }
-            Vec::new()
-        }
+        Ok(PilotAnalysisResult::TimedOut) | Err(_) => missed(),
     }
 }
 
