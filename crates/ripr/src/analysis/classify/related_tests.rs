@@ -947,8 +947,20 @@ fn find_related_tests_with_candidates<'a>(
             // A unique owner name, or a receiver resolved to this impl, is a
             // direct call. An impl method whose name has other workspace
             // definitions cannot be `direct_owner_call` until the receiver
-            // is bound to this impl (#4760).
-            owner_call_relation_reason(test, owner_fn, owner_name, indexed_same_name_count)
+            // is bound to this impl (#4760). A receiver whose type the
+            // test's own module shadows is name-only even when unique
+            // (#6951).
+            let test_source = index
+                .files()
+                .get(&test.file)
+                .map(|facts| facts.data().source.as_ref());
+            owner_call_relation_reason(
+                test,
+                owner_fn,
+                owner_name,
+                indexed_same_name_count,
+                test_source,
+            )
         } else if helper_chain_reaches {
             // The test calls a function that reaches the owner through
             // the bounded helper-transfer chain (#3296).
@@ -2501,6 +2513,7 @@ fn owner_call_relation_reason(
     owner_fn: Option<&FunctionSummary>,
     owner_name: &str,
     indexed_same_name_count: usize,
+    test_source: Option<&str>,
 ) -> RelationReason {
     let Some(owner) = owner_fn else {
         return RelationReason::DirectOwnerCall;
@@ -2508,6 +2521,17 @@ fn owner_call_relation_reason(
     let Some(impl_type) = impl_self_type_name(&owner.id.0) else {
         return RelationReason::DirectOwnerCall;
     };
+    // #6951: when the test's own module scope declares the owner's impl
+    // type, a bare receiver of that name binds the test-local shadow, not
+    // the production type — the same entity-identity refusal as the #6905
+    // owner pin. A shadowed receiver keeps a name-only relation instead of
+    // direct production reach, in both the unique-name and ambiguous-name
+    // branches. No source (or no shadow) preserves existing credit.
+    if test_source
+        .is_some_and(|source| super::owner_pin::test_module_shadows_type(test, source, &impl_type))
+    {
+        return RelationReason::WeakTokenSubstring;
+    }
     if indexed_same_name_count <= 1 {
         return RelationReason::DirectOwnerCall;
     }
@@ -3117,6 +3141,114 @@ mod tests {
         assert_eq!(related.len(), 1);
         assert_eq!(related[0].1, RelationReason::DirectOwnerCall);
     }
+
+    /// #6951: a unique impl method whose type the test's own module
+    /// shadows. The test binds a test-local `Window` and calls its derived
+    /// `clone` — never the production owner — so the relation is name-only,
+    /// not `direct_owner_call`, even though the name is unique.
+    #[test]
+    fn given_unique_impl_method_when_test_module_shadows_type_then_name_only_relation() {
+        let owner = impl_function("src/lib.rs", "clone", "impl Clone for Window");
+        let mut shadow_test = test_with_call(
+            "src/lib.rs",
+            "a_clone_equals_its_original",
+            "let window = Window { start: 3, end: 9 };\nassert_eq!(window.clone(), window);",
+            "clone",
+        );
+        shadow_test.start_line = 23;
+        shadow_test.end_line = 26;
+        let mut index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions: vec![owner.clone()],
+            tests: vec![shadow_test],
+            ..Default::default()
+        });
+        with_source(&mut index, "src/lib.rs", SHADOWED_WINDOW_SOURCE);
+        let probe = probe("src/lib.rs", "start: self.start");
+
+        let related = find_related_tests(&probe, Some(&owner), &index, true, None, None);
+
+        assert_eq!(related.len(), 1, "the same-named call is still related");
+        assert_eq!(related[0].0.name, "a_clone_equals_its_original");
+        assert_eq!(
+            related[0].1,
+            RelationReason::WeakTokenSubstring,
+            "a receiver shadowed by the test module cannot be direct_owner_call"
+        );
+    }
+
+    /// #6951 preserve: the same unique-name shape without a shadowing
+    /// declaration keeps `direct_owner_call`. The file parses and the
+    /// receiver resolves to the production type.
+    #[test]
+    fn given_unique_impl_method_when_no_shadow_then_direct_owner_call() {
+        let owner = impl_function("src/lib.rs", "apply", "impl Ledger");
+        let mut ledger_test = test_with_call(
+            "src/lib.rs",
+            "changes_balance",
+            "let mut ledger = Ledger { balance: 0 };\nledger.apply(5);",
+            "apply",
+        );
+        ledger_test.start_line = 16;
+        ledger_test.end_line = 19;
+        let mut index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions: vec![owner.clone()],
+            tests: vec![ledger_test],
+            ..Default::default()
+        });
+        with_source(&mut index, "src/lib.rs", UNSHADOWED_LEDGER_SOURCE);
+        let probe = probe("src/lib.rs", "self.persist(amount * 9)");
+
+        let related = find_related_tests(&probe, Some(&owner), &index, true, None, None);
+
+        assert_eq!(related.len(), 1);
+        assert_eq!(related[0].1, RelationReason::DirectOwnerCall);
+    }
+
+    /// #6951 with ambiguity: two impls of one method, and the test module
+    /// shadows the owner's type. The receiver name matches, but it binds
+    /// the shadow — name-only, not `direct_owner_call`.
+    #[test]
+    fn given_two_impls_when_test_module_shadows_owner_type_then_name_only_relation() {
+        let owner = impl_function("src/lib.rs", "size_hint", "impl Iterator for WhileSome");
+        let other = impl_function("src/lib.rs", "size_hint", "impl Iterator for Combinations");
+        let mut shadow_test = test_with_call(
+            "src/lib.rs",
+            "while_some_size_hint_upper_bound",
+            "let it = WhileSome { inner: vec![Some(1)] };\nassert_eq!(it.size_hint().1, Some(1));",
+            "size_hint",
+        );
+        shadow_test.start_line = 16;
+        shadow_test.end_line = 19;
+        let mut index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions: vec![owner.clone(), other],
+            tests: vec![shadow_test],
+            ..Default::default()
+        });
+        with_source(&mut index, "src/lib.rs", SHADOWED_WHILE_SOME_SOURCE);
+        let probe = probe("src/lib.rs", "(0, self.iter.size_hint().1)");
+
+        let related = find_related_tests(&probe, Some(&owner), &index, true, None, None);
+
+        assert_eq!(related.len(), 1);
+        assert_eq!(
+            related[0].1,
+            RelationReason::WeakTokenSubstring,
+            "a shadowed receiver cannot be direct_owner_call even when the name resolves"
+        );
+    }
+
+    /// Fixture-shaped source for the unique-name shadow test: production
+    /// `Window` with a hand-written `Clone`, and `mod tests` declaring its
+    /// own same-name `Window`. The test fn spans lines 23-26.
+    const SHADOWED_WINDOW_SOURCE: &str = "pub struct Window {\n    start: u32,\n    end: u32,\n}\n\nimpl Clone for Window {\n    fn clone(&self) -> Self {\n        Window {\n            start: self.start,\n            end: self.end,\n        }\n    }\n}\n\n#[cfg(test)]\nmod tests {\n    struct Window {\n        start: u32,\n        end: u32,\n    }\n\n    #[test]\n    fn a_clone_equals_its_original() {\n        let window = Window { start: 3, end: 9 };\n        assert_eq!(window.clone(), window);\n    }\n}\n";
+
+    /// Same-file production `Ledger` with no test-module shadow. The test
+    /// fn spans lines 16-19.
+    const UNSHADOWED_LEDGER_SOURCE: &str = "pub struct Ledger {\n    balance: i32,\n}\n\nimpl Ledger {\n    pub fn apply(&mut self, amount: i32) {\n        self.balance += amount;\n    }\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    #[test]\n    fn changes_balance() {\n        let mut ledger = Ledger { balance: 0 };\n        ledger.apply(5);\n    }\n}\n";
+
+    /// Two-impl shape with the owner's type shadowed in `mod tests`. The
+    /// test fn spans lines 16-19.
+    const SHADOWED_WHILE_SOME_SOURCE: &str = "pub struct WhileSome {\n    inner: Vec<Option<u32>>,\n}\n\npub struct Combinations {\n    remaining: u32,\n}\n\n#[cfg(test)]\nmod tests {\n    struct WhileSome {\n        inner: Vec<Option<u32>>,\n    }\n\n    #[test]\n    fn while_some_size_hint_upper_bound() {\n        let it = WhileSome { inner: vec![Some(1)] };\n        assert_eq!(it.size_hint().1, Some(1));\n    }\n}\n";
 
     /// #2971 scope control: the same workspace as the positive control above,
     /// reached through a partial index. The diff path indexes only the changed

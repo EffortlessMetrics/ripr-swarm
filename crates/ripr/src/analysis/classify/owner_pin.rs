@@ -3392,7 +3392,15 @@ fn named_or_slice(
 /// an inner scope would disambiguate, but this stays lexical and fails
 /// closed. A file that textually declares the name nowhere needs no parse;
 /// one that fails to parse fails closed.
-fn test_module_shadows_type(test: &TestSummary, source: &str, base: &str) -> bool {
+///
+/// Shared with related-test classification (#6951): a shadowed receiver
+/// type also refuses `direct_owner_call` reach credit, for the same
+/// entity-identity reason.
+pub(in crate::analysis) fn test_module_shadows_type(
+    test: &TestSummary,
+    source: &str,
+    base: &str,
+) -> bool {
     let masked = mask_comments_and_strings(source);
     // `r#Window` denotes `Window`: a raw-identifier declaration shadows too.
     let raw = format!("r#{base}");

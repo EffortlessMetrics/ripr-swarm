@@ -21,10 +21,10 @@ Probe
   canonical gap: gap:rust:src/lib.rs:impl Clone for Window::clone:field_construction:field_construction:start_self.start
 
 Static exposure
-  weakly_exposed (warning, confidence 0.92)
+  weakly_exposed (warning, confidence 0.66)
 
 Evidence
-  - reach yes: Related tests appear to reach clone: a_clone_equals_its_original
+  - reach weak: No test is seen calling clone; tests share only its file or a name token: a_clone_equals_its_original
   - infection yes: Reachable tests can plausibly activate this changed behavior
   - propagation yes: Complete propagation witness reaches constructed field: start: self.start
   - observation yes: A related test observes a value or effect near the changed behavior
