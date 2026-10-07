@@ -37,8 +37,11 @@ item — a seam ID, or a canonical gap ID naming exactly one seam — repair
 starts the before phase for that exact subject.
 
 A successful start prints the before-phase summary and the compact repair
-card for the seam. Repair never edits source files and never runs project
-verification; make the focused test edit, then run `ripr continue`.
+card for the seam. If the card cannot render after the start published,
+repair refuses with exit 3 and empty stdout, naming the retained attempt
+and its recovery instead of printing a partial success. Repair never edits
+source files and never runs project verification; make the focused test
+edit, then run `ripr continue`.
 
 This is the ordinary route into the repair transaction. The advanced
 spelling `ripr agent repair --seam-id ID --phase before` runs the same
