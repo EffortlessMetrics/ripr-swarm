@@ -1010,11 +1010,22 @@ pub(crate) fn normalize_fixture_json_output(value: &str) -> String {
 }
 
 pub(crate) fn normalize_fixture_human_output(value: &str) -> String {
-    let normalized = project_renderer_cwd(&value.replace('\\', "/"));
+    let normalized = project_renderer_cwd(&normalize_separators(value));
     let trimmed = normalized.trim_end_matches(['\r', '\n']);
     let mut output = trimmed.to_string();
     output.push('\n');
     output
+}
+
+/// Turn Windows separators into `/` while keeping the shell's `'\''`
+/// escape intact, so a checkout path containing an apostrophe still reaches
+/// `project_cwd_prefix` as one quoted token (#6762).
+fn normalize_separators(value: &str) -> String {
+    value
+        .split(r"'\''")
+        .map(|part| part.replace('\\', "/"))
+        .collect::<Vec<_>>()
+        .join(r"'\''")
 }
 
 /// The `check` drill-in commands bind `--root` to the resolved repository
@@ -2037,6 +2048,15 @@ mod tests {
         assert_eq!(
             project_cwd_prefix(
                 r"--root '/tmp/dev'\''s repo/fixtures/x/input' --diff d",
+                "/tmp/dev's repo/"
+            ),
+            "--root <cwd>/fixtures/x/input --diff d"
+        );
+        // The full human-output path keeps that escape through separator
+        // normalization; replacing every backslash first left it unprojected.
+        assert_eq!(
+            project_cwd_prefix(
+                &normalize_separators(r"--root '/tmp/dev'\''s repo/fixtures\x\input' --diff d"),
                 "/tmp/dev's repo/"
             ),
             "--root <cwd>/fixtures/x/input --diff d"
