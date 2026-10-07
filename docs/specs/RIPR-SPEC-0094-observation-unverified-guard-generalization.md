@@ -344,10 +344,11 @@ calls a function that reaches the owner within six call hops (a
 `#[cfg(test)]` helper such as `reference_tax` counts), computes its
 expected value through the changed code (RIPR-SPEC-0035, self-computed
 expected value). In `assert_eq!(invoice(3, 100), sub + tax(sub))`, where
-`invoice` calls `tax`, both sides move with `tax`. The same owner call on
-both sides (`assert_eq!(tax(250), tax(250))`) counts too; two different
-owner-calling expressions (`tax(250) * 2` against `tax(250) + 8`) can pin
-the owner's value and keep their strength. Such an assertion never
+`invoice` calls `tax`, both sides move with `tax`. Owner calls on both
+sides count too when the identifiers and literals outside those calls are
+the same (`assert_eq!(tax(250) * 2, 2 * tax(250))`); when they differ
+(`tax(250) * 2` against `tax(250) + 8`), the assertion can pin the owner's
+value and keeps its strength. Such an assertion never
 confirms observation, and its probe-relative strength is at most `weak`, for
 every family. Callers are found over indexed call facts, and a call counts
 only when its own syntax can name the callee: a bare call or a lower-case

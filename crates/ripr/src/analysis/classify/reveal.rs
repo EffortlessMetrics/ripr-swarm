@@ -1054,18 +1054,77 @@ fn expected_computed_through_owner(
             .any(|(ty, called)| called != owner && reaches_owner(ty.as_deref(), called))
     };
     match (text_calls(left, owner), text_calls(right, owner)) {
-        // Identical owner calls on both sides are equal whatever the owner
-        // returns. Different expressions (`tax(250) * 2` against
-        // `tax(250) + 8`) can still pin its value, so they keep their
-        // strength (#6970 review).
+        // Both sides run the owner. Unless the code around the owner calls
+        // differs (`tax(250) * 2` against `tax(250) + 8` pins the owner's
+        // value), the sides move together; reordering, parentheses or a
+        // path prefix (`2 * tax(250)`, `crate::tax(250)`) do not count as
+        // a difference (#6970 review).
         (true, true) => {
-            let normalized = |operand: &str| operand.split_whitespace().collect::<String>();
-            normalized(left) == normalized(right)
+            terms_outside_owner_calls(left, owner) == terms_outside_owner_calls(right, owner)
         }
         (true, false) => reaches(right),
         (false, true) => reaches(left),
         _ => false,
     }
+}
+
+/// The identifiers and literals of `operand` outside every call of `owner`
+/// (its arguments and any `path::` prefix included), sorted, with
+/// comments and string contents masked. Operators and grouping are
+/// dropped, so equal multisets mean the operands differ at most in order,
+/// grouping or what they pass the owner.
+fn terms_outside_owner_calls(operand: &str, owner: &str) -> Vec<String> {
+    let masked = crate::analysis::extract::mask_comments_and_strings(operand);
+    let bytes = masked.as_bytes();
+    let is_word = |byte: u8| byte.is_ascii_alphanumeric() || byte == b'_';
+    let mut terms = Vec::new();
+    let mut path = Vec::new();
+    let mut index = 0;
+    while index < bytes.len() {
+        if !is_word(bytes[index]) {
+            if !(bytes[index] == b':' && bytes.get(index + 1) == Some(&b':')) {
+                terms.append(&mut path);
+            }
+            index += if bytes[index] == b':' && bytes.get(index + 1) == Some(&b':') {
+                2
+            } else {
+                1
+            };
+            continue;
+        }
+        let start = index;
+        while index < bytes.len() && is_word(bytes[index]) {
+            index += 1;
+        }
+        let word = &masked[start..index];
+        let rest = masked[index..].trim_start();
+        if word == owner && rest.starts_with('(') {
+            // Drop the path prefix and skip the balanced argument list.
+            path.clear();
+            let mut depth = 0usize;
+            let mut cursor = masked.len() - rest.len();
+            while cursor < bytes.len() {
+                match bytes[cursor] {
+                    b'(' => depth += 1,
+                    b')' => {
+                        depth = depth.saturating_sub(1);
+                        if depth == 0 {
+                            cursor += 1;
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+                cursor += 1;
+            }
+            index = cursor;
+            continue;
+        }
+        path.push(word.to_string());
+    }
+    terms.append(&mut path);
+    terms.sort();
+    terms
 }
 
 /// The bare-scrutinee convention of the synthesized guarded-Result-match
@@ -6997,6 +7056,24 @@ return Err(\"typed pin\".into());
         // this passes only when `tax(250)` is 8.
         assert!(!expected_computed_through_owner(
             "assert_eq!(tax(250) * 2, tax(250) + 8);",
+            "tax",
+            &|_: Option<&str>, _: &str| false
+        ));
+        // Reordering, grouping and a path prefix leave the sides equal.
+        for text in [
+            "assert_eq!(tax(250) * 2, 2 * tax(250));",
+            "assert_eq!((tax(250)), tax(250));",
+            "assert_eq!(crate::tax(250), tax(250u64));",
+            "assert_eq!(tax(250) /* same */, tax(250));",
+        ] {
+            assert!(
+                expected_computed_through_owner(text, "tax", &|_: Option<&str>, _: &str| false),
+                "{text}"
+            );
+        }
+        // Different code around the owner keeps strength.
+        assert!(!expected_computed_through_owner(
+            "assert_eq!(tax(250) + base, tax(250) + other);",
             "tax",
             &|_: Option<&str>, _: &str| false
         ));
