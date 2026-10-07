@@ -54,20 +54,29 @@ pub(crate) fn posix_words(command: &str) -> Result<Vec<String>, String> {
 
 #[test]
 fn posix_words_keep_quoted_checkout_paths_whole() -> Result<(), String> {
-    let words =
-        posix_words("ripr explain --root '/home/dev/my repo/it'\\''s' --worktree probe:a:1:b")?;
+    let words = posix_words(
+        "ripr explain --root '/srv/checkouts/my repo/it'\\''s' --worktree probe:a:1:b",
+    )?;
     assert_eq!(
         words,
         [
             "ripr",
             "explain",
             "--root",
-            "/home/dev/my repo/it's",
+            "/srv/checkouts/my repo/it's",
             "--worktree",
             "probe:a:1:b"
         ]
     );
-    assert!(posix_words("ripr check --root 'open").is_err());
-    assert!(posix_words("ripr check --root 'a'\"$(printf '\\033')\"'b'").is_err());
+    for rejected in [
+        "ripr check --root 'open",
+        "ripr check --root 'a'\"$(printf '\\033')\"'b'",
+    ] {
+        if let Ok(words) = posix_words(rejected) {
+            return Err(format!(
+                "`{rejected}` split into {words:?} instead of failing"
+            ));
+        }
+    }
     Ok(())
 }
