@@ -2421,6 +2421,33 @@ fn a_test_module_shadow_of_the_receiver_refuses_the_clone_pin() {
     assert_eq!(admitted_texts(&index, &pin).len(), 1);
 }
 
+/// #6948 review: the parsed module item for a macro-generated type is the
+/// macro, not the struct it emits, so a test-module `macro_rules!`
+/// definition plus invocation emitting `Window` shadows the receiver the
+/// same way a direct declaration does. Precision control: a macro emitting
+/// an unrelated name does not shadow, so the pin still admits.
+#[test]
+fn a_macro_generated_test_module_shadow_of_the_receiver_refuses_the_clone_pin() {
+    let shadowed = "#[derive(Debug, PartialEq, Eq)]\npub struct Window {\n    start: u32,\n    end: u32,\n}\n\nimpl Window {\n    pub fn new(start: u32, end: u32) -> Self {\n        Window { start, end }\n    }\n}\n\nimpl Clone for Window {\n    fn clone(&self) -> Self {\n        Window {\n            start: self.start,\n            end: self.end,\n        }\n    }\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    macro_rules! define_window {\n        () => {\n            #[derive(Debug, Clone, PartialEq, Eq)]\n            struct Window {\n                start: u32,\n                end: u32,\n            }\n        };\n    }\n    define_window!();\n\n    #[test]\n    fn a_clone_equals_its_original() {\n        let window = Window { start: 3, end: 9 };\n        assert_eq!(window.clone(), window);\n    }\n}\n";
+    let (index, pin) =
+        same_file_clone_field_pin(shadowed, "start: self.start,", "start: self.start,");
+    assert!(
+        pin.is_some(),
+        "the pin establishes from the production type"
+    );
+    let Some(pin) = pin else { return };
+    assert!(
+        admitted_texts(&index, &pin).is_empty(),
+        "a macro-generated shadow names the test-local type, not the owner"
+    );
+    let unrelated = shadowed.replace("            struct Window", "            struct Pane");
+    let (index, pin) =
+        same_file_clone_field_pin(&unrelated, "start: self.start,", "start: self.start,");
+    assert!(pin.is_some(), "the unrelated-macro control must establish");
+    let Some(pin) = pin else { return };
+    assert_eq!(admitted_texts(&index, &pin).len(), 1);
+}
+
 /// #6905 for rules 1-2 method pins: the receiver type is established by
 /// name, so a test-module shadow refuses it the same way. Gate-level
 /// control: the shadow is methodless (a same-name method would already

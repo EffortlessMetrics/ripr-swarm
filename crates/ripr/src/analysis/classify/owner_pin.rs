@@ -3152,7 +3152,10 @@ fn test_module_shadows_type(test: &TestSummary, source: &str, base: &str) -> boo
 }
 
 /// Whether a direct module item declares the type name `base` (`r#Window`
-/// denotes `Window`).
+/// denotes `Window`). A macro definition or invocation may emit the type
+/// (#6948 review): the parsed item is the macro, not the struct, enum,
+/// union or alias it generates, so a lexical declaration of the name inside
+/// the macro's own text fails closed.
 fn module_item_names_type(item: &ast::Item, base: &str) -> bool {
     let name = match item {
         ast::Item::Struct(item) => item.name(),
@@ -3161,10 +3164,22 @@ fn module_item_names_type(item: &ast::Item, base: &str) -> bool {
         ast::Item::TypeAlias(item) => item.name(),
         _ => None,
     };
-    name.is_some_and(|name| {
+    if name.is_some_and(|name| {
         let text = name.text().to_string();
         text.strip_prefix("r#").unwrap_or(&text) == base
-    })
+    }) {
+        return true;
+    }
+    if !matches!(
+        item,
+        ast::Item::MacroRules(_) | ast::Item::MacroDef(_) | ast::Item::MacroCall(_)
+    ) {
+        return false;
+    }
+    let text = mask_comments_and_strings(&item.syntax().text().to_string());
+    declares_type(&text, base)
+        || declares_type(&text, &format!("r#{base}"))
+        || file_aliases_type(&text, base)
 }
 
 /// A trait's methods are callable with method syntax only while the trait
