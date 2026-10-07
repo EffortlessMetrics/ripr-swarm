@@ -1,5 +1,8 @@
 use std::path::{Component, Path, PathBuf};
 
+/// How a builder renders its shell-redirect target from `(root, out_path)`.
+type RedirectTarget = fn(&str, &str) -> String;
+
 pub(crate) const AGENT_LOOP_COMMAND_TEMPLATE_VERSION: &str = "0.1";
 
 pub(crate) const WORKFLOW_BEFORE_SNAPSHOT_ARTIFACT: &str =
@@ -133,6 +136,22 @@ pub(crate) fn anchored_redirect_target(root: &str, out_path: &str) -> String {
     }
 }
 
+/// Render a shell-redirect target for a portable command (#4000): one whose
+/// relative `--root` deliberately means the reader's own checkout, such as a
+/// review card published into a pull request. A relative root keeps the
+/// target relative to that same root, so the command analyzes and writes
+/// one repository wherever it is pasted. [`anchored_redirect_target`] would
+/// instead resolve the target against the renderer's working directory (often
+/// a CI runner), splitting analysis and write across two machines. An
+/// absolute root or target is anchored exactly as there.
+pub(crate) fn portable_redirect_target(root: &str, out_path: &str) -> String {
+    let root_path = Path::new(root);
+    if root_path.is_absolute() || Path::new(out_path).is_absolute() {
+        return anchored_redirect_target(root, out_path);
+    }
+    root_path_display(&lexically_clean(&root_path.join(out_path)))
+}
+
 /// Drop `.` segments and resolve `..` lexically (no filesystem I/O: the
 /// target usually does not exist yet when guidance is rendered). Keeps the
 /// anchored target free of `/./` noise when `--root` is `.`. A leading
@@ -204,6 +223,27 @@ pub(crate) fn check_analysis_outcome_command_with_base(
     mode: &str,
     out_path: &str,
 ) -> String {
+    analysis_outcome_command(root, base, mode, out_path, anchored_redirect_target)
+}
+
+/// [`check_analysis_outcome_command_with_base`] for a portable root; see
+/// [`portable_redirect_target`].
+pub(crate) fn portable_check_analysis_outcome_command_with_base(
+    root: &str,
+    base: Option<&str>,
+    mode: &str,
+    out_path: &str,
+) -> String {
+    analysis_outcome_command(root, base, mode, out_path, portable_redirect_target)
+}
+
+fn analysis_outcome_command(
+    root: &str,
+    base: Option<&str>,
+    mode: &str,
+    out_path: &str,
+    redirect_target: RedirectTarget,
+) -> String {
     let base_arg = base
         .map(|base| format!(" --base {}", shell_arg(base)))
         .unwrap_or_default();
@@ -212,7 +252,7 @@ pub(crate) fn check_analysis_outcome_command_with_base(
         shell_arg(&root_display(root)),
         base_arg,
         shell_arg(mode),
-        shell_arg(&anchored_redirect_target(root, out_path))
+        shell_arg(&redirect_target(root, out_path))
     )
 }
 
@@ -226,11 +266,26 @@ pub(crate) fn agent_packet_command(root: &str, seam_id: &str, out_path: &str) ->
 }
 
 pub(crate) fn agent_brief_command(root: &str, seam_id: &str, out_path: &str) -> String {
+    brief_command(root, seam_id, out_path, anchored_redirect_target)
+}
+
+/// [`agent_brief_command`] for a portable root; see
+/// [`portable_redirect_target`].
+pub(crate) fn portable_agent_brief_command(root: &str, seam_id: &str, out_path: &str) -> String {
+    brief_command(root, seam_id, out_path, portable_redirect_target)
+}
+
+fn brief_command(
+    root: &str,
+    seam_id: &str,
+    out_path: &str,
+    redirect_target: RedirectTarget,
+) -> String {
     format!(
         "ripr agent brief --root {} --seam-id {} --json > {}",
         shell_arg(&root_display(root)),
         shell_arg(seam_id),
-        shell_arg(&anchored_redirect_target(root, out_path))
+        shell_arg(&redirect_target(root, out_path))
     )
 }
 
@@ -240,13 +295,35 @@ pub(crate) fn agent_verify_command(
     after_path: &str,
     out_path: Option<&str>,
 ) -> String {
-    let command = format!(
+    let command = verify_command_head(root, before_path, after_path);
+    append_redirect(root, command, out_path)
+}
+
+/// [`agent_verify_command`] for a portable root; see
+/// [`portable_redirect_target`].
+pub(crate) fn portable_agent_verify_command(
+    root: &str,
+    before_path: &str,
+    after_path: &str,
+    out_path: Option<&str>,
+) -> String {
+    let command = verify_command_head(root, before_path, after_path);
+    match out_path {
+        Some(path) => format!(
+            "{command} > {}",
+            shell_arg(&portable_redirect_target(root, path))
+        ),
+        None => command,
+    }
+}
+
+fn verify_command_head(root: &str, before_path: &str, after_path: &str) -> String {
+    format!(
         "ripr agent verify --root {} --before {} --after {} --json",
         shell_arg(&root_display(root)),
         shell_arg(before_path),
         shell_arg(after_path)
-    );
-    append_redirect(root, command, out_path)
+    )
 }
 
 pub(crate) fn agent_receipt_command(
@@ -459,6 +536,64 @@ fn append_redirect(root: &str, command: String, out_path: Option<&str>) -> Strin
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// #4000: a portable command's analyzed root and redirect target must
+    /// name one repository. A relative root keeps a relative target under
+    /// that root; the bound builders keep anchoring at the renderer's
+    /// resolved root, and an absolute root anchors either way.
+    #[test]
+    fn portable_redirect_stays_under_the_typed_root() -> Result<(), String> {
+        let artifact = WORKFLOW_AGENT_BRIEF_ARTIFACT;
+        for (root, expected) in [
+            (".", artifact.to_string()),
+            ("my repo", format!("my repo/{artifact}")),
+            ("./sub/../my repo", format!("my repo/{artifact}")),
+        ] {
+            let target = portable_redirect_target(root, artifact);
+            if target != expected {
+                return Err(format!("portable target for {root:?}: {target}"));
+            }
+            let command = portable_agent_brief_command(root, "seam", artifact);
+            if !command.ends_with(&format!("> {}", shell_arg(&expected))) {
+                return Err(format!("portable brief split root and write: {command}"));
+            }
+        }
+        let bound = agent_brief_command(".", "seam", artifact);
+        if !bound.ends_with(&format!(
+            "> {}",
+            shell_arg(&anchored_redirect_target(".", artifact))
+        )) || !Path::new(&anchored_redirect_target(".", artifact)).is_absolute()
+        {
+            return Err(format!("bound brief must stay anchored: {bound}"));
+        }
+        let absolute = bound_root("my repo");
+        if portable_redirect_target(&absolute, artifact)
+            != anchored_redirect_target(&absolute, artifact)
+        {
+            return Err("an absolute root must anchor the same way".to_string());
+        }
+        let verify = portable_agent_verify_command(
+            ".",
+            WORKFLOW_BEFORE_SNAPSHOT_ARTIFACT,
+            WORKFLOW_AFTER_SNAPSHOT_ARTIFACT,
+            Some(WORKFLOW_AGENT_VERIFY_ARTIFACT),
+        );
+        let outcome = portable_check_analysis_outcome_command_with_base(
+            ".",
+            Some("main"),
+            "draft",
+            WORKFLOW_ANALYSIS_OUTCOME_ARTIFACT,
+        );
+        for (command, target) in [
+            (verify, WORKFLOW_AGENT_VERIFY_ARTIFACT),
+            (outcome, WORKFLOW_ANALYSIS_OUTCOME_ARTIFACT),
+        ] {
+            if !command.ends_with(&format!("> {target}")) {
+                return Err(format!("portable command left the root: {command}"));
+            }
+        }
+        Ok(())
+    }
 
     #[test]
     fn analysis_outcome_preserves_selected_base_and_default_compatibility() -> Result<(), String> {

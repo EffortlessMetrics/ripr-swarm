@@ -1507,7 +1507,7 @@ fn pilot_language_routes_state_follows_rust_seams_and_discovered_languages() {
             assert_unavailable(route);
             continue;
         }
-        assert_eq!(route.command.as_deref(), Some("ripr check --root ."));
+        assert_eq!(route.command.as_deref(), Some(route_command().as_str()));
         assert_eq!(route.guidance_category, Some(TsFullRepoGuidance::CATEGORY));
         assert_eq!(
             route.guidance.as_deref(),
@@ -1516,7 +1516,7 @@ fn pilot_language_routes_state_follows_rust_seams_and_discovered_languages() {
     }
     let python = &required.routes[2];
     if LanguageId::Python.is_available() {
-        assert_eq!(python.command.as_deref(), Some("ripr check --root ."));
+        assert_eq!(python.command.as_deref(), Some(route_command().as_str()));
         assert_eq!(
             python.guidance_category,
             Some(PythonRepoExposureGuidance::CATEGORY)
@@ -1531,13 +1531,14 @@ fn pilot_language_routes_state_follows_rust_seams_and_discovered_languages() {
     let perl = &required.routes[3];
     if LanguageId::Perl.is_available() {
         assert_eq!(perl.language_status(), "preview");
-        assert_eq!(perl.command.as_deref(), Some("ripr check --root ."));
+        assert_eq!(perl.command.as_deref(), Some(route_command().as_str()));
     } else {
         assert_unavailable(perl);
     }
+    let route = route_command();
     let expected_commands: Vec<&str> = if typescript_available || LanguageId::Python.is_available()
     {
-        vec!["ripr check --root ."]
+        vec![route.as_str()]
     } else {
         Vec::new()
     };
@@ -1607,7 +1608,7 @@ fn pilot_terminal_route_label_has_one_shape_for_every_language() {
             .unwrap_or_default();
         assert_eq!(
             route_line,
-            "    route: ripr check --root .",
+            format!("    route: {}", route_command()),
             "{} route label differs:\n{terminal}",
             route.language.as_str()
         );
@@ -1865,16 +1866,20 @@ fn pilot_renderers_show_language_routes_only_without_rust_seams() -> Result<(), 
         }
     } else {
         assert!(
-            terminal.contains("typescript: 1 file (preview, diff-first; not enabled in ripr.toml [languages])\n    route: ripr check --root .\n"),
+            terminal.contains(&format!("typescript: 1 file (preview, diff-first; not enabled in ripr.toml [languages])\n    route: {}\n", route_command())),
             "{terminal}"
         );
         assert!(
-            terminal.ends_with(
-                "Next, analyze the changed code in these languages:\n  ripr check --root .\n"
-            ),
+            terminal.ends_with(&format!(
+                "Next, analyze the changed code in these languages:\n  {}\n",
+                route_command()
+            )),
             "{terminal}"
         );
-        assert!(md.contains("```bash\nripr check --root .\n```"), "{md}");
+        assert!(
+            md.contains(&format!("```bash\n{}\n```", route_command())),
+            "{md}"
+        );
     }
     assert!(!terminal.contains("ripr outcome --before"), "{terminal}");
     assert!(!md.contains("ripr outcome --before"), "{md}");
@@ -2493,4 +2498,13 @@ fn pilot_renderers_say_whether_the_top_recommendation_is_in_the_current_change()
         );
     }
     Ok(())
+}
+
+/// The language route pilot prints for the `.` fixtures: `ripr check` on the
+/// repository pilot analyzed, bound so it survives a paste elsewhere (#4000).
+fn route_command() -> String {
+    format!(
+        "ripr check --root {}",
+        crate::agent::loop_commands::shell_arg(&crate::agent::loop_commands::bound_root("."))
+    )
 }
