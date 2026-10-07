@@ -1,0 +1,13 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 97eae71..c1408ea 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -6,7 +6,7 @@ pub const ALPHABET: &[u8; 8] = b"abcdefgh";
+ pub fn encode3(input: &[u8]) -> Vec<u8> {
+     let mut out = Vec::with_capacity(input.len());
+     for &b in input {
+-        let index = (b & 0x07) as usize;
++        let index = (b % 8) as usize;
+         debug_assert!(index < ALPHABET.len());
+         out.push(ALPHABET[index % ALPHABET.len()]);
+     }

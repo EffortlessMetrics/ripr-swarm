@@ -3,7 +3,7 @@ use super::propagation_witness::{
     PropagationWitnessV1, complete_direct_witness, is_direct_collection_state_write,
     normalize_semantic_text, valid_owner_bound_partial_witness,
 };
-use super::text::exact_error_variant;
+use super::text::{exact_error_variant, question_mark_error_variant};
 use crate::domain::*;
 
 pub(in crate::analysis) fn propagation_evidence(
@@ -147,7 +147,7 @@ pub(in crate::analysis) fn local_flow_sinks(
         )],
         ProbeFamily::ErrorPath => vec![flow_sink(
             FlowSinkKind::ErrorVariant,
-            result_error_text(&probe.expression),
+            error_path_sink_text(probe, owner_fn),
             probe.location.line,
             owner.clone(),
         )],
@@ -261,6 +261,20 @@ fn predicate_flow_sinks(
         )];
     }
     Vec::new()
+}
+
+/// The declared name of one generic parameter item (`E: From<X>` -> `E`,
+/// `const N: usize` -> `N`); `None` for a lifetime or an empty item.
+fn generic_item_name(item: &str) -> Option<&str> {
+    let item = item.trim();
+    let item = item.strip_prefix("const ").unwrap_or(item).trim_start();
+    if item.starts_with('\'') {
+        return None;
+    }
+    let end = item
+        .find(|character: char| !(character.is_ascii_alphanumeric() || character == '_'))
+        .unwrap_or(item.len());
+    (end > 0).then(|| &item[..end])
 }
 
 /// Identifier-like tokens (`amount`, `threshold`, …) referenced by a predicate
@@ -788,6 +802,233 @@ fn looks_like_config_effect(text: &str) -> bool {
         ]
         .iter()
         .any(|needle| text.contains(needle))
+}
+
+/// The error-variant sink of an ErrorPath probe. A statement-level
+/// `<expr>.ok_or(Type::Variant)?` / `.ok_or_else(|| Type::Variant)?`
+/// (#6695) returns `Err(Type::Variant)` from the owner, so its sink is that
+/// error — but only when the line sits directly in the owner's body, where
+/// the `?` returns from the owner itself. Every other shape keeps the
+/// existing text.
+fn error_path_sink_text(probe: &Probe, owner_fn: Option<&FunctionSummary>) -> String {
+    if exact_error_variant(&probe.expression).is_none()
+        && let Some(variant) = question_mark_error_variant(&probe.expression)
+        && question_mark_returns_from_owner(probe, owner_fn)
+        && owner_error_type_names_variant_enum(owner_fn, &variant)
+    {
+        return format!("Result::Err({variant})");
+    }
+    result_error_text(&probe.expression)
+}
+
+/// Whether the owner's declared return type is `Result<_, E>` with `E` the
+/// enum the `ok_or` variant belongs to (PR #6786 review, Devin). `?`
+/// converts the error through `From` when the owner returns another error
+/// type (`Inner::Bad` becomes `Outer::Wrapped`), so the variant is the
+/// owner's returned error only when the types agree. The variant's enum path
+/// and the error type must be textually equal after dropping one leading
+/// `crate::` or `self::` (a final-segment match let `other::E::Bad` pass for
+/// an owner returning a different `E`; PR #6786 review, CodeRabbit). A type
+/// alias (`Result<T>`, `io::Result<T>`, `Result<T, Error>` naming an alias),
+/// an imported-path spelling difference, `Self`, a `fn`-level generic
+/// parameter of that name, or an unparsed signature answers `false`
+/// (fail-closed).
+fn owner_error_type_names_variant_enum(owner_fn: Option<&FunctionSummary>, variant: &str) -> bool {
+    fn local_path(path: &str) -> &str {
+        let path = path.trim();
+        path.strip_prefix("crate::")
+            .or_else(|| path.strip_prefix("self::"))
+            .unwrap_or(path)
+    }
+    let Some(function) = owner_fn else {
+        return false;
+    };
+    let Some((enum_path, _)) = variant.rsplit_once("::") else {
+        return false;
+    };
+    let enum_path = local_path(enum_path);
+    let Some(returned) = super::owner_pin::declared_return_type(&function.body) else {
+        return false;
+    };
+    let returned = returned.trim();
+    let Some(arguments) = ["Result<", "std::result::Result<", "core::result::Result<"]
+        .iter()
+        .find_map(|prefix| returned.strip_prefix(prefix))
+        .and_then(|rest| rest.strip_suffix('>'))
+    else {
+        return false;
+    };
+    // Split the generic arguments at depth-zero commas.
+    let mut depth = 0i32;
+    let mut parts = Vec::new();
+    let mut start = 0;
+    for (offset, character) in arguments.char_indices() {
+        match character {
+            '<' | '(' | '[' => depth += 1,
+            '>' | ')' | ']' => depth -= 1,
+            ',' if depth == 0 => {
+                parts.push(&arguments[start..offset]);
+                start = offset + 1;
+            }
+            _ => {}
+        }
+    }
+    parts.push(&arguments[start..]);
+    let [_, error_type] = parts.as_slice() else {
+        return false;
+    };
+    let error_type = local_path(error_type);
+    !error_type.is_empty()
+        && error_type.chars().all(|character| {
+            character.is_ascii_alphanumeric() || character == '_' || character == ':'
+        })
+        && error_type == enum_path
+        && fn_generic_parameters(&function.body).is_some_and(|names| !names.contains(&error_type))
+}
+
+/// The names a `fn` header's own generic parameter list declares
+/// (`fn parse<'a, E: From<X>, const N: usize>` -> `["E", "N"]`); lifetimes
+/// are skipped. `Some(vec![])` when the name is followed directly by `(`;
+/// `None` when the header cannot be read (fail-closed for the caller).
+fn fn_generic_parameters(definition: &str) -> Option<Vec<&str>> {
+    let masked_fn = definition.find("fn ")?;
+    let after_fn = definition[masked_fn + "fn ".len()..].trim_start();
+    let name_len = after_fn
+        .find(|character: char| !(character.is_ascii_alphanumeric() || character == '_'))
+        .unwrap_or(after_fn.len());
+    let rest = after_fn[name_len..].trim_start();
+    if rest.starts_with('(') {
+        return Some(Vec::new());
+    }
+    let generics = rest.strip_prefix('<')?;
+    let mut names = Vec::new();
+    let mut depth = 0i32;
+    let mut item_start = 0;
+    let mut previous = ' ';
+    for (offset, character) in generics.char_indices() {
+        let arrow = previous == '-';
+        previous = character;
+        match character {
+            // The `>` of a `Fn(..) -> T` bound's arrow closes nothing.
+            '>' if arrow => {}
+            '<' | '(' | '[' => depth += 1,
+            ')' | ']' => depth -= 1,
+            '>' if depth == 0 => {
+                names.extend(generic_item_name(&generics[item_start..offset]));
+                return Some(names);
+            }
+            '>' => depth -= 1,
+            ',' if depth == 0 => {
+                names.extend(generic_item_name(&generics[item_start..offset]));
+                item_start = offset + 1;
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Whether a `?` on the probe's line returns from the owner function: the
+/// owner body's line at the probe matches the changed expression, and no
+/// enclosing delimiter between the owner's body brace and that line opens a
+/// closure, an `async`/`try` block, a nested item, a macro body, or a call
+/// argument list (where `?` would return from something else, or the line
+/// could be a closure body without braces). Lexical and bounded over the
+/// masked body; an unclear shape answers `false` (fail-closed).
+fn question_mark_returns_from_owner(probe: &Probe, owner_fn: Option<&FunctionSummary>) -> bool {
+    let Some(function) = owner_fn else {
+        return false;
+    };
+    let Some(offset) = probe.location.line.checked_sub(function.start_line) else {
+        return false;
+    };
+    if offset == 0 {
+        return false;
+    }
+    // The extract mask also blanks character literals (keeping lifetimes and
+    // loop labels as code): a `'}'` or `')'` inside a closure would
+    // otherwise pop the closure's delimiter and let a closure-local `?`
+    // read as returning from the owner.
+    let masked = crate::analysis::extract::mask_comments_and_strings(&function.body);
+    let lines: Vec<&str> = masked.lines().collect();
+    let expression = crate::analysis::extract::mask_comments_and_strings(&probe.expression);
+    if lines.get(offset).map(|line| line.trim()) != Some(expression.trim()) {
+        return false;
+    }
+    let mut owner_body_opened = false;
+    // One entry per open delimiter: `true` for a brace whose head is a
+    // plain block (`if`/`for`/`loop`/`match` arm/`else`/`unsafe`/bare).
+    let mut open: Vec<bool> = Vec::new();
+    let mut head = String::new();
+    for line in &lines[..offset] {
+        for character in line.chars().chain(std::iter::once('\n')) {
+            match character {
+                '{' => {
+                    if owner_body_opened {
+                        open.push(plain_block_head(&head));
+                    } else if open.is_empty() {
+                        owner_body_opened = true;
+                    } else {
+                        open.push(false);
+                    }
+                    head.clear();
+                }
+                '(' | '[' => {
+                    open.push(false);
+                    head.push(character);
+                }
+                '}' | ')' | ']' => {
+                    if character == '}' && open.is_empty() {
+                        // The owner body closed before the probe line.
+                        return false;
+                    }
+                    if open.pop().is_none() {
+                        return false;
+                    }
+                    if character == '}' {
+                        head.clear();
+                    } else {
+                        head.push(character);
+                    }
+                }
+                ';' => head.clear(),
+                _ => head.push(character),
+            }
+        }
+    }
+    // The text since the last `{`, `}` or `;` is the head of the probe line's
+    // own statement. A closure head there (`let f = |c|` with its body on
+    // the next line, no brace) makes the `?` return from the closure, so
+    // the head must read as a plain statement start (PR #6786 review).
+    owner_body_opened && open.iter().all(|plain| *plain) && plain_block_head(&head)
+}
+
+/// Whether the text before a `{` opens a block a `?` passes straight
+/// through: no closure pipe, no macro bang, and none of the item or
+/// coroutine keywords that start a new return target.
+fn plain_block_head(head: &str) -> bool {
+    !head.contains('|')
+        && !head.contains('!')
+        && !head
+            .split(|character: char| !character.is_ascii_alphanumeric() && character != '_')
+            .any(|word| {
+                matches!(
+                    word,
+                    "async"
+                        | "try"
+                        | "move"
+                        | "fn"
+                        | "impl"
+                        | "trait"
+                        | "struct"
+                        | "enum"
+                        | "union"
+                        | "mod"
+                        | "const"
+                        | "static"
+                        | "gen"
+                )
+            })
 }
 
 fn result_error_text(text: &str) -> String {
@@ -1460,6 +1701,221 @@ mod tests {
             item: Default::default(),
             impl_context: Default::default(),
         }
+    }
+
+    // ── #6695: `.ok_or(Variant)?` propagates that error from the owner ──
+
+    const OK_OR_LINE: &str = "let d = digit(c).ok_or_else(|| CodeError::NotDigit)?;";
+
+    fn ok_or_owner(body: &str) -> FunctionSummary {
+        FunctionSummary {
+            returns: Vec::new(),
+            ..function(body)
+        }
+    }
+
+    fn ok_or_propagation(body: &str, line: usize) -> (Vec<FlowSinkFact>, StageEvidence) {
+        let owner = ok_or_owner(body);
+        let probe = probe(ProbeFamily::ErrorPath, OK_OR_LINE, line);
+        let sinks = local_flow_sinks(&probe, Some(&owner));
+        let witness = super::super::propagation_witness::current_path_witness(&probe, &sinks);
+        let evidence = propagation_evidence_with_witness(&probe, &sinks, witness.as_ref());
+        (sinks, evidence)
+    }
+
+    #[test]
+    fn question_mark_ok_or_in_the_owner_body_is_a_complete_error_witness() {
+        let (sinks, evidence) = ok_or_propagation(
+            "pub fn parse_code(s: &str) -> Result<u32, CodeError> {\n    let mut value = 0;\n    for c in s.chars().take(4) {\n        let d = digit(c).ok_or_else(|| CodeError::NotDigit)?;\n        value = value * 10 + d;\n    }\n    Ok(value)\n}",
+            4,
+        );
+        assert_eq!(sinks.len(), 1, "{sinks:?}");
+        assert_eq!(sinks[0].kind, FlowSinkKind::ErrorVariant);
+        assert_eq!(sinks[0].text, "Result::Err(CodeError::NotDigit)");
+        assert_eq!(evidence.state, StageState::Yes, "{}", evidence.summary);
+        assert!(
+            evidence
+                .summary
+                .contains("Complete propagation witness reaches error variant"),
+            "{}",
+            evidence.summary
+        );
+    }
+
+    #[test]
+    fn question_mark_ok_or_inside_a_closure_or_async_block_is_not_owner_propagation() {
+        for (body, line) in [
+            // A braced closure body: `?` returns from the closure.
+            (
+                "pub fn parse_code(s: &str) -> Result<Vec<u32>, CodeError> {\n    s.chars().map(|c| {\n        let d = digit(c).ok_or_else(|| CodeError::NotDigit)?;\n        Ok(d)\n    }).collect()\n}",
+                3,
+            ),
+            // A closure body without braces, continued on the next line.
+            (
+                "pub fn parse_code(s: &str) -> Result<Vec<u32>, CodeError> {\n    let all = s.chars().map(|c|\n        let d = digit(c).ok_or_else(|| CodeError::NotDigit)?;\n    );\n    Ok(all)\n}",
+                3,
+            ),
+            // An async block returns from the block's future.
+            (
+                "pub fn parse_code(s: &str) -> Result<u32, CodeError> {\n    let fut = async move {\n        let d = digit(c).ok_or_else(|| CodeError::NotDigit)?;\n        Ok(d)\n    };\n    Ok(0)\n}",
+                3,
+            ),
+            // The owner body line does not hold the changed expression.
+            (
+                "pub fn parse_code(s: &str) -> Result<u32, CodeError> {\n    let d = other(c).ok_or_else(|| CodeError::NotDigit)?;\n    Ok(d)\n}",
+                2,
+            ),
+        ] {
+            let (sinks, evidence) = ok_or_propagation(body, line);
+            assert!(
+                sinks
+                    .iter()
+                    .all(|sink| sink.text != "Result::Err(CodeError::NotDigit)"),
+                "no owner-level error sink for {body:?}: {sinks:?}"
+            );
+            assert_ne!(evidence.state, StageState::Yes, "{body:?}");
+        }
+    }
+
+    #[test]
+    fn question_mark_ok_or_scan_masks_char_literals_but_keeps_lifetimes() {
+        // A `'}'` char literal inside a closure must not pop the closure's
+        // delimiter: the `?` still returns from the closure (CodeRabbit,
+        // PR #6786). Without masking, the scan saw every delimiter closed
+        // and emitted an owner-level error sink.
+        let (sinks, evidence) = ok_or_propagation(
+            "pub fn parse_code(s: &str) -> Result<u32, CodeError> {\n    let f = |c: char| -> Result<u32, CodeError> {\n        if c == '}' { return Ok(0); }\n        let d = digit(c).ok_or_else(|| CodeError::NotDigit)?;\n        Ok(d)\n    };\n    f('1')\n}",
+            4,
+        );
+        assert!(
+            sinks
+                .iter()
+                .all(|sink| sink.text != "Result::Err(CodeError::NotDigit)"),
+            "a closure-local `?` after a '}}' literal is not owner propagation: {sinks:?}"
+        );
+        assert_ne!(evidence.state, StageState::Yes, "{}", evidence.summary);
+
+        // Positive control: a `'}'` literal and a lifetime/label in the
+        // owner body itself leave the line at owner level.
+        let (sinks, evidence) = ok_or_propagation(
+            "pub fn parse_code<'a>(s: &'a str) -> Result<u32, CodeError> {\n    let close = '}';\n    'outer: for c in s.chars() {\n        let d = digit(c).ok_or_else(|| CodeError::NotDigit)?;\n        if d == 0 { break 'outer; }\n    }\n    Ok(close as u32)\n}",
+            4,
+        );
+        assert_eq!(sinks.len(), 1, "{sinks:?}");
+        assert_eq!(sinks[0].text, "Result::Err(CodeError::NotDigit)");
+        assert_eq!(evidence.state, StageState::Yes, "{}", evidence.summary);
+    }
+
+    #[test]
+    fn question_mark_ok_or_sink_requires_the_owner_error_type_to_be_the_variant_enum() {
+        // Same type: the `?` returns the variant unchanged.
+        let owner = ok_or_owner(
+            "pub fn parse(x: Option<u8>) -> Result<u8, Inner> {\n    let v = x.ok_or(Inner::Bad)?;\n    Ok(v)\n}",
+        );
+        let probe = probe(ProbeFamily::ErrorPath, "let v = x.ok_or(Inner::Bad)?;", 2);
+        let sinks = local_flow_sinks(&probe, Some(&owner));
+        assert!(
+            sinks
+                .iter()
+                .any(|sink| sink.text == "Result::Err(Inner::Bad)"),
+            "{sinks:?}"
+        );
+        // Converting type: `?` turns `Inner::Bad` into whatever `From<Inner>
+        // for Outer` builds, so no exact owner-level variant is claimed.
+        for signature in [
+            "pub fn parse(x: Option<u8>) -> Result<u8, Outer> {",
+            "pub fn parse(x: Option<u8>) -> Result<u8> {",
+            "pub fn parse(x: Option<u8>) -> io::Result<u8> {",
+            "pub fn parse(x: Option<u8>) -> Result<u8, Box<dyn Error>> {",
+        ] {
+            let owner = ok_or_owner(&format!(
+                "{signature}\n    let v = x.ok_or(Inner::Bad)?;\n    Ok(v)\n}}"
+            ));
+            let sinks = local_flow_sinks(&probe, Some(&owner));
+            assert!(
+                sinks
+                    .iter()
+                    .all(|sink| sink.text != "Result::Err(Inner::Bad)"),
+                "{signature}: {sinks:?}"
+            );
+            // The fallback sink flow does emit cannot complete the witness
+            // through the generic identity rule either.
+            let witness = super::super::propagation_witness::current_path_witness(&probe, &sinks);
+            let evidence = propagation_evidence_with_witness(&probe, &sinks, witness.as_ref());
+            assert_ne!(
+                evidence.state,
+                StageState::Yes,
+                "{signature}: {}",
+                evidence.summary
+            );
+        }
+        // A same-named enum in another module, and a `fn`-level generic that
+        // shadows the crate enum's name, are different error types.
+        for (definition, variant) in [
+            (
+                "pub fn parse(x: Option<u8>) -> Result<u8, E> {\n    let v = x.ok_or(other::E::Bad)?;\n    Ok(v)\n}",
+                "other::E::Bad",
+            ),
+            (
+                "pub fn parse<E: From<crate::E>>(x: Option<u8>) -> Result<u8, E> {\n    let v = x.ok_or(crate::E::Bad)?;\n    Ok(v)\n}",
+                "crate::E::Bad",
+            ),
+            (
+                "pub fn parse<'a, E>(x: Option<&'a u8>) -> Result<u8, E> {\n    let v = x.ok_or(E::Bad)?;\n    Ok(*v)\n}",
+                "E::Bad",
+            ),
+            (
+                "pub fn parse<F: Fn(u8) -> u8, E>(x: Option<u8>, f: F) -> Result<u8, E> {\n    let v = x.ok_or(E::Bad)?;\n    Ok(f(v))\n}",
+                "E::Bad",
+            ),
+        ] {
+            let owner = ok_or_owner(definition);
+            assert!(
+                !owner_error_type_names_variant_enum(Some(&owner), variant),
+                "{definition}"
+            );
+        }
+        // `crate::` on either side is the same local path.
+        let owner = ok_or_owner(
+            "pub fn parse(x: Option<u8>) -> Result<u8, crate::E> {\n    let v = x.ok_or(E::Bad)?;\n    Ok(v)\n}",
+        );
+        assert!(owner_error_type_names_variant_enum(Some(&owner), "E::Bad"));
+        assert!(owner_error_type_names_variant_enum(
+            Some(&owner),
+            "crate::E::Bad"
+        ));
+        // Nested generics in the success type still split at the right comma.
+        let owner = ok_or_owner(
+            "pub fn parse(x: Option<u8>) -> Result<Vec<(u8, u8)>, crate::Inner> {\n    let v = x.ok_or(Inner::Bad)?;\n    Ok(vec![(v, v)])\n}",
+        );
+        assert!(owner_error_type_names_variant_enum(
+            Some(&owner),
+            "Inner::Bad"
+        ));
+    }
+
+    #[test]
+    fn question_mark_ok_or_in_a_braceless_next_line_closure_is_not_owner_propagation() {
+        // The closure head ends the previous line and its body is the probe
+        // line, with no brace between them: the `?` returns from the closure.
+        const LINE: &str = "c.ok_or(CodeError::NotDigit)?;";
+        let owner = ok_or_owner(
+            "pub fn parse_code(s: &str) -> Result<u32, CodeError> {\n    let f = |c: Option<Result<u32, CodeError>>|\n        c.ok_or(CodeError::NotDigit)?;\n    Ok(0)\n}",
+        );
+        let probe = probe(ProbeFamily::ErrorPath, LINE, 3);
+        assert!(!question_mark_returns_from_owner(&probe, Some(&owner)));
+        let sinks = local_flow_sinks(&probe, Some(&owner));
+        assert!(
+            sinks
+                .iter()
+                .all(|sink| sink.text != "Result::Err(CodeError::NotDigit)"),
+            "{sinks:?}"
+        );
+        // Positive control: the same line directly in the owner body.
+        let owner = ok_or_owner(
+            "pub fn parse_code(c: Option<u32>) -> Result<u32, CodeError> {\n    let total = 1;\n    c.ok_or(CodeError::NotDigit)?;\n    Ok(total)\n}",
+        );
+        assert!(question_mark_returns_from_owner(&probe, Some(&owner)));
     }
 
     fn tail_owner(body: &str) -> FunctionSummary {

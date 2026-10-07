@@ -1,0 +1,26 @@
+{
+  "case_id": "bytesize-as-kb-div",
+  "subject_id": "bytesize-66a3715",
+  "origin": "upstream",
+  "anchor": "src/lib.rs:258",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "unit_test_assert_eq",
+  "hard_case": true,
+  "truth": "not_discriminated",
+  "ideal_verdict": "gap",
+  "observed_verdict": "limited",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "no_static_path"
+  ],
+  "outcome": "abstained",
+  "contradictions": [
+    "no_static_path_with_related_tests"
+  ],
+  "findings_scored": 1,
+  "findings_contradicted": 1,
+  "contradiction_counts": {
+    "no_static_path_with_related_tests": 1
+  }
+}

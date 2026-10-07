@@ -62,6 +62,7 @@ fn packet_test_options() -> crate::analysis::AnalysisOptions {
         include_unchanged_tests: false,
         resolve_tsconfig_paths: false,
         perl_facts_path: None,
+        perl_producer_failure: None,
         git_timeout: None,
         git_candidate: None,
         production_like_targets: Default::default(),
@@ -3297,6 +3298,135 @@ fn h1_concrete_discriminator_attaches_canonical_gap() -> Result<(), String> {
             .any(|e| e.starts_with("perl_suggested_test_location")),
         "concrete discriminator must emit the repair-gap test location"
     );
+    Ok(())
+}
+
+/// #6829: the documented `missing_discriminator` change field is the
+/// canonical gap-discriminator channel. A spec/doc-shaped packet — plain
+/// `sha256:` digest, no `discriminator:` prefix, only the field — must form
+/// a referenceable canonical gap carrying the field's text, instead of the
+/// pre-#6829 behavior that dropped the supplied discriminator and attached
+/// no gap.
+#[test]
+fn h1_missing_discriminator_field_attaches_canonical_gap() -> Result<(), String> {
+    let packet = EXACT_RETURN_PACKET.replace(
+        "\"changed_text_digest\": \"sha256:return\"",
+        "\"changed_text_digest\": \"sha256:return\",\n      \"missing_discriminator\": \"$amount == $threshold\"",
+    );
+    let findings = findings_from_packet(&packet)?;
+    let finding = findings
+        .first()
+        .ok_or_else(|| "expected one finding".to_string())?;
+    let gap = finding.canonical_gap.as_ref().ok_or_else(|| {
+        format!(
+            "a packet supplying `missing_discriminator` must attach a canonical repair \
+                 gap; got None with missing={:?}",
+            finding.missing
+        )
+    })?;
+    assert_eq!(
+        gap.normalized_discriminator, "$amount == $threshold",
+        "the gap must carry the field's discriminator text"
+    );
+    assert!(
+        finding
+            .activation
+            .missing_discriminators
+            .iter()
+            .any(|fact| fact.value == "$amount == $threshold"),
+        "the finding must restate the supplied discriminator, not claim it missing"
+    );
+    Ok(())
+}
+
+/// #6829: both documented channels form the IDENTICAL canonical gap. A
+/// producer following the spec (`missing_discriminator` field) and a
+/// producer using the compatibility `discriminator:` prefix on
+/// `changed_text_digest` must produce the same `canonical_gap_id` and
+/// `normalized_discriminator` for the same change.
+#[test]
+fn h1_missing_discriminator_field_and_prefix_channel_form_identical_gap() -> Result<(), String> {
+    let field_channel = findings_from_packet(&EXACT_RETURN_PACKET.replace(
+        "\"changed_text_digest\": \"sha256:return\"",
+        "\"changed_text_digest\": \"sha256:return\",\n      \"missing_discriminator\": \"$amount == $threshold\"",
+    ))?;
+    let prefix_channel = findings_from_packet(&EXACT_RETURN_PACKET.replace(
+        "\"changed_text_digest\": \"sha256:return\"",
+        "\"changed_text_digest\": \"discriminator:$amount == $threshold\"",
+    ))?;
+    let field_gap = field_channel
+        .first()
+        .ok_or_else(|| "expected one finding (field channel)".to_string())?
+        .canonical_gap
+        .as_ref()
+        .ok_or_else(|| "field channel must attach a canonical gap".to_string())?;
+    let prefix_gap = prefix_channel
+        .first()
+        .ok_or_else(|| "expected one finding (prefix channel)".to_string())?
+        .canonical_gap
+        .as_ref()
+        .ok_or_else(|| "prefix channel must attach a canonical gap".to_string())?;
+    assert_eq!(
+        field_gap.id, prefix_gap.id,
+        "both discriminator channels must form the identical canonical gap id"
+    );
+    assert_eq!(
+        field_gap.normalized_discriminator, prefix_gap.normalized_discriminator,
+        "both channels must normalize to the same discriminator"
+    );
+    Ok(())
+}
+
+/// #6829: when both channels are present, the documented
+/// `missing_discriminator` field wins over the compatibility prefix.
+#[test]
+fn h1_missing_discriminator_field_wins_over_prefix_when_both_present() -> Result<(), String> {
+    let packet = EXACT_RETURN_PACKET
+        .replace(
+            "\"changed_text_digest\": \"sha256:return\"",
+            "\"changed_text_digest\": \"discriminator:$output == $other\"",
+        )
+        .replace(
+            "\"behavior_hint\": \"return_value\"",
+            "\"behavior_hint\": \"return_value\",\n      \"missing_discriminator\": \"$amount == $threshold\"",
+        );
+    let findings = findings_from_packet(&packet)?;
+    let finding = findings
+        .first()
+        .ok_or_else(|| "expected one finding".to_string())?;
+    let gap = finding
+        .canonical_gap
+        .as_ref()
+        .ok_or_else(|| "both channels present must attach a canonical gap".to_string())?;
+    assert_eq!(
+        gap.normalized_discriminator, "$amount == $threshold",
+        "the field channel must win over the compatibility prefix"
+    );
+    Ok(())
+}
+
+/// #6829 fail-closed control: a blank `missing_discriminator` field is NOT a
+/// supplied discriminator. Without the prefix channel the gap gate stays
+/// closed and the finding carries no canonical repair gap.
+#[test]
+fn h1_blank_missing_discriminator_field_does_not_open_gap_gate() -> Result<(), String> {
+    for blank in ["", "   "] {
+        let packet = EXACT_RETURN_PACKET.replace(
+            "\"changed_text_digest\": \"sha256:return\"",
+            &format!(
+                "\"changed_text_digest\": \"sha256:return\",\n      \"missing_discriminator\": \"{blank}\""
+            ),
+        );
+        let findings = findings_from_packet(&packet)?;
+        let finding = findings
+            .first()
+            .ok_or_else(|| "expected one finding".to_string())?;
+        assert!(
+            finding.canonical_gap.is_none(),
+            "a blank `missing_discriminator` ({blank:?}) must not open the gap gate; got {:?}",
+            finding.canonical_gap
+        );
+    }
     Ok(())
 }
 

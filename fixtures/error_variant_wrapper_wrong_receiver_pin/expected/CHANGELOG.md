@@ -242,3 +242,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — error_variant_wrapper_wrong_receiver_pin (19)
+
+Reason:
+RIPR-SPEC-0116: the check drill-in binds --root to the resolved repository (#3948); goldens carry the <cwd>/ placeholder
+
+Command:
+`cargo xtask goldens bless error_variant_wrapper_wrong_receiver_pin --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

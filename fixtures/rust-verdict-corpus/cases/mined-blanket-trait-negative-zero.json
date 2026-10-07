@@ -1,0 +1,52 @@
+{
+  "case_id": "mined-blanket-trait-negative-zero",
+  "subject_id": "authored-mined-codec",
+  "diff": "cases/mined-blanket-trait-negative-zero.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 62
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value",
+  "test_shape": "trait_impl_reached_through_blanket_impl",
+  "hard_case": "The owner is impl Render for f64, and the test calls to_text() from a blanket impl<T: Render> ToText for T. toml_writer formats floats this way; in a mining run on the real crate, ripr reported no_static_path for the f64 impl. Here ripr sees no test calling render.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "return String::from(\"0.0\");",
+        "mutated_line": "return String::from(\"0.0\");",
+        "outcome": "tests_failed",
+        "failing_test": "tests::negative_zero_keeps_its_sign",
+        "equivalence_review": "not equivalent: the sign is lost"
+      },
+      {
+        "replacement": "return String::new();",
+        "mutated_line": "return String::new();",
+        "outcome": "tests_failed",
+        "failing_test": "tests::negative_zero_keeps_its_sign",
+        "equivalence_review": "not equivalent: empty output"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "negative_zero_keeps_its_sign pins (-0.0f64).to_text() == \"-0.0\" through the blanket impl, so both mutants fail it.",
+  "labeling_observation": {
+    "ripr_commit": "f46c5e5",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

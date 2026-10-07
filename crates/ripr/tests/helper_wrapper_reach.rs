@@ -417,10 +417,25 @@ fn buried_scalar_in_a_wrapper_argument_does_not_pair() -> Result<(), String> {
             "{pin}: {finding}"
         );
         assert_ne!(finding["classification"], "exposed", "{pin}: {finding}");
-        assert!(
-            discriminate_summary(&finding).contains("same_test_pairing_missing"),
-            "{pin}: {finding}"
-        );
+        if pin.contains("10 * 2") {
+            // RIPR-SPEC-0186 #6796: a computed argument leaves the boundary
+            // input unresolved, so infection is unknown before pairing runs.
+            assert_eq!(
+                finding["classification"], "infection_unknown",
+                "{pin}: {finding}"
+            );
+            assert!(
+                finding["ripr"]["infect"]["summary"]
+                    .as_str()
+                    .is_some_and(|summary| summary.contains("computed argument for `qty`")),
+                "{pin}: {finding}"
+            );
+        } else {
+            assert!(
+                discriminate_summary(&finding).contains("same_test_pairing_missing"),
+                "{pin}: {finding}"
+            );
+        }
     }
     Ok(())
 }

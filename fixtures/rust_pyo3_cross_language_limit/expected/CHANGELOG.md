@@ -165,3 +165,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — rust_pyo3_cross_language_limit (15)
+
+Reason:
+RIPR-SPEC-0116: the check drill-in binds --root to the resolved repository (#3948); goldens carry the <cwd>/ placeholder
+
+Command:
+`cargo xtask goldens bless rust_pyo3_cross_language_limit --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

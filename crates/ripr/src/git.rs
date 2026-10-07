@@ -297,6 +297,10 @@ pub(crate) const UNTRUSTED_REPOSITORY_CONFIG: [&str; 2] = ["-c", "core.fsmonitor
 
 fn git_command(root: &Path, args: &[&str]) -> Command {
     let mut command = Command::new("git");
+    // Several callers read Git's stderr for a known cause (dubious ownership,
+    // no merge base, a damaged repository). A translated Git would word those
+    // differently and silently lose the match, so messages stay in English.
+    command.env("LC_ALL", "C");
     command
         .current_dir(root)
         .args(UNTRUSTED_REPOSITORY_CONFIG)
@@ -1744,7 +1748,16 @@ To add an exception for this directory, call:\n\n\tgit config --global --add saf
                 .unwrap_or(0)
         ));
         std::fs::create_dir_all(&empty_path).map_err(|err| format!("create empty PATH: {err}"))?;
-        let mut command = git_command(&empty_path, &["--version"]);
+        // The missing binary must be unresolvable, not merely off PATH: an
+        // empty PATH suffices on Unix, but Windows `CreateProcess` resolves
+        // the executable through the parent's PATH and ignores the child's
+        // custom PATH, so a bare `git` still spawns (#6855 probe: exit 0
+        // with PATH restricted to an empty directory). A missing absolute
+        // `git.exe` is NotFound on every host while keeping the
+        // git-specific diagnosis (a `git.exe` basename still counts as git).
+        let missing_git = empty_path.join("git.exe");
+        let mut command = Command::new(missing_git);
+        command.current_dir(&empty_path);
         command.env("PATH", &empty_path);
         let result = collect_output_with_deadline(command, None, "git --version");
         let _ = std::fs::remove_dir_all(&empty_path);

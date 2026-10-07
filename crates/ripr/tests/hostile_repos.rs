@@ -295,7 +295,14 @@ fn awkward_file_names_each_produce_a_probe() -> Result<(), String> {
     let root = scratch.path.join("names");
     fs::create_dir_all(root.join("src")).map_err(|e| format!("mkdir failed: {e}"))?;
     fs::write(root.join("Cargo.toml"), MANIFEST).map_err(|e| format!("write failed: {e}"))?;
-    fs::write(root.join("src/lib.rs"), "").map_err(|e| format!("write failed: {e}"))?;
+    // Each file is a declared module, so rustc compiles it and every change
+    // seeds a probe; an undeclared file seeds nothing (#4435).
+    let lib = names
+        .iter()
+        .enumerate()
+        .map(|(i, name)| format!("#[path = {name:?}]\nmod m{i};\n"))
+        .collect::<String>();
+    fs::write(root.join("src/lib.rs"), lib).map_err(|e| format!("write failed: {e}"))?;
     for (i, name) in names.iter().enumerate() {
         fs::write(root.join("src").join(name), body(i, 2))
             .map_err(|e| format!("write {name:?} failed: {e}"))?;
@@ -634,6 +641,96 @@ fn unreadable_config_is_a_loud_error_not_a_default() -> Result<(), String> {
     assert_sane(&ran, "non-utf8 ripr.toml")?;
     if ran.code != Some(2) || !ran.stderr.contains("ripr.toml") {
         return Err(format!("expected config refusal\n{}", ran.stderr));
+    }
+    Ok(())
+}
+
+/// Damaged Git state is refused in Git's own words with a repair route, not
+/// as a missing remote or a wrong directory (#6908).
+#[test]
+fn damaged_git_state_names_the_cause_and_a_repair() -> Result<(), String> {
+    type Damage = fn(&Path) -> Result<(), String>;
+    let cases: [(&str, Damage, &[&str]); 4] = [
+        (
+            "bad config",
+            |root| {
+                fs::write(root.join(".git/config"), b"[core\n")
+                    .map_err(|e| format!("write failed: {e}"))
+            },
+            &["bad config line 1", "correct or restore it"],
+        ),
+        (
+            "corrupt packed-refs",
+            |root| {
+                fs::write(root.join(".git/packed-refs"), b"garbage\n")
+                    .map_err(|e| format!("write failed: {e}"))
+            },
+            &["packed-refs", "correct or restore it"],
+        ),
+        (
+            "unborn HEAD",
+            |root| {
+                fs::write(root.join(".git/HEAD"), b"ref: refs/heads/nonexistent\n")
+                    .map_err(|e| format!("write failed: {e}"))
+            },
+            &["git rev-parse HEAD", "Check"],
+        ),
+        (
+            "corrupt object",
+            |root| {
+                // `repo` leaves `feat` checked out as a loose ref.
+                let sha = fs::read_to_string(root.join(".git/refs/heads/feat"))
+                    .map_err(|e| format!("feat ref missing: {e}"))?
+                    .trim()
+                    .to_string();
+                let object = root.join(".git/objects").join(&sha[..2]).join(&sha[2..]);
+                // Loose objects are read-only; replace the file instead.
+                fs::remove_file(&object).map_err(|e| format!("object missing: {e}"))?;
+                fs::write(&object, b"junk").map_err(|e| format!("write failed: {e}"))
+            },
+            &["git fsck"],
+        ),
+    ];
+    let scratch = Scratch::new("damaged-git")?;
+    for (label, damage, expected) in cases {
+        let root = plain(&scratch, &label.replace(' ', "-"))?;
+        damage(&root)?;
+        let ran = ripr(&root, &["check", "--base", "main"], &[])?;
+        assert_sane(&ran, label)?;
+        if ran.code != Some(2) {
+            return Err(format!("{label}: expected a refusal\n{}", ran.stderr));
+        }
+        for needle in expected {
+            if !ran.stderr.contains(needle) {
+                return Err(format!("{label}: missing `{needle}`\n{}", ran.stderr));
+            }
+        }
+        for wrong in ["No git remote is configured", "not inside a Git work tree"] {
+            if ran.stderr.contains(wrong) {
+                return Err(format!("{label}: wrong cause `{wrong}`\n{}", ran.stderr));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Configuration Git inherits from the environment is not repository damage:
+/// the repair names the variable, not `.git/config`.
+#[test]
+fn malformed_git_environment_config_is_not_blamed_on_the_repository() -> Result<(), String> {
+    let scratch = Scratch::new("git-env-config")?;
+    let root = plain(&scratch, "repo")?;
+    let ran = ripr(
+        &root,
+        &["check", "--base", "main"],
+        &[("GIT_CONFIG_COUNT", "xyz")],
+    )?;
+    assert_sane(&ran, "malformed GIT_CONFIG_COUNT")?;
+    if ran.code != Some(2) || !ran.stderr.contains("GIT_CONFIG_*") {
+        return Err(format!("expected the environment remedy\n{}", ran.stderr));
+    }
+    if ran.stderr.contains("`.git/config`") {
+        return Err(format!("blamed the repository\n{}", ran.stderr));
     }
     Ok(())
 }

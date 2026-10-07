@@ -3869,7 +3869,7 @@ fn find_related_tests_matches_import_alias_call() {
         "from src.pricing import apply_discount as discount\n\ndef test_discount_alias():\n    assert discount(100) == 90\n",
     );
 
-    let related = find_related_tests(&owners[0], &tests);
+    let related = find_related_tests(&owners[0], &tests, None);
 
     assert_eq!(related.len(), 1);
     assert_eq!(related[0].name, "test_discount_alias");
@@ -4493,6 +4493,7 @@ fn analyze_diff_returns_zero_findings_and_counts_accepted_files() -> Result<(), 
         include_unchanged_tests: false,
         resolve_tsconfig_paths: false,
         perl_facts_path: None,
+        perl_producer_failure: None,
         git_timeout: None,
         git_candidate: None,
         production_like_targets: Default::default(),
@@ -4928,6 +4929,7 @@ fn repo_options(root: &Path) -> AnalysisOptions {
         include_unchanged_tests: false,
         resolve_tsconfig_paths: false,
         perl_facts_path: None,
+        perl_producer_failure: None,
         git_timeout: None,
         git_candidate: None,
         production_like_targets: Default::default(),

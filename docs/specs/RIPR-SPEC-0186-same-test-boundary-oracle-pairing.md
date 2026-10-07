@@ -17,6 +17,7 @@ Linked issues:
 - #4828
 - #5027 (shared execution admission before pairing)
 - #6668 (argument must be the boundary literal, not merely contain it)
+- #7004 (post-`let` mutation voids a bound boundary name)
 
 Linked PRs:
 
@@ -112,8 +113,15 @@ pair, and so does an entry call shadowed by a test-local closure or nested
 fn of the entry's name. The owner-return pin (RIPR-SPEC-0197) judges the owner's own call and
 never admits a wrapper assertion here.
 
-Proximity-only oracle credit and bare-name method relation are out of
-scope.
+A `let`-bound boundary name stays paired only while the binding still holds
+the call's result. A post-`let` reassignment (`got = true`), compound
+assignment (`got += 1`), or `&mut` borrow (`&mut got`) voids the binding
+fail-closed, so a later exact assertion on the name does not pair (#7004).
+`let mut` alone does not void, and a mutation before the boundary `let`
+does not void the fresh binding. Re-`let` shadowing is unchanged.
+
+Proximity-only oracle credit, and bare-name method
+relation are out of scope.
 
 ## Required Evidence
 
@@ -126,11 +134,14 @@ scope.
   let-bound pairing including short names, buried-literal if-expression and
   `std::cmp::max` arguments (including `assert!`), typed literals, locals
   bound to the boundary, named-constant pairing through infection `==`,
-  and named-constant pairing when an unrelated extra argument is compound.
+  named-constant pairing when an unrelated extra argument is compound,
+  post-`let` reassignment, compound assignment, and `&mut` borrows (each
+  voiding the binding), and the unmutated `let mut` control that still pairs.
 - Golden drift is reviewed row by row: every downgrade names the missing
   same-test pairing, and no finding gains a class.
 - An honesty-corpus case independently prohibits `exposed` on the split
-  reproduction.
+  reproduction, and one case per post-`let` mutation variant
+  (reassignment, compound assignment, mutable borrow) does the same.
 
 ## Non-Goals
 
@@ -169,6 +180,11 @@ scope.
   classified, then it pairs. With `let _ = is_bulk(qty); 5` as the wrapper
   body, or with the tests calling only `order_discount(12)` and
   `order_discount(3)`, it does not.
+- Given `let mut got = gate(10); got = true; assert_eq!(got, true)`, or
+  `got += 1` / `&mut got` in place of the reassignment, when the predicate
+  is classified, then it does not pair: the binding no longer holds the
+  boundary call's result. Given `let mut got = gate(10);` with no later
+  mutation, then `assert_eq!(got, true)` still pairs.
 
 ## Test Mapping
 
@@ -176,6 +192,9 @@ scope.
 - `fixtures/split_test_boundary_oracle`
 - `fixtures/predicate_boundary_oracle_refused`
 - `fixtures/predicate_boundary_oracle_admitted`
+- `fixtures/predicate_pairing_reassigned_binding`
+- `fixtures/predicate_pairing_compound_assigned_binding`
+- `fixtures/predicate_pairing_mutably_borrowed_binding`
 - `crates/ripr/tests/owner_pin_execution.rs::predicate_pairing_cannot_reuse_refused_boundary_equalities`
 - `crates/ripr/tests/helper_wrapper_reach.rs`
 

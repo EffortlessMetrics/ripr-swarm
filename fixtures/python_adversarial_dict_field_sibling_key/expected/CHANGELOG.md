@@ -369,3 +369,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — python_adversarial_dict_field_sibling_key (15)
+
+Reason:
+RIPR-SPEC-0116: the check drill-in binds --root to the resolved repository (#3948); goldens carry the <cwd>/ placeholder
+
+Command:
+`cargo xtask goldens bless python_adversarial_dict_field_sibling_key --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

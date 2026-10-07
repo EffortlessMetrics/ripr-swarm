@@ -103,3 +103,29 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — owner_return_pin_cfg_false_file (9)
+
+Reason:
+RIPR-SPEC-0116: the check drill-in binds --root to the resolved repository (#3948); goldens carry the <cwd>/ placeholder
+
+Command:
+`cargo xtask goldens bless owner_return_pin_cfg_false_file --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — owner_return_pin_cfg_false_file (10)
+
+Reason:
+RIPR-SPEC-0240: a non-limit assertion refusal no longer offers a static-limit reading (#6903)
+
+Command:
+`cargo xtask goldens bless owner_return_pin_cfg_false_file --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

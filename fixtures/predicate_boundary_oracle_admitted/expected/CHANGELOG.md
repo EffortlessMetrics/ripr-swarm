@@ -52,3 +52,29 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — predicate_boundary_oracle_admitted (5)
+
+Reason:
+RIPR-SPEC-0116: the check drill-in binds --root to the resolved repository (#3948); goldens carry the <cwd>/ placeholder
+
+Command:
+`cargo xtask goldens bless predicate_boundary_oracle_admitted --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — predicate_boundary_oracle_admitted (6)
+
+Reason:
+RIPR-SPEC-0122: a predicate's before is cut to the same span as its after (#6995)
+
+Command:
+`cargo xtask goldens bless predicate_boundary_oracle_admitted --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

@@ -53,6 +53,15 @@ pub(crate) fn array_field(
 
 pub(crate) fn escape(value: &str) -> String {
     let mut out = String::new();
+    escape_into(&mut out, value);
+    out
+}
+
+/// [`escape`] writing into an existing buffer, so hot render loops reuse
+/// one allocation instead of one per field (#6898). [`escape`] delegates
+/// here, so the two spellings cannot diverge.
+pub(crate) fn escape_into(out: &mut String, value: &str) {
+    use std::fmt::Write as _;
     for ch in value.chars() {
         match ch {
             '\\' => out.push_str("\\\\"),
@@ -63,18 +72,17 @@ pub(crate) fn escape(value: &str) -> String {
             c if c.is_control() => {
                 let code = c as u32;
                 if code <= 0xFFFF {
-                    out.push_str(&format!("\\u{code:04x}"));
+                    let _ = write!(out, "\\u{code:04x}");
                 } else {
                     let adjusted = code - 0x10000;
                     let high = 0xD800 + (adjusted >> 10);
                     let low = 0xDC00 + (adjusted & 0x3FF);
-                    out.push_str(&format!("\\u{high:04x}\\u{low:04x}"));
+                    let _ = write!(out, "\\u{high:04x}\\u{low:04x}");
                 }
             }
             c => out.push(c),
         }
     }
-    out
 }
 
 #[cfg(test)]
@@ -89,6 +97,17 @@ mod tests {
     #[test]
     fn escapes_backslash_and_control_chars() {
         assert_eq!(escape("\\\u{0008}\t"), "\\\\\\u0008\\t");
+    }
+
+    #[test]
+    fn escape_into_appends_without_disturbing_the_buffer() {
+        use super::escape_into;
+        let mut out = String::from("{\"a\": \"");
+        escape_into(&mut out, "x\"y\n\\");
+        out.push('"');
+        assert_eq!(out, "{\"a\": \"x\\\"y\\n\\\\\"");
+        // Delegation keeps the allocating spelling identical.
+        assert_eq!(escape("x\"y\n\\"), "x\\\"y\\n\\\\");
     }
 
     #[test]

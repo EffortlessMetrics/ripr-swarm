@@ -206,6 +206,8 @@ pub(crate) fn summarize_file_lexically(path: PathBuf, text: String) -> FileFacts
         unresolved_property_macros,
         role_provenance: super::super::facts::SourceRoleProvenance::default(),
         source,
+        item_scopes: None,
+        macro_candidates: None,
     }
 }
 

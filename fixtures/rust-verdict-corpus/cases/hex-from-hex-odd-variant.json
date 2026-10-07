@@ -1,0 +1,46 @@
+{
+  "case_id": "hex-from-hex-odd-variant",
+  "subject_id": "rust-hex",
+  "diff": "cases/hex-from-hex-odd-variant.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 226
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "error_variant",
+  "test_shape": "unit_test_assert_eq_error",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "Self::Error::InvalidStringLength",
+        "mutated_line": "return Err(Self::Error::InvalidStringLength);",
+        "outcome": "tests_failed",
+        "failing_test": "test::test_invalid_length",
+        "equivalence_review": "not equivalent: odd-length input reports the wrong error variant"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "test_invalid_length asserts Vec::from_hex(\"1\") returns exactly OddLength, a straight-line assert_eq! on the error variant. ripr reports reachable_unrevealed and weakly_exposed on the line, a false actionable verdict.",
+  "labeling_observation": {
+    "ripr_commit": "a7a089e",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "reachable_unrevealed",
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

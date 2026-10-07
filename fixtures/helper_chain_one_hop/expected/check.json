@@ -3,7 +3,7 @@
   "tool": "ripr",
   "mode": "fast",
   "root": "fixtures/helper_chain_one_hop/input",
-  "summary": {"changed_rust_files":1,"probes":1,"findings":1,"exposed":0,"weakly_exposed":0,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":0,"propagation_unknown":1,"static_unknown":0,"changed_files_by_language":[{"language":"rust","files":1}]},
+  "summary": {"changed_rust_files":1,"probes":1,"findings":1,"exposed":0,"weakly_exposed":0,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":1,"propagation_unknown":0,"static_unknown":0,"changed_files_by_language":[{"language":"rust","files":1}]},
   "analysis_outcome": {
     "analysis_complete": true,
     "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":null,"base_revision":null,"input_identity":"sha256:41e3f57851eebb624f2b38a3757631f44c6545ab7a1c3d3527c663193597f0b9","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":2,"candidate_line_count":1,"probe_count":1,"finding_count":1},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
@@ -23,8 +23,8 @@
         "normalized_discriminator": "c==lit20"
 
       },
-      "classification": "propagation_unknown",
-      "severity": "note",
+      "classification": "infection_unknown",
+      "severity": "warning",
       "confidence": 0.66,
       "probe": {
         "id": "probe:src_lib.rs:predicate:ac178c7f",
@@ -36,16 +36,16 @@
        },
       "ripr": {
         "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach is_word_start: leading_space_classifies_other, letter_classifies_word"},
-        "infect": {"state":"weak","confidence":"medium","summary":"Related tests contain input values, but the equality-boundary discriminator is missing"},
+        "infect": {"state":"unknown","confidence":"low","summary":"Changed boundary input is unresolved: boundary operand `c` is a local or computed value ripr cannot map to the related tests' inputs, so it cannot tell which side of the boundary a test reaches; activation/infection is unknown"},
         "propagate": {"state":"unknown","confidence":"low","summary":"Propagation is not statically obvious from syntax-first analysis"},
         "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
         "discriminate": {"state":"yes","confidence":"medium","summary":"Strong oracle found: exact value or pattern assertion"}
        },
-      "evidence_path": ["reach yes: Related tests appear to reach is_word_start: leading_space_classifies_other, letter_classifies_word", "infection weak: Related tests contain input values, but the equality-boundary discriminator is missing", "propagation unknown: Propagation is not statically obvious from syntax-first analysis", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator missing: `c == ' '`; related oracle: Strong oracle found: exact value or pattern assertion", "related test tests/classify.rs:4 leading_space_classifies_other uses strong exact value oracle: assert_eq!(classify(\" x\"), \"other\");", "related test tests/classify.rs:9 letter_classifies_word uses strong exact value oracle: assert_eq!(classify(\"hello\"), \"word\");", "source assertion argument value \" x\" at line 5", "source assertion argument value \"other\" at line 5", "source assertion argument value \"hello\" at line 10", "source assertion argument value \"word\" at line 10", "missing discriminator c == ' ': No related test call uses c equal to ' '; observed c values: unknown; target ' ' value: ' '"],
+      "evidence_path": ["reach yes: Related tests appear to reach is_word_start: leading_space_classifies_other, letter_classifies_word", "infection unknown: Changed boundary input is unresolved: boundary operand `c` is a local or computed value ripr cannot map to the related tests' inputs, so it cannot tell which side of the boundary a test reaches; activation/infection is unknown", "propagation unknown: Propagation is not statically obvious from syntax-first analysis", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator not established (infection_unknown); related oracle: Strong oracle found: exact value or pattern assertion", "related test tests/classify.rs:4 leading_space_classifies_other uses strong exact value oracle: assert_eq!(classify(\" x\"), \"other\");", "related test tests/classify.rs:9 letter_classifies_word uses strong exact value oracle: assert_eq!(classify(\"hello\"), \"word\");", "source assertion argument value \" x\" at line 5", "source assertion argument value \"other\" at line 5", "source assertion argument value \"hello\" at line 10", "source assertion argument value \"word\" at line 10"],
       "flow_sinks": [
       ],
-      "evidence": ["A related test observes a value or effect near the changed behavior", "Propagation is not statically obvious from syntax-first analysis", "Related tests appear to reach is_word_start: leading_space_classifies_other, letter_classifies_word", "Related tests contain input values, but the equality-boundary discriminator is missing", "Strong oracle found: exact value or pattern assertion"],
-      "missing": ["Missing discriminator value: c == ' '", "No clear propagation path from changed behavior to an observable sink"],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Changed boundary input is unresolved: boundary operand `c` is a local or computed value ripr cannot map to the related tests' inputs, so it cannot tell which side of the boundary a test reaches; activation/infection is unknown", "Propagation is not statically obvious from syntax-first analysis", "Related tests appear to reach is_word_start: leading_space_classifies_other, letter_classifies_word", "Strong oracle found: exact value or pattern assertion"],
+      "missing": ["Changed boundary input is unresolved: boundary operand `c` is a local or computed value ripr cannot map to the related tests' inputs, so it cannot tell which side of the boundary a test reaches; activation/infection is unknown", "No detected boundary input for the changed predicate"],
       "assertion_texts": {
         "5": "assert_eq!(classify(\" x\"), \"other\");",
         "10": "assert_eq!(classify(\"hello\"), \"word\");"
@@ -74,11 +74,6 @@
           }
         ],
         "missing_discriminators": [
-          {
-            "value": "c == ' '",
-            "reason": "No related test call uses c equal to ' '; observed c values: unknown; target ' ' value: ' '",
-            "flow_sink": null
-          }
         ]
       },
       "observed_values": [
@@ -104,11 +99,6 @@
         }
       ],
       "missing_discriminators": [
-        {
-          "value": "c == ' '",
-          "reason": "No related test call uses c equal to ' '; observed c values: unknown; target ' ' value: ' '",
-          "flow_sink": null
-        }
       ],
       "related_tests_total": 2,
       "related_tests": [
@@ -133,11 +123,11 @@
           "relation_confidence": "high"
         }
       ],
-      "stop_reasons": ["propagation_evidence_unknown"],
+      "stop_reasons": ["infection_evidence_unknown"],
       "oracle_kind": "exact_value",
       "oracle_strength": "strong",
-      "recommended_next_step": "Escalate to real mutation testing or deep static analysis for this probe.",
-      "suggested_next_action": "Escalate to real mutation testing or deep static analysis for this probe.",
+      "recommended_next_step": "Add a targeted boundary or negative-path test, or teach ripr about the fixture/builder in ripr.toml.",
+      "suggested_next_action": "Add a targeted boundary or negative-path test, or teach ripr about the fixture/builder in ripr.toml.",
       "language": "rust",
       "source_currentness": "candidate_current"
     }
