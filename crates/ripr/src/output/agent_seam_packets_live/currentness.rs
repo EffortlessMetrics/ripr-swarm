@@ -869,8 +869,12 @@ mod tests {
         assert!(!legacy.refresh_replayable());
     }
 
+    // Constructed only by the unix-only symlink test above; gate the helper
+    // too so non-unix clippy builds do not see it as dead code (#7023).
+    #[cfg(unix)]
     struct RemoveOnDrop(PathBuf);
 
+    #[cfg(unix)]
     impl Drop for RemoveOnDrop {
         fn drop(&mut self) {
             let _ = std::fs::remove_dir_all(&self.0);
