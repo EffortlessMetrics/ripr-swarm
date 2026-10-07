@@ -33,7 +33,7 @@
       "silent"
     ]
   },
-  "reasoning": "packages/b/tests/x.test.ts imports `{ price }` from the workspace package `a` and pins `expect(price(150)).toBe(140)`; the edit makes it 130 and the test fails (jest resolves `a` through moduleNameMapper `^a$` -> packages/a/src/lib.ts; tsconfig `paths` maps `a` only for ts-jest type checking, and ripr's resolve_tsconfig_paths stays off). ripr reports `exposed` via direct_owner_call/high with exact_value. (matches spec: exposed with no tsconfig flag). Spec cells: RIPR-SPEC-0234 example 28",
+  "reasoning": "packages/b/tests/x.test.ts imports `{ price }` from the workspace package `a` and pins `expect(price(150)).toBe(140)`; the edit makes it 130 and the test fails (jest resolves `a` through moduleNameMapper `^a$` -> packages/a/src/lib.ts; tsconfig `paths` maps `a` only for ts-jest type checking, and ripr's resolve_tsconfig_paths stays off). ripr reports `exposed` via direct_owner_call/high with exact_value. (matches spec: exposed with no tsconfig flag). Spec cells: RIPR-SPEC-0243 example 28",
   "labeling_observation": {
     "ripr_commit": "1273096",
     "full_checkout_verdict": "credited",

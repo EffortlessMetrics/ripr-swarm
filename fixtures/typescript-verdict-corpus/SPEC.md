@@ -1,7 +1,7 @@
 # Fixture Corpus: typescript-verdict-corpus
 
-Spec: RIPR-SPEC-0238 (per-language corpora), with cases drawn from the
-RIPR-SPEC-0234 acceptance examples and from test patterns seen in public
+Spec: RIPR-SPEC-0244 (per-language corpora), with cases drawn from the
+RIPR-SPEC-0243 acceptance examples and from test patterns seen in public
 TypeScript repositories (re-authored, not copied).
 
 ## Given
@@ -11,9 +11,9 @@ under this repository's license, grouped by test runner:
 
 - jest (ts-jest): `authored-ts-jest-checkout` (strict and loose matchers,
   boundaries, `toThrow`, mocks, `.not`, `test.each`), `authored-ts-jest-oracles`
-  (RIPR-SPEC-0234 oracle examples: snapshots, custom matchers,
+  (RIPR-SPEC-0243 oracle examples: snapshots, custom matchers,
   `toMatchObject`, error class and message), `authored-ts-jest-relations`
-  (RIPR-SPEC-0234 reach examples: aliased, renamed, default and dynamic
+  (RIPR-SPEC-0243 reach examples: aliased, renamed, default and dynamic
   imports, mocked and unobserved owners), `authored-ts-jest-monorepo` (a
   workspace package), `authored-ts-jest-alias` (a tsconfig `paths` alias) and
   `authored-ts-jest-mined` (default-export objects, test functions passed by
@@ -27,7 +27,7 @@ under this repository's license, grouped by test runner:
   (`node:assert` strict and legacy, `assert.throws` and `assert.rejects`,
   subtests, `t.assert`).
 
-Every RIPR-SPEC-0234 acceptance example (1 to 32) has at least one case.
+Every RIPR-SPEC-0243 acceptance example (1 to 32) has at least one case.
 Where the spec says "(today X)", the case keeps today's verdict in its
 labeling observation; where the mutant run contradicts it, the case scores
 it as false and its reasoning names the spec example.

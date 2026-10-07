@@ -1,7 +1,7 @@
 <!-- section: Added -->
 - TypeScript verdict corpus: `fixtures/typescript-verdict-corpus` holds 101
   authored cases across jest, vitest, mocha with chai and node:test,
-  including at least one case for each RIPR-SPEC-0234 acceptance example,
+  including at least one case for each RIPR-SPEC-0243 acceptance example,
   each labeled by running its StrykerJS mutants against the package's own
   tests. `cargo xtask verdict-corpus check --language typescript` scores
   them: today 27/62 false actionable, 9/39 false exposed, 0/39 false

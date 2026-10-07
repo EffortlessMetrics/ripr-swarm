@@ -33,7 +33,7 @@
       "silent"
     ]
   },
-  "reasoning": "The test mocks `../src/unrelated32` while the real identity `fee32` runs, and pins `expect(priceUnrelatedMocked(150)).toBe(140)`; the edit makes it 130 and the test fails. ripr reports `exposed` with mocked_module and still emits `typescript_mock_only_observer`. (spec says today exposed with typescript_mock_only_observer; target drops it - still present). Spec cells: RIPR-SPEC-0234 example 32",
+  "reasoning": "The test mocks `../src/unrelated32` while the real identity `fee32` runs, and pins `expect(priceUnrelatedMocked(150)).toBe(140)`; the edit makes it 130 and the test fails. ripr reports `exposed` with mocked_module and still emits `typescript_mock_only_observer`. (spec says today exposed with typescript_mock_only_observer; target drops it - still present). Spec cells: RIPR-SPEC-0243 example 32",
   "labeling_observation": {
     "ripr_commit": "1273096",
     "full_checkout_verdict": "credited",

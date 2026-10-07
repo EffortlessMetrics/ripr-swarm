@@ -33,7 +33,7 @@
       "silent"
     ]
   },
-  "reasoning": "`return days * 2` rewritten to `return 2 * days`. The test asserts through the node:test context `t.assert.equal(lateFee(10), 20)`, which kills the only mutant. ripr does not read `t.assert.*` (RIPR-SPEC-0234: no assertion), so the related test's oracle is unknown and the class is `weakly_exposed`, a false gap against a discriminated truth. Spec cells: RIPR-SPEC-0234 execution-context receiver rule (`t.assert.equal(...)` yields no assertion).",
+  "reasoning": "`return days * 2` rewritten to `return 2 * days`. The test asserts through the node:test context `t.assert.equal(lateFee(10), 20)`, which kills the only mutant. ripr does not read `t.assert.*` (RIPR-SPEC-0243: no assertion), so the related test's oracle is unknown and the class is `weakly_exposed`, a false gap against a discriminated truth. Spec cells: RIPR-SPEC-0243 execution-context receiver rule (`t.assert.equal(...)` yields no assertion).",
   "labeling_observation": {
     "ripr_commit": "1273096",
     "full_checkout_verdict": "gap",

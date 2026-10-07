@@ -33,7 +33,7 @@
       "silent"
     ]
   },
-  "reasoning": "The test mocks `../src/other24` (which `priceOtherMocked` does not import) and pins `expect(priceOtherMocked(150)).toBe(140)`; the edit makes it 130 and the test fails. ripr reports `exposed` with static_limit_kind `mocked_module`, gap_state static_limitation, and still emits `typescript_mock_only_observer`. (spec says today exposed + mocked_module with typescript_mock_only_observer present; target drops that limitation - still present). Spec cells: RIPR-SPEC-0234 example 24",
+  "reasoning": "The test mocks `../src/other24` (which `priceOtherMocked` does not import) and pins `expect(priceOtherMocked(150)).toBe(140)`; the edit makes it 130 and the test fails. ripr reports `exposed` with static_limit_kind `mocked_module`, gap_state static_limitation, and still emits `typescript_mock_only_observer`. (spec says today exposed + mocked_module with typescript_mock_only_observer present; target drops that limitation - still present). Spec cells: RIPR-SPEC-0243 example 24",
   "labeling_observation": {
     "ripr_commit": "1273096",
     "full_checkout_verdict": "credited",

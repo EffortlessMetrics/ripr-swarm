@@ -33,7 +33,7 @@
       "silent"
     ]
   },
-  "reasoning": "The test sets const ok = true and, inside if (ok), pins priceEx11(150) to 140, so the edit fails it. ripr walks the if block and reports exposed with exact_value / strong, matching the truth. (spec says today exposed, exact_value / strong; ripr matches it) Spec cells: RIPR-SPEC-0234 example 11",
+  "reasoning": "The test sets const ok = true and, inside if (ok), pins priceEx11(150) to 140, so the edit fails it. ripr walks the if block and reports exposed with exact_value / strong, matching the truth. (spec says today exposed, exact_value / strong; ripr matches it) Spec cells: RIPR-SPEC-0243 example 11",
   "labeling_observation": {
     "ripr_commit": "1273096",
     "full_checkout_verdict": "credited",

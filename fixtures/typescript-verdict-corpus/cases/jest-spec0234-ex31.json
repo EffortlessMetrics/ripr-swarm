@@ -32,7 +32,7 @@
       "limited"
     ]
   },
-  "reasoning": "The test mocks `../src/fee31` with a factory returning a constant 5 and asserts `expect(priceFeeMocked(150)).toBe(5)`; the changed argument `amount - 20` reaches only the mocked `fee31`, so the test passes. ripr reports `exposed` (mocked_module, static_limitation, typescript_mock_only_observer) - a wrong credit for an undiscriminated change. (spec says today exposed; target static_unknown - still exposed). Spec cells: RIPR-SPEC-0234 example 31",
+  "reasoning": "The test mocks `../src/fee31` with a factory returning a constant 5 and asserts `expect(priceFeeMocked(150)).toBe(5)`; the changed argument `amount - 20` reaches only the mocked `fee31`, so the test passes. ripr reports `exposed` (mocked_module, static_limitation, typescript_mock_only_observer) - a wrong credit for an undiscriminated change. (spec says today exposed; target static_unknown - still exposed). Spec cells: RIPR-SPEC-0243 example 31",
   "labeling_observation": {
     "ripr_commit": "1273096",
     "full_checkout_verdict": "credited",

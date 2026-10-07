@@ -32,7 +32,7 @@
       "limited"
     ]
   },
-  "reasoning": "Adapted for a green suite: the stored module adds a guard `if (amount > 120) { throw new Error(\"bad\"); }` before the base branch, so priceEx15(150) throws \"bad\" and the test snippet stays verbatim; the changed `return amount - 10` line (now line 6) is never reached by the test, so the edit survives. ripr reports class weakly_exposed while related_tests[0] reads exact_error_variant / strong (the display mismatch the spec files), a correct gap. (spec says today weakly_exposed, related_tests[0] exact_error_variant / strong; ripr matches it) Spec cells: RIPR-SPEC-0234 example 15",
+  "reasoning": "Adapted for a green suite: the stored module adds a guard `if (amount > 120) { throw new Error(\"bad\"); }` before the base branch, so priceEx15(150) throws \"bad\" and the test snippet stays verbatim; the changed `return amount - 10` line (now line 6) is never reached by the test, so the edit survives. ripr reports class weakly_exposed while related_tests[0] reads exact_error_variant / strong (the display mismatch the spec files), a correct gap. (spec says today weakly_exposed, related_tests[0] exact_error_variant / strong; ripr matches it) Spec cells: RIPR-SPEC-0243 example 15",
   "labeling_observation": {
     "ripr_commit": "1273096",
     "full_checkout_verdict": "gap",

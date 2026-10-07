@@ -9,30 +9,30 @@
   },
   "by_outcome": {
     "abstained": 81,
-    "false_actionable": 66,
-    "false_exposed": 8,
-    "ideal": 128
+    "false_actionable": 62,
+    "false_exposed": 7,
+    "ideal": 133
   },
   "by_observed_verdict": {
-    "credited": 45,
-    "gap": 157,
+    "credited": 48,
+    "gap": 154,
     "limited": 80,
     "silent": 1
   },
   "false_verdict_rate": {
-    "numerator": 74,
+    "numerator": 69,
     "denominator": 283,
-    "rate": "0.2615"
+    "rate": "0.2438"
   },
   "false_actionable_rate": {
-    "numerator": 66,
+    "numerator": 62,
     "denominator": 144,
-    "rate": "0.4583"
+    "rate": "0.4306"
   },
   "false_exposed_rate": {
-    "numerator": 8,
+    "numerator": 7,
     "denominator": 139,
-    "rate": "0.0576"
+    "rate": "0.0504"
   },
   "false_silent_rate": {
     "numerator": 0,
@@ -40,9 +40,9 @@
     "rate": "0.0000"
   },
   "ideal_rate": {
-    "numerator": 128,
+    "numerator": 133,
     "denominator": 283,
-    "rate": "0.4523"
+    "rate": "0.4700"
   },
   "abstention_rate": {
     "numerator": 81,
@@ -61,25 +61,25 @@
     "authored": {
       "cases_total": 249,
       "by_observed_verdict": {
-        "credited": 40,
-        "gap": 152,
+        "credited": 43,
+        "gap": 149,
         "limited": 56,
         "silent": 1
       },
       "false_verdict_rate": {
-        "numerator": 71,
+        "numerator": 66,
         "denominator": 249,
-        "rate": "0.2851"
+        "rate": "0.2651"
       },
       "false_actionable_rate": {
-        "numerator": 63,
+        "numerator": 59,
         "denominator": 124,
-        "rate": "0.5081"
+        "rate": "0.4758"
       },
       "false_exposed_rate": {
-        "numerator": 8,
+        "numerator": 7,
         "denominator": 125,
-        "rate": "0.0640"
+        "rate": "0.0560"
       },
       "false_silent_rate": {
         "numerator": 0,
@@ -87,9 +87,9 @@
         "rate": "0.0000"
       },
       "ideal_rate": {
-        "numerator": 121,
+        "numerator": 126,
         "denominator": 249,
-        "rate": "0.4859"
+        "rate": "0.5060"
       },
       "abstention_rate": {
         "numerator": 57,
@@ -1505,13 +1505,13 @@
       "hard_case": true,
       "truth": "discriminated",
       "ideal_verdict": "credited",
-      "observed_verdict": "gap",
+      "observed_verdict": "credited",
       "followed_retarget": false,
-      "changed_since_labeling": false,
+      "changed_since_labeling": true,
       "observed_classifications": [
-        "weakly_exposed"
+        "exposed"
       ],
-      "outcome": "false_actionable",
+      "outcome": "ideal",
       "contradictions": [],
       "findings_scored": 1,
       "findings_contradicted": 0,
@@ -1733,8 +1733,9 @@
       "ideal_verdict": "credited",
       "observed_verdict": "gap",
       "followed_retarget": false,
-      "changed_since_labeling": false,
+      "changed_since_labeling": true,
       "observed_classifications": [
+        "exposed",
         "weakly_exposed"
       ],
       "outcome": "false_actionable",
@@ -2529,13 +2530,13 @@
       "hard_case": true,
       "truth": "discriminated",
       "ideal_verdict": "credited",
-      "observed_verdict": "gap",
+      "observed_verdict": "credited",
       "followed_retarget": false,
-      "changed_since_labeling": false,
+      "changed_since_labeling": true,
       "observed_classifications": [
-        "weakly_exposed"
+        "exposed"
       ],
-      "outcome": "false_actionable",
+      "outcome": "ideal",
       "contradictions": [],
       "findings_scored": 1,
       "findings_contradicted": 0,
@@ -2551,13 +2552,13 @@
       "hard_case": true,
       "truth": "discriminated",
       "ideal_verdict": "credited",
-      "observed_verdict": "gap",
+      "observed_verdict": "credited",
       "followed_retarget": false,
-      "changed_since_labeling": false,
+      "changed_since_labeling": true,
       "observed_classifications": [
-        "weakly_exposed"
+        "exposed"
       ],
-      "outcome": "false_actionable",
+      "outcome": "ideal",
       "contradictions": [],
       "findings_scored": 1,
       "findings_contradicted": 0,
@@ -2837,13 +2838,13 @@
       "hard_case": true,
       "truth": "not_discriminated",
       "ideal_verdict": "gap",
-      "observed_verdict": "credited",
+      "observed_verdict": "gap",
       "followed_retarget": false,
-      "changed_since_labeling": false,
+      "changed_since_labeling": true,
       "observed_classifications": [
-        "exposed"
+        "weakly_exposed"
       ],
-      "outcome": "false_exposed",
+      "outcome": "ideal",
       "contradictions": [],
       "findings_scored": 1,
       "findings_contradicted": 0,
@@ -4847,13 +4848,13 @@
       "hard_case": true,
       "truth": "discriminated",
       "ideal_verdict": "credited",
-      "observed_verdict": "gap",
+      "observed_verdict": "credited",
       "followed_retarget": false,
-      "changed_since_labeling": false,
+      "changed_since_labeling": true,
       "observed_classifications": [
-        "weakly_exposed"
+        "exposed"
       ],
-      "outcome": "false_actionable",
+      "outcome": "ideal",
       "contradictions": [],
       "findings_scored": 1,
       "findings_contradicted": 0,

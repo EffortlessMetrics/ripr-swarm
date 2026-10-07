@@ -32,7 +32,7 @@
       "limited"
     ]
   },
-  "reasoning": "The test calls `add(1, 2)` without using the result and asserts only `expect(address).toBe(\"x\")` on an unrelated local; the edit `a + b` -> `a - b` cannot be noticed and the test passes. ripr reports `exposed` (observed `address`, exact_value), a wrong credit: it treats `address` as an observation of `add`. (spec target weakly_exposed with propagation_unknown; spec today exposed; ripr today exposed). Spec cells: RIPR-SPEC-0234 example 22",
+  "reasoning": "The test calls `add(1, 2)` without using the result and asserts only `expect(address).toBe(\"x\")` on an unrelated local; the edit `a + b` -> `a - b` cannot be noticed and the test passes. ripr reports `exposed` (observed `address`, exact_value), a wrong credit: it treats `address` as an observation of `add`. (spec target weakly_exposed with propagation_unknown; spec today exposed; ripr today exposed). Spec cells: RIPR-SPEC-0243 example 22",
   "labeling_observation": {
     "ripr_commit": "1273096",
     "full_checkout_verdict": "credited",

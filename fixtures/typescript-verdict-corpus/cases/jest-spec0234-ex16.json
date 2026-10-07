@@ -32,7 +32,7 @@
       "limited"
     ]
   },
-  "reasoning": "Adapted: priceEx16.ts adds `export default function roundEx16`, and test/otherEx16.test.ts does `import priceEx16 from \"../src/priceEx16\"`, so the call is Math.round(150); the stored expectation is toBe(150) instead of the spec's toBe(130) so the suite is green, and the edit survives because the owner is never called. ripr reports exposed with direct_owner_call and exact_value / strong: false exposure on a not_discriminated case. (spec says today exposed, direct_owner_call; ripr matches it) Spec cells: RIPR-SPEC-0234 example 16",
+  "reasoning": "Adapted: priceEx16.ts adds `export default function roundEx16`, and test/otherEx16.test.ts does `import priceEx16 from \"../src/priceEx16\"`, so the call is Math.round(150); the stored expectation is toBe(150) instead of the spec's toBe(130) so the suite is green, and the edit survives because the owner is never called. ripr reports exposed with direct_owner_call and exact_value / strong: false exposure on a not_discriminated case. (spec says today exposed, direct_owner_call; ripr matches it) Spec cells: RIPR-SPEC-0243 example 16",
   "labeling_observation": {
     "ripr_commit": "1273096",
     "full_checkout_verdict": "credited",

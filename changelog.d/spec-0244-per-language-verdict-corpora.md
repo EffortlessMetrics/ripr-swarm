@@ -4,4 +4,4 @@
   `fixtures/<language>-verdict-corpus`, so each language's corpus can be
   validated, checked and re-blessed on its own; without it they act on the
   Rust corpus. Only the Rust corpus holds labels to replayable cargo test
-  commands and Rust test names (RIPR-SPEC-0238, #6686).
+  commands and Rust test names (RIPR-SPEC-0244, #6686).

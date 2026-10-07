@@ -32,7 +32,7 @@
       "limited"
     ]
   },
-  "reasoning": "The stored code throws TypeError(\"empty\"); toThrow(TypeError) pins only the class, so changing the message to \"blank\" survives. ripr reports exposed with exact_error_variant / strong, which the spec keeps on purpose (its listed open over-credit for a class-only payload on a message-only change), so this is false exposure against runtime truth. (spec says today exposed, exact_error_variant / strong; ripr matches it) Spec cells: RIPR-SPEC-0234 example 13 (TypeError variant)",
+  "reasoning": "The stored code throws TypeError(\"empty\"); toThrow(TypeError) pins only the class, so changing the message to \"blank\" survives. ripr reports exposed with exact_error_variant / strong, which the spec keeps on purpose (its listed open over-credit for a class-only payload on a message-only change), so this is false exposure against runtime truth. (spec says today exposed, exact_error_variant / strong; ripr matches it) Spec cells: RIPR-SPEC-0243 example 13 (TypeError variant)",
   "labeling_observation": {
     "ripr_commit": "1273096",
     "full_checkout_verdict": "credited",

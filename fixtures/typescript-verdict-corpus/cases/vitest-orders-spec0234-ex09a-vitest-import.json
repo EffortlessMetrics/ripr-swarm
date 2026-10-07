@@ -33,7 +33,7 @@
       "silent"
     ]
   },
-  "reasoning": "Stored pre-change code returns amount - 10 and the test (expect/test imported from \"vitest\") asserts expect(priceEx09a(150)).toBe(140); the diff to amount - 20 makes it 130 and the test fails. ripr reports exposed with exact_value/strong. The @playwright/test import variant is not realized (package not installed). Spec cells: RIPR-SPEC-0234 example 9",
+  "reasoning": "Stored pre-change code returns amount - 10 and the test (expect/test imported from \"vitest\") asserts expect(priceEx09a(150)).toBe(140); the diff to amount - 20 makes it 130 and the test fails. ripr reports exposed with exact_value/strong. The @playwright/test import variant is not realized (package not installed). Spec cells: RIPR-SPEC-0243 example 9",
   "labeling_observation": {
     "ripr_commit": "1273096",
     "full_checkout_verdict": "credited",

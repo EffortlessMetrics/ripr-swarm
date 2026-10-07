@@ -32,7 +32,7 @@
       "limited"
     ]
   },
-  "reasoning": "The test pins only that priceEx06(150) does not throw; the edit changes the value, not the throw, so it survives. ripr reports weakly_exposed with unknown / unknown and typescript_oracle_helper_gated; the class is a correct gap, the spec's target oracle is broad_error / weak. (spec says today weakly_exposed, unknown / unknown; ripr matches it) Spec cells: RIPR-SPEC-0234 example 6",
+  "reasoning": "The test pins only that priceEx06(150) does not throw; the edit changes the value, not the throw, so it survives. ripr reports weakly_exposed with unknown / unknown and typescript_oracle_helper_gated; the class is a correct gap, the spec's target oracle is broad_error / weak. (spec says today weakly_exposed, unknown / unknown; ripr matches it) Spec cells: RIPR-SPEC-0243 example 6",
   "labeling_observation": {
     "ripr_commit": "1273096",
     "full_checkout_verdict": "gap",

@@ -32,7 +32,7 @@
       "limited"
     ]
   },
-  "reasoning": "toThrow(globalThis.Error) accepts any thrown Error, so the message change survives. ripr reports weakly_exposed with broad_error / weak and typescript_dynamic_assertion_unresolved, a correct gap. (spec says today weakly_exposed, broad_error / weak; ripr matches it) Spec cells: RIPR-SPEC-0234 example 13 (globalThis.Error variant)",
+  "reasoning": "toThrow(globalThis.Error) accepts any thrown Error, so the message change survives. ripr reports weakly_exposed with broad_error / weak and typescript_dynamic_assertion_unresolved, a correct gap. (spec says today weakly_exposed, broad_error / weak; ripr matches it) Spec cells: RIPR-SPEC-0243 example 13 (globalThis.Error variant)",
   "labeling_observation": {
     "ripr_commit": "1273096",
     "full_checkout_verdict": "gap",

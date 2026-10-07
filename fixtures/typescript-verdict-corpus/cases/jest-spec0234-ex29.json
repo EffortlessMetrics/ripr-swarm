@@ -33,7 +33,7 @@
       "silent"
     ]
   },
-  "reasoning": "tests/lib.test.ts imports `{ price }` from `@/lib` (jest moduleNameMapper `^@/(.*)$` -> src/$1, tsconfig paths `@/*`) and pins `toBe(140)`; the edit makes it 130 and the test fails. With `[typescript] resolve_tsconfig_paths = false` ripr finds no related test and reports `no_static_path` with `typescript_path_alias_unresolved` (an abstention). (matches spec: no_static_path, typescript_path_alias_unresolved). Spec cells: RIPR-SPEC-0234 example 29",
+  "reasoning": "tests/lib.test.ts imports `{ price }` from `@/lib` (jest moduleNameMapper `^@/(.*)$` -> src/$1, tsconfig paths `@/*`) and pins `toBe(140)`; the edit makes it 130 and the test fails. With `[typescript] resolve_tsconfig_paths = false` ripr finds no related test and reports `no_static_path` with `typescript_path_alias_unresolved` (an abstention). (matches spec: no_static_path, typescript_path_alias_unresolved). Spec cells: RIPR-SPEC-0243 example 29",
   "labeling_observation": {
     "ripr_commit": "1273096",
     "full_checkout_verdict": "limited",

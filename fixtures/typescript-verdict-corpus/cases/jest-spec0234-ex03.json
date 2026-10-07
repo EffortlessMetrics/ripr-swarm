@@ -33,7 +33,7 @@
       "silent"
     ]
   },
-  "reasoning": "The committed snapshot stores 140 for priceEx03(150); under jest --ci the edit's 130 mismatches the snapshot and the test fails. ripr reports weakly_exposed with snapshot / medium and typescript_snapshot_discriminator_unresolved, so it under-credits a real discriminator (a gap verdict on a discriminated case); this is the spec's intended reading, not a defect of the corpus. (spec says today weakly_exposed, snapshot / medium; ripr matches it) Spec cells: RIPR-SPEC-0234 example 3",
+  "reasoning": "The committed snapshot stores 140 for priceEx03(150); under jest --ci the edit's 130 mismatches the snapshot and the test fails. ripr reports weakly_exposed with snapshot / medium and typescript_snapshot_discriminator_unresolved, so it under-credits a real discriminator (a gap verdict on a discriminated case); this is the spec's intended reading, not a defect of the corpus. (spec says today weakly_exposed, snapshot / medium; ripr matches it) Spec cells: RIPR-SPEC-0243 example 3",
   "labeling_observation": {
     "ripr_commit": "1273096",
     "full_checkout_verdict": "gap",

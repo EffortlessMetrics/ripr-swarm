@@ -33,7 +33,7 @@
       "silent"
     ]
   },
-  "reasoning": "Stored pre-change, `parse(\"\")` throws `new Error(\"empty\")` and the test asserts `expect(() => parse(\"\")).to.throw(\"empty\")`; the diff changes the message to \"blank\", which no longer includes \"empty\", so the test fails. ripr reports `weakly_exposed` with broad_error/weak, matching the spec text but under-crediting a discriminating oracle. Spec cells: RIPR-SPEC-0234 example 14",
+  "reasoning": "Stored pre-change, `parse(\"\")` throws `new Error(\"empty\")` and the test asserts `expect(() => parse(\"\")).to.throw(\"empty\")`; the diff changes the message to \"blank\", which no longer includes \"empty\", so the test fails. ripr reports `weakly_exposed` with broad_error/weak, matching the spec text but under-crediting a discriminating oracle. Spec cells: RIPR-SPEC-0243 example 14",
   "labeling_observation": {
     "ripr_commit": "1273096",
     "full_checkout_verdict": "gap",

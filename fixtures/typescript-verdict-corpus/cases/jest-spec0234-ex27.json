@@ -33,7 +33,7 @@
       "silent"
     ]
   },
-  "reasoning": "The test has no static import: `const m = await import(\"../src/priceDynamic\")` then `expect(m.priceDynamic(150)).toBe(140)`; the edit makes it 130 and the test fails. ripr reports `exposed` via `import_path_affinity` with an exact_value oracle. (matches spec: import_path_affinity, exposed). Spec cells: RIPR-SPEC-0234 example 27",
+  "reasoning": "The test has no static import: `const m = await import(\"../src/priceDynamic\")` then `expect(m.priceDynamic(150)).toBe(140)`; the edit makes it 130 and the test fails. ripr reports `exposed` via `import_path_affinity` with an exact_value oracle. (matches spec: import_path_affinity, exposed). Spec cells: RIPR-SPEC-0243 example 27",
   "labeling_observation": {
     "ripr_commit": "1273096",
     "full_checkout_verdict": "credited",

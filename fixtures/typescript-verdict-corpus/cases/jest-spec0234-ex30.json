@@ -33,7 +33,7 @@
       "silent"
     ]
   },
-  "reasoning": "The test passes `{ write: jest.fn() }` to `save(db, 1)` and pins `expect(db.write).toHaveBeenCalledWith(2)`; the edit `v + 1` -> `v + 2` calls write(3) and the test fails. ripr reports `weakly_exposed` with a `mock_expectation`/medium oracle (gap_state advisory), so the exact argument pin is under-credited. (matches spec: mock_expectation / medium, weakly_exposed). Spec cells: RIPR-SPEC-0234 example 30",
+  "reasoning": "The test passes `{ write: jest.fn() }` to `save(db, 1)` and pins `expect(db.write).toHaveBeenCalledWith(2)`; the edit `v + 1` -> `v + 2` calls write(3) and the test fails. ripr reports `weakly_exposed` with a `mock_expectation`/medium oracle (gap_state advisory), so the exact argument pin is under-credited. (matches spec: mock_expectation / medium, weakly_exposed). Spec cells: RIPR-SPEC-0243 example 30",
   "labeling_observation": {
     "ripr_commit": "1273096",
     "full_checkout_verdict": "gap",

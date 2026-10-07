@@ -9,7 +9,7 @@
   "edit_kind": "behavior_preserving_rewrite",
   "behavior_family": "field_construction",
   "test_shape": "jest_tomatchinlinesnapshot_field",
-  "hard_case": "an inline snapshot is an exact whole-object oracle that ripr grades medium (RIPR-SPEC-0234 example 3)",
+  "hard_case": "an inline snapshot is an exact whole-object oracle that ripr grades medium (RIPR-SPEC-0243 example 3)",
   "truth": {
     "state": "discriminated",
     "method": "runtime_mutant_kill",

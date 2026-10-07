@@ -1,13 +1,13 @@
 {
   "schema_version": "ripr_verdict_corpus.v1",
   "kind": "ripr_verdict_corpus",
-  "spec": "RIPR-SPEC-0238",
+  "spec": "RIPR-SPEC-0244",
   "description": "Hand-labeled TypeScript verdict corpus: one-line edits in small authored TypeScript packages, one or more subjects per test library (jest, vitest, mocha with chai, node:test), each labeled with what the package's own tests actually discriminate, so ripr's TypeScript verdicts can be scored as false actionable, false exposed, false silent, abstained, or ideal.",
   "label_method": "For each case the edit was applied to a scratch copy of the whole authored package and its own test command (recorded on the case) was run. For a behavior_preserving_rewrite the edit keeps the tests green and the listed mutants of the edited line come from a StrykerJS 10 run restricted to that line (jest, vitest and mocha runners; node:test through the command runner, with each detected mutant replayed to name its failing test), or, for the cases handed over from the Python corpus thread, from hand-applied mutants. For a behavior_change the edit is its own single mutant: the stored package's tests pass and the edited package's tests are run. A mutant counts as detected (`tests_failed`) when the test command fails after the code loads. Each mutant was reviewed for equivalence before its outcome counted. Truth is derived from the count of mutants with tests_failed: all is discriminated, none is not_discriminated, otherwise partially_discriminated.",
   "verdict_projection": "Only candidate_current findings on the anchor file and line count, plus, when the anchor is a plain `let name = init;` or `let mut name = init;`, candidate_current findings in the anchor file whose binding_predicate_relation evidence names that binding with init as its new initializer (the RIPR-SPEC-0157 retarget). exposed is credited; a named static_limit_kind or a no_static_path, infection_unknown, propagation_unknown or static_unknown class is limited; any other class (weakly_exposed, reachable_unrevealed) is a gap. A gap on the line outranks credit, and credit outranks a limit. No anchored finding is silent. The per-finding reading mirrors crates/ripr/src/output/human/triage.rs; the line-level precedence is this corpus's own policy.",
   "non_claims": [
     "Rates describe this corpus only; they are not a population estimate for TypeScript code or for ripr in general.",
-    "Every subject is authored to cover a test-library oracle or reach rule (RIPR-SPEC-0027, RIPR-SPEC-0085, RIPR-SPEC-0234); the rates describe those cells, not real-world TypeScript tests.",
+    "Every subject is authored to cover a test-library oracle or reach rule (RIPR-SPEC-0027, RIPR-SPEC-0085, RIPR-SPEC-0243); the rates describe those cells, not real-world TypeScript tests.",
     "Truth comes from the listed mutants, not from exhaustive mutation; a discriminated label means every listed mutant made the test command fail.",
     "The harness does not run mutation testing, the TypeScript test runners, or any network access."
   ]

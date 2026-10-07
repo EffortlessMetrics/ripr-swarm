@@ -40,7 +40,7 @@
       "silent"
     ]
   },
-  "reasoning": "`return listPrice - 5` rewritten to `return -5 + listPrice`. The only assertion is `assert.strictEqual(memberPrice(30), 25)` inside `await t.test(...)`, which kills both mutants (the outer test fails too). ripr does not collect assertions inside a subtest callback, so the outer test's oracle is unknown and the class is `weakly_exposed`, a false gap against a discriminated truth; this matches RIPR-SPEC-0234's statement that subtest assertions are not collected.",
+  "reasoning": "`return listPrice - 5` rewritten to `return -5 + listPrice`. The only assertion is `assert.strictEqual(memberPrice(30), 25)` inside `await t.test(...)`, which kills both mutants (the outer test fails too). ripr does not collect assertions inside a subtest callback, so the outer test's oracle is unknown and the class is `weakly_exposed`, a false gap against a discriminated truth; this matches RIPR-SPEC-0243's statement that subtest assertions are not collected.",
   "labeling_observation": {
     "ripr_commit": "1273096",
     "full_checkout_verdict": "gap",

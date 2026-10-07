@@ -32,7 +32,7 @@
       "limited"
     ]
   },
-  "reasoning": "The test `jest.mock(\"../src/priceSelfMocked\")` automocks the owner's module, so `priceSelfMocked(150)` returns undefined and the edit is never executed; the test passes. Adapted from the spec: the stored assertion is `toBe(undefined)` instead of `toBe(130)` because the automocked call can never return a number (a green suite is required); a probe with `toBe(140)` gives ripr the same verdict. ripr reports `weakly_exposed`, `mocked_module`, oracle `unknown`, related only by test name; the named mocked_module limit projects to limited, an abstention. (matches spec: weakly_exposed, mocked_module). Spec cells: RIPR-SPEC-0234 example 25",
+  "reasoning": "The test `jest.mock(\"../src/priceSelfMocked\")` automocks the owner's module, so `priceSelfMocked(150)` returns undefined and the edit is never executed; the test passes. Adapted from the spec: the stored assertion is `toBe(undefined)` instead of `toBe(130)` because the automocked call can never return a number (a green suite is required); a probe with `toBe(140)` gives ripr the same verdict. ripr reports `weakly_exposed`, `mocked_module`, oracle `unknown`, related only by test name; the named mocked_module limit projects to limited, an abstention. (matches spec: weakly_exposed, mocked_module). Spec cells: RIPR-SPEC-0243 example 25",
   "labeling_observation": {
     "ripr_commit": "1273096",
     "full_checkout_verdict": "limited",
