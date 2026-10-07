@@ -1526,23 +1526,42 @@ fn clone_field_pin_at(
     expression: &str,
 ) -> (RustIndex, Option<OwnerReturnPin>) {
     let index = index(&[(LIB, lib), (TESTS, tests)]);
-    let pin = {
-        let owner = owner(&index, "clone");
-        let line = lib
-            .lines()
-            .enumerate()
-            .position(|(offset, line)| offset + 1 > owner.start_line && line.trim() == line_text)
-            .map_or(0, |offset| offset + 1);
-        assert!(
-            line > owner.start_line,
-            "fixture: the field line must parse"
-        );
-        let mut probe = return_probe(owner, expression);
-        probe.family = ProbeFamily::FieldConstruction;
-        probe.location = SourceLocation::new(owner.file.clone(), line, 1);
-        OwnerReturnPin::establish(&probe, owner, &index)
-    };
+    let pin = field_pin(&index, lib, line_text, expression);
     (index, pin)
+}
+
+/// A `field_construction` probe on `line_text` of `clone` when production
+/// and its `mod tests` share one file (#6905).
+fn same_file_clone_field_pin(
+    source: &str,
+    line_text: &str,
+    expression: &str,
+) -> (RustIndex, Option<OwnerReturnPin>) {
+    let index = index(&[(LIB, source)]);
+    let pin = field_pin(&index, source, line_text, expression);
+    (index, pin)
+}
+
+fn field_pin(
+    index: &RustIndex,
+    lib: &str,
+    line_text: &str,
+    expression: &str,
+) -> Option<OwnerReturnPin> {
+    let owner = owner(index, "clone");
+    let line = lib
+        .lines()
+        .enumerate()
+        .position(|(offset, line)| offset + 1 > owner.start_line && line.trim() == line_text)
+        .map_or(0, |offset| offset + 1);
+    assert!(
+        line > owner.start_line,
+        "fixture: the field line must parse"
+    );
+    let mut probe = return_probe(owner, expression);
+    probe.family = ProbeFamily::FieldConstruction;
+    probe.location = SourceLocation::new(owner.file.clone(), line, 1);
+    OwnerReturnPin::establish(&probe, owner, index)
 }
 
 /// #6692: `assert_eq!(recv.clone(), recv)` through a derived `PartialEq`
@@ -1928,6 +1947,93 @@ fn a_clone_field_pin_allows_lint_tool_attributes_on_the_type() {
         let (_, pin) = clone_field_pin(&lib, WINDOW_TESTS);
         assert!(pin.is_some(), "{lib}");
     }
+}
+
+/// #6905: production `Window` with a hand-written `Clone`, and a `mod
+/// tests` in the same file declaring its own same-name `Window` with a
+/// derived `Clone`. The test's `window.clone()` runs the test-local clone,
+/// never the changed owner.
+const SHADOWED_WINDOW: &str = "#[derive(Debug, PartialEq, Eq)]\npub struct Window {\n    start: u32,\n    end: u32,\n}\n\nimpl Window {\n    pub fn new(start: u32, end: u32) -> Self {\n        Window { start, end }\n    }\n}\n\nimpl Clone for Window {\n    fn clone(&self) -> Self {\n        Window {\n            start: self.start,\n            end: self.end,\n        }\n    }\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    #[derive(Debug, Clone, PartialEq, Eq)]\n    struct Window {\n        start: u32,\n        end: u32,\n    }\n\n    #[test]\n    fn a_clone_equals_its_original() {\n        let window = Window { start: 3, end: 9 };\n        assert_eq!(window.clone(), window);\n    }\n}\n";
+
+/// #6905: the pin establishes from the production type (equality reads
+/// past the test-module definition), but the shadowed receiver names the
+/// test-local type, so no assertion is admitted. The same file without the
+/// shadowing declaration still pins.
+#[test]
+fn a_test_module_shadow_of_the_receiver_refuses_the_clone_pin() {
+    let (index, pin) =
+        same_file_clone_field_pin(SHADOWED_WINDOW, "start: self.start,", "start: self.start,");
+    assert!(
+        pin.is_some(),
+        "the pin establishes from the production type"
+    );
+    let Some(pin) = pin else { return };
+    assert!(
+        admitted_texts(&index, &pin).is_empty(),
+        "a shadowed receiver names the test-local type, not the owner"
+    );
+    let unshadowed = SHADOWED_WINDOW
+        .replace(
+            "    #[derive(Debug, Clone, PartialEq, Eq)]\n    struct Window {\n        start: u32,\n        end: u32,\n    }\n\n",
+            "",
+        )
+        .replace(
+            "let window = Window { start: 3, end: 9 };",
+            "let window = Window::new(3, 9);",
+        );
+    let (index, pin) =
+        same_file_clone_field_pin(&unshadowed, "start: self.start,", "start: self.start,");
+    assert!(pin.is_some(), "the unshadowed control must establish");
+    let Some(pin) = pin else { return };
+    assert_eq!(admitted_texts(&index, &pin).len(), 1);
+}
+
+/// #6905 for rules 1-2 method pins: the receiver type is established by
+/// name, so a test-module shadow refuses it the same way. Gate-level
+/// control: the shadow is methodless (a same-name method would already
+/// compete), which pins the receiver-identity refusal itself.
+#[test]
+fn a_test_module_shadow_of_the_receiver_refuses_a_method_pin() {
+    let shadowed = "pub struct Stack {\n    items: Vec<u32>,\n}\n\nimpl Stack {\n    pub fn depth(&self) -> usize {\n        self.items.len() + 1\n    }\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    struct Stack {\n        items: Vec<u32>,\n    }\n\n    #[test]\n    fn depth_counts() {\n        let stack = Stack { items: Vec::new() };\n        assert_eq!(stack.depth(), 1);\n    }\n}\n";
+    let outer = "pub struct Stack {\n    items: Vec<u32>,\n}\n\nimpl Stack {\n    pub fn depth(&self) -> usize {\n        self.items.len() + 1\n    }\n}\n\nmod holder {\n    struct Stack {\n        items: Vec<u32>,\n    }\n\n    #[cfg(test)]\n    mod tests {\n        #[test]\n        fn depth_counts() {\n            let stack = Stack { items: Vec::new() };\n            assert_eq!(stack.depth(), 1);\n        }\n    }\n}\n";
+    for source in [shadowed, outer] {
+        let index = index(&[(LIB, source)]);
+        let pin = establish(&index, "depth", "self.items.len() + 1");
+        assert!(
+            pin.is_some(),
+            "the pin establishes from the production type: {source}"
+        );
+        let Some(pin) = pin else { return };
+        assert!(
+            admitted_texts(&index, &pin).is_empty(),
+            "a shadowed receiver names the test-local type: {source}"
+        );
+    }
+    // A raw-identifier shadow (`r#Stack` denotes `Stack`) refuses the same
+    // way, including across files where it is the test file's only
+    // declaration of the name.
+    let lib = "pub struct Stack {\n    items: Vec<u32>,\n}\n\nimpl Stack {\n    pub fn depth(&self) -> usize {\n        self.items.len() + 1\n    }\n}\n";
+    let tests = "use demo::Stack;\n\nmod tests {\n    struct r#Stack {\n        items: Vec<u32>,\n    }\n\n    #[test]\n    fn depth_counts() {\n        let stack = Stack { items: Vec::new() };\n        assert_eq!(stack.depth(), 1);\n    }\n}\n";
+    let index = index(&[(LIB, lib), (TESTS, tests)]);
+    let pin = establish(&index, "depth", "self.items.len() + 1");
+    assert!(pin.is_some(), "the raw-identifier control must establish");
+    let Some(pin) = pin else { return };
+    assert!(
+        admitted_texts(&index, &pin).is_empty(),
+        "a raw-identifier shadow names the test-local type"
+    );
+}
+
+/// #6905 precision: a same-name type outside the test's own module scope
+/// does not shadow the receiver, so the pin still admits.
+#[test]
+fn a_same_name_type_outside_the_test_module_does_not_shadow() {
+    let lib = "pub struct Stack {\n    items: Vec<u32>,\n}\n\nimpl Stack {\n    pub fn depth(&self) -> usize {\n        self.items.len() + 1\n    }\n}\n\npub mod other {\n    pub struct Stack {\n        items: Vec<u32>,\n    }\n}\n\n#[cfg(test)]\nmod tests {\n    use super::Stack;\n\n    #[test]\n    fn depth_counts() {\n        let stack = Stack { items: Vec::new() };\n        assert_eq!(stack.depth(), 1);\n    }\n}\n";
+    let index = index(&[(LIB, lib)]);
+    let pin = establish(&index, "depth", "self.items.len() + 1");
+    assert!(pin.is_some(), "the sibling control must establish");
+    let Some(pin) = pin else { return };
+    assert_eq!(admitted_texts(&index, &pin).len(), 1);
 }
 
 const GATE_LIB: &str = "pub fn gate(value: u32) -> bool {\n    10 <= value\n}\n\npub fn level(value: u32) -> u32 {\n    10 + value\n}\n";

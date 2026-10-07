@@ -137,7 +137,10 @@ rule only for an assertion whose context was admitted.
      parameters, a macro that mentions it) leaves the type unestablished. A
      named type must be a struct, enum or union declared in the workspace,
      and the test's file must not import it from outside the workspace,
-     rename another item to it, or declare a `type` alias of it.
+     rename another item to it, or declare a `type` alias of it. A type
+     declaration of the name in the test's own module scope shadows the
+     production type for that test (#6905), so it refuses the pin rather
+     than crediting the production method.
    - The receiver type must dispatch to the owner: the inherent `impl`'s
      self type, the trait impl's self type, or, for a trait default method,
      a type with an `impl .. Trait for <type>` in the workspace. A trait
@@ -343,6 +346,10 @@ string literal is not a call or a reference. These rules hold for
   (`fixtures/owner_return_pin_identity_traps`): the associated-versus-free
   bare call, the overridden trait default, the early-exit input, and the
   test-local binding of the owner's name.
+- A fixture pins a test-module same-name shadow as non-exposed
+  (`fixtures/owner_return_pin_test_module_shadow`, #6905): the test's own
+  `Window` with a derived `Clone` runs instead of the changed owner, so the
+  clone field stays `weakly_exposed` with its struct-field gap.
 - Unit tests pin every gate with a positive and a discriminating negative.
 - Twenty matched fixtures keep effective and ineffective tests separate:
   - `owner_return_pin_direct`, `_called_closure`, `_token_direct`, and
