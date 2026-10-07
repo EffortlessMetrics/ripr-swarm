@@ -1,4 +1,4 @@
-# RIPR-SPEC-0234: Canonical next action
+# RIPR-SPEC-0241: Canonical next action
 
 Status: proposed
 
@@ -17,6 +17,10 @@ Linked issues: #6304
 Linked PRs:
 
 Support-tier impact:
+
+- No tier change. `docs/status/SUPPORT_TIERS.md` remains unchanged; this spec
+  projects guidance over existing Rust surfaces and adds no language support,
+  platform, or packaging claim.
 
 Policy impact:
 
