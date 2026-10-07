@@ -276,42 +276,61 @@ pub(crate) fn error_path_twins(shapes: &[ProbeShapeFact], source: &str) -> Vec<b
     let groups: Vec<_> = errors
         .chunk_by(|(_, a), (_, b)| a.start_byte == b.start_byte)
         .collect();
-    for pair in groups.windows(2) {
-        let [outers, inners] = pair else { continue };
+    // Whether a group's call only wraps an `Err(..)`, so the call around it
+    // wraps that error too (`Ok(Poll::Ready(Err(X)))`). Pairs run from the
+    // last group back so the inner group is settled first.
+    let mut wraps_err = vec![false; groups.len()];
+    for at in (1..groups.len()).rev() {
+        let (Some(outers), Some(inners)) = (groups.get(at - 1), groups.get(at)) else {
+            continue;
+        };
         let (Some((_, outer)), Some((_, inner))) = (outers.first(), inners.first()) else {
             continue;
         };
         let Some(prefix) = source.get(outer.start_byte..inner.start_byte) else {
             continue;
         };
+        let inner_is_err = wraps_err.get(at).copied().unwrap_or(false)
+            || source
+                .get(inner.start_byte..)
+                .is_some_and(err_call_opening_at_start);
         if is_return_prefix(prefix) {
-            mark_returns(outers, inners, source, &mut twins);
+            mark_returns(outers, inners, inner_is_err, source, &mut twins);
         }
         if let Some(opening) = err_call_opening(prefix) {
             mark_payloads(outers, inners, opening, source, &mut twins);
         }
-        let inner_is_err = source
-            .get(inner.start_byte..)
-            .is_some_and(err_call_opening_at_start);
-        if wraps_first_argument(prefix, inner_is_err) {
+        if wraps_argument(prefix, inner_is_err) {
             mark_wrappers(outers, inners, &mut twins);
+            if inner_is_err && let Some(wraps) = wraps_err.get_mut(at - 1) {
+                *wraps = true;
+            }
         }
     }
     twins
 }
 
-/// Marks each call in `outers` that holds an inner shape: the prefix check
-/// already placed the inner group in the call's argument list (#6938).
+/// Marks the call in `outers` that holds the inner shape: the prefix check
+/// already placed the inner group in the call's argument list (#6938). Only
+/// the shortest outer that contains it is the call; a longer shape from the
+/// same start (`wrap(Err(X)).map_err(..)` as a tail) adds behavior and stays.
 fn mark_wrappers(
     outers: &[(usize, &ProbeShapeFact)],
     inners: &[(usize, &ProbeShapeFact)],
     twins: &mut [bool],
 ) {
-    for &(outer_index, outer) in outers {
-        let nests = inners
-            .first()
-            .is_some_and(|(_, inner)| inner.end_byte <= outer.end_byte);
-        if nests && let Some(twin) = twins.get_mut(outer_index) {
+    let Some((_, inner)) = inners.first() else {
+        return;
+    };
+    let first = outers.partition_point(|(_, outer)| outer.end_byte < inner.end_byte);
+    let Some(&(_, call)) = outers.get(first) else {
+        return;
+    };
+    for &(outer_index, outer) in outers.get(first..).unwrap_or_default() {
+        if outer.end_byte != call.end_byte {
+            break;
+        }
+        if let Some(twin) = twins.get_mut(outer_index) {
             *twin = true;
         }
     }
@@ -323,10 +342,13 @@ fn mark_wrappers(
 ///
 /// Inside `Err(..)` the payload rule applies instead. A capitalised callee
 /// (`Error::Bad(Error::Inner(1))`) builds its own error around the inner one
-/// and stays, unless the inner shape is an `Err(..)` that the callee only
-/// wraps (`Poll::Ready(Err(X))`). A prefix with a quote or a `/` may hide a
-/// delimiter in a literal or comment, so it keeps both shapes.
-fn wraps_first_argument(prefix: &str, inner_is_err: bool) -> bool {
+/// and stays, as does a function on a type (`io::Error::new(kind, ..)`,
+/// `Error::wrap(..)`), unless the inner shape is an `Err(..)` that the callee
+/// only wraps (`Poll::Ready(Err(X))`). A prefix with a quote or a `/` may
+/// hide a delimiter in a literal or comment, so it keeps both shapes. An
+/// `Err(..)` inside a macro argument before the inner shape has no shape of
+/// its own, so `wrap(vec![Err(A)], Err(B))` keeps only `Err(B)`.
+fn wraps_argument(prefix: &str, inner_is_err: bool) -> bool {
     let Some((callee, arguments)) = prefix.split_once('(') else {
         return false;
     };
@@ -345,7 +367,10 @@ fn wraps_first_argument(prefix: &str, inner_is_err: bool) -> bool {
             .chars()
             .all(|c| c.is_alphanumeric() || c == '_' || c == ':');
     let name = path.rsplit("::").next().unwrap_or(path);
-    if !is_path || name == "Err" || (!inner_is_err && name.starts_with(char::is_uppercase)) {
+    let builds_error = path
+        .split("::")
+        .any(|segment| segment.starts_with(char::is_uppercase));
+    if !is_path || name == "Err" || (!inner_is_err && builds_error) {
         return false;
     }
     let mut depth = 0_usize;
@@ -377,12 +402,15 @@ fn err_call_opening_at_start(text: &str) -> bool {
 
 /// Marks each `return` in `outers` around the inner shape that ends last
 /// inside it, when only closing parentheses follow that shape, or a method
-/// chain on it (`return Err(X).context(..)`, #6935). The constructor is then
-/// the innermost receiver, so its own seam carries the error. A
-/// `return x.map_err(..)` has no inner constructor and keeps its seam.
+/// chain on it when it is an `Err(..)` (`return Err(X).context(..)`, #6935).
+/// The constructor is then the innermost receiver, so its own seam carries
+/// the error. A chain on any other error shape
+/// (`return load(Error::A).map_err(Error::Io)`) adds a conversion and keeps
+/// its seam, as does a `return x.map_err(..)` with no inner shape.
 fn mark_returns(
     outers: &[(usize, &ProbeShapeFact)],
     inners: &[(usize, &ProbeShapeFact)],
+    inner_is_err: bool,
     source: &str,
     twins: &mut [bool],
 ) {
@@ -395,7 +423,7 @@ fn mark_returns(
             .get(inner.end_byte..outer.end_byte)
             .is_some_and(|suffix| {
                 let rest = suffix.trim_start_matches(|c: char| c == ')' || c.is_whitespace());
-                rest.is_empty() || rest.starts_with('.')
+                rest.is_empty() || (inner_is_err && rest.starts_with('.'))
             });
         if closes && let Some(twin) = twins.get_mut(outer_index) {
             *twin = true;

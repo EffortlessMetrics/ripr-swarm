@@ -1,13 +1,16 @@
 <!-- section: Fixed -->
 - Wrapped error constructors now get one `error_variant` seam, on the
   constructor itself, instead of a second seam on the wrapper:
-  - a `return` around a method chain on the constructor
+  - a `return` around a method chain on an `Err(..)`
     (`return Err(X).context(..)`, #6935);
-  - a call that takes the constructor as a top-level argument
-    (`Poll::Ready(Err(X))`, `Ok(Err(X))`, `pick(s, Err(A), Err(B))`,
-    `wrap(Error::X(1))`, #6938).
+  - a call that takes the constructor as a top-level argument, including
+    nested wrappers (`Poll::Ready(Err(X))`, `Ok(Poll::Ready(Err(X)))`,
+    `pick(s, Err(A), Err(B))`, `wrap(Error::X(1))`, #6938).
 
-  A `return x.map_err(..)` with no constructor inside keeps its own seam. A
-  capitalised callee that builds its own error around another one
-  (`Error::Outer(Error::Inner(1))`) keeps both. Classified seam caches move
-  to 1.44 / 0.50, so warm entries rebuild.
+  Wrappers that add error behavior of their own keep their seams: a chain on
+  a non-`Err` shape (`return load(Error::A).map_err(Error::Io)`), a function
+  on a type (`io::Error::new(kind, Error::W(1))`), a capitalised constructor
+  around another error, and a longer chain on the call
+  (`wrap(Err(X)).map_err(..)`). A `return x.map_err(..)` with no constructor
+  inside keeps its seam too. Classified seam caches move to 1.44 / 0.50, so
+  warm entries rebuild.

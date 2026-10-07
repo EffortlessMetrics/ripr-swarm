@@ -437,3 +437,67 @@ fn inventory_drops_a_call_wrapping_an_error_constructor() -> Result<(), String> 
     );
     Ok(())
 }
+
+/// Review of #6935/#6938: a wrapper or chain that adds error behavior of its
+/// own keeps its seam, and nested wrappers around one `Err(..)` all go.
+#[test]
+fn inventory_keeps_wrappers_that_add_error_behavior() -> Result<(), String> {
+    let source = concat!(
+        "pub fn run(s: &str) -> Result<u8, Error> {\n",
+        "    if s == \"a\" { return load(s, Error::Strict).map_err(Error::Io); }\n",
+        "    if s == \"b\" { return Error::wrap(Error::A(1)).into(); }\n",
+        "    if s == \"c\" { return io::Error::new(Kind::Bad, Error::W(1)); }\n",
+        "    if s == \"d\" { return Ok(Poll::Ready(Err(Error::N))); }\n",
+        "    if s == \"e\" { return Poll::Ready(Err::<u8, Error>(Error::T)); }\n",
+        "    if s == \"f\" { return g(s, |e| Err(e)); }\n",
+        "    if s == \"h\" { return wrap(')', Err(Error::H)); }\n",
+        "    if s == \"i\" { return Err(Error::I)?.into(); }\n",
+        "    if s == \"j\" { return (wrap(Error::J), Err(Error::K)); }\n",
+        "    wrap(Err(Error::Tail)).map_err(|_| Error::Other)\n",
+        "}\n",
+    );
+    let index = index_of(source)?;
+    let file = PathBuf::from("src/lib.rs");
+    let seams = inventory_seams_from_index(std::slice::from_ref(&file), &index);
+    let error_seams: Vec<(usize, &str)> = seams
+        .iter()
+        .filter(|seam| seam.kind() == SeamKind::ErrorVariant)
+        .map(|seam| (seam.display_line(), seam.expression()))
+        .collect();
+    assert_eq!(
+        error_seams,
+        vec![
+            // A chain on a non-`Err` shape adds a conversion.
+            (2, "return load(s, Error::Strict).map_err(Error::Io)"),
+            (2, "load(s, Error::Strict)"),
+            // Functions on a type build their own error; the `.into()` on a
+            // non-`Err` shape keeps the `return` too.
+            (3, "return Error::wrap(Error::A(1)).into()"),
+            (3, "Error::wrap(Error::A(1))"),
+            (3, "Error::A(1)"),
+            (4, "io::Error::new(Kind::Bad, Error::W(1))"),
+            (4, "Error::W(1)"),
+            // Nested wrappers around one `Err(..)` all go.
+            (5, "Err(Error::N)"),
+            (6, "Err::<u8, Error>(Error::T)"),
+            // A closure argument is not a top-level constructor.
+            (7, "g(s, |e| Err(e))"),
+            (7, "Err(e)"),
+            // A char literal may hide a delimiter.
+            (8, "wrap(')', Err(Error::H))"),
+            (8, "Err(Error::H)"),
+            // `?` is not a method chain on the constructor.
+            (9, "return Err(Error::I)?.into()"),
+            (9, "Err(Error::I)"),
+            // `wrap` holds no error shape; the tuple is not a call.
+            (10, "return (wrap(Error::J), Err(Error::K))"),
+            (10, "wrap(Error::J)"),
+            (10, "Err(Error::K)"),
+            // The tail chain adds a conversion; only the call goes.
+            (11, "wrap(Err(Error::Tail)).map_err(|_| Error::Other)"),
+            (11, "Err(Error::Tail)"),
+        ],
+        "{seams:?}"
+    );
+    Ok(())
+}
