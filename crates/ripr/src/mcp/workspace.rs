@@ -554,12 +554,21 @@ impl WorkspaceSession {
             }
             if fitting == 0 {
                 // Even one summary cannot fit beside the shell in the
-                // structured envelope; keep one so the page still makes
-                // progress and tool_result best-fits the wire form.
-                items.truncate(1);
-            } else {
-                items.truncate(fitting);
+                // structured envelope: no page can carry the advertised
+                // structured result, so fail closed instead of shipping a
+                // text-only success that breaks the outputSchema contract
+                // (#6021 review).
+                return Err(AttemptFailure::new(
+                    CODE_RESULT_TOO_LARGE,
+                    format!(
+                        "gap list cannot serve even one page with its structured result: the non-pageable disclosure alone fills the {}-byte envelope budget",
+                        super::MAX_RESPONSE_BYTES
+                    ),
+                    "read identities through the ripr://snapshot/{snapshot_id} resource and single items through ripr_get_gap",
+                )
+                .with_data(json!({ "current_snapshot_id": snapshot.snapshot_id })));
             }
+            items.truncate(fitting);
         }
 
         let page = GapPage {
