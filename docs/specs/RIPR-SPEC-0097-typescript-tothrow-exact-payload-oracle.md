@@ -77,17 +77,17 @@ and `await expect(...).rejects.toThrowError(arg)`.
 ### Support tier
 
 TS stays PREVIEW-tier (advisory). This spec changes the exposure CLASS
-within preview (`weakly_exposed` → `exposed` when an exact `toThrow` payload
+within preview (`weakly_exposed` â†’ `exposed` when an exact `toThrow` payload
 is present) but does NOT change the support tier or emit actionable repair
 packets.
 
 ## Required Evidence
 
 - Fixture `typescript_tothrow_exact_oracle`: owner changed, tests use all
-  three exact-payload forms → must produce `exposed`,
+  three exact-payload forms â†’ must produce `exposed`,
   `oracle_kind: exact_error_variant`.
 - Fixture `typescript_broad_tothrow` (existing control): bare `.toThrow()`
-  → must stay `weakly_exposed` (BroadError / weak). Must NOT flip to exposed.
+  â†’ must stay `weakly_exposed` (BroadError / weak). Must NOT flip to exposed.
 - Unit tests:
   - `extract_tests_maps_object_tothrow_to_exact_error_variant_oracle`
   - `extract_tests_maps_class_tothrow_to_exact_error_variant_oracle`
@@ -169,9 +169,9 @@ After spec:     weakly_exposed, BroadError / weak oracle (unchanged)
 
 ## Test Mapping
 
-- `fixtures/typescript_tothrow_exact_oracle/` — golden fixture proving all three
+- `fixtures/typescript_tothrow_exact_oracle/` â€” golden fixture proving all three
   exact-payload forms produce `exposed` with `oracle_kind: exact_error_variant`.
-- `fixtures/typescript_broad_tothrow/` — existing golden control: bare `.toThrow()`
+- `fixtures/typescript_broad_tothrow/` â€” existing golden control: bare `.toThrow()`
   must stay `weakly_exposed` after this spec (classification must not change).
 - `crates/ripr/src/analysis/language/typescript/tests.rs`:
   - `extract_tests_maps_object_tothrow_to_exact_error_variant_oracle`
@@ -191,12 +191,28 @@ After spec:     weakly_exposed, BroadError / weak oracle (unchanged)
   - `TypeScriptErrorPayloadKind::RejectsThrowClass` (new variant)
   - `TypeScriptErrorPayload::oracle_text()` updated to cover all variants.
 - `crates/ripr/src/analysis/language/typescript/oracle.rs`:
-  - `safe_error_class_payload_text()` — new helper: extracts PascalCase member
+  - `safe_error_class_payload_text()` â€” new helper: extracts PascalCase member
     path from an identifier/dotted-member argument; returns `None` for camelCase
     (fail-closed).
-  - `error_payload_from_assertion()` — expanded: tries string literal, then
+  - `error_payload_from_assertion()` â€” expanded: tries string literal, then
     all-literal object, then PascalCase class ref (in that priority order)
     for both sync `toThrow` and async `.rejects.toThrow`.
+
+## Later Amendment
+
+RIPR-SPEC-0243 rule 4 (2026-10-04) adds two exceptions to this spec's
+reading. A payload whose whole text is `Error` stays BroadError / Weak,
+because every thrown error is an `Error`, unless the old side throws a
+primitive literal (`globalThis.Error` already stays BroadError under the
+uppercase-first gate). On a message-only change, where the changed line
+is a `throw` or `Promise.reject(...)` and every differing token lies
+inside a string literal of the thrown or rejected message argument, a PascalCase class payload reads
+BroadError / Weak, and a string payload reads ExactErrorVariant only
+when it is not a substring of the old message (adjacent `+` literals
+joined; a non-literal operand reads BroadError). Both otherwise pass on
+the old and new versions. On any other change, including this spec's
+fixture `typescript_tothrow_exact_oracle` (a condition change), every
+payload keeps this spec's reading.
 
 ## Metrics
 
