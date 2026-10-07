@@ -1,0 +1,13 @@
+diff --git a/src/levels.rs b/src/levels.rs
+index a2db1e0..7415e9f 100644
+--- a/src/levels.rs
++++ b/src/levels.rs
+@@ -1,7 +1,7 @@
+ pub fn parse_level(text: &str) -> u8 {
+     match text {
+         "low" => 1,
+-        "high" => 9,
++        "high" => 3 * 3,
+         _ => panic!("unknown level"),
+     }
+ }

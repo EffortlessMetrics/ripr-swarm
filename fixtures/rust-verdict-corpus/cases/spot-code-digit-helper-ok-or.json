@@ -1,0 +1,60 @@
+{
+  "case_id": "spot-code-digit-helper-ok-or",
+  "subject_id": "authored-spot",
+  "diff": "cases/spot-code-digit-helper-ok-or.diff",
+  "anchor": {
+    "file": "src/parse.rs",
+    "line": 19
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "error_variant",
+  "test_shape": "pure_helper_call_with_ok_or_exact_result",
+  "hard_case": "a_letter_is_not_a_digit pins Err(NotDigit) exactly, but ripr finds no owner-bound propagation witness for an error produced by a helper call's ok_or and returned through ?, so the error_path probe reads weakly_exposed.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "let d = digit('0').ok_or_else(|| CodeError::NotDigit)?;",
+        "mutated_line": "let d = digit('0').ok_or_else(|| CodeError::NotDigit)?;",
+        "outcome": "tests_failed",
+        "failing_test": "parse::tests::a_letter_is_not_a_digit",
+        "equivalence_review": "not equivalent: a pinned value changes"
+      },
+      {
+        "replacement": "let d = digit(c).ok_or_else(|| CodeError::Short)?;",
+        "mutated_line": "let d = digit(c).ok_or_else(|| CodeError::Short)?;",
+        "outcome": "tests_failed",
+        "failing_test": "parse::tests::a_letter_is_not_a_digit",
+        "equivalence_review": "not equivalent: a pinned value changes"
+      },
+      {
+        "replacement": "let d = digit(c).unwrap_or(0);",
+        "mutated_line": "let d = digit(c).unwrap_or(0);",
+        "outcome": "tests_failed",
+        "failing_test": "parse::tests::a_letter_is_not_a_digit",
+        "equivalence_review": "not equivalent: a pinned value changes"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "a_letter_is_not_a_digit pins Err(NotDigit) and four_digits_parse_to_their_value pins the Ok value, so replacing the helper call, its error variant or its fallback changes a pinned value. Pattern from refuted pilot picks: humantime date.rs:74 (two_digits_inner(..).ok_or(..)), rust-hex lib.rs:230 (decode_to_slice(..)?).",
+  "labeling_observation": {
+    "ripr_commit": "b2f2a21",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "infection_unknown",
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

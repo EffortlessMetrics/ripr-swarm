@@ -50,6 +50,7 @@ pub(crate) fn explain_finding_with_config_and_navigation_mode(
             finding,
             config,
             &navigation.context_command(selector),
+            &output.root,
         )),
         None => Err(no_finding_matched(selector, &navigation.list_command())),
     }
@@ -115,6 +116,9 @@ pub(crate) fn explain_finding_from_artifact_with_navigation_mode(
             finding,
             config,
             &navigation.context_command(selector),
+            // The artifact was identity-verified against this root; the
+            // location renders against it like every fresh route (#5996).
+            &input.root,
         )),
         None => Err(no_finding_matched(selector, "ripr check --json")),
     }

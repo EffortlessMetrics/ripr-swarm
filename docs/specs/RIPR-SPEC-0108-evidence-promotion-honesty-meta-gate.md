@@ -82,7 +82,8 @@ denominator or establish representative-project accuracy. Golden assertions
 pin a nonzero finding count and oracle fields so empty findings cannot pass
 even when report-level scope or limitations are retained.
 The typed `expected_related_test` assertion also pins the test's file, line,
-name and oracle fields on every selected finding. Deleting that JSON evidence
+name and oracle fields on every selected finding, with an optional
+`relation_reason` pin for reach-identity cases. Deleting that JSON evidence
 cannot pass by retaining top-level oracle fields and human prose.
 
 Oracle projection validation also accepts the renderer's anchored related-test
@@ -157,7 +158,7 @@ contains ` uses ` does not hide an otherwise valid oracle projection.
       `allowed_edit_surface`, and `forbidden_files`
     - `must_not_have_contradictory_packet_messaging`
     - `expected_oracle` with `kind` and `strength`
-    - `expected_related_test` with `name`, `file`, positive `line`, `kind` and `strength`
+    - `expected_related_test` with `name`, `file`, positive `line`, `kind` and `strength`, plus optional `relation_reason` (pins the related-test relation, e.g. `weak_token_substring` for a test-module-shadowed receiver, #6951)
     - `expected_class` with `class`
     - `maximum_class` with `class`
     - `expected_completeness` with `completeness`
@@ -514,6 +515,8 @@ gate-specific artifacts.
 | ts_strong_oracle_control | typescript | typescript_strong_oracle |
 | ts_ava_t_is_exact_value | typescript | ts_runner_detect_ava_devdep (`expected_oracle=exact_value/strong`, `expected_class=exposed`, no repair packet or receipt command) |
 | ts_tape_equal_exact_value | typescript | typescript_tape_equal_oracle (`expected_oracle=exact_value/strong`, `expected_class=exposed`, no repair packet or receipt command) |
+| ts_node_expect_failure_no_credit | typescript | ts_node_expect_failure_no_credit (a Node `expectFailure` test is the only related test: `expected_class=no_static_path`, never promoted, no repair packet or receipt command) |
+| ts_node_ordinary_test_control | typescript | ts_node_ordinary_test_control (same test without `expectFailure`: `expected_oracle=exact_value/strong`, `expected_class=exposed`) |
 | ts_dynamic_expected_incomplete_packet | typescript | typescript_dynamic_assertion_unresolved (`expected_oracle=exact_value/strong`, `expected_class=weakly_exposed`, `maximum_class=weakly_exposed` because `clamp(-5, 0, 10)` does not reach the changed `value < min` boundary under the RIPR-SPEC-0027 boundary witness, no repair packet or receipt command) |
 | ts_same_method_owner_identity_positive_control | typescript | typescript_same_method_owner_identity_positive (`expected_oracle=exact_value/strong`, `expected_class=exposed`, no repair packet or receipt command) |
 | perl_sink_aligned_positive_control | perl | reports/perl_sink_aligned_positive_control.json (`expected_oracle=exact_value/strong`, `expected_class=exposed`, no repair packet or receipt command) |

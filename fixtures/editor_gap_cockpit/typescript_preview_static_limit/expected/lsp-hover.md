@@ -32,8 +32,8 @@ verify and receipt.
 
 ## Verify and receipt
 
-- verify: `ripr agent verify --root . --json`
-- receipt: `ripr agent receipt --root . --json`
+- verify: `ripr agent verify --root <root> --json`
+- receipt: `ripr agent receipt --root <root> --json`
 
 ## Limits
 
