@@ -814,11 +814,7 @@ impl Backend {
                     return cancellation_outcome(request);
                 }
                 self.client
-                    .publish_diagnostics(
-                        uri.clone(),
-                        Vec::new(),
-                        self.document_version_for_publication(uri),
-                    )
+                    .publish_diagnostics(uri.clone(), Vec::new(), Self::clear_version())
                     .await;
             }
             // Documents that enter quarantine under this transaction's
@@ -844,13 +840,23 @@ impl Backend {
                     .await;
                     return cancellation_outcome(request);
                 }
-                // One observed read couples the disclosure decision to the
-                // bound version (#1747).
-                let observed = self.observed_document_state(uri);
-                if !snapshot.served_diagnostics_for_uri(uri).is_empty()
-                    && let Some((path, reason)) = observed.as_ref().and_then(|state| {
-                        quarantine_for_pending_from_state(state, &pending_analyzed)
+                // One projection couples the disclosure decision to the
+                // bound version (#1747). Unknown buffer authority binds no
+                // version: the recorded version tags text the server
+                // cannot trust (#1746 rejection).
+                let (pending_quarantine, raw_version) = self
+                    .with_document_state(uri, |state| {
+                        let pending = quarantine_for_pending_from_state(state, &pending_analyzed);
+                        let version = if state.buffer_authority_unknown {
+                            None
+                        } else {
+                            state.version
+                        };
+                        (pending, version)
                     })
+                    .unwrap_or((None, None));
+                if !snapshot.served_diagnostics_for_uri(uri).is_empty()
+                    && let Some((path, reason)) = pending_quarantine
                 {
                     self.client
                         .log_message(
@@ -859,8 +865,7 @@ impl Backend {
                         )
                         .await;
                 }
-                let version =
-                    self.negotiated_version(observed.as_ref().and_then(|state| state.version));
+                let version = self.negotiated_version(raw_version);
                 self.client
                     .publish_diagnostics(uri.clone(), Vec::new(), version)
                     .await;
@@ -1471,27 +1476,29 @@ impl Backend {
         }
     }
 
-    /// One live read of the document state, cloning under a single lock
-    /// hold (#1747). Publish decisions derive both the quarantine reading
-    /// and the bound version from this one read, so a concurrent edit
-    /// cannot slip between the decision and the version sample and make
-    /// analyzed diagnostics look current.
-    fn observed_document_state(&self, uri: &Uri) -> Option<DocumentState> {
-        self.documents.lock().ok()?.state_for_uri(uri).cloned()
+    /// Project owned values from one live document-state read under a
+    /// single lock hold (#1747). Publish decisions derive both the
+    /// quarantine reading and the bound version from this one projection,
+    /// so a concurrent edit cannot slip between the decision and the
+    /// version sample and make analyzed diagnostics look current. The
+    /// closure must not lock (it runs under the documents lock); gate
+    /// the projected version on negotiation after it returns.
+    fn with_document_state<R>(
+        &self,
+        uri: &Uri,
+        project: impl FnOnce(&DocumentState) -> R,
+    ) -> Option<R> {
+        self.documents.lock().ok()?.state_for_uri(uri).map(project)
     }
 
-    /// The live-sampled version for `uri` (#1747), for clears only: a
-    /// clear drops whatever the client shows, so the current version is
-    /// the correct marker. Content publishes bind the version captured
-    /// with their quarantine decision instead (see
-    /// [`Self::observed_document_state`]); an unknown document or a
-    /// poisoned store yields `None`.
-    fn document_version_for_publication(&self, uri: &Uri) -> Option<i32> {
-        if !self.publish_version_negotiated() {
-            return None;
-        }
-        let documents = self.documents.lock().ok()?;
-        documents.state_for_uri(uri)?.version
+    /// Clears intentionally bind no version (#1747): a clear must apply
+    /// unconditionally, and a versioned clear can be discarded as stale
+    /// when the document advances (a no-op `didChange` bumps the version
+    /// with no quarantine edge and no refresh to follow up). Withdrawals
+    /// carry their decision version because ordering against a later
+    /// restore matters; clears drop everything.
+    fn clear_version() -> Option<i32> {
+        None
     }
 
     fn diagnostic_refresh_support_enabled(&self) -> bool {
@@ -2411,9 +2418,8 @@ impl Backend {
             let uris = self.clear_all_diagnostic_uris();
             if !self.pull_diagnostics_enabled() {
                 for uri in uris {
-                    let version = self.document_version_for_publication(&uri);
                     self.client
-                        .publish_diagnostics(uri, Vec::new(), version)
+                        .publish_diagnostics(uri, Vec::new(), Self::clear_version())
                         .await;
                 }
             }
@@ -3178,7 +3184,19 @@ impl Backend {
                 self.restore_document_diagnostics(uri, was_disclosed, decision_version)
                     .await;
             }
-            QuarantineTransition::Unchanged => {}
+            QuarantineTransition::Unchanged => {
+                // An edit that advances the version while quarantine holds
+                // must re-clear (#1747): the earlier decision-versioned
+                // withdrawal is now stale and a version-aware client
+                // discards it, which would leave the old diagnostics
+                // visible with no follow-up publish. Negotiation-gated so
+                // unnegotiated clients see no extra traffic; the withdraw
+                // itself suppresses when nothing is visible.
+                if self.publish_version_negotiated() && self.document_quarantine(uri).is_some() {
+                    self.withdraw_document_diagnostics(uri, decision_version)
+                        .await;
+                }
+            }
         }
     }
 
@@ -3240,14 +3258,23 @@ impl Backend {
         diagnostics: Vec<Diagnostic>,
         pending_analyzed: &BTreeMap<Uri, Option<String>>,
     ) {
-        // One observed read couples the quarantine decision to the bound
-        // version (#1747): both derive from this state, so a concurrent
-        // edit cannot make analyzed diagnostics look current.
-        let observed = self.observed_document_state(uri);
-        let pending_quarantine = observed
-            .as_ref()
-            .and_then(|state| quarantine_for_pending_from_state(state, pending_analyzed));
-        let version = self.negotiated_version(observed.as_ref().and_then(|state| state.version));
+        // One projection couples the quarantine decision to the bound
+        // version (#1747): both derive from one read, so a concurrent
+        // edit cannot make analyzed diagnostics look current. Unknown
+        // buffer authority binds no version (see the pending-entered
+        // pass).
+        let (pending_quarantine, raw_version, is_quarantined) = self
+            .with_document_state(uri, |state| {
+                let pending = quarantine_for_pending_from_state(state, pending_analyzed);
+                let version = if state.buffer_authority_unknown {
+                    None
+                } else {
+                    state.version
+                };
+                (pending, version, quarantine_from_state(state).is_some())
+            })
+            .unwrap_or((None, None, false));
+        let version = self.negotiated_version(raw_version);
         if pending_quarantine.is_some() {
             if !diagnostics.is_empty() {
                 // When the quarantine episode is already registered the
@@ -3255,7 +3282,7 @@ impl Backend {
                 // is disclosed by the pending_entered publication pass (or
                 // here directly when the batch covers it) and marked at
                 // commit.
-                if observed.as_ref().and_then(quarantine_from_state).is_some() {
+                if is_quarantined {
                     self.disclose_withdrawal_once(uri).await;
                 } else if let Some((path, reason)) = pending_quarantine {
                     self.client
@@ -5262,9 +5289,8 @@ impl LanguageServer for Backend {
         let uris = self.clear_all_diagnostic_uris();
         if !self.pull_diagnostics_enabled() {
             for uri in uris {
-                let version = self.document_version_for_publication(&uri);
                 self.client
-                    .publish_diagnostics(uri, Vec::new(), version)
+                    .publish_diagnostics(uri, Vec::new(), Self::clear_version())
                     .await;
             }
         }
@@ -5804,17 +5830,28 @@ impl Backend {
         // selection so push and pull agree.
         let mut disclosed = false;
         for uri in uris {
-            // One observed read couples the quarantine decision to the
+            // One projection couples the quarantine decision to the
             // bound version (#1747): a concurrent edit between them could
             // otherwise serve analyzed content under a newer version.
-            let observed = self.observed_document_state(&uri);
+            // Unknown buffer authority binds no version. Pull versions
+            // are unconditional: `versionSupport` governs push
+            // publications only, while the workspace report carries its
+            // version directly (LSP 3.17).
+            let (quarantined, raw_version) = self
+                .with_document_state(&uri, |state| {
+                    let quarantined = quarantine_from_state(state).is_some();
+                    let version = if state.buffer_authority_unknown {
+                        None
+                    } else {
+                        state.version
+                    };
+                    (quarantined, version)
+                })
+                .unwrap_or((false, None));
             // Quarantined (dirty-buffer) documents serve an empty set under
             // a distinct result id, same as the document pull handler
             // (#1970); other documents are unaffected.
-            let quarantined = observed.as_ref().and_then(quarantine_from_state).is_some();
-            let version = self
-                .negotiated_version(observed.as_ref().and_then(|state| state.version))
-                .map(i64::from);
+            let version = raw_version.map(i64::from);
             let mut result_id = result_ids.document_id(&snapshot, &uri);
             if quarantined {
                 result_id = quarantined_document_result_id(&result_id);
