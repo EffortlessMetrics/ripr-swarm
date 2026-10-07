@@ -997,6 +997,15 @@ fn a_slower_install_fails_the_gate_against_a_same_runner_baseline() -> Result<()
     if !install.runner_dependent {
         return Err("first_run.install_seconds must be runner_dependent".to_string());
     }
+    let pct = install.regression_pct;
+    let floor = install.regression_floor;
+    // The receipt also emits time_to_first_useful_result_s, which moves with
+    // install duration. Gate only the parsed install metric so a larger
+    // install slack cannot fail the other row.
+    let mut gate_config = config.clone();
+    gate_config
+        .metric
+        .retain(|metric| metric.id == "first_run.install_seconds");
     let boards = vec!["first_run".to_string()];
     let with_install = |secs: f64| -> Result<Vec<Sample>, String> {
         let mut receipt = first_run_receipt(true);
@@ -1019,7 +1028,7 @@ fn a_slower_install_fails_the_gate_against_a_same_runner_baseline() -> Result<()
             _ => None,
         })
         .ok_or("first_run receipt did not yield a completed install_seconds sample")?;
-    let slack = (baseline_secs * install.regression_pct / 100.0).max(install.regression_floor);
+    let slack = (baseline_secs * pct / 100.0).max(floor);
     if slack < 1.0 {
         return Err(
             "first_run.install_seconds slack is under 1 s; cannot place \
@@ -1032,7 +1041,7 @@ fn a_slower_install_fails_the_gate_against_a_same_runner_baseline() -> Result<()
     let inside = baseline_secs + slack - 1.0;
     let outside = baseline_secs + slack + 1.0;
     let baseline = build_report(
-        &config,
+        &gate_config,
         &boards,
         &baseline_samples,
         &context("runner-a"),
@@ -1041,7 +1050,7 @@ fn a_slower_install_fails_the_gate_against_a_same_runner_baseline() -> Result<()
     );
     let gate = |secs: f64, runner: &str| -> Result<Value, String> {
         Ok(build_report(
-            &config,
+            &gate_config,
             &boards,
             &with_install(secs)?,
             &context(runner),
