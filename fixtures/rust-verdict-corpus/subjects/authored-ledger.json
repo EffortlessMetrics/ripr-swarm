@@ -1,0 +1,17 @@
+{
+  "subject_id": "authored-ledger",
+  "origin": "authored",
+  "version_label": "authored@18cc13d",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "Cargo.toml",
+      "sha256": "e1a22dbb6a38a514794e9a990e7067f8895a4438225fe81a68094c7d090e7fda"
+    },
+    {
+      "path": "src/lib.rs",
+      "sha256": "782bb3ff326326e09c029477e04474d7323518e842dec2b708dbe5dad99b4a21"
+    }
+  ]
+}

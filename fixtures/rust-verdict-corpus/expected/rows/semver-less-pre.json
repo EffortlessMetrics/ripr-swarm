@@ -1,0 +1,20 @@
+{
+  "case_id": "semver-less-pre",
+  "subject_id": "semver",
+  "origin": "upstream",
+  "anchor": "src/eval.rs:113",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "integration_test_custom_assert_helper",
+  "hard_case": false,
+  "truth": "discriminated",
+  "ideal_verdict": "credited",
+  "observed_verdict": "limited",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "infection_unknown",
+    "propagation_unknown"
+  ],
+  "outcome": "abstained",
+  "contradictions": []
+}

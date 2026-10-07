@@ -12486,6 +12486,11 @@ tests = [
   "xtask/src/reports/verdict_corpus_tests.rs::build_report_counts_rates_over_the_right_denominators",
   "xtask/src/reports/verdict_corpus_tests.rs::contradiction_counts_use_one_per_finding_unit",
   "xtask/src/reports/verdict_corpus_tests.rs::stored_paths_keep_vendored_rust_out_of_the_workspace",
+  "xtask/src/reports/verdict_corpus_tests.rs::corpus_records_load_in_file_name_order_and_must_match_their_ids",
+  "xtask/src/reports/verdict_corpus_tests.rs::split_moves_the_one_file_layout_into_records_without_loss",
+  "xtask/src/reports/verdict_corpus_tests.rs::drift_names_moved_missing_and_stale_rows_and_a_subset_compares_only_its_rows",
+  "xtask/src/reports/verdict_corpus_tests.rs::validator_rejects_a_case_that_borrows_another_cases_diff",
+  "xtask/src/reports/verdict_corpus_tests.rs::check_all_finds_every_language_corpus_and_refuses_one_without_a_header",
   "xtask/src/reports/verdict_corpus_tests.rs::validator_requires_a_replayable_mutated_line_that_changes_the_anchor",
   "xtask/src/reports/verdict_corpus_tests.rs::validator_refuses_a_mutated_line_on_a_behavior_change",
   "xtask/src/reports/verdict_corpus_tests.rs::validator_refuses_a_test_command_the_replay_cannot_run",
@@ -12511,8 +12516,8 @@ code = [
   "xtask/src/reports/verdict_corpus_relabel.rs",
 ]
 outputs = [
-  "fixtures/rust-verdict-corpus/expected/report.json",
-  "fixtures/rust-verdict-corpus/expected/report.md",
+  "fixtures/rust-verdict-corpus/expected/summary.json",
+  "fixtures/rust-verdict-corpus/expected/rows",
 ]
 metrics = [
   "verdict_corpus_false_verdict_rate",
@@ -13165,7 +13170,6 @@ outputs = [
 metrics = [
   "unit_test_pass_rate",
 ]
-
 [[behavior]]
 id = "RIPR-SPEC-0239"
 name = "ripr plus last-good receipt"
@@ -13202,6 +13206,7 @@ tests = [
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::refusals_that_can_keep_an_assertion_from_running_are_not_limits",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::an_outcome_settling_attribute_is_the_refusal_wherever_it_sits",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_definition_covering_the_test_outranks_a_may_rebind_site_elsewhere",
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::the_workspace_site_is_the_first_rebinding_in_path_order_else_the_first_site",
   "crates/ripr/src/analysis/classify/reveal.rs::tests::name_only_relations_stop_crediting_beside_a_reach_bearing_one",
   "crates/ripr/tests/owner_pin_execution.rs::owner_pin_matched_static_and_runtime_controls",
   "crates/ripr/tests/owner_pin_execution.rs::macro_use_module_admission_matches_runtime",
@@ -13256,6 +13261,40 @@ code = [
   "crates/ripr/src/app/progress.rs",
 ]
 outputs = []
+metrics = [
+  "unit_test_pass_rate",
+]
+
+[[behavior]]
+id = "RIPR-SPEC-0242"
+name = "canonical next action"
+spec = "docs/specs/RIPR-SPEC-0242-canonical-next-action.md"
+tests = [
+  "crates/ripr/src/domain/next_action.rs::tests::control_1_disagreement_refuses_rather_than_choosing",
+  "crates/ripr/src/domain/next_action.rs::tests::control_10_each_gate_owns_its_negative",
+  "crates/ripr/src/domain/next_action.rs::tests::check_cases_map_to_their_closed_classes",
+  "crates/ripr/src/output/next_action.rs::tests::control_9_human_and_json_agree_from_one_dto",
+  "crates/ripr/src/output/next_action.rs::tests::control_8_stopped_renders_omit_command_strings",
+  "crates/ripr/src/app/repair_card.rs::tests::canonical_decision_and_reference_agree",
+  "crates/ripr/src/app/agent_status.rs::tests::canonical_decision_selects_the_status_arm",
+  "crates/ripr/src/output/human/triage.rs::tests::check_adapter_binds_the_ranked_winner_with_bounded_alternatives",
+  "crates/ripr/src/repair_card_digest.rs::tests::canonical_decision_moves_remint_the_digest",
+  "crates/ripr/tests/cli_smoke/next_action.rs::agent_card_json_embeds_the_canonical_decision",
+]
+code = [
+  "crates/ripr/src/domain/next_action.rs",
+  "crates/ripr/src/output/next_action.rs",
+  "crates/ripr/src/app/repair_card.rs",
+  "crates/ripr/src/app/agent_status.rs",
+  "crates/ripr/src/output/human/triage.rs",
+  "crates/ripr/src/cli/commands/agent_card.rs",
+  "crates/ripr/src/repair_card_digest.rs",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0242-canonical-next-action.md",
+  "docs/OUTPUT_SCHEMA.md",
+  "policy/output_contracts.txt",
+]
 metrics = [
   "unit_test_pass_rate",
 ]

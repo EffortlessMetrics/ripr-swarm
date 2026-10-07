@@ -26,6 +26,8 @@ mod findings_byte_budget;
 #[cfg(feature = "lang-python")]
 #[path = "cli_smoke/implicit_git_root.rs"]
 mod implicit_git_root;
+#[path = "cli_smoke/next_action.rs"]
+mod next_action;
 #[cfg(feature = "lang-python")]
 #[path = "cli_smoke/python_source_admission.rs"]
 mod python_source_admission;
@@ -21827,6 +21829,30 @@ fn pr_summary_root_from_foreign_cwd_anchors_artifacts_and_baseline() -> Result<(
         return Err(format!(
             "summary read foreign artifacts or baseline: {summary}"
         ));
+    }
+    // #4000: pasted from this foreign directory, the summary's own
+    // reproduction commands must name the selected repository, not `.`.
+    let commands = summary
+        .pointer("/local_reproduction_commands")
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| format!("summary has no reproduction commands: {summary}"))?;
+    let selected_root_arg = selected_arg.replace(std::path::MAIN_SEPARATOR, "/");
+    for prefix in ["ripr check ", "ripr first-pr "] {
+        let Some(command) = commands
+            .iter()
+            .filter_map(serde_json::Value::as_str)
+            .find(|command| command.starts_with(prefix))
+        else {
+            return Err(format!("no `{prefix}` reproduction command: {commands:?}"));
+        };
+        if !command.starts_with(&format!("{prefix}--root "))
+            || !command.contains(&selected_root_arg)
+            || command.contains("--root .")
+        {
+            return Err(format!(
+                "reproduction command does not name the selected repository: {command}"
+            ));
+        }
     }
     let relative_root = Path::new("..").join("selected répo");
     let relative_root_arg = relative_root

@@ -385,7 +385,6 @@ pub(crate) struct CaseResult {
 #[derive(Debug, Serialize)]
 struct Receipt {
     schema_version: &'static str,
-    corpus_version: String,
     seed: String,
     sample: Option<usize>,
     repeat: usize,
@@ -1077,7 +1076,6 @@ pub(crate) fn relabel(args: &[String]) -> Result<(), String> {
     let drifted_cases = results.iter().filter(|r| !r.drift.is_empty()).count();
     let receipt = Receipt {
         schema_version: RELABEL_SCHEMA,
-        corpus_version: corpus.corpus_version.clone(),
         seed: args.seed.clone(),
         sample: args.sample,
         repeat: args.repeat,

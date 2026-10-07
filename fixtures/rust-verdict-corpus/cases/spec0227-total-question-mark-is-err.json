@@ -1,0 +1,52 @@
+{
+  "case_id": "spec0227-total-question-mark-is-err",
+  "subject_id": "authored-spec0227-9",
+  "diff": "cases/spec0227-total-question-mark-is-err.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 16
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "question_mark_propagation",
+  "test_shape": "is_err_on_reached_err",
+  "hard_case": "The spec's change (unwrap_or(0) to ?) is not behavior-preserving, so the case rewrites the ? line as (digit(c))? and uses the unwrap_or forms as mutants. Truth is discriminated and RIPR-SPEC-0227 rule 3b expects exposed, because a result-side oracle sees the side flip on total(\"x\"); ripr reads weakly_exposed (the RIPR-SPEC-0107 reading). An earlier rewrite, digit(c).map_err(E::from)?, drew a wrapper_error_binding_unresolved limit, so the plain-paren form was kept.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "let d = digit(c).unwrap_or(0);",
+        "mutated_line": "let d = digit(c).unwrap_or(0);",
+        "outcome": "tests_failed",
+        "failing_test": "tests::non_digit_is_refused",
+        "equivalence_review": "not equivalent: total(\"x\") returns Ok(0)"
+      },
+      {
+        "replacement": "let d = digit(c).unwrap_or(1);",
+        "mutated_line": "let d = digit(c).unwrap_or(1);",
+        "outcome": "tests_failed",
+        "failing_test": "tests::non_digit_is_refused",
+        "equivalence_review": "not equivalent: total(\"x\") returns Ok(1)"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "non_digit_is_refused asserts total(\"x\").is_err(); without the ? the non-digit is swallowed and total returns Ok, so the test fails. Spec cells: RIPR-SPEC-0227 example 9 (rule 3b positive case), RIPR-SPEC-0107.",
+  "labeling_observation": {
+    "ripr_commit": "7b3deeb",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}
