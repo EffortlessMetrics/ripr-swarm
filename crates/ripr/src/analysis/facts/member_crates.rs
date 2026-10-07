@@ -39,15 +39,20 @@ use super::drop_in::{config_mentions, normalized, patches};
 /// dependencies reach only the build script.
 const TEST_DEPENDENCY_TABLES: &[&str] = &["dependencies", "dev-dependencies", "dev_dependencies"];
 
+/// Import names per (test file directory, owner crate root).
+type ImportNames = BTreeMap<(PathBuf, PathBuf), Vec<String>>;
+/// Foreign-export answers per (owner crate root, item name).
+type ForeignExports = BTreeMap<(PathBuf, String), bool>;
+
 /// Per-analysis cache of member-crate import names, keyed by the test file's
 /// directory and the owner's crate root. Clones share the cache.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct MemberCrates {
     root: Option<PathBuf>,
-    names: Arc<Mutex<BTreeMap<(PathBuf, PathBuf), Vec<String>>>>,
+    names: Arc<Mutex<ImportNames>>,
     /// Per (crate root, item name): whether the library may export a
     /// foreign item of that name, computed by the classifier.
-    foreign_exports: Arc<Mutex<BTreeMap<(PathBuf, String), bool>>>,
+    foreign_exports: Arc<Mutex<ForeignExports>>,
 }
 
 impl MemberCrates {
@@ -469,7 +474,8 @@ mod tests {
     fn anything_else_names_nothing() -> Result<(), String> {
         let path = "[dependencies]\npricing = { path = \"../pricing\" }\n";
         let plain = orders(path);
-        let cases: Vec<(String, Vec<(&str, String)>, &str, &str)> = vec![
+        type Case<'a> = (String, Vec<(&'a str, String)>, &'a str, &'a str);
+        let cases: Vec<Case> = vec![
             // No dependency on the owner's package.
             (
                 "no dependency".into(),
