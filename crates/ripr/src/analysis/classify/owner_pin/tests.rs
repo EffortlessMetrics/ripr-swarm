@@ -2947,4 +2947,12 @@ fn return_path_gate_reads_the_tail_past_a_comment() {
     // sits on an earlier line, and the tail after the comment differs.
     let other_tail = "fn family(sku: &str) -> &str {\n    let head = unsafe { sku.get_unchecked(..1) };\n    // SAFETY: `head` is a char boundary.\n    unsafe { sku.get_unchecked(head.len()..) }\n}";
     assert!(gate(other_tail, "unsafe { sku.get_unchecked(..1) }").is_none());
+    // Masking hides string contents, so a same-length payload on the
+    // changed line must still match the real tail text (#6970 review).
+    let payload = "fn f() -> Result<&'static str, ()> {\n    // note\n    Ok(\"actual\")\n}";
+    assert!(matches!(
+        return_path_gate(payload, "Ok(\"actual\")", 2),
+        Some(ReturnPathGate::Any)
+    ));
+    assert!(return_path_gate(payload, "Ok(\"expect\")", 2).is_none());
 }

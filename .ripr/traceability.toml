@@ -6948,6 +6948,10 @@ tests = [
   "crates/ripr/src/analysis/classify/reveal.rs::tests::expected_computed_through_owner_reads_either_side_and_masks_strings",
   "crates/ripr/src/analysis/classifier/evidence.rs::tests::caller_walk_follows_qualified_chains_and_skips_foreign_same_names",
   "crates/ripr/src/analysis/classifier/evidence.rs::tests::caller_walk_names_a_free_owner_by_bare_or_module_path_only",
+  "crates/ripr/src/analysis/classifier/evidence.rs::tests::caller_walk_stops_after_six_hops",
+  "crates/ripr/src/analysis/classifier/evidence.rs::tests::caller_walk_ignores_owner_names_in_comments_and_strings_on_the_call_line",
+  "crates/ripr/src/analysis/classifier/evidence.rs::tests::owner_parameters_are_read_from_a_multiline_signature",
+  "crates/ripr/src/analysis/classify/reveal.rs::tests::a_type_qualified_expected_call_reaches_only_through_its_own_type",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::return_path_gate_reads_the_tail_past_a_comment"
 ]
 fixtures = [
