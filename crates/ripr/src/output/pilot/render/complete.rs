@@ -19,8 +19,8 @@ use crate::output::pilot::ranking::{
     withheld_static_limitations,
 };
 use crate::output::pilot::{
-    PILOT_SUMMARY_SCHEMA_VERSION, PilotCurrentChange, PilotLanguageRoute, PilotLanguageRoutes,
-    PilotPythonFirstUse, PilotSummaryContext, RUST_EXCLUDED_GUIDANCE,
+    ChangeSeams, PILOT_SUMMARY_SCHEMA_VERSION, PilotCurrentChange, PilotLanguageRoute,
+    PilotLanguageRoutes, PilotPythonFirstUse, PilotSummaryContext, RUST_EXCLUDED_GUIDANCE,
 };
 use crate::output::python_repair_card::PythonRepairCard;
 
@@ -233,6 +233,11 @@ pub(crate) fn render_pilot_summary_md(
             withheld_count_label(withheld, context.seam_limit),
             display_path(&context.artifacts.repo_exposure_md)
         ));
+    }
+    if top.is_empty()
+        && let Some(reason) = unranked_change_reason(context, true)
+    {
+        out.push_str(&format!("- Current change: {reason}\n"));
     }
     out.push('\n');
 
@@ -543,6 +548,11 @@ pub(crate) fn render_pilot_terminal(
             withheld_count_label(withheld, context.seam_limit)
         ));
     }
+    if top.is_empty()
+        && let Some(reason) = unranked_change_reason(context, false)
+    {
+        out.push_str(&format!("  current change: {reason}\n"));
+    }
     out.push('\n');
 
     let no_repair_target = if let Some(entry) = top.first() {
@@ -786,8 +796,14 @@ fn scope_line(context: PilotSummaryContext<'_>, code: bool) -> Option<String> {
 /// `None` when there is no current change or it could not be
 /// loaded: pilot's ranking is then repo-wide, as it always was.
 enum CurrentChangeLabel {
-    PartOfChange { base: Option<String> },
-    Elsewhere { base: Option<String>, check: String },
+    PartOfChange {
+        base: Option<String>,
+    },
+    Elsewhere {
+        base: Option<String>,
+        check: String,
+        seams: ChangeSeams,
+    },
 }
 
 fn current_change_label(
@@ -803,6 +819,7 @@ fn current_change_label(
     } else {
         CurrentChangeLabel::Elsewhere {
             base,
+            seams: change.seams().unwrap_or_default(),
             check: format!(
                 "ripr check --root {}{}",
                 shell_path(&crate::agent::loop_commands::bound_root_path(context.root)),
@@ -810,6 +827,24 @@ fn current_change_label(
             ),
         }
     })
+}
+
+/// With nothing ranked, why the current change's seams are not ranked
+/// either, when it has any or a seam limit may hide them (#5309). The
+/// pilot budget can drop those seams before the empty-ranking text counts
+/// what was withheld, so this reads the counts taken before the cut.
+fn unranked_change_reason(context: PilotSummaryContext<'_>, code: bool) -> Option<String> {
+    let change = context.current_change?;
+    let seams = change.seams()?;
+    if seams.touched == 0 && seams.unanalyzed.is_none() {
+        return None;
+    }
+    let base = change.base().map(str::to_string);
+    Some(CurrentChangeLabel::why_elsewhere(
+        seams,
+        base.as_ref(),
+        code,
+    ))
 }
 
 impl CurrentChangeLabel {
@@ -821,15 +856,88 @@ impl CurrentChangeLabel {
         }
     }
 
+    /// Where a count of seams sits: "a line changed since X" for one,
+    /// "lines changed since X" for several.
+    fn changed_lines(base: Option<&String>, code: bool, count: usize) -> String {
+        if count == 1 {
+            return Self::changed_line(base, code);
+        }
+        match base {
+            Some(base) if code => format!("lines changed since `{base}`"),
+            Some(base) => format!("lines changed since {base}"),
+            None => "lines your current change touches".to_string(),
+        }
+    }
+
+    /// Why no seam on the change ranks (#5309). A change whose seams pilot
+    /// withholds, or whose seams a seam limit left unanalyzed, must not read
+    /// as a change with no seams.
+    fn why_elsewhere(seams: ChangeSeams, base: Option<&String>, code: bool) -> String {
+        let ChangeSeams {
+            touched,
+            withheld,
+            unanalyzed,
+        } = seams;
+        let lines = |count| Self::changed_lines(base, code, count);
+        // Seams past the inventory limit were never classified, so a reason
+        // drawn from the analyzed seams alone must say it may not be all.
+        let unseen = unanalyzed.map(|(analyzed, total)| {
+            format!(
+                "the seam limit left {} of {total} seams unanalyzed, so the change may have seams pilot did not see",
+                total.saturating_sub(analyzed)
+            )
+        });
+        let gripped = touched.saturating_sub(withheld);
+        let mut reason = if withheld > 0 {
+            let which = match (withheld, touched) {
+                (1, 1) => format!("the analyzed seam on {}", lines(1)),
+                (w, t) if w == t => format!("the {t} analyzed seams on {}", lines(t)),
+                (w, t) => format!("{w} of the {t} analyzed seams on {}", lines(t)),
+            };
+            let what = if withheld == 1 {
+                "its static evidence is unknown or opaque, so it is a static limitation, not a gap"
+            } else {
+                "their static evidence is unknown or opaque, so they are static limitations, not gaps"
+            };
+            let rest = match gripped {
+                0 => String::new(),
+                1 => "; the other is already gripped, intentional or suppressed".to_string(),
+                _ => "; the others are already gripped, intentional or suppressed".to_string(),
+            };
+            format!("Pilot withholds {which}: {what}{rest}")
+        } else if touched > 0 {
+            match touched {
+                1 => format!(
+                    "The analyzed seam on {} has no gap to rank: it is already gripped, intentional or suppressed",
+                    lines(1)
+                ),
+                t => format!(
+                    "The {t} analyzed seams on {} have no gap to rank: they are already gripped, intentional or suppressed",
+                    lines(t)
+                ),
+            }
+        } else if unseen.is_some() {
+            format!("No analyzed seam is on {}", lines(1))
+        } else {
+            return format!("No seam pilot analyzed is on {}.", lines(1));
+        };
+        if let Some(unseen) = unseen {
+            reason.push_str(", but ");
+            reason.push_str(&unseen);
+        }
+        reason.push('.');
+        reason
+    }
+
     fn terminal(&self) -> String {
         match self {
             Self::PartOfChange { base } => format!(
                 "part of it (this seam is on {})",
                 Self::changed_line(base.as_ref(), false)
             ),
-            Self::Elsewhere { base, check } => format!(
-                "not part of it. This recommendation is elsewhere in the repo: no seam pilot ranks is on {}. For the change itself, run: {check}",
-                Self::changed_line(base.as_ref(), false)
+            Self::Elsewhere { base, check, seams } => format!(
+                "not part of it. {} This recommendation is elsewhere in the repo. For the change itself, run: {check}",
+                Self::why_elsewhere(*seams, base.as_ref(), false)
             ),
         }
     }
@@ -840,9 +948,9 @@ impl CurrentChangeLabel {
                 "part of it (this seam is on {})",
                 Self::changed_line(base.as_ref(), true)
             ),
-            Self::Elsewhere { base, check } => format!(
-                "not part of it. This recommendation is elsewhere in the repo: no seam pilot ranks is on {}. For the change itself, run `{check}`.",
-                Self::changed_line(base.as_ref(), true)
+            Self::Elsewhere { base, check, seams } => format!(
+                "not part of it. {} This recommendation is elsewhere in the repo. For the change itself, run `{check}`.",
+                Self::why_elsewhere(*seams, base.as_ref(), true)
             ),
         }
     }
@@ -868,8 +976,13 @@ fn push_current_change_json(
             "    \"actionable_seams_in_change\": {},\n",
             actionable_in_change(classified, change)
         ));
+        out.push_str(&format!(
+            "    \"withheld_seams_in_change\": {},\n",
+            change.seams().unwrap_or_default().withheld
+        ));
     } else {
         out.push_str("    \"actionable_seams_in_change\": null,\n");
+        out.push_str("    \"withheld_seams_in_change\": null,\n");
     }
     match top.filter(|_| change.is_changed()) {
         Some(entry) => out.push_str(&format!(

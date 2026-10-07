@@ -130,6 +130,10 @@ pub struct RustIndex {
     /// file is the registry package. Unset for an index assembled without a
     /// manifest walk, which verifies nothing.
     pub(crate) drop_in_manifests: super::drop_in::DropInManifests,
+    /// The crate names under which a test's crate imports a workspace
+    /// member's library, read from member manifests. Unset for an index
+    /// assembled without a manifest walk, which names nothing.
+    pub(crate) member_crates: super::member_crates::MemberCrates,
     pub include_parents: BTreeMap<PathBuf, ResolvedIncludeParent>,
     pub include_limitations: Vec<RustIncludeLimitation>,
     pub non_utf8_sources: BTreeSet<PathBuf>,

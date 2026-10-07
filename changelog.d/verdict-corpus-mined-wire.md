@@ -12,6 +12,6 @@
   and a table loop with an expected-failures allowlist (a skipped row and an
   asserted row). Five of the nine discriminated cases score
   `false_actionable` today (218 cases). Authored false actionable moves from
-  48/86 to 53/95 and the overall rate from 53/106 to 58/115; upstream rates are
+  46/86 to 51/95 and the overall rate from 49/106 to 54/115; upstream rates are
   unchanged. Doctest names (`src/lib.rs - item (line N)`) now pass the
   one-test-name rule for `failing_test` (#6644).

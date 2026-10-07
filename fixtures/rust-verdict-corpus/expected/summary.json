@@ -9,25 +9,25 @@
   },
   "by_outcome": {
     "abstained": 71,
-    "false_actionable": 58,
+    "false_actionable": 54,
     "false_exposed": 6,
-    "ideal": 83
+    "ideal": 87
   },
   "by_observed_verdict": {
-    "credited": 28,
-    "gap": 119,
+    "credited": 32,
+    "gap": 115,
     "limited": 70,
     "silent": 1
   },
   "false_verdict_rate": {
-    "numerator": 64,
+    "numerator": 60,
     "denominator": 218,
-    "rate": "0.2936"
+    "rate": "0.2752"
   },
   "false_actionable_rate": {
-    "numerator": 58,
+    "numerator": 54,
     "denominator": 115,
-    "rate": "0.5043"
+    "rate": "0.4696"
   },
   "false_exposed_rate": {
     "numerator": 6,
@@ -40,9 +40,9 @@
     "rate": "0.0000"
   },
   "ideal_rate": {
-    "numerator": 83,
+    "numerator": 87,
     "denominator": 218,
-    "rate": "0.3807"
+    "rate": "0.3991"
   },
   "abstention_rate": {
     "numerator": 71,
@@ -61,20 +61,20 @@
     "authored": {
       "cases_total": 184,
       "by_observed_verdict": {
-        "credited": 25,
-        "gap": 112,
+        "credited": 27,
+        "gap": 110,
         "limited": 46,
         "silent": 1
       },
       "false_verdict_rate": {
-        "numerator": 59,
+        "numerator": 57,
         "denominator": 184,
-        "rate": "0.3207"
+        "rate": "0.3098"
       },
       "false_actionable_rate": {
-        "numerator": 53,
+        "numerator": 51,
         "denominator": 95,
-        "rate": "0.5579"
+        "rate": "0.5368"
       },
       "false_exposed_rate": {
         "numerator": 6,
@@ -87,9 +87,9 @@
         "rate": "0.0000"
       },
       "ideal_rate": {
-        "numerator": 78,
+        "numerator": 80,
         "denominator": 184,
-        "rate": "0.4239"
+        "rate": "0.4348"
       },
       "abstention_rate": {
         "numerator": 47,
@@ -100,19 +100,19 @@
     "upstream": {
       "cases_total": 34,
       "by_observed_verdict": {
-        "credited": 3,
-        "gap": 7,
+        "credited": 5,
+        "gap": 5,
         "limited": 24
       },
       "false_verdict_rate": {
-        "numerator": 5,
+        "numerator": 3,
         "denominator": 34,
-        "rate": "0.1471"
+        "rate": "0.0882"
       },
       "false_actionable_rate": {
-        "numerator": 5,
+        "numerator": 3,
         "denominator": 20,
-        "rate": "0.2500"
+        "rate": "0.1500"
       },
       "false_exposed_rate": {
         "numerator": 0,
@@ -125,9 +125,9 @@
         "rate": "0.0000"
       },
       "ideal_rate": {
-        "numerator": 5,
+        "numerator": 7,
         "denominator": 34,
-        "rate": "0.1471"
+        "rate": "0.2059"
       },
       "abstention_rate": {
         "numerator": 24,

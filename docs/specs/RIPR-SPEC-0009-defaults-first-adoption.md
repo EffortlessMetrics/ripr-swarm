@@ -194,7 +194,10 @@ changes, otherwise `<base>...HEAD`), ranks actionable seams on its changed
 lines first, and says in the terminal, Markdown and
 `pilot-summary.json` (`current_change`) whether the top recommendation is part
 of the change. When the change has no ranked seam, pilot says the
-recommendation is elsewhere in the repo and names `ripr check` for the change
+recommendation is elsewhere in the repo, says why no seam on the change ranks
+(pilot withholds its seams as static limitations, they are already gripped,
+intentional or suppressed, the seam limit left seams unanalyzed, or no seam
+pilot analyzed is on a changed line), and names `ripr check` for the change
 itself, with `--worktree` when the change is uncommitted, since plain `ripr
 check` reads committed history only. The terminal and Markdown "Inspected" block names the scope:
 change-first with a change, otherwise the whole repository, with a short reason
@@ -426,6 +429,12 @@ Given a branch whose change touches no ranked seam,
 when a user runs ripr pilot,
 then pilot says the top recommendation is elsewhere in the repo, not part of
 the current change, and names ripr check for the change itself.
+
+Given a branch whose changed lines hold only seams pilot withholds as static
+limitations (opaque or an unknown class),
+when a user runs ripr pilot,
+then pilot says it withholds the seams on the change and why, rather than that
+no seam pilot analyzed is on a changed line, and `withheld_seams_in_change` counts them.
 
 Given a change that exists only as uncommitted edits in the working tree,
 when a user runs ripr pilot and the top recommendation is not part of it,

@@ -205,6 +205,11 @@ pub(crate) struct MacroBindingSite {
     /// inline module or function body: that item's first and last line.
     /// `None` means the binding may reach any file in the workspace.
     pub(crate) scope: Option<(usize, usize)>,
+    /// The binding cannot leave the crate whose module tree holds this file:
+    /// a private import, `#[macro_use] extern crate`, `#![no_implicit_prelude]`
+    /// or a non-exported definition. Exported definitions, `pub` imports,
+    /// opaque macro arguments and unparsed files may reach other crates.
+    pub(crate) crate_local: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -287,7 +292,7 @@ fn macro_binding_ambiguities(
     {
         return ambiguous;
     }
-    let all = |line: usize, kind: MacroBindingKind| {
+    let all = |line: usize, kind: MacroBindingKind, crate_local: bool| {
         trusted
             .iter()
             .map(|name| {
@@ -297,13 +302,14 @@ fn macro_binding_ambiguities(
                         line,
                         kind: kind.clone(),
                         scope: None,
+                        crate_local,
                     },
                 )
             })
-            .collect()
+            .collect::<Vec<_>>()
     };
     let Some(parse) = parse_clean_source_file(source) else {
-        return all(0, MacroBindingKind::Unparsed);
+        return all(0, MacroBindingKind::Unparsed, false);
     };
     // Built only when a binding site is found, which most files lack.
     let lines = std::cell::OnceCell::new();
@@ -359,6 +365,7 @@ fn macro_binding_ambiguities(
                         line,
                         kind: MacroBindingKind::Definition,
                         scope,
+                        crate_local: !is_exported_macro(&node),
                     },
                 ));
             }
@@ -373,7 +380,12 @@ fn macro_binding_ambiguities(
                 .iter()
                 .any(|token| token.text().trim_start_matches("r#") == "no_implicit_prelude")
             {
-                return all(line_of(&node), MacroBindingKind::NoImplicitPrelude);
+                ambiguous.extend(all(
+                    line_of(&node),
+                    MacroBindingKind::NoImplicitPrelude,
+                    true,
+                ));
+                continue;
             }
             if words
                 .iter()
@@ -402,7 +414,16 @@ fn macro_binding_ambiguities(
                         .syntax()
                         .parent()
                         .map_or_else(|| line_of(&node), |parent| item_line(&parent, source));
-                    return all(line, MacroBindingKind::MacroUse(item));
+                    // `#[macro_use] extern crate` only imports into this crate. An
+                    // unresolved `#[macro_use] mod` may `#[macro_export]` its macros,
+                    // which other crates reach through a glob, so it stays
+                    // workspace-wide.
+                    let extern_crate = attr
+                        .syntax()
+                        .parent()
+                        .is_some_and(|parent| ast::ExternCrate::can_cast(parent.kind()));
+                    ambiguous.extend(all(line, MacroBindingKind::MacroUse(item), extern_crate));
+                    continue;
                 }
             }
         }
@@ -430,6 +451,8 @@ fn macro_binding_ambiguities(
                         wrapper: path.syntax().text().to_string(),
                         attribute: attribute.to_string(),
                     },
+                    // The expansion may export what it defines.
+                    false,
                 );
             }
             // Every mention counts, a plain `assert_eq!(..)` included: to the
@@ -446,6 +469,7 @@ fn macro_binding_ambiguities(
                             line,
                             kind: MacroBindingKind::MacroArgument(path.syntax().text().to_string()),
                             scope: None,
+                            crate_local: false,
                         },
                     ));
                 }
@@ -453,8 +477,9 @@ fn macro_binding_ambiguities(
         }
         if let Some(import) = ast::Use::cast(node.clone()) {
             let Some(tree) = import.use_tree() else {
-                return all(line_of(&node), MacroBindingKind::Unparsed);
+                return all(line_of(&node), MacroBindingKind::Unparsed, false);
             };
+            let private = import.visibility().is_none();
             let root = tree
                 .path()
                 .map(|path| path.syntax().text().to_string())
@@ -473,10 +498,11 @@ fn macro_binding_ambiguities(
             for item in tree.syntax().descendants().filter_map(ast::UseTree::cast) {
                 if item.star_token().is_some() && !own {
                     let path = import.syntax().text().to_string();
-                    let Some(scope) = scope_of(import_scope(&import)) else {
-                        return all(line_of(&node), MacroBindingKind::ForeignGlob(path));
-                    };
                     let line = line_of(&node);
+                    let Some(scope) = scope_of(import_scope(&import)) else {
+                        ambiguous.extend(all(line, MacroBindingKind::ForeignGlob(path), private));
+                        continue;
+                    };
                     ambiguous.extend(trusted.iter().map(|name| {
                         (
                             (*name).to_string(),
@@ -484,6 +510,7 @@ fn macro_binding_ambiguities(
                                 line,
                                 kind: MacroBindingKind::ForeignGlob(path.clone()),
                                 scope: Some(scope),
+                                crate_local: private,
                             },
                         )
                     }));
@@ -520,6 +547,7 @@ fn macro_binding_ambiguities(
                                 line,
                                 kind,
                                 scope: scope_of(import_scope(&import)),
+                                crate_local: private,
                             },
                         ));
                     }
@@ -571,16 +599,11 @@ fn is_drop_in_assertion(item: &ast::UseTree, name: &str) -> bool {
 /// out-of-line `mod name;` inside it (whose file would inherit the scope).
 /// `None` for a file-level definition or a `macro` 2.0 item.
 fn textual_scope(definition: &SyntaxNode) -> Option<SyntaxNode> {
-    let rules = ast::MacroRules::cast(definition.clone())?;
+    ast::MacroRules::cast(definition.clone())?;
     // `#[macro_export]` (also under `cfg_attr`) puts the macro at crate-root
     // path scope, so a bare `assert_eq!` anywhere in the crate root resolves
     // to it whatever item encloses the definition.
-    if rules.attrs().any(|attr| {
-        attr.syntax()
-            .descendants_with_tokens()
-            .filter_map(|element| element.into_token())
-            .any(|token| token.text().trim_start_matches("r#") == "macro_export")
-    }) {
+    if is_exported_macro(definition) {
         return None;
     }
     let scope = definition.ancestors().skip(1).find(|node| {
@@ -632,6 +655,21 @@ fn import_scope(import: &ast::Use) -> Option<SyntaxNode> {
         return None;
     }
     Some(scope)
+}
+
+/// Whether a macro definition can be named from another crate:
+/// `#[macro_export]` (raw or under `cfg_attr`) on `macro_rules!`, or a
+/// visibility on a `macro` 2.0 item.
+fn is_exported_macro(definition: &SyntaxNode) -> bool {
+    if let Some(rules) = ast::MacroRules::cast(definition.clone()) {
+        return rules.attrs().any(|attr| {
+            attr.syntax()
+                .descendants_with_tokens()
+                .filter_map(|element| element.into_token())
+                .any(|token| token.text().trim_start_matches("r#") == "macro_export")
+        });
+    }
+    ast::MacroDef::cast(definition.clone()).is_none_or(|item| item.visibility().is_some())
 }
 
 /// The item's text without attributes, doc comments or body: `mod name;` or
@@ -725,6 +763,32 @@ fn local_empty_macros(root: &SyntaxNode) -> BTreeMap<String, ast::MacroRules> {
     }
     candidates.retain(|name, _| counts.get(name) == Some(&1));
     candidates
+}
+
+/// Whether every `return` in `item` (one function's text) leaves that
+/// function: the text parses cleanly and no `return` sits inside a closure,
+/// an `async` or `const` block, or a nested `fn` item, where it would end
+/// only that inner body.
+pub(crate) fn returns_leave_the_function(item: &str) -> bool {
+    parse_clean_source_file(item).is_some_and(|parse| {
+        parse
+            .tree()
+            .syntax()
+            .descendants()
+            .filter(|node| ast::ReturnExpr::can_cast(node.kind()))
+            .all(|node| {
+                node.ancestors()
+                    .filter(|parent| ast::Fn::can_cast(parent.kind()))
+                    .count()
+                    <= 1
+                    && !node.ancestors().any(|parent| {
+                        ast::ClosureExpr::can_cast(parent.kind())
+                            || ast::BlockExpr::cast(parent).is_some_and(|block| {
+                                block.async_token().is_some() || block.const_token().is_some()
+                            })
+                    })
+            })
+    })
 }
 
 pub(crate) fn local_empty_macro_names(source: &str) -> BTreeSet<String> {

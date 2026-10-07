@@ -34,6 +34,8 @@ mod python_source_admission;
 mod receipt_recovery_root;
 #[path = "cli_smoke/related_test_count.rs"]
 mod related_test_count;
+#[path = "cli_smoke/shell_words.rs"]
+mod shell_words;
 #[cfg(unix)]
 #[path = "cli_smoke/workflow_directory.rs"]
 mod workflow_directory;
@@ -2229,8 +2231,12 @@ fn check_human_navigation_commands_replay_custom_scope() -> Result<(), String> {
         .lines()
         .find(|line| line.starts_with("  ripr context "))
         .ok_or_else(|| format!("check output omitted context command:\n{stdout}"))?;
-    let explain_args = explain_line.split_whitespace().collect::<Vec<_>>();
-    let context_args = context_line.split_whitespace().collect::<Vec<_>>();
+    // #6762: split as the shell would, so a checkout path that needs
+    // quoting (a space, an apostrophe) replays as one argument.
+    let explain_words = shell_words::posix_words(explain_line)?;
+    let context_words = shell_words::posix_words(context_line)?;
+    let explain_args = explain_words.iter().map(String::as_str).collect::<Vec<_>>();
+    let context_args = context_words.iter().map(String::as_str).collect::<Vec<_>>();
     if explain_args.first() != Some(&"ripr") || context_args.first() != Some(&"ripr") {
         return Err(format!(
             "unexpected navigation commands:\n{explain_line}\n{context_line}"
@@ -2267,10 +2273,27 @@ fn check_human_navigation_commands_replay_custom_scope() -> Result<(), String> {
         .ok_or_else(|| "explain command omitted selector".to_string())?;
     let context = run_ripr_in_workspace(&context_args[1..]).map_err(|err| err.to_string())?;
     assert_success(&context);
-    if !String::from_utf8_lossy(&explain.stdout).contains(&format!(
-        "Next: ripr context --root {printed_root} --diff {printed_diff} --at {selector}"
-    )) {
-        return Err("explain output omitted its scope-preserving context command".to_string());
+    // Compare decoded words: the printed `Next:` command shell-quotes a root
+    // that needs it, while `printed_root` is already decoded (#6762).
+    let explain_stdout = String::from_utf8_lossy(&explain.stdout);
+    let next_line = explain_stdout
+        .lines()
+        .find_map(|line| line.trim_start().strip_prefix("Next: ripr context "))
+        .ok_or_else(|| "explain output omitted its scope-preserving context command".to_string())?;
+    let next_args = shell_words::posix_words(next_line)?;
+    if next_args
+        != [
+            "--root",
+            printed_root,
+            "--diff",
+            printed_diff,
+            "--at",
+            selector,
+        ]
+    {
+        return Err(format!(
+            "explain output's context command lost the scope: {next_line}"
+        ));
     }
     if !String::from_utf8_lossy(&context.stdout).contains("\"version\": \"1.0\"") {
         return Err("context command did not return its JSON packet".to_string());
@@ -3511,20 +3534,15 @@ fn first_pr_check_missing_packet_suggests_rooted_out_dir() -> Result<(), Box<dyn
 }
 
 /// The write command a `first-pr --check` missing-packet recovery suggests,
-/// as arguments after `ripr` (each shell word decoded; the fixture paths have
-/// no spaces).
+/// as arguments after `ripr`, split the way the shell would so a quoted
+/// checkout path with spaces stays one argument (#6762).
 fn suggested_first_pr_write(stderr: &str) -> Result<Vec<String>, String> {
     let line = stderr
         .split("Create and validate it with:\n")
         .nth(1)
         .and_then(|rest| rest.lines().next())
         .ok_or_else(|| format!("no suggested write command:\n{stderr}"))?;
-    let mut args = line
-        .split_whitespace()
-        .map(|arg| {
-            decode_shell_token(arg).ok_or_else(|| format!("malformed shell word `{arg}`: {line}"))
-        })
-        .collect::<Result<Vec<_>, _>>()?;
+    let mut args = shell_words::posix_words(line)?;
     if args.first().map(String::as_str) != Some("ripr") {
         return Err(format!("suggested command is not a ripr command: {line}"));
     }
@@ -5753,11 +5771,12 @@ fn agent_repair_phases_materialize_snapshots_and_verify_json()
     // bug. This driver adds --json because the assertions below read the
     // after phase's result document from stdout; the seam-selected after
     // phase stays covered by the replay and receipt checks below.
-    let mut next_args: Vec<&str> = next_command
-        .strip_prefix("ripr ")
-        .ok_or_else(|| format!("next command is not a ripr command: {next_command}"))?
-        .split_whitespace()
-        .collect();
+    let next_words = shell_words::posix_words(
+        next_command
+            .strip_prefix("ripr ")
+            .ok_or_else(|| format!("next command is not a ripr command: {next_command}"))?,
+    )?;
+    let mut next_args: Vec<&str> = next_words.iter().map(String::as_str).collect();
     next_args.push("--json");
     let after = run_ripr(&next_args);
     assert_success(&after);
@@ -12492,14 +12511,19 @@ fn pilot_snapshot_is_the_agent_verify_baseline() -> Result<(), Box<dyn std::erro
     let (check_part, redirect) = after_command
         .split_once(" > ")
         .ok_or_else(|| format!("after command has no redirect: {after_command}"))?;
-    let check_args: Vec<&str> = check_part
-        .strip_prefix("ripr ")
-        .ok_or_else(|| format!("after command is not a ripr command: {after_command}"))?
-        .split_whitespace()
-        .collect();
+    let check_words = shell_words::posix_words(
+        check_part
+            .strip_prefix("ripr ")
+            .ok_or_else(|| format!("after command is not a ripr command: {after_command}"))?,
+    )?;
+    let check_args: Vec<&str> = check_words.iter().map(String::as_str).collect();
     // Pilot anchors the redirect at the resolved root (#3938), so the printed
     // target may be absolute; either way it must land in pilot's own out dir.
-    let redirect_path = std::path::Path::new(redirect.trim().trim_matches('\''));
+    let redirect_words = shell_words::posix_words(redirect)?;
+    let [redirect_word] = redirect_words.as_slice() else {
+        return Err(format!("after command redirect is not one word: {after_command}").into());
+    };
+    let redirect_path = std::path::Path::new(redirect_word);
     let after = if redirect_path.is_absolute() {
         redirect_path.to_path_buf()
     } else {
@@ -13036,13 +13060,14 @@ fn pilot_writes_default_packet_outputs_for_boundary_gap_fixture() -> Result<(), 
         .lines()
         .find_map(|line| line.trim().strip_prefix("repair this seam: "))
         .ok_or_else(|| format!("pilot did not print a repair command:\n{stdout}"))?;
-    let tokens: Vec<&str> = repair_line.split_whitespace().collect();
+    let repair_words = shell_words::posix_words(repair_line)?;
+    let tokens: Vec<&str> = repair_words.iter().map(String::as_str).collect();
     let flag_value = |flag: &str| -> Option<&str> {
         tokens
             .iter()
             .position(|token| *token == flag)
             .and_then(|at| tokens.get(at + 1))
-            .map(|value| value.trim_matches('\''))
+            .copied()
     };
     assert_eq!(
         tokens.first().copied(),
@@ -14670,6 +14695,65 @@ fn pilot_honors_ripr_git_timeout_for_the_current_change() -> Result<(), String> 
 /// recommendation must not read as the next step for that change when it is
 /// a repo-wide seam elsewhere. Drives the real binary through the default
 /// base resolution and both diff routes (uncommitted and committed).
+/// #5309: a change whose only seam pilot withholds must not read as a
+/// change with no seams. With the pilot seam budget at one, the withheld
+/// changed seam is cut from the ranked artifacts, so this also proves the
+/// change's seams are counted before the cut.
+#[test]
+fn pilot_says_it_withholds_the_seam_on_the_current_change() -> Result<(), String> {
+    let lib = "pub fn checkout(total: u32) -> u32 {\n    tier(total) * 10\n}\n\nfn tier(total: u32) -> u32 {\n    if total > 100 { 2 } else { 1 }\n}\n";
+    let root = pilot_language_fixture_repo(
+        "pilot-withheld-current-change",
+        &[
+            (
+                "Cargo.toml",
+                "[package]\nname = \"shop\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+            ),
+            ("src/lib.rs", lib),
+            (
+                "tests/checkout.rs",
+                "#[test]\nfn checkout_large_order() {\n    assert_eq!(shop::checkout(150), 20);\n}\n",
+            ),
+        ],
+        ("src/lib.rs", &lib.replace("total > 100", "total >= 100")),
+    )?;
+    let out_dir = unique_temp_workspace("pilot-withheld-current-change-out");
+    let root_arg = root.display().to_string();
+    let out_arg = out_dir.display().to_string();
+    let output = run_ripr_with_env(
+        &["pilot", "--root", &root_arg, "--out", &out_arg],
+        &[("RIPR_PILOT_SEAM_BUDGET", "1")],
+    );
+    assert_success(&output);
+    let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+    let summary: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(out_dir.join("pilot-summary.json"))
+            .map_err(|err| format!("read pilot summary json: {err}"))?,
+    )
+    .map_err(|err| format!("parse pilot summary json: {err}"))?;
+    // Precondition: the budget cut the withheld seam from the ranked
+    // artifacts, so only a count taken before the cut can see it.
+    assert_eq!(summary["withheld_static_limitations_total"], 0, "{summary}");
+    assert_eq!(summary["current_change"]["state"], "changed", "{summary}");
+    assert_eq!(
+        summary["current_change"]["withheld_seams_in_change"], 1,
+        "{summary}"
+    );
+    assert_eq!(
+        summary["current_change"]["top_recommendation_in_change"], false,
+        "{summary}"
+    );
+    assert!(
+        stdout.contains(
+            "current change: not part of it. Pilot withholds the analyzed seam on a line changed since origin/main: its static evidence is unknown or opaque"
+        ),
+        "{stdout}"
+    );
+    ignore_remove_dir_all(&root);
+    ignore_remove_dir_all(&out_dir);
+    Ok(())
+}
+
 #[test]
 fn pilot_ranks_and_labels_seams_in_the_current_change() -> Result<(), String> {
     let lib = "pub fn discounted(amount: u32) -> u32 {\n    if amount > 100 { amount - 10 } else { amount }\n}\n\npub fn is_digit(byte: u8) -> bool {\n    byte >= b'0' && byte <= b'9'\n}\n";
@@ -14698,13 +14782,14 @@ fn pilot_ranks_and_labels_seams_in_the_current_change() -> Result<(), String> {
     assert_eq!(summary["current_change"]["state"], "changed");
     assert_eq!(summary["current_change"]["base"], "origin/main");
     assert_eq!(summary["current_change"]["actionable_seams_in_change"], 0);
+    assert_eq!(summary["current_change"]["withheld_seams_in_change"], 0);
     assert_eq!(
         summary["current_change"]["top_recommendation_in_change"],
         false
     );
     assert!(
         stdout.contains(
-            "current change: not part of it. This recommendation is elsewhere in the repo"
+            "current change: not part of it. No seam pilot analyzed is on a line changed since origin/main. This recommendation is elsewhere in the repo"
         ),
         "{stdout}"
     );
