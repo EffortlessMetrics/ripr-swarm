@@ -2587,6 +2587,9 @@ fn text_has_non_receiver_call_site(text: &str, name: &str) -> bool {
         if !ident_boundary(bytes, at, after) || !call_suffix_follows(&masked, after) {
             continue;
         }
+        if fn_keyword_before(bytes, at) {
+            continue;
+        }
         if !receiver_dot_before(bytes, at) {
             return true;
         }
@@ -2595,9 +2598,10 @@ fn text_has_non_receiver_call_site(text: &str, name: &str) -> bool {
 }
 
 /// Whether the name occurrence ending at `after` opens a call: an argument
-/// list `(` or a turbofish `::<>`, either after optional whitespace. A
-/// bare turbofish `parse::<u8>(..)` is still a direct free-function call.
-/// The whitespace rule mirrors [`body_contains_owner_call`] exactly
+/// list `(` or a turbofish `::<...>(..)` with balanced brackets followed
+/// by `(`, either after optional whitespace. A bare turbofish
+/// `parse::<u8>` without a call is a function-item expression, not a
+/// call. The whitespace rule mirrors [`body_contains_owner_call`] exactly
 /// (Unicode `trim_start`), so every site that authority admits is
 /// classified here too.
 fn call_suffix_follows(text: &str, after: usize) -> bool {
@@ -2605,25 +2609,80 @@ fn call_suffix_follows(text: &str, after: usize) -> bool {
     if rest.starts_with('(') {
         return true;
     }
-    rest.strip_prefix("::")
-        .is_some_and(|turbo| turbo.trim_start().starts_with('<'))
+    let Some(turbo) = rest.strip_prefix("::") else {
+        return false;
+    };
+    let turbo = turbo.trim_start();
+    if !turbo.starts_with('<') {
+        return false;
+    }
+    // Scan balanced `<>` (the text is masked, so no strings intervene)
+    // and require the opening paren after the closing bracket.
+    let mut depth = 0usize;
+    for (index, byte) in turbo.bytes().enumerate() {
+        if byte == b'<' {
+            depth += 1;
+        } else if byte == b'>' {
+            depth = depth.saturating_sub(1);
+            if depth == 0 {
+                return turbo
+                    .get(index + 1..)
+                    .is_some_and(|tail| tail.trim_start().starts_with('('));
+            }
+        }
+    }
+    false
 }
 
-/// Whether the `.` directly before the name occurrence at `at` is a
-/// receiver dot. Only a single adjacent `.` selects a method on its
+/// Whether the `.` before the name occurrence at `at` is a receiver dot.
+/// Rust permits trivia between the dot and the method name
+/// (`config. parse(..)`, masked comments), so the scan moves backward
+/// over whitespace first. Only a single `.` selects a method on its
 /// receiver; the second `.` of a range (`0..bound(x)`) leaves a bare call
 /// computing the bound, and any other preceding byte (path `::`, open
 /// bracket, operator, or start) spells a free-function call.
 fn receiver_dot_before(bytes: &[u8], at: usize) -> bool {
-    let Some(dot) = at.checked_sub(1) else {
+    let mut cursor = at;
+    while let Some(previous) = cursor.checked_sub(1) {
+        match bytes.get(previous).copied() {
+            Some(byte) if byte.is_ascii_whitespace() => cursor = previous,
+            Some(b'.') => {
+                return previous
+                    .checked_sub(1)
+                    .and_then(|i| bytes.get(i).copied())
+                    .is_none_or(|before| before != b'.');
+            }
+            _ => return false,
+        }
+    }
+    false
+}
+
+/// Whether the name occurrence at `at` is declared, not called: a nested
+/// `fn name(..)` item satisfies the identifier-and-`(` shape but never
+/// invokes the owner. The `fn` keyword must sit directly before the name
+/// (modulo trivia) with a keyword boundary, so `my_fn(name)` and calls
+/// after a declaration still count.
+fn fn_keyword_before(bytes: &[u8], at: usize) -> bool {
+    let mut cursor = at;
+    while let Some(previous) = cursor.checked_sub(1) {
+        match bytes.get(previous).copied() {
+            Some(byte) if byte.is_ascii_whitespace() => cursor = previous,
+            _ => break,
+        }
+    }
+    let Some(end) = cursor.checked_sub(1) else {
         return false;
     };
-    if bytes.get(dot).copied() != Some(b'.') {
+    // `end` is the last non-trivia byte; `fn` must end exactly there.
+    let is_fn = bytes.get(end).copied() == Some(b'n')
+        && end.checked_sub(1).and_then(|i| bytes.get(i).copied()) == Some(b'f');
+    if !is_fn {
         return false;
     }
-    dot.checked_sub(1)
+    end.checked_sub(2)
         .and_then(|i| bytes.get(i).copied())
-        .is_none_or(|before| before != b'.')
+        .is_none_or(|before| !before.is_ascii_alphanumeric() && before != b'_')
 }
 
 /// True when `body` mentions `owner_name` immediately followed by `(`.
@@ -3485,6 +3544,78 @@ mod tests {
 
         assert_eq!(related.len(), 1);
         assert_eq!(related[0].1, RelationReason::DirectOwnerCall);
+    }
+
+    /// #7006 control: Rust permits trivia between the receiver dot and the
+    /// method name, so `config. parse(..)` is still a method call and must
+    /// not credit the free function.
+    #[test]
+    fn given_free_function_owner_when_receiver_dot_is_spaced_then_name_only_relation() {
+        let owner = established_free_function("src/lib.rs", "parse");
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions: vec![owner.clone()],
+            tests: vec![test_with_call(
+                "tests/config_parse.rs",
+                "spaced_receiver_parse_reports_value",
+                "assert_eq!(config. parse(\"7\"), 7);",
+                "parse",
+            )],
+            ..Default::default()
+        });
+        let probe = probe("src/lib.rs", "input.parse()");
+
+        let related = find_related_tests(&probe, Some(&owner), &index, true, None, None);
+
+        assert_eq!(related.len(), 1);
+        assert_eq!(related[0].1, RelationReason::WeakTokenSubstring);
+    }
+
+    /// #7006 control: an uncalled turbofish `parse::<u8>` is a
+    /// function-item expression, not a call — beside a same-named method
+    /// call it must not rescue direct credit.
+    #[test]
+    fn given_free_function_owner_when_turbofish_is_uncalled_then_name_only_relation() {
+        let owner = established_free_function("src/lib.rs", "parse");
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions: vec![owner.clone()],
+            tests: vec![test_with_call(
+                "tests/config_parse.rs",
+                "uncalled_turbofish_beside_method_call",
+                "let f = parse::<u8>; assert_eq!(config.parse(\"7\"), 7);",
+                "parse",
+            )],
+            ..Default::default()
+        });
+        let probe = probe("src/lib.rs", "input.parse()");
+
+        let related = find_related_tests(&probe, Some(&owner), &index, true, None, None);
+
+        assert_eq!(related.len(), 1);
+        assert_eq!(related[0].1, RelationReason::WeakTokenSubstring);
+    }
+
+    /// #7006 control: a nested `fn parse(..)` declaration satisfies the
+    /// identifier-and-`(` shape but never invokes the owner, so beside a
+    /// same-named method call the relation stays weak.
+    #[test]
+    fn given_free_function_owner_when_match_is_only_a_nested_fn_then_name_only_relation() {
+        let owner = established_free_function("src/lib.rs", "parse");
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions: vec![owner.clone()],
+            tests: vec![test_with_call(
+                "tests/config_parse.rs",
+                "nested_fn_beside_method_call",
+                "fn parse(x: &str) -> usize { x.len() } assert_eq!(config.parse(\"7\"), 7);",
+                "parse",
+            )],
+            ..Default::default()
+        });
+        let probe = probe("src/lib.rs", "input.parse()");
+
+        let related = find_related_tests(&probe, Some(&owner), &index, true, None, None);
+
+        assert_eq!(related.len(), 1);
+        assert_eq!(related[0].1, RelationReason::WeakTokenSubstring);
     }
 
     /// #2971 scope control: the same workspace as the positive control above,
