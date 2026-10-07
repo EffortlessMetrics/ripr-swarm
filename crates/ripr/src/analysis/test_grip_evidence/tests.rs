@@ -2718,6 +2718,206 @@ fn window_boundaries_release_only_unheld_shared_grips() -> Result<(), String> {
     Ok(())
 }
 
+#[test]
+fn shared_grips_keep_every_semantic_field_distinct() -> Result<(), String> {
+    // #5341: two records share backing only when every semantic field is
+    // equal. Each variant below differs from `base` in exactly one field.
+    let index = index_from_files(&[(PathBuf::from("src/lib.rs"), "pub fn f() {}\n")])?;
+    let context = CompactGripContext::new(&index);
+    let base = RelatedTestGrip {
+        test_name: "f_works".to_string(),
+        file: PathBuf::from("tests/f.rs"),
+        line: 3,
+        test_target: None,
+        oracle_kind: OracleKind::ExactValue,
+        oracle_strength: OracleStrength::Strong,
+        evidence_summary: "exact value assertion".to_string(),
+        relation_reason: RelationReason::DirectOwnerCall,
+        relation_confidence: RelationConfidence::High,
+    };
+    let target = TestTargetEvidence::from_index(
+        crate::domain::SymbolId("tests/f.rs::f_works".to_string()),
+        PathBuf::from("tests/f.rs"),
+        3,
+        TestKind::Integration,
+        RelationReason::DirectOwnerCall,
+        "sha256:workspace".to_string(),
+    );
+    let variants = [
+        (
+            "test_name",
+            RelatedTestGrip {
+                test_name: "f_fails".to_string(),
+                ..base.clone()
+            },
+        ),
+        (
+            "file",
+            RelatedTestGrip {
+                file: PathBuf::from("tests/g.rs"),
+                ..base.clone()
+            },
+        ),
+        (
+            "line",
+            RelatedTestGrip {
+                line: 4,
+                ..base.clone()
+            },
+        ),
+        (
+            "test_target",
+            RelatedTestGrip {
+                test_target: Some(target.clone()),
+                ..base.clone()
+            },
+        ),
+        (
+            "oracle_kind",
+            RelatedTestGrip {
+                oracle_kind: OracleKind::RelationalCheck,
+                ..base.clone()
+            },
+        ),
+        (
+            "oracle_strength",
+            RelatedTestGrip {
+                oracle_strength: OracleStrength::Weak,
+                ..base.clone()
+            },
+        ),
+        (
+            "evidence_summary",
+            RelatedTestGrip {
+                evidence_summary: "relational assertion".to_string(),
+                ..base.clone()
+            },
+        ),
+        (
+            "relation_reason",
+            RelatedTestGrip {
+                relation_reason: RelationReason::SameModule,
+                ..base.clone()
+            },
+        ),
+        (
+            "relation_confidence",
+            RelatedTestGrip {
+                relation_confidence: RelationConfidence::Low,
+                ..base.clone()
+            },
+        ),
+    ];
+    let shared_base = context.share_grip(base.clone());
+    for (field, variant) in variants {
+        assert_ne!(variant, base, "{field}: fixture must differ from the base");
+        let shared = context.share_grip(variant.clone());
+        assert!(
+            !Arc::ptr_eq(&shared, &shared_base),
+            "{field}: a record differing only in {field} must not share the base"
+        );
+        assert_eq!(
+            *shared, variant,
+            "{field}: sharing must not rewrite the record"
+        );
+        assert!(
+            Arc::ptr_eq(&shared, &context.share_grip(variant)),
+            "{field}: a repeat of the variant must share it"
+        );
+    }
+    // Two present targets that differ only in their identity stay distinct.
+    let other_target = TestTargetEvidence::from_index(
+        crate::domain::SymbolId("tests/f.rs::f_works_too".to_string()),
+        PathBuf::from("tests/f.rs"),
+        3,
+        TestKind::Integration,
+        RelationReason::DirectOwnerCall,
+        "sha256:workspace".to_string(),
+    );
+    let with_target = context.share_grip(RelatedTestGrip {
+        test_target: Some(target),
+        ..base.clone()
+    });
+    let with_other = context.share_grip(RelatedTestGrip {
+        test_target: Some(other_target),
+        ..base.clone()
+    });
+    assert_ne!(*with_target, *with_other, "fixture targets must differ");
+    assert!(!Arc::ptr_eq(&with_target, &with_other));
+    assert!(Arc::ptr_eq(&shared_base, &context.share_grip(base)));
+    Ok(())
+}
+
+#[test]
+fn shared_grips_retain_one_record_per_distinct_grip_at_high_fan_out() -> Result<(), String> {
+    // #5341: retained related-test records scale with distinct records, not
+    // with seam x test occurrences. Before sharing, 6,000 occurrences meant
+    // 6,000 records.
+    let index = index_from_files(&[(PathBuf::from("src/lib.rs"), "pub fn f() {}\n")])?;
+    let context = CompactGripContext::new(&index);
+    let grip = |test_name: &str| RelatedTestGrip {
+        test_name: test_name.to_string(),
+        file: PathBuf::from("tests/f.rs"),
+        line: 3,
+        test_target: None,
+        oracle_kind: OracleKind::ExactValue,
+        oracle_strength: OracleStrength::Strong,
+        evidence_summary: "exact value assertion".to_string(),
+        relation_reason: RelationReason::DirectOwnerCall,
+        relation_confidence: RelationConfidence::High,
+    };
+    let names = ["a_works", "b_works", "c_works"];
+    let seams: Vec<Vec<Arc<RelatedTestGrip>>> = (0..2_000)
+        .map(|_| {
+            names
+                .iter()
+                .map(|name| context.share_grip(grip(name)))
+                .collect()
+        })
+        .collect();
+    let occurrences: usize = seams.iter().map(Vec::len).sum();
+    let records: std::collections::HashSet<*const RelatedTestGrip> =
+        seams.iter().flatten().map(Arc::as_ptr).collect();
+    assert_eq!(occurrences, 6_000);
+    assert_eq!(records.len(), names.len());
+    Ok(())
+}
+
+#[test]
+fn window_boundaries_keep_a_held_second_spelling_shared() -> Result<(), String> {
+    // A window boundary may drop the first spelling's holders while a kept
+    // seam still holds the second spelling; that record must stay shared.
+    let index = index_from_files(&[(PathBuf::from("src/lib.rs"), "pub fn f() {}\n")])?;
+    let context = CompactGripContext::new(&index);
+    let grip = |file: &str| RelatedTestGrip {
+        test_name: "f_works".to_string(),
+        file: PathBuf::from(file),
+        line: 3,
+        test_target: None,
+        oracle_kind: OracleKind::ExactValue,
+        oracle_strength: OracleStrength::Strong,
+        evidence_summary: "exact value assertion".to_string(),
+        relation_reason: RelationReason::DirectOwnerCall,
+        relation_confidence: RelationConfidence::High,
+    };
+    let plain = Arc::downgrade(&context.share_grip(grip("tests/f.rs")));
+    let dotted = context.share_grip(grip("tests/./f.rs"));
+    context.clear_window_memos();
+    assert!(
+        plain.upgrade().is_none(),
+        "an unheld first spelling must be released even while a second is held"
+    );
+    assert!(Arc::ptr_eq(
+        &dotted,
+        &context.share_grip(grip("tests/./f.rs"))
+    ));
+    assert_eq!(
+        context.share_grip(grip("tests/f.rs")).file.as_os_str(),
+        "tests/f.rs"
+    );
+    Ok(())
+}
+
 fn parallel_evidence_fixture() -> Result<(FixtureIndex, Vec<RepoSeam>), String> {
     let prod = PathBuf::from("src/pricing.rs");
     let prod_src = r#"
@@ -3839,6 +4039,7 @@ fn producer_rejects_same_file_production_helper_as_test_target() -> Result<(), S
             unresolved_property_macros: Vec::new(),
             role_provenance: Default::default(),
             source: "fn discounted_total_helper() {}".into(),
+            item_scopes: None,
         },
     );
     let seam = RepoSeam::new(

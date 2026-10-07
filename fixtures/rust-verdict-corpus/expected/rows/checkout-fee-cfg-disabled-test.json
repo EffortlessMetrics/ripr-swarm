@@ -1,0 +1,19 @@
+{
+  "case_id": "checkout-fee-cfg-disabled-test",
+  "subject_id": "authored-checkout",
+  "origin": "authored",
+  "anchor": "src/fees.rs:16",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "test_in_cfg_false_module",
+  "hard_case": false,
+  "truth": "not_discriminated",
+  "ideal_verdict": "gap",
+  "observed_verdict": "gap",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "weakly_exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": []
+}

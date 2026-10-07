@@ -1,0 +1,58 @@
+{
+  "case_id": "trap-const-fn-self-expected",
+  "subject_id": "authored-trap-reach",
+  "diff": "cases/trap-const-fn-self-expected.diff",
+  "anchor": {
+    "file": "src/quotas.rs",
+    "line": 2
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "self_computed_expected_via_const_fn",
+  "hard_case": "The expected value is a test-module const computed by the same const fn, so the assert compares quota with quota.",
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "base * 28",
+        "mutated_line": "base * 28",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: replaces `27 * base` with `base * 28`, which changes the result, but no executed assertion observes it"
+      },
+      {
+        "replacement": "base + 27",
+        "mutated_line": "base + 27",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: replaces `27 * base` with `base + 27`, which changes the result, but no executed assertion observes it"
+      },
+      {
+        "replacement": "base * 26",
+        "mutated_line": "base * 26",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: replaces `27 * base` with `base * 26`, which changes the result, but no executed assertion observes it"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "quota_matches_the_table asserts quota(2) == EXPECTED, and EXPECTED is `const EXPECTED: u32 = quota(2)`, evaluated by the edited body at compile time. Spec cells: RIPR-SPEC-0004, RIPR-SPEC-0035 (self-computed expected value), const-evaluated variant of trap-tax-reference-helper; a runtime `let expected = quota(2)` binding reads the same, so the const is not what misleads ripr.",
+  "labeling_observation": {
+    "ripr_commit": "fce75e1",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

@@ -1,0 +1,58 @@
+{
+  "case_id": "trap-boost-detached-thread",
+  "subject_id": "authored-trap-reach",
+  "diff": "cases/trap-boost-detached-thread.diff",
+  "anchor": {
+    "file": "src/boosts.rs",
+    "line": 2
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "assert_in_detached_thread",
+  "hard_case": "The assert runs on a spawned thread whose JoinHandle is dropped, so its panic never reaches the test harness.",
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "base * 18",
+        "mutated_line": "base * 18",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: replaces `17 * base` with `base * 18`, which changes the result, but no executed assertion observes it"
+      },
+      {
+        "replacement": "base + 17",
+        "mutated_line": "base + 17",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: replaces `17 * base` with `base + 17`, which changes the result, but no executed assertion observes it"
+      },
+      {
+        "replacement": "base * 16",
+        "mutated_line": "base * 16",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: replaces `17 * base` with `base * 16`, which changes the result, but no executed assertion observes it"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "boost_runs_in_a_worker spawns a thread that asserts boost(2) == 34 and returns without joining it; a failing assert panics only that thread and the test still passes. Adversarial shape (assertion outside the test thread); paired with trap-lift-joined-thread-control. ripr's gap here is incidental today: it does not read an assert inside a thread::spawn closure at all, so the scoped-thread and joined-thread controls score false_actionable too (#6966). This case guards the fix: once a joined or scoped spawn earns credit, a detached one must not.",
+  "labeling_observation": {
+    "ripr_commit": "fce75e1",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "reachable_unrevealed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

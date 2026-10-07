@@ -169,7 +169,7 @@ pub(crate) fn load_diff_with_effective_base_core(
 
     warn_if_git_operation_in_progress(root, git_timeout);
 
-    let base = resolve_effective_base(root, base, git_timeout)?;
+    let base = resolve_effective_base_core(root, base, git_timeout)?;
 
     let text = run_git_diff(
         root,
@@ -228,7 +228,7 @@ pub(crate) fn load_worktree_diff_with_effective_base_core(
 ) -> Result<LoadedDiff, CoreError> {
     warn_if_git_operation_in_progress(root, git_timeout);
 
-    let base = resolve_effective_base(root, base, git_timeout)?;
+    let base = resolve_effective_base_core(root, base, git_timeout)?;
 
     let origin = worktree_diff_origin(root, &base, git_timeout);
     let text = run_git_diff(root, &origin, &["--submodule=short"], git_timeout)?;
@@ -291,14 +291,32 @@ fn worktree_diff_origin(root: &Path, base: &str, git_timeout: Option<Duration>) 
 /// This is the one base authority for every command that diffs committed
 /// history (#3952, #3886): `check`, `diff`, `first-pr` and `pr-evidence` all
 /// resolve an omitted `--base` here instead of assuming `origin/main`.
+///
+/// String compatibility wrapper around [`resolve_effective_base_core`].
+/// Production analysis uses the typed core; tests pin Display parity here.
 pub fn resolve_effective_base(
     root: &Path,
     base: Option<&str>,
     git_timeout: Option<Duration>,
 ) -> Result<String, String> {
+    resolve_effective_base_core(root, base, git_timeout).map_err(Into::into)
+}
+
+/// Typed core of [`resolve_effective_base`]: the same authority, with each
+/// failure branch constructing its [`CoreError`] family directly (#6834).
+/// A base that does not resolve is `BaseUnresolvable`; a root Git cannot
+/// work with (not a work tree, unreadable, refused) is
+/// `RepositoryRootUnusable`. Consumers match those variants structurally —
+/// never message text — and every message stays byte-identical to the
+/// legacy wording, so the wrapper above is a pure projection.
+pub(crate) fn resolve_effective_base_core(
+    root: &Path,
+    base: Option<&str>,
+    git_timeout: Option<Duration>,
+) -> Result<String, CoreError> {
     let Some(explicit) = base else {
         return resolve_default_base(root, git_timeout).map_err(|err| {
-            message_for_git_root_probe(probe_git_root(root, git_timeout), root).unwrap_or(err)
+            core_error_for_git_root_probe(probe_git_root(root, git_timeout), root, err)
         });
     };
 
@@ -306,23 +324,62 @@ pub fn resolve_effective_base(
     // (`--output=<path>...HEAD` writes a file) if the probe below cannot run.
     // The LSP takes this value from its client's settings.
     if explicit.starts_with('-') {
-        return Err(format!(
+        return Err(CoreError::base_unresolvable(format!(
             "the base `{explicit}` starts with `-`, which no Git revision does (the analysis \
              did not run). Pass `--base <ref>` for a ref this repository has."
-        ));
+        )));
     }
     let commit = format!("{explicit}^{{commit}}");
     match git_ref_output(root, &commit, git_timeout) {
-        Some(output) if !output.status.success() => Err(not_a_work_tree(root, git_timeout)
-            .or_else(|| unreadable_repository_message(root, &output))
-            .unwrap_or_else(|| {
-                let fetch = missing_ref_repair(root, explicit, git_timeout);
-                format!(
-                    "the base `{explicit}` does not resolve to a commit (the analysis did not \
-                     run). {fetch} or pass `--base <ref>` for a ref this repository has."
-                )
-            })),
+        Some(output) if !output.status.success() => {
+            if let Some(message) = not_a_work_tree(root, git_timeout) {
+                return Err(CoreError::repository_root_unusable(message));
+            }
+            if let Some(message) = unreadable_repository_message(root, &output) {
+                return Err(CoreError::repository_root_unusable(message));
+            }
+            let fetch = missing_ref_repair(root, explicit, git_timeout);
+            Err(CoreError::base_unresolvable(format!(
+                "the base `{explicit}` does not resolve to a commit (the analysis did not \
+                 run). {fetch} or pass `--base <ref>` for a ref this repository has."
+            )))
+        }
         _ => Ok(explicit.to_string()),
+    }
+}
+
+/// Classify a default-base failure from the Git root probe (#6834).
+///
+/// Same messages as [`message_for_git_root_probe`] — which stays the single
+/// message constructor — with the probe enum selecting the typed variant
+/// structurally. A root Git cannot work with is `RepositoryRootUnusable`;
+/// missing git stays an untyped message (environmental, not a root or ref
+/// verdict); a timed-out probe keeps its timeout identity (#6956); an
+/// unanswered probe keeps the default-base error as `BaseUnresolvable`.
+/// The `None` arms are defensive: these probes always render, but a silent
+/// change there must keep the default-base error, never panic.
+fn core_error_for_git_root_probe(
+    probe: GitRootProbe,
+    root: &Path,
+    default_base_error: String,
+) -> CoreError {
+    match probe {
+        GitRootProbe::NotAWorkTree
+        | GitRootProbe::DubiousOwnership(_)
+        | GitRootProbe::Unreadable(_) => match message_for_git_root_probe(probe, root) {
+            Some(message) => CoreError::repository_root_unusable(message),
+            None => CoreError::base_unresolvable(default_base_error),
+        },
+        GitRootProbe::GitNotFoundOnPath => match message_for_git_root_probe(probe, root) {
+            Some(message) => CoreError::message(message),
+            None => CoreError::base_unresolvable(default_base_error),
+        },
+        GitRootProbe::TimedOut {
+            operation,
+            timeout_ms,
+            spawned,
+        } => CoreError::git_invocation_timeout(operation, timeout_ms, spawned),
+        GitRootProbe::Unanswered => CoreError::base_unresolvable(default_base_error),
     }
 }
 
@@ -342,6 +399,14 @@ enum GitRootProbe {
     /// Git ran and could not read the repository (a bad `.git/config`, a
     /// damaged ref store); the message carries Git's own reason and a repair.
     Unreadable(String),
+    /// The probe exceeded its deadline and was terminated (#6956). A
+    /// stalled probe established nothing about refs or roots, so the
+    /// refusal names `git_invocation_timeout`, never `base_unresolvable`.
+    TimedOut {
+        operation: String,
+        timeout_ms: u128,
+        spawned: bool,
+    },
     Unanswered,
 }
 
@@ -372,6 +437,11 @@ fn message_for_git_root_probe(probe: GitRootProbe, root: &Path) -> Option<String
         GitRootProbe::DubiousOwnership(message) | GitRootProbe::Unreadable(message) => {
             Some(message)
         }
+        GitRootProbe::TimedOut {
+            operation,
+            timeout_ms,
+            spawned,
+        } => Some(CoreError::git_invocation_timeout(operation, timeout_ms, spawned).to_string()),
         GitRootProbe::Unanswered => None,
     }
 }
@@ -479,6 +549,15 @@ fn probe_git_root(root: &Path, git_timeout: Option<Duration>) -> GitRootProbe {
         &["rev-parse", "--is-inside-work-tree"],
         git_timeout,
     ) {
+        Err(CoreError::GitInvocationTimeout {
+            operation,
+            timeout_ms,
+            spawned,
+        }) => GitRootProbe::TimedOut {
+            operation,
+            timeout_ms,
+            spawned,
+        },
         Err(err) => classify_git_root_probe(Err(&err.to_string())),
         Ok(output) => {
             let inside =
@@ -510,8 +589,10 @@ fn probe_git_root(root: &Path, git_timeout: Option<Duration>) -> GitRootProbe {
 /// failure path alone, so the ordinary run still costs one `rev-parse`.
 ///
 /// It is evidence on the same terms as the base probe: `None` when the command
-/// could not run at all, because a probe that never ran may not assert that a
-/// directory is not a repository any more than it may assert a ref is absent.
+/// could not run at all or never answered (missing git, timeout, or an
+/// unanswered probe), because a probe that never established anything may not
+/// assert that a directory is not a repository any more than it may assert a
+/// ref is absent.
 /// `--is-inside-work-tree` prints `true` only inside a work tree, so a run that
 /// printed anything else — or failed, which is what it does outside a
 /// repository — is the case this names. Missing git is not this message; the
@@ -525,7 +606,9 @@ fn not_a_work_tree(root: &Path, git_timeout: Option<Duration>) -> Option<String>
         GitRootProbe::DubiousOwnership(message) | GitRootProbe::Unreadable(message) => {
             Some(message)
         }
-        GitRootProbe::GitNotFoundOnPath | GitRootProbe::Unanswered => None,
+        GitRootProbe::GitNotFoundOnPath
+        | GitRootProbe::TimedOut { .. }
+        | GitRootProbe::Unanswered => None,
     }
 }
 
@@ -1870,6 +1953,165 @@ mod tests {
     }
 
     #[test]
+    fn resolve_effective_base_core_types_an_unresolvable_base_structurally() -> std::io::Result<()>
+    {
+        use crate::core_error::CheckFailureKind;
+        let dir = unique_fixture_root("resolve-base-typed")?;
+        ignore_remove_dir_all(&dir);
+        init_git_repo(&dir, "main")?;
+
+        let typed = resolve_effective_base_core(&dir, Some("definitely-not-a-real-ref"), None);
+        let Err(typed) = typed else {
+            ignore_remove_dir_all(&dir);
+            return Err(std::io::Error::other("a missing base must fail"));
+        };
+        assert_eq!(
+            typed.check_failure_kind(),
+            Some(CheckFailureKind::BaseUnresolvable),
+            "{typed}"
+        );
+        assert!(
+            typed.to_string().contains("does not resolve to a commit"),
+            "{typed}"
+        );
+        // The String wrapper is a pure Display projection of the same error.
+        let legacy = resolve_effective_base(&dir, Some("definitely-not-a-real-ref"), None);
+        let Err(legacy) = legacy else {
+            ignore_remove_dir_all(&dir);
+            return Err(std::io::Error::other("a missing base must fail"));
+        };
+        assert_eq!(legacy, typed.to_string());
+
+        ignore_remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn resolve_effective_base_core_types_a_non_repository_root_structurally() -> std::io::Result<()>
+    {
+        use crate::core_error::CheckFailureKind;
+        // A bare repository: `--is-inside-work-tree` prints `false` no
+        // matter where the temp directory lives (a plain temp dir sits
+        // inside this checkout, hence inside a work tree).
+        let dir = unique_fixture_root("resolve-base-typed-non-repo")?;
+        ignore_remove_dir_all(&dir);
+        fs::create_dir_all(&dir)?;
+        run_git_checked(&dir, &["init", "--bare", "--quiet", "."])?;
+
+        // Explicit base outside a work tree: the root verdict, not the ref.
+        let Err(explicit) =
+            resolve_effective_base_core(&dir, Some("definitely-not-a-real-ref"), None)
+        else {
+            ignore_remove_dir_all(&dir);
+            return Err(std::io::Error::other(
+                "a base outside a repository must fail",
+            ));
+        };
+        assert_eq!(
+            explicit.check_failure_kind(),
+            Some(CheckFailureKind::RepositoryRootUnusable),
+            "{explicit}"
+        );
+        // Omitted base outside a work tree: same root verdict.
+        let Err(default) = resolve_effective_base_core(&dir, None, None) else {
+            ignore_remove_dir_all(&dir);
+            return Err(std::io::Error::other(
+                "a default base outside a work tree must fail",
+            ));
+        };
+        assert_eq!(
+            default.check_failure_kind(),
+            Some(CheckFailureKind::RepositoryRootUnusable),
+            "{default}"
+        );
+
+        ignore_remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn core_error_for_git_root_probe_matches_the_legacy_messages() {
+        use crate::core_error::CheckFailureKind;
+        let root = Path::new("/repo");
+        let default_error = "could not resolve a default base".to_string();
+        let probes = [
+            GitRootProbe::NotAWorkTree,
+            GitRootProbe::GitNotFoundOnPath,
+            GitRootProbe::DubiousOwnership("dubious ownership repair".to_string()),
+            GitRootProbe::Unreadable("unreadable repair".to_string()),
+            GitRootProbe::TimedOut {
+                operation: "git rev-parse".to_string(),
+                timeout_ms: 1_000,
+                spawned: true,
+            },
+            GitRootProbe::Unanswered,
+        ];
+        for probe in probes {
+            let label = format!("{probe:?}");
+            let (for_legacy, for_typed, expected_kind, expected_timeout) = match probe {
+                GitRootProbe::NotAWorkTree => (
+                    GitRootProbe::NotAWorkTree,
+                    GitRootProbe::NotAWorkTree,
+                    Some(CheckFailureKind::RepositoryRootUnusable),
+                    false,
+                ),
+                GitRootProbe::GitNotFoundOnPath => (
+                    GitRootProbe::GitNotFoundOnPath,
+                    GitRootProbe::GitNotFoundOnPath,
+                    None,
+                    false,
+                ),
+                GitRootProbe::DubiousOwnership(message) => (
+                    GitRootProbe::DubiousOwnership(message.clone()),
+                    GitRootProbe::DubiousOwnership(message),
+                    Some(CheckFailureKind::RepositoryRootUnusable),
+                    false,
+                ),
+                GitRootProbe::Unreadable(message) => (
+                    GitRootProbe::Unreadable(message.clone()),
+                    GitRootProbe::Unreadable(message),
+                    Some(CheckFailureKind::RepositoryRootUnusable),
+                    false,
+                ),
+                GitRootProbe::TimedOut {
+                    operation,
+                    timeout_ms,
+                    spawned,
+                } => (
+                    GitRootProbe::TimedOut {
+                        operation: operation.clone(),
+                        timeout_ms,
+                        spawned,
+                    },
+                    GitRootProbe::TimedOut {
+                        operation,
+                        timeout_ms,
+                        spawned,
+                    },
+                    None,
+                    true,
+                ),
+                GitRootProbe::Unanswered => (
+                    GitRootProbe::Unanswered,
+                    GitRootProbe::Unanswered,
+                    Some(CheckFailureKind::BaseUnresolvable),
+                    false,
+                ),
+            };
+            let legacy = message_for_git_root_probe(for_legacy, root)
+                .unwrap_or_else(|| default_error.clone());
+            let typed = core_error_for_git_root_probe(for_typed, root, default_error.clone());
+            assert_eq!(typed.to_string(), legacy, "{label}");
+            assert_eq!(typed.check_failure_kind(), expected_kind, "{label}");
+            assert_eq!(
+                typed.is_git_invocation_timeout(),
+                expected_timeout,
+                "{label}"
+            );
+        }
+    }
+
+    #[test]
     fn resolve_default_base_uses_origin_master_when_symbolic_ref_points_there()
     -> std::io::Result<()> {
         // Simulates a repo whose remote default branch is "master" (not "main").
@@ -2999,9 +3241,11 @@ mod tests {
 
         let result = load_diff(&dir, None, None, Some(Duration::ZERO));
         let err = result.expect_err("a zero deadline must fail default-base resolution");
+        // #6956: the stalled probe reports its timeout; only a genuinely
+        // unanswered probe keeps the default-base error.
         assert!(
-            err.contains("could not resolve a default base"),
-            "expected fail-closed default-base error, got: {err}"
+            err.contains("git_invocation_timeout"),
+            "a zero deadline is a timeout, not a missing ref, got: {err}"
         );
 
         ignore_remove_dir_all(&dir);

@@ -1,0 +1,19 @@
+{
+  "case_id": "semver-digits-ten",
+  "subject_id": "semver-280ebcb",
+  "origin": "upstream",
+  "anchor": "src/display.rs:157",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "integration_test_public_api",
+  "hard_case": false,
+  "truth": "partially_discriminated",
+  "ideal_verdict": "gap",
+  "observed_verdict": "limited",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "no_static_path"
+  ],
+  "outcome": "abstained",
+  "contradictions": []
+}

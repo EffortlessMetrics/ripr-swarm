@@ -466,8 +466,19 @@ pub(crate) fn candidate_config_bytes(
         &["show", &format!("{treeish}:ripr.toml")],
         deadline,
     )
-    .map_err(|error| SubjectError::ExecutionFailed {
-        detail: format!("reading candidate ripr.toml failed: {error}"),
+    .map_err(|error| match error {
+        crate::core_error::CoreError::GitInvocationTimeout {
+            operation,
+            timeout_ms,
+            spawned,
+        } => SubjectError::ExecutionTimedOut {
+            operation,
+            timeout_ms,
+            spawned,
+        },
+        other => SubjectError::ExecutionFailed {
+            detail: format!("reading candidate ripr.toml failed: {other}"),
+        },
     })?;
     if !output.status.success() {
         // A tree without a ripr.toml uses the default config.

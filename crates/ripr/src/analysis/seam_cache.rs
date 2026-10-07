@@ -645,7 +645,10 @@ pub(crate) const COUNT_CACHE_SCHEMA_VERSION: &str = "0.2";
 /// (diverging Ok arm, exact assertion Err arm), and a `return`/tail
 /// `x.ok_or(Type::Variant)?` line now produces an ErrorPath probe shape
 /// (#6695); `1.30` facts lack both.
-pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.31";
+/// `1.32`: parser-backed facts carry the file's compact module item scopes,
+/// so same-file helper crediting stops reparsing test files on warm runs
+/// (#5363). `1.31` facts lack them.
+pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.32";
 
 /// Keep the best-effort classified-seam cache from turning a successful live
 /// analysis into an unbounded post-analysis stall on large repos. Larger live
@@ -3948,7 +3951,8 @@ mod tests {
         // 1.29 -> 1.30: Rust 2021 parse fallback and char/byte literal
         // facts (#5359).
         // 1.30 -> 1.31: the #6673 asserted-Err guarded-match form.
-        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.31");
+        // 1.31 -> 1.32: compact module item scopes for helper crediting (#5363).
+        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.32");
         // 1.4 -> 1.5: metadata-sourced harness validation (#3634) flips
         // verdicts for workspaces the manifest emulation approximated.
         // 1.5 -> 1.6: the #3636 reachability authority excludes

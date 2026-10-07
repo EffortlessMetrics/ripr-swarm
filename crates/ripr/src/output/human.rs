@@ -1,4 +1,4 @@
-use crate::app::{CheckOutput, FindingDrillIn, FindingNavigation};
+use crate::app::{CheckDiffProvenance, CheckOutput, FindingDrillIn, FindingNavigation};
 use crate::config::RiprConfig;
 use crate::domain::Finding;
 pub(crate) use crate::terminal_text::terminal_safe;
@@ -62,7 +62,14 @@ pub(crate) fn render_with_config(output: &CheckOutput, config: &RiprConfig) -> S
 
 pub(crate) fn render_bounded_with_config(output: &CheckOutput, config: &RiprConfig) -> String {
     let drill_in = FindingDrillIn::Commands(FindingNavigation::legacy());
-    render_bounded_with_config_and_navigation(output, config, Some(&drill_in))
+    // Library callers declare no provenance; the adapter falls back to the
+    // committed-history derivation from `output.base`.
+    render_bounded_with_config_and_navigation(
+        output,
+        config,
+        Some(&drill_in),
+        CheckDiffProvenance::CommittedHistory,
+    )
 }
 
 /// #4012: the no-scope note must describe what was actually analyzed. When
@@ -88,6 +95,7 @@ pub(crate) fn render_bounded_with_config_and_navigation(
     output: &CheckOutput,
     config: &RiprConfig,
     drill_in: Option<&FindingDrillIn>,
+    provenance: CheckDiffProvenance,
 ) -> String {
     let mut out = render_header_summary(output);
     render_analysis_outcome_disclosure(&mut out, output);
@@ -98,7 +106,7 @@ pub(crate) fn render_bounded_with_config_and_navigation(
         out.push_str("No diff-derived static exposure probes found.\n");
         if output.no_scope_provided {
             let triage = triage::select_human_triage(output, config);
-            triage::render_human_triage(&mut out, &triage, output, config, drill_in);
+            triage::render_human_triage(&mut out, &triage, output, config, drill_in, provenance);
         }
         if output.no_scope_provided && !output.unanalyzed_working_tree {
             out.push_str(&render_no_scope_note(output));
@@ -112,7 +120,7 @@ pub(crate) fn render_bounded_with_config_and_navigation(
     }
 
     let triage = triage::select_human_triage(output, config);
-    triage::render_human_triage(&mut out, &triage, output, config, drill_in);
+    triage::render_human_triage(&mut out, &triage, output, config, drill_in, provenance);
     render_all_no_path_disclosure(&mut out, output);
     if output.unanalyzed_working_tree {
         out.push_str(&unanalyzed_working_tree_note(output));
@@ -3100,6 +3108,7 @@ mod tests {
             &output,
             &crate::config::RiprConfig::default(),
             Some(&worktree_drill_in()),
+            crate::app::CheckDiffProvenance::Worktree,
         ));
 
         assert!(

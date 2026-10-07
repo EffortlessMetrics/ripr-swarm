@@ -1,0 +1,19 @@
+{
+  "case_id": "trap-const-fn-self-expected",
+  "subject_id": "authored-trap-reach",
+  "origin": "authored",
+  "anchor": "src/quotas.rs:2",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "self_computed_expected_via_const_fn",
+  "hard_case": true,
+  "truth": "not_discriminated",
+  "ideal_verdict": "gap",
+  "observed_verdict": "credited",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "exposed"
+  ],
+  "outcome": "false_exposed",
+  "contradictions": []
+}
