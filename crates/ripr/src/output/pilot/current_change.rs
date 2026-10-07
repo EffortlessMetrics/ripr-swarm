@@ -9,7 +9,7 @@
 //! `<base>...HEAD`); this module only maps its changed new-side lines onto
 //! seams.
 
-use crate::analysis::ClassifiedSeam;
+use crate::analysis::{ClassifiedSeam, SeamLimitInfo};
 use crate::output::path::display_path;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -28,6 +28,9 @@ pub(crate) enum PilotCurrentChange {
         /// sees it only with `--worktree`; its default reads committed
         /// history (RIPR-SPEC-0112).
         working_tree: bool,
+        /// The analyzed seams on changed lines, counted before the pilot
+        /// budget cut, which drops the ones pilot cannot recommend.
+        seams: ChangeSeams,
     },
     /// The default diff loaded and is empty: there is no current change.
     NoChange { base: Option<String> },
@@ -77,6 +80,41 @@ impl PilotCurrentChange {
             base,
             lines,
             working_tree: false,
+            seams: ChangeSeams::default(),
+        }
+    }
+
+    /// Count the analyzed seams on changed lines before the pilot budget
+    /// cut. Without this, a change whose seams pilot withholds reads as a
+    /// change with no seams at all (#5309).
+    pub(crate) fn with_seams_counted(
+        mut self,
+        classified: &[ClassifiedSeam],
+        inventory_limit: Option<&SeamLimitInfo>,
+    ) -> Self {
+        let mut counted = ChangeSeams {
+            unanalyzed: inventory_limit
+                .map(|limit| (limit.analyzed, limit.total))
+                .filter(|(analyzed, total)| analyzed < total),
+            ..ChangeSeams::default()
+        };
+        for entry in classified.iter().filter(|entry| self.touches(entry)) {
+            counted.touched = counted.touched.saturating_add(1);
+            if entry.class.is_static_limitation() {
+                counted.withheld = counted.withheld.saturating_add(1);
+            }
+        }
+        if let Self::Changed { seams, .. } = &mut self {
+            *seams = counted;
+        }
+        self
+    }
+
+    /// The analyzed seams on changed lines, when there is a change.
+    pub(crate) fn seams(&self) -> Option<ChangeSeams> {
+        match self {
+            Self::Changed { seams, .. } => Some(*seams),
+            Self::NoChange { .. } | Self::Unavailable { .. } => None,
         }
     }
 
@@ -140,6 +178,19 @@ impl PilotCurrentChange {
         let end = start + entry.seam.expression().lines().count().saturating_sub(1);
         changed.range(start..=end).next().is_some()
     }
+}
+
+/// The analyzed seams on a change's lines.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct ChangeSeams {
+    /// Seams whose span overlaps a changed new-side line.
+    pub(crate) touched: usize,
+    /// Of those, the ones pilot withholds as static limitations
+    /// (`opaque` or an `*_unknown` class).
+    pub(crate) withheld: usize,
+    /// `(analyzed, total)` when the inventory seam limit left seams
+    /// unclassified: the change may have seams among them.
+    pub(crate) unanalyzed: Option<(usize, usize)>,
 }
 
 /// Slash-separated path without leading `./`, so the seam inventory's paths
