@@ -1130,9 +1130,27 @@ fn a_cfg_gated_owner_is_not_reached_by_a_bare_call() {
     );
     let inner_gated = format!("#![cfg(not(feature = \"alt\"))]\n{scale}");
     assert!(file_admitted("pub mod scale;\n", &inner_gated, &[]).is_empty());
-    // Control: the plain declaration pins.
+    // A `cfg_attr` that can only toggle lints keeps the pin; one that
+    // expands to a `cfg` drops the file.
+    let lint_toggle = format!("#![cfg_attr(docsrs, allow(unused))]\n{scale}");
+    assert_eq!(
+        file_admitted("pub mod scale;\n", &lint_toggle, &[]),
+        ["assert_eq!(weight(4), 12);"]
+    );
+    let cfg_toggle = format!("#![cfg_attr(feature = \"alt\", cfg(any()))]\n{scale}");
+    assert!(file_admitted("pub mod scale;\n", &cfg_toggle, &[]).is_empty());
+    // Control: the plain declaration pins, even beside a cfg'd `mod scale;`
+    // that declares another file (only the edge's own declaration counts).
     assert_eq!(
         file_admitted("pub mod scale;\n", scale, &[]),
+        ["assert_eq!(weight(4), 12);"]
+    );
+    assert_eq!(
+        file_admitted(
+            "pub mod scale;\nmod unused {\n    #[cfg(feature = \"alt\")]\n    mod scale;\n}\n",
+            scale,
+            &[]
+        ),
         ["assert_eq!(weight(4), 12);"]
     );
     // Control: the ungated integration owner pins.
@@ -1142,6 +1160,130 @@ fn a_cfg_gated_owner_is_not_reached_by_a_bare_call() {
         ),
         ["assert_eq!(weight(4), 12);"]
     );
+}
+
+#[test]
+fn an_ancestor_file_a_cfg_may_drop_gates_the_owner() {
+    // #7104 review: an inner `#![cfg]` at the top of `src/a.rs` drops
+    // `a::scale` with it.
+    let tests = "use demo::a::scale::weight;\n\n#[test]\nfn weighs() {\n    assert_eq!(weight(4), 12);\n}\n";
+    let owner_file = "src/a/scale.rs";
+    let admitted_with = |a: &str| {
+        let lib = "pub mod a;\n";
+        let files = [
+            (LIB, lib),
+            ("src/a.rs", a),
+            (owner_file, "pub fn weight(x: u32) -> u32 {\n    x * 3\n}\n"),
+            (TESTS, tests),
+        ];
+        let line = a
+            .lines()
+            .position(|line| line.contains("mod scale;"))
+            .map_or(0, |at| at + 1);
+        assert!(line > 0, "{a}");
+        let edges = vec![
+            module_edge(LIB, "src/a.rs", "a", 1, false),
+            module_edge("src/a.rs", owner_file, "scale", line, false),
+        ];
+        let chain = |edges: Vec<SourceRoleProvenanceEdge>| SourceRoleProvenance {
+            edges,
+            earliest_unresolved_reason: None,
+        };
+        let ix = index_with_provenance(
+            &files,
+            &[
+                ("src/a.rs", chain(edges[..1].to_vec())),
+                (owner_file, chain(edges)),
+            ],
+        );
+        let owner = ix
+            .functions()
+            .iter()
+            .find(|function| function.name == "weight" && function.file == Path::new(owner_file));
+        assert!(owner.is_some());
+        let pin = owner
+            .and_then(|owner| OwnerReturnPin::establish(&return_probe(owner, "x * 3"), owner, &ix));
+        assert!(pin.is_some(), "the nested file owner must establish");
+        pin.map(|pin| admitted_texts(&ix, &pin)).unwrap_or_default()
+    };
+    assert!(admitted_with("#![cfg(not(feature = \"alt\"))]\npub mod scale;\n").is_empty());
+    // Control: the same chain without the cfg pins.
+    assert_eq!(
+        admitted_with("pub mod scale;\n"),
+        ["assert_eq!(weight(4), 12);"]
+    );
+}
+
+#[test]
+fn a_cfg_attr_path_on_the_owners_declaration_gates_it_through_real_composition()
+-> Result<(), String> {
+    // #7104 review: ripr records no module edge for a `#[path]` under
+    // `cfg_attr`, so the owner's file has an empty chain; only a crate
+    // root may. The unresolved path also disables target roots, and each
+    // of the two refuses this on its own.
+    let pinned = |label: &str, lib: &str| -> Result<Vec<String>, String> {
+        let root = std::env::temp_dir().join(format!(
+            "ripr-owner-pin-cfg-attr-path-{label}-{}",
+            std::process::id()
+        ));
+        let files = [
+            (
+                "Cargo.toml",
+                "[package]\nname = \"demo\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+            ),
+            ("src/lib.rs", lib),
+            (
+                "src/scale.rs",
+                "pub fn weight(x: u32) -> u32 {\n    x * 3\n}\n",
+            ),
+            (
+                "src/alt_scale.rs",
+                "pub fn helper(_: u32) -> u32 {\n    12\n}\n#[allow(non_upper_case_globals)]\npub static weight: fn(u32) -> u32 = helper;\n",
+            ),
+            (
+                "tests/t.rs",
+                "use demo::scale::weight;\n\n#[test]\nfn weighs() {\n    assert_eq!(weight(4), 12);\n}\n",
+            ),
+        ];
+        let mut paths = Vec::new();
+        for (path, text) in files {
+            let full = root.join(path);
+            if let Some(parent) = full.parent() {
+                std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+            }
+            std::fs::write(&full, text).map_err(|error| error.to_string())?;
+            if path.ends_with(".rs") {
+                paths.push(PathBuf::from(path));
+            }
+        }
+        let index = crate::analysis::facts::build_index(&root, &paths);
+        let _ = std::fs::remove_dir_all(&root);
+        let index = index?;
+        let owner = index
+            .functions()
+            .iter()
+            .find(|function| {
+                function.name == "weight" && function.file == Path::new("src/scale.rs")
+            })
+            .ok_or("the owner must be indexed from src/scale.rs")?;
+        let pin = OwnerReturnPin::establish(&return_probe(owner, "x * 3"), owner, &index)
+            .ok_or("the owner must establish")?;
+        Ok(admitted_texts(&index, &pin))
+    };
+    assert!(
+        pinned(
+            "gated",
+            "#[cfg_attr(feature = \"alt\", path = \"alt_scale.rs\")]\npub mod scale;\n"
+        )?
+        .is_empty()
+    );
+    // Control: the plain declaration pins, with the edge real composition
+    // records.
+    assert_eq!(
+        pinned("plain", "pub mod scale;\n")?,
+        ["assert_eq!(weight(4), 12);"]
+    );
+    Ok(())
 }
 
 const COUNTER_LIB: &str = "pub struct Counter {\n    n: usize,\n}\n\nimpl Counter {\n    pub fn new() -> Self {\n        Counter { n: 0 }\n    }\n\n    pub fn try_new(n: usize) -> Result<Self, String> {\n        Ok(Counter { n })\n    }\n\n    pub fn count(&self) -> usize {\n        self.n + 1\n    }\n\n    pub fn tally(&self) -> usize {\n        self.n + 1\n    }\n}\n";

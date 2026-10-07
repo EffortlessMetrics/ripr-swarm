@@ -248,25 +248,43 @@ impl OwnerPinSyntax {
         nesting
     }
 
-    /// #7082: whether a `cfg` may drop `file` as a whole, kept per file: an
-    /// inner `#![cfg]` or `#![cfg_attr]` at its top, or one on any `mod`
-    /// declaration on the chain that compiles it into its crate. A
-    /// complementary cfg may then compile a same-named module in its place.
-    /// An include edge, an unresolved chain or an unparsable file fails
-    /// closed.
+    /// #7082: whether a `cfg` may drop `file` as a whole, kept per file: a
+    /// dropping inner attribute ([`has_cfg_that_may_drop`]) at the top of
+    /// the file or of any file on the chain that compiles it into its
+    /// crate, or a dropping attribute on any `mod` declaration on that
+    /// chain. A complementary cfg may then compile a same-named module in
+    /// its place. An include edge, an unresolved chain, an unparsable file,
+    /// disabled target roots, or a non-root file with no recorded chain
+    /// (ripr records no edge for a `mod` whose `#[path]` it cannot
+    /// resolve, such as one under `cfg_attr`) fails closed.
     fn file_cfg_gated(&self, index: &RustIndex, file: &Path) -> bool {
         if let Some(known) = self.path_memo.borrow().file_gated.get(file) {
             return *known;
         }
-        let gated = index.files().get(file).is_none_or(|facts| {
-            let provenance = &facts.role_provenance;
-            parse_clean_source_file(&facts.source).is_none_or(|parse| has_cfg_attr(&parse.tree()))
-                || provenance.earliest_unresolved_reason.is_some()
-                || provenance.edges.iter().any(|edge| {
-                    edge.kind != SourceRoleProvenanceEdgeKind::Module
-                        || module_declaration_cfg_gated(index, &edge.parent, &edge.declaration)
-                })
-        });
+        let roots = self.target_roots(index);
+        let inner_gated = |path: &Path| {
+            index.files().get(path).is_none_or(|facts| {
+                parse_clean_source_file(&facts.source)
+                    .is_none_or(|parse| has_cfg_that_may_drop(&parse.tree()))
+            })
+        };
+        let gated = roots.disabled
+            || inner_gated(file)
+            || index.files().get(file).is_none_or(|facts| {
+                let provenance = &facts.role_provenance;
+                (provenance.edges.is_empty() && roots.root(file, index).as_deref() != Some(file))
+                    || provenance.earliest_unresolved_reason.is_some()
+                    || provenance.edges.iter().any(|edge| {
+                        edge.kind != SourceRoleProvenanceEdgeKind::Module
+                            || inner_gated(&edge.parent)
+                            || module_declaration_cfg_gated(
+                                index,
+                                &edge.parent,
+                                &edge.declaration,
+                                edge.line,
+                            )
+                    })
+            });
         self.path_memo
             .borrow_mut()
             .file_gated
@@ -1909,11 +1927,16 @@ fn has_cfg_attr(node: &impl ast::HasAttrs) -> bool {
     })
 }
 
-/// #7082: whether `parent` declares the out-of-line module that
-/// `declaration` (`mod <name>;`) names under a `cfg` or `cfg_attr`. Any
-/// same-named out-of-line declaration with one counts; an unreadable
-/// parent or declaration fails closed.
-fn module_declaration_cfg_gated(index: &RustIndex, parent: &Path, declaration: &str) -> bool {
+/// #7082: whether the out-of-line `mod <name>;` that `declaration` names,
+/// with its `mod` token on `line` of `parent`, carries a `cfg` or
+/// `cfg_attr`. An unreadable parent or declaration, or no such declaration
+/// on that line, fails closed.
+fn module_declaration_cfg_gated(
+    index: &RustIndex,
+    parent: &Path,
+    declaration: &str,
+    line: usize,
+) -> bool {
     let name = declaration
         .split_whitespace()
         .skip_while(|word| *word != "mod")
@@ -1923,26 +1946,72 @@ fn module_declaration_cfg_gated(index: &RustIndex, parent: &Path, declaration: &
         return true;
     };
     let name = name.strip_prefix("r#").unwrap_or(name);
-    let Some(parse) = index
-        .files()
-        .get(parent)
-        .and_then(|facts| parse_clean_source_file(&facts.source))
-    else {
+    let Some(facts) = index.files().get(parent) else {
         return true;
     };
-    parse
+    let source = &facts.source;
+    let Some(parse) = parse_clean_source_file(source) else {
+        return true;
+    };
+    let line_of = |offset: u32| source[..offset as usize].matches('\n').count() + 1;
+    let mut on_line = parse
         .tree()
         .syntax()
         .descendants()
         .filter_map(ast::Module::cast)
         .filter(|module| module.item_list().is_none())
         .filter(|module| {
-            module.name().is_some_and(|ident| {
-                let text = ident.text().to_string();
-                text.strip_prefix("r#").unwrap_or(&text) == name
-            })
+            module
+                .mod_token()
+                .is_some_and(|token| line_of(token.text_range().start().into()) == line)
+                && module.name().is_some_and(|ident| {
+                    let text = ident.text().to_string();
+                    text.strip_prefix("r#").unwrap_or(&text) == name
+                })
         })
-        .any(|module| has_cfg_attr(&module))
+        .peekable();
+    on_line.peek().is_none() || on_line.any(|module| has_cfg_that_may_drop(&module))
+}
+
+/// #7082: whether `node` carries an attribute that may drop or relocate it
+/// under some cfg: a `cfg`, or a `cfg_attr` whose attributes name `cfg`,
+/// `cfg_attr` or `path`. `#![cfg_attr(docsrs, feature(doc_cfg))]` and other
+/// lint or doc toggles cannot, so they keep the pin (#7104 review).
+fn has_cfg_that_may_drop(node: &impl ast::HasAttrs) -> bool {
+    node.attrs().any(|attr| match attr.meta() {
+        Some(ast::Meta::CfgMeta(_)) => true,
+        Some(ast::Meta::CfgAttrMeta(meta)) => {
+            cfg_attr_payload_may_drop(&meta.syntax().text().to_string())
+        }
+        _ => false,
+    })
+}
+
+/// The attributes after a `cfg_attr(predicate, ..)`'s first top-level
+/// comma name `cfg`, `cfg_attr` or `path`; unreadable text fails closed.
+fn cfg_attr_payload_may_drop(text: &str) -> bool {
+    let Some(open) = text.find('(') else {
+        return true;
+    };
+    let inner = &text[open + 1..];
+    let mut depth = 0_i32;
+    let mut payload = None;
+    for (at, character) in inner.char_indices() {
+        match character {
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => depth -= 1,
+            ',' if depth == 0 => {
+                payload = Some(&inner[at + 1..]);
+                break;
+            }
+            _ => {}
+        }
+    }
+    payload.is_none_or(|payload| {
+        ["cfg", "cfg_attr", "path"]
+            .iter()
+            .any(|word| contains_as_whole_word(payload, word))
+    })
 }
 
 /// #6974 review: whether any workspace file spells `r#name`, a raw
