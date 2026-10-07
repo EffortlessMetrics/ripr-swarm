@@ -2832,7 +2832,7 @@ Policy reports are advisory unless `--mode fail-on-new-warning` is used.
       "oracle_location": { "file": "tests/pricing.rs", "line": 44 }
     },
     "suggested_assertion": null,
-    "explain_command": "ripr explain --root . probe:src_lib.rs:predicate:bbaa2c25",
+    "explain_command": "ripr explain --root /work/repo --diff /work/repo/change.diff probe:src_lib.rs:predicate:bbaa2c25",
     "confidence": { "value": 0.75, "basis": "static_only" },
     "limitations": [
       {
@@ -2846,6 +2846,12 @@ Policy reports are advisory unless `--mode fail-on-new-warning` is used.
   "recommended_next_step": "Add below, equal, and above threshold tests."
 }
 ```
+
+`witness.explain_command` names the resolved repository root, not the spelling
+typed on the command line, so it analyzes the same repository when pasted from
+another directory (#3948). The scope follows the input: a diff or `--from`
+artifact file is printed as a resolved path, stdin stays `--diff -`, and a
+`--base` or `--worktree` scope is repeated as given.
 
 The context packet is intentionally smaller than check output. It is optimized
 for coding agents and editor commands. `witness` is additive and is omitted
