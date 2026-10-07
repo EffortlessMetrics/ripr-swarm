@@ -153,7 +153,9 @@ fn contains_portable_root_arg(text: &str) -> bool {
             text[index + needle.len()..]
                 .chars()
                 .next()
-                .is_none_or(|next| !(next.is_alphanumeric() || matches!(next, '/' | '.' | '_' | '-')))
+                .is_none_or(|next| {
+                    !(next.is_alphanumeric() || matches!(next, '/' | '.' | '_' | '-'))
+                })
         })
     })
 }
