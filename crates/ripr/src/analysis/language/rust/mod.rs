@@ -3691,7 +3691,14 @@ mod tests {
         write_dependent_scope_workspace(&plain_root, UNRELATED_E_SOURCE)?;
         write(&plain_root.join("a/tests/gauge_tests.rs"), gauge_test)?;
         let (plain_full, _, _) = scoped_findings(&plain_root, DependentScopeMode::Full)?;
-        let rooted = |text: &str, root: &Path| text.replace(&root.display().to_string(), "<root>");
+        // `scoped_findings` Debug-renders paths, so on Windows the text holds
+        // the root with escaped (`\\`) separators that the raw `display()`
+        // spelling never matches; normalize both spellings (#6983).
+        let rooted = |text: &str, root: &Path| {
+            let raw = root.display().to_string();
+            let escaped = raw.replace('\\', "\\\\");
+            text.replace(&escaped, "<root>").replace(&raw, "<root>")
+        };
         assert_ne!(
             rooted(&plain_full, &plain_root),
             rooted(&full, &root),
