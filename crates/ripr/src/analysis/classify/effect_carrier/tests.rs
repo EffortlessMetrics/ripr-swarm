@@ -432,6 +432,8 @@ fn path_calls_and_ref_mut_patterns_keep_the_part_c_reading() {
         "self.journal.as_ref().write_all(sku.as_bytes()).ok();",
         "self.tx.clone().send(sku.to_string()).ok();",
         "self.sink.publish(sku);",
+        "self.events.record::<u32>(1);",
+        "self.flush::<u32>();",
     ] {
         let source = variant(remove, &format!("{remove}\n            {added}"));
         let idx = index(&[(LIB, &source)]);

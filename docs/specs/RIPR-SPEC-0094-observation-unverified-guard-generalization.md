@@ -276,7 +276,8 @@ when the written state is statically bounded:
   and `self.sink.publish(..)` are out), no chained method outside those
   lists and the entry/`Option` chain helpers (`or_insert`, `unwrap`, ...;
   `self.journal.as_ref().write_all(..)` and `self.tx.clone().send(..)` are
-  out), no std path into `fs`, `io`, `env`, `net`, `process`,
+  out), no turbofish method call outside those lists
+  (`self.events.record::<Low>(..)`), no std path into `fs`, `io`, `env`, `net`, `process`,
   `sync` or `thread`, no method call on a parameter or local outside the
   read-only and pure by-value list (`sink.record(..)` is out, `sku.trim()`
   is in), no `borrow`/`get_mut` handle access, no non-pure macro, no `ref mut` pattern, no interior

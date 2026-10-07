@@ -402,6 +402,21 @@ fn scan_field_use(body: &[Tok]) -> FieldUse {
             // receiver (#7046 review).
             uses.opaque = true;
         }
+        if index >= 1
+            && punct(body, index - 1, '.')
+            && punct(body, index + 1, ':')
+            && punct(body, index + 2, ':')
+            && punct(body, index + 3, '<')
+            && !READ_ONLY_METHODS.contains(&name.as_str())
+            && !COLLECTION_MUTATORS.contains(&name.as_str())
+            && !CHAIN_METHODS.contains(&name.as_str())
+        {
+            // A turbofish method call (`self.events.record::<Low>(..)`,
+            // `self.flush::<T>()`) hides its `(` behind generic arguments,
+            // so neither the field walk nor the self-call scan sees it
+            // (#7046 review).
+            uses.opaque = true;
+        }
         if previous_is_path || KEYWORDS.contains(&name.as_str()) {
             continue;
         }
