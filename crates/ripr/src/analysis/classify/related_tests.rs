@@ -2122,6 +2122,16 @@ pub(in crate::analysis) fn impl_self_type_name(owner_id: &str) -> Option<String>
     compact_impl_type_name(self_ty)
 }
 
+/// Trait of a trait-impl method owner from its symbol id
+/// (`src/lib.rs::impl Render for f64::render` → `Render`). `None` for
+/// inherent impls and free functions.
+pub(in crate::analysis) fn impl_trait_name(owner_id: &str) -> Option<String> {
+    let impl_rest = owner_id.split("::impl ").nth(1)?;
+    let impl_body = impl_rest.rsplit_once("::")?.0;
+    let (trait_ty, _) = impl_body.rsplit_once(" for ")?;
+    compact_impl_type_name(trait_ty)
+}
+
 fn compact_impl_type_name(ty: &str) -> Option<String> {
     let ty = ty.trim();
     let ty = ty.strip_prefix('&').unwrap_or(ty).trim();
@@ -2327,6 +2337,7 @@ fn text_resolves_method_to_type(
     text: &str,
     method: &str,
     impl_type: &str,
+    impl_trait: Option<&str>,
     body_for_lets: &str,
     whole_body: bool,
 ) -> bool {
@@ -2350,7 +2361,19 @@ fn text_resolves_method_to_type(
         };
         if ident_boundary(bytes, at, after) && skip_ws_if_paren(text, after) {
             if at >= 2 && bytes[at - 2] == b':' && bytes[at - 1] == b':' {
-                if ident_ending_at(text, at - 2).is_some_and(|ty| ty == impl_type) {
+                let qualifier = ident_ending_at(text, at - 2);
+                if qualifier.is_some_and(|ty| ty == impl_type)
+                    || qualified_self_type_matches(text, at - 2, impl_type, impl_trait)
+                {
+                    return true;
+                }
+                // `Render::render(&-0.0f64)`: a call qualified by the owner's
+                // trait dispatches on its first argument's type. A raw call
+                // line is unmasked, so only the masked body reads arguments.
+                if whole_body
+                    && impl_trait.is_some_and(|tr| qualifier == Some(tr))
+                    && first_argument_has_type(text, after, impl_type, body_for_lets)
+                {
                     return true;
                 }
             } else if at > 0 && bytes[at - 1] == b'.' {
@@ -2375,6 +2398,91 @@ fn text_resolves_method_to_type(
         search = at + method.chars().next().map_or(1, char::len_utf8);
     }
     false
+}
+
+/// `<f64 as Render>::m(..)`: the qualified path ending at `colons` names
+/// `impl_type` as its self type and the owner's trait as its trait. Without a
+/// known trait (an inherent owner) the form cannot name this impl.
+fn qualified_self_type_matches(
+    text: &str,
+    colons: usize,
+    impl_type: &str,
+    impl_trait: Option<&str>,
+) -> bool {
+    let Some(impl_trait) = impl_trait else {
+        return false;
+    };
+    let bytes = text.as_bytes();
+    let mut close = colons;
+    while close > 0 && bytes[close - 1].is_ascii_whitespace() {
+        close -= 1;
+    }
+    let Some(close) = close.checked_sub(1) else {
+        return false;
+    };
+    if bytes[close] != b'>' {
+        return false;
+    }
+    let Some(open) = matching_open(bytes, close, b'<', b'>') else {
+        return false;
+    };
+    let Some((self_ty, trait_ty)) = text[open + 1..close].split_once(" as ") else {
+        return false;
+    };
+    compact_impl_type_name(self_ty).as_deref() == Some(impl_type)
+        && compact_impl_type_name(trait_ty).as_deref() == Some(impl_trait)
+}
+
+/// Whether the first argument of the call whose name ends at `after_name`
+/// has type `impl_type`: a suffixed literal (`&-0.0f64`), a `let` binding
+/// typed as `impl_type`, or a constructor or struct literal head
+/// (`&Site::new()`). Anything else fails closed.
+fn first_argument_has_type(
+    text: &str,
+    after_name: usize,
+    impl_type: &str,
+    body_for_lets: &str,
+) -> bool {
+    let bytes = text.as_bytes();
+    let mut open = after_name;
+    while open < bytes.len() && bytes[open].is_ascii_whitespace() {
+        open += 1;
+    }
+    if bytes.get(open) != Some(&b'(') {
+        return false;
+    }
+    let mut depth = 0usize;
+    let mut end = None;
+    for (index, &byte) in bytes.iter().enumerate().skip(open + 1) {
+        match byte {
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' if depth == 0 => {
+                end = Some(index);
+                break;
+            }
+            b')' | b']' | b'}' => depth -= 1,
+            b',' if depth == 0 => {
+                end = Some(index);
+                break;
+            }
+            _ => {}
+        }
+    }
+    let Some(end) = end else {
+        return false;
+    };
+    let arg = text[open + 1..end].trim();
+    let arg = arg.strip_prefix('&').map_or(arg, str::trim_start);
+    let arg = arg.strip_prefix("mut ").map_or(arg, str::trim_start);
+    let literal = arg.strip_prefix('-').map_or(arg, str::trim_start);
+    if let Some(ty) = suffixed_numeric_literal_type(literal) {
+        return ty == impl_type;
+    }
+    if !arg.is_empty() && arg.bytes().all(is_ident_byte) {
+        return let_binding_mentions_type(body_for_lets, arg, impl_type);
+    }
+    initializer_is_one_head_expr(arg)
+        && initializer_type_head(arg).is_some_and(|head| head == impl_type)
 }
 
 /// Whether the bracketed receiver expression ending just before the `.` at
@@ -2560,16 +2668,25 @@ fn matching_open(bytes: &[u8], close: usize, open_byte: u8, close_byte: u8) -> O
 /// Whether a test invokes `method` on a receiver bound to `impl_type`
 /// (constructor, type annotation, UFCS `Type::method`, or `Type { .. }.method`).
 /// Unresolved receivers fail closed (#4760).
-pub(in crate::analysis) fn method_call_resolves_to_impl_type(
+#[cfg(test)]
+fn method_call_resolves_to_impl_type(test: &TestSummary, method: &str, impl_type: &str) -> bool {
+    method_call_resolves_to_impl(test, method, impl_type, None)
+}
+
+/// [`method_call_resolves_to_impl_type`] for an owner in `impl impl_trait for
+/// impl_type`, which also accepts a trait-qualified call on an argument of
+/// that type (`Render::render(&-0.0f64)`, `<f64 as Render>::render(&x)`).
+pub(in crate::analysis) fn method_call_resolves_to_impl(
     test: &TestSummary,
     method: &str,
     impl_type: &str,
+    impl_trait: Option<&str>,
 ) -> bool {
     if method.is_empty() || impl_type.is_empty() {
         return false;
     }
     let masked_body = mask_comments_and_strings(&test.body);
-    method_call_resolves_to_impl_type_in(test, &masked_body, method, impl_type)
+    method_call_resolves_to_impl_in(test, &masked_body, method, impl_type, impl_trait)
 }
 
 /// [`method_call_resolves_to_impl_type`] with the test body already masked
@@ -2581,15 +2698,39 @@ pub(in crate::analysis) fn method_call_resolves_to_impl_type_in(
     method: &str,
     impl_type: &str,
 ) -> bool {
+    method_call_resolves_to_impl_in(test, masked_body, method, impl_type, None)
+}
+
+fn method_call_resolves_to_impl_in(
+    test: &TestSummary,
+    masked_body: &str,
+    method: &str,
+    impl_type: &str,
+    impl_trait: Option<&str>,
+) -> bool {
     if method.is_empty() || impl_type.is_empty() {
         return false;
     }
-    if text_resolves_method_to_type(masked_body, method, impl_type, masked_body, true) {
+    if text_resolves_method_to_type(
+        masked_body,
+        method,
+        impl_type,
+        impl_trait,
+        masked_body,
+        true,
+    ) {
         return true;
     }
     test.calls.iter().any(|call| {
         call.name == method
-            && text_resolves_method_to_type(&call.text, method, impl_type, masked_body, false)
+            && text_resolves_method_to_type(
+                &call.text,
+                method,
+                impl_type,
+                impl_trait,
+                masked_body,
+                false,
+            )
     })
 }
 
@@ -2629,7 +2770,8 @@ fn owner_call_relation_reason(
     if indexed_same_name_count <= 1 {
         return RelationReason::DirectOwnerCall;
     }
-    if method_call_resolves_to_impl_type(test, owner_name, &impl_type) {
+    let impl_trait = impl_trait_name(&owner.id.0);
+    if method_call_resolves_to_impl(test, owner_name, &impl_type, impl_trait.as_deref()) {
         RelationReason::DirectOwnerCall
     } else {
         RelationReason::WeakTokenSubstring
@@ -3109,6 +3251,111 @@ mod tests {
             impl_self_type_name("src/lib.rs::size_hint").as_deref(),
             None
         );
+    }
+
+    #[test]
+    fn impl_trait_name_reads_only_trait_impl_segments() {
+        let cases = [
+            ("src/lib.rs::impl Render for f64::render", Some("Render")),
+            (
+                "src/lib.rs::impl fmt::Display for Site<T>::fmt",
+                Some("Display"),
+            ),
+            (
+                "src/lib.rs::impl Iterator for WhileSome<I>::size_hint",
+                Some("Iterator"),
+            ),
+            ("src/adaptors/mod.rs::impl WhileSome::size_hint", None),
+            ("src/lib.rs::size_hint", None),
+        ];
+        for (owner_id, expected) in cases {
+            assert_eq!(impl_trait_name(owner_id).as_deref(), expected, "{owner_id}");
+        }
+    }
+
+    /// #6732: two `render` impls. A test that calls the trait method through
+    /// its trait path on an `f64` argument reaches `impl Render for f64`
+    /// directly; the same call on a `u8` argument stays name-only.
+    #[test]
+    fn given_two_impls_when_test_calls_through_trait_path_then_argument_type_decides() {
+        let owner = impl_function("src/lib.rs", "render", "impl Render for f64");
+        let other = impl_function("src/lib.rs", "render", "impl Render for u8");
+        for (body, expected) in [
+            (
+                "assert_eq!(Render::render(&-0.0f64), \"-0.0\");",
+                RelationReason::DirectOwnerCall,
+            ),
+            (
+                "assert_eq!(<f64 as Render>::render(&z), \"-0.0\");",
+                RelationReason::DirectOwnerCall,
+            ),
+            (
+                "assert_eq!(Render::render(&3u8), \"3\");",
+                RelationReason::WeakTokenSubstring,
+            ),
+        ] {
+            let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+                functions: vec![owner.clone(), other.clone()],
+                tests: vec![test_with_call("tests/render.rs", "t", body, "render")],
+                ..Default::default()
+            });
+            let probe = probe("src/lib.rs", "return String::from(\"-0.0\");");
+
+            let related = find_related_tests(&probe, Some(&owner), &index, true, None, None);
+
+            assert_eq!(related.len(), 1, "{body}");
+            assert_eq!(related[0].1, expected, "{body}");
+        }
+    }
+
+    /// #6732: a trait-qualified call relates to `impl impl_trait for
+    /// impl_type` only when the qualifier is that trait and the first
+    /// argument's own syntax names the type. Another trait, a type path that
+    /// is not the trait, an untyped argument, or an inherent owner (no trait)
+    /// fail closed.
+    #[test]
+    fn trait_qualified_call_resolves_by_its_first_argument() {
+        let cases = [
+            ("Render::render(&-0.0f64);", Some("Render"), true),
+            ("crate::Render::render(&1.5f64);", Some("Render"), true),
+            ("Render::render( &mut 2f64 , 3);", Some("Render"), true),
+            (
+                "let z: f64 = -0.0; Render::render(&z);",
+                Some("Render"),
+                true,
+            ),
+            (
+                "let z = Wrap::new(1); Render::render(&z);",
+                Some("Render"),
+                false,
+            ),
+            ("Render::render(&Site::new());", Some("Render"), false),
+            ("<f64 as Render>::render(&z);", Some("Render"), true),
+            ("<f64 as crate::Render>::render(&z);", Some("Render"), true),
+            ("<u8 as Render>::render(&z);", Some("Render"), false),
+            ("<f64 as Show>::render(&z);", Some("Render"), false),
+            ("<f64 as Render>::render(&z);", None, false),
+            ("Show::render(&-0.0f64);", Some("Render"), false),
+            ("Codec::render(&-0.0f64);", None, false),
+            ("Render::render(&-0.0f32);", Some("Render"), false),
+            ("Render::render(&-0.0);", Some("Render"), false),
+            ("Render::render(&make(1f64));", Some("Render"), false),
+            ("Render::render(&(1f64, 2));", Some("Render"), false),
+            ("Render::render(", Some("Render"), false),
+            (
+                "let s = \"Render::render(&1f64)\"; other.render();",
+                Some("Render"),
+                false,
+            ),
+        ];
+        for (body, impl_trait, expected) in cases {
+            let summary = test("tests/render.rs", "t", body);
+            assert_eq!(
+                method_call_resolves_to_impl(&summary, "render", "f64", impl_trait),
+                expected,
+                "{body} with trait {impl_trait:?}"
+            );
+        }
     }
 
     /// #4760: two impls of one trait method. A test that calls the method on
