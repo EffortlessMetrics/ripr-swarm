@@ -1745,7 +1745,7 @@ fn run_m2_corpus(
                 let get = rpc_tool_op(
                     &mut session,
                     "ripr_get_gap",
-                    json!({ "gap_id": gap_id }),
+                    get_gap_request_arguments(&gap_id),
                     timeout,
                 );
                 ops.push(name_no_snapshot_absence(get, refresh_failure.as_deref(), "get_gap"));
@@ -1994,6 +1994,14 @@ fn gap_id_from_list_response(response: &Value) -> Option<String> {
         }
     }
     None
+}
+
+/// The `ripr_get_gap` request arguments: the id must be sent under the
+/// tool's registered input name `canonical_id` (the server rejects any
+/// other spelling with `unknown argument …; allowed: ["canonical_id",
+/// "snapshot_id"]`).
+fn get_gap_request_arguments(canonical_id: &str) -> Value {
+    json!({ "canonical_id": canonical_id })
 }
 
 fn collect_m2_violations(corpus: &Corpus, result: &M2Result, violations: &mut Vec<String>) {
@@ -3699,6 +3707,20 @@ mod tests {
             "result": { "content": [{ "type": "text", "text": "{\"items\": []}" }] }
         });
         assert_eq!(gap_id_from_list_response(&empty), None);
+    }
+
+    /// The extracted gap id must be sent under the tool's registered input
+    /// name: the server rejects any other spelling (`unknown argument
+    /// "gap_id"; allowed: ["canonical_id", "snapshot_id"]`), which turned
+    /// every get_gap op on a gap-bearing corpus into a receipt failure.
+    #[test]
+    fn get_gap_request_uses_the_registered_canonical_id_argument() {
+        let args = get_gap_request_arguments("gap:any");
+        assert_eq!(args["canonical_id"], "gap:any");
+        assert!(
+            args.get("gap_id").is_none(),
+            "the unregistered `gap_id` spelling is rejected by the server"
+        );
     }
 
     #[test]
