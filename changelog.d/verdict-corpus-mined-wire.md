@@ -13,4 +13,4 @@
   asserted row). Six of the nine discriminated cases score
   `false_actionable` today (corpus 2026-10-05.1, 217 cases). Authored false
   actionable moves from 56/86 to 62/95 and the overall rate from 0.623 to
-  0.626; upstream rates are unchanged.
+  0.626; upstream rates are unchanged (#6644).
