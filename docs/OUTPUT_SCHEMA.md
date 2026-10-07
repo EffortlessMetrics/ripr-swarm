@@ -17806,8 +17806,8 @@ JSON shape (schema version `0.1`):
     "why_not_actionable": "Seam inventory was capped; not all seams were analyzed in this run."
   },
   "local_reproduction_commands": [
-    "ripr check --base origin/main",
-    "ripr first-pr --root . --base origin/main --head HEAD",
+    "ripr check --root /work/repo --base origin/main",
+    "ripr first-pr --root /work/repo --base origin/main --head HEAD",
     "cargo test -p ripr error_path"
   ]
 }
@@ -17823,6 +17823,9 @@ line before `verify`.
 
 RIPR renders the `base` and `head` values as one literal Bash argument,
 quoting when needed, in the `ripr check` and `ripr first-pr` lines it builds.
+Those two lines name the absolute repository `ripr pr-summary` read, through
+`--root`, like the commands carried from start-here, so the list can be pasted
+from any directory without mixing repositories (#4000).
 The complete `selected.repair_command` and `selected.verify_command` strings
 are carried unchanged from start-here. `pr-summary` does not parse or
 validate their shell syntax. Review those commands before execution.
