@@ -31,12 +31,12 @@ Kind: `predicate_boundary`
 
 ## Handoff, verify, and receipt commands
 
-- Repair (start here): `ripr agent repair --root . --seam-id 67fc764ba37d77bd --phase before`
-- Packet: `ripr agent packet --root . --seam-id 67fc764ba37d77bd --json > target/ripr/agent/agent-packet.json`
-- Brief: `ripr agent brief --root . --seam-id 67fc764ba37d77bd --json > target/ripr/agent/agent-brief.json`
-- After snapshot: `ripr check --root . --base origin/main --mode fast --format repo-exposure-json > target/ripr/pilot/after.repo-exposure.json`
-- Verify: `ripr agent verify --root . --before target/ripr/pilot/repo-exposure.json --after target/ripr/pilot/after.repo-exposure.json --json > target/ripr/agent/agent-verify.json`
-- Receipt: `ripr agent receipt --root . --verify-json target/ripr/agent/agent-verify.json --seam-id 67fc764ba37d77bd --json --out target/ripr/agent/agent-receipt.json`
+- Repair (start here): `ripr agent repair --root <root> --seam-id 67fc764ba37d77bd --phase before`
+- Packet: `ripr agent packet --root <root> --seam-id 67fc764ba37d77bd --json > <root>/target/ripr/agent/agent-packet.json`
+- Brief: `ripr agent brief --root <root> --seam-id 67fc764ba37d77bd --json > <root>/target/ripr/agent/agent-brief.json`
+- After snapshot: `ripr check --root <root> --base origin/main --mode fast --format repo-exposure-json > <root>/target/ripr/pilot/after.repo-exposure.json`
+- Verify: `ripr agent verify --root <root> --before target/ripr/pilot/repo-exposure.json --after target/ripr/pilot/after.repo-exposure.json --json > <root>/target/ripr/agent/agent-verify.json`
+- Receipt: `ripr agent receipt --root <root> --verify-json target/ripr/agent/agent-verify.json --seam-id 67fc764ba37d77bd --json --out target/ripr/agent/agent-receipt.json`
 
 ## Status projection
 

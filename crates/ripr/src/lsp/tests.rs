@@ -7683,6 +7683,41 @@ fn boundary_gap_lsp_code_actions_match_fixture_expectation() -> Result<(), Strin
     assert_json_fixture("lsp-code-actions.json", actions)
 }
 
+/// #4001: these goldens were hand-kept and still showed `--root .` after
+/// production bound the workspace root; only their headings were checked.
+#[test]
+fn editor_lsp_workflow_lsp_goldens_match_production() -> Result<(), String> {
+    let (diagnostics, actions) = lsp_fixture_outputs("editor_lsp_workflow")?;
+    // The hand-written hover golden lists the same handoff, verify and
+    // receipt commands; each must be the one production emits.
+    let hover_path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures/editor_lsp_workflow/expected/lsp-hover.md");
+    let hover = std::fs::read_to_string(&hover_path)
+        .map_err(|err| format!("failed to read {}: {err}", hover_path.display()))?;
+    let commands = actions["actions"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .flat_map(|action| action["arguments"].as_array().into_iter().flatten())
+        .filter_map(|argument| argument["command"].as_str())
+        .collect::<Vec<_>>();
+    if commands.len() != 6 {
+        return Err(format!(
+            "expected six agent-loop commands, got {commands:?}"
+        ));
+    }
+    for command in commands {
+        if !hover.contains(&format!("`{command}`")) {
+            return Err(format!(
+                "{} does not show production command `{command}`",
+                hover_path.display()
+            ));
+        }
+    }
+    assert_named_json_fixture("editor_lsp_workflow", "lsp-diagnostics.json", diagnostics)?;
+    assert_named_json_fixture("editor_lsp_workflow", "lsp-code-actions.json", actions)
+}
+
 #[test]
 fn diagnostic_for_finding_preserves_lsp_payload_shape() -> Result<(), String> {
     let finding = sample_finding();
@@ -13134,7 +13169,18 @@ fn first_seam_diagnostic(
 }
 
 fn boundary_gap_lsp_fixture_outputs() -> Result<(serde_json::Value, serde_json::Value), String> {
-    let fixture_root = boundary_gap_fixture_root();
+    lsp_fixture_outputs("boundary_gap")
+}
+
+/// Render a seam fixture's diagnostics and code actions through the
+/// production LSP path, projected for a checked-in golden. `editor_lsp_workflow`
+/// shares `boundary_gap`'s seam, so both goldens come from the same renderer
+/// and cannot keep a command form production no longer emits (#4001).
+fn lsp_fixture_outputs(fixture: &str) -> Result<(serde_json::Value, serde_json::Value), String> {
+    let fixture_root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures")
+        .join(fixture)
+        .join("input");
     let (mut seams, _) = crate::analysis::inventory_classified_seams_at_with_config(
         &fixture_root,
         &crate::config::RiprConfig::default(),
@@ -13142,7 +13188,7 @@ fn boundary_gap_lsp_fixture_outputs() -> Result<(serde_json::Value, serde_json::
     seams.sort_by(|left, right| left.seam.id().as_str().cmp(right.seam.id().as_str()));
     if seams.len() != 1 {
         return Err(format!(
-            "expected one boundary_gap classified seam, got {}",
+            "expected one {fixture} classified seam, got {}",
             seams.len()
         ));
     }
@@ -13173,19 +13219,27 @@ fn boundary_gap_lsp_fixture_outputs() -> Result<(serde_json::Value, serde_json::
 
     Ok((
         serde_json::json!({
-            "fixture": "boundary_gap",
+            "fixture": fixture,
             "diagnostics": [project_diagnostic(&fixture_root, &uri, &diagnostic)?],
         }),
         serde_json::json!({
-            "fixture": "boundary_gap",
+            "fixture": fixture,
             "actions": project_code_actions(&fixture_root, &actions)?,
         }),
     ))
 }
 
 fn assert_json_fixture(name: &str, actual: serde_json::Value) -> Result<(), String> {
+    assert_named_json_fixture("boundary_gap", name, actual)
+}
+
+fn assert_named_json_fixture(
+    fixture: &str,
+    name: &str,
+    actual: serde_json::Value,
+) -> Result<(), String> {
     let path = Path::new("fixtures")
-        .join("boundary_gap")
+        .join(fixture)
         .join("expected")
         .join(name);
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
