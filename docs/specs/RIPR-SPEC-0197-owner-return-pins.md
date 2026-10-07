@@ -113,7 +113,8 @@ rule only for an assertion whose context was admitted.
    `std::thread::scope(..)`, and the spawn is either a bare statement (the
    scope re-raises an unjoined thread's panic) or carries the same join chain.
    The closure `std::thread::scope` runs is itself on an ordinary path: it is
-   called once on the test thread and its panic propagates. Names are not
+   called once on the test thread and its panic propagates. A `::thread::`
+   path names an extern crate, so it never matches. Names are not
    resolved, so the test's file refuses when it holds an item, alias or
    binding named `std` or `thread`; an `extern crate thread;`; a `use` ending in `std` or `thread`
    other than exactly `use std::thread;`, or a `self` in a `use` list under

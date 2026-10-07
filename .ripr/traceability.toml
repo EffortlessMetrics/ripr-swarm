@@ -11531,6 +11531,7 @@ tests = [
   "crates/ripr/tests/owner_pin_execution.rs::equality_execution_uses_statement_prefix_and_closure_invocation",
   "crates/ripr/tests/owner_pin_execution.rs::spawned_thread_assertion_matched_static_and_runtime_controls",
   "crates/ripr/tests/owner_pin_execution.rs::an_extern_crate_named_thread_refuses_spawned_thread_credit",
+  "crates/ripr/tests/owner_pin_execution.rs::a_leading_colon_thread_path_refuses_spawned_thread_credit",
   "crates/ripr/tests/owner_pin_execution.rs::an_out_of_line_super_glob_refuses_spawned_thread_credit",
   "crates/ripr/tests/owner_pin_execution.rs::equality_oracle_family_matched_static_and_runtime_controls",
   "crates/ripr/tests/owner_pin_execution.rs::lexical_source_values_do_not_claim_observed_oracles",

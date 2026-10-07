@@ -2122,9 +2122,26 @@ fn bool_owner_assert_pin_matched_static_and_runtime_controls() -> Result<(), Str
 /// closure lets a wrong owner pass. ripr refuses the credit.
 #[test]
 fn an_extern_crate_named_thread_refuses_spawned_thread_credit() -> Result<(), String> {
+    fake_thread_crate_refuses_credit(
+        "#[cfg(test)]\nmod tests {\n    use super::*;\n    use std::thread;\n    #[test]\n    fn weight_in_worker() {\n        extern crate thread;\n        thread::spawn(|| assert_eq!(weight(4), 12)).join().unwrap();\n    }\n}\n",
+    )
+}
+
+/// In edition 2018 and later, `::thread::spawn` names the extern crate
+/// `thread`, not the `use std::thread;` import (#7022 review). The fake
+/// crate's `spawn` never runs the closure, so ripr refuses the credit.
+#[test]
+fn a_leading_colon_thread_path_refuses_spawned_thread_credit() -> Result<(), String> {
+    fake_thread_crate_refuses_credit(
+        "#[cfg(test)]\nmod tests {\n    use super::*;\n    use std::thread;\n    #[test]\n    fn weight_in_worker() {\n        let _ = thread::current();\n        ::thread::spawn(|| assert_eq!(weight(4), 12)).join().unwrap();\n    }\n}\n",
+    )
+}
+
+/// Runs `tests` against a dev-dependency named `thread` whose `spawn` never
+/// runs its closure: ripr must refuse the credit and the mutant must survive.
+fn fake_thread_crate_refuses_credit(tests: &str) -> Result<(), String> {
     let production = "pub fn weight(input: u32) -> u32 {\n    3 * input\n}\n";
     let diff = "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,3 +1,3 @@\n pub fn weight(input: u32) -> u32 {\n-    input * 3\n+    3 * input\n }\n";
-    let tests = "#[cfg(test)]\nmod tests {\n    use super::*;\n    use std::thread;\n    #[test]\n    fn weight_in_worker() {\n        extern crate thread;\n        thread::spawn(|| assert_eq!(weight(4), 12)).join().unwrap();\n    }\n}\n";
     let scratch = Scratch::create()?;
     let root = scratch.0.join("ws");
     let fake = scratch.0.join("fake");

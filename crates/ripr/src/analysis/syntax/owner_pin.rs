@@ -1301,6 +1301,7 @@ fn unparenthesized(closure: &ast::ClosureExpr) -> SyntaxNode {
 ///   any of which may expand to the above;
 /// - a `use` list holding `self` under a `std` or `thread` prefix.
 ///
+/// A `::thread::` path names an extern crate and never matches.
 /// `thread::<item>` also needs `use std::thread;` directly in the test
 /// function's own module. A `std` or `thread` module that `use super::*;`
 /// brings in from another file is not seen (RIPR-SPEC-0197).
@@ -1312,10 +1313,15 @@ fn std_thread_item(path: &ast::PathExpr, function: &ast::Fn) -> Option<String> {
         .chars()
         .filter(|character| !character.is_whitespace())
         .collect();
-    let text = text.strip_prefix("::").unwrap_or(&text);
-    let (item, needs_import) = match text.strip_prefix("std::thread::") {
-        Some(item) => (item, false),
-        None => (text.strip_prefix("thread::")?, true),
+    // `::thread::` names an extern crate `thread`, never the imported std
+    // module, so only `::std::thread::` keeps its leading `::`.
+    let (item, needs_import) = if let Some(item) = text
+        .strip_prefix("::std::thread::")
+        .or_else(|| text.strip_prefix("std::thread::"))
+    {
+        (item, false)
+    } else {
+        (text.strip_prefix("thread::")?, true)
     };
     if !item
         .chars()
