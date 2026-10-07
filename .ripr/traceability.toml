@@ -13207,6 +13207,7 @@ tests = [
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::refusals_that_can_keep_an_assertion_from_running_are_not_limits",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::an_outcome_settling_attribute_is_the_refusal_wherever_it_sits",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_definition_covering_the_test_outranks_a_may_rebind_site_elsewhere",
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::the_workspace_site_is_the_first_rebinding_in_path_order_else_the_first_site",
   "crates/ripr/src/analysis/classify/reveal.rs::tests::name_only_relations_stop_crediting_beside_a_reach_bearing_one",
   "crates/ripr/tests/owner_pin_execution.rs::owner_pin_matched_static_and_runtime_controls",
   "crates/ripr/tests/owner_pin_execution.rs::macro_use_module_admission_matches_runtime",
