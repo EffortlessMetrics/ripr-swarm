@@ -1976,22 +1976,121 @@ fn is_workspace_root(root: &str, index: &RustIndex) -> bool {
 }
 
 /// Whether the library whose crate root is `owner_root` may export some other
-/// item named `name` from outside itself: a `pub use` in one of its files,
-/// rooted anywhere but `crate`, `self` or `super`, that names `name` or globs
-/// (`pub use fastscore::score;`, `pub use other::*;`). Another crate's
-/// `use library::name;` could then bind that item instead of the owner, which
-/// the workspace's indexed definitions cannot show.
+/// item named `name` than the owner, so that another crate's
+/// `use library::name;` could bind it. Fails closed (true) when:
+/// - an `include!` was unresolved anywhere, or a file under the package's
+///   `src/` has no established crate root (its exports are unread);
+/// - a library file uses `include!`, or declares a `const` or `static` named
+///   `name`;
+/// - a `pub use` in a library file names `name` or globs, and its path is
+///   rooted outside `crate`, `self` and `super` (`pub use fastscore::score;`)
+///   or passes through a segment that is not a `mod` the library declares
+///   (`use fastscore as fs; pub use self::fs::score;`).
 pub(super) fn library_may_export_other(index: &RustIndex, owner_root: &Path, name: &str) -> bool {
+    let Some(source_dir) = owner_root.parent() else {
+        return true;
+    };
+    if !index.include_limitations.is_empty() {
+        return true;
+    }
     let src_dirs = BTreeSet::new();
+    let mut library = Vec::new();
+    for (path, facts) in index.files().iter() {
+        if !path.starts_with(source_dir) {
+            continue;
+        }
+        match target_root(path, index, &src_dirs) {
+            None => return true,
+            Some(root) if root == owner_root => {
+                let masked = mask_comments_and_strings(&facts.source);
+                let includes = whole_word_offsets(&masked, "include")
+                    .into_iter()
+                    .any(|offset| {
+                        masked[offset + "include".len()..]
+                            .trim_start()
+                            .starts_with('!')
+                    });
+                if includes || declares_value_named(&masked, name) {
+                    return true;
+                }
+                library.push(masked);
+            }
+            Some(_) => {}
+        }
+    }
+    let modules: BTreeSet<&str> = library
+        .iter()
+        .flat_map(|masked| declared_module_names(masked))
+        .collect();
     index.files().iter().any(|(path, facts)| {
         target_root(path, index, &src_dirs).as_deref() == Some(owner_root)
             && public_use_statements(&facts.source)
                 .iter()
                 .any(|statement| {
                     (contains_as_whole_word(statement, name) || statement.contains('*'))
-                        && use_statement_first_segment(statement)
-                            .is_none_or(|root| !matches!(root, "crate" | "self" | "super"))
+                        && !reexports_library_module(statement, &modules)
                 })
+    })
+}
+
+/// Whether a `pub use` path stays inside the library: rooted at `crate`,
+/// `self` or `super`, with every segment before the imported item (or brace
+/// list, or glob) a module the library declares.
+fn reexports_library_module(statement: &str, modules: &BTreeSet<&str>) -> bool {
+    let Some(path) = statement.trim_start().strip_prefix("use") else {
+        return false;
+    };
+    let prefix_end = path.find(['{', '*']);
+    let prefix = &path[..prefix_end.unwrap_or(path.len())];
+    let mut segments: Vec<&str> = prefix
+        .split("::")
+        .map(str::trim)
+        .filter(|segment| !segment.is_empty())
+        .collect();
+    if prefix_end.is_none() {
+        segments.pop();
+    }
+    let Some((root, intermediate)) = segments.split_first() else {
+        return false;
+    };
+    matches!(*root, "crate" | "self" | "super")
+        && intermediate
+            .iter()
+            .all(|segment| *segment == "super" || modules.contains(segment))
+}
+
+/// Names of `mod <name>` declarations in masked source.
+fn declared_module_names(masked: &str) -> Vec<&str> {
+    whole_word_offsets(masked, "mod")
+        .into_iter()
+        .filter_map(|offset| {
+            let rest = masked[offset + 3..].trim_start();
+            let end = rest
+                .find(|character: char| !(character.is_ascii_alphanumeric() || character == '_'))
+                .unwrap_or(rest.len());
+            (end > 0).then(|| &rest[..end])
+        })
+        .collect()
+}
+
+/// Whether masked source declares a `const` or `static` (optionally `mut`)
+/// named `name`.
+fn declares_value_named(masked: &str, name: &str) -> bool {
+    ["const", "static"].iter().any(|keyword| {
+        whole_word_offsets(masked, keyword)
+            .into_iter()
+            .any(|offset| {
+                let rest = masked[offset + keyword.len()..].trim_start();
+                let rest = rest
+                    .strip_prefix("mut")
+                    .filter(|after| after.starts_with(char::is_whitespace))
+                    .map_or(rest, str::trim_start);
+                rest.strip_prefix(name).is_some_and(|after| {
+                    !after.starts_with(|character: char| {
+                        character.is_ascii_alphanumeric() || character == '_'
+                    })
+                })
+            })
     })
 }
 

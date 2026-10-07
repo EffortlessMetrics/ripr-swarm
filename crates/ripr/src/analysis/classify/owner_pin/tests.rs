@@ -367,6 +367,64 @@ fn only_plain_pub_use_statements_can_export_to_another_crate() {
     // Another crate root's re-exports do not speak for this library.
     let binary = index(&[("pricing/src/main.rs", "pub use fastscore::score;\n")]);
     assert!(!library_may_export_other(&binary, root, "score"));
+    for (label, lib, exports) in [
+        (
+            "local crate path",
+            "pub mod a;\npub use crate::a::score;\n",
+            false,
+        ),
+        (
+            "split pub use",
+            "pub mod a;\npub\nuse fastscore::score;\n",
+            true,
+        ),
+        (
+            "string literal",
+            "pub mod a;\nconst DOC: &str = \"pub use x::score;\";\n",
+            false,
+        ),
+        // A private alias routed through a `self`/`crate` path.
+        (
+            "aliased crate",
+            "pub mod a;\nuse fastscore as fs;\npub use self::fs::score;\n",
+            true,
+        ),
+        (
+            "aliased extern",
+            "pub mod a;\nextern crate fastscore as fs;\npub use crate::fs::*;\n",
+            true,
+        ),
+        // A value of the callee's name, or text ripr does not read.
+        (
+            "const",
+            "pub mod a;\npub const score: fn(i64) -> i64 = fastscore::score;\n",
+            true,
+        ),
+        (
+            "static mut",
+            "pub mod a;\npub static mut score: i64 = 0;\n",
+            true,
+        ),
+        ("include", "pub mod a;\ninclude!(\"exports.rs\");\n", true),
+        (
+            "unrelated const",
+            "pub mod a;\npub const SCORE_MAX: i64 = 9;\n",
+            false,
+        ),
+    ] {
+        let library = index(&[("pricing/src/lib.rs", lib)]);
+        assert_eq!(
+            library_may_export_other(&library, root, "score"),
+            exports,
+            "{label}"
+        );
+    }
+    // A file under `src/` with no established crate root is unread.
+    let unresolved = index(&[
+        ("pricing/src/lib.rs", "pub mod a;\n"),
+        ("pricing/src/orphan.rs", "pub fn other() {}\n"),
+    ]);
+    assert!(library_may_export_other(&unresolved, root, "score"));
 }
 
 #[test]

@@ -233,10 +233,15 @@ rule only for an assertion whose context was admitted.
    between either file and the analysis root that mentions the name or sets
    `paths`, `[patch]`, `[source]` or `include` leave the import foreign
    (configuration above the root or in `$CARGO_HOME` is not read). A test
-   in the owner's own package whose dependency key is the library name, and
-   a `pub use` in any file of the owner's library rooted outside `crate`,
-   `self` and `super` that names the callee or globs (it may re-export a
-   foreign item under that name), also leave the import foreign. The same
+   in the owner's own package whose dependency key is the library name
+   also leaves the import foreign, and so does any sign that the library
+   may export another item under the callee's name: a `pub use` in a
+   library file that names the callee or globs, unless its path is rooted
+   at `crate`, `self` or `super` and passes only through modules the
+   library declares (`use fastscore as fs; pub use self::fs::score;` is
+   refused); a library `const` or `static` of that name; an `include!` in
+   a library file or an unresolved include anywhere; or a file under the
+   package's `src/` whose crate root is not established. The same
    own-crate reading serves every consumer of the same-name import defeat
    (the reveal-side owner binding, RIPR-SPEC-0229 arm withholding and tuple
    match observations), as the root package's names already did. So
