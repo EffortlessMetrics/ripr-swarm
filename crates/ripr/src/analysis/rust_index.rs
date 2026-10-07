@@ -240,6 +240,121 @@ pub(in crate::analysis) fn summarize_file(path: PathBuf, text: String) -> FileFa
     }
 }
 
+/// For each shape of one file, whether it is an ErrorPath twin of another
+/// ErrorPath shape for the same error behavior, so repository inventory
+/// keeps one of them (#6914). Indexes match `shapes`.
+///
+/// The parser keeps both shapes because diff synthesis needs each one: a
+/// change to only the `return` line of a multi-line `return Err(X)` reaches
+/// the error path through the `return` span, and a change to only the
+/// constructor line through the `Err(X)` span. Inventory keeps the
+/// constructor and drops:
+/// - the `return` wrapped around it (`return Err(X)`, `return (Err(X))`);
+/// - the payload call inside an `Err(..)` (`Err(Error::X(off))`).
+///
+/// The relation reads source bytes between the two spans, never `text`,
+/// which is a trimmed display snippet. One sorted pass per file: both
+/// relations pair a shape with the ErrorPath that starts next inside it,
+/// because the source between them is only `return`, a callee and
+/// parentheses, where no other shape can start. Comparing every pair would
+/// be quadratic on generated files with many error paths.
+pub(crate) fn error_path_twins(shapes: &[ProbeShapeFact], source: &str) -> Vec<bool> {
+    let mut twins = vec![false; shapes.len()];
+    let mut errors: Vec<(usize, &ProbeShapeFact)> = shapes
+        .iter()
+        .enumerate()
+        .filter(|(_, shape)| shape.kind == ProbeShapeKind::ErrorPath)
+        .collect();
+    errors.sort_by_key(|(_, shape)| (shape.start_byte, std::cmp::Reverse(shape.end_byte)));
+    for (position, &(outer_index, outer)) in errors.iter().enumerate() {
+        let later = errors.get(position + 1..).unwrap_or_default();
+        let Some(next_start) = later
+            .iter()
+            .map(|(_, shape)| shape.start_byte)
+            .find(|&start| start > outer.start_byte)
+        else {
+            continue;
+        };
+        let next = later
+            .iter()
+            .skip_while(|(_, shape)| shape.start_byte < next_start)
+            .take_while(|(_, shape)| shape.start_byte == next_start);
+        for &(inner_index, inner) in next {
+            if returns_error_constructor(outer, inner, source)
+                && let Some(twin) = twins.get_mut(outer_index)
+            {
+                *twin = true;
+            }
+            if is_err_payload(inner, outer, source)
+                && let Some(twin) = twins.get_mut(inner_index)
+            {
+                *twin = true;
+            }
+        }
+    }
+    twins
+}
+
+/// `outer` is `return` (and parentheses) around exactly `inner`.
+fn returns_error_constructor(outer: &ProbeShapeFact, inner: &ProbeShapeFact, source: &str) -> bool {
+    let Some((prefix, suffix)) = surrounding_source(outer, inner, source) else {
+        return false;
+    };
+    let prefix = prefix.trim_end_matches(|c: char| c == '(' || c.is_whitespace());
+    let suffix_is_closing = suffix.chars().all(|c| c == ')' || c.is_whitespace());
+    prefix == "return" && suffix_is_closing
+}
+
+/// `inner` is the whole argument of an `Err(..)` constructor `outer`.
+fn is_err_payload(inner: &ProbeShapeFact, outer: &ProbeShapeFact, source: &str) -> bool {
+    let Some((prefix, suffix)) = surrounding_source(outer, inner, source) else {
+        return false;
+    };
+    // `Err((payload))`: count the opening parens so the suffix must close
+    // exactly that many.
+    let mut callee = prefix.trim_end();
+    let mut opening = 0_usize;
+    while let Some(before) = callee.strip_suffix('(') {
+        callee = before.trim_end();
+        opening += 1;
+    }
+    if opening == 0 {
+        return false;
+    }
+    // `Err::<T, E>(..)`: drop the turbofish before reading the name.
+    let callee = match callee.rfind("::<") {
+        Some(turbofish) if callee.ends_with('>') => callee.get(..turbofish).unwrap_or(callee),
+        _ => callee,
+    };
+    let named_err = callee
+        .rsplit(|c: char| !(c.is_alphanumeric() || c == '_'))
+        .next()
+        .is_some_and(|name| name == "Err");
+    // rustfmt's vertical layout leaves `Err(\n    payload,\n)`.
+    let closing: String = suffix.chars().filter(|c| !c.is_whitespace()).collect();
+    let closing = closing.strip_prefix(',').unwrap_or(&closing);
+    named_err && closing.len() == opening && closing.chars().all(|c| c == ')')
+}
+
+/// Source text of `outer` before and after `inner`, when `inner` is a
+/// strictly smaller span inside `outer`.
+fn surrounding_source<'a>(
+    outer: &ProbeShapeFact,
+    inner: &ProbeShapeFact,
+    source: &'a str,
+) -> Option<(&'a str, &'a str)> {
+    let nested = outer.start_byte <= inner.start_byte
+        && inner.end_byte <= outer.end_byte
+        && (outer.start_byte, outer.end_byte) != (inner.start_byte, inner.end_byte);
+    if !nested {
+        return None;
+    }
+    Some((
+        source.get(outer.start_byte..inner.start_byte)?,
+        source.get(inner.end_byte..outer.end_byte)?,
+    ))
+}
+
 pub fn find_owner_function<'a>(
     index: &'a RustIndex,
     file: &Path,

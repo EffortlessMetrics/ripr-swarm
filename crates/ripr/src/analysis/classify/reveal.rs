@@ -2023,7 +2023,10 @@ pub(in crate::analysis::classify) fn use_statement_first_segment(statement: &str
 /// terminal `::` segment of a brace-less path, or any brace-list item
 /// (nested brace lists recurse). `as` renames bind the alias; `*` and
 /// `self` bind nothing nameable here.
-fn use_statement_binds_name(statement: &str, callee: &str) -> bool {
+pub(in crate::analysis::classify) fn use_statement_binds_name(
+    statement: &str,
+    callee: &str,
+) -> bool {
     let Some(rest) = statement.trim_start().strip_prefix("use") else {
         return false;
     };

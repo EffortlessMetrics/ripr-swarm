@@ -2958,13 +2958,17 @@ pub(crate) fn nearest_strong_test_to_imitate(
     seam_kind: SeamKind,
     evidence: &TestGripEvidence,
 ) -> Option<&crate::analysis::test_grip_evidence::RelatedTestGrip> {
-    evidence.related_tests.iter().find(|test| {
-        test.oracle_strength == crate::domain::OracleStrength::Strong
-            && crate::analysis::test_grip_evidence::oracle_kind_matches_seam_kind(
-                seam_kind,
-                &test.oracle_kind,
-            )
-    })
+    evidence
+        .related_tests
+        .iter()
+        .find(|test| {
+            test.oracle_strength == crate::domain::OracleStrength::Strong
+                && crate::analysis::test_grip_evidence::oracle_kind_matches_seam_kind(
+                    seam_kind,
+                    &test.oracle_kind,
+                )
+        })
+        .map(std::sync::Arc::as_ref)
 }
 
 fn push_related_test_reference(
@@ -3558,7 +3562,7 @@ mod tests {
             seam,
             evidence: TestGripEvidence {
                 seam_id,
-                related_tests,
+                related_tests: related_tests.into_iter().map(std::sync::Arc::new).collect(),
                 reach: stage(StageState::Yes),
                 activate: stage(StageState::Yes),
                 propagate: stage(StageState::Weak),
@@ -3608,7 +3612,7 @@ mod tests {
         let seam = boundary_seam();
         let evidence = TestGripEvidence {
             seam_id: seam.id().clone(),
-            related_tests: vec![RelatedTestGrip {
+            related_tests: vec![std::sync::Arc::new(RelatedTestGrip {
                 test_name: "below_threshold_has_no_discount".to_string(),
                 file: PathBuf::from("tests/pricing.rs"),
                 line: 12,
@@ -3625,7 +3629,7 @@ mod tests {
                 relation_reason:
                     crate::analysis::test_grip_evidence::RelationReason::DirectOwnerCall,
                 relation_confidence: crate::analysis::test_grip_evidence::RelationConfidence::High,
-            }],
+            })],
             reach: stage(StageState::Yes),
             activate: stage(StageState::Yes),
             propagate: stage(StageState::Yes),
@@ -3826,8 +3830,9 @@ mod tests {
         // (`repair_packet_queue_visible`) must exclude it before `task_for`
         // is ever reached.
         let mut entry = weakly_gripped_classified();
-        entry.evidence.related_tests[0].file = PathBuf::from("tests/pricing.ts");
-        entry.evidence.related_tests[0].test_target = None;
+        std::sync::Arc::make_mut(&mut entry.evidence.related_tests[0]).file =
+            PathBuf::from("tests/pricing.ts");
+        std::sync::Arc::make_mut(&mut entry.evidence.related_tests[0]).test_target = None;
         let json = render_agent_seam_packets_json(&[entry], None);
         if !json.contains("\"packets_total\": 0") {
             return Err(format!(
@@ -3843,7 +3848,9 @@ mod tests {
         // through the shared extension authority; near-misses stay
         // unlabeled. The expected labels are pinned here as a removal
         // control, not read back from the authority.
-        let base_test = weakly_gripped_classified().evidence.related_tests[0].clone();
+        let base_test = weakly_gripped_classified().evidence.related_tests[0]
+            .as_ref()
+            .clone();
         let cases = [
             ("ts", Some("typescript")),
             ("tsx", Some("typescript")),
@@ -4029,7 +4036,7 @@ mod tests {
         };
         // Caller provides a ranked vec — `evidence_for_seam` always
         // emits ranked, so this mirrors the production path.
-        entry.evidence.related_tests = vec![high, low];
+        entry.evidence.related_tests = vec![std::sync::Arc::new(high), std::sync::Arc::new(low)];
 
         let json = render_agent_seam_packets_json(&[entry], None);
         let high_idx = json
@@ -5642,7 +5649,8 @@ mod tests {
     #[test]
     fn packet_v2_normalizes_windows_related_test_paths() -> Result<(), String> {
         let mut entry = weakly_gripped_classified();
-        entry.evidence.related_tests[0].file = PathBuf::from(r"tests\pricing.rs");
+        std::sync::Arc::make_mut(&mut entry.evidence.related_tests[0]).file =
+            PathBuf::from(r"tests\pricing.rs");
 
         let json = render_agent_seam_packets_json(&[entry], None);
         assert!(
@@ -5750,12 +5758,13 @@ mod tests {
         );
         assert!(integration.symbol_id.is_some());
 
-        entry.evidence.related_tests[0].file = PathBuf::from("src/pricing.rs");
+        std::sync::Arc::make_mut(&mut entry.evidence.related_tests[0]).file =
+            PathBuf::from("src/pricing.rs");
         let inline = recommended_test_for(&entry);
         assert_eq!(inline.target_kind, RecommendedTestTargetKind::ExistingTest);
         assert!(inline.symbol_id.is_some());
 
-        entry.evidence.related_tests[0].test_target = None;
+        std::sync::Arc::make_mut(&mut entry.evidence.related_tests[0]).test_target = None;
         let production_fallback = recommended_test_for(&entry);
         assert_eq!(
             production_fallback.target_kind,

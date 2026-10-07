@@ -65,6 +65,54 @@ mod tests {{
     )
 }
 
+/// #6905: `src/lib.rs` with the changed `start: self.start,` on line 17
+/// and a `mod tests` declaring its own same-name `Window` with a derived
+/// `Clone`. The test's `window.clone()` runs the test-local clone, never
+/// the changed owner, so the field must stay non-exposed.
+fn shadowed_source(assertion: &str) -> String {
+    format!(
+        "{DERIVED}
+pub struct Window {{
+    start: u32,
+    end: u32,
+}}
+
+impl Window {{
+    pub fn new(start: u32, end: u32) -> Self {{
+        Window {{ start, end }}
+    }}
+}}
+
+
+impl Clone for Window {{
+    fn clone(&self) -> Self {{
+        Window {{
+            start: self.start,
+            end: self.end,
+        }}
+    }}
+}}
+
+#[cfg(test)]
+mod tests {{
+    use super::*;
+
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    struct Window {{
+        start: u32,
+        end: u32,
+    }}
+
+    #[test]
+    fn a_clone_equals_its_original() {{
+        let window = Window {{ start: 3, end: 9 }};
+        {assertion}
+    }}
+}}
+"
+    )
+}
+
 struct TempRepo {
     root: PathBuf,
 }
@@ -130,6 +178,26 @@ fn a_clone_compared_with_its_original_through_derived_equality_is_exposed() -> R
     assert!(
         finding.activation.missing_discriminators.is_empty(),
         "the clone pin observes the field: {finding:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_test_module_shadow_of_the_receiver_is_not_exposed() -> Result<(), String> {
+    let finding =
+        TempRepo::create(&shadowed_source("assert_eq!(window.clone(), window);"))?.field()?;
+    assert_ne!(
+        finding.class,
+        ExposureClass::Exposed,
+        "the shadowed clone runs the test-local type: {finding:?}"
+    );
+    assert!(
+        finding
+            .activation
+            .missing_discriminators
+            .iter()
+            .any(|fact| format!("{:?}", fact.flow_sink).contains("StructField")),
+        "the struct-field gap must survive without a credited pin: {finding:?}"
     );
     Ok(())
 }

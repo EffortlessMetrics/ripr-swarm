@@ -53,12 +53,14 @@ use super::seam_classification::ClassifiedSeam;
 #[cfg(test)]
 use super::seam_classification::SeamGripClassCounts;
 use super::seam_inventory::{SeamLimitSource, repo_exposure_seam_limit};
+use super::test_grip_evidence::RelatedTestGrip;
+use super::test_grip_evidence::shared_grips::SharedGrips;
 use crate::config::{
     PYTHON_PROJECT_MARKERS, PYTHON_SOURCE_DIR_MARKERS, source_dir_contains_detectable_python,
 };
 use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
 
 // The producer's layer names are also the only names cache maintenance may
 // inspect or remove. Defining both the typed names and inventory here makes a
@@ -315,7 +317,10 @@ pub(crate) struct CachedSeamLimitInfo {
 /// operands, computed test or hop arguments, an opaque `CONST ± N`) reads
 /// infection unknown instead of a missing discriminator (#6674, #6693,
 /// #6672, #6671); old entries would replay the weak missing-input class.
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.42";
+/// `1.43`: inventory keeps one error_variant seam per error constructor;
+/// the `return` around `Err(X)` and the payload call inside `Err(..)` are
+/// twins and drop out (#6914).
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.43";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -397,7 +402,8 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.42";
 /// transition as full `1.40`.
 /// `0.47`: same asserted-Err/`ok_or?` transition as full `1.41`.
 /// `0.48`: same unresolved-boundary-input transition as full `1.42`.
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.48";
+/// `0.49`: same single error_variant transition as full `1.43`.
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.49";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -481,7 +487,8 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.48";
 /// transition as full `1.40`.
 /// `0.47`: same asserted-Err/`ok_or?` transition as full `1.41`.
 /// `0.48`: same unresolved-boundary-input transition as full `1.42`.
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.48";
+/// `0.49`: same single error_variant transition as full `1.43`.
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.49";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -1654,6 +1661,7 @@ impl RepoSeamFactCache {
         }
 
         let mut seams = Vec::with_capacity(manifest.total_seams);
+        let mut shared_grips = SharedGrips::default();
         for (index, shard) in manifest.shards.iter().enumerate() {
             if shard.index != index {
                 return CacheLoad::CorruptIgnored {
@@ -1711,7 +1719,9 @@ impl RepoSeamFactCache {
                     ),
                 };
             }
-            seams.extend(envelope.classified_seams);
+            let mut shard_seams = envelope.classified_seams;
+            share_grips_across_shards(&mut shard_seams, &mut shared_grips);
+            seams.extend(shard_seams);
         }
         if seams.len() != manifest.total_seams {
             return CacheLoad::CorruptIgnored {
@@ -1736,6 +1746,26 @@ impl RepoSeamFactCache {
 
     fn sharded_manifest_path(&self, key: &RepoSeamCacheKey) -> PathBuf {
         self.sharded_entry_dir(key).join("manifest.json")
+    }
+}
+
+/// Each shard decodes its own related-test table, so a test named in two
+/// shards arrives as two records. Hand every seam the inventory's one shared
+/// record instead (#5341). Within a shard, every seam naming a table row
+/// already holds the same record, so each distinct row is looked up once.
+fn share_grips_across_shards(seams: &mut [ClassifiedSeam], shared: &mut SharedGrips) {
+    let mut by_row: HashMap<*const RelatedTestGrip, Arc<RelatedTestGrip>> = HashMap::new();
+    for seam in seams {
+        for grip in &mut seam.evidence.related_tests {
+            // Keyed by address: live rows have distinct addresses, and a row
+            // freed mid-loop has no holder left to look it up again.
+            let canonical = by_row
+                .entry(Arc::as_ptr(grip))
+                .or_insert_with(|| shared.share_arc(grip));
+            if !Arc::ptr_eq(grip, canonical) {
+                *grip = Arc::clone(canonical);
+            }
+        }
     }
 }
 
@@ -3978,7 +4008,8 @@ mod tests {
         // sibling-variant reveal gate.
         // 1.41 -> 1.42: unresolved boundary inputs read infection unknown
         // (#6674, #6693, #6672, #6671).
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.42");
+        // 1.42 -> 1.43: one error_variant seam per error constructor (#6914).
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.43");
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
         // for the sharded and compact envelopes.
@@ -4013,8 +4044,9 @@ mod tests {
         // 0.45 -> 0.46: seams gain optional span geometry (#5336).
         // 0.47: same #6673/#6695 transition as full 1.41.
         // 0.47 -> 0.48: same unresolved-boundary-input transition as 1.42.
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.48");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.48");
+        // 0.48 -> 0.49: same #6914 transition as full 1.43.
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.49");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.49");
     }
 
     #[test]
@@ -4832,6 +4864,11 @@ mod tests {
                 expected,
                 "{label}"
             );
+            // One shared record per distinct test, across shard files too.
+            let tests = |seam: usize| &loaded[seam].evidence.related_tests;
+            assert!(Arc::ptr_eq(&tests(0)[0], &tests(1)[1]), "{label}: a");
+            assert!(Arc::ptr_eq(&tests(0)[0], &tests(2)[0]), "{label}: a");
+            assert!(Arc::ptr_eq(&tests(0)[1], &tests(1)[0]), "{label}: b");
         }
         Ok(())
     }

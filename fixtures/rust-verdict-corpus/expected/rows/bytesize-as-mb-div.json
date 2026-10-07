@@ -8,12 +8,12 @@
   "hard_case": false,
   "truth": "discriminated",
   "ideal_verdict": "credited",
-  "observed_verdict": "gap",
+  "observed_verdict": "credited",
   "followed_retarget": false,
-  "changed_since_labeling": false,
+  "changed_since_labeling": true,
   "observed_classifications": [
-    "weakly_exposed"
+    "exposed"
   ],
-  "outcome": "false_actionable",
+  "outcome": "ideal",
   "contradictions": []
 }

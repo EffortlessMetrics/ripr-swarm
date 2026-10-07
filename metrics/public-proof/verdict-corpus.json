@@ -5,8 +5,8 @@
     "rate": "0.3235"
   },
   "by_observed_verdict": {
-    "credited": 26,
-    "gap": 112,
+    "credited": 30,
+    "gap": 108,
     "limited": 65,
     "silent": 1
   },
@@ -18,16 +18,16 @@
         "rate": "0.2471"
       },
       "by_observed_verdict": {
-        "credited": 23,
-        "gap": 105,
+        "credited": 25,
+        "gap": 103,
         "limited": 41,
         "silent": 1
       },
       "cases_total": 170,
       "false_actionable_rate": {
         "denominator": 86,
-        "numerator": 48,
-        "rate": "0.5581"
+        "numerator": 46,
+        "rate": "0.5349"
       },
       "false_exposed_rate": {
         "denominator": 84,
@@ -41,13 +41,13 @@
       },
       "false_verdict_rate": {
         "denominator": 170,
-        "numerator": 54,
-        "rate": "0.3176"
+        "numerator": 52,
+        "rate": "0.3059"
       },
       "ideal_rate": {
         "denominator": 170,
-        "numerator": 74,
-        "rate": "0.4353"
+        "numerator": 76,
+        "rate": "0.4471"
       }
     },
     "upstream": {
@@ -57,15 +57,15 @@
         "rate": "0.7059"
       },
       "by_observed_verdict": {
-        "credited": 3,
-        "gap": 7,
+        "credited": 5,
+        "gap": 5,
         "limited": 24
       },
       "cases_total": 34,
       "false_actionable_rate": {
         "denominator": 20,
-        "numerator": 5,
-        "rate": "0.2500"
+        "numerator": 3,
+        "rate": "0.1500"
       },
       "false_exposed_rate": {
         "denominator": 14,
@@ -79,21 +79,21 @@
       },
       "false_verdict_rate": {
         "denominator": 34,
-        "numerator": 5,
-        "rate": "0.1471"
+        "numerator": 3,
+        "rate": "0.0882"
       },
       "ideal_rate": {
         "denominator": 34,
-        "numerator": 5,
-        "rate": "0.1471"
+        "numerator": 7,
+        "rate": "0.2059"
       }
     }
   },
   "by_outcome": {
     "abstained": 66,
-    "false_actionable": 53,
+    "false_actionable": 49,
     "false_exposed": 6,
-    "ideal": 79
+    "ideal": 83
   },
   "by_truth": {
     "discriminated": 106,
@@ -111,8 +111,8 @@
   },
   "false_actionable_rate": {
     "denominator": 106,
-    "numerator": 53,
-    "rate": "0.5000"
+    "numerator": 49,
+    "rate": "0.4623"
   },
   "false_exposed_rate": {
     "denominator": 98,
@@ -126,13 +126,13 @@
   },
   "false_verdict_rate": {
     "denominator": 204,
-    "numerator": 59,
-    "rate": "0.2892"
+    "numerator": 55,
+    "rate": "0.2696"
   },
   "ideal_rate": {
     "denominator": 204,
-    "numerator": 79,
-    "rate": "0.3873"
+    "numerator": 83,
+    "rate": "0.4069"
   },
   "non_claims": [
     "Rates describe this corpus only; they are not a population estimate for Rust code or for ripr in general.",
@@ -282,17 +282,17 @@
       "anchor": "src/lib.rs:264",
       "behavior_family": "return_value_arithmetic",
       "case_id": "bytesize-as-kib-div",
-      "changed_since_labeling": false,
+      "changed_since_labeling": true,
       "contradictions": [],
       "followed_retarget": false,
       "hard_case": false,
       "ideal_verdict": "credited",
       "observed_classifications": [
-        "weakly_exposed"
+        "exposed"
       ],
-      "observed_verdict": "gap",
+      "observed_verdict": "credited",
       "origin": "upstream",
-      "outcome": "false_actionable",
+      "outcome": "ideal",
       "subject_id": "bytesize-66a3715",
       "test_shape": "unit_test_assert_eq",
       "truth": "discriminated"
@@ -301,17 +301,17 @@
       "anchor": "src/lib.rs:270",
       "behavior_family": "return_value_arithmetic",
       "case_id": "bytesize-as-mb-div",
-      "changed_since_labeling": false,
+      "changed_since_labeling": true,
       "contradictions": [],
       "followed_retarget": false,
       "hard_case": false,
       "ideal_verdict": "credited",
       "observed_classifications": [
-        "weakly_exposed"
+        "exposed"
       ],
-      "observed_verdict": "gap",
+      "observed_verdict": "credited",
       "origin": "upstream",
-      "outcome": "false_actionable",
+      "outcome": "ideal",
       "subject_id": "bytesize-66a3715",
       "test_shape": "unit_test_assert_eq",
       "truth": "discriminated"
@@ -2911,17 +2911,17 @@
       "anchor": "pricing/src/lib.rs:4",
       "behavior_family": "return_value_arithmetic",
       "case_id": "shop-score-imported-across-crates",
-      "changed_since_labeling": false,
+      "changed_since_labeling": true,
       "contradictions": [],
       "followed_retarget": false,
       "hard_case": true,
       "ideal_verdict": "credited",
       "observed_classifications": [
-        "weakly_exposed"
+        "exposed"
       ],
-      "observed_verdict": "gap",
+      "observed_verdict": "credited",
       "origin": "authored",
-      "outcome": "false_actionable",
+      "outcome": "ideal",
       "subject_id": "authored-shop",
       "test_shape": "dependent_crate_test_imports_owner",
       "truth": "discriminated"
@@ -3863,18 +3863,18 @@
       "anchor": "src/raw.rs:9",
       "behavior_family": "static_unknown_unsafe_fn",
       "case_id": "tokens-byte-at-unsafe-fn",
-      "changed_since_labeling": false,
+      "changed_since_labeling": true,
       "contradictions": [],
       "followed_retarget": false,
       "hard_case": false,
       "ideal_verdict": "credited",
       "observed_classifications": [
-        "static_unknown",
-        "weakly_exposed"
+        "exposed",
+        "static_unknown"
       ],
-      "observed_verdict": "gap",
+      "observed_verdict": "credited",
       "origin": "authored",
-      "outcome": "false_actionable",
+      "outcome": "ideal",
       "subject_id": "authored-tokens",
       "test_shape": "unit_test_assert_eq",
       "truth": "discriminated"
