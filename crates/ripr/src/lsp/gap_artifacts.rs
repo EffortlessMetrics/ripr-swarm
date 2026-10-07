@@ -1513,6 +1513,15 @@ pub(super) fn bind_portable_command(root: &Path, command: &str) -> Option<String
         // No portable root passes through; two are ambiguous and withheld.
         return dots.is_empty().then(|| command.to_string());
     };
+    // Any other top-level root would compete with the bound one.
+    let roots = spans
+        .iter()
+        .map(|span| body[span.clone()].replace(['\'', '"'], ""))
+        .filter(|token| token == "--root" || token.starts_with("--root="))
+        .count();
+    if roots > 1 {
+        return None;
+    }
     // A word starting with `#` begins a shell comment, which could hide the
     // bound root and run the command in the paste directory instead.
     if spans.iter().any(|span| body[span.clone()].starts_with('#')) {
@@ -2012,6 +2021,9 @@ mod tests {
             "ripr agent verify # --root . --json",
             "ripr agent verify --root . --json #note",
             "ripr agent verify --root . --root . --json",
+            "ripr agent verify --root . --root ./sub --json",
+            "ripr agent verify --root=./sub --root . --json",
+            "ripr agent verify --root . '--root=./sub' --json",
         ] {
             assert_eq!(bind_portable_command(&root, command), None, "{command:?}");
         }
