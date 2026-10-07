@@ -7103,16 +7103,17 @@ fn workspace_status_top_actionable_packet(snapshot: &AnalysisSnapshot) -> serde_
         .first()
         .and_then(|id| id.canonical_gap_id.as_deref())
         .unwrap_or("");
-    let verify_command = artifact
-        .verify_commands
-        .first()
-        .map(String::as_str)
-        .unwrap_or("");
-    let receipt_command = artifact
-        .receipt_commands
-        .first()
-        .map(String::as_str)
-        .unwrap_or("");
+    // #4001: the status packet names the selected workspace, like the
+    // diagnostic, hover and action projections of the same artifact.
+    let bind = |command: Option<&String>| {
+        command
+            .and_then(|command| {
+                super::gap_artifacts::bind_portable_command(&snapshot.root, command)
+            })
+            .unwrap_or_default()
+    };
+    let verify_command = bind(artifact.verify_commands.first());
+    let receipt_command = bind(artifact.receipt_commands.first());
     let file = artifact
         .related_paths
         .first()
@@ -8331,11 +8332,10 @@ fn collect_receipt_status_fields(
                 .first()
                 .map(String::as_str)
                 .unwrap_or("");
-            if super::gap_artifacts::command_payload_is_safe(root, cmd) {
-                serde_json::Value::String(cmd.to_string())
-            } else {
-                serde_json::Value::String("not_available".to_string())
-            }
+            let bound = super::gap_artifacts::command_payload_is_safe(root, cmd)
+                .then(|| super::gap_artifacts::bind_portable_command(root, cmd))
+                .flatten();
+            serde_json::Value::String(bound.unwrap_or_else(|| "not_available".to_string()))
         } else {
             // Incomplete packet — no receipt command shown.
             serde_json::Value::String("not_available".to_string())
@@ -8616,10 +8616,13 @@ fn collect_repair_packet_from_actionable_gaps(
         return Some(sentinel);
     }
 
-    validate_and_render_actionable_gap_packet(packet)
+    validate_and_render_actionable_gap_packet(root, packet)
 }
 
-fn validate_and_render_actionable_gap_packet(packet: &serde_json::Value) -> Option<LSPAny> {
+fn validate_and_render_actionable_gap_packet(
+    root: &Path,
+    packet: &serde_json::Value,
+) -> Option<LSPAny> {
     use super::gap_artifacts::{GapArtifactRejection, require_actionable_packet_render_fields};
 
     // The render-field contract is owned by the ingest boundary
@@ -8664,6 +8667,13 @@ fn validate_and_render_actionable_gap_packet(packet: &serde_json::Value) -> Opti
         return Some(repair_packet_sentinel(
             "actionable packet is missing receipt_command",
         ));
+    };
+    // #4001: the copied commands name the selected workspace, not `.`.
+    let (Some(verify_command), Some(receipt_command)) = (
+        super::gap_artifacts::bind_portable_command(root, &verify_command),
+        super::gap_artifacts::bind_portable_command(root, &receipt_command),
+    ) else {
+        return Some(repair_packet_sentinel(UNBOUND_PACKET_COMMANDS_REASON));
     };
 
     let allowed_edit_surface: Vec<serde_json::Value> = packet
@@ -8784,8 +8794,14 @@ fn collect_repair_packet_from_ledger(
     }
 
     let route = record.repair_route.as_ref()?;
-    let verify_command = record.verification_commands.first()?.clone();
-    let receipt_command = record.receipt_command.as_deref().map(ToOwned::to_owned)?;
+    // #4001: the copied commands name the selected workspace, not `.`.
+    let bind = |command: &str| super::gap_artifacts::bind_portable_command(root, command);
+    let (Some(verify_command), Some(receipt_command)) = (
+        bind(record.verification_commands.first()?),
+        bind(record.receipt_command.as_deref()?),
+    ) else {
+        return Some(repair_packet_sentinel(UNBOUND_PACKET_COMMANDS_REASON));
+    };
     let allowed_edit_surface =
         crate::output::agent_seam_packets::allowed_edit_surface_for_gap_route(route);
     let must_not_change: Vec<String> =
@@ -8865,6 +8881,9 @@ fn repair_packet_sentinel(reason: &str) -> LSPAny {
 /// client must be able to tell "no packet" apart from "packet source corrupt;
 /// artifact regeneration required before exposure can be assessed".
 const MALFORMED_ACTIONABLE_GAPS_REASON: &str = "actionable-gaps.json is malformed; artifact regeneration required before exposure can be assessed";
+const UNBOUND_PACKET_COMMANDS_REASON: &str =
+    "packet commands cannot be bound to the selected workspace";
+
 const MALFORMED_GAP_LEDGER_REASON: &str = "gap-decision-ledger.json is malformed; artifact regeneration required before exposure can be assessed";
 
 fn gap_record_matches(record: &GapRecord, gap_id: &str) -> bool {
