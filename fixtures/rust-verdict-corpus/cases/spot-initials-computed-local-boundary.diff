@@ -1,0 +1,13 @@
+diff --git a/src/score.rs b/src/score.rs
+index 46d09f6..09c342e 100644
+--- a/src/score.rs
++++ b/src/score.rs
+@@ -15,7 +15,7 @@ pub fn capped_score(value: u32) -> u32 {
+ 
+ pub fn initials(name: &str) -> u32 {
+     let letters = name.split_whitespace().count();
+-    if letters == 0 {
++    if 0 == letters {
+         return 100;
+     }
+     letters as u32

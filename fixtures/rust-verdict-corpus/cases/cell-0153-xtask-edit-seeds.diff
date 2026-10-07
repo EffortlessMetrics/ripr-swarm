@@ -1,0 +1,13 @@
+diff --git a/xtask/src/main.rs b/xtask/src/main.rs
+index f1c7966..4aedcff 100644
+--- a/xtask/src/main.rs
++++ b/xtask/src/main.rs
+@@ -1,7 +1,7 @@
+ //! Repository automation: bumps a release counter.
+ 
+ fn bump(version: u32) -> u32 {
+-    version + 1
++    1 + version
+ }
+ 
+ fn main() {

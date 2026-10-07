@@ -1,0 +1,19 @@
+{
+  "case_id": "trap-lift-joined-thread-control",
+  "subject_id": "authored-trap-reach",
+  "origin": "authored",
+  "anchor": "src/lifts.rs:2",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "assert_in_joined_thread",
+  "hard_case": false,
+  "truth": "discriminated",
+  "ideal_verdict": "credited",
+  "observed_verdict": "gap",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "weakly_exposed"
+  ],
+  "outcome": "false_actionable",
+  "contradictions": []
+}

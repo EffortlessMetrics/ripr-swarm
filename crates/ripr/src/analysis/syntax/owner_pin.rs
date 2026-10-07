@@ -276,6 +276,163 @@ pub(crate) fn macro_binding_scan(
     .collect()
 }
 
+/// Standard macros that cannot return a value from the enclosing function,
+/// whose workspace rebinding the owner-pin scans look for.
+pub(crate) const TRUSTED_MACRO_NAMES: &[&str] = &[
+    "assert",
+    "assert_eq",
+    "assert_ne",
+    "cfg",
+    "column",
+    "concat",
+    "dbg",
+    "debug_assert",
+    "debug_assert_eq",
+    "debug_assert_ne",
+    "eprint",
+    "eprintln",
+    "file",
+    "format",
+    "format_args",
+    "line",
+    "matches",
+    "module_path",
+    "panic",
+    "print",
+    "println",
+    "stringify",
+    "todo",
+    "unimplemented",
+    "unreachable",
+    "vec",
+    "write",
+    "writeln",
+];
+
+/// The trusted macro names a file's binding sites may report, whatever the
+/// workspace context: any trusted subset, package set, module resolution or
+/// drop-in verdict. [`MacroBindingCandidates::may_bind`] false for a name
+/// means [`trusted_macro_binding_sites`] reports no site for it in this
+/// file, so the scans skip parsing it. Built from the producer's clean
+/// parse and stored in the file facts (#5363).
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub(crate) enum MacroBindingCandidates {
+    /// A site may bind every name: an attribute or macro argument naming
+    /// `macro_use` or `no_implicit_prelude`, a glob import not rooted at
+    /// `crate`, `self` or `super`, or a `use` without a tree.
+    Any,
+    /// Only these trusted names have a definition, an import or a mention
+    /// in some macro call's arguments.
+    Names(BTreeSet<String>),
+}
+
+impl MacroBindingCandidates {
+    /// Whether the scan may report a site for `name`. A name outside
+    /// [`TRUSTED_MACRO_NAMES`] was never recorded, so it is always possible.
+    pub(crate) fn may_bind(&self, name: &str) -> bool {
+        match self {
+            Self::Any => true,
+            Self::Names(names) => names.contains(name) || !TRUSTED_MACRO_NAMES.contains(&name),
+        }
+    }
+
+    /// Whether the scan may report a site for any trusted name. `Names`
+    /// only ever holds trusted names, so this is its emptiness.
+    pub(crate) fn may_bind_any_trusted(&self) -> bool {
+        match self {
+            Self::Any => true,
+            Self::Names(names) => !names.is_empty(),
+        }
+    }
+}
+
+/// [`MacroBindingCandidates`] of a parser-clean file. It mirrors every site
+/// [`macro_binding_ambiguities`] can record and widens each context check:
+/// every macro call's arguments count (a trusted call is skipped only when
+/// its name is in the requested subset), every `macro_use` counts as
+/// unresolved (so a crate root with `#[macro_use] mod m;` is never skipped)
+/// and every foreign-looking glob as foreign.
+pub(crate) fn macro_binding_candidates(source: &ast::SourceFile) -> MacroBindingCandidates {
+    let trusted = |text: &str| {
+        let name = text.trim_start_matches("r#");
+        TRUSTED_MACRO_NAMES
+            .contains(&name)
+            .then(|| name.to_string())
+    };
+    let binds_any = |text: &str| {
+        matches!(
+            text.trim_start_matches("r#"),
+            "macro_use" | "no_implicit_prelude"
+        )
+    };
+    let mut names = BTreeSet::new();
+    for node in source.syntax().descendants() {
+        if let Some(name) = ast::MacroRules::cast(node.clone())
+            .and_then(|item| item.name())
+            .or_else(|| ast::MacroDef::cast(node.clone()).and_then(|item| item.name()))
+        {
+            names.extend(trusted(name.text()));
+        }
+        let tokens = || {
+            node.descendants_with_tokens()
+                .filter_map(|element| element.into_token())
+                .filter(|token| !token.kind().is_trivia())
+        };
+        if ast::Attr::can_cast(node.kind()) && tokens().any(|token| binds_any(token.text())) {
+            return MacroBindingCandidates::Any;
+        }
+        if let Some(tree) = ast::MacroCall::cast(node.clone()).and_then(|call| call.token_tree()) {
+            for token in tree
+                .syntax()
+                .descendants_with_tokens()
+                .filter_map(|element| element.into_token())
+            {
+                if binds_any(token.text()) {
+                    return MacroBindingCandidates::Any;
+                }
+                names.extend(trusted(token.text()));
+            }
+        }
+        if let Some(import) = ast::Use::cast(node) {
+            let Some(tree) = import.use_tree() else {
+                return MacroBindingCandidates::Any;
+            };
+            let root = tree
+                .path()
+                .map(|path| path.syntax().text().to_string())
+                .unwrap_or_default();
+            let root = root
+                .trim_start_matches("::")
+                .split("::")
+                .next()
+                .unwrap_or("")
+                .trim();
+            for item in tree.syntax().descendants().filter_map(ast::UseTree::cast) {
+                if item.star_token().is_some() && !matches!(root, "crate" | "self" | "super") {
+                    return MacroBindingCandidates::Any;
+                }
+                // As the scan reads it: `as _` binds no name.
+                if let Some(rename) = item.rename() {
+                    if let Some(name) = rename.name() {
+                        names.extend(trusted(name.text()));
+                    }
+                } else if item.use_tree_list().is_none()
+                    && let Some(name) = item
+                        .path()
+                        .and_then(|path| path.segment())
+                        .and_then(|segment| segment.name_ref())
+                {
+                    names.extend(trusted(name.text()));
+                }
+            }
+        }
+    }
+    MacroBindingCandidates::Names(names)
+}
+
+// [`macro_binding_candidates`] is a stored over-approximation of this scan:
+// a new site kind, or a wider existing one, must widen it too and bump
+// `FILE_FACT_CACHE_SCHEMA_VERSION`, or cached candidates hide the new sites.
 fn macro_binding_ambiguities(
     source: &str,
     packages: &BTreeSet<String>,
