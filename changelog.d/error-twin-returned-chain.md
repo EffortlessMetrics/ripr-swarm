@@ -9,8 +9,10 @@
 
   Wrappers that add error behavior of their own keep their seams: a chain on
   a non-`Err` shape (`return load(Error::A).map_err(Error::Io)`), a function
-  on a type (`io::Error::new(kind, Error::W(1))`), a capitalised constructor
-  around another error, and a longer chain on the call
-  (`wrap(Err(X)).map_err(..)`). A `return x.map_err(..)` with no constructor
-  inside keeps its seam too. Classified seam caches move to 1.44 / 0.50, so
-  warm entries rebuild.
+  on a type (`io::Error::new(kind, Error::W(1))`), a constructor of an error
+  type around another error (`Error::Outer(Err(X))`), a chain that replaces
+  the error (`return Err(A).map_err(|_| Error::B)`), a longer chain on the
+  call (`wrap(Err(X)).map_err(..)`), and a call around such a chain
+  (`Ok(wrap(Err(X)).map_err(..))`). A `return x.map_err(..)` with no
+  constructor inside keeps its seam too. Classified seam caches move to
+  1.44 / 0.50, so warm entries rebuild (#6935, #6938).

@@ -461,6 +461,9 @@ fn inventory_keeps_wrappers_that_add_error_behavior() -> Result<(), String> {
         "    if s == \"h\" { return wrap(')', Err(Error::H)); }\n",
         "    if s == \"i\" { return Err(Error::I)?.into(); }\n",
         "    if s == \"j\" { return (wrap(Error::J), Err(Error::K)); }\n",
+        "    if s == \"k\" { return Err(Error::L).map_err(|_| Error::B); }\n",
+        "    if s == \"l\" { let v = Error::Outer(Err(Error::C)); }\n",
+        "    if s == \"m\" { return Ok(wrap(Err(Error::M)).map_err(convert)); }\n",
         "    wrap(Err(Error::Tail)).map_err(|_| Error::Other)\n",
         "}\n",
     );
@@ -501,9 +504,18 @@ fn inventory_keeps_wrappers_that_add_error_behavior() -> Result<(), String> {
             (10, "return (wrap(Error::J), Err(Error::K))"),
             (10, "wrap(Error::J)"),
             (10, "Err(Error::K)"),
+            // A chain that replaces the error keeps the `return`.
+            (11, "return Err(Error::L).map_err(|_| Error::B)"),
+            (11, "Err(Error::L)"),
+            // A callee naming an error type builds an error around `Err(..)`.
+            (12, "Error::Outer(Err(Error::C))"),
+            (12, "Err(Error::C)"),
+            // `Ok(..)` holds a converted error, not the bare call.
+            (13, "Ok(wrap(Err(Error::M)).map_err(convert))"),
+            (13, "Err(Error::M)"),
             // The tail chain adds a conversion; only the call goes.
-            (11, "wrap(Err(Error::Tail)).map_err(|_| Error::Other)"),
-            (11, "Err(Error::Tail)"),
+            (14, "wrap(Err(Error::Tail)).map_err(|_| Error::Other)"),
+            (14, "Err(Error::Tail)"),
         ],
         "{seams:?}"
     );

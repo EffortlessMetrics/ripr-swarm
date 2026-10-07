@@ -300,11 +300,12 @@ pub(crate) fn error_path_twins(shapes: &[ProbeShapeFact], source: &str) -> Vec<b
         if let Some(opening) = err_call_opening(prefix) {
             mark_payloads(outers, inners, opening, source, &mut twins);
         }
-        if wraps_argument(prefix, inner_is_err) {
-            mark_wrappers(outers, inners, &mut twins);
-            if inner_is_err && let Some(wraps) = wraps_err.get_mut(at - 1) {
-                *wraps = true;
-            }
+        if wraps_argument(prefix, inner_is_err)
+            && mark_wrappers(outers, inners, source, &mut twins)
+            && inner_is_err
+            && let Some(wraps) = wraps_err.get_mut(at - 1)
+        {
+            *wraps = true;
         }
     }
     twins
@@ -314,18 +315,28 @@ pub(crate) fn error_path_twins(shapes: &[ProbeShapeFact], source: &str) -> Vec<b
 /// already placed the inner group in the call's argument list (#6938). Only
 /// the shortest outer that contains it is the call; a longer shape from the
 /// same start (`wrap(Err(X)).map_err(..)` as a tail) adds behavior and stays.
+/// The inner shape must be the whole argument: in
+/// `Ok(wrap(Err(E)).map_err(convert))` the argument converts the error, so
+/// `Ok(..)` stays too. Returns whether a call was marked.
 fn mark_wrappers(
     outers: &[(usize, &ProbeShapeFact)],
     inners: &[(usize, &ProbeShapeFact)],
+    source: &str,
     twins: &mut [bool],
-) {
+) -> bool {
     let Some((_, inner)) = inners.first() else {
-        return;
+        return false;
     };
     let first = outers.partition_point(|(_, outer)| outer.end_byte < inner.end_byte);
     let Some(&(_, call)) = outers.get(first) else {
-        return;
+        return false;
     };
+    let whole_argument = source
+        .get(inner.end_byte..call.end_byte)
+        .is_some_and(|suffix| suffix.trim_start().starts_with([',', ')']));
+    if !whole_argument {
+        return false;
+    }
     for &(outer_index, outer) in outers.get(first..).unwrap_or_default() {
         if outer.end_byte != call.end_byte {
             break;
@@ -334,6 +345,7 @@ fn mark_wrappers(
             *twin = true;
         }
     }
+    true
 }
 
 /// `prefix` opens a call whose argument list reaches the inner shape at the
@@ -344,7 +356,9 @@ fn mark_wrappers(
 /// (`Error::Bad(Error::Inner(1))`) builds its own error around the inner one
 /// and stays, as does a function on a type (`io::Error::new(kind, ..)`,
 /// `Error::wrap(..)`), unless the inner shape is an `Err(..)` that the callee
-/// only wraps (`Poll::Ready(Err(X))`). A prefix with a quote or a `/` may
+/// only wraps (`Poll::Ready(Err(X))`). A callee path naming an error type
+/// (`Error::Outer(Err(..))`, `MyErr::Wrap(Err(..))`) builds an error even
+/// around an `Err(..)` and stays. A prefix with a quote or a `/` may
 /// hide a delimiter in a literal or comment, so it keeps both shapes. An
 /// `Err(..)` inside a macro argument before the inner shape has no shape of
 /// its own, so `wrap(vec![Err(A)], Err(B))` keeps only `Err(B)`.
@@ -370,7 +384,8 @@ fn wraps_argument(prefix: &str, inner_is_err: bool) -> bool {
     let builds_error = path
         .split("::")
         .any(|segment| segment.starts_with(char::is_uppercase));
-    if !is_path || name == "Err" || (!inner_is_err && builds_error) {
+    let names_error = path.split("::").any(|segment| segment.contains("Err"));
+    if !is_path || name == "Err" || (builds_error && (!inner_is_err || names_error)) {
         return false;
     }
     let mut depth = 0_usize;
@@ -404,7 +419,9 @@ fn err_call_opening_at_start(text: &str) -> bool {
 /// inside it, when only closing parentheses follow that shape, or a method
 /// chain on it when it is an `Err(..)` (`return Err(X).context(..)`, #6935).
 /// The constructor is then the innermost receiver, so its own seam carries
-/// the error. A chain on any other error shape
+/// the error. A chain that converts or replaces the error
+/// (`return Err(A).map_err(|_| Error::B)`, `.or_else(..)`) has no shape of
+/// its own and keeps the return. A chain on any other error shape
 /// (`return load(Error::A).map_err(Error::Io)`) adds a conversion and keeps
 /// its seam, as does a `return x.map_err(..)` with no inner shape.
 fn mark_returns(
@@ -425,12 +442,22 @@ fn mark_returns(
                 let rest = suffix.trim_start_matches(|c: char| c == ')' || c.is_whitespace());
                 // `..` after the constructor is a range, not a method chain.
                 rest.is_empty()
-                    || (inner_is_err && rest.starts_with('.') && !rest.starts_with(".."))
+                    || (inner_is_err
+                        && rest.starts_with('.')
+                        && !rest.starts_with("..")
+                        && !converts_error(rest))
             });
         if closes && let Some(twin) = twins.get_mut(outer_index) {
             *twin = true;
         }
     }
+}
+
+/// A method chain whose text can replace the error it is called on.
+fn converts_error(chain: &str) -> bool {
+    ["Err", "map_err", ".or(", ".or_else(", "bail!", "anyhow!"]
+        .iter()
+        .any(|marker| chain.contains(marker))
 }
 
 /// Marks each payload in `inners` that some `Err(..)` in `outers` closes
