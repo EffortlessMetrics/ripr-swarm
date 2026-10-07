@@ -55,6 +55,16 @@ pub(super) fn discrimination(
     {
         return None;
     }
+    // Rule 3b condition 1, narrowed: the credit covers swallowing this `?`,
+    // so the edit must keep the same `?` call on both sides. A removed-line
+    // probe (no `after`) or a changed operand (a new call, `.trim()` added,
+    // another fallible function) is a change a side oracle cannot vouch for.
+    let after = context.probe.after.as_deref()?;
+    let before = context.probe.before.as_deref()?;
+    let operand = sole_try_operand(after)?;
+    if sole_try_operand(before)? != operand {
+        return None;
+    }
     let owner = context.owner_fn?;
     if context.probe.owner.as_ref() != Some(&owner.id)
         || context
@@ -93,7 +103,15 @@ pub(super) fn discrimination(
         let Some(test_facts) = find_file_facts(context.index, &test.file) else {
             continue;
         };
+        // A parent file can define the `assert!` a child module sees, and a
+        // file-local `macro_rules!` or inner `cfg` can turn the assertion
+        // into a no-op or compile the test out.
         if test_facts.used_lexical_fallback
+            || !test_facts.role_provenance.edges.is_empty()
+            || test_facts
+                .role_provenance
+                .earliest_unresolved_reason
+                .is_some()
             || context.test_file_imports_foreign_callee_name(
                 &test.file,
                 &test_facts.source,
@@ -105,6 +123,9 @@ pub(super) fn discrimination(
         let Some(test_root) = parsed(&test_facts.source) else {
             continue;
         };
+        if !test_file_macros_and_inner_cfg_are_plain(test_root.syntax()) {
+            continue;
+        }
         let Some(test_function) = unique_function(test_root.syntax(), &test.name) else {
             continue;
         };
@@ -117,6 +138,61 @@ pub(super) fn discrimination(
         }
     }
     None
+}
+
+/// The `?` operand of a one-line statement or expression, normalized so a
+/// behavior-preserving respelling compares equal: parentheses around an
+/// expression and generic arguments (`parse::<u16>()`) are dropped, and
+/// whitespace is ignored. `None` unless the text holds exactly one `?`.
+fn sole_try_operand(line: &str) -> Option<String> {
+    let line = line.trim();
+    let source = if line.ends_with(';') || line.ends_with('}') {
+        format!("fn __try() {{ {line} }}")
+    } else {
+        format!("fn __try() {{ {line}; }}")
+    };
+    let root = parsed(&source)?;
+    let mut tries = root.syntax().descendants().filter_map(ast::TryExpr::cast);
+    let try_expr = tries.next()?;
+    if tries.next().is_some() {
+        return None;
+    }
+    let operand = try_expr.expr()?;
+    let mut text = String::new();
+    for element in operand.syntax().descendants_with_tokens() {
+        let Some(token) = element.into_token() else {
+            continue;
+        };
+        if token.kind().is_trivia() {
+            continue;
+        }
+        let parent = token.parent()?;
+        if parent
+            .ancestors()
+            .any(|node| ast::GenericArgList::can_cast(node.kind()))
+        {
+            continue;
+        }
+        if ast::ParenExpr::can_cast(parent.kind()) && matches!(token.text(), "(" | ")") {
+            continue;
+        }
+        text.push_str(token.text());
+    }
+    Some(text)
+}
+
+/// No `macro_rules!` anywhere in the test file (it can shadow `assert!` or
+/// `matches!`), and no inner attribute other than `#![cfg(test)]` (an inner
+/// `cfg` compiles the test out without touching its function or modules).
+fn test_file_macros_and_inner_cfg_are_plain(root: &SyntaxNode) -> bool {
+    root.descendants().all(|node| {
+        if ast::MacroRules::can_cast(node.kind()) {
+            return false;
+        }
+        ast::Attr::cast(node).is_none_or(|attribute| {
+            attribute.excl_token().is_none() || attribute.syntax().text() == "#![cfg(test)]"
+        })
+    })
 }
 
 /// The only function of this name anywhere in the file.
@@ -169,6 +245,9 @@ fn sole_error_source_line(source: &str, function: &ast::Fn) -> Option<usize> {
         {
             return None;
         }
+        // Belt and braces: with no `return` and an `Ok(..)` tail an `Err`
+        // value can leave only through the `?`, and an `Err` in the operand
+        // is refused by `shapes_error`. `Result::Err` spellings are not read.
         if let Some(path) = ast::PathExpr::cast(node.clone())
             && path.syntax().text() == "Err"
         {
@@ -259,6 +338,14 @@ fn asserts_owner_err_inner(function: &ast::Fn, owner: &str) -> Option<bool> {
         let ast::Stmt::ExprStmt(statement) = statement else {
             return false;
         };
+        // `#[cfg(..)] assert!(..);` may never compile.
+        if statement
+            .syntax()
+            .descendants()
+            .any(|node| ast::Attr::can_cast(node.kind()))
+        {
+            return false;
+        }
         statement
             .expr()
             .is_some_and(|expression| observes_err_side(&expression, owner))
@@ -475,6 +562,22 @@ mod tests {
                 "pub fn total(s: &str) -> Result<u32, E> {\n    let d = digit(s)?;\n    check!(d);\n    Ok(d)\n}\n",
             ),
             (
+                "lowercase error mapper",
+                "pub fn total(s: &str) -> Result<u32, E> {\n    let d = digit(s).map_err(convert)?;\n    Ok(d)\n}\n",
+            ),
+            (
+                "lowercase ok_or argument",
+                "pub fn total(s: &str) -> Result<u32, E> {\n    let d = s.parse::<u32>().ok().ok_or(err)?;\n    Ok(d)\n}\n",
+            ),
+            (
+                "type-path callee",
+                "pub fn total(s: &str) -> Result<u32, E> {\n    let d = E::parse(s)?;\n    Ok(d)\n}\n",
+            ),
+            (
+                "non-Ok tail",
+                "pub fn total(s: &str) -> Result<u32, E> {\n    let d = digit(s)?;\n    validate(d)\n}\n",
+            ),
+            (
                 "closure",
                 "pub fn total(s: &str) -> Result<u32, E> {\n    let f = || digit(s);\n    let d = f()?;\n    Ok(d)\n}\n",
             ),
@@ -528,6 +631,18 @@ mod tests {
                 "#[test]\nfn t() {\n    let port = |_: &str| Err::<u16, ()>(());\n    assert!(port(\"x\").is_err());\n}\n",
             ),
             (
+                "owner rebound",
+                "#[test]\nfn t() {\n    let port = other_port;\n    assert!(port(\"x\").is_err());\n}\n",
+            ),
+            (
+                "cfg on the statement",
+                "#[test]\nfn t() {\n    #[cfg(any())]\n    assert!(port(\"x\").is_err());\n}\n",
+            ),
+            (
+                "early return",
+                "#[test]\nfn t() {\n    return;\n    assert!(port(\"x\").is_err());\n}\n",
+            ),
+            (
                 "wrapper call",
                 "#[test]\nfn t() {\n    assert!(wrap(port(\"x\")).is_err());\n}\n",
             ),
@@ -541,6 +656,48 @@ mod tests {
             ),
         ] {
             assert!(!test_observes(source, "t", "port"), "{label}");
+        }
+    }
+
+    #[test]
+    fn a_respelled_operand_compares_equal_and_a_changed_one_does_not() {
+        let same = sole_try_operand("let port = text.trim().parse::<u16>()?;");
+        assert_eq!(same.as_deref(), Some("text.trim().parse()"));
+        assert_eq!(
+            sole_try_operand("let port: u16 = text.trim().parse()?;"),
+            same
+        );
+        assert_eq!(
+            sole_try_operand("let d = (digit(c))?;"),
+            sole_try_operand("let d = digit(c)?;")
+        );
+        for changed in [
+            "let port: u16 = text.parse()?;",
+            "let port: u16 = text.trim().parse_strict()?;",
+            "let port: u16 = text.trim().parse().and_then(check)?;",
+        ] {
+            assert_ne!(sole_try_operand(changed), same, "{changed}");
+        }
+        assert_eq!(sole_try_operand("let d = digit(c).unwrap_or(0);"), None);
+        assert_eq!(sole_try_operand("let d = a(c)? + b(c)?;"), None);
+    }
+
+    #[test]
+    fn macro_definitions_and_inner_cfg_make_a_test_file_unreadable() {
+        let plain =
+            "#![cfg(test)]\nuse super::*;\n#[test]\nfn t() { assert!(port(\"x\").is_err()); }\n";
+        let root = parsed(plain).map(|root| root.syntax().clone());
+        assert!(root.is_some_and(|root| test_file_macros_and_inner_cfg_are_plain(&root)));
+        for source in [
+            "macro_rules! assert { ($($t:tt)*) => {}; }\n#[test]\nfn t() { assert!(port(\"x\").is_err()); }\n",
+            "mod tests {\n    #![cfg(any())]\n    #[test]\n    fn t() { assert!(port(\"x\").is_err()); }\n}\n",
+            "#![cfg(any())]\n#[test]\nfn t() { assert!(port(\"x\").is_err()); }\n",
+        ] {
+            let root = parsed(source).map(|root| root.syntax().clone());
+            assert!(
+                root.is_some_and(|root| !test_file_macros_and_inner_cfg_are_plain(&root)),
+                "{source}"
+            );
         }
     }
 }

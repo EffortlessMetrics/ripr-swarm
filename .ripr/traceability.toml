@@ -13082,9 +13082,19 @@ metrics = [
 id = "RIPR-SPEC-0227"
 name = "Result-side oracles (is_err, is_ok, unwrap_err, should_panic)"
 spec = "docs/specs/RIPR-SPEC-0227-result-side-oracles.md"
-tests = []
+tests = [
+  "crates/ripr/src/analysis/classifier/evidence/side_flip.rs::tests::a_lone_passthrough_question_mark_is_the_sole_error_source",
+  "crates/ripr/src/analysis/classifier/evidence/side_flip.rs::tests::any_other_error_source_refuses_the_flip",
+  "crates/ripr/src/analysis/classifier/evidence/side_flip.rs::tests::a_respelled_operand_compares_equal_and_a_changed_one_does_not",
+  "crates/ripr/src/analysis/classifier/evidence/side_flip.rs::tests::err_side_assertions_observe_the_flip",
+  "crates/ripr/src/analysis/classifier/evidence/side_flip.rs::tests::ok_side_or_unexecuted_assertions_do_not_observe_the_flip",
+  "crates/ripr/tests/question_mark_side_flip.rs::an_err_side_assertion_exposes_a_sole_source_question_mark",
+  "crates/ripr/tests/question_mark_side_flip.rs::a_changed_question_mark_operand_keeps_the_gap",
+  "crates/ripr/tests/question_mark_side_flip.rs::an_earlier_error_source_keeps_the_gap",
+]
 fixtures = []
 code = [
+  "crates/ripr/src/analysis/classifier/evidence/side_flip.rs",
   "crates/ripr/src/analysis/extract/oracles/scan.rs",
   "crates/ripr/src/analysis/extract/oracles/classify.rs",
   "crates/ripr/src/analysis/classify/boundary_pairing.rs",

@@ -363,7 +363,10 @@ RIPR-SPEC-0227 decision 3 (2026-10-04) adds one narrow exception for an added
 or removed `?`: a result-side oracle (RIPR-SPEC-0227) confirms the
 `error_path` probe only when the test input provably reaches the `?` call's
 `Err`, the original and changed code provably return different sides on that
-input, and the path conditions of RIPR-SPEC-0227 rule 3b hold. Every other
+input, and the path conditions of RIPR-SPEC-0227 rule 3b hold. RIPR-SPEC-0227
+decision 4 (2026-10-07) extends it to a changed line that keeps the same `?`
+operand when that `?` is the owner's only source of `Err`
+(`crates/ripr/src/analysis/classifier/evidence/side_flip.rs`). Every other
 `error_path` probe still needs a variant-observing oracle.
 
 ## Metrics

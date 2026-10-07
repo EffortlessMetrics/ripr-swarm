@@ -217,7 +217,15 @@ rejected alternative. Any can be reversed later without touching the rest.
    RIPR-SPEC-0107 still applies. RIPR-SPEC-0107 records this exception.
    Rejected: leave `?` under RIPR-SPEC-0107 (always weak with a broad oracle).
 4. **Establishing rule 3b without evaluating the input.** Adopted
-   (2026-10-07): when the changed `?` is the owner's only possible source of
+   (2026-10-07). It also widens condition 1: a changed line that keeps the
+   same `?` call is covered, and the claim is that a test would notice if
+   that `?` were swallowed. "The same call" means the `?` operand on the old
+   and new line reads equal after dropping whitespace, parentheses around an
+   expression and generic arguments (`parse::<u16>()` and `: u16 = parse()`
+   agree; `parse_lenient(s)?` to `parse_strict(s)?` does not, since a side
+   oracle cannot see which error comes back, rule 1). A removed line, an added
+   `?` and a changed operand keep the RIPR-SPEC-0107 reading.
+   When the changed `?` is the owner's only possible source of
    `Err`, a passing test that asserts the owner call returns `Err` proves
    condition 2 (that call took the `?`'s `Err`), and condition 3 follows
    because swallowing the `?` leaves no other way to return `Err`. "Only
@@ -228,7 +236,11 @@ rejected alternative. Any can be reversed later without touching the rest.
    type or variant), because rule 1 still holds. The assertion must be a
    top-level statement of a plain `#[test]` that calls the owner directly by
    name (`is_err()`, `!is_ok()`, `matches!(.., Err(_))`, or a bare
-   `unwrap_err()` / `expect_err()`). Any other shape keeps the
+   `unwrap_err()` / `expect_err()`), in a test file with no `macro_rules!`,
+   no inherited parent context and no inner attribute other than
+   `#![cfg(test)]`, and with no attribute on the assertion statement. The
+   premise that the test passes on the current code is assumed, as it is for
+   every ripr reading, not checked. Any other shape keeps the
    RIPR-SPEC-0107 reading. Rejected: evaluate `c` on the test input (a
    std-library and user-code interpreter ripr does not have) or withhold
    these findings as `static_unknown` (rule 1 keeps the gap for a weak
@@ -299,7 +311,15 @@ Source: `check` as in Problem.
   and 13, each naming its example in its reasoning and labeled with runtime
   mutant truth. Examples 10 and 11 are covered by the existing cases
   `checkout-withdraw-sibling-variant` and `accounts-parse-too-long-variant`.
+- Decision 4: `classifier/evidence/side_flip.rs::tests` (owner, operand and
+  test-shape refusals) and `crates/ripr/tests/question_mark_side_flip.rs`
+  (end to end: `is_err()` and `matches!(.., Err(_))` read `exposed`; an
+  `is_ok()` test, an earlier `?`, a changed operand, a wrapped or unexecuted
+  assertion and a file-local `assert!` macro do not). Corpus:
+  `spec0227-total-question-mark-is-err` and `grid-try-exact`.
 - Planned: oracle-scan unit tests for bare `unwrap_err()` and `should_panic`.
+  Until those land, a bare `unwrap_err()` statement is no oracle and decision
+  4 cannot credit it.
 
 ## Implementation Mapping
 
