@@ -62,7 +62,7 @@ pub(crate) struct CompactGripContext<'a> {
     /// One shared record per distinct related-test grip (#5341, #5362).
     /// Seams relate to the same tests over and over: on ripr-swarm 10,000
     /// seams hold 1.28M related-test entries but only about 15k distinct
-    /// records, and owning a copy each cost ~850 MB of cold-pilot peak.
+    /// records; sharing them cut the cold-pilot peak from 1.42 GB to 689 MB.
     /// Records are immutable, so sharing one does not couple seams. Kept
     /// across windows: the dedup is the point.
     shared_grips: Mutex<HashSet<Arc<RelatedTestGrip>>>,
@@ -74,6 +74,15 @@ pub(crate) struct CompactGripContext<'a> {
 struct NameModuleCandidateIndex {
     name_trigrams: BTreeMap<[u8; 3], Vec<usize>>,
     module_prefixes: BTreeMap<String, Vec<usize>>,
+}
+
+fn same_path_spelling(left: &RelatedTestGrip, right: &RelatedTestGrip) -> bool {
+    left.file.as_os_str() == right.file.as_os_str()
+        && match (&left.test_target, &right.test_target) {
+            (Some(left), Some(right)) => left.file().as_os_str() == right.file().as_os_str(),
+            (None, None) => true,
+            _ => false,
+        }
 }
 
 impl NameModuleCandidateIndex {
@@ -221,7 +230,13 @@ impl<'a> CompactGripContext<'a> {
     ) -> Arc<RelatedTestGrip> {
         let mut shared = memo(&self.shared_grips);
         if let Some(existing) = shared.get(&grip) {
-            return Arc::clone(existing);
+            // `PathBuf` equality compares components, so `tests/./a.rs`
+            // equals `tests/a.rs`. Share only an identical spelling, so the
+            // output keeps each seam's own path bytes.
+            if same_path_spelling(existing, &grip) {
+                return Arc::clone(existing);
+            }
+            return Arc::new(grip);
         }
         let grip = Arc::new(grip);
         shared.insert(Arc::clone(&grip));

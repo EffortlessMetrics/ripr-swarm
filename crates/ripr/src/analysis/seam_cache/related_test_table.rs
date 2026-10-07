@@ -6,6 +6,9 @@
 //! body now stores a `related_tests` table of distinct records and gives each
 //! seam the table indices of its tests, in its original order.
 //!
+//! Decoding hands every seam that names a row the table's one shared record,
+//! so a warm run holds each distinct test once in memory as well (#5341).
+//!
 //! Records are deduplicated by their own serialized JSON, so a decoded seam's
 //! related tests serialize exactly as the stored ones did. Field lists are
 //! destructured exhaustively: a new `ClassifiedSeam` or `TestGripEvidence`

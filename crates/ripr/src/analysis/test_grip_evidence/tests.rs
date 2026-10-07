@@ -2613,12 +2613,17 @@ fn evidence_for_seams_shares_one_record_per_distinct_related_test() -> Result<()
 pub fn discounted_total(amount: i32, threshold: i32) -> i32 {
     if amount >= threshold { amount - 10 } else { amount }
 }
+
+pub fn shipping(amount: i32, threshold: i32) -> i32 {
+    if amount > threshold { 0 } else { 5 }
+}
 "#;
     let tests = PathBuf::from("tests/pricing_tests.rs");
     let tests_src = r#"
 #[test]
 fn equality_boundary_returns_discount() {
     assert_eq!(discounted_total(100, 100), 90);
+    assert_eq!(shipping(100, 50), 0);
 }
 "#;
     let index = index_from_files(&[(prod, prod_src), (tests, tests_src)])?;
