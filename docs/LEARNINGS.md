@@ -3,6 +3,24 @@
 This log captures repo knowledge that should survive individual PRs and chat
 sessions. It is intentionally short and actionable.
 
+## 2026-10-07: Out-of-line shadows live at parent roots, and owner-side gates fire first (#6950)
+
+The module-declaration producer emits top-level `mod` declarations only, so
+a recorded parent edge's scope is always the parent file's root: reasoning
+about inline modules enclosing a `mod` declaration is vacuous against real
+provenance. A test-local shadow in a parent file therefore sits at the
+parent root, and only the owner's own root (a root-level owner in that
+file) is exempt.
+
+Separately, the owner-side pin gates fail closed before the test-side
+receiver check ever runs: `derived_equality` refuses a type declared in
+two files (rule 6), and method competition refuses a compiling shadow
+method (rules 1-2). The #6950 code-reading traced only the test-side
+check; the end-to-end fail-open was in reach (`direct_owner_call`), not
+the pin. Reproduce a trust hole end-to-end before designing the fix, and
+keep honest fixtures compiling: a `tests/` child naming parent items
+breaks dual crate-root compilation, while `src/`-nested layouts compile.
+
 ## 2026-10-06: The MCP tool envelope is a wire cost, not a free re-render (#6021)
 
 Serializing the same document twice into one tool response — pretty

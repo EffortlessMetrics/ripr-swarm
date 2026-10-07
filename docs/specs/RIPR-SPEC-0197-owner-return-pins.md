@@ -23,6 +23,8 @@ Linked issues:
 - #6692 (a hand-written `Clone` field pinned by `assert_eq!(recv.clone(), recv)` through derived equality)
 - #6957 (the owner's own enclosing module is not a shadow: nested
   production declarations keep their pin)
+- #6950 (an out-of-line parent module declaring the receiver shadows it:
+  the parent chain refuses the pin and direct reach)
 - RIPR-SPEC-0219 verdict corpus: `assert!(owner(..))` on a bool owner read
   as a weak relational check (bool-owner pins below)
 
@@ -156,7 +158,13 @@ rule only for an assertion whose context was admitted.
      is not a shadow (#6957): when the production declaration sits in an
      enclosing non-root module, a binding of that name still names the
      production type. A same-file test-module declaration alongside it, and
-     any test-file declaration for a cross-file owner, still refuses.
+     any test-file declaration for a cross-file owner, still refuses. A
+     declaration of the name at an out-of-line parent module's root
+     shadows the same way (#6950): the test file's composed parent chain
+     is its enclosing scope beyond its own file, except the parent root
+     holding a root-level owner, which is the production scope. An
+     unresolved chain, an `include!` edge, or a missing or unparseable
+     parent refuses rather than guessing.
    - The receiver type must dispatch to the owner: the inherent `impl`'s
      self type, the trait impl's self type, or, for a trait default method,
      a type with an `impl .. Trait for <type>` in the workspace. A trait
@@ -413,6 +421,11 @@ string literal is not a call or a reference. These rules hold for
   (`fixtures/owner_return_pin_test_module_shadow`, #6905): the test's own
   `Window` with a derived `Clone` runs instead of the changed owner, so the
   clone field stays `weakly_exposed` with its struct-field gap.
+- A fixture pins an out-of-line parent-module same-name shadow as
+  non-exposed (`fixtures/owner_return_pin_out_of_line_test_module_shadow`,
+  #6950): the nested child test binds the parent module's own `Window`,
+  so the pin is refused and the relation stays name-only
+  (`weak_token_substring`).
 - Unit tests pin every gate with a positive and a discriminating negative.
 - Twenty matched fixtures keep effective and ineffective tests separate:
   - `owner_return_pin_direct`, `_called_closure`, `_token_direct`, and

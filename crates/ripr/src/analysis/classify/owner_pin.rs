@@ -1293,15 +1293,12 @@ impl OwnerReturnPin {
             .files()
             .get(&test.file)
             .map(|facts| facts.data().source.as_ref());
-        // #6957: the exemption resolves the owner's enclosing module in the
-        // test file's own parse, so only a same-file owner supplies one; a
-        // cross-file owner keeps the fail-closed shadow check.
-        let owner_scope = OwnerScope::same_file(
-            self.name.as_str(),
-            self.owner_start_line,
-            &self.owner_file,
-            &test.file,
-        );
+        // The single-file exemption resolves the owner's enclosing module
+        // in the test file's own parse (#6957), while the parent-chain walk
+        // resolves it in whichever chain file holds the owner (#6950); a
+        // cross-file owner keeps the fail-closed single-file check.
+        let owner_scope =
+            OwnerScope::new(self.name.as_str(), self.owner_start_line, &self.owner_file);
         let masked_body = mask_comments_and_strings(&test.body);
         match (&self.call, call) {
             (PinCall::Bare, CallShape::Bare) => {
@@ -2874,7 +2871,7 @@ fn test_receiver_type(
     test_source: Option<&str>,
     index: &RustIndex,
     imports_foreign: ForeignImport<'_>,
-    owner: Option<OwnerScope<'_>>,
+    owner: OwnerScope<'_>,
 ) -> Option<ReceiverType> {
     let mut bound: Option<ReceiverType> = None;
     for binding in receiver_let_bindings(test, receiver)? {
@@ -3266,7 +3263,7 @@ fn binding_type(
     test_source: Option<&str>,
     index: &RustIndex,
     imports_foreign: ForeignImport<'_>,
-    owner: Option<OwnerScope<'_>>,
+    owner: OwnerScope<'_>,
 ) -> Option<ReceiverType> {
     let binding = binding.trim();
     let (annotation, initializer) = if let Some(rest) = binding.strip_prefix(':') {
@@ -3276,7 +3273,7 @@ fn binding_type(
         (None, binding.strip_prefix('=')?.trim())
     };
     if let Some(annotation) = annotation {
-        return named_or_slice(annotation, test, test_source, imports_foreign, owner);
+        return named_or_slice(annotation, test, test_source, index, imports_foreign, owner);
     }
     if is_byte_slice_expression(initializer) {
         return Some(ReceiverType::ByteSlice);
@@ -3310,7 +3307,7 @@ fn binding_type(
     if !constructor {
         return None;
     }
-    named_or_slice(type_name, test, test_source, imports_foreign, owner)
+    named_or_slice(type_name, test, test_source, index, imports_foreign, owner)
 }
 
 /// The initializer without a trailing `?`, `.unwrap()` or `.expect(..)`,
@@ -3395,8 +3392,9 @@ fn named_or_slice(
     type_text: &str,
     test: &TestSummary,
     test_source: Option<&str>,
+    index: &RustIndex,
     imports_foreign: ForeignImport<'_>,
-    owner: Option<OwnerScope<'_>>,
+    owner: OwnerScope<'_>,
 ) -> Option<ReceiverType> {
     if is_byte_slice_type(type_text) {
         return Some(ReceiverType::ByteSlice);
@@ -3407,39 +3405,47 @@ fn named_or_slice(
     }
     // A test file that imports the name from outside the workspace, renames
     // another item to it, aliases it, or declares it in the test's own
-    // module scope binds a different type than the workspace declaration.
+    // module scope — in its own file (#6905) or in an out-of-line parent
+    // module (#6950) — binds a different type than the workspace declaration.
     let source = test_source?;
     if imports_foreign(&test.file, base)
         || file_renames_to(source, base)
         || file_aliases_type(source, base)
-        || test_module_shadows_type(test, source, base, owner)
+        || test_module_shadows_type(test, source, base, owner.in_file(&test.file))
+        || parent_chain_shadows_type(test, base, owner, index)
     {
         return None;
     }
     Some(ReceiverType::Named(base.to_string()))
 }
 
-/// A same-file owner, for the #6957 shadow exemption: the owner's own
-/// enclosing module holds the production declaration, so it is not a
-/// test-local shadow. Only the test file's own parse resolves it, so a
-/// cross-file owner supplies no scope and keeps the fail-closed check.
+/// The owner's identity, for the #6957 shadow exemption: the owner's own
+/// scope holds the production declaration, so it is not a test-local
+/// shadow. The single-file check resolves the scope in the test file's own
+/// parse only ([`OwnerScope::in_file`]); the parent-chain walk resolves it
+/// in whichever chain file holds the owner (#6950).
 #[derive(Clone, Copy)]
 pub(in crate::analysis) struct OwnerScope<'a> {
     name: &'a str,
     start_line: usize,
+    file: &'a Path,
 }
 
 impl<'a> OwnerScope<'a> {
-    /// A scope for a same-file owner, or `None` when the owner lives in
-    /// another file and keeps the fail-closed shadow check. Related-test
-    /// reach reuses the #6957 exemption through this constructor (#6951).
-    pub(in crate::analysis) fn same_file(
-        name: &'a str,
-        start_line: usize,
-        owner_file: &Path,
-        test_file: &Path,
-    ) -> Option<Self> {
-        (test_file == owner_file).then_some(Self { name, start_line })
+    /// The owner's total identity.
+    pub(in crate::analysis) fn new(name: &'a str, start_line: usize, file: &'a Path) -> Self {
+        Self {
+            name,
+            start_line,
+            file,
+        }
+    }
+
+    /// This scope when the owner lives in `test_file`, or `None` when a
+    /// cross-file owner keeps the fail-closed single-file check.
+    /// Related-test reach reuses the #6957 exemption through this (#6951).
+    pub(in crate::analysis) fn in_file(&self, test_file: &Path) -> Option<Self> {
+        (test_file == self.file).then_some(*self)
     }
 }
 
@@ -3541,6 +3547,95 @@ pub(in crate::analysis) fn test_module_shadows_type(
         })
 }
 
+/// Whether an out-of-line parent module of the test file declares the
+/// receiver type name (#6950): the parent chain through out-of-line `mod`
+/// declarations (the test file's composed role provenance) is the test's
+/// enclosing module scope beyond its own file. A `struct`, `enum`, `union`
+/// or `type` alias that is a direct item of a parent file's root shadows
+/// the production type for the test exactly as an enclosing inline
+/// declaration does (#6905), so a binding of that name names the
+/// test-local type and the pin is refused.
+///
+/// Only parent roots count: the module-declaration producer emits
+/// top-level declarations only, so a recorded edge's parent scope is the
+/// file root, and a sibling inline module is out of scope by the same
+/// precision rule as same-file siblings. The test file's own root stays
+/// exempt (the #6905 single-file behavior, via
+/// [`test_module_shadows_type`]); each parent root counts unless it is the
+/// owner's own scope — the file holding the owner with the owner at its
+/// root (the transposed #6957 exemption).
+///
+/// Shared with related-test classification like [`test_module_shadows_type`]:
+/// a shadowed receiver also refuses `direct_owner_call` reach credit.
+/// Fail-closed throughout: an unresolved chain
+/// (`rust_module_ambiguous_parent` and its siblings), an `include!` edge
+/// (whose scope needs site localization this lexical check does not do), a
+/// missing parent file, and an unparseable parent that textually declares
+/// the name all refuse rather than guess. A parent that textually declares
+/// the name nowhere needs no parse.
+pub(in crate::analysis) fn parent_chain_shadows_type(
+    test: &TestSummary,
+    base: &str,
+    owner: OwnerScope<'_>,
+    index: &RustIndex,
+) -> bool {
+    let Some(facts) = index.files().get(&test.file) else {
+        return false;
+    };
+    let chain = &facts.role_provenance;
+    if chain.edges.is_empty() {
+        return false;
+    }
+    if chain.earliest_unresolved_reason.is_some() {
+        return true;
+    }
+    chain.edges.iter().any(|edge| {
+        if edge.kind != SourceRoleProvenanceEdgeKind::Module {
+            return true;
+        }
+        let Some(parent) = index.files().get(&edge.parent) else {
+            return true;
+        };
+        parent_root_shadows_type(&parent.source, &edge.parent, base, owner)
+    })
+}
+
+/// Whether one parent file's root declares the receiver type name: the
+/// per-edge step of [`parent_chain_shadows_type`]. The owner's own root
+/// (the file holding a root-level owner) is the production declaration's
+/// scope, never a shadow; every other declaring root refuses.
+fn parent_root_shadows_type(
+    parent_source: &str,
+    parent_file: &Path,
+    base: &str,
+    owner: OwnerScope<'_>,
+) -> bool {
+    let masked = mask_comments_and_strings(parent_source);
+    // `r#Window` denotes `Window`: a raw-identifier declaration shadows too.
+    let raw = format!("r#{base}");
+    if !declares_type(&masked, base)
+        && !masked.contains(raw.as_str())
+        && !file_aliases_type(parent_source, base)
+    {
+        return false;
+    }
+    let Some(parse) = parse_clean_source_file(parent_source) else {
+        return true;
+    };
+    let root = parse.tree().syntax().clone();
+    if !root
+        .children()
+        .filter_map(ast::Item::cast)
+        .any(|item| module_item_names_type(&item, base))
+    {
+        return false;
+    }
+    if owner.file == parent_file && owner_at_file_root(&root, parent_source, owner) {
+        return false;
+    }
+    true
+}
+
 /// The text range of the inline module directly enclosing the owner
 /// (#6957): for inline code the owner's own nearest enclosing `mod`
 /// is the `impl`'s module, and a same-name type declared there is the
@@ -3554,6 +3649,36 @@ fn owner_enclosing_module(
     source: &str,
     owner: OwnerScope<'_>,
 ) -> Option<TextRange> {
+    resolve_owner_fn(root, source, owner)?
+        .syntax()
+        .ancestors()
+        .filter_map(ast::Module::cast)
+        .next()
+        .map(|module| module.syntax().text_range())
+}
+
+/// Whether the owner fn resolves in `source` at the file root: exactly one
+/// same-name `fn` spans the owner's start line, with no enclosing inline
+/// module (#6950). A parent-file root holding both the receiver type and a
+/// root-level owner is the production scope, not a shadow; an unresolvable
+/// owner resolves to no scope and keeps the fail-closed check.
+fn owner_at_file_root(root: &SyntaxNode, source: &str, owner: OwnerScope<'_>) -> bool {
+    resolve_owner_fn(root, source, owner).is_some_and(|found| {
+        found
+            .syntax()
+            .ancestors()
+            .filter_map(ast::Module::cast)
+            .next()
+            .is_none()
+    })
+}
+
+/// The owner's `fn` node in this file's parse: exactly one same-name `fn`
+/// spanning the owner's start line. Byte-exact ancestry, not line spans,
+/// decides, so a same-line sibling module is never the owner's scope; a
+/// nested same-name `fn` sharing the owner's start line resolves to no
+/// scope rather than the wrong one.
+fn resolve_owner_fn(root: &SyntaxNode, source: &str, owner: OwnerScope<'_>) -> Option<ast::Fn> {
     // 1-based file lines, matching `FunctionSummary`.
     let line_of = |offset: u32| source[..offset as usize].matches('\n').count() + 1;
     let name = owner.name.strip_prefix("r#").unwrap_or(owner.name);
@@ -3569,17 +3694,7 @@ fn owner_enclosing_module(
         }
     });
     let found = owners.next()?;
-    // A nested same-name `fn` sharing the owner's start line resolves to no
-    // scope rather than the wrong module.
-    if owners.next().is_some() {
-        return None;
-    }
-    found
-        .syntax()
-        .ancestors()
-        .filter_map(ast::Module::cast)
-        .next()
-        .map(|module| module.syntax().text_range())
+    owners.next().is_none().then_some(found)
 }
 
 /// Whether a direct module item declares the type name `base` (`r#Window`

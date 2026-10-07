@@ -4266,6 +4266,48 @@
           "class": "weakly_exposed"
         }
       ]
+    },
+    {
+      "id": "rust_owner_pin_out_of_line_test_module_shadow",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/owner_return_pin_out_of_line_test_module_shadow",
+      "vector": "owner_return_pin_out_of_line_test_module_receiver_shadow",
+      "probe_family": "field_construction",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "expected_oracle",
+          "kind": "exact_value",
+          "strength": "strong"
+        },
+        {
+          "type": "expected_related_test",
+          "name": "a_clone_equals_its_original",
+          "file": "src/helpers/window_tests.rs",
+          "line": 4,
+          "kind": "exact_value",
+          "strength": "strong",
+          "relation_reason": "weak_token_substring"
+        },
+        {
+          "type": "maximum_class",
+          "class": "weakly_exposed"
+        }
+      ]
     }
   ]
 }

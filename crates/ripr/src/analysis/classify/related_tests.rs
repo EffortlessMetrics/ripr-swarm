@@ -948,8 +948,9 @@ fn find_related_tests_with_candidates<'a>(
             // direct call. An impl method whose name has other workspace
             // definitions cannot be `direct_owner_call` until the receiver
             // is bound to this impl (#4760). A receiver whose type the
-            // test's own module shadows is name-only even when unique
-            // (#6951).
+            // test's own module shadows is name-only even when unique,
+            // whether the shadow is inline (#6951) or in an out-of-line
+            // parent module (#6950).
             let test_source = index
                 .files()
                 .get(&test.file)
@@ -960,6 +961,7 @@ fn find_related_tests_with_candidates<'a>(
                 owner_name,
                 indexed_same_name_count,
                 test_source,
+                index,
             )
         } else if helper_chain_reaches {
             // The test calls a function that reaches the owner through
@@ -2599,6 +2601,7 @@ fn owner_call_relation_reason(
     owner_name: &str,
     indexed_same_name_count: usize,
     test_source: Option<&str>,
+    index: &RustIndex,
 ) -> RelationReason {
     let Some(owner) = owner_fn else {
         return RelationReason::DirectOwnerCall;
@@ -2612,18 +2615,21 @@ fn owner_call_relation_reason(
     // owner pin. A shadowed receiver keeps a name-only relation instead of
     // direct production reach, in both the unique-name and ambiguous-name
     // branches. No source (or no shadow) preserves existing credit. The
-    // owner's own enclosing module is not a shadow (#6957), so a
-    // same-file owner supplies its scope; a cross-file owner keeps the
-    // fail-closed check.
-    let owner_scope = super::owner_pin::OwnerScope::same_file(
-        owner.name.as_str(),
-        owner.start_line,
-        &owner.file,
-        &test.file,
-    );
+    // owner's own scope is not a shadow (#6957), so a same-file owner
+    // supplies its scope while a cross-file owner keeps the fail-closed
+    // single-file check; an out-of-line parent module declaring the type
+    // refuses the same way (#6950).
+    let owner_scope =
+        super::owner_pin::OwnerScope::new(owner.name.as_str(), owner.start_line, &owner.file);
     if test_source.is_some_and(|source| {
-        super::owner_pin::test_module_shadows_type(test, source, &impl_type, owner_scope)
-    }) {
+        super::owner_pin::test_module_shadows_type(
+            test,
+            source,
+            &impl_type,
+            owner_scope.in_file(&test.file),
+        )
+    }) || super::owner_pin::parent_chain_shadows_type(test, &impl_type, owner_scope, index)
+    {
         return RelationReason::WeakTokenSubstring;
     }
     if indexed_same_name_count <= 1 {
@@ -2684,7 +2690,10 @@ pub(in crate::analysis) fn body_contains_owner_call(body: &str, owner_name: &str
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::analysis::facts::{FileFacts, FunctionSourceRole};
+    use crate::analysis::facts::{
+        FileFacts, FunctionSourceRole, SourceRoleProvenance, SourceRoleProvenanceEdge,
+        SourceRoleProvenanceEdgeKind,
+    };
     use crate::analysis::rust_index::{CallFact, OracleFact, extract_identifier_tokens};
     use crate::domain::{
         DeltaKind, OracleKind, OracleStrength, ProbeFamily, ProbeId, SourceLocation, SymbolId,
@@ -3343,6 +3352,207 @@ mod tests {
     /// Two-impl shape with the owner's type shadowed in `mod tests`. The
     /// test fn spans lines 16-19.
     const SHADOWED_WHILE_SOME_SOURCE: &str = "pub struct WhileSome {\n    inner: Vec<Option<u32>>,\n}\n\npub struct Combinations {\n    remaining: u32,\n}\n\n#[cfg(test)]\nmod tests {\n    struct WhileSome {\n        inner: Vec<Option<u32>>,\n    }\n\n    #[test]\n    fn while_some_size_hint_upper_bound() {\n        let it = WhileSome { inner: vec![Some(1)] };\n        assert_eq!(it.size_hint().1, Some(1));\n    }\n}\n";
+
+    /// #6950: production `Window` with a hand-written `Clone` (`fn clone`
+    /// on line 7) and an out-of-line `#[cfg(test)] mod helpers;` (`mod`
+    /// token on line 16).
+    const OUT_OF_LINE_LIB_SOURCE: &str = "pub struct Window {\n    start: u32,\n    end: u32,\n}\n\nimpl Clone for Window {\n    fn clone(&self) -> Self {\n        Window {\n            start: self.start,\n            end: self.end,\n        }\n    }\n}\n\n#[cfg(test)]\nmod helpers;\n";
+
+    /// #6950: the `helpers` parent module declares its own `Window` above
+    /// its `mod window_tests;` (`mod` token on line 6).
+    const OUT_OF_LINE_HELPERS_SOURCE: &str =
+        "pub struct Window {\n    start: u32,\n    end: u32,\n}\n\nmod window_tests;\n";
+
+    /// #6950 precision: the same `helpers` module without the shadow
+    /// (`mod` token on line 1).
+    const OUT_OF_LINE_HELPERS_PLAIN_SOURCE: &str = "mod window_tests;\n";
+
+    /// #6950: the nested child test binds `Window` (the `helpers` shadow)
+    /// and clones it. The test fn spans lines 4-7.
+    const OUT_OF_LINE_CHILD_SOURCE: &str = "use super::*;\n\n#[test]\nfn a_clone_equals_its_original() {\n    let window = Window { start: 3, end: 9 };\n    assert_eq!(window.clone(), window);\n}\n";
+
+    /// #6950: the nested out-of-line shape (production `clone` owner in
+    /// `src/lib.rs`, child test calling `clone`) and the test's relation
+    /// reason. `lib_source` is the owner's file content, `parents` are
+    /// additional indexed files, and `chain` is the test file's composed
+    /// provenance.
+    fn out_of_line_clone_relation(
+        lib_source: &str,
+        parents: &[(&str, &str)],
+        chain: SourceRoleProvenance,
+    ) -> RelationReason {
+        let mut owner = impl_function("src/lib.rs", "clone", "impl Clone for Window");
+        owner.start_line = 7;
+        let mut child_test = test_with_call(
+            "src/helpers/window_tests.rs",
+            "a_clone_equals_its_original",
+            "let window = Window { start: 3, end: 9 };\nassert_eq!(window.clone(), window);",
+            "clone",
+        );
+        child_test.start_line = 4;
+        child_test.end_line = 7;
+        let mut index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions: vec![owner.clone()],
+            tests: vec![child_test],
+            ..Default::default()
+        });
+        with_source(&mut index, "src/lib.rs", lib_source);
+        for (file, source) in parents {
+            with_source(&mut index, file, source);
+        }
+        with_source_provenance(
+            &mut index,
+            "src/helpers/window_tests.rs",
+            OUT_OF_LINE_CHILD_SOURCE,
+            chain,
+        );
+        let probe = probe("src/lib.rs", "start: self.start");
+        let related = find_related_tests(&probe, Some(&owner), &index, true, None, None);
+        assert_eq!(related.len(), 1, "the same-named call is still related");
+        related[0].1
+    }
+
+    /// The composed two-edge chain for the #6950 shape: `src/lib.rs`
+    /// declares `mod helpers;`, which declares `mod window_tests;`.
+    fn out_of_line_chain() -> SourceRoleProvenance {
+        SourceRoleProvenance {
+            edges: vec![
+                composed_module_edge("src/lib.rs", "src/helpers.rs", "helpers", 16, true),
+                composed_module_edge(
+                    "src/helpers.rs",
+                    "src/helpers/window_tests.rs",
+                    "window_tests",
+                    6,
+                    false,
+                ),
+            ],
+            earliest_unresolved_reason: None,
+        }
+    }
+
+    /// #6950 (the out-of-line analog of the #6951 shadow test): the
+    /// `helpers` parent module declares the receiver, so the nested child
+    /// test's call is name-only, not `direct_owner_call`, even though the
+    /// child file itself declares nothing.
+    #[test]
+    fn given_out_of_line_parent_shadow_when_test_calls_owner_method_then_name_only_relation() {
+        let reason = out_of_line_clone_relation(
+            OUT_OF_LINE_LIB_SOURCE,
+            &[("src/helpers.rs", OUT_OF_LINE_HELPERS_SOURCE)],
+            out_of_line_chain(),
+        );
+        assert_eq!(
+            reason,
+            RelationReason::WeakTokenSubstring,
+            "a parent-chain shadow cannot be direct_owner_call"
+        );
+    }
+
+    /// #6950 precision: the same nested layout without the parent shadow
+    /// keeps `direct_owner_call`. The production root stays exempt as the
+    /// owner's own scope.
+    #[test]
+    fn given_out_of_line_test_without_parent_shadow_when_test_calls_owner_then_direct() {
+        let reason = out_of_line_clone_relation(
+            OUT_OF_LINE_LIB_SOURCE,
+            &[("src/helpers.rs", OUT_OF_LINE_HELPERS_PLAIN_SOURCE)],
+            SourceRoleProvenance {
+                edges: vec![
+                    composed_module_edge("src/lib.rs", "src/helpers.rs", "helpers", 16, true),
+                    composed_module_edge(
+                        "src/helpers.rs",
+                        "src/helpers/window_tests.rs",
+                        "window_tests",
+                        1,
+                        false,
+                    ),
+                ],
+                earliest_unresolved_reason: None,
+            },
+        );
+        assert_eq!(reason, RelationReason::DirectOwnerCall);
+    }
+
+    /// #6950 fail-closed: a parent chain ripr cannot resolve refuses
+    /// `direct_owner_call` rather than guessing the receiver. Each variant
+    /// carries no shadowing declaration, so the refusal comes from the
+    /// chain alone: an ambiguous parent, an `include!` edge (whose scope
+    /// needs site localization this check does not do), a missing parent
+    /// file, and an unparseable parent that textually declares the name.
+    #[test]
+    fn given_out_of_line_test_when_parent_chain_is_unresolvable_then_name_only_relation() {
+        let plain = OUT_OF_LINE_HELPERS_PLAIN_SOURCE;
+        let lib = "pub fn placeholder() {}\n";
+        let unparseable = "pub struct Window;\nmod window_tests;\nfn broken( {\n";
+        assert!(
+            crate::analysis::syntax::parse_clean_source_file(unparseable).is_none(),
+            "fixture: the parent must fail to parse"
+        );
+        let mut ambiguous = out_of_line_chain();
+        ambiguous.earliest_unresolved_reason = Some("rust_module_ambiguous_parent".to_string());
+        let no_parents: Vec<(&str, &str)> = vec![];
+        let variants = vec![
+            (
+                "ambiguous parent",
+                OUT_OF_LINE_LIB_SOURCE,
+                vec![("src/helpers.rs", plain)],
+                ambiguous,
+            ),
+            (
+                "include edge",
+                lib,
+                no_parents.clone(),
+                SourceRoleProvenance {
+                    edges: vec![SourceRoleProvenanceEdge {
+                        kind: SourceRoleProvenanceEdgeKind::Include,
+                        parent: PathBuf::from("src/lib.rs"),
+                        child: PathBuf::from("src/helpers/window_tests.rs"),
+                        declaration: "include!(\"window_tests.rs\")".to_string(),
+                        line: 1,
+                        requires_test: false,
+                    }],
+                    earliest_unresolved_reason: None,
+                },
+            ),
+            (
+                "missing parent",
+                lib,
+                no_parents,
+                SourceRoleProvenance {
+                    edges: vec![composed_module_edge(
+                        "src/missing.rs",
+                        "src/helpers/window_tests.rs",
+                        "window_tests",
+                        1,
+                        false,
+                    )],
+                    earliest_unresolved_reason: None,
+                },
+            ),
+            (
+                "unparseable parent",
+                lib,
+                vec![("src/helpers.rs", unparseable)],
+                SourceRoleProvenance {
+                    edges: vec![composed_module_edge(
+                        "src/helpers.rs",
+                        "src/helpers/window_tests.rs",
+                        "window_tests",
+                        2,
+                        false,
+                    )],
+                    earliest_unresolved_reason: None,
+                },
+            ),
+        ];
+        for (label, lib_source, parents, chain) in variants {
+            assert_eq!(
+                out_of_line_clone_relation(lib_source, &parents, chain),
+                RelationReason::WeakTokenSubstring,
+                "{label}: an unresolvable parent chain cannot be direct_owner_call"
+            );
+        }
+    }
 
     /// #2971 scope control: the same workspace as the positive control above,
     /// reached through a partial index. The diff path indexes only the changed
@@ -5058,6 +5268,42 @@ fn crate_c_score_test() {
                 ..FileFacts::default()
             },
         );
+    }
+
+    /// [`with_source`] with composed module provenance: `chain` is the
+    /// file's `role_provenance`, exactly as role composition records it.
+    fn with_source_provenance(
+        index: &mut RustIndex,
+        file: &str,
+        source: &str,
+        chain: SourceRoleProvenance,
+    ) {
+        index.insert_file_only(
+            PathBuf::from(file),
+            FileFacts {
+                source: source.into(),
+                role_provenance: chain,
+                ..FileFacts::default()
+            },
+        );
+    }
+
+    /// One composed out-of-line `mod` edge.
+    fn composed_module_edge(
+        parent: &str,
+        child: &str,
+        name: &str,
+        line: usize,
+        requires_test: bool,
+    ) -> SourceRoleProvenanceEdge {
+        SourceRoleProvenanceEdge {
+            kind: SourceRoleProvenanceEdgeKind::Module,
+            parent: PathBuf::from(parent),
+            child: PathBuf::from(child),
+            declaration: format!("mod {name};"),
+            line,
+            requires_test,
+        }
     }
 
     /// #4558 review: the owner's crate brings a same-named type in from
