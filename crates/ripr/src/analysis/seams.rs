@@ -373,6 +373,76 @@ pub(crate) struct RepoSeam {
     required_discriminator: RequiredDiscriminator,
     expected_sink: ExpectedSink,
     span: Option<SeamSpan>,
+    /// How a test calls the owner (#5357). Presentation only: not part of
+    /// the seam ID. A seam deserialized from a cache entry written before
+    /// the field existed reads `Unknown`, which renders no call.
+    #[serde(default)]
+    owner_call: OwnerCallShape,
+}
+
+/// How a test can call a seam's owner function, read from the parser's item
+/// facts (#5357). Suggested assertions name the owner through this, so a
+/// method is never presented as a free-function call.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub(crate) enum OwnerCallShape {
+    /// Not established: lexical fallback, a cache entry older than the fact,
+    /// a trait default method, a function-local `fn`, or an impl whose self
+    /// type is not a plain named path. Renders no call syntax.
+    #[default]
+    Unknown,
+    /// A module-level `fn`: `name(args)`.
+    Free,
+    /// An impl method with a `self` receiver: `<receiver>.name(args)`.
+    Method { self_type: String },
+    /// An impl associated function without `self`: `Type::name(args)`.
+    Associated { self_type: String },
+}
+
+impl OwnerCallShape {
+    /// Derive the call shape from the owner's parser facts. Every path that
+    /// is not positively established stays `Unknown`.
+    pub(crate) fn from_function(function: &crate::analysis::facts::FunctionFact) -> Self {
+        use crate::analysis::facts::{FunctionContainer, FunctionImplContext};
+        match (&function.item.container, &function.impl_context) {
+            (FunctionContainer::Free, FunctionImplContext::Free) => Self::Free,
+            (
+                FunctionContainer::Inherent { .. } | FunctionContainer::TraitImpl { .. },
+                FunctionImplContext::Impl { self_type },
+            ) if !self_type.trim().is_empty() => {
+                let self_type = self_type.clone();
+                if function.item.has_self_param {
+                    Self::Method { self_type }
+                } else {
+                    Self::Associated { self_type }
+                }
+            }
+            _ => Self::Unknown,
+        }
+    }
+
+    /// Render a call of `name` with `arguments` placed between the
+    /// parentheses. `Unknown` renders a placeholder comment naming the owner
+    /// instead of a call that may not compile; an `arguments` placeholder
+    /// comment is folded into it.
+    pub(crate) fn call(&self, name: &str, arguments: &str) -> String {
+        match self {
+            Self::Free => format!("{name}({arguments})"),
+            Self::Method { self_type } => {
+                format!("/* {self_type} value */.{name}({arguments})")
+            }
+            Self::Associated { self_type } => format!("{self_type}::{name}({arguments})"),
+            Self::Unknown => {
+                let inner = arguments
+                    .trim()
+                    .strip_prefix("/*")
+                    .and_then(|rest| rest.strip_suffix("*/"))
+                    .unwrap_or(arguments)
+                    .trim();
+                format!("/* call {name} (receiver or path not established) with {inner} */")
+            }
+        }
+    }
 }
 
 impl RepoSeam {
@@ -414,6 +484,7 @@ impl RepoSeam {
             required_discriminator,
             expected_sink,
             span: None,
+            owner_call: OwnerCallShape::Unknown,
         }
     }
 
@@ -421,6 +492,12 @@ impl RepoSeam {
     /// file/owner/kind/byte offset only, so spans never change identity.
     pub(crate) fn with_span(mut self, span: SeamSpan) -> Self {
         self.span = Some(span);
+        self
+    }
+
+    /// Attach the owner's call shape read from the parser (#5357).
+    pub(crate) fn with_owner_call(mut self, owner_call: OwnerCallShape) -> Self {
+        self.owner_call = owner_call;
         self
     }
 
@@ -453,6 +530,9 @@ impl RepoSeam {
     }
     pub(crate) fn expected_sink(&self) -> ExpectedSink {
         self.expected_sink
+    }
+    pub(crate) fn owner_call(&self) -> &OwnerCallShape {
+        &self.owner_call
     }
 }
 
@@ -923,5 +1003,62 @@ mod tests {
             }
             other => Err(format!("expected BoundaryValue, got {}", other.as_str())),
         }
+    }
+
+    /// #5357: the call shape decides the call syntax. Before the fix every
+    /// shape rendered as the `Free` form, so the method and associated cases
+    /// below failed and the `Unknown` case presented a free call.
+    #[test]
+    fn owner_call_shape_renders_receiver_path_or_honest_placeholder() {
+        let hint = "/* boundary input where unit == 0 */";
+        assert_eq!(
+            OwnerCallShape::Free.call("clamp_units", hint),
+            "clamp_units(/* boundary input where unit == 0 */)"
+        );
+        assert_eq!(
+            OwnerCallShape::Method {
+                self_type: "ByteSize".to_string()
+            }
+            .call("as_whole_units", hint),
+            "/* ByteSize value */.as_whole_units(/* boundary input where unit == 0 */)"
+        );
+        assert_eq!(
+            OwnerCallShape::Associated {
+                self_type: "ByteSize".to_string()
+            }
+            .call("from_kib", "/* input */"),
+            "ByteSize::from_kib(/* input */)"
+        );
+        let unknown = OwnerCallShape::Unknown.call("as_whole_units", hint);
+        assert_eq!(
+            unknown,
+            "/* call as_whole_units (receiver or path not established) with boundary input where unit == 0 */"
+        );
+        assert!(
+            !unknown.contains("as_whole_units("),
+            "an unestablished shape must not present a call: {unknown}"
+        );
+        assert_eq!(
+            OwnerCallShape::Unknown.call("emit", "..."),
+            "/* call emit (receiver or path not established) with ... */"
+        );
+    }
+
+    /// A seam built without parser facts, or read from a cache entry older
+    /// than the field, has no established call shape.
+    #[test]
+    fn owner_call_defaults_to_unknown_for_new_and_legacy_seams() -> Result<(), String> {
+        let seam = make_seam("src/lib.rs", "src/lib.rs::f", SeamKind::ReturnValue, 0);
+        assert_eq!(seam.owner_call(), &OwnerCallShape::Unknown);
+        let mut legacy = serde_json::to_value(&seam).map_err(|err| err.to_string())?;
+        legacy
+            .as_object_mut()
+            .ok_or("seam serializes as an object")?
+            .remove("owner_call");
+        let restored: RepoSeam = serde_json::from_value(legacy).map_err(|err| err.to_string())?;
+        assert_eq!(restored.owner_call(), &OwnerCallShape::Unknown);
+        let shaped = seam.with_owner_call(OwnerCallShape::Free);
+        assert_eq!(shaped.owner_call(), &OwnerCallShape::Free);
+        Ok(())
     }
 }

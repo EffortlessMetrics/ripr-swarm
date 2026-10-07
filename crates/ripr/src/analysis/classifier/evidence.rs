@@ -53,6 +53,9 @@ pub(in crate::analysis) struct AssertionRefusalNote {
     pub(in crate::analysis) location: String,
     pub(in crate::analysis) reason: String,
     pub(in crate::analysis) calls_owner: bool,
+    /// Whether the refusal is a limit of ripr's own reading rather than a
+    /// shape that can keep the assertion from running (RIPR-SPEC-0240).
+    pub(in crate::analysis) is_analyzer_limit: bool,
 }
 
 impl ClassifiedProbeEvidence {
@@ -386,15 +389,13 @@ impl ClassifiedProbeEvidence {
         let mut evidence =
             evidence_summaries([&reach, &infect, &propagate, &observe, &discriminate]);
         // Disclose a refused related `assert_eq!` whenever the refusal can
-        // matter: the reveal is not fully established. One whose text calls
-        // the changed owner is preferred, since an unrelated refused
-        // assertion (`if flag { assert_eq!(1, 1) }`) could not observe the
-        // change even if it were credited.
+        // matter: the reveal is not fully established. See
+        // `preferred_refusal_note` for which one.
         let owner_name = context.owner_fn.map_or("", |owner| owner.name.as_str());
         let assertion_refusal = (observe.summary == ASSERTION_CONTEXT_UNESTABLISHED
             || discriminate.state != StageState::Yes)
             .then(|| {
-                let mut first = None;
+                let mut notes = Vec::new();
                 for (test, _) in &context.related_tests {
                     for assertion in &test.assertions {
                         let Some(refusal) = pin_syntax.equality_assertion_refusal(
@@ -415,14 +416,12 @@ impl ClassifiedProbeEvidence {
                             ),
                             reason: refusal.describe(),
                             calls_owner,
+                            is_analyzer_limit: refusal.is_analyzer_limit(),
                         };
-                        if calls_owner {
-                            return Some(note);
-                        }
-                        first.get_or_insert(note);
+                        notes.push(note);
                     }
                 }
-                first
+                preferred_refusal_note(notes)
             })
             .flatten();
         if let Some(note) = &assertion_refusal {
@@ -749,6 +748,23 @@ fn memoized_file_defeat(
         .or_default()
         .insert(callee.to_string(), defeats);
     defeats
+}
+
+/// The refused `assert_eq!` to disclose. One whose text calls the changed
+/// owner comes first, since an unrelated refused assertion
+/// (`if flag { assert_eq!(1, 1) }`) could not observe the change even if it
+/// were credited. Among those, a refusal that is not an analyzer limit comes
+/// first (#6903): it is what keeps the gap, so the next step must not offer
+/// the static-limit reading a limit refusal earns.
+fn preferred_refusal_note(notes: Vec<AssertionRefusalNote>) -> Option<AssertionRefusalNote> {
+    let rank = |note: &AssertionRefusalNote| match (note.calls_owner, note.is_analyzer_limit) {
+        (true, false) => 0,
+        (true, true) => 1,
+        (false, _) => 2,
+    };
+    // `min_by_key` keeps the first of equal ranks, so test order still
+    // decides within a rank.
+    notes.into_iter().min_by_key(rank)
 }
 
 #[cfg(test)]
@@ -1109,6 +1125,46 @@ mod tests {
             impl_context: Default::default(),
         };
         assert_eq!(owner_local_binding_names(&owner), vec!["table".to_string()]);
+    }
+
+    #[test]
+    fn preferred_refusal_note_puts_a_non_limit_owner_call_first() {
+        use super::{AssertionRefusalNote, preferred_refusal_note};
+        let note = |name: &str, calls_owner, is_analyzer_limit| AssertionRefusalNote {
+            location: name.to_string(),
+            reason: String::new(),
+            calls_owner,
+            is_analyzer_limit,
+        };
+        let pick = |notes: Vec<AssertionRefusalNote>| {
+            preferred_refusal_note(notes).map(|note| note.location)
+        };
+        // #6903: a limit refusal listed first must not front for the
+        // `if flag { assert_eq!(owner(..), ..) }` that keeps the gap.
+        assert_eq!(
+            pick(vec![
+                note("unrelated", false, false),
+                note("limit", true, true),
+                note("branch", true, false),
+            ]),
+            Some("branch".to_string())
+        );
+        assert_eq!(
+            pick(vec![
+                note("unrelated", false, false),
+                note("limit", true, true)
+            ]),
+            Some("limit".to_string())
+        );
+        // Without an owner call the first refusal in test order is kept.
+        assert_eq!(
+            pick(vec![
+                note("first", false, true),
+                note("second", false, false)
+            ]),
+            Some("first".to_string())
+        );
+        assert_eq!(pick(Vec::new()), None);
     }
 
     // --- #5830 review (A1): the caller walk names the owner by syntax ---

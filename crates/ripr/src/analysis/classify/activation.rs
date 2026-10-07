@@ -1,5 +1,7 @@
 use super::super::rust_index::{FunctionSummary, TestSummary};
-use super::text::{delimited_contents_at, enum_variant_values, exact_error_variant};
+use super::text::{
+    delimited_contents_at, enum_variant_values, exact_error_variant, path_value_is_constant,
+};
 use crate::domain::*;
 
 #[cfg(test)]
@@ -200,6 +202,17 @@ impl TestValueFacts {
     }
 }
 
+/// The value context of a qualified path token found in a test (#5357):
+/// `Constant` when the path's spelling establishes a constant, otherwise the
+/// historical `EnumVariant`.
+fn path_value_context(path: &str) -> ValueContext {
+    if path_value_is_constant(path) {
+        ValueContext::Constant
+    } else {
+        ValueContext::EnumVariant
+    }
+}
+
 fn value_facts_for_test(test: &TestSummary, owner_fn: Option<&FunctionSummary>) -> Vec<ValueFact> {
     let owner_name = owner_fn.map(|owner| owner.name.as_str()).unwrap_or("");
     let parameters = owner_fn.map(function_parameters).unwrap_or_default();
@@ -229,8 +242,8 @@ fn value_facts_for_test(test: &TestSummary, owner_fn: Option<&FunctionSummary>) 
                 facts.push(ValueFact {
                     line: call.line,
                     text: call.text.clone(),
+                    context: path_value_context(&value),
                     value,
-                    context: ValueContext::EnumVariant,
                 });
             }
         }
@@ -255,8 +268,8 @@ fn value_facts_for_test(test: &TestSummary, owner_fn: Option<&FunctionSummary>) 
             facts.push(ValueFact {
                 line: assertion.line,
                 text: assertion.text.clone(),
+                context: path_value_context(&value),
                 value,
-                context: ValueContext::EnumVariant,
             });
         }
     }
@@ -4137,6 +4150,39 @@ assert_eq!(input.amount, 100);"#
                 .iter()
                 .any(|fact| fact.context == ValueContext::AssertionArgument && fact.value == "100")
         );
+    }
+
+    /// #5357: `crate::KIB` and `u64::MAX` were reported as "enum variant"
+    /// values. The path's own spelling decides; real variants keep the
+    /// label.
+    #[test]
+    fn value_facts_for_test_labels_path_constants_apart_from_enum_variants() {
+        let assertion = "assert_eq!(size.as_whole_units(crate::KIB), u64::MAX, Mode::Fast);";
+        let test = TestSummary {
+            name: "constants".to_string(),
+            file: PathBuf::from("tests/value.rs"),
+            start_line: 10,
+            end_line: 12,
+            body: assertion.to_string().into(),
+            calls: Vec::new(),
+            assertions: vec![oracle_fact(assertion, OracleKind::ExactValue)],
+            literals: Vec::new(),
+            attrs: Vec::new(),
+            nested_fn_names: Vec::new(),
+            let_bindings: Vec::new(),
+        };
+
+        let facts = value_facts_for_test(&test, None);
+        let context_of = |value: &str| {
+            facts
+                .iter()
+                .find(|fact| fact.value == value)
+                .map(|fact| fact.context.clone())
+        };
+
+        assert_eq!(context_of("crate::KIB"), Some(ValueContext::Constant));
+        assert_eq!(context_of("u64::MAX"), Some(ValueContext::Constant));
+        assert_eq!(context_of("Mode::Fast"), Some(ValueContext::EnumVariant));
     }
 
     #[test]

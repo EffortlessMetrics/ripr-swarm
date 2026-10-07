@@ -11,6 +11,7 @@ Linked issues:
 - #5310 (a mistyped `ripr plus` path cost the previous receipt)
 - #5595 (help and messages named copies that were not kept)
 - #6295 (a receipt `ripr plus` composed was never kept)
+- #6698 (a kept Markdown could belong to a different run than its JSON)
 - #6714 (tests checked only the message, not the files)
 
 Support-tier impact:
@@ -43,9 +44,16 @@ skipped every `indeterminate` receipt kept nothing `ripr plus` itself wrote.
   `evaluation_error` or `evaluation_timeout`), a receipt with no `status`, and
   unparseable JSON are never copied, so a second failure cannot replace the
   kept copy with an error.
-- The canonical Markdown is copied beside it as `ripr-plus.last-good.md` when
-  present; when absent, a saved Markdown from an older run is removed so the
-  pair never describes two runs.
+- The last-good JSON is saved first. Last-good Markdown is kept only when the
+  canonical Markdown is the projection of that JSON and this call saved it;
+  the copy is skipped when the saved path is already a regular file with those
+  bytes. A leftover
+  Markdown from another run is dropped only after that JSON save, so a failed
+  JSON copy leaves a previous matching pair intact and a newer JSON never sits
+  beside another run's Markdown. When the canonical Markdown cannot be read,
+  the JSON is still saved, leftover last-good Markdown is dropped, the message
+  does not name last-good Markdown as kept, and the read failure is a
+  Markdown-only failure.
 - The failure message names only the copies actually written. A composed copy
   is labelled with its status and cause. Every message says the copy describes
   an earlier run, may be stale for the current HEAD, and is not current
@@ -68,11 +76,20 @@ skipped every `indeterminate` receipt kept nothing `ripr plus` itself wrote.
   that were.
 - `--check` on a valid input makes no last-good files, and leaves a copy an
   earlier failure made byte for byte.
+- A mismatched canonical Markdown is not named as kept, and the leftover
+  last-good Markdown is dropped after the JSON save, including a read-only
+  leftover file. A failed JSON copy leaves a previous matching pair intact
+  and names no Markdown as kept.
+- When the canonical Markdown cannot be read, JSON is still saved, leftover
+  last-good Markdown is dropped, and the message does not name last-good
+  Markdown as kept.
 
 ## Non-Goals
 
-- Pairing a kept Markdown with its JSON beyond presence (#6698).
 - Treating a kept copy as evidence for any gate or badge.
+- A dedicated run-id field on the last-good pair. Pairing is by exact
+  Markdown projection of the saved JSON; two runs that render identical
+  Markdown cannot be told apart.
 
 ## Acceptance Examples
 

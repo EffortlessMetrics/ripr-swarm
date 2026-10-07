@@ -47,3 +47,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — gap_kept_ignored_test (5)
+
+Reason:
+RIPR-SPEC-0240: a non-limit assertion refusal no longer offers a static-limit reading (#6903)
+
+Command:
+`cargo xtask goldens bless gap_kept_ignored_test --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

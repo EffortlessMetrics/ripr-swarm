@@ -141,3 +141,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — error_path_oracle_execution_uncalled (12)
+
+Reason:
+RIPR-SPEC-0240: a non-limit assertion refusal no longer offers a static-limit reading (#6903)
+
+Command:
+`cargo xtask goldens bless error_path_oracle_execution_uncalled --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
