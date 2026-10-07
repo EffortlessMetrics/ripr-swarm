@@ -92,6 +92,11 @@ pub(in crate::analysis) struct OwnerPinSyntax {
     /// Disclosure memo: the first workspace-wide site per refused name, so
     /// naming a refusal does not rescan every file once per finding.
     workspace_macro_sites: RefCell<WorkspaceMacroSites>,
+    /// Disclosure memo: each test file's sites per refused name. A file's
+    /// sites depend only on the name and the index, and parsing the file
+    /// once per (probe, test, assertion) made a diff with many related tests
+    /// run for an hour.
+    test_file_macro_sites: RefCell<TestFileMacroSites>,
     by_file: RefCell<BTreeMap<PathBuf, OwnerPinAssertions>>,
     empty_macro_ambiguities: RefCell<BTreeMap<PathBuf, BTreeSet<String>>>,
     resolved_modules: OnceCell<BTreeSet<(PathBuf, usize, String)>>,
@@ -266,7 +271,13 @@ impl OwnerPinSyntax {
                 // rebinding; it outranks a workspace site that only may
                 // rebind the name, or the refusal would read as an analyzer
                 // limit (RIPR-SPEC-0240) for a macro that is really replaced.
-                let local = test_macro_binding_site(&name, test, index, &resolved);
+                let local = test_macro_binding_site(
+                    &name,
+                    test,
+                    index,
+                    &self.test_file_macro_sites,
+                    &resolved,
+                );
                 let site = if local.as_ref().is_some_and(|(_, site)| rebinds(site)) {
                     local
                 } else {
@@ -418,6 +429,7 @@ type ScopedMacroBindings = BTreeMap<PathBuf, Vec<(String, MacroBindingSite)>>;
 type CrateMacroBindings = BTreeMap<PathBuf, BTreeSet<String>>;
 /// Keyed by trusted name and the test's recognized root.
 type WorkspaceMacroSites = BTreeMap<(String, Option<PathBuf>), Option<(PathBuf, MacroBindingSite)>>;
+type TestFileMacroSites = BTreeMap<(String, PathBuf), Vec<(String, MacroBindingSite)>>;
 
 /// The crate root whose module tree holds `file`, when that root is one of
 /// Cargo's autodiscovered targets (`src/lib.rs`, `src/main.rs`,
@@ -808,16 +820,21 @@ fn test_macro_binding_site(
     name: &str,
     test: &TestSummary,
     index: &RustIndex,
+    memo: &RefCell<TestFileMacroSites>,
     module_resolved: &dyn Fn(&Path, usize, &str) -> bool,
 ) -> Option<(PathBuf, MacroBindingSite)> {
     if !NON_RETURNING_MACROS.contains(&name) {
         return None;
     }
     let facts = index.files().get(&test.file)?;
-    macro_binding_sites(name, &test.file, &facts.source, index, module_resolved)
-        .into_iter()
+    memo.borrow_mut()
+        .entry((name.to_string(), test.file.clone()))
+        .or_insert_with(|| {
+            macro_binding_sites(name, &test.file, &facts.source, index, module_resolved)
+        })
+        .iter()
         .find(|(_, site)| site_covers(site, test))
-        .map(|(_, site)| (test.file.clone(), site))
+        .map(|(_, site)| (test.file.clone(), site.clone()))
 }
 
 fn macro_binding_sites(
