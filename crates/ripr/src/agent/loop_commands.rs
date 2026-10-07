@@ -724,12 +724,8 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn bound_root_keeps_a_parent_segment_after_a_symlink() -> Result<(), String> {
-        let nonce = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_err(|err| err.to_string())?
-            .as_nanos();
-        let base =
-            std::env::temp_dir().join(format!("ripr-symlink-root-{}-{nonce}", std::process::id()));
+        let dir = RoundTripDir::new("symlink-root")?;
+        let base = &dir.path;
         for dir in ["outside/child", "outside/repo", "work/repo"] {
             std::fs::create_dir_all(base.join(dir)).map_err(|err| err.to_string())?;
         }
@@ -750,7 +746,6 @@ mod tests {
         let redirect = anchored_redirect_target(&through_link.to_string_lossy(), "target/out.json");
         let bound_canonical = canonical(&bound)?;
         let chained_canonical = canonical(&chained)?;
-        std::fs::remove_dir_all(&base).map_err(|err| err.to_string())?;
 
         assert_eq!(
             bound, through_link,

@@ -431,6 +431,34 @@ fn resolve_declared_path(root: &Path, declared: &str) -> PathBuf {
     }
 }
 
+/// Resolve a declared repo-exposure source under the bound root, or `None`
+/// when it escapes the root.
+///
+/// Clean `.`/`..` lexically before the containment check: `Path::starts_with`
+/// is component-wise on the raw path, so an un-normalized
+/// `<root>/../outside.json` would otherwise pass it. A relative path that
+/// stays inside the root is cleaned on its own and joined to the root,
+/// because a bound root may keep a `..` after a symlink (#6960) that the
+/// whole-path lexical clean would remove, failing the containment check and
+/// silently replacing the declared source with the default.
+fn contained_source_path(command_root: &Path, declared: &str) -> Option<PathBuf> {
+    let declared_path = Path::new(declared);
+    if !declared_path.is_absolute() {
+        let cleaned = lexically_clean(declared_path);
+        if matches!(
+            cleaned.components().next(),
+            Some(std::path::Component::Normal(_))
+        ) {
+            return Some(command_root.join(cleaned));
+        }
+    }
+    Some(lexically_clean(&resolve_declared_path(
+        command_root,
+        declared,
+    )))
+    .filter(|path| path.starts_with(command_root))
+}
+
 fn refresh_commands(
     root: &Path,
     gap_ledger_path: &Path,
@@ -455,11 +483,7 @@ fn refresh_commands(
     let command_root = bound_root_path(root);
     let default_source = DEFAULT_REPO_EXPOSURE_PATH;
     let source_path = source_path
-        // Clean `.`/`..` lexically before the containment check:
-        // `Path::starts_with` is component-wise on the raw path, so an
-        // un-normalized `<root>/../outside.json` would otherwise pass it.
-        .map(|path| lexically_clean(&resolve_declared_path(&command_root, path)))
-        .filter(|path| path.starts_with(&command_root))
+        .and_then(|path| contained_source_path(&command_root, path))
         .unwrap_or_else(|| command_root.join(default_source));
     let source_display = crate::output::outcome::display_path(&source_path);
     let ledger_display = crate::output::outcome::display_path(gap_ledger_path);
@@ -625,6 +649,59 @@ mod tests {
                 commands[1]
             );
         }
+        Ok(())
+    }
+
+    /// #6960 review: a bound root that keeps a `..` after a symlink must
+    /// still keep a declared relative source inside it, and an escaping
+    /// source must still fall back to the default.
+    #[cfg(unix)]
+    #[test]
+    fn declared_source_survives_a_root_that_keeps_a_symlink_parent() -> Result<(), String> {
+        let base = unique_test_dir("symlink-parent-declared-source");
+        for dir in ["outside/child", "outside/repo", "work/repo"] {
+            std::fs::create_dir_all(base.join(dir)).map_err(|err| err.to_string())?;
+        }
+        std::os::unix::fs::symlink(base.join("outside/child"), base.join("work/link"))
+            .map_err(|err| err.to_string())?;
+        let root = base.join("work/link/../repo");
+        let bound = bound_root_path(&root);
+        let cases = [
+            (
+                "reports/repo-exposure.json",
+                Some(bound.join("reports/repo-exposure.json")),
+            ),
+            (
+                "reports/./x/../repo-exposure.json",
+                Some(bound.join("reports/repo-exposure.json")),
+            ),
+            ("../outside.json", None),
+            ("reports/../../outside.json", None),
+        ];
+        let results: Vec<_> = cases
+            .iter()
+            .map(|(declared, _)| contained_source_path(&bound, declared))
+            .collect();
+        let commands = refresh_commands(
+            &root,
+            Path::new("out/gap-ledger.json"),
+            Some("repo_exposure"),
+            Some("reports/repo-exposure.json"),
+        );
+        std::fs::remove_dir_all(&base).map_err(|err| err.to_string())?;
+
+        // Fixture: the root really keeps its `..`.
+        assert_eq!(bound, root);
+        for ((declared, expected), actual) in cases.iter().zip(results) {
+            assert_eq!(&actual, expected, "declared {declared}");
+        }
+        let expected =
+            crate::output::outcome::display_path(&bound.join("reports/repo-exposure.json"));
+        assert!(
+            commands[1].contains(&shell_arg(&expected)),
+            "declared source must survive: {}",
+            commands[1]
+        );
         Ok(())
     }
 
