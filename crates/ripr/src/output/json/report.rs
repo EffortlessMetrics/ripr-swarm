@@ -473,6 +473,23 @@ pub(crate) fn render_with_config(
     if output.unanalyzed_working_tree {
         out.push_str(",\n  \"unanalyzed_working_tree\": true");
     }
+    // Additive advisory field: emitted when routed source or test files are
+    // untracked in the live repository, on both committed-history and
+    // working-tree reads, since neither read analyzes them (RIPR-SPEC-0112
+    // #5258, RIPR-SPEC-0116 amendment). Absent when the list is empty. This
+    // is the machine-readable form of the human/GitHub untracked-files notes;
+    // without it a zero-finding JSON report reads as complete while routed
+    // files were silently excluded (#5997 review).
+    if !output.untracked_working_tree_source_paths.is_empty() {
+        out.push_str(",\n");
+        array_field(
+            &mut out,
+            1,
+            "untracked_working_tree_source_paths",
+            &output.untracked_working_tree_source_paths,
+            false,
+        );
+    }
     // Additive advisory field — emitted only when preview-language files were
     // in scope. Absent for pure-Rust diffs (RIPR-SPEC-0082).
     if !output.preview_language_advisories.is_empty() {

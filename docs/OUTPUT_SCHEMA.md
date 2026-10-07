@@ -2065,8 +2065,8 @@ ALL of the following are true:
 
 Absent (not emitted) when `false`. Does not bump `schema_version`.
 
-This field closes the false-clean gap where `ripr check --base HEAD` (or a bare
-`ripr check` on the default branch) with an uncommitted `.rs` edit returns 0 probes and exit 0 — a result that is honest
+This field closes the false-clean gap where `ripr check --committed --base HEAD`
+with an uncommitted tracked `.rs` edit returns 0 probes and exit 0 — a result that is honest
 for the committed diff but misleading if the user assumes it covers their
 working-tree change. When `unanalyzed_working_tree: true` is present, the
 result is NOT a clean pass for the uncommitted changes.
@@ -2083,6 +2083,26 @@ edited README does not count), when `--diff <file>` or
 tracked edits in the analyzed diff. When the committed-content probe cannot
 run, the check fails with the git step named instead of analyzing mixed
 content.
+
+### `untracked_working_tree_source_paths` (top-level additive array, RIPR-SPEC-0116 amendment)
+
+Added as an additive optional top-level array of path strings. Emitted only
+when at least one routed source or test file is untracked in the live
+repository, on both committed-history and working-tree reads: committed
+history reads every file as committed, and the working-tree diff covers
+tracked files only, so in both cases the named files were not analyzed.
+Absent (not emitted) when the list is empty. Does not bump `schema_version`.
+
+This is the machine-readable form of the human and GitHub untracked-files
+notes (#5258, RIPR-SPEC-0112). Without it, a working-tree JSON report with
+zero findings reads as complete while routed files were silently excluded,
+because `unanalyzed_working_tree` stays absent on working-tree reads.
+
+Example:
+
+```json
+"untracked_working_tree_source_paths": ["src/new.rs"]
+```
 
 ### `base_commit`, `merge_base_commit`, and `head` (top-level additive, RIPR-SPEC-0116 amendment)
 

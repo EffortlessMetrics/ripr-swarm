@@ -19221,6 +19221,17 @@ fn check_untracked_files_keep_committed_default_and_working_tree_reads_name_them
             "an untracked-only tree must keep the committed-history default and disclose it:\n{untracked_only}"
         ));
     }
+    // #5997 review: the JSON report must name the excluded untracked files,
+    // not just flag that the working tree went unanalyzed.
+    let untracked_only_paths = untracked_only["untracked_working_tree_source_paths"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    if !untracked_only_paths.iter().any(|path| path == "src/new.rs") {
+        return Err(format!(
+            "an untracked-only tree must name the excluded file in JSON:\n{untracked_only}"
+        ));
+    }
     let untracked_only_human = human(&["check", "--root", &root_str]);
     if !untracked_only_human
         .contains("Untracked files (src/new.rs) are invisible to both; stage them first")
@@ -19257,6 +19268,17 @@ fn check_untracked_files_keep_committed_default_and_working_tree_reads_name_them
             "an empty default working-tree read must disclose the working-tree range:\n{empty_json}"
         ));
     }
+    // #5997 review: an empty working-tree JSON report must name the untracked
+    // files the tracked-only diff cannot contain, or it reads as complete.
+    let empty_paths = empty_json["untracked_working_tree_source_paths"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    if !empty_paths.iter().any(|path| path == "src/new.rs") {
+        return Err(format!(
+            "an empty working-tree read must name the untracked file in JSON:\n{empty_json}"
+        ));
+    }
     let empty_worktree = human(&["check", "--root", &root_str]);
     for expected in [
         "Note: the working tree has no changed tracked files against `main` (diff from the merge base of `main` and HEAD to the working tree), so there was nothing to analyze.",
@@ -19290,6 +19312,17 @@ fn check_untracked_files_keep_committed_default_and_working_tree_reads_name_them
     if mixed["head"]["source"] != "working_tree" || mixed.get("unanalyzed_working_tree").is_some() {
         return Err(format!(
             "a tracked edit must flip the default to a working-tree read:\n{mixed}"
+        ));
+    }
+    // #5997 review: the working-tree JSON report must name the untracked
+    // files beside the tracked edit; `unanalyzed_working_tree` stays absent.
+    let mixed_paths = mixed["untracked_working_tree_source_paths"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    if !mixed_paths.iter().any(|path| path == "src/new.rs") {
+        return Err(format!(
+            "a working-tree default run must name the untracked file in JSON:\n{mixed}"
         ));
     }
     let mixed_human = human(&["check", "--root", &root_str]);
