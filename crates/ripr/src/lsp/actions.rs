@@ -4,7 +4,7 @@ use super::action_contract::{
 };
 use super::client_features::ClientFeatureProfile;
 use super::gap_artifacts::{
-    ValidatedGapArtifact, bind_portable_command, command_payload_is_safe, workspace_path_is_safe,
+    ValidatedGapArtifact, bind_portable_command, editor_command_is_safe, workspace_path_is_safe,
 };
 use super::state::AnalysisSnapshot;
 use super::uri::file_uri_for_path;
@@ -1871,7 +1871,7 @@ fn safe_commands_at(root: &Path, data: &Value, path: &[&str]) -> Vec<String> {
         .flat_map(|items| items.iter())
         .filter_map(Value::as_str)
         .map(str::trim)
-        .filter(|command| command_payload_is_safe(root, command))
+        .filter(|command| editor_command_is_safe(root, command))
         .filter_map(|command| bind_portable_command(root, command))
         .collect()
 }
@@ -1884,7 +1884,7 @@ fn first_safe_receipt_command(root: &Path, data: &Value) -> Option<String> {
     ]
     .iter()
     .filter_map(|path| string_at(data, path))
-    .find(|command| command_payload_is_safe(root, command))
+    .find(|command| editor_command_is_safe(root, command))
     .and_then(|command| bind_portable_command(root, command))
 }
 

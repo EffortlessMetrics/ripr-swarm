@@ -1538,6 +1538,29 @@ pub(super) fn bind_portable_command(root: &Path, command: &str) -> Option<String
     command_payload_is_safe(root, &probe).then_some(display)
 }
 
+/// Whether a command read back from editor data is safe to offer: either a
+/// safe artifact payload, or exactly what `bind_portable_command` renders
+/// from one. Diagnostics data carries bound commands, and a workspace path's
+/// quoted `&` or `;` would fail the payload check on its own (#4001).
+pub(super) fn editor_command_is_safe(root: &Path, command: &str) -> bool {
+    if command_payload_is_safe(root, command) {
+        return true;
+    }
+    let trimmed = command.trim();
+    let bound = crate::agent::loop_commands::bound_root(&root.to_string_lossy());
+    let needle = format!(" --root {}", crate::agent::loop_commands::shell_arg(&bound));
+    let Some(at) = trimmed.find(&needle) else {
+        return false;
+    };
+    let portable = format!(
+        "{} --root .{}",
+        &trimmed[..at],
+        &trimmed[at + needle.len()..]
+    );
+    command_payload_is_safe(root, &portable)
+        && bind_portable_command(root, &portable).as_deref() == Some(trimmed)
+}
+
 /// Byte spans of the whitespace-separated shell tokens of `command`. A quoted
 /// span, including its whitespace, stays inside one token.
 fn top_level_token_spans(command: &str) -> Vec<std::ops::Range<usize>> {
@@ -1899,6 +1922,30 @@ mod tests {
             &format!("ripr agent verify --root . --json > {target}"),
             &format!("ripr agent verify --root {amp_arg} --json > {anchored}"),
         )?;
+        Ok(())
+    }
+
+    /// #4001 re-review: a bound command read back from diagnostics data is
+    /// offered again when it is exactly the binder's rendering, even with a
+    /// workspace path's `&`; anything appended to it is not.
+    #[test]
+    fn editor_command_is_safe_accepts_only_the_binders_rendering() -> Result<(), String> {
+        let root = std::env::temp_dir().join("ripr a & b");
+        let portable = "ripr agent verify --root . --json";
+        let bound = bind_portable_command(&root, portable)
+            .ok_or_else(|| "an `&` root must bind".to_string())?;
+        assert!(editor_command_is_safe(&root, portable));
+        assert!(editor_command_is_safe(&root, &bound));
+        assert!(!editor_command_is_safe(
+            &root,
+            &format!("{bound}; touch pwned")
+        ));
+        assert!(!editor_command_is_safe(
+            &root,
+            &format!("{bound} & touch pwned")
+        ));
+        let other = std::env::temp_dir().join("ripr c & d");
+        assert!(!editor_command_is_safe(&other, &bound));
         Ok(())
     }
 
