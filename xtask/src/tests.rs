@@ -3,6 +3,8 @@
 //! body moved verbatim; test names and module path (`crate::tests`) are
 //! unchanged.
 
+mod discarded_matcher_honesty;
+
 /// Best-effort temp-dir teardown for tests. The `io::Result` is matched
 /// with `if let` so a `#[must_use]` cleanup failure is an explicit ignore.
 fn ignore_remove_dir_all(path: impl AsRef<std::path::Path>) {
@@ -1458,6 +1460,7 @@ fn evidence_promotion_semantic_assertions_retain_related_test_identity() -> Resu
             line: 8,
             kind: "relational_check".to_string(),
             strength: "weak".to_string(),
+            relation_reason: None,
         },
     ];
     let original: serde_json::Value = serde_json::from_str(include_str!(
@@ -1507,6 +1510,69 @@ fn evidence_promotion_semantic_assertions_retain_related_test_identity() -> Resu
     assert!(!inspect(&missing).is_empty());
     missing["findings"] = serde_json::json!([]);
     assert!(!inspect(&missing).is_empty());
+    Ok(())
+}
+
+#[test]
+fn evidence_promotion_related_test_relation_pin_is_optional_and_exact() -> Result<(), String> {
+    let assertion_with_relation = |relation_reason: Option<&str>| {
+        vec![
+            super::EvidencePromotionSemanticAssertion::ExpectedRelatedTest {
+                name: "observes_score".to_string(),
+                file: "src/lib.rs".to_string(),
+                line: 8,
+                kind: "relational_check".to_string(),
+                strength: "weak".to_string(),
+                relation_reason: relation_reason.map(str::to_string),
+            },
+        ]
+    };
+    let original: serde_json::Value = serde_json::from_str(include_str!(
+        "../../fixtures/wildcard_oracle_wildcard_original/expected/check.json"
+    ))
+    .map_err(|err| format!("invalid canonical wildcard golden: {err}"))?;
+    let human =
+        include_str!("../../fixtures/wildcard_oracle_wildcard_original/expected/human-full.txt");
+    let inspect = |assertions: &[_], json: &serde_json::Value| {
+        super::evidence_promotion_semantic_violations(
+            "related_test_relation",
+            Some("fixtures/wildcard_oracle_wildcard_original"),
+            assertions,
+            json,
+            Some(human),
+            true,
+        )
+    };
+    // The canonical golden relates via `direct_owner_call`.
+    assert!(inspect(&assertion_with_relation(None), &original).is_empty());
+    assert!(
+        inspect(
+            &assertion_with_relation(Some("direct_owner_call")),
+            &original
+        )
+        .is_empty()
+    );
+    assert!(
+        !inspect(
+            &assertion_with_relation(Some("weak_token_substring")),
+            &original
+        )
+        .is_empty()
+    );
+    // A re-blessed relation flips the pin.
+    let mut weak = original.clone();
+    weak["findings"][0]["related_tests"][0]["relation_reason"] =
+        serde_json::json!("weak_token_substring");
+    assert!(
+        inspect(
+            &assertion_with_relation(Some("weak_token_substring")),
+            &weak
+        )
+        .is_empty()
+    );
+    assert!(!inspect(&assertion_with_relation(Some("direct_owner_call")), &weak).is_empty());
+    // Absent pins stay backward compatible.
+    assert!(inspect(&assertion_with_relation(None), &weak).is_empty());
     Ok(())
 }
 
@@ -4726,7 +4792,7 @@ fn write_editor_first_run_actions(root: &Path, case: &str, titles: &[&str]) {
                     },
                     "arguments": if *title == "Copy first repair packet" {
                         serde_json::json!([{
-                            "packet": "RIPR first repair packet\nGap identity: gap:test\nSuggested action:\n- Add one focused assertion.\nVerify command:\nripr agent verify --root . --json\nReceipt command:\nripr agent receipt --root . --json\nLimits and non-claims:\n- Static editor evidence only."
+                            "packet": "RIPR first repair packet\nGap identity: gap:test\nSuggested action:\n- Add one focused assertion.\nVerify command:\nripr agent verify --root <root> --json\nReceipt command:\nripr agent receipt --root <root> --json\nLimits and non-claims:\n- Static editor evidence only."
                         }])
                     } else {
                         serde_json::json!([])
@@ -5435,6 +5501,52 @@ fn editor_gap_cockpit_fixture_case_guard_accepts_actionable_contract() -> Result
     super::validate_editor_gap_cockpit_fixture_case(&root, "rust_actionable", &mut violations)?;
 
     assert_eq!(violations, Vec::<String>::new());
+    Ok(())
+}
+
+/// #4001 control 12: a checked-in editor projection must name the selected
+/// workspace; a portable `--root .` command is a violation.
+#[test]
+fn editor_gap_cockpit_fixture_case_guard_rejects_portable_root_commands() -> Result<(), String> {
+    let root = temp_dir("editor-gap-cockpit-portable-root");
+    write_editor_gap_case_expected(
+        &root,
+        "rust_actionable",
+        r#"{
+  "diagnostics": [
+    {
+      "data": {
+        "language": "rust",
+        "language_status": "stable",
+        "canonical_gap_id": "gap:rust:pricing",
+        "receipt_command": "ripr agent receipt --root . --json"
+      }
+    }
+  ]
+}
+"#,
+        r#"{
+  "actions": [
+    {"title": "Inspect gap: copy repair packet", "command": "ripr.copyAgentPacketCommand", "arguments": [{"command": "ripr agent packet"}]},
+    {"title": "Write targeted test: open best related test", "command": "ripr.openRelatedTest", "arguments": [{"uri": "file:///repo/tests/pricing.rs"}]},
+    {"title": "Verify after test: copy verify command", "command": "ripr.copyAgentVerifyCommand", "arguments": [{"command": "ripr agent verify --root <root> --json"}]},
+    {"title": "Review result: copy receipt command", "command": "ripr.copyAgentReceiptCommand", "arguments": [{"command": "ripr agent receipt --root <root> --json"}]},
+    {"title": "Refresh Analysis - Saved Workspace Check", "command": "ripr.refresh"}
+  ]
+}
+"#,
+        "# Hover\n\n## Evidence boundary\n\n## Gap state\n\n- verify: `ripr agent verify --root ./sub --json`\n\n## Limits\n",
+    );
+
+    let mut violations = Vec::new();
+    super::validate_editor_gap_cockpit_fixture_case(&root, "rust_actionable", &mut violations)?;
+
+    // Only the diagnostics file carries `--root .`; `<root>` and `./sub` pass.
+    assert_eq!(violations.len(), 1, "{violations:?}");
+    assert!(
+        violations[0].contains("lsp-diagnostics.json") && violations[0].contains("--root ."),
+        "{violations:?}"
+    );
     Ok(())
 }
 

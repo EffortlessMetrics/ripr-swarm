@@ -38,7 +38,12 @@ pub(crate) const INPUT_SCHEMA_VERSION: &str = "ripr-dx-scoreboard-input-v1";
 const FIRST_RUN_SCHEMA_VERSION: &str = "first_run.v1";
 /// Receipt written by the mutation spot-check (real cargo-mutants outcomes
 /// joined to ripr seams); converted on ingest.
-const MUTATION_SPOT_CHECK_SCHEMA_VERSION: &str = "ripr-mutation-spot-check-v1";
+const MUTATION_SPOT_CHECK_SCHEMA_VERSION: &str = "ripr-mutation-spot-check-v2";
+/// v1 spot-check receipts paired mutants with seams by operator text on a
+/// shared line. Their `seam_precise` counts and rates describe a different
+/// population from v2's canonical joins, so ingest refuses them rather than
+/// trending one against the other.
+const MUTATION_SPOT_CHECK_V1_SCHEMA_VERSION: &str = "ripr-mutation-spot-check-v1";
 /// One JSON object per line from the first-run walk's scoreboard export.
 const FIRST_RUN_ROW_SCHEMA_VERSION: &str = "first_run_row.v1";
 const RUST_CORPUS_SMOKE_SCHEMA_VERSION: &str = "ripr-rust-corpus-smoke-v1";
@@ -446,7 +451,8 @@ pub(crate) fn parse_config(text: &str) -> Result<Config, String> {
         let source_ok = metric.source == "measured"
             || metric.source == "pending"
             || metric.source.starts_with("ingest:")
-            || metric.source.starts_with("file:");
+            || metric.source.starts_with("file:")
+            || metric.source.starts_with("verdict-corpus:");
         if !source_ok {
             return Err(format!(
                 "metric `{}` has unknown source `{}`",
@@ -510,6 +516,11 @@ pub(crate) fn parse_ingest(value: &Value, config: &Config) -> Result<Vec<Sample>
     if value["schema_version"].as_str() == Some(MUTATION_SPOT_CHECK_SCHEMA_VERSION) {
         let converted = mutation_spot_check_to_input(value)?;
         return parse_ingest(&converted, config);
+    }
+    if value["schema_version"].as_str() == Some(MUTATION_SPOT_CHECK_V1_SCHEMA_VERSION) {
+        return Err(format!(
+            "{MUTATION_SPOT_CHECK_V1_SCHEMA_VERSION} receipts scored operator-text pairings, which {MUTATION_SPOT_CHECK_SCHEMA_VERSION} replaced with canonical seam_id and span-containment joins; re-run `cargo xtask mutation-spot-check` to produce a comparable receipt"
+        ));
     }
     if value["schema_version"].as_str() == Some(FIRST_RUN_ROW_SCHEMA_VERSION) {
         let converted = first_run_rows_to_input(value)?;
@@ -1023,6 +1034,92 @@ pub(crate) fn rust_corpus_smoke_to_input(value: &Value) -> Result<Value, String>
     }))
 }
 
+/// v1 spot-check rows measured operator-text pairings, a different population
+/// from v2's canonical joins, so a baseline row compares only when every one
+/// of its samples names the v2 receipt (each row's evidence does).
+fn from_spot_check_v2(base_row: &Value) -> bool {
+    base_row["samples"].as_array().is_some_and(|samples| {
+        !samples.is_empty()
+            && samples.iter().all(|sample| {
+                sample["detail"]
+                    .as_str()
+                    .is_some_and(|detail| detail.contains(MUTATION_SPOT_CHECK_SCHEMA_VERSION))
+            })
+    })
+}
+
+/// Opens the population suffix on every spot-check row's evidence. Everything
+/// before it is text this module writes, so the first occurrence is the
+/// marker, and everything after it is one JSON array.
+const POPULATION_MARKER: &str = " population=";
+
+/// One repository of a spot-check population, as a structured value so
+/// distinct argument vectors stay distinct: its name, checkout revision,
+/// cargo-mutants version, the digest of the mutant set the rates were
+/// computed over, and the cargo-mutants arguments (`null` when a supplied
+/// `mutants.out` did not record them).
+fn population_member(repo: &Value) -> Option<Value> {
+    let name = repo["name"].as_str().filter(|name| !name.is_empty())?;
+    let revision = repo["revision"]
+        .as_str()
+        .filter(|revision| !revision.is_empty())?;
+    let mutant_set = repo["mutant_set_sha256"]
+        .as_str()
+        .filter(|digest| !digest.is_empty())?;
+    let args = match &repo["cargo_mutants_args"] {
+        Value::Null => Value::Null,
+        Value::Array(args) if args.iter().all(Value::is_string) => Value::Array(args.clone()),
+        _ => return None,
+    };
+    let version = match &repo["cargo_mutants_version"] {
+        Value::Null => Value::Null,
+        Value::String(version) if !version.is_empty() => json!(version),
+        _ => return None,
+    };
+    // A shorter timeout turns slow caught mutants into timeouts, which are
+    // unscoreable, so it moves the pooled rate like a selection change.
+    let timeout = match &repo["mutant_timeout_secs"] {
+        Value::Null => Value::Null,
+        Value::Number(secs) if secs.as_u64().is_some_and(|secs| secs > 0) => json!(secs),
+        _ => return None,
+    };
+    Some(json!({
+        "name": name,
+        "revision": revision,
+        "cargo_mutants_version": version,
+        "mutant_set_sha256": mutant_set,
+        "cargo_mutants_args": args,
+        "mutant_timeout_secs": timeout,
+    }))
+}
+
+/// The population a spot-check row was measured over, decoded from the
+/// evidence of each of its samples. `None` when a sample predates the suffix,
+/// does not decode, or disagrees with another sample, so none of those can
+/// pass as a known population.
+fn has_unknown_cargo_mutants_version(population: Option<&Value>) -> bool {
+    population.and_then(Value::as_array).is_some_and(|members| {
+        members
+            .iter()
+            .any(|member| member["cargo_mutants_version"].is_null())
+    })
+}
+
+fn spot_check_population(row: &Value) -> Option<Value> {
+    let samples = row["samples"].as_array()?;
+    let mut populations = samples.iter().map(|sample| {
+        let detail = sample["detail"].as_str()?;
+        let start = detail.find(POPULATION_MARKER)? + POPULATION_MARKER.len();
+        serde_json::from_str::<Value>(&detail[start..])
+            .ok()
+            .filter(Value::is_array)
+    });
+    let first = populations.next()??;
+    populations
+        .all(|population| population.as_ref() == Some(&first))
+        .then_some(first)
+}
+
 /// Convert a `ripr-pilot-ranking-v1` receipt (`cargo xtask pilot-ranking
 /// score`) into pooled `ranking` rows: precision of pilot's top 5 and top 10,
 /// the share of top-10 picks a label could judge, the share of top-10 picks
@@ -1197,17 +1294,24 @@ fn pilot_tier_split(pilot: &Value) -> String {
         .join(", ")
 }
 
-/// Convert a `ripr-mutation-spot-check-v1` receipt into scoreboard rows:
+/// Convert a `ripr-mutation-spot-check-v2` receipt into scoreboard rows:
 ///
 /// - discriminator claim agreement: when ripr says a test discriminates the
-///   seam, the share of seam-precise mutants a real run caught;
+///   seam, the share of canonical precise mutants a real run caught;
 /// - gap claim agreement: when ripr says no test discriminates, the share of
-///   seam-precise mutants a real run missed (the rest are false gaps);
-/// - join coverage: seam-precise joins over all mutants, because agreement
-///   rates only speak for the mutants that could be joined to a seam;
+///   canonical precise mutants a real run missed (the rest are false gaps);
+/// - join coverage: canonical precise records over every runtime record,
+///   because agreement rates only speak for the mutants that could be joined
+///   to a seam by `seam_id` or span containment;
 /// - pilot top-recommendation precision: of `ripr pilot`'s top seams that a
 ///   real mutant scores, the share where a mutant was missed (receipts written
 ///   before the pilot section existed simply omit the row).
+///
+/// Rates pool every repository, so each row's evidence ends with the
+/// population it measured (every repository's name, revision, cargo-mutants
+/// version, mutant-set digest and arguments). A baseline over a different population is not
+/// compared: swapping a repository moves a pooled rate without any verdict
+/// changing (#6311).
 pub(crate) fn mutation_spot_check_to_input(value: &Value) -> Result<Value, String> {
     let families = value["scored_families"]
         .as_object()
@@ -1238,7 +1342,9 @@ pub(crate) fn mutation_spot_check_to_input(value: &Value) -> Result<Value, Strin
         rows.push(json!({
             "id": metric,
             "value": rate,
-            "evidence": format!("{scored} seam-precise mutants scored"),
+            "evidence": format!(
+                "{MUTATION_SPOT_CHECK_SCHEMA_VERSION}: {scored} canonical precise mutants scored"
+            ),
         }));
     }
     let repos = value["repos"]
@@ -1246,15 +1352,28 @@ pub(crate) fn mutation_spot_check_to_input(value: &Value) -> Result<Value, Strin
         .filter(|repos| !repos.is_empty())
         .ok_or("mutation spot-check receipt needs a non-empty repos array")?;
     let (mut joined, mut mutants) = (0_u64, 0_u64);
+    let mut population = Vec::new();
     for (index, repo) in repos.iter().enumerate() {
-        let precise = repo["pairings"]["seam_precise"].as_u64();
-        let total = repo["calibration_metrics"]["mutants_total"].as_u64();
+        population.push(population_member(repo).ok_or_else(|| {
+            format!(
+                "mutation spot-check repo {} needs a name, revision, mutant_set_sha256 and cargo_mutants_args (an array of strings, or null when unrecorded), so its rates can be tied to the population they measured",
+                index + 1
+            )
+        })?);
+        let precise = repo["pairings"]["canonical_precise"].as_u64();
+        let total = repo["pairings"]["records_total"].as_u64();
         let (Some(precise), Some(total)) = (precise, total) else {
             return Err(format!(
-                "mutation spot-check repo {} needs pairings.seam_precise and calibration_metrics.mutants_total",
+                "mutation spot-check repo {} needs pairings.canonical_precise and pairings.records_total",
                 index + 1
             ));
         };
+        if repo["calibration_metrics"]["mutants_total"].as_u64() != Some(total) {
+            return Err(format!(
+                "mutation spot-check repo {} accounts for {total} records but calibration_metrics.mutants_total differs",
+                index + 1
+            ));
+        }
         if precise > total {
             return Err(format!(
                 "mutation spot-check repo {} joins {precise} of only {total} mutants",
@@ -1295,7 +1414,7 @@ pub(crate) fn mutation_spot_check_to_input(value: &Value) -> Result<Value, Strin
             "id": "trust.pilot_top_recommendation_precision",
             "value": precision,
             "evidence": format!(
-                "{scored} pilot recommendations scored ({}) over {}",
+                "{MUTATION_SPOT_CHECK_SCHEMA_VERSION}: {scored} pilot recommendations scored ({}) over {}",
                 pilot_tier_split(pilot),
                 pilot_repos(pilot)
             ),
@@ -1305,7 +1424,9 @@ pub(crate) fn mutation_spot_check_to_input(value: &Value) -> Result<Value, Strin
         rows.push(json!({
             "id": "trust.mutation_join_coverage",
             "value": joined as f64 / mutants as f64,
-            "evidence": format!("{joined} of {mutants} mutants joined seam-precise"),
+            "evidence": format!(
+                "{MUTATION_SPOT_CHECK_SCHEMA_VERSION}: {joined} of {mutants} mutants joined canonically and scoreable"
+            ),
         }));
     }
     // Rates pool every repository, and a repository run with extra
@@ -1327,13 +1448,16 @@ pub(crate) fn mutation_spot_check_to_input(value: &Value) -> Result<Value, Strin
     } else {
         String::new()
     };
+    population.sort_by_key(Value::to_string);
+    let population = format!("{POPULATION_MARKER}{}", Value::Array(population));
     for row in &mut rows {
         if let Some(Value::String(evidence)) = row.get_mut("evidence") {
             evidence.push_str(&caveat);
+            evidence.push_str(&population);
         }
     }
     let evidence = format!(
-        "ripr-mutation-spot-check-v1 receipt, {} repositories{caveat}",
+        "{MUTATION_SPOT_CHECK_SCHEMA_VERSION} receipt, {} repositories{caveat}",
         repos.len()
     );
     Ok(json!({
@@ -1344,13 +1468,19 @@ pub(crate) fn mutation_spot_check_to_input(value: &Value) -> Result<Value, Strin
     }))
 }
 
-/// Metrics read from committed receipts (`file:<path>#<json.path>`). The
-/// referenced object uses the judged-panel `{numerator, denominator}` shape;
-/// a zero denominator is `not_measured`, not a perfect rate.
+/// Metrics read from committed receipts (`file:<path>#<json.path>`) or from
+/// a verdict corpus's committed rows (`verdict-corpus:<corpus dir>#<rate>`,
+/// the summary derived as `verdict-corpus check` derives it). The referenced
+/// object uses the judged-panel `{numerator, denominator}` shape; a zero
+/// denominator is `not_measured`, not a perfect rate.
 fn file_samples(config: &Config, boards: &[String]) -> Result<Vec<Sample>, String> {
     let mut samples = Vec::new();
     for metric in &config.metric {
         if !boards.contains(&metric.board) {
+            continue;
+        }
+        if let Some(reference) = metric.source.strip_prefix("verdict-corpus:") {
+            samples.push(verdict_corpus_sample(metric, reference));
             continue;
         }
         let Some(reference) = metric.source.strip_prefix("file:") else {
@@ -1380,6 +1510,36 @@ fn file_samples(config: &Config, boards: &[String]) -> Result<Vec<Sample>, Strin
         samples.push(sample);
     }
     Ok(samples)
+}
+
+fn verdict_corpus_sample(metric: &MetricDef, reference: &str) -> Sample {
+    let (dir, pointer) = reference.split_once('#').unwrap_or((reference, ""));
+    // A missing corpus is not measured; a corpus that exists but whose rows
+    // do not parse is a failed instrument, as an unparsable `file:` receipt is.
+    if !Path::new(dir).join("corpus.json").is_file() {
+        let err = format!("{dir}/corpus.json is missing");
+        return Sample {
+            metric: metric.id.clone(),
+            repo: None,
+            outcome: SampleOutcome::NotMeasured,
+            detail: match &metric.pending_reason {
+                Some(reason) => format!("{err}; {reason}"),
+                None => err,
+            },
+        };
+    }
+    let report = super::verdict_corpus::expected_report(Path::new(dir)).and_then(|report| {
+        serde_json::to_value(&report).map_err(|err| format!("render {dir} report: {err}"))
+    });
+    match report {
+        Ok(json) => ratio_sample(&metric.id, dir, pointer, &json),
+        Err(err) => Sample {
+            metric: metric.id.clone(),
+            repo: None,
+            outcome: SampleOutcome::Failed,
+            detail: err,
+        },
+    }
 }
 
 pub(crate) fn ratio_sample(metric: &str, path: &str, pointer: &str, json: &Value) -> Sample {
@@ -1954,6 +2114,34 @@ pub(crate) fn compare_with_baseline(
     let Some(base_row) = base_row else {
         return json!({"comparable": false, "reason": "metric absent from baseline"});
     };
+    if def.source == "ingest:mutation-spot-check" {
+        if !from_spot_check_v2(base_row) {
+            return json!({
+                "comparable": false,
+                "value": base_row["value"],
+                "reason": format!(
+                    "baseline was not ingested from a {MUTATION_SPOT_CHECK_SCHEMA_VERSION} receipt"
+                ),
+            });
+        }
+        // A pooled rate over other repositories, revisions or cargo-mutants
+        // runs is a different population, not a trend.
+        let before = spot_check_population(base_row);
+        let now = spot_check_population(row);
+        // An unrecorded cargo-mutants version could hide an instrument
+        // change, so it matches nothing, not even another unrecorded one.
+        if before.is_none() || before != now || has_unknown_cargo_mutants_version(now.as_ref()) {
+            return json!({
+                "comparable": false,
+                "value": base_row["value"],
+                "reason": format!(
+                    "baseline measured population {}; this run measured {}",
+                    before.map_or_else(|| "unrecorded".to_string(), |p| p.to_string()),
+                    now.map_or_else(|| "unrecorded".to_string(), |p| p.to_string()),
+                ),
+            });
+        }
+    }
     // Samples with a repository are judged per repository below.
     let incomplete = |r: &Value| {
         r["samples"].as_array().is_some_and(|samples| {

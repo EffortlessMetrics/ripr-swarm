@@ -32,6 +32,11 @@ pub(crate) const SNAPSHOT_SCHEMA_VERSION: &str = "ripr-mcp-snapshot-v1";
 pub(crate) const CODE_WORKSPACE_UNAVAILABLE: &str = "workspace_unavailable";
 pub(crate) const CODE_ANALYSIS_FAILED: &str = "analysis_failed";
 pub(crate) const CODE_UNSUPPORTED_PROFILE: &str = "unsupported_profile";
+/// The workspace `ripr.toml` is present but cannot be read or parsed
+/// (#6825): the refresh attempt fails closed instead of silently analyzing
+/// with built-in defaults. Promoted from the reserved vocabulary when the
+/// config path landed.
+pub(crate) const CODE_CONFIG_INVALID: &str = "config_invalid";
 pub(crate) const CODE_NO_SNAPSHOT: &str = "no_snapshot";
 pub(crate) const CODE_ANALYSIS_IN_FLIGHT: &str = "analysis_in_flight";
 pub(crate) const CODE_STALE_SNAPSHOT: &str = "stale_snapshot";
@@ -41,7 +46,6 @@ pub(crate) const CODE_RESULT_TOO_LARGE: &str = "result_too_large";
 /// closed before any of these states can occur; they are named so the wire
 /// contract stays stable when the owning slice lands.
 pub(crate) const RESERVED_FAILURE_CODES: &[&str] = &[
-    "config_invalid",
     "workspace_ambiguous",
     "static_limitation",
     "cancelled",
@@ -49,6 +53,55 @@ pub(crate) const RESERVED_FAILURE_CODES: &[&str] = &[
 ];
 
 const MAX_FAILURE_DETAIL_CHARS: usize = 512;
+
+/// The caller-narrowed window over a gap list's selected items (#6021):
+/// `offset` indexes the selected items in snapshot order, `limit` caps the
+/// returned page. The default window byte-fills one wire-fitting page.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) struct GapListWindow {
+    pub(crate) offset: usize,
+    pub(crate) limit: Option<usize>,
+}
+
+/// The disclosed page window inside a gap-list document: what the caller
+/// asked for (`offset`, `limit` when set), what shipped, and how to
+/// continue. A page never lies about the selection: `selected` stays the
+/// full stored-selection count while `page.returned` counts this page.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct GapPage {
+    offset: usize,
+    limit: Option<usize>,
+    returned: usize,
+    has_more: bool,
+    next_offset: Option<usize>,
+}
+
+/// Compact serialized length of a document, measured without retaining the
+/// encoded bytes.
+fn document_bytes(value: &Value) -> Result<usize, AttemptFailure> {
+    struct LengthWriter(usize);
+
+    impl std::io::Write for LengthWriter {
+        fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
+            self.0 += buffer.len();
+            Ok(buffer.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    let mut writer = LengthWriter(0);
+    serde_json::to_writer(&mut writer, value).map_err(|error| {
+        AttemptFailure::new(
+            CODE_ANALYSIS_FAILED,
+            format!("serialize gap list: {error}"),
+            "retry with ripr_refresh",
+        )
+    })?;
+    Ok(writer.0)
+}
 
 /// One typed failure. `detail` is producer wording bounded to
 /// [`MAX_FAILURE_DETAIL_CHARS`]; `recovery` names the action that can change
@@ -125,6 +178,39 @@ pub(crate) struct Snapshot {
     pub(crate) card_producers: Option<super::repair_card::SnapshotCardProducers>,
     pub(crate) budget: DiagnosticBudget,
     pub(crate) selection: DiagnosticBudgetResult,
+    /// The producer's RIPR-SPEC-0112 working-tree facts bound at commit time
+    /// (#5995): the analyzed committed default-branch diff ran while routed
+    /// source or test files carried uncommitted edits, so those edits are
+    /// outside this snapshot's scope. `uncommitted_edits` includes untracked
+    /// files (the overlay keeps them in its dirty set); `untracked` names the
+    /// subset neither the committed diff nor `--worktree` can analyze
+    /// (#5258), so the served disclosure can name the real remedy. The facts
+    /// ride the snapshot identity: two otherwise identical snapshots with
+    /// different exclusions are different snapshots.
+    pub(crate) scope: ScopeFacts,
+}
+
+/// The scope-relevant working-tree facts one snapshot was analyzed against.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct ScopeFacts {
+    pub(crate) uncommitted_edits: bool,
+    pub(crate) untracked: Vec<String>,
+}
+
+impl ScopeFacts {
+    fn from_output(output: &crate::app::CheckOutput) -> Self {
+        Self {
+            uncommitted_edits: output.unanalyzed_working_tree,
+            untracked: output.untracked_working_tree_source_paths.clone(),
+        }
+    }
+
+    fn identity_key(&self) -> Value {
+        json!({
+            "uncommitted_edits": self.uncommitted_edits,
+            "untracked": self.untracked,
+        })
+    }
 }
 
 impl Snapshot {
@@ -176,7 +262,7 @@ impl Snapshot {
         let mut items = output
             .findings
             .iter()
-            .map(GapItem::from_finding)
+            .map(|finding| GapItem::from_finding(finding, &output.root))
             .collect::<Result<Vec<_>, String>>()
             .map_err(|error| {
                 AttemptFailure::new(
@@ -187,7 +273,8 @@ impl Snapshot {
             })?;
         items.sort_by(|left, right| left.canonical_id.cmp(&right.canonical_id));
 
-        let snapshot_id = snapshot_identity(&outcome, &items).map_err(|error| {
+        let scope = ScopeFacts::from_output(output);
+        let snapshot_id = snapshot_identity(&outcome, &items, &scope).map_err(|error| {
             AttemptFailure::new(CODE_ANALYSIS_FAILED, error, "retry with ripr_refresh")
         })?;
         let profile_identity = format!(
@@ -220,6 +307,7 @@ impl Snapshot {
             card_producers: None,
             budget,
             selection,
+            scope,
         })
     }
 
@@ -239,7 +327,11 @@ fn limitation_summary(outcome: &AnalysisOutcome) -> String {
         .join(", ")
 }
 
-fn snapshot_identity(outcome: &AnalysisOutcome, items: &[GapItem]) -> Result<String, String> {
+fn snapshot_identity(
+    outcome: &AnalysisOutcome,
+    items: &[GapItem],
+    scope: &ScopeFacts,
+) -> Result<String, String> {
     let outcome_digest = outcome.semantic_digest()?;
     let item_ids = items
         .iter()
@@ -253,6 +345,10 @@ fn snapshot_identity(outcome: &AnalysisOutcome, items: &[GapItem]) -> Result<Str
         "outcome_digest": outcome_digest,
         "items": item_ids,
         "evidence": evidence_digests,
+        // The scope facts change what the served documents disclose, so two
+        // otherwise identical snapshots with different exclusions must not
+        // share an identity (#5995 review).
+        "scope": scope.identity_key(),
     });
     let bytes = serde_json::to_vec(&payload)
         .map_err(|error| format!("serialize snapshot identity: {error}"))?;
@@ -357,20 +453,179 @@ impl WorkspaceSession {
 
     /// Bounded working set for the current (or named) snapshot. Selection is
     /// the snapshot's stored shared-budget result; this function never
-    /// re-runs ranking.
-    pub(crate) fn list_gaps(&self, requested: Option<&str>) -> Result<Value, AttemptFailure> {
+    /// re-runs ranking. `window` pages over the selected items in snapshot
+    /// order (#6021); an unset limit byte-fills the page to
+    /// [`super::MAX_TOOL_DOCUMENT_BYTES`] so a listing that outgrows one
+    /// wire response degrades to disclosed pages instead of failing after
+    /// budget approval.
+    pub(crate) fn list_gaps(
+        &self,
+        requested: Option<&str>,
+        window: GapListWindow,
+    ) -> Result<Value, AttemptFailure> {
         let snapshot = self.active_snapshot(requested)?;
         let selection = &snapshot.selection;
         let selected_ids = selection
             .selected_ids()
             .collect::<std::collections::BTreeSet<&str>>();
-        let items = snapshot
+        let selected_items = snapshot
             .items
             .iter()
             .filter(|item| selected_ids.contains(item.canonical_id.as_str()))
-            .map(|item| item.list_summary.clone())
             .collect::<Vec<_>>();
-        let document = json!({
+
+        // The document shell carries every disclosure except the page of
+        // item summaries; its measured size sets the page budget. The
+        // reserve absorbs the small byte difference between this shell's
+        // zeroed page fields and the filled ones the caller receives.
+        let shell_bytes = {
+            let shell = self.gap_list_document(
+                snapshot,
+                selection,
+                requested,
+                Vec::new(),
+                &GapPage::default(),
+            )?;
+            document_bytes(&shell)?
+        };
+        // Reserve covers the array syntax around the summaries and the
+        // byte-accounting margin; per-item commas are charged below.
+        let reserve = 256usize;
+        let page_budget =
+            super::MAX_TOOL_DOCUMENT_BYTES.saturating_sub(shell_bytes.saturating_add(reserve));
+
+        let start = window.offset.min(selected_items.len());
+        let mut items = Vec::new();
+        let mut used = 0usize;
+        for item in &selected_items[start..] {
+            if items.len() >= window.limit.unwrap_or(usize::MAX) {
+                break;
+            }
+            // One byte per joining comma keeps the accounting exact.
+            let cost = item.list_summary_bytes().saturating_add(1);
+            // The first summary always ships: a page must make progress
+            // even when a single item outgrows the byte budget.
+            if !items.is_empty() && used + cost > page_budget {
+                break;
+            }
+            used += cost;
+            items.push(item.list_summary.clone());
+        }
+
+        // The tool advertises an outputSchema, so a successful result must
+        // carry its structured copy (#6021 review): shrink the byte-fitted
+        // page until the complete double envelope measures under the bound.
+        // The probe carries the exact final-page fields (has_more and
+        // next_offset derived from the selection). The complete page is not
+        // strictly larger than every shorter prefix — the selection-
+        // exhausting page omits the next-page route — so probe it first and
+        // keep it whole when it fits; only then bisect the strictly
+        // monotone continuation prefixes for the largest fitting page.
+        let page_fields = |count: usize| GapPage {
+            // The window echoes the requested offset; a past-end request is
+            // an empty disclosed page at that offset, not a renumbered one.
+            offset: window.offset,
+            limit: window.limit,
+            returned: count,
+            has_more: start + count < selected_items.len(),
+            next_offset: (start + count < selected_items.len()).then_some(start + count),
+        };
+        if !items.is_empty() {
+            let structured_fit = |count: usize| -> Result<bool, AttemptFailure> {
+                let probe = self.gap_list_document(
+                    snapshot,
+                    selection,
+                    requested,
+                    items[..count].to_vec(),
+                    &page_fields(count),
+                )?;
+                crate::mcp::protocol::structured_envelope_overflows(&probe)
+                    .map(|overflows| !overflows)
+                    .map_err(|error| {
+                        AttemptFailure::new(CODE_ANALYSIS_FAILED, error, "retry with ripr_refresh")
+                    })
+            };
+            if !structured_fit(items.len())? {
+                let mut low = 1usize;
+                let mut high = items.len() - 1;
+                let mut fitting = 0usize;
+                while low <= high {
+                    let mid = (low + high) / 2;
+                    if structured_fit(mid)? {
+                        fitting = mid;
+                        low = mid + 1;
+                    } else {
+                        high = mid.saturating_sub(1);
+                    }
+                }
+                if fitting == 0 {
+                    // Even one summary cannot fit beside the shell in the
+                    // structured envelope: no page can carry the advertised
+                    // structured result, so fail closed instead of shipping
+                    // a text-only success that breaks the outputSchema
+                    // contract (#6021 review).
+                    return Err(AttemptFailure::new(
+                        CODE_RESULT_TOO_LARGE,
+                        format!(
+                            "gap list cannot serve even one page with its structured result: the non-pageable disclosure alone fills the {}-byte envelope budget",
+                            super::MAX_RESPONSE_BYTES
+                        ),
+                        "read identities through the ripr://snapshot/{snapshot_id} resource and single items through ripr_get_gap",
+                    )
+                    .with_data(json!({ "current_snapshot_id": snapshot.snapshot_id })));
+                }
+                items.truncate(fitting);
+            }
+        }
+
+        let page = page_fields(items.len());
+
+        let document = self.gap_list_document(snapshot, selection, requested, items, &page)?;
+        // A listing whose non-pageable shell (for example an omission
+        // disclosure alone) outgrows the ceiling cannot be narrowed by
+        // paging; fail closed naming the identity route (#6021).
+        let bytes = document_bytes(&document)?;
+        if bytes > super::MAX_TOOL_DOCUMENT_BYTES {
+            return Err(AttemptFailure::new(
+                CODE_RESULT_TOO_LARGE,
+                format!(
+                    "gap list cannot fit even one wire-fitting page: its non-pageable disclosure renders {bytes} bytes against the {}-byte page ceiling",
+                    super::MAX_TOOL_DOCUMENT_BYTES
+                ),
+                "read identities through the ripr://snapshot/{snapshot_id} resource and single items through ripr_get_gap",
+            )
+            .with_data(json!({ "current_snapshot_id": snapshot.snapshot_id })));
+        }
+        bounded_document(document)
+    }
+
+    /// Assemble the gap-list document around a page of item summaries.
+    fn gap_list_document(
+        &self,
+        snapshot: &Snapshot,
+        selection: &DiagnosticBudgetResult,
+        requested: Option<&str>,
+        items: Vec<Value>,
+        page: &GapPage,
+    ) -> Result<Value, AttemptFailure> {
+        let mut continuation = json!({
+            "tool": "ripr_get_gap",
+            "resource_template": "ripr://gap/{canonical_id}",
+        });
+        if let Some(next_offset) = page.next_offset {
+            // The generated route pins the snapshot identity: a refresh
+            // between pages fails closed with stale_snapshot instead of
+            // silently resuming at the old offset over a new selection
+            // (#6021 review).
+            continuation["next_page"] = json!({
+                "tool": "ripr_list_gaps",
+                "arguments": {
+                    "snapshot_id": snapshot.snapshot_id,
+                    "offset": next_offset,
+                },
+            });
+        }
+        Ok(json!({
             "schema_version": GAP_LIST_SCHEMA_VERSION,
             "snapshot_id": snapshot.snapshot_id,
             "requested_snapshot_id": requested,
@@ -395,6 +650,13 @@ impl WorkspaceSession {
                 .map(|reason| overflow_reason_as_str(*reason))
                 .collect::<Vec<_>>(),
             "items": items,
+            "page": {
+                "offset": page.offset,
+                "limit": page.limit,
+                "returned": page.returned,
+                "has_more": page.has_more,
+                "next_offset": page.next_offset,
+            },
             "omitted_items": selection
                 .omitted
                 .iter()
@@ -403,17 +665,13 @@ impl WorkspaceSession {
                     "reason": omitted_reason_as_str(item.reason),
                 }))
                 .collect::<Vec<_>>(),
-            "continuation": {
-                "tool": "ripr_get_gap",
-                "resource_template": "ripr://gap/{canonical_id}",
-            },
+            "continuation": continuation,
             "claim_boundary": "Bounded working-set projection over one completed snapshot. Selection is the shared CLI/LSP budget authority; omitted identities and reasons are disclosed, never silently truncated, and no business-risk ranking is inferred.",
             "limitations": [
                 "summaries do not contain evidence detail; read one item with ripr_get_gap or ripr://gap/{canonical_id}",
                 "the list is deterministic for its snapshot identity; a refresh replaces the snapshot and its identities",
             ],
-        });
-        bounded_document(document)
+        }))
     }
 
     /// One canonical item's complete bounded evidence.
@@ -540,16 +798,24 @@ impl WorkspaceSession {
             "last_completed_snapshot": last_completed,
             "last_known_good": last_known_good,
             "last_failure": last_failure,
+            "scope": self
+                .last_good
+                .as_ref()
+                .and_then(|snapshot| scope_disclosure(snapshot))
+                .unwrap_or(Value::Null),
             "freshness": {
                 "state": freshness_state(self),
                 "note": "the server does not watch the worktree; the snapshot is current as of its last completed ripr_refresh, a later failed attempt leaves it unverified for that attempt, so refresh again after edits",
             },
             "analysis_outcome": analysis_outcome,
             "profile": profile.document(),
-            "limitations": [
-                "the session is in-memory: restarting the server drops the snapshot unless a new ripr_refresh commits one",
-                "project-local ripr.toml stays detected-not-loaded; refresh runs with built-in defaults",
-            ],
+            "limitations": profile
+                .session_limitation()
+                .into_iter()
+                .chain([
+                    "the session is in-memory: restarting the server drops the snapshot unless a new ripr_refresh commits one",
+                ])
+                .collect::<Vec<_>>(),
         })
     }
 }
@@ -600,6 +866,56 @@ impl Drop for InFlightAttempt {
     }
 }
 
+/// The typed scope disclosure for one committed snapshot (#5995), mirroring
+/// the LSP session's limits-note wording family: the refresh analyzes only
+/// the committed default-branch diff, so when routed source or test files
+/// carried uncommitted edits at analysis time (RIPR-SPEC-0112's producer
+/// fact), those edits are outside every served document — a dirty-tree
+/// `no_scope` with zero findings must never read as all-clear. When
+/// untracked files exist, the note never offers bare `--worktree` as the
+/// remedy: they are invisible to both the committed diff and `--worktree`
+/// (#5258), so the disclosure names staging or an explicit diff instead,
+/// the same contract as the human note. `ripr_refresh` takes no diff-source
+/// argument, so there is no in-protocol expansion to promise.
+fn scope_disclosure(snapshot: &Snapshot) -> Option<Value> {
+    let scope = &snapshot.scope;
+    if !scope.uncommitted_edits {
+        return None;
+    }
+    const NAMED_PATHS: usize = 3;
+    let named = scope
+        .untracked
+        .iter()
+        .take(NAMED_PATHS)
+        .cloned()
+        .collect::<Vec<_>>();
+    let more = scope.untracked.len().saturating_sub(NAMED_PATHS);
+    if scope.untracked.is_empty() {
+        return Some(json!({
+            "analyzed": "committed default-branch diff",
+            "uncommitted_edits": "outside this analysis",
+            "note": "staged and unstaged tracked edits are outside the analyzed scope of this snapshot; analyze them with `ripr check --worktree --format json` in the repository",
+        }));
+    }
+    let listing = if more > 0 {
+        format!("{} and {more} more", named.join(", "))
+    } else {
+        named.join(", ")
+    };
+    Some(json!({
+        "analyzed": "committed default-branch diff",
+        "uncommitted_edits": "outside this analysis",
+        "note": "this snapshot reads each file as committed at HEAD; `ripr check --worktree --format json` adds staged and unstaged tracked edits only. Untracked files are invisible to both; stage them (`git add <paths>`, or `git add -N <paths>` intent-to-add makes a new file visible to `--worktree`) and rerun, or pass an explicit `--diff`",
+        "untracked_edits": {
+            "files": named,
+            "total": scope.untracked.len(),
+            "more": more,
+            "listing_example": listing,
+            "remedy": "stage them (`git add <paths>`, or `git add -N <paths>`) and rerun `ripr check --worktree`, or pass an explicit diff",
+        },
+    }))
+}
+
 /// The refresh-time attempt document returned by `ripr_refresh`.
 pub(crate) fn refresh_document(session: &WorkspaceSession) -> Value {
     let snapshot = session.last_good.as_ref().map(|snapshot| {
@@ -623,6 +939,11 @@ pub(crate) fn refresh_document(session: &WorkspaceSession) -> Value {
                 .unwrap_or(Value::Null),
         },
         "snapshot": snapshot,
+        "scope": session
+            .last_good
+            .as_ref()
+            .and_then(|snapshot| scope_disclosure(snapshot))
+            .unwrap_or(Value::Null),
         "last_known_good": session
             .last_good
             .as_ref()
@@ -635,14 +956,74 @@ pub(crate) fn refresh_document(session: &WorkspaceSession) -> Value {
     })
 }
 
-/// Built-in-default analysis profile facts for the session block.
+/// The resolved analysis-configuration posture of the session (#6825): which
+/// configuration `ripr_refresh` will run under. The read-only boundary
+/// (ADR 0022) is untouched — the server still edits nothing and loads no
+/// *provider* configuration; honoring the workspace's analysis
+/// configuration is the same `load_for_root` resolution the CLI uses.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum SessionConfigPosture {
+    /// A workspace `ripr.toml` was read and parsed; `identity` is the
+    /// fingerprint of its exact text.
+    Loaded { identity: String },
+    /// A `ripr.toml` entry is present but could not be read or parsed;
+    /// refresh fails closed with `config_invalid`.
+    DetectedNotLoaded,
+    /// No config resolved; refresh runs on built-in defaults (marker-based
+    /// language auto-enable is disclosed through `languages`).
+    BuiltInDefaults,
+}
+
+/// The analysis profile facts for the session block, resolved from the
+/// workspace's own configuration (#6825).
+#[derive(Clone, Debug)]
 pub(crate) struct SessionProfile {
     mode: &'static str,
     languages: Vec<String>,
+    posture: SessionConfigPosture,
 }
 
 impl SessionProfile {
-    pub(crate) fn built_in() -> Self {
+    /// Resolve the profile from the analyzed root. `None` (an unavailable
+    /// root) keeps the built-in-default profile.
+    pub(crate) fn resolve(root: Option<&Path>) -> Self {
+        let Some(root) = root else {
+            return Self::built_in();
+        };
+        match crate::config::load_for_root(root) {
+            Ok(config) => {
+                let languages = config
+                    .languages()
+                    .enabled()
+                    .iter()
+                    .map(|language| language.as_str().to_string())
+                    .collect();
+                let posture = match crate::config::loaded_config_identity(&config) {
+                    Some(identity) => SessionConfigPosture::Loaded { identity },
+                    None => SessionConfigPosture::BuiltInDefaults,
+                };
+                Self {
+                    mode: "draft",
+                    languages,
+                    posture,
+                }
+            }
+            // A load failure with no config entry anywhere (for example the
+            // marker-based language auto-enable refusing an unavailable
+            // language on a feature-restricted build) is a defaults
+            // posture; only a present-but-unloadable entry is
+            // detected-not-loaded (#6825).
+            Err(_) if crate::config::config_discovered_for_root(root) => Self {
+                posture: SessionConfigPosture::DetectedNotLoaded,
+                ..Self::built_in()
+            },
+            Err(_) => Self::built_in(),
+        }
+    }
+
+    /// The built-in-default profile (an unavailable root, or the defaults
+    /// fallback when the workspace config cannot load).
+    fn built_in() -> Self {
         let languages = crate::config::RiprConfig::default()
             .languages()
             .enabled()
@@ -652,33 +1033,70 @@ impl SessionProfile {
         Self {
             mode: "draft",
             languages,
+            posture: SessionConfigPosture::BuiltInDefaults,
         }
     }
 
     fn document(&self) -> Value {
-        json!({
+        let (project_config, support) = match &self.posture {
+            SessionConfigPosture::Loaded { .. } => ("loaded", "project_config"),
+            SessionConfigPosture::DetectedNotLoaded => ("detected_not_loaded", "built_in_defaults"),
+            SessionConfigPosture::BuiltInDefaults => ("built_in_defaults", "built_in_defaults"),
+        };
+        let mut document = json!({
             "mode": self.mode,
             "languages": self.languages,
-            "project_config": "detected_not_loaded",
-            "support": "built_in_defaults",
-        })
+            "project_config": project_config,
+            "support": support,
+        });
+        if let SessionConfigPosture::Loaded { identity } = &self.posture {
+            document["config_identity"] = Value::from(identity.clone());
+        }
+        document
+    }
+
+    /// The session-block limitation naming the configuration posture, so a
+    /// zero finding count is never mistaken for a language gate (#6825).
+    fn session_limitation(&self) -> Option<&'static str> {
+        match self.posture {
+            SessionConfigPosture::Loaded { .. } => Some(
+                "this profile resolved ripr.toml at server startup; each ripr_refresh re-resolves it and binds the config identity it used in the snapshot outcome, so a post-startup ripr.toml edit is visible to the next refresh before it is visible here",
+            ),
+            SessionConfigPosture::DetectedNotLoaded => Some(
+                "project-local ripr.toml is detected but could not be loaded; refresh fails closed with config_invalid until it parses",
+            ),
+            SessionConfigPosture::BuiltInDefaults => {
+                Some("no workspace ripr.toml was loaded; refresh runs with built-in defaults")
+            }
+        }
     }
 }
 
 /// Run one bounded analysis through the shared check authority and bind it
 /// into a snapshot. This is the only bridge from the session to the
 /// producer: read-only static analysis, identical to what `ripr check` and
-/// the LSP run in-process.
+/// the LSP run in-process. The workspace's own configuration is honored
+/// through the same `load_for_root` resolution the CLI uses (#6825): a
+/// config file is loaded, and a config-less root keeps built-in defaults
+/// (with the zero-config marker-based language auto-enable), so a
+/// Python-enabled workspace analyzes identically over MCP and CLI.
 pub(crate) fn run_check(
     root: &Path,
     root_identity: Option<&str>,
 ) -> Result<Snapshot, AttemptFailure> {
+    let config = crate::config::load_for_root(root).map_err(|error| {
+        AttemptFailure::new(
+            CODE_CONFIG_INVALID,
+            format!("the workspace configuration could not be loaded: {error}"),
+            "address the configuration error above (the detail names the cause), then retry with ripr_refresh",
+        )
+    })?;
     let input = crate::app::CheckInput {
         root: PathBuf::from(root),
         git_timeout: Some(crate::app::default_cli_git_timeout()),
         ..Default::default()
     };
-    let output = crate::app::check_workspace(input).map_err(|error| {
+    let output = crate::app::check_workspace_with_config(input, &config).map_err(|error| {
         AttemptFailure::new(
             CODE_ANALYSIS_FAILED,
             format!("shared check authority failed: {error}"),
@@ -689,7 +1107,10 @@ pub(crate) fn run_check(
     // Bind the repair-card producers inside the same bounded attempt, after
     // the shared check authority completed: the snapshot commits complete —
     // items, findings, head, and card seams — or not at all (RIPR-SPEC-0215).
-    super::repair_card::bind_snapshot_card_producers(root, &mut snapshot)?;
+    // The card producers consume the same resolved workspace configuration
+    // as the findings (#6825 review), so one committed snapshot cannot
+    // disagree with itself across the two producers.
+    super::repair_card::bind_snapshot_card_producers(root, &config, &mut snapshot)?;
     Ok(snapshot)
 }
 
@@ -857,9 +1278,11 @@ mod tests {
             superseded_attempts: std::collections::BTreeMap::new(),
             superseded_order: std::collections::VecDeque::new(),
         };
-        let _ = complete.list_gaps(None).map_err(|failure| failure.detail)?;
+        let _ = complete
+            .list_gaps(None, GapListWindow::default())
+            .map_err(|failure| failure.detail)?;
         let incomplete_doc = incomplete
-            .list_gaps(None)
+            .list_gaps(None, GapListWindow::default())
             .map_err(|failure| failure.detail)?;
         let complete_snapshot = complete
             .last_good
@@ -908,7 +1331,10 @@ mod tests {
     #[test]
     fn list_get_snapshot_before_any_refresh_fail_closed() -> Result<(), String> {
         let session = WorkspaceSession::default();
-        expect_code(session.list_gaps(None), CODE_NO_SNAPSHOT)?;
+        expect_code(
+            session.list_gaps(None, GapListWindow::default()),
+            CODE_NO_SNAPSHOT,
+        )?;
         expect_code(session.get_gap("gap:any", None), CODE_NO_SNAPSHOT)?;
         expect_code(
             session.snapshot_document("snapshot:sha256:none"),
@@ -927,7 +1353,10 @@ mod tests {
             in_flight: true,
             ..Default::default()
         };
-        expect_code(session.list_gaps(None), CODE_ANALYSIS_IN_FLIGHT)?;
+        expect_code(
+            session.list_gaps(None, GapListWindow::default()),
+            CODE_ANALYSIS_IN_FLIGHT,
+        )?;
         expect_code(session.get_gap("gap:any", None), CODE_ANALYSIS_IN_FLIGHT)?;
         expect_code(
             session.snapshot_document("snapshot:sha256:any"),
@@ -949,7 +1378,7 @@ mod tests {
             .ok_or_else(|| "missing snapshot".to_string())?
             .snapshot_id
             .clone();
-        match session.list_gaps(Some("snapshot:sha256:old")) {
+        match session.list_gaps(Some("snapshot:sha256:old"), GapListWindow::default()) {
             Ok(value) => Err(format!("stale snapshot must fail closed: {value}")),
             Err(failure) if failure.code != CODE_STALE_SNAPSHOT => {
                 Err(format!("unexpected failure code: {}", failure.code))
@@ -969,6 +1398,295 @@ mod tests {
                 Ok(())
             }
         }
+    }
+
+    /// A snapshot carrying `count` distinct canonical items, built from the
+    /// shared gaps test finding with per-index identities. No analysis runs:
+    /// the session contract is exercised against typed producer output.
+    fn session_with_findings(count: usize) -> Result<WorkspaceSession, String> {
+        let findings = (0..count)
+            .map(|index| {
+                let mut finding = gaps::test_finding()?;
+                finding.id = format!("finding:test:{index}");
+                if let Some(gap) = finding.canonical_gap.as_mut() {
+                    gap.id = format!("gap:test:{index}");
+                }
+                finding.probe.id = crate::domain::ProbeId(format!("probe:test:{index}"));
+                // Distinct files: the shared budget caps items per document,
+                // and this fixture needs a workspace-scale selection.
+                finding.probe.location =
+                    crate::domain::SourceLocation::new(format!("src/module{index}.rs"), 12, 5);
+                Ok(finding)
+            })
+            .collect::<Result<Vec<_>, String>>()?;
+        let output = crate::app::CheckOutput {
+            schema_version: crate::app::CHECK_OUTPUT_SCHEMA_VERSION.to_string(),
+            harness_projections: Vec::new(),
+            tool: "ripr".to_string(),
+            mode: crate::app::Mode::Draft,
+            root: PathBuf::from("."),
+            base: None,
+            analysis_outcome: Some(outcome(
+                AnalysisOutcomeKind::CompleteWithFindings,
+                count as u64,
+                Vec::new(),
+            )?),
+            summary: crate::domain::Summary::default(),
+            findings,
+            preview_language_advisories: Vec::new(),
+            language_runs: Vec::new(),
+            no_scope_provided: false,
+            unanalyzed_working_tree: false,
+            untracked_working_tree_source_paths: Vec::new(),
+            unlinked_python_tests: None,
+            suppression: None,
+            partial_scope: None,
+        };
+        let snapshot = Snapshot::from_output(&output, Some("root:sha256:test"))
+            .map_err(|failure| failure.detail)?;
+        Ok(WorkspaceSession {
+            in_flight: false,
+            last_good: Some(Arc::new(snapshot)),
+            last_failure: None,
+            repairs: std::collections::BTreeMap::new(),
+            superseded_attempts: std::collections::BTreeMap::new(),
+            superseded_order: std::collections::VecDeque::new(),
+        })
+    }
+
+    /// #6021: an aggregate listing too large for one wire response degrades
+    /// to disclosed pages. The old behavior returned the whole budget-
+    /// approved document and let the tool envelope fail `result_too_large`
+    /// after approval — the approved-then-dead sequence. Now the default
+    /// call byte-fills one wire-fitting page, discloses the window, and
+    /// walking `page.next_offset` covers the selection exactly once.
+    #[test]
+    fn oversized_aggregate_listing_pages_instead_of_dying_after_budget_approval()
+    -> Result<(), String> {
+        let session = session_with_findings(700)?;
+        let document = session
+            .list_gaps(None, GapListWindow::default())
+            .map_err(|failure| failure.detail)?;
+
+        // The page itself must fit the wire envelope end to end, with the
+        // advertised structured copy intact: the tool declares an
+        // outputSchema, so a paged success may not drop structuredContent
+        // (#6021 review).
+        let envelope = crate::mcp::protocol::tool_result(document.clone())
+            .map_err(|error| format!("paged listing must ship: {error}"))?;
+        let envelope_bytes = serde_json::to_vec(&envelope).map_err(|error| error.to_string())?;
+        if envelope_bytes.len() > crate::mcp::MAX_RESPONSE_BYTES {
+            return Err(format!(
+                "the paged envelope must fit the wire bound, got {} bytes",
+                envelope_bytes.len()
+            ));
+        }
+        if envelope.get("structuredContent").is_none() {
+            return Err(
+                "a paged listing must keep its structured result; the page trim must size the \
+                 double envelope, not fall back to text-only"
+                    .to_string(),
+            );
+        }
+        // A byte-filled page must actually sit at the tool document ceiling.
+        let document_bytes = serde_json::to_vec(&document).map_err(|error| error.to_string())?;
+        if document_bytes.len() > crate::mcp::MAX_TOOL_DOCUMENT_BYTES {
+            return Err(format!(
+                "the default page must respect the tool document ceiling, got {} bytes",
+                document_bytes.len()
+            ));
+        }
+
+        let selected = document
+            .pointer("/selected")
+            .and_then(Value::as_u64)
+            .ok_or_else(|| "list lost its selected count".to_string())?;
+        let returned = document
+            .pointer("/page/returned")
+            .and_then(Value::as_u64)
+            .ok_or_else(|| "list lost its page window".to_string())?;
+        if returned == 0 || returned >= selected {
+            return Err(format!(
+                "a byte-filled page must be partial: returned {returned} of {selected}"
+            ));
+        }
+        if document.pointer("/page/has_more").and_then(Value::as_bool) != Some(true) {
+            return Err("a partial page must disclose has_more".to_string());
+        }
+        if document
+            .pointer("/page/next_offset")
+            .and_then(Value::as_u64)
+            != Some(returned)
+        {
+            return Err("next_offset must resume after the returned page".to_string());
+        }
+        if document
+            .pointer("/items")
+            .and_then(Value::as_array)
+            .map(|items| items.len())
+            != Some(returned as usize)
+        {
+            return Err("items must carry exactly the returned page".to_string());
+        }
+        if document
+            .pointer("/continuation/next_page/tool")
+            .and_then(Value::as_str)
+            != Some("ripr_list_gaps")
+        {
+            return Err("a partial page must name the next-page route".to_string());
+        }
+        // The generated next-page route pins the snapshot identity, so a
+        // refresh between pages fails closed with stale_snapshot instead of
+        // silently mixing snapshots (#6021 review).
+        let snapshot_id = document
+            .pointer("/snapshot_id")
+            .and_then(Value::as_str)
+            .ok_or_else(|| "list lost its snapshot identity".to_string())?
+            .to_string();
+        if document
+            .pointer("/continuation/next_page/arguments/snapshot_id")
+            .and_then(Value::as_str)
+            != Some(snapshot_id.as_str())
+        {
+            return Err(format!(
+                "next_page must pin the snapshot identity {snapshot_id}: {document}"
+            ));
+        }
+
+        // Walking next_offset covers the selection exactly once, in order,
+        // ending in a disclosed final page.
+        let mut seen = std::collections::BTreeSet::new();
+        let mut pages = 0usize;
+        let mut offset = 0usize;
+        loop {
+            let document = session
+                .list_gaps(
+                    None,
+                    GapListWindow {
+                        offset,
+                        limit: None,
+                    },
+                )
+                .map_err(|failure| failure.detail)?;
+            let ids = document
+                .pointer("/items")
+                .and_then(Value::as_array)
+                .ok_or_else(|| "page lost its items".to_string())?;
+            if ids.is_empty() {
+                return Err(format!("page at offset {offset} returned no items"));
+            }
+            for id in ids {
+                let id = id
+                    .pointer("/canonical_id")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| "item summary lost its identity".to_string())?;
+                if !seen.insert(id.to_string()) {
+                    return Err(format!("identity {id} appeared on two pages"));
+                }
+            }
+            pages += 1;
+            match document.pointer("/page/has_more").and_then(Value::as_bool) {
+                Some(true) => {
+                    offset = document
+                        .pointer("/page/next_offset")
+                        .and_then(Value::as_u64)
+                        .ok_or_else(|| "has_more without next_offset".to_string())?
+                        as usize;
+                }
+                Some(false) => break,
+                other => return Err(format!("page lost has_more: {other:?}")),
+            }
+            if pages > selected as usize {
+                return Err("paging must terminate".to_string());
+            }
+        }
+        if seen.len() != selected as usize {
+            return Err(format!(
+                "walked {} identities but the selection holds {selected}",
+                seen.len()
+            ));
+        }
+
+        // An explicit limit caps the page and is disclosed.
+        let limited = session
+            .list_gaps(
+                None,
+                GapListWindow {
+                    offset: 0,
+                    limit: Some(1),
+                },
+            )
+            .map_err(|failure| failure.detail)?;
+        if limited.pointer("/page/limit").and_then(Value::as_u64) != Some(1)
+            || limited.pointer("/page/returned").and_then(Value::as_u64) != Some(1)
+            || limited.pointer("/page/has_more").and_then(Value::as_bool) != Some(true)
+        {
+            return Err(format!(
+                "an explicit limit must cap and disclose: {limited}"
+            ));
+        }
+        // An offset past the selection is an empty disclosed page, not an
+        // error, and the window echoes the requested offset rather than the
+        // clamped slice start (#6021 review).
+        let requested_offset = selected as usize + 5;
+        let beyond = session
+            .list_gaps(
+                None,
+                GapListWindow {
+                    offset: requested_offset,
+                    limit: None,
+                },
+            )
+            .map_err(|failure| failure.detail)?;
+        if beyond
+            .pointer("/items")
+            .and_then(Value::as_array)
+            .map(|items| !items.is_empty())
+            != Some(false)
+            || beyond.pointer("/page/has_more").and_then(Value::as_bool) != Some(false)
+            || beyond.pointer("/page/next_offset") != Some(&Value::Null)
+            || beyond.pointer("/page/offset").and_then(Value::as_u64)
+                != Some(requested_offset as u64)
+        {
+            return Err(format!(
+                "an offset past the selection must be an empty final page echoing the request: {beyond}"
+            ));
+        }
+        Ok(())
+    }
+
+    /// #6021: below the wire ceiling the default listing still ships the
+    /// whole selection in one page — the small-workspace contract is
+    /// unchanged apart from the added page disclosure.
+    #[test]
+    fn fitting_listing_ships_whole_with_a_closed_page_window() -> Result<(), String> {
+        let session = session_with_findings(3)?;
+        let document = session
+            .list_gaps(None, GapListWindow::default())
+            .map_err(|failure| failure.detail)?;
+        if document.pointer("/selected").and_then(Value::as_u64) != Some(3)
+            || document
+                .pointer("/items")
+                .and_then(Value::as_array)
+                .map(|items| items.len())
+                != Some(3)
+        {
+            return Err(format!("small selection must ship whole: {document}"));
+        }
+        if document.pointer("/page/has_more").and_then(Value::as_bool) != Some(false)
+            || document.pointer("/page/next_offset") != Some(&Value::Null)
+            || document.pointer("/page/returned").and_then(Value::as_u64) != Some(3)
+        {
+            return Err(format!(
+                "a complete listing must close its window: {document}"
+            ));
+        }
+        let envelope = crate::mcp::protocol::tool_result(document)
+            .map_err(|error| format!("small listing must ship: {error}"))?;
+        if envelope.get("structuredContent").is_none() {
+            return Err("a fitting listing must keep structuredContent".to_string());
+        }
+        Ok(())
     }
 
     #[test]
@@ -1017,9 +1735,27 @@ mod tests {
         if document
             .pointer("/profile/project_config")
             .and_then(Value::as_str)
-            != Some("detected_not_loaded")
+            != Some("built_in_defaults")
         {
-            return Err("session profile must stay detected-not-loaded".to_string());
+            return Err(format!(
+                "built-in profile must disclose its defaults posture: {document}"
+            ));
+        }
+        if document.pointer("/profile/support").and_then(Value::as_str) != Some("built_in_defaults")
+        {
+            return Err(format!(
+                "built-in profile lost its support fact: {document}"
+            ));
+        }
+        let limitations = document
+            .pointer("/limitations")
+            .and_then(Value::as_array)
+            .ok_or_else(|| "session lost its limitations".to_string())?;
+        let text = serde_json::to_string(limitations).map_err(|error| error.to_string())?;
+        if !text.contains("no workspace ripr.toml was loaded") {
+            return Err(format!(
+                "a defaults session must disclose the missing config: {text}"
+            ));
         }
         if document
             .pointer("/last_completed_snapshot/snapshot_id")
@@ -1034,6 +1770,111 @@ mod tests {
         if profile.languages.is_empty() {
             return Err("built-in profile must name at least one language".to_string());
         }
+        Ok(())
+    }
+
+    /// #6825: the session profile resolves the workspace's own
+    /// configuration, so a Python-enabled workspace discloses `loaded` with
+    /// its config identity and the enabled language — never a rust-only
+    /// built-in default.
+    #[test]
+    fn session_profile_resolves_the_workspace_configuration() -> Result<(), String> {
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|duration| duration.as_nanos())
+            .unwrap_or(0);
+        let root = std::env::temp_dir().join(format!(
+            "ripr-mcp-profile-resolve-{}-{stamp}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&root).map_err(|error| error.to_string())?;
+
+        // No config: built-in defaults (no python markers in an empty root).
+        let defaults = SessionProfile::resolve(Some(&root));
+        if defaults.languages != vec!["rust".to_string()]
+            || defaults.posture != SessionConfigPosture::BuiltInDefaults
+        {
+            return Err(format!(
+                "a config-less empty root must keep built-in defaults: {defaults:?}"
+            ));
+        }
+        let document =
+            crate::mcp::workspace::WorkspaceSession::default().session_document(&defaults);
+        let limitations = document
+            .pointer("/limitations")
+            .and_then(Value::as_array)
+            .ok_or_else(|| "session lost its limitations".to_string())?;
+        let text = serde_json::to_string(limitations).map_err(|error| error.to_string())?;
+        if !text.contains("no workspace ripr.toml was loaded") {
+            return Err(format!("defaults posture must be disclosed: {text}"));
+        }
+
+        // A python-enabled workspace: loaded posture with the config
+        // identity and the enabled language. Python-only (#4252): a build
+        // without `lang-python` refuses the enabled language at load, so
+        // the loaded posture is not observable there.
+        #[cfg(feature = "lang-python")]
+        {
+            std::fs::write(
+                root.join("ripr.toml"),
+                "[languages]\nenabled = [\"python\"]\n",
+            )
+            .map_err(|error| error.to_string())?;
+            let loaded = SessionProfile::resolve(Some(&root));
+            match &loaded.posture {
+                SessionConfigPosture::Loaded { identity }
+                    if identity.starts_with("fnv1a64:") && loaded.languages == vec!["python"] => {}
+                other => {
+                    return Err(format!(
+                        "a python-enabled workspace must project loaded with its language: {other:?}"
+                    ));
+                }
+            }
+            let document =
+                crate::mcp::workspace::WorkspaceSession::default().session_document(&loaded);
+            if document.pointer("/profile/config_identity").is_none() {
+                return Err(format!(
+                    "a loaded profile must publish its config identity: {document}"
+                ));
+            }
+            let limitations = document
+                .pointer("/limitations")
+                .and_then(Value::as_array)
+                .ok_or_else(|| "session lost its limitations".to_string())?;
+            let text = serde_json::to_string(limitations).map_err(|error| error.to_string())?;
+            if text.contains("could not be loaded") || !text.contains("re-resolves") {
+                return Err(format!(
+                    "a loaded profile must carry only the startup-freshness disclosure: {text}"
+                ));
+            }
+        }
+
+        // A present but unparseable config: detected-not-loaded, refresh
+        // fails closed with config_invalid.
+        std::fs::write(root.join("ripr.toml"), "not valid toml =\n")
+            .map_err(|error| error.to_string())?;
+        let detected = SessionProfile::resolve(Some(&root));
+        if detected.posture != SessionConfigPosture::DetectedNotLoaded
+            || detected.languages != vec!["rust".to_string()]
+        {
+            return Err(format!(
+                "an unparseable ripr.toml must project detected-not-loaded: {detected:?}"
+            ));
+        }
+        let document =
+            crate::mcp::workspace::WorkspaceSession::default().session_document(&detected);
+        let limitations = document
+            .pointer("/limitations")
+            .and_then(Value::as_array)
+            .ok_or_else(|| "session lost its limitations".to_string())?;
+        let text = serde_json::to_string(limitations).map_err(|error| error.to_string())?;
+        if !text.contains("config_invalid") {
+            return Err(format!(
+                "detected-not-loaded must name the refresh failure: {text}"
+            ));
+        }
+
+        std::fs::remove_dir_all(&root).map_err(|error| error.to_string())?;
         Ok(())
     }
 
@@ -1106,6 +1947,178 @@ mod tests {
         Ok(())
     }
 
+    /// #5995: the refresh analyzes only the committed default-branch diff.
+    /// On a dirty tracked file it reports `no_scope` with zero findings
+    /// while `ripr check --worktree` and an LSP session both report the
+    /// finding — so the refresh result and the workspace status must carry
+    /// the producer's unanalyzed-working-tree fact as a typed scope
+    /// disclosure naming the `--worktree` route, and must stay silent on a
+    /// clean tracked tree. Without it, `no_scope` reads as all-clear.
+    #[test]
+    fn dirty_tree_refresh_and_status_disclose_the_committed_diff_scope() -> Result<(), String> {
+        let mut dirty = output(AnalysisOutcomeKind::CompleteNoFindings, 0, Vec::new())?;
+        // The issue's shape verbatim: `no_scope` with every count zero.
+        dirty.analysis_outcome = Some(AnalysisOutcome::new(
+            AnalysisOutcomeKind::NoScope,
+            Default::default(),
+            AnalysisOutcomeCounts::default(),
+            Vec::new(),
+        )?);
+        dirty.unanalyzed_working_tree = true;
+        let snapshot =
+            Snapshot::from_output(&dirty, Some("root:sha256:test")).map_err(|f| f.detail)?;
+        assert!(
+            snapshot.scope.uncommitted_edits,
+            "the producer fact must bind onto the snapshot"
+        );
+        let session = WorkspaceSession {
+            in_flight: false,
+            last_good: Some(Arc::new(snapshot)),
+            last_failure: None,
+            repairs: std::collections::BTreeMap::new(),
+            superseded_attempts: std::collections::BTreeMap::new(),
+            superseded_order: std::collections::VecDeque::new(),
+        };
+
+        let refresh = refresh_document(&session);
+        if refresh.pointer("/scope/analyzed").and_then(Value::as_str)
+            != Some("committed default-branch diff")
+        {
+            return Err(format!(
+                "refresh must disclose the analyzed scope: {refresh}"
+            ));
+        }
+        if refresh
+            .pointer("/scope/uncommitted_edits")
+            .and_then(Value::as_str)
+            != Some("outside this analysis")
+        {
+            return Err(format!(
+                "refresh must disclose the excluded edits: {refresh}"
+            ));
+        }
+        let note = refresh
+            .pointer("/scope/note")
+            .and_then(Value::as_str)
+            .ok_or_else(|| format!("scope disclosure must name the repair route: {refresh}"))?;
+        if !note.contains("--worktree") {
+            return Err(format!(
+                "scope note must name `ripr check --worktree`: {note}"
+            ));
+        }
+
+        let status = session.session_document(&SessionProfile::built_in());
+        if status.pointer("/scope/analyzed").and_then(Value::as_str)
+            != Some("committed default-branch diff")
+        {
+            return Err(format!("status must disclose the analyzed scope: {status}"));
+        }
+        if !status
+            .pointer("/scope/note")
+            .and_then(Value::as_str)
+            .is_some_and(|note| note.contains("--worktree"))
+        {
+            return Err(format!(
+                "status scope note must name the worktree route: {status}"
+            ));
+        }
+
+        // A clean tracked tree carries no exclusion to disclose.
+        let clean = session_with(AnalysisOutcomeKind::CompleteNoFindings, 0)?;
+        if !refresh_document(&clean)["scope"].is_null() {
+            return Err("a clean tree must not invent a scope exclusion".to_string());
+        }
+        if !clean.session_document(&SessionProfile::built_in())["scope"].is_null() {
+            return Err("a clean tree must not invent a scope exclusion".to_string());
+        }
+
+        // #5995 review: an untracked-only tree must not receive the bare
+        // `--worktree` remedy — untracked files are invisible to it (#5258).
+        // The disclosure names staging or an explicit diff instead.
+        let mut untracked_only = output(AnalysisOutcomeKind::CompleteNoFindings, 0, Vec::new())?;
+        untracked_only.analysis_outcome = dirty.analysis_outcome.clone();
+        untracked_only.unanalyzed_working_tree = true;
+        untracked_only.untracked_working_tree_source_paths =
+            vec!["src/new.rs".to_string(), "src/other_new.rs".to_string()];
+        let untracked_snapshot = Snapshot::from_output(&untracked_only, Some("root:sha256:test"))
+            .map_err(|f| f.detail)?;
+        let untracked_session = WorkspaceSession {
+            in_flight: false,
+            last_good: Some(Arc::new(untracked_snapshot)),
+            last_failure: None,
+            repairs: std::collections::BTreeMap::new(),
+            superseded_attempts: std::collections::BTreeMap::new(),
+            superseded_order: std::collections::VecDeque::new(),
+        };
+        let untracked_refresh = refresh_document(&untracked_session);
+        let note = untracked_refresh
+            .pointer("/scope/note")
+            .and_then(Value::as_str)
+            .ok_or_else(|| {
+                format!("untracked disclosure must carry a note: {untracked_refresh}")
+            })?;
+        if !note.contains("staged and unstaged tracked edits only") {
+            return Err(format!(
+                "an untracked tree must bound the worktree remedy: {note}"
+            ));
+        }
+        if !note.contains("stage them") {
+            return Err(format!(
+                "an untracked tree must name the staging remedy: {note}"
+            ));
+        }
+        let files = untracked_refresh
+            .pointer("/scope/untracked_edits/files")
+            .and_then(Value::as_array)
+            .ok_or_else(|| {
+                format!("untracked disclosure must name the files: {untracked_refresh}")
+            })?;
+        if files.len() != 2 {
+            return Err(format!(
+                "the disclosure must name both untracked files: {files:?}"
+            ));
+        }
+        if untracked_refresh
+            .pointer("/scope/untracked_edits/total")
+            .and_then(Value::as_u64)
+            != Some(2)
+        {
+            return Err(format!(
+                "untracked disclosure must carry the total: {untracked_refresh}"
+            ));
+        }
+
+        Ok(())
+    }
+
+    /// #5995 review: the scope facts change what the served documents
+    /// disclose, so two otherwise identical snapshots with different
+    /// exclusions must not share a snapshot identity.
+    #[test]
+    fn snapshot_identity_distinguishes_excluded_edit_facts() -> Result<(), String> {
+        let no_scope_outcome = AnalysisOutcome::new(
+            AnalysisOutcomeKind::NoScope,
+            Default::default(),
+            AnalysisOutcomeCounts::default(),
+            Vec::new(),
+        )?;
+        let mut clean = output(AnalysisOutcomeKind::CompleteNoFindings, 0, Vec::new())?;
+        clean.analysis_outcome = Some(no_scope_outcome.clone());
+        let mut dirty = clean.clone();
+        dirty.unanalyzed_working_tree = true;
+        let clean_snapshot =
+            Snapshot::from_output(&clean, Some("root:sha256:test")).map_err(|f| f.detail)?;
+        let dirty_snapshot =
+            Snapshot::from_output(&dirty, Some("root:sha256:test")).map_err(|f| f.detail)?;
+        if clean_snapshot.snapshot_id == dirty_snapshot.snapshot_id {
+            return Err(
+                "two snapshots differing only in the excluded-edit facts must not share an id"
+                    .to_string(),
+            );
+        }
+        Ok(())
+    }
+
     #[test]
     fn portable_snapshot_identity_ignores_the_concrete_root() -> Result<(), String> {
         let first = output(AnalysisOutcomeKind::CompleteNoFindings, 0, Vec::new())?;
@@ -1116,6 +2129,40 @@ mod tests {
             return Err(
                 "equivalent roots must preserve one portable snapshot identity".to_string(),
             );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn portable_snapshot_identity_survives_distinct_absolute_checkouts() -> Result<(), String> {
+        // #5254 item 6: the same finding content committed from two checkouts
+        // at different absolute roots must share one snapshot identity, since
+        // every served file renders root-relative. Absolute host paths in
+        // evidence would fork the identity per checkout. Host-native roots
+        // (no filesystem touch) so the pin holds on every host.
+        let one_root = std::env::temp_dir().join("ripr-portable-one");
+        let two_root = std::env::temp_dir().join("ripr-portable-two");
+        let mut first = output(AnalysisOutcomeKind::CompleteWithFindings, 1, Vec::new())?;
+        first.root = one_root.clone();
+        let mut first_finding = gaps::test_finding()?;
+        first_finding.probe.location.file = one_root.join("src/lib.rs");
+        first_finding.related_tests[0].file = one_root.join("tests/checkout.rs");
+        first.findings.push(first_finding);
+
+        let mut second = output(AnalysisOutcomeKind::CompleteWithFindings, 1, Vec::new())?;
+        second.root = two_root.clone();
+        let mut second_finding = gaps::test_finding()?;
+        second_finding.probe.location.file = two_root.join("src/lib.rs");
+        second_finding.related_tests[0].file = two_root.join("tests/checkout.rs");
+        second.findings.push(second_finding);
+
+        let one = Snapshot::from_output(&first, Some("root:sha256:test")).map_err(|f| f.detail)?;
+        let two = Snapshot::from_output(&second, Some("root:sha256:test")).map_err(|f| f.detail)?;
+        if one.snapshot_id != two.snapshot_id {
+            return Err(format!(
+                "distinct checkouts must share one portable snapshot identity: {} vs {}",
+                one.snapshot_id, two.snapshot_id
+            ));
         }
         Ok(())
     }
@@ -1149,7 +2196,9 @@ mod tests {
             let mut original_items = snapshot
                 .findings
                 .iter()
-                .map(GapItem::from_finding)
+                // Same root the `output()` shell commits with, so the
+                // re-projection reproduces the committed bytes exactly.
+                .map(|finding| GapItem::from_finding(finding, Path::new(".")))
                 .collect::<Result<Vec<_>, _>>()?;
             for item in &mut original_items {
                 let bytes = serde_json::to_vec(&item.evidence_core).map_err(|e| e.to_string())?;
@@ -1157,7 +2206,8 @@ mod tests {
                 item.evidence_sha256 = sha256_hex(&bytes);
                 lengths.push(bytes.len());
             }
-            let original_id = snapshot_identity(&snapshot.outcome, &original_items)?;
+            let original_id =
+                snapshot_identity(&snapshot.outcome, &original_items, &snapshot.scope)?;
             assert_eq!(snapshot.snapshot_id, original_id);
 
             let session = WorkspaceSession {

@@ -1,0 +1,58 @@
+{
+  "case_id": "trap-widen-asserts-input",
+  "subject_id": "authored-trap-kit",
+  "diff": "cases/trap-widen-asserts-input.diff",
+  "anchor": {
+    "file": "src/sizing.rs",
+    "line": 2
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "assert_on_input_not_result",
+  "hard_case": "The test calls widen() but asserts on the input binding, not on the returned value.",
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "width - 4",
+        "mutated_line": "width - 4",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: replaces `4 + width` with `width - 4`, which changes the result, but no executed assertion observes it"
+      },
+      {
+        "replacement": "width + 5",
+        "mutated_line": "width + 5",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: replaces `4 + width` with `width + 5`, which changes the result, but no executed assertion observes it"
+      },
+      {
+        "replacement": "width * 4",
+        "mutated_line": "width * 4",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: replaces `4 + width` with `width * 4`, which changes the result, but no executed assertion observes it"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "widen_adds_the_margin computes after = widen(before) and then asserts before == 10; the result is discarded. Adversarial shape (assert on the wrong variable). It also guards the owner-result binding rule (RIPR-SPEC-0005): today any let-bound result reads weak, so a fix there must still refuse this shape.",
+  "labeling_observation": {
+    "ripr_commit": "6487826",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

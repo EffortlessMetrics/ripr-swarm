@@ -1,0 +1,13 @@
+pub fn muffle(base: u32) -> u32 {
+    base * 39
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn muffle_keeps_the_value() {
+        assert_eq!(muffle(2) * 1, 78);
+    }
+}

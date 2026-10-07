@@ -21,6 +21,7 @@ use crate::output::typescript_preview_card::{
 };
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
+use std::path::Path;
 
 use super::finding_alignment;
 use super::{array_field, escape, field, float_field, number_field};
@@ -226,6 +227,7 @@ pub(crate) fn render_with_config(
             config,
             &canonical_gap_counts,
             suppressed_selectors.get(finding.id.as_str()).copied(),
+            &output.root,
         );
         rendered_findings += 1;
         let last_analysis_finding = idx + 1 == output.findings.len();
@@ -641,6 +643,7 @@ pub(super) fn finding_json(out: &mut String, finding: &Finding, indent: usize) {
         &RiprConfig::default(),
         &BTreeMap::new(),
         None,
+        Path::new("."),
     );
 }
 
@@ -651,6 +654,7 @@ fn finding_json_with_config_and_counts(
     config: &RiprConfig,
     canonical_gap_counts: &BTreeMap<&str, usize>,
     suppressed_selector: Option<&str>,
+    root: &Path,
 ) {
     let sp = "  ".repeat(indent);
     out.push_str(&format!("{sp}{{\n"));
@@ -708,7 +712,10 @@ fn finding_json_with_config_and_counts(
         out,
         indent + 2,
         "file",
-        &crate::output::path::display_path(&finding.probe.location.file),
+        // The shared finding-location owner (#5996): check JSON is the
+        // listing agents join MCP items and LSP packets against, so the
+        // location renders in the one shared workspace-relative form.
+        &crate::analysis::finding_location_text(root, &finding.probe.location.file),
         true,
     );
     number_field(out, indent + 2, "line", finding.probe.location.line, true);

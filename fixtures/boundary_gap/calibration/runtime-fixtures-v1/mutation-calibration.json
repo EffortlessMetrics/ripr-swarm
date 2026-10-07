@@ -49,6 +49,7 @@
       }
     }
   ],
+  "ambiguous_span_overlap_matches": [],
   "matches": [
     {
       "confidence_label": "contradicts_static_gap",
@@ -223,6 +224,7 @@
   ],
   "metrics": {
     "ambiguous_file_line_total": 1,
+    "ambiguous_span_overlap_total": 0,
     "join_method_counts": {
       "file_line": 1,
       "seam_id": 5
@@ -236,7 +238,10 @@
     },
     "static_seams_total": 9,
     "static_without_runtime_total": 1,
-    "unmatched_mutants_total": 1
+    "unmatched_mutants_total": 1,
+    "unmatched_reason_counts": {
+      "no_seam_on_line": 1
+    }
   },
   "missed_runtime_signals": [
     {
@@ -288,9 +293,10 @@
     "runtime gap signals are imported runtime labels such as missed, survived, not_caught, or uncaught",
     "runtime clean signals are imported runtime labels such as caught or timeout",
     "static_gap_without_runtime_signal includes static gap seams with no matched runtime gap signal in this import",
-    "ambiguous file/line runtime gap signals are counted as runtime_inconclusive until a seam_id or unambiguous location is available"
+    "runtime records with a complete span join by span_containment to the unique innermost static seam whose span contains the mutated range; with no containing span they fall back to file and line over seams without a span, and records without a complete span join by file and line",
+    "ambiguous runtime gap signals (ambiguous_file_line: the file/line fallback found several seams on the line; ambiguous_span_overlap: equal or crossing innermost seam spans) are counted as runtime_inconclusive until a seam_id or unambiguous location is available"
   ],
-  "schema_version": "0.1",
+  "schema_version": "0.2",
   "scope": "repo",
   "static_only_findings": [
     {
@@ -374,7 +380,8 @@
       "mutation_operator": "replace arithmetic expression",
       "runtime_outcome": "missed",
       "seam_id": null,
-      "test_command": "cargo test external_runtime_signal"
+      "test_command": "cargo test external_runtime_signal",
+      "unmatched_reason": "no_seam_on_line"
     }
   ]
 }

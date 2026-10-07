@@ -1836,3 +1836,27 @@ fn handwritten_files_identities_follow_semantic_paths_and_consumed_language() ->
     );
     Ok(())
 }
+
+#[test]
+fn candidate_config_error_timeout_renders_the_timeout_diagnostic() {
+    let timeout = CandidateConfigError::Timeout {
+        operation: "git show".to_string(),
+        timeout_ms: 30_000,
+        spawned: true,
+    };
+    let text = timeout.to_string();
+    assert!(
+        text.contains("git_invocation_timeout"),
+        "timeout must keep its identity wording: {text}"
+    );
+    assert!(
+        text.contains("30000ms"),
+        "timeout must name its deadline: {text}"
+    );
+    let other = CandidateConfigError::Other("candidate tree ripr.toml: bad toml".to_string());
+    assert_eq!(
+        other.to_string(),
+        "candidate tree ripr.toml: bad toml",
+        "non-timeout failures keep their message verbatim"
+    );
+}

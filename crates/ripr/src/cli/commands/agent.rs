@@ -23,7 +23,7 @@ use crate::cli::commands_agent_support::{
     validate_agent_verify_snapshot_path,
 };
 use crate::cli::commands_context::{ensure_command_root, load_root_input_and_config};
-use crate::config::load_for_root;
+use crate::config::{RiprConfig, load_for_root};
 use crate::output;
 use crate::output::human::terminal_safe;
 use std::io::{BufWriter, Write};
@@ -51,6 +51,14 @@ const REPAIR_AFTER_RESULT_SCHEMA_VERSION: &str = "0.1";
 /// and the bare verify document's `0.3`, so every after-phase stdout shape
 /// stays identifiable from `schema_version` alone.
 const REPAIR_AFTER_REFUSAL_SCHEMA_VERSION: &str = "0.2";
+
+/// The `repair_after_failure` stdout envelope (#6033): an after phase whose
+/// edit cage finished the attempt as not receipt-ready (violated,
+/// incomparable, stale). Its own version keeps every after-phase stdout
+/// shape identifiable from `schema_version` alone; the exit code for this
+/// path stays `2` — the attempt is terminal and the recovery is a new
+/// attempt, not a retry of this one.
+const REPAIR_AFTER_FAILURE_SCHEMA_VERSION: &str = "0.4";
 
 pub(in crate::cli) fn agent(args: &[String]) -> Result<(), CommandError> {
     let command = parse_agent_args(args)?;
@@ -183,15 +191,27 @@ struct AgentStartWritten {
 fn write_agent_start(options: AgentStartOptions) -> Result<AgentStartWritten, String> {
     ensure_command_root(&options.root, "agent start")?;
     let (input, config) = load_root_input_and_config(&options.root)?;
+    let report = analysis::inventory_classified_seams_report_at_with_config(&input.root, &config)?;
+    write_agent_start_with_report(&options, &input, &config, &report)
+}
 
+/// `write_agent_start` over one caller-supplied inventory (#5301 item 1):
+/// the before phase shares a single `ClassifiedSeamsReport` across packet,
+/// start, and snapshot instead of reloading the same classified seams three
+/// times. The standalone route above loads its own report; the bytes are
+/// identical either way because the root and config are the same.
+fn write_agent_start_with_report(
+    options: &AgentStartOptions,
+    input: &app::CheckInput,
+    config: &RiprConfig,
+    report: &analysis::ClassifiedSeamsReport,
+) -> Result<AgentStartWritten, String> {
     let working_set = AgentBriefResolvedWorkingSet::seam_id(options.seam_id.clone());
-    let (classified, _) =
-        analysis::inventory_classified_seams_at_with_config(&input.root, &config)?;
     let selection = select_agent_brief_seams(
-        &classified,
+        &report.classified,
         &working_set,
         1,
-        AgentBriefPolicy::from_config(&config),
+        AgentBriefPolicy::from_config(config),
     );
     if selection.top_seams.is_empty() {
         return Err(format!(
@@ -208,7 +228,7 @@ fn write_agent_start(options: AgentStartOptions) -> Result<AgentStartWritten, St
     let agent_brief_json = output::agent_brief::render_agent_brief_json(
         &input.root,
         &input.mode,
-        &config,
+        config,
         &working_set,
         &selection,
     )?;
@@ -311,25 +331,41 @@ fn render_agent_packet_with_context(
         "agent packet requires --seam-id or --gap-ledger with --gap-id".to_string()
     })?;
     let config = load_for_root(&options.root)?;
-    let (classified, _) =
-        analysis::inventory_classified_seams_at_with_config(&options.root, &config)?;
-    let entry = classified
+    let report =
+        analysis::inventory_classified_seams_report_at_with_config(&options.root, &config)?;
+    render_agent_packet_for_seam_with_report(&options.root, seam_id, &config, &report, context)
+}
+
+/// The `--seam-id` packet route over one caller-supplied inventory (#5301
+/// item 1): the before phase shares a single `ClassifiedSeamsReport` across
+/// packet, start, and snapshot instead of reloading the same classified
+/// seams three times. The standalone route above loads its own report; the
+/// bytes are identical either way because the root and config are the same.
+fn render_agent_packet_for_seam_with_report(
+    root: &Path,
+    seam_id: &str,
+    config: &RiprConfig,
+    report: &analysis::ClassifiedSeamsReport,
+    context: output::agent_seam_packets::PacketCommandContext<'_>,
+) -> Result<String, String> {
+    let entry = report
+        .classified
         .iter()
         .find(|entry| entry.seam.id().as_str() == seam_id)
         .ok_or_else(|| {
             format!(
                 "agent packet seam_id {seam_id} was not found. {}",
-                unknown_seam_id_hint(&options.root, seam_id)
+                unknown_seam_id_hint(root, seam_id)
             )
         })?;
 
-    let policy = AgentBriefPolicy::from_config(&config);
+    let policy = AgentBriefPolicy::from_config(config);
     if let Some(reason) = policy.omission_reason_for_class(entry.class) {
         // #4332: a policy-omitted seam is a dead end without the listing
         // route; name it like the not-found refusals do.
         return Err(format!(
             "agent packet seam_id {seam_id} {reason}. {}",
-            unknown_seam_id_hint(&options.root, seam_id)
+            unknown_seam_id_hint(root, seam_id)
         ));
     }
 
@@ -368,11 +404,16 @@ fn render_agent_verify(options: &AgentVerifyOptions) -> Result<String, String> {
         &before_identity.currentness,
         &after_identity.currentness,
     );
-    let report = output::outcome::targeted_test_outcome_report_from_json(
+    // Both snapshots validated above, so the report reuses the validated
+    // heads instead of re-parsing each document a fourth time (#5301
+    // item 7).
+    let report = output::outcome::targeted_test_outcome_report_from_json_with_heads(
         &before_json,
         &after_json,
         agent_identity_path(&options.before),
         agent_identity_path(&options.after),
+        Some(before_identity.repository_head),
+        Some(after_identity.repository_head),
     )?;
     // Bind the verify result to the exact artifact bytes it compared (#2922
     // PR B): the validated content commitments ride in canonical output so a
@@ -715,6 +756,17 @@ fn run_agent_repair_with_identity(
             attempt_id.as_str()
         );
     }
+    // One outcome resolution for the after phase's shared workflow
+    // artifacts (#6033): whatever the exit path, the pre-attempt backups are
+    // either restored or discarded exactly once.
+    if let Some(artifacts) = refusal.workflow_artifacts.take() {
+        let terminal = refusal.terminal_finish.is_some();
+        if result.is_ok() {
+            artifacts.resolve(true, terminal, refusal.tail_reached);
+        } else {
+            artifacts.resolve(false, terminal, refusal.tail_reached);
+        }
+    }
     // A deliberate named refusal once the after phase selected its attempt
     // (typed) is recorded above and maps to the decision exit code 3.
     // Operational errors after selection stay ordinary failures: exit 2.
@@ -792,6 +844,134 @@ struct AfterPhaseRefusalContext {
     /// document on a post-verify refusal), so a refusal never prints a
     /// second document.
     stdout_document_printed: bool,
+    /// Set when the tail reached the durable finish and the attempt ended
+    /// non-receipt-ready (violated, incomparable, or stale): the phase then
+    /// prints the typed `repair_after_failure` envelope instead of the bare
+    /// success-shaped verify document, and withdraws the shared workflow
+    /// artifacts it wrote, so `agent status` does not present them as
+    /// current loop artifacts beside a terminal attempt (#6033).
+    terminal_finish: Option<TerminalAttemptFinish>,
+    /// Set when the after phase tracked the shared workflow artifacts (an
+    /// attempt was selected and the phase began publishing). The outcome
+    /// resolver runs once on the phase result and decides whether the
+    /// pre-attempt backups are restored or discarded.
+    workflow_artifacts: Option<SharedWorkflowArtifacts>,
+    /// Set when the after phase's tail began running, so a failure after
+    /// artifact publication keeps the fresh projections for a retryable
+    /// attempt while a pre-tail failure restores the pre-attempt state.
+    tail_reached: bool,
+}
+
+/// What a finished-but-refused attempt carries into the failure envelope.
+struct TerminalAttemptFinish {
+    attempt_id: String,
+    attempt_state: &'static str,
+    edit_cage_verdict: &'static str,
+}
+
+/// The shared workflow artifacts an after phase writes as projections for a
+/// loop that reaches its receipt. When the cage refuses the attempt instead,
+/// the artifacts this phase created are withdrawn (#6033) so `agent status`
+/// does not list them as present loop artifacts next to a terminal attempt.
+/// Artifacts that already existed before this phase stay untouched: an
+/// earlier attempt's projections are not this phase's to clean.
+struct SharedWorkflowArtifacts {
+    paths: Vec<PathBuf>,
+    /// For a path that already existed when the phase began: the backup the
+    /// original bytes were renamed to. `None` when the path was absent, so
+    /// the phase's own artifact is fresh and is withdrawn on a terminal
+    /// refusal.
+    backups: Vec<Option<PathBuf>>,
+}
+
+const WORKFLOW_ARTIFACT_BACKUP_SUFFIX: &str = ".ripr-preattempt-backup";
+
+impl SharedWorkflowArtifacts {
+    fn track(root: &Path) -> Self {
+        let paths = vec![
+            root.join("target/ripr/workflow/after.repo-exposure.json"),
+            root.join("target/ripr/workflow/agent-verify.json"),
+            root.join(crate::agent::loop_commands::WORKFLOW_ANALYSIS_OUTCOME_ARTIFACT),
+        ];
+        let mut backups = Vec::with_capacity(paths.len());
+        for path in &paths {
+            let mut backup_name = path
+                .extension()
+                .map(|extension| extension.to_os_string())
+                .unwrap_or_default();
+            backup_name.push(WORKFLOW_ARTIFACT_BACKUP_SUFFIX);
+            let backup = path.with_extension(backup_name);
+            if backup.exists() {
+                // Crash recovery: a previous run renamed its pre-attempt
+                // bytes aside and died before resolving them. When it died
+                // before writing, the original is absent; when it died after
+                // writing its fresh projection, the visible file is that
+                // dead run's unresolved projection (on Windows a rename
+                // cannot replace the existing backup). Either way the backup
+                // holds the true pre-attempt state: drop the unresolved
+                // projection and restore, then re-decide below.
+                let _ = std::fs::remove_file(path);
+                let _ = std::fs::rename(&backup, path);
+            }
+            if path.exists() && std::fs::rename(path, &backup).is_ok() {
+                // Preserve the previous projection's bytes: the phase is
+                // about to overwrite the path, and a terminal refusal must
+                // leave the pre-attempt state standing, not a success-shaped
+                // projection of the refused attempt (#6701 review).
+                backups.push(Some(backup));
+                continue;
+            }
+            backups.push(None);
+        }
+        Self { paths, backups }
+    }
+
+    /// Removes exactly the artifacts this phase created (a terminal refusal
+    /// leaves no loop projection beside the terminal attempt). Best-effort:
+    /// a failed removal leaves the artifact and the status projection with
+    /// it, which is never a worse state than the pre-#6033 behavior.
+    fn withdraw_fresh_artifacts(&self) {
+        for (path, backup) in self.paths.iter().zip(&self.backups) {
+            if backup.is_none() {
+                let _ = std::fs::remove_file(path);
+            }
+        }
+    }
+
+    /// Puts the pre-attempt projections back in place.
+    fn restore_backups(&self) {
+        for (path, backup) in self.paths.iter().zip(&self.backups) {
+            if let Some(backup) = backup {
+                let _ = std::fs::rename(backup, path);
+            }
+        }
+    }
+
+    /// The phase's own artifacts are the current state; the backups are
+    /// stale copies of what they replaced.
+    fn discard_backups(&self) {
+        for backup in self.backups.iter().flatten() {
+            let _ = std::fs::remove_file(backup);
+        }
+    }
+
+    /// One resolution for the phase result: on success the fresh artifacts
+    /// stand; on a terminal refusal the fresh artifacts are withdrawn and
+    /// the pre-attempt state restored; on a retryable failure after the
+    /// tail the fresh artifacts stand for the retry; and any earlier
+    /// failure restores the pre-attempt state.
+    fn resolve(self, phase_ok: bool, terminal: bool, tail_reached: bool) {
+        if phase_ok {
+            self.discard_backups();
+        } else if terminal {
+            self.withdraw_fresh_artifacts();
+            self.restore_backups();
+        } else if tail_reached {
+            self.discard_backups();
+        } else {
+            self.restore_backups();
+        }
+    }
 }
 
 /// The typed-refusal stdout document of an after phase that refused with a
@@ -813,6 +993,32 @@ fn render_repair_after_refusal_json(
     serde_json::to_string_pretty(&document)
         .map(|rendered| format!("{rendered}\n"))
         .map_err(|error| format!("serialize after-phase refusal document failed: {error}"))
+}
+
+/// The typed-failure stdout document of an after phase whose edit cage
+/// finished the attempt as not receipt-ready (#6033). This is the only
+/// failure shape that used to emit the success-shaped verify document:
+/// `status: advisory` with a gap-closed movement summary beside a terminal
+/// attempt. The envelope names the terminal attempt state and the cage
+/// verdict instead, so a driver that captures only stdout cannot read the
+/// refused phase as a green repair.
+fn render_repair_after_failure_json(
+    finish: &TerminalAttemptFinish,
+    error: &str,
+    narration: &[String],
+) -> Result<String, String> {
+    let document = serde_json::json!({
+        "schema_version": REPAIR_AFTER_FAILURE_SCHEMA_VERSION,
+        "kind": "repair_after_failure",
+        "attempt_id": finish.attempt_id,
+        "attempt_state": finish.attempt_state,
+        "edit_cage_verdict": finish.edit_cage_verdict,
+        "error": error.trim(),
+        "narration": narration,
+    });
+    serde_json::to_string_pretty(&document)
+        .map(|rendered| format!("{rendered}\n"))
+        .map_err(|error| format!("serialize after-phase failure document failed: {error}"))
 }
 
 impl AfterPhaseRefusalContext {
@@ -889,15 +1095,24 @@ fn run_agent_repair_phase(
             // packet names no test file ripr may edit refuses here, before any
             // workflow artifact is written, so neither this phase nor
             // `ripr agent status` reads as a started repair.
+            //
+            // #5301 item 1: one inventory for the whole before phase. Packet,
+            // start, and snapshot each resolved the same (root, config) and
+            // reloaded the same classified seams; the shared report below
+            // feeds all three, so a warm before phase pays one cache load
+            // instead of three. The load precedes admission but writes no
+            // workflow artifact, so F15-12 still holds.
             let packet_root = crate::agent::loop_commands::bound_root(&root.to_string_lossy());
-            let packet = render_agent_packet_with_context(
-                &AgentPacketOptions {
-                    root: root.clone(),
-                    seam_id: Some(seam_id.clone()),
-                    gap_ledger: None,
-                    gap_id: None,
-                    json: true,
-                },
+            let (before_input, before_config) = load_root_input_and_config(&root)?;
+            let before_report = analysis::inventory_classified_seams_report_at_with_config(
+                &before_input.root,
+                &before_config,
+            )?;
+            let packet = render_agent_packet_for_seam_with_report(
+                &root,
+                &seam_id,
+                &before_config,
+                &before_report,
                 output::agent_seam_packets::PacketCommandContext::Prepared {
                     root: &packet_root,
                     attempt_id: identity.attempt_id(),
@@ -948,12 +1163,17 @@ fn run_agent_repair_phase(
             // packet. The start step's `Next: ripr check ...` hint is dropped
             // because this phase writes that before snapshot itself; printing
             // it sent users to redo it.
-            let started = write_agent_start(AgentStartOptions {
-                root: root.clone(),
-                seam_id: seam_id.clone(),
-                out_dir: std::path::PathBuf::from("target/ripr/workflow"),
-                json: false,
-            })?;
+            let started = write_agent_start_with_report(
+                &AgentStartOptions {
+                    root: root.clone(),
+                    seam_id: seam_id.clone(),
+                    out_dir: std::path::PathBuf::from("target/ripr/workflow"),
+                    json: false,
+                },
+                &before_input,
+                &before_config,
+                &before_report,
+            )?;
             for path in &started.paths {
                 eprintln!(
                     "{}",
@@ -962,7 +1182,12 @@ fn run_agent_repair_phase(
             }
 
             let before = root.join("target/ripr/workflow/before.repo-exposure.json");
-            write_agent_repo_exposure_snapshot(&root, &before)?;
+            write_agent_repo_exposure_snapshot_with_report(
+                &root,
+                &before_config,
+                before_report,
+                &before,
+            )?;
 
             let packet_path = root.join("target/ripr/workflow/agent-packet.json");
             write_text_file(&packet_path, &packet)?;
@@ -1004,6 +1229,11 @@ fn run_agent_repair_phase(
                 "ripr: consuming attempt manifest {}",
                 attempt.manifest_path.display()
             );
+            // #6033: remember which shared workflow artifacts existed before
+            // this phase wrote its own (preserving the previous projection's
+            // bytes), so the outcome resolver can withdraw the fresh ones
+            // and restore the pre-attempt state when the cage refuses.
+            refusal.workflow_artifacts = Some(SharedWorkflowArtifacts::track(&root));
 
             // The retained before snapshot and packet are the transaction's
             // authority. The repository-global after, verify, receipt, and
@@ -1146,8 +1376,17 @@ fn run_agent_repair_phase(
             // `verify` and the status report under `agent_status`; when the
             // tail refuses, the verify document alone is printed — the
             // refusal bytes this phase always produced, and still one document
-            // an orchestrator can parse with one JSON.parse call.
+            // an orchestrator can parse with one JSON.parse call. The one
+            // #6033 exception: when the cage finished the attempt as not
+            // receipt-ready, the printed document is the typed
+            // `repair_after_failure` envelope, because a success-shaped
+            // verify document beside a terminal attempt is exactly the green
+            // repair story the driver cannot trust.
             let after_tail = |refusal: &mut AfterPhaseRefusalContext| -> Result<String, String> {
+                // A failure past this point leaves the phase's fresh
+                // projections standing when the attempt stays retryable
+                // (the outcome resolver keys on this flag).
+                refusal.tail_reached = true;
                 use crate::app::python_repair_binding::{
                     ManifestConfirmationError, confirm_manifest_unchanged, write_apply_record_from,
                 };
@@ -1205,6 +1444,20 @@ fn run_agent_repair_phase(
                         return Err(error);
                     }
                 };
+                // #6033: record the terminal finish the moment the cage
+                // lands non-Compliant, so the tail's error path can print
+                // the typed failure envelope and withdraw this phase's
+                // shared artifacts instead of the success-shaped document.
+                if cage_after.verdict.status != crate::edit_cage::EditCageVerdictStatus::Compliant {
+                    refusal.terminal_finish = Some(TerminalAttemptFinish {
+                        attempt_id: cage_after.attempt_id.as_str().to_string(),
+                        attempt_state: crate::app::repair_attempt::repair_attempt_state_for_finish(
+                            &cage_after,
+                        )
+                        .as_label(),
+                        edit_cage_verdict: cage_after.verdict.status.as_label(),
+                    });
+                }
                 eprintln!(
                     "ripr: edit-cage verdict for attempt `{}`: {:?}",
                     cage_after.attempt_id.as_str(),
@@ -1217,7 +1470,7 @@ fn run_agent_repair_phase(
                     &attempt.repository_head,
                     &cage_after,
                 ) {
-                    eprintln!("ripr: {line}");
+                    refusal.narrate(line);
                 }
 
                 // The receipt can refuse (for example an escape verdict is not
@@ -1327,6 +1580,12 @@ fn run_agent_repair_phase(
                                         eprintln!(
                                             "ripr: apply record publication failed; the attempt was restored to awaiting_edit for a retry"
                                         );
+                                        // The durable state is retryable again,
+                                        // so the terminal marker must not stand:
+                                        // the error path would otherwise report
+                                        // `failed` in the envelope and withdraw
+                                        // artifacts a retry owns (#6701 review).
+                                        refusal.terminal_finish = None;
                                         apply_record_result = Err(error);
                                     }
                                     Err(restore_error) => {
@@ -1364,8 +1623,28 @@ fn run_agent_repair_phase(
             let status_rendered = match after_tail(&mut *refusal) {
                 Ok(status_rendered) => status_rendered,
                 Err(error) => {
+                    // #6033: a cage-refused attempt must not read as a green
+                    // repair on the documented stdout channel. The typed
+                    // failure envelope names the terminal attempt state and
+                    // the cage verdict; any other post-verify failure keeps
+                    // the bare verify document this phase always printed.
                     if json {
-                        print!("{rendered_verify}");
+                        match refusal.terminal_finish.as_ref() {
+                            Some(finish) => {
+                                match render_repair_after_failure_json(
+                                    finish,
+                                    &error,
+                                    &refusal.narration,
+                                ) {
+                                    Ok(rendered) => print!("{rendered}"),
+                                    Err(render_error) => {
+                                        eprintln!("ripr: {render_error}");
+                                        print!("{rendered_verify}");
+                                    }
+                                }
+                            }
+                            None => print!("{rendered_verify}"),
+                        }
                         refusal.stdout_document_printed = true;
                     }
                     return Err(error);
@@ -1481,6 +1760,22 @@ fn write_agent_analysis_outcome(root: &Path) -> Result<(), String> {
 fn write_agent_repo_exposure_snapshot(root: &Path, path: &Path) -> Result<(), String> {
     let config = load_for_root(root)?;
     let report = analysis::inventory_classified_seams_report_at_with_config(root, &config)?;
+    write_agent_repo_exposure_snapshot_with_report(root, &config, report, path)
+}
+
+/// `write_agent_repo_exposure_snapshot` over one caller-supplied inventory
+/// (#5301 item 1): the before phase shares a single
+/// `ClassifiedSeamsReport` across packet, start, and snapshot instead of
+/// reloading the same classified seams three times. The report moves in as
+/// the last consumer; the standalone and after-phase routes above load their
+/// own report. The bytes are identical either way because the root and
+/// config are the same.
+fn write_agent_repo_exposure_snapshot_with_report(
+    root: &Path,
+    config: &RiprConfig,
+    report: analysis::ClassifiedSeamsReport,
+    path: &Path,
+) -> Result<(), String> {
     let ts_guidance = output::render::detect_ts_full_repo_guidance_pub(root, &report.classified);
     let python_guidance =
         output::render::detect_python_repo_exposure_guidance_pub(root, &report.classified);
@@ -1492,7 +1787,7 @@ fn write_agent_repo_exposure_snapshot(root: &Path, path: &Path) -> Result<(), St
         root.to_path_buf(),
         "ready".to_string(),
         None,
-        &config,
+        config,
     )?;
     if let Some(parent) = path
         .parent()

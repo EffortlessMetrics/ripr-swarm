@@ -74,7 +74,7 @@ pub(crate) const PERL_FACT_PACKET_SCHEMA: &str = "ripr-perl-facts-v1";
 /// version string moves.
 pub(crate) const AGENT_SEAM_PACKET_SCHEMA_VERSION: &str = "0.5";
 pub(crate) use crate::analysis::repair_route::repair_route_readiness;
-pub(crate) use check::check_with_progress;
+pub(crate) use check::check_with_progress_core;
 #[cfg(test)]
 pub(crate) use check::check_workspace_repo_with_origins;
 #[cfg(test)]
@@ -98,7 +98,8 @@ pub(crate) use explain::{
     explain_finding_with_config_and_navigation_mode,
 };
 pub(crate) use navigation::{
-    FindingDrillIn, FindingNavigation, finding_navigation, finding_navigation_with_worktree,
+    CheckDiffProvenance, FindingDrillIn, FindingNavigation, finding_navigation,
+    finding_navigation_with_worktree,
 };
 pub(crate) use progress::{
     AnalysisProgressEvent, AnalysisProgressScope, AnalysisProgressSink, AnalysisProgressStage,
@@ -345,9 +346,10 @@ pub(crate) fn render_check_with_config_and_navigation_and_progress(
     config: &RiprConfig,
     drill_in: Option<&FindingDrillIn>,
     progress: Option<&dyn AnalysisProgressSink>,
+    provenance: CheckDiffProvenance,
 ) -> Result<String, String> {
     output::render::render_check_with_config_and_navigation_and_progress(
-        output, format, config, drill_in, progress,
+        output, format, config, drill_in, progress, provenance,
     )
 }
 

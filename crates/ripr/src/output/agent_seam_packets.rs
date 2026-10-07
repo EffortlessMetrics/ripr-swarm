@@ -47,7 +47,8 @@ use crate::app::causal_projection::CausalDeltaArtifact;
 use crate::domain::CommandRole;
 use crate::output::evidence_record::{
     CROSS_LANGUAGE_TARGET_UNRESOLVED_REPAIR_ROUTE, evidence_record_json_value,
-    evidence_record_with_verify_command, workflow_snapshot_verify_command,
+    evidence_record_with_bound_verify_command, workflow_snapshot_verify_command,
+    workflow_snapshot_verify_command_for,
 };
 use crate::output::first_pr::STATIC_EVIDENCE_BOUNDARY;
 use crate::output::gap_decision_ledger::{GapRecord, GapRepairRoute, projection_eligible};
@@ -64,6 +65,7 @@ use crate::repair_guidance::{
 };
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
+use std::path::Path;
 
 /// Cap on related-tests rendered per packet. Mirrors the JSON-side
 /// limit in `output::repo_exposure` so an agent inspecting the same
@@ -192,6 +194,26 @@ pub(crate) fn render_agent_seam_packets_json_with_causal_and_outcome(
     )
 }
 
+/// The pilot packet names the repository pilot analyzed, so its loop
+/// commands bind that root instead of `.`; a portable `--root .` whose
+/// redirect anchors at the renderer's working directory sends every
+/// snapshot to the wrong repository when pilot ran with `--root X` (#5324).
+pub(crate) fn render_agent_seam_packets_json_for_root(
+    classified: &[ClassifiedSeam],
+    limit_info: Option<&SeamLimitInfo>,
+    causal_projection: Option<&CausalDeltaArtifact>,
+    root: &str,
+) -> String {
+    render_agent_seam_packets_json_with_root(
+        classified,
+        limit_info,
+        causal_projection,
+        None,
+        false,
+        PacketCommandContext::Standalone { root },
+    )
+}
+
 #[derive(Clone, Copy)]
 pub(crate) enum PacketCommandContext<'a> {
     Portable,
@@ -274,10 +296,17 @@ fn render_agent_seam_packets_json_with_root(
     // verify route — the after phase verifies against the attempt's retained
     // before snapshot, not the repository-global path another attempt can
     // overwrite — so its embedded records keep every verify projection null.
-    let embedded_verify_command = match context {
+    // A standalone document binds its `next` block to the selected root, so
+    // its embedded verify names that root too (#3948, #3999): pasted from
+    // another directory it verifies the same repository.
+    let embedded_verify = match context {
         PacketCommandContext::Prepared { .. } => None,
-        PacketCommandContext::Portable | PacketCommandContext::Standalone { .. } => {
-            Some(workflow_snapshot_verify_command())
+        PacketCommandContext::Portable => Some((
+            workflow_snapshot_verify_command(),
+            crate::agent::command_specs::PORTABLE_ROOT,
+        )),
+        PacketCommandContext::Standalone { root } => {
+            Some((workflow_snapshot_verify_command_for(root), root))
         }
     };
     out.push_str("  \"packets\": [");
@@ -290,7 +319,9 @@ fn render_agent_seam_packets_json_with_root(
             entry,
             canonical_gaps.get(entry.seam.id()),
             causal_projection,
-            embedded_verify_command.as_deref(),
+            embedded_verify
+                .as_ref()
+                .map(|(command, root)| (command.as_str(), Path::new(*root))),
         );
         if idx + 1 != actionable.len() {
             out.push_str(",\n");
@@ -2132,7 +2163,7 @@ fn push_packet_json(
     entry: &ClassifiedSeam,
     canonical_gap: Option<&CanonicalGapIdentity>,
     causal_projection: Option<&CausalDeltaArtifact>,
-    verify_command: Option<&str>,
+    verify: Option<(&str, &Path)>,
 ) {
     let seam = &entry.seam;
     let evidence = &entry.evidence;
@@ -2486,10 +2517,14 @@ fn push_packet_json(
     // records keep every verify projection null: an orchestrator following the
     // typed spec can never verify against a snapshot another attempt can
     // overwrite.
-    let evidence_record = evidence_record_json_value(&evidence_record_with_verify_command(
+    let evidence_record = evidence_record_json_value(&evidence_record_with_bound_verify_command(
         entry,
         canonical_gap,
-        verify_command,
+        verify.map(|(command, _)| command),
+        verify.map_or(
+            Path::new(crate::agent::command_specs::PORTABLE_ROOT),
+            |(_, root)| root,
+        ),
     ));
     out.push_str("      \"evidence_record\": ");
     out.push_str(&evidence_record.to_string());
@@ -2926,13 +2961,17 @@ pub(crate) fn nearest_strong_test_to_imitate(
     seam_kind: SeamKind,
     evidence: &TestGripEvidence,
 ) -> Option<&crate::analysis::test_grip_evidence::RelatedTestGrip> {
-    evidence.related_tests.iter().find(|test| {
-        test.oracle_strength == crate::domain::OracleStrength::Strong
-            && crate::analysis::test_grip_evidence::oracle_kind_matches_seam_kind(
-                seam_kind,
-                &test.oracle_kind,
-            )
-    })
+    evidence
+        .related_tests
+        .iter()
+        .find(|test| {
+            test.oracle_strength == crate::domain::OracleStrength::Strong
+                && crate::analysis::test_grip_evidence::oracle_kind_matches_seam_kind(
+                    seam_kind,
+                    &test.oracle_kind,
+                )
+        })
+        .map(std::sync::Arc::as_ref)
 }
 
 fn push_related_test_reference(
@@ -3542,7 +3581,7 @@ mod tests {
             seam,
             evidence: TestGripEvidence {
                 seam_id,
-                related_tests,
+                related_tests: related_tests.into_iter().map(std::sync::Arc::new).collect(),
                 reach: stage(StageState::Yes),
                 activate: stage(StageState::Yes),
                 propagate: stage(StageState::Weak),
@@ -3592,7 +3631,7 @@ mod tests {
         let seam = boundary_seam();
         let evidence = TestGripEvidence {
             seam_id: seam.id().clone(),
-            related_tests: vec![RelatedTestGrip {
+            related_tests: vec![std::sync::Arc::new(RelatedTestGrip {
                 test_name: "below_threshold_has_no_discount".to_string(),
                 file: PathBuf::from("tests/pricing.rs"),
                 line: 12,
@@ -3609,7 +3648,7 @@ mod tests {
                 relation_reason:
                     crate::analysis::test_grip_evidence::RelationReason::DirectOwnerCall,
                 relation_confidence: crate::analysis::test_grip_evidence::RelationConfidence::High,
-            }],
+            })],
             reach: stage(StageState::Yes),
             activate: stage(StageState::Yes),
             propagate: stage(StageState::Yes),
@@ -3810,8 +3849,9 @@ mod tests {
         // (`repair_packet_queue_visible`) must exclude it before `task_for`
         // is ever reached.
         let mut entry = weakly_gripped_classified();
-        entry.evidence.related_tests[0].file = PathBuf::from("tests/pricing.ts");
-        entry.evidence.related_tests[0].test_target = None;
+        std::sync::Arc::make_mut(&mut entry.evidence.related_tests[0]).file =
+            PathBuf::from("tests/pricing.ts");
+        std::sync::Arc::make_mut(&mut entry.evidence.related_tests[0]).test_target = None;
         let json = render_agent_seam_packets_json(&[entry], None);
         if !json.contains("\"packets_total\": 0") {
             return Err(format!(
@@ -3827,7 +3867,9 @@ mod tests {
         // through the shared extension authority; near-misses stay
         // unlabeled. The expected labels are pinned here as a removal
         // control, not read back from the authority.
-        let base_test = weakly_gripped_classified().evidence.related_tests[0].clone();
+        let base_test = weakly_gripped_classified().evidence.related_tests[0]
+            .as_ref()
+            .clone();
         let cases = [
             ("ts", Some("typescript")),
             ("tsx", Some("typescript")),
@@ -4013,7 +4055,7 @@ mod tests {
         };
         // Caller provides a ranked vec — `evidence_for_seam` always
         // emits ranked, so this mirrors the production path.
-        entry.evidence.related_tests = vec![high, low];
+        entry.evidence.related_tests = vec![std::sync::Arc::new(high), std::sync::Arc::new(low)];
 
         let json = render_agent_seam_packets_json(&[entry], None);
         let high_idx = json
@@ -5626,7 +5668,8 @@ mod tests {
     #[test]
     fn packet_v2_normalizes_windows_related_test_paths() -> Result<(), String> {
         let mut entry = weakly_gripped_classified();
-        entry.evidence.related_tests[0].file = PathBuf::from(r"tests\pricing.rs");
+        std::sync::Arc::make_mut(&mut entry.evidence.related_tests[0]).file =
+            PathBuf::from(r"tests\pricing.rs");
 
         let json = render_agent_seam_packets_json(&[entry], None);
         assert!(
@@ -5734,12 +5777,13 @@ mod tests {
         );
         assert!(integration.symbol_id.is_some());
 
-        entry.evidence.related_tests[0].file = PathBuf::from("src/pricing.rs");
+        std::sync::Arc::make_mut(&mut entry.evidence.related_tests[0]).file =
+            PathBuf::from("src/pricing.rs");
         let inline = recommended_test_for(&entry);
         assert_eq!(inline.target_kind, RecommendedTestTargetKind::ExistingTest);
         assert!(inline.symbol_id.is_some());
 
-        entry.evidence.related_tests[0].test_target = None;
+        std::sync::Arc::make_mut(&mut entry.evidence.related_tests[0]).test_target = None;
         let production_fallback = recommended_test_for(&entry);
         assert_eq!(
             production_fallback.target_kind,

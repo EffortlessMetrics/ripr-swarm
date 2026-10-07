@@ -9,12 +9,16 @@
 
 use crate::analysis::repair_route::{RepairRouteReadiness, RepairTargetSelection};
 use crate::domain::{
-    CommandSpec, FixInstructionSummary, REPAIR_CARD_CLAIM_BOUNDARY, REPAIR_CARD_SCHEMA_VERSION,
+    CanonicalNextActionV1, CommandRole, CommandSpec, FixInstructionState, FixInstructionSummary,
+    NextActionAttemptView, NextActionCurrentness, NextActionDiffSource, NextActionInput,
+    NextActionProducer, REPAIR_CARD_CLAIM_BOUNDARY, REPAIR_CARD_SCHEMA_VERSION,
     RepairCardAssertionGoal, RepairCardAttempt, RepairCardBudget, RepairCardCommandRef,
     RepairCardDoneWhen, RepairCardProposedTestKind, RepairCardReadinessFacts,
-    RepairCardRejectedAlternative, RepairCardSnapshot, RepairCardSubject, RepairCardTarget,
-    RepairCardTestKind, RepairCardV1, repair_card_route_exposable,
+    RepairCardRejectedAlternative, RepairCardSnapshot, RepairCardSnapshotCurrentness,
+    RepairCardSubject, RepairCardTarget, RepairCardTestKind, RepairCardV1,
+    current_command_platform, repair_card_route_exposable, select_canonical_next_action,
 };
+use crate::output::path::display_path;
 use crate::repair_card_budget::{RepairCardDetailSource, apply_repair_card_budget};
 use crate::repair_card_digest::repair_card_semantic_digest;
 
@@ -48,6 +52,9 @@ pub(crate) struct RepairCardInput<'a> {
     /// target evidence alone cannot promise an executable edit surface.
     pub(crate) edit_cage_refusal: Option<String>,
     pub(crate) next_command: Option<&'a CommandSpec>,
+    /// Producer-owned canonical packet route, carried as the canonical
+    /// action's detail and recompute route.
+    pub(crate) packet_route: String,
     pub(crate) allowed_files: Vec<String>,
     pub(crate) forbidden_files: Vec<String>,
     pub(crate) done_when: RepairCardDoneWhen,
@@ -109,6 +116,7 @@ pub(crate) fn build_repair_card(input: &RepairCardInput<'_>) -> Result<RepairCar
         .selected_basis
         .clone()
         .or_else(|| selected_basis_from_target(selected_target.as_ref()));
+    let canonical_action = canonical_next_action_for_card(input)?;
 
     let mut missing_evidence = input.readiness.missing_evidence.clone();
     if let Some(refusal) = &input.edit_cage_refusal {
@@ -139,7 +147,17 @@ pub(crate) fn build_repair_card(input: &RepairCardInput<'_>) -> Result<RepairCar
         forbidden_files: input.forbidden_files.clone(),
         done_when: input.done_when,
         stop_conditions: input.stop_conditions.clone(),
-        next_action: input.next_command.map(project_command_ref),
+        // Projected from the canonical decision, never built beside it:
+        // `Some` exactly when the shared authority finds the route
+        // executable, so the reference and the decision cannot disagree.
+        next_action: canonical_action
+            .command()
+            .map(|command| RepairCardCommandRef {
+                command_id: command.command_id.clone(),
+                role: serde_role(&command.role),
+                display: command.display.clone(),
+            }),
+        canonical_next_action: Some(canonical_action),
         selected_basis,
         rejected_alternatives: input.rejected_alternatives.clone(),
         attempt: input.attempt.map(project_attempt),
@@ -152,6 +170,124 @@ pub(crate) fn build_repair_card(input: &RepairCardInput<'_>) -> Result<RepairCar
     apply_repair_card_budget(&mut card, &input.detail_sources, &input.budget)?;
     card.repair_card_id = repair_card_semantic_digest(&card)?;
     Ok(card)
+}
+
+/// Project the card producer's canonical action. The card orders inspection
+/// of its packet: the attempt lifecycle gates only terminality for
+/// executable specs (a terminal repair cannot continue, but its results stay
+/// readable). Edit obligations and restarts belong to the status producer,
+/// which owns the attempt commands.
+fn canonical_next_action_for_card(
+    input: &RepairCardInput<'_>,
+) -> Result<CanonicalNextActionV1, String> {
+    let head = input.snapshot.repository_head.clone();
+    let attempts = input
+        .attempt
+        .map(|manifest| NextActionAttemptView {
+            id: manifest.repair_attempt_id.as_str().to_string(),
+            terminal: manifest.state
+                == crate::app::repair_attempt::RepairAttemptState::ReadyToFinish,
+            awaits_edit: false,
+            restart_recommended: false,
+            restart_route: String::new(),
+            receipt_ref: None,
+        })
+        .into_iter()
+        .collect::<Vec<_>>();
+    let route_admitted = input.packet_eligible
+        && input.edit_cage_refusal.is_none()
+        && repair_card_route_exposable(input.instruction.state, input.readiness.is_repair_ready());
+    let limitation = if input.instruction.state == FixInstructionState::FixSiteReady {
+        None
+    } else {
+        Some(format!(
+            "instruction {} exposes no bounded route",
+            instruction_label(input.instruction.state)
+        ))
+    };
+    let missing_input = if route_admitted || limitation.is_some() {
+        None
+    } else if !input.packet_eligible {
+        Some("repair-packet eligibility for this seam".to_string())
+    } else if let Some(refusal) = &input.edit_cage_refusal {
+        Some(refusal.clone())
+    } else if input.readiness.missing_evidence.is_empty() {
+        Some("repair readiness for this seam".to_string())
+    } else {
+        Some(input.readiness.missing_evidence.join("; "))
+    };
+    select_canonical_next_action(&NextActionInput {
+        producer: NextActionProducer::RepairCard,
+        root: input.snapshot.workspace_identity.clone(),
+        // The card's diff-source names the tree state the card's routes
+        // read, not the historical analysis input (the card producer
+        // gathers from the live tree and never sees the check mode): a
+        // clean scope reads committed content, an accepted dirty draft
+        // reads working-tree content. The label tracks the evidence
+        // actually bound.
+        diff_source: match input.snapshot.currentness {
+            RepairCardSnapshotCurrentness::Current => NextActionDiffSource::Committed {
+                base: None,
+                head: Some(head.clone()),
+            },
+            RepairCardSnapshotCurrentness::AcceptedDirtyDraft => {
+                NextActionDiffSource::WorkingTree { head: Some(head) }
+            }
+        },
+        item_id: input.subject.seam_id.clone(),
+        check_item: None,
+        card_item: Some(input.subject.seam_id.clone()),
+        item_candidates: Vec::new(),
+        attempts,
+        currentness: NextActionCurrentness {
+            head_expected: Some(input.snapshot.repository_head.clone()),
+            head_observed: Some(input.snapshot.repository_head.clone()),
+            config_expected: None,
+            config_observed: None,
+        },
+        offered_command: input.next_command,
+        route_admitted,
+        route_refusal: None,
+        missing_input,
+        platform: current_command_platform(),
+        limitation,
+        limitation_route: None,
+        detail_route: input.packet_route.clone(),
+        transition_from: instruction_label(input.instruction.state).to_string(),
+        transition_to: input
+            .next_command
+            .map(|spec| command_effect_label(spec.role).to_string()),
+        restart_route: input.packet_route.clone(),
+        check_case: None,
+        doctor_recovery: None,
+        pilot_delegation: None,
+        alternatives: Vec::new(),
+        limitations: input.limitations.clone(),
+    })
+}
+
+/// The wire spelling of an instruction state, exactly as its authority
+/// serializes it. Pinned by `instruction_labels_match_wire_spellings`.
+fn instruction_label(state: FixInstructionState) -> &'static str {
+    match state {
+        FixInstructionState::FixSiteReady => "fix_site_ready",
+        FixInstructionState::StaticLimitation => "static_limitation",
+        FixInstructionState::Stale => "stale",
+        FixInstructionState::InspectOnly => "inspect_only",
+        FixInstructionState::Unavailable => "unavailable",
+    }
+}
+
+/// The canonical effect label of an offered command role: what the card
+/// producer claims running that route records.
+fn command_effect_label(role: CommandRole) -> &'static str {
+    match role {
+        CommandRole::Verify => "verification_recorded",
+        CommandRole::Receipt => "receipt_recorded",
+        CommandRole::Regeneration => "evidence_regenerated",
+        CommandRole::Inspection => "packet_inspected",
+        CommandRole::TargetedRerun => "rerun_recorded",
+    }
 }
 
 fn project_assertion_goal(input: &RepairCardInput<'_>) -> Option<RepairCardAssertionGoal> {
@@ -168,7 +304,7 @@ fn project_target(selection: &RepairTargetSelection) -> Option<RepairCardTarget>
     match selection {
         RepairTargetSelection::Existing(target) => Some(RepairCardTarget::Existing {
             symbol_id: target.symbol_id().0.clone(),
-            file: target.file().display().to_string(),
+            file: display_path(target.file()),
             line: target.line(),
             test_kind: match target.test_kind() {
                 crate::analysis::test_grip_evidence::TestKind::InlineUnit => {
@@ -182,7 +318,7 @@ fn project_target(selection: &RepairTargetSelection) -> Option<RepairCardTarget>
             workspace_identity: target.workspace_identity().to_string(),
         }),
         RepairTargetSelection::Proposed(proposal) => Some(RepairCardTarget::Proposed {
-            file: proposal.file.display().to_string(),
+            file: display_path(&proposal.file),
             owner: proposal.owner.clone(),
             proposal_kind: match proposal.kind {
                 crate::analysis::new_test_target::NewTestKind::InlineUnit => {
@@ -202,14 +338,6 @@ fn selected_basis_from_target(target: Option<&RepairCardTarget>) -> Option<Strin
         Some(RepairCardTarget::Existing { relation, .. }) => Some(relation.clone()),
         Some(RepairCardTarget::Proposed { owner, .. }) => Some(owner.clone()),
         None => None,
-    }
-}
-
-fn project_command_ref(command: &CommandSpec) -> RepairCardCommandRef {
-    RepairCardCommandRef {
-        command_id: command.command_id.clone(),
-        role: serde_role(&command.role),
-        display: command.display.clone(),
     }
 }
 
@@ -342,7 +470,11 @@ mod tests {
             expected_exit_codes: vec![0],
             expected_writes: Vec::new(),
             cost_class: crate::domain::CommandCostClass::CompileOrTest,
-            platforms: vec![crate::domain::CommandPlatform::Linux],
+            platforms: vec![
+                crate::domain::CommandPlatform::Linux,
+                crate::domain::CommandPlatform::Macos,
+                crate::domain::CommandPlatform::Windows,
+            ],
             display: "cargo test -p demo".to_string(),
             authority_boundary: crate::domain::CommandAuthorityBoundary::VerificationRouteOnly,
         }
@@ -365,6 +497,7 @@ mod tests {
             packet_eligible: true,
             edit_cage_refusal: None,
             next_command: None,
+            packet_route: "ripr agent packet --seam-id seam:demo --json".to_string(),
             allowed_files: vec!["tests/demo.rs".to_string()],
             forbidden_files: vec!["src/lib.rs".to_string()],
             done_when: done_when(),
@@ -668,6 +801,42 @@ mod tests {
     }
 
     #[test]
+    fn selected_target_file_uses_portable_separators() -> Result<(), String> {
+        // Native separators must never leak into the machine-readable card
+        // (#5440). Backslashes survive a Path round-trip on every platform,
+        // so this pins the normalization without needing Windows.
+        let existing = readiness(
+            RepairRouteState::Ready,
+            RepairTargetSelection::Existing(TestTargetEvidence::fixture(
+                "case",
+                Path::new("tests\\pricing.rs"),
+                4,
+            )),
+        );
+        let instruction = instruction(FixInstructionState::FixSiteReady);
+        let card = build_repair_card(&base_input(&instruction, &existing))?;
+        match card.selected_target {
+            Some(RepairCardTarget::Existing { ref file, .. }) if file == "tests/pricing.rs" => {}
+            ref other => return Err(format!("existing target file was not portable: {other:?}")),
+        }
+        let proposed = readiness(
+            RepairRouteState::Ready,
+            RepairTargetSelection::Proposed(NewTestTargetProposal {
+                kind: NewTestKind::Integration,
+                file: PathBuf::from("tests\\new.rs"),
+                owner: "src/lib.rs".to_string(),
+                provenance: NewTestProposalProvenance::ProducerOwned,
+            }),
+        );
+        let card = build_repair_card(&base_input(&instruction, &proposed))?;
+        match card.selected_target {
+            Some(RepairCardTarget::Proposed { ref file, .. }) if file == "tests/new.rs" => {}
+            ref other => return Err(format!("proposed target file was not portable: {other:?}")),
+        }
+        Ok(())
+    }
+
+    #[test]
     fn over_boundary_rejected_alternatives_fail_closed() {
         let instruction = instruction(FixInstructionState::FixSiteReady);
         let readiness = ready_readiness();
@@ -867,6 +1036,200 @@ mod tests {
         }
         if card.next_action.is_none() {
             return Err("stale detail evidence stripped the exposed route".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn canonical_decision_and_reference_agree() -> Result<(), String> {
+        use crate::domain::{NextActionClass, NextActionProducer};
+        let instruction = instruction(FixInstructionState::FixSiteReady);
+        let readiness = ready_readiness();
+        let command = verify_command();
+        let mut input = base_input(&instruction, &readiness);
+        input.next_command = Some(&command);
+
+        let card = build_repair_card(&input)?;
+        let canonical = card
+            .canonical_next_action
+            .as_ref()
+            .ok_or_else(|| "ready card minted no canonical next action".to_string())?;
+        if canonical.producer() != NextActionProducer::RepairCard {
+            return Err("canonical action names the wrong producer".to_string());
+        }
+        if canonical.action_class() != NextActionClass::RunCommand {
+            return Err("ready card decision is not executable".to_string());
+        }
+        let reference = card
+            .next_action
+            .as_ref()
+            .ok_or_else(|| "ready card lost its next action".to_string())?;
+        let canonical_command = canonical
+            .command()
+            .ok_or_else(|| "executable decision carries no command".to_string())?;
+        // The reference is a verbatim projection of the canonical command:
+        // identity, role, and the spec's own display.
+        if reference.command_id != canonical_command.command_id
+            || reference.command_id != command.command_id
+        {
+            return Err("next action did not copy the command identity".to_string());
+        }
+        if reference.display != command.display {
+            return Err("next action did not copy the command display".to_string());
+        }
+        if canonical.subject().item.as_deref() != Some("seam:demo") {
+            return Err("canonical action bound the wrong subject".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn canonical_refusal_clears_the_reference() -> Result<(), String> {
+        use crate::domain::NextActionClass;
+        let instruction = instruction(FixInstructionState::StaticLimitation);
+        let readiness = ready_readiness();
+        let input = base_input(&instruction, &readiness);
+
+        let card = build_repair_card(&input)?;
+        if card.next_action.is_some() {
+            return Err("limited card exposed a route".to_string());
+        }
+        let canonical = card
+            .canonical_next_action
+            .as_ref()
+            .ok_or_else(|| "limited card minted no canonical next action".to_string())?;
+        if canonical.action_class() != NextActionClass::UnsupportedOrLimited {
+            return Err(format!(
+                "limited card decision is not a limitation: {}",
+                canonical.action_class().as_str()
+            ));
+        }
+        if canonical.command().is_some() {
+            return Err("limited decision carries a command".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn canonical_terminal_attempt_blocks_executable_specs() -> Result<(), String> {
+        use crate::domain::NextActionClass;
+        let manifest = RepairAttemptManifest {
+            schema_version: "0.1".to_string(),
+            kind: "repair".to_string(),
+            repair_attempt_id: RepairAttemptId::parse("repair-attempt-0123456789abcdef01234567")
+                .map_err(|error| error.to_string())?,
+            state: RepairAttemptState::ReadyToFinish,
+            root: ".".to_string(),
+            repository_head: "abc123".to_string(),
+            producer_version: "test".to_string(),
+            seam_id: "seam:demo".to_string(),
+            created_unix_ms: 0,
+            artifacts: Vec::new(),
+            next_command: "cargo test".to_string(),
+            limitations: Vec::new(),
+            non_claims: Vec::new(),
+            after: None,
+            last_after_refusal: None,
+            terminal_artifacts: Vec::new(),
+            store: None,
+        };
+        let instruction = instruction(FixInstructionState::FixSiteReady);
+        let readiness = ready_readiness();
+        let command = verify_command();
+        let mut input = base_input(&instruction, &readiness);
+        input.next_command = Some(&command);
+        input.attempt = Some(&manifest);
+
+        let card = build_repair_card(&input)?;
+        if card.next_action.is_some() {
+            return Err("terminal attempt exposed a continue command".to_string());
+        }
+        let canonical = card
+            .canonical_next_action
+            .as_ref()
+            .ok_or_else(|| "terminal card minted no canonical next action".to_string())?;
+        if canonical.action_class() != NextActionClass::TerminalNoAction {
+            return Err("terminal card decision is not terminal".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn canonical_missing_evidence_names_the_prerequisite() -> Result<(), String> {
+        use crate::domain::{NextActionClass, NextActionStop};
+        let instruction = instruction(FixInstructionState::FixSiteReady);
+        let mut readiness = ready_readiness();
+        readiness.missing_evidence = vec!["owner".to_string()];
+        // Not repair-ready: the gate closes without an offered command, so
+        // the builder names the missing evidence instead of erroring.
+        readiness.state = crate::analysis::repair_route::RepairRouteState::StaticLimitation;
+        let input = base_input(&instruction, &readiness);
+
+        let card = build_repair_card(&input)?;
+        if card.next_action.is_some() {
+            return Err("unready card exposed a route".to_string());
+        }
+        let canonical = card
+            .canonical_next_action
+            .as_ref()
+            .ok_or_else(|| "unready card minted no canonical next action".to_string())?;
+        if canonical.action_class() != NextActionClass::SatisfyPrerequisite {
+            return Err("unready card decision does not name its prerequisite".to_string());
+        }
+        match canonical.stop() {
+            Some(NextActionStop::ProvideInput { input, .. }) if input.contains("owner") => {}
+            other => {
+                return Err(format!(
+                    "unready card stop does not name the missing evidence: {other:?}"
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn canonical_platform_gap_clears_the_reference() -> Result<(), String> {
+        use crate::domain::NextActionClass;
+        let instruction = instruction(FixInstructionState::FixSiteReady);
+        let readiness = ready_readiness();
+        let mut command = verify_command();
+        command.platforms = Vec::new();
+        let mut input = base_input(&instruction, &readiness);
+        input.next_command = Some(&command);
+
+        let card = build_repair_card(&input)?;
+        if card.next_action.is_some() {
+            return Err("unrenderable command exposed a route".to_string());
+        }
+        let canonical = card
+            .canonical_next_action
+            .as_ref()
+            .ok_or_else(|| "platform card minted no canonical next action".to_string())?;
+        if canonical.action_class() != NextActionClass::UnsupportedOrLimited {
+            return Err("platform card decision stays executable".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn instruction_labels_match_wire_spellings() -> Result<(), String> {
+        for state in [
+            FixInstructionState::FixSiteReady,
+            FixInstructionState::StaticLimitation,
+            FixInstructionState::Stale,
+            FixInstructionState::InspectOnly,
+            FixInstructionState::Unavailable,
+        ] {
+            let rendered = serde_json::to_value(state).map_err(|error| error.to_string())?;
+            let Some(spelling) = rendered.as_str() else {
+                return Err("instruction state did not serialize to a string".to_string());
+            };
+            if instruction_label(state) != spelling {
+                return Err(format!(
+                    "instruction label drifted from its wire spelling: {}",
+                    spelling
+                ));
+            }
         }
         Ok(())
     }

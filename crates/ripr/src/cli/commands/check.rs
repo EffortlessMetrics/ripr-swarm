@@ -13,7 +13,10 @@ use crate::cli::parse::{
     disclose_attached_terminal_stdin_read, expect_value, parse_format, parse_mode,
 };
 use crate::cli::suggest::unknown_argument;
-use crate::config::{CheckInputExplicit, RiprConfig, apply_to_check_input, load_for_root};
+use crate::config::{
+    CheckInputExplicit, RiprConfig, apply_to_check_input, config_discovered_for_root, load_for_root,
+};
+use crate::core_error::CoreError;
 use crate::git::WorkTreeRootProbe;
 use crate::output;
 use crate::output::human::terminal_safe;
@@ -264,7 +267,7 @@ fn parse_git_timeout_from(
     Ok((secs > 0).then_some(timeout))
 }
 
-fn git_timeout_from_env(
+pub(super) fn git_timeout_from_env(
     explicit: bool,
     env_value: Result<String, std::env::VarError>,
 ) -> Result<Option<Option<std::time::Duration>>, String> {
@@ -299,6 +302,58 @@ fn select_output_format(
     *format = chosen;
     *selection = Some(spelling);
     Ok(())
+}
+
+/// Typed refusal for a [`load_for_root`] failure (#6834).
+///
+/// A present-but-unloadable config entry is `config_invalid`. No config
+/// entry anywhere means automatic language detection refused (e.g. Python
+/// markers in a Rust-only binary), not a broken file: the untyped fallback
+/// makes no claim, while `config_invalid` would misdirect to
+/// `analysis/config-load` (#6952 review).
+fn config_load_refusal(root: &Path, err: String) -> CoreError {
+    if config_discovered_for_root(root) {
+        CoreError::config_invalid(err)
+    } else {
+        CoreError::from(err)
+    }
+}
+
+/// Refusal exit for a post-argv-parse `check` failure (#6834).
+///
+/// When `format` is [`OutputFormat::Json`], writes the refusal document to
+/// stdout first — the frozen scope-guard envelope for the two guards, the
+/// structural [`CoreError::check_refusal`] envelope for everything else —
+/// then returns the unchanged prose error for stderr. Other formats return
+/// the prose untouched. Every `?` and `return Err` in [`check`] below the
+/// argv parser routes through here; argv usage errors return before the
+/// envelope snapshot exists and stay prose-only.
+fn refuse_check(
+    envelope_input: &CheckInput,
+    format: OutputFormat,
+    error: impl Into<CoreError>,
+) -> String {
+    let error = error.into();
+    if !matches!(format, OutputFormat::Json) {
+        return error.to_string();
+    }
+    let display = error.to_string();
+    let rendered =
+        match output::limited_check::render_diff_scope_limited_check_json(envelope_input, &display)
+        {
+            Ok(Some(rendered)) => Ok(rendered),
+            Ok(None) => output::limited_check::render_check_failure_json(envelope_input, &error),
+            Err(render) => Err(render),
+        };
+    match rendered {
+        Ok(document) => {
+            if let Err(write) = write_stdout_chunked(&document) {
+                return write;
+            }
+        }
+        Err(render) => return render,
+    }
+    error.to_string()
 }
 
 pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
@@ -439,6 +494,13 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
         }
         i += 1;
     }
+    // #6834: refusal-envelope context for every failure below. Argv usage
+    // errors above return before this snapshot exists and stay prose-only.
+    // `format` never changes after this point (`apply_to_check_input`
+    // touches only mode and unchanged-test inclusion), so the argv format
+    // is the effective one for the whole run.
+    let effective_format = input.format;
+    let mut envelope_input = input.clone();
     if root_explicitly_provided {
         // An explicit --root that is not a directory reached the diff loader
         // and surfaced git's spawn failure, complete with the full argv:
@@ -449,10 +511,24 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
         // than being handed the invocation that failed on it. Only an explicit
         // root is checked: the implicit path below legitimately walks up from
         // the current directory.
-        ensure_command_root(&input.root, "check")?;
+        ensure_command_root(&input.root, "check").map_err(|err| {
+            refuse_check(
+                &envelope_input,
+                effective_format,
+                CoreError::repository_root_unusable(err),
+            )
+        })?;
     } else {
-        resolve_implicit_workspace_root(&mut input)?;
+        resolve_implicit_workspace_root(&mut input).map_err(|err| {
+            refuse_check(
+                &envelope_input,
+                effective_format,
+                CoreError::repository_root_unusable(err),
+            )
+        })?;
     }
+    // The root is now the effective one (resolved for implicit runs).
+    envelope_input = input.clone();
     // RIPR-SPEC-0084: when no --base was explicitly given AND no --diff file
     // was provided, resolve the repo's real default branch instead of
     // hardcoding origin/main. Setting base to None here triggers
@@ -469,11 +545,17 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
     if let Some(timeout) = git_timeout_from_env(
         git_timeout_explicitly_provided,
         std::env::var("RIPR_GIT_TIMEOUT"),
-    )? {
+    )
+    .map_err(|err| refuse_check(&envelope_input, effective_format, err))?
+    {
         input.git_timeout = timeout;
     }
     if worktree_explicitly_provided && input.diff_file.is_some() {
-        return Err("check --worktree cannot be combined with --diff".to_string());
+        return Err(refuse_check(
+            &envelope_input,
+            effective_format,
+            "check --worktree cannot be combined with --diff".to_string(),
+        ));
     }
     // #1441: --suppression-policy applies to the findings-based check
     // surfaces only. SARIF keeps its existing `.ripr/suppressions.toml`
@@ -489,11 +571,13 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
                 | OutputFormat::Github
         )
     {
-        return Err(
+        return Err(refuse_check(
+            &envelope_input,
+            effective_format,
             "--suppression-policy applies to the findings-based check formats (human, human-full, json, github); \
              it is not yet supported for SARIF, badge, or repo formats"
                 .to_string(),
-        );
+        ));
     }
     // #3237/#3278: bind the immutable subject before the analysis
     // call. Construction runs #3276's typed validation (malformed OIDs,
@@ -503,12 +587,14 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
     if let Some(tree) = candidate_tree.as_deref() {
         let base = match candidate_base.as_deref() {
             Some(explicit) => crate::domain::GitCandidateBase::Treeish(
-                crate::domain::GitTreeish::new(explicit).map_err(|error| error.to_string())?,
+                crate::domain::GitTreeish::new(explicit).map_err(|error| {
+                    refuse_check(&envelope_input, effective_format, error.to_string())
+                })?,
             ),
             None => crate::domain::GitCandidateBase::EmptyTree,
         };
-        let candidate =
-            crate::domain::GitObjectId::parse(tree).map_err(|error| error.to_string())?;
+        let candidate = crate::domain::GitObjectId::parse(tree)
+            .map_err(|error| refuse_check(&envelope_input, effective_format, error.to_string()))?;
         input.git_candidate = Some(crate::domain::GitCandidateSubject::new(
             input.root.clone(),
             base,
@@ -518,10 +604,12 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
     // #3278 review: --candidate-base without --candidate-tree is a
     // dangling input the run would silently ignore; fail closed.
     if candidate_base.is_some() && candidate_tree.is_none() {
-        return Err(
+        return Err(refuse_check(
+            &envelope_input,
+            effective_format,
             "--candidate-base requires --candidate-tree: name the candidate tree the base applies to"
                 .to_string(),
-        );
+        ));
     }
     // #4252: a bound subject configures itself from its candidate tree
     // (#3279 R4 below), so the worktree ripr.toml is never read for it.
@@ -534,9 +622,17 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
     let config = if candidate_tree.is_some() {
         RiprConfig::default()
     } else {
-        load_for_root(&input.root)?
+        load_for_root(&input.root).map_err(|err| {
+            refuse_check(
+                &envelope_input,
+                effective_format,
+                config_load_refusal(&input.root, err),
+            )
+        })?
     };
     apply_to_check_input(&mut input, &config, explicit);
+    // Post-config-merge snapshot: mode may now come from ripr.toml.
+    envelope_input = input.clone();
     let format = input.format;
     // #3278 review M1: repo-scope formats, repo exposure, and the gap
     // ledger analyze the LIVE repository by definition. A bound
@@ -549,14 +645,18 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
             || matches!(format, OutputFormat::RepoExposureJson)
             || format.is_repo_scope());
     if subject_bound_with_live_repo_path {
-        return Err(format!(
-            "--candidate-tree cannot be combined with the live-repository path (--format {}{}): the subject binds exact trees, not the live repo",
-            format.primary_cli_name(),
-            if gap_ledger.is_some() {
-                " with --gap-ledger"
-            } else {
-                ""
-            }
+        return Err(refuse_check(
+            &envelope_input,
+            effective_format,
+            format!(
+                "--candidate-tree cannot be combined with the live-repository path (--format {}{}): the subject binds exact trees, not the live repo",
+                format.primary_cli_name(),
+                if gap_ledger.is_some() {
+                    " with --gap-ledger"
+                } else {
+                    ""
+                }
+            ),
         ));
     }
     // RIPR-SPEC-0140: --write-artifact records a diff-scoped findings run.
@@ -569,9 +669,13 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
         // identity re-reads a named file. A literal '-' in the cwd must
         // never let those unrelated bytes stand in for the consumed input.
         if input.diff_file.as_deref() == Some(Path::new("-")) {
-            return Err(format!(
-                "--write-artifact {} cannot be combined with --diff -: stdin bytes are not retained in the artifact identity; save stdin to a named diff file, then pass --diff <path> with --write-artifact",
-                path.display()
+            return Err(refuse_check(
+                &envelope_input,
+                effective_format,
+                format!(
+                    "--write-artifact {} cannot be combined with --diff -: stdin bytes are not retained in the artifact identity; save stdin to a named diff file, then pass --diff <path> with --write-artifact",
+                    path.display()
+                ),
             ));
         }
         // #4951/#4958: Windows strips trailing dots and spaces from EVERY
@@ -588,12 +692,16 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
         // literal and writable, so nothing is refused.
         if !crate::cli::commands_context::windows_stripped_components(path).is_empty() {
             let written = crate::cli::commands_context::windows_normalized_path(path);
-            return Err(format!(
-                "--write-artifact {} would be written as {written:?} on this platform \
-                 (Windows strips trailing dots and spaces), so the on-disk artifact and the \
-                 suggested follow-up commands would name different files; \
-                 pass a name without trailing dots or spaces",
-                path.display()
+            return Err(refuse_check(
+                &envelope_input,
+                effective_format,
+                format!(
+                    "--write-artifact {} would be written as {written:?} on this platform \
+                     (Windows strips trailing dots and spaces), so the on-disk artifact and the \
+                     suggested follow-up commands would name different files; \
+                     pass a name without trailing dots or spaces",
+                    path.display()
+                ),
             ));
         }
         // #3278 review B1: the artifact records a diff source and its
@@ -603,22 +711,34 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
         // vacuously. Fail closed until a subject-aware diff source
         // identity exists (R4 scope).
         if candidate_tree.is_some() {
-            return Err(format!(
-                "--write-artifact {} cannot be combined with --candidate-tree: the artifact records a diff source; the subject's tree-to-tree diff is not re-resolvable yet",
-                path.display()
+            return Err(refuse_check(
+                &envelope_input,
+                effective_format,
+                format!(
+                    "--write-artifact {} cannot be combined with --candidate-tree: the artifact records a diff source; the subject's tree-to-tree diff is not re-resolvable yet",
+                    path.display()
+                ),
             ));
         }
         if gap_ledger.is_some() {
-            return Err(format!(
-                "--write-artifact {} cannot be combined with --gap-ledger: the artifact records a findings-based check run",
-                path.display()
+            return Err(refuse_check(
+                &envelope_input,
+                effective_format,
+                format!(
+                    "--write-artifact {} cannot be combined with --gap-ledger: the artifact records a findings-based check run",
+                    path.display()
+                ),
             ));
         }
         if matches!(format, OutputFormat::RepoExposureJson) || format.is_repo_scope() {
-            return Err(format!(
-                "--write-artifact {} records a diff-scoped findings run; --format {} is repo-scoped and produces no such artifact",
-                path.display(),
-                format.primary_cli_name()
+            return Err(refuse_check(
+                &envelope_input,
+                effective_format,
+                format!(
+                    "--write-artifact {} records a diff-scoped findings run; --format {} is repo-scoped and produces no such artifact",
+                    path.display(),
+                    format.primary_cli_name()
+                ),
             ));
         }
         // Managed producer mode generates the Perl fact packet inside
@@ -634,9 +754,13 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
                 .producer()
                 .is_some_and(app::is_managed_perl_producer)
         {
-            return Err(format!(
-                "--write-artifact {} does not support [perl] producer packet generation (named limitation: the generated packet is not part of the recorded identity); pass --perl-facts <path> explicitly to make the packet part of the recorded identity",
-                path.display()
+            return Err(refuse_check(
+                &envelope_input,
+                effective_format,
+                format!(
+                    "--write-artifact {} does not support [perl] producer packet generation (named limitation: the generated packet is not part of the recorded identity); pass --perl-facts <path> explicitly to make the packet part of the recorded identity",
+                    path.display()
+                ),
             ));
         }
     }
@@ -650,8 +774,27 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
     // gates that reject subject combinations outright.
     let mut config = config;
     if let Some(subject) = input.git_candidate.as_ref() {
-        config = crate::config::config_for_candidate(subject, &config)?;
+        config = crate::config::config_for_candidate(subject, &config, input.git_timeout).map_err(
+            |err| {
+                // #6956: a stalled candidate-tree config read is a timeout,
+                // not a broken config file; only genuine load/parse failures
+                // take `config_invalid`.
+                let refusal = match err {
+                    crate::config::CandidateConfigError::Timeout {
+                        operation,
+                        timeout_ms,
+                        spawned,
+                    } => CoreError::git_invocation_timeout(operation, timeout_ms, spawned),
+                    crate::config::CandidateConfigError::Other(message) => {
+                        CoreError::config_invalid(message)
+                    }
+                };
+                refuse_check(&envelope_input, effective_format, refusal)
+            },
+        )?;
         apply_to_check_input(&mut input, &config, explicit);
+        // Post-subject-config snapshot: the candidate tree's config won.
+        envelope_input = input.clone();
     }
     // #2644: `fast` is currently behaviorally identical to `draft`. The notice
     // fires on the EFFECTIVE mode after `apply_to_check_input`, not on argv
@@ -721,12 +864,15 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
         eprintln!("{}", terminal_safe(warning));
     }
     if format.is_repo_scope() {
-        validate_repo_scope_diff_inputs(&input, base_explicitly_provided)?;
+        validate_repo_scope_diff_inputs(&input, base_explicitly_provided)
+            .map_err(|err| refuse_check(&envelope_input, effective_format, err))?;
     }
     if let Some(gap_ledger) = gap_ledger.as_ref() {
-        write_stdout_chunked(&render_check_gap_ledger_badge(
-            gap_ledger, &format, &config,
-        )?)?;
+        write_stdout_chunked(
+            &render_check_gap_ledger_badge(gap_ledger, &format, &config)
+                .map_err(|err| refuse_check(&envelope_input, effective_format, err))?,
+        )
+        .map_err(|err| refuse_check(&envelope_input, effective_format, err))?;
         return Ok(());
     }
     // #4945: the sink is wired BEFORE every repo-format path so the
@@ -792,7 +938,8 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
                 )?;
                 Ok(())
             },
-        )?;
+        )
+        .map_err(|err| refuse_check(&envelope_input, effective_format, err))?;
         // Producer `completed` was held until the streaming stdout write
         // finished; a failed write already dropped the sink, which projected
         // `failed` instead.
@@ -805,6 +952,9 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
     // RIPR-SPEC-0112 disclosure gate after the analysis needs it.
     let input_diff_file_is_some = input.diff_file.is_some();
     let limited_check_input = input.clone();
+    // Analysis-phase snapshot: identical to the scope-guard input, so guard
+    // envelopes and refusal envelopes echo the same invocation context.
+    envelope_input = limited_check_input.clone();
     // #4319: `--diff -` reads the diff from stdin. On an attached terminal
     // that blocks until EOF with no visible sign of why, so the cli adapter
     // discloses the read before dispatching; the analysis loader itself
@@ -829,21 +979,11 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
         // `CheckOutput` carries only the fields these renderers read.
         Ok(app::repo_seam_inventory_input(input))
     } else {
-        app::check_with_progress(input, &config, progress_scope, progress_sink)
+        app::check_with_progress_core(input, &config, progress_scope, progress_sink)
     };
     let mut output = match output_result {
         Ok(output) => output,
-        Err(err) => {
-            if matches!(format, OutputFormat::Json)
-                && let Some(rendered) = output::limited_check::render_diff_scope_limited_check_json(
-                    &limited_check_input,
-                    &err,
-                )?
-            {
-                write_stdout_chunked(&rendered)?;
-            }
-            return Err(err);
-        }
+        Err(err) => return Err(refuse_check(&envelope_input, effective_format, err)),
     };
     // RIPR-SPEC-0140: persist the full-fidelity finding set plus the input
     // identity for a later `explain --from` / `context --from`. A failed
@@ -855,7 +995,8 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
             &config,
             &output.findings,
             worktree_explicitly_provided,
-        )?;
+        )
+        .map_err(|err| refuse_check(&envelope_input, effective_format, err))?;
     }
     // RIPR-SPEC-0083: disclose when no scope was provided and the result is empty.
     // #4012: gate on what was actually analyzed, not on what was typed. A
@@ -949,13 +1090,27 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
     // #4945: repo seam-driven formats run their walks inside the render arms,
     // so the sink threads through rendering to bracket those walks with
     // repo-scope stage boundaries; diff-scoped arms ignore it.
-    write_stdout_chunked(&app::render_check_with_config_and_navigation_and_progress(
-        &output,
-        &format,
-        &config,
-        Some(&drill_in),
-        progress_sink,
-    )?)?;
+    // The canonical triage adapter binds its diff-source mode from this
+    // declared provenance (#6304): base presence cannot identify it.
+    let provenance = if worktree_explicitly_provided {
+        app::CheckDiffProvenance::Worktree
+    } else if input_diff_file_is_some || candidate_tree.is_some() {
+        app::CheckDiffProvenance::SuppliedScope
+    } else {
+        app::CheckDiffProvenance::CommittedHistory
+    };
+    write_stdout_chunked(
+        &app::render_check_with_config_and_navigation_and_progress(
+            &output,
+            &format,
+            &config,
+            Some(&drill_in),
+            progress_sink,
+            provenance,
+        )
+        .map_err(|err| refuse_check(&envelope_input, effective_format, err))?,
+    )
+    .map_err(|err| refuse_check(&envelope_input, effective_format, err))?;
     if let Some(sink) = &progress {
         sink.commit_success();
     }
@@ -1297,6 +1452,31 @@ mod tests {
             {
                 return Err(format!("{argv:?} must name both selections, got {error}"));
             }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn config_load_refusal_without_any_config_entry_falls_back() -> Result<(), String> {
+        // #6952 review: no ripr.toml anywhere means automatic language
+        // detection refused, not a broken file. The refusal must not
+        // claim `config_invalid`.
+        let dir = unique_command_test_dir("config-load-refusal");
+        std::fs::create_dir_all(&dir).map_err(|err| err.to_string())?;
+        if config_discovered_for_root(&dir) {
+            return Err(format!(
+                "precondition: {} must have no config entry in scope",
+                dir.display()
+            ));
+        }
+        let refusal = config_load_refusal(&dir, "synthetic detection error".to_string());
+        if refusal.check_refusal().identity != crate::core_error::ANALYSIS_FAILED_IDENTITY {
+            return Err("undiscovered config must fall back to analysis_failed".to_string());
+        }
+        std::fs::write(dir.join("ripr.toml"), "[\n").map_err(|err| err.to_string())?;
+        let refusal = config_load_refusal(&dir, "synthetic parse error".to_string());
+        if refusal.check_refusal().identity != "config_invalid" {
+            return Err("a present-but-broken entry must stay config_invalid".to_string());
         }
         Ok(())
     }
@@ -1818,10 +1998,14 @@ mod tests {
                 "seed linked worktree",
             ],
         )?;
-        let linked_arg = linked.to_str().ok_or("fixture linked path is not UTF-8")?;
+        // Relative on purpose: the fixture root is a canonicalized verbatim
+        // path on Windows, and Git for Windows rejects a verbatim worktree
+        // path argument ("could not create leading directories", #6855).
+        // `repo` and `linked` are siblings under the same fixture root, so
+        // `../linked` names the same directory on every host.
         crate::testing::fixture_git::fixture_git_ok(
             &repo,
-            &["worktree", "add", "--detach", linked_arg, "HEAD"],
+            &["worktree", "add", "--detach", "../linked", "HEAD"],
         )?;
         assert!(linked.join(".git").is_file(), "fixture must use a Git file");
         let nested = linked.join("src");

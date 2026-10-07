@@ -1,0 +1,17 @@
+{
+  "subject_id": "authored-sibling-pin",
+  "origin": "authored",
+  "version_label": "authored 2026-10-06 for the RIPR-SPEC-0106 sibling-variant gate",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "Cargo.toml",
+      "sha256": "39bb8d56be1a65ed7e886e3488ef215c992889dd4dc117f399890f396bb8ba6e"
+    },
+    {
+      "path": "src/lib.rs",
+      "sha256": "3c11ce9743e2daaa2fc4f9c6e349f344c56b4869a79e04bb036f3842819f607d"
+    }
+  ]
+}

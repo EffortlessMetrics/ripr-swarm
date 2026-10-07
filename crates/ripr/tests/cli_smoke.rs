@@ -18,11 +18,16 @@ mod build_commit_record;
 mod check_artifact_stdin;
 #[path = "common/mod.rs"]
 mod common;
+#[cfg(feature = "lang-rust")]
+#[path = "cli_smoke/discarded_matches.rs"]
+mod discarded_matches;
 #[path = "cli_smoke/findings_byte_budget.rs"]
 mod findings_byte_budget;
 #[cfg(feature = "lang-python")]
 #[path = "cli_smoke/implicit_git_root.rs"]
 mod implicit_git_root;
+#[path = "cli_smoke/next_action.rs"]
+mod next_action;
 #[cfg(feature = "lang-python")]
 #[path = "cli_smoke/python_source_admission.rs"]
 mod python_source_admission;
@@ -31,6 +36,11 @@ mod python_source_admission;
 mod receipt_recovery_root;
 #[path = "cli_smoke/related_test_count.rs"]
 mod related_test_count;
+#[path = "cli_smoke/shell_words.rs"]
+mod shell_words;
+#[cfg(unix)]
+#[path = "cli_smoke/workflow_directory.rs"]
+mod workflow_directory;
 
 // All plain fixture-setup git invocations below route through the shared
 // hardened helper (deadline + one idempotent retry + commit reconcile,
@@ -43,6 +53,21 @@ static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 fn run_ripr(args: &[&str]) -> Output {
     let bin = env!("CARGO_BIN_EXE_ripr");
     Command::new(bin).args(args).output().unwrap()
+}
+
+#[cfg(feature = "lang-rust")]
+fn run_matcher_calibration_with_deadline(
+    args: &[&str],
+    budget: std::time::Duration,
+) -> Result<Output, std::io::Error> {
+    let mut command = probe_command(env!("CARGO_BIN_EXE_ripr"));
+    command
+        .current_dir(workspace_root())
+        .args(args)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    run_owned_stdin_probe(command, &[], budget)
 }
 
 fn run_ripr_in_workspace(args: &[&str]) -> Result<Output, std::io::Error> {
@@ -618,7 +643,7 @@ fn write_bound_repo_exposure_fixture(
     let placeholder = "sha256:0000000000000000000000000000000000000000000000000000000000000000";
     let raw = format!(
         r#"{{
-  "schema_version": "0.3",
+  "schema_version": "0.4",
   "artifact": {{
     "kind": "repo_exposure",
     "schema_version": "1",
@@ -835,7 +860,7 @@ fn bind_repo_exposure_fixture_with_worktree(
     worktree: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let mut value: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(source)?)?;
-    value["schema_version"] = serde_json::Value::String("0.3".to_string());
+    value["schema_version"] = serde_json::Value::String("0.4".to_string());
     value["run_status"] = serde_json::Value::String("complete".to_string());
     let head = concrete_fixture_repository_head(root)?;
     let root_identity = root.canonicalize()?.to_string_lossy().replace('\\', "/");
@@ -2208,14 +2233,40 @@ fn check_human_navigation_commands_replay_custom_scope() -> Result<(), String> {
         .lines()
         .find(|line| line.starts_with("  ripr context "))
         .ok_or_else(|| format!("check output omitted context command:\n{stdout}"))?;
-    let explain_args = explain_line.split_whitespace().collect::<Vec<_>>();
-    let context_args = context_line.split_whitespace().collect::<Vec<_>>();
+    // #6762: split as the shell would, so a checkout path that needs
+    // quoting (a space, an apostrophe) replays as one argument.
+    let explain_words = shell_words::posix_words(explain_line)?;
+    let context_words = shell_words::posix_words(context_line)?;
+    let explain_args = explain_words.iter().map(String::as_str).collect::<Vec<_>>();
+    let context_args = context_words.iter().map(String::as_str).collect::<Vec<_>>();
     if explain_args.first() != Some(&"ripr") || context_args.first() != Some(&"ripr") {
         return Err(format!(
             "unexpected navigation commands:\n{explain_line}\n{context_line}"
         ));
     }
 
+    // #3948: the drill-in names the resolved repository, not the typed `.`, so
+    // pasting it from another directory analyzes the same repository.
+    let printed_root = explain_args
+        .iter()
+        .position(|arg| *arg == "--root")
+        .and_then(|at| explain_args.get(at + 1))
+        .copied()
+        .ok_or_else(|| format!("explain command omitted --root:\n{explain_line}"))?;
+    assert!(
+        std::path::Path::new(printed_root).is_absolute(),
+        "drill-in repeated the typed relative root instead of the resolved one: {printed_root}"
+    );
+    let printed_diff = explain_args
+        .iter()
+        .position(|arg| *arg == "--diff")
+        .and_then(|at| explain_args.get(at + 1))
+        .copied()
+        .ok_or_else(|| format!("explain command omitted --diff:\n{explain_line}"))?;
+    assert!(
+        std::path::Path::new(printed_diff).is_absolute(),
+        "drill-in repeated the typed relative --diff: {printed_diff}"
+    );
     let explain = run_ripr_in_workspace(&explain_args[1..]).map_err(|err| err.to_string())?;
     assert_success(&explain);
     let selector = explain_args
@@ -2224,10 +2275,27 @@ fn check_human_navigation_commands_replay_custom_scope() -> Result<(), String> {
         .ok_or_else(|| "explain command omitted selector".to_string())?;
     let context = run_ripr_in_workspace(&context_args[1..]).map_err(|err| err.to_string())?;
     assert_success(&context);
-    if !String::from_utf8_lossy(&explain.stdout).contains(&format!(
-        "Next: ripr context --root {root} --diff {diff} --at {selector}"
-    )) {
-        return Err("explain output omitted its scope-preserving context command".to_string());
+    // Compare decoded words: the printed `Next:` command shell-quotes a root
+    // that needs it, while `printed_root` is already decoded (#6762).
+    let explain_stdout = String::from_utf8_lossy(&explain.stdout);
+    let next_line = explain_stdout
+        .lines()
+        .find_map(|line| line.trim_start().strip_prefix("Next: ripr context "))
+        .ok_or_else(|| "explain output omitted its scope-preserving context command".to_string())?;
+    let next_args = shell_words::posix_words(next_line)?;
+    if next_args
+        != [
+            "--root",
+            printed_root,
+            "--diff",
+            printed_diff,
+            "--at",
+            selector,
+        ]
+    {
+        return Err(format!(
+            "explain output's context command lost the scope: {next_line}"
+        ));
     }
     if !String::from_utf8_lossy(&context.stdout).contains("\"version\": \"1.0\"") {
         return Err("context command did not return its JSON packet".to_string());
@@ -2845,6 +2913,545 @@ fn check_json_diff_scope_oversized_emits_limited_artifact() -> Result<(), String
         stderr.contains("diff_scope_oversized"),
         "stderr should still report failed analysis: {stderr}"
     );
+    Ok(())
+}
+
+/// #6834: shared shape assertions for a `check --json` refusal document —
+/// the one non-consumable envelope the scope guards already use, with the
+/// typed identity selecting run_status/category/limitation/basis.
+fn assert_check_json_refusal(
+    output: &Output,
+    identity: &str,
+    repair_route: &str,
+) -> Result<serde_json::Value, String> {
+    if output.status.code() != Some(2) {
+        return Err(format!(
+            "expected exit 2 for {identity}, got {:?}\nstderr:\n{}",
+            output.status.code(),
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+    // The assertion that fails before the fix: stdout carried zero bytes.
+    if output.stdout.is_empty() {
+        return Err(format!(
+            "check --json must emit a refusal document on stdout for {identity}, got zero bytes"
+        ));
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let value: serde_json::Value = serde_json::from_str(&stdout)
+        .map_err(|err| format!("refusal stdout should parse as JSON: {err}\n{stdout}"))?;
+    for (pointer, expected) in [
+        ("/schema_version", "0.2"),
+        ("/tool", "ripr"),
+        ("/analysis_scope/scope", "diff"),
+        ("/analysis_scope/run_status", identity),
+        ("/analysis_scope/basis", identity),
+        ("/analysis_scope/limitation", identity),
+        ("/analysis_scope/repair_route", repair_route),
+        ("/run_limitations/0/category", identity),
+        ("/run_limitations/0/run_status", identity),
+        ("/run_limitations/0/basis", identity),
+        ("/run_limitations/0/repair_route", repair_route),
+    ] {
+        let actual = value.pointer(pointer).and_then(serde_json::Value::as_str);
+        if actual != Some(expected) {
+            return Err(format!(
+                "{pointer}: expected {expected}, got {actual:?}\n{stdout}"
+            ));
+        }
+    }
+    for pointer in [
+        "/analysis_scope/downstream_consumable",
+        "/run_limitations/0/downstream_consumable",
+    ] {
+        if value.pointer(pointer) != Some(&serde_json::Value::Bool(false)) {
+            return Err(format!("{pointer} must be false\n{stdout}"));
+        }
+    }
+    if value["findings"].as_array().map(Vec::len) != Some(0) {
+        return Err(format!("refusal findings must be empty\n{stdout}"));
+    }
+    if value["run_limitations"][0]["message"]
+        .as_str()
+        .is_none_or(str::is_empty)
+    {
+        return Err(format!("refusal must carry a human message\n{stdout}"));
+    }
+    Ok(value)
+}
+
+/// #6834: a git fixture repo with `commits` commits on `main`.
+fn init_check_refusal_repo(label: &str, commits: usize) -> Result<PathBuf, String> {
+    let root = unique_temp_workspace(label);
+    std::fs::create_dir_all(root.join("src")).map_err(|e| format!("create src dir: {e}"))?;
+    run_git(&root, &["init", "--initial-branch=main"])?;
+    run_git(&root, &["config", "user.email", "refusal@t.st"])?;
+    run_git(&root, &["config", "user.name", "refusal"])?;
+    for n in 0..commits {
+        std::fs::write(
+            root.join("src/lib.rs"),
+            format!("pub fn v{n}() -> u8 {{ {n} }}\n"),
+        )
+        .map_err(|e| format!("write lib.rs: {e}"))?;
+        run_git(&root, &["add", "."])?;
+        run_git(&root, &["commit", "-qm", &format!("commit {n}")])?;
+    }
+    Ok(root)
+}
+
+/// #6834: the demonstrated case — an unresolvable `--base` emits a typed
+/// refusal naming `base_unresolvable`, with the caller-supplied invocation
+/// context echoed and the stderr prose unchanged.
+#[test]
+fn check_json_unresolvable_base_emits_refusal_envelope() -> Result<(), String> {
+    let root = init_check_refusal_repo("check-json-bad-base", 1)?;
+    let root_arg = root.display().to_string();
+    let output = run_ripr(&[
+        "check",
+        "--json",
+        "--root",
+        &root_arg,
+        "--base",
+        "definitely-not-a-real-ref-9f2a-6834",
+    ]);
+    let value =
+        assert_check_json_refusal(&output, "base_unresolvable", "analysis/base-resolution")?;
+    if value["base"] != "definitely-not-a-real-ref-9f2a-6834" {
+        return Err(format!(
+            "refusal must echo the caller-supplied base: {value}"
+        ));
+    }
+    if value["root"] != root_arg.as_str() {
+        return Err(format!(
+            "refusal must echo the caller-supplied root: {value}"
+        ));
+    }
+    let message = value["run_limitations"][0]["message"]
+        .as_str()
+        .ok_or("refusal must carry a message")?;
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if !stderr.contains(message) {
+        return Err(format!(
+            "the envelope message must be the stderr diagnostic verbatim; stderr: {stderr}"
+        ));
+    }
+    ignore_remove_dir_all(&root);
+    Ok(())
+}
+
+/// #6834 (owner ruling): argv usage errors stay prose-only. There is no
+/// successfully parsed invocation to echo, so no envelope exists: exit 2,
+/// empty stdout, the cause on stderr.
+#[test]
+fn check_json_argv_usage_errors_stay_prose_only() -> Result<(), String> {
+    let output = run_ripr(&["check", "--json", "--bogus-flag-6834"]);
+    if output.status.code() != Some(2) {
+        return Err(format!(
+            "expected exit 2, got {:?}\nstderr:\n{}",
+            output.status.code(),
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+    if !output.stdout.is_empty() {
+        return Err(format!(
+            "argv usage errors must not emit an envelope, got {} stdout bytes",
+            output.stdout.len()
+        ));
+    }
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if !stderr.contains("--bogus-flag-6834") {
+        return Err(format!("stderr must name the flag, got: {stderr}"));
+    }
+    Ok(())
+}
+
+/// #6834: a `--root` Git cannot work with — a missing directory or a
+/// directory outside any work tree — names `repository_root_unusable`.
+#[test]
+fn check_json_unusable_root_emits_repository_root_unusable() -> Result<(), String> {
+    let missing = unique_temp_workspace("check-json-missing-root").join("no-such-dir");
+    let missing_arg = missing.display().to_string();
+    let output = run_ripr(&["check", "--json", "--root", &missing_arg, "--base", "main"]);
+    assert_check_json_refusal(
+        &output,
+        "repository_root_unusable",
+        "analysis/repository-root",
+    )?;
+
+    // Outside the repository: the temp dir sits under target/, where git
+    // discovery would walk up into the checkout and resolve the base.
+    let plain = unique_external_workspace("check-json-plain-dir")?;
+    std::fs::create_dir_all(&plain).map_err(|e| format!("create plain dir: {e}"))?;
+    let plain_arg = plain.display().to_string();
+    let output = run_ripr(&["check", "--json", "--root", &plain_arg, "--base", "main"]);
+    let value = assert_check_json_refusal(
+        &output,
+        "repository_root_unusable",
+        "analysis/repository-root",
+    )?;
+    if value["root"] != plain_arg.as_str() {
+        return Err(format!(
+            "refusal must echo the caller-supplied root: {value}"
+        ));
+    }
+    ignore_remove_dir_all(&plain);
+    Ok(())
+}
+
+/// #6834: a malformed `ripr.toml` names `config_invalid`, and the envelope
+/// message carries the redacted summary — the config source excerpt never
+/// enters machine output (RIPR-SPEC-0007) while stderr keeps the full prose.
+#[test]
+fn check_json_malformed_config_emits_redacted_refusal() -> Result<(), String> {
+    let root = unique_temp_workspace("check-json-bad-config");
+    std::fs::create_dir_all(&root).map_err(|e| format!("create workspace: {e}"))?;
+    std::fs::write(root.join("ripr.toml"), "canary_config_secret_6834 = [\n")
+        .map_err(|e| format!("write ripr.toml: {e}"))?;
+    let root_arg = root.display().to_string();
+    let output = run_ripr(&["check", "--json", "--root", &root_arg, "--base", "main"]);
+    let value = assert_check_json_refusal(&output, "config_invalid", "analysis/config-load")?;
+    let message = value["run_limitations"][0]["message"]
+        .as_str()
+        .ok_or("refusal must carry a message")?;
+    if message.contains("canary_config_secret_6834") {
+        return Err(format!(
+            "config source excerpt must not enter stdout: {message}"
+        ));
+    }
+    if !message.contains("invalid ripr.toml") {
+        return Err(format!(
+            "the actionable summary must survive redaction: {message}"
+        ));
+    }
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if !stderr.contains("canary_config_secret_6834") {
+        return Err(format!("stderr keeps the full human diagnostic: {stderr}"));
+    }
+    ignore_remove_dir_all(&root);
+    Ok(())
+}
+
+/// #6834: a malformed `--suppression-policy` names
+/// `suppression_policy_invalid` after analysis ran.
+#[test]
+fn check_json_malformed_suppression_policy_emits_refusal() -> Result<(), String> {
+    let root = init_check_refusal_repo("check-json-bad-policy", 2)?;
+    std::fs::write(root.join("badpolicy.toml"), "not [[[ valid\n")
+        .map_err(|e| format!("write policy: {e}"))?;
+    let root_arg = root.display().to_string();
+    let output = run_ripr(&[
+        "check",
+        "--json",
+        "--root",
+        &root_arg,
+        "--base",
+        "HEAD~1",
+        "--suppression-policy",
+        "badpolicy.toml",
+    ]);
+    let value = assert_check_json_refusal(
+        &output,
+        "suppression_policy_invalid",
+        "analysis/suppression-policy",
+    )?;
+    let message = value["run_limitations"][0]["message"]
+        .as_str()
+        .ok_or("refusal must carry a message")?;
+    if !message.contains("suppression policy") {
+        return Err(format!(
+            "the message must name the policy failure: {message}"
+        ));
+    }
+    ignore_remove_dir_all(&root);
+    Ok(())
+}
+
+/// #6834: an analysis-path failure outside every named family — here an
+/// unreadable `--diff` file — still emits a document, on the honest
+/// `analysis_failed` fallback rather than as zero bytes.
+#[test]
+fn check_json_unmigrated_analysis_failure_emits_analysis_failed() -> Result<(), String> {
+    let root = workspace_root().display().to_string();
+    let output = run_ripr(&[
+        "check",
+        "--json",
+        "--root",
+        &root,
+        "--diff",
+        "definitely-not-a-diff-9f2a-6834.diff",
+    ]);
+    let value = assert_check_json_refusal(&output, "analysis_failed", "analysis/failure")?;
+    let message = value["run_limitations"][0]["message"]
+        .as_str()
+        .ok_or("refusal must carry a message")?;
+    if !message.contains("failed to read diff file") {
+        return Err(format!(
+            "the message must carry the loader diagnostic: {message}"
+        ));
+    }
+    Ok(())
+}
+
+/// #6834: a `git_invocation_timeout` and an unresolvable base produce
+/// different identities, so a consumer can tell them apart. The timeout is
+/// forced deterministically: every git invocation hangs, and
+/// `RIPR_GIT_TIMEOUT=1` cuts the diff call.
+#[cfg(unix)]
+#[test]
+fn check_json_timeout_and_bad_base_have_distinct_identities() -> Result<(), String> {
+    let root = init_check_refusal_repo("check-json-timeout", 1)?;
+    let root_arg = root.display().to_string();
+
+    // A `git` shim that hangs on every invocation; nothing passes through,
+    // so the fixture setup above (real git) must finish before this PATH
+    // override is installed for the `ripr` run below.
+    let shim_dir = unique_temp_workspace("check-json-timeout-shim");
+    std::fs::create_dir_all(&shim_dir).map_err(|err| format!("create shim dir: {err}"))?;
+    let shim = shim_dir.join("git");
+    std::fs::write(&shim, "#!/bin/sh\nexec sleep 60\n")
+        .map_err(|err| format!("write git shim: {err}"))?;
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&shim, std::fs::Permissions::from_mode(0o755))
+            .map_err(|err| format!("make git shim executable: {err}"))?;
+    }
+    let mut paths = vec![shim_dir.clone()];
+    paths.extend(std::env::split_paths(
+        &std::env::var_os("PATH").unwrap_or_default(),
+    ));
+    let search_path = std::env::join_paths(paths)
+        .map_err(|err| format!("build shim PATH: {err}"))?
+        .to_string_lossy()
+        .into_owned();
+
+    let started = std::time::Instant::now();
+    let output = run_command_with_env(
+        env!("CARGO_BIN_EXE_ripr"),
+        &root,
+        &[
+            "check",
+            "--json",
+            "--root",
+            root_arg.as_str(),
+            "--base",
+            "HEAD",
+            "--git-timeout",
+            "1",
+        ],
+        &[("PATH", search_path.as_str())],
+    )
+    .map_err(|err| format!("run check with hanging git: {err}"))?;
+    let elapsed = started.elapsed();
+    let timeout_value =
+        assert_check_json_refusal(&output, "git_invocation_timeout", "analysis/git-timeout")?;
+    assert!(
+        elapsed < std::time::Duration::from_secs(45),
+        "check waited {elapsed:?} on hung git under --git-timeout 1"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if !stderr.contains("git_invocation_timeout") {
+        return Err(format!("stderr must keep the timeout prose: {stderr}"));
+    }
+
+    // Control on the same repo with a working git: the bad base names its
+    // own family, distinct from the timeout above.
+    let output = run_ripr(&[
+        "check",
+        "--json",
+        "--root",
+        &root_arg,
+        "--base",
+        "definitely-not-a-real-ref-9f2a-6834",
+    ]);
+    let base_value =
+        assert_check_json_refusal(&output, "base_unresolvable", "analysis/base-resolution")?;
+    let timeout_identity = timeout_value["analysis_scope"]["run_status"]
+        .as_str()
+        .ok_or("timeout refusal must name its identity")?;
+    let base_identity = base_value["analysis_scope"]["run_status"]
+        .as_str()
+        .ok_or("base refusal must name its identity")?;
+    if timeout_identity == base_identity {
+        return Err(format!(
+            "timeout and bad base must have distinct identities, got {timeout_identity}"
+        ));
+    }
+    ignore_remove_dir_all(&root);
+    ignore_remove_dir_all(&shim_dir);
+    Ok(())
+}
+
+/// #6956: a `git` shim that hangs on every invocation, first on `PATH`.
+/// Fixture setup with real git must finish before installing the override.
+/// Returns the shim dir (for cleanup) and the search path for the run.
+#[cfg(unix)]
+fn hanging_git_path_override(label: &str) -> Result<(PathBuf, String), String> {
+    let shim_dir = unique_temp_workspace(label);
+    std::fs::create_dir_all(&shim_dir).map_err(|err| format!("create shim dir: {err}"))?;
+    let shim = shim_dir.join("git");
+    std::fs::write(&shim, "#!/bin/sh\nexec sleep 60\n")
+        .map_err(|err| format!("write git shim: {err}"))?;
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&shim, std::fs::Permissions::from_mode(0o755))
+            .map_err(|err| format!("make git shim executable: {err}"))?;
+    }
+    let mut paths = vec![shim_dir.clone()];
+    paths.extend(std::env::split_paths(
+        &std::env::var_os("PATH").unwrap_or_default(),
+    ));
+    let search_path = std::env::join_paths(paths)
+        .map_err(|err| format!("build shim PATH: {err}"))?
+        .to_string_lossy()
+        .into_owned();
+    Ok((shim_dir, search_path))
+}
+
+/// #6956: with no `--base`, a stalled default-base probe is a timeout,
+/// not a missing ref: the refusal names `git_invocation_timeout` while
+/// stderr keeps the timeout diagnostic.
+#[cfg(unix)]
+#[test]
+fn check_json_omitted_base_git_timeout_names_timeout_identity() -> Result<(), String> {
+    let root = init_check_refusal_repo("check-json-omitted-base-timeout", 1)?;
+    let root_arg = root.display().to_string();
+    let (shim_dir, search_path) =
+        hanging_git_path_override("check-json-omitted-base-timeout-shim")?;
+
+    let started = std::time::Instant::now();
+    let output = run_command_with_env(
+        env!("CARGO_BIN_EXE_ripr"),
+        &root,
+        &[
+            "check",
+            "--json",
+            "--root",
+            root_arg.as_str(),
+            "--worktree",
+            "--git-timeout",
+            "1",
+        ],
+        &[("PATH", search_path.as_str())],
+    )
+    .map_err(|err| format!("run check with hanging git: {err}"))?;
+    let elapsed = started.elapsed();
+    let value =
+        assert_check_json_refusal(&output, "git_invocation_timeout", "analysis/git-timeout")?;
+    assert!(
+        elapsed < std::time::Duration::from_mins(1),
+        "check waited {elapsed:?} on hung git under --git-timeout 1"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if !stderr.contains("git_invocation_timeout") {
+        return Err(format!("stderr must keep the timeout prose: {stderr}"));
+    }
+    let message = value["run_limitations"][0]["message"]
+        .as_str()
+        .ok_or("refusal must carry a message")?;
+    if !message.contains("git_invocation_timeout") {
+        return Err(format!(
+            "the envelope message must echo the timeout diagnostic: {message}"
+        ));
+    }
+    ignore_remove_dir_all(&root);
+    ignore_remove_dir_all(&shim_dir);
+    Ok(())
+}
+
+/// #6956: a stalled candidate-tree config read is a timeout, not a broken
+/// config file: the refusal names `git_invocation_timeout` while stderr
+/// keeps the timeout diagnostic. The read honors the caller's
+/// `--git-timeout`, so a 1s deadline both keeps this test fast and proves
+/// the knob reaches the read (the old fixed 30s read would report
+/// `30000ms` here instead of `1000ms`).
+#[cfg(unix)]
+#[test]
+fn check_json_bound_subject_config_timeout_names_timeout_identity() -> Result<(), String> {
+    use common::fixture_git::fixture_git_output;
+    let root = init_check_refusal_repo("check-json-subject-config-timeout", 1)?;
+    let root_arg = root.display().to_string();
+    let tree = fixture_git_output(&root, &["rev-parse", "HEAD^{tree}"])?;
+    let tree = tree.trim().to_string();
+    let (shim_dir, search_path) =
+        hanging_git_path_override("check-json-subject-config-timeout-shim")?;
+
+    let started = std::time::Instant::now();
+    let output = run_command_with_env(
+        env!("CARGO_BIN_EXE_ripr"),
+        &root,
+        &[
+            "check",
+            "--json",
+            "--root",
+            root_arg.as_str(),
+            "--candidate-tree",
+            tree.as_str(),
+            "--candidate-base",
+            "HEAD",
+            "--git-timeout",
+            "1",
+        ],
+        &[("PATH", search_path.as_str())],
+    )
+    .map_err(|err| format!("run check with hanging git: {err}"))?;
+    let elapsed = started.elapsed();
+    let value =
+        assert_check_json_refusal(&output, "git_invocation_timeout", "analysis/git-timeout")?;
+    assert!(
+        elapsed < std::time::Duration::from_mins(1),
+        "check waited {elapsed:?} on hung git for the candidate config read"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if !stderr.contains("git_invocation_timeout") {
+        return Err(format!("stderr must keep the timeout prose: {stderr}"));
+    }
+    let message = value["run_limitations"][0]["message"]
+        .as_str()
+        .ok_or("refusal must carry a message")?;
+    if !message.contains("git_invocation_timeout") {
+        return Err(format!(
+            "the envelope message must echo the timeout diagnostic: {message}"
+        ));
+    }
+    if !message.contains("1000ms") {
+        return Err(format!(
+            "the timeout must name the caller-supplied 1s deadline, got: {message}"
+        ));
+    }
+    ignore_remove_dir_all(&root);
+    ignore_remove_dir_all(&shim_dir);
+    Ok(())
+}
+
+/// #6834: the success path carries no refusal shape — no `analysis_scope`
+/// or `run_limitations` keys — so the envelope cannot be mistaken for a
+/// result and no success field moved. Byte-identity against the base
+/// binary is demonstrated in the PR evidence.
+#[test]
+fn check_json_success_carries_no_refusal_shape() -> Result<(), String> {
+    let root = workspace_root().display().to_string();
+    let diff = sample_diff().display().to_string();
+    let output = run_ripr(&["check", "--root", &root, "--diff", &diff, "--json"]);
+    assert_success(&output);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let value: serde_json::Value = serde_json::from_str(&stdout)
+        .map_err(|err| format!("success stdout should parse as JSON: {err}\n{stdout}"))?;
+    if value.get("analysis_scope").is_some() {
+        return Err(format!(
+            "success output must not carry analysis_scope: {value}"
+        ));
+    }
+    if value.get("run_limitations").is_some() {
+        return Err(format!(
+            "success output must not carry run_limitations: {value}"
+        ));
+    }
+    if value["schema_version"] != "0.2" {
+        return Err(format!("success schema_version must stay 0.2: {value}"));
+    }
+    if value["findings"].as_array().is_none() {
+        return Err(format!("success output must carry findings: {value}"));
+    }
     Ok(())
 }
 
@@ -3468,20 +4075,15 @@ fn first_pr_check_missing_packet_suggests_rooted_out_dir() -> Result<(), Box<dyn
 }
 
 /// The write command a `first-pr --check` missing-packet recovery suggests,
-/// as arguments after `ripr` (each shell word decoded; the fixture paths have
-/// no spaces).
+/// as arguments after `ripr`, split the way the shell would so a quoted
+/// checkout path with spaces stays one argument (#6762).
 fn suggested_first_pr_write(stderr: &str) -> Result<Vec<String>, String> {
     let line = stderr
         .split("Create and validate it with:\n")
         .nth(1)
         .and_then(|rest| rest.lines().next())
         .ok_or_else(|| format!("no suggested write command:\n{stderr}"))?;
-    let mut args = line
-        .split_whitespace()
-        .map(|arg| {
-            decode_shell_token(arg).ok_or_else(|| format!("malformed shell word `{arg}`: {line}"))
-        })
-        .collect::<Result<Vec<_>, _>>()?;
+    let mut args = shell_words::posix_words(line)?;
     if args.first().map(String::as_str) != Some("ripr") {
         return Err(format!("suggested command is not a ripr command: {line}"));
     }
@@ -5710,11 +6312,12 @@ fn agent_repair_phases_materialize_snapshots_and_verify_json()
     // bug. This driver adds --json because the assertions below read the
     // after phase's result document from stdout; the seam-selected after
     // phase stays covered by the replay and receipt checks below.
-    let mut next_args: Vec<&str> = next_command
-        .strip_prefix("ripr ")
-        .ok_or_else(|| format!("next command is not a ripr command: {next_command}"))?
-        .split_whitespace()
-        .collect();
+    let next_words = shell_words::posix_words(
+        next_command
+            .strip_prefix("ripr ")
+            .ok_or_else(|| format!("next command is not a ripr command: {next_command}"))?,
+    )?;
+    let mut next_args: Vec<&str> = next_words.iter().map(String::as_str).collect();
     next_args.push("--json");
     let after = run_ripr(&next_args);
     assert_success(&after);
@@ -7403,28 +8006,36 @@ fn agent_receipt_attempt_flag_selects_one_attempt_and_refusals_name_ids()
     assert_failure(&after_a);
     let (_, manifest_a) = sole_repair_attempt(&root)?;
     assert_eq!(manifest_a["state"], "failed", "{manifest_a}");
-    // The refused after phase still published its verify document; keep it
-    // for the receipt reruns below.
-    std::fs::rename(
-        root.join("target/ripr/workflow/agent-verify.json"),
-        root.join("target/ripr/workflow/agent-verify-a.json"),
-    )?;
-
-    // With exactly one attempt for the seam — the failed one — the bare
-    // receipt refuses, and the refusal uses the serialized vocabulary the
-    // manifest and verdict carry: `failed`/`violated`, not Debug spellings.
-    let not_ready = receipt_with_attempt(&root, None, "target/ripr/workflow/agent-verify-a.json")?;
-    assert_failure(&not_ready);
-    let stderr = String::from_utf8_lossy(&not_ready.stderr);
+    // #6033: the refused after phase withdraws the shared workflow artifacts
+    // it wrote, so none of them survives beside the terminal attempt.
+    for artifact in [
+        "target/ripr/workflow/agent-verify.json",
+        "target/ripr/workflow/after.repo-exposure.json",
+        "target/ripr/workflow/analysis-outcome.json",
+    ] {
+        assert!(
+            !root.join(artifact).exists(),
+            "a refused after phase must withdraw {artifact}"
+        );
+    }
+    // The refused phase's typed stdout envelope carries the same serialized
+    // vocabulary the manifest and verdict carry — `failed`/`violated`, not
+    // Debug spellings — so the not-receipt-ready refusal is pinned in-band
+    // even though no receipt document can exist for this attempt.
+    let refusal_envelope: serde_json::Value = serde_json::from_slice(&after_a.stdout)?;
+    assert_eq!(refusal_envelope["kind"], "repair_after_failure");
+    assert_eq!(refusal_envelope["attempt_id"], attempt_a);
+    assert_eq!(refusal_envelope["attempt_state"], "failed");
+    assert_eq!(refusal_envelope["edit_cage_verdict"], "violated");
+    let envelope_error = refusal_envelope["error"]
+        .as_str()
+        .ok_or("failure envelope carries the terse error")?;
+    assert!(envelope_error.contains(&format!(
+        "repair attempt {attempt_a} is not receipt-ready: state `failed`, current true, verdict `violated`"
+    )), "the envelope must carry the serialized refusal vocabulary: {envelope_error}");
     assert!(
-        stderr.contains(&format!(
-            "repair attempt {attempt_a} is not receipt-ready: state `failed`, current true, verdict `violated`"
-        )),
-        "the receipt-ready refusal must use the serialized vocabulary:\n{stderr}"
-    );
-    assert!(
-        !stderr.contains("state Failed") && !stderr.contains("verdict Violated"),
-        "the refusal must not leak Debug spellings:\n{stderr}"
+        !envelope_error.contains("state Failed") && !envelope_error.contains("verdict Violated"),
+        "the envelope must not leak Debug spellings: {envelope_error}"
     );
 
     // Attempt B: fresh, prepared after A's committed edit, finished cleanly.
@@ -8368,7 +8979,7 @@ fn agent_verify_rejects_unsupported_repo_exposure_schema() -> Result<(), Box<dyn
     write_bound_repo_exposure_fixture(&root, &before, seam)?;
     write_bound_repo_exposure_fixture(&root, &after, seam)?;
     let altered = std::fs::read_to_string(&before)?
-        .replace("\"schema_version\": \"0.3\"", "\"schema_version\": \"9.0\"");
+        .replace("\"schema_version\": \"0.4\"", "\"schema_version\": \"9.0\"");
     std::fs::write(&before, altered)?;
 
     let before_path = before.display().to_string();
@@ -9994,6 +10605,18 @@ fn doctor_names_workspace_build_first_on_path() -> Result<(), String> {
         if binary["version"].as_str() != Some(expected_version_line().trim_end()) {
             return Err(format!("doctor must report the --version line: {binary}"));
         }
+        // #5252 item 5: the serialized executable spellings must match the
+        // human lines (#4378): no verbatim prefix, one separator convention.
+        // (On Unix a backslash is a filename character, so only the
+        // verbatim-prefix half applies there.)
+        for field in ["executable", "path_ripr"] {
+            let spelling = binary[field].as_str().unwrap_or_default();
+            if spelling.contains(r"\\?\") || (cfg!(windows) && spelling.contains('\\')) {
+                return Err(format!(
+                    "doctor --json {field} must use the human path spelling: {spelling}"
+                ));
+            }
+        }
 
         let (workspace_ok, report) =
             doctor_json_with_path_prefix(&installed, &workspace, &[built_dir, &installed_dir])?;
@@ -10903,8 +11526,8 @@ fn doctor_reports_a_real_path_prove_despite_a_repo_local_prove_cmd() -> Result<(
 }
 
 #[test]
-fn doctor_outside_git_or_on_a_missing_root_recommends_a_command_that_can_run() -> Result<(), String>
-{
+fn doctor_missing_root_recommends_recovery_and_outside_git_recommends_runnable_command()
+-> Result<(), String> {
     // #4531: doctor named the non-Git root, then recommended `ripr check`
     // (which cannot run there) after a raw `git status` failure on stderr.
     // A missing root also blamed cargo and rustc for the failed spawn.
@@ -10945,19 +11568,20 @@ fn doctor_outside_git_or_on_a_missing_root_recommends_a_command_that_can_run() -
     assert_failure(&output);
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
-    // #5010 keeps a runnable recovery command for a missing root, naming its
-    // lossless physical spelling; #4531's residual is that cargo and rustc
-    // are skipped instead of blamed, and no raw work-tree probe failure is
-    // printed on stderr.
-    let physical = root.strip_prefix(r"\\?\").unwrap_or(&root).to_string();
+    // #5252 item 3: no check command can run against a missing root, so the
+    // recovery action is the recommendation -- not the old `ripr check --root
+    // <missing>` template, which failed the same way doctor just did -- and
+    // the manifest check skips like the tool checks instead of restating the
+    // root failure. #4531's residual (skipped tools, no raw probe failure) is
+    // unchanged, and #5010's lossless spelling still serves the routes that
+    // render one.
     if !stdout.contains("- cargo check skipped: the root directory does not exist")
         || !stdout.contains("- rustc check skipped: the root directory does not exist")
+        || !stdout.contains("- Cargo.toml check skipped: the root directory does not exist")
         || stdout.contains("not available")
-        || !stdout.contains(&format!(
-            "- Recommended first command: {}",
-            first_command_at(&physical, "")
-        ))
-        || !stdout.contains("- The selected root does not exist; rerun with `--root <path>` naming an existing repository directory")
+        || !stdout.contains("- Recommended first command: The selected root does not exist; rerun with `--root <path>` naming an existing repository directory")
+        || !stdout.contains("- Safe next action: fix the selected root first (see below); no check command can run until it exists")
+        || stdout.contains("Recommended first command: ripr check --root")
         || stderr.contains("working-tree change probe failed")
     {
         return Err(format!(
@@ -11006,27 +11630,20 @@ fn doctor_file_root_is_not_reported_as_missing() -> Result<(), String> {
     assert_failure(&output);
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
-    let resolved = file
-        .canonicalize()
-        .map_err(|err| format!("canonicalize file root: {err}"))?;
-    let resolved_display = resolved.display().to_string();
-    let physical = resolved_display
-        .strip_prefix(r"\\?\")
-        .unwrap_or(&resolved_display)
-        .to_string();
+    // #5252 item 3: a file root gets the same recovery-action recommendation
+    // as a missing path (no check command can run against either), plus the
+    // manifest skip.
     let human_ok = stdout.contains("is not a directory")
         && !stdout.contains("root directory does not exist")
         && stdout.contains("- cargo check skipped: the root is not a directory")
         && stdout.contains("- rustc check skipped: the root is not a directory")
         && stdout.contains("- Git work tree check skipped: the root is not a directory")
-        && stdout.contains(&format!(
-            "- Recommended first command: {}",
-            first_command_at(&physical, "")
-        ))
+        && stdout.contains("- Cargo.toml check skipped: the root is not a directory")
         && stdout.contains(
-            "- The selected root exists but is not a directory; rerun with `--root <path>` naming the repository directory, not a file inside it",
+            "- Recommended first command: The selected root exists but is not a directory; rerun with `--root <path>` naming the repository directory, not a file inside it",
         )
         && !stdout.contains("- The selected root does not exist;")
+        && !stdout.contains("Recommended first command: ripr check --root")
         && !stderr.contains("working-tree change probe failed");
 
     let json_output = run_ripr(&["doctor", "--root", &root, "--json"]);
@@ -12435,14 +13052,19 @@ fn pilot_snapshot_is_the_agent_verify_baseline() -> Result<(), Box<dyn std::erro
     let (check_part, redirect) = after_command
         .split_once(" > ")
         .ok_or_else(|| format!("after command has no redirect: {after_command}"))?;
-    let check_args: Vec<&str> = check_part
-        .strip_prefix("ripr ")
-        .ok_or_else(|| format!("after command is not a ripr command: {after_command}"))?
-        .split_whitespace()
-        .collect();
+    let check_words = shell_words::posix_words(
+        check_part
+            .strip_prefix("ripr ")
+            .ok_or_else(|| format!("after command is not a ripr command: {after_command}"))?,
+    )?;
+    let check_args: Vec<&str> = check_words.iter().map(String::as_str).collect();
     // Pilot anchors the redirect at the resolved root (#3938), so the printed
     // target may be absolute; either way it must land in pilot's own out dir.
-    let redirect_path = std::path::Path::new(redirect.trim().trim_matches('\''));
+    let redirect_words = shell_words::posix_words(redirect)?;
+    let [redirect_word] = redirect_words.as_slice() else {
+        return Err(format!("after command redirect is not one word: {after_command}").into());
+    };
+    let redirect_path = std::path::Path::new(redirect_word);
     let after = if redirect_path.is_absolute() {
         redirect_path.to_path_buf()
     } else {
@@ -12496,6 +13118,80 @@ fn pilot_snapshot_is_the_agent_verify_baseline() -> Result<(), Box<dyn std::erro
         Some(&serde_json::json!(1)),
         "{report}"
     );
+    std::fs::remove_dir_all(root)?;
+    Ok(())
+}
+
+/// #5497: pilot ranks gap classes only. A private helper reached only
+/// through an integration test reads `opaque` (unresolved reach); pilot
+/// withholds it and says so, while the genuinely uncalled `shipping_fee`
+/// (`ungripped`) still ranks. The withheld seam stays in repo exposure.
+#[test]
+fn pilot_withholds_static_limitations_and_keeps_a_true_gap()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = unique_temp_workspace("pilot-withholds-limitations");
+    std::fs::create_dir_all(root.join("src"))?;
+    std::fs::create_dir_all(root.join("tests"))?;
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"shop\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    )?;
+    std::fs::write(
+        root.join("src/lib.rs"),
+        "pub fn checkout(total: u32) -> u32 {\n    tier(total) * 10\n}\n\nfn tier(total: u32) -> u32 {\n    if total > 100 { 2 } else { 1 }\n}\n\npub fn shipping_fee(weight: i32, free_limit: i32) -> i32 {\n    if weight > free_limit { 5 } else { 0 }\n}\n",
+    )?;
+    std::fs::write(
+        root.join("tests/checkout.rs"),
+        "#[test]\nfn checkout_large_order() {\n    assert_eq!(shop::checkout(150), 20);\n}\n",
+    )?;
+
+    let pilot = run_command(
+        env!("CARGO_BIN_EXE_ripr"),
+        Some(&root),
+        &["pilot", "--root", ".", "--mode", "draft"],
+    )?;
+    assert_success(&pilot);
+    let exposure: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(
+        root.join("target/ripr/pilot/repo-exposure.json"),
+    )?)?;
+    let class_of = |owner: &str| {
+        exposure["seams"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|seam| seam["owner"] == format!("src/lib.rs::{owner}"))
+            .map(|seam| seam["grip_class"].as_str().unwrap_or_default().to_string())
+            .collect::<Vec<_>>()
+    };
+    // Preconditions: the fixture really holds one limitation and one gap.
+    assert_eq!(class_of("tier"), ["opaque"], "{exposure}");
+    assert_eq!(class_of("shipping_fee"), ["ungripped"], "{exposure}");
+
+    let summary: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(
+        root.join("target/ripr/pilot/pilot-summary.json"),
+    )?)?;
+    assert_eq!(summary["withheld_static_limitations_total"], 1, "{summary}");
+    let ranked = summary["top_actionable_seams"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|seam| seam["owner"].as_str().unwrap_or_default())
+        .collect::<Vec<_>>();
+    assert!(ranked.contains(&"src/lib.rs::shipping_fee"), "{summary}");
+    assert!(!ranked.contains(&"src/lib.rs::tier"), "{summary}");
+    assert_eq!(
+        summary["actionable_seams_total"].as_u64(),
+        Some(ranked.len() as u64),
+        "{summary}"
+    );
+
+    let md = std::fs::read_to_string(root.join("target/ripr/pilot/pilot-summary.md"))?;
+    assert!(
+        md.contains("- Withheld: 1 seam (static evidence is unknown or opaque"),
+        "{md}"
+    );
+    let stdout = String::from_utf8_lossy(&pilot.stdout);
+    assert!(stdout.contains("  withheld: 1 seam ("), "{stdout}");
     std::fs::remove_dir_all(root)?;
     Ok(())
 }
@@ -12561,7 +13257,7 @@ fn pilot_snapshot_truncated_by_the_seam_budget_is_not_a_verify_baseline()
     let full_total = count(&full);
     assert!(
         summary.contains(&format!(
-            "- Seam limit reached: ranked the first 1 of {full_total} seams;"
+            "- Seam limit reached: ranked 1 of {full_total} seams;"
         )),
         "{summary}"
     );
@@ -12584,7 +13280,7 @@ fn pilot_snapshot_truncated_by_the_seam_budget_is_not_a_verify_baseline()
     let summary = std::fs::read_to_string(root.join("target/ripr/pilot/pilot-summary.md"))?;
     assert!(
         summary.contains(&format!(
-            "- Seam limit reached: ranked the first 1 of {full_total} seams;"
+            "- Seam limit reached: ranked 1 of {full_total} seams;"
         )),
         "{summary}"
     );
@@ -12859,7 +13555,7 @@ fn pilot_writes_default_packet_outputs_for_boundary_gap_fixture() -> Result<(), 
 
     let summary_json = std::fs::read_to_string(out_dir.join("pilot-summary.json"))
         .map_err(|e| format!("read pilot summary json: {e}"))?;
-    assert!(summary_json.contains(r#""schema_version": "0.2""#));
+    assert!(summary_json.contains(r#""schema_version": "0.3""#));
     assert!(summary_json.contains(r#""scope": "repo""#));
     assert!(summary_json.contains(r#""status": "complete""#));
     assert!(summary_json.contains(r#""timeout_ms": 30000"#));
@@ -12905,13 +13601,14 @@ fn pilot_writes_default_packet_outputs_for_boundary_gap_fixture() -> Result<(), 
         .lines()
         .find_map(|line| line.trim().strip_prefix("repair this seam: "))
         .ok_or_else(|| format!("pilot did not print a repair command:\n{stdout}"))?;
-    let tokens: Vec<&str> = repair_line.split_whitespace().collect();
+    let repair_words = shell_words::posix_words(repair_line)?;
+    let tokens: Vec<&str> = repair_words.iter().map(String::as_str).collect();
     let flag_value = |flag: &str| -> Option<&str> {
         tokens
             .iter()
             .position(|token| *token == flag)
             .and_then(|at| tokens.get(at + 1))
-            .map(|value| value.trim_matches('\''))
+            .copied()
     };
     assert_eq!(
         tokens.first().copied(),
@@ -13736,6 +14433,14 @@ fn pilot_projects_python_repair_card_for_git_diff() -> Result<(), String> {
     .map_err(|err| format!("write changed pricing: {err}"))?;
     run_git(&root, &["add", "src/pricing.py"])?;
     run_git(&root, &["commit", "-m", "change threshold boundary"])?;
+    // An uncommitted edit to another tracked Python file makes the working
+    // tree the current change. The scope line names Rust seam ranking only,
+    // and the Python card is still chosen from the committed diff.
+    std::fs::write(
+        root.join("tests/test_pricing.py"),
+        "from src.pricing import calculate_discount\n\n\ndef test_calculate_discount_smoke():\n    result = calculate_discount(125, 100)\n    assert result  # note\n",
+    )
+    .map_err(|err| format!("write uncommitted tests edit: {err}"))?;
 
     let out_dir = unique_temp_workspace("pilot-python-git-out");
     let output = run_ripr(&[
@@ -13757,6 +14462,7 @@ fn pilot_projects_python_repair_card_for_git_diff() -> Result<(), String> {
         "recommended repair: strengthen test_calculate_discount_smoke in tests/test_pricing.py",
         "verify: python -m pytest tests/test_pricing.py::test_calculate_discount_smoke",
         "receipt status: unavailable_until_python_gap_ledger",
+        "  scope: change-first (Rust seams on lines changed since origin/main rank first)\n",
     ] {
         assert!(stdout.contains(needle), "missing stdout needle: {needle}");
     }
@@ -13783,6 +14489,16 @@ fn pilot_projects_python_repair_card_for_git_diff() -> Result<(), String> {
             "missing summary JSON needle: {needle}"
         );
     }
+    let summary: serde_json::Value = serde_json::from_str(&summary_json)
+        .map_err(|err| format!("parse pilot summary json: {err}"))?;
+    assert_eq!(
+        summary["current_change"]["state"], "changed",
+        "{summary_json}"
+    );
+    assert_eq!(
+        summary["current_change"]["actionable_seams_in_change"], 0,
+        "{summary_json}"
+    );
 
     ignore_remove_dir_all(&root);
     ignore_remove_dir_all(&out_dir);
@@ -14403,9 +15119,550 @@ fn pilot_says_perl_is_unavailable_when_repo_has_no_rust_seams() -> Result<(), St
     Ok(())
 }
 
+/// `RIPR_GIT_TIMEOUT` bounds pilot's current-change git calls as it bounds
+/// `ripr check` (#2613): an invalid value fails closed before any analysis,
+/// and a hung `git diff` is cut at the configured deadline (not the 5-minute
+/// default), leaving the ranking repo-wide with the reason named.
+#[cfg(unix)]
+#[test]
+fn pilot_honors_ripr_git_timeout_for_the_current_change() -> Result<(), String> {
+    let root = pilot_language_fixture_repo(
+        "pilot-git-timeout",
+        &[
+            (
+                "Cargo.toml",
+                "[package]\nname = \"timeout_fx\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+            ),
+            (
+                "src/lib.rs",
+                "pub fn discounted(amount: u32) -> u32 {\n    if amount > 100 { amount - 10 } else { amount }\n}\n",
+            ),
+        ],
+        ("NOTES.md", "notes\n"),
+    )?;
+    let out_dir = unique_temp_workspace("pilot-git-timeout-out");
+    let root_arg = root.display().to_string();
+    let out_arg = out_dir.display().to_string();
+    let args = [
+        "pilot",
+        "--root",
+        root_arg.as_str(),
+        "--out",
+        out_arg.as_str(),
+    ];
+
+    let invalid = run_command_with_env(
+        env!("CARGO_BIN_EXE_ripr"),
+        &root,
+        &args,
+        &[("RIPR_GIT_TIMEOUT", "soon")],
+    )
+    .map_err(|err| format!("run pilot with invalid timeout: {err}"))?;
+    let stderr = String::from_utf8_lossy(&invalid.stderr);
+    assert!(!invalid.status.success(), "{stderr}");
+    assert!(
+        stderr.contains("RIPR_GIT_TIMEOUT requires a non-negative integer"),
+        "{stderr}"
+    );
+
+    // A `git` shim that hangs on `diff` and passes everything else through.
+    let real_git = std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default())
+        .map(|dir| dir.join("git"))
+        .find(|candidate| candidate.is_file())
+        .ok_or("git is not on PATH")?;
+    let shim_dir = unique_temp_workspace("pilot-git-timeout-shim");
+    std::fs::create_dir_all(&shim_dir).map_err(|err| format!("create shim dir: {err}"))?;
+    let shim = shim_dir.join("git");
+    std::fs::write(
+        &shim,
+        format!(
+            "#!/bin/sh\nfor arg in \"$@\"; do\n  if [ \"$arg\" = diff ]; then exec sleep 60; fi\ndone\nexec '{}' \"$@\"\n",
+            real_git.display()
+        ),
+    )
+    .map_err(|err| format!("write git shim: {err}"))?;
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&shim, std::fs::Permissions::from_mode(0o755))
+            .map_err(|err| format!("make git shim executable: {err}"))?;
+    }
+    let mut paths = vec![shim_dir.clone()];
+    paths.extend(std::env::split_paths(
+        &std::env::var_os("PATH").unwrap_or_default(),
+    ));
+    let search_path = std::env::join_paths(paths)
+        .map_err(|err| format!("build shim PATH: {err}"))?
+        .to_string_lossy()
+        .into_owned();
+
+    let started = std::time::Instant::now();
+    let output = run_command_with_env(
+        env!("CARGO_BIN_EXE_ripr"),
+        &root,
+        &args,
+        &[("RIPR_GIT_TIMEOUT", "1"), ("PATH", &search_path)],
+    )
+    .map_err(|err| format!("run pilot with hanging git diff: {err}"))?;
+    let elapsed = started.elapsed();
+    assert_success(&output);
+    assert!(
+        elapsed < std::time::Duration::from_secs(45),
+        "pilot waited {elapsed:?} on a hung git diff under RIPR_GIT_TIMEOUT=1"
+    );
+    let summary: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(out_dir.join("pilot-summary.json"))
+            .map_err(|err| format!("read pilot summary: {err}"))?,
+    )
+    .map_err(|err| format!("parse pilot summary: {err}"))?;
+    assert_eq!(
+        summary["current_change"]["state"], "unavailable",
+        "{summary}"
+    );
+    assert_eq!(
+        summary["current_change"]["reason"], "git timed out",
+        "{summary}"
+    );
+
+    ignore_remove_dir_all(&root);
+    ignore_remove_dir_all(&out_dir);
+    ignore_remove_dir_all(&shim_dir);
+    Ok(())
+}
+
 /// Rust-only output is untouched by language routing, and adding TypeScript
 /// beside Rust seams leaves the human output byte-identical: the mixed repo
 /// keeps the Rust result and lists the other language in JSON only.
+/// #1169: right after `ripr check` describes a change, pilot's top
+/// recommendation must not read as the next step for that change when it is
+/// a repo-wide seam elsewhere. Drives the real binary through the default
+/// base resolution and both diff routes (uncommitted and committed).
+/// #5309: a change whose only seam pilot withholds must not read as a
+/// change with no seams. With the pilot seam budget at one, the withheld
+/// changed seam is cut from the ranked artifacts, so this also proves the
+/// change's seams are counted before the cut.
+#[test]
+fn pilot_says_it_withholds_the_seam_on_the_current_change() -> Result<(), String> {
+    let lib = "pub fn checkout(total: u32) -> u32 {\n    tier(total) * 10\n}\n\nfn tier(total: u32) -> u32 {\n    if total > 100 { 2 } else { 1 }\n}\n";
+    let root = pilot_language_fixture_repo(
+        "pilot-withheld-current-change",
+        &[
+            (
+                "Cargo.toml",
+                "[package]\nname = \"shop\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+            ),
+            ("src/lib.rs", lib),
+            (
+                "tests/checkout.rs",
+                "#[test]\nfn checkout_large_order() {\n    assert_eq!(shop::checkout(150), 20);\n}\n",
+            ),
+        ],
+        ("src/lib.rs", &lib.replace("total > 100", "total >= 100")),
+    )?;
+    let out_dir = unique_temp_workspace("pilot-withheld-current-change-out");
+    let root_arg = root.display().to_string();
+    let out_arg = out_dir.display().to_string();
+    let output = run_ripr_with_env(
+        &["pilot", "--root", &root_arg, "--out", &out_arg],
+        &[("RIPR_PILOT_SEAM_BUDGET", "1")],
+    );
+    assert_success(&output);
+    let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+    let summary: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(out_dir.join("pilot-summary.json"))
+            .map_err(|err| format!("read pilot summary json: {err}"))?,
+    )
+    .map_err(|err| format!("parse pilot summary json: {err}"))?;
+    // Precondition: the budget cut the withheld seam from the ranked
+    // artifacts, so only a count taken before the cut can see it.
+    assert_eq!(summary["withheld_static_limitations_total"], 0, "{summary}");
+    assert_eq!(summary["current_change"]["state"], "changed", "{summary}");
+    assert_eq!(
+        summary["current_change"]["withheld_seams_in_change"], 1,
+        "{summary}"
+    );
+    assert_eq!(
+        summary["current_change"]["top_recommendation_in_change"], false,
+        "{summary}"
+    );
+    assert!(
+        stdout.contains(
+            "current change: not part of it. Pilot withholds the analyzed seam on a line changed since origin/main: its static evidence is unknown or opaque"
+        ),
+        "{stdout}"
+    );
+    ignore_remove_dir_all(&root);
+    ignore_remove_dir_all(&out_dir);
+    Ok(())
+}
+
+/// #6943: on a repo past the inventory seam limit, the seams on the current
+/// change used to be cut before pilot loaded the change, so change-first
+/// ranking had nothing to rank. With the limit at one, only the first
+/// function's seam survives the inventory; the changed `is_digit` seam must
+/// still be classified, ranked first and counted as analyzed.
+#[test]
+fn pilot_ranks_the_current_change_past_the_inventory_seam_limit() -> Result<(), String> {
+    let lib = "pub fn discounted(amount: u32) -> u32 {\n    if amount > 100 { amount - 10 } else { amount }\n}\n\npub fn is_digit(byte: u8) -> bool {\n    byte >= b'0' && byte <= b'9'\n}\n\npub fn is_large(amount: u32) -> bool {\n    amount > 1000\n}\n";
+    let root = pilot_language_fixture_repo(
+        "pilot-change-past-seam-limit",
+        &[
+            (
+                "Cargo.toml",
+                "[package]\nname = \"two_fns\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+            ),
+            ("src/lib.rs", lib),
+            (
+                "tests/pricing.rs",
+                "use two_fns::discounted;\n\n#[test]\nfn big_orders_get_a_discount() {\n    assert_eq!(discounted(200), 190);\n}\n",
+            ),
+        ],
+        ("src/lib.rs", &lib.replace("byte <= b'9'", "byte < b'9'")),
+    )?;
+    let out_dir = unique_temp_workspace("pilot-change-past-seam-limit-out");
+    let root_arg = root.display().to_string();
+    let out_arg = out_dir.display().to_string();
+    let output = run_ripr_with_env(
+        &["pilot", "--root", &root_arg, "--out", &out_arg],
+        &[("RIPR_REPO_EXPOSURE_SEAM_LIMIT", "1")],
+    );
+    assert_success(&output);
+    let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+    let summary: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(out_dir.join("pilot-summary.json"))
+            .map_err(|err| format!("read pilot summary json: {err}"))?,
+    )
+    .map_err(|err| format!("parse pilot summary json: {err}"))?;
+    let md = std::fs::read_to_string(out_dir.join("pilot-summary.md"))
+        .map_err(|err| format!("read pilot summary md: {err}"))?;
+    // Precondition: the inventory limit fired and kept one seam, which is
+    // not on the change; the changed seams it cut were classified on their
+    // own and count as analyzed.
+    assert!(md.contains("- Seam limit reached: ranked "), "{md}");
+    assert!(!md.contains("ranked 1 of "), "{md}");
+    assert!(md.contains("ranked 4 of 6 seams"), "{md}");
+    // `ripr check` never classifies the added seams, so the snapshot is not
+    // its population and carries no comparable identity.
+    let snapshot: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(out_dir.join("repo-exposure.json"))
+            .map_err(|err| format!("read repo exposure json: {err}"))?,
+    )
+    .map_err(|err| format!("parse repo exposure json: {err}"))?;
+    assert!(snapshot.get("artifact").is_none(), "{snapshot}");
+    assert_eq!(summary["current_change"]["state"], "changed", "{summary}");
+    assert_eq!(summary["top_actionable_seams"][0]["line"], 6, "{summary}");
+    assert_eq!(
+        summary["current_change"]["top_recommendation_in_change"], true,
+        "{summary}"
+    );
+    assert!(
+        stdout.contains(
+            "current change: part of it (this seam is on a line changed since origin/main)"
+        ),
+        "{stdout}"
+    );
+    // The change was classified, so the limit can no longer hide a seam on
+    // it, and pilot does not say it might.
+    assert!(
+        !stdout.contains("may have seams pilot did not see"),
+        "{stdout}"
+    );
+    ignore_remove_dir_all(&root);
+    ignore_remove_dir_all(&out_dir);
+    Ok(())
+}
+
+/// #6944: `ripr check` analyzes a changed build script, but pilot's repo
+/// inventory leaves build scripts out by design. Pilot must name that
+/// exclusion rather than say the change has no analyzed seam.
+#[test]
+fn pilot_names_a_changed_build_script_its_ranking_leaves_out() -> Result<(), String> {
+    let build = "fn main() {\n    let level = std::env::var(\"OPT_LEVEL\").map(|v| v.len()).unwrap_or(0);\n    if level > 2 {\n        println!(\"cargo:rustc-cfg=fast\");\n    }\n}\n";
+    let root = pilot_language_fixture_repo(
+        "pilot-build-script-change",
+        &[
+            (
+                "Cargo.toml",
+                "[package]\nname = \"shop\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+            ),
+            ("build.rs", build),
+            (
+                "src/lib.rs",
+                "pub fn discounted(amount: u32) -> u32 {\n    if amount > 100 { amount - 10 } else { amount }\n}\n",
+            ),
+            (
+                "tests/pricing.rs",
+                "#[test]\nfn big_orders_get_a_discount() {\n    assert_eq!(shop::discounted(200), 190);\n}\n",
+            ),
+        ],
+        ("build.rs", &build.replace("level > 2", "level >= 2")),
+    )?;
+    let out_dir = unique_temp_workspace("pilot-build-script-change-out");
+    let (stdout, md, summary, _) = run_pilot_language_fixture(&root, &out_dir)?;
+    // Precondition: the change is loaded and pilot ranked a seam elsewhere.
+    assert_eq!(summary["current_change"]["state"], "changed", "{summary}");
+    assert_eq!(
+        summary["current_change"]["top_recommendation_in_change"], false,
+        "{summary}"
+    );
+    assert!(
+        stdout.contains(
+            "current change: not part of it. No seam pilot analyzed is on a line changed since origin/main: every changed Rust line is in build.rs, a Cargo build script, which pilot's repo-wide ranking leaves out. This recommendation is elsewhere in the repo"
+        ),
+        "{stdout}"
+    );
+    assert!(
+        md.contains("every changed Rust line is in `build.rs`, a Cargo build script"),
+        "{md}"
+    );
+    ignore_remove_dir_all(&root);
+    ignore_remove_dir_all(&out_dir);
+    Ok(())
+}
+
+/// #6987: with Rust disabled neither `ripr check` nor pilot analyzes Rust,
+/// so pilot must not name a changed build script as one `ripr check`
+/// covers. With the gate removed, the unranked-change reason would name it
+/// ("every changed Rust line is in build.rs").
+#[test]
+#[cfg(feature = "lang-python")]
+fn pilot_names_no_build_script_when_rust_is_disabled() -> Result<(), String> {
+    let build = "fn main() {\n    let level = std::env::var(\"OPT_LEVEL\").map(|v| v.len()).unwrap_or(0);\n    if level > 2 {\n        println!(\"cargo:rustc-cfg=fast\");\n    }\n}\n";
+    let root = pilot_language_fixture_repo(
+        "pilot-build-script-rust-disabled",
+        &[
+            (
+                "Cargo.toml",
+                "[package]\nname = \"shop\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+            ),
+            ("ripr.toml", "[languages]\nenabled = [\"python\"]\n"),
+            ("build.rs", build),
+            (
+                "src/lib.rs",
+                "pub fn discounted(amount: u32) -> u32 {\n    if amount > 100 { amount - 10 } else { amount }\n}\n",
+            ),
+        ],
+        ("build.rs", &build.replace("level > 2", "level >= 2")),
+    )?;
+    let out_dir = unique_temp_workspace("pilot-build-script-rust-disabled-out");
+    let (stdout, md, summary, _) = run_pilot_language_fixture(&root, &out_dir)?;
+    // Precondition: the change is loaded, so only the Rust gate can keep
+    // the build script unnamed.
+    assert_eq!(summary["current_change"]["state"], "changed", "{summary}");
+    assert!(
+        stdout.contains("not enabled in ripr.toml [languages]"),
+        "Rust must be reported as disabled: {stdout}"
+    );
+    assert!(!stdout.contains("build.rs"), "{stdout}");
+    assert!(!md.contains("build.rs"), "{md}");
+    ignore_remove_dir_all(&root);
+    ignore_remove_dir_all(&out_dir);
+    Ok(())
+}
+
+#[test]
+fn pilot_ranks_and_labels_seams_in_the_current_change() -> Result<(), String> {
+    let lib = "pub fn discounted(amount: u32) -> u32 {\n    if amount > 100 { amount - 10 } else { amount }\n}\n\npub fn is_digit(byte: u8) -> bool {\n    byte >= b'0' && byte <= b'9'\n}\n";
+    let root = pilot_language_fixture_repo(
+        "pilot-current-change",
+        &[
+            (
+                "Cargo.toml",
+                "[package]\nname = \"two_fns\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+            ),
+            ("src/lib.rs", lib),
+            (
+                "tests/pricing.rs",
+                "use two_fns::discounted;\n\n#[test]\nfn big_orders_get_a_discount() {\n    assert_eq!(discounted(200), 190);\n}\n",
+            ),
+        ],
+        ("NOTES.md", "notes\n"),
+    )?;
+    let out_dir = unique_temp_workspace("pilot-current-change-out");
+    let top_line = |summary: &serde_json::Value| summary["top_actionable_seams"][0]["line"].clone();
+
+    // A committed change with no ranked seam: the repo-wide top seam is
+    // labeled as elsewhere, and `ripr check` is named for the change.
+    let (stdout, md, summary, _) = run_pilot_language_fixture(&root, &out_dir)?;
+    assert_eq!(top_line(&summary), 2, "{summary}");
+    assert_eq!(summary["current_change"]["state"], "changed");
+    assert_eq!(summary["current_change"]["base"], "origin/main");
+    assert_eq!(summary["current_change"]["actionable_seams_in_change"], 0);
+    assert_eq!(summary["current_change"]["withheld_seams_in_change"], 0);
+    assert_eq!(
+        summary["current_change"]["top_recommendation_in_change"],
+        false
+    );
+    assert!(
+        stdout.contains(
+            "current change: not part of it. No seam pilot analyzed is on a line changed since origin/main. This recommendation is elsewhere in the repo"
+        ),
+        "{stdout}"
+    );
+    assert!(stdout.contains("run: ripr check --root "), "{stdout}");
+    // A committed change is what plain `ripr check` reads.
+    assert!(!stdout.contains("--worktree"), "{stdout}");
+    assert!(
+        stdout.contains(
+            "  scope: change-first (Rust seams on lines changed since origin/main rank first)\n"
+        ),
+        "{stdout}"
+    );
+    assert!(md.contains("- Current change: not part of it."), "{md}");
+
+    // An uncommitted edit to `is_digit` is the current change: its seam now
+    // outranks the better-classed `discounted` seam and is labeled part of it.
+    std::fs::write(
+        root.join("src/lib.rs"),
+        lib.replace("byte <= b'9'", "byte < b'9'"),
+    )
+    .map_err(|err| format!("edit src/lib.rs: {err}"))?;
+    let (stdout, md, summary, _) = run_pilot_language_fixture(&root, &out_dir)?;
+    assert_eq!(top_line(&summary), 6, "{summary}");
+    assert_eq!(
+        summary["current_change"]["top_recommendation_in_change"],
+        true
+    );
+    assert!(
+        stdout.contains("Top recommendation:\n  current change: part of it (this seam is on a line changed since origin/main)"),
+        "{stdout}"
+    );
+    assert!(md.contains("- Current change: part of it"), "{md}");
+
+    // A seam budget of one would cut the changed `is_digit` seam, which comes
+    // after `discounted` in inventory order; pilot keeps it past the cut.
+    let (root_arg, out_arg) = (root.display().to_string(), out_dir.display().to_string());
+    let budgeted = run_command_with_env(
+        env!("CARGO_BIN_EXE_ripr"),
+        &root,
+        &["pilot", "--root", &root_arg, "--out", &out_arg],
+        &[("RIPR_PILOT_SEAM_BUDGET", "1")],
+    )
+    .map_err(|err| format!("run budgeted pilot: {err}"))?;
+    assert_success(&budgeted);
+    let summary: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(out_dir.join("pilot-summary.json"))
+            .map_err(|err| format!("read budgeted summary: {err}"))?,
+    )
+    .map_err(|err| format!("parse budgeted summary: {err}"))?;
+    assert_eq!(top_line(&summary), 6, "{summary}");
+    assert_eq!(
+        summary["current_change"]["top_recommendation_in_change"],
+        true
+    );
+
+    // An uncommitted edit on no ranked seam: plain `ripr check` reads
+    // committed history and would miss it, so the named command selects the
+    // working tree.
+    std::fs::write(root.join("src/lib.rs"), format!("{lib}// note\n"))
+        .map_err(|err| format!("edit src/lib.rs: {err}"))?;
+    let (stdout, md, summary, _) = run_pilot_language_fixture(&root, &out_dir)?;
+    assert_eq!(
+        summary["current_change"]["top_recommendation_in_change"],
+        false
+    );
+    let check_line = stdout
+        .lines()
+        .find(|line| line.contains("For the change itself, run: "))
+        .ok_or_else(|| format!("no check command: {stdout}"))?;
+    assert!(check_line.ends_with(" --worktree"), "{check_line}");
+    assert!(md.contains(" --worktree`."), "{md}");
+
+    // A failed working-tree probe is not a clean tree: a corrupt index makes
+    // `git status` fail while the base still resolves, and pilot must say the
+    // change is unavailable instead of ranking `<base>...HEAD`.
+    std::fs::write(root.join(".git/index"), "not an index\n")
+        .map_err(|err| format!("corrupt index: {err}"))?;
+    let (stdout, _, summary, _) = run_pilot_language_fixture(&root, &out_dir)?;
+    assert_eq!(
+        summary["current_change"]["state"], "unavailable",
+        "{summary}"
+    );
+    assert_eq!(summary["current_change"]["reason"], "git status failed");
+    assert!(
+        stdout.contains("scope: whole repository (current change unavailable: git status failed)"),
+        "{stdout}"
+    );
+    Ok(())
+}
+
+/// #5324: `ripr pilot --root X` without `--out`, run from another
+/// directory, writes its packet under X (where `ripr agent status --root X`
+/// reads it) and leaves the working directory's `target/` untouched.
+#[test]
+fn pilot_default_packet_lands_under_the_root_not_the_working_directory() -> Result<(), String> {
+    let root = pilot_language_fixture_repo(
+        "pilot-default-out-root",
+        &[
+            (
+                "Cargo.toml",
+                "[package]\nname = \"out_root\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+            ),
+            (
+                "src/lib.rs",
+                "pub fn discounted(amount: u32) -> u32 {\n    if amount > 100 { amount - 10 } else { amount }\n}\n",
+            ),
+            (
+                "tests/discount.rs",
+                "#[test]\nfn small_amounts_pass_through() {\n    assert!(out_root::discounted(50) > 0);\n}\n",
+            ),
+        ],
+        ("NOTES.md", "notes\n"),
+    )?;
+    let elsewhere = unique_temp_workspace("pilot-default-out-cwd");
+    std::fs::create_dir_all(&elsewhere).map_err(|err| format!("create cwd: {err}"))?;
+    let root_arg = root.display().to_string();
+    let output = run_command(
+        env!("CARGO_BIN_EXE_ripr"),
+        Some(&elsewhere),
+        &["pilot", "--root", &root_arg],
+    )
+    .map_err(|err| format!("run ripr pilot: {err}"))?;
+    assert_success(&output);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let packet = root.join("target/ripr/pilot");
+    assert!(
+        packet.join("pilot-summary.json").is_file(),
+        "packet missing under the root {}: {stdout}",
+        packet.display()
+    );
+    assert!(
+        !elsewhere.join("target").exists(),
+        "pilot wrote under the working directory {}",
+        elsewhere.display()
+    );
+    // Pilot renders human paths with forward separators on every platform,
+    // so the needle normalizes the same way (#6856).
+    assert!(
+        stdout.contains(
+            &packet
+                .join("pilot-summary.md")
+                .to_string_lossy()
+                .replace('\\', "/")
+        ),
+        "{stdout}"
+    );
+    // The packet's loop commands must write into the analyzed repository,
+    // not the directory pilot was launched from.
+    let packets = std::fs::read_to_string(packet.join("agent-seam-packets.json"))
+        .map_err(|err| format!("read packets: {err}"))?;
+    let packets: serde_json::Value =
+        serde_json::from_str(&packets).map_err(|err| format!("parse packets: {err}"))?;
+    let before = packets["next"]["before_snapshot_command"]
+        .as_str()
+        .ok_or_else(|| format!("the fixture must yield a repair loop: {packets}"))?;
+    // Commands render with forward separators on every platform, so both
+    // needles normalize the same way (#6856). Without this the launch-dir
+    // needle passes vacuously on Windows and the root needle always fails.
+    let elsewhere_text = elsewhere.to_string_lossy().replace('\\', "/");
+    let root_text = root.to_string_lossy().replace('\\', "/");
+    assert!(
+        !before.contains(&elsewhere_text),
+        "the snapshot redirect names the launch directory: {before}"
+    );
+    assert!(before.contains(&root_text), "{before}");
+    Ok(())
+}
+
 #[test]
 fn pilot_keeps_rust_output_byte_identical_when_rust_seams_exist() -> Result<(), String> {
     let root = pilot_language_fixture_repo(
@@ -14812,7 +16069,7 @@ fn calibrate_cargo_mutants_writes_json_when_requested() -> Result<(), String> {
 
     let json =
         std::fs::read_to_string(&out_path).map_err(|e| format!("read calibration json: {e}"))?;
-    assert!(json.contains(r#""schema_version": "0.1""#));
+    assert!(json.contains(r#""schema_version": "0.2""#));
     assert!(json.contains(r#""status": "advisory""#));
     assert!(json.contains(r#""agreement""#));
     assert!(json.contains(r#""matches""#));
@@ -14961,6 +16218,148 @@ fn calibration_runtime_fixture_v3_matches_checked_reports() -> Result<(), String
         "runtime-only signal must stay calibration context without creating a static gap"
     );
 
+    Ok(())
+}
+
+/// #5486 Atuin regression: every record the line-only join left ambiguous
+/// leaves `ambiguous_file_line` once spans are imported, and what stays
+/// ambiguous is a genuine equal-span tie.
+#[test]
+fn calibration_span_containment_atuin_fixture_matches_checked_reports() -> Result<(), String> {
+    let root = workspace_root();
+    let fixture = root.join("fixtures/boundary_gap/calibration/span-containment-atuin");
+    let value = assert_calibration_fixture_matches_checked_reports(&fixture)?;
+
+    assert_eq!(value["schema_version"], "0.2");
+    assert_eq!(value["metrics"]["mutants_total"], 27);
+    assert_eq!(
+        value["metrics"]["join_method_counts"]["span_containment"],
+        8
+    );
+    assert_eq!(value["metrics"]["join_method_counts"]["file_line"], 5);
+    assert_eq!(value["metrics"]["ambiguous_file_line_total"], 0);
+    assert_eq!(value["metrics"]["ambiguous_span_overlap_total"], 6);
+    assert_eq!(
+        value["metrics"]["unmatched_reason_counts"]["no_containing_seam"],
+        8
+    );
+    for record in value["ambiguous_span_overlap_matches"]
+        .as_array()
+        .ok_or("missing ambiguous_span_overlap_matches")?
+    {
+        let spans = record["candidates"]
+            .as_array()
+            .ok_or("missing candidates")?
+            .iter()
+            .map(|seam| {
+                (
+                    seam["line"].clone(),
+                    seam["column"].clone(),
+                    seam["end_line"].clone(),
+                    seam["end_column"].clone(),
+                )
+            })
+            .collect::<Vec<_>>();
+        assert!(spans.len() > 1 && spans.iter().all(|span| *span == spans[0]));
+        assert!(!spans[0].1.is_null(), "overlap candidates carry spans");
+        assert!(!record["runtime"]["end_column"].is_null());
+    }
+
+    // The same records without span ends are line-only evidence: the
+    // pre-#5486 join, with 16 ambiguous file/line records.
+    let mut line_only: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(fixture.join("runtime-mutants.json"))
+            .map_err(|e| format!("read runtime mutants: {e}"))?,
+    )
+    .map_err(|e| format!("parse runtime mutants: {e}"))?;
+    for outcome in line_only["outcomes"]
+        .as_array_mut()
+        .ok_or("missing outcomes")?
+    {
+        outcome["scenario"]["Mutant"]["span"]
+            .as_object_mut()
+            .ok_or("missing mutant span")?
+            .remove("end");
+    }
+    let dir = unique_temp_workspace("calibrate-atuin-line-only");
+    std::fs::create_dir_all(&dir).map_err(|e| format!("create temp dir: {e}"))?;
+    let line_only_path = dir.join("runtime-mutants.json");
+    std::fs::write(&line_only_path, line_only.to_string())
+        .map_err(|e| format!("write line-only mutants: {e}"))?;
+    let output = run_ripr(&[
+        "calibrate",
+        "cargo-mutants",
+        "--mutants-json",
+        &line_only_path.display().to_string(),
+        "--repo-exposure-json",
+        &fixture.join("repo-exposure.json").display().to_string(),
+        "--format",
+        "json",
+    ]);
+    assert_success(&output);
+    let before: serde_json::Value = serde_json::from_slice(&output.stdout)
+        .map_err(|e| format!("parse line-only calibration: {e}"))?;
+    assert_eq!(before["metrics"]["ambiguous_file_line_total"], 16);
+    let mutant_ids = |items: &serde_json::Value, pointer: &str| {
+        items
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|item| item.pointer(pointer).and_then(|id| id.as_str()))
+            .map(str::to_string)
+            .collect::<std::collections::BTreeSet<_>>()
+    };
+    let formerly_ambiguous =
+        mutant_ids(&before["ambiguous_file_line_matches"], "/runtime/mutant_id");
+    let joined = mutant_ids(&value["matches"], "/runtime/mutant_id");
+    let overlaps = mutant_ids(
+        &value["ambiguous_span_overlap_matches"],
+        "/runtime/mutant_id",
+    );
+    let unmatched = mutant_ids(&value["unmatched_mutants"], "/mutant_id");
+    assert_eq!(
+        formerly_ambiguous
+            .iter()
+            .filter(|id| joined.contains(*id))
+            .count(),
+        9
+    );
+    assert_eq!(
+        formerly_ambiguous
+            .iter()
+            .filter(|id| overlaps.contains(*id))
+            .count(),
+        6
+    );
+    assert_eq!(
+        formerly_ambiguous
+            .iter()
+            .filter(|id| unmatched.contains(*id))
+            .count(),
+        1
+    );
+
+    ignore_remove_dir_all(&dir);
+    Ok(())
+}
+
+/// #5336 semver `display.rs:20`: a `+` mutant beside a call seam on the same
+/// line is not joined to the call seam.
+#[test]
+fn calibration_span_containment_semver_display_refuses_same_line_pairing() -> Result<(), String> {
+    let root = workspace_root();
+    let fixture = root.join("fixtures/boundary_gap/calibration/span-containment-semver-display");
+    let value = assert_calibration_fixture_matches_checked_reports(&fixture)?;
+
+    assert_eq!(value["metrics"]["matched_total"], 0);
+    assert_eq!(value["metrics"]["unmatched_mutants_total"], 2);
+    for record in value["unmatched_mutants"]
+        .as_array()
+        .ok_or("missing unmatched_mutants")?
+    {
+        assert_eq!(record["unmatched_reason"], "no_containing_seam");
+        assert_eq!(record["column"], 17);
+    }
     Ok(())
 }
 
@@ -20661,6 +22060,30 @@ fn pr_summary_root_from_foreign_cwd_anchors_artifacts_and_baseline() -> Result<(
             "summary read foreign artifacts or baseline: {summary}"
         ));
     }
+    // #4000: pasted from this foreign directory, the summary's own
+    // reproduction commands must name the selected repository, not `.`.
+    let commands = summary
+        .pointer("/local_reproduction_commands")
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| format!("summary has no reproduction commands: {summary}"))?;
+    let selected_root_arg = selected_arg.replace(std::path::MAIN_SEPARATOR, "/");
+    for prefix in ["ripr check ", "ripr first-pr "] {
+        let Some(command) = commands
+            .iter()
+            .filter_map(serde_json::Value::as_str)
+            .find(|command| command.starts_with(prefix))
+        else {
+            return Err(format!("no `{prefix}` reproduction command: {commands:?}"));
+        };
+        if !command.starts_with(&format!("{prefix}--root "))
+            || !command.contains(&selected_root_arg)
+            || command.contains("--root .")
+        {
+            return Err(format!(
+                "reproduction command does not name the selected repository: {command}"
+            ));
+        }
+    }
     let relative_root = Path::new("..").join("selected répo");
     let relative_root_arg = relative_root
         .to_str()
@@ -21157,13 +22580,131 @@ fn plus_help_exits_cleanly() {
         "ripr-plus.last-good.json",
         "ripr-plus.last-good.md",
         "may be stale",
-        "keeps no last-good copy",
+        "makes no last-good copy",
+        "stays until a later failure replaces it",
+        "error receipt is never kept",
+        "(only after a read or compose failure)",
     ] {
         assert!(
             stdout.contains(kept),
             "help must name the kept last-good receipt and its staleness ({kept}):\n{stdout}"
         );
     }
+}
+
+/// The last good receipt is the last one a run composed (#6295): a read
+/// failure keeps it byte-for-byte, and a --check failure makes no copy and
+/// leaves an earlier one as it was (#6714).
+#[test]
+fn plus_failed_run_keeps_the_composed_receipt_and_check_keeps_none() -> Result<(), String> {
+    let root = unique_temp_workspace("plus-last-good");
+    std::fs::create_dir_all(&root).map_err(|error| error.to_string())?;
+    run_git(&root, &["init"])?;
+    run_git(&root, &["config", "user.email", "test@test.com"])?;
+    run_git(&root, &["config", "user.name", "Test"])?;
+    std::fs::write(root.join("README.md"), "last-good fixture\n")
+        .map_err(|error| error.to_string())?;
+    run_git(&root, &["add", "README.md"])?;
+    run_git(&root, &["commit", "-m", "candidate"])?;
+    let summary = serde_json::json!({
+        "schema_version": "0.1",
+        "format": "repo-exposure-summary-json",
+        "basis": "canonical_actionable_gap",
+        "metadata": {"head": "abc", "root": "repo"},
+        "metrics": {"unsuppressed_exposure_gaps": 1, "suppressed_exposure_gaps": 0, "raw_seams": 2},
+        "reason_breakdown": {},
+        "top_files": []
+    });
+    std::fs::write(root.join("summary.json"), summary.to_string())
+        .map_err(|error| error.to_string())?;
+    let reports = root.join("target/ripr/reports");
+    let last_good_json = reports.join("ripr-plus.last-good.json");
+    let last_good_md = reports.join("ripr-plus.last-good.md");
+
+    // --check on a valid input writes the composed receipt and keeps no copy
+    // of the receipt it replaced.
+    std::fs::create_dir_all(&reports).map_err(|error| error.to_string())?;
+    std::fs::write(reports.join("ripr-plus.json"), r#"{"status":"pass"}"#)
+        .map_err(|error| error.to_string())?;
+    std::fs::write(reports.join("ripr-plus.md"), "older pass")
+        .map_err(|error| error.to_string())?;
+    let checked = run_command(
+        env!("CARGO_BIN_EXE_ripr"),
+        Some(&root),
+        &["plus", "--repo-exposure-summary", "summary.json", "--check"],
+    )
+    .map_err(|error| error.to_string())?;
+    assert_eq!(checked.status.code(), Some(2));
+    assert!(
+        !last_good_json.exists(),
+        "--check must keep no last-good json"
+    );
+    assert!(!last_good_md.exists(), "--check must keep no last-good md");
+
+    let composed = run_command(
+        env!("CARGO_BIN_EXE_ripr"),
+        Some(&root),
+        &["plus", "--repo-exposure-summary", "summary.json"],
+    )
+    .map_err(|error| error.to_string())?;
+    assert!(
+        composed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&composed.stderr)
+    );
+    let composed_json =
+        std::fs::read(reports.join("ripr-plus.json")).map_err(|error| error.to_string())?;
+    let composed_md =
+        std::fs::read(reports.join("ripr-plus.md")).map_err(|error| error.to_string())?;
+
+    let failed = run_command(
+        env!("CARGO_BIN_EXE_ripr"),
+        Some(&root),
+        &["plus", "--gap-ledger", "missing.json"],
+    )
+    .map_err(|error| error.to_string())?;
+    assert_eq!(failed.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&failed.stderr);
+    assert!(
+        stderr.contains("cause `quality_evidence_incomplete`) is kept at"),
+        "{stderr}"
+    );
+    assert_eq!(
+        std::fs::read(&last_good_json).map_err(|error| error.to_string())?,
+        composed_json
+    );
+    assert_eq!(
+        std::fs::read(&last_good_md).map_err(|error| error.to_string())?,
+        composed_md
+    );
+    let canonical: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(reports.join("ripr-plus.json"))
+            .map_err(|error| error.to_string())?,
+    )
+    .map_err(|error| error.to_string())?;
+    assert_eq!(canonical["machine_readable_cause"], "evaluation_error");
+
+    // A later --check makes no copy of its own: the copy the failure left is
+    // neither replaced by the error receipt nor removed (#6295).
+    let rechecked = run_command(
+        env!("CARGO_BIN_EXE_ripr"),
+        Some(&root),
+        &["plus", "--repo-exposure-summary", "summary.json", "--check"],
+    )
+    .map_err(|error| error.to_string())?;
+    assert_eq!(rechecked.status.code(), Some(2));
+    assert_eq!(
+        std::fs::read(&last_good_json).map_err(|error| error.to_string())?,
+        composed_json,
+        "--check must leave the earlier last-good json as it was"
+    );
+    assert_eq!(
+        std::fs::read(&last_good_md).map_err(|error| error.to_string())?,
+        composed_md,
+        "--check must leave the earlier last-good md as it was"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+    Ok(())
 }
 
 /// An exposure-only counter is not a complete, current RIPR+ quality result.
@@ -23137,5 +24678,451 @@ fn review_comments_help_survives_invalid_admission_environment()
             "{stderr}"
         );
     }
+    Ok(())
+}
+
+/// #6033: a cage-violated after phase is the one failure shape that used to
+/// emit the success-shaped movement document on the documented stdout
+/// channel (`status: advisory`, gap closed) while the attempt terminated as
+/// `failed`. With `--json`, stdout must instead be the typed
+/// `repair_after_failure` envelope naming the terminal attempt state and the
+/// cage verdict, and the shared workflow artifacts the phase wrote must be
+/// withdrawn, so `agent status` does not present them as current loop
+/// artifacts beside the terminal attempt.
+#[test]
+fn agent_repair_after_cage_violation_prints_failure_envelope_and_withdraws_shared_artifacts()
+-> Result<(), Box<dyn std::error::Error>> {
+    // The natural redirect shape from #4216: ripr output redirected into the
+    // checkout sits untracked in the tree, so the cage refuses the attempt.
+    let root = built_repair_fixture("agent-repair-cage-violated-stdout")?;
+    let packet = root.join("packet.json");
+    let before_err = root.join("before.err");
+    let before = run_repair_phase_redirected(
+        &root,
+        &["--seam-id", BOUNDARY_GAP_SEAM_ID],
+        "before",
+        &packet,
+        &before_err,
+    )?;
+    assert!(before.status.success(), "before phase failed: {before:?}");
+    let (attempt_id, _) = sole_repair_attempt(&root)?;
+    add_boundary_test(&root)?;
+    let after = run_repair_phase(&root, &["--attempt", &attempt_id], "after")?;
+    assert_failure(&after);
+    // The terminal cage failure is not a retryable refusal: exit 2, not 3.
+    assert_eq!(after.status.code(), Some(2), "{after:?}");
+
+    let stdout: serde_json::Value = serde_json::from_str(&String::from_utf8_lossy(&after.stdout))
+        .map_err(|error| {
+        format!(
+            "after-phase stdout must be one JSON document: {error}: {}",
+            String::from_utf8_lossy(&after.stdout)
+        )
+    })?;
+    assert_eq!(stdout["kind"], "repair_after_failure", "{stdout}");
+    assert_eq!(stdout["schema_version"], "0.4", "{stdout}");
+    assert_eq!(stdout["attempt_id"], attempt_id, "{stdout}");
+    assert_eq!(stdout["attempt_state"], "failed", "{stdout}");
+    assert_eq!(stdout["edit_cage_verdict"], "violated", "{stdout}");
+    assert!(
+        stdout["error"]
+            .as_str()
+            .is_some_and(|error| error.contains("not receipt-ready")),
+        "the envelope carries the terse final error: {stdout}"
+    );
+    assert!(
+        stdout.get("verify").is_none() && stdout.get("changed_seams").is_none(),
+        "no success-shaped movement document beside a terminal attempt: {stdout}"
+    );
+
+    // The artifacts this phase wrote are withdrawn; the before phase's
+    // retained projection is not this phase's to clean.
+    assert!(
+        !root
+            .join("target/ripr/workflow/after.repo-exposure.json")
+            .exists(),
+        "a refused after phase must not leave a fresh after snapshot as a current loop artifact"
+    );
+    assert!(
+        !root.join("target/ripr/workflow/agent-verify.json").exists(),
+        "a refused after phase must not leave a fresh verify document as a current loop artifact"
+    );
+    assert!(
+        !root
+            .join("target/ripr/workflow/analysis-outcome.json")
+            .exists(),
+        "a refused after phase must not leave a fresh analysis outcome as a current loop artifact"
+    );
+    assert!(
+        root.join("target/ripr/workflow/before.repo-exposure.json")
+            .exists(),
+        "the before phase's own artifact stays"
+    );
+    std::fs::remove_dir_all(root)?;
+    Ok(())
+}
+
+/// #6033 review: a cage-refused after phase must not leave a success-shaped
+/// projection of the refused attempt in place of a previous attempt's
+/// artifacts either. When all three shared workflow paths already exist
+/// (preseeded here with sentinel bytes), the phase renames their bytes
+/// aside, and a terminal cage failure restores exactly those original
+/// bytes while withdrawing the phase's fresh artifacts.
+#[test]
+fn agent_repair_after_cage_violation_restores_preexisting_shared_artifacts()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = built_repair_fixture("agent-repair-cage-violated-preseeded")?;
+    let packet = root.join("packet.json");
+    let before_err = root.join("before.err");
+    let before = run_repair_phase_redirected(
+        &root,
+        &["--seam-id", BOUNDARY_GAP_SEAM_ID],
+        "before",
+        &packet,
+        &before_err,
+    )?;
+    assert!(before.status.success(), "before phase failed: {before:?}");
+    let (attempt_id, _) = sole_repair_attempt(&root)?;
+    add_boundary_test(&root)?;
+
+    // Preseed all three shared paths the way an earlier loop's projections
+    // would have left them.
+    let preseeded = [
+        (
+            "target/ripr/workflow/after.repo-exposure.json",
+            "{\"stale\":\"after\"}",
+        ),
+        (
+            "target/ripr/workflow/agent-verify.json",
+            "{\"stale\":\"verify\"}",
+        ),
+        (
+            "target/ripr/workflow/analysis-outcome.json",
+            "{\"stale\":\"analysis-outcome\"}",
+        ),
+    ];
+    for (relative, contents) in preseeded {
+        std::fs::create_dir_all(root.join("target/ripr/workflow"))?;
+        std::fs::write(root.join(relative), contents)?;
+    }
+
+    let after = run_repair_phase(&root, &["--attempt", &attempt_id], "after")?;
+    assert_failure(&after);
+    assert_eq!(after.status.code(), Some(2), "{after:?}");
+
+    // The pre-attempt bytes are restored verbatim; the refused attempt's
+    // fresh projection is gone.
+    for (relative, contents) in preseeded {
+        let restored = std::fs::read_to_string(root.join(relative))?;
+        assert_eq!(
+            restored, contents,
+            "{relative} must carry the pre-attempt bytes after the refusal"
+        );
+    }
+    std::fs::remove_dir_all(root)?;
+    Ok(())
+}
+
+/// #5252 item 7: `init` into a directory that is not a Git work tree warns
+/// instead of silently writing branch-based configuration; a real repo stays
+/// quiet. The warning is advisory: files are still written, exit stays 0.
+#[test]
+fn init_warns_when_the_root_is_not_a_git_work_tree() -> Result<(), String> {
+    // `.cargo/config.toml` redirects TMPDIR into `target/`, which is inside
+    // the checkout's work tree, so the plain temp helper cannot host the
+    // non-repo half. The sibling-of-workspace helper escapes the checkout,
+    // but the checkout itself may be nested in another repository, so both
+    // git probes below run under a ceiling at the fixture's parent: the
+    // fixture dir itself is examined (it holds no `.git`, a genuine
+    // outside), while discovery can never reach an enclosing work tree.
+    // The ceiling must be the parent, not the fixture: git still examines
+    // the starting directory when it equals a ceiling.
+    let bare = unique_external_workspace("init-nonrepo-warning")?;
+    std::fs::create_dir_all(&bare).map_err(|e| format!("create bare root: {e}"))?;
+    let ceiling = bare
+        .parent()
+        .ok_or_else(|| "fixture root has no parent".to_string())?
+        .display()
+        .to_string();
+    let ceiling_env = [("GIT_CEILING_DIRECTORIES", ceiling.as_str())];
+    let outside = run_command_with_env(
+        "git",
+        &bare,
+        &["rev-parse", "--is-inside-work-tree"],
+        &ceiling_env,
+    )
+    .map_err(|e| e.to_string())?;
+    assert!(
+        !outside.status.success(),
+        "fixture must sit outside any work tree: {outside:?}"
+    );
+    let bare_arg = bare.display().to_string();
+    let output = run_ripr_with_env(
+        &["init", "--ci", "github", "--root", &bare_arg],
+        &ceiling_env,
+    );
+    assert_success(&output);
+    assert!(
+        bare.join("ripr.toml").is_file(),
+        "the warning must stay advisory: {output:?}"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("not inside a Git work tree"),
+        "init into a non-repo must warn: {stderr}"
+    );
+
+    let repo = unique_temp_workspace("init-repo-stays-quiet");
+    std::fs::create_dir_all(&repo).map_err(|e| format!("create repo root: {e}"))?;
+    init_git_fixture_repo(&repo).map_err(|e| e.to_string())?;
+    let repo_arg = repo.display().to_string();
+    let quiet = run_ripr(&["init", "--ci", "github", "--root", &repo_arg]);
+    assert_success(&quiet);
+    let quiet_stderr = String::from_utf8_lossy(&quiet.stderr);
+    assert!(
+        !quiet_stderr.contains("not inside a Git work tree")
+            && !quiet_stderr.contains("Git could not confirm the root"),
+        "init inside a work tree must stay quiet: {quiet_stderr}"
+    );
+    let _ = std::fs::remove_dir_all(&bare);
+    let _ = std::fs::remove_dir_all(&repo);
+    Ok(())
+}
+
+/// #5252 item 8: missing-base advice must not assume an `origin` remote.
+/// In a remote-less repo the repair names the add-remote step instead of a
+/// `git fetch` that would exit without fetching anything.
+#[test]
+fn check_missing_base_advice_does_not_assume_origin_remote()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = unique_temp_workspace("missing-base-no-origin");
+    std::fs::create_dir_all(root.join("src"))?;
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"demo\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    )?;
+    std::fs::write(root.join("src/lib.rs"), "")?;
+    init_git_fixture_repo(&root)?;
+    let remotes = run_command("git", Some(&root), &["remote"])?;
+    assert!(
+        remotes.status.success() && String::from_utf8_lossy(&remotes.stdout).trim().is_empty(),
+        "fixture must carry no remotes: {remotes:?}"
+    );
+    let output = run_ripr(&[
+        "check",
+        "--root",
+        &root.display().to_string(),
+        "--base",
+        "no-such-ref-5252",
+    ]);
+    assert_eq!(output.status.code(), Some(2), "{output:?}");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("no-such-ref-5252"),
+        "the failure must name the ref: {stderr}"
+    );
+    assert!(
+        stderr.contains("No git remote is configured") && stderr.contains("git remote add"),
+        "a remote-less repo must get the add-remote step: {stderr}"
+    );
+    assert!(
+        !stderr.contains("git fetch origin"),
+        "the repair must not assume an `origin` remote: {stderr}"
+    );
+    std::fs::remove_dir_all(&root)?;
+    Ok(())
+}
+
+/// #5252 item 8: with exactly one remote the missing-base advice names that
+/// remote instead of prescribing `origin`.
+#[test]
+fn check_missing_base_advice_names_the_single_configured_remote()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = unique_temp_workspace("missing-base-one-remote");
+    std::fs::create_dir_all(root.join("src"))?;
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"demo\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    )?;
+    std::fs::write(root.join("src/lib.rs"), "")?;
+    init_git_fixture_repo(&root)?;
+    // `remote add` touches config only: no network.
+    let add = run_command(
+        "git",
+        Some(&root),
+        &["remote", "add", "fork", "https://example.test/fork.git"],
+    )?;
+    assert!(
+        add.status.success(),
+        "fixture must gain a `fork` remote: {add:?}"
+    );
+    let output = run_ripr(&[
+        "check",
+        "--root",
+        &root.display().to_string(),
+        "--base",
+        "no-such-ref-5252",
+    ]);
+    assert_eq!(output.status.code(), Some(2), "{output:?}");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("(for example `git fetch fork`)"),
+        "one configured remote is read, not assumed: {stderr}"
+    );
+    assert!(
+        !stderr.contains("git fetch origin"),
+        "the repair must not assume an `origin` remote: {stderr}"
+    );
+    std::fs::remove_dir_all(&root)?;
+    Ok(())
+}
+
+/// #5252 item 8: a remote-qualified missing ref names its own configured
+/// remote even when several remotes exist, so a branch tracking `fork` with
+/// a missing `origin/main` is told to fetch `origin`, not a bare fetch that
+/// would follow the branch upstream to `fork`.
+#[test]
+fn check_missing_base_advice_names_a_configured_remote_qualifier()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = unique_temp_workspace("missing-base-qualified");
+    std::fs::create_dir_all(root.join("src"))?;
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"demo\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    )?;
+    std::fs::write(root.join("src/lib.rs"), "")?;
+    init_git_fixture_repo(&root)?;
+    for (name, url) in [
+        ("fork", "https://example.test/fork.git"),
+        ("origin", "https://example.test/origin.git"),
+    ] {
+        let add = run_command("git", Some(&root), &["remote", "add", name, url])?;
+        assert!(
+            add.status.success(),
+            "fixture must gain a `{name}` remote: {add:?}"
+        );
+    }
+    let output = run_ripr(&[
+        "check",
+        "--root",
+        &root.display().to_string(),
+        "--base",
+        "origin/main",
+    ]);
+    assert_eq!(output.status.code(), Some(2), "{output:?}");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("(for example `git fetch origin`)"),
+        "a configured qualifier names its own remote: {stderr}"
+    );
+    std::fs::remove_dir_all(&root)?;
+    Ok(())
+}
+
+/// #5252 item 4: two unresolvable refs must warn once per ref (naming the
+/// ref), and the renderer-owned preflight spellings must use one separator
+/// style per document like the `next_command` lines already do.
+#[test]
+fn first_pr_unresolvable_refs_warn_once_per_ref_with_uniform_spellings()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = unique_temp_workspace("first-pr-bad-refs");
+    std::fs::create_dir_all(root.join("src"))?;
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"demo\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    )?;
+    std::fs::write(root.join("src/lib.rs"), "")?;
+    init_git_fixture_repo(&root)?;
+    // Canonicalize so Windows passes the verbatim (`\\?\`) spelling: the
+    // prefix assertions below then pin the strip for real instead of
+    // vacuously. (UNC roots keep their prefix by `human_path_text` design
+    // (#4378) and have no portable fixture, so they stay uncovered.)
+    let root_arg = root
+        .canonicalize()
+        .map_err(|err| format!("canonicalize fixture root: {err}"))?
+        .display()
+        .to_string();
+    let output = run_ripr(&[
+        "first-pr",
+        "--root",
+        &root_arg,
+        "--base",
+        "nope-missing-base",
+        "--head",
+        "also-missing-head",
+    ]);
+    let packet = root.join("target/ripr/reports/start-here.json");
+    assert!(
+        packet.is_file(),
+        "first-pr must still compose the blocked packet: {output:?}"
+    );
+    let report: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&packet)?)?;
+    let warnings = report
+        .pointer("/warnings")
+        .and_then(serde_json::Value::as_array)
+        .ok_or("start-here.json must carry a warnings array")?;
+    let texts: Vec<&str> = warnings
+        .iter()
+        .filter_map(serde_json::Value::as_str)
+        .collect();
+    assert_eq!(
+        texts.len(),
+        warnings.len(),
+        "warnings must all render as text: {warnings:?}"
+    );
+    let mut sorted = texts.clone();
+    sorted.sort_unstable();
+    sorted.dedup();
+    assert_eq!(
+        sorted.len(),
+        texts.len(),
+        "each distinct warning must appear once: {texts:?}"
+    );
+    for (role, rev) in [
+        ("--base", "nope-missing-base"),
+        ("--head", "also-missing-head"),
+    ] {
+        assert!(
+            texts
+                .iter()
+                .any(|warning| warning.contains(role) && warning.contains(rev)),
+            "a warning must pair `{role}` with unresolvable ref `{rev}`: {texts:?}"
+        );
+    }
+    // Renderer-owned spellings stay comparable: the root-check path must
+    // still resolve after normalization, and on Windows it must use the
+    // slash spelling the sibling `next_command` lines use (a backslash is
+    // an ordinary filename character on Unix, so that half is Windows-only).
+    let resolved_root = json_pointer_str(&report, "/preflight/resolved_root")?;
+    assert!(
+        std::path::Path::new(resolved_root).is_dir(),
+        "resolved_root must keep naming the workspace: {resolved_root}"
+    );
+    let checks = report
+        .pointer("/preflight/checks")
+        .and_then(serde_json::Value::as_array)
+        .ok_or("preflight must carry checks")?;
+    for check in checks {
+        let Some(path) = check.pointer("/path").and_then(serde_json::Value::as_str) else {
+            continue;
+        };
+        assert!(
+            !path.contains(r"\\?\"),
+            "preflight path must not leak the verbatim prefix: {path}"
+        );
+        if cfg!(windows) {
+            assert!(
+                !path.contains('\\'),
+                "preflight path must use the slash spelling: {path}"
+            );
+        }
+    }
+    if cfg!(windows) {
+        assert!(
+            !resolved_root.contains('\\') && !resolved_root.contains(r"\\?\"),
+            "resolved_root must use the slash spelling: {resolved_root}"
+        );
+    }
+    std::fs::remove_dir_all(&root)?;
     Ok(())
 }

@@ -108,7 +108,10 @@ pub(in crate::analysis) fn missing_evidence(
     activation: &ActivationEvidence,
 ) -> Vec<String> {
     let mut missing = Vec::new();
-    if observe.summary == super::ASSERTION_CONTEXT_UNESTABLISHED {
+    // A related assertion exists but is not credited: saying no assertion
+    // or oracle was detected would contradict the refusal it replaces.
+    let refused_context = observe.summary == super::ASSERTION_CONTEXT_UNESTABLISHED;
+    if refused_context {
         missing.push(observe.summary.clone());
     }
     match class {
@@ -116,6 +119,7 @@ pub(in crate::analysis) fn missing_evidence(
         ExposureClass::NoStaticPath => {
             missing.push("No static test path reaches the changed owner".to_string())
         }
+        ExposureClass::ReachableUnrevealed if refused_context => {}
         ExposureClass::ReachableUnrevealed => missing.push(
             "No detected assertion observes the changed value, error, field, or effect".to_string(),
         ),
@@ -138,7 +142,7 @@ pub(in crate::analysis) fn missing_evidence(
     {
         missing.push("No detected boundary input for the changed predicate".to_string());
     }
-    if observe.state != StageState::Yes {
+    if observe.state != StageState::Yes && !refused_context {
         missing.push("No relevant oracle was detected".to_string());
     }
     if discriminate.state != StageState::Yes {
