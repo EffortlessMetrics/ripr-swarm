@@ -2310,15 +2310,12 @@ pub(crate) fn ts_oracle_kind_matches_seam(
 pub(crate) fn strongest_family_matching_oracle(
     probe_family: &ProbeFamily,
     candidates: &[TypeScriptRelatedCandidate<'_>],
-    owner: &TypeScriptOwner,
-    alias_map: Option<&TsAliasMap>,
-    workspace_root: Option<&Path>,
 ) -> (u8, OracleKind) {
     let mut best_rank: u8 = 0;
     let mut best_kind = OracleKind::Unknown;
 
     for candidate in candidates {
-        if !candidate_observes_owner_call(candidate, owner, alias_map, workspace_root) {
+        if !candidate_observes_owner_call(candidate) {
             continue;
         }
         for assertion in &candidate.test.assertions {
@@ -2412,13 +2409,7 @@ pub(crate) fn classify_change_with_alias_state(
     // applies below, so a row never displays a wrong-family assertion while
     // classification judges another.
     let probe_shape = classify_probe_shape_detail(line_text);
-    let related = related_tests_for_candidates(
-        &related_candidates,
-        owner,
-        alias_map,
-        workspace_root,
-        Some(&probe_shape.family),
-    );
+    let related = related_tests_for_candidates(&related_candidates, Some(&probe_shape.family));
     let bun_array_buffer_facts = collect_related_bun_array_buffer_facts(&related_candidates);
     let bun_bridge_hints = collect_related_bun_bridge_hints(&bun_array_buffer_facts);
     let mock_paths =
@@ -2491,13 +2482,8 @@ pub(crate) fn classify_change_with_alias_state(
     // static_limit_kind, or repair_packet_ready. At most one assertion's
     // metadata is emitted (the strongest, by oracle_strength rank) to avoid
     // redundant evidence.
-    let oracle_metadata_lines: Vec<String> = collect_oracle_metadata_evidence_lines(
-        &probe_shape.family,
-        &related_candidates,
-        owner,
-        alias_map,
-        workspace_root,
-    );
+    let oracle_metadata_lines: Vec<String> =
+        collect_oracle_metadata_evidence_lines(&probe_shape.family, &related_candidates);
     let has_oracle_eligible_relation = related_candidates
         .iter()
         .any(|candidate| candidate.relation.uses_oracle());
@@ -2515,9 +2501,9 @@ pub(crate) fn classify_change_with_alias_state(
     // owner-name call, so its oracle classification and missing-discriminator
     // messaging stay readable. Only the exposure/boundary-witness decision
     // above consumes `has_oracle_eligible_relation`.
-    let has_owner_call_evidence = related_candidates.iter().any(|candidate| {
-        candidate_observes_owner_call(candidate, owner, alias_map, workspace_root)
-    });
+    let has_owner_call_evidence = related_candidates
+        .iter()
+        .any(|candidate| candidate_observes_owner_call(candidate));
 
     // RIPR-SPEC-0104: compute strongest_strength/strongest_kind at the
     // ASSERTION level, filtered by probe_family↔oracle_kind match.
@@ -2534,13 +2520,8 @@ pub(crate) fn classify_change_with_alias_state(
     // slice) and filter each assertion by `ts_oracle_kind_matches_seam`. This
     // lets a multi-assertion test contribute its family-matching assertion even
     // when its overall-strongest assertion is wrong-family (anti-over-correction).
-    let (strongest_strength, strongest_kind) = strongest_family_matching_oracle(
-        &probe_shape.family,
-        &related_candidates,
-        owner,
-        alias_map,
-        workspace_root,
-    );
+    let (strongest_strength, strongest_kind) =
+        strongest_family_matching_oracle(&probe_shape.family, &related_candidates);
     let mock_payload_oracle = related_mock_payload_oracle(&related);
 
     // Move flow_sink computation here so it is available to the observation
@@ -2899,9 +2880,10 @@ pub(crate) fn classify_change_with_alias_state(
     // reads this disclosure and keeps the finding non-delegatable: its target
     // row and inferred verify command are chosen by row strength, so a moved
     // row must never make a card newly agent-packet eligible (RIPR-SPEC-0224).
-    for candidate in related_candidates.iter().filter(|candidate| {
-        candidate_observes_owner_call(candidate, owner, alias_map, workspace_root)
-    }) {
+    for candidate in related_candidates
+        .iter()
+        .filter(|candidate| candidate_observes_owner_call(candidate))
+    {
         if let Some(moved) = row_projection_move(&candidate.test.assertions, &probe_shape.family) {
             evidence.push(format!(
                 "typescript_assertion_selection: {} ({})",

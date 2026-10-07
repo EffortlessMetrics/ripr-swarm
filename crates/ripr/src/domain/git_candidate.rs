@@ -227,6 +227,14 @@ pub enum GitCandidateSubjectError {
     /// exact step and identity; execution never falls back to worktree
     /// analysis or an empty result.
     ExecutionFailed { detail: String },
+    /// A Git plumbing step exceeded its deadline and was terminated
+    /// (#6956). Timeout evidence stays typed so the refusal names
+    /// `git_invocation_timeout`, never a config or ref family.
+    ExecutionTimedOut {
+        operation: String,
+        timeout_ms: u128,
+        spawned: bool,
+    },
 }
 
 impl GitCandidateSubjectError {
@@ -239,6 +247,7 @@ impl GitCandidateSubjectError {
             Self::DiffFileConflict { .. } => "diff_file_conflict",
             Self::BaseConflict { .. } => "base_conflict",
             Self::ExecutionFailed { .. } => "execution_failed",
+            Self::ExecutionTimedOut { .. } => "execution_timed_out",
             Self::ExecutionUnsupported => "execution_unsupported",
         }
     }
@@ -278,6 +287,24 @@ impl fmt::Display for GitCandidateSubjectError {
             Self::ExecutionFailed { detail } => write!(
                 formatter,
                 "git candidate subject: object producer failed: {detail}"
+            ),
+            Self::ExecutionTimedOut {
+                operation,
+                timeout_ms: _,
+                spawned: false,
+            } => write!(
+                formatter,
+                "git candidate subject: object producer timed out: {operation} was given a zero \
+                 deadline (not spawned)"
+            ),
+            Self::ExecutionTimedOut {
+                operation,
+                timeout_ms,
+                spawned: true,
+            } => write!(
+                formatter,
+                "git candidate subject: object producer timed out: {operation} exceeded the \
+                 {timeout_ms}ms deadline (process terminated)"
             ),
             Self::ExecutionUnsupported => write!(
                 formatter,
@@ -420,6 +447,14 @@ mod tests {
             (
                 GitCandidateSubjectError::ExecutionUnsupported,
                 "not executable",
+            ),
+            (
+                GitCandidateSubjectError::ExecutionTimedOut {
+                    operation: "git show".to_string(),
+                    timeout_ms: 30_000,
+                    spawned: true,
+                },
+                "timed out",
             ),
         ];
         for (error, fragment) in cases {

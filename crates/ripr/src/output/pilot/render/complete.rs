@@ -213,7 +213,7 @@ pub(crate) fn render_pilot_summary_md(
     // actionable count is a lower bound.
     if let Some(limit) = context.seam_limit {
         out.push_str(&format!(
-            "- Seam limit reached: ranked the first {} of {} seams; Rust seam counts below cover those only\n",
+            "- Seam limit reached: ranked {} of {} seams; Rust seam counts below cover those only\n",
             limit.analyzed, limit.total
         ));
         out.push_str(&format!(
@@ -537,7 +537,7 @@ pub(crate) fn render_pilot_terminal(
     // states the seam limit too; a gap past the cut was never classified.
     if let Some(limit) = context.seam_limit {
         out.push_str(&format!(
-            "  seam limit: ranked the first {} of {} seams\n",
+            "  seam limit: ranked {} of {} seams\n",
             limit.analyzed, limit.total
         ));
     }
@@ -803,7 +803,78 @@ enum CurrentChangeLabel {
         base: Option<String>,
         check: String,
         seams: ChangeSeams,
+        diff_only: Option<DiffOnlyNote>,
     },
+}
+
+/// The first changed file only diff analysis covers, its shape, and how
+/// many such files the change has (#6944).
+struct DiffOnlyNote {
+    file: String,
+    source: crate::analysis::DiffOnlySource,
+    count: usize,
+    /// Every changed Rust file is one of them.
+    whole_change: bool,
+}
+
+impl DiffOnlyNote {
+    fn of(change: &crate::output::pilot::PilotCurrentChange) -> Option<Self> {
+        let files = change.diff_only_files();
+        let (file, source) = files.first()?;
+        Some(Self {
+            file: file.clone(),
+            source: *source,
+            count: files.len(),
+            whole_change: files.len() == change.changed_rust_files().len(),
+        })
+    }
+
+    /// "every changed Rust line is in `build.rs`, a Cargo build script,
+    /// which pilot's repo-wide ranking leaves out". `whole_change` counts
+    /// the files with new-side lines, so a deleted file does not make the
+    /// note claim less than it can.
+    fn reason(&self, code: bool) -> String {
+        self.phrase(code, false)
+    }
+
+    /// The same note after a reason drawn from analyzed seams on the
+    /// change: "the change also includes `build.rs`, ...".
+    fn also(&self, code: bool) -> String {
+        self.phrase(code, true)
+    }
+
+    fn phrase(&self, code: bool, also: bool) -> String {
+        use crate::analysis::DiffOnlySource;
+        let kind = match self.source {
+            DiffOnlySource::BuildScript => "a Cargo build script",
+            DiffOnlySource::RepoAutomation => "repository automation",
+            DiffOnlySource::DeclaredOutsideSrc => "a crate source declared outside src",
+        };
+        let file = if code {
+            format!("`{}`", self.file)
+        } else {
+            self.file.clone()
+        };
+        let includes = if also {
+            "the change also includes"
+        } else {
+            "the change includes"
+        };
+        match (self.count, self.whole_change && !also) {
+            (1, true) => format!(
+                "every changed Rust line is in {file}, {kind}, which pilot's repo-wide ranking leaves out"
+            ),
+            (1, false) => {
+                format!("{includes} {file}, {kind}, which pilot's repo-wide ranking leaves out")
+            }
+            (count, true) => format!(
+                "every changed Rust line is in {count} files pilot's repo-wide ranking leaves out, such as {file} ({kind})"
+            ),
+            (count, false) => format!(
+                "{includes} {count} files pilot's repo-wide ranking leaves out, such as {file} ({kind})"
+            ),
+        }
+    }
 }
 
 fn current_change_label(
@@ -820,6 +891,7 @@ fn current_change_label(
         CurrentChangeLabel::Elsewhere {
             base,
             seams: change.seams().unwrap_or_default(),
+            diff_only: DiffOnlyNote::of(change),
             check: format!(
                 "ripr check --root {}{}",
                 shell_path(&crate::agent::loop_commands::bound_root_path(context.root)),
@@ -836,12 +908,14 @@ fn current_change_label(
 fn unranked_change_reason(context: PilotSummaryContext<'_>, code: bool) -> Option<String> {
     let change = context.current_change?;
     let seams = change.seams()?;
-    if seams.touched == 0 && seams.unanalyzed.is_none() {
+    let diff_only = DiffOnlyNote::of(change);
+    if seams.touched == 0 && seams.unanalyzed.is_none() && diff_only.is_none() {
         return None;
     }
     let base = change.base().map(str::to_string);
     Some(CurrentChangeLabel::why_elsewhere(
         seams,
+        diff_only.as_ref(),
         base.as_ref(),
         code,
     ))
@@ -872,7 +946,12 @@ impl CurrentChangeLabel {
     /// Why no seam on the change ranks (#5309). A change whose seams pilot
     /// withholds, or whose seams a seam limit left unanalyzed, must not read
     /// as a change with no seams.
-    fn why_elsewhere(seams: ChangeSeams, base: Option<&String>, code: bool) -> String {
+    fn why_elsewhere(
+        seams: ChangeSeams,
+        diff_only: Option<&DiffOnlyNote>,
+        base: Option<&String>,
+        code: bool,
+    ) -> String {
         let ChangeSeams {
             touched,
             withheld,
@@ -916,11 +995,26 @@ impl CurrentChangeLabel {
                     lines(t)
                 ),
             }
+        } else if let Some(note) = diff_only {
+            // #6944: `ripr check` analyzes these files, so "no seam" alone
+            // would contradict it; say why pilot did not look.
+            format!(
+                "No seam pilot analyzed is on {}: {}",
+                lines(1),
+                note.reason(code)
+            )
         } else if unseen.is_some() {
             format!("No analyzed seam is on {}", lines(1))
         } else {
             return format!("No seam pilot analyzed is on {}.", lines(1));
         };
+        if touched > 0
+            && let Some(note) = diff_only
+        {
+            // The analyzed seams explain only part of the change.
+            reason.push_str("; ");
+            reason.push_str(&note.also(code));
+        }
         if let Some(unseen) = unseen {
             reason.push_str(", but ");
             reason.push_str(&unseen);
@@ -935,9 +1029,14 @@ impl CurrentChangeLabel {
                 "part of it (this seam is on {})",
                 Self::changed_line(base.as_ref(), false)
             ),
-            Self::Elsewhere { base, check, seams } => format!(
+            Self::Elsewhere {
+                base,
+                check,
+                seams,
+                diff_only,
+            } => format!(
                 "not part of it. {} This recommendation is elsewhere in the repo. For the change itself, run: {check}",
-                Self::why_elsewhere(*seams, base.as_ref(), false)
+                Self::why_elsewhere(*seams, diff_only.as_ref(), base.as_ref(), false)
             ),
         }
     }
@@ -948,9 +1047,14 @@ impl CurrentChangeLabel {
                 "part of it (this seam is on {})",
                 Self::changed_line(base.as_ref(), true)
             ),
-            Self::Elsewhere { base, check, seams } => format!(
+            Self::Elsewhere {
+                base,
+                check,
+                seams,
+                diff_only,
+            } => format!(
                 "not part of it. {} This recommendation is elsewhere in the repo. For the change itself, run `{check}`.",
-                Self::why_elsewhere(*seams, base.as_ref(), true)
+                Self::why_elsewhere(*seams, diff_only.as_ref(), base.as_ref(), true)
             ),
         }
     }

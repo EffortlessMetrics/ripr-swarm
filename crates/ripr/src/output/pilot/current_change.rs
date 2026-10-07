@@ -9,7 +9,7 @@
 //! `<base>...HEAD`); this module only maps its changed new-side lines onto
 //! seams.
 
-use crate::analysis::{ClassifiedSeam, SeamLimitInfo};
+use crate::analysis::{ClassifiedSeam, DiffOnlySource, RepoSeam, SeamLimitInfo};
 use crate::output::path::display_path;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -31,6 +31,10 @@ pub(crate) enum PilotCurrentChange {
         /// The analyzed seams on changed lines, counted before the pilot
         /// budget cut, which drops the ones pilot cannot recommend.
         seams: ChangeSeams,
+        /// Changed files diff analysis covers but the repo inventory leaves
+        /// out by design (build scripts, `xtask/`, roots outside `src`),
+        /// root-relative and slash separated (#6944).
+        diff_only: Vec<(String, DiffOnlySource)>,
     },
     /// The default diff loaded and is empty: there is no current change.
     NoChange { base: Option<String> },
@@ -81,6 +85,7 @@ impl PilotCurrentChange {
             lines,
             working_tree: false,
             seams: ChangeSeams::default(),
+            diff_only: Vec::new(),
         }
     }
 
@@ -110,6 +115,90 @@ impl PilotCurrentChange {
         self
     }
 
+    /// The change's Rust files, root-relative, for classifying the change on
+    /// its own when the inventory seam limit cut it (#6943). Empty without a
+    /// change.
+    pub(crate) fn changed_rust_files(&self) -> Vec<PathBuf> {
+        let Self::Changed { lines, .. } = self else {
+            return Vec::new();
+        };
+        // Keys are stable path text (`%` escapes); the inventory compares
+        // raw path bytes, so decode them back to the on-disk spelling.
+        lines
+            .keys()
+            .filter(|path| path.ends_with(".rs"))
+            .map(|path| crate::analysis::decode_stable_path_text(path))
+            .collect()
+    }
+
+    /// Fold the change's own classification (run when the inventory seam
+    /// limit fired on a change with Rust files) into the ranked population:
+    /// the cut seams on changed lines join `classified` and count as
+    /// analyzed in `limit`. Returns how many were added and the limit the
+    /// change's seam-limit caveat should cite: none once the change's files
+    /// were classified, or when the change has no Rust file the limit could
+    /// hide; the inventory's limit when the classification failed or never
+    /// ran.
+    pub(crate) fn fold_classified_change<'a>(
+        &self,
+        classified: &mut Vec<ClassifiedSeam>,
+        limit: &'a mut Option<SeamLimitInfo>,
+        change: Option<Result<Vec<ClassifiedSeam>, String>>,
+    ) -> ChangeClassification<'a> {
+        match change {
+            Some(Ok(scoped)) => {
+                let added = self.add_cut_seams(classified, scoped);
+                if let Some(info) = limit.as_mut() {
+                    info.analyzed = info.analyzed.saturating_add(added);
+                    // Every seam the limit cut was on the change: nothing
+                    // is left unanalyzed, so no limit applies.
+                    if info.analyzed >= info.total {
+                        *limit = None;
+                    }
+                }
+                ChangeClassification {
+                    added,
+                    caveat_limit: None,
+                    error: None,
+                }
+            }
+            Some(Err(error)) => ChangeClassification {
+                added: 0,
+                caveat_limit: limit.as_ref(),
+                error: Some(error),
+            },
+            None => ChangeClassification {
+                added: 0,
+                caveat_limit: limit
+                    .as_ref()
+                    .filter(|_| !self.is_changed() || !self.changed_rust_files().is_empty()),
+                error: None,
+            },
+        }
+    }
+
+    /// Append the seams in `scoped` that sit on a changed line and are not
+    /// already in `classified`, returning how many were added. Seams
+    /// elsewhere in a changed file stay out, so the cut repo-wide population
+    /// the rest of the ranking sees does not tilt toward the changed files.
+    pub(crate) fn add_cut_seams(
+        &self,
+        classified: &mut Vec<ClassifiedSeam>,
+        scoped: Vec<ClassifiedSeam>,
+    ) -> usize {
+        let known: std::collections::HashSet<_> = classified
+            .iter()
+            .map(|entry| entry.seam.id().clone())
+            .collect();
+        let before = classified.len();
+        classified.extend(
+            scoped
+                .into_iter()
+                .filter(|entry| self.touches(entry) && !known.contains(entry.seam.id())),
+        );
+        classified.len() - before
+    }
+
     /// The analyzed seams on changed lines, when there is a change.
     pub(crate) fn seams(&self) -> Option<ChangeSeams> {
         match self {
@@ -124,6 +213,25 @@ impl PilotCurrentChange {
             *working_tree = from_working_tree;
         }
         self
+    }
+
+    /// Record the changed files only diff analysis covers (#6944).
+    pub(crate) fn with_diff_only_files(mut self, files: Vec<(PathBuf, DiffOnlySource)>) -> Self {
+        if let Self::Changed { diff_only, .. } = &mut self {
+            *diff_only = files
+                .into_iter()
+                .map(|(path, source)| (normalized(&path), source))
+                .collect();
+        }
+        self
+    }
+
+    /// The changed files only diff analysis covers; empty without a change.
+    pub(crate) fn diff_only_files(&self) -> &[(String, DiffOnlySource)] {
+        match self {
+            Self::Changed { diff_only, .. } => diff_only,
+            Self::NoChange { .. } | Self::Unavailable { .. } => &[],
+        }
     }
 
     /// The `ripr check` flags that select this same diff.
@@ -166,18 +274,35 @@ impl PilotCurrentChange {
     /// Whether a changed new-side line falls inside the seam's source span
     /// (its display line through the last line of its expression text).
     pub(crate) fn touches(&self, entry: &ClassifiedSeam) -> bool {
+        self.touches_seam(&entry.seam)
+    }
+
+    /// [`Self::touches`] for a seam not yet classified, so the change's own
+    /// classification can skip evidence for seams off the changed lines.
+    pub(crate) fn touches_seam(&self, seam: &RepoSeam) -> bool {
         let Self::Changed { root, lines, .. } = self else {
             return false;
         };
-        let file = entry.seam.file();
+        let file = seam.file();
         let relative = file.strip_prefix(root).unwrap_or(file);
         let Some(changed) = lines.get(&normalized(relative)) else {
             return false;
         };
-        let start = entry.seam.display_line();
-        let end = start + entry.seam.expression().lines().count().saturating_sub(1);
+        let start = seam.display_line();
+        let end = start + seam.expression().lines().count().saturating_sub(1);
         changed.range(start..=end).next().is_some()
     }
+}
+
+/// What folding the change's own classification into the inventory did.
+#[derive(Debug)]
+pub(crate) struct ChangeClassification<'a> {
+    /// Cut seams on changed lines added to the ranked population.
+    pub(crate) added: usize,
+    /// The seam limit the change's caveat cites, if it still applies.
+    pub(crate) caveat_limit: Option<&'a SeamLimitInfo>,
+    /// Why the change could not be classified, when it could not.
+    pub(crate) error: Option<String>,
 }
 
 /// The analyzed seams on a change's lines.

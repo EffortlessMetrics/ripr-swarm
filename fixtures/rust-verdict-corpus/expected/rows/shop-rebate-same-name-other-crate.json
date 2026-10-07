@@ -1,0 +1,19 @@
+{
+  "case_id": "shop-rebate-same-name-other-crate",
+  "subject_id": "authored-shop",
+  "origin": "authored",
+  "anchor": "pricing/src/lib.rs:8",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "same_name_owner_in_dependent_crate_tested",
+  "hard_case": false,
+  "truth": "not_discriminated",
+  "ideal_verdict": "gap",
+  "observed_verdict": "gap",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "weakly_exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": []
+}

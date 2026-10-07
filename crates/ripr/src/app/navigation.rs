@@ -2,6 +2,19 @@ use super::{CheckInput, Mode};
 use crate::agent::loop_commands::{bound_root, bound_root_path, root_path_display, shell_arg};
 use std::path::Path;
 
+/// What tree content a check run analyzed (#6304): the live working tree
+/// (`--worktree`), a fixed supplied scope (`--diff`, `--candidate-tree`),
+/// or committed history (an explicit or resolved base). The canonical triage
+/// adapter binds the DTO diff-source from this, never by deriving it from
+/// `output.base`: both committed and worktree runs resolve a base, while a
+/// supplied scope has none — base presence identifies neither mode.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum CheckDiffProvenance {
+    Worktree,
+    SuppliedScope,
+    CommittedHistory,
+}
+
 /// Copy-pasteable sibling commands for a selected finding.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct FindingNavigation {

@@ -1389,9 +1389,6 @@ pub(crate) fn oracle_metadata_evidence_lines(
 pub(crate) fn collect_oracle_metadata_evidence_lines(
     probe_family: &ProbeFamily,
     candidates: &[TypeScriptRelatedCandidate<'_>],
-    owner: &TypeScriptOwner,
-    alias_map: Option<&TsAliasMap>,
-    workspace_root: Option<&Path>,
 ) -> Vec<String> {
     // Candidates observing an owner-name call: trusted relations by
     // construction, plus gate-denied relations whose test still calls the
@@ -1399,9 +1396,7 @@ pub(crate) fn collect_oracle_metadata_evidence_lines(
     // credit (see `candidate_observes_owner_call`).
     let strongest_assertion_with_file = candidates
         .iter()
-        .filter(|candidate| {
-            candidate_observes_owner_call(candidate, owner, alias_map, workspace_root)
-        })
+        .filter(|candidate| candidate_observes_owner_call(candidate))
         // Each test contributes the assertion its related-test row shows
         // (#5525), so the metadata and the row never describe different
         // assertions of one test; across tests the last strongest wins, the

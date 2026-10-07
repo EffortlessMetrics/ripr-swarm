@@ -1,0 +1,19 @@
+{
+  "case_id": "pricing-flat-shipping-fee",
+  "subject_id": "authored-pricing",
+  "origin": "authored",
+  "anchor": "src/lib.rs:5",
+  "behavior_family": "return_value",
+  "test_shape": "unit_test_relational_assert",
+  "hard_case": false,
+  "truth": "not_discriminated",
+  "ideal_verdict": "gap",
+  "observed_verdict": "limited",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "static_unknown"
+  ],
+  "outcome": "abstained",
+  "contradictions": []
+}

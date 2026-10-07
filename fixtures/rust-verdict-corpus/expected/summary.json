@@ -1,0 +1,146 @@
+{
+  "schema_version": "ripr_verdict_corpus_report.v1",
+  "spec": "RIPR-SPEC-0219",
+  "cases_total": 218,
+  "by_truth": {
+    "discriminated": 115,
+    "not_discriminated": 69,
+    "partially_discriminated": 34
+  },
+  "by_outcome": {
+    "abstained": 71,
+    "false_actionable": 54,
+    "false_exposed": 4,
+    "ideal": 89
+  },
+  "by_observed_verdict": {
+    "credited": 30,
+    "gap": 117,
+    "limited": 70,
+    "silent": 1
+  },
+  "false_verdict_rate": {
+    "numerator": 58,
+    "denominator": 218,
+    "rate": "0.2661"
+  },
+  "false_actionable_rate": {
+    "numerator": 54,
+    "denominator": 115,
+    "rate": "0.4696"
+  },
+  "false_exposed_rate": {
+    "numerator": 4,
+    "denominator": 103,
+    "rate": "0.0388"
+  },
+  "false_silent_rate": {
+    "numerator": 0,
+    "denominator": 103,
+    "rate": "0.0000"
+  },
+  "ideal_rate": {
+    "numerator": 89,
+    "denominator": 218,
+    "rate": "0.4083"
+  },
+  "abstention_rate": {
+    "numerator": 71,
+    "denominator": 218,
+    "rate": "0.3257"
+  },
+  "contradiction_rate": {
+    "numerator": 2,
+    "denominator": 293,
+    "rate": "0.0068"
+  },
+  "contradictions_by_code": {
+    "no_static_path_with_related_tests": 2
+  },
+  "by_origin": {
+    "authored": {
+      "cases_total": 184,
+      "by_observed_verdict": {
+        "credited": 25,
+        "gap": 112,
+        "limited": 46,
+        "silent": 1
+      },
+      "false_verdict_rate": {
+        "numerator": 55,
+        "denominator": 184,
+        "rate": "0.2989"
+      },
+      "false_actionable_rate": {
+        "numerator": 51,
+        "denominator": 95,
+        "rate": "0.5368"
+      },
+      "false_exposed_rate": {
+        "numerator": 4,
+        "denominator": 89,
+        "rate": "0.0449"
+      },
+      "false_silent_rate": {
+        "numerator": 0,
+        "denominator": 89,
+        "rate": "0.0000"
+      },
+      "ideal_rate": {
+        "numerator": 82,
+        "denominator": 184,
+        "rate": "0.4457"
+      },
+      "abstention_rate": {
+        "numerator": 47,
+        "denominator": 184,
+        "rate": "0.2554"
+      }
+    },
+    "upstream": {
+      "cases_total": 34,
+      "by_observed_verdict": {
+        "credited": 5,
+        "gap": 5,
+        "limited": 24
+      },
+      "false_verdict_rate": {
+        "numerator": 3,
+        "denominator": 34,
+        "rate": "0.0882"
+      },
+      "false_actionable_rate": {
+        "numerator": 3,
+        "denominator": 20,
+        "rate": "0.1500"
+      },
+      "false_exposed_rate": {
+        "numerator": 0,
+        "denominator": 14,
+        "rate": "0.0000"
+      },
+      "false_silent_rate": {
+        "numerator": 0,
+        "denominator": 14,
+        "rate": "0.0000"
+      },
+      "ideal_rate": {
+        "numerator": 7,
+        "denominator": 34,
+        "rate": "0.2059"
+      },
+      "abstention_rate": {
+        "numerator": 24,
+        "denominator": 34,
+        "rate": "0.7059"
+      }
+    }
+  },
+  "non_claims": [
+    "Rates describe this corpus only; they are not a population estimate for Rust code or for ripr in general.",
+    "Authored cases were written to fill verdict and probe-family cells the upstream cases leave empty; their rates are reported separately under by_origin and are not real-world rates.",
+    "Truth comes from the listed mutants, not from exhaustive mutation; a discriminated label means every listed mutant made the test command fail.",
+    "The harness runs ripr on retained upstream excerpts and on whole authored crates; excerpt findings matched the full pinned checkout at labeling time and must be re-checked when a verdict changes.",
+    "The harness does not run mutation testing, cargo test, or any network access."
+  ]
+}

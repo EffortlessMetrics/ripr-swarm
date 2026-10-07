@@ -1310,6 +1310,86 @@ pub(crate) fn inventory_diff_scoped_classified_seams_at_with_config(
     )
 }
 
+/// Classify the seams in `changed_files` (root-relative) for which
+/// `on_change` holds, and only those: the other seams in those files get no
+/// evidence. No owner names are passed, so no caller files join the scope.
+/// Pilot uses it when the repo inventory's seam limit cut the current
+/// change's seams (#6943): the cached inventory stays diff-independent and
+/// the change is classified on its own. The no-impact fast path is skipped:
+/// pilot asks only after the limit fired on a change with Rust files, where
+/// it would decline anyway.
+pub(crate) fn classify_seams_in_files_at_with_config(
+    root: &Path,
+    config: &RiprConfig,
+    changed_files: &[PathBuf],
+    on_change: &dyn Fn(&RepoSeam) -> bool,
+) -> Result<Vec<ClassifiedSeam>, String> {
+    let stages = DiffScopeEvidenceStages {
+        first: on_change,
+        sufficient: &|_| true,
+    };
+    inventory_diff_scoped_classified_seams_inner(
+        root,
+        config,
+        changed_files,
+        &[],
+        false,
+        Some(&stages),
+        None,
+    )
+    .map(|inventory| inventory.classified)
+}
+
+/// The changed Rust files (root-relative) that diff analysis covers but the
+/// repo seam inventory leaves out by design (#6944): Cargo build scripts,
+/// repository automation, and crate roots declared outside `src`. Roles come
+/// from the context the inventory and `ripr check` build, over the changed
+/// files only: a file's build script, declared roots and module directories
+/// come from its own package's manifest, so the rest of the corpus adds
+/// nothing. As in `ripr check`, generated files are dropped and a file no
+/// module tree reaches (#4435) is not named. The module-graph pass, which
+/// can read the whole corpus, runs only for files that could still be
+/// diff-only.
+pub(crate) fn diff_only_rust_files(
+    root: &Path,
+    config: &RiprConfig,
+    changed_files: &[PathBuf],
+) -> Vec<(PathBuf, workspace::DiffOnlySource)> {
+    let generated = super::language::GeneratedRustSources::for_repo(root, &config.languages().rust);
+    // Only files `ripr check` can index, by the shared worktree admission:
+    // a changed path missing from the working tree (sparse checkout, deleted
+    // since the diff), a symlink, or a file below a symlinked directory is
+    // refused by Rust discovery, so check has no probes for it either.
+    let candidates = changed_files
+        .iter()
+        .filter(|path| workspace::worktree_contains_regular_source_file(root, path))
+        .filter(|path| !generated.contains(path))
+        .collect::<Vec<_>>();
+    if candidates.is_empty() {
+        return Vec::new();
+    }
+    let mut context =
+        production_role_context(root, config, candidates.iter().map(|path| path.as_path()));
+    let candidates = candidates
+        .into_iter()
+        .filter(|path| workspace::may_be_diff_only_source(path, &context))
+        .collect::<Vec<_>>();
+    if candidates.is_empty() {
+        return Vec::new();
+    }
+    workspace::apply_module_graph_evidence(
+        root,
+        &mut context,
+        candidates.iter().map(|path| path.as_path()),
+    );
+    candidates
+        .into_iter()
+        .filter_map(|path| {
+            workspace::diff_only_source(path, &context).map(|source| (path.clone(), source))
+        })
+        .collect()
+}
+
 /// A bounded consumer of classified windows. Implementations retain their
 /// result payloads independently from the complete evaluation denominator.
 pub(crate) trait ScopedEvidenceConsumer {
@@ -3461,6 +3541,74 @@ pub fn classify(amount: i32, service: &mut Service) -> Result<Quote, Error> {
                 .map_err(|err| format!("mkdir {}: {err}", parent.display()))?;
         }
         std::fs::write(path, content).map_err(|err| format!("write {}: {err}", path.display()))
+    }
+
+    /// #6944: the files pilot names as left out of its ranking. Generated
+    /// files are dropped as in `ripr check`, sources outside every diff-only
+    /// shape are not named, and a root below a `src` directory still finds
+    /// its own manifest.
+    #[test]
+    fn diff_only_rust_files_names_build_scripts_and_automation_only() -> Result<(), String> {
+        use super::workspace::DiffOnlySource;
+        let temp = make_tempdir("diff-only")?;
+        let root = temp.join("src").join("shop");
+        let files = [
+            (
+                "Cargo.toml",
+                "[package]\nname = 'shop'\nversion = '0.1.0'\n",
+            ),
+            ("build.rs", "fn main() {}\n"),
+            ("src/lib.rs", "pub fn f() -> bool { true }\n"),
+            ("lib/stray.rs", "pub fn g() {}\n"),
+            (
+                "xtask/Cargo.toml",
+                "[package]\nname = 'xtask'\nversion = '0.1.0'\n",
+            ),
+            ("xtask/src/main.rs", "mod gen;\nfn main() {}\n"),
+            ("xtask/src/gen.rs", "// @generated\npub fn h() {}\n"),
+            ("tests/fixtures/case.rs", "fn main() {}\n"),
+        ];
+        for (path, content) in files {
+            write_file(&root.join(path), content)?;
+        }
+        let changed = files
+            .iter()
+            .map(|(path, _)| PathBuf::from(path))
+            .filter(|path| path.extension().is_some_and(|ext| ext == "rs"))
+            .collect::<Vec<_>>();
+        // A changed path absent from the working tree is not named.
+        let mut changed = changed;
+        changed.push(PathBuf::from("xtask/src/absent.rs"));
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(root.join("build.rs"), root.join("xtask/src/link.rs"))
+                .map_err(|err| format!("symlink: {err}"))?;
+            changed.push(PathBuf::from("xtask/src/link.rs"));
+            // A build script below a symlinked directory (here, a package
+            // outside the checkout) is refused too.
+            let outside = temp.join("outside");
+            write_file(
+                &outside.join("Cargo.toml"),
+                "[package]\nname = 'outside'\nversion = '0.1.0'\n",
+            )?;
+            write_file(&outside.join("build.rs"), "fn main() {}\n")?;
+            std::os::unix::fs::symlink(&outside, root.join("linked"))
+                .map_err(|err| format!("symlink: {err}"))?;
+            changed.push(PathBuf::from("linked/build.rs"));
+        }
+        let named = diff_only_rust_files(&root, &RiprConfig::default(), &changed);
+        let _ = std::fs::remove_dir_all(&temp);
+        assert_eq!(
+            named,
+            vec![
+                (PathBuf::from("build.rs"), DiffOnlySource::BuildScript),
+                (
+                    PathBuf::from("xtask/src/main.rs"),
+                    DiffOnlySource::RepoAutomation
+                ),
+            ]
+        );
+        Ok(())
     }
 
     /// Rewrite `path` with identical content until the inode change time

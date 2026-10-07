@@ -1,0 +1,20 @@
+{
+  "case_id": "shop-tier-gold-arm-unreached",
+  "subject_id": "authored-shop",
+  "origin": "authored",
+  "anchor": "pricing/src/lib.rs:48",
+  "behavior_family": "match_arm",
+  "test_shape": "sibling_arm_asserted_shared_enum_qualifier",
+  "hard_case": false,
+  "truth": "not_discriminated",
+  "ideal_verdict": "gap",
+  "observed_verdict": "gap",
+  "followed_retarget": false,
+  "changed_since_labeling": true,
+  "observed_classifications": [
+    "infection_unknown",
+    "weakly_exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": []
+}

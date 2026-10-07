@@ -1,0 +1,19 @@
+{
+  "case_id": "grid-match-none",
+  "subject_id": "authored-grid-match",
+  "origin": "authored",
+  "anchor": "src/lib.rs:39",
+  "behavior_family": "match_arm",
+  "test_shape": "smoke_call_no_assert",
+  "hard_case": false,
+  "truth": "not_discriminated",
+  "ideal_verdict": "gap",
+  "observed_verdict": "gap",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "weakly_exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": []
+}

@@ -62,7 +62,39 @@ pub(super) fn credit_same_file_assertion_helpers(index: &mut RustIndex) {
     // Only files that hold a test can credit a helper, so only those are
     // parsed, and the parses run on the rayon pool: every indexed file was
     // parsed serially here before, which dominated warm diff-scoped checks.
-    let test_files: BTreeSet<&PathBuf> = index.tests().iter().map(|test| &test.file).collect();
+    // A file is parsed only when one of its tests calls a candidate helper
+    // that the parse-free conditions below already admit.
+    let mut names_by_file: BTreeMap<&PathBuf, BTreeMap<&str, Vec<&FunctionFact>>> = BTreeMap::new();
+    let mut test_files: BTreeSet<&PathBuf> = BTreeSet::new();
+    for test in index.tests().iter() {
+        if test_files.contains(&test.file) {
+            continue;
+        }
+        let Some(facts) = index.files().get(&test.file) else {
+            continue;
+        };
+        let names = names_by_file.entry(&test.file).or_insert_with(|| {
+            let mut names: BTreeMap<&str, Vec<&FunctionFact>> = BTreeMap::new();
+            for function in facts.functions.iter() {
+                names
+                    .entry(function.name.as_str())
+                    .or_default()
+                    .push(function);
+            }
+            names
+        });
+        let candidate = test.calls.iter().any(|call| {
+            matches!(
+                names.get(call.name.as_str()).map(Vec::as_slice),
+                Some([helper]) if helper.source_role == FunctionSourceRole::CfgTestModule
+                    && !test_shadows(test, &call.name)
+                    && !spans_overlap(helper, test)
+            )
+        });
+        if candidate {
+            test_files.insert(&test.file);
+        }
+    }
     let files = index
         .files()
         .iter()

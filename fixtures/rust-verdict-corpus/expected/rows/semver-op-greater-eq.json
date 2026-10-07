@@ -1,0 +1,19 @@
+{
+  "case_id": "semver-op-greater-eq",
+  "subject_id": "semver",
+  "origin": "upstream",
+  "anchor": "src/parse.rs:272",
+  "behavior_family": "predicate",
+  "test_shape": "integration_test_public_api",
+  "hard_case": true,
+  "truth": "discriminated",
+  "ideal_verdict": "credited",
+  "observed_verdict": "gap",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "reachable_unrevealed"
+  ],
+  "outcome": "false_actionable",
+  "contradictions": []
+}
