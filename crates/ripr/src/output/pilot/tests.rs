@@ -2034,6 +2034,11 @@ fn change_seams_cut_by_the_inventory_limit_are_added_once() {
     let change =
         PilotCurrentChange::from_diff_text(Path::new("."), Some("origin/main".to_string()), &diff);
     assert_eq!(change.changed_rust_files(), [PathBuf::from("src/a.rs")]);
+    // Stable path text escapes `%`; the inventory needs the on-disk name.
+    assert_eq!(
+        changed("src/100%.rs", 1).changed_rust_files(),
+        [PathBuf::from("src/100%.rs")]
+    );
     assert!(
         PilotCurrentChange::from_diff_text(Path::new("."), None, "")
             .changed_rust_files()
@@ -2067,6 +2072,81 @@ fn change_seams_cut_by_the_inventory_limit_are_added_once() {
     assert_eq!(classified.len(), 3);
     assert_ne!(classified[1].seam.id(), cut_on_change.seam.id());
     assert_eq!(classified[2].seam.id(), cut_on_change.seam.id());
+}
+
+/// #6943: folding the change's own classification decides whether the
+/// seam-limit caveat on the change still applies.
+#[test]
+fn folding_the_classified_change_keeps_the_caveat_only_when_it_can_hold() {
+    let limit = || {
+        Some(crate::analysis::SeamLimitInfo {
+            analyzed: 1,
+            total: 5,
+            source: crate::analysis::SeamLimitSource::Default,
+        })
+    };
+    let rust_change = changed("src/a.rs", 10);
+    let on_change = classified_with(SeamGripClass::Ungripped, "src/a.rs", 10, vec![], vec![]);
+
+    // Classified: the cut seam joins, counts as analyzed, and the caveat goes.
+    let (mut classified, mut inventory_limit) = (Vec::new(), limit());
+    let folded = rust_change.fold_classified_change(
+        &mut classified,
+        &mut inventory_limit,
+        Some(Ok(vec![on_change])),
+    );
+    assert_eq!(
+        (folded.added, folded.caveat_limit, folded.error),
+        (1, None, None)
+    );
+    assert_eq!(classified.len(), 1);
+    assert_eq!(
+        inventory_limit.as_ref().map(|limit| limit.analyzed),
+        Some(2)
+    );
+
+    // When every cut seam was on the change, nothing is left unanalyzed.
+    let (mut classified, mut inventory_limit) = (Vec::new(), limit());
+    if let Some(limit) = inventory_limit.as_mut() {
+        limit.total = 2;
+    }
+    rust_change.fold_classified_change(
+        &mut classified,
+        &mut inventory_limit,
+        Some(Ok(vec![classified_with(
+            SeamGripClass::Ungripped,
+            "src/a.rs",
+            10,
+            vec![],
+            vec![],
+        )])),
+    );
+    assert_eq!(inventory_limit, None);
+
+    // Failed: nothing joins and the caveat cites the inventory's limit.
+    let (mut classified, mut inventory_limit) = (Vec::new(), limit());
+    let folded = rust_change.fold_classified_change(
+        &mut classified,
+        &mut inventory_limit,
+        Some(Err("late".to_string())),
+    );
+    assert_eq!(folded.added, 0);
+    assert_eq!(folded.caveat_limit.map(|limit| limit.analyzed), Some(1));
+    assert_eq!(folded.error.as_deref(), Some("late"));
+    assert!(classified.is_empty());
+
+    // Not run on a Rust change (the limit did not fire): the caveat stays
+    // whenever there is a limit to cite.
+    let (mut classified, mut inventory_limit) = (Vec::new(), limit());
+    let folded = rust_change.fold_classified_change(&mut classified, &mut inventory_limit, None);
+    assert_eq!(folded.caveat_limit.map(|limit| limit.total), Some(5));
+
+    // A change with no Rust file: pilot ranks Rust seams only, so the limit
+    // cannot hide a seam on it.
+    let docs_change = changed("README.md", 1);
+    let (mut classified, mut inventory_limit) = (Vec::new(), limit());
+    let folded = docs_change.fold_classified_change(&mut classified, &mut inventory_limit, None);
+    assert_eq!(folded.caveat_limit, None);
 }
 
 #[test]

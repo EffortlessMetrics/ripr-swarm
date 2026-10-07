@@ -14761,7 +14761,7 @@ fn pilot_says_it_withholds_the_seam_on_the_current_change() -> Result<(), String
 /// still be classified, ranked first and counted as analyzed.
 #[test]
 fn pilot_ranks_the_current_change_past_the_inventory_seam_limit() -> Result<(), String> {
-    let lib = "pub fn discounted(amount: u32) -> u32 {\n    if amount > 100 { amount - 10 } else { amount }\n}\n\npub fn is_digit(byte: u8) -> bool {\n    byte >= b'0' && byte <= b'9'\n}\n";
+    let lib = "pub fn discounted(amount: u32) -> u32 {\n    if amount > 100 { amount - 10 } else { amount }\n}\n\npub fn is_digit(byte: u8) -> bool {\n    byte >= b'0' && byte <= b'9'\n}\n\npub fn is_large(amount: u32) -> bool {\n    amount > 1000\n}\n";
     let root = pilot_language_fixture_repo(
         "pilot-change-past-seam-limit",
         &[
@@ -14801,6 +14801,15 @@ fn pilot_ranks_the_current_change_past_the_inventory_seam_limit() -> Result<(), 
         "{md}"
     );
     assert!(!md.contains("ranked the first 1 of "), "{md}");
+    assert!(md.contains("ranked the first 4 of 6 seams"), "{md}");
+    // `ripr check` never classifies the added seams, so the snapshot is not
+    // its population and carries no comparable identity.
+    let snapshot: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(out_dir.join("repo-exposure.json"))
+            .map_err(|err| format!("read repo exposure json: {err}"))?,
+    )
+    .map_err(|err| format!("parse repo exposure json: {err}"))?;
+    assert!(snapshot.get("artifact").is_none(), "{snapshot}");
     assert_eq!(summary["current_change"]["state"], "changed", "{summary}");
     assert_eq!(summary["top_actionable_seams"][0]["line"], 6, "{summary}");
     assert_eq!(

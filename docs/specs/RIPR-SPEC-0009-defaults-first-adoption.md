@@ -200,10 +200,13 @@ intentional or suppressed, the seam limit left seams unanalyzed, or no seam
 pilot analyzed is on a changed line), and names `ripr check` for the change
 itself, with `--worktree` when the change is uncommitted, since plain `ripr
 check` reads committed history only. When the repo-exposure seam limit cuts
-the inventory, pilot classifies the change's Rust files on their own and adds
-the seams on changed lines that the cut dropped, so they still rank
-change-first and count as analyzed; the seam-limit caveat about the change
-then no longer applies (#6943). The terminal and Markdown "Inspected" block names the scope:
+the inventory, pilot classifies the seams on the change's lines on their own,
+within what is left of its deadline, and adds the ones the cut dropped, so they
+still rank change-first and count as analyzed; the seam-limit caveat about the
+change then no longer applies. If that classification fails or runs out of
+time, pilot says so on stderr, keeps the caveat and still completes. Because
+`ripr check` never classifies the added seams, pilot's `repo-exposure.json` is
+then written without the comparable `artifact` identity (#6943). The terminal and Markdown "Inspected" block names the scope:
 change-first with a change, otherwise the whole repository, with a short reason
 when the change could not be loaded. With no change, or when the diff cannot be
 loaded, the ranking is unchanged, the human output differs only by that scope
