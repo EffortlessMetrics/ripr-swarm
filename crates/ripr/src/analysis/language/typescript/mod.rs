@@ -51,6 +51,9 @@ mod annotation_only;
 mod annotation_only_tests;
 #[cfg(test)]
 mod assertion_library_tests;
+mod assertion_selection;
+#[cfg(test)]
+mod assertion_selection_tests;
 mod boundary_input;
 #[cfg(test)]
 mod boundary_input_tests;
@@ -64,8 +67,12 @@ mod module_entries;
 #[cfg(test)]
 mod new_declaration_tests;
 mod oracle;
+#[cfg(test)]
+mod owner_path_tests;
 mod owners;
 mod package;
+#[cfg(test)]
+mod predicate_activation_tests;
 pub(crate) use package::detect_framework_for_root;
 #[cfg(test)]
 mod ambient_declaration_tests;
@@ -89,6 +96,7 @@ mod workspace_packages;
 pub(crate) use actionability::*;
 pub(crate) use admission::{TypeScriptAdmissionContext, TypeScriptAssertionAdmission};
 pub(crate) use annotation_only::*;
+pub(crate) use assertion_selection::{row_projection_move, select_family_relevant_assertion};
 pub(crate) use boundary_input::*;
 pub(crate) use bounded_read::*;
 pub(crate) use bun_bridge::*;

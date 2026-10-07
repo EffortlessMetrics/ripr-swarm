@@ -1,0 +1,118 @@
+{
+  "schema_version": "0.2",
+  "tool": "ripr",
+  "mode": "fast",
+  "root": "fixtures/predicate_pairing_compound_assigned_binding/input",
+  "summary": {"changed_rust_files":1,"probes":1,"findings":1,"exposed":0,"weakly_exposed":1,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":0,"propagation_unknown":0,"static_unknown":0,"changed_files_by_language":[{"language":"rust","files":1}]},
+  "analysis_outcome": {
+    "analysis_complete": true,
+    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":null,"base_revision":null,"input_identity":"sha256:2316547c95630f7fc3292a0ada35fde9977c431c22b2b0f2b13e2421c6366680","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":2,"candidate_line_count":1,"probe_count":1,"finding_count":1},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
+  },
+  "findings": [
+    {
+      "id": "probe:src_lib.rs:predicate:6d1d88e6",
+      "canonical_gap_id": "gap:rust:src/lib.rs:bucket:predicate_boundary:predicate:input==10",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:bucket:predicate_boundary:predicate:input==10",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "bucket",
+        "behavior_kind": "predicate_boundary",
+        "probe_kind": "predicate",
+        "normalized_discriminator": "input==10"
+
+      },
+      "classification": "weakly_exposed",
+      "severity": "warning",
+      "confidence": 0.92,
+      "probe": {
+        "id": "probe:src_lib.rs:predicate:6d1d88e6",
+        "family": "predicate",
+        "delta": "control",
+        "file": "./src/lib.rs",
+        "line": 2,
+        "expression": "input >= 10"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach bucket: compounded"},
+        "infect": {"state":"yes","confidence":"medium","summary":"Detected related test input at the changed boundary"},
+        "propagate": {"state":"yes","confidence":"medium","summary":"Changed behavior appears to influence returned value: 1"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: no admitted discriminating oracle is paired with the owner's boundary call (same_test_pairing_missing); a boundary input and a separate exact oracle do not establish that discriminator"}
+       },
+      "evidence_path": ["reach yes: Related tests appear to reach bucket: compounded", "infection yes: Detected related test input at the changed boundary", "propagation yes: Changed behavior appears to influence returned value: 1", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no admitted discriminating oracle is paired with the owner's boundary call (same_test_pairing_missing); a boundary input and a separate exact oracle do not establish that discriminator", "local flow reaches returned value: 1 (line 3)", "related test tests/compounded.rs:4 compounded uses strong exact value oracle: assert_eq!(got, 2);", "source function argument value input = 10 at line 5", "source function argument value input == 10 at line 5", "source assertion argument value 2 at line 7"],
+      "flow_sinks": [
+        {"kind":"return_value","text":"1","line":3}
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Changed behavior appears to influence returned value: 1", "Detected related test input at the changed boundary", "Discriminator unconfirmed: no admitted discriminating oracle is paired with the owner's boundary call (same_test_pairing_missing); a boundary input and a separate exact oracle do not establish that discriminator", "Related tests appear to reach bucket: compounded"],
+      "missing": ["Discriminator unconfirmed: no admitted discriminating oracle is paired with the owner's boundary call (same_test_pairing_missing); a boundary input and a separate exact oracle do not establish that discriminator"],
+      "assertion_texts": {
+        "5": "let mut got = bucket(10);",
+        "7": "assert_eq!(got, 2);"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 5,
+            "value": "input = 10",
+            "context": "function_argument"
+          },
+          {
+            "line": 5,
+            "value": "input == 10",
+            "context": "function_argument",
+            "provenance": "let mut got = bucket(10); | exact input input = 10; literal operand 10 = 10"
+          },
+          {
+            "line": 7,
+            "value": "2",
+            "context": "assertion_argument"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 5,
+          "value": "input = 10",
+          "context": "function_argument"
+        },
+        {
+          "line": 5,
+          "value": "input == 10",
+          "context": "function_argument",
+          "provenance": "let mut got = bucket(10); | exact input input = 10; literal operand 10 = 10"
+        },
+        {
+          "line": 7,
+          "value": "2",
+          "context": "assertion_argument"
+        }
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "compounded",
+          "file": "tests/compounded.rs",
+          "line": 4,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(got, 2);",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high"
+        }
+      ],
+      "stop_reasons": [],
+      "oracle_kind": "exact_value",
+      "oracle_strength": "strong",
+      "recommended_next_step": "Add boundary tests for below, equal, and above the changed threshold with exact assertions.",
+      "suggested_next_action": "Add boundary tests for below, equal, and above the changed threshold with exact assertions.",
+      "language": "rust",
+      "source_currentness": "candidate_current"
+    }
+  ]
+}

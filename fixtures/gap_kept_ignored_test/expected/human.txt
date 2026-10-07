@@ -28,10 +28,10 @@ Start here:
     - 7 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
-  ripr explain --root fixtures/gap_kept_ignored_test/input --diff fixtures/gap_kept_ignored_test/diff.patch --mode fast probe:src_lib.rs:return_value:6ea804bb
-  ripr context --root fixtures/gap_kept_ignored_test/input --diff fixtures/gap_kept_ignored_test/diff.patch --mode fast --at probe:src_lib.rs:return_value:6ea804bb
+  ripr explain --root <cwd>/fixtures/gap_kept_ignored_test/input --diff <cwd>/fixtures/gap_kept_ignored_test/diff.patch --mode fast probe:src_lib.rs:return_value:6ea804bb
+  ripr context --root <cwd>/fixtures/gap_kept_ignored_test/input --diff <cwd>/fixtures/gap_kept_ignored_test/diff.patch --mode fast --at probe:src_lib.rs:return_value:6ea804bb
 Write a test for it:
-  ripr agent stub --root fixtures/gap_kept_ignored_test/input --at src/lib.rs:2
+  ripr agent stub --root <cwd>/fixtures/gap_kept_ignored_test/input --at src/lib.rs:2
 
 More:
   Full evidence: rerun with --format human-full

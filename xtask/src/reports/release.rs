@@ -152,6 +152,7 @@ fn build_release_readiness_report(version: &str) -> ReleaseReadinessReport {
         github_workflow_check(&installed_binary),
         vsix_packaging_check(),
         extension_version_match_check(version, crate_version.as_deref()),
+        init_pin_version_check(version),
         known_limits_docs_check(),
     ];
     let status = release_readiness_status(&checks).to_string();
@@ -2814,6 +2815,155 @@ fn extension_version_check_from(
     }
 }
 
+const INIT_WORKFLOW_SOURCE: &str = "crates/ripr/src/cli/commands/init_workflow.rs";
+
+fn init_pin_version_check(version: &str) -> ReleaseReadinessCheck {
+    let pinned = fs::read_to_string(INIT_WORKFLOW_SOURCE)
+        .ok()
+        .and_then(|source| latest_released_version_in(&source));
+    let release_commit = fs::read_to_string("CHANGELOG.md")
+        .ok()
+        .map(|changelog| changelog_has_release_heading(&changelog, version));
+    init_pin_version_check_from(version, pinned.as_deref(), release_commit)
+}
+
+/// `X.Y.Z` as numbers; `None` for anything else, prerelease included.
+fn stable_version_triplet(version: &str) -> Option<(u64, u64, u64)> {
+    let mut parts = version.split('.').map(|part| part.parse::<u64>().ok());
+    let triplet = (parts.next()??, parts.next()??, parts.next()??);
+    parts.next().is_none().then_some(triplet)
+}
+
+/// The string value of `const LATEST_RELEASED_VERSION: &str = "...";`.
+fn latest_released_version_in(source: &str) -> Option<String> {
+    source.lines().find_map(|line| {
+        let rest = line
+            .trim()
+            .strip_prefix("const LATEST_RELEASED_VERSION: &str = \"")?;
+        let (value, _) = rest.split_once('"')?;
+        Some(value.to_string())
+    })
+}
+
+/// Whether CHANGELOG.md already has the `## <version>` heading the cut's
+/// changelog fold writes. Between releases main carries the next version in
+/// Cargo.toml with no such heading, and CI runs release-readiness on every
+/// main push, so this is what separates the release commit from development.
+fn changelog_has_release_heading(changelog: &str, version: &str) -> bool {
+    changelog.lines().any(|line| {
+        line.strip_prefix("## ")
+            .and_then(|rest| rest.strip_prefix(version))
+            .is_some_and(|tail| tail.is_empty() || tail.starts_with(' '))
+    })
+}
+
+/// `ripr init --ci github` self-pins the generated workflow at or below
+/// `LATEST_RELEASED_VERSION`. A stable release commit must carry the constant
+/// at the release version (docs/RELEASE.md, Post-Publish); otherwise every
+/// published generator pins its predecessor and warns that it is unreleased.
+/// Before the cut (no `## <version>` changelog heading) the constant must name
+/// an earlier release: lagging is the normal development state and only warns,
+/// so main's push CI stays green, while a constant at or past the version
+/// would make development generators pin a release that does not exist. A
+/// release candidate must keep a release older than its stable target (#5208).
+/// `release_commit` is `None` when CHANGELOG.md is unreadable, which fails
+/// rather than silently downgrading the release-head failure to a warning.
+fn init_pin_version_check_from(
+    version: &str,
+    pinned: Option<&str>,
+    release_commit: Option<bool>,
+) -> ReleaseReadinessCheck {
+    let id = "init-pin-version";
+    let command = "compare LATEST_RELEASED_VERSION in crates/ripr/src/cli/commands/init_workflow.rs to the requested release version";
+    let fail = |summary: &str, problem: String| {
+        readiness_check(
+            id,
+            "fail",
+            true,
+            command,
+            summary,
+            Vec::new(),
+            vec![problem],
+        )
+    };
+    let pass = |summary: &str| {
+        readiness_check(
+            id,
+            "pass",
+            true,
+            command,
+            summary,
+            vec![INIT_WORKFLOW_SOURCE.to_string()],
+            Vec::new(),
+        )
+    };
+    let Some(pinned) = pinned else {
+        return fail(
+            "could not read LATEST_RELEASED_VERSION",
+            format!(
+                "no `const LATEST_RELEASED_VERSION: &str = \"...\";` line in {INIT_WORKFLOW_SOURCE}"
+            ),
+        );
+    };
+    let Some(release_commit) = release_commit else {
+        return fail(
+            "could not read CHANGELOG.md to tell the release commit from development",
+            "CHANGELOG.md is missing or unreadable".to_string(),
+        );
+    };
+    let wrong_pin = "generated CI workflows would pin the wrong ripr release";
+    let pinned_triplet = stable_version_triplet(pinned);
+
+    if let Some((stable_target, _)) = version.split_once('-') {
+        return match (pinned_triplet, stable_version_triplet(stable_target)) {
+            (Some(pin), Some(target)) if pin < target => pass(
+                "LATEST_RELEASED_VERSION stays at a release older than the candidate's stable target",
+            ),
+            _ => fail(
+                wrong_pin,
+                format!(
+                    "LATEST_RELEASED_VERSION is {pinned} for release candidate {version}; a candidate keeps the last published stable release, older than {stable_target} (#5208)"
+                ),
+            ),
+        };
+    }
+
+    match (pinned == version, release_commit) {
+        (true, true) => pass("ripr init --ci github pins the release version being cut"),
+        (true, false) => fail(
+            wrong_pin,
+            format!(
+                "LATEST_RELEASED_VERSION is already {version} but CHANGELOG.md has no heading for it; development generators would pin an unpublished release (move the bump into the release commit)"
+            ),
+        ),
+        (false, true) => fail(
+            wrong_pin,
+            format!(
+                "LATEST_RELEASED_VERSION is {pinned} != requested release version {version}; the release commit bumps it with the package version (docs/RELEASE.md, Post-Publish)"
+            ),
+        ),
+        (false, false) => match (pinned_triplet, stable_version_triplet(version)) {
+            (Some(pin), Some(target)) if pin < target => readiness_check(
+                id,
+                "warn",
+                true,
+                command,
+                "not cut yet: CHANGELOG.md has no heading for this version, so the pin lag is expected; the release commit must bump it",
+                Vec::new(),
+                vec![format!(
+                    "LATEST_RELEASED_VERSION is {pinned}; the release commit sets it to {version}"
+                )],
+            ),
+            _ => fail(
+                wrong_pin,
+                format!(
+                    "LATEST_RELEASED_VERSION is {pinned}, not a release older than {version}; development generators would pin a release that does not exist"
+                ),
+            ),
+        },
+    }
+}
+
 fn missing_required_needles(text: &str, required: &[&str]) -> Vec<String> {
     required
         .iter()
@@ -3226,8 +3376,9 @@ mod tests {
     use super::{CI_PACKET_STEP_NEEDLES, ci_packet_steps_missing, ci_summary_first_run_missing};
     use super::{
         EditorVersion, FIRST_SCREEN_NEEDLES, PackageVersion, RELEASE_LOOP_NEEDLES,
-        ReleaseReadinessCheck, ReleaseReadinessReport, create_external_doctor_fixture,
-        extension_version_check_from, extract_packaged_crate, missing_required_needles,
+        ReleaseReadinessCheck, ReleaseReadinessReport, changelog_has_release_heading,
+        create_external_doctor_fixture, extension_version_check_from, extract_packaged_crate,
+        init_pin_version_check_from, latest_released_version_in, missing_required_needles,
         package_version, parse_release_readiness_args, read_crate_version, readiness_check,
         release_readiness_json, release_readiness_markdown, release_readiness_status,
         validate_binary_identity, validate_doctor_result, validate_installed_version,
@@ -3732,6 +3883,151 @@ mod tests {
                 value: lock.map(str::to_string),
             },
         ]
+    }
+
+    #[test]
+    fn init_pin_version_check_binds_the_constant_to_stable_releases() -> Result<(), String> {
+        let source =
+            "const OTHER: &str = \"9.9.9\";\nconst LATEST_RELEASED_VERSION: &str = \"0.10.0\";\n";
+        if latest_released_version_in(source).as_deref() != Some("0.10.0") {
+            return Err("expected to read 0.10.0 from the const line".to_string());
+        }
+        if latest_released_version_in("const OTHER: &str = \"1.0.0\";").is_some() {
+            return Err("an unrelated const must not be read as the pin".to_string());
+        }
+        // The real source must parse, or the readiness check would fail
+        // closed at the cut for a reason unrelated to the bump.
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .ok_or_else(|| "xtask manifest has no parent directory".to_string())?
+            .to_path_buf();
+        let real = fs::read_to_string(root.join(super::INIT_WORKFLOW_SOURCE))
+            .map_err(|err| format!("failed to read init_workflow.rs: {err}"))?;
+        if latest_released_version_in(&real).is_none() {
+            return Err("LATEST_RELEASED_VERSION unreadable in init_workflow.rs".to_string());
+        }
+        for (version, pinned, release_commit, expected, label) in [
+            (
+                "0.11.0",
+                Some("0.11.0"),
+                Some(true),
+                "pass",
+                "release commit, bumped",
+            ),
+            (
+                "0.11.0",
+                Some("0.10.0"),
+                Some(true),
+                "fail",
+                "release commit, not bumped",
+            ),
+            (
+                "0.11.0",
+                Some("0.10.0"),
+                Some(false),
+                "warn",
+                "development, pin lags",
+            ),
+            (
+                "0.11.0",
+                Some("0.11.0"),
+                Some(false),
+                "fail",
+                "bumped before the cut",
+            ),
+            (
+                "0.11.0",
+                Some("0.12.0"),
+                Some(false),
+                "fail",
+                "pin past the version",
+            ),
+            (
+                "0.11.0",
+                Some("garbage"),
+                Some(false),
+                "fail",
+                "malformed pin",
+            ),
+            (
+                "0.11.0",
+                Some("0.10.0"),
+                None,
+                "fail",
+                "unreadable changelog",
+            ),
+            ("0.11.0", None, Some(false), "fail", "unreadable constant"),
+            (
+                "0.11.0-rc.1",
+                Some("0.10.0"),
+                Some(false),
+                "pass",
+                "candidate keeps the pin",
+            ),
+            (
+                "0.11.0-rc.1",
+                Some("0.11.0-rc.1"),
+                Some(false),
+                "fail",
+                "candidate pin",
+            ),
+            (
+                "0.11.0-rc.1",
+                Some("0.11.0"),
+                Some(false),
+                "fail",
+                "candidate's stable target",
+            ),
+            (
+                "0.11.0-rc.1",
+                Some("0.12.0"),
+                Some(false),
+                "fail",
+                "candidate, future pin",
+            ),
+        ] {
+            let check = init_pin_version_check_from(version, pinned, release_commit);
+            if check.status != expected || !check.required {
+                return Err(format!(
+                    "{label}: expected required {expected}, got {}/{}",
+                    check.status, check.required
+                ));
+            }
+        }
+        // CI runs `release-readiness --version <Cargo.toml version>` on every
+        // main push; between releases that must not fail the run.
+        let mut checks = vec![init_pin_version_check_from(
+            "0.11.0",
+            Some("0.10.0"),
+            Some(false),
+        )];
+        if release_readiness_status(&checks) == "fail" {
+            return Err("a development pin lag failed the readiness rollup".to_string());
+        }
+        checks.push(init_pin_version_check_from(
+            "0.11.0",
+            Some("0.10.0"),
+            Some(true),
+        ));
+        if release_readiness_status(&checks) != "fail" {
+            return Err("an unbumped release commit did not fail the rollup".to_string());
+        }
+        let changelog =
+            "# Changelog\n\n## Unreleased\n\n## 0.11.0-rc.1\n## 0.10.0 - Title\n## 0.1.0\n";
+        for (version, expected) in [
+            ("0.10.0", true),
+            ("0.1.0", true),
+            ("0.11.0", false),
+            ("0.11.0-rc.1", true),
+            ("0.1", false),
+        ] {
+            if changelog_has_release_heading(changelog, version) != expected {
+                return Err(format!(
+                    "changelog heading for {version}: expected {expected}"
+                ));
+            }
+        }
+        Ok(())
     }
 
     #[test]

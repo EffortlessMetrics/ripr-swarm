@@ -1,0 +1,22 @@
+{
+  "case_id": "shop-cap-literal-only-expected",
+  "subject_id": "authored-shop",
+  "origin": "authored",
+  "anchor": "pricing/src/lib.rs:84",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "boundary_literal_only_as_expected_value",
+  "hard_case": false,
+  "truth": "not_discriminated",
+  "ideal_verdict": "gap",
+  "observed_verdict": "gap",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "weakly_exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

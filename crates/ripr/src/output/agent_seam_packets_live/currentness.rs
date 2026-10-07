@@ -2,7 +2,7 @@ use crate::agent::artifact::{
     ArtifactCurrentness, RepoExposureArtifactContext, validate_repo_exposure_artifact,
 };
 use crate::agent::loop_commands::{
-    bound_root, bound_root_path, check_repo_exposure_command, lexically_clean, shell_arg,
+    bound_root, bound_root_path, check_repo_exposure_command, clean_bound_path, shell_arg,
 };
 use crate::output::gap_decision_ledger::{
     self, GapDecisionLedgerInput, GapDecisionLedgerSourceKind, GapRecord,
@@ -431,6 +431,37 @@ fn resolve_declared_path(root: &Path, declared: &str) -> PathBuf {
     }
 }
 
+/// Resolve a declared repo-exposure source under the bound root, or `None`
+/// when it escapes the root.
+///
+/// Clean `.`/`..` before the containment check: `Path::starts_with` is
+/// component-wise on the raw path, so an un-normalized
+/// `<root>/../outside.json` would otherwise pass it. The declared path is
+/// cleaned with the same symlink-aware [`clean_bound_path`] as the bound
+/// root, so a root that keeps a `..` after a symlink (#6960) still prefixes
+/// its own sources, relative or absolute. That cleaner keeps a `..` that
+/// follows a symlink, so any `..` left below the root fails closed: it
+/// could leave the root through a symlinked directory. A source that names
+/// the root itself is a directory, not an artifact, and also falls back
+/// (#7017).
+///
+/// Containment is lexical against the root's own spelling. An absolute
+/// source spelled through the root's resolved target (the directory a
+/// symlink-parent root reaches) does not share that spelling and falls
+/// back to the default: a safe false negative, not an escape.
+fn contained_source_path(command_root: &Path, declared: &str) -> Option<PathBuf> {
+    let cleaned = clean_bound_path(&resolve_declared_path(command_root, declared));
+    let below_root = cleaned.strip_prefix(command_root).ok()?;
+    if below_root.as_os_str().is_empty()
+        || below_root
+            .components()
+            .any(|component| !matches!(component, std::path::Component::Normal(_)))
+    {
+        return None;
+    }
+    Some(command_root.join(below_root))
+}
+
 fn refresh_commands(
     root: &Path,
     gap_ledger_path: &Path,
@@ -455,11 +486,7 @@ fn refresh_commands(
     let command_root = bound_root_path(root);
     let default_source = DEFAULT_REPO_EXPOSURE_PATH;
     let source_path = source_path
-        // Clean `.`/`..` lexically before the containment check:
-        // `Path::starts_with` is component-wise on the raw path, so an
-        // un-normalized `<root>/../outside.json` would otherwise pass it.
-        .map(|path| lexically_clean(&resolve_declared_path(&command_root, path)))
-        .filter(|path| path.starts_with(&command_root))
+        .and_then(|path| contained_source_path(&command_root, path))
         .unwrap_or_else(|| command_root.join(default_source));
     let source_display = crate::output::outcome::display_path(&source_path);
     let ledger_display = crate::output::outcome::display_path(gap_ledger_path);
@@ -628,6 +655,91 @@ mod tests {
         Ok(())
     }
 
+    /// #6960 review: a bound root that keeps a `..` after a symlink must
+    /// still keep a declared relative source inside it, and an escaping
+    /// source must still fall back to the default.
+    #[cfg(unix)]
+    #[test]
+    fn declared_source_survives_a_root_that_keeps_a_symlink_parent() -> Result<(), String> {
+        // Removed on drop, so a failed setup step does not leak it (#7005).
+        let scratch = RemoveOnDrop(unique_test_dir("symlink-parent-declared-source"));
+        let base = scratch.0.clone();
+        for dir in ["outside/child", "outside/repo", "work/repo"] {
+            std::fs::create_dir_all(base.join(dir)).map_err(|err| err.to_string())?;
+        }
+        std::os::unix::fs::symlink(base.join("outside/child"), base.join("work/link"))
+            .map_err(|err| err.to_string())?;
+        // A symlink inside the analyzed checkout that points outside it.
+        std::os::unix::fs::symlink(base.join("outside/child"), base.join("outside/repo/escape"))
+            .map_err(|err| err.to_string())?;
+        let root = base.join("work/link/../repo");
+        let bound = bound_root_path(&root);
+        let inside = Some(bound.join("reports/repo-exposure.json"));
+        let absolute = |rel: &str| bound.join(rel).to_string_lossy().into_owned();
+        let cases = [
+            ("reports/repo-exposure.json".to_string(), inside.clone()),
+            (
+                "reports/./x/../repo-exposure.json".to_string(),
+                inside.clone(),
+            ),
+            (absolute("reports/repo-exposure.json"), inside.clone()),
+            (absolute("reports/x/../repo-exposure.json"), inside.clone()),
+            ("../outside.json".to_string(), None),
+            ("reports/../../outside.json".to_string(), None),
+            (absolute("../outside.json"), None),
+            // The root itself is a directory, not a source artifact (#7017).
+            ("".to_string(), None),
+            (".".to_string(), None),
+            ("reports/..".to_string(), None),
+            (absolute(""), None),
+            // `escape/..` resolves to `outside/`, not the checkout.
+            ("escape/../repo-exposure.json".to_string(), None),
+            // The root's resolved spelling does not share its prefix: a safe
+            // false negative that falls back to the default (#7017).
+            (
+                base.join("outside/repo/reports/repo-exposure.json")
+                    .to_string_lossy()
+                    .into_owned(),
+                None,
+            ),
+        ];
+        let results: Vec<_> = cases
+            .iter()
+            .map(|(declared, _)| contained_source_path(&bound, declared))
+            .collect();
+        let absolute_commands = refresh_commands(
+            &root,
+            Path::new("out/gap-ledger.json"),
+            Some("repo_exposure"),
+            Some(&absolute("reports/repo-exposure.json")),
+        );
+        let commands = refresh_commands(
+            &root,
+            Path::new("out/gap-ledger.json"),
+            Some("repo_exposure"),
+            Some("reports/repo-exposure.json"),
+        );
+
+        // Fixture: the root really keeps its `..`.
+        assert_eq!(bound, root);
+        for ((declared, expected), actual) in cases.iter().zip(results) {
+            assert_eq!(&actual, expected, "declared {declared}");
+        }
+        let expected =
+            crate::output::outcome::display_path(&bound.join("reports/repo-exposure.json"));
+        assert!(
+            commands[1].contains(&shell_arg(&expected)),
+            "declared source must survive: {}",
+            commands[1]
+        );
+        assert!(
+            absolute_commands[1].contains(&shell_arg(&expected)),
+            "absolute declared source must survive: {}",
+            absolute_commands[1]
+        );
+        Ok(())
+    }
+
     #[test]
     fn check_output_refresh_is_typed_not_replayable() -> Result<(), String> {
         // #5985: a check output records its base but not whether its scope
@@ -755,6 +867,14 @@ mod tests {
             None,
         );
         assert!(!legacy.refresh_replayable());
+    }
+
+    struct RemoveOnDrop(PathBuf);
+
+    impl Drop for RemoveOnDrop {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
     }
 
     fn unique_test_dir(name: &str) -> PathBuf {

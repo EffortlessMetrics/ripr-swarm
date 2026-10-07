@@ -1,0 +1,28 @@
+pub struct Grid {
+    cols: usize,
+}
+
+impl Grid {
+    pub fn new(cols: usize) -> Grid {
+        assert!(cols > 0, "grid needs columns");
+        Grid { cols }
+    }
+
+    pub fn row_of(&self, index: usize) -> usize {
+        if index >= 100 {
+            panic!("index out of range");
+        }
+        index / self.cols
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    #[should_panic]
+    fn row_of_rejects_large_index() {
+        Grid::new(0).row_of(100);
+    }
+}

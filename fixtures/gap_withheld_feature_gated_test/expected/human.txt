@@ -26,8 +26,8 @@ Start here:
     - 7 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
-  ripr explain --root fixtures/gap_withheld_feature_gated_test/input --diff fixtures/gap_withheld_feature_gated_test/diff.patch --mode fast probe:src_lib.rs:return_value:6ea804bb
-  ripr context --root fixtures/gap_withheld_feature_gated_test/input --diff fixtures/gap_withheld_feature_gated_test/diff.patch --mode fast --at probe:src_lib.rs:return_value:6ea804bb
+  ripr explain --root <cwd>/fixtures/gap_withheld_feature_gated_test/input --diff <cwd>/fixtures/gap_withheld_feature_gated_test/diff.patch --mode fast probe:src_lib.rs:return_value:6ea804bb
+  ripr context --root <cwd>/fixtures/gap_withheld_feature_gated_test/input --diff <cwd>/fixtures/gap_withheld_feature_gated_test/diff.patch --mode fast --at probe:src_lib.rs:return_value:6ea804bb
 
 More:
   Full evidence: rerun with --format human-full

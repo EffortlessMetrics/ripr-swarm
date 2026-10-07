@@ -466,8 +466,19 @@ pub(crate) fn candidate_config_bytes(
         &["show", &format!("{treeish}:ripr.toml")],
         deadline,
     )
-    .map_err(|error| SubjectError::ExecutionFailed {
-        detail: format!("reading candidate ripr.toml failed: {error}"),
+    .map_err(|error| match error {
+        crate::core_error::CoreError::GitInvocationTimeout {
+            operation,
+            timeout_ms,
+            spawned,
+        } => SubjectError::ExecutionTimedOut {
+            operation,
+            timeout_ms,
+            spawned,
+        },
+        other => SubjectError::ExecutionFailed {
+            detail: format!("reading candidate ripr.toml failed: {other}"),
+        },
     })?;
     if !output.status.success() {
         // A tree without a ripr.toml uses the default config.
@@ -761,6 +772,7 @@ mod tests {
             include_unchanged_tests: false,
             resolve_tsconfig_paths: false,
             perl_facts_path: None,
+            perl_producer_failure: None,
             git_timeout: None,
             git_candidate: Some(s.clone()),
             production_like_targets: Default::default(),
@@ -820,6 +832,7 @@ mod tests {
             include_unchanged_tests: false,
             resolve_tsconfig_paths: false,
             perl_facts_path: None,
+            perl_producer_failure: None,
             git_timeout: None,
             git_candidate: Some(subject),
             production_like_targets: Default::default(),

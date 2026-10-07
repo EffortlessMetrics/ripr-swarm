@@ -1,0 +1,59 @@
+{
+  "case_id": "trap-fine-declared-test-file-control",
+  "subject_id": "authored-trap-reach",
+  "diff": "cases/trap-fine-declared-test-file-control.diff",
+  "anchor": {
+    "file": "src/fines.rs",
+    "line": 2
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "test_in_declared_source_file",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "base * 38",
+        "mutated_line": "base * 38",
+        "outcome": "tests_failed",
+        "failing_test": "fines_tests::fine_is_seventy_four",
+        "equivalence_review": "not equivalent: replaces `37 * base` with `base * 38`, which changes the result"
+      },
+      {
+        "replacement": "base + 37",
+        "mutated_line": "base + 37",
+        "outcome": "tests_failed",
+        "failing_test": "fines_tests::fine_is_seventy_four",
+        "equivalence_review": "not equivalent: replaces `37 * base` with `base + 37`, which changes the result"
+      },
+      {
+        "replacement": "base * 36",
+        "mutated_line": "base * 36",
+        "outcome": "tests_failed",
+        "failing_test": "fines_tests::fine_is_seventy_four",
+        "equivalence_review": "not equivalent: replaces `37 * base` with `base * 36`, which changes the result"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "Negative control for trap-spare-undeclared-test-file: the same out-of-line test file shape, declared with `#[cfg(test)] mod fines_tests;` in lib.rs, so fine_is_seventy_four runs and pins fine(2) == 74.",
+  "labeling_observation": {
+    "ripr_commit": "fce75e1",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

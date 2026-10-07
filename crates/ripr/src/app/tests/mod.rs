@@ -16,8 +16,12 @@ mod preview_analyzed_outcome;
 mod python_test_note;
 // Drives the Python adapter end to end through `check_workspace_with_config`.
 #[cfg(feature = "lang-python")]
+mod python_family_selection_packets;
+#[cfg(feature = "lang-python")]
 mod python_packet_eligibility;
 mod rendering_contracts;
+#[cfg(feature = "lang-typescript")]
+mod typescript_family_selection_packets;
 
 fn sample_finding(file: &str, line: usize) -> Finding {
     Finding {

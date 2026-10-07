@@ -3,7 +3,7 @@
   "tool": "ripr",
   "mode": "fast",
   "root": "fixtures/scanner_controls/input",
-  "summary": {"changed_rust_files":1,"probes":4,"findings":4,"exposed":0,"weakly_exposed":4,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":0,"propagation_unknown":0,"static_unknown":0,"changed_files_by_language":[{"language":"rust","files":1}]},
+  "summary": {"changed_rust_files":1,"probes":4,"findings":4,"exposed":0,"weakly_exposed":0,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":4,"propagation_unknown":0,"static_unknown":0,"changed_files_by_language":[{"language":"rust","files":1}]},
   "analysis_outcome": {
     "analysis_complete": true,
     "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":null,"base_revision":null,"input_identity":"sha256:a6f9e10ab475c277839df90bb9f4d78969c48a778f34050b11f7e71ff85ebb90","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":8,"candidate_line_count":4,"probe_count":4,"finding_count":4},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
@@ -23,9 +23,9 @@
         "normalized_discriminator": "final_state==lit74657874"
 
       },
-      "classification": "weakly_exposed",
+      "classification": "infection_unknown",
       "severity": "warning",
-      "confidence": 0.92,
+      "confidence": 0.66,
       "probe": {
         "id": "probe:src_lib.rs:predicate:f4ed635d",
         "family": "predicate",
@@ -36,17 +36,17 @@
        },
       "ripr": {
         "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach classify_bound: bound_long_trailing_space_is_blank, bound_long_word_is_word"},
-        "infect": {"state":"weak","confidence":"medium","summary":"Related tests contain input values, but the equality-boundary discriminator is missing"},
+        "infect": {"state":"unknown","confidence":"low","summary":"Changed boundary input is unresolved: boundary operand `final_state` is a local or computed value ripr cannot map to the related tests' inputs, so it cannot tell which side of the boundary a test reaches; activation/infection is unknown"},
         "propagate": {"state":"yes","confidence":"medium","summary":"Changed behavior appears to influence returned value: \"word\""},
         "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
         "discriminate": {"state":"yes","confidence":"medium","summary":"Strong oracle found: exact value or pattern assertion"}
        },
-      "evidence_path": ["reach yes: Related tests appear to reach classify_bound: bound_long_trailing_space_is_blank, bound_long_word_is_word", "infection weak: Related tests contain input values, but the equality-boundary discriminator is missing", "propagation yes: Changed behavior appears to influence returned value: \"word\"", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator missing: `final_state == \"text\"`; related oracle: Strong oracle found: exact value or pattern assertion", "local flow reaches returned value: \"word\" (line 17)", "related test tests/classify.rs:12 bound_long_trailing_space_is_blank uses strong exact value oracle: assert_eq!(classify_bound(\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \"), \"blank\");", "related test tests/classify.rs:7 bound_long_word_is_word uses strong exact value oracle: assert_eq!(classify_bound(\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"), \"word\");", "source assertion argument value \"word\" at line 8", "source function argument value input = \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\" at line 8", "source assertion argument value \"blank\" at line 13", "source function argument value input = \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \" at line 13", "missing discriminator final_state == \"text\": No related test call uses final_state equal to \"text\"; observed final_state values: unknown; target \"text\" value: \"text\""],
+      "evidence_path": ["reach yes: Related tests appear to reach classify_bound: bound_long_trailing_space_is_blank, bound_long_word_is_word", "infection unknown: Changed boundary input is unresolved: boundary operand `final_state` is a local or computed value ripr cannot map to the related tests' inputs, so it cannot tell which side of the boundary a test reaches; activation/infection is unknown", "propagation yes: Changed behavior appears to influence returned value: \"word\"", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator not established (infection_unknown); related oracle: Strong oracle found: exact value or pattern assertion", "local flow reaches returned value: \"word\" (line 17)", "related test tests/classify.rs:12 bound_long_trailing_space_is_blank uses strong exact value oracle: assert_eq!(classify_bound(\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \"), \"blank\");", "related test tests/classify.rs:7 bound_long_word_is_word uses strong exact value oracle: assert_eq!(classify_bound(\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"), \"word\");", "source assertion argument value \"word\" at line 8", "source function argument value input = \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\" at line 8", "source assertion argument value \"blank\" at line 13", "source function argument value input = \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \" at line 13"],
       "flow_sinks": [
         {"kind":"return_value","text":"\"word\"","line":17}
       ],
-      "evidence": ["A related test observes a value or effect near the changed behavior", "Changed behavior appears to influence returned value: \"word\"", "Related tests appear to reach classify_bound: bound_long_trailing_space_is_blank, bound_long_word_is_word", "Related tests contain input values, but the equality-boundary discriminator is missing", "Strong oracle found: exact value or pattern assertion"],
-      "missing": ["Missing discriminator value: final_state == \"text\""],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Changed behavior appears to influence returned value: \"word\"", "Changed boundary input is unresolved: boundary operand `final_state` is a local or computed value ripr cannot map to the related tests' inputs, so it cannot tell which side of the boundary a test reaches; activation/infection is unknown", "Related tests appear to reach classify_bound: bound_long_trailing_space_is_blank, bound_long_word_is_word", "Strong oracle found: exact value or pattern assertion"],
+      "missing": ["Changed boundary input is unresolved: boundary operand `final_state` is a local or computed value ripr cannot map to the related tests' inputs, so it cannot tell which side of the boundary a test reaches; activation/infection is unknown", "No detected boundary input for the changed predicate"],
       "assertion_texts": {
         "8": "assert_eq!(classify_bound(\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"), \"word\");",
         "13": "assert_eq!(classify_bound(\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \"), \"blank\");"
@@ -75,11 +75,6 @@
           }
         ],
         "missing_discriminators": [
-          {
-            "value": "final_state == \"text\"",
-            "reason": "No related test call uses final_state equal to \"text\"; observed final_state values: unknown; target \"text\" value: \"text\"",
-            "flow_sink": {"kind":"return_value","text":"\"word\"","line":17}
-          }
         ]
       },
       "observed_values": [
@@ -105,11 +100,6 @@
         }
       ],
       "missing_discriminators": [
-        {
-          "value": "final_state == \"text\"",
-          "reason": "No related test call uses final_state equal to \"text\"; observed final_state values: unknown; target \"text\" value: \"text\"",
-          "flow_sink": {"kind":"return_value","text":"\"word\"","line":17}
-        }
       ],
       "related_tests_total": 2,
       "related_tests": [
@@ -121,9 +111,7 @@
           "oracle_kind": "exact_value",
           "oracle": "assert_eq!(classify_bound(\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \"), \"blank\");",
           "relation_reason": "direct_owner_call",
-          "relation_confidence": "high",
-          "miss": "missing_input",
-          "why": "no test input reaches `final_state == \"text\"`"
+          "relation_confidence": "high"
         },
         {
           "name": "bound_long_word_is_word",
@@ -133,16 +121,14 @@
           "oracle_kind": "exact_value",
           "oracle": "assert_eq!(classify_bound(\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"), \"word\");",
           "relation_reason": "direct_owner_call",
-          "relation_confidence": "high",
-          "miss": "missing_input",
-          "why": "no test input reaches `final_state == \"text\"`"
+          "relation_confidence": "high"
         }
       ],
-      "stop_reasons": [],
+      "stop_reasons": ["infection_evidence_unknown"],
       "oracle_kind": "exact_value",
       "oracle_strength": "strong",
-      "recommended_next_step": "Add boundary tests for below, equal, and above the changed threshold with exact assertions.",
-      "suggested_next_action": "Add boundary tests for below, equal, and above the changed threshold with exact assertions.",
+      "recommended_next_step": "Add a targeted boundary or negative-path test, or teach ripr about the fixture/builder in ripr.toml.",
+      "suggested_next_action": "Add a targeted boundary or negative-path test, or teach ripr about the fixture/builder in ripr.toml.",
       "language": "rust",
       "source_currentness": "candidate_current"
     },
@@ -160,9 +146,9 @@
         "normalized_discriminator": "final_state==lit74657874"
 
       },
-      "classification": "weakly_exposed",
+      "classification": "infection_unknown",
       "severity": "warning",
-      "confidence": 0.92,
+      "confidence": 0.66,
       "probe": {
         "id": "probe:src_lib.rs:predicate:10d9563b",
         "family": "predicate",
@@ -173,17 +159,17 @@
        },
       "ripr": {
         "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach classify_trim: trimmed_trailing_space_is_word, trimmed_word_is_word"},
-        "infect": {"state":"weak","confidence":"medium","summary":"Related tests contain input values, but the equality-boundary discriminator is missing"},
+        "infect": {"state":"unknown","confidence":"low","summary":"Changed boundary input is unresolved: boundary operand `final_state` is a local or computed value ripr cannot map to the related tests' inputs, so it cannot tell which side of the boundary a test reaches; activation/infection is unknown"},
         "propagate": {"state":"yes","confidence":"medium","summary":"Changed behavior appears to influence returned value: \"word\""},
         "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
         "discriminate": {"state":"yes","confidence":"medium","summary":"Strong oracle found: exact value or pattern assertion"}
        },
-      "evidence_path": ["reach yes: Related tests appear to reach classify_trim: trimmed_trailing_space_is_word, trimmed_word_is_word", "infection weak: Related tests contain input values, but the equality-boundary discriminator is missing", "propagation yes: Changed behavior appears to influence returned value: \"word\"", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator missing: `final_state == \"text\"`; related oracle: Strong oracle found: exact value or pattern assertion", "local flow reaches returned value: \"word\" (line 39)", "related test tests/classify.rs:22 trimmed_trailing_space_is_word uses strong exact value oracle: assert_eq!(classify_trim(\"ab \"), \"word\");", "related test tests/classify.rs:17 trimmed_word_is_word uses strong exact value oracle: assert_eq!(classify_trim(\"ab\"), \"word\");", "source assertion argument value \"word\" at line 18", "source function argument value input = \"ab\" at line 18", "source assertion argument value \"word\" at line 23", "source function argument value input = \"ab \" at line 23", "missing discriminator final_state == \"text\": No related test call uses final_state equal to \"text\"; observed final_state values: unknown; target \"text\" value: \"text\""],
+      "evidence_path": ["reach yes: Related tests appear to reach classify_trim: trimmed_trailing_space_is_word, trimmed_word_is_word", "infection unknown: Changed boundary input is unresolved: boundary operand `final_state` is a local or computed value ripr cannot map to the related tests' inputs, so it cannot tell which side of the boundary a test reaches; activation/infection is unknown", "propagation yes: Changed behavior appears to influence returned value: \"word\"", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator not established (infection_unknown); related oracle: Strong oracle found: exact value or pattern assertion", "local flow reaches returned value: \"word\" (line 39)", "related test tests/classify.rs:22 trimmed_trailing_space_is_word uses strong exact value oracle: assert_eq!(classify_trim(\"ab \"), \"word\");", "related test tests/classify.rs:17 trimmed_word_is_word uses strong exact value oracle: assert_eq!(classify_trim(\"ab\"), \"word\");", "source assertion argument value \"word\" at line 18", "source function argument value input = \"ab\" at line 18", "source assertion argument value \"word\" at line 23", "source function argument value input = \"ab \" at line 23"],
       "flow_sinks": [
         {"kind":"return_value","text":"\"word\"","line":39}
       ],
-      "evidence": ["A related test observes a value or effect near the changed behavior", "Changed behavior appears to influence returned value: \"word\"", "Related tests appear to reach classify_trim: trimmed_trailing_space_is_word, trimmed_word_is_word", "Related tests contain input values, but the equality-boundary discriminator is missing", "Strong oracle found: exact value or pattern assertion"],
-      "missing": ["Missing discriminator value: final_state == \"text\""],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Changed behavior appears to influence returned value: \"word\"", "Changed boundary input is unresolved: boundary operand `final_state` is a local or computed value ripr cannot map to the related tests' inputs, so it cannot tell which side of the boundary a test reaches; activation/infection is unknown", "Related tests appear to reach classify_trim: trimmed_trailing_space_is_word, trimmed_word_is_word", "Strong oracle found: exact value or pattern assertion"],
+      "missing": ["Changed boundary input is unresolved: boundary operand `final_state` is a local or computed value ripr cannot map to the related tests' inputs, so it cannot tell which side of the boundary a test reaches; activation/infection is unknown", "No detected boundary input for the changed predicate"],
       "assertion_texts": {
         "18": "assert_eq!(classify_trim(\"ab\"), \"word\");",
         "23": "assert_eq!(classify_trim(\"ab \"), \"word\");"
@@ -212,11 +198,6 @@
           }
         ],
         "missing_discriminators": [
-          {
-            "value": "final_state == \"text\"",
-            "reason": "No related test call uses final_state equal to \"text\"; observed final_state values: unknown; target \"text\" value: \"text\"",
-            "flow_sink": {"kind":"return_value","text":"\"word\"","line":39}
-          }
         ]
       },
       "observed_values": [
@@ -242,11 +223,6 @@
         }
       ],
       "missing_discriminators": [
-        {
-          "value": "final_state == \"text\"",
-          "reason": "No related test call uses final_state equal to \"text\"; observed final_state values: unknown; target \"text\" value: \"text\"",
-          "flow_sink": {"kind":"return_value","text":"\"word\"","line":39}
-        }
       ],
       "related_tests_total": 2,
       "related_tests": [
@@ -258,9 +234,7 @@
           "oracle_kind": "exact_value",
           "oracle": "assert_eq!(classify_trim(\"ab \"), \"word\");",
           "relation_reason": "direct_owner_call",
-          "relation_confidence": "high",
-          "miss": "missing_input",
-          "why": "no test input reaches `final_state == \"text\"`"
+          "relation_confidence": "high"
         },
         {
           "name": "trimmed_word_is_word",
@@ -270,16 +244,14 @@
           "oracle_kind": "exact_value",
           "oracle": "assert_eq!(classify_trim(\"ab\"), \"word\");",
           "relation_reason": "direct_owner_call",
-          "relation_confidence": "high",
-          "miss": "missing_input",
-          "why": "no test input reaches `final_state == \"text\"`"
+          "relation_confidence": "high"
         }
       ],
-      "stop_reasons": [],
+      "stop_reasons": ["infection_evidence_unknown"],
       "oracle_kind": "exact_value",
       "oracle_strength": "strong",
-      "recommended_next_step": "Add boundary tests for below, equal, and above the changed threshold with exact assertions.",
-      "suggested_next_action": "Add boundary tests for below, equal, and above the changed threshold with exact assertions.",
+      "recommended_next_step": "Add a targeted boundary or negative-path test, or teach ripr about the fixture/builder in ripr.toml.",
+      "suggested_next_action": "Add a targeted boundary or negative-path test, or teach ripr about the fixture/builder in ripr.toml.",
       "language": "rust",
       "source_currentness": "candidate_current"
     },
@@ -297,9 +269,9 @@
         "normalized_discriminator": "final_state==lit74657874"
 
       },
-      "classification": "weakly_exposed",
+      "classification": "infection_unknown",
       "severity": "warning",
-      "confidence": 0.92,
+      "confidence": 0.66,
       "probe": {
         "id": "probe:src_lib.rs:predicate:df1a9a22",
         "family": "predicate",
@@ -310,17 +282,17 @@
        },
       "ripr": {
         "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach classify_computed: computed_space_is_blank, computed_word_is_word"},
-        "infect": {"state":"weak","confidence":"medium","summary":"Related tests contain input values, but the equality-boundary discriminator is missing"},
+        "infect": {"state":"unknown","confidence":"low","summary":"Changed boundary input is unresolved: boundary operand `final_state` is a local or computed value ripr cannot map to the related tests' inputs, so it cannot tell which side of the boundary a test reaches; activation/infection is unknown"},
         "propagate": {"state":"yes","confidence":"medium","summary":"Changed behavior appears to influence returned value: \"word\""},
         "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
         "discriminate": {"state":"yes","confidence":"medium","summary":"Strong oracle found: exact value or pattern assertion"}
        },
-      "evidence_path": ["reach yes: Related tests appear to reach classify_computed: computed_space_is_blank, computed_word_is_word", "infection weak: Related tests contain input values, but the equality-boundary discriminator is missing", "propagation yes: Changed behavior appears to influence returned value: \"word\"", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator missing: `final_state == \"text\"`; related oracle: Strong oracle found: exact value or pattern assertion", "local flow reaches returned value: \"word\" (line 65)", "related test tests/classify.rs:32 computed_space_is_blank uses strong exact value oracle: assert_eq!(classify_computed(\" \"), \"blank\");", "related test tests/classify.rs:27 computed_word_is_word uses strong exact value oracle: assert_eq!(classify_computed(\"ab\"), \"word\");", "source assertion argument value \"word\" at line 28", "source function argument value input = \"ab\" at line 28", "source assertion argument value \"blank\" at line 33", "source function argument value input = \" \" at line 33", "missing discriminator final_state == \"text\": No related test call uses final_state equal to \"text\"; observed final_state values: unknown; target \"text\" value: \"text\""],
+      "evidence_path": ["reach yes: Related tests appear to reach classify_computed: computed_space_is_blank, computed_word_is_word", "infection unknown: Changed boundary input is unresolved: boundary operand `final_state` is a local or computed value ripr cannot map to the related tests' inputs, so it cannot tell which side of the boundary a test reaches; activation/infection is unknown", "propagation yes: Changed behavior appears to influence returned value: \"word\"", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator not established (infection_unknown); related oracle: Strong oracle found: exact value or pattern assertion", "local flow reaches returned value: \"word\" (line 65)", "related test tests/classify.rs:32 computed_space_is_blank uses strong exact value oracle: assert_eq!(classify_computed(\" \"), \"blank\");", "related test tests/classify.rs:27 computed_word_is_word uses strong exact value oracle: assert_eq!(classify_computed(\"ab\"), \"word\");", "source assertion argument value \"word\" at line 28", "source function argument value input = \"ab\" at line 28", "source assertion argument value \"blank\" at line 33", "source function argument value input = \" \" at line 33"],
       "flow_sinks": [
         {"kind":"return_value","text":"\"word\"","line":65}
       ],
-      "evidence": ["A related test observes a value or effect near the changed behavior", "Changed behavior appears to influence returned value: \"word\"", "Related tests appear to reach classify_computed: computed_space_is_blank, computed_word_is_word", "Related tests contain input values, but the equality-boundary discriminator is missing", "Strong oracle found: exact value or pattern assertion"],
-      "missing": ["Missing discriminator value: final_state == \"text\""],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Changed behavior appears to influence returned value: \"word\"", "Changed boundary input is unresolved: boundary operand `final_state` is a local or computed value ripr cannot map to the related tests' inputs, so it cannot tell which side of the boundary a test reaches; activation/infection is unknown", "Related tests appear to reach classify_computed: computed_space_is_blank, computed_word_is_word", "Strong oracle found: exact value or pattern assertion"],
+      "missing": ["Changed boundary input is unresolved: boundary operand `final_state` is a local or computed value ripr cannot map to the related tests' inputs, so it cannot tell which side of the boundary a test reaches; activation/infection is unknown", "No detected boundary input for the changed predicate"],
       "assertion_texts": {
         "28": "assert_eq!(classify_computed(\"ab\"), \"word\");",
         "33": "assert_eq!(classify_computed(\" \"), \"blank\");"
@@ -349,11 +321,6 @@
           }
         ],
         "missing_discriminators": [
-          {
-            "value": "final_state == \"text\"",
-            "reason": "No related test call uses final_state equal to \"text\"; observed final_state values: unknown; target \"text\" value: \"text\"",
-            "flow_sink": {"kind":"return_value","text":"\"word\"","line":65}
-          }
         ]
       },
       "observed_values": [
@@ -379,11 +346,6 @@
         }
       ],
       "missing_discriminators": [
-        {
-          "value": "final_state == \"text\"",
-          "reason": "No related test call uses final_state equal to \"text\"; observed final_state values: unknown; target \"text\" value: \"text\"",
-          "flow_sink": {"kind":"return_value","text":"\"word\"","line":65}
-        }
       ],
       "related_tests_total": 2,
       "related_tests": [
@@ -395,9 +357,7 @@
           "oracle_kind": "exact_value",
           "oracle": "assert_eq!(classify_computed(\" \"), \"blank\");",
           "relation_reason": "direct_owner_call",
-          "relation_confidence": "high",
-          "miss": "missing_input",
-          "why": "no test input reaches `final_state == \"text\"`"
+          "relation_confidence": "high"
         },
         {
           "name": "computed_word_is_word",
@@ -407,16 +367,14 @@
           "oracle_kind": "exact_value",
           "oracle": "assert_eq!(classify_computed(\"ab\"), \"word\");",
           "relation_reason": "direct_owner_call",
-          "relation_confidence": "high",
-          "miss": "missing_input",
-          "why": "no test input reaches `final_state == \"text\"`"
+          "relation_confidence": "high"
         }
       ],
-      "stop_reasons": [],
+      "stop_reasons": ["infection_evidence_unknown"],
       "oracle_kind": "exact_value",
       "oracle_strength": "strong",
-      "recommended_next_step": "Add boundary tests for below, equal, and above the changed threshold with exact assertions.",
-      "suggested_next_action": "Add boundary tests for below, equal, and above the changed threshold with exact assertions.",
+      "recommended_next_step": "Add a targeted boundary or negative-path test, or teach ripr about the fixture/builder in ripr.toml.",
+      "suggested_next_action": "Add a targeted boundary or negative-path test, or teach ripr about the fixture/builder in ripr.toml.",
       "language": "rust",
       "source_currentness": "candidate_current"
     },
@@ -434,9 +392,9 @@
         "normalized_discriminator": "final_state==lit74657874"
 
       },
-      "classification": "weakly_exposed",
+      "classification": "infection_unknown",
       "severity": "warning",
-      "confidence": 0.92,
+      "confidence": 0.66,
       "probe": {
         "id": "probe:src_lib.rs:predicate:ab4a8a0d",
         "family": "predicate",
@@ -447,17 +405,17 @@
        },
       "ripr": {
         "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach classify_bare: bare_space_is_blank, bare_word_is_word"},
-        "infect": {"state":"weak","confidence":"medium","summary":"Related tests contain input values, but the equality-boundary discriminator is missing"},
+        "infect": {"state":"unknown","confidence":"low","summary":"Changed boundary input is unresolved: boundary operand `final_state` is a local or computed value ripr cannot map to the related tests' inputs, so it cannot tell which side of the boundary a test reaches; activation/infection is unknown"},
         "propagate": {"state":"yes","confidence":"medium","summary":"Changed behavior appears to influence returned value: \"word\""},
         "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
         "discriminate": {"state":"yes","confidence":"medium","summary":"Strong oracle found: exact value or pattern assertion"}
        },
-      "evidence_path": ["reach yes: Related tests appear to reach classify_bare: bare_space_is_blank, bare_word_is_word", "infection weak: Related tests contain input values, but the equality-boundary discriminator is missing", "propagation yes: Changed behavior appears to influence returned value: \"word\"", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator missing: `final_state == \"text\"`; related oracle: Strong oracle found: exact value or pattern assertion", "local flow reaches returned value: \"word\" (line 88)", "related test tests/classify.rs:42 bare_space_is_blank uses strong exact value oracle: assert_eq!(classify_bare(\" \"), \"blank\");", "related test tests/classify.rs:37 bare_word_is_word uses strong exact value oracle: assert_eq!(classify_bare(\"ab\"), \"word\");", "source assertion argument value \"word\" at line 38", "source function argument value input = \"ab\" at line 38", "source assertion argument value \"blank\" at line 43", "source function argument value input = \" \" at line 43", "missing discriminator final_state == \"text\": No related test call uses final_state equal to \"text\"; observed final_state values: unknown; target \"text\" value: \"text\""],
+      "evidence_path": ["reach yes: Related tests appear to reach classify_bare: bare_space_is_blank, bare_word_is_word", "infection unknown: Changed boundary input is unresolved: boundary operand `final_state` is a local or computed value ripr cannot map to the related tests' inputs, so it cannot tell which side of the boundary a test reaches; activation/infection is unknown", "propagation yes: Changed behavior appears to influence returned value: \"word\"", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator not established (infection_unknown); related oracle: Strong oracle found: exact value or pattern assertion", "local flow reaches returned value: \"word\" (line 88)", "related test tests/classify.rs:42 bare_space_is_blank uses strong exact value oracle: assert_eq!(classify_bare(\" \"), \"blank\");", "related test tests/classify.rs:37 bare_word_is_word uses strong exact value oracle: assert_eq!(classify_bare(\"ab\"), \"word\");", "source assertion argument value \"word\" at line 38", "source function argument value input = \"ab\" at line 38", "source assertion argument value \"blank\" at line 43", "source function argument value input = \" \" at line 43"],
       "flow_sinks": [
         {"kind":"return_value","text":"\"word\"","line":88}
       ],
-      "evidence": ["A related test observes a value or effect near the changed behavior", "Changed behavior appears to influence returned value: \"word\"", "Related tests appear to reach classify_bare: bare_space_is_blank, bare_word_is_word", "Related tests contain input values, but the equality-boundary discriminator is missing", "Strong oracle found: exact value or pattern assertion"],
-      "missing": ["Missing discriminator value: final_state == \"text\""],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Changed behavior appears to influence returned value: \"word\"", "Changed boundary input is unresolved: boundary operand `final_state` is a local or computed value ripr cannot map to the related tests' inputs, so it cannot tell which side of the boundary a test reaches; activation/infection is unknown", "Related tests appear to reach classify_bare: bare_space_is_blank, bare_word_is_word", "Strong oracle found: exact value or pattern assertion"],
+      "missing": ["Changed boundary input is unresolved: boundary operand `final_state` is a local or computed value ripr cannot map to the related tests' inputs, so it cannot tell which side of the boundary a test reaches; activation/infection is unknown", "No detected boundary input for the changed predicate"],
       "assertion_texts": {
         "38": "assert_eq!(classify_bare(\"ab\"), \"word\");",
         "43": "assert_eq!(classify_bare(\" \"), \"blank\");"
@@ -486,11 +444,6 @@
           }
         ],
         "missing_discriminators": [
-          {
-            "value": "final_state == \"text\"",
-            "reason": "No related test call uses final_state equal to \"text\"; observed final_state values: unknown; target \"text\" value: \"text\"",
-            "flow_sink": {"kind":"return_value","text":"\"word\"","line":88}
-          }
         ]
       },
       "observed_values": [
@@ -516,11 +469,6 @@
         }
       ],
       "missing_discriminators": [
-        {
-          "value": "final_state == \"text\"",
-          "reason": "No related test call uses final_state equal to \"text\"; observed final_state values: unknown; target \"text\" value: \"text\"",
-          "flow_sink": {"kind":"return_value","text":"\"word\"","line":88}
-        }
       ],
       "related_tests_total": 2,
       "related_tests": [
@@ -532,9 +480,7 @@
           "oracle_kind": "exact_value",
           "oracle": "assert_eq!(classify_bare(\" \"), \"blank\");",
           "relation_reason": "direct_owner_call",
-          "relation_confidence": "high",
-          "miss": "missing_input",
-          "why": "no test input reaches `final_state == \"text\"`"
+          "relation_confidence": "high"
         },
         {
           "name": "bare_word_is_word",
@@ -544,16 +490,14 @@
           "oracle_kind": "exact_value",
           "oracle": "assert_eq!(classify_bare(\"ab\"), \"word\");",
           "relation_reason": "direct_owner_call",
-          "relation_confidence": "high",
-          "miss": "missing_input",
-          "why": "no test input reaches `final_state == \"text\"`"
+          "relation_confidence": "high"
         }
       ],
-      "stop_reasons": [],
+      "stop_reasons": ["infection_evidence_unknown"],
       "oracle_kind": "exact_value",
       "oracle_strength": "strong",
-      "recommended_next_step": "Add boundary tests for below, equal, and above the changed threshold with exact assertions.",
-      "suggested_next_action": "Add boundary tests for below, equal, and above the changed threshold with exact assertions.",
+      "recommended_next_step": "Add a targeted boundary or negative-path test, or teach ripr about the fixture/builder in ripr.toml.",
+      "suggested_next_action": "Add a targeted boundary or negative-path test, or teach ripr about the fixture/builder in ripr.toml.",
       "language": "rust",
       "source_currentness": "candidate_current"
     }

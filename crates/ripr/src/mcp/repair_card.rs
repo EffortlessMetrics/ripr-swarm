@@ -476,7 +476,7 @@ mod tests {
             seam,
             evidence: TestGripEvidence {
                 seam_id,
-                related_tests: vec![RelatedTestGrip {
+                related_tests: vec![Arc::new(RelatedTestGrip {
                     test_name: "discounted_total_boundary".to_string(),
                     file: PathBuf::from("tests/pricing.rs"),
                     line: 12,
@@ -490,7 +490,7 @@ mod tests {
                     evidence_summary: "asserts the discounted total".to_string(),
                     relation_reason: crate::domain::RelationReason::DirectOwnerCall,
                     relation_confidence: crate::domain::RelationConfidence::High,
-                }],
+                })],
                 reach: stage(crate::domain::StageState::Yes),
                 activate: stage(crate::domain::StageState::Yes),
                 propagate: stage(crate::domain::StageState::Yes),

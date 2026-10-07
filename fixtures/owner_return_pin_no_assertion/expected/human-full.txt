@@ -41,5 +41,5 @@ Weakness
 Next step
   Add a meaningful assertion that observes the changed value, branch, error, field, event, or side effect.
 Drill in:
-  ripr explain --root fixtures/owner_return_pin_no_assertion/input --diff fixtures/owner_return_pin_no_assertion/diff.patch --mode fast probe:src_lib.rs:return_value:6ea804bb
-  ripr context --root fixtures/owner_return_pin_no_assertion/input --diff fixtures/owner_return_pin_no_assertion/diff.patch --mode fast --at probe:src_lib.rs:return_value:6ea804bb
+  ripr explain --root <cwd>/fixtures/owner_return_pin_no_assertion/input --diff <cwd>/fixtures/owner_return_pin_no_assertion/diff.patch --mode fast probe:src_lib.rs:return_value:6ea804bb
+  ripr context --root <cwd>/fixtures/owner_return_pin_no_assertion/input --diff <cwd>/fixtures/owner_return_pin_no_assertion/diff.patch --mode fast --at probe:src_lib.rs:return_value:6ea804bb

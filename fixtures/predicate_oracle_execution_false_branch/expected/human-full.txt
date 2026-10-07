@@ -11,7 +11,7 @@ WARNING ./src/lib.rs:2
   id: probe:src_lib.rs:predicate:c80557eb
 
 Changed
-  before: if amount > discount_threshold {
+  before: amount > discount_threshold
   after:  amount >= discount_threshold
 
 Probe
@@ -43,5 +43,5 @@ Weakness
 Next step
   ripr did not credit the `assert_eq!` in equality_threshold_discounts at src/lib.rs:14; the "not credited" note says why. That shape can keep the assertion from checking the change, so this is not a static limit: make the check run on every default test run, as the standard `assert_eq!`, in a test expected to pass.
 Drill in:
-  ripr explain --root fixtures/predicate_oracle_execution_false_branch/input --diff fixtures/predicate_oracle_execution_false_branch/diff.patch --mode fast probe:src_lib.rs:predicate:c80557eb
-  ripr context --root fixtures/predicate_oracle_execution_false_branch/input --diff fixtures/predicate_oracle_execution_false_branch/diff.patch --mode fast --at probe:src_lib.rs:predicate:c80557eb
+  ripr explain --root <cwd>/fixtures/predicate_oracle_execution_false_branch/input --diff <cwd>/fixtures/predicate_oracle_execution_false_branch/diff.patch --mode fast probe:src_lib.rs:predicate:c80557eb
+  ripr context --root <cwd>/fixtures/predicate_oracle_execution_false_branch/input --diff <cwd>/fixtures/predicate_oracle_execution_false_branch/diff.patch --mode fast --at probe:src_lib.rs:predicate:c80557eb

@@ -21,8 +21,8 @@ Start here:
     - 7 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
-  ripr explain --root fixtures/wildcard_oracle_guarded_wrong/input --diff fixtures/wildcard_oracle_guarded_wrong/diff.patch --mode fast probe:src_lib.rs:return_value:c7c856d1
-  ripr context --root fixtures/wildcard_oracle_guarded_wrong/input --diff fixtures/wildcard_oracle_guarded_wrong/diff.patch --mode fast --at probe:src_lib.rs:return_value:c7c856d1
+  ripr explain --root <cwd>/fixtures/wildcard_oracle_guarded_wrong/input --diff <cwd>/fixtures/wildcard_oracle_guarded_wrong/diff.patch --mode fast probe:src_lib.rs:return_value:c7c856d1
+  ripr context --root <cwd>/fixtures/wildcard_oracle_guarded_wrong/input --diff <cwd>/fixtures/wildcard_oracle_guarded_wrong/diff.patch --mode fast --at probe:src_lib.rs:return_value:c7c856d1
 
 More:
   Full evidence: rerun with --format human-full

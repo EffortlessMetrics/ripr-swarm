@@ -1,0 +1,38 @@
+{
+  "subject_id": "semver-280ebcb",
+  "upstream": "https://github.com/dtolnay/semver",
+  "commit": "280ebcb6edac3aa4cdc545dbff8a26c5ac4861fe",
+  "version_label": "master@280ebcb (mutation spot-check pin; differs from corpus semver 1.0.23 pin)",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "Cargo.toml",
+      "sha256": "a3386a53d0ad50260a7424689ba2d983abd6c6b5bb09bda48b9fceb3032e8318"
+    },
+    {
+      "path": "LICENSE-APACHE",
+      "sha256": "62c7a1e35f56406896d7aa7ca52d0cc0d272ac022b5d2796e7d6905db8a3636a"
+    },
+    {
+      "path": "LICENSE-MIT",
+      "sha256": "23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3"
+    },
+    {
+      "path": "src/display.rs",
+      "sha256": "cfe08cb163fd5ba7fa024880a0809afb07f6e465891d8cefb716c693b13958d0"
+    },
+    {
+      "path": "src/eval.rs",
+      "sha256": "292eac9472c92db20fcd3a864c5598f55a2f5554008af8f704ff975fcf40dd74"
+    },
+    {
+      "path": "src/lib.rs",
+      "sha256": "e56f4d7c7774c45e61026fb0050955d67601c9ad18bdf93f8921d9898067c119"
+    },
+    {
+      "path": "tests/test_version_req.rs",
+      "sha256": "edb7440c14655a77af2dfed4ea8eebbd9b637947c46f33164a2b66b62f75d464"
+    }
+  ]
+}

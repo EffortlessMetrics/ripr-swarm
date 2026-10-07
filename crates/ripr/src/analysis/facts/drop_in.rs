@@ -190,7 +190,7 @@ fn plain(spec: &toml::Value, krate: &str, workspace: Option<&toml::Table>) -> bo
 /// `package =` rename, which Cargo matches on), or any `[replace]` entry:
 /// its package-ID specs (`name@version`, `url#name@version`) are not worth
 /// parsing for a deprecated table.
-fn patches(manifest: &toml::Table, krate: &str) -> bool {
+pub(super) fn patches(manifest: &toml::Table, krate: &str) -> bool {
     let patched = manifest
         .get("patch")
         .and_then(toml::Value::as_table)
@@ -216,7 +216,7 @@ fn patches(manifest: &toml::Table, krate: &str) -> bool {
 /// way ripr resolves: a `paths` override, a `[patch]` or `[source]` table,
 /// an `include` of another config, or any mention of the crate. An
 /// unreadable or unparsable config fails closed too.
-fn config_mentions(directory: &Path, krate: &str) -> bool {
+pub(super) fn config_mentions(directory: &Path, krate: &str) -> bool {
     let hyphenated = krate.replace('_', "-");
     ["config.toml", "config"].iter().any(|name| {
         match std::fs::read_to_string(directory.join(".cargo").join(name)) {
@@ -234,7 +234,7 @@ fn config_mentions(directory: &Path, krate: &str) -> bool {
     })
 }
 
-fn normalized(name: &str) -> String {
+pub(super) fn normalized(name: &str) -> String {
     name.replace('-', "_")
 }
 

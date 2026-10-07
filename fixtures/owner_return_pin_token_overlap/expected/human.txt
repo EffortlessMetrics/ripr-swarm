@@ -28,10 +28,10 @@ Start here:
     - 7 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
-  ripr explain --root fixtures/owner_return_pin_token_overlap/input --diff fixtures/owner_return_pin_token_overlap/diff.patch --mode fast probe:src_lib.rs:return_value:6ea804bb
-  ripr context --root fixtures/owner_return_pin_token_overlap/input --diff fixtures/owner_return_pin_token_overlap/diff.patch --mode fast --at probe:src_lib.rs:return_value:6ea804bb
+  ripr explain --root <cwd>/fixtures/owner_return_pin_token_overlap/input --diff <cwd>/fixtures/owner_return_pin_token_overlap/diff.patch --mode fast probe:src_lib.rs:return_value:6ea804bb
+  ripr context --root <cwd>/fixtures/owner_return_pin_token_overlap/input --diff <cwd>/fixtures/owner_return_pin_token_overlap/diff.patch --mode fast --at probe:src_lib.rs:return_value:6ea804bb
 Write a test for it:
-  ripr agent stub --root fixtures/owner_return_pin_token_overlap/input --at src/lib.rs:2
+  ripr agent stub --root <cwd>/fixtures/owner_return_pin_token_overlap/input --at src/lib.rs:2
 
 More:
   Full evidence: rerun with --format human-full

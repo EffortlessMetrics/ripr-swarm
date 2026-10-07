@@ -1,0 +1,22 @@
+{
+  "case_id": "tokens-recursive-label-arm",
+  "subject_id": "authored-tokens",
+  "origin": "authored",
+  "anchor": "src/scan.rs:25",
+  "behavior_family": "match_arm",
+  "test_shape": "recursive_helper_arm_assert_eq",
+  "hard_case": false,
+  "truth": "discriminated",
+  "ideal_verdict": "credited",
+  "observed_verdict": "gap",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "weakly_exposed"
+  ],
+  "outcome": "false_actionable",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

@@ -195,6 +195,42 @@ Updated:
 ## Pending — binding_value_fail_closed (13)
 
 Reason:
+RIPR-SPEC-0116: the check drill-in binds --root to the resolved repository (#3948); goldens carry the <cwd>/ placeholder
+
+Command:
+`cargo xtask goldens bless binding_value_fail_closed --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — binding_value_fail_closed (14)
+
+Reason:
+RIPR-SPEC-0001 unresolved boundary input (#6674, #6693): an operand ripr cannot map to related-test inputs reads infection_unknown 'Changed boundary input is unresolved' instead of a missing equality discriminator with 'observed values: unknown'; no exposed finding
+
+Command:
+`cargo xtask goldens bless binding_value_fail_closed --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — binding_value_fail_closed (15)
+
+Reason:
+RIPR-SPEC-0001: the human 'Why unknown' line for infection_unknown says 'reaches a sink' only when propagation is yes (CodeRabbit review on #6796); propagation is not yes here, so the line no longer claims a sink
+
+Command:
+`cargo xtask goldens bless binding_value_fail_closed --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — binding_value_fail_closed (16)
+
+Reason:
 RIPR-SPEC-0096: infection note names the char-vs-numeric literal mismatch (#6902)
 
 Command:

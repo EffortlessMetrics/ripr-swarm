@@ -1,0 +1,51 @@
+{
+  "case_id": "spec0227-check-variant-should-panic",
+  "subject_id": "authored-spec0227-6",
+  "diff": "cases/spec0227-check-variant-should-panic.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 11
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "error_variant",
+  "test_shape": "should_panic_unwrap",
+  "hard_case": "ripr reads weakly_exposed via the unwrap() smoke_only oracle, not via should_panic as a result-side oracle; the class matches the spec.",
+  "truth": {
+    "state": "partially_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "return Err(E::Bad);",
+        "mutated_line": "return Err(E::Bad);",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: too-long input reports Bad"
+      },
+      {
+        "replacement": "return Ok(0);",
+        "mutated_line": "return Ok(0);",
+        "outcome": "tests_failed",
+        "failing_test": "tests::unwrap_panics_on_far_input",
+        "equivalence_review": "not equivalent: too-long input is accepted as Ok(0)"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "unwrap_panics_on_far_input panics on any Err, so it notices an Ok but not a different variant. Spec cells: RIPR-SPEC-0227 example 6.",
+  "labeling_observation": {
+    "ripr_commit": "7b3deeb",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

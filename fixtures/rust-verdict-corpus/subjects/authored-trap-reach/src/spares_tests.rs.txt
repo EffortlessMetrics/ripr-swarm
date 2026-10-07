@@ -1,0 +1,6 @@
+use crate::spares::spare;
+
+#[test]
+fn spare_is_twenty_two() {
+    assert_eq!(spare(2), 22);
+}

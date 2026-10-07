@@ -24,8 +24,8 @@ Start here:
     - 8 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
-  ripr explain --root fixtures/infect_value_returned/input --diff fixtures/infect_value_returned/diff.patch --mode fast probe:src_lib.rs:static_unknown:134382d4
-  ripr context --root fixtures/infect_value_returned/input --diff fixtures/infect_value_returned/diff.patch --mode fast --at probe:src_lib.rs:static_unknown:134382d4
+  ripr explain --root <cwd>/fixtures/infect_value_returned/input --diff <cwd>/fixtures/infect_value_returned/diff.patch --mode fast probe:src_lib.rs:static_unknown:134382d4
+  ripr context --root <cwd>/fixtures/infect_value_returned/input --diff <cwd>/fixtures/infect_value_returned/diff.patch --mode fast --at probe:src_lib.rs:static_unknown:134382d4
 
 Hidden:
   1 lower-priority finding(s) omitted from default human output.
