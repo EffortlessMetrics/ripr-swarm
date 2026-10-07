@@ -242,7 +242,8 @@ position rules as the witness (#5527):
 
    Project-level setup files (vitest `setupFiles`, jest
    `setupFilesAfterEnv`) are outside this rule's view; a hook there that
-   calls the owner is a known limit.
+   calls the owner is a known limit, as is a module the owner's own module
+   imports for its side effects that registers such a hook.
 
    A visible owner call at the boundary is checked first and yields
    `reached_without_discriminator`. `missed_boundary` is the only state that
