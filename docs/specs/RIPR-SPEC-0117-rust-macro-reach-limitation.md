@@ -103,7 +103,8 @@ macro edge, the witness falls back to an invocation of a generator: a macro
 whose body contains `#[test]`, whose single definition in the index lexically
 mentions the owner, invoked in its own file outside any macro body. The scan
 masks comments and strings first, so a commented-out invocation or a `#[test]`
-inside a string does not count. The witness names the
+inside a string does not count. Body exclusion is by whole line, so an
+invocation sharing a line with a macro body's first or last line is skipped too. The witness names the
 invocation's first identifier argument as the test (the usual generated test
 name; the invocation `name!` itself when that argument is a keyword, raw
 identifier, path or literal), the invocation line, and the definition line, and says the test "is
