@@ -128,8 +128,11 @@ fn test_pairs_boundary_input_with_oracle(
 /// - the activation fact sits on the line of an eager call to the helper
 ///   that is the only call expression on its line, so it describes that
 ///   call and that call runs;
-/// - that call passes only scalar literals, so a pooled fact from another
-///   test's identical call carries the same input.
+/// - that call passes only scalar literals, with no comment or string
+///   before it, and the fact's `parameter == value` matches the literal
+///   that call itself feeds that owner parameter through the helper, so a
+///   pooled fact from another file's same-line call through another helper
+///   cannot stand in for it.
 fn loan_pairs_boundary_call(
     owner: &FunctionSummary,
     test: &TestSummary,
@@ -186,26 +189,86 @@ fn loan_pairs_boundary_call(
             return false;
         }
         // Activation's facts are pooled across related tests and carry no
-        // file, so the fact must also name this call's text, and that text
-        // must fix its values: with only scalar literal arguments, another
-        // test's same-line, same-text call passes the same input. A local
-        // (`check_pass(n, true)`) may be bound differently in each test.
-        if !call_arguments(&helper_call.text, &loan.name).is_some_and(|arguments| {
-            !arguments.is_empty()
-                && arguments
-                    .iter()
-                    .all(|argument| argument_is_whole_scalar_literal(argument.trim()))
-        }) {
+        // file, so a fact on this line may describe another file's call
+        // through another helper. The call must therefore fix its own
+        // values (only scalar literals: `check_pass(n, true)` may bind `n`
+        // differently per test), and the fact must agree with the literal
+        // this call itself feeds the owner's parameter. A comment or string
+        // before the call could feed the argument parser foreign text.
+        let Some(literals) = loan_call_literals(&helper_call.text, &loan.name) else {
+            return false;
+        };
+        let fed = owner_parameter_literals(owner, arguments, loan, &literals);
+        if fed.is_empty() {
             return false;
         }
         activation.observed_values.iter().any(|fact| {
             fact.line == *line
-                && fact.value.contains(" == ")
                 && matches!(fact.context, ValueContext::FunctionArgument)
                 && !fact.text.is_empty()
                 && fact.text.contains(&helper_call.text)
+                && fact_matches_fed_literals(&fact.value, &fed)
         })
     })
+}
+
+/// Whether an activation value (`input == 10`, or a conjunction such as
+/// `y == 0 && x == 0`) consists only of `parameter == literal` terms, each
+/// naming an owner parameter and the very literal this call feeds it.
+fn fact_matches_fed_literals(value: &str, fed: &[(String, String)]) -> bool {
+    !value.contains("||")
+        && value.split(" && ").all(|term| {
+            term.split_once(" == ").is_some_and(|(parameter, literal)| {
+                fed.iter()
+                    .any(|(name, fed)| name == parameter.trim() && fed == literal.trim())
+            })
+        })
+}
+
+/// The helper call's arguments when each is a whole scalar literal and no
+/// comment or string precedes the call on its line; `None` otherwise.
+fn loan_call_literals(text: &str, helper: &str) -> Option<Vec<String>> {
+    let prefix = &text[..text.find(&format!("{helper}("))?];
+    if text.contains("//") || text.contains("/*") || prefix.contains(['"', '\'']) {
+        return None;
+    }
+    let arguments = call_arguments(text, helper)?;
+    (!arguments.is_empty()
+        && arguments
+            .iter()
+            .all(|argument| argument_is_whole_scalar_literal(argument.trim())))
+    .then(|| {
+        arguments
+            .iter()
+            .map(|argument| argument.trim().to_string())
+            .collect()
+    })
+}
+
+/// `(owner parameter, literal)` for each owner parameter whose argument is a
+/// helper parameter the call fills with a literal. Empty when the owner's
+/// parameter list and its call's arguments do not line up one to one.
+fn owner_parameter_literals(
+    owner: &FunctionSummary,
+    owner_arguments: &[String],
+    loan: &HelperLoan,
+    literals: &[String],
+) -> Vec<(String, String)> {
+    let owner_parameters = function_parameters(owner);
+    if owner_parameters.len() != owner_arguments.len() || loan.parameters.len() != literals.len() {
+        return Vec::new();
+    }
+    owner_parameters
+        .into_iter()
+        .zip(owner_arguments)
+        .filter_map(|(parameter, argument)| {
+            let slot = loan
+                .parameters
+                .iter()
+                .position(|name| name == argument.trim())?;
+            Some((parameter, literals[slot].clone()))
+        })
+        .collect()
 }
 
 fn assertion_is_discriminating(assertion: &OracleFact) -> bool {
@@ -2007,6 +2070,40 @@ mod tests {
                 "{call_text}"
             );
         }
+        // A comment or string before the call could feed the argument
+        // parser text that is not this call's.
+        for call_text in [
+            "/* check(10, true) */ check(n, true);",
+            "let _ = \"check(10, true)\"; check(n, true);",
+        ] {
+            let (test, assertion, loan, activation) = loan_case(CHECK, call_text, 2);
+            assert!(
+                !loan_pairs(&test, &assertion, &loan, &activation),
+                "{call_text}"
+            );
+        }
+        // A pooled fact for the same line and text whose value is not the
+        // literal this call feeds the owner (another file's `check` with its
+        // parameters swapped): `check(50, true)` feeds `input` 50, not 10.
+        let (fifty, fifty_assertion, fifty_loan, mut swapped) =
+            loan_case(CHECK, "check(50, true);", 2);
+        swapped.observed_values[0].value = "input == 10".to_string();
+        assert!(!loan_pairs(&fifty, &fifty_assertion, &fifty_loan, &swapped));
+        // A conjunction pairs only when every term is a literal the call
+        // feeds (`gate(x, y)` reached with `check(0, 0)`).
+        let fed = [
+            ("x".to_string(), "0".to_string()),
+            ("y".to_string(), "0".to_string()),
+        ];
+        assert!(fact_matches_fed_literals("y == 0 && x == 0", &fed));
+        assert!(!fact_matches_fed_literals("y == 0 && x == 1", &fed));
+        assert!(!fact_matches_fed_literals("y == 0 || x == 0", &fed));
+        assert!(!fact_matches_fed_literals("y == 0 && x > 0", &fed));
+        assert!(!fact_matches_fed_literals("y == 0 && z == 0", &fed));
+        // The fact must name the owner parameter that literal reaches.
+        let mut renamed = activation.clone();
+        renamed.observed_values[0].value = "other == 10".to_string();
+        assert!(!loan_pairs(&test, &assertion, &loan, &renamed));
         assert!(loan_pairs(&test, &assertion, &loan, &activation), "control");
     }
 

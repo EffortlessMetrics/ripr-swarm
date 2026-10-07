@@ -279,6 +279,7 @@ impl OwnerPinSyntax {
                 let local = test_macro_binding_site(
                     &name,
                     test,
+                    assertion.line,
                     index,
                     &self.test_file_macro_sites,
                     &resolved,
@@ -608,15 +609,24 @@ impl OwnerPinSyntax {
             .and_then(|scoped| scoped.get(&test.file))
             .into_iter()
             .flatten()
-            .filter(|(_, site)| {
-                site_covers(site, test)
-                    || site
-                        .scope
-                        .is_some_and(|(start, end)| (start..=end).contains(&assertion_line))
-            })
+            .filter(|(_, site)| site_covers_assertion(site, test, assertion_line))
             .map(|(name, _)| name.clone())
             .collect()
     }
+}
+
+/// Whether a scoped site may reach the invocation at `assertion_line` in
+/// `test`: it overlaps the test, or (for an assertion a check helper lends,
+/// #6482) its scope holds the assertion's own line in the helper's body.
+fn site_covers_assertion(
+    site: &MacroBindingSite,
+    test: &TestSummary,
+    assertion_line: usize,
+) -> bool {
+    site_covers(site, test)
+        || site
+            .scope
+            .is_some_and(|(start, end)| (start..=end).contains(&assertion_line))
 }
 
 /// Whether a scoped site may reach `test`: any overlap of their line spans.
@@ -890,6 +900,7 @@ fn rebinds(site: &MacroBindingSite) -> bool {
 fn test_macro_binding_site(
     name: &str,
     test: &TestSummary,
+    assertion_line: usize,
     index: &RustIndex,
     memo: &RefCell<TestFileMacroSites>,
     module_resolved: &dyn Fn(&Path, usize, &str) -> bool,
@@ -911,7 +922,7 @@ fn test_macro_binding_site(
             )
         })
         .iter()
-        .find(|(_, site)| site_covers(site, test))
+        .find(|(_, site)| site_covers_assertion(site, test, assertion_line))
         .map(|(_, site)| (test.file.clone(), site.clone()))
 }
 

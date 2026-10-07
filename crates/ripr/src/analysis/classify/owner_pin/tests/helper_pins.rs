@@ -332,6 +332,39 @@ fn a_helper_scoped_assert_eq_binding_refuses_the_loan() -> Result<(), String> {
             (false, false),
             "{shadow}"
         );
+        // The disclosure names the helper's own binding, a real rebinding,
+        // not a site-less analyzer limit.
+        match helper_assertion_refusal(&module(&helper, CALLS))? {
+            Some(AssertionRefusal::MacroBinding { name, site }) => {
+                assert_eq!(name, "assert_eq", "{shadow}");
+                let (_, site) = site.ok_or("the helper's binding is disclosed")?;
+                assert_eq!(site.line, 10, "{shadow}");
+            }
+            other => return Err(format!("{shadow}: {other:?}")),
+        }
     }
     Ok(())
+}
+
+/// The disclosed refusal for the helper's assertion, as
+/// [`helper_assertion_admitted`] builds it.
+fn helper_assertion_refusal(source: &str) -> Result<Option<AssertionRefusal>, String> {
+    let index = index(&[(LIB, source)]);
+    let test = index
+        .tests()
+        .iter()
+        .find(|test| test.name == "tip_is_added")
+        .ok_or("premise: `tip_is_added` is indexed")?;
+    let helper = index
+        .functions()
+        .iter()
+        .find(|function| function.name == "check_tip")
+        .ok_or("premise: `check_tip` is indexed")?;
+    let assertion = parser_oracles_for_function(&helper.body, helper.start_line)
+        .unwrap_or_default()
+        .into_iter()
+        .find(|oracle| oracle.text.starts_with("assert_eq!(with_tip("))
+        .ok_or("premise: the helper's assert_eq! parses")?;
+    let probe = return_probe(owner(&index, "with_tip"), "tip + bill");
+    Ok(OwnerPinSyntax::default().equality_assertion_refusal(&probe, test, &assertion, &index))
 }

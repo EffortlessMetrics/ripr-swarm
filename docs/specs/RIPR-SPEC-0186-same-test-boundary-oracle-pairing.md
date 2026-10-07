@@ -109,13 +109,19 @@ fixed:
   (`passes(score)`, not `passes(score + 1)` or `{ let score = 1;
   passes(score) }`);
 - the call passes only scalar literals (`check_pass(50, true)`, not
-  `check_pass(n, true)`): activation's facts are pooled across related tests
-  without file identity, so another test's identical call on the same line
-  number must carry the same input.
+  `check_pass(n, true)`), with no comment or string before it on its line,
+  and the activation fact's `parameter == value` equals the literal this call
+  feeds that owner parameter through the helper's parameter slot.
+  Activation's facts are pooled across related tests without file identity,
+  so a fact from another file's same-line call through a different helper
+  cannot stand in for this call's input.
 
 A borrowed assertion pairs only this way: its operands name the helper's
 parameters, so the direct owner-call and bound-name paths, which read the
-test's own bindings, never see it.
+test's own bindings, never see it. The same holds for any assertion outside
+the test's own lines, including a harness-registry callback's assertions
+credited to a trial: they no longer pair through the test's bindings, which
+can only withhold pairing.
 
 The same owner-name defeats as an inline oracle apply. Anything else keeps
 `same_test_pairing_missing`.
