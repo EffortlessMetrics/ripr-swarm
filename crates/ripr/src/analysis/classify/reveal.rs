@@ -979,6 +979,27 @@ fn called_names(text: &str) -> Vec<String> {
         .collect()
 }
 
+fn is_called_path_ident_byte(byte: u8) -> bool {
+    !byte.is_ascii() || is_ident_byte(byte)
+}
+
+fn is_called_path_ident_start_byte(byte: u8) -> bool {
+    !byte.is_ascii() || byte.is_ascii_alphabetic() || byte == b'_'
+}
+
+/// Last path segment of `path`, treating non-ASCII characters as identifier
+/// characters so a name such as `módulo` is not cut at `ó`. `rfind` yields
+/// a character start; skip that whole character rather than one byte.
+fn last_called_path_segment(path: &str) -> &str {
+    let path = path.trim_end();
+    let begin = path
+        .rfind(|ch: char| ch.is_ascii() && !(ch.is_ascii_alphanumeric() || ch == '_'))
+        .map_or(0, |at| {
+            at + path[at..].chars().next().map_or(1, char::len_utf8)
+        });
+    path.get(begin..).unwrap_or("")
+}
+
 /// Every call in `text` as (named type, identifier): the type is the
 /// upper-case path segment directly before the identifier (`Money` in
 /// `Money::new(8)`), and `None` for a bare call, a method call, a module
@@ -989,27 +1010,21 @@ fn called_paths(text: &str) -> Vec<(Option<String>, String)> {
     let mut names = Vec::new();
     let mut index = 0;
     while index < bytes.len() {
-        if !(bytes[index].is_ascii_alphabetic() || bytes[index] == b'_') {
+        if !is_called_path_ident_start_byte(bytes[index]) {
             index += 1;
             continue;
         }
         let start = index;
-        while index < bytes.len() && is_ident_byte(bytes[index]) {
+        while index < bytes.len() && is_called_path_ident_byte(bytes[index]) {
             index += 1;
         }
-        let preceded_by_ident = start > 0 && is_ident_byte(bytes[start - 1]);
+        let preceded_by_ident = start > 0 && is_called_path_ident_byte(bytes[start - 1]);
         let rest = masked[index..].trim_start();
         if !preceded_by_ident && (rest.starts_with('(') || rest.starts_with("::<")) {
             let qualifier = masked[..start]
                 .trim_end()
                 .strip_suffix("::")
-                .map(|path| {
-                    let path = path.trim_end();
-                    let begin = path
-                        .rfind(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_'))
-                        .map_or(0, |at| at + 1);
-                    &path[begin..]
-                })
+                .map(last_called_path_segment)
                 .filter(|segment| {
                     *segment != "Self" && segment.starts_with(|ch: char| ch.is_ascii_uppercase())
                 })
@@ -7125,6 +7140,32 @@ return Err(\"typed pin\".into());
                 (Some("Invoice".to_string()), "new".to_string()),
                 (None, "new".to_string()),
                 (None, "new".to_string()),
+            ]
+        );
+    }
+
+    /// #7062: a non-ASCII module or function name used to abort
+    /// `called_paths` (`rfind(..) + 1` inside `ó`) or be read as the
+    /// ASCII tail (`dulo`). ASCII paths are the no-change control.
+    #[test]
+    fn called_paths_reads_non_ascii_identifiers_on_char_boundaries() {
+        assert_eq!(
+            called_paths("crate::módulo::render(2)"),
+            vec![(None, "render".to_string())]
+        );
+        assert_eq!(
+            called_names("módulo(2) + función(1)"),
+            vec!["módulo".to_string(), "función".to_string()]
+        );
+        assert_eq!(
+            called_paths("Módulo::new(8)"),
+            vec![(Some("Módulo".to_string()), "new".to_string())]
+        );
+        assert_eq!(
+            called_paths("crate::a::render(2) + Money::new(8)"),
+            vec![
+                (None, "render".to_string()),
+                (Some("Money".to_string()), "new".to_string()),
             ]
         );
     }
