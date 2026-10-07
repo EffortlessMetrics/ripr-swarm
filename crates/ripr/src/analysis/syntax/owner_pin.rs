@@ -1394,11 +1394,15 @@ fn std_thread_item(path: &ast::PathExpr, function: &ast::Fn) -> Option<String> {
         let path_text = path_text.trim_start_matches("::");
         let last = path_text.rsplit("::").next().unwrap_or(path_text);
         let last = last.trim_start_matches("r#");
-        if path_text == "std::thread" && tree.rename().is_none() {
-            imported |= tree
-                .syntax()
-                .parent()
-                .filter(|parent| ast::Use::can_cast(parent.kind()))
+        // Only a whole `use std::thread;` imports std's module: the same
+        // text nested in a list (`use crate::fake::{std::thread};`) names
+        // another path and falls through to the refusal below.
+        let direct_use = tree
+            .syntax()
+            .parent()
+            .filter(|parent| ast::Use::can_cast(parent.kind()));
+        if path_text == "std::thread" && tree.rename().is_none() && direct_use.is_some() {
+            imported |= direct_use
                 .and_then(|parent| parent.parent())
                 .is_some_and(|container| container == module);
         } else if matches!(last, "std" | "thread")

@@ -2255,6 +2255,18 @@ fn spawned_thread_assertion_matched_static_and_runtime_controls() -> Result<(), 
             false,
         ),
         (
+            // The block's nested list re-imports `thread` from the fake
+            // module, shadowing the module-level `use std::thread;`.
+            "nested_list_shadows_thread",
+            "mod fake;\n",
+            "use std::thread;",
+            format!(
+                "use crate::fake::{{std::thread}};\n        thread::spawn(|| {assertion}).join().unwrap();"
+            ),
+            false,
+            false,
+        ),
+        (
             "imported_other_std",
             "mod fake;\n",
             "use crate::fake::std;",

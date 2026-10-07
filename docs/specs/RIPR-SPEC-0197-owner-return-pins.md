@@ -122,8 +122,11 @@ rule only for an assertion whose context was admitted.
    statement-position macro other than a std statement macro (`println!`,
    `assert_eq!` and the like). A `thread::` path also needs
    `use std::thread;` directly in the test's own module. Residuals: a `std`
-   or `thread` module that `use super::*;` brings in from another file, and
-   an attribute macro that emits such an import. Detached threads, bound handles,
+   or `thread` module that `use super::*;` brings in from another file, an
+   attribute macro that emits such an import, and a `#[macro_use]` macro from
+   another file that reuses a std statement-macro name (`assert_eq!`) to emit
+   one. Only a whole `use std::thread;` counts as the import; the same path
+   nested in a list (`use crate::fake::{std::thread};`) refuses. Detached threads, bound handles,
    and joins whose result is dropped or converted (`.ok()`, `let _ =`) stay
    unknown.
    `?` in a root test remains supported (an error fails an ordinary Result
