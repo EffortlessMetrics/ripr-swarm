@@ -9,7 +9,7 @@
   "edit_kind": "behavior_preserving_rewrite",
   "behavior_family": "return_value_arithmetic",
   "test_shape": "harness_trial_bare_identifier_callback",
-  "hard_case": "The only test is a libtest-mimic Trial registered as Trial::test(\"shipping_is_four_per_kilo\", check_shipping); the exact assert lives in the named callback's body, not in the invocation.",
+  "hard_case": "The only test reaching shipping is a libtest-mimic Trial registered as Trial::test(\"shipping_is_four_per_kilo\", check_shipping); the exact assert lives in the named callback's body, not in the invocation.",
   "truth": {
     "state": "discriminated",
     "method": "runtime_mutant_kill",
