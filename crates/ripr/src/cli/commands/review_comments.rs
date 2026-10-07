@@ -20,7 +20,8 @@ use crate::cli::commands_options::ReviewCommentsOptions;
 use crate::cli::help;
 use crate::cli::parse::expect_value;
 use crate::cli::suggest::unknown_argument;
-use crate::config::{CheckInputExplicit, apply_to_check_input, load_for_root};
+use crate::config::{CheckInputExplicit, RiprConfig, apply_to_check_input, load_for_root};
+use crate::domain::LanguageId;
 use crate::output;
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
@@ -734,6 +735,35 @@ fn review_comments_with_admission(
             output::review_comments::DEFAULT_REVIEW_MAX_SUMMARY_ITEMS
         ));
     }
+    // #6832 disclosure: the base/head review-comments path is seam-scoped.
+    // Preview-language findings are not seams, so they are never projected as
+    // comments here; without this warning an empty report is indistinguishable
+    // from "no findings". Name the working gap-ledger route so the exclusion
+    // is actionable. The `--gap-ledger` route itself renders those records and
+    // returns above, so it never carries this warning.
+    let preview_language_files = preview_language_changed_files(&working_set, &config);
+    if !preview_language_files.is_empty() {
+        let listed = preview_language_files
+            .iter()
+            .take(5)
+            .cloned()
+            .collect::<Vec<_>>();
+        let extra = preview_language_files.len().saturating_sub(listed.len());
+        selection.warnings.push(format!(
+            "preview_language_findings_not_projected: the base/head review-comments path is \
+             seam-scoped (Rust); findings for the changed preview-language files ({}{}) are not \
+             projected as comments here, so zero comments does not mean no findings for them. \
+             Run `ripr check --base <base-ref> --json` at the head checkout for preview-language \
+             evidence, then `ripr reports gap-ledger --check-output <check-output.json> --root .` \
+             and rerun review-comments with `--gap-ledger` to render preview-language repair cards.",
+            listed.join(", "),
+            if extra > 0 {
+                format!(", and {extra} more")
+            } else {
+                String::new()
+            }
+        ));
+    }
     enforce_review_comments_deadline(
         &mut receipt,
         &receipt_path,
@@ -809,6 +839,41 @@ fn review_comments_with_admission(
     println!("Wrote {}", options.out.display());
     println!("Wrote {}", markdown_path.display());
     Ok(())
+}
+
+/// Changed working-set files that belong to an ENABLED preview language
+/// (Python, TypeScript/JavaScript), displayed with forward slashes.
+///
+/// The base/head review-comments path is seam-scoped: findings for
+/// preview-language files are never projected as comments, because preview
+/// findings are not seams (#6832). The caller discloses this exclusion so an
+/// empty report is distinguishable from "no findings"; a file of a DISABLED
+/// preview language is not listed (the run never claimed that language).
+fn preview_language_changed_files(
+    working_set: &AgentBriefResolvedWorkingSet,
+    config: &RiprConfig,
+) -> Vec<String> {
+    let enabled = config.languages().enabled();
+    let python_enabled = enabled.contains(&LanguageId::Python);
+    let typescript_enabled =
+        enabled.contains(&LanguageId::TypeScript) || enabled.contains(&LanguageId::JavaScript);
+    if !python_enabled && !typescript_enabled {
+        return Vec::new();
+    }
+    working_set
+        .files
+        .iter()
+        .filter(|file| {
+            let ext = file.extension().and_then(|ext| ext.to_str());
+            let is_python = ext == Some("py");
+            let is_typescript = matches!(
+                ext,
+                Some("ts" | "tsx" | "js" | "jsx" | "mjs" | "cjs" | "mts" | "cts")
+            );
+            (is_python && python_enabled) || (is_typescript && typescript_enabled)
+        })
+        .map(|path| path.display().to_string().replace('\\', "/"))
+        .collect()
 }
 
 fn parse_review_comments_options(args: &[String]) -> Result<ReviewCommentsOptions, String> {
@@ -1310,6 +1375,179 @@ mod tests {
         assert!(rendered_md.contains("Advisory static evidence only"));
 
         std::fs::remove_dir_all(&root).map_err(|err| format!("remove temp root: {err}"))?;
+        Ok(())
+    }
+
+    #[test]
+    fn review_comments_discloses_preview_language_exclusion_on_python_diffs() -> Result<(), String>
+    {
+        // #6832: the base/head review-comments path is seam-scoped, so a
+        // Python diff produces zero comments even when the diff-scoped check
+        // has actionable evidence. The empty report must disclose WHY (the
+        // preview exclusion) and name the working gap-ledger route instead of
+        // reading as "no findings".
+        let root = unique_command_test_dir("review-comments-preview-disclosure");
+        std::fs::create_dir_all(root.join("src")).map_err(|err| format!("create src: {err}"))?;
+        std::fs::write(
+            root.join("ripr.toml"),
+            "[languages]\nenabled = [\"python\"]\n",
+        )
+        .map_err(|err| format!("write ripr.toml: {err}"))?;
+        std::fs::write(
+            root.join("src/pricing.py"),
+            "def apply_discount(amount, threshold):\n    if amount >= threshold:\n        return amount - 10\n    return amount\n",
+        )
+        .map_err(|err| format!("write src/pricing.py: {err}"))?;
+
+        let out = root.join("target/ripr/review/comments.json");
+        review_comments_with_diff_loader(
+            &args(&[
+                "--root",
+                &root.display().to_string(),
+                "--base",
+                "HEAD~1",
+                "--head",
+                "HEAD",
+                "--out",
+                &out.display().to_string(),
+            ]),
+            |_diff_root, _base, _head| {
+                Ok("diff --git a/src/pricing.py b/src/pricing.py\n--- a/src/pricing.py\n+++ b/src/pricing.py\n@@ -2 +2 @@\n-    if amount > threshold:\n+    if amount >= threshold:\n".to_string())
+            },
+        )?;
+
+        let rendered_json = std::fs::read_to_string(&out)
+            .map_err(|err| format!("read review comments JSON: {err}"))?;
+        let value: serde_json::Value = serde_json::from_str(&rendered_json)
+            .map_err(|err| format!("parse review comments JSON: {err}"))?;
+        assert_eq!(value["summary"]["comments"], 0);
+        let warnings = value["warnings"]
+            .as_array()
+            .ok_or("warnings must be an array")?;
+        let disclosure = warnings
+            .iter()
+            .find(|warning| {
+                warning["message"].as_str().is_some_and(|message| {
+                    message.starts_with("preview_language_findings_not_projected:")
+                })
+            })
+            .ok_or("expected a preview_language_findings_not_projected warning on a Python diff")?;
+        let message = disclosure["message"]
+            .as_str()
+            .ok_or("warning message must be a string")?;
+        assert!(
+            message.contains("src/pricing.py"),
+            "the disclosure must name the changed preview-language file: {message}"
+        );
+        assert!(
+            message.contains("seam-scoped"),
+            "the disclosure must name the seam-scoped cause: {message}"
+        );
+        assert!(
+            message.contains("reports gap-ledger --check-output")
+                && message.contains("--gap-ledger"),
+            "the disclosure must name the working ledger route: {message}"
+        );
+
+        // The markdown surface shares the pre-existing warnings-omission
+        // property of every review-comments warning kind (pinned by the
+        // boundary_gap pr-guidance goldens), so the JSON `warnings` array is
+        // the disclosure contract here.
+
+        std::fs::remove_dir_all(&root).map_err(|err| format!("remove temp root: {err}"))?;
+        Ok(())
+    }
+
+    #[test]
+    fn review_comments_no_preview_disclosure_without_enabled_preview_language_changed()
+    -> Result<(), String> {
+        // Controls (#6832): the disclosure fires only when an ENABLED preview
+        // language has a changed file. A Rust-only repo with a Rust diff, and
+        // a Rust repo whose diff touches a .py file it never enabled, must
+        // stay free of the warning.
+        let run_case = |label: &str,
+                        config_text: Option<&str>,
+                        source: (&str, &str),
+                        diff: &str|
+         -> Result<serde_json::Value, String> {
+            let root = unique_command_test_dir(label);
+            std::fs::create_dir_all(root.join("src"))
+                .map_err(|err| format!("create src: {err}"))?;
+            if let Some(config_text) = config_text {
+                std::fs::write(root.join("ripr.toml"), config_text)
+                    .map_err(|err| format!("write ripr.toml: {err}"))?;
+            }
+            std::fs::write(root.join(source.0), source.1)
+                .map_err(|err| format!("write {}: {err}", source.0))?;
+            let out = root.join("target/ripr/review/comments.json");
+            review_comments_with_diff_loader(
+                &args(&[
+                    "--root",
+                    &root.display().to_string(),
+                    "--base",
+                    "HEAD~1",
+                    "--head",
+                    "HEAD",
+                    "--out",
+                    &out.display().to_string(),
+                ]),
+                |_diff_root, _base, _head| Ok(diff.to_string()),
+            )?;
+            let rendered = std::fs::read_to_string(&out)
+                .map_err(|err| format!("read review comments JSON: {err}"))?;
+            let value: serde_json::Value = serde_json::from_str(&rendered)
+                .map_err(|err| format!("parse review comments JSON: {err}"))?;
+            std::fs::remove_dir_all(&root).map_err(|err| format!("remove temp root: {err}"))?;
+            Ok(value)
+        };
+
+        // Control 1: Rust-only repo, Rust diff — default config, no warning.
+        let rust_case = run_case(
+            "review-comments-no-preview-rust",
+            None,
+            (
+                "src/lib.rs",
+                "pub fn discounted_total(amount: i32) -> i32 {\n    if amount > 10 { amount - 1 } else { amount }\n}\n",
+            ),
+            "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -2 +2 @@\n-    if amount >= 10 { amount - 1 } else { amount }\n+    if amount > 10 { amount - 1 } else { amount }\n",
+        )?;
+        let rust_warnings = rust_case["warnings"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default();
+        assert!(
+            !rust_warnings.iter().any(|warning| {
+                warning["message"].as_str().is_some_and(|message| {
+                    message.contains("preview_language_findings_not_projected")
+                })
+            }),
+            "a Rust-only diff must not carry the preview disclosure: {rust_warnings:?}"
+        );
+
+        // Control 2: Python file changed but Python is NOT enabled — the run
+        // never claimed that language, so no disclosure.
+        let disabled_case = run_case(
+            "review-comments-no-preview-disabled",
+            Some("[languages]\nenabled = [\"rust\"]\n"),
+            (
+                "src/pricing.py",
+                "def apply_discount(amount, threshold):\n    if amount >= threshold:\n        return amount - 10\n    return amount\n",
+            ),
+            "diff --git a/src/pricing.py b/src/pricing.py\n--- a/src/pricing.py\n+++ b/src/pricing.py\n@@ -2 +2 @@\n-    if amount > threshold:\n+    if amount >= threshold:\n",
+        )?;
+        let disabled_warnings = disabled_case["warnings"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default();
+        assert!(
+            !disabled_warnings.iter().any(|warning| {
+                warning["message"].as_str().is_some_and(|message| {
+                    message.contains("preview_language_findings_not_projected")
+                })
+            }),
+            "a diff in a DISABLED preview language must not carry the disclosure: {disabled_warnings:?}"
+        );
+
         Ok(())
     }
 

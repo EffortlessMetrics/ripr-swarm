@@ -578,8 +578,18 @@ fn detect_framework_signals(pkg_json: &str) -> Vec<TsFramework> {
     if script_has_word("mocha") {
         push_framework_signal(&mut signals, TsFramework::Mocha);
     }
-    // "node --test" or "node:test" patterns
-    if test_script.contains("node --test") || test_script.contains("node:test") {
+    // "node --test" or "node:test" patterns, plus the direct-invocation form
+    // `node <test-file>`: the common zero-dependency node:test shape, whose
+    // `scripts.test` (e.g. "node test/pricing.test.mjs") contains NEITHER
+    // marker, which used to cap such workspaces at unresolved detection even
+    // though the suite is real and runnable (#6826). The direct form is only
+    // credited when no other framework signal matched — it is weaker evidence
+    // than a runner dependency or an explicit framework invocation, and never
+    // a reason to report an already-detected framework as ambiguous.
+    if test_script.contains("node --test")
+        || test_script.contains("node:test")
+        || (signals.is_empty() && node_script_targets_test_file(&test_script))
+    {
         push_framework_signal(&mut signals, TsFramework::NodeTest);
     }
     // "bun test" pattern (script-only; dep signal already caught bun-types above)
@@ -587,6 +597,66 @@ fn detect_framework_signals(pkg_json: &str) -> Vec<TsFramework> {
         push_framework_signal(&mut signals, TsFramework::Bun);
     }
     signals
+}
+
+/// Does the lowercased `scripts.test` value invoke the `node` binary directly
+/// on a test file?
+///
+/// Matches a whitespace-delimited `node` / `node.exe` token whose first
+/// positional argument (flag tokens skipped) names a test file: either a
+/// basename carrying a `.test.`/`.spec.` infix before a JS/TS extension, or a
+/// path through a conventional test directory (`test`, `tests`, `__tests__`) —
+/// for example `node test/pricing.test.mjs` or
+/// `node --experimental-strip-types test/foo.ts` (#6826). A `node` invocation
+/// whose entry argument is not test-shaped (`node server.js`,
+/// `node scripts/generate-fixtures.js`) stays unmatched, so a plain node
+/// script in `scripts.test` is never guessed into a `node:test` framework.
+/// `ts-node`/`tsx` are separate binaries and are not credited; this evidence
+/// stays fail-closed on the manifest text only.
+fn node_script_targets_test_file(test_script: &str) -> bool {
+    let mut tokens = test_script.split_whitespace();
+    while let Some(token) = tokens.next() {
+        if token != "node" && token != "node.exe" {
+            continue;
+        }
+        // The first positional argument after the binary is node's entry
+        // point; anything else (a non-test entry, or no argument at all) does
+        // not evidence a node:test suite.
+        for arg in tokens.by_ref() {
+            if arg.starts_with('-') {
+                continue;
+            }
+            return script_token_names_test_file(arg);
+        }
+    }
+    false
+}
+
+/// Conservative shape check for a `scripts.test` token that may name a test
+/// file: only plain relative/absolute POSIX-style paths (no shell syntax,
+/// quotes, or globs) with a JS/TS extension qualify, and the file must carry a
+/// `.test.`/`.spec.` basename infix or live under a conventional test
+/// directory (`test`, `tests`, `__tests__`).
+fn script_token_names_test_file(token: &str) -> bool {
+    const JS_TS_EXTENSIONS: [&str; 8] =
+        [".js", ".mjs", ".cjs", ".ts", ".mts", ".cts", ".jsx", ".tsx"];
+    let is_plain_path = !token.is_empty()
+        && token
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '/' | '-' | '_'));
+    if !is_plain_path {
+        return false;
+    }
+    let file_name = token.rsplit('/').next().unwrap_or(token);
+    if !JS_TS_EXTENSIONS.iter().any(|ext| file_name.ends_with(ext)) {
+        return false;
+    }
+    if file_name.contains(".test.") || file_name.contains(".spec.") {
+        return true;
+    }
+    token
+        .split('/')
+        .any(|segment| matches!(segment, "test" | "tests" | "__tests__"))
 }
 
 /// Detect the runner from `scripts.test` in `package.json`.
@@ -1051,6 +1121,50 @@ mod tests {
     }
 
     #[test]
+    fn detect_framework_node_test_from_direct_file_script() {
+        // Zero-dependency node:test shape (#6826): the script invokes node
+        // directly on the suite file, so neither "node --test" nor "node:test"
+        // appears anywhere. Detection must resolve from the manifest evidence
+        // instead of failing closed.
+        let pkg = r#"{"scripts":{"test":"node test/pricing.test.mjs"}}"#;
+        let result = detect_framework(pkg);
+        assert_eq!(result, Some(TsFramework::NodeTest));
+    }
+
+    #[test]
+    fn detect_framework_node_test_from_flagged_direct_file_script() {
+        // A flag between the binary and the entry file must not break the
+        // direct-invocation match (#6826).
+        let pkg = r#"{"scripts":{"test":"node --experimental-strip-types test/foo.ts"}}"#;
+        let result = detect_framework(pkg);
+        assert_eq!(result, Some(TsFramework::NodeTest));
+    }
+
+    #[test]
+    fn detect_framework_node_direct_non_test_entry_not_credited() {
+        // Fail-closed control (#6826): a node invocation whose entry argument
+        // is not test-shaped must not credit node:test.
+        let pkg = r#"{"scripts":{"test":"node server.js"}}"#;
+        assert_eq!(detect_framework(pkg), None);
+        let pkg = r#"{"scripts":{"test":"node scripts/generate-fixtures.js"}}"#;
+        assert_eq!(detect_framework(pkg), None);
+    }
+
+    #[test]
+    fn detect_framework_node_direct_file_signal_does_not_ambiguate_known_framework() {
+        // The direct `node <test-file>` form is weaker evidence than an
+        // explicit framework invocation: when a script word already matched,
+        // it must not add a second signal (that would cap confidence and
+        // disclose ambiguity for ordinary bootstrap scripts).
+        let pkg = r#"{"scripts":{"test":"node tests/setup.mjs && jest"}}"#;
+        let signals = detect_framework_signals(pkg);
+        assert_eq!(signals, vec![TsFramework::Jest]);
+        let pkg = r#"{"scripts":{"test":"mocha test/foo.spec.js"}}"#;
+        let signals = detect_framework_signals(pkg);
+        assert_eq!(signals, vec![TsFramework::Mocha]);
+    }
+
+    #[test]
     fn detect_framework_signals_single_match_has_no_ambiguity() {
         // One distinct framework signal → no ambiguity evidence.
         let signals = detect_framework_signals(jest_pkg_json());
@@ -1234,6 +1348,93 @@ mod tests {
             lines
                 .iter()
                 .any(|l| l.contains("typescript_package_confidence: high"))
+        );
+    }
+
+    #[test]
+    fn ts_package_discovery_direct_node_script_resolves_node_test_and_verify_command() {
+        // One-string-flip contrast from #6826: the ONLY framework evidence is
+        // `"test": "node test/pricing.test.mjs"` (no dependencies, no
+        // lockfile). Detection must resolve node_test, emit the runner
+        // evidence, and derive the runnable `node --test <file>` verify
+        // command instead of failing closed with unresolved-hint limitations.
+        let root = unique_test_dir("single-node-direct");
+        setup_single_package(
+            &root,
+            r#"{"name":"pkg","scripts":{"test":"node test/pricing.test.mjs"}}"#,
+            None,
+        );
+        let _ = fs::create_dir_all(root.join("test"));
+        let _ = fs::write(
+            root.join("test/pricing.test.mjs"),
+            "import { test } from 'node:test';\n",
+        );
+        let test_file = PathBuf::from("test/pricing.test.mjs");
+
+        let result = resolve_package_discovery(&test_file, &root);
+
+        assert_eq!(result.framework_hint, Some(TsFramework::NodeTest));
+        // No runner/lockfile evidence: the package manager stays unresolved
+        // (informational — the framework binary derives the command), which
+        // caps confidence at medium. The blocking unresolved-hint limitations
+        // must be gone.
+        assert_eq!(result.runner_hint, None);
+        assert_eq!(result.confidence, TsPackageConfidence::Medium);
+        assert_eq!(
+            result.limitations,
+            vec![TsPackageLimitation::PackageManagerUnresolved]
+        );
+
+        let lines = result.evidence_lines();
+        assert!(
+            lines
+                .iter()
+                .any(|l| l == "typescript_framework_hint: node_test")
+        );
+        assert!(
+            lines
+                .iter()
+                .any(|l| l == "typescript_test_runner: node_test")
+        );
+        assert!(
+            !lines.iter().any(|l| {
+                l == "typescript_package_limitation: typescript_framework_hint_unresolved"
+            }),
+            "framework evidence resolved; the unresolved limitation must be gone: {lines:?}"
+        );
+
+        let cmd = verify_command_for_discovery(&result, &test_file);
+        assert_eq!(cmd.as_deref(), Some("node --test test/pricing.test.mjs"));
+    }
+
+    #[test]
+    fn ts_package_discovery_direct_node_script_without_test_shape_stays_unresolved() {
+        // Fail-closed contrast for #6826: a scripts.test invoking node on a
+        // NON-test entry must keep the old unresolved detection instead of
+        // guessing node:test.
+        let root = unique_test_dir("single-node-nontest");
+        setup_single_package(
+            &root,
+            r#"{"name":"pkg","scripts":{"test":"node server.js"}}"#,
+            None,
+        );
+        let result = resolve_package_discovery(&PathBuf::from("src/lib.ts"), &root);
+
+        assert_eq!(result.framework_hint, None);
+        assert_eq!(result.confidence, TsPackageConfidence::Low);
+        assert!(
+            result
+                .limitations
+                .contains(&TsPackageLimitation::FrameworkHintMissing)
+        );
+        assert!(
+            result
+                .limitations
+                .contains(&TsPackageLimitation::RunnerHintMissing)
+        );
+        assert_eq!(
+            verify_command_for_discovery(&result, &PathBuf::from("src/lib.ts")),
+            None
         );
     }
 
