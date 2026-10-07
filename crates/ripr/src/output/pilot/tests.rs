@@ -421,7 +421,7 @@ fn pilot_summary_md_marks_owner_counts_as_lower_bounds_after_a_seam_limit() {
     let md = render_pilot_summary_md(&entries, context);
 
     assert!(
-        md.contains("- Seam limit reached: ranked the first 3 of 7 seams; Rust seam counts below cover those only\n- Actionable seams: at least 3, showing up to 1\n\n"),
+        md.contains("- Seam limit reached: ranked 3 of 7 seams; Rust seam counts below cover those only\n- Actionable seams: at least 3, showing up to 1\n\n"),
         "{md}"
     );
     assert!(
@@ -676,7 +676,7 @@ fn pilot_summary_with_only_limitations_is_not_a_clean_result() {
     assert!(!md.contains("No gap to test:"), "{md}");
     let terminal = render_pilot_terminal(&entries, limited);
     assert!(
-        terminal.contains("  seam limit: ranked the first 2 of 9 seams\n"),
+        terminal.contains("  seam limit: ranked 2 of 9 seams\n"),
         "{terminal}"
     );
     assert!(

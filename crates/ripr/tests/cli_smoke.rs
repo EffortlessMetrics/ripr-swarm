@@ -12716,7 +12716,7 @@ fn pilot_snapshot_truncated_by_the_seam_budget_is_not_a_verify_baseline()
     let full_total = count(&full);
     assert!(
         summary.contains(&format!(
-            "- Seam limit reached: ranked the first 1 of {full_total} seams;"
+            "- Seam limit reached: ranked 1 of {full_total} seams;"
         )),
         "{summary}"
     );
@@ -12739,7 +12739,7 @@ fn pilot_snapshot_truncated_by_the_seam_budget_is_not_a_verify_baseline()
     let summary = std::fs::read_to_string(root.join("target/ripr/pilot/pilot-summary.md"))?;
     assert!(
         summary.contains(&format!(
-            "- Seam limit reached: ranked the first 1 of {full_total} seams;"
+            "- Seam limit reached: ranked 1 of {full_total} seams;"
         )),
         "{summary}"
     );
@@ -14797,11 +14797,11 @@ fn pilot_ranks_the_current_change_past_the_inventory_seam_limit() -> Result<(), 
     // not on the change; the changed seams it cut were classified on their
     // own and count as analyzed.
     assert!(
-        md.contains("- Seam limit reached: ranked the first "),
+        md.contains("- Seam limit reached: ranked "),
         "{md}"
     );
-    assert!(!md.contains("ranked the first 1 of "), "{md}");
-    assert!(md.contains("ranked the first 4 of 6 seams"), "{md}");
+    assert!(!md.contains("ranked 1 of "), "{md}");
+    assert!(md.contains("ranked 4 of 6 seams"), "{md}");
     // `ripr check` never classifies the added seams, so the snapshot is not
     // its population and carries no comparable identity.
     let snapshot: serde_json::Value = serde_json::from_str(
