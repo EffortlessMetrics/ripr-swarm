@@ -53,9 +53,13 @@ impl LiveDiffSource {
 /// clean or untracked-only tree, or a probe that could not run, keeps
 /// committed history. An explicit `--base` does not change this: the base
 /// names where the diff starts, not where it ends.
-pub(crate) fn select_live_diff_source(root: &Path, request: DiffSourceRequest) -> LiveDiffSource {
+pub(crate) fn select_live_diff_source(
+    root: &Path,
+    request: DiffSourceRequest,
+    git_timeout: Option<std::time::Duration>,
+) -> LiveDiffSource {
     select_live_diff_source_with(request, || {
-        crate::analysis::working_tree_has_uncommitted_changes(root)
+        crate::analysis::working_tree_has_uncommitted_changes(root, git_timeout)
     })
 }
 

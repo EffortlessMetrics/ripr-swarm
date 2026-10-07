@@ -1104,11 +1104,25 @@ pub fn working_tree_has_tracked_changes(root: &Path) -> bool {
 /// own: the run then takes the committed-history path, whose diff loader
 /// names the same git failure in ripr's voice, and whose committed-content
 /// probe still discloses any uncommitted edits it finds (RIPR-SPEC-0112).
-pub(crate) fn working_tree_has_uncommitted_changes(root: &Path) -> bool {
-    matches!(uncommitted_changes_probe(root), WorkingTreeProbe::Dirty)
+pub(crate) fn working_tree_has_uncommitted_changes(
+    root: &Path,
+    git_timeout: Option<std::time::Duration>,
+) -> bool {
+    matches!(
+        uncommitted_changes_probe(root, git_timeout),
+        WorkingTreeProbe::Dirty
+    )
 }
 
-fn uncommitted_changes_probe(root: &Path) -> WorkingTreeProbe {
+fn uncommitted_changes_probe(
+    root: &Path,
+    git_timeout: Option<std::time::Duration>,
+) -> WorkingTreeProbe {
+    // The caller's `--git-timeout` caps this probe like every other git
+    // invocation; without one the probe keeps its own one-minute deadline so
+    // a hung git cannot stall source selection forever (#5997: the fixed
+    // deadline ignored `--git-timeout 1` and failed
+    // check_json_timeout_and_bad_base_have_distinct_identities).
     let result = crate::git::run_git_output_with_deadline(
         root,
         &[
@@ -1119,7 +1133,7 @@ fn uncommitted_changes_probe(root: &Path) -> WorkingTreeProbe {
             "--",
             ".",
         ],
-        Some(WORKING_TREE_PROBE_DEADLINE),
+        git_timeout.or(Some(WORKING_TREE_PROBE_DEADLINE)),
     );
     match result {
         Ok(out) if out.status.success() => {
@@ -3300,7 +3314,7 @@ mod tests {
         ignore_remove_dir_all(&dir);
         init_git_repo(&dir, "main")?;
         let dirty = |label: &str, expected: bool| -> std::io::Result<()> {
-            if working_tree_has_uncommitted_changes(&dir) == expected {
+            if working_tree_has_uncommitted_changes(&dir, None) == expected {
                 Ok(())
             } else {
                 Err(std::io::Error::other(format!(

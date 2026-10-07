@@ -1034,8 +1034,12 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
         !input_diff_file_is_some && candidate_tree.is_none() && !format.is_repo_scope();
     let worktree_run = worktree_explicitly_provided
         || (live_diff_source
-            && app::diff_source::select_live_diff_source(&input.root, diff_source_request)
-                .is_working_tree());
+            && app::diff_source::select_live_diff_source(
+                &input.root,
+                diff_source_request,
+                input.git_timeout,
+            )
+            .is_working_tree());
     let progress_scope = if format.is_repo_scope() {
         app::AnalysisProgressScope::Repo
     } else if worktree_run {
