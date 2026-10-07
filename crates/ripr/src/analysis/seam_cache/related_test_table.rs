@@ -459,6 +459,77 @@ pub(super) mod tests {
     }
 
     #[test]
+    fn duplicate_occurrences_in_one_seam_survive_decode() -> Result<(), String> {
+        // Sharing reuses the backing record but never deduplicates a seam's
+        // occurrence list (#5341).
+        let a = related("a", RelationReason::SameModule);
+        let b = related("b", RelationReason::SameModule);
+        let seams = vec![seam(1, vec![a.clone(), b, a])];
+        let encoded = serde_json::to_value(Body {
+            seams: seams.clone(),
+        })
+        .map_err(|err| err.to_string())?;
+        assert_eq!(
+            encoded["seams"]["seams"][0]["evidence"]["related_tests"],
+            serde_json::json!([0, 1, 0])
+        );
+        let decoded: Body = serde_json::from_value(encoded).map_err(|err| err.to_string())?;
+        assert_eq!(
+            serde_json::to_value(&decoded.seams).map_err(|err| err.to_string())?,
+            serde_json::to_value(&seams).map_err(|err| err.to_string())?
+        );
+        let tests = &decoded.seams[0].evidence.related_tests;
+        assert_eq!(tests.len(), 3);
+        assert!(Arc::ptr_eq(&tests[0], &tests[2]));
+        assert!(!Arc::ptr_eq(&tests[0], &tests[1]));
+        Ok(())
+    }
+
+    #[test]
+    fn high_fan_out_table_decodes_to_one_record_per_row() -> Result<(), String> {
+        // 2,000 seams naming the same three tests decode to three records,
+        // and a forged run of repeated indices costs one pointer per index,
+        // not one record (#5341, #5124).
+        let names = ["a", "b", "c"];
+        let seams: Vec<ClassifiedSeam> = (1..=2_000)
+            .map(|line| {
+                seam(
+                    line,
+                    names
+                        .iter()
+                        .map(|name| related(name, RelationReason::SameModule))
+                        .collect(),
+                )
+            })
+            .collect();
+        let mut encoded = serde_json::to_value(Body { seams }).map_err(|err| err.to_string())?;
+        assert_eq!(
+            encoded["seams"]["related_tests"]
+                .as_array()
+                .ok_or("missing related test table")?
+                .len(),
+            names.len()
+        );
+        encoded["seams"]["seams"][0]["evidence"]["related_tests"] =
+            serde_json::json!(vec![0; 100_000]);
+        let decoded: Body = serde_json::from_value(encoded).map_err(|err| err.to_string())?;
+        let occurrences: usize = decoded
+            .seams
+            .iter()
+            .map(|classified| classified.evidence.related_tests.len())
+            .sum();
+        let records: std::collections::HashSet<*const RelatedTestGrip> = decoded
+            .seams
+            .iter()
+            .flat_map(|classified| classified.evidence.related_tests.iter())
+            .map(Arc::as_ptr)
+            .collect();
+        assert_eq!(occurrences, 100_000 + 1_999 * names.len());
+        assert_eq!(records.len(), names.len());
+        Ok(())
+    }
+
+    #[test]
     fn index_outside_the_table_is_a_decode_error() -> Result<(), String> {
         let mut encoded = serde_json::to_value(Body {
             seams: vec![seam(1, vec![related("a", RelationReason::SameModule)])],
