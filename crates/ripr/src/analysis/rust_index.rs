@@ -280,15 +280,15 @@ pub(crate) fn error_path_twins(shapes: &[ProbeShapeFact], source: &str) -> Vec<b
             .skip_while(|(_, shape)| shape.start_byte < next_start)
             .take_while(|(_, shape)| shape.start_byte == next_start);
         for &(inner_index, inner) in next {
-            if returns_error_constructor(outer, inner, source) {
-                if let Some(twin) = twins.get_mut(outer_index) {
-                    *twin = true;
-                }
+            if returns_error_constructor(outer, inner, source)
+                && let Some(twin) = twins.get_mut(outer_index)
+            {
+                *twin = true;
             }
-            if is_err_payload(inner, outer, source) {
-                if let Some(twin) = twins.get_mut(inner_index) {
-                    *twin = true;
-                }
+            if is_err_payload(inner, outer, source)
+                && let Some(twin) = twins.get_mut(inner_index)
+            {
+                *twin = true;
             }
         }
     }
