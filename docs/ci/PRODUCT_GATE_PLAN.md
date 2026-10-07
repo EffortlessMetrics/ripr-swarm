@@ -18,6 +18,7 @@ product meaning.
 | --- | --- | --- | --- |
 | `product.rust.formatting` | `cargo fmt --check` | required | Rust |
 | `product.rust.workspace_check` | `cargo check --workspace --all-targets` | required | Rust |
+| `product.rust.all_features_check` | `cargo check -p ripr --all-targets --all-features` | required | Rust |
 | `product.rust.clippy` | `cargo clippy --workspace --all-targets -- -D warnings` | required | Rust |
 | `product.rust.workspace_tests` | `cargo nextest run --workspace --profile ci` | required | Rust |
 | `product.rust.workspace_doc_tests` | `cargo test --workspace --doc` | required | Rust |
@@ -38,7 +39,7 @@ intentionally dual:
 | --- | --- | --- | --- |
 | lib, bin, integration, and example test binaries | `cargo nextest run --workspace --profile ci` | default | fresh `junit.xml` naming at least one test, plus `run-context.txt` with checkout SHA, tool versions, and blob identities of `Cargo.lock`, `.config/nextest.toml`, and `rust-gates.yml` |
 | Rust doctests | `cargo test --workspace --doc` | default | job log only |
-| `lang-perl` and other non-default-feature tests | not in the required lane | all / perl / no-default | advisory Test Analytics, the `Perl and release proof` job, and the Windows advisory feature matrix |
+| `lang-perl` and other non-default-feature tests | compiled (not run) by `cargo check -p ripr --all-targets --all-features`; not executed in the required lane | all / perl / no-default | advisory Test Analytics, the `Perl and release proof` job, and the Windows advisory feature matrix |
 
 Nextest cannot execute doctests, so a green nextest row never stands in for the
 doctest row, and neither row claims non-default-feature subjects. The `ci`

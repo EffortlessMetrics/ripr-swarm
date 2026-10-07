@@ -2,7 +2,7 @@ use crate::agent::artifact::{
     ArtifactCurrentness, RepoExposureArtifactContext, validate_repo_exposure_artifact,
 };
 use crate::agent::loop_commands::{
-    bound_root, bound_root_path, check_repo_exposure_command, lexically_clean, shell_arg,
+    bound_root, bound_root_path, check_repo_exposure_command, clean_bound_path, shell_arg,
 };
 use crate::output::gap_decision_ledger::{
     self, GapDecisionLedgerInput, GapDecisionLedgerSourceKind, GapRecord,
@@ -17,7 +17,7 @@ pub(super) const QUEUED: &str = "queued";
 pub(super) const BLOCKED_STALE: &str = "blocked_stale";
 pub(super) const BLOCKED_NOT_EVALUATED: &str = "blocked_not_evaluated";
 const DEFAULT_REPO_EXPOSURE_PATH: &str = "target/ripr/reports/repo-exposure.json";
-const DEFAULT_CHECK_OUTPUT_PATH: &str = "target/ripr/reports/check.json";
+const REPO_EXPOSURE_SOURCE_KIND: &str = "repo_exposure";
 const CHECK_OUTPUT_SOURCE_KIND: &str = "check_output";
 
 pub(crate) struct GapRecordSourceInput<'a> {
@@ -93,12 +93,31 @@ impl GapRecordSourceCurrentness {
         self.status == CURRENT && self.queue_state == QUEUED
     }
 
+    /// Typed refresh authority (#5985): `true` only when `refresh_commands`
+    /// reproduce the ledger's own recorded source route — the repo-exposure
+    /// producer route. That is a property of the route, not of the current
+    /// artifact state: whatever a repo-exposure ledger's present validation
+    /// outcome (current, stale, or not_evaluated), its two commands
+    /// regenerate the same repo-exposure source and rebuild the ledger the
+    /// same way, which is exactly why a blocked repo-exposure source refreshes
+    /// through them. A check-output source records no `--diff` scope, so its
+    /// route cannot be replayed faithfully; `refresh_commands` stays empty
+    /// and the blocked reason names the manual rerun-with-same-`--diff`
+    /// route instead. A records or unidentified source receives the
+    /// repo-exposure regeneration commands as its recovery path, which
+    /// replace rather than replay the recorded input, so it also reports
+    /// `false`.
+    pub(crate) fn refresh_replayable(&self) -> bool {
+        self.source_kind.as_deref() == Some(REPO_EXPOSURE_SOURCE_KIND)
+    }
+
     pub(super) fn json(&self) -> Value {
         json!({
             "status": self.status.as_str(),
             "queue_state": self.queue_state.as_str(),
             "reason": self.reason.as_str(),
             "refresh_commands": &self.refresh_commands,
+            "refresh_replayable": self.refresh_replayable(),
             "source_kind": self.source_kind.as_deref(),
             "source_path": self.source_path.as_deref(),
         })
@@ -180,17 +199,21 @@ pub(crate) fn evaluate_gap_record_source_currentness(
     }
     if input.source_kind == Some(CHECK_OUTPUT_SOURCE_KIND) {
         // The check-output route (the Python/TypeScript preview path) carries
-        // no producer snapshot identity, so it stays non-assignable. Its
-        // refresh replays the same route instead of steering to the Rust-only
-        // repo-exposure route, which would drop the preview records.
+        // no producer snapshot identity, so it stays non-assignable. No
+        // runnable refresh command is offered (#5985): check output does not
+        // record whether its scope came from `--diff`, so a regenerated check
+        // could silently widen the recorded diff scope or, outside Git,
+        // truncate the recorded artifact through its own redirect. The
+        // operator reruns the original check invocation (with the same
+        // `--diff` when one was used) and then the gap-ledger route by hand.
         return GapRecordSourceCurrentness::not_evaluated(
-            "gap ledger source kind check_output has no live snapshot authority, so this packet cannot be assigned; the ledger record's repair_route stays usable as advisory guidance, and refresh_commands rebuild the check output and ledger after the checkout changes; they replay the recorded Git base, so a check run from --diff must instead be rerun with the same --diff",
+            "gap ledger source kind check_output has no live snapshot authority, so this packet cannot be assigned; the ledger record's repair_route stays usable as advisory guidance; no runnable refresh command is emitted because check output does not record whether its scope came from --diff, so a rerun without it would rebuild the ledger at a different scope; to refresh, rerun the original ripr check invocation with the same --diff when one was used and then run ripr reports gap-ledger --check-output for the fresh check output",
             refresh_commands,
             source_kind_owned,
             source_path_owned,
         );
     }
-    if input.source_kind != Some("repo_exposure") {
+    if input.source_kind != Some(REPO_EXPOSURE_SOURCE_KIND) {
         return GapRecordSourceCurrentness::not_evaluated(
             format!(
                 "gap ledger source kind {} has no live snapshot authority; regenerate from a canonical repo-exposure artifact",
@@ -408,57 +431,65 @@ fn resolve_declared_path(root: &Path, declared: &str) -> PathBuf {
     }
 }
 
+/// Resolve a declared repo-exposure source under the bound root, or `None`
+/// when it escapes the root.
+///
+/// Clean `.`/`..` before the containment check: `Path::starts_with` is
+/// component-wise on the raw path, so an un-normalized
+/// `<root>/../outside.json` would otherwise pass it. The declared path is
+/// cleaned with the same symlink-aware [`clean_bound_path`] as the bound
+/// root, so a root that keeps a `..` after a symlink (#6960) still prefixes
+/// its own sources, relative or absolute. That cleaner keeps a `..` that
+/// follows a symlink, so any `..` left below the root fails closed: it
+/// could leave the root through a symlinked directory. A source that names
+/// the root itself is a directory, not an artifact, and also falls back
+/// (#7017).
+///
+/// Containment is lexical against the root's own spelling. An absolute
+/// source spelled through the root's resolved target (the directory a
+/// symlink-parent root reaches) does not share that spelling and falls
+/// back to the default: a safe false negative, not an escape.
+fn contained_source_path(command_root: &Path, declared: &str) -> Option<PathBuf> {
+    let cleaned = clean_bound_path(&resolve_declared_path(command_root, declared));
+    let below_root = cleaned.strip_prefix(command_root).ok()?;
+    if below_root.as_os_str().is_empty()
+        || below_root
+            .components()
+            .any(|component| !matches!(component, std::path::Component::Normal(_)))
+    {
+        return None;
+    }
+    Some(command_root.join(below_root))
+}
+
 fn refresh_commands(
     root: &Path,
     gap_ledger_path: &Path,
     source_kind: Option<&str>,
     source_path: Option<&str>,
 ) -> Vec<String> {
+    // A runnable refresh would be a guess for check_output ledgers (#5985):
+    // check output records its base but not whether its scope came from
+    // `--diff`, so a rerun cannot reproduce the recorded run. Inside Git it
+    // would silently rebuild the ledger at the wrong scope; outside Git the
+    // emitted redirect would truncate the recorded artifact. Emit nothing
+    // runnable; `refresh_replayable` carries the typed not-replayable state
+    // and the blocked reason names the manual route.
+    if source_kind == Some(CHECK_OUTPUT_SOURCE_KIND) {
+        return Vec::new();
+    }
     let root_display = bound_root(&crate::output::outcome::display_path(root));
-    let check_output = source_kind == Some(CHECK_OUTPUT_SOURCE_KIND);
     // The source artifact is anchored to the same bound root as `--root`, so
     // the generated source path stays absolute and names the selected
     // repository from any working directory (#3999). The ledger output path
     // is the caller's own path and is rendered unchanged.
     let command_root = bound_root_path(root);
-    let default_source = if check_output {
-        DEFAULT_CHECK_OUTPUT_PATH
-    } else {
-        DEFAULT_REPO_EXPOSURE_PATH
-    };
+    let default_source = DEFAULT_REPO_EXPOSURE_PATH;
     let source_path = source_path
-        // Clean `.`/`..` lexically before the containment check:
-        // `Path::starts_with` is component-wise on the raw path, so an
-        // un-normalized `<root>/../outside.json` would otherwise pass it.
-        .map(|path| lexically_clean(&resolve_declared_path(&command_root, path)))
-        .filter(|path| path.starts_with(&command_root))
+        .and_then(|path| contained_source_path(&command_root, path))
         .unwrap_or_else(|| command_root.join(default_source));
     let source_display = crate::output::outcome::display_path(&source_path);
     let ledger_display = crate::output::outcome::display_path(gap_ledger_path);
-    if check_output {
-        // Replay the base the existing check output recorded, so the refresh
-        // compares the same diff; without one, `ripr check` resolves its
-        // default base as the original first-pr route would. Check output
-        // does not record whether its scope came from `--diff`, so that case
-        // cannot be replayed here; the blocked reason names it instead.
-        let base_arg = recorded_check_base(&source_path)
-            .map(|base| format!(" --base {}", shell_arg(&base)))
-            .unwrap_or_default();
-        return vec![
-            format!(
-                "ripr check --root {}{} --json > {}",
-                shell_arg(&root_display),
-                base_arg,
-                shell_arg(&source_display)
-            ),
-            format!(
-                "ripr reports gap-ledger --check-output {} --root {} --out {}",
-                shell_arg(&source_display),
-                shell_arg(&root_display),
-                shell_arg(&ledger_display)
-            ),
-        ];
-    }
     vec![
         check_repo_exposure_command(&root_display, "draft", &source_display),
         format!(
@@ -468,16 +499,6 @@ fn refresh_commands(
             shell_arg(&ledger_display)
         ),
     ]
-}
-
-fn recorded_check_base(check_output: &Path) -> Option<String> {
-    let contents = std::fs::read_to_string(check_output).ok()?;
-    let json = serde_json::from_str::<Value>(&contents).ok()?;
-    json.get("base")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|base| !base.is_empty())
-        .map(ToString::to_string)
 }
 
 #[cfg(test)]
@@ -634,61 +655,226 @@ mod tests {
         Ok(())
     }
 
+    /// #6960 review: a bound root that keeps a `..` after a symlink must
+    /// still keep a declared relative source inside it, and an escaping
+    /// source must still fall back to the default.
+    #[cfg(unix)]
     #[test]
-    fn check_output_refresh_replays_the_check_output_route() -> Result<(), String> {
+    fn declared_source_survives_a_root_that_keeps_a_symlink_parent() -> Result<(), String> {
+        // Removed on drop, so a failed setup step does not leak it (#7005).
+        let scratch = RemoveOnDrop(unique_test_dir("symlink-parent-declared-source"));
+        let base = scratch.0.clone();
+        for dir in ["outside/child", "outside/repo", "work/repo"] {
+            std::fs::create_dir_all(base.join(dir)).map_err(|err| err.to_string())?;
+        }
+        std::os::unix::fs::symlink(base.join("outside/child"), base.join("work/link"))
+            .map_err(|err| err.to_string())?;
+        // A symlink inside the analyzed checkout that points outside it.
+        std::os::unix::fs::symlink(base.join("outside/child"), base.join("outside/repo/escape"))
+            .map_err(|err| err.to_string())?;
+        let root = base.join("work/link/../repo");
+        let bound = bound_root_path(&root);
+        let inside = Some(bound.join("reports/repo-exposure.json"));
+        let absolute = |rel: &str| bound.join(rel).to_string_lossy().into_owned();
+        let cases = [
+            ("reports/repo-exposure.json".to_string(), inside.clone()),
+            (
+                "reports/./x/../repo-exposure.json".to_string(),
+                inside.clone(),
+            ),
+            (absolute("reports/repo-exposure.json"), inside.clone()),
+            (absolute("reports/x/../repo-exposure.json"), inside.clone()),
+            ("../outside.json".to_string(), None),
+            ("reports/../../outside.json".to_string(), None),
+            (absolute("../outside.json"), None),
+            // The root itself is a directory, not a source artifact (#7017).
+            ("".to_string(), None),
+            (".".to_string(), None),
+            ("reports/..".to_string(), None),
+            (absolute(""), None),
+            // `escape/..` resolves to `outside/`, not the checkout.
+            ("escape/../repo-exposure.json".to_string(), None),
+            // The root's resolved spelling does not share its prefix: a safe
+            // false negative that falls back to the default (#7017).
+            (
+                base.join("outside/repo/reports/repo-exposure.json")
+                    .to_string_lossy()
+                    .into_owned(),
+                None,
+            ),
+        ];
+        let results: Vec<_> = cases
+            .iter()
+            .map(|(declared, _)| contained_source_path(&bound, declared))
+            .collect();
+        let absolute_commands = refresh_commands(
+            &root,
+            Path::new("out/gap-ledger.json"),
+            Some("repo_exposure"),
+            Some(&absolute("reports/repo-exposure.json")),
+        );
+        let commands = refresh_commands(
+            &root,
+            Path::new("out/gap-ledger.json"),
+            Some("repo_exposure"),
+            Some("reports/repo-exposure.json"),
+        );
+
+        // Fixture: the root really keeps its `..`.
+        assert_eq!(bound, root);
+        for ((declared, expected), actual) in cases.iter().zip(results) {
+            assert_eq!(&actual, expected, "declared {declared}");
+        }
+        let expected =
+            crate::output::outcome::display_path(&bound.join("reports/repo-exposure.json"));
+        assert!(
+            commands[1].contains(&shell_arg(&expected)),
+            "declared source must survive: {}",
+            commands[1]
+        );
+        assert!(
+            absolute_commands[1].contains(&shell_arg(&expected)),
+            "absolute declared source must survive: {}",
+            absolute_commands[1]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn check_output_refresh_is_typed_not_replayable() -> Result<(), String> {
+        // #5985: a check output records its base but not whether its scope
+        // came from `--diff`, so no runnable refresh command can reproduce
+        // the recorded run. The route must carry the typed not-replayable
+        // state and no runnable command — the previously emitted
+        // `ripr check ... > <recorded artifact>` truncated the artifact
+        // outside Git and silently rebuilt the ledger at the wrong scope
+        // inside Git.
         let root = unique_test_dir("check-output-refresh");
         let reports = root.join("target/ripr/reports");
         std::fs::create_dir_all(&reports).map_err(|error| format!("create reports: {error}"))?;
         let ledger = Path::new("out/gap-ledger.json");
-        let bound = bound_root_path(&root);
-        let check = bound.join(DEFAULT_CHECK_OUTPUT_PATH);
-        let check_display = crate::output::outcome::display_path(&check);
-        let root_display = bound_root(&crate::output::outcome::display_path(&root));
-        let expected_ledger = format!(
-            "ripr reports gap-ledger --check-output {} --root {} --out {}",
-            shell_arg(&check_display),
-            shell_arg(&root_display),
-            shell_arg("out/gap-ledger.json")
-        );
+        let check = root.join("target/ripr/reports/check.json");
+        let recorded = r#"{"base":"origin/trunk","findings":[],"analysis_outcome":{"analysis_complete":true}}"#;
+        std::fs::write(&check, recorded).map_err(|error| format!("write check: {error}"))?;
+        let recorded_before = std::fs::read_to_string(&check).map_err(|error| {
+            format!("the recorded check output must be readable before refresh: {error}")
+        })?;
 
-        // No readable check output yet: no base to replay.
-        let commands = refresh_commands(&root, ledger, Some("check_output"), None);
-        assert_eq!(
-            commands,
-            vec![
-                format!(
-                    "ripr check --root {} --json > {}",
-                    shell_arg(&root_display),
-                    shell_arg(&check_display)
-                ),
-                expected_ledger.clone(),
-            ]
-        );
+        for source_path in [None, Some("../outside.json")] {
+            let currentness = evaluate_gap_record_source_currentness(GapRecordSourceInput {
+                root: &root,
+                gap_ledger_path: &root.join(ledger),
+                ledger_root: Some(&root.display().to_string()),
+                source_kind: Some("check_output"),
+                records_path: source_path,
+                source_identity_error: None,
+                records: &[],
+            });
+            assert_eq!(currentness.status, NOT_EVALUATED);
+            assert_eq!(currentness.queue_state, BLOCKED_NOT_EVALUATED);
+            assert!(
+                !currentness.refresh_replayable(),
+                "a check_output route is never replayable: {currentness:?}"
+            );
+            assert!(
+                currentness.refresh_commands.is_empty(),
+                "no runnable command may accompany a not-replayable route: {:?}",
+                currentness.refresh_commands
+            );
+            assert!(
+                currentness.reason.contains("--diff"),
+                "the blocked reason must name the rerun-with-same---diff route: {}",
+                currentness.reason
+            );
+            assert!(
+                currentness
+                    .reason
+                    .contains("ripr reports gap-ledger --check-output"),
+                "the blocked reason must carry the manual ledger route: {}",
+                currentness.reason
+            );
+            let rendered = currentness.json();
+            assert_eq!(rendered["refresh_replayable"], serde_json::json!(false));
+            assert_eq!(rendered["refresh_commands"], serde_json::json!([]));
+        }
 
-        // The recorded base is replayed; an escaping declared path falls
-        // back to the default check output under the bound root.
-        std::fs::write(&check, r#"{"base":"origin/trunk","findings":[]}"#)
-            .map_err(|error| format!("write check: {error}"))?;
-        let commands =
-            refresh_commands(&root, ledger, Some("check_output"), Some("../outside.json"));
+        // The recorded artifact is untouched: evaluation never reads or
+        // truncates the check output it reports on.
+        let recorded_after = std::fs::read_to_string(&check)
+            .map_err(|error| format!("the recorded check output must survive: {error}"))?;
         assert_eq!(
-            commands,
-            vec![
-                format!(
-                    "ripr check --root {} --base origin/trunk --json > {}",
-                    shell_arg(&root_display),
-                    shell_arg(&check_display)
-                ),
-                expected_ledger,
-            ]
-        );
-        assert!(
-            commands
-                .iter()
-                .all(|command| !command.contains("repo-exposure"))
+            recorded_after, recorded_before,
+            "currentness evaluation must not modify the recorded check output"
         );
         std::fs::remove_dir_all(&root).map_err(|error| format!("remove root: {error}"))?;
         Ok(())
+    }
+
+    #[test]
+    fn repo_exposure_refresh_stays_replayable_with_commands() -> Result<(), String> {
+        // Control: the repo-exposure refresh route keeps its runnable,
+        // replayable commands; only the check_output route is withheld.
+        let root = unique_test_dir("repo-exposure-refresh-replayable");
+        let commands = refresh_commands(
+            &root,
+            Path::new("out/gap-ledger.json"),
+            Some("repo_exposure"),
+            None,
+        );
+        assert_eq!(commands.len(), 2, "{commands:?}");
+        let currentness = GapRecordSourceCurrentness::not_evaluated(
+            "test reason",
+            commands,
+            Some("repo_exposure".to_string()),
+            None,
+        );
+        assert!(currentness.refresh_replayable());
+        assert_eq!(
+            currentness.json()["refresh_replayable"],
+            serde_json::json!(true)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn records_ledger_is_not_replayable_but_keeps_its_recovery_route() {
+        // PR review on #5985: a records-kind ledger receives the repo-exposure
+        // regeneration commands as its recovery path, which replace rather
+        // than replay the recorded records input. The typed field must not
+        // advertise that as a replay.
+        let currentness = GapRecordSourceCurrentness::not_evaluated(
+            "gap ledger source kind records has no live snapshot authority",
+            vec![
+                "ripr check --format repo-exposure-json".to_string(),
+                "ripr reports gap-ledger --repo-exposure".to_string(),
+            ],
+            Some("records".to_string()),
+            None,
+        );
+        assert!(
+            !currentness.refresh_replayable(),
+            "records input is not reproduced by the regeneration route"
+        );
+        assert_eq!(
+            currentness.json()["refresh_replayable"],
+            serde_json::json!(false)
+        );
+        // An unidentified source kind is likewise not a replay.
+        let legacy = GapRecordSourceCurrentness::not_evaluated(
+            "legacy ledger has no live snapshot binding",
+            vec!["refresh source".to_string()],
+            None,
+            None,
+        );
+        assert!(!legacy.refresh_replayable());
+    }
+
+    struct RemoveOnDrop(PathBuf);
+
+    impl Drop for RemoveOnDrop {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
     }
 
     fn unique_test_dir(name: &str) -> PathBuf {

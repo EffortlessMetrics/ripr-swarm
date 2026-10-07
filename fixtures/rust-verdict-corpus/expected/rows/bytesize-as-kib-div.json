@@ -1,0 +1,19 @@
+{
+  "case_id": "bytesize-as-kib-div",
+  "subject_id": "bytesize-66a3715",
+  "origin": "upstream",
+  "anchor": "src/lib.rs:264",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "unit_test_assert_eq",
+  "hard_case": false,
+  "truth": "discriminated",
+  "ideal_verdict": "credited",
+  "observed_verdict": "credited",
+  "followed_retarget": false,
+  "changed_since_labeling": true,
+  "observed_classifications": [
+    "exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": []
+}

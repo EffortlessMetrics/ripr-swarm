@@ -7,7 +7,7 @@ Summary: 1 probe(s), 0 exposed, 0 weakly_exposed, 0 reachable_unrevealed, 0 no_s
 Analysis outcome: findings below (analysis complete; complete_with_findings).
   Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 probe(s), 1 finding(s).
 
-NOTE fixtures/rust_constructor_field_wrong_field_observer/input/src/lib.rs:15
+NOTE ./src/lib.rs:15
   id: probe:src_lib.rs:return_value:f04ff7e2
 
 Changed
@@ -18,6 +18,7 @@ Probe
   family: return_value
   delta:  value
   owner:  src/lib.rs::lower_statement
+  canonical gap: gap:rust:src/lib.rs:lower_statement:return_value:return_value:storage
 
 Static exposure
   propagation_unknown (note, confidence 0.66)
@@ -27,13 +28,14 @@ Evidence
   - infection yes: Reachable tests can plausibly activate this changed behavior
   - propagation unknown: Propagation is not statically obvious from syntax-first analysis
   - observation yes: A related test observes a value or effect near the changed behavior
-  - discriminator not established (propagation_unknown); related oracle: Strong oracle found: exact value or pattern assertion
+  - discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)
   - local flow reaches unknown sink: unknown sink (line 15)
   - related test tests/lower.rs:4 lower_ast_only_checks_name uses strong exact value oracle: assert_eq!(statement.name, "item");
   - source assertion argument value "item" at line 6
 
 Weakness
   - No clear propagation path from changed behavior to an observable sink
+  - No strong discriminator was detected
 
 Stop reasons:
   - propagation_evidence_unknown — ripr could not tell whether the changed value flows to something a test observes
@@ -41,5 +43,5 @@ Stop reasons:
 Next step
   Escalate to real mutation testing or deep static analysis for this probe.
 Drill in:
-  ripr explain --root fixtures/rust_constructor_field_wrong_field_observer/input --diff fixtures/rust_constructor_field_wrong_field_observer/diff.patch --mode fast probe:src_lib.rs:return_value:f04ff7e2
-  ripr context --root fixtures/rust_constructor_field_wrong_field_observer/input --diff fixtures/rust_constructor_field_wrong_field_observer/diff.patch --mode fast --at probe:src_lib.rs:return_value:f04ff7e2
+  ripr explain --root <cwd>/fixtures/rust_constructor_field_wrong_field_observer/input --diff <cwd>/fixtures/rust_constructor_field_wrong_field_observer/diff.patch --mode fast probe:src_lib.rs:return_value:f04ff7e2
+  ripr context --root <cwd>/fixtures/rust_constructor_field_wrong_field_observer/input --diff <cwd>/fixtures/rust_constructor_field_wrong_field_observer/diff.patch --mode fast --at probe:src_lib.rs:return_value:f04ff7e2

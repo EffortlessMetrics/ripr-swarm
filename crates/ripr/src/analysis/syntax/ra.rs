@@ -1,14 +1,16 @@
 use crate::domain::{OracleKind, OracleStrength, SymbolId};
+#[cfg(test)]
+use ra_ap_syntax::Edition;
 use ra_ap_syntax::{
-    AstNode, Edition, SourceFile, TextSize,
+    AstNode, SourceFile, TextSize,
     ast::{self, HasAttrs, HasGenericParams, HasName},
 };
 mod property_macros;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
-use super::super::extract::PROBE_SHAPE_UNSAFE_BOUNDARY;
 use super::super::extract::ShadowAuthority;
 use super::super::extract::extract_pattern_words;
 use super::super::facts::FileFacts;
@@ -26,9 +28,7 @@ use super::{
     rust_nesting_refusal,
 };
 use crate::analysis::rust_index::{
-    FunctionFact, OracleFact, PROBE_SHAPE_CALL_DELETION, PROBE_SHAPE_ERROR_PATH,
-    PROBE_SHAPE_FIELD_CONSTRUCTION, PROBE_SHAPE_MATCH_ARM, PROBE_SHAPE_PREDICATE,
-    PROBE_SHAPE_RETURN_VALUE, PROBE_SHAPE_SIDE_EFFECT, ProbeShapeFact, TestFact,
+    FunctionFact, OracleFact, ProbeShapeFact, ProbeShapeKind, SourceText, TestFact,
     classify_assertion, err_return_guard_oracles, extract_call_facts, extract_identifier_tokens,
     extract_line_scanned_oracles, extract_literal_facts, extract_return_facts,
     guarded_result_match_scan_with_shadow_authority, is_unwrap_err_bound_error_assertion,
@@ -136,7 +136,8 @@ pub(crate) fn parser_oracles_for_function(
 
 /// Module scope of a file's functions, keyed by (fn-token line, name) as
 /// function and test facts record them.
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(into = "ModuleItemScopesWire", from = "ModuleItemScopesWire")]
 pub(crate) struct ModuleItemScopes {
     /// Every fn that is a direct item of the file or of an inline
     /// `mod name { .. }`, mapped to the line span of its innermost inline
@@ -163,18 +164,132 @@ pub(crate) struct ModuleItemScopes {
     pub(crate) bound_names: BTreeMap<(usize, String), std::collections::BTreeSet<String>>,
 }
 
+/// One row per fn, since JSON object keys cannot be `(line, name)` tuples.
+#[derive(serde::Serialize, serde::Deserialize)]
+struct ModuleItemScopesWire {
+    fns: Vec<FnScopeWire>,
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct FnScopeWire {
+    line: usize,
+    name: String,
+    item: FnItemScope,
+    local_use: bool,
+    deferred_code: bool,
+    cfg: bool,
+    direct_calls: Option<BTreeSet<String>>,
+    bound_names: Option<BTreeSet<String>>,
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+enum FnItemScope {
+    /// Nested in another fn, or associated: not a module item.
+    NotItem,
+    TopLevel,
+    Module {
+        start: usize,
+        end: usize,
+    },
+}
+
+impl From<ModuleItemScopes> for ModuleItemScopesWire {
+    fn from(scopes: ModuleItemScopes) -> Self {
+        let mut keys: BTreeSet<(usize, String)> = BTreeSet::new();
+        keys.extend(scopes.item_fns.keys().cloned());
+        keys.extend(scopes.fns_with_local_use.iter().cloned());
+        keys.extend(scopes.fns_with_deferred_code.iter().cloned());
+        keys.extend(scopes.direct_calls.keys().cloned());
+        keys.extend(scopes.fns_with_cfg.iter().cloned());
+        keys.extend(scopes.bound_names.keys().cloned());
+        let fns = keys
+            .into_iter()
+            .map(|key| FnScopeWire {
+                item: match scopes.item_fns.get(&key) {
+                    None => FnItemScope::NotItem,
+                    Some(None) => FnItemScope::TopLevel,
+                    Some(Some((start, end))) => FnItemScope::Module {
+                        start: *start,
+                        end: *end,
+                    },
+                },
+                local_use: scopes.fns_with_local_use.contains(&key),
+                deferred_code: scopes.fns_with_deferred_code.contains(&key),
+                cfg: scopes.fns_with_cfg.contains(&key),
+                direct_calls: scopes.direct_calls.get(&key).cloned(),
+                bound_names: scopes.bound_names.get(&key).cloned(),
+                line: key.0,
+                name: key.1,
+            })
+            .collect();
+        Self { fns }
+    }
+}
+
+impl From<ModuleItemScopesWire> for ModuleItemScopes {
+    fn from(wire: ModuleItemScopesWire) -> Self {
+        let mut scopes = Self::default();
+        for row in wire.fns {
+            let key = (row.line, row.name);
+            match row.item {
+                FnItemScope::NotItem => {}
+                FnItemScope::TopLevel => {
+                    scopes.item_fns.insert(key.clone(), None);
+                }
+                FnItemScope::Module { start, end } => {
+                    scopes.item_fns.insert(key.clone(), Some((start, end)));
+                }
+            }
+            if row.local_use {
+                scopes.fns_with_local_use.insert(key.clone());
+            }
+            if row.deferred_code {
+                scopes.fns_with_deferred_code.insert(key.clone());
+            }
+            if row.cfg {
+                scopes.fns_with_cfg.insert(key.clone());
+            }
+            if let Some(called) = row.direct_calls {
+                scopes.direct_calls.insert(key.clone(), called);
+            }
+            if let Some(bound) = row.bound_names {
+                scopes.bound_names.insert(key, bound);
+            }
+        }
+        scopes
+    }
+}
+
+impl ModuleItemScopes {
+    /// Keep only the call and binding names in `keep`. Same-file helper
+    /// crediting only asks whether a name of one of the file's functions, or
+    /// a name one of them calls, is called or bound, so the producer stores
+    /// this compact form in the file-fact cache.
+    pub(crate) fn retain_names(&mut self, keep: &std::collections::BTreeSet<&str>) {
+        for names in self
+            .direct_calls
+            .values_mut()
+            .chain(self.bound_names.values_mut())
+        {
+            names.retain(|name| keep.contains(name.as_str()));
+        }
+    }
+}
+
 /// The module scopes of `text`'s functions. `None` when the file does not
 /// parse cleanly, so a caller that needs module scope fails closed.
 pub(crate) fn module_item_scopes(text: &str) -> Option<ModuleItemScopes> {
     let parse = parse_clean_source_file(text)?;
-    let line_index = LineIndex::new(text);
+    Some(module_item_scopes_in(&parse.tree(), &LineIndex::new(text)))
+}
+
+/// [`module_item_scopes`] over a tree the caller already parsed cleanly.
+pub(crate) fn module_item_scopes_in(
+    source: &ast::SourceFile,
+    line_index: &LineIndex,
+) -> ModuleItemScopes {
     let mut scopes = ModuleItemScopes::default();
-    for function in parse
-        .tree()
-        .syntax()
-        .descendants()
-        .filter_map(ast::Fn::cast)
-    {
+    for function in source.syntax().descendants().filter_map(ast::Fn::cast) {
         let (Some(name), Some(fn_token)) = (function.name(), function.fn_token()) else {
             continue;
         };
@@ -279,7 +394,7 @@ pub(crate) fn module_item_scopes(text: &str) -> Option<ModuleItemScopes> {
         };
         scopes.item_fns.insert(key, module);
     }
-    Some(scopes)
+    scopes
 }
 
 /// How many times the first `fn` item in `fn_text` binds `name`: every
@@ -372,7 +487,7 @@ pub fn summarize_file_with_parser(path: &Path, text: &str) -> Result<FileFacts, 
     if let Some(reason) = rust_nesting_refusal(text) {
         return Err(reason);
     }
-    let parse = SourceFile::parse(text, Edition::CURRENT);
+    let parse = super::nesting::parse_source_file(text);
     let errors = parse.errors();
     if !errors.is_empty() {
         return Err(format!("parser reported {} syntax errors", errors.len()));
@@ -380,11 +495,13 @@ pub fn summarize_file_with_parser(path: &Path, text: &str) -> Result<FileFacts, 
 
     let source = parse.tree();
     let line_index = LineIndex::new(text);
+    // #5415 step 2: one allocation for the file; bodies and shape snippets
+    // below share spans of it instead of copying substrings.
+    let shared_source: Arc<str> = Arc::from(text);
     let empty_invocations = super::owner_pin::empty_local_macro_invocation_ranges(source.syntax());
     let module_declarations = module_declaration_facts(&source, &line_index);
     let mut functions = Vec::new();
     let mut tests = Vec::new();
-    let mut file_calls = Vec::new();
     let mut file_returns = Vec::new();
     let mut file_literals = Vec::new();
     let mut file_probe_shapes = Vec::new();
@@ -417,7 +534,8 @@ pub fn summarize_file_with_parser(path: &Path, text: &str) -> Result<FileFacts, 
         let calls = extract_call_facts(&call_body, start_line);
         let returns = extract_return_facts(&body, start_line);
         let literals = extract_literal_facts(&body, start_line);
-        let probe_shapes = extract_parser_probe_shapes(&function, text, &line_index);
+        let probe_shapes =
+            extract_parser_probe_shapes(&function, text, &shared_source, &line_index);
         // A plain helper inside an inline `#[cfg(test)]` module is test
         // infrastructure even when it has no `#[test]` attribute. Classify
         // that role at the producer boundary so diff probes, seam inventory,
@@ -443,7 +561,6 @@ pub fn summarize_file_with_parser(path: &Path, text: &str) -> Result<FileFacts, 
         let (nested_fn_names, let_bindings) =
             collect_body_shadow_facts(&function, &|offset| line_index.line(offset), start_line);
 
-        file_calls.extend(calls.clone());
         file_returns.extend(returns.clone());
         file_literals.extend(literals.clone());
         file_probe_shapes.extend(probe_shapes);
@@ -454,7 +571,7 @@ pub fn summarize_file_with_parser(path: &Path, text: &str) -> Result<FileFacts, 
             file: path_buf.clone(),
             start_line,
             end_line,
-            body: body.clone(),
+            body: SourceText::shared_or_owned(&shared_source, u32::from(fn_start) as usize, &body),
             calls: calls.clone(),
             returns: returns.clone(),
             literals: literals.clone(),
@@ -473,7 +590,11 @@ pub fn summarize_file_with_parser(path: &Path, text: &str) -> Result<FileFacts, 
                 file: path_buf.clone(),
                 start_line,
                 end_line,
-                body,
+                body: SourceText::shared_or_owned(
+                    &shared_source,
+                    u32::from(fn_start) as usize,
+                    &body,
+                ),
                 calls,
                 assertions: extract_parser_oracles(&function, text, &line_index),
                 literals,
@@ -488,8 +609,6 @@ pub fn summarize_file_with_parser(path: &Path, text: &str) -> Result<FileFacts, 
 
     disambiguate_duplicate_symbol_ids(&mut functions);
 
-    file_calls.sort_by(|a, b| a.line.cmp(&b.line).then(a.name.cmp(&b.name)));
-    file_calls.dedup_by(|a, b| a.line == b.line && a.name == b.name && a.text == b.text);
     file_returns.sort_by(|a, b| a.line.cmp(&b.line).then(a.text.cmp(&b.text)));
     file_returns.dedup_by(|a, b| a.line == b.line && a.text == b.text);
     file_literals.sort_by(|a, b| a.line.cmp(&b.line).then(a.value.cmp(&b.value)));
@@ -498,7 +617,7 @@ pub fn summarize_file_with_parser(path: &Path, text: &str) -> Result<FileFacts, 
         a.start_line
             .cmp(&b.start_line)
             .then(a.end_line.cmp(&b.end_line))
-            .then(a.kind.cmp(&b.kind))
+            .then(a.kind.as_str().cmp(b.kind.as_str()))
             .then(a.text.cmp(&b.text))
     });
     file_probe_shapes.dedup_by(|a, b| {
@@ -508,11 +627,20 @@ pub fn summarize_file_with_parser(path: &Path, text: &str) -> Result<FileFacts, 
             && a.text == b.text
     });
 
+    let mut item_scopes = module_item_scopes_in(&source, &line_index);
+    let keep: std::collections::BTreeSet<&str> = functions
+        .iter()
+        .flat_map(|function: &FunctionFact| {
+            std::iter::once(function.name.as_str())
+                .chain(function.calls.iter().map(|call| call.name.as_str()))
+        })
+        .collect();
+    item_scopes.retain_names(&keep);
+
     Ok(FileFacts {
         path: path_buf,
         functions,
         tests,
-        calls: file_calls,
         returns: file_returns,
         literals: file_literals,
         probe_shapes: file_probe_shapes,
@@ -523,7 +651,11 @@ pub fn summarize_file_with_parser(path: &Path, text: &str) -> Result<FileFacts, 
             &line_index,
         ),
         role_provenance: SourceRoleProvenance::default(),
-        source: text.to_string(),
+        source: shared_source,
+        item_scopes: Some(Box::new(item_scopes)),
+        macro_candidates: Some(Box::new(super::owner_pin::macro_binding_candidates(
+            &source,
+        ))),
     })
 }
 
@@ -1150,10 +1282,11 @@ fn collect_impl_attr_syntax(function: &ast::Fn) -> Vec<String> {
 fn extract_parser_probe_shapes(
     function: &ast::Fn,
     text: &str,
+    source: &Arc<str>,
     line_index: &LineIndex,
 ) -> Vec<ProbeShapeFact> {
     let mut shapes = Vec::new();
-    push_unsafe_boundary_probe_shapes(&mut shapes, function, line_index);
+    push_unsafe_boundary_probe_shapes(&mut shapes, function, source, line_index);
 
     for if_expr in function
         .syntax()
@@ -1165,7 +1298,8 @@ fn extract_parser_probe_shapes(
                 &mut shapes,
                 line_index,
                 text,
-                PROBE_SHAPE_PREDICATE,
+                source,
+                ProbeShapeKind::Predicate,
                 condition.syntax().text_range().start(),
                 condition.syntax().text_range().end(),
             );
@@ -1182,7 +1316,8 @@ fn extract_parser_probe_shapes(
                 &mut shapes,
                 line_index,
                 text,
-                PROBE_SHAPE_PREDICATE,
+                source,
+                ProbeShapeKind::Predicate,
                 condition.syntax().text_range().start(),
                 condition.syntax().text_range().end(),
             );
@@ -1202,7 +1337,8 @@ fn extract_parser_probe_shapes(
                 &mut shapes,
                 line_index,
                 text,
-                PROBE_SHAPE_PREDICATE,
+                source,
+                ProbeShapeKind::Predicate,
                 bin_expr.syntax().text_range().start(),
                 bin_expr.syntax().text_range().end(),
             );
@@ -1219,7 +1355,8 @@ fn extract_parser_probe_shapes(
             &mut shapes,
             line_index,
             text,
-            PROBE_SHAPE_RETURN_VALUE,
+            source,
+            ProbeShapeKind::ReturnValue,
             range.start(),
             range.end(),
         );
@@ -1229,7 +1366,8 @@ fn extract_parser_probe_shapes(
                 &mut shapes,
                 line_index,
                 text,
-                PROBE_SHAPE_ERROR_PATH,
+                source,
+                ProbeShapeKind::ErrorPath,
                 range.start(),
                 range.end(),
             );
@@ -1244,7 +1382,8 @@ fn extract_parser_probe_shapes(
                 &mut shapes,
                 line_index,
                 text,
-                PROBE_SHAPE_RETURN_VALUE,
+                source,
+                ProbeShapeKind::ReturnValue,
                 range.start(),
                 range.end(),
             );
@@ -1253,7 +1392,8 @@ fn extract_parser_probe_shapes(
                     &mut shapes,
                     line_index,
                     text,
-                    PROBE_SHAPE_ERROR_PATH,
+                    source,
+                    ProbeShapeKind::ErrorPath,
                     range.start(),
                     range.end(),
                 );
@@ -1272,7 +1412,8 @@ fn extract_parser_probe_shapes(
             &mut shapes,
             line_index,
             text,
-            PROBE_SHAPE_CALL_DELETION,
+            source,
+            ProbeShapeKind::CallDeletion,
             range.start(),
             range.end(),
         );
@@ -1281,7 +1422,8 @@ fn extract_parser_probe_shapes(
                 &mut shapes,
                 line_index,
                 text,
-                PROBE_SHAPE_RETURN_VALUE,
+                source,
+                ProbeShapeKind::ReturnValue,
                 range.start(),
                 range.end(),
             );
@@ -1291,7 +1433,8 @@ fn extract_parser_probe_shapes(
                 &mut shapes,
                 line_index,
                 text,
-                PROBE_SHAPE_ERROR_PATH,
+                source,
+                ProbeShapeKind::ErrorPath,
                 range.start(),
                 range.end(),
             );
@@ -1309,7 +1452,8 @@ fn extract_parser_probe_shapes(
             &mut shapes,
             line_index,
             text,
-            PROBE_SHAPE_CALL_DELETION,
+            source,
+            ProbeShapeKind::CallDeletion,
             range.start(),
             range.end(),
         );
@@ -1322,7 +1466,8 @@ fn extract_parser_probe_shapes(
                 &mut shapes,
                 line_index,
                 text,
-                PROBE_SHAPE_SIDE_EFFECT,
+                source,
+                ProbeShapeKind::SideEffect,
                 range.start(),
                 range.end(),
             );
@@ -1339,7 +1484,8 @@ fn extract_parser_probe_shapes(
             &mut shapes,
             line_index,
             text,
-            PROBE_SHAPE_FIELD_CONSTRUCTION,
+            source,
+            ProbeShapeKind::FieldConstruction,
             range.start(),
             range.end(),
         );
@@ -1351,17 +1497,18 @@ fn extract_parser_probe_shapes(
         .filter_map(ast::MatchExpr::cast)
     {
         if let Some(token) = match_expr.match_token() {
+            let snippet = match_expr_probe_text(
+                text,
+                match_expr.expr().map(|expr| expr.syntax().text_range()),
+                match_expr.syntax().text_range(),
+            );
             push_probe_shape_with_text(
                 &mut shapes,
                 line_index,
-                PROBE_SHAPE_MATCH_ARM,
+                ProbeShapeKind::MatchArm,
                 token.text_range().start(),
                 token.text_range().end(),
-                match_expr_probe_text(
-                    text,
-                    match_expr.expr().map(|expr| expr.syntax().text_range()),
-                    match_expr.syntax().text_range(),
-                ),
+                link_shape_text(source, token.text_range().start(), snippet),
             );
         }
     }
@@ -1372,17 +1519,18 @@ fn extract_parser_probe_shapes(
         .filter_map(ast::MatchArm::cast)
     {
         if let Some(token) = arm.fat_arrow_token() {
+            let snippet = match_arm_probe_text(
+                text,
+                arm.syntax().text_range().start(),
+                token.text_range().start(),
+            );
             push_probe_shape_with_text(
                 &mut shapes,
                 line_index,
-                PROBE_SHAPE_MATCH_ARM,
+                ProbeShapeKind::MatchArm,
                 token.text_range().start(),
                 token.text_range().end(),
-                match_arm_probe_text(
-                    text,
-                    arm.syntax().text_range().start(),
-                    token.text_range().start(),
-                ),
+                link_shape_text(source, token.text_range().start(), snippet),
             );
         }
     }
@@ -1391,7 +1539,7 @@ fn extract_parser_probe_shapes(
         a.start_line
             .cmp(&b.start_line)
             .then(a.end_line.cmp(&b.end_line))
-            .then(a.kind.cmp(&b.kind))
+            .then(a.kind.as_str().cmp(b.kind.as_str()))
             .then(a.text.cmp(&b.text))
     });
     shapes.dedup_by(|a, b| {
@@ -1406,6 +1554,7 @@ fn extract_parser_probe_shapes(
 fn push_unsafe_boundary_probe_shapes(
     shapes: &mut Vec<ProbeShapeFact>,
     function: &ast::Fn,
+    source: &Arc<str>,
     line_index: &LineIndex,
 ) {
     if let Some(unsafe_token) = function.unsafe_token() {
@@ -1416,10 +1565,14 @@ fn push_unsafe_boundary_probe_shapes(
         push_probe_shape_with_text(
             shapes,
             line_index,
-            PROBE_SHAPE_UNSAFE_BOUNDARY,
+            ProbeShapeKind::UnsafeBoundary,
             unsafe_token.text_range().start(),
             function.syntax().text_range().end(),
-            format!("unsafe fn {name}"),
+            link_shape_text(
+                source,
+                unsafe_token.text_range().start(),
+                format!("unsafe fn {name}"),
+            ),
         );
     }
 
@@ -1434,10 +1587,14 @@ fn push_unsafe_boundary_probe_shapes(
         push_probe_shape_with_text(
             shapes,
             line_index,
-            PROBE_SHAPE_UNSAFE_BOUNDARY,
+            ProbeShapeKind::UnsafeBoundary,
             unsafe_token.text_range().start(),
             block.syntax().text_range().end(),
-            "unsafe block".to_string(),
+            link_shape_text(
+                source,
+                unsafe_token.text_range().start(),
+                "unsafe block".to_string(),
+            ),
         );
     }
 }
@@ -1446,38 +1603,53 @@ fn push_probe_shape(
     shapes: &mut Vec<ProbeShapeFact>,
     line_index: &LineIndex,
     text: &str,
-    kind: &str,
+    source: &Arc<str>,
+    kind: ProbeShapeKind,
     start: TextSize,
     end: TextSize,
 ) {
-    let snippet = slice_text(text, start, end)
-        .trim()
-        .trim_end_matches(';')
-        .to_string();
+    let raw = slice_text(text, start, end);
+    let snippet = raw.trim().trim_end_matches(';').to_string();
     if snippet.is_empty() {
         return;
     }
-    push_probe_shape_with_text(shapes, line_index, kind, start, end, snippet);
+    // Trimming only strips edges, so the snippet still sits verbatim at the
+    // leading-trimmed offset; trailing whitespace and `;` fall outside the
+    // shared window. `shared_or_owned` re-validates and keeps an owned copy
+    // if the span ever disagrees.
+    let leading = raw.len() - raw.trim_start().len();
+    let link_start = (u32::from(start) as usize).saturating_add(leading);
+    let text = SourceText::shared_or_owned(source, link_start, &snippet);
+    push_probe_shape_with_text(shapes, line_index, kind, start, end, text);
 }
 
 fn push_probe_shape_with_text(
     shapes: &mut Vec<ProbeShapeFact>,
     line_index: &LineIndex,
-    kind: &str,
+    kind: ProbeShapeKind,
     start: TextSize,
     end: TextSize,
-    snippet: String,
+    text: SourceText,
 ) {
-    if snippet.is_empty() {
+    if text.is_empty() {
         return;
     }
     shapes.push(ProbeShapeFact {
         start_line: line_index.line(start),
         end_line: line_index.line_for_range_end(end),
         start_byte: u32::from(start) as usize,
-        kind: kind.to_string(),
-        text: snippet,
+        end_byte: u32::from(end) as usize,
+        kind,
+        text,
     });
+}
+
+/// Link a synthetic or normalized snippet that may not sit verbatim in the
+/// source. Verbatim snippets share the allocation; anything else (match-arm
+/// normalization, `unsafe fn {name}` synthesis) stays owned with identical
+/// text.
+fn link_shape_text(source: &Arc<str>, start: TextSize, snippet: String) -> SourceText {
+    SourceText::shared_or_owned(source, u32::from(start) as usize, &snippet)
 }
 
 fn match_expr_probe_text(
@@ -1551,6 +1723,11 @@ fn has_error_path_text(text: &str) -> bool {
         || text.contains("map_err")
         || text.contains("bail!")
         || text.contains("anyhow!")
+        // #6695: a `return`/tail `x.ok_or(Type::Variant)?` returns that error.
+        // Same fail-closed reader as the seam identity, so `E::Bad` is
+        // recognised without an `Error` suffix (PR #6786 review, Devin).
+        || (text.contains(".ok_or")
+            && crate::analysis::classify::changed_error_variant(text).is_some())
 }
 
 fn has_effect_text(text: &str) -> bool {
@@ -1727,16 +1904,18 @@ fn extract_parser_oracles(
 /// over — a leaf ident like `snapshot_helper` must not classify, while
 /// `assert_snapshot` / `assert_json_snapshot` do.
 pub(crate) fn is_assertion_macro_leaf(name: &str) -> bool {
+    // `matches!` computes a bool. Only an asserting wrapper observes it;
+    // admitting the computation itself credits discarded values (#5713).
     matches!(
         name,
-        "assert" | "assert_eq" | "assert_ne" | "assert_matches" | "matches"
+        "assert" | "assert_eq" | "assert_ne" | "assert_matches"
     ) || name.ends_with("snapshot")
 }
 
 pub(crate) fn is_assertion_macro(macro_name: &str) -> bool {
     matches!(
         macro_name,
-        "assert" | "assert_eq" | "assert_ne" | "assert_matches" | "matches"
+        "assert" | "assert_eq" | "assert_ne" | "assert_matches"
     ) || macro_name.starts_with("insta::assert")
         || macro_name.contains("snapshot")
 }
@@ -1830,7 +2009,7 @@ fn owner_changed_nodes(
                 },
                 start_line: function.start_line,
                 end_line: function.end_line,
-                text: function.body.clone(),
+                text: function.body.to_string(),
                 owner: Some(function.id.clone()),
             });
         }
@@ -2153,14 +2332,14 @@ pub fn validate(value: i32) -> Result<i32, String> {
             facts
                 .probe_shapes
                 .iter()
-                .any(|p| p.kind == PROBE_SHAPE_PREDICATE),
+                .any(|p| p.kind == ProbeShapeKind::Predicate),
             "Should extract predicate probe shapes"
         );
         assert!(
             facts
                 .probe_shapes
                 .iter()
-                .any(|p| p.kind == PROBE_SHAPE_ERROR_PATH),
+                .any(|p| p.kind == ProbeShapeKind::ErrorPath),
             "Should extract error_path probe shapes"
         );
         Ok(())
@@ -2177,7 +2356,7 @@ pub fn validate(value: i32) -> Result<i32, String> {
         let predicates: Vec<_> = facts
             .probe_shapes
             .iter()
-            .filter(|shape| shape.kind == PROBE_SHAPE_PREDICATE)
+            .filter(|shape| shape.kind == ProbeShapeKind::Predicate)
             .collect();
         assert!(
             !predicates.is_empty(),
@@ -2220,7 +2399,7 @@ pub fn validate(value: i32) -> Result<i32, String> {
         let predicates: Vec<_> = facts
             .probe_shapes
             .iter()
-            .filter(|shape| shape.kind == PROBE_SHAPE_PREDICATE)
+            .filter(|shape| shape.kind == ProbeShapeKind::Predicate)
             .collect();
         let producer = source
             .find("montant_é > discount_threshold")
@@ -2260,8 +2439,8 @@ pub fn read_raw(ptr: *const u8) -> u8 {
         let boundaries = facts
             .probe_shapes
             .iter()
-            .filter(|shape| shape.kind == PROBE_SHAPE_UNSAFE_BOUNDARY)
-            .map(|shape| (shape.text.clone(), shape.start_line, shape.end_line))
+            .filter(|shape| shape.kind == ProbeShapeKind::UnsafeBoundary)
+            .map(|shape| (shape.text.to_string(), shape.start_line, shape.end_line))
             .collect::<Vec<_>>();
 
         assert_eq!(
@@ -2298,7 +2477,7 @@ pub fn wrap(value: u64) -> Result<Option<u64>, ()> {
         let return_shapes = facts
             .probe_shapes
             .iter()
-            .filter(|shape| shape.kind == PROBE_SHAPE_RETURN_VALUE)
+            .filter(|shape| shape.kind == ProbeShapeKind::ReturnValue)
             .map(|shape| shape.text.as_str())
             .collect::<Vec<_>>();
 
@@ -2334,7 +2513,6 @@ pub fn wrap(value: u64) -> Result<Option<u64>, ()> {
             path: std::path::PathBuf::from("nonexistent.rs"),
             functions: vec![],
             tests: vec![],
-            calls: vec![],
             returns: vec![],
             literals: vec![],
             probe_shapes: vec![],
@@ -2342,7 +2520,9 @@ pub fn wrap(value: u64) -> Result<Option<u64>, ()> {
             module_declarations: Vec::new(),
             unresolved_property_macros: Vec::new(),
             role_provenance: Default::default(),
-            source: String::new(),
+            source: String::new().into(),
+            item_scopes: None,
+            macro_candidates: None,
         };
         let nodes = adapter.changed_nodes(
             crate::analysis::facts::FactSlice::from_slice(&facts.functions),
@@ -3105,6 +3285,54 @@ mod shadow_fact_equivalence_tests {
                 lexical.match_start_lines, parser_backed.match_start_lines,
                 "owned-statement lines must agree for:\n{body}"
             );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn parser_bodies_and_verbatim_shapes_share_the_file_allocation() -> Result<(), String> {
+        // #5415 step 2 mechanism pin: parser bodies slice exact spans, so
+        // they must share the file allocation (one 36MB source instead of
+        // ~84MB of substring copies). Synthetic/normalized shape text stays
+        // owned by construction; verbatim shapes share.
+        let text = "fn alpha(x: i32) -> i32 {\n    if x > 0 {\n        x\n    } else {\n        0\n    }\n}\n#[test]\nfn beta() {\n    assert_eq!(alpha(1), 1);\n}\n";
+        let facts = summarize_file_with_parser(Path::new("src/lib.rs"), text)?;
+        assert_eq!(facts.functions.len(), 2);
+        assert_eq!(facts.tests.len(), 1);
+        assert!(
+            !facts.probe_shapes.is_empty(),
+            "needs shapes to pin sharing"
+        );
+        let alpha = facts
+            .functions
+            .iter()
+            .find(|function| function.name == "alpha")
+            .ok_or("missing alpha")?;
+        assert_eq!(
+            alpha.body.as_str(),
+            &text[..text.find("\n#[test]").unwrap_or(text.len())]
+        );
+        for body in facts
+            .functions
+            .iter()
+            .map(|function| &function.body)
+            .chain(facts.tests.iter().map(|test| &test.body))
+        {
+            assert!(
+                body.shared_source()
+                    .is_some_and(|arc| Arc::ptr_eq(arc, &facts.source)),
+                "parser body must share the file allocation: {body:?}"
+            );
+        }
+        assert!(
+            facts.probe_shapes.iter().any(|shape| shape
+                .text
+                .shared_source()
+                .is_some_and(|arc| Arc::ptr_eq(arc, &facts.source))),
+            "at least the verbatim predicate shape must share the allocation"
+        );
+        for shape in &facts.probe_shapes {
+            assert!(!shape.text.is_empty());
         }
         Ok(())
     }

@@ -1,0 +1,6 @@
+use trapreach::levies::levy;
+
+#[test]
+fn levy_is_thirty() {
+    assert_eq!(levy(2), 30);
+}

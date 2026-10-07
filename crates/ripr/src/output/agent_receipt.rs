@@ -97,6 +97,31 @@ impl AgentReceiptReading {
     }
 }
 
+/// The verdict fields a receipt issued from one verify document for one seam
+/// must carry: the seam's recorded change plus the lifecycle state and
+/// guidance kind the renderer derives from it. Readers bind a stored
+/// receipt's verdict to its verify document through this expectation instead
+/// of trusting the receipt's verdict strings on their own (#5256).
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct ExpectedReceiptVerdict {
+    pub(crate) change: String,
+    pub(crate) receipt_state: String,
+    pub(crate) guidance_kind: String,
+}
+
+pub(crate) fn expected_receipt_verdict(
+    verify: &Value,
+    seam_id: &str,
+) -> Result<ExpectedReceiptVerdict, String> {
+    let seam = find_receipt_seam(verify, seam_id)?;
+    let guidance = receipt_guidance(&seam.change);
+    Ok(ExpectedReceiptVerdict {
+        receipt_state: receipt_lifecycle_state_from_movement(Some(seam.change.as_str())),
+        guidance_kind: guidance.kind.to_string(),
+        change: seam.change,
+    })
+}
+
 pub(crate) use crate::app::analysis_outcome_artifact::AnalysisOutcomeUnavailableStatus as AgentReceiptUnavailableStatus;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -106,6 +131,48 @@ pub(crate) enum AgentReceiptAnalysisOutcome {
         status: AgentReceiptUnavailableStatus,
         reason: String,
     },
+}
+
+/// The one owner of the receipt `status` vocabulary: only a complete, valid
+/// producer analysis outcome is `advisory` evidence. Both the renderer and
+/// the stored-receipt validator derive the status through this mapping, so a
+/// flipped `/status` cannot survive the receipt's own recorded projection.
+pub(crate) fn agent_receipt_status_for_outcome(
+    analysis_outcome: &AgentReceiptAnalysisOutcome,
+) -> &'static str {
+    match analysis_outcome {
+        AgentReceiptAnalysisOutcome::Present(outcome) if outcome.kind.is_complete() => {
+            AGENT_RECEIPT_STATUS_ADVISORY
+        }
+        AgentReceiptAnalysisOutcome::Present(_) => "incomplete",
+        AgentReceiptAnalysisOutcome::Unavailable {
+            status: AgentReceiptUnavailableStatus::Missing,
+            ..
+        } => "incomplete",
+        AgentReceiptAnalysisOutcome::Unavailable { .. } => "invalid",
+    }
+}
+
+/// The status a stored receipt must carry for its recorded
+/// `analysis_outcome_status` projection. This inverts
+/// [`agent_receipt_status_for_outcome`] through the projection vocabulary
+/// (`analysis_outcome_projection` / `unavailable_analysis_outcome_projection`):
+/// `complete` is the only advisory arm; `incomplete` and `missing` render
+/// `incomplete`; `invalid` renders `invalid`. A missing or unknown projection
+/// maps to no status: the producer always records one of the four tokens, so
+/// anything else is not an issued receipt. (A present-but-unserializable
+/// outcome would project `invalid` while rendering `incomplete`, but
+/// serializing a validated outcome cannot fail, so no producer output takes
+/// that corner.)
+pub(crate) fn expected_agent_receipt_status_for_projection(
+    analysis_outcome_status: Option<&str>,
+) -> Option<&'static str> {
+    match analysis_outcome_status {
+        Some("complete") => Some(AGENT_RECEIPT_STATUS_ADVISORY),
+        Some("incomplete" | "missing") => Some("incomplete"),
+        Some("invalid") => Some("invalid"),
+        _ => None,
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -144,6 +211,15 @@ struct AgentReceiptSeam {
     grip_class: Option<String>,
     change: String,
     evidence_delta: Vec<String>,
+    /// #5250: presence-aware. `None` means the verify document predates
+    /// the after-signals, so guidance must stay generic; `Some([])` means
+    /// the after side genuinely has no missing discriminators / open legs.
+    /// `after_discriminate_state` is `Some` only when the verify row
+    /// records the leg: `None` covers both predating documents and
+    /// after-sides that never recorded the discriminate state.
+    after_missing_discriminators: Option<Vec<String>>,
+    after_discriminate_state: Option<String>,
+    after_open_legs: Option<Vec<String>>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -190,6 +266,7 @@ pub(crate) fn render_agent_receipt_value_json(
     let input_paths = agent_receipt_input_paths_from_value(verify)?;
     let seam = find_receipt_seam(verify, seam_id)?;
     let guidance = receipt_guidance(&seam.change);
+    let guidance_note = receipt_guidance_note(&seam);
     let receipt_state = receipt_lifecycle_state_from_movement(Some(seam.change.as_str()));
     let provenance = provenance_json(&provenance, &seam);
     let analysis_projection = match &analysis_outcome {
@@ -200,22 +277,13 @@ pub(crate) fn render_agent_receipt_value_json(
             unavailable_analysis_outcome_projection(*status, reason)
         }
     };
-    let status = match &analysis_outcome {
-        AgentReceiptAnalysisOutcome::Present(outcome) if outcome.kind.is_complete() => {
-            AGENT_RECEIPT_STATUS_ADVISORY
-        }
-        AgentReceiptAnalysisOutcome::Present(_) => "incomplete",
-        AgentReceiptAnalysisOutcome::Unavailable {
-            status: AgentReceiptUnavailableStatus::Missing,
-            ..
-        } => "incomplete",
-        AgentReceiptAnalysisOutcome::Unavailable { .. } => "invalid",
-    };
+    let status = agent_receipt_status_for_outcome(&analysis_outcome);
     let (next_recommendation, recommended_action) = receipt_next_step(
         status,
         analysis_projection.status,
         analysis_projection.error.as_deref(),
         &guidance,
+        guidance_note.as_ref(),
     );
 
     let value = serde_json::json!({
@@ -240,7 +308,8 @@ pub(crate) fn render_agent_receipt_value_json(
             "after": seam.after,
             "grip_class": seam.grip_class,
             "change": seam.change,
-            "evidence_delta": seam.evidence_delta
+            "evidence_delta": seam.evidence_delta,
+            "guidance_note": guidance_note.as_ref().map(|note| note.note.as_str())
         },
         "test_changed": test_changed,
         // The receipt never executes a command: `commands_run` is what the
@@ -365,6 +434,15 @@ fn matched_receipt_seam(
         grip_class: None,
         change: required_string(seam, "change", bucket)?,
         evidence_delta: string_array_field(seam, "evidence_delta"),
+        after_missing_discriminators: optional_string_array_field(
+            seam,
+            "after_missing_discriminators",
+        ),
+        after_discriminate_state: seam
+            .get("after_discriminate_state")
+            .and_then(Value::as_str)
+            .map(str::to_string),
+        after_open_legs: optional_string_array_field(seam, "after_open_legs"),
     })
 }
 
@@ -383,6 +461,9 @@ fn one_sided_receipt_seam(
         grip_class: Some(required_string(seam, "grip_class", bucket)?),
         change: required_string(seam, "change", bucket)?,
         evidence_delta: Vec::new(),
+        after_missing_discriminators: None,
+        after_discriminate_state: None,
+        after_open_legs: None,
     })
 }
 
@@ -399,8 +480,15 @@ fn receipt_next_step(
     analysis_outcome_status: &str,
     analysis_outcome_error: Option<&str>,
     guidance: &AgentReceiptGuidance,
+    guidance_note: Option<&UnchangedGuidanceNote>,
 ) -> (String, String) {
     if status == "advisory" {
+        // #5250: when the static add-discriminator lines would repeat a
+        // satisfied instruction or dangle over an empty missing list, the
+        // refined note carries the replacement for both next-step lines.
+        if let Some(next_steps) = guidance_note.and_then(|note| note.next_steps.clone()) {
+            return (next_steps.clone(), next_steps);
+        }
         return (
             guidance.next_recommendation.to_string(),
             guidance.recommended_action.to_string(),
@@ -513,6 +601,102 @@ fn string_array_field(value: &Value, key: &str) -> Vec<String> {
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default()
+}
+
+/// #5250: presence-aware array parse. `None` means the verify document
+/// predates the field, which guidance must treat as unknown rather than
+/// as an empty after-side fact.
+fn optional_string_array_field(value: &Value, key: &str) -> Option<Vec<String>> {
+    value.get(key)?.as_array().map(|items| {
+        items
+            .iter()
+            .filter_map(Value::as_str)
+            .map(str::to_string)
+            .collect::<Vec<_>>()
+    })
+}
+
+/// #5250: the refined guidance for an `unchanged` seam whose evidence
+/// moved. The static [`receipt_guidance`] text cannot see the after side,
+/// so it repeats the add-discriminator instruction even after the
+/// discriminator is satisfied. `next_steps` carries the full replacement
+/// for the static next-step lines when they would mislead (a repeated
+/// satisfied instruction, or a packet reference dangling over an empty
+/// missing list); `None` keeps the generic guidance and the note only
+/// annotates the seam.
+struct UnchangedGuidanceNote {
+    note: String,
+    next_steps: Option<String>,
+}
+
+/// #5250: refine the `unchanged` guidance from the after-side signals.
+/// Stays `None` for true no-movement, for other buckets, and for verify
+/// documents that predate the after-signals (fail-safe generic guidance).
+/// An empty missing list alone never establishes satisfaction: several seam
+/// kinds never name missing discriminators while their discriminate leg
+/// stays weak, so the discriminate state decides alongside the list.
+fn receipt_guidance_note(seam: &AgentReceiptSeam) -> Option<UnchangedGuidanceNote> {
+    if seam.change != "unchanged" || seam.evidence_delta.is_empty() {
+        return None;
+    }
+    let missing = seam.after_missing_discriminators.as_ref()?;
+    let discriminate = seam.after_discriminate_state.as_deref();
+    let open_legs = seam.after_open_legs.as_ref()?;
+    let after = seam.after.as_deref().unwrap_or("unknown");
+    if !missing.is_empty() {
+        let first = missing.first().map(String::as_str).unwrap_or("unknown");
+        let missing_clause = if missing.len() == 1 {
+            format!(
+                "1 discriminator is still missing ({first}); strengthen it, then rerun agent verify."
+            )
+        } else {
+            format!(
+                "{} discriminators are still missing ({first}); strengthen those, then rerun agent verify.",
+                missing.len()
+            )
+        };
+        return Some(UnchangedGuidanceNote {
+            note: format!(
+                "Static evidence moved (see `evidence_delta`) but the grip class stayed `{after}`; {missing_clause}"
+            ),
+            next_steps: None,
+        });
+    }
+    match discriminate {
+        Some("yes") => {
+            let gate = if open_legs.is_empty() {
+                "a leg outside the recorded states; inspect the seam packet".to_string()
+            } else {
+                open_legs.join(", ")
+            };
+            let note = format!(
+                "The missing discriminators are satisfied and static evidence moved (see `evidence_delta`), but the grip class stayed `{after}`; the class is gated by {gate}."
+            );
+            Some(UnchangedGuidanceNote {
+                next_steps: Some(format!(
+                    "{note} Investigate the gate, then rerun agent verify."
+                )),
+                note,
+            })
+        }
+        Some(state) if !state.is_empty() => {
+            let note = format!(
+                "Static evidence moved (see `evidence_delta`) but the grip class stayed `{after}`; the discriminate leg is still {state}."
+            );
+            Some(UnchangedGuidanceNote {
+                next_steps: Some(format!(
+                    "{note} Strengthen the oracle asserting the changed behavior, then rerun agent verify."
+                )),
+                note,
+            })
+        }
+        _ => Some(UnchangedGuidanceNote {
+            note: format!(
+                "Static evidence moved (see `evidence_delta`) but the grip class stayed `{after}`; the discriminate state was not recorded, so satisfaction is unknown; inspect the seam packet."
+            ),
+            next_steps: None,
+        }),
+    }
 }
 
 #[cfg(test)]
@@ -884,6 +1068,28 @@ mod tests {
         Ok(())
     }
 
+    /// #5250: minimal verify document holding one `unchanged` seam whose
+    /// evidence moved. `after_signals` is the raw JSON fragment for the
+    /// after-side signal fields (or empty for a document that predates
+    /// them); `delta_line` is the single `evidence_delta` entry.
+    fn unchanged_class_verify_json(after_signals: &str, delta_line: &str) -> String {
+        format!(
+            r#"{{"inputs": {{"before": "target/ripr/workflow/before.repo-exposure.json", "after": "target/ripr/workflow/after.repo-exposure.json"}}, "changed_seams": [], "unchanged_seams": [{{"seam_id": "seam-static", "seam_kind": "predicate_boundary", "file": "src/pricing.rs", "line": 42, "before": "weakly_gripped", "after": "weakly_gripped", "change": "unchanged", "evidence_delta": ["{delta_line}"]{after_signals}}}], "new_gaps": [], "resolved_gaps": []}}"#
+        )
+    }
+
+    fn render_static_receipt(verify_json: &str) -> Result<Value, String> {
+        let rendered = render_agent_receipt_json(
+            verify_json,
+            "target/ripr/workflow/agent-verify.json".to_string(),
+            "seam-static",
+            None,
+            &[],
+            fixed_provenance(),
+        )?;
+        serde_json::from_str(&rendered).map_err(|err| format!("receipt JSON should parse: {err}"))
+    }
+
     #[test]
     fn agent_receipt_json_errors_when_seam_is_missing() {
         assert_eq!(
@@ -897,6 +1103,557 @@ mod tests {
             ),
             Err("agent receipt seam_id missing was not found in agent verify JSON".to_string())
         );
+    }
+
+    #[test]
+    fn agent_receipt_unchanged_class_satisfied_discriminator_names_gate() -> Result<(), String> {
+        // Satisfaction needs both an explicitly empty missing list and a
+        // `yes` discriminate leg: several seam kinds never name missing
+        // discriminators while their oracle stays weak.
+        let verify = unchanged_class_verify_json(
+            r#", "after_missing_discriminators": [], "after_discriminate_state": "yes", "after_open_legs": ["observe (weak)"]"#,
+            "missing discriminator no longer reported: threshold equality",
+        );
+        let value = render_static_receipt(&verify)?;
+        let expected: Value = serde_json::from_str(
+            r#"{
+  "analysis_outcome": {
+    "analysis_complete": true,
+    "outcome": {
+      "claim_boundary": "Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim.",
+      "counts": {
+        "candidate_line_count": 1,
+        "changed_file_count": 1,
+        "changed_line_count": 1,
+        "finding_count": 0,
+        "probe_count": 1
+      },
+      "identity": {
+        "base_revision": null,
+        "config_identity": null,
+        "git_candidate_subject": null,
+        "input_identity": null,
+        "repository_identity": null,
+        "root_identity": null,
+        "snapshot_identity": null
+      },
+      "kind": "complete_no_findings",
+      "limitations": [],
+      "schema_version": "0.1"
+    },
+    "semantic_digest": "sha256:89c2c6fad1805d30efd0b9e5ae55ab26e04836e4fe2b82b5fbd19abfa993039a"
+  },
+  "analysis_outcome_error": null,
+  "analysis_outcome_status": "complete",
+  "inputs": {
+    "after": "target/ripr/workflow/after.repo-exposure.json",
+    "agent_verify_json": "target/ripr/workflow/agent-verify.json",
+    "before": "target/ripr/workflow/before.repo-exposure.json"
+  },
+  "provenance": {
+    "after_artifact": {
+      "path": "target/ripr/workflow/after.repo-exposure.json",
+      "sha256": "sha256:after"
+    },
+    "after_class": "weakly_gripped",
+    "before_artifact": {
+      "path": "target/ripr/workflow/before.repo-exposure.json",
+      "sha256": "sha256:before"
+    },
+    "before_class": "weakly_gripped",
+    "command_template_version": "0.1",
+    "config_fingerprint": "fnv1a64:4c94a2f6cfaa5c21",
+    "generated_at": "unix_ms:1778179200000",
+    "limits": {
+      "runtime_adequacy_claim": false,
+      "runtime_mutation_execution": false,
+      "static_artifact_relationship": true
+    },
+    "movement": "unchanged",
+    "repo_root": ".",
+    "ripr_version": "0.8.0",
+    "seam_id": "seam-static",
+    "verify_artifact": {
+      "path": "target/ripr/workflow/agent-verify.json",
+      "sha256": "sha256:verify"
+    },
+    "workflow_artifact": null
+  },
+  "schema_version": "0.5",
+  "seam": {
+    "after": "weakly_gripped",
+    "before": "weakly_gripped",
+    "change": "unchanged",
+    "evidence_delta": [
+      "missing discriminator no longer reported: threshold equality"
+    ],
+    "file": "src/pricing.rs",
+    "grip_class": null,
+    "guidance_note": "The missing discriminators are satisfied and static evidence moved (see `evidence_delta`), but the grip class stayed `weakly_gripped`; the class is gated by observe (weak).",
+    "line": 42,
+    "seam_id": "seam-static",
+    "seam_kind": "predicate_boundary"
+  },
+  "status": "advisory",
+  "summary": {
+    "next_action": {
+      "kind": "unchanged",
+      "recommended_action": "The missing discriminators are satisfied and static evidence moved (see `evidence_delta`), but the grip class stayed `weakly_gripped`; the class is gated by observe (weak). Investigate the gate, then rerun agent verify.",
+      "summary": "Static grip did not improve."
+    },
+    "next_recommendation": "The missing discriminators are satisfied and static evidence moved (see `evidence_delta`), but the grip class stayed `weakly_gripped`; the class is gated by observe (weak). Investigate the gate, then rerun agent verify.",
+    "receipt_state": "receipt_movement_unchanged",
+    "remaining_gap": "Static grip class did not move."
+  },
+  "test_changed": null,
+  "tool": "ripr",
+  "verification": {
+    "commands_run": [],
+    "non_claims": [
+      "static_only_assurance"
+    ],
+    "status": "verification_not_run"
+  }
+}"#,
+        )
+        .map_err(|err| format!("expected receipt should parse: {err}"))?;
+
+        assert_eq!(value, expected);
+        assert!(
+            value["summary"]["next_recommendation"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("gated by observe (weak)")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn agent_receipt_unchanged_class_weak_discriminate_keeps_strengthen_guidance()
+    -> Result<(), String> {
+        // An empty missing list with a weak discriminate leg must not read
+        // as satisfied: several seam kinds never name missing
+        // discriminators while their oracle stays weak. The note names the
+        // weak leg and the next steps keep the strengthen instruction.
+        let verify = unchanged_class_verify_json(
+            r#", "after_missing_discriminators": [], "after_discriminate_state": "weak", "after_open_legs": ["discriminate (weak)"]"#,
+            "missing discriminator no longer reported: threshold equality",
+        );
+        let value = render_static_receipt(&verify)?;
+        let expected: Value = serde_json::from_str(
+            r#"{
+  "analysis_outcome": {
+    "analysis_complete": true,
+    "outcome": {
+      "claim_boundary": "Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim.",
+      "counts": {
+        "candidate_line_count": 1,
+        "changed_file_count": 1,
+        "changed_line_count": 1,
+        "finding_count": 0,
+        "probe_count": 1
+      },
+      "identity": {
+        "base_revision": null,
+        "config_identity": null,
+        "git_candidate_subject": null,
+        "input_identity": null,
+        "repository_identity": null,
+        "root_identity": null,
+        "snapshot_identity": null
+      },
+      "kind": "complete_no_findings",
+      "limitations": [],
+      "schema_version": "0.1"
+    },
+    "semantic_digest": "sha256:89c2c6fad1805d30efd0b9e5ae55ab26e04836e4fe2b82b5fbd19abfa993039a"
+  },
+  "analysis_outcome_error": null,
+  "analysis_outcome_status": "complete",
+  "inputs": {
+    "after": "target/ripr/workflow/after.repo-exposure.json",
+    "agent_verify_json": "target/ripr/workflow/agent-verify.json",
+    "before": "target/ripr/workflow/before.repo-exposure.json"
+  },
+  "provenance": {
+    "after_artifact": {
+      "path": "target/ripr/workflow/after.repo-exposure.json",
+      "sha256": "sha256:after"
+    },
+    "after_class": "weakly_gripped",
+    "before_artifact": {
+      "path": "target/ripr/workflow/before.repo-exposure.json",
+      "sha256": "sha256:before"
+    },
+    "before_class": "weakly_gripped",
+    "command_template_version": "0.1",
+    "config_fingerprint": "fnv1a64:4c94a2f6cfaa5c21",
+    "generated_at": "unix_ms:1778179200000",
+    "limits": {
+      "runtime_adequacy_claim": false,
+      "runtime_mutation_execution": false,
+      "static_artifact_relationship": true
+    },
+    "movement": "unchanged",
+    "repo_root": ".",
+    "ripr_version": "0.8.0",
+    "seam_id": "seam-static",
+    "verify_artifact": {
+      "path": "target/ripr/workflow/agent-verify.json",
+      "sha256": "sha256:verify"
+    },
+    "workflow_artifact": null
+  },
+  "schema_version": "0.5",
+  "seam": {
+    "after": "weakly_gripped",
+    "before": "weakly_gripped",
+    "change": "unchanged",
+    "evidence_delta": [
+      "missing discriminator no longer reported: threshold equality"
+    ],
+    "file": "src/pricing.rs",
+    "grip_class": null,
+    "guidance_note": "Static evidence moved (see `evidence_delta`) but the grip class stayed `weakly_gripped`; the discriminate leg is still weak.",
+    "line": 42,
+    "seam_id": "seam-static",
+    "seam_kind": "predicate_boundary"
+  },
+  "status": "advisory",
+  "summary": {
+    "next_action": {
+      "kind": "unchanged",
+      "recommended_action": "Static evidence moved (see `evidence_delta`) but the grip class stayed `weakly_gripped`; the discriminate leg is still weak. Strengthen the oracle asserting the changed behavior, then rerun agent verify.",
+      "summary": "Static grip did not improve."
+    },
+    "next_recommendation": "Static evidence moved (see `evidence_delta`) but the grip class stayed `weakly_gripped`; the discriminate leg is still weak. Strengthen the oracle asserting the changed behavior, then rerun agent verify.",
+    "receipt_state": "receipt_movement_unchanged",
+    "remaining_gap": "Static grip class did not move."
+  },
+  "test_changed": null,
+  "tool": "ripr",
+  "verification": {
+    "commands_run": [],
+    "non_claims": [
+      "static_only_assurance"
+    ],
+    "status": "verification_not_run"
+  }
+}"#,
+        )
+        .map_err(|err| format!("expected receipt should parse: {err}"))?;
+
+        assert_eq!(value, expected);
+        assert!(
+            !value["seam"]["guidance_note"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("satisfied")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn agent_receipt_unchanged_class_unrecorded_discriminate_stays_unknown() -> Result<(), String> {
+        // An empty missing list with no recorded discriminate state must
+        // not read as satisfied either: the note says satisfaction is
+        // unknown and the generic next steps stay.
+        let verify = unchanged_class_verify_json(
+            r#", "after_missing_discriminators": [], "after_discriminate_state": null, "after_open_legs": ["reach (not recorded)", "activate (not recorded)", "propagate (not recorded)", "observe (not recorded)", "discriminate (not recorded)"]"#,
+            "missing discriminator no longer reported: threshold equality",
+        );
+        let value = render_static_receipt(&verify)?;
+        let expected: Value = serde_json::from_str(
+            r#"{
+  "analysis_outcome": {
+    "analysis_complete": true,
+    "outcome": {
+      "claim_boundary": "Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim.",
+      "counts": {
+        "candidate_line_count": 1,
+        "changed_file_count": 1,
+        "changed_line_count": 1,
+        "finding_count": 0,
+        "probe_count": 1
+      },
+      "identity": {
+        "base_revision": null,
+        "config_identity": null,
+        "git_candidate_subject": null,
+        "input_identity": null,
+        "repository_identity": null,
+        "root_identity": null,
+        "snapshot_identity": null
+      },
+      "kind": "complete_no_findings",
+      "limitations": [],
+      "schema_version": "0.1"
+    },
+    "semantic_digest": "sha256:89c2c6fad1805d30efd0b9e5ae55ab26e04836e4fe2b82b5fbd19abfa993039a"
+  },
+  "analysis_outcome_error": null,
+  "analysis_outcome_status": "complete",
+  "inputs": {
+    "after": "target/ripr/workflow/after.repo-exposure.json",
+    "agent_verify_json": "target/ripr/workflow/agent-verify.json",
+    "before": "target/ripr/workflow/before.repo-exposure.json"
+  },
+  "provenance": {
+    "after_artifact": {
+      "path": "target/ripr/workflow/after.repo-exposure.json",
+      "sha256": "sha256:after"
+    },
+    "after_class": "weakly_gripped",
+    "before_artifact": {
+      "path": "target/ripr/workflow/before.repo-exposure.json",
+      "sha256": "sha256:before"
+    },
+    "before_class": "weakly_gripped",
+    "command_template_version": "0.1",
+    "config_fingerprint": "fnv1a64:4c94a2f6cfaa5c21",
+    "generated_at": "unix_ms:1778179200000",
+    "limits": {
+      "runtime_adequacy_claim": false,
+      "runtime_mutation_execution": false,
+      "static_artifact_relationship": true
+    },
+    "movement": "unchanged",
+    "repo_root": ".",
+    "ripr_version": "0.8.0",
+    "seam_id": "seam-static",
+    "verify_artifact": {
+      "path": "target/ripr/workflow/agent-verify.json",
+      "sha256": "sha256:verify"
+    },
+    "workflow_artifact": null
+  },
+  "schema_version": "0.5",
+  "seam": {
+    "after": "weakly_gripped",
+    "before": "weakly_gripped",
+    "change": "unchanged",
+    "evidence_delta": [
+      "missing discriminator no longer reported: threshold equality"
+    ],
+    "file": "src/pricing.rs",
+    "grip_class": null,
+    "guidance_note": "Static evidence moved (see `evidence_delta`) but the grip class stayed `weakly_gripped`; the discriminate state was not recorded, so satisfaction is unknown; inspect the seam packet.",
+    "line": 42,
+    "seam_id": "seam-static",
+    "seam_kind": "predicate_boundary"
+  },
+  "status": "advisory",
+  "summary": {
+    "next_action": {
+      "kind": "unchanged",
+      "recommended_action": "Add the missing discriminator or stronger assertion named by the packet.",
+      "summary": "Static grip did not improve."
+    },
+    "next_recommendation": "Add or strengthen the missing discriminator named by the seam packet, then rerun agent verify.",
+    "receipt_state": "receipt_movement_unchanged",
+    "remaining_gap": "Static grip class did not move."
+  },
+  "test_changed": null,
+  "tool": "ripr",
+  "verification": {
+    "commands_run": [],
+    "non_claims": [
+      "static_only_assurance"
+    ],
+    "status": "verification_not_run"
+  }
+}"#,
+        )
+        .map_err(|err| format!("expected receipt should parse: {err}"))?;
+
+        assert_eq!(value, expected);
+        Ok(())
+    }
+
+    #[test]
+    fn agent_receipt_unchanged_class_missing_discriminator_keeps_add_discriminator_guidance()
+    -> Result<(), String> {
+        // Removal control for the satisfied case above: without the new
+        // test the discriminator is still missing, so the generic
+        // add-discriminator guidance must stay.
+        let verify = unchanged_class_verify_json(
+            r#", "after_missing_discriminators": ["threshold equality"], "after_discriminate_state": "weak", "after_open_legs": ["discriminate (weak)"]"#,
+            "missing discriminator still reported: threshold equality",
+        );
+        let value = render_static_receipt(&verify)?;
+        let expected: Value = serde_json::from_str(
+            r#"{
+  "analysis_outcome": {
+    "analysis_complete": true,
+    "outcome": {
+      "claim_boundary": "Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim.",
+      "counts": {
+        "candidate_line_count": 1,
+        "changed_file_count": 1,
+        "changed_line_count": 1,
+        "finding_count": 0,
+        "probe_count": 1
+      },
+      "identity": {
+        "base_revision": null,
+        "config_identity": null,
+        "git_candidate_subject": null,
+        "input_identity": null,
+        "repository_identity": null,
+        "root_identity": null,
+        "snapshot_identity": null
+      },
+      "kind": "complete_no_findings",
+      "limitations": [],
+      "schema_version": "0.1"
+    },
+    "semantic_digest": "sha256:89c2c6fad1805d30efd0b9e5ae55ab26e04836e4fe2b82b5fbd19abfa993039a"
+  },
+  "analysis_outcome_error": null,
+  "analysis_outcome_status": "complete",
+  "inputs": {
+    "after": "target/ripr/workflow/after.repo-exposure.json",
+    "agent_verify_json": "target/ripr/workflow/agent-verify.json",
+    "before": "target/ripr/workflow/before.repo-exposure.json"
+  },
+  "provenance": {
+    "after_artifact": {
+      "path": "target/ripr/workflow/after.repo-exposure.json",
+      "sha256": "sha256:after"
+    },
+    "after_class": "weakly_gripped",
+    "before_artifact": {
+      "path": "target/ripr/workflow/before.repo-exposure.json",
+      "sha256": "sha256:before"
+    },
+    "before_class": "weakly_gripped",
+    "command_template_version": "0.1",
+    "config_fingerprint": "fnv1a64:4c94a2f6cfaa5c21",
+    "generated_at": "unix_ms:1778179200000",
+    "limits": {
+      "runtime_adequacy_claim": false,
+      "runtime_mutation_execution": false,
+      "static_artifact_relationship": true
+    },
+    "movement": "unchanged",
+    "repo_root": ".",
+    "ripr_version": "0.8.0",
+    "seam_id": "seam-static",
+    "verify_artifact": {
+      "path": "target/ripr/workflow/agent-verify.json",
+      "sha256": "sha256:verify"
+    },
+    "workflow_artifact": null
+  },
+  "schema_version": "0.5",
+  "seam": {
+    "after": "weakly_gripped",
+    "before": "weakly_gripped",
+    "change": "unchanged",
+    "evidence_delta": [
+      "missing discriminator still reported: threshold equality"
+    ],
+    "file": "src/pricing.rs",
+    "grip_class": null,
+    "guidance_note": "Static evidence moved (see `evidence_delta`) but the grip class stayed `weakly_gripped`; 1 discriminator is still missing (threshold equality); strengthen it, then rerun agent verify.",
+    "line": 42,
+    "seam_id": "seam-static",
+    "seam_kind": "predicate_boundary"
+  },
+  "status": "advisory",
+  "summary": {
+    "next_action": {
+      "kind": "unchanged",
+      "recommended_action": "Add the missing discriminator or stronger assertion named by the packet.",
+      "summary": "Static grip did not improve."
+    },
+    "next_recommendation": "Add or strengthen the missing discriminator named by the seam packet, then rerun agent verify.",
+    "receipt_state": "receipt_movement_unchanged",
+    "remaining_gap": "Static grip class did not move."
+  },
+  "test_changed": null,
+  "tool": "ripr",
+  "verification": {
+    "commands_run": [],
+    "non_claims": [
+      "static_only_assurance"
+    ],
+    "status": "verification_not_run"
+  }
+}"#,
+        )
+        .map_err(|err| format!("expected receipt should parse: {err}"))?;
+
+        assert_eq!(value, expected);
+        assert!(
+            value["summary"]["next_action"]["recommended_action"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("Add the missing discriminator")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn agent_receipt_guidance_note_stays_null_outside_unchanged_with_movement() -> Result<(), String>
+    {
+        // #5250: the refined note only annotates `unchanged` seams whose
+        // evidence moved. Other buckets stay `null` even when they carry
+        // after-side signals, and true no-movement stays `null`.
+        let improved = render_receipt_value("seam-a")?;
+        assert!(improved["seam"]["guidance_note"].is_null());
+        let quiet = render_receipt_value("seam-b")?;
+        assert!(quiet["seam"]["guidance_note"].is_null());
+
+        let verify = unchanged_class_verify_json(
+            r#", "after_missing_discriminators": [], "after_open_legs": []"#,
+            "missing discriminator no longer reported: threshold equality",
+        )
+        .replace(r#""change": "unchanged""#, r#""change": "improved""#);
+        let value = render_static_receipt(&verify)?;
+        assert!(value["seam"]["guidance_note"].is_null());
+        Ok(())
+    }
+
+    #[test]
+    fn agent_receipt_unchanged_class_null_missing_list_stays_generic() -> Result<(), String> {
+        // #5250 review: a movement `null` (the after snapshot never
+        // recorded the field) must not read as an explicitly satisfied
+        // empty list.
+        let verify = unchanged_class_verify_json(
+            r#", "after_missing_discriminators": null, "after_discriminate_state": "yes", "after_open_legs": []"#,
+            "missing discriminator no longer reported: threshold equality",
+        );
+        let value = render_static_receipt(&verify)?;
+
+        assert!(value["seam"]["guidance_note"].is_null());
+        assert_eq!(
+            value["summary"]["next_recommendation"],
+            "Add or strengthen the missing discriminator named by the seam packet, then rerun agent verify."
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn agent_receipt_unchanged_class_without_after_signals_stays_generic() -> Result<(), String> {
+        // Verify documents that predate the after-signals keep the
+        // fail-safe generic guidance (no refined note).
+        let verify = unchanged_class_verify_json(
+            "",
+            "missing discriminator no longer reported: threshold equality",
+        );
+        let value = render_static_receipt(&verify)?;
+
+        assert!(value["seam"]["guidance_note"].is_null());
+        assert_eq!(
+            value["summary"]["next_recommendation"],
+            "Add or strengthen the missing discriminator named by the seam packet, then rerun agent verify."
+        );
+        assert_eq!(
+            value["summary"]["next_action"]["recommended_action"],
+            "Add the missing discriminator or stronger assertion named by the packet."
+        );
+        Ok(())
     }
 
     #[test]

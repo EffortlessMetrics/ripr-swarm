@@ -1,0 +1,19 @@
+{
+  "case_id": "spec0227-check-variant-is-err",
+  "subject_id": "authored-spec0227-5",
+  "origin": "authored",
+  "anchor": "src/lib.rs:11",
+  "behavior_family": "error_variant",
+  "test_shape": "far_input_is_err",
+  "hard_case": false,
+  "truth": "partially_discriminated",
+  "ideal_verdict": "gap",
+  "observed_verdict": "gap",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "weakly_exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": []
+}

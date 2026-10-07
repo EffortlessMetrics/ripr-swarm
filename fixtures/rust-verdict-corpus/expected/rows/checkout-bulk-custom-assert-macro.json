@@ -1,0 +1,19 @@
+{
+  "case_id": "checkout-bulk-custom-assert-macro",
+  "subject_id": "authored-checkout",
+  "origin": "authored",
+  "anchor": "src/limits.rs:31",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "custom_assertion_macro",
+  "hard_case": false,
+  "truth": "discriminated",
+  "ideal_verdict": "credited",
+  "observed_verdict": "gap",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "weakly_exposed"
+  ],
+  "outcome": "false_actionable",
+  "contradictions": []
+}

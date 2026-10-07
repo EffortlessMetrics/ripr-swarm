@@ -1,0 +1,19 @@
+{
+  "case_id": "trap-row-at-expected-panic-control",
+  "subject_id": "authored-trap-kit",
+  "origin": "authored",
+  "anchor": "src/grid_checked.rs:12",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "should_panic_expected_message",
+  "hard_case": false,
+  "truth": "discriminated",
+  "ideal_verdict": "credited",
+  "observed_verdict": "gap",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "reachable_unrevealed"
+  ],
+  "outcome": "false_actionable",
+  "contradictions": []
+}

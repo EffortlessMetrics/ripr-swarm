@@ -1,0 +1,29 @@
+//! Authored false-credit traps: each module's tests look like they check the
+//! code beside them but cannot notice when it changes (or, for the controls,
+//! do notice).
+#![allow(clippy::all)]
+
+pub mod billing;
+pub mod coolers;
+pub mod counter;
+pub mod grid;
+pub mod grid_checked;
+pub mod grid_reached;
+pub mod heaters;
+pub mod labels;
+pub mod levels;
+pub mod modes;
+pub mod modes_checked;
+pub mod notices;
+pub mod probes;
+pub mod probes_checked;
+pub mod rates;
+pub mod retries;
+pub mod scaling;
+pub mod shapes;
+pub mod sizing;
+pub mod tables;
+pub mod totals;
+pub mod units;
+pub mod units_checked;
+pub mod nested;

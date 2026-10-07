@@ -1,0 +1,51 @@
+{
+  "case_id": "checkout-fee-unpolled-async-assert",
+  "subject_id": "authored-checkout",
+  "diff": "cases/checkout-fee-unpolled-async-assert.diff",
+  "anchor": {
+    "file": "src/fees.rs",
+    "line": 12
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "assert_in_unpolled_async_block",
+  "hard_case": null,
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "amount * 200",
+        "mutated_line": "amount * 200",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: cash_fee(1000) becomes 200000"
+      },
+      {
+        "replacement": "amount / 2",
+        "mutated_line": "amount / 2",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: cash_fee(1000) becomes 500"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "The assert_eq! naming cash_fee sits in an async block that is dropped without being polled. Spec cells: RIPR-SPEC-0108, RIPR-SPEC-0197.",
+  "labeling_observation": {
+    "ripr_commit": "b0c6ef6",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

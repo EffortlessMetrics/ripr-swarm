@@ -1,0 +1,12 @@
+diff --git a/src/units_checked.rs b/src/units_checked.rs
+index ae66589..a34b241 100644
+--- a/src/units_checked.rs
++++ b/src/units_checked.rs
+@@ -1,6 +1,6 @@
+ pub mod celsius {
+     pub fn snap(value: u32) -> u32 {
+-        (value + 5) / 10 * 10
++        (5 + value) / 10 * 10
+     }
+ }
+ 

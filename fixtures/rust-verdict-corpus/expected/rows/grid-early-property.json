@@ -1,0 +1,19 @@
+{
+  "case_id": "grid-early-property",
+  "subject_id": "authored-grid-early",
+  "origin": "authored",
+  "anchor": "src/lib.rs:18",
+  "behavior_family": "early_return_guard",
+  "test_shape": "property_invariant_loop",
+  "hard_case": false,
+  "truth": "partially_discriminated",
+  "ideal_verdict": "gap",
+  "observed_verdict": "limited",
+  "followed_retarget": false,
+  "changed_since_labeling": true,
+  "observed_classifications": [
+    "infection_unknown"
+  ],
+  "outcome": "abstained",
+  "contradictions": []
+}

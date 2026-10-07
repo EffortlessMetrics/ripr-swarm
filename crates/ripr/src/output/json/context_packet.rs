@@ -1,4 +1,5 @@
 use crate::domain::{Finding, MissingDiscriminatorFact, ValueFact, context_packet::ContextPacket};
+use std::path::Path;
 
 use super::{array_field, escape, field, number_field};
 use crate::output::json::report::{related_test_json, stop_reason_values};
@@ -8,8 +9,8 @@ use crate::output::next_step::reconcile_next_step;
 // output-contract check can verify the JSON surface while the DTO owns values.
 const CONTEXT_PACKET_VERSION_CONTRACT: &str = "1.0";
 
-pub fn render_context_packet(finding: &Finding, max_related_tests: usize) -> String {
-    render_context_packet_with_explain_command(finding, max_related_tests, None)
+pub fn render_context_packet(finding: &Finding, max_related_tests: usize, root: &Path) -> String {
+    render_context_packet_with_explain_command(finding, max_related_tests, None, root)
 }
 
 /// Render the packet with the witness's `explain_command` replaced by one
@@ -21,9 +22,10 @@ pub(crate) fn render_context_packet_with_explain_command(
     finding: &Finding,
     max_related_tests: usize,
     explain_command: Option<String>,
+    root: &Path,
 ) -> String {
     let stop_reasons = stop_reason_values(finding);
-    let mut packet = ContextPacket::from_finding(finding, max_related_tests, stop_reasons);
+    let mut packet = ContextPacket::from_finding(finding, max_related_tests, stop_reasons, root);
     if let (Some(witness), Some(command)) = (packet.witness.as_mut(), explain_command) {
         witness.explain_command = command;
     }
@@ -179,14 +181,14 @@ mod tests {
         RelatedTest, RevealEvidence, RiprEvidence, SourceLocation, StageEvidence, StageState,
         SymbolId, ValueContext, ValueFact,
     };
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
 
     #[test]
     fn context_packet_limits_related_tests_to_max() {
         let mut finding = sample_finding();
         finding.related_tests = vec![related("t1"), related("t2"), related("t3")];
 
-        let packet = render_context_packet(&finding, 2);
+        let packet = render_context_packet(&finding, 2, Path::new("."));
 
         assert!(packet.contains("\"name\": \"t1\""));
         assert!(packet.contains("\"name\": \"t2\""));
@@ -211,7 +213,7 @@ mod tests {
                 flow_sink: None,
             });
 
-        let packet = render_context_packet(&finding, 5);
+        let packet = render_context_packet(&finding, 5, Path::new("."));
 
         assert!(packet.contains("line \\\"a\\\"\\nnext"));
         assert!(packet.contains("No test checks \\\"boundary\\\"\\ncase"));
@@ -231,7 +233,7 @@ mod tests {
             normalized_discriminator: "amount>=threshold".to_string(),
         });
 
-        let packet = render_context_packet(&finding, 5);
+        let packet = render_context_packet(&finding, 5, Path::new("."));
 
         assert!(packet.contains(
             "\"canonical_gap_id\": \"gap:python:src/pricing.py:discount:predicate_boundary:predicate:amount>=threshold\""
