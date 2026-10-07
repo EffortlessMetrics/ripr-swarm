@@ -152,7 +152,17 @@ pub(in crate::analysis) fn local_flow_sinks(
             owner.clone(),
         )],
         ProbeFamily::SideEffect | ProbeFamily::CallDeletion => {
-            if constructs_result_error(&probe.expression) {
+            // A discarded value (`drop(Err::<(), E>(E::X))`, `let _ = ..`)
+            // propagates nowhere, whatever it constructs, so the discard is
+            // read before any error or return sink (#7063 review).
+            if value_is_swallowed(&probe.expression) {
+                vec![flow_sink(
+                    FlowSinkKind::Unknown,
+                    "value is discarded at the call-chain tail; propagation unknown",
+                    probe.location.line,
+                    owner.clone(),
+                )]
+            } else if constructs_result_error(&probe.expression) {
                 vec![flow_sink(
                     FlowSinkKind::ErrorVariant,
                     result_error_text(&probe.expression),
@@ -166,13 +176,6 @@ pub(in crate::analysis) fn local_flow_sinks(
                 vec![flow_sink(
                     FlowSinkKind::ReturnValue,
                     return_sink_text(&probe.expression),
-                    probe.location.line,
-                    owner.clone(),
-                )]
-            } else if value_is_swallowed(&probe.expression) {
-                vec![flow_sink(
-                    FlowSinkKind::Unknown,
-                    "value is discarded at the call-chain tail; propagation unknown",
                     probe.location.line,
                     owner.clone(),
                 )]
@@ -1155,6 +1158,18 @@ mod tests {
                 "{family:?}: {sinks:?}"
             );
         }
+
+        // A discarded turbofish `Err` propagates nowhere.
+        let probe = probe(
+            ProbeFamily::SideEffect,
+            "drop(Err::<(), PayError>(PayError::Limit));",
+            3,
+        );
+        let sinks = local_flow_sinks(&probe, Some(&owner));
+        assert!(
+            sinks.iter().all(|sink| sink.kind == FlowSinkKind::Unknown),
+            "{sinks:?}"
+        );
     }
 
     #[test]
