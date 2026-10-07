@@ -1622,6 +1622,148 @@ fn drop_in_crate_admission_matches_cargo_resolution() -> Result<(), String> {
     Ok(())
 }
 
+/// A test in one workspace member that imports the owner from another
+/// member (`use pricing::score;`) pins it only when the manifests bind that
+/// crate name to the owner's package. When the dependency under that key is
+/// another package (`package = "fake-pricing"` at another path), the same
+/// import binds it, and a wrong owner then passes the test. So it does when
+/// the owner's library re-exports a foreign item under the owner's name.
+#[test]
+fn member_crate_import_admission_matches_cargo_resolution() -> Result<(), String> {
+    let owner = "pub fn score(points: i64) -> i64 {\n    3 * points\n}\n";
+    let diff = |path: &str| {
+        format!(
+            "diff --git a/{path} b/{path}\n--- a/{path}\n+++ b/{path}\n@@ -1,3 +1,3 @@\n pub fn score(points: i64) -> i64 {{\n-    points * 3\n+    3 * points\n }}\n"
+        )
+    };
+    let test = "use pricing::score;\n\n#[test]\nfn score_triples_points() {\n    assert_eq!(score(7), 21);\n}\n";
+    let package = |name: &str| {
+        format!("[package]\nname = \"{name}\"\nversion = \"0.1.0\"\nedition = \"2021\"\n")
+    };
+    let path_dependency = "pricing = { path = \"../pricing\" }";
+    // (case, orders' dependency, owner file, pricing's lib.rs when the owner
+    // is elsewhere, pricing's dependencies, exposed)
+    for (case, dependency, owner_path, library, pricing_dependencies, exposed) in [
+        (
+            "path_dependency",
+            path_dependency,
+            "pricing/src/lib.rs",
+            None,
+            "",
+            true,
+        ),
+        (
+            "renamed_package",
+            "pricing = { package = \"fake-pricing\", path = \"../../fake\" }",
+            "pricing/src/lib.rs",
+            None,
+            "",
+            false,
+        ),
+        (
+            "foreign_reexport",
+            path_dependency,
+            "pricing/src/a.rs",
+            Some("pub mod a;\npub use fake_pricing::score;\n"),
+            "fake-pricing = { path = \"../../fake\" }",
+            false,
+        ),
+    ] {
+        // The fake package sits outside the analyzed root, as a registry or
+        // vendored dependency would.
+        let scratch = Scratch::create()?;
+        let root = scratch.0.join("ws");
+        let fake = scratch.0.join("fake");
+        for directory in [
+            root.join("pricing/src"),
+            root.join("orders/src"),
+            root.join("orders/tests"),
+            fake.join("src"),
+        ] {
+            std::fs::create_dir_all(directory).map_err(|error| error.to_string())?;
+        }
+        let write = |path: PathBuf, text: &str| {
+            std::fs::write(path, text).map_err(|error| error.to_string())
+        };
+        write(
+            root.join("Cargo.toml"),
+            "[workspace]\nmembers = [\"pricing\", \"orders\"]\nresolver = \"2\"\n",
+        )?;
+        write(
+            root.join("pricing/Cargo.toml"),
+            &format!(
+                "{}\n[dependencies]\n{pricing_dependencies}\n",
+                package("pricing")
+            ),
+        )?;
+        if let Some(library) = library {
+            write(root.join("pricing/src/lib.rs"), library)?;
+        }
+        write(root.join(owner_path), owner)?;
+        write(
+            root.join("orders/Cargo.toml"),
+            &format!("{}\n[dependencies]\n{dependency}\n", package("orders")),
+        )?;
+        write(root.join("orders/src/lib.rs"), "")?;
+        write(root.join("orders/tests/orders.rs"), test)?;
+        write(fake.join("Cargo.toml"), &package("fake-pricing"))?;
+        write(
+            fake.join("src/lib.rs"),
+            "pub fn score(points: i64) -> i64 {\n    points * 3\n}\n",
+        )?;
+        let diff_file = scratch.0.join("diff.patch");
+        write(diff_file.clone(), &diff(owner_path))?;
+        let report = check_workspace(CheckInput {
+            root: root.clone(),
+            diff_file: Some(diff_file),
+            mode: Mode::Fast,
+            format: OutputFormat::Json,
+            include_unchanged_tests: true,
+            ..CheckInput::default()
+        })?;
+        assert_eq!(report.findings.len(), 1, "{case}");
+        assert_eq!(
+            report.findings[0].class == ExposureClass::Exposed,
+            exposed,
+            "{case}: {:?}",
+            report.findings[0].class
+        );
+        // A wrong owner fails the test exactly when the import binds it.
+        write(
+            root.join(owner_path),
+            &owner.replace("3 * points", "2 * points"),
+        )?;
+        let cargo = PathBuf::from(std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into()));
+        let manifest_path = root.join("Cargo.toml");
+        let target_dir = scratch.0.join("target");
+        let result = run(
+            &cargo,
+            &[
+                "test".as_ref(),
+                "--offline".as_ref(),
+                "--quiet".as_ref(),
+                "--workspace".as_ref(),
+                "--manifest-path".as_ref(),
+                manifest_path.as_os_str(),
+                "--target-dir".as_ref(),
+                target_dir.as_os_str(),
+            ],
+        )?;
+        let stdout = String::from_utf8_lossy(&result.stdout);
+        let stderr = String::from_utf8_lossy(&result.stderr);
+        assert!(
+            stdout.contains("running 1 test"),
+            "{case}: the cross-crate test must compile and run: {stdout}; {stderr}"
+        );
+        assert_eq!(
+            !result.status.success(),
+            exposed,
+            "{case}: the wrong owner must fail exactly when the import binds it: {stdout}; {stderr}"
+        );
+    }
+    Ok(())
+}
+
 #[test]
 fn async_test_discovery_does_not_supply_execution_provenance() -> Result<(), String> {
     let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/rust_async_fn_owner");

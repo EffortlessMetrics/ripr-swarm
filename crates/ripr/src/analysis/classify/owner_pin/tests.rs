@@ -346,6 +346,157 @@ fn an_inline_constructor_types_the_receiver_like_a_binding() {
 }
 
 #[test]
+fn only_plain_pub_use_statements_can_export_to_another_crate() {
+    let source = "pub use fastscore::score;\npub(crate) use other::score;\nuse private::score;\n// pub use commented::score;\npub  use  spaced::*;\nfn republish() {}\n";
+    assert_eq!(
+        public_use_statements(source),
+        ["use fastscore::score", "use  spaced::*"]
+    );
+    let lib = "pub mod a;\npub use self::a::score;\n";
+    let root = Path::new("pricing/src/lib.rs");
+    let local = index(&[("pricing/src/lib.rs", lib)]);
+    assert!(!library_may_export_other(&local, root, "score"));
+    let foreign = index(&[(
+        "pricing/src/lib.rs",
+        "pub mod a;\npub use fastscore::score;\n",
+    )]);
+    assert!(library_may_export_other(&foreign, root, "score"));
+    assert!(!library_may_export_other(&foreign, root, "rebate"));
+    let glob = index(&[("pricing/src/lib.rs", "pub mod a;\npub use fastscore::*;\n")]);
+    assert!(library_may_export_other(&glob, root, "rebate"));
+    // Another crate root's re-exports do not speak for this library.
+    let binary = index(&[("pricing/src/main.rs", "pub use fastscore::score;\n")]);
+    assert!(!library_may_export_other(&binary, root, "score"));
+    for (label, lib, exports) in [
+        (
+            "local crate path",
+            "pub mod a;\npub use crate::a::score;\n",
+            false,
+        ),
+        (
+            "split pub use",
+            "pub mod a;\npub\nuse fastscore::score;\n",
+            true,
+        ),
+        (
+            "string literal",
+            "pub mod a;\nconst DOC: &str = \"pub use x::score;\";\n",
+            false,
+        ),
+        // A private alias routed through a `self`/`crate` path.
+        (
+            "aliased crate",
+            "pub mod a;\nuse fastscore as fs;\npub use self::fs::score;\n",
+            true,
+        ),
+        (
+            "aliased extern",
+            "pub mod a;\nextern crate fastscore as fs;\npub use crate::fs::*;\n",
+            true,
+        ),
+        // A value of the callee's name, or text ripr does not read.
+        (
+            "const",
+            "pub mod a;\npub const score: fn(i64) -> i64 = fastscore::score;\n",
+            true,
+        ),
+        (
+            "static mut",
+            "pub mod a;\npub static mut score: i64 = 0;\n",
+            true,
+        ),
+        ("include", "pub mod a;\ninclude!(\"exports.rs\");\n", true),
+        (
+            "unrelated const",
+            "pub mod a;\npub const SCORE_MAX: i64 = 9;\n",
+            false,
+        ),
+        // Each path inside a brace group must stay local too.
+        (
+            "grouped alias path",
+            "pub mod a;\nuse fastscore as fs;\npub use self::{fs::score};\n",
+            true,
+        ),
+        (
+            "nested grouped alias path",
+            "pub mod a;\nuse fastscore as fs;\npub use crate::{a::{rebate, fs::score}};\n",
+            true,
+        ),
+        (
+            "grouped local paths",
+            "pub mod a;\npub use self::{a::score, a::rebate};\n",
+            false,
+        ),
+        (
+            "unbalanced group",
+            "pub mod a;\npub use self::{a::score;\n",
+            true,
+        ),
+        // A module name that an import alias also binds.
+        (
+            "alias shadows a nested module",
+            "pub mod a;\nmod unrelated { mod fs {} }\npub use fastscore as fs;\npub use self::fs::score;\n",
+            true,
+        ),
+        (
+            "extern alias shadows a module",
+            "pub mod a;\nmod b { mod fs {} }\nextern crate fastscore as fs;\npub use crate::fs::*;\n",
+            true,
+        ),
+    ] {
+        let library = index(&[("pricing/src/lib.rs", lib)]);
+        assert_eq!(
+            library_may_export_other(&library, root, "score"),
+            exports,
+            "{label}"
+        );
+    }
+    // A file under `src/` with no established crate root is unread.
+    let unresolved = index(&[
+        ("pricing/src/lib.rs", "pub mod a;\n"),
+        ("pricing/src/orphan.rs", "pub fn other() {}\n"),
+    ]);
+    assert!(library_may_export_other(&unresolved, root, "score"));
+}
+
+#[test]
+fn an_unsafe_block_holding_only_the_owner_call_pins_it() {
+    // `assert_eq!(unsafe { byte_at(b"xyz", 1) }, b'y')`: calling an
+    // `unsafe fn` needs the block, and its value is the call's value.
+    let lib = "pub unsafe fn byte_at(bytes: &[u8], index: usize) -> u8 {\n    *bytes.get_unchecked(index)\n}\n";
+    let changed = "*bytes.get_unchecked(index)";
+    for (operand, admitted) in [
+        ("unsafe { byte_at(b\"xyz\", 1) }", 1),
+        ("unsafe{byte_at(b\"xyz\", 1)}", 1),
+        ("unsafe {\n        byte_at(b\"xyz\", 1)\n    }", 1),
+        ("unsafe { byte_at(b\"xyz\", 1) /* SAFETY: 1 < 3 */ }", 1),
+        (
+            "unsafe {\n        // SAFETY: 1 < 3.\n        byte_at(b\"xyz\", 1)\n    }",
+            1,
+        ),
+        // A statement in the block means its value is not only the call.
+        ("unsafe { let v = byte_at(b\"xyz\", 1); v }", 0),
+        ("unsafe { byte_at(b\"xyz\", 1); 121 }", 0),
+        // Something chained after the block, or after the call inside it.
+        ("unsafe { byte_at(b\"xyz\", 1) }.wrapping_add(0)", 0),
+        ("unsafe { byte_at(b\"xyz\", 1).wrapping_add(0) }", 0),
+        // Another call wrapping the owner call is not the owner's value.
+        ("unsafe { u8::from(byte_at(b\"xyz\", 1)) }", 0),
+        // A function merely named like the keyword is not a block.
+        ("unsafe_byte_at(b\"xyz\", 1)", 0),
+    ] {
+        let tests = format!(
+            "use demo::byte_at;\n\n#[test]\nfn reads() {{\n    assert_eq!({operand}, b'y');\n}}\n"
+        );
+        let index = index(&[(LIB, lib), (TESTS, &tests)]);
+        let pin = establish(&index, "byte_at", changed);
+        assert!(pin.is_some());
+        let Some(pin) = pin else { return };
+        assert_eq!(admitted_texts(&index, &pin).len(), admitted, "{operand}");
+    }
+}
+
+#[test]
 fn bare_call_names_only_a_module_level_function() {
     // B2: `decode(..)` in a test names the free function, so an associated
     // `Codec::decode` owner never takes a bare call.

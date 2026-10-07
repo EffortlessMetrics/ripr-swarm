@@ -111,6 +111,11 @@ rule only for an assertion whose context was admitted.
    one compared operand is a complete call of the owner's name with nothing
    chained after it, and the other operand does not mention the owner's
    name (`assert_eq!(f(4), f(2) + f(2))` compares the owner with itself).
+   An `unsafe { .. }` block whose only content is that complete call (no
+   statement, nothing chained after the call or the block; comments around
+   the call are ignored) is the call:
+   calling an `unsafe fn` needs the block, and the block's value is the
+   call's value.
 2. Call identity, from the parser's item-container fact on the owner
    (`FunctionFact.item`: free, local, inherent, trait impl, or trait, with
    the `self`-receiver and body flags; the lexical fallback leaves it
@@ -217,6 +222,44 @@ rule only for an assertion whose context was admitted.
    import, a same-named function in the test's own package when the owner
    lives in another package, and the exact variant when the changed
    expression constructs an error variant.
+   An import is not foreign when its first segment names the owner's own
+   library from the test's crate, as the manifests declare it. The owner
+   file must compose (through its `mod` declarations) under its package's
+   default library root, `src/lib.rs`, with no `[lib] path` and `autolib`
+   not turned off. Then either the test is in the same package (the
+   `[lib]` name, else the package name), or the test's nearest manifest has
+   a `[dependencies]` or `[dev-dependencies]` entry (also spelled
+   `dev_dependencies`; `[target.*]` tables included) whose `path`, directly
+   or through `[workspace.dependencies]` for `workspace = true`, resolves to
+   the owner's package directory. A `package =` rename must name the
+   owner's package and imports under its key; without one the key must be
+   the package name and imports under the library name. Target tables are
+   read without their `cfg` predicates, so a name that any other entry
+   (in any table) binds to another package is ambiguous and stays foreign.
+   A `git` or
+   `registry` key, a `package.workspace`, a `[patch]` entry for the name or
+   any `[replace]` between the test and the root, and a `.cargo/config`
+   between either file and the analysis root that mentions the name or sets
+   `paths`, `[patch]`, `[source]` or `include` leave the import foreign
+   (configuration above the root or in `$CARGO_HOME` is not read). A test
+   in the owner's own package whose dependency key is the library name
+   also leaves the import foreign, and so does any sign that the library
+   may export another item under the callee's name: a `pub use` in a
+   library file that names the callee or globs, unless its path is rooted
+   at `crate`, `self` or `super` and passes only through modules the
+   library declares that no `use` or `extern crate` in it also binds,
+   checked for every path inside a brace group
+   (`use fastscore as fs; pub use self::fs::score;` and
+   `pub use self::{fs::score};` are refused, even beside an unrelated
+   `mod fs`); a library `const` or `static` of that name; an `include!` in
+   a library file or an unresolved include anywhere; or a file under the
+   package's `src/` whose crate root is not established. The same
+   own-crate reading serves every consumer of the same-name import defeat
+   (the reveal-side owner binding, RIPR-SPEC-0229 arm withholding and tuple
+   match observations), as the root package's names already did. So
+   `use pricing::score;` in a sibling member that depends on `pricing` by
+   path pins `score`, and the same line under a `pricing` key that names
+   another package does not.
 6. Clone field pins (#6692). A `field_construction` probe on field `f` of
    a hand-written `impl Clone for T` is confirmed by
    `assert_eq!(recv.clone(), recv)` (either operand order). The owner is

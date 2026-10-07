@@ -39,7 +39,8 @@
 use super::super::rust_index::{FunctionSummary, OracleFact, RustIndex, TestSummary};
 use super::reveal::{
     assertion_comparison_operands, contains_as_whole_word, file_imports_foreign_callee_name,
-    file_imports_own_item, file_use_statements, use_statement_first_segment,
+    file_imports_own_item, file_use_statements, use_statement_binds_name,
+    use_statement_first_segment,
 };
 use crate::analysis::extract::{
     fact_body_defines_callee_fn, fact_body_let_shadow_line, mask_comments_and_strings,
@@ -485,7 +486,15 @@ impl TargetRoots {
     }
 }
 
-fn target_root(file: &Path, index: &RustIndex, src_dirs: &BTreeSet<PathBuf>) -> Option<PathBuf> {
+/// The crate root file `file` composes under: a recognized Cargo target root
+/// (`src/lib.rs`, `src/main.rs`, `src/bin/*.rs`, an integration test, bench,
+/// example or build script), or `None` when composition is unresolved, goes
+/// through `include!`, or ends at an unrecognized file.
+pub(super) fn target_root(
+    file: &Path,
+    index: &RustIndex,
+    src_dirs: &BTreeSet<PathBuf>,
+) -> Option<PathBuf> {
     let facts = index.files().get(file)?;
     let provenance = &facts.role_provenance;
     if provenance.earliest_unresolved_reason.is_some()
@@ -1298,6 +1307,9 @@ enum CallShape<'a> {
 /// with a plain identifier receiver and nothing chained after the call.
 fn owner_call_shape<'a>(operand: &'a str, name: &str) -> Option<CallShape<'a>> {
     let operand = operand.trim();
+    if let Some(inner) = unsafe_block_value(operand) {
+        return owner_call_shape(inner, name);
+    }
     if let Some(receiver) = constructed_receiver(operand, name) {
         let call_start = receiver.len() + 1;
         let masked = mask_comments_and_strings(operand);
@@ -1335,6 +1347,29 @@ fn owner_call_shape<'a>(operand: &'a str, name: &str) -> Option<CallShape<'a>> {
     } else {
         CallShape::Method(&operand[..call_start - 1])
     })
+}
+
+/// The value expression of `unsafe { <expr> }` when `operand` is exactly that
+/// block and the block holds one expression and no statement. Calling an
+/// `unsafe fn` needs the block, and the block's value is the call's value.
+fn unsafe_block_value(operand: &str) -> Option<&str> {
+    let rest = operand.strip_prefix("unsafe")?;
+    let open = operand.len() - rest.trim_start().len();
+    if !operand[open..].starts_with('{') {
+        return None;
+    }
+    let masked = mask_comments_and_strings(operand);
+    let close = matching_close(&masked, open, b'{', b'}')?;
+    if !operand[close + 1..].trim().is_empty() || masked[open + 1..close].contains(';') {
+        return None;
+    }
+    // Trim by the masked text so a `// SAFETY:` or `/* .. */` comment around
+    // the call is not read as part of it. The call starts with its name and
+    // ends with `)`, neither of which masking touches.
+    let body = &masked[open + 1..close];
+    let start = body.len() - body.trim_start().len();
+    let end = body.trim_end().len();
+    (start < end).then(|| &operand[open + 1 + start..open + 1 + end])
 }
 
 /// The receiver of `Type::constructor(..).name(` when `operand` starts with
@@ -1949,6 +1984,230 @@ fn is_workspace_root(root: &str, index: &RustIndex) -> bool {
             .package_names
             .iter()
             .any(|name| name.replace('-', "_") == root)
+}
+
+/// Whether the library whose crate root is `owner_root` may export some other
+/// item named `name` than the owner, so that another crate's
+/// `use library::name;` could bind it. Fails closed (true) when:
+/// - an `include!` was unresolved anywhere, or a file under the package's
+///   `src/` has no established crate root (its exports are unread);
+/// - a library file uses `include!`, or declares a `const` or `static` named
+///   `name`;
+/// - a `pub use` in a library file names `name` or globs, and its path is
+///   rooted outside `crate`, `self` and `super` (`pub use fastscore::score;`)
+///   or passes through a segment that is not a `mod` the library declares
+///   (`use fastscore as fs; pub use self::fs::score;`).
+pub(super) fn library_may_export_other(index: &RustIndex, owner_root: &Path, name: &str) -> bool {
+    let Some(source_dir) = owner_root.parent() else {
+        return true;
+    };
+    if !index.include_limitations.is_empty() {
+        return true;
+    }
+    let src_dirs = BTreeSet::new();
+    let mut library = Vec::new();
+    for (path, facts) in index.files().iter() {
+        if !path.starts_with(source_dir) {
+            continue;
+        }
+        match target_root(path, index, &src_dirs) {
+            None => return true,
+            Some(root) if root == owner_root => {
+                let masked = mask_comments_and_strings(&facts.source);
+                let includes = whole_word_offsets(&masked, "include")
+                    .into_iter()
+                    .any(|offset| {
+                        masked[offset + "include".len()..]
+                            .trim_start()
+                            .starts_with('!')
+                    });
+                if includes || declares_value_named(&masked, name) {
+                    return true;
+                }
+                library.push(masked);
+            }
+            Some(_) => {}
+        }
+    }
+    // A module name some `use` or `extern crate` also binds may name that
+    // import instead (`pub use fastscore as fs;` beside an unrelated
+    // `mod fs`), so it does not count as a library module.
+    let modules: BTreeSet<&str> = library
+        .iter()
+        .flat_map(|masked| declared_module_names(masked))
+        .filter(|module| {
+            !library.iter().any(|masked| {
+                file_use_statements(masked)
+                    .iter()
+                    .any(|statement| use_statement_binds_name(statement, module))
+                    || binds_extern_crate(masked, module)
+            })
+        })
+        .collect();
+    index.files().iter().any(|(path, facts)| {
+        target_root(path, index, &src_dirs).as_deref() == Some(owner_root)
+            && public_use_statements(&facts.source)
+                .iter()
+                .any(|statement| {
+                    (contains_as_whole_word(statement, name) || statement.contains('*'))
+                        && !reexports_library_module(statement, &modules)
+                })
+    })
+}
+
+/// Whether a `pub use` path stays inside the library: rooted at `crate`,
+/// `self` or `super`, with every segment before an imported item or glob a
+/// module the library declares, including each path inside a brace group
+/// (`pub use self::{fs::score};` reaches through `fs`).
+fn reexports_library_module(statement: &str, modules: &BTreeSet<&str>) -> bool {
+    let Some(path) = statement.trim_start().strip_prefix("use") else {
+        return false;
+    };
+    let path = path.trim();
+    let root_end = path.find("::").unwrap_or(path.len());
+    matches!(path[..root_end].trim(), "crate" | "self" | "super")
+        && use_tree_stays_local(path[root_end..].trim_start_matches("::"), modules)
+}
+
+/// Whether every path in a use tree (the text after its `crate`/`self`/
+/// `super` root) passes only through `super` or declared library modules
+/// before its imported item, glob or brace group. An unbalanced group fails
+/// closed.
+fn use_tree_stays_local(tree: &str, modules: &BTreeSet<&str>) -> bool {
+    let tree = tree.trim();
+    let Some(open) = tree.find('{') else {
+        let mut segments: Vec<&str> = tree.split("::").map(str::trim).collect();
+        // The last segment is the imported item, glob or `x as y` binding.
+        segments.pop();
+        return segments
+            .iter()
+            .all(|segment| *segment == "super" || modules.contains(segment));
+    };
+    let Some(close) = tree.rfind('}').filter(|close| *close > open) else {
+        return false;
+    };
+    let prefix_local = tree[..open]
+        .split("::")
+        .map(str::trim)
+        .filter(|segment| !segment.is_empty())
+        .all(|segment| segment == "super" || modules.contains(segment));
+    prefix_local
+        && top_level_items(&tree[open + 1..close])
+            .iter()
+            .all(|item| use_tree_stays_local(item, modules))
+}
+
+/// The comma-separated items of a brace group's body, splitting only at
+/// depth zero.
+fn top_level_items(body: &str) -> Vec<&str> {
+    let mut items = Vec::new();
+    let mut depth = 0usize;
+    let mut start = 0;
+    for (offset, character) in body.char_indices() {
+        match character {
+            '{' => depth += 1,
+            '}' => depth = depth.saturating_sub(1),
+            ',' if depth == 0 => {
+                items.push(&body[start..offset]);
+                start = offset + 1;
+            }
+            _ => {}
+        }
+    }
+    items.push(&body[start..]);
+    items
+        .into_iter()
+        .map(str::trim)
+        .filter(|item| !item.is_empty())
+        .collect()
+}
+
+/// Whether masked source has `extern crate <name>` or `extern crate .. as
+/// <name>`.
+fn binds_extern_crate(masked: &str, name: &str) -> bool {
+    whole_word_offsets(masked, "extern")
+        .into_iter()
+        .any(|offset| {
+            let rest = masked[offset + "extern".len()..].trim_start();
+            let Some(rest) = rest.strip_prefix("crate") else {
+                return false;
+            };
+            let declaration = rest.split(';').next().unwrap_or_default();
+            let bound = declaration
+                .rsplit_once(" as ")
+                .map_or(declaration, |(_, alias)| alias)
+                .trim();
+            bound == name
+        })
+}
+
+/// Names of `mod <name>` declarations in masked source.
+fn declared_module_names(masked: &str) -> Vec<&str> {
+    whole_word_offsets(masked, "mod")
+        .into_iter()
+        .filter_map(|offset| {
+            let rest = masked[offset + 3..].trim_start();
+            let end = rest
+                .find(|character: char| !(character.is_ascii_alphanumeric() || character == '_'))
+                .unwrap_or(rest.len());
+            (end > 0).then(|| &rest[..end])
+        })
+        .collect()
+}
+
+/// Whether masked source declares a `const` or `static` (optionally `mut`)
+/// named `name`.
+fn declares_value_named(masked: &str, name: &str) -> bool {
+    ["const", "static"].iter().any(|keyword| {
+        whole_word_offsets(masked, keyword)
+            .into_iter()
+            .any(|offset| {
+                let rest = masked[offset + keyword.len()..].trim_start();
+                let rest = rest
+                    .strip_prefix("mut")
+                    .filter(|after| after.starts_with(char::is_whitespace))
+                    .map_or(rest, str::trim_start);
+                rest.strip_prefix(name).is_some_and(|after| {
+                    !after.starts_with(|character: char| {
+                        character.is_ascii_alphanumeric() || character == '_'
+                    })
+                })
+            })
+    })
+}
+
+/// The `use ..;` text of every `pub use` declaration in `source` (plain
+/// `pub` only: a `pub(crate)` or `pub(in ..)` import is not visible to
+/// another crate).
+fn public_use_statements(source: &str) -> Vec<&str> {
+    let masked = mask_comments_and_strings(source);
+    let bytes = masked.as_bytes();
+    let word = |at: usize, text: &str| {
+        masked[at..].starts_with(text)
+            && (at == 0 || !is_ident_byte(bytes[at - 1]))
+            && bytes
+                .get(at + text.len())
+                .is_none_or(|byte| !is_ident_byte(*byte))
+    };
+    let mut statements = Vec::new();
+    let mut at = 0;
+    while let Some(offset) = masked[at..].find("pub") {
+        let start = at + offset;
+        at = start + 3;
+        if !word(start, "pub") {
+            continue;
+        }
+        let use_at = at + (masked[at..].len() - masked[at..].trim_start().len());
+        if !word(use_at, "use") {
+            continue;
+        }
+        let Some(end) = masked[use_at..].find(';') else {
+            break;
+        };
+        statements.push(&source[use_at..use_at + end]);
+        at = use_at + end;
+    }
+    statements
 }
 
 /// Whether a workspace path may lead to some item named `base` other than
