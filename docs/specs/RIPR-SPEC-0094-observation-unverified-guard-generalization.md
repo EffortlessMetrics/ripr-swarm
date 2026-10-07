@@ -273,13 +273,18 @@ when the written state is statically bounded:
   also `Self::record()`, which is not traversed) outside std roots (`std`,
   `core`, `alloc` and the primitive types), no field method outside the
   read-only list and known collection mutators (`self.file.write_all(..)`
-  and `self.sink.publish(..)` are out), no std path into `fs`, `io`, `env`, `net`, `process`,
+  and `self.sink.publish(..)` are out), no chained method outside those
+  lists and the entry/`Option` chain helpers (`or_insert`, `unwrap`, ...;
+  `self.journal.as_ref().write_all(..)` and `self.tx.clone().send(..)` are
+  out), no std path into `fs`, `io`, `env`, `net`, `process`,
   `sync` or `thread`, no method call on a parameter or local outside the
   read-only and pure by-value list (`sink.record(..)` is out, `sku.trim()`
   is in), no `borrow`/`get_mut` handle access, no non-pure macro, no `ref mut` pattern, no interior
   mutability marker or `unsafe`, and every transitive self call resolves the
   same way;
 - the callee writes at least one field;
+- the workspace has no user `Drop` impl, since a collection mutator that
+  removes or replaces a value would run it;
 - the owner itself, apart from the changed call, reads no written field,
   uses no bare `self` and calls no other reading self method. An owner that
   reads the state back (`if self.low_stock.contains(sku) { self.log.push(..) }`)
@@ -310,14 +315,16 @@ field belongs to the self type; any other field (`app.inventory`) may hold
 the receiver, so its binding is resolved as above. A call through a std or
 primitive path (`u32::from(..)`, `String::from(..)`, `Vec::<Event>::new()`)
 is decided by its arguments; any other free or module-path call
-(`setup()`, `fixtures::stocked()`) may return the receiver and carries.
+(`setup()`, `fixtures::stocked()`, or an associated function of a non-std
+type such as `TestBed::with_inventory()`) may return the receiver and carries.
 
 State can also reach a non-reading observer through a later test action. When
 the test calls a `&mut self` method of the self type, other than the owner,
 that reads a written field (`inv.reorder()` turning `low_stock` into log
-entries, or `Inventory::reorder(&mut inv)`), every whole-object equality in
-that test is admitted, because the observed field may now depend on the
-written one. Call order is not established, since the owner may be reached
+entries, or `Inventory::reorder(&mut inv)`), or a `&self` reader that also
+reaches outside the object (one writing the field to a file), every
+whole-object equality in that test is admitted, because the observed field
+may now depend on the written one. Call order is not established, since the owner may be reached
 indirectly. A `&mut self` method that reads no written field (`inv.ship(..)`
 in the corpus case) does not admit: it cannot move the written state. A
 test that takes a `&mut` borrow of a binding (`restock(&mut inv)`,

@@ -429,6 +429,8 @@ fn path_calls_and_ref_mut_patterns_keep_the_part_c_reading() {
         "let _ = Self::threshold_floor();",
         "let _ = Inventory::threshold_floor();",
         "self.journal.write_all(sku.as_bytes()).ok();",
+        "self.journal.as_ref().write_all(sku.as_bytes()).ok();",
+        "self.tx.clone().send(sku.to_string()).ok();",
         "self.sink.publish(sku);",
     ] {
         let source = variant(remove, &format!("{remove}\n            {added}"));
@@ -438,6 +440,12 @@ fn path_calls_and_ref_mut_patterns_keep_the_part_c_reading() {
             "`{added}` must keep the Part C reading"
         );
     }
+    // A user `Drop` impl anywhere makes collection stores unbounded.
+    let with_drop = format!(
+        "{LEDGER}\n\npub struct Token;\n\nimpl Drop for Token {{\n    fn drop(&mut self) {{}}\n}}\n"
+    );
+    let idx = index(&[(LIB, &with_drop)]);
+    assert!(establish(&idx, "self.refresh_low_stock(sku)").is_none());
     // std roots stay bounded.
     for added in [
         "let _ = std::cmp::max(1, 2);",
@@ -552,11 +560,27 @@ fn escapes_found_in_review_keep_the_part_c_reading() {
         "let app = App { inventory: inv.clone() };",
         "assert_eq!(app.inventory, Inventory::new(5));",
     ));
+    // A workspace type's associated function may return the receiver.
+    assert!(run(
+        LEDGER,
+        "let bed = TestBed::with_inventory();",
+        "assert_eq!(bed, TestBed::expected());",
+    ));
     // A macro initializer may capture the receiver inside its string.
     assert!(run(
         LEDGER,
         "let dump = format!(\"{inv:?}\");",
         "assert_eq!(dump, String::new());",
+    ));
+    // A `&self` reader that reaches outside the object can publish the
+    // written state before the assertion.
+    let publish = reader_lib(
+        "    pub fn publish_low_state(&self) {\n        std::fs::write(\"low\", format!(\"{:?}\", self.low_stock)).ok();\n    }",
+    );
+    assert!(run(
+        &publish,
+        "inv.publish_low_state();",
+        "assert_eq!(std::fs::read_to_string(\"low\").ok(), None);",
     ));
     // A turbofish constructor is a std path, not a fixture helper.
     assert!(!run(

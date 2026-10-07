@@ -120,6 +120,25 @@ const WRITE_ONLY_METHODS: &[&str] = &[
 /// Shared-ownership handles whose value may alias the object's state.
 const SHARED_HANDLES: &[&str] = &["Arc", "Rc", "Weak"];
 
+/// Methods that only finish an in-object chain (`entry(..).or_insert(0)`).
+const CHAIN_METHODS: &[&str] = &[
+    "and_modify",
+    "collect",
+    "expect",
+    "is_err",
+    "is_ok",
+    "ok",
+    "or_default",
+    "or_insert",
+    "or_insert_with",
+    "unwrap",
+];
+
+/// Uppercase std types whose constructors cannot return the receiver.
+const STD_VALUE_TYPES: &[&str] = &[
+    "BTreeMap", "BTreeSet", "Box", "HashMap", "HashSet", "Option", "Result", "Vec", "VecDeque",
+];
+
 /// Collection methods that change only the collection they are called on.
 const COLLECTION_MUTATORS: &[&str] = &[
     "append",
@@ -370,6 +389,19 @@ fn scan_field_use(body: &[Tok]) -> FieldUse {
             // (`std::fs::write(..)`) leaves the object (#7046 review).
             uses.opaque = true;
         }
+        if index >= 2
+            && punct(body, index - 1, '.')
+            && punct(body, index + 1, '(')
+            && ident(body, index - 2) != Some("self")
+            && !READ_ONLY_METHODS.contains(&name.as_str())
+            && !COLLECTION_MUTATORS.contains(&name.as_str())
+            && !CHAIN_METHODS.contains(&name.as_str())
+        {
+            // A later method in a chain (`self.f.as_ref().write_all(..)`,
+            // `self.tx.clone().send(..)`) may publish state outside the
+            // receiver (#7046 review).
+            uses.opaque = true;
+        }
         if previous_is_path || KEYWORDS.contains(&name.as_str()) {
             continue;
         }
@@ -553,6 +585,19 @@ impl EffectStateCarrier {
         if !mut_self_without_return(&signature) {
             return None;
         }
+        // A user `Drop` impl runs on values a collection mutator removes or
+        // replaces, so an in-object store may still reach outside the object
+        // (#7046 review).
+        if index.functions().iter().any(|function| {
+            function.name == "drop"
+                && matches!(
+                    &function.item.container,
+                    FunctionContainer::TraitImpl { trait_path, .. }
+                        if trait_path.rsplit("::").next() == Some("Drop")
+                )
+        }) {
+            return None;
+        }
         let written_fields = transitive_writes(callee, &methods)?;
         if written_fields.is_empty() {
             return None;
@@ -595,9 +640,14 @@ impl EffectStateCarrier {
                     .by_name
                     .get(name.as_str())
                     .is_some_and(|definitions| {
+                        // A `&self` reader that also reaches outside the
+                        // object (`publish_low_state` writing a file) moves
+                        // the written state just as a `&mut self` one does
+                        // (#7046 review).
                         definitions.iter().any(|definition| {
                             split_signature(definition)
                                 .is_none_or(|(signature, _)| takes_mut_self(&signature))
+                                || function_field_use(definition).is_none_or(|uses| uses.opaque)
                         })
                     })
             })
@@ -734,9 +784,12 @@ impl EffectStateCarrier {
                 && !KEYWORDS.contains(&name)
                 && name.starts_with(|c: char| c.is_lowercase() || c == '_')
                 && match path_root(tokens, index) {
-                    Some(root) => {
-                        root.starts_with(char::is_lowercase) && !STD_ROOTS.contains(&root)
-                    }
+                    // A workspace type's associated function
+                    // (`Fixtures::stocked()`, `TestBed::with_inventory()`)
+                    // may return a value holding the receiver; only std
+                    // roots and std value types are decided by their
+                    // arguments (#7046 review).
+                    Some(root) => !STD_ROOTS.contains(&root) && !STD_VALUE_TYPES.contains(&root),
                     // A turbofish path (`Vec::<Event>::new()`) has no
                     // resolvable root but is path-qualified, not a free call
                     // (#7046 review).
