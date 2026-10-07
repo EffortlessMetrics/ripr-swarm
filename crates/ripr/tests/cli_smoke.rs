@@ -2273,10 +2273,27 @@ fn check_human_navigation_commands_replay_custom_scope() -> Result<(), String> {
         .ok_or_else(|| "explain command omitted selector".to_string())?;
     let context = run_ripr_in_workspace(&context_args[1..]).map_err(|err| err.to_string())?;
     assert_success(&context);
-    if !String::from_utf8_lossy(&explain.stdout).contains(&format!(
-        "Next: ripr context --root {printed_root} --diff {printed_diff} --at {selector}"
-    )) {
-        return Err("explain output omitted its scope-preserving context command".to_string());
+    // Compare decoded words: the printed `Next:` command shell-quotes a root
+    // that needs it, while `printed_root` is already decoded (#6762).
+    let explain_stdout = String::from_utf8_lossy(&explain.stdout);
+    let next_line = explain_stdout
+        .lines()
+        .find_map(|line| line.trim_start().strip_prefix("Next: ripr context "))
+        .ok_or_else(|| "explain output omitted its scope-preserving context command".to_string())?;
+    let next_args = shell_words::posix_words(next_line)?;
+    if next_args
+        != [
+            "--root",
+            printed_root,
+            "--diff",
+            printed_diff,
+            "--at",
+            selector,
+        ]
+    {
+        return Err(format!(
+            "explain output's context command lost the scope: {next_line}"
+        ));
     }
     if !String::from_utf8_lossy(&context.stdout).contains("\"version\": \"1.0\"") {
         return Err("context command did not return its JSON packet".to_string());
