@@ -2943,6 +2943,8 @@ fn return_path_gate_reads_the_tail_past_a_comment() {
         gate(body, "unsafe { sku.get_unchecked(..end) }"),
         Some(ReturnPathGate::Any)
     ));
-    // The comment does not make a different tail match.
-    assert!(gate(body, "unsafe { sku.get_unchecked(end..) }").is_none());
+    // The comment does not make a different tail match: the changed text
+    // sits on an earlier line, and the tail after the comment differs.
+    let other_tail = "fn family(sku: &str) -> &str {\n    let head = unsafe { sku.get_unchecked(..1) };\n    // SAFETY: `head` is a char boundary.\n    unsafe { sku.get_unchecked(head.len()..) }\n}";
+    assert!(gate(other_tail, "unsafe { sku.get_unchecked(..1) }").is_none());
 }

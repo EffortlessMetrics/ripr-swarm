@@ -2,7 +2,7 @@ diff --git a/src/lib.rs b/src/lib.rs
 index 67a281b..e1338ec 100644
 --- a/src/lib.rs
 +++ b/src/lib.rs
-@@ -8,7 +8,7 @@ impl Stack {
+@@ -8,6 +8,6 @@ impl Stack {
      }
  
      pub fn len(&self) -> usize {
@@ -10,4 +10,3 @@ index 67a281b..e1338ec 100644
 +        self.items.len() + 1
      }
  }
- 

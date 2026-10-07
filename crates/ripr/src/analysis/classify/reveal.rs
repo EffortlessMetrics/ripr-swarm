@@ -31,8 +31,10 @@ pub(in crate::analysis) struct ReturnOracleAdmission<'a> {
     /// owner. An equality whose one side calls the owner and whose other
     /// side reaches it computes its expected value through the changed
     /// code, so the two sides move together (RIPR-SPEC-0035
-    /// self-computed expected value, #5830).
-    pub(in crate::analysis) expected_reaches_owner: &'a dyn Fn(&str) -> bool,
+    /// self-computed expected value, #5830). The first argument is the
+    /// type a call names (`Money` in `Money::new(8)`), when it names one:
+    /// such a call reaches the owner only through that type's function.
+    pub(in crate::analysis) expected_reaches_owner: &'a dyn Fn(Option<&str>, &str) -> bool,
 }
 
 #[cfg(test)]
@@ -52,7 +54,7 @@ fn reveal_evidence(
             assertion_admitted: &|_, _| true,
             proximity_may_reach_owner: &|_| false,
             owner_parameters: &[],
-            expected_reaches_owner: &|_| false,
+            expected_reaches_owner: &|_, _| false,
         },
         None,
     );
@@ -663,12 +665,24 @@ fn analyze_related_assertions(
                 owner_pinned,
                 owner_bound,
             );
+            // RIPR-SPEC-0035 / #5830: an equality whose expected side is
+            // computed through the changed owner moves with it, so it
+            // neither pins the value nor confirms observation.
+            let self_computed = matched
+                && match_context.owner_callee.is_some_and(|owner| {
+                    expected_computed_through_owner(
+                        &assertion.text,
+                        owner,
+                        return_admission.expected_reaches_owner,
+                    )
+                });
             // #6692: the owner pin is credited only through an assertion
             // that matched, from a test that may supply the oracle, with the
             // pin surviving the reveal-side defeats. The missing-field
             // cleanup in `ClassifiedProbeEvidence::gather` reads this.
             owner_pin_credited |= matched
                 && credits_oracle
+                && !self_computed
                 && owner_return_pin_holds(
                     &match_context,
                     assertion,
@@ -683,22 +697,15 @@ fn analyze_related_assertions(
                     line: test.start_line,
                     oracle: Some(assertion.text.clone()),
                     oracle_kind: assertion.kind.clone(),
-                    oracle_strength: probe_relative_oracle_strength(&probe.family, assertion),
+                    oracle_strength: self_computed_cap(
+                        probe_relative_oracle_strength(&probe.family, assertion),
+                        self_computed,
+                    ),
                     relation_reason,
                     relation_confidence,
                     miss: Some(RelatedTestMiss::NoCallPath),
                 });
             } else if matched {
-                // RIPR-SPEC-0035 / #5830: an equality whose expected side is
-                // computed through the changed owner moves with it, so it
-                // neither pins the value nor confirms observation.
-                let self_computed = match_context.owner_callee.is_some_and(|owner| {
-                    expected_computed_through_owner(
-                        &assertion.text,
-                        owner,
-                        return_admission.expected_reaches_owner,
-                    )
-                });
                 let observation_confirmed = !self_computed
                     && (!confirm_required
                         || (confirms_observation
@@ -736,9 +743,7 @@ fn analyze_related_assertions(
                 } else {
                     probe_relative_oracle_strength(&probe.family, assertion)
                 };
-                if self_computed && relative_strength.rank() > OracleStrength::Weak.rank() {
-                    relative_strength = OracleStrength::Weak;
-                }
+                relative_strength = self_computed_cap(relative_strength, self_computed);
                 // Keep strength, kind, and confirmation on one assertion.
                 // An equally strong confirmed oracle wins over an unrelated
                 // one regardless of encounter order; a weaker oracle cannot.
@@ -968,6 +973,17 @@ fn text_calls(text: &str, name: &str) -> bool {
 /// Every identifier `text` calls (comments and strings masked), excluding
 /// macro invocations: the word immediately before `(` or `::<`.
 fn called_names(text: &str) -> Vec<String> {
+    called_paths(text)
+        .into_iter()
+        .map(|(_, name)| name)
+        .collect()
+}
+
+/// Every call in `text` as (named type, identifier): the type is the
+/// upper-case path segment directly before the identifier (`Money` in
+/// `Money::new(8)`), and `None` for a bare call, a method call, a module
+/// path or `Self::`, whose callee the text alone does not tie to a type.
+fn called_paths(text: &str) -> Vec<(Option<String>, String)> {
     let masked = crate::analysis::extract::mask_comments_and_strings(text);
     let bytes = masked.as_bytes();
     let mut names = Vec::new();
@@ -984,10 +1000,33 @@ fn called_names(text: &str) -> Vec<String> {
         let preceded_by_ident = start > 0 && is_ident_byte(bytes[start - 1]);
         let rest = masked[index..].trim_start();
         if !preceded_by_ident && (rest.starts_with('(') || rest.starts_with("::<")) {
-            names.push(masked[start..index].to_string());
+            let qualifier = masked[..start]
+                .trim_end()
+                .strip_suffix("::")
+                .map(|path| {
+                    let path = path.trim_end();
+                    let begin = path
+                        .rfind(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_'))
+                        .map_or(0, |at| at + 1);
+                    &path[begin..]
+                })
+                .filter(|segment| {
+                    *segment != "Self" && segment.starts_with(|ch: char| ch.is_ascii_uppercase())
+                })
+                .map(str::to_string);
+            names.push((qualifier, masked[start..index].to_string()));
         }
     }
     names
+}
+
+/// A self-computed assertion's probe-relative strength is at most `weak`.
+fn self_computed_cap(strength: OracleStrength, self_computed: bool) -> OracleStrength {
+    if self_computed && strength.rank() > OracleStrength::Weak.rank() {
+        OracleStrength::Weak
+    } else {
+        strength
+    }
 }
 
 /// RIPR-SPEC-0035 self-computed expected value (#5830): an `assert_eq!`
@@ -1001,7 +1040,7 @@ fn called_names(text: &str) -> Vec<String> {
 fn expected_computed_through_owner(
     text: &str,
     owner: &str,
-    reaches_owner: &dyn Fn(&str) -> bool,
+    reaches_owner: &dyn Fn(Option<&str>, &str) -> bool,
 ) -> bool {
     if !text.contains("assert_eq!") {
         return false;
@@ -1010,9 +1049,9 @@ fn expected_computed_through_owner(
         return false;
     };
     let reaches = |operand: &str| {
-        called_names(operand)
+        called_paths(operand)
             .iter()
-            .any(|called| called != owner && reaches_owner(called))
+            .any(|(ty, called)| called != owner && reaches_owner(ty.as_deref(), called))
     };
     match (text_calls(left, owner), text_calls(right, owner)) {
         (true, false) => reaches(right),
@@ -3273,7 +3312,7 @@ mod tests {
                     assertion_admitted: &|_, _| true,
                     proximity_may_reach_owner: &|_| false,
                     owner_parameters: &[],
-                    expected_reaches_owner: &|_| false,
+                    expected_reaches_owner: &|_, _| false,
                 },
                 None,
             )
@@ -3365,7 +3404,7 @@ mod tests {
                     assertion_admitted: &|_, _| true,
                     proximity_may_reach_owner: &|_| false,
                     owner_parameters: &[],
-                    expected_reaches_owner: &|_| false,
+                    expected_reaches_owner: &|_, _| false,
                 },
                 None,
             )
@@ -3714,7 +3753,7 @@ mod tests {
                 assertion_admitted: &|_, _| true,
                 proximity_may_reach_owner: &|_| false,
                 owner_parameters: &[],
-                expected_reaches_owner: &|_| false,
+                expected_reaches_owner: &|_, _| false,
             },
             None,
         );
@@ -3782,7 +3821,7 @@ mod tests {
                 assertion_admitted: &|_, _| true,
                 proximity_may_reach_owner: &|_| false,
                 owner_parameters: &[],
-                expected_reaches_owner: &|_| false,
+                expected_reaches_owner: &|_, _| false,
             },
             None,
         );
@@ -5308,7 +5347,7 @@ return Err(\"typed pin\".into());
                 assertion_admitted: &|_, _| true,
                 proximity_may_reach_owner: &|_| false,
                 owner_parameters: &[],
-                expected_reaches_owner: &|_| false,
+                expected_reaches_owner: &|_, _| false,
             },
             None,
         );
@@ -5361,7 +5400,7 @@ return Err(\"typed pin\".into());
                 assertion_admitted: &|_, _| true,
                 proximity_may_reach_owner: &|_| false,
                 owner_parameters: &[],
-                expected_reaches_owner: &|_| false,
+                expected_reaches_owner: &|_, _| false,
             },
             None,
         );
@@ -5385,7 +5424,7 @@ return Err(\"typed pin\".into());
                 assertion_admitted: &|_, _| true,
                 proximity_may_reach_owner: &|_| false,
                 owner_parameters: &[],
-                expected_reaches_owner: &|_| false,
+                expected_reaches_owner: &|_, _| false,
             },
             None,
         );
@@ -5428,7 +5467,7 @@ return Err(\"typed pin\".into());
                 assertion_admitted: &|_, _| true,
                 proximity_may_reach_owner: &|_| false,
                 owner_parameters: &[],
-                expected_reaches_owner: &|_| false,
+                expected_reaches_owner: &|_, _| false,
             },
             None,
         );
@@ -5473,7 +5512,7 @@ return Err(\"typed pin\".into());
                 assertion_admitted: &|_, _| true,
                 proximity_may_reach_owner: &|_| false,
                 owner_parameters: &[],
-                expected_reaches_owner: &|_| false,
+                expected_reaches_owner: &|_, _| false,
             },
             None,
         );
@@ -5643,7 +5682,7 @@ return Err(\"typed pin\".into());
                 assertion_admitted: &|_, _| true,
                 proximity_may_reach_owner: &|_| false,
                 owner_parameters: &[],
-                expected_reaches_owner: &|_| false,
+                expected_reaches_owner: &|_, _| false,
             },
             None,
         );
@@ -5670,7 +5709,7 @@ return Err(\"typed pin\".into());
                 assertion_admitted: &|_, _| true,
                 proximity_may_reach_owner: &|_| false,
                 owner_parameters: &[],
-                expected_reaches_owner: &|_| false,
+                expected_reaches_owner: &|_, _| false,
             },
             None,
         );
@@ -6184,7 +6223,7 @@ return Err(\"typed pin\".into());
                 assertion_admitted: &|_, _| true,
                 proximity_may_reach_owner: &|test| test.name == "from_str_fortnight",
                 owner_parameters: &[],
-                expected_reaches_owner: &|_| false,
+                expected_reaches_owner: &|_, _| false,
             },
             None,
         );
@@ -6485,7 +6524,7 @@ return Err(\"typed pin\".into());
                 assertion_admitted: &|_, _| true,
                 proximity_may_reach_owner: &|_| false,
                 owner_parameters: &[],
-                expected_reaches_owner: &|_| false,
+                expected_reaches_owner: &|_, _| false,
             },
             None,
         );
@@ -6766,7 +6805,7 @@ return Err(\"typed pin\".into());
         expression: &str,
         test: &TestSummary,
         owner_parameters: &[String],
-        reaches: &dyn Fn(&str) -> bool,
+        reaches: &dyn Fn(Option<&str>, &str) -> bool,
     ) -> (StageEvidence, OracleStrength) {
         let probe = owned_probe(ProbeFamily::ReturnValue, expression, "tax");
         let (_, discriminate, related, _) = reveal_evidence_with_expression(
@@ -6805,7 +6844,8 @@ return Err(\"typed pin\".into());
             "subtotal_multiplies",
             vec![exact("assert_eq!(subtotal(3, 5), 15);")],
         );
-        let (discriminate, _) = tax_reveal("subtotal * 8 / 1000", &unrelated, &params, &|_| false);
+        let (discriminate, _) =
+            tax_reveal("subtotal * 8 / 1000", &unrelated, &params, &|_, _| false);
         assert_eq!(
             discriminate.state,
             StageState::Weak,
@@ -6817,7 +6857,7 @@ return Err(\"typed pin\".into());
             "tax_of_subtotal",
             vec![exact("assert_eq!(tax(subtotal), 24);")],
         );
-        let (discriminate, _) = tax_reveal("subtotal * 8 / 1000", &calling, &params, &|_| false);
+        let (discriminate, _) = tax_reveal("subtotal * 8 / 1000", &calling, &params, &|_, _| false);
         assert_eq!(
             discriminate.state,
             StageState::Yes,
@@ -6832,7 +6872,7 @@ return Err(\"typed pin\".into());
             "let subtotal = tax(300);\nassert_eq!(subtotal, 24);",
             vec![exact("assert_eq!(subtotal, 24);")],
         );
-        let (discriminate, _) = tax_reveal("subtotal * 8 / 1000", &bound, &params, &|_| false);
+        let (discriminate, _) = tax_reveal("subtotal * 8 / 1000", &bound, &params, &|_, _| false);
         assert_eq!(
             discriminate.state,
             StageState::Yes,
@@ -6842,7 +6882,7 @@ return Err(\"typed pin\".into());
 
         // Without the parameter list the old token rule still confirms, which
         // is what the first case relied on before #5830.
-        let (discriminate, _) = tax_reveal("subtotal * 8 / 1000", &unrelated, &[], &|_| false);
+        let (discriminate, _) = tax_reveal("subtotal * 8 / 1000", &unrelated, &[], &|_, _| false);
         assert_eq!(
             discriminate.state,
             StageState::Yes,
@@ -6859,7 +6899,7 @@ return Err(\"typed pin\".into());
             "subtotal_multiplies",
             vec![exact("assert_eq!(subtotal(3, 100), 300);")],
         );
-        let (discriminate, _) = tax_reveal("amount * 8 / 100", &unrelated, &[], &|_| false);
+        let (discriminate, _) = tax_reveal("amount * 8 / 100", &unrelated, &[], &|_, _| false);
         assert_eq!(
             discriminate.state,
             StageState::Weak,
@@ -6868,7 +6908,7 @@ return Err(\"typed pin\".into());
         );
 
         let calling = test_with_assertions("tax_of_100", vec![exact("assert_eq!(tax(100), 8);")]);
-        let (discriminate, _) = tax_reveal("amount * 8 / 100", &calling, &[], &|_| false);
+        let (discriminate, _) = tax_reveal("amount * 8 / 100", &calling, &[], &|_, _| false);
         assert_eq!(
             discriminate.state,
             StageState::Yes,
@@ -6889,13 +6929,14 @@ return Err(\"typed pin\".into());
                 "assert_eq!(invoice(3, 100), subtotal + tax(subtotal));",
             )],
         );
-        let (discriminate, strength) = tax_reveal("subtotal * 8 / 1000", &test, &params, &|name| {
-            name == "invoice"
-        });
+        let (discriminate, strength) =
+            tax_reveal("subtotal * 8 / 1000", &test, &params, &|_, name| {
+                name == "invoice"
+            });
         assert_eq!(strength, OracleStrength::Weak);
-        assert_ne!(
+        assert_eq!(
             discriminate.state,
-            StageState::Yes,
+            StageState::Weak,
             "{}",
             discriminate.summary
         );
@@ -6903,7 +6944,7 @@ return Err(\"typed pin\".into());
         // The same assertion against an `invoice` that never calls `tax`
         // compares tax with an independent value and keeps its credit.
         let (discriminate, strength) =
-            tax_reveal("subtotal * 8 / 1000", &test, &params, &|_| false);
+            tax_reveal("subtotal * 8 / 1000", &test, &params, &|_, _| false);
         assert_eq!(strength, OracleStrength::Strong);
         assert_eq!(
             discriminate.state,
@@ -6915,7 +6956,7 @@ return Err(\"typed pin\".into());
 
     #[test]
     fn expected_computed_through_owner_reads_either_side_and_masks_strings() {
-        let reaches = |name: &str| name == "invoice";
+        let reaches = |_: Option<&str>, name: &str| name == "invoice";
         assert!(expected_computed_through_owner(
             "assert_eq!(sub + tax(sub), invoice(3, 100));",
             "tax",
@@ -6953,6 +6994,40 @@ return Err(\"typed pin\".into());
         assert_eq!(
             called_names("a.tax(1) + vec![x] + Tax::new::<u8>(2) + taxes (3)"),
             vec!["tax", "new", "taxes"]
+        );
+    }
+
+    /// #5830 review: a type-qualified expected-side call (`Money::new(8)`)
+    /// reaches the owner only through that type's function. A same-named
+    /// `Invoice::new` that calls the owner leaves a genuine pin strong.
+    #[test]
+    fn a_type_qualified_expected_call_reaches_only_through_its_own_type() {
+        let reaches =
+            |ty: Option<&str>, name: &str| name == "new" && ty.is_none_or(|ty| ty == "Invoice");
+        assert!(!expected_computed_through_owner(
+            "assert_eq!(tax(100), Money::new(8));",
+            "tax",
+            &reaches
+        ));
+        assert!(expected_computed_through_owner(
+            "assert_eq!(tax(100), Invoice::new(100).tax);",
+            "tax",
+            &reaches
+        ));
+        // A method or `Self::` call names no type, so it matches by name.
+        assert!(expected_computed_through_owner(
+            "assert_eq!(tax(100), cart.new(100));",
+            "tax",
+            &reaches
+        ));
+        assert_eq!(
+            called_paths("Money::new(8) + crate::fees::Invoice::new(1) + Self::new(2) + new(3)"),
+            vec![
+                (Some("Money".to_string()), "new".to_string()),
+                (Some("Invoice".to_string()), "new".to_string()),
+                (None, "new".to_string()),
+                (None, "new".to_string()),
+            ]
         );
     }
 }

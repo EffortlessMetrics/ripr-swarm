@@ -194,11 +194,14 @@ impl ClassifiedProbeEvidence {
         // #5830: names of functions that transitively call the owner,
         // computed once per probe and only when an assertion asks.
         let owner_callers = std::cell::OnceCell::new();
-        let expected_reaches_owner = |name: &str| {
+        let expected_reaches_owner = |ty: Option<&str>, name: &str| {
             context.owner_fn.is_some_and(|owner| {
                 owner_callers
                     .get_or_init(|| transitive_caller_names(owner, context.index))
-                    .contains(name)
+                    .iter()
+                    .any(|(caller_type, caller)| {
+                        caller == name && ty.is_none_or(|ty| caller_type.as_deref() == Some(ty))
+                    })
             })
         };
         // #3731 review (F11): the related test's file source is reachable
@@ -589,16 +592,17 @@ fn owner_parameter_names(owner: &FunctionSummary) -> Vec<String> {
 /// Bound on the caller walk: deeper chains keep the assertion's credit.
 const MAX_CALLER_DEPTH: usize = 6;
 
-/// Names of indexed functions whose calls reach `owner` within
-/// `MAX_CALLER_DEPTH` hops. A call counts only when its own syntax can name
-/// the callee (see `call_names_function`), so `String::new()` or
-/// `values.len()` never reaches an owner `Rect::new` or `Stack::len`. Names
-/// are recorded without type resolution: a same-named function elsewhere
-/// still matches the lookup, which can only withhold credit.
+/// Indexed functions whose calls reach `owner` within `MAX_CALLER_DEPTH`
+/// hops, as (impl type, name). A call counts only when its own syntax can
+/// name the callee (see `call_names_function`), so `String::new()` or
+/// `values.len()` never reaches an owner `Rect::new` or `Stack::len`. A
+/// type-qualified expected-side call (`Money::new(8)`) matches only a
+/// caller in that type's impl; any other call matches by name alone, so a
+/// same-named function elsewhere can only withhold credit.
 fn transitive_caller_names(
     owner: &FunctionSummary,
     index: &crate::analysis::facts::RustIndex,
-) -> std::collections::BTreeSet<String> {
+) -> std::collections::BTreeSet<(Option<String>, String)> {
     let mut callers = std::collections::BTreeSet::new();
     let mut visited = std::collections::HashSet::from([&owner.id]);
     let mut frontier = vec![owner];
@@ -615,7 +619,10 @@ fn transitive_caller_names(
             });
             if reaches {
                 visited.insert(&function.id);
-                callers.insert(function.name.clone());
+                callers.insert((
+                    crate::analysis::classify::impl_self_type_name(&function.id.0),
+                    function.name.clone(),
+                ));
                 next.push(function);
             }
         }
@@ -1115,6 +1122,9 @@ mod tests {
             .ok_or_else(|| format!("owner {owner} indexed"))?;
         Ok(super::transitive_caller_names(&owner, &index)
             .into_iter()
+            .map(|(_, name)| name)
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
             .collect())
     }
 
@@ -1167,6 +1177,24 @@ mod tests {
             ["pathed", "reference"],
             "a free owner is reached by a bare or crate-path call, never by a \
              method call or a type-qualified call of the same name"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn caller_walk_stops_after_six_hops() -> Result<(), String> {
+        let mut source = "pub fn tax(subtotal: i64) -> i64 { subtotal * 8 / 100 }\n".to_string();
+        let mut previous = "tax".to_string();
+        for hop in 1..=7 {
+            source.push_str(&format!(
+                "pub fn hop{hop}(v: i64) -> i64 {{ {previous}(v) }}\n"
+            ));
+            previous = format!("hop{hop}");
+        }
+        assert_eq!(
+            caller_names_for(&source, "src/lib.rs::tax")?,
+            ["hop1", "hop2", "hop3", "hop4", "hop5", "hop6"],
+            "callers six hops out reach the owner; the seventh hop does not"
         );
         Ok(())
     }

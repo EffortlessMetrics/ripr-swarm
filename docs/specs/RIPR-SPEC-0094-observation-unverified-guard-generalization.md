@@ -346,18 +346,29 @@ expected value through the changed code (RIPR-SPEC-0035, self-computed
 expected value). In `assert_eq!(invoice(3, 100), sub + tax(sub))`, where
 `invoice` calls `tax`, both sides move with `tax`. Such an assertion never
 confirms observation, and its probe-relative strength is at most `weak`, for
-every family. Callers are found by name over indexed call facts. A
-same-named function elsewhere also counts as a caller, so name collisions
-can only withhold credit. An expected side that is a literal, or that calls
+every family. Callers are found over indexed call facts, and a call counts
+only when its own syntax can name the callee: a bare call or a lower-case
+module path outside `std`, `core` and `alloc` for a free function;
+`Type::name`, or `Self::name` or `self.name(` inside the same impl, for an
+associated function. So `values.len()` never reaches an owner `Stack::len`.
+On the expected side, a type-qualified call (`Money::new(8)`) reaches the
+owner only through a caller in that type's impl; any other call matches a
+caller by name alone, so a same-named function elsewhere can only withhold
+credit. An expected side that is a literal, or that calls
 only functions that do not reach the owner, keeps the assertion's strength.
 A value bound from the owner in an earlier `let` is not followed. When no
-test reaches the owner (reach ruled out), a stage these rules leave `weak`
-reads as unreached, like a `yes` stage, because an unconfirmed oracle in a
-test that never runs the owner discriminates nothing. These
+test reaches the owner (reach ruled out), any `weak` infection, observation
+or discrimination stage reads as unreached, like a `yes` stage, because a
+test that never runs the owner activates, observes and discriminates
+nothing. These
 rules govern diff-mode reveal; repo exposure grading (`test_grip_evidence`)
 does not apply them yet.
 
 Proof: `owner_parameter_name_confirms_only_in_an_assertion_calling_the_owner`,
+`a_type_qualified_expected_call_reaches_only_through_its_own_type`, the
+caller-walk tests in `classifier/evidence.rs` (including the six-hop bound),
+`return_path_gate_reads_the_tail_past_a_comment`, the
+`owner_name_collision_helper_keeps_credit` control,
 `numeric_literal_token_confirms_only_in_an_assertion_calling_the_owner`,
 `self_computed_expected_value_is_weak_and_unconfirmed`, the
 `owner_parameter_token_coincidence`, `self_computed_expected_value` and
