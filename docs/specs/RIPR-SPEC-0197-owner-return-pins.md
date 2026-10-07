@@ -391,6 +391,22 @@ rule only for an assertion whose context was admitted.
    defeats (`RevealOutcome::owner_pin_credited`). The finding may then
    read `exposed`; no other family or oracle gains credit (the
    #6579 whole-object effect-observer gap is unchanged).
+7. Pins equal to an operand (#7077). An exact pin on a constructed field
+   does not discriminate a change to its initializer when the field equals
+   one of its operands for the pinned input. The changed initializer is
+   `f: a <op> b` with two distinct plain identifier operands and one binary
+   operator. A sibling initializer of the same struct literal is `g: a` (or
+   the shorthand `a`). A related test binds `q` straight from a call to the
+   owner (`let q = quote(..)`) and holds both `assert_eq!(q.f, v)` and
+   `assert_eq!(q.g, v)` with the same expected text `v` (digit separators
+   ignored). For that input `f` equals `a`, so the mutant `f: a` passes
+   whatever the operator is. When every related test that pins `q.f`
+   exactly is paired this way, the field-construction finding's
+   discriminate stage reads weak with the code
+   `field_pinned_equal_to_operand`, which names the operand the tests never
+   vary. One pinning test without such a pair keeps the credit. Anything
+   ripr cannot read (a nested expression, a receiver bound some other way,
+   a repeated initializer text) leaves the finding as it was.
 
 ### Bool-owner pins
 
@@ -873,6 +889,8 @@ assertions. This repair shares the existing callback without that larger migrati
   confirmation signals behind the family, oracle-kind and owner-binding
   defeats. `analyze_related_assertions` applies shared context before matching
   or credit and preserves refused assertions only as zero-oracle relations; `file_imports_own_item`; `::`-rooted `use` paths.
+- `crates/ripr/src/analysis/classify/operand_pin.rs`: rule 7's
+  operand-only pin, applied in `classifier/evidence.rs`.
 - `crates/ripr/src/analysis/classifier/evidence.rs`: establishes the pin
   once per probe and supplies the shared context-admission callback.
 - `crates/ripr/src/analysis/classifier/finding.rs` and `classify/decision.rs`:

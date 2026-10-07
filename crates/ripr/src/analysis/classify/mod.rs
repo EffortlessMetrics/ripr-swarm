@@ -8,6 +8,7 @@ mod gap_admission;
 mod helper_transfer;
 mod infection;
 mod match_transfer;
+mod operand_pin;
 mod owner_pin;
 mod owner_shape;
 mod propagation_witness;
@@ -38,6 +39,7 @@ pub(in crate::analysis) use gap_admission::{
 };
 pub(in crate::analysis) use helper_transfer::{callee_is_unique, resolve_chain};
 pub(in crate::analysis) use infection::infection_evidence_with_boundary_input;
+pub(in crate::analysis) use operand_pin::operand_only_pin;
 pub(in crate::analysis) use owner_pin::{
     OwnerPinSyntax, OwnerReturnPin, WithheldMacroBindings, pin_scope_needs,
     trait_impl_self_type_names,

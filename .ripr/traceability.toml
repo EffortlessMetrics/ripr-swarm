@@ -11612,6 +11612,12 @@ id = "RIPR-SPEC-0197"
 name = "Owner-return pins through calls that name the owner"
 spec = "docs/specs/RIPR-SPEC-0197-owner-return-pins.md"
 tests = [
+  "crates/ripr/src/analysis/classify/operand_pin.rs::tests::a_total_pinned_equal_to_its_subtotal_names_the_unseen_operand",
+  "crates/ripr/src/analysis/classify/operand_pin.rs::tests::different_pinned_values_discriminate_the_operand",
+  "crates/ripr/src/analysis/classify/operand_pin.rs::tests::one_unpaired_pinning_test_keeps_the_credit",
+  "crates/ripr/src/analysis/classify/operand_pin.rs::tests::a_receiver_not_bound_from_the_owner_is_not_read",
+  "crates/ripr/src/analysis/classify/operand_pin.rs::tests::no_test_pinning_the_field_is_not_this_rule",
+  "crates/ripr/src/analysis/classify/operand_pin.rs::tests::only_a_plain_binary_initializer_is_read",
   "crates/ripr/tests/owner_pin_execution.rs::predicate_pairing_cannot_reuse_refused_boundary_equalities",
   "crates/ripr/tests/owner_pin_execution.rs::local_empty_macro_preserves_independent_equality_execution",
   "crates/ripr/tests/owner_pin_execution.rs::empty_macro_arguments_cannot_activate_a_real_far_oracle",
@@ -11748,6 +11754,7 @@ code = [
   "crates/ripr/src/domain/probe.rs",
   "crates/ripr/src/analysis/classify/boundary_pairing.rs",
   "crates/ripr/src/analysis/classify/owner_pin.rs",
+  "crates/ripr/src/analysis/classify/operand_pin.rs",
   "crates/ripr/src/analysis/classify/reveal.rs",
   "crates/ripr/src/analysis/classifier/evidence.rs",
   "crates/ripr/src/analysis/syntax/ra.rs",
