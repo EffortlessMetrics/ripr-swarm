@@ -1509,6 +1509,14 @@ pub(super) fn bind_portable_command(root: &Path, command: &str) -> Option<String
         })
         .map(|pair| pair[1].clone())
         .collect();
+    // Producers write `--root .`; a `--root=.` spelling is still portable but
+    // is not rewritten, so its route is withheld rather than passed through.
+    if spans
+        .iter()
+        .any(|span| body[span.clone()].replace(['\'', '"'], "") == "--root=.")
+    {
+        return None;
+    }
     let [dot] = dots.as_slice() else {
         // No portable root passes through; two are ambiguous and withheld.
         return dots.is_empty().then(|| command.to_string());
@@ -2024,6 +2032,9 @@ mod tests {
             "ripr agent verify --root . --root ./sub --json",
             "ripr agent verify --root=./sub --root . --json",
             "ripr agent verify --root . '--root=./sub' --json",
+            "ripr agent verify --root=. --json",
+            "ripr agent verify '--root=.' --json",
+            "ripr agent verify --root='.' --json",
         ] {
             assert_eq!(bind_portable_command(&root, command), None, "{command:?}");
         }
