@@ -3583,11 +3583,13 @@ pub(in crate::analysis) fn parent_chain_shadows_type(
         return false;
     };
     let chain = &facts.role_provenance;
-    if chain.edges.is_empty() {
-        return false;
-    }
+    // The reason leads: an immediately ambiguous parent composes to empty
+    // edges with the reason set, which is unresolved, not standalone.
     if chain.earliest_unresolved_reason.is_some() {
         return true;
+    }
+    if chain.edges.is_empty() {
+        return false;
     }
     chain.edges.iter().any(|edge| {
         if edge.kind != SourceRoleProvenanceEdgeKind::Module {

@@ -2699,6 +2699,7 @@ mod tests {
         DeltaKind, OracleKind, OracleStrength, ProbeFamily, ProbeId, SourceLocation, SymbolId,
     };
     use std::path::{Path, PathBuf};
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
     fn opaque_declarations_do_not_supply_body_owner_calls() {
@@ -3499,6 +3500,15 @@ mod tests {
                 ambiguous,
             ),
             (
+                "ambiguous parent with no recorded edges",
+                OUT_OF_LINE_LIB_SOURCE,
+                vec![("src/helpers.rs", plain)],
+                SourceRoleProvenance {
+                    edges: vec![],
+                    earliest_unresolved_reason: Some("rust_module_ambiguous_parent".to_string()),
+                },
+            ),
+            (
                 "include edge",
                 lib,
                 no_parents.clone(),
@@ -3552,6 +3562,63 @@ mod tests {
                 "{label}: an unresolvable parent chain cannot be direct_owner_call"
             );
         }
+    }
+
+    /// The empty-edges shape above runs through the real role-composition
+    /// producer here: two `#[path]` claimants on one child file holding the
+    /// test. The setup assertions pin what the producer actually records
+    /// for the contested child before the relation is checked.
+    #[test]
+    fn given_really_ambiguous_parent_when_test_calls_owner_method_then_name_only_relation()
+    -> Result<(), String> {
+        let root = temp_dir("out-of-line-ambiguous-parent")?;
+        write_manifest(&root)?;
+        let files = vec![
+            write(
+                &root,
+                "src/lib.rs",
+                "pub struct Stack {\n    items: Vec<u32>,\n}\n\nimpl Stack {\n    pub fn depth(&self) -> usize {\n        self.items.len() + 1\n    }\n}\n\nmod other;\n\n#[path = \"shared.rs\"]\nmod from_lib;\n",
+            )?,
+            write(
+                &root,
+                "src/other.rs",
+                "#[path = \"shared.rs\"]\nmod from_other;\n",
+            )?,
+            write(
+                &root,
+                "src/shared.rs",
+                "#[test]\nfn contested_depth_check() {\n    let stack = Stack { items: Vec::new() };\n    assert_eq!(stack.depth(), 1);\n}\n",
+            )?,
+        ];
+        let index = crate::analysis::facts::build_index(&root, &files)?;
+        let shared = index
+            .files()
+            .get(Path::new("src/shared.rs"))
+            .ok_or_else(|| "missing contested file facts".to_string())?;
+        assert!(
+            shared.role_provenance.edges.is_empty(),
+            "setup: the real producer records no edges for the contested child"
+        );
+        assert_eq!(
+            shared.role_provenance.earliest_unresolved_reason.as_deref(),
+            Some("rust_module_ambiguous_parent"),
+            "setup: the real producer names the ambiguous parent"
+        );
+        let owner = index
+            .functions()
+            .iter()
+            .find(|function| function.name == "depth")
+            .ok_or_else(|| "missing owner fact for depth".to_string())?;
+        assert_eq!(index.tests().len(), 1, "setup: one contested test");
+        let probe = probe("src/lib.rs", "self.items.len() + 1");
+        let related = find_related_tests(&probe, Some(owner), &index, true, None, None);
+        assert_eq!(related.len(), 1, "the same-named call is still related");
+        assert_eq!(
+            related[0].1,
+            RelationReason::WeakTokenSubstring,
+            "an unresolved parent chain cannot be direct_owner_call"
+        );
+        Ok(())
     }
 
     /// #2971 scope control: the same workspace as the positive control above,
@@ -5304,6 +5371,35 @@ fn crate_c_score_test() {
             line,
             requires_test,
         }
+    }
+
+    /// A scratch workspace root for [`crate::analysis::facts::build_index`],
+    /// mirroring the role-composition tests.
+    fn temp_dir(name: &str) -> Result<PathBuf, String> {
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|duration| duration.as_nanos())
+            .unwrap_or(0);
+        let dir = std::env::temp_dir().join(format!("ripr-related-tests-{name}-{stamp}"));
+        std::fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
+        Ok(dir)
+    }
+
+    fn write_manifest(root: &Path) -> Result<(), String> {
+        std::fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname='related-tests'\nversion='0.1.0'\nedition='2024'\n",
+        )
+        .map_err(|error| error.to_string())
+    }
+
+    fn write(root: &Path, relative: &str, source: &str) -> Result<PathBuf, String> {
+        let full = root.join(relative);
+        if let Some(parent) = full.parent() {
+            std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+        }
+        std::fs::write(&full, source).map_err(|error| error.to_string())?;
+        Ok(PathBuf::from(relative))
     }
 
     /// #4558 review: the owner's crate brings a same-named type in from
