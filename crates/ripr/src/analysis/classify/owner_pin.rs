@@ -61,7 +61,7 @@ use crate::analysis::syntax::{
 use crate::domain::{Probe, ProbeFamily};
 use ra_ap_syntax::{
     AstNode, SyntaxNode, TextRange,
-    ast::{self, HasModuleItem, HasName},
+    ast::{self, HasArgList, HasGenericArgs, HasModuleItem, HasName},
 };
 use rayon::prelude::*;
 use std::cell::{OnceCell, RefCell};
@@ -1036,6 +1036,22 @@ enum ReturnPathGate {
     /// `PartialEq`, so every field of the clone is compared with the
     /// original's.
     CloneReceiver,
+    /// RIPR-SPEC-0225: field `field` of the `type_name { .. }` literal the
+    /// owner returns (inside `wrapper(..)` when the owner returns
+    /// `Result`/`Option`). The pinned value must be a literal of that type,
+    /// in the same wrapper, naming the field with an independent value.
+    WholeValueField(WholeValueField),
+}
+
+/// The owner-side facts [`ReturnPathGate::WholeValueField`] checks a test's
+/// expected literal against.
+struct WholeValueField {
+    type_name: String,
+    field: String,
+    wrapper: Option<&'static str>,
+    /// The field is declared `String`, so `"x".into()` converts through the
+    /// standard library, not a workspace `From` impl.
+    field_is_string: bool,
 }
 
 impl OwnerReturnPin {
@@ -1048,7 +1064,8 @@ impl OwnerReturnPin {
         index: &RustIndex,
     ) -> Option<Self> {
         if matches!(probe.family, ProbeFamily::FieldConstruction) {
-            return Self::establish_clone_field(probe, owner, index);
+            return Self::establish_clone_field(probe, owner, index)
+                .or_else(|| Self::establish_whole_value_field(probe, owner, index));
         }
         if !owner.item.has_body {
             return None;
@@ -1071,38 +1088,7 @@ impl OwnerReturnPin {
         let name = owner.name.as_str();
         let changed_line = probe.location.line.checked_sub(owner.start_line)?;
         let path = return_path_gate(&owner.body, &probe.expression, changed_line)?;
-        let call = match (&owner.item.container, owner.item.has_self_param) {
-            (FunctionContainer::Free, false) => PinCall::Bare,
-            (FunctionContainer::Inherent { self_ty }, true) => PinCall::Method {
-                receivers: vec![declared_receiver(self_ty, index)?],
-                trait_scope: None,
-            },
-            (
-                FunctionContainer::TraitImpl {
-                    trait_path,
-                    self_ty,
-                },
-                true,
-            ) => PinCall::Method {
-                receivers: vec![declared_receiver(self_ty, index)?],
-                trait_scope: Some(TraitScope {
-                    trait_name: path_base_name(trait_path)?.to_string(),
-                }),
-            },
-            (FunctionContainer::Trait { trait_name }, true) => {
-                let receivers = trait_impl_receivers(trait_name, index);
-                if receivers.is_empty() {
-                    return None;
-                }
-                PinCall::Method {
-                    receivers,
-                    trait_scope: Some(TraitScope {
-                        trait_name: trait_name.clone(),
-                    }),
-                }
-            }
-            _ => return None,
-        };
+        let call = pin_call(owner, index)?;
         let method = matches!(call, PinCall::Method { .. });
         if other_definition_competes(owner, index, method) {
             return None;
@@ -1199,6 +1185,83 @@ impl OwnerReturnPin {
         })
     }
 
+    /// RIPR-SPEC-0225: the owner-side gates for a `field_construction`
+    /// probe on a field of the struct literal the owner returns. The literal
+    /// (or `Ok(..)`/`Some(..)` around it, matching the declared return type)
+    /// is the owner's tail and only value exit, the changed line is one whole
+    /// field initializer of it that evaluates on every input, and `==` on the
+    /// literal's type compares that field by value (rules 3 and 4).
+    fn establish_whole_value_field(
+        probe: &Probe,
+        owner: &FunctionSummary,
+        index: &RustIndex,
+    ) -> Option<Self> {
+        if !owner.item.has_body
+            || index
+                .files()
+                .get(&owner.file)
+                .is_none_or(|facts| facts.used_lexical_fallback)
+        {
+            return None;
+        }
+        let changed_line = probe.location.line.checked_sub(owner.start_line)?;
+        let field = initialized_field_name(&probe.expression)?;
+        let tail = whole_value_tail(&owner.body, changed_line, field, &probe.expression)?;
+        let type_name = if tail.type_name == "Self" {
+            match &owner.item.container {
+                FunctionContainer::Inherent { self_ty }
+                | FunctionContainer::TraitImpl { self_ty, .. }
+                    if !self_ty.contains('<') =>
+                {
+                    path_base_name(self_ty)?.to_string()
+                }
+                _ => return None,
+            }
+        } else {
+            tail.type_name
+        };
+        let declared = declared_return_type(&owner.body)?;
+        let names_type = |ty: &str| ty == type_name || ty == "Self";
+        let declared_matches = match tail.wrapper {
+            None => names_type(&declared),
+            Some(wrapper) => {
+                let (path, arguments) = declared.split_once('<')?;
+                let arguments = arguments.strip_suffix('>')?;
+                let first = top_level_arguments(arguments).into_iter().next()?;
+                let container = if wrapper == "Ok" { "Result" } else { "Option" };
+                path_base_name(path) == Some(container)
+                    && !type_declared_in_workspace(container, index)
+                    && names_type(first.trim())
+            }
+        };
+        if !declared_matches || !field_compares_with_derived_equality(&type_name, field, index) {
+            return None;
+        }
+        let field_is_string = derived_equality(&type_name, index).is_some_and(|(facts, _)| {
+            facts.fields.iter().any(|candidate| {
+                candidate.name.as_deref() == Some(field) && candidate.ty == "String"
+            })
+        });
+        let call = pin_call(owner, index)?;
+        if other_definition_competes(owner, index, matches!(call, PinCall::Method { .. })) {
+            return None;
+        }
+        Some(Self {
+            name: owner.name.clone(),
+            call,
+            path: ReturnPathGate::WholeValueField(WholeValueField {
+                type_name,
+                field: field.to_string(),
+                wrapper: tail.wrapper,
+                field_is_string,
+            }),
+            returns_bool: false,
+            owner_file: owner.file.clone(),
+            owner_start_line: owner.start_line,
+            trait_scope_by_file: RefCell::default(),
+        })
+    }
+
     /// The test-side gates: whether `assertion` in `test` pins the owner's
     /// return value through a call that names the owner.
     pub(in crate::analysis) fn admits(
@@ -1235,6 +1298,17 @@ impl OwnerReturnPin {
             ) {
                 (Some(call), None) => (call, operands[1]),
                 (None, Some(call)) => (call, operands[0]),
+                // RIPR-SPEC-0225 rule 1: `let c = owner(..); assert_eq!(c, T { .. })`.
+                (None, None) if matches!(self.path, ReturnPathGate::WholeValueField(_)) => {
+                    match (
+                        bound_owner_call(test, operands[0], &self.name),
+                        bound_owner_call(test, operands[1], &self.name),
+                    ) {
+                        (Some(call), None) => (call, operands[1]),
+                        (None, Some(call)) => (call, operands[0]),
+                        _ => return false,
+                    }
+                }
                 _ => return false,
             }
         } else if self.returns_bool && is_plain_macro(&assertion.text, "assert") {
@@ -1385,6 +1459,44 @@ impl OwnerReturnPin {
     }
 }
 
+/// How a test calls `owner`: a bare call for a free function, a method call
+/// on a receiver of one of the owner's `impl` types otherwise. `None` for a
+/// shape no pin reads (an associated function, a free fn with `self`).
+fn pin_call(owner: &FunctionSummary, index: &RustIndex) -> Option<PinCall> {
+    Some(match (&owner.item.container, owner.item.has_self_param) {
+        (FunctionContainer::Free, false) => PinCall::Bare,
+        (FunctionContainer::Inherent { self_ty }, true) => PinCall::Method {
+            receivers: vec![declared_receiver(self_ty, index)?],
+            trait_scope: None,
+        },
+        (
+            FunctionContainer::TraitImpl {
+                trait_path,
+                self_ty,
+            },
+            true,
+        ) => PinCall::Method {
+            receivers: vec![declared_receiver(self_ty, index)?],
+            trait_scope: Some(TraitScope {
+                trait_name: path_base_name(trait_path)?.to_string(),
+            }),
+        },
+        (FunctionContainer::Trait { trait_name }, true) => {
+            let receivers = trait_impl_receivers(trait_name, index);
+            if receivers.is_empty() {
+                return None;
+            }
+            PinCall::Method {
+                receivers,
+                trait_scope: Some(TraitScope {
+                    trait_name: trait_name.clone(),
+                }),
+            }
+        }
+        _ => return None,
+    })
+}
+
 impl ReturnPathGate {
     fn admits(&self, expected: &str) -> bool {
         match self {
@@ -1392,6 +1504,7 @@ impl ReturnPathGate {
             Self::Head(head) => constructor_call_span(expected.trim(), head).is_some(),
             Self::Exact(value) => expected.trim() == *value,
             Self::CloneReceiver => false,
+            Self::WholeValueField(gate) => gate.admits(expected),
         }
     }
 }
@@ -1448,6 +1561,51 @@ fn owner_call_shape<'a>(operand: &'a str, name: &str) -> Option<CallShape<'a>> {
     } else {
         CallShape::Method(&operand[..call_start - 1])
     })
+}
+
+/// RIPR-SPEC-0225 rule 1: the owner call an operand names through a local
+/// binding. The operand is a plain name that the test binds once, with
+/// `let name = <owner call>;` (an optional type annotation, never `mut`),
+/// and mentions nowhere else: any other use could borrow it mutably,
+/// shadow it, write through it or copy a field of it into the expected
+/// value. A macro that may bind the name refuses it too.
+fn bound_owner_call<'a>(
+    test: &'a TestSummary,
+    operand: &str,
+    owner: &str,
+) -> Option<CallShape<'a>> {
+    let name = operand.trim();
+    if !is_plain_identifier(name) || name == owner {
+        return None;
+    }
+    let masked = mask_comments_and_strings(&test.body);
+    if whole_word_offsets(&masked, name).len() != 2 || bound_by_macro(&masked, name) {
+        return None;
+    }
+    let mut bindings = whole_word_offsets(&masked, "let")
+        .into_iter()
+        .filter_map(|start| {
+            let rest = masked[start + 3..].trim_start().strip_prefix(name)?;
+            if rest.starts_with(|ch: char| ch.is_ascii_alphanumeric() || ch == '_') {
+                return None;
+            }
+            let rest = rest.trim_start();
+            // `let c = ..` or `let c: T = ..`; a type cannot hold `=`.
+            if !rest.starts_with(['=', ':']) {
+                return None;
+            }
+            let equals = masked.len() - rest.len() + rest.find('=')?;
+            if masked[equals + 1..].starts_with(['=', '>']) {
+                return None;
+            }
+            let end = equals + masked[equals..].find(';')?;
+            Some((equals, end))
+        });
+    let (Some((equals, end)), None) = (bindings.next(), bindings.next()) else {
+        return None;
+    };
+    let initializer = test.body.get(equals + 1..end)?;
+    owner_call_shape(initializer, owner)
 }
 
 /// The value expression of `unsafe { <expr> }` when `operand` is exactly that
@@ -1854,6 +2012,279 @@ fn clone_tail_literal_spans(
     depth == 1
         && !line.contains(['{', '}'])
         && field_text(&body[line_start..line_end]) == field_text(expression)
+}
+
+/// The struct literal an owner returns, as [`whole_value_tail`] reads it.
+struct WholeValueTail {
+    /// The literal's type as written: its last path segment, or `Self`.
+    type_name: String,
+    /// `Ok` or `Some` when the tail wraps the literal in that constructor.
+    wrapper: Option<&'static str>,
+}
+
+/// RIPR-SPEC-0225: the literal whose field `field` the changed line
+/// initializes, when that literal is the owner's tail value (directly, or as
+/// the one argument of a tail `Ok(..)`/`Some(..)`). The body may not
+/// `return`, nor hold a macro that may hide an exit, and `?` is allowed only
+/// around a wrapped tail, where it exits with `Err`/`None`, never the pinned
+/// constructor. The changed line must be the field's whole initializer, at
+/// the literal's top level, with a value evaluated on every input and no
+/// functional-update base in the literal. Fails closed on anything else.
+fn whole_value_tail(
+    body: &str,
+    changed_line: usize,
+    field: &str,
+    expression: &str,
+) -> Option<WholeValueTail> {
+    let masked = mask_comments_and_strings(body);
+    if has_unbounded_macro(&masked) || !whole_word_offsets(&masked, "return").is_empty() {
+        return None;
+    }
+    let parse = parse_clean_source_file(body)?;
+    let function = parse
+        .tree()
+        .syntax()
+        .descendants()
+        .find_map(ast::Fn::cast)?;
+    let block = function.body()?;
+    let mut tail = block.tail_expr()?;
+    while let ast::Expr::ParenExpr(inner) = &tail {
+        tail = inner.expr()?;
+    }
+    let (literal, wrapper) = match tail {
+        ast::Expr::RecordExpr(literal) => (literal, None),
+        ast::Expr::CallExpr(call) => {
+            let wrapper = match call.expr()?.syntax().text().to_string().as_str() {
+                "Ok" => "Ok",
+                "Some" => "Some",
+                _ => return None,
+            };
+            let mut arguments = call.arg_list()?.args();
+            let (Some(ast::Expr::RecordExpr(literal)), None) = (arguments.next(), arguments.next())
+            else {
+                return None;
+            };
+            (literal, Some(wrapper))
+        }
+        _ => return None,
+    };
+    if wrapper.is_none()
+        && block
+            .syntax()
+            .descendants()
+            .any(|node| ast::TryExpr::can_cast(node.kind()))
+    {
+        return None;
+    }
+    let path = literal.path()?;
+    if path
+        .segments()
+        .any(|segment| segment.generic_arg_list().is_some())
+    {
+        return None;
+    }
+    let type_name = path.segment()?.name_ref()?.text().to_string();
+    let fields = literal.record_expr_field_list()?;
+    if fields.spread().is_some() || fields.dotdot_token().is_some() {
+        return None;
+    }
+    let mut named = fields.fields().filter(|candidate| {
+        candidate
+            .field_name()
+            .is_some_and(|name| name.text().trim_start_matches("r#") == field)
+    });
+    let (Some(initializer), None) = (named.next(), named.next()) else {
+        return None;
+    };
+    let range = initializer.syntax().text_range();
+    let line_of = |offset: usize| body[..offset].matches('\n').count();
+    let (first, last) = (
+        line_of(usize::from(range.start())),
+        line_of(usize::from(range.end())),
+    );
+    let value = initializer.expr()?;
+    let field_text = |text: &str| collapse_whitespace(text.trim().trim_end_matches(',').trim());
+    (first == changed_line
+        && last == changed_line
+        && field_text(&initializer.syntax().text().to_string()) == field_text(expression)
+        && !evaluates_conditionally(&mask_comments_and_strings(
+            &value.syntax().text().to_string(),
+        )))
+    .then_some(WholeValueTail { type_name, wrapper })
+}
+
+impl WholeValueField {
+    /// RIPR-SPEC-0225 rule 2: `expected` is a literal of the owner's type,
+    /// in the owner's wrapper, that names the field once, explicitly, with an
+    /// independent value ([`independent_value`]), and no functional-update
+    /// base anywhere in it.
+    fn admits(&self, expected: &str) -> bool {
+        let Some(parse) =
+            parse_clean_source_file(&format!("fn ripr_expected() {{ ({expected}); }}"))
+        else {
+            return false;
+        };
+        let Some(mut value) = parse
+            .tree()
+            .syntax()
+            .descendants()
+            .find_map(ast::ParenExpr::cast)
+            .and_then(|paren| paren.expr())
+        else {
+            return false;
+        };
+        if let Some(wrapper) = self.wrapper {
+            let ast::Expr::CallExpr(call) = value else {
+                return false;
+            };
+            if call
+                .expr()
+                .is_none_or(|callee| callee.syntax().text() != wrapper)
+            {
+                return false;
+            }
+            let Some(mut arguments) = call.arg_list().map(|list| list.args()) else {
+                return false;
+            };
+            let (Some(inner), None) = (arguments.next(), arguments.next()) else {
+                return false;
+            };
+            value = inner;
+        }
+        let ast::Expr::RecordExpr(literal) = value else {
+            return false;
+        };
+        if literal.syntax().descendants().any(|node| {
+            ast::RecordExprFieldList::cast(node)
+                .is_some_and(|list| list.spread().is_some() || list.dotdot_token().is_some())
+        }) {
+            return false;
+        }
+        let names_type = literal.path().is_some_and(|path| {
+            path.segments()
+                .all(|segment| segment.generic_arg_list().is_none())
+                && path
+                    .segment()
+                    .and_then(|segment| segment.name_ref())
+                    .is_some_and(|name| name.text() == self.type_name.as_str())
+        });
+        let Some(fields) = literal.record_expr_field_list() else {
+            return false;
+        };
+        let mut named = fields.fields().filter(|candidate| {
+            candidate
+                .field_name()
+                .is_some_and(|name| name.text().trim_start_matches("r#") == self.field)
+        });
+        let (Some(pinned), None) = (named.next(), named.next()) else {
+            return false;
+        };
+        // A shorthand `field` reads a local binding of that name.
+        names_type
+            && pinned.name_ref().is_some()
+            && pinned
+                .expr()
+                .is_some_and(|value| independent_value(&value, self.field_is_string))
+    }
+}
+
+/// RIPR-SPEC-0225 rule 2: an expected value that cannot carry the owner's
+/// result: literals (negated too), tuples and arrays of them, unit and tuple
+/// variants or structs and struct literals named by a CamelCase path, and a
+/// string literal's `.to_string()`, `.to_owned()`, `String::from(..)`, or
+/// `.into()` when the field is a `String`. A local binding, a constant, a
+/// workspace function or any other method can carry the owner's output
+/// (`retries: c.retries`, `RETRIES` from a `const fn`) and gives no credit.
+fn independent_value(value: &ast::Expr, string_field: bool) -> bool {
+    let string_literal = |expr: Option<ast::Expr>| {
+        matches!(expr, Some(ast::Expr::Literal(literal))
+            if matches!(literal.kind(), ast::LiteralKind::String(_)))
+    };
+    match value {
+        ast::Expr::Literal(_) => true,
+        ast::Expr::PrefixExpr(prefix) => {
+            prefix.op_kind() == Some(ast::UnaryOp::Neg)
+                && matches!(prefix.expr(), Some(ast::Expr::Literal(_)))
+        }
+        ast::Expr::ParenExpr(inner) => inner
+            .expr()
+            .is_some_and(|inner| independent_value(&inner, string_field)),
+        ast::Expr::TupleExpr(tuple) => tuple
+            .fields()
+            .all(|item| independent_value(&item, string_field)),
+        ast::Expr::ArrayExpr(items) => {
+            items.semicolon_token().is_none()
+                && items
+                    .exprs()
+                    .all(|item| independent_value(&item, string_field))
+        }
+        ast::Expr::PathExpr(path) => path.path().is_some_and(|path| constructor_path(&path)),
+        ast::Expr::CallExpr(call) => {
+            let Some(ast::Expr::PathExpr(callee)) = call.expr() else {
+                return false;
+            };
+            let Some(path) = callee.path() else {
+                return false;
+            };
+            let arguments = call.arg_list().map(|list| list.args().collect::<Vec<_>>());
+            if path.syntax().text() == "String::from" {
+                return arguments.is_some_and(|arguments| {
+                    arguments.len() == 1 && string_literal(arguments.into_iter().next())
+                });
+            }
+            constructor_path(&path)
+                && arguments.is_some_and(|arguments| {
+                    arguments
+                        .iter()
+                        .all(|argument| independent_value(argument, false))
+                })
+        }
+        ast::Expr::RecordExpr(literal) => {
+            literal.path().is_some_and(|path| constructor_path(&path))
+                && literal.record_expr_field_list().is_some_and(|fields| {
+                    fields.spread().is_none()
+                        && fields.dotdot_token().is_none()
+                        && fields.fields().all(|field| {
+                            field.name_ref().is_some()
+                                && field
+                                    .expr()
+                                    .is_some_and(|value| independent_value(&value, false))
+                        })
+                })
+        }
+        ast::Expr::MethodCallExpr(call) => {
+            let Some(method) = call.name_ref() else {
+                return false;
+            };
+            let method = method.text();
+            call.generic_arg_list().is_none()
+                && call
+                    .arg_list()
+                    .is_some_and(|list| list.args().next().is_none())
+                && (method == "to_string"
+                    || method == "to_owned"
+                    || (method == "into" && string_field))
+                && string_literal(call.receiver())
+        }
+        _ => false,
+    }
+}
+
+/// A path that names a variant or a struct: its last segment is CamelCase
+/// (`None`, `Some`, `Count`, `Mode::Fast`) and no segment has generic
+/// arguments. A SCREAMING_CASE constant may be computed (a `const fn` of the
+/// workspace) and does not qualify.
+fn constructor_path(path: &ast::Path) -> bool {
+    path.segments()
+        .all(|segment| segment.generic_arg_list().is_none())
+        && path
+            .segment()
+            .and_then(|segment| segment.name_ref())
+            .is_some_and(|name| {
+                let text = name.text();
+                text.starts_with(|ch: char| ch.is_ascii_uppercase())
+                    && text.chars().any(|ch| ch.is_ascii_lowercase())
+            })
 }
 
 /// The field a struct-literal initializer names: `start: self.start,` and

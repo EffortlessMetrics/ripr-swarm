@@ -2133,7 +2133,19 @@ fn field_pin(
     line_text: &str,
     expression: &str,
 ) -> Option<OwnerReturnPin> {
-    let owner = owner(index, "clone");
+    field_pin_of(index, lib, "clone", line_text, expression)
+}
+
+/// A `field_construction` probe on the first line of owner `name` whose
+/// trimmed text is `line_text`.
+fn field_pin_of(
+    index: &RustIndex,
+    lib: &str,
+    name: &str,
+    line_text: &str,
+    expression: &str,
+) -> Option<OwnerReturnPin> {
+    let owner = owner(index, name);
     let line = lib
         .lines()
         .enumerate()
@@ -3265,4 +3277,196 @@ fn stored_macro_candidates_never_hide_a_site_in_this_crate() -> Result<(), Strin
     // Most files rule some name out; a vacuous pass would check none.
     assert!(checked > 150, "only {checked} files ruled a name out");
     Ok(())
+}
+
+/// RIPR-SPEC-0225: `build` returns a `Config` literal; `parse` returns it
+/// inside `Ok(..)` after a `?`.
+const CONFIG_LIB: &str = r#"#[derive(Debug, Clone, PartialEq)]
+pub struct Count(pub u32);
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Config {
+    pub retries: u32,
+    pub name: String,
+    pub count: Count,
+}
+
+pub fn build(n: u32) -> Config {
+    Config {
+        retries: n + 1,
+        name: "x".into(),
+        count: Count(n),
+    }
+}
+
+pub fn parse(s: &str) -> Result<Config, String> {
+    let n: u32 = s.parse().map_err(|_| String::from("bad"))?;
+    Ok(Config {
+        retries: n + 1,
+        name: "x".into(),
+        count: Count(n),
+    })
+}
+"#;
+
+/// The `retries` field pin of `owner` against `tests` (one test).
+fn whole_value_pin(
+    lib: &str,
+    owner_name: &str,
+    tests: &str,
+) -> (RustIndex, Option<OwnerReturnPin>) {
+    let index = index(&[(LIB, lib), (TESTS, tests)]);
+    let pin = field_pin_of(
+        &index,
+        lib,
+        owner_name,
+        "retries: n + 1,",
+        "retries: n + 1,",
+    );
+    (index, pin)
+}
+
+fn whole_value_admits(lib: &str, owner_name: &str, body: &str) -> bool {
+    let tests = format!("use demo::*;\n#[test]\nfn pins() {{\n{body}\n}}\n");
+    let (index, pin) = whole_value_pin(lib, owner_name, &tests);
+    assert!(
+        pin.is_some(),
+        "the whole-value field pin must establish: {lib}"
+    );
+    pin.is_some_and(|pin| !admitted_texts(&index, &pin).is_empty())
+}
+
+/// RIPR-SPEC-0225 acceptance examples 1, 3, 4 and 16b: a whole-value
+/// literal that names the changed field with an independent value pins it,
+/// directly, through `Ok(..)`, through a once-used `let` of the owner call,
+/// and through nested workspace literals.
+#[test]
+fn a_whole_value_literal_naming_the_field_pins_it() {
+    let literal = r#"Config { retries: 4, name: "x".into(), count: Count(3) }"#;
+    for body in [
+        format!("assert_eq!(build(3), {literal});"),
+        format!("assert_eq!({literal}, build(3));"),
+        format!("let c = build(3);\nassert_eq!(c, {literal});"),
+        format!("let c: Config = build(3);\nassert_eq!({literal}, c);"),
+        r#"assert_eq!(build(3), Config { retries: (4), name: String::from("x"), count: Count(3) });"#
+            .to_string(),
+    ] {
+        assert!(whole_value_admits(CONFIG_LIB, "build", &body), "{body}");
+    }
+    assert!(whole_value_admits(
+        CONFIG_LIB,
+        "parse",
+        &format!("assert_eq!(parse(\"3\"), Ok({literal}));")
+    ));
+}
+
+/// RIPR-SPEC-0225 "No credit" and acceptance examples 5-8, 10, 12, 13 and
+/// 15: a separate binding or helper, a functional update, another call,
+/// `assert_ne!`, a value copied from the result, a `let mut` or a second use
+/// of the binding, a mismatched wrapper, and a dependent expected value give
+/// no credit.
+#[test]
+fn a_whole_value_literal_without_an_independent_field_value_does_not_pin() {
+    let literal = r#"Config { retries: 4, name: "x".into(), count: Count(3) }"#;
+    for body in [
+        format!("let c = build(3);\nlet e = {literal};\nassert_eq!(c, e);"),
+        "assert_eq!(build(3), expected());".to_string(),
+        r#"assert_eq!(build(3), Config { name: "x".into(), ..Config::default() });"#.to_string(),
+        r#"assert_eq!(build(3), Config { retries: 4, ..base() });"#.to_string(),
+        format!("assert_eq!(other(3), {literal});"),
+        format!("assert_ne!(build(3), {literal});"),
+        r#"let c = build(3);
+assert_eq!(c, Config { retries: c.retries, name: "x".into(), count: Count(3) });"#
+            .to_string(),
+        format!("let mut c = build(3);\nc.retries = 4;\nassert_eq!(c, {literal});"),
+        format!("let c = build(3);\nlet r = c.retries;\nassert_eq!(c, {literal});\nlet _ = r;"),
+        format!("let c = build(3);\nlet c = build(4);\nassert_eq!(c, {literal});"),
+        format!("assert_eq!(build(3), Some({literal}));"),
+        format!("assert_eq!(build(3), Other {{ retries: 4 }});"),
+        r#"assert_eq!(build(3), Config { retries, name: "x".into(), count: Count(3) });"#
+            .to_string(),
+        r#"assert_eq!(build(3), Config { retries: RETRIES, name: "x".into(), count: Count(3) });"#
+            .to_string(),
+        r#"assert_eq!(build(3), Config { retries: four(), name: "x".into(), count: Count(3) });"#
+            .to_string(),
+        r#"assert_eq!(build(3), Config { retries: 2 + 2, name: "x".into(), count: Count(3) });"#
+            .to_string(),
+        r#"assert_eq!(build(3), Config { retries: build(3).retries, name: "x".into(), count: Count(3) });"#
+            .to_string(),
+        r#"assert_eq!(build(3), Config { retries: "4".parse().unwrap(), name: "x".into(), count: Count(3) });"#
+            .to_string(),
+        r#"assert_eq!(build(3), Config { retries: 4, retries: 5, name: "x".into(), count: Count(3) });"#
+            .to_string(),
+    ] {
+        assert!(!whole_value_admits(CONFIG_LIB, "build", &body), "{body}");
+    }
+    assert!(!whole_value_admits(
+        CONFIG_LIB,
+        "parse",
+        &format!("assert_eq!(parse(\"3\"), {literal});")
+    ));
+}
+
+/// RIPR-SPEC-0225 owner-side gates, acceptance examples 2, 11 and 14:
+/// a manual `PartialEq` on the type, a field type without by-value
+/// equality, an attribute on the field, a second exit, a conditional field
+/// value, a mismatched declared return type, or a tail that is not the
+/// literal leaves the pin unestablished.
+#[test]
+fn a_whole_value_field_pin_needs_derived_equality_and_the_returned_literal() {
+    let manual_eq = CONFIG_LIB.replacen(
+        "#[derive(Debug, Clone, PartialEq)]\npub struct Config",
+        "#[derive(Debug, Clone)]\npub struct Config",
+        1,
+    ) + "impl PartialEq for Config {\n    fn eq(&self, o: &Self) -> bool { self.name == o.name }\n}\n";
+    let foreign_field = CONFIG_LIB.replace("pub retries: u32,", "pub retries: other::Retries,");
+    let attributed_field =
+        CONFIG_LIB.replace("pub retries: u32,", "#[eq(ignore)]\n    pub retries: u32,");
+    let early_return = CONFIG_LIB.replace(
+        "pub fn build(n: u32) -> Config {\n",
+        "pub fn build(n: u32) -> Config {\n    if n == 0 {\n        return build(1);\n    }\n",
+    );
+    let conditional = CONFIG_LIB.replace(
+        "pub fn build(n: u32) -> Config {\n    Config {\n        retries: n + 1,",
+        "pub fn build(n: u32) -> Config {\n    Config {\n        retries: if n > 9 { n } else { n + 1 },",
+    );
+    let bound_first = CONFIG_LIB
+        .replace(
+            "pub fn build(n: u32) -> Config {\n    Config {",
+            "pub fn build(n: u32) -> Config {\n    let c = Config {",
+        )
+        .replace(
+            "        count: Count(n),\n    }\n}\n\npub fn parse",
+            "        count: Count(n),\n    };\n    c\n}\n\npub fn parse",
+        );
+    let boxed_return = CONFIG_LIB.replace(
+        "pub fn build(n: u32) -> Config {",
+        "pub fn build(n: u32) -> Box<Config> {",
+    );
+    for lib in [
+        manual_eq,
+        foreign_field,
+        attributed_field,
+        early_return,
+        bound_first,
+        boxed_return,
+    ] {
+        let tests = "use demo::*;\n#[test]\nfn pins() {\n    assert_eq!(build(3), Config { retries: 4, name: \"x\".into(), count: Count(3) });\n}\n";
+        let (_, pin) = whole_value_pin(&lib, "build", tests);
+        assert!(pin.is_none(), "{lib}");
+    }
+    let tests = "use demo::*;\n#[test]\nfn pins() {\n    assert_eq!(build(3), Config { retries: 4, name: \"x\".into(), count: Count(3) });\n}\n";
+    let index = index(&[(LIB, &conditional), (TESTS, tests)]);
+    assert!(
+        field_pin_of(
+            &index,
+            &conditional,
+            "build",
+            "retries: if n > 9 { n } else { n + 1 },",
+            "retries: if n > 9 { n } else { n + 1 },",
+        )
+        .is_none()
+    );
+    // Fixture control: the plain library establishes.
+    assert!(whole_value_pin(CONFIG_LIB, "build", tests).1.is_some());
 }

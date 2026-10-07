@@ -173,6 +173,31 @@ rejected alternative. Any can be reversed later without touching the rest.
    withholding route with its own `static_limit_kind`, so a refused equality
    gate reads as an analyzer limit instead of a gap.
 
+4. **First implementation scope (2026-10-07, false-verdict push before
+   0.11).** Field credit is an owner-return pin
+   (`OwnerReturnPin::establish_whole_value_field`), so rule 1's call
+   identity and execution gates are RIPR-SPEC-0197's own. Adopted, each
+   narrower than the text above and failing closed:
+   - the owner's tail is the literal, or `Ok(..)`/`Some(..)` around it
+     matching a declared `Result`/`Option` return; a workspace enum wrapper
+     is not read yet, so example 14 is refused at the wrapper;
+   - the body has no `return` and no macro that may hide an exit, and `?`
+     only around a wrapped tail; the changed field's value evaluates on every
+     input;
+   - a `let` binding of the owner call counts only when the test names the
+     binding exactly twice (the `let` and the compared operand), which also
+     refuses examples 12, 13 and 15;
+   - an expected field value may be a literal, a CamelCase variant or struct
+     constructor of such values, or a string literal's `.to_string()`,
+     `.to_owned()`, `String::from(..)` or (for a `String` field) `.into()`;
+     constants are refused, since a `const` may be computed by a workspace
+     `const fn`.
+   A field read inside the braces of an expected literal no longer clears the
+   `FieldValue` missing discriminator (example 12, which had read `exposed`).
+   The parser-backed `whole_object_equality` classifier change is not part of
+   this step: field credit parses the expected literal itself, so a brace
+   elsewhere cannot earn it.
+
 ## Required Evidence
 
 - The reproduction above reads `exposed`.
@@ -252,7 +277,8 @@ The diff changes `retries: n + 2` to `retries: n + 1` in `build`; `Config` deriv
 - `crates/ripr/src/analysis/classify/activation.rs`: clear `FieldValue` for a
   named field in an admitted whole-value literal.
 - `crates/ripr/src/analysis/classify/owner_pin.rs`: reuse call identity and
-  execution admission.
+  execution admission (`establish_whole_value_field`, `whole_value_tail`,
+  `WholeValueField::admits`, `bound_owner_call`).
 
 ## Metrics
 

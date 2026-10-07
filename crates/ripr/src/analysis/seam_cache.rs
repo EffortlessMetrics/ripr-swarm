@@ -365,7 +365,11 @@ pub(crate) struct CachedSeamLimitInfo {
 /// (`Poll::Ready(Err(X))`, #6938) are that constructor's twins too.
 /// `1.45`: a test under a never-true cfg is no longer a test, so related
 /// tests change (#6293). Old entries would keep crediting it.
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.45";
+/// `1.46`: a whole-value literal naming a constructed field pins it
+/// (RIPR-SPEC-0225), so field findings gain credit; a field read copied into
+/// the expected literal stops clearing the missing field value. Old entries
+/// would keep the previous verdicts.
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.46";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -450,7 +454,8 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.45";
 /// `0.49`: same single error_variant transition as full `1.43`.
 /// `0.50`: same wrapper twin transition as full `1.44`.
 /// `0.51`: same never-true-cfg test transition as full `1.45` (#6293).
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.51";
+/// `0.52`: same whole-value field transition as full `1.46` (RIPR-SPEC-0225).
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.52";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -537,7 +542,8 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.51";
 /// `0.49`: same single error_variant transition as full `1.43`.
 /// `0.50`: same wrapper twin transition as full `1.44`.
 /// `0.51`: same never-true-cfg test transition as full `1.45` (#6293).
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.51";
+/// `0.52`: same whole-value field transition as full `1.46` (RIPR-SPEC-0225).
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.52";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -4149,7 +4155,8 @@ mod tests {
         // 1.43 -> 1.44: returned chains and wrapping calls are twins (#6935,
         // #6938).
         // 1.44 -> 1.45: a never-true-cfg test is not a test (#6293).
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.45");
+        // 1.45 -> 1.46: whole-value field pins (RIPR-SPEC-0225).
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.46");
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
         // for the sharded and compact envelopes.
@@ -4186,8 +4193,9 @@ mod tests {
         // 0.47 -> 0.48: same unresolved-boundary-input transition as 1.42.
         // 0.48 -> 0.49: same #6914 transition as full 1.43.
         // 0.50 -> 0.51: same #6293 transition as full 1.45.
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.51");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.51");
+        // 0.51 -> 0.52: same RIPR-SPEC-0225 transition as full 1.46.
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.52");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.52");
     }
 
     #[test]

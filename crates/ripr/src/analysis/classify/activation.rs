@@ -1486,10 +1486,20 @@ fn constructed_field_name(expression: &str) -> Option<&str> {
 /// Whether `assertion` reads `read` (`.field`) on a value the test got from
 /// calling `owner`: a direct `owner(..).field` chain, or a receiver the test
 /// body binds with `let [mut] recv = ..owner(..)..;`.
+///
+/// A read inside a struct literal's braces (`assert_eq!(c, Config { retries:
+/// c.retries, .. })`) copies the owner's value into the expected side, so
+/// the comparison cannot fail on it: it observes nothing (RIPR-SPEC-0225
+/// acceptance example 12).
 fn reads_owner_result_field(body: &str, assertion: &str, read: &str, owner: &str) -> bool {
     let is_ident = |ch: char| ch.is_ascii_alphanumeric() || ch == '_';
     let owner_call = format!("{owner}(");
+    let masked = crate::analysis::extract::mask_comments_and_strings(assertion);
     assertion.match_indices(read).any(|(start, matched)| {
+        let braces = masked.get(..start).unwrap_or_default();
+        if braces.matches('{').count() > braces.matches('}').count() {
+            return false;
+        }
         if assertion[start + matched.len()..]
             .chars()
             .next()
@@ -3034,6 +3044,17 @@ mod tests {
             "assert_eq!(Config::default_config(\"x\").retries, 3);"
         ));
         assert!(reads("assert_eq!(default_config(load(1)).retries, 3);"));
+        // RIPR-SPEC-0225 example 12: a read copied into the expected
+        // literal makes the comparison a tautology on that field.
+        assert!(!reads(
+            "assert_eq!(cfg, Config { retries: cfg.retries, name: \"x\".into() });"
+        ));
+        assert!(!reads(
+            "assert_eq!(cfg, Config { inner: Inner { n: cfg.retries } });"
+        ));
+        // A brace in a message string does not open a literal.
+        assert!(reads("assert_eq!(cfg.retries, 3, \"{}\", 1);"));
+        assert!(reads("assert_eq!(cfg.retries, 3, \"{\");"));
         assert!(!reads_owner_result_field(
             "let e = make();",
             "assert!(e.downcast_ref::<Box<dyn E>>().is_some());",
