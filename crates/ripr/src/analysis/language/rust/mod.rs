@@ -271,15 +271,17 @@ fn selection_with_open_files(selected: &[PathBuf], open: &BTreeSet<PathBuf>) -> 
     selected.len() + open.iter().filter(|file| !selected.contains(file)).count()
 }
 
-/// Drops the unchanged files that hold tests and that no Cargo target's
-/// module tree reaches (#6965). rustc never compiles such a file, so its
-/// tests never run. Changed files keep their own orphan handling (#4435);
-/// a file that never spells `test` cannot register one (`#[test]`,
-/// `#[tokio::test]`, `#[rstest]`, `proptest!`).
+/// Drops the files that hold tests and that no Cargo target's module tree
+/// reaches (#6965). rustc never compiles such a file, so its tests never
+/// run. A changed file is dropped when its own #4435 orphan check already
+/// proved it unreached; an unchanged one when the walk below does. A file
+/// that never spells `test` cannot register one (`#[test]`,
+/// `#[tokio::test]`, `#[rstest]`, `proptest!`) and is kept.
 ///
 /// The module-tree walk parses every module of a package, so it runs only
-/// for suspects: test files whose module name no loaded file declares or
-/// spells as a path, and target roots in a package that turns Cargo's
+/// for suspects: test files whose module name no loaded file of their
+/// package declares outside a line comment, and no loaded file spells as a
+/// path, and target roots in a package that turns Cargo's
 /// target discovery off. Anything else keeps its tests without a walk.
 ///
 /// The drop inherits the walk's unmodeled cases (module_graph.rs header): a
@@ -297,6 +299,7 @@ fn drop_unreached_test_files(
         .map(|path| workspace::normalize_path(path))
         .collect::<BTreeSet<_>>();
     let mut mentioned = None;
+    let mut manifests = BTreeMap::new();
     let mut discovery_off = BTreeMap::new();
     let suspects = loaded_files
         .iter()
@@ -304,25 +307,43 @@ fn drop_unreached_test_files(
             !changed.contains(&workspace::normalize_path(path)) && contains_bytes(bytes, b"test")
         })
         .filter(|(path, _)| {
-            let mentioned = mentioned.get_or_insert_with(|| mentioned_module_names(&loaded_files));
-            may_be_unreached(root, path, mentioned, &mut discovery_off)
+            let mentioned = mentioned
+                .get_or_insert_with(|| mentioned_module_names(root, &loaded_files, &mut manifests));
+            may_be_unreached(root, path, mentioned, &mut manifests, &mut discovery_off)
         })
         .map(|(path, _)| path.as_path())
         .collect::<Vec<_>>();
-    if suspects.is_empty() {
-        return loaded_files;
-    }
-    let mut probe = source_role_context.clone();
-    probe.module_graph_orphans.clear();
-    workspace::apply_module_graph_evidence(root, &mut probe, suspects);
-    if probe.module_graph_orphans.is_empty() {
-        return loaded_files;
-    }
-    let orphans = probe
+    // A changed file the #4435 walk already proved unreached seeds no
+    // probe, but its tests would still relate to the other changed files:
+    // a new test file whose `mod` was forgotten is the common case.
+    let mut orphans = source_role_context
         .module_graph_orphans
         .iter()
         .map(|path| workspace::normalize_path(path))
+        .filter(|path| changed.contains(path))
+        // The production-like opt-in still seeds probes for an orphan, and
+        // those probes need the file's owners in the index (#4586).
+        .filter(|path| !workspace::seeds_diff_probes(Path::new(path), source_role_context))
+        .filter(|path| {
+            loaded_files.iter().any(|(loaded, bytes)| {
+                workspace::normalize_path(loaded) == *path && contains_bytes(bytes, b"test")
+            })
+        })
         .collect::<BTreeSet<_>>();
+    if !suspects.is_empty() {
+        let mut probe = source_role_context.clone();
+        probe.module_graph_orphans.clear();
+        workspace::apply_module_graph_evidence(root, &mut probe, suspects);
+        orphans.extend(
+            probe
+                .module_graph_orphans
+                .iter()
+                .map(|path| workspace::normalize_path(path)),
+        );
+    }
+    if orphans.is_empty() {
+        return loaded_files;
+    }
     loaded_files
         .into_iter()
         .filter(|(path, _)| !orphans.contains(&workspace::normalize_path(path)))
@@ -339,15 +360,62 @@ fn contains_bytes(haystack: &[u8], needle: &[u8]) -> bool {
         .any(|window| window == needle)
 }
 
-/// Every name the loaded files declare with `mod <name>` and every file
-/// stem they spell before `.rs` in a string (`#[path]`, `include!`). A
-/// textual over-approximation: it only decides which files skip the walk.
-fn mentioned_module_names(loaded_files: &[(PathBuf, Vec<u8>)]) -> BTreeSet<String> {
+/// The module names the loaded files mention: `mod <name>` declarations,
+/// keyed by the declaring file's package, and every file stem spelled
+/// before `.rs` in a string (`#[path]`, `include!`), which may cross
+/// packages. A textual over-approximation: it only decides which files
+/// skip the walk, so a miss costs a walk and never a verdict.
+#[derive(Default)]
+struct MentionedModules {
+    declared: BTreeMap<Option<PathBuf>, BTreeSet<String>>,
+    path_stems: BTreeSet<String>,
+}
+
+impl MentionedModules {
+    fn mentions(&self, package: &Option<PathBuf>, name: &str) -> bool {
+        self.path_stems.contains(name)
+            || self
+                .declared
+                .get(package)
+                .is_some_and(|names| names.contains(name))
+    }
+}
+
+/// The nearest directory at or above `path`'s parent that holds a
+/// `Cargo.toml`, relative to `root`; `None` when none does.
+fn owning_manifest_dir(
+    root: &Path,
+    path: &Path,
+    manifests: &mut BTreeMap<PathBuf, bool>,
+) -> Option<PathBuf> {
+    path.ancestors().skip(1).find_map(|dir| {
+        let has_manifest = *manifests
+            .entry(dir.to_path_buf())
+            .or_insert_with(|| root.join(dir).join("Cargo.toml").is_file());
+        has_manifest.then(|| dir.to_path_buf())
+    })
+}
+
+fn mentioned_module_names(
+    root: &Path,
+    loaded_files: &[(PathBuf, Vec<u8>)],
+    manifests: &mut BTreeMap<PathBuf, bool>,
+) -> MentionedModules {
     let is_ident = |byte: u8| byte.is_ascii_alphanumeric() || byte == b'_';
-    let mut names = BTreeSet::new();
-    for (_, bytes) in loaded_files {
+    let mut mentioned = MentionedModules::default();
+    for (path, bytes) in loaded_files {
+        let package = owning_manifest_dir(root, path, manifests);
         for (at, _) in bytes.windows(3).enumerate().filter(|(_, w)| *w == b"mod") {
             if at > 0 && is_ident(bytes[at - 1]) {
+                continue;
+            }
+            // A commented-out declaration (`// mod used_tests;`) is how a
+            // file often becomes an orphan; it must not spare the walk.
+            let line_start = bytes[..at]
+                .iter()
+                .rposition(|byte| *byte == b'\n')
+                .map_or(0, |position| position + 1);
+            if contains_bytes(&bytes[line_start..at], b"//") {
                 continue;
             }
             let rest = &bytes[at + 3..];
@@ -366,7 +434,11 @@ fn mentioned_module_names(loaded_files: &[(PathBuf, Vec<u8>)]) -> BTreeSet<Strin
                 .copied()
                 .collect::<Vec<_>>();
             if !name.is_empty() {
-                names.insert(String::from_utf8_lossy(&name).into_owned());
+                mentioned
+                    .declared
+                    .entry(package.clone())
+                    .or_default()
+                    .insert(String::from_utf8_lossy(&name).into_owned());
             }
         }
         for (at, _) in bytes.windows(4).enumerate().filter(|(_, w)| *w == b".rs\"") {
@@ -374,10 +446,12 @@ fn mentioned_module_names(loaded_files: &[(PathBuf, Vec<u8>)]) -> BTreeSet<Strin
                 .iter()
                 .rposition(|byte| matches!(byte, b'/' | b'\\' | b'"'))
                 .map_or(0, |position| position + 1);
-            names.insert(String::from_utf8_lossy(&bytes[start..at]).into_owned());
+            mentioned
+                .path_stems
+                .insert(String::from_utf8_lossy(&bytes[start..at]).into_owned());
         }
     }
-    names
+    mentioned
 }
 
 /// Whether `path` could be a file no target reaches: a module file whose
@@ -392,7 +466,8 @@ fn mentioned_module_names(loaded_files: &[(PathBuf, Vec<u8>)]) -> BTreeSet<Strin
 fn may_be_unreached(
     root: &Path,
     path: &Path,
-    mentioned: &BTreeSet<String>,
+    mentioned: &MentionedModules,
+    manifests: &mut BTreeMap<PathBuf, bool>,
     discovery_off: &mut BTreeMap<PathBuf, bool>,
 ) -> bool {
     let Some(file_name) = path.file_name().and_then(|name| name.to_str()) else {
@@ -449,7 +524,7 @@ fn may_be_unreached(
         "mod.rs" => parent_name.unwrap_or_default(),
         _ => file_name.trim_end_matches(".rs"),
     };
-    !mentioned.contains(module_name)
+    !mentioned.mentions(&owning_manifest_dir(root, path, manifests), module_name)
 }
 
 /// Fail closed when a repo-scoped working set exceeds the guard (#2109).
@@ -1755,9 +1830,8 @@ impl RustAdapter {
             })
             .filter_map(Result::transpose)
             .collect::<Result<Vec<_>, String>>()?;
-        // #6965: an unchanged file holding tests that no Cargo target's
-        // module tree reaches is never compiled, so its tests are not
-        // evidence. Only a complete walk proves a file unreached (#4435);
+        // #6965: a file holding tests that no Cargo target's module tree
+        // reaches is never compiled, so its tests are not evidence. Only a complete walk proves a file unreached (#4435);
         // anything less keeps the file.
         let loaded_files = drop_unreached_test_files(
             &options.root,
@@ -6572,10 +6646,12 @@ fn absent_delimiter_boundary_returns_head() {
                 &root.join("Cargo.toml"),
                 "[package]\nname='shop'\nversion='0.1.0'\nedition='2021'\n",
             )?;
+            // The orphan's lib spells the declaration only in a comment,
+            // which must not spare it the walk (#6984 review).
             let lib = if declared {
                 "pub mod used;\n\n#[cfg(test)]\nmod used_tests;\n"
             } else {
-                "pub mod used;\n"
+                "pub mod used;\n\n// #[cfg(test)]\n// mod used_tests;\n"
             };
             write(&root.join("src/lib.rs"), lib)?;
             write(&root.join("src/used.rs"), DISCOUNT_SOURCE)?;
@@ -6592,6 +6668,80 @@ fn absent_delimiter_boundary_returns_head() {
             fs::remove_dir_all(root).map_err(|error| format!("remove fixture: {error}"))?;
         }
         Ok(())
+    }
+
+    #[test]
+    fn diff_analysis_ignores_a_new_test_file_whose_mod_was_forgotten() -> Result<(), String> {
+        // #6984 review: the diff adds `src/used_tests.rs` beside the changed
+        // function but no `mod` declares it, so it never compiles. Its own
+        // orphan check stops its probes; its tests must not relate to
+        // `src/used.rs` either. Declaring it (the control) relates them.
+        for declared in [false, true] {
+            let root = temp_root(if declared {
+                "module-graph-declared-new-test-file"
+            } else {
+                "module-graph-orphan-new-test-file"
+            })?;
+            write(
+                &root.join("Cargo.toml"),
+                "[package]\nname='shop'\nversion='0.1.0'\nedition='2021'\n",
+            )?;
+            let lib = if declared {
+                "pub mod used;\n\n#[cfg(test)]\nmod used_tests;\n"
+            } else {
+                "pub mod used;\n"
+            };
+            write(&root.join("src/lib.rs"), lib)?;
+            write(&root.join("src/used.rs"), DISCOUNT_SOURCE)?;
+            write(&root.join("src/used_tests.rs"), ORPHAN_TEST_SOURCE)?;
+            let added = ORPHAN_TEST_SOURCE
+                .lines()
+                .map(|line| format!("+{line}\n"))
+                .collect::<String>();
+            let diff = format!(
+                "{}diff --git a/src/used_tests.rs b/src/used_tests.rs\n\
+                 new file mode 100644\n\
+                 --- /dev/null\n\
+                 +++ b/src/used_tests.rs\n\
+                 @@ -0,0 +1,{} @@\n{added}",
+                predicate_change_diff("src/used.rs"),
+                ORPHAN_TEST_SOURCE.lines().count(),
+            );
+
+            let result = module_graph_diff(&root, &diff)?;
+
+            let related = related_test_names(&root, &result, "src/used.rs");
+            assert_eq!(
+                related.iter().any(|name| name == "discount_applies"),
+                declared,
+                "declared={declared}: {related:?}"
+            );
+            fs::remove_dir_all(root).map_err(|error| format!("remove fixture: {error}"))?;
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn a_changed_orphan_opted_in_as_production_like_stays_indexed() {
+        // #6984 review: an opted-in target seeds probes even when no module
+        // tree reaches it, so dropping it would leave those probes without
+        // owners (a false `no_static_path`). Without the opt-in it drops.
+        let file = PathBuf::from("src/support.rs");
+        let loaded = vec![(file.clone(), b"#[test]\nfn check() {}\n".to_vec())];
+        for opted_in in [false, true] {
+            let mut context = crate::analysis::workspace::SourceRoleContext::empty();
+            context.module_graph_orphans.insert(file.clone());
+            if opted_in {
+                context.production_like_targets.insert(file.clone());
+            }
+            let kept = super::drop_unreached_test_files(
+                Path::new("."),
+                &context,
+                std::slice::from_ref(&file),
+                loaded.clone(),
+            );
+            assert_eq!(kept.len(), usize::from(opted_in), "opted_in={opted_in}");
+        }
     }
 
     #[test]
