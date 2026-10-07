@@ -154,7 +154,8 @@
         "lsp_seam_diagnostics",
         "suppressions_path",
         "bun_ub_profile_configured",
-        "bun_ub_test_roots"
+        "bun_ub_test_roots",
+        "bun_ub_bridge_hints"
       ],
       "properties": {
         "source_path": {
@@ -168,6 +169,10 @@
         "bun_ub_test_roots": {
           "type": "array",
           "items": { "type": "string" }
+        },
+        "bun_ub_bridge_hints": {
+          "description": "The `[profiles.bun_ub].bridge_hints` path in the portable display spelling, or null when the profile is absent.",
+          "$ref": "#/$defs/nullable_string"
         }
       }
     },

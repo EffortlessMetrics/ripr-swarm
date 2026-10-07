@@ -10712,6 +10712,8 @@ fn doctor_json_reports_current_schema() -> Result<(), String> {
 /// disabled preview language, cache state, detected test surfaces, and the Perl
 /// preview. `ripr.toml` exists and enables only Rust, so Python stays detected
 /// and disabled instead of being auto-enabled by the no-config default path.
+/// It also configures `[profiles.bun_ub]` with a custom bridge-hints path, so
+/// the parity assertions cover the profile facts on both surfaces.
 /// Git-initialized so the core checks decide the exit status, not the fixture
 /// location.
 fn doctor_environment_fact_root(label: &str) -> Result<PathBuf, String> {
@@ -10725,7 +10727,10 @@ fn doctor_environment_fact_root(label: &str) -> Result<PathBuf, String> {
             "[package]\nname = \"doctor-json-parity\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
         ),
         ("src/lib.rs", "pub fn placeholder() {}\n"),
-        ("ripr.toml", "[languages]\nenabled = [\"rust\"]\n"),
+        (
+            "ripr.toml",
+            "[languages]\nenabled = [\"rust\"]\n[profiles.bun_ub]\ntest_roots = [\"bun-tests\"]\nbridge_hints = \"custom/bridge-hints.toml\"\n",
+        ),
         (
             "pyproject.toml",
             "[project]\nname = \"fixture\"\nversion = \"0.1.0\"\n",
@@ -10984,6 +10989,39 @@ fn doctor_json_carries_every_environment_fact_the_human_screen_prints() -> Resul
                 defaults["suppressions_path"].as_str().unwrap_or_default()
             )),
             "the screen must print the config defaults the JSON carries: {human}"
+        );
+        // Bun UB profile facts, including the custom bridge-hints path: the
+        // screen and the JSON must carry the same actionable values (#5283).
+        if defaults["bun_ub_profile_configured"] != true {
+            return Err(format!(
+                "the fixture profile must read as configured: {defaults}"
+            ));
+        }
+        let roots = defaults["bun_ub_test_roots"]
+            .as_array()
+            .map(|entries| {
+                entries
+                    .iter()
+                    .map(|value| value.as_str().unwrap_or_default().to_string())
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        if roots != vec!["bun-tests".to_string()] {
+            return Err(format!(
+                "the JSON must carry the fixture test roots: {defaults}"
+            ));
+        }
+        let hints = defaults["bun_ub_bridge_hints"].as_str().unwrap_or_default();
+        if hints != "custom/bridge-hints.toml" {
+            return Err(format!(
+                "the JSON must carry the custom bridge-hints path: {defaults}"
+            ));
+        }
+        assert!(
+            human.contains("- Bun UB profile: configured (preview advisory only)")
+                && human.contains("- Bun UB test roots: bun-tests")
+                && human.contains(&format!("- Bun UB bridge hints: {hints}")),
+            "the screen must print the profile facts the JSON carries: {human}"
         );
         Ok(())
     })();

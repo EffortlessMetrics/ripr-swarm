@@ -598,6 +598,10 @@ pub(crate) struct DoctorConfigDefaults {
     pub(crate) bun_ub_profile_configured: bool,
     /// `[profiles.bun_ub].test_roots`, empty when the profile is absent.
     pub(crate) bun_ub_test_roots: Vec<String>,
+    /// `[profiles.bun_ub].bridge_hints` in the portable display spelling,
+    /// or `None` when the profile is absent. The human screen prints the
+    /// same value, so automation keeps the actionable path (#5283 review).
+    pub(crate) bun_ub_bridge_hints: Option<String>,
 }
 
 /// Where the seam cache lives for this root and how big it is.
@@ -3245,6 +3249,7 @@ mod tests {
                 suppressions_path: ".ripr/suppressions.toml".to_string(),
                 bun_ub_profile_configured: false,
                 bun_ub_test_roots: Vec::new(),
+                bun_ub_bridge_hints: None,
             }),
             cache: DoctorCacheStatus {
                 cache_dir: "target/ripr/cache".to_string(),

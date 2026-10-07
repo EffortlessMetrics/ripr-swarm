@@ -47,8 +47,12 @@ fn fixture_root(label: &str) -> Result<PathBuf, String> {
         ("src/lib.rs", "pub fn placeholder() {}\n"),
         // An explicit enabled set keeps Python detected and disabled, so the
         // preview-language gap and the detected/enabled distinction are both
-        // exercised by real emitted bytes.
-        ("ripr.toml", "[languages]\nenabled = [\"rust\"]\n"),
+        // exercised by real emitted bytes. The Bun profile exercises the
+        // nullable bridge-hints arm with a real path.
+        (
+            "ripr.toml",
+            "[languages]\nenabled = [\"rust\"]\n[profiles.bun_ub]\ntest_roots = [\"bun-tests\"]\nbridge_hints = \"custom/bridge-hints.toml\"\n",
+        ),
         (
             "pyproject.toml",
             "[project]\nname = \"fixture\"\nversion = \"0.1.0\"\n",
@@ -315,6 +319,14 @@ fn doctor_json_conforms_to_the_published_schema() -> Result<(), String> {
                 "the fixture root must exercise `{field}`, or this contract proves nothing: {document}"
             ));
         }
+    }
+    if document["config_defaults"]["bun_ub_bridge_hints"]
+        .as_str()
+        .is_none_or(str::is_empty)
+    {
+        return Err(format!(
+            "the fixture profile must exercise `bun_ub_bridge_hints` with a real path: {document}"
+        ));
     }
     // Gaps are suggested only for preview languages whose adapter is compiled
     // in, so a rust-only binary must omit the field rather than an empty tip.

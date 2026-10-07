@@ -312,6 +312,10 @@ fn config_defaults(
             .bun_ub()
             .map(|profile| profile.test_roots().to_vec())
             .unwrap_or_default(),
+        bun_ub_bridge_hints: config
+            .profiles()
+            .bun_ub()
+            .map(|profile| profile.display_bridge_hints()),
     })
 }
 
@@ -2410,17 +2414,24 @@ fn report_config_status(
             );
             println!("- Suppressions path: {}", defaults.suppressions_path);
             println!("- Enabled languages: {}", report.languages.join(", "));
-            if let Some(profile) = config
+            if config
                 .as_ref()
                 .ok()
                 .and_then(|config| config.profiles().bun_ub())
+                .is_some()
             {
                 println!("- Bun UB profile: configured (preview advisory only)");
                 println!(
                     "- Bun UB test roots: {}",
                     defaults.bun_ub_test_roots.join(", ")
                 );
-                println!("- Bun UB bridge hints: {}", profile.display_bridge_hints());
+                // The builder sets bridge hints whenever the profile exists,
+                // so `None` here means defaults and config disagree; report
+                // that rather than a path the probe never verified.
+                println!(
+                    "- Bun UB bridge hints: {}",
+                    defaults.bun_ub_bridge_hints.as_deref().unwrap_or("unknown")
+                );
                 println!(
                     "- Bun UB authority: no runtime Bun, tsc, tsserver, generated tests, gates, badges, baselines, or support-tier promotion"
                 );
