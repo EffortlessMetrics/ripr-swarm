@@ -477,8 +477,7 @@ fn mark_returns(
 /// `inspect_err`, `inspect` or `into`. Any other method may replace the
 /// error (`map_err`, `or_else`, `unwrap_or_else`, an extension trait), so
 /// the chain fails closed and the `return` keeps its seam. Arguments are
-/// skipped; a comment, or a char literal or lifetime at the top level, fails
-/// closed.
+/// skipped; a comment, a char literal or a lifetime fails closed.
 fn keeps_error(chain: &str) -> bool {
     const KEEPS: [&str; 9] = [
         "context",
@@ -512,7 +511,7 @@ fn keeps_error(chain: &str) -> bool {
             // A comment may hide a delimiter or a method; a lifetime or
             // char literal may hide a quote.
             '/' => return false,
-            '\'' if depth == 0 => return false,
+            '\'' => return false,
             '.' if depth == 0 => {
                 let name: String = chain
                     .get(at + 1..)
