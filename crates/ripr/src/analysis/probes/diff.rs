@@ -1299,8 +1299,7 @@ mod tests {
                 "\"b\" | \"d\" =>",
             ),
         ] {
-            let probes =
-                single_shape_probes(added, removed, ProbeShapeKind::MatchArm, shape, "");
+            let probes = single_shape_probes(added, removed, ProbeShapeKind::MatchArm, shape, "");
             let arm = probes
                 .iter()
                 .find(|probe| probe.family == ProbeFamily::MatchArm);
