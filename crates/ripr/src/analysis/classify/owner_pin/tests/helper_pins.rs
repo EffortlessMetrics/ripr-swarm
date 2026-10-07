@@ -452,3 +452,27 @@ fn a_borrowed_assertion_takes_neither_the_path_nor_the_let_bound_pin() -> Result
     );
     Ok(())
 }
+
+/// A helper that names the owner beyond its asserted call may compare the
+/// owner with itself; the test-body self-comparison scan never reads the
+/// helper, so the loan refuses any second mention.
+#[test]
+fn a_helper_that_names_the_owner_twice_lends_nothing() -> Result<(), String> {
+    for helper in [
+        "    fn check_tip(b: u64, t: u64) {\n        let e = with_tip(b, t);\n        assert_eq!(with_tip(b, t), e);\n    }\n",
+        "    fn check_tip(b: u64, t: u64) {\n        let w = with_tip;\n        assert_eq!(with_tip(b, t), w(b, t));\n    }\n",
+        "    fn check_tip(b: u64, t: u64) {\n        let e = with_tip(b, t) * 1;\n        let g = e;\n        assert_eq!(with_tip(b, t), g);\n    }\n",
+        "    fn check_tip(b: u64, t: u64) {\n        let e = super::with_tip(b, t);\n        assert_eq!(with_tip(b, t), e);\n    }\n",
+    ] {
+        assert_eq!(
+            helper_assertion_admitted(&module(helper, "check_tip(40, 6);"))?,
+            (true, false),
+            "{helper}"
+        );
+    }
+    assert_eq!(
+        whole_word_count("with_tip(b) + with_tips(c) + my_with_tip", "with_tip"),
+        1
+    );
+    Ok(())
+}

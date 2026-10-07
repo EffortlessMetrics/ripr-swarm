@@ -1721,6 +1721,21 @@ pub(in crate::analysis) fn helper_pins_owner_call(
         && !test_body_defines_callee_fn(&masked, name)
         && test_body_let_shadow_line(&masked, name).is_none()
         && !contains_as_whole_word(masked_test_body, name)
+        && whole_word_count(&masked, name) == 1
+}
+
+/// How often `name` occurs as a whole identifier in `text`. A helper that
+/// names the owner anywhere besides its asserted call (`let e = owner(b);`,
+/// `let f = owner;`, `super::owner(b)`) may compare the owner with itself,
+/// and the test-body self-comparison scan never reads the helper.
+fn whole_word_count(text: &str, name: &str) -> usize {
+    let is_ident = |ch: Option<char>| ch.is_some_and(|ch| ch.is_alphanumeric() || ch == '_');
+    text.match_indices(name)
+        .filter(|(at, found)| {
+            !is_ident(text[..*at].chars().next_back())
+                && !is_ident(text[at + found.len()..].chars().next())
+        })
+        .count()
 }
 
 impl ReturnPathGate {

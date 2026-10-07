@@ -477,11 +477,15 @@ rule only for an assertion whose context was admitted.
      call is on the test's eager path under the same rule-1 walk as an inline
      assertion: not inside a loop, branch, argument, deferred closure or
      `async` block, after no root `return`, with no attribute. A directly
-     invoked closure is supported as for inline assertions. One eager call is
-     enough; further deferred calls neither add nor remove credit.
+     invoked closure and a `for` loop over a non-empty constant-row table
+     (#5328) are eager paths here exactly as for inline assertions. One eager
+     call is enough; further deferred calls neither add nor remove credit.
    - The call can only name the helper: exactly one `fn` of that name is
      visible anywhere in the file, and it is a direct item of the test's own
-     module (or both are top-level items of the source file). A module item
+     module (or both are top-level items of an out-of-line `#[cfg(test)]`
+     module file). Helpers in an integration-test target (`tests/*.rs`) are
+     not yet borrowed: the helper-assertion producer feeds only functions in
+     `#[cfg(test)]` modules, so their assertions stay uncredited. A module item
      cannot coexist with a same-named import and wins over a glob. The test
      contains no `use` item and binds no name equal to the helper (pattern,
      parameter, closure parameter or nested item). A helper in a parent or
@@ -510,7 +514,11 @@ rule only for an assertion whose context was admitted.
    (parameters, `let`, `for`, closure and match patterns, nested `fn`, macro
    operands), and the calling test must not mention the owner's name at all,
    so no call-site argument can feed the owner's own value back as the
-   expected one (`check_tip(40, 6, with_tip(40, 6))`). Rule 3 is unchanged:
+   expected one (`check_tip(40, 6, with_tip(40, 6))`). The helper names the
+   owner exactly once, in its asserted call: the test-body self-comparison
+   scan never reads the helper, so `let e = with_tip(b, t);
+   assert_eq!(with_tip(b, t), e);`, an alias `let w = with_tip;` or a second
+   `super::with_tip(..)` refuses the loan. Rule 3 is unchanged:
    an owner with other exits still needs an `Ok(..)`/`Some(..)` expected
    value, which a helper parameter is not, so such a pin stays refused.
 
@@ -522,7 +530,7 @@ rule only for an assertion whose context was admitted.
    same-named import in that module, and a function body with no exits, loops
    or untrusted macros runs to its end. Following helpers further (helpers of
    helpers, cross-module or cross-file helpers, generic helpers, helpers with
-   early exits, calls in a loop or table) needs value, dispatch or loop-count
+   early exits, calls in a loop other than a constant-row table) needs value, dispatch or loop-count
    reasoning this bounded query does not do, so those shapes stay refused
    rather than approximated. The decision stays in the existing owner-pin
    owner (`syntax/owner_pin.rs` for context, `classify/owner_pin.rs` for the
