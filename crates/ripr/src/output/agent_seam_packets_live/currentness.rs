@@ -2,7 +2,7 @@ use crate::agent::artifact::{
     ArtifactCurrentness, RepoExposureArtifactContext, validate_repo_exposure_artifact,
 };
 use crate::agent::loop_commands::{
-    bound_root, bound_root_path, check_repo_exposure_command, lexically_clean, shell_arg,
+    bound_root, bound_root_path, check_repo_exposure_command, clean_bound_path, shell_arg,
 };
 use crate::output::gap_decision_ledger::{
     self, GapDecisionLedgerInput, GapDecisionLedgerSourceKind, GapRecord,
@@ -434,29 +434,24 @@ fn resolve_declared_path(root: &Path, declared: &str) -> PathBuf {
 /// Resolve a declared repo-exposure source under the bound root, or `None`
 /// when it escapes the root.
 ///
-/// Clean `.`/`..` lexically before the containment check: `Path::starts_with`
-/// is component-wise on the raw path, so an un-normalized
-/// `<root>/../outside.json` would otherwise pass it. A relative path that
-/// stays inside the root is cleaned on its own and joined to the root,
-/// because a bound root may keep a `..` after a symlink (#6960) that the
-/// whole-path lexical clean would remove, failing the containment check and
-/// silently replacing the declared source with the default.
+/// Clean `.`/`..` before the containment check: `Path::starts_with` is
+/// component-wise on the raw path, so an un-normalized
+/// `<root>/../outside.json` would otherwise pass it. The declared path is
+/// cleaned with the same symlink-aware [`clean_bound_path`] as the bound
+/// root, so a root that keeps a `..` after a symlink (#6960) still prefixes
+/// its own sources, relative or absolute. That cleaner keeps a `..` that
+/// follows a symlink, so any `..` left below the root fails closed: it
+/// could leave the root through a symlinked directory.
 fn contained_source_path(command_root: &Path, declared: &str) -> Option<PathBuf> {
-    let declared_path = Path::new(declared);
-    if !declared_path.is_absolute() {
-        let cleaned = lexically_clean(declared_path);
-        if matches!(
-            cleaned.components().next(),
-            Some(std::path::Component::Normal(_))
-        ) {
-            return Some(command_root.join(cleaned));
-        }
+    let cleaned = clean_bound_path(&resolve_declared_path(command_root, declared));
+    let below_root = cleaned.strip_prefix(command_root).ok()?;
+    if below_root
+        .components()
+        .any(|component| !matches!(component, std::path::Component::Normal(_)))
+    {
+        return None;
     }
-    Some(lexically_clean(&resolve_declared_path(
-        command_root,
-        declared,
-    )))
-    .filter(|path| path.starts_with(command_root))
+    Some(command_root.join(below_root))
 }
 
 fn refresh_commands(
@@ -664,24 +659,43 @@ mod tests {
         }
         std::os::unix::fs::symlink(base.join("outside/child"), base.join("work/link"))
             .map_err(|err| err.to_string())?;
+        // A symlink inside the analyzed checkout that points outside it.
+        std::os::unix::fs::symlink(base.join("outside/child"), base.join("outside/repo/escape"))
+            .map_err(|err| err.to_string())?;
         let root = base.join("work/link/../repo");
         let bound = bound_root_path(&root);
+        let inside = Some(bound.join("reports/repo-exposure.json"));
+        let absolute = |rel: &str| bound.join(rel).to_string_lossy().into_owned();
         let cases = [
+            ("reports/repo-exposure.json".to_string(), inside.clone()),
             (
-                "reports/repo-exposure.json",
-                Some(bound.join("reports/repo-exposure.json")),
+                "reports/./x/../repo-exposure.json".to_string(),
+                inside.clone(),
             ),
+            (absolute("reports/repo-exposure.json"), inside.clone()),
+            (absolute("reports/x/../repo-exposure.json"), inside.clone()),
+            ("../outside.json".to_string(), None),
+            ("reports/../../outside.json".to_string(), None),
+            (absolute("../outside.json"), None),
+            // `escape/..` resolves to `outside/`, not the checkout.
+            ("escape/../repo-exposure.json".to_string(), None),
             (
-                "reports/./x/../repo-exposure.json",
-                Some(bound.join("reports/repo-exposure.json")),
+                base.join("outside/repo/reports/repo-exposure.json")
+                    .to_string_lossy()
+                    .into_owned(),
+                None,
             ),
-            ("../outside.json", None),
-            ("reports/../../outside.json", None),
         ];
         let results: Vec<_> = cases
             .iter()
             .map(|(declared, _)| contained_source_path(&bound, declared))
             .collect();
+        let absolute_commands = refresh_commands(
+            &root,
+            Path::new("out/gap-ledger.json"),
+            Some("repo_exposure"),
+            Some(&absolute("reports/repo-exposure.json")),
+        );
         let commands = refresh_commands(
             &root,
             Path::new("out/gap-ledger.json"),
@@ -701,6 +715,11 @@ mod tests {
             commands[1].contains(&shell_arg(&expected)),
             "declared source must survive: {}",
             commands[1]
+        );
+        assert!(
+            absolute_commands[1].contains(&shell_arg(&expected)),
+            "absolute declared source must survive: {}",
+            absolute_commands[1]
         );
         Ok(())
     }
