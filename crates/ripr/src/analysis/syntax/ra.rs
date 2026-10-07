@@ -653,6 +653,9 @@ pub fn summarize_file_with_parser(path: &Path, text: &str) -> Result<FileFacts, 
         role_provenance: SourceRoleProvenance::default(),
         source: shared_source,
         item_scopes: Some(Box::new(item_scopes)),
+        macro_candidates: Some(Box::new(super::owner_pin::macro_binding_candidates(
+            &source,
+        ))),
     })
 }
 
@@ -2519,6 +2522,7 @@ pub fn wrap(value: u64) -> Result<Option<u64>, ()> {
             role_provenance: Default::default(),
             source: String::new().into(),
             item_scopes: None,
+            macro_candidates: None,
         };
         let nodes = adapter.changed_nodes(
             crate::analysis::facts::FactSlice::from_slice(&facts.functions),

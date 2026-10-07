@@ -4040,6 +4040,7 @@ fn producer_rejects_same_file_production_helper_as_test_target() -> Result<(), S
             role_provenance: Default::default(),
             source: "fn discounted_total_helper() {}".into(),
             item_scopes: None,
+            macro_candidates: None,
         },
     );
     let seam = RepoSeam::new(
