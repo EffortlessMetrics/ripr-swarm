@@ -23,3 +23,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — rust_test_under_false_cfg_not_grip (3)
+
+Reason:
+RIPR-SPEC-0153: fixture input now matches diff.patch (cents / 9, was / 10), so the changed expression is a mapped return_value probe; verdict moves from static_unknown to no_static_path with propagation yes, still reach no and no test named (#7043)
+
+Command:
+`cargo xtask goldens bless rust_test_under_false_cfg_not_grip --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

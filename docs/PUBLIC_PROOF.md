@@ -37,7 +37,7 @@ The page is generated. A unit test that CI requires fails when the page no longe
 | Trust | Commands that exit 0 when pointed at a missing repository | 0 commands | <= 0 commands | meets the bar | -2 commands since c6ccf9d (was 2 commands) |
 | Trust | Hostile-repository journeys (odd file names, symlink loops, shallow clones, submodules) where ripr neither finds nor refuses cleanly | 0 journeys | <= 0 journeys | meets the bar | no earlier measurement |
 | Trust | Findings or seams whose own evidence contradicts itself | 0 findings | <= 0 findings | meets the bar | -1 finding since c6ccf9d (was 1 finding) |
-| Trust | Wrong verdicts on hand-checked changes from real repositories | **8.8%** | <= 5.0% | below the bar | first receipt (verdict corpus, upstream cases only; all 283 cases: 26.5%) |
+| Trust | Wrong verdicts on hand-checked changes from real repositories | **8.8%** | <= 5.0% | below the bar | first receipt (verdict corpus, upstream cases only; all 283 cases: 26.2%) |
 | Trust | Hand-checked edits the crate's tests fully catch that ripr still flags as a gap | **62.3%** | <= 5.0% | below the bar | no earlier measurement |
 | Trust | Hand-checked edits where ripr gives no specific verdict | **28.6%** | <= 20.0% | below the bar | no earlier measurement |
 | Trust | Hand-checked edits the crate's tests miss that ripr reports as fine (counterweight to abstaining less) | 0.0% | <= 0.0% | meets the bar | no earlier measurement |
@@ -80,7 +80,7 @@ Not measured, and why:
 
 Each line below is computed from the receipts above. Detail sections follow.
 
-- **Wrong gaps.** On changes from real repositories ripr reported a gap on 3 of 20 whose tests caught every listed mutant (15.0%): `regex-syntax-max-scalar-two-byte`, `semver-op-greater-eq`, `strsim-sorensen-dice-equal`. On the authored cases, which were written to fill empty corpus cells, it did so on 65 of 124 (52.4%).
+- **Wrong gaps.** On changes from real repositories ripr reported a gap on 3 of 20 whose tests caught every listed mutant (15.0%): `regex-syntax-max-scalar-two-byte`, `semver-op-greater-eq`, `strsim-sorensen-dice-equal`. On the authored cases, which were written to fill empty corpus cells, it did so on 63 of 124 (50.8%).
 - **Mostly unsure.** On real-repository changes it abstained on 24 of 34 cases (70.6%); on the authored cases, 57 of 249 (22.9%). Abstaining is the safe failure, but each abstention is a change ripr gave the developer no help on.
 - **Real mutants disagree with "no test would notice".** Of 23 mutants on seams ripr called ungripped, real mutation testing caught 22 that ripr said nothing would catch; ripr agreed on 1. The 12 recorded examples are all in: semver.
 - **Thin ground truth.** Only 37 of 1745 mutants (2.1%) enter an agreement rate. 174 join a ripr seam precisely, and 137 of those still do not enter a rate.
@@ -146,11 +146,11 @@ Only the upstream cases come from real repositories. The authored cases were wri
 
 | Rate | All cases | Upstream (real repositories) | Authored |
 | --- | --- | --- | --- |
-| False verdicts (all cases) | 75/283 (26.5%) | 3/34 (8.8%) | 72/249 (28.9%) |
-| False actionable (of discriminated) | 68/144 (47.2%) | 3/20 (15.0%) | 65/124 (52.4%) |
-| False exposed (of not fully discriminated) | 7/139 (5.0%) | 0/14 (0.0%) | 7/125 (5.6%) |
+| False verdicts (all cases) | 74/283 (26.2%) | 3/34 (8.8%) | 71/249 (28.5%) |
+| False actionable (of discriminated) | 66/144 (45.8%) | 3/20 (15.0%) | 63/124 (50.8%) |
+| False exposed (of not fully discriminated) | 8/139 (5.8%) | 0/14 (0.0%) | 8/125 (6.4%) |
 | False silent (of not fully discriminated) | 0/139 (0.0%) | 0/14 (0.0%) | 0/125 (0.0%) |
-| Ideal verdict | 127/283 (44.9%) | 7/34 (20.6%) | 120/249 (48.2%) |
+| Ideal verdict | 128/283 (45.2%) | 7/34 (20.6%) | 121/249 (48.6%) |
 | Abstained (limited or silent where acceptable) | 81/283 (28.6%) | 24/34 (70.6%) | 57/249 (22.9%) |
 | Findings with a contradiction | 2/363 (0.5%) | not split by origin | not split by origin |
 
@@ -277,7 +277,7 @@ Only the upstream cases come from real repositories. The authored cases were wri
 | `itoa-two-digit-tail` | upstream | not_discriminated | gap | limited | no_static_path | abstained | none |
 | `ledger-insufficient-available` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | none |
 | `ledger-receipt-remaining` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | none |
-| `ledger-receive-refresh-low-stock` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | none |
+| `ledger-receive-refresh-low-stock` | authored | not_discriminated | gap | credited | exposed | false_exposed | none |
 | `ledger-ship-exact-stock` | authored | not_discriminated | gap | limited | infection_unknown | abstained | none |
 | `ledger-ship-log-push` | authored | discriminated | credited | gap | exposed, weakly_exposed | false_actionable | none |
 | `ledger-shipped-total` | authored | partially_discriminated | gap | limited | static_unknown | abstained | none |
@@ -412,10 +412,10 @@ Only the upstream cases come from real repositories. The authored cases were wri
 | `trap-fine-declared-test-file-control` | authored | discriminated | credited | credited | exposed | ideal | none |
 | `trap-glow-debug-nonempty` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | none |
 | `trap-halve-empty-table` | authored | not_discriminated | gap | gap | reachable_unrevealed | ideal | none |
-| `trap-hoist-scoped-thread-control` | authored | discriminated | credited | gap | reachable_unrevealed | false_actionable | none |
+| `trap-hoist-scoped-thread-control` | authored | discriminated | credited | credited | exposed | ideal | none |
 | `trap-level-catch-unwind` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | none |
 | `trap-levy-registered-integration-control` | authored | discriminated | credited | credited | exposed | ideal | none |
-| `trap-lift-joined-thread-control` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | none |
+| `trap-lift-joined-thread-control` | authored | discriminated | credited | credited | exposed | ideal | none |
 | `trap-limit-nested-test` | authored | not_discriminated | gap | gap | reachable_unrevealed | ideal | none |
 | `trap-muffle-times-one-control` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | none |
 | `trap-pause-asserted-arm-control` | authored | discriminated | credited | credited | exposed | ideal | none |

@@ -910,6 +910,7 @@ mod tests {
             }),
             region: None,
             blocker: None,
+            owner_inline_region: None,
         }
     }
 

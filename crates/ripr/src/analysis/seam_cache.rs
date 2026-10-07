@@ -365,7 +365,10 @@ pub(crate) struct CachedSeamLimitInfo {
 /// (`Poll::Ready(Err(X))`, #6938) are that constructor's twins too.
 /// `1.45`: a test under a never-true cfg is no longer a test, so related
 /// tests change (#6293). Old entries would keep crediting it.
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.45";
+/// `1.46`: `RepoSeam.owner_call` (#5357) carries the owner's call shape, and
+/// path constants carry `ValueContext::Constant`. A warm `<= 1.45` hit would
+/// serve every seam with an `Unknown` call shape and the old enum label.
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.46";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -450,7 +453,8 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.45";
 /// `0.49`: same single error_variant transition as full `1.43`.
 /// `0.50`: same wrapper twin transition as full `1.44`.
 /// `0.51`: same never-true-cfg test transition as full `1.45` (#6293).
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.51";
+/// `0.52`: same owner call shape and constant label as full `1.46` (#5357).
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.52";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -537,7 +541,8 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.51";
 /// `0.49`: same single error_variant transition as full `1.43`.
 /// `0.50`: same wrapper twin transition as full `1.44`.
 /// `0.51`: same never-true-cfg test transition as full `1.45` (#6293).
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.51";
+/// `0.52`: same owner call shape and constant label as full `1.46` (#5357).
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.52";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -1011,6 +1016,12 @@ impl RepoFileFactCacheKey {
         }
     }
 
+    /// Digest of the bytes this key was built from, in the per-file form
+    /// [`FilesContentHashBuilder::push_digest`] folds (#4996).
+    pub(crate) fn content_hash(&self) -> &str {
+        &self.content_hash
+    }
+
     /// Model a prior analyzer build without changing path, content or schema.
     #[cfg(test)]
     pub(crate) fn with_test_analyzer_identity(&self, analyzer_version: String) -> Self {
@@ -1089,9 +1100,13 @@ fn corrupt_entry<T>(path: &Path, reason: impl std::fmt::Display) -> CacheLoad<T>
     }
 }
 
-/// Inputs the analysis pipeline collects to derive the cache key. Held
-/// separately so the test pyramid can construct a known state without
-/// touching the filesystem.
+/// Legacy test-only corpus snapshot (issue #4996 follow-up to #2108).
+/// Production inventory no longer retains the raw source corpus; it folds
+/// content identity incrementally through [`FilesContentHashBuilder`].
+/// This snapshot stays — constructible without touching the filesystem —
+/// as the byte-identical legacy oracle the streaming equivalence tests
+/// compare against.
+#[cfg(test)]
 pub(crate) struct WorkspaceState<'a> {
     pub(crate) workspace_root: &'a Path,
     /// `(canonical relative path, content bytes)` for every Rust file
@@ -1108,29 +1123,62 @@ pub(crate) struct WorkspaceState<'a> {
     pub(crate) suppressions_text: Option<&'a str>,
 }
 
-/// Aggregate content hash over the corpus file set — the exact
-/// `files_content_hash` derivation `WorkspaceState::cache_key` has always
-/// used, extracted so the corpus fingerprint store can persist and reuse it
-/// (issue #2108). The corpus fingerprint fast path rebuilds a byte-identical
-/// cache key from this stored value instead of re-reading every file.
+/// Incremental aggregate content-hash builder (issue #4996). Fold one
+/// file at a time in sorted-path order and release its bytes immediately;
+/// `finish` returns the byte-identical value [`files_content_hash`]
+/// computes for the same set, without ever retaining the whole corpus.
+pub(crate) struct FilesContentHashBuilder {
+    files_buf: String,
+}
+
+impl FilesContentHashBuilder {
+    pub(crate) fn new() -> Self {
+        Self {
+            files_buf: String::new(),
+        }
+    }
+
+    pub(crate) fn push(&mut self, path: &Path, content: &[u8]) {
+        self.push_digest(path, &hash_bytes(content));
+    }
+
+    /// Fold a per-file digest already computed from the file's bytes, such
+    /// as [`RepoFileFactCacheKey::content_hash`]. Same output as `push`.
+    pub(crate) fn push_digest(&mut self, path: &Path, content_hash: &str) {
+        self.files_buf
+            .push_str(&path.to_string_lossy().replace('\\', "/"));
+        self.files_buf.push('\0');
+        self.files_buf.push_str(content_hash);
+        self.files_buf.push('\n');
+    }
+
+    pub(crate) fn finish(self) -> String {
+        hash_str(&self.files_buf)
+    }
+}
+
+/// Aggregate content hash over the corpus file set — the exact derivation
+/// production used before the #4996 streaming fold, kept as the
+/// byte-identical legacy oracle for the streaming equivalence tests.
+/// The corpus fingerprint fast path (issue #2108) rebuilds a byte-identical
+/// cache key from a stored value instead of re-reading every file.
+#[cfg(test)]
 pub(crate) fn files_content_hash(files: &[(PathBuf, Vec<u8>)]) -> String {
     // Sort by path so file walk order does not change the hash.
     let mut sorted_files: Vec<(&PathBuf, &Vec<u8>)> = files.iter().map(|(p, b)| (p, b)).collect();
     sorted_files.sort_by(|a, b| a.0.cmp(b.0));
-    let mut files_buf = String::new();
+    let mut builder = FilesContentHashBuilder::new();
     for (path, content) in sorted_files {
-        files_buf.push_str(&path.to_string_lossy().replace('\\', "/"));
-        files_buf.push('\0');
-        files_buf.push_str(&hash_bytes(content));
-        files_buf.push('\n');
+        builder.push(path, content);
     }
-    hash_str(&files_buf)
+    builder.finish()
 }
 
 /// Cache-key inputs other than the corpus content hash. The fingerprint
 /// fast path (issue #2108) holds no file bytes, so it rebuilds the key from
 /// these small inputs plus the stored `files_content_hash`. Keeping the key
-/// derivation here — shared with [`WorkspaceState::cache_key`] — is what
+/// derivation here — shared with the streaming inventory collect path
+/// (`FilesContentHashBuilder` + `WorkspaceKeyContext::cache_key`) — is what
 /// guarantees a fingerprint-rebuilt key is byte-identical to a freshly
 /// computed one.
 pub(crate) struct WorkspaceKeyContext<'a> {
@@ -1182,6 +1230,7 @@ impl WorkspaceKeyContext<'_> {
     }
 }
 
+#[cfg(test)]
 impl WorkspaceState<'_> {
     pub(crate) fn cache_key(&self) -> RepoSeamCacheKey {
         WorkspaceKeyContext {
@@ -3838,6 +3887,42 @@ mod tests {
     use std::path::PathBuf;
 
     #[test]
+    fn folding_file_fact_key_digests_matches_folding_bytes() {
+        // Includes a Windows separator and non-UTF-8 bytes, the two inputs
+        // `push` normalizes or hashes rather than copying.
+        let files: [(PathBuf, &[u8]); 3] = [
+            (PathBuf::from("src/a.rs"), b"pub fn a() {}\n"),
+            (PathBuf::from("src\\b.rs"), b"// \xff\xfe\n"),
+            (PathBuf::from("tests/c.rs"), b""),
+        ];
+        let mut from_bytes = FilesContentHashBuilder::new();
+        let mut from_keys = FilesContentHashBuilder::new();
+        for (path, bytes) in &files {
+            from_bytes.push(path, bytes);
+            from_keys.push_digest(path, RepoFileFactCacheKey::new(path, bytes).content_hash());
+        }
+        let expected = from_bytes.finish();
+        assert_eq!(from_keys.finish(), expected);
+        let loaded: Vec<(PathBuf, Vec<u8>)> = files
+            .iter()
+            .map(|(path, bytes)| (path.clone(), bytes.to_vec()))
+            .collect();
+        assert_eq!(files_content_hash(&loaded), expected);
+
+        // A different byte in one file must change the folded digest.
+        let mut edited = FilesContentHashBuilder::new();
+        for (path, bytes) in &files {
+            let bytes: &[u8] = if path.ends_with("a.rs") {
+                b"pub fn a() { }\n"
+            } else {
+                bytes
+            };
+            edited.push_digest(path, RepoFileFactCacheKey::new(path, bytes).content_hash());
+        }
+        assert_ne!(edited.finish(), expected);
+    }
+
+    #[test]
     fn producer_directories_match_the_maintenance_inventory() -> Result<(), String> {
         let root = Path::new("/workspace");
         let base = cache_base_dir(root);
@@ -4069,7 +4154,8 @@ mod tests {
         // 1.43 -> 1.44: returned chains and wrapping calls are twins (#6935,
         // #6938).
         // 1.44 -> 1.45: a never-true-cfg test is not a test (#6293).
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.45");
+        // 1.45 -> 1.46: seam owner call shape and constant value context (#5357).
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.46");
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
         // for the sharded and compact envelopes.
@@ -4106,8 +4192,9 @@ mod tests {
         // 0.47 -> 0.48: same unresolved-boundary-input transition as 1.42.
         // 0.48 -> 0.49: same #6914 transition as full 1.43.
         // 0.50 -> 0.51: same #6293 transition as full 1.45.
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.51");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.51");
+        // 0.51 -> 0.52: same owner call shape transition as the outer cache.
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.52");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.52");
     }
 
     #[test]

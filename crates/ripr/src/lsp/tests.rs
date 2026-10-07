@@ -3697,13 +3697,18 @@ fn gap_code_actions_surface_bounded_repair_actions_when_artifact_is_valid() -> R
     assert_eq!(commands[0].2[0]["label"], "first_repair_packet");
     assert_eq!(commands[0].2[0]["gap_identity"], "gap:py:pricing");
     assert_eq!(commands[0].2[0]["canonical_gap_id"], "gap:py:pricing");
+    // #4001: the artifact's portable `--root .` is bound to the selected
+    // workspace, so a copied command analyzes it from any directory.
+    let bound = crate::agent::loop_commands::shell_arg(&crate::agent::loop_commands::bound_root(
+        &root.path().to_string_lossy(),
+    ));
     assert_eq!(
         commands[0].2[0]["verify_command"],
-        "ripr agent verify --root . --json"
+        format!("ripr agent verify --root {bound} --json")
     );
     assert_eq!(
         commands[0].2[0]["receipt_command"],
-        "ripr agent receipt --root . --json"
+        format!("ripr agent receipt --root {bound} --json")
     );
     assert_eq!(
         commands[0].2[0]["command_specs"]["verify"]["command_id"],
@@ -3778,16 +3783,16 @@ fn gap_code_actions_surface_bounded_repair_actions_when_artifact_is_valid() -> R
         .as_str()
         .ok_or_else(|| "missing Python repair-card text".to_string())?;
     for needle in [
-        "Python repair card (preview/advisory)",
-        "Freshness: current validated GapRecord diagnostic.",
-        "Changed owner:\n  python:app/pricing.py::calculate_discount",
-        "Current test evidence:",
-        "Missing discriminator:\n  price(threshold) == expected",
-        "Verify:\n  ripr agent verify --root . --json",
-        "Receipt:\n  ripr agent receipt --root . --json",
-        "Static preview evidence only",
+        "Python repair card (preview/advisory)".to_string(),
+        "Freshness: current validated GapRecord diagnostic.".to_string(),
+        "Changed owner:\n  python:app/pricing.py::calculate_discount".to_string(),
+        "Current test evidence:".to_string(),
+        "Missing discriminator:\n  price(threshold) == expected".to_string(),
+        format!("Verify:\n  ripr agent verify --root {bound} --json"),
+        format!("Receipt:\n  ripr agent receipt --root {bound} --json"),
+        "Static preview evidence only".to_string(),
     ] {
-        assert!(card.contains(needle), "missing {needle:?} in:\n{card}");
+        assert!(card.contains(&needle), "missing {needle:?} in:\n{card}");
     }
     assert_eq!(
         commands[4].2[0]["uri"],
@@ -3798,12 +3803,12 @@ fn gap_code_actions_surface_bounded_repair_actions_when_artifact_is_valid() -> R
     assert_eq!(commands[5].2[0]["label"], "gap_verify");
     assert_eq!(
         commands[5].2[0]["command"],
-        "ripr agent verify --root . --json"
+        format!("ripr agent verify --root {bound} --json")
     );
     assert_eq!(commands[6].2[0]["label"], "gap_receipt");
     assert_eq!(
         commands[6].2[0]["command"],
-        "ripr agent receipt --root . --json"
+        format!("ripr agent receipt --root {bound} --json")
     );
     assert!(
         commands[7].2[0]["note"]
@@ -4476,8 +4481,15 @@ fn editor_adoption_baseline_pins_gap_repair_action_contract() -> Result<(), Stri
     assert!(packet.contains("Missing discriminator: price(threshold) == expected"));
     assert!(packet.contains("Focused proof intent:"));
     assert!(packet.contains("Artifacts:"));
-    assert!(packet.contains("Verify command:\nripr agent verify --root . --json"));
-    assert!(packet.contains("Receipt command:\nripr agent receipt --root . --json"));
+    let bound = crate::agent::loop_commands::shell_arg(&crate::agent::loop_commands::bound_root(
+        &root.path().to_string_lossy(),
+    ));
+    assert!(packet.contains(&format!(
+        "Verify command:\nripr agent verify --root {bound} --json"
+    )));
+    assert!(packet.contains(&format!(
+        "Receipt command:\nripr agent receipt --root {bound} --json"
+    )));
     let static_limit_position = packet
         .find("Static limit: missing_import_graph")
         .ok_or_else(|| format!("missing static limit in first repair packet:\n{packet}"))?;
@@ -13688,7 +13700,8 @@ fn sample_classified_seam() -> crate::analysis::ClassifiedSeam {
             description: "amount >= discount_threshold".to_string(),
         },
         ExpectedSink::ReturnValue,
-    );
+    )
+    .with_owner_call(crate::analysis::seams::OwnerCallShape::Free);
     let seam_id = seam.id().clone();
     crate::analysis::ClassifiedSeam {
         seam,
@@ -16418,13 +16431,18 @@ fn execute_command_collect_workspace_status_with_actionable_gap_and_rejection_re
             packet["canonical_gap_id"],
             "gap:rust:pricing:threshold-boundary"
         );
+        // #4001: the status packet binds the artifact's `--root .` to the
+        // selected workspace.
+        let bound = crate::agent::loop_commands::shell_arg(
+            &crate::agent::loop_commands::bound_root("/workspace"),
+        );
         assert_eq!(
             packet["verify_command"],
-            "ripr agent verify --root . --json"
+            format!("ripr agent verify --root {bound} --json")
         );
         assert_eq!(
             packet["receipt_command"],
-            "ripr agent receipt --root . --json"
+            format!("ripr agent receipt --root {bound} --json")
         );
         assert_eq!(packet["file"], "src/pricing.rs");
 
@@ -16940,12 +16958,18 @@ fn execute_command_collect_repair_packet_complete_gap_returns_full_packet() -> R
                 .is_some_and(|v| !v.is_empty()),
             "raw_evidence_refs must be non-empty"
         );
+        // #4001: the copied commands name the selected workspace, not `.`.
+        let bound = crate::agent::loop_commands::shell_arg(
+            &crate::agent::loop_commands::bound_root(&root.path().to_string_lossy()),
+        );
         assert_eq!(
-            packet["verify_command"], "ripr agent verify --root . --json",
+            packet["verify_command"],
+            format!("ripr agent verify --root {bound} --json"),
             "must carry verify_command"
         );
         assert_eq!(
-            packet["receipt_command"], "ripr agent receipt --root . --json",
+            packet["receipt_command"],
+            format!("ripr agent receipt --root {bound} --json"),
             "must carry receipt_command"
         );
         assert_eq!(

@@ -98,6 +98,7 @@ fn normalize_indexed_file_test_styles(
     let lexical_lines = facts
         .used_lexical_fallback
         .then(|| facts.source.lines().collect::<Vec<_>>());
+    let cfg_test_lines = std::cell::OnceCell::new();
     let mut normalized_tests = Vec::new();
     for &id in &facts.functions {
         cancellation::checkpoint()?;
@@ -124,7 +125,11 @@ fn normalize_indexed_file_test_styles(
         let preserve_cfg_test_role = (defines_test && compiled_out)
             || (!has_test_attribute
                 && function.source_role.is_evidence_role()
-                && is_inside_cfg_test_module(&facts.source, function.start_line));
+                && inside_cfg_test_module_at(
+                    cfg_test_lines.get_or_init(|| cfg_test_module_lines(&facts.source)),
+                    &facts.source,
+                    function.start_line,
+                ));
         let promotion_claimed_expansion =
             function.source_role == FunctionSourceRole::ParameterizedExpansion;
         function.source_role = if has_test_attribute {
@@ -166,7 +171,11 @@ fn test_fact_from_function(function: &FunctionFact) -> TestFact {
     }
 }
 
-fn attributes_define_test<'attribute>(
+/// Whether any attribute is a recognised test attribute (`#[test]`,
+/// `#[tokio::test]`, `#[rstest]`, ...). The one authority for which functions
+/// are tests; the inline test-region cage consumes it to decide whether an
+/// inserted function is a new test.
+pub(crate) fn attributes_define_test<'attribute>(
     attributes: impl IntoIterator<Item = &'attribute str>,
 ) -> bool {
     attributes.into_iter().any(|attribute| {
@@ -269,11 +278,50 @@ fn is_inside_cfg_test_module(source: &str, function_start_line: usize) -> bool {
         .lines()
         .take(function_start_line.saturating_sub(1))
         .collect();
-    let mut scopes = Vec::new();
+    cfg_test_module_walk(&lines, |_, _| {})
+}
+
+/// [`is_inside_cfg_test_module`] for every line of one file from a single
+/// walk: entry `n` answers for a function whose first `n` lines precede it.
+/// Asking per function rewalked the file from its top each time, which was
+/// quadratic in large test files and most of `index_test_styles` on warm
+/// runs (#5363). `None` marks a line inside a multi-line attribute: the
+/// prefix walk would stop mid-attribute, so that answer comes from the
+/// prefix walk itself.
+fn cfg_test_module_lines(source: &str) -> Vec<Option<bool>> {
+    let lines: Vec<&str> = source.lines().collect();
+    let mut inside = vec![None; lines.len() + 1];
+    let at_end = cfg_test_module_walk(&lines, |index, state| inside[index] = Some(state));
+    inside[lines.len()] = Some(at_end);
+    inside
+}
+
+fn inside_cfg_test_module_at(
+    table: &[Option<bool>],
+    source: &str,
+    function_start_line: usize,
+) -> bool {
+    match table.get(function_start_line.saturating_sub(1)) {
+        Some(Some(inside)) => *inside,
+        _ => is_inside_cfg_test_module(source, function_start_line),
+    }
+}
+
+/// Walks `lines` and returns whether the end is inside a `cfg(test)`
+/// module. `at_line(index, inside)` reports the same answer for the prefix
+/// `lines[..index]` at every line where a walk step starts; a walk of that
+/// prefix alone takes the same steps, since no attribute join before
+/// `index` reaches past it.
+fn cfg_test_module_walk(lines: &[&str], mut at_line: impl FnMut(usize, bool)) -> bool {
+    let mut scopes: Vec<bool> = Vec::new();
+    // How many open scopes are `cfg(test)` modules, so asking "inside one?"
+    // at every step costs O(1) instead of a scan of the scope stack.
+    let mut cfg_test_scopes = 0usize;
     let mut pending_cfg_test = false;
     let mut index = 0usize;
 
     while index < lines.len() {
+        at_line(index, cfg_test_scopes != 0);
         let remainder_storage;
         let line: &str = if lines[index].trim_start().starts_with("#[") {
             match join_leading_attribute(&lines[index..]) {
@@ -313,11 +361,13 @@ fn is_inside_cfg_test_module(source: &str, function_start_line: usize) -> bool {
         for character in line.chars() {
             match character {
                 '{' => {
-                    scopes.push(declares_cfg_test_module && !module_opened);
+                    let is_cfg_test_module = declares_cfg_test_module && !module_opened;
+                    cfg_test_scopes += usize::from(is_cfg_test_module);
+                    scopes.push(is_cfg_test_module);
                     module_opened = true;
                 }
                 '}' => {
-                    scopes.pop();
+                    cfg_test_scopes -= usize::from(scopes.pop() == Some(true));
                 }
                 _ => {}
             }
@@ -328,7 +378,7 @@ fn is_inside_cfg_test_module(source: &str, function_start_line: usize) -> bool {
         index += 1;
     }
 
-    scopes.iter().any(|is_cfg_test_module| *is_cfg_test_module)
+    cfg_test_scopes != 0
 }
 
 /// Joins continuation lines until the leading attribute's closing bracket so
