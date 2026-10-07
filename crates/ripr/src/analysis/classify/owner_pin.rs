@@ -1444,8 +1444,14 @@ impl OwnerReturnPin {
             OwnerScope::new(self.name.as_str(), self.owner_start_line, &self.owner_file);
         let masked_body = mask_comments_and_strings(&test.body);
         match (&self.call, call) {
+            // #7082: a cfg on the owner or an enclosing module may compile
+            // a same-named `static`, `const` or `use` in its place, which
+            // the bare name then reaches instead.
             (PinCall::Bare, CallShape::Bare) => {
-                !test_body_shadows_owner(test, &self.name)
+                !syntax
+                    .item_nesting(index, &self.owner_file, &self.name, self.owner_start_line)
+                    .is_none_or(|owner| owner.cfg_gated)
+                    && !test_body_shadows_owner(test, &self.name)
                     && !binds_outside_let(&masked_body, &self.name)
                     && !bound_by_macro(&masked_body, &self.name)
                     && test_source.is_some_and(|source| !file_renames_to(source, &self.name))

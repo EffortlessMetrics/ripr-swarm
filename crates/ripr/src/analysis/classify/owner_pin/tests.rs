@@ -1039,6 +1039,60 @@ fn a_bare_call_through_any_other_binding_of_the_name_is_not_a_pin() {
     }
 }
 
+#[test]
+fn a_cfg_gated_owner_is_not_reached_by_a_bare_call() {
+    // #7082: under the complementary cfg the bare name reaches the
+    // same-named `static`, not the owner.
+    let tests = "use demo::weight;\n\n#[test]\nfn weighs() {\n    assert_eq!(weight(4), 12);\n}\n";
+    let lib = "pub fn helper(_: u32) -> u32 {\n    12\n}\n#[cfg(feature = \"alt\")]\n#[allow(non_upper_case_globals)]\npub static weight: fn(u32) -> u32 = helper;\n#[cfg(not(feature = \"alt\"))]\npub fn weight(x: u32) -> u32 {\n    x * 3\n}\n";
+    let ix = index(&[(LIB, lib), (TESTS, tests)]);
+    let pin = establish(&ix, "weight", "x * 3");
+    assert!(pin.is_some(), "the owner itself must establish");
+    if let Some(pin) = pin {
+        assert!(admitted_texts(&ix, &pin).is_empty());
+    }
+    // An enclosing inline module's cfg gates it the same way.
+    let lib = "#[cfg(not(feature = \"alt\"))]\npub mod scale {\n    pub fn weight(x: u32) -> u32 {\n        x * 3\n    }\n}\n";
+    let tests =
+        "use demo::scale::weight;\n\n#[test]\nfn weighs() {\n    assert_eq!(weight(4), 12);\n}\n";
+    let ix = index(&[(LIB, lib), (TESTS, tests)]);
+    let pin = establish(&ix, "weight", "x * 3");
+    assert!(pin.is_some(), "the nested owner must establish");
+    if let Some(pin) = pin {
+        assert!(admitted_texts(&ix, &pin).is_empty());
+        // Control: the same module without the cfg pins.
+        let lib = lib.replace("#[cfg(not(feature = \"alt\"))]\n", "");
+        let ix = index(&[(LIB, &lib), (TESTS, tests)]);
+        let pin = establish(&ix, "weight", "x * 3");
+        assert!(pin.is_some());
+        if let Some(pin) = pin {
+            assert_eq!(admitted_texts(&ix, &pin), ["assert_eq!(weight(4), 12);"]);
+        }
+    }
+    // The unit-test form: `#[cfg(test)]` swaps in the twin.
+    let twin = "pub fn helper(_: u32) -> u32 {\n    12\n}\n#[cfg(test)]\n#[allow(non_upper_case_globals)]\npub static weight: fn(u32) -> u32 = helper;\n\n";
+    let unit = unit_tests(twin, "assert_eq!(weight(4), 12);")
+        .replace("pub fn weight", "#[cfg(not(test))]\npub fn weight")
+        .replace("mod tests {\n", "mod tests {\n    use super::*;\n");
+    assert!(
+        unit.contains("#[cfg(not(test))]\npub fn weight") && unit.contains("use super::*;"),
+        "{unit}"
+    );
+    let ix = index(&[(LIB, &unit)]);
+    let pin = establish(&ix, "weight", "x * 3");
+    assert!(pin.is_some());
+    if let Some(pin) = pin {
+        assert!(admitted_texts(&ix, &pin).is_empty());
+    }
+    // Control: the ungated integration owner pins.
+    assert_eq!(
+        weight_admitted(
+            "use demo::weight;\n\n#[test]\nfn weighs() {\n    assert_eq!(weight(4), 12);\n}\n"
+        ),
+        ["assert_eq!(weight(4), 12);"]
+    );
+}
+
 const COUNTER_LIB: &str = "pub struct Counter {\n    n: usize,\n}\n\nimpl Counter {\n    pub fn new() -> Self {\n        Counter { n: 0 }\n    }\n\n    pub fn try_new(n: usize) -> Result<Self, String> {\n        Ok(Counter { n })\n    }\n\n    pub fn count(&self) -> usize {\n        self.n + 1\n    }\n\n    pub fn tally(&self) -> usize {\n        self.n + 1\n    }\n}\n";
 
 fn counter_admitted(owner_name: &str, prelude: &str, binding: &str) -> usize {
@@ -3871,6 +3925,10 @@ fn a_result_bound_once_and_only_asserted_pins_like_the_call() {
         // Two assertions of the binding on one line: the use count and the
         // only-statement-on-its-line rule each refuse it.
         "let total = crate::weight(4);\n        assert_eq!(total, 12); touch_count(); assert_eq!(total, 12);",
+        // Only the only-statement-on-its-line rule refuses this one: the
+        // first assertion is the next statement, and a statement runs
+        // before the second (#7061 round 3).
+        "let total = crate::weight(4);\n        assert_eq!(total, touch_count()); touch_count(); assert_eq!(total, 12);",
     ] {
         let lib = unit_tests(LET_BOUND_PRELUDE, body);
         assert!(path_admitted(&lib, "x * 3", None).is_empty(), "{body}");
