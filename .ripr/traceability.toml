@@ -13223,6 +13223,9 @@ tests = [
   "crates/ripr/tests/match_arm_unselected_identity.rs::a_local_closure_named_like_the_owner_cannot_credit_the_arm",
   "crates/ripr/tests/match_arm_unselected_identity.rs::a_helper_two_calls_away_may_select_the_arm",
   "crates/ripr/tests/match_arm_unselected_identity.rs::a_call_through_another_crate_path_cannot_credit_the_arm",
+  "crates/ripr/src/analysis/probes/diff.rs::tests::arm_head_edit_drops_the_unchanged_return_value",
+  "crates/ripr/src/analysis/probes/diff.rs::tests::arm_body_edit_keeps_the_changed_return_value",
+  "crates/ripr/src/analysis/probes/diff.rs::tests::unchanged_return_value_stays_when_no_other_shape_holds_the_edit",
 ]
 fixtures = [
   "fixtures/match_arm_blind",

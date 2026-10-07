@@ -101,6 +101,31 @@ pub(crate) fn probes_for_file_with_relations(
             .cloned()
             .collect::<Vec<_>>();
         if !canonical_shapes.is_empty() {
+            // #7074: a return value that the edit left untouched (`Ok(Level::Warn)`
+            // after a changed arm head `"warning" | "warn" =>`) is not changed
+            // behavior. It is dropped only when another shape on the line holds
+            // the whole edit, so the line keeps a probe for what did change.
+            let unchanged_return = |shape: &super::classify::ParserProbeShape| {
+                shape.family == ProbeFamily::ReturnValue
+                    && removed_counterpart.as_deref().is_some_and(|removed| {
+                        let removed = removed.trim();
+                        shape_outside_edit(text, &canonical_probe_text(text, shape.text), removed)
+                            && canonical_shapes.iter().any(|other| {
+                                other.family != ProbeFamily::ReturnValue
+                                    && removed_span_of_shape(
+                                        text,
+                                        &canonical_probe_text(text, other.text),
+                                        removed,
+                                    )
+                                    .is_some()
+                            })
+                    })
+            };
+            let canonical_shapes = canonical_shapes
+                .iter()
+                .filter(|shape| !unchanged_return(shape))
+                .cloned()
+                .collect::<Vec<_>>();
             for shape in canonical_shapes {
                 let key = (shape.start_byte, shape.family.as_str().to_string());
                 if emitted_parser_shapes.iter().any(|current| current == &key) {
@@ -937,22 +962,7 @@ fn removed_span_of_shape(added_line: &str, shape_text: &str, removed_line: &str)
     }
     let start = added_line.find(shape_text)?;
     let end = start + shape_text.len();
-    let mut prefix = 0;
-    for (added, removed) in added_line.chars().zip(removed_line.chars()) {
-        if added != removed {
-            break;
-        }
-        prefix += added.len_utf8();
-    }
-    // The suffix may not reach back into the prefix.
-    let room = added_line.len().min(removed_line.len()) - prefix;
-    let mut suffix = 0;
-    for (added, removed) in added_line.chars().rev().zip(removed_line.chars().rev()) {
-        if added != removed || suffix + added.len_utf8() > room {
-            break;
-        }
-        suffix += added.len_utf8();
-    }
+    let (prefix, suffix) = common_prefix_suffix(added_line, removed_line);
     // Unchanged text must anchor both ends of the shape: when the shape ends
     // the line and no common suffix reaches into it (`if a != b` from
     // `if a == b {`), the old line's tail cannot be split from the shape.
@@ -964,6 +974,45 @@ fn removed_span_of_shape(added_line: &str, shape_text: &str, removed_line: &str)
     let removed_end = removed_line.len().checked_sub(added_line.len() - end)?;
     let span = removed_line.get(start..removed_end)?.trim();
     (!span.is_empty()).then(|| span.to_string())
+}
+
+/// Byte lengths of the text the two lines share at the start and at the
+/// end. The suffix never reaches back into the prefix.
+fn common_prefix_suffix(added_line: &str, removed_line: &str) -> (usize, usize) {
+    let mut prefix = 0;
+    for (added, removed) in added_line.chars().zip(removed_line.chars()) {
+        if added != removed {
+            break;
+        }
+        prefix += added.len_utf8();
+    }
+    let room = added_line.len().min(removed_line.len()) - prefix;
+    let mut suffix = 0;
+    for (added, removed) in added_line.chars().rev().zip(removed_line.chars().rev()) {
+        if added != removed || suffix + added.len_utf8() > room {
+            break;
+        }
+        suffix += added.len_utf8();
+    }
+    (prefix, suffix)
+}
+
+/// Whether `shape_text` lies wholly in text the old and new lines share, so
+/// the edit between them never touches it. The shape must occur once on the
+/// added line and the lines must differ.
+fn shape_outside_edit(added_line: &str, shape_text: &str, removed_line: &str) -> bool {
+    if shape_text.is_empty()
+        || added_line == removed_line
+        || added_line.matches(shape_text).count() != 1
+    {
+        return false;
+    }
+    let Some(start) = added_line.find(shape_text) else {
+        return false;
+    };
+    let end = start + shape_text.len();
+    let (prefix, suffix) = common_prefix_suffix(added_line, removed_line);
+    end <= prefix || start >= added_line.len() - suffix
 }
 
 /// A probe's `before` text: the positional counterpart when the replacement
@@ -1121,6 +1170,12 @@ mod tests {
         kind: ProbeShapeKind,
         shape_text: &str,
     ) -> Vec<Probe> {
+        shapes_probes(added, removed, &[(kind, shape_text)])
+    }
+
+    /// Probes for one changed line whose parser shapes are `shapes`, each
+    /// found by its first occurrence on the added line.
+    fn shapes_probes(added: &str, removed: &str, shapes: &[(ProbeShapeKind, &str)]) -> Vec<Probe> {
         let path = PathBuf::from("src/lib.rs");
         let line = |text: &str| ChangedLine {
             line: 3,
@@ -1132,7 +1187,20 @@ mod tests {
             added_lines: vec![line(added)],
             removed_lines: vec![line(removed)],
         };
-        let start_byte = 20 + added.find(shape_text).unwrap_or(0);
+        let probe_shapes = shapes
+            .iter()
+            .map(|(kind, shape_text)| {
+                let start_byte = 20 + added.find(shape_text).unwrap_or(0);
+                ProbeShapeFact {
+                    start_line: 3,
+                    end_line: 3,
+                    start_byte,
+                    end_byte: start_byte + shape_text.len(),
+                    kind: *kind,
+                    text: (*shape_text).into(),
+                }
+            })
+            .collect();
         let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
             files: BTreeMap::from([(
                 path.clone(),
@@ -1156,14 +1224,7 @@ mod tests {
                         item: Default::default(),
                         impl_context: Default::default(),
                     }],
-                    probe_shapes: vec![ProbeShapeFact {
-                        start_line: 3,
-                        end_line: 3,
-                        start_byte,
-                        end_byte: start_byte + shape_text.len(),
-                        kind,
-                        text: shape_text.into(),
-                    }],
+                    probe_shapes,
                     ..FileFacts::default()
                 },
             )]),
@@ -1250,6 +1311,67 @@ mod tests {
         assert_eq!(
             arm.and_then(|probe| probe.before.as_deref()),
             Some("(true, false) => \"old\","),
+            "{probes:?}"
+        );
+    }
+
+    /// #7074: an arm-head edit leaves the arm's return value untouched, so
+    /// the line carries only the arm probe, not a return-value probe that
+    /// would ask for a discriminator of a value that never changed.
+    #[test]
+    fn arm_head_edit_drops_the_unchanged_return_value() {
+        let probes = shapes_probes(
+            "\"warning\" | \"warn\" => Ok(Level::Warn),",
+            "\"warn\" => Ok(Level::Warn),",
+            &[
+                (ProbeShapeKind::MatchArm, "\"warning\" | \"warn\" =>"),
+                (ProbeShapeKind::ReturnValue, "Ok(Level::Warn)"),
+            ],
+        );
+
+        let families = probes
+            .iter()
+            .map(|probe| probe.family.clone())
+            .collect::<Vec<_>>();
+        assert!(families.contains(&ProbeFamily::MatchArm), "{probes:?}");
+        assert!(!families.contains(&ProbeFamily::ReturnValue), "{probes:?}");
+    }
+
+    /// #7074 control: a body edit changes the return value itself, so its
+    /// probe stays.
+    #[test]
+    fn arm_body_edit_keeps_the_changed_return_value() {
+        let probes = shapes_probes(
+            "\"warn\" => Ok(Level::Error),",
+            "\"warn\" => Ok(Level::Warn),",
+            &[
+                (ProbeShapeKind::MatchArm, "\"warn\" =>"),
+                (ProbeShapeKind::ReturnValue, "Ok(Level::Error)"),
+            ],
+        );
+
+        assert!(
+            probes
+                .iter()
+                .any(|probe| probe.family == ProbeFamily::ReturnValue),
+            "{probes:?}"
+        );
+    }
+
+    /// #7074 control: when no other shape on the line holds the edit, the
+    /// return value is kept so the line still has a probe.
+    #[test]
+    fn unchanged_return_value_stays_when_no_other_shape_holds_the_edit() {
+        let probes = shapes_probes(
+            "let _ = log(); return Ok(Level::Warn);",
+            "log(); return Ok(Level::Warn);",
+            &[(ProbeShapeKind::ReturnValue, "Ok(Level::Warn)")],
+        );
+
+        assert!(
+            probes
+                .iter()
+                .any(|probe| probe.family == ProbeFamily::ReturnValue),
             "{probes:?}"
         );
     }
