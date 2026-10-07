@@ -1347,5 +1347,14 @@ fn summary_derived_from_blessed_rows_equals_the_run_summary() -> Result<(), Stri
     );
     let err = expected_report(&dir).err().unwrap_or_default();
     assert!(err.contains("findings_scored"), "{err}");
+
+    // A case without its row fails instead of shrinking the denominators.
+    bless(&dir.join("expected"), &report)?;
+    fs::remove_file(dir.join("expected/rows/b-case.json")).map_err(|err| err.to_string())?;
+    let err = expected_report(&dir).err().unwrap_or_default();
+    assert!(
+        err.contains("missing rows") && err.contains("b-case"),
+        "{err}"
+    );
     Ok(())
 }

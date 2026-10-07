@@ -2548,6 +2548,7 @@ fn verdict_corpus_sources_derive_each_rate_from_the_committed_rows() -> Result<(
         &dir.join("corpus.json"),
         r#"{"spec": "RIPR-SPEC-0219", "non_claims": []}"#,
     );
+    crate::tests::write(&dir.join("cases/a-case.json"), r#"{"case_id": "a-case"}"#);
     crate::tests::write(
         &dir.join("expected/rows/a-case.json"),
         r#"{"case_id": "a-case"}"#,

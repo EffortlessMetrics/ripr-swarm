@@ -2472,10 +2472,19 @@ mod tests {
             serde_json::to_vec_pretty(&header).map_err(|e| e.to_string())?,
         )
         .map_err(|e| e.to_string())?;
+        let cases_dir = corpus.join("cases");
+        fs::create_dir_all(&cases_dir).map_err(|e| e.to_string())?;
         for row in rows {
+            let id = text(row, "case_id");
             fs::write(
-                rows_dir.join(format!("{}.json", text(row, "case_id"))),
+                rows_dir.join(format!("{id}.json")),
                 serde_json::to_vec_pretty(row).map_err(|e| e.to_string())?,
+            )
+            .map_err(|e| e.to_string())?;
+            // The receipt checks rows against the case ids, so each row needs its case.
+            fs::write(
+                cases_dir.join(format!("{id}.json")),
+                serde_json::json!({ "case_id": id }).to_string(),
             )
             .map_err(|e| e.to_string())?;
         }

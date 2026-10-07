@@ -893,6 +893,22 @@ pub(crate) fn expected_report(dir: &Path) -> Result<Report, String> {
                 .map_err(|err| format!("parse a row under {}: {err}", normalize_path(&rows_dir)))
         })
         .collect::<Result<Vec<_>, _>>()?;
+    // The rows must cover exactly the corpus's cases: a missing row would
+    // otherwise shrink every denominator into a plausible, wrong rate.
+    let case_ids: BTreeSet<String> = record_files(&dir.join("cases"), "case_id")?
+        .iter()
+        .filter_map(|case| case.get("case_id").and_then(Value::as_str))
+        .map(str::to_string)
+        .collect();
+    let row_ids: BTreeSet<String> = rows.iter().map(|row| row.case_id.clone()).collect();
+    let missing: Vec<&String> = case_ids.difference(&row_ids).collect();
+    let extra: Vec<&String> = row_ids.difference(&case_ids).collect();
+    if !missing.is_empty() || !extra.is_empty() {
+        return Err(format!(
+            "{} does not match the corpus cases (missing rows: {missing:?}; rows without a case: {extra:?}); run `cargo xtask verdict-corpus check`",
+            normalize_path(&rows_dir)
+        ));
+    }
     Ok(summarize(header.spec, header.non_claims, rows))
 }
 
