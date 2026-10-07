@@ -13,12 +13,22 @@ import {
   LspCompatibilityEvidence,
   LspCompatibilityFailure,
   probeProcessExitCode,
+  probeProcessStartFailure,
   probeStandardLspCompatibility,
+  probeWrapperReportedExitCode,
   spawnProbeProcess,
   terminateProbeProcessTree
 } from './lspCompatibility';
 
 const START_TIMEOUT_MS = 10_000;
+
+/**
+ * Guidance for a failed configured-path candidate. The generic remedy tells
+ * the user to set ripr.server.path, which is circular exactly when that
+ * setting is already present but its target does not resolve (#5891).
+ */
+const CONFIGURED_PATH_REMEDY =
+  'Fix or clear ripr.server.path so it points at an existing ripr server executable.';
 
 export type ServerSource = 'configured' | 'bundled' | 'managed_cache' | 'managed_download' | 'path';
 
@@ -43,6 +53,12 @@ export interface ResolvedServer {
 export interface ResolveFailure {
   readonly message: string;
   readonly detail: string;
+  /**
+   * Replacement guidance for the generic missing-server remedy. Set when the
+   * generic "set ripr.server.path" advice would be circular: the setting is
+   * present but its target failed resolution (#5891).
+   */
+  readonly remedy?: string;
 }
 
 export interface ServerResolverRuntime {
@@ -65,7 +81,17 @@ export async function resolveServer(
 ): Promise<ResolvedServer | ResolveFailure> {
   const configuredPath = config.serverPath.trim();
   if (configuredPath.length > 0) {
-    return runtime.probeCandidate(configuredPath, 'configured', `configured ripr.server.path ${configuredPath}`, false, 'unmanaged');
+    const configuredResult = await runtime.probeCandidate(
+      configuredPath,
+      'configured',
+      `configured ripr.server.path ${configuredPath}`,
+      false,
+      'unmanaged'
+    );
+    if (isResolved(configuredResult)) {
+      return configuredResult;
+    }
+    return { ...configuredResult, remedy: CONFIGURED_PATH_REMEDY };
   }
 
   const platform = currentRiprPlatform();
@@ -266,7 +292,24 @@ export function probeServerVersion(
 
     child.once('exit', (wrapperCode) => {
       const code = probeProcessExitCode(child, wrapperCode);
+      // The win32 wrapper reports a target that could not start through its
+      // typed marker; name the real cause instead of a bogus exit code (#5891).
+      const startFailure = probeProcessStartFailure(child);
+      if (startFailure) {
+        finish({ message: `${detail} could not start.`, detail: startFailure });
+        return;
+      }
       if (code === 0) {
+        if (process.platform === 'win32' && probeWrapperReportedExitCode(child) === undefined) {
+          // A completed win32 probe run always prints its exit-code marker.
+          // Exit 0 with no marker means the probe never ran to completion,
+          // so it cannot count as a passed version check (#5891).
+          finish({
+            message: `${detail} could not start.`,
+            detail: `The ${command} --version probe wrapper exited with code 0 without reporting a probe exit code; the probe process never ran to completion.`
+          });
+          return;
+        }
         finish({
           binaryVersion: firstOutputLine(stdoutChunks, stderrChunks)
         });

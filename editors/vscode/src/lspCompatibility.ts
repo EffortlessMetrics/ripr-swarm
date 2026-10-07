@@ -4,7 +4,9 @@ import * as crypto from 'crypto';
 const DEFAULT_PROBE_TIMEOUT_MS = 5000;
 const MAX_MESSAGE_BYTES = 1024 * 1024;
 const PROBE_EXIT_CODE_MARKER = '__RIPR_PROBE_EXIT_CODE__';
+const PROBE_START_FAILURE_MARKER = '__RIPR_PROBE_ERROR__';
 const probeExitCodes = new WeakMap<cp.ChildProcess, number>();
+const probeStartFailures = new WeakMap<cp.ChildProcess, string>();
 
 export type RequiredLspCapability =
   | 'textDocumentSync'
@@ -174,10 +176,21 @@ public static class RiprProbeJob {
             }
             string exitNonce = Environment.GetEnvironmentVariable("RIPR_PROBE_EXIT_NONCE") ?? "";
             start.EnvironmentVariables.Remove("RIPR_PROBE_EXIT_NONCE");
-            using (var process = new Process { StartInfo = start }) {
+            Process process;
+            try {
+                process = new Process { StartInfo = start };
                 if (!process.Start()) {
+                    process.Dispose();
                     throw new InvalidOperationException("Probe process did not start.");
                 }
+            } catch (Exception startFailure) {
+                // A missing or unstartable target throws here; without a typed
+                // marker the wrapper used to exit 0 silently and the resolver
+                // misread the candidate as LSP-incompatible (#5891).
+                ReportProbeStartFailure(exitNonce, startFailure);
+                return 3;
+            }
+            using (process) {
                 var input = StartPump(Console.OpenStandardInput(), process.StandardInput.BaseStream, true);
                 var output = StartPump(process.StandardOutput.BaseStream, Console.OpenStandardOutput(), false);
                 var error = StartPump(process.StandardError.BaseStream, Console.OpenStandardError(), false);
@@ -195,6 +208,15 @@ public static class RiprProbeJob {
         } finally {
             Close(job);
         }
+    }
+
+    private static void ReportProbeStartFailure(string exitNonce, Exception startFailure) {
+        string message = startFailure != null && !string.IsNullOrEmpty(startFailure.Message)
+            ? startFailure.Message
+            : "the probe process did not start";
+        Console.Error.WriteLine("__RIPR_PROBE_ERROR__" + exitNonce + "=start_failed: " + message);
+        Console.Error.WriteLine("__RIPR_PROBE_EXIT_CODE__" + exitNonce + "=3");
+        Console.Error.Flush();
     }
 
     private static Thread StartPump(System.IO.Stream source, System.IO.Stream destination, bool closeDestination) {
@@ -266,6 +288,15 @@ export async function probeStandardLspCompatibility(
     child.once('exit', (wrapperCode, signal) => {
       const code = probeProcessExitCode(child, wrapperCode);
       if (settled) {
+        return;
+      }
+      // On win32 a target that cannot start never produces a child 'error'
+      // event: the wrapper itself reports the failure through its typed
+      // marker, so surface the real cause under the same spawn_failure kind
+      // the POSIX error path uses (#5891).
+      const startFailure = probeProcessStartFailure(child);
+      if (startFailure) {
+        fail('spawn_failure', startFailure);
         return;
       }
       if (phase === 'exit' && code === 0 && evidence) {
@@ -632,6 +663,10 @@ export function spawnProbeProcess(
       if (match) {
         probeExitCodes.set(child, Number(match[1]));
       }
+      const failure = new RegExp(`${PROBE_START_FAILURE_MARKER}${exitNonce}=start_failed: (.*)`).exec(stderr);
+      if (failure) {
+        probeStartFailures.set(child, failure[1].trim());
+      }
       if (stderr.length > 4096) {
         stderr = stderr.slice(-4096);
       }
@@ -647,6 +682,26 @@ export function spawnProbeProcess(
 
 export function probeProcessExitCode(child: cp.ChildProcess, wrapperCode: number | null): number | null {
   return probeExitCodes.get(child) ?? wrapperCode;
+}
+
+/**
+ * The exit code the Windows wrapper itself reported through its exit-code
+ * marker, or undefined when no marker was seen. On win32 a completed probe
+ * run always prints the marker, so a wrapper exit of 0 with no marker means
+ * the probe never ran to completion and its code is untrustworthy (#5891).
+ */
+export function probeWrapperReportedExitCode(child: cp.ChildProcess): number | undefined {
+  return probeExitCodes.get(child);
+}
+
+/**
+ * The start-failure cause the Windows wrapper reported for this probe, if
+ * any. On win32 a missing or unstartable target throws inside the wrapper
+ * before any child process exists, so this typed marker is the only channel
+ * that names the real cause (#5891).
+ */
+export function probeProcessStartFailure(child: cp.ChildProcess): string | undefined {
+  return probeStartFailures.get(child);
 }
 
 function isObject(value: unknown): value is Record<string, unknown> {

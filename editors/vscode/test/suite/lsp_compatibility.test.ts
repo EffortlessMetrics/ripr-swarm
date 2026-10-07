@@ -55,6 +55,20 @@ suite('Standard LSP compatibility probe', () => {
     assert.ok(result.status === 'incompatible' && ['framing_failure', 'process_failure'].includes(result.kind));
   });
 
+  test('a probe target that cannot start is a spawn failure naming the cause', async function () {
+    // #5891: on win32 the PowerShell wrapper used to swallow the start
+    // exception for a nonexistent target, exit 0, and read back as a
+    // process failure with a nonsensical code 0.
+    this.timeout(25_000);
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ripr-lsp-missing-'));
+    temporaryRoots.push(root);
+    const missing = path.join(root, 'no-such-ripr.exe');
+    const result = await probeStandardLspCompatibility(missing, false, fakeProbeTimeoutMs);
+    assert.strictEqual(result.status, 'incompatible', JSON.stringify(result));
+    assert.strictEqual(result.status === 'incompatible' ? result.kind : undefined, 'spawn_failure');
+    assert.ok(result.status === 'incompatible' && result.detail.length > 0, JSON.stringify(result));
+  });
+
   test('an initialize capability observer failure settles as a process failure', async () => {
     const fake = fakeServer('valid');
     const result = await probeStandardLspCompatibility(fake.command, fake.useShell, fakeProbeTimeoutMs, () => {
