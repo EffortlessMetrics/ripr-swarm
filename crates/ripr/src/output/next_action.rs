@@ -155,22 +155,38 @@ fn bind_route_root(route: &str, bound: Option<&str>) -> String {
     if tokens.contains(&"--root") {
         return route.to_string();
     }
-    let splice_at = if tokens.get(1) == Some(&"agent") {
+    let after_words = if tokens.get(1) == Some(&"agent") {
         3
     } else {
         2
     };
-    if tokens.len() < splice_at {
+    if tokens.len() < after_words {
         return route.to_string();
     }
-    let mut bound_tokens: Vec<String> = tokens[..splice_at]
-        .iter()
-        .map(|token| token.to_string())
-        .collect();
-    bound_tokens.push("--root".to_string());
-    bound_tokens.push(shell_arg(bound));
-    bound_tokens.extend(tokens[splice_at..].iter().map(|token| token.to_string()));
-    bound_tokens.join(" ")
+    // Splice at a byte offset instead of rejoining tokens: quoted arguments
+    // may carry significant interior whitespace that a split/join would
+    // collapse.
+    let mut offset = 0;
+    for _ in 0..after_words {
+        while trimmed[offset..].starts_with(char::is_whitespace) {
+            offset += 1;
+        }
+        while offset < trimmed.len() && !trimmed[offset..].starts_with(char::is_whitespace) {
+            offset += trimmed[offset..]
+                .chars()
+                .next()
+                .map_or(1, |ch| ch.len_utf8());
+        }
+    }
+    if offset == 0 || offset > trimmed.len() {
+        return route.to_string();
+    }
+    format!(
+        "{} --root {}{}",
+        &trimmed[..offset],
+        shell_arg(bound),
+        &trimmed[offset..]
+    )
 }
 
 /// The paired PowerShell form of one rendered route for plain-text paste
@@ -569,6 +585,14 @@ mod tests {
         );
         assert!(bound.contains(&expected), "{bound}");
         assert!(!bound.contains(&format!("; see {rootless}")), "{bound}");
+        // Interior whitespace inside quoted arguments survives the splice
+        // byte-for-byte.
+        let spaced = stopped_action(NextActionStop::ProvideInput {
+            input: "readiness".to_string(),
+            detail_route: "ripr agent packet  --seam-id 'a  b' --json".to_string(),
+        })?;
+        let bound = render_next_action_human_at_root(&spaced, Path::new("/repo/checkout"));
+        assert!(bound.contains("--seam-id 'a  b' --json"), "{bound}");
         // A hostile root (apostrophe) pairs the bash route with its
         // PowerShell spelling on the next line, the plain-text convention.
         let hostile = render_next_action_human_at_root(&action, Path::new("/repo/check'out"));
