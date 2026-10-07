@@ -484,7 +484,7 @@ fn may_be_unreached(
     path: &Path,
     mentioned: &MentionedModules,
     manifests: &mut BTreeMap<PathBuf, bool>,
-    discovery_off: &mut BTreeMap<PathBuf, bool>,
+    discovery_off: &mut BTreeMap<PathBuf, Option<bool>>,
 ) -> bool {
     let Some(file_name) = path.file_name().and_then(|name| name.to_str()) else {
         return false;
@@ -508,38 +508,39 @@ fn may_be_unreached(
     // `src/tests/x.rs` sits under a module directory named `tests`, not a
     // target directory: with no manifest beside it, it is an ordinary module
     // file and takes the module-name check below (#6979).
-    let package_dir = package_dir.filter(|dir| {
-        committed_source::read_source_bytes(root, &dir.join("Cargo.toml"))
-            .ok()
-            .flatten()
-            .is_some()
-    });
     if let Some(package_dir) = package_dir {
-        return *discovery_off
+        // `None`: no manifest beside the directory, so it is not a target
+        // directory. Read through the committed-source overlay, as the walk
+        // does, so a committed-history diff sees the committed manifest.
+        let discovery = *discovery_off
             .entry(package_dir.to_path_buf())
             .or_insert_with(|| {
                 // The same reading `evidence_roots` applies: only an explicit
-                // `auto* = false` turns discovery off. An unreadable or
-                // unparsable manifest leaves the walk nothing to prove.
-                // Read through the committed-source overlay, as the walk does,
-                // so a committed-history diff sees the committed manifest.
+                // `auto* = false` turns discovery off. An unparsable manifest
+                // leaves the walk nothing to prove.
                 committed_source::read_source_bytes(root, &package_dir.join("Cargo.toml"))
                     .ok()
                     .flatten()
-                    .and_then(|bytes| String::from_utf8(bytes).ok())
-                    .and_then(|text| toml::from_str::<toml::Value>(&text).ok())
-                    .is_some_and(|manifest| {
-                        let package = manifest.get("package");
-                        ["autotests", "autobenches", "autoexamples"]
-                            .iter()
-                            .any(|key| {
-                                package
-                                    .and_then(|package| package.get(*key))
-                                    .and_then(toml::Value::as_bool)
-                                    == Some(false)
+                    .map(|bytes| {
+                        String::from_utf8(bytes)
+                            .ok()
+                            .and_then(|text| toml::from_str::<toml::Value>(&text).ok())
+                            .is_some_and(|manifest| {
+                                let package = manifest.get("package");
+                                ["autotests", "autobenches", "autoexamples"]
+                                    .iter()
+                                    .any(|key| {
+                                        package
+                                            .and_then(|package| package.get(*key))
+                                            .and_then(toml::Value::as_bool)
+                                            == Some(false)
+                                    })
                             })
                     })
             });
+        if let Some(off) = discovery {
+            return off;
+        }
     }
     if parent_name == Some("bin") && grandparent_name == Some("src") {
         return false;

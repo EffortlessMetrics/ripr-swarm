@@ -777,7 +777,7 @@ where
 /// ancestors) is not the owner either: like the manifest search, the
 /// layout search never leaves the analyzed workspace.
 pub(super) fn owning_package_dir(workspace_root: &Path, anchored: &Path) -> Option<PathBuf> {
-    package_root_of(anchored)
+    package_root_of(workspace_root, anchored)
         .filter(|dir| dir.starts_with(workspace_root))
         .or_else(|| nearest_manifest_dir(workspace_root, anchored))
 }
@@ -812,18 +812,24 @@ pub(super) fn nearest_manifest_dir(workspace_root: &Path, file: &Path) -> Option
 
 /// The package root owning `file`: the nearest ancestor directory that
 /// starts a Cargo source layout (`src/`, `tests/`, `benches/`,
-/// `examples/` — mirroring `workspace::classify::package_root`).
+/// `examples/`; `workspace::classify::package_root` is the path-only twin).
 ///
 /// A `tests/`, `benches/` or `examples/` directory only starts a layout when
-/// a manifest sits beside it. Without one it is an ordinary module
+/// a manifest sits beside it (checked on disk; the overlay-aware twin is in
+/// `may_be_unreached`). Without one it is an ordinary module
 /// directory (`src/tests/` holds `#[cfg(test)] mod tests;`, #6979), so the
 /// search keeps climbing to the real package. If nothing better is found the
 /// first such candidate is kept, so a tree with no manifests at all resolves
-/// as it did before.
-fn package_root_of(file: &Path) -> Option<PathBuf> {
+/// as it did before. The climb never leaves `floor` (the analyzed root): a
+/// root such as `<tmp>/tests/fixtures/app` has `tests` among its own
+/// ancestors, which must not become the owner or hide the fallback inside it.
+fn package_root_of(floor: &Path, file: &Path) -> Option<PathBuf> {
     let mut parent = file.parent()?;
     let mut manifestless: Option<PathBuf> = None;
     loop {
+        if !parent.starts_with(floor) {
+            return manifestless;
+        }
         let name = parent
             .file_name()
             .map(|name| name.to_string_lossy().to_string())
@@ -1006,19 +1012,46 @@ mod extraction {
     #[test]
     fn package_root_resolution_covers_source_layouts() {
         assert_eq!(
-            package_root_of(Path::new("/ws/pkg-a/src/lib.rs")),
+            package_root_of(Path::new("/ws"), Path::new("/ws/pkg-a/src/lib.rs")),
             Some(PathBuf::from("/ws/pkg-a"))
         );
         assert_eq!(
-            package_root_of(Path::new("/ws/pkg-a/tests/it.rs")),
+            package_root_of(Path::new("/ws"), Path::new("/ws/pkg-a/tests/it.rs")),
             Some(PathBuf::from("/ws/pkg-a"))
         );
         assert_eq!(
-            package_root_of(Path::new("/ws/pkg-a/benches/perf.rs")),
+            package_root_of(Path::new("/ws"), Path::new("/ws/pkg-a/benches/perf.rs")),
             Some(PathBuf::from("/ws/pkg-a"))
         );
         // A file with no Cargo source-layout ancestor has no package root.
-        assert_eq!(package_root_of(Path::new("/ws/loose.rs")), None);
+        assert_eq!(
+            package_root_of(Path::new("/ws"), Path::new("/ws/loose.rs")),
+            None
+        );
+    }
+
+    #[test]
+    fn package_root_of_climbs_past_manifestless_target_named_directories() -> Result<(), String> {
+        // #6979: `pkg/src/tests/x.rs` belongs to `pkg`, not `pkg/src`; a root
+        // that itself sits under a `tests/` directory keeps its own fallback.
+        let temp = unique_workspace("package-root-tests-module");
+        let pkg = temp.join("pkg");
+        std::fs::create_dir_all(pkg.join("src").join("tests")).map_err(|err| err.to_string())?;
+        std::fs::create_dir_all(pkg.join("tests")).map_err(|err| err.to_string())?;
+        std::fs::write(pkg.join("Cargo.toml"), "[package]\nname = 'pkg'\n")
+            .map_err(|err| err.to_string())?;
+        let module = package_root_of(&temp, &pkg.join("src").join("tests").join("x.rs"));
+        let target = package_root_of(&temp, &pkg.join("tests").join("it.rs"));
+        let app = temp.join("tests").join("fixtures").join("app");
+        std::fs::create_dir_all(app.join("tests")).map_err(|err| err.to_string())?;
+        let bounded = package_root_of(&app, &app.join("tests").join("it.rs"));
+        let owned = owning_package_dir(&app, &app.join("tests").join("it.rs"));
+        let _ = std::fs::remove_dir_all(&temp);
+        assert_eq!(module, Some(pkg.clone()));
+        assert_eq!(target, Some(pkg));
+        assert_eq!(bounded, Some(app.clone()));
+        assert_eq!(owned, Some(app));
+        Ok(())
     }
 
     #[test]
