@@ -20607,6 +20607,55 @@ where
     }
 }
 
+/// Send one `workspace/diagnostic` pull and read the response, answering
+/// any `window/workDoneProgress/create` request arriving in between.
+/// Returns the response `result` payload (the workspace report object).
+async fn framed_pull_workspace_report<R, W>(
+    reader: &mut R,
+    writer: &mut W,
+    id: u64,
+) -> Result<serde_json::Value, String>
+where
+    R: AsyncRead + Unpin,
+    W: AsyncWrite + Unpin,
+{
+    write_lsp_message(
+        writer,
+        serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "method": "workspace/diagnostic",
+            "params": { "previousResultIds": [] }
+        }),
+    )
+    .await?;
+    loop {
+        let message = read_lsp_message(reader).await?;
+        if message.get("method").and_then(serde_json::Value::as_str)
+            == Some("window/workDoneProgress/create")
+        {
+            let request_id = message
+                .get("id")
+                .cloned()
+                .ok_or_else(|| "workDoneProgress/create request carried no id".to_string())?;
+            write_lsp_message(
+                writer,
+                serde_json::json!({"jsonrpc": "2.0", "id": request_id, "result": null}),
+            )
+            .await?;
+            continue;
+        }
+        if message.get("method").is_none()
+            && message.get("id").and_then(serde_json::Value::as_u64) == Some(id)
+        {
+            if message.get("error").is_some() {
+                return Err(format!("workspace diagnostic pull failed: {message}"));
+            }
+            return Ok(message["result"].clone());
+        }
+    }
+}
+
 #[test]
 #[serial]
 fn framed_lsp_saved_workspace_session_serves_saved_state_across_dirty_save() -> Result<(), String> {
@@ -20953,6 +21002,515 @@ fn framed_lsp_saved_workspace_session_serves_saved_state_across_dirty_save() -> 
                 return Err("LSP server did not stop after exit notification".to_string());
             }
         }
+        drop(temp);
+        Ok(())
+    })
+}
+
+// ---- #1747: document version binding on push and workspace pull ----
+
+/// Collect the `version` values of every `publishDiagnostics` notification
+/// for `uri`, in arrival order. A missing field decodes as null.
+fn published_versions_for_uri(
+    notifications: &[serde_json::Value],
+    uri: &str,
+) -> Vec<serde_json::Value> {
+    notifications
+        .iter()
+        .filter(|message| {
+            message.get("method").and_then(serde_json::Value::as_str)
+                == Some("textDocument/publishDiagnostics")
+                && message["params"]["uri"].as_str() == Some(uri)
+        })
+        .map(|message| {
+            message["params"]
+                .get("version")
+                .cloned()
+                .unwrap_or_default()
+        })
+        .collect()
+}
+
+/// Shut a framed session down cleanly: shutdown → exit → server stop.
+async fn shutdown_framed_session<R, W>(
+    reader: &mut R,
+    writer: &mut W,
+    server_task: &mut tokio::task::JoinHandle<()>,
+    id: u64,
+) -> Result<(), String>
+where
+    R: AsyncRead + Unpin,
+    W: AsyncWrite + Unpin,
+{
+    write_lsp_message(
+        writer,
+        serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "method": "shutdown",
+            "params": null
+        }),
+    )
+    .await?;
+    let shutdown = read_lsp_response(reader, id).await?;
+    if shutdown.get("error").is_some() {
+        return Err(format!("shutdown failed: {shutdown}"));
+    }
+    write_lsp_message(
+        writer,
+        serde_json::json!({"jsonrpc": "2.0", "method": "exit", "params": null}),
+    )
+    .await?;
+    writer
+        .shutdown()
+        .await
+        .map_err(|err| format!("failed to close test client: {err}"))?;
+    match tokio::time::timeout(Duration::from_secs(2), &mut *server_task).await {
+        Ok(join_result) => {
+            join_result.map_err(|err| format!("LSP server task failed: {err}"))?;
+        }
+        Err(_) => {
+            server_task.abort();
+            return Err("LSP server did not stop after exit notification".to_string());
+        }
+    }
+    Ok(())
+}
+
+#[test]
+#[serial]
+fn framed_push_diagnostics_bind_the_observed_document_version() -> Result<(), String> {
+    // #1747: a client that negotiates `versionSupport` receives the
+    // observed document version on every push publication for that
+    // document, so stale deliveries are recognizable on the wire.
+    work_done_progress_runtime()?.block_on(async {
+        let temp = boundary_gap_git_fixture_root("push-version-bound")?;
+        let root = temp.path().to_path_buf();
+        let lib_path = root.join("src/lib.rs");
+        let saved_text = std::fs::read_to_string(&lib_path)
+            .map_err(|err| format!("read fixture lib.rs failed: {err}"))?;
+        let text_uri = file_uri_for_path(&lib_path)?.as_str().to_string();
+
+        let (client_io, server_io) = tokio::io::duplex(64 * 1024);
+        let (mut client_read, mut client_write) = tokio::io::split(client_io);
+        let (server_read, server_write) = tokio::io::split(server_io);
+        let (service, socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
+        let mut server_task = tokio::spawn(async move {
+            Server::new(server_read, server_write, socket)
+                .serve(service)
+                .await;
+        });
+
+        let root_uri = file_uri_for_path(&root)?;
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "processId": null,
+                    "rootUri": root_uri.as_str(),
+                    "initializationOptions": {
+                        "baseRef": "HEAD",
+                        "checkMode": "instant",
+                        "diagnosticProfile": "full"
+                    },
+                    "capabilities": {
+                        "textDocument": {
+                            "publishDiagnostics": {"versionSupport": true}
+                        },
+                        "window": {"workDoneProgress": true}
+                    }
+                }
+            }),
+        )
+        .await?;
+        let initialize = read_lsp_response(&mut client_read, 1).await?;
+        if initialize.get("error").is_some() {
+            return Err(format!("initialize failed: {initialize}"));
+        }
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({"jsonrpc": "2.0", "method": "initialized", "params": {}}),
+        )
+        .await?;
+
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "textDocument/didOpen",
+                "params": {
+                    "textDocument": {
+                        "uri": text_uri,
+                        "languageId": "rust",
+                        "version": 7,
+                        "text": saved_text
+                    }
+                }
+            }),
+        )
+        .await?;
+        read_lsp_notifications_until_refresh_settled(
+            &mut client_read,
+            &mut client_write,
+            "ripr analysis refresh completed in",
+            "seams_deferred",
+        )
+        .await?;
+
+        // The didOpen refresh analyzes an empty diff, so nothing publishes
+        // yet. Make the boundary edit the analyzed saved content: didChange
+        // moves the buffer (and the observed version) to the dirty text,
+        // the write persists it, and didSave schedules the refresh that
+        // publishes diagnostics for the opened document.
+        let dirty_text = saved_text.replace(">=", ">");
+        if dirty_text == saved_text {
+            return Err(
+                "saved-workspace fixture no longer carries the equality boundary".to_string(),
+            );
+        }
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "textDocument/didChange",
+                "params": {
+                    "textDocument": { "uri": text_uri, "version": 8 },
+                    "contentChanges": [{ "text": dirty_text }]
+                }
+            }),
+        )
+        .await?;
+        std::fs::write(&lib_path, &dirty_text)
+            .map_err(|err| format!("mirror save failed: {err}"))?;
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "textDocument/didSave",
+                "params": {
+                    "textDocument": { "uri": text_uri },
+                    "text": dirty_text
+                }
+            }),
+        )
+        .await?;
+        let notifications = read_lsp_notifications_until_refresh_settled(
+            &mut client_read,
+            &mut client_write,
+            "ripr analysis refresh completed in",
+            "seams_deferred",
+        )
+        .await?;
+
+        let versions = published_versions_for_uri(&notifications, &text_uri);
+        if versions.is_empty() {
+            return Err(format!(
+                "the didSave refresh must publish diagnostics for the opened document: {notifications:?}"
+            ));
+        }
+        if !versions.iter().all(|version| version.as_i64() == Some(8)) {
+            return Err(format!(
+                "every push publication must bind the observed version 8: {versions:?}"
+            ));
+        }
+
+        shutdown_framed_session(&mut client_read, &mut client_write, &mut server_task, 2).await?;
+        drop(temp);
+        Ok(())
+    })
+}
+
+#[test]
+#[serial]
+fn framed_push_diagnostics_omit_version_without_negotiation() -> Result<(), String> {
+    // #1747 negative: without `versionSupport` the push publication
+    // carries no version — the fail-closed wire shape is unchanged.
+    work_done_progress_runtime()?.block_on(async {
+        let temp = boundary_gap_git_fixture_root("push-version-unnegotiated")?;
+        let root = temp.path().to_path_buf();
+        let lib_path = root.join("src/lib.rs");
+        let saved_text = std::fs::read_to_string(&lib_path)
+            .map_err(|err| format!("read fixture lib.rs failed: {err}"))?;
+        let text_uri = file_uri_for_path(&lib_path)?.as_str().to_string();
+
+        let (client_io, server_io) = tokio::io::duplex(64 * 1024);
+        let (mut client_read, mut client_write) = tokio::io::split(client_io);
+        let (server_read, server_write) = tokio::io::split(server_io);
+        let (service, socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
+        let mut server_task = tokio::spawn(async move {
+            Server::new(server_read, server_write, socket)
+                .serve(service)
+                .await;
+        });
+
+        let root_uri = file_uri_for_path(&root)?;
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "processId": null,
+                    "rootUri": root_uri.as_str(),
+                    "initializationOptions": {
+                        "baseRef": "HEAD",
+                        "checkMode": "instant",
+                        "diagnosticProfile": "full"
+                    },
+                    "capabilities": {
+                        "window": {"workDoneProgress": true}
+                    }
+                }
+            }),
+        )
+        .await?;
+        let initialize = read_lsp_response(&mut client_read, 1).await?;
+        if initialize.get("error").is_some() {
+            return Err(format!("initialize failed: {initialize}"));
+        }
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({"jsonrpc": "2.0", "method": "initialized", "params": {}}),
+        )
+        .await?;
+
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "textDocument/didOpen",
+                "params": {
+                    "textDocument": {
+                        "uri": text_uri,
+                        "languageId": "rust",
+                        "version": 7,
+                        "text": saved_text
+                    }
+                }
+            }),
+        )
+        .await?;
+        read_lsp_notifications_until_refresh_settled(
+            &mut client_read,
+            &mut client_write,
+            "ripr analysis refresh completed in",
+            "seams_deferred",
+        )
+        .await?;
+
+        // Same analyzed-save flow as the positive test: the didOpen
+        // refresh sees an empty diff and publishes nothing.
+        let dirty_text = saved_text.replace(">=", ">");
+        if dirty_text == saved_text {
+            return Err(
+                "saved-workspace fixture no longer carries the equality boundary".to_string(),
+            );
+        }
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "textDocument/didChange",
+                "params": {
+                    "textDocument": { "uri": text_uri, "version": 8 },
+                    "contentChanges": [{ "text": dirty_text }]
+                }
+            }),
+        )
+        .await?;
+        std::fs::write(&lib_path, &dirty_text)
+            .map_err(|err| format!("mirror save failed: {err}"))?;
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "textDocument/didSave",
+                "params": {
+                    "textDocument": { "uri": text_uri },
+                    "text": dirty_text
+                }
+            }),
+        )
+        .await?;
+        let notifications = read_lsp_notifications_until_refresh_settled(
+            &mut client_read,
+            &mut client_write,
+            "ripr analysis refresh completed in",
+            "seams_deferred",
+        )
+        .await?;
+
+        let versions = published_versions_for_uri(&notifications, &text_uri);
+        if versions.is_empty() {
+            return Err(format!(
+                "the didSave refresh must publish diagnostics for the opened document: {notifications:?}"
+            ));
+        }
+        if !versions.iter().all(serde_json::Value::is_null) {
+            return Err(format!(
+                "no push publication may bind a version without negotiation: {versions:?}"
+            ));
+        }
+
+        shutdown_framed_session(&mut client_read, &mut client_write, &mut server_task, 2).await?;
+        drop(temp);
+        Ok(())
+    })
+}
+
+#[test]
+#[serial]
+fn framed_workspace_pull_binds_the_observed_document_version() -> Result<(), String> {
+    // #1747: the workspace pull report binds the observed document
+    // version for a client that negotiated `versionSupport`.
+    work_done_progress_runtime()?.block_on(async {
+        let temp = boundary_gap_git_fixture_root("pull-version-bound")?;
+        let root = temp.path().to_path_buf();
+        let lib_path = root.join("src/lib.rs");
+        let saved_text = std::fs::read_to_string(&lib_path)
+            .map_err(|err| format!("read fixture lib.rs failed: {err}"))?;
+        let text_uri = file_uri_for_path(&lib_path)?.as_str().to_string();
+
+        let (client_io, server_io) = tokio::io::duplex(64 * 1024);
+        let (mut client_read, mut client_write) = tokio::io::split(client_io);
+        let (server_read, server_write) = tokio::io::split(server_io);
+        let (service, socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
+        let mut server_task = tokio::spawn(async move {
+            Server::new(server_read, server_write, socket)
+                .serve(service)
+                .await;
+        });
+
+        let root_uri = file_uri_for_path(&root)?;
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "processId": null,
+                    "rootUri": root_uri.as_str(),
+                    "initializationOptions": {
+                        "baseRef": "HEAD",
+                        "checkMode": "instant",
+                        "diagnosticProfile": "full"
+                    },
+                    "capabilities": {
+                        "textDocument": {
+                            "diagnostic": {"dynamicRegistration": false},
+                            "publishDiagnostics": {"versionSupport": true}
+                        },
+                        "window": {"workDoneProgress": true}
+                    }
+                }
+            }),
+        )
+        .await?;
+        let initialize = read_lsp_response(&mut client_read, 1).await?;
+        if initialize.get("error").is_some() {
+            return Err(format!("initialize failed: {initialize}"));
+        }
+        if initialize["result"]["capabilities"]["diagnosticProvider"].is_null() {
+            return Err(format!(
+                "the pull-diagnostic route must be negotiated: {initialize}"
+            ));
+        }
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({"jsonrpc": "2.0", "method": "initialized", "params": {}}),
+        )
+        .await?;
+
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "textDocument/didOpen",
+                "params": {
+                    "textDocument": {
+                        "uri": text_uri,
+                        "languageId": "rust",
+                        "version": 7,
+                        "text": saved_text
+                    }
+                }
+            }),
+        )
+        .await?;
+        read_lsp_notifications_until_refresh_settled(
+            &mut client_read,
+            &mut client_write,
+            "ripr analysis refresh completed in",
+            "seams_deferred",
+        )
+        .await?;
+
+        // The didOpen refresh sees an empty diff, so the workspace report
+        // would not cover the opened document yet. Analyze the boundary
+        // edit first (same flow as the push tests).
+        let dirty_text = saved_text.replace(">=", ">");
+        if dirty_text == saved_text {
+            return Err(
+                "saved-workspace fixture no longer carries the equality boundary".to_string(),
+            );
+        }
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "textDocument/didChange",
+                "params": {
+                    "textDocument": { "uri": text_uri, "version": 8 },
+                    "contentChanges": [{ "text": dirty_text }]
+                }
+            }),
+        )
+        .await?;
+        std::fs::write(&lib_path, &dirty_text)
+            .map_err(|err| format!("mirror save failed: {err}"))?;
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "textDocument/didSave",
+                "params": {
+                    "textDocument": { "uri": text_uri },
+                    "text": dirty_text
+                }
+            }),
+        )
+        .await?;
+        read_lsp_notifications_until_refresh_settled(
+            &mut client_read,
+            &mut client_write,
+            "ripr analysis refresh completed in",
+            "seams_deferred",
+        )
+        .await?;
+
+        let report = framed_pull_workspace_report(&mut client_read, &mut client_write, 2).await?;
+        let items = report
+            .get("items")
+            .and_then(serde_json::Value::as_array)
+            .ok_or_else(|| format!("workspace report carried no items array: {report}"))?;
+        let entry = items
+            .iter()
+            .find(|item| {
+                item.get("uri").and_then(serde_json::Value::as_str) == Some(text_uri.as_str())
+            })
+            .ok_or_else(|| format!("workspace report must cover the opened document: {report}"))?;
+        if entry.get("version").and_then(serde_json::Value::as_i64) != Some(8) {
+            return Err(format!(
+                "the workspace pull entry must bind the observed version 8: {entry}"
+            ));
+        }
+
+        shutdown_framed_session(&mut client_read, &mut client_write, &mut server_task, 3).await?;
         drop(temp);
         Ok(())
     })
