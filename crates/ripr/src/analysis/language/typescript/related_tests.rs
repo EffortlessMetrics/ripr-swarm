@@ -660,7 +660,7 @@ pub(crate) fn related_test_candidates<'a>(
         .iter()
         .filter_map(|test| {
             owner_call_relation(test, owner, reexport_index, alias_map, workspace_root)
-                .map(|relation| TypeScriptRelatedCandidate { test, relation })
+                .map(|relation| related_candidate(test, relation, owner, alias_map, workspace_root))
         })
         .collect();
     // Same-module entry reach is admitted only when no test calls the owner
@@ -672,9 +672,14 @@ pub(crate) fn related_test_candidates<'a>(
             .filter(|test| {
                 module_entry_relation(test, owner, reexport_index, alias_map, workspace_root)
             })
-            .map(|test| TypeScriptRelatedCandidate {
-                test,
-                relation: TypeScriptRelationKind::ModuleEntryCall,
+            .map(|test| {
+                related_candidate(
+                    test,
+                    TypeScriptRelationKind::ModuleEntryCall,
+                    owner,
+                    alias_map,
+                    workspace_root,
+                )
             })
             .collect();
     }
@@ -683,8 +688,9 @@ pub(crate) fn related_test_candidates<'a>(
             .iter()
             .filter(in_owner_package)
             .filter_map(|test| {
-                heuristic_relation(test, owner, alias_map, workspace_root)
-                    .map(|relation| TypeScriptRelatedCandidate { test, relation })
+                heuristic_relation(test, owner, alias_map, workspace_root).map(|relation| {
+                    related_candidate(test, relation, owner, alias_map, workspace_root)
+                })
             })
             .collect();
     }
@@ -699,6 +705,9 @@ pub(crate) fn sort_related_candidates(candidates: &mut [TypeScriptRelatedCandida
             .rank()
             .cmp(&left.relation.rank())
             .then_with(|| {
+                // Candidate ordering has no changed line here, so it keeps
+                // the strength-only rank (#5525 changes the row projection,
+                // not the related-test ranking).
                 let left_rank = strongest_assertion(&left.test.assertions)
                     .map(|assertion| assertion.oracle_strength.rank())
                     .unwrap_or(0);
@@ -1527,39 +1536,80 @@ fn owner_name_destructured_from_unrelated_source(
     alias_map: Option<&TsAliasMap>,
     workspace_root: Option<&Path>,
 ) -> bool {
+    owner_name_destructure_binding_mismatch(test, owner, alias_map, workspace_root).is_some()
+}
+
+/// The strongest mismatch among the body-local destructures that bind the
+/// owner name. A `require("<path>")` source mismatches unless it resolves to
+/// the owner's module; any other initializer mismatches unless it names a
+/// namespace import of the owner's module. A specifier the resolver cannot
+/// place, or a namespace import whose source it cannot place, is
+/// `Unresolved` (#5523); every other mismatch is `Unrelated`.
+fn owner_name_destructure_binding_mismatch(
+    test: &TypeScriptTest,
+    owner: &TypeScriptOwner,
+    alias_map: Option<&TsAliasMap>,
+    workspace_root: Option<&Path>,
+) -> Option<OwnerBindingMismatch> {
+    let from_resolution = |resolution: ImportSourceResolution| match resolution {
+        ImportSourceResolution::OwnerModule => None,
+        ImportSourceResolution::OtherModule => Some(OwnerBindingMismatch::Unrelated),
+        ImportSourceResolution::Unresolved => Some(OwnerBindingMismatch::Unresolved),
+    };
     owner_name_destructure_inits(test, &owner.name)
         .iter()
-        .any(|init| {
+        .map(|init| {
             // `require("<path>")`: a shadow only when the path is NOT the
             // owner's own module.
             if let Some(source) = require_source_from_text(init) {
-                return normalized_relative_import_module(
+                return from_resolution(import_source_resolution(
                     &test.file,
                     &source,
+                    owner,
                     alias_map,
                     workspace_root,
-                )
-                .is_none_or(|module| module != normalized_module_path(&owner.file));
+                ));
+            }
+            // A dynamic `import(...)` source is never parsed, so where it
+            // points stays unknown: a shadow for the legacy answer (the
+            // assertion stays unread), but not an affirmative mismatch. The
+            // extractor is line-based, so an initializer that continues on
+            // the next line (`= await` / `=` then `import(...)`) leaves an
+            // empty remainder here: its source is unseen, hence unknown too.
+            let after_await = init.trim_start_matches("await").trim_start();
+            if after_await.is_empty() || after_await.starts_with("import(") {
+                return Some(OwnerBindingMismatch::Unresolved);
             }
             // `<namespace>` where the namespace import binds the owner's
-            // module: not a shadow. Anything else (factory call, dynamic
-            // import, an unrelated binding) is.
+            // module: not a shadow. Anything else (factory call, an
+            // unrelated binding) is.
             let init_ident: String = init
                 .chars()
                 .take_while(|ch| ch.is_ascii_alphanumeric() || *ch == '_' || *ch == '$')
                 .collect();
-            !test.imports_in_file.iter().any(|import| {
-                import.namespace
-                    && import.local == init_ident
-                    && import_source_matches_owner(
-                        import,
+            let resolutions: Vec<ImportSourceResolution> = test
+                .imports_in_file
+                .iter()
+                .filter(|import| import.namespace && import.local == init_ident)
+                .map(|import| {
+                    import_source_resolution(
                         &test.file,
+                        &import.source,
                         owner,
                         alias_map,
                         workspace_root,
                     )
-            })
+                })
+                .collect();
+            if resolutions.contains(&ImportSourceResolution::OwnerModule) {
+                None
+            } else if resolutions.contains(&ImportSourceResolution::Unresolved) {
+                Some(OwnerBindingMismatch::Unresolved)
+            } else {
+                Some(OwnerBindingMismatch::Unrelated)
+            }
         })
+        .fold(None, OwnerBindingMismatch::strongest)
 }
 
 /// #4103 shape 1 (anchor complement): a body-local destructuring that binds
@@ -1887,7 +1937,12 @@ fn heuristic_owner_supported(owner: &TypeScriptOwner) -> bool {
     )
 }
 
-/// Find related tests for `owner` in `all_tests`.
+/// Find related tests for `owner` in `all_tests`, projecting each row from
+/// its strongest assertion overall.
+///
+/// This entry point has no changed line, so no probe family: it is the
+/// test-only owner-level relation check. The classifier projects rows through
+/// [`related_tests_for_candidates`] with the changed line's family instead.
 ///
 /// `workspace_root` enables package-local ownership filtering when `Some`:
 /// tests in different packages are excluded from the candidate set.
@@ -1898,6 +1953,7 @@ fn heuristic_owner_supported(owner: &TypeScriptOwner) -> bool {
 ///
 /// `alias_map` enables tsconfig.json path alias resolution for non-relative
 /// specifiers.  Pass `None` when `resolve_tsconfig_paths` is `false` (default).
+#[cfg(test)]
 pub(crate) fn find_related_tests(
     owner: &TypeScriptOwner,
     all_tests: &[TypeScriptTest],
@@ -1905,14 +1961,37 @@ pub(crate) fn find_related_tests(
     reexport_index: &ReExportIndex,
     alias_map: Option<&TsAliasMap>,
 ) -> Vec<RelatedTest> {
-    related_test_candidates(owner, all_tests, workspace_root, reexport_index, alias_map)
-        .into_iter()
+    let candidates =
+        related_test_candidates(owner, all_tests, workspace_root, reexport_index, alias_map);
+    related_tests_for_candidates(&candidates, None)
+}
+
+/// Project the public `RelatedTest` rows for already-discovered candidates.
+///
+/// Each row's `oracle_kind`, `oracle_strength` and `oracle` text come from
+/// one assertion: the one [`select_family_relevant_assertion`] picks for
+/// `probe_family` (#5525, RIPR-SPEC-0224), filtered through the same
+/// `ts_oracle_kind_matches_seam` authority the classifier uses. A test whose
+/// assertions all observe another behavior family shows no oracle rather than
+/// the strongest wrong-family assertion. `probe_family` is `None` only where
+/// no changed line exists; every assertion then applies.
+///
+/// A candidate that does not observe an owner-name call keeps an unknown
+/// oracle, exactly as before: its assertions observe something else.
+pub(crate) fn related_tests_for_candidates(
+    candidates: &[TypeScriptRelatedCandidate<'_>],
+    probe_family: Option<&ProbeFamily>,
+) -> Vec<RelatedTest> {
+    candidates
+        .iter()
         .map(|candidate| {
-            let strongest =
-                candidate_observes_owner_call(&candidate, owner, alias_map, workspace_root)
-                    .then(|| strongest_assertion(&candidate.test.assertions))
-                    .flatten();
-            let (oracle_kind, oracle_strength, oracle_text) = match strongest {
+            let selected = candidate_observes_owner_call(candidate)
+                .then(|| {
+                    select_family_relevant_assertion(&candidate.test.assertions, probe_family)
+                        .assertion()
+                })
+                .flatten();
+            let (oracle_kind, oracle_strength, oracle_text) = match selected {
                 Some(assertion) => (
                     assertion.oracle_kind.clone(),
                     assertion.oracle_strength.clone(),
@@ -1946,17 +2025,17 @@ pub(crate) fn find_related_tests(
 /// broad `toThrow` is broad-error/weak evidence and a smoke call is smoke
 /// evidence regardless of whether the relation to the owner is anchored.
 ///
-/// Trusted relations observe the owner by construction. A relation denied by
-/// the gates still contains an owner-name call unless a gate found POSITIVE
-/// evidence that the name does not reach the owner: a body-local declaration,
-/// an unrelated import/destructure shadow, an owner-module mock, or a spy
-/// fabrication all make the assertion observe a different function or a
-/// fabricated value, so those assertions stay unclassified for the owner. A
-/// missing declaration anchor alone is unproven rather than disproven — the
-/// test really calls a function of the owner's name — so its assertion shape
-/// stays readable while the finding discloses the uncertain relation and
-/// withholds exposure credit.
-pub(crate) fn candidate_observes_owner_call(
+/// The answer is a projection of the candidate's typed owner-path
+/// disposition (#5523, [`owner_path_disposition`]), never a second gate run.
+pub(crate) fn candidate_observes_owner_call(candidate: &TypeScriptRelatedCandidate<'_>) -> bool {
+    candidate.owner_path().observes_owner_call()
+}
+
+/// The pre-#5523 `candidate_observes_owner_call` formula, frozen verbatim as
+/// a test-only parity oracle: the owner-path controls assert the typed
+/// disposition projects to exactly this answer. Production never calls it.
+#[cfg(test)]
+pub(crate) fn legacy_candidate_observes_owner_call(
     candidate: &TypeScriptRelatedCandidate<'_>,
     owner: &TypeScriptOwner,
     alias_map: Option<&TsAliasMap>,
@@ -1972,6 +2051,75 @@ pub(crate) fn candidate_observes_owner_call(
         && !owner_name_destructured_from_unrelated_source(test, owner, alias_map, workspace_root)
         && !test_mocks_owner_module(test, owner, alias_map, workspace_root)
         && !test_spies_owner_with_fabrication(test, &owner.name)
+}
+
+/// Build a candidate whose owner-path disposition comes from the same gates
+/// that assigned `relation` (#5523). Every candidate is built here.
+fn related_candidate<'a>(
+    test: &'a TypeScriptTest,
+    relation: TypeScriptRelationKind,
+    owner: &TypeScriptOwner,
+    alias_map: Option<&TsAliasMap>,
+    workspace_root: Option<&Path>,
+) -> TypeScriptRelatedCandidate<'a> {
+    let owner_path = owner_path_disposition(test, relation, owner, alias_map, workspace_root);
+    TypeScriptRelatedCandidate::with_owner_path(test, relation, owner_path)
+}
+
+/// What a candidate with `relation` establishes about the changed owner
+/// (#5523).
+///
+/// Trusted relations observe the owner by construction, and a module-entry
+/// relation has a present but per-test unresolved path. A heuristic relation
+/// with no owner-name call is proximity or name evidence only. A heuristic
+/// relation whose test does call the owner name is unanchored unless a gate
+/// found POSITIVE evidence that the name does not reach the owner: a
+/// body-local declaration, an unrelated import/destructure shadow, an
+/// owner-module mock, or a spy fabrication all make the assertion observe a
+/// different function or a fabricated value. Affirmative rejections win over
+/// an unresolved binding, which stays unknown: the resolver could not place
+/// the import or `require` specifier at all. A missing declaration anchor
+/// alone is unproven rather than disproven — the test really calls a
+/// function of the owner's name — so its assertion shape stays readable
+/// while the finding discloses the uncertain relation and withholds exposure
+/// credit.
+pub(crate) fn owner_path_disposition(
+    test: &TypeScriptTest,
+    relation: TypeScriptRelationKind,
+    owner: &TypeScriptOwner,
+    alias_map: Option<&TsAliasMap>,
+    workspace_root: Option<&Path>,
+) -> TypeScriptOwnerPathDisposition {
+    if relation == TypeScriptRelationKind::ModuleEntryCall {
+        return TypeScriptOwnerPathDisposition::ModuleEntryPath;
+    }
+    if relation.uses_oracle() {
+        return TypeScriptOwnerPathDisposition::TrustedOwnerPath;
+    }
+    if !contains_call_name(&test.body_text, &owner.name) {
+        return TypeScriptOwnerPathDisposition::HeuristicOnly;
+    }
+    if local_identifier_declared_in_test_body(&test.body_text, &owner.name) {
+        return TypeScriptOwnerPathDisposition::RejectedLocalShadow;
+    }
+    let import_binding = owner_name_import_binding_mismatch(test, owner, alias_map, workspace_root);
+    let destructure_binding =
+        owner_name_destructure_binding_mismatch(test, owner, alias_map, workspace_root);
+    if import_binding == Some(OwnerBindingMismatch::Unrelated)
+        || destructure_binding == Some(OwnerBindingMismatch::Unrelated)
+    {
+        return TypeScriptOwnerPathDisposition::RejectedUnrelatedImportOrDestructure;
+    }
+    if test_mocks_owner_module(test, owner, alias_map, workspace_root) {
+        return TypeScriptOwnerPathDisposition::RejectedOwnerModuleMock;
+    }
+    if test_spies_owner_with_fabrication(test, &owner.name) {
+        return TypeScriptOwnerPathDisposition::RejectedSpyFabrication;
+    }
+    if import_binding.is_some() || destructure_binding.is_some() {
+        return TypeScriptOwnerPathDisposition::UnresolvedAliasOrReexport;
+    }
+    TypeScriptOwnerPathDisposition::OwnerNameCallUnanchored
 }
 
 /// Map a `TypeScriptRelationKind` to the domain `(RelationReason, RelationConfidence)`.
@@ -2063,28 +2211,99 @@ fn has_call_boundary(body_text: &str, idx: usize) -> bool {
     prefix.ends_with("...")
 }
 
+/// How a binding of the owner name fails to anchor it to the owner (#5523).
+///
+/// `Unrelated` is affirmative: the binding resolves to another module, or
+/// binds a namespace or a different export. `Unresolved` is unknown: the
+/// specifier could not be resolved at all (a non-relative specifier with no
+/// alias map, or one the alias map cannot place). Both fail closed for
+/// relation credit; only the owner-path disposition tells them apart.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum OwnerBindingMismatch {
+    Unrelated,
+    Unresolved,
+}
+
+impl OwnerBindingMismatch {
+    /// Fold one more binding into the strongest mismatch seen so far: an
+    /// affirmative `Unrelated` wins over `Unresolved`.
+    fn strongest(left: Option<Self>, right: Option<Self>) -> Option<Self> {
+        match (left, right) {
+            (Some(Self::Unrelated), _) | (_, Some(Self::Unrelated)) => Some(Self::Unrelated),
+            (Some(Self::Unresolved), _) | (_, Some(Self::Unresolved)) => Some(Self::Unresolved),
+            (None, None) => None,
+        }
+    }
+}
+
+/// Where an import specifier resolves relative to the owner's module.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ImportSourceResolution {
+    OwnerModule,
+    OtherModule,
+    Unresolved,
+}
+
+fn import_source_resolution(
+    test_file: &Path,
+    source: &str,
+    owner: &TypeScriptOwner,
+    alias_map: Option<&TsAliasMap>,
+    workspace_root: Option<&Path>,
+) -> ImportSourceResolution {
+    match normalized_relative_import_module(test_file, source, alias_map, workspace_root) {
+        Some(module) if module == normalized_module_path(&owner.file) => {
+            ImportSourceResolution::OwnerModule
+        }
+        Some(_) => ImportSourceResolution::OtherModule,
+        None => ImportSourceResolution::Unresolved,
+    }
+}
+
 fn owner_name_shadowed_by_unrelated_import(
     test: &TypeScriptTest,
     owner: &TypeScriptOwner,
     alias_map: Option<&TsAliasMap>,
     workspace_root: Option<&Path>,
 ) -> bool {
+    owner_name_import_binding_mismatch(test, owner, alias_map, workspace_root).is_some()
+}
+
+/// The strongest mismatch among the file's imports that bind the owner name
+/// as their local: a namespace binding, a source that is not the owner's
+/// module, or a different export name.
+fn owner_name_import_binding_mismatch(
+    test: &TypeScriptTest,
+    owner: &TypeScriptOwner,
+    alias_map: Option<&TsAliasMap>,
+    workspace_root: Option<&Path>,
+) -> Option<OwnerBindingMismatch> {
     test.imports_in_file
         .iter()
         .filter(|import| import.local == owner.name)
-        .any(|import| {
-            import.namespace
-                || !import_source_matches_owner(
-                    import,
-                    &test.file,
-                    owner,
-                    alias_map,
-                    workspace_root,
-                )
-                || import.imported.as_deref().is_some_and(|imported| {
-                    imported != owner.name.as_str() && imported != "default"
-                })
+        .map(|import| {
+            if import.namespace {
+                return Some(OwnerBindingMismatch::Unrelated);
+            }
+            match import_source_resolution(
+                &test.file,
+                &import.source,
+                owner,
+                alias_map,
+                workspace_root,
+            ) {
+                ImportSourceResolution::Unresolved => Some(OwnerBindingMismatch::Unresolved),
+                ImportSourceResolution::OtherModule => Some(OwnerBindingMismatch::Unrelated),
+                ImportSourceResolution::OwnerModule => import
+                    .imported
+                    .as_deref()
+                    .is_some_and(|imported| {
+                        imported != owner.name.as_str() && imported != "default"
+                    })
+                    .then_some(OwnerBindingMismatch::Unrelated),
+            }
         })
+        .fold(None, OwnerBindingMismatch::strongest)
 }
 
 fn owner_export_imported_from_unrelated_source(
@@ -2127,8 +2346,8 @@ pub(crate) fn import_source_matches_owner(
     alias_map: Option<&TsAliasMap>,
     workspace_root: Option<&Path>,
 ) -> bool {
-    normalized_relative_import_module(test_file, &import.source, alias_map, workspace_root)
-        .is_some_and(|module| module == normalized_module_path(&owner.file))
+    import_source_resolution(test_file, &import.source, owner, alias_map, workspace_root)
+        == ImportSourceResolution::OwnerModule
 }
 
 /// Resolve an import specifier relative to `test_file` to a normalized module

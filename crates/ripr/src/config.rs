@@ -150,11 +150,17 @@ enabled = ["rust"]
 "#;
 
 /// Whether a `ripr.toml` entry exists at `path`, without following links.
-/// `Path::exists` follows them, so a dangling or self-referencing symlink read
-/// as "no config" and the run silently used defaults. The entry is present;
-/// reading it reports the real failure.
-fn config_entry_present(path: &Path) -> bool {
+/// `Path::exists` and `Path::is_file` follow them, so a dangling or
+/// self-referencing symlink read as "no config" and consumers silently used
+/// built-in defaults. The entry is present; reading it reports the real failure.
+pub(crate) fn config_entry_present(path: &Path) -> bool {
     std::fs::symlink_metadata(path).is_ok()
+}
+
+/// Whether the analyzed root has a `ripr.toml` directory entry. Presence uses
+/// [`config_entry_present`]: a dangling link is present, not absent.
+pub(crate) fn config_present_at_root(root: &Path) -> bool {
+    config_entry_present(&root.join(CONFIG_FILE_NAME))
 }
 
 fn discover_config_path(root: &Path) -> Option<PathBuf> {
@@ -208,6 +214,17 @@ pub(crate) fn load_for_root(root: &Path) -> Result<RiprConfig, String> {
     Ok(config)
 }
 
+/// Whether config discovery would find a `ripr.toml` entry for this root
+/// (directly, or in an ancestor up to the repository boundary). Consumers
+/// that report the configuration posture need this when [`load_for_root`]
+/// fails: a present-but-unloadable entry is detected-not-loaded, while a
+/// failure with no config entry anywhere (for example the marker-based
+/// language auto-enable refusing an unavailable language) leaves the file
+/// posture at built-in defaults (#6825).
+pub(crate) fn config_discovered_for_root(root: &Path) -> bool {
+    discover_config_path(root).is_some()
+}
+
 fn default_config_for_root(root: &Path) -> Result<RiprConfig, String> {
     let mut config = RiprConfig::default();
     if detect_python_project(root) {
@@ -258,6 +275,20 @@ pub(crate) fn check_artifact_config_identity_hash(config: &RiprConfig) -> String
         .collect::<Vec<_>>();
     pairs.sort();
     config_fingerprint(&pairs.join("\n"))
+}
+
+/// The config identity published in the diff-check outcome identity block
+/// (#5988): the fingerprint of the exact `ripr.toml` text loaded for the run,
+/// so any change to the loaded config — finding-affecting allowlist fields,
+/// but also the mode / unchanged-test / enabled-language settings the
+/// check-artifact identity records in separate fields — moves the identity
+/// block agents compare (#6777 review: the finding-affecting allowlist alone
+/// let finding-changing settings share one block). `Some` exactly when a
+/// `ripr.toml` was actually loaded ([`RiprConfig::source_text`] is present);
+/// a defaults-only run — no config file, or a bound Git-candidate subject
+/// that must ignore the worktree config — keeps `null`.
+pub(crate) fn loaded_config_identity(config: &RiprConfig) -> Option<String> {
+    config.source_text().map(config_fingerprint)
 }
 
 /// The exact `ripr.toml` fields the repo-exposure producer (the seam
@@ -1158,20 +1189,68 @@ fn marker_path_is_exact(marker: &str) -> bool {
 )]
 mod tests;
 
+/// Typed `config_for_candidate` failure (#6956): a stalled
+/// candidate-tree config read stays a timeout so the refusal names
+/// `git_invocation_timeout`, never `config_invalid`. Every other failure
+/// keeps its existing message verbatim.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum CandidateConfigError {
+    Timeout {
+        operation: String,
+        timeout_ms: u128,
+        spawned: bool,
+    },
+    Other(String),
+}
+
+impl std::fmt::Display for CandidateConfigError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Timeout {
+                operation,
+                timeout_ms,
+                spawned,
+            } => crate::core_error::CoreError::git_invocation_timeout(
+                operation.clone(),
+                *timeout_ms,
+                *spawned,
+            )
+            .fmt(formatter),
+            Self::Other(message) => formatter.write_str(message),
+        }
+    }
+}
+
 /// The config a bound immutable-subject run uses (#3279 R4): the
 /// candidate tree's own `ripr.toml` when the tree carries one, else the
 /// default config. The worktree file (already loaded as `worktree`)
 /// contributes nothing — `source_path`/`source_text` are cleared so the
 /// recorded identity cannot claim the worktree file as its source.
+///
+/// The config read honors the run's effective git deadline (#6956), so
+/// `--git-timeout`/`RIPR_GIT_TIMEOUT` (and `0` for no deadline) reach it
+/// like every other git wait, and the timeout repair guidance stays
+/// effective.
 pub(crate) fn config_for_candidate(
     subject: &crate::domain::GitCandidateSubject,
     worktree: &RiprConfig,
-) -> Result<RiprConfig, String> {
-    let bytes = crate::analysis::git_candidate_execution::candidate_config_bytes(
-        subject,
-        Some(std::time::Duration::from_secs(30)),
-    )
-    .map_err(|error| error.to_string())?;
+    git_timeout: Option<std::time::Duration>,
+) -> Result<RiprConfig, CandidateConfigError> {
+    use crate::domain::GitCandidateSubjectError;
+    let bytes =
+        crate::analysis::git_candidate_execution::candidate_config_bytes(subject, git_timeout)
+            .map_err(|error| match error {
+                GitCandidateSubjectError::ExecutionTimedOut {
+                    operation,
+                    timeout_ms,
+                    spawned,
+                } => CandidateConfigError::Timeout {
+                    operation,
+                    timeout_ms,
+                    spawned,
+                },
+                other => CandidateConfigError::Other(other.to_string()),
+            })?;
     let Some(text) = bytes else {
         // Pure default: no worktree fact may enter a subject run
         // (#3279 review B1 — the worktree's enabled-languages list is
@@ -1180,8 +1259,8 @@ pub(crate) fn config_for_candidate(
         let _ = worktree;
         return Ok(RiprConfig::default());
     };
-    let mut config =
-        parse_config(&text).map_err(|err| format!("candidate tree ripr.toml: {err}"))?;
+    let mut config = parse_config(&text)
+        .map_err(|err| CandidateConfigError::Other(format!("candidate tree ripr.toml: {err}")))?;
     config.source_path = None;
     config.source_text = Some(text);
     Ok(config)

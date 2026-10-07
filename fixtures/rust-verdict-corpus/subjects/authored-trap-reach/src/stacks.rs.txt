@@ -1,0 +1,13 @@
+pub fn stack(base: u32) -> u32 {
+    base * 31
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn stack_holds_one_entry() {
+        assert_eq!(vec![stack(2)].len(), 1);
+    }
+}

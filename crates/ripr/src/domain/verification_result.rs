@@ -304,8 +304,8 @@ impl VerificationExecutionResultV1 {
 }
 
 /// Hash the canonical serialized command specification used by the result
-/// binding. The human display string is included only as ordinary typed data;
-/// consumers never reconstruct argv from it.
+/// binding. The human display string is excluded: it may name the concrete
+/// checkout root, and consumers never reconstruct argv from it (#3999).
 pub fn command_spec_sha256(
     command_spec: &CommandSpec,
 ) -> Result<String, VerificationExecutionResultValidationError> {
@@ -532,8 +532,35 @@ mod tests {
     #[test]
     fn command_spec_digest_is_pinned_to_serialized_field_order() -> Result<(), String> {
         let digest = command_spec_sha256(&command_spec()).map_err(|error| error.to_string())?;
-        if digest != "sha256:7594ebd8d5ea61336f33c236c213c87467b752befec1b582d7cc99ce42f8a5ab" {
+        if digest != "sha256:29edcc48f135caecd412a54f6e83c46c7d3e84577f8f7560767d5eae1a12a984" {
             return Err(format!("unexpected command-spec digest: {digest}"));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn command_spec_digest_ignores_display_but_covers_typed_route() -> Result<(), String> {
+        let spec = command_spec();
+        let base = command_spec_sha256(&spec).map_err(|error| error.to_string())?;
+
+        let mut relabeled = spec.clone();
+        relabeled.display = "cargo test boundary # /other/checkout".to_string();
+        let relabeled = command_spec_sha256(&relabeled).map_err(|error| error.to_string())?;
+        if relabeled != base {
+            return Err("a display-only change moved the command identity".to_string());
+        }
+
+        let mut reargued = spec.clone();
+        reargued.args.push("--exact".to_string());
+        let mut recwd = spec.clone();
+        recwd.cwd = "crates".to_string();
+        let mut rewritten = spec;
+        rewritten.network_policy = NetworkPolicy::Unrestricted;
+        for (label, changed) in [("args", reargued), ("cwd", recwd), ("policy", rewritten)] {
+            let digest = command_spec_sha256(&changed).map_err(|error| error.to_string())?;
+            if digest == base {
+                return Err(format!("a {label} change kept the command identity"));
+            }
         }
         Ok(())
     }

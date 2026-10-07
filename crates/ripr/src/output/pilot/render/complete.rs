@@ -3,6 +3,7 @@ use super::render_helpers::{
     push_path_field, push_top_seam_json, yes_no,
 };
 use super::why_line;
+use crate::agent::loop_commands::shell_path;
 use crate::analysis::ClassifiedSeam;
 use crate::output::agent_seam_packets::{
     suggested_assertion_for_classified_seam, targeted_test_brief_outline_for_classified_seam,
@@ -13,10 +14,13 @@ use crate::output::path::{display_path, display_path_text};
 use crate::output::pilot::commands::{
     PilotCommands, python_card_first_pr_command, repair_start_command,
 };
-use crate::output::pilot::ranking::{actionable_in_owner, actionable_total, top_actionable_seams};
+use crate::output::pilot::ranking::{
+    actionable_in_change, actionable_in_owner, actionable_total, top_actionable_seams,
+    withheld_static_limitations,
+};
 use crate::output::pilot::{
-    PILOT_SUMMARY_SCHEMA_VERSION, PilotLanguageRoute, PilotLanguageRoutes, PilotPythonFirstUse,
-    PilotSummaryContext, RUST_EXCLUDED_GUIDANCE,
+    ChangeSeams, PILOT_SUMMARY_SCHEMA_VERSION, PilotCurrentChange, PilotLanguageRoute,
+    PilotLanguageRoutes, PilotPythonFirstUse, PilotSummaryContext, RUST_EXCLUDED_GUIDANCE,
 };
 use crate::output::python_repair_card::PythonRepairCard;
 
@@ -40,7 +44,7 @@ pub(crate) fn render_pilot_summary_json(
     context: PilotSummaryContext<'_>,
 ) -> String {
     let actionable_total = actionable_total(classified);
-    let top = top_actionable_seams(classified, context.max_seams);
+    let top = top_actionable_seams(classified, context.max_seams, context.current_change);
     let commands = PilotCommands::new(context);
 
     let mut out = String::new();
@@ -113,6 +117,10 @@ pub(crate) fn render_pilot_summary_json(
         "  \"actionable_seams_total\": {},\n",
         actionable_total
     ));
+    out.push_str(&format!(
+        "  \"withheld_static_limitations_total\": {},\n",
+        withheld_static_limitations(classified)
+    ));
     out.push_str("  \"top_actionable_seams\": [");
     for (idx, entry) in top.iter().enumerate() {
         if idx == 0 {
@@ -131,6 +139,12 @@ pub(crate) fn render_pilot_summary_json(
     out.push_str("],\n");
     push_python_first_use_json(&mut out, context.python_first_use);
     push_language_routes_json(&mut out, context.language_routes);
+    push_current_change_json(
+        &mut out,
+        classified,
+        top.first().copied(),
+        context.current_change,
+    );
     out.push_str("  \"next\": {\n");
     out.push_str(&format!(
         "    \"inspect_packet\": \"{}\",\n",
@@ -138,8 +152,13 @@ pub(crate) fn render_pilot_summary_json(
     ));
     // An unanalyzed-only workspace has no seam to snapshot or measure, so
     // offering the follow-up commands would send the reader into a loop.
-    // A Rust exclusion likewise emptied the ranking (#5205).
-    if unanalyzed_only(context).is_some() || rust_excluded(context).is_some() {
+    // A Rust exclusion likewise emptied the ranking (#5205), and so did
+    // withholding every seam as a static limitation with no Python card to
+    // offer instead (#5497): there is no gap to snapshot or measure.
+    let withheld_only = top.is_empty()
+        && withheld_static_limitations(classified) > 0
+        && python_top_repair_card(context.python_first_use).is_none();
+    if unanalyzed_only(context).is_some() || rust_excluded(context).is_some() || withheld_only {
         out.push_str("    \"after_snapshot_command\": null,\n");
         out.push_str("    \"outcome_command\": null,\n");
     } else {
@@ -172,7 +191,7 @@ pub(crate) fn render_pilot_summary_md(
     context: PilotSummaryContext<'_>,
 ) -> String {
     let actionable_total = actionable_total(classified);
-    let top = top_actionable_seams(classified, context.max_seams);
+    let top = top_actionable_seams(classified, context.max_seams, context.current_change);
     let commands = PilotCommands::new(context);
 
     let mut out = String::new();
@@ -186,10 +205,41 @@ pub(crate) fn render_pilot_summary_md(
         Some(path) => out.push_str(&format!("- Config: loaded `{}`\n", display_path(path))),
         None => out.push_str("- Config: missing; using built-in defaults\n"),
     }
-    out.push_str(&format!(
-        "- Actionable seams: {} total, showing up to {}\n\n",
-        actionable_total, context.max_seams
-    ));
+    if let Some(scope) = scope_line(context, true) {
+        out.push_str(&format!("- Scope: {scope}\n"));
+    }
+    // #6602: a seam limit cut the classified list before ranking, so every
+    // Rust seam count below covers only the seams that were kept, and the
+    // actionable count is a lower bound.
+    if let Some(limit) = context.seam_limit {
+        out.push_str(&format!(
+            "- Seam limit reached: ranked {} of {} seams; Rust seam counts below cover those only\n",
+            limit.analyzed, limit.total
+        ));
+        out.push_str(&format!(
+            "- Actionable seams: at least {}, showing up to {}\n",
+            actionable_total, context.max_seams
+        ));
+    } else {
+        out.push_str(&format!(
+            "- Actionable seams: {} total, showing up to {}\n",
+            actionable_total, context.max_seams
+        ));
+    }
+    let withheld = withheld_static_limitations(classified);
+    if withheld > 0 {
+        out.push_str(&format!(
+            "- Withheld: {} ({WITHHELD_REASON}; listed in `{}`)\n",
+            withheld_count_label(withheld, context.seam_limit),
+            display_path(&context.artifacts.repo_exposure_md)
+        ));
+    }
+    if top.is_empty()
+        && let Some(reason) = unranked_change_reason(context, true)
+    {
+        out.push_str(&format!("- Current change: {reason}\n"));
+    }
+    out.push('\n');
 
     let python_top = python_top_repair_card(context.python_first_use);
     if top.is_empty() {
@@ -210,11 +260,20 @@ pub(crate) fn render_pilot_summary_md(
                 "None: {UNANALYZED_ONLY_VERDICT} Found: {}.\n\n",
                 unanalyzed_label(unanalyzed)
             ));
+        } else if withheld > 0 {
+            out.push_str(&format!(
+                "None ranked: {} {WITHHELD_ONLY_VERDICT} Inspect them in `{}`.\n\n",
+                withheld_count_label(withheld, context.seam_limit),
+                display_path(&context.artifacts.repo_exposure_md)
+            ));
         } else {
             out.push_str("No actionable seam was ranked by the default pilot policy.\n\n");
         }
     } else {
         out.push_str("## Top Recommendation\n\n");
+        if let Some(label) = current_change_label(context, top[0]) {
+            out.push_str(&format!("- Current change: {}\n", label.markdown()));
+        }
         push_markdown_recommendation(&mut out, top[0]);
         out.push('\n');
 
@@ -233,15 +292,23 @@ pub(crate) fn render_pilot_summary_md(
             );
         }
         for (idx, entry) in top.iter().enumerate() {
+            let in_change = context
+                .current_change
+                .is_some_and(|change| change.touches(entry));
             out.push_str(&format!(
-                "{}. `{}` {} (`{}`) {}:{} `{}`\n",
+                "{}. `{}` {} (`{}`) {}:{} `{}`{}\n",
                 idx + 1,
                 entry.seam.id().as_str(),
                 entry.class.plain_label(),
                 entry.class.as_str(),
                 display_path(entry.seam.file()),
                 entry.seam.display_line(),
-                entry.seam.kind().as_str()
+                entry.seam.kind().as_str(),
+                if in_change {
+                    " (in your current change)"
+                } else {
+                    ""
+                }
             ));
             out.push_str(&format!("   - Owner: `{}`\n", entry.seam.owner()));
             // Ranking spreads the list across owners (#5770); say once, on
@@ -255,7 +322,12 @@ pub(crate) fn render_pilot_summary_md(
                 .saturating_sub(top.iter().filter(|shown| same_owner(shown)).count());
             if first_of_owner && unlisted > 0 {
                 out.push_str(&format!(
-                    "   - Also in this function: {} more actionable {} not listed here\n",
+                    "   - Also in this function: {}{} more actionable {} not listed here\n",
+                    if context.seam_limit.is_some() {
+                        "at least "
+                    } else {
+                        ""
+                    },
                     unlisted,
                     if unlisted == 1 { "seam" } else { "seams" }
                 ));
@@ -375,6 +447,13 @@ pub(crate) fn render_pilot_summary_md(
             out.push('\n');
             return out;
         }
+        // #5497: with every seam withheld there is no gap to test, so the
+        // snapshot pair would only measure an edit nobody was asked to make.
+        (None, None) if top.is_empty() && withheld > 0 => {
+            out.push_str(&withheld_only_next(context.seam_limit));
+            out.push('\n');
+            return out;
+        }
         (None, None) => {
             match top.first() {
                 Some(entry)
@@ -438,7 +517,7 @@ pub(crate) fn render_pilot_terminal(
     classified: &[ClassifiedSeam],
     context: PilotSummaryContext<'_>,
 ) -> String {
-    let top = top_actionable_seams(classified, 1);
+    let top = top_actionable_seams(classified, 1, context.current_change);
     let commands = PilotCommands::new(context);
 
     let mut out = String::new();
@@ -451,11 +530,37 @@ pub(crate) fn render_pilot_terminal(
         None => out.push_str("  config: missing, using built-in defaults\n"),
     }
     out.push_str(&format!("  timeout: {} ms\n", context.timeout_ms));
+    if let Some(scope) = scope_line(context, false) {
+        out.push_str(&format!("  scope: {scope}\n"));
+    }
+    // #5497: the terminal is where most users read the empty ranking, so it
+    // states the seam limit too; a gap past the cut was never classified.
+    if let Some(limit) = context.seam_limit {
+        out.push_str(&format!(
+            "  seam limit: ranked {} of {} seams\n",
+            limit.analyzed, limit.total
+        ));
+    }
+    let withheld = withheld_static_limitations(classified);
+    if withheld > 0 {
+        out.push_str(&format!(
+            "  withheld: {} ({WITHHELD_REASON})\n",
+            withheld_count_label(withheld, context.seam_limit)
+        ));
+    }
+    if top.is_empty()
+        && let Some(reason) = unranked_change_reason(context, false)
+    {
+        out.push_str(&format!("  current change: {reason}\n"));
+    }
     out.push('\n');
 
     let no_repair_target = if let Some(entry) = top.first() {
         let outline = targeted_test_brief_outline_for_classified_seam(entry);
         out.push_str("Top recommendation:\n");
+        if let Some(label) = current_change_label(context, entry) {
+            out.push_str(&format!("  current change: {}\n", label.terminal()));
+        }
         // The id leads the line, as it does in the Markdown sibling
         // (`render_helpers::push_markdown_recommendation`). Until this was
         // added, the terminal was the only one of the three pilot renderers
@@ -531,6 +636,14 @@ pub(crate) fn render_pilot_terminal(
         out.push_str(&format!(
             "  none: {UNANALYZED_ONLY_VERDICT}\n  found: {}\n\n",
             unanalyzed_label(unanalyzed)
+        ));
+        false
+    } else if withheld > 0 {
+        out.push_str("Top recommendation:\n");
+        out.push_str(&format!(
+            "  none ranked: {} {WITHHELD_ONLY_VERDICT}\n  inspect: {}\n\n",
+            withheld_count_label(withheld, context.seam_limit),
+            display_path(&context.artifacts.repo_exposure_md)
         ));
         false
     } else {
@@ -631,6 +744,11 @@ pub(crate) fn render_pilot_terminal(
         out.push('\n');
         return out;
     }
+    if top.is_empty() && withheld > 0 {
+        out.push_str(&withheld_only_next(context.seam_limit));
+        out.push('\n');
+        return out;
+    }
     if let Some(entry) = top.first().filter(|_| no_repair_target) {
         out.push_str(&format!(
             "Next, by hand: {}, then compare against this run:\n",
@@ -652,6 +770,334 @@ pub(crate) fn render_pilot_terminal(
 /// repair-packet eligibility flip, so no `ripr agent repair` command is printed.
 const NO_REPAIR_START_LINE: &str = "not available for this seam (static evidence does not admit a repair target); add the focused test by hand";
 
+/// What pilot's ranking covers: change-first when there is a current change,
+/// else the whole repository (with the reason when the change could not be
+/// loaded). `None` when change data was not collected.
+fn scope_line(context: PilotSummaryContext<'_>, code: bool) -> Option<String> {
+    let change = context.current_change?;
+    Some(if change.is_changed() {
+        match change.base() {
+            Some(base) if code => {
+                format!("change-first (Rust seams on lines changed since `{base}` rank first)")
+            }
+            Some(base) => {
+                format!("change-first (Rust seams on lines changed since {base} rank first)")
+            }
+            None => "change-first (Rust seams on changed lines rank first)".to_string(),
+        }
+    } else if let Some(reason) = change.unavailable_reason() {
+        format!("whole repository (current change unavailable: {reason})")
+    } else {
+        "whole repository".to_string()
+    })
+}
+
+/// Whether the top recommendation is part of the current change.
+/// `None` when there is no current change or it could not be
+/// loaded: pilot's ranking is then repo-wide, as it always was.
+enum CurrentChangeLabel {
+    PartOfChange {
+        base: Option<String>,
+    },
+    Elsewhere {
+        base: Option<String>,
+        check: String,
+        seams: ChangeSeams,
+        diff_only: Option<DiffOnlyNote>,
+    },
+}
+
+/// The first changed file only diff analysis covers, its shape, and how
+/// many such files the change has (#6944).
+struct DiffOnlyNote {
+    file: String,
+    source: crate::analysis::DiffOnlySource,
+    count: usize,
+    /// Every changed Rust file is one of them.
+    whole_change: bool,
+}
+
+impl DiffOnlyNote {
+    fn of(change: &crate::output::pilot::PilotCurrentChange) -> Option<Self> {
+        let files = change.diff_only_files();
+        let (file, source) = files.first()?;
+        Some(Self {
+            file: file.clone(),
+            source: *source,
+            count: files.len(),
+            whole_change: files.len() == change.changed_rust_files().len(),
+        })
+    }
+
+    /// "every changed Rust line is in `build.rs`, a Cargo build script,
+    /// which pilot's repo-wide ranking leaves out". `whole_change` counts
+    /// the files with new-side lines, so a deleted file does not make the
+    /// note claim less than it can.
+    fn reason(&self, code: bool) -> String {
+        self.phrase(code, false)
+    }
+
+    /// The same note after a reason drawn from analyzed seams on the
+    /// change: "the change also includes `build.rs`, ...".
+    fn also(&self, code: bool) -> String {
+        self.phrase(code, true)
+    }
+
+    fn phrase(&self, code: bool, also: bool) -> String {
+        use crate::analysis::DiffOnlySource;
+        let kind = match self.source {
+            DiffOnlySource::BuildScript => "a Cargo build script",
+            DiffOnlySource::RepoAutomation => "repository automation",
+            DiffOnlySource::DeclaredOutsideSrc => "a crate source declared outside src",
+        };
+        let file = if code {
+            format!("`{}`", self.file)
+        } else {
+            self.file.clone()
+        };
+        let includes = if also {
+            "the change also includes"
+        } else {
+            "the change includes"
+        };
+        match (self.count, self.whole_change && !also) {
+            (1, true) => format!(
+                "every changed Rust line is in {file}, {kind}, which pilot's repo-wide ranking leaves out"
+            ),
+            (1, false) => {
+                format!("{includes} {file}, {kind}, which pilot's repo-wide ranking leaves out")
+            }
+            (count, true) => format!(
+                "every changed Rust line is in {count} files pilot's repo-wide ranking leaves out, such as {file} ({kind})"
+            ),
+            (count, false) => format!(
+                "{includes} {count} files pilot's repo-wide ranking leaves out, such as {file} ({kind})"
+            ),
+        }
+    }
+}
+
+fn current_change_label(
+    context: PilotSummaryContext<'_>,
+    top: &ClassifiedSeam,
+) -> Option<CurrentChangeLabel> {
+    let change = context
+        .current_change
+        .filter(|change| change.is_changed())?;
+    let base = change.base().map(str::to_string);
+    Some(if change.touches(top) {
+        CurrentChangeLabel::PartOfChange { base }
+    } else {
+        CurrentChangeLabel::Elsewhere {
+            base,
+            seams: change.seams().unwrap_or_default(),
+            diff_only: DiffOnlyNote::of(change),
+            check: format!(
+                "ripr check --root {}{}",
+                shell_path(&crate::agent::loop_commands::bound_root_path(context.root)),
+                change.check_selector()
+            ),
+        }
+    })
+}
+
+/// With nothing ranked, why the current change's seams are not ranked
+/// either, when it has any or a seam limit may hide them (#5309). The
+/// pilot budget can drop those seams before the empty-ranking text counts
+/// what was withheld, so this reads the counts taken before the cut.
+fn unranked_change_reason(context: PilotSummaryContext<'_>, code: bool) -> Option<String> {
+    let change = context.current_change?;
+    let seams = change.seams()?;
+    let diff_only = DiffOnlyNote::of(change);
+    if seams.touched == 0 && seams.unanalyzed.is_none() && diff_only.is_none() {
+        return None;
+    }
+    let base = change.base().map(str::to_string);
+    Some(CurrentChangeLabel::why_elsewhere(
+        seams,
+        diff_only.as_ref(),
+        base.as_ref(),
+        code,
+    ))
+}
+
+impl CurrentChangeLabel {
+    fn changed_line(base: Option<&String>, code: bool) -> String {
+        match base {
+            Some(base) if code => format!("a line changed since `{base}`"),
+            Some(base) => format!("a line changed since {base}"),
+            None => "a line your current change touches".to_string(),
+        }
+    }
+
+    /// Where a count of seams sits: "a line changed since X" for one,
+    /// "lines changed since X" for several.
+    fn changed_lines(base: Option<&String>, code: bool, count: usize) -> String {
+        if count == 1 {
+            return Self::changed_line(base, code);
+        }
+        match base {
+            Some(base) if code => format!("lines changed since `{base}`"),
+            Some(base) => format!("lines changed since {base}"),
+            None => "lines your current change touches".to_string(),
+        }
+    }
+
+    /// Why no seam on the change ranks (#5309). A change whose seams pilot
+    /// withholds, or whose seams a seam limit left unanalyzed, must not read
+    /// as a change with no seams.
+    fn why_elsewhere(
+        seams: ChangeSeams,
+        diff_only: Option<&DiffOnlyNote>,
+        base: Option<&String>,
+        code: bool,
+    ) -> String {
+        let ChangeSeams {
+            touched,
+            withheld,
+            unanalyzed,
+        } = seams;
+        let lines = |count| Self::changed_lines(base, code, count);
+        // Seams past the inventory limit were never classified, so a reason
+        // drawn from the analyzed seams alone must say it may not be all.
+        let unseen = unanalyzed.map(|(analyzed, total)| {
+            format!(
+                "the seam limit left {} of {total} seams unanalyzed, so the change may have seams pilot did not see",
+                total.saturating_sub(analyzed)
+            )
+        });
+        let gripped = touched.saturating_sub(withheld);
+        let mut reason = if withheld > 0 {
+            let which = match (withheld, touched) {
+                (1, 1) => format!("the analyzed seam on {}", lines(1)),
+                (w, t) if w == t => format!("the {t} analyzed seams on {}", lines(t)),
+                (w, t) => format!("{w} of the {t} analyzed seams on {}", lines(t)),
+            };
+            let what = if withheld == 1 {
+                "its static evidence is unknown or opaque, so it is a static limitation, not a gap"
+            } else {
+                "their static evidence is unknown or opaque, so they are static limitations, not gaps"
+            };
+            let rest = match gripped {
+                0 => String::new(),
+                1 => "; the other is already gripped, intentional or suppressed".to_string(),
+                _ => "; the others are already gripped, intentional or suppressed".to_string(),
+            };
+            format!("Pilot withholds {which}: {what}{rest}")
+        } else if touched > 0 {
+            match touched {
+                1 => format!(
+                    "The analyzed seam on {} has no gap to rank: it is already gripped, intentional or suppressed",
+                    lines(1)
+                ),
+                t => format!(
+                    "The {t} analyzed seams on {} have no gap to rank: they are already gripped, intentional or suppressed",
+                    lines(t)
+                ),
+            }
+        } else if let Some(note) = diff_only {
+            // #6944: `ripr check` analyzes these files, so "no seam" alone
+            // would contradict it; say why pilot did not look.
+            format!(
+                "No seam pilot analyzed is on {}: {}",
+                lines(1),
+                note.reason(code)
+            )
+        } else if unseen.is_some() {
+            format!("No analyzed seam is on {}", lines(1))
+        } else {
+            return format!("No seam pilot analyzed is on {}.", lines(1));
+        };
+        if touched > 0
+            && let Some(note) = diff_only
+        {
+            // The analyzed seams explain only part of the change.
+            reason.push_str("; ");
+            reason.push_str(&note.also(code));
+        }
+        if let Some(unseen) = unseen {
+            reason.push_str(", but ");
+            reason.push_str(&unseen);
+        }
+        reason.push('.');
+        reason
+    }
+
+    fn terminal(&self) -> String {
+        match self {
+            Self::PartOfChange { base } => format!(
+                "part of it (this seam is on {})",
+                Self::changed_line(base.as_ref(), false)
+            ),
+            Self::Elsewhere {
+                base,
+                check,
+                seams,
+                diff_only,
+            } => format!(
+                "not part of it. {} This recommendation is elsewhere in the repo. For the change itself, run: {check}",
+                Self::why_elsewhere(*seams, diff_only.as_ref(), base.as_ref(), false)
+            ),
+        }
+    }
+
+    fn markdown(&self) -> String {
+        match self {
+            Self::PartOfChange { base } => format!(
+                "part of it (this seam is on {})",
+                Self::changed_line(base.as_ref(), true)
+            ),
+            Self::Elsewhere {
+                base,
+                check,
+                seams,
+                diff_only,
+            } => format!(
+                "not part of it. {} This recommendation is elsewhere in the repo. For the change itself, run `{check}`.",
+                Self::why_elsewhere(*seams, diff_only.as_ref(), base.as_ref(), true)
+            ),
+        }
+    }
+}
+
+fn push_current_change_json(
+    out: &mut String,
+    classified: &[ClassifiedSeam],
+    top: Option<&ClassifiedSeam>,
+    change: Option<&PilotCurrentChange>,
+) {
+    out.push_str("  \"current_change\": ");
+    let Some(change) = change else {
+        out.push_str("null,\n");
+        return;
+    };
+    out.push_str("{\n");
+    json_string_field(out, 4, "state", change.state(), true);
+    json_optional_string_field(out, 4, "base", change.base(), true);
+    json_optional_string_field(out, 4, "reason", change.unavailable_reason(), true);
+    if change.is_changed() {
+        out.push_str(&format!(
+            "    \"actionable_seams_in_change\": {},\n",
+            actionable_in_change(classified, change)
+        ));
+        out.push_str(&format!(
+            "    \"withheld_seams_in_change\": {},\n",
+            change.seams().unwrap_or_default().withheld
+        ));
+    } else {
+        out.push_str("    \"actionable_seams_in_change\": null,\n");
+        out.push_str("    \"withheld_seams_in_change\": null,\n");
+    }
+    match top.filter(|_| change.is_changed()) {
+        Some(entry) => out.push_str(&format!(
+            "    \"top_recommendation_in_change\": {}\n",
+            change.touches(entry)
+        )),
+        None => out.push_str("    \"top_recommendation_in_change\": null\n"),
+    }
+    out.push_str("  },\n");
+}
+
 /// Closing line when every language pilot did not rank is unavailable in
 /// this binary, so no runnable command exists.
 const NO_LANGUAGE_ROUTE_COMMAND: &str =
@@ -660,6 +1106,50 @@ const NO_LANGUAGE_ROUTE_COMMAND: &str =
 /// Why an empty ranking is a non-claim when pilot found only source in
 /// languages no ripr adapter reads.
 const UNANALYZED_ONLY_VERDICT: &str = "this repository's source is in languages ripr does not analyze, so the empty ranking is not a clean result. ripr analyzes Rust, plus TypeScript/JavaScript and Python as previews.";
+
+/// Why pilot withheld seams from its ranking (#5497): their class is
+/// `opaque` or an `*_unknown` class, so ripr's static evidence could not
+/// establish whether a test discriminates them.
+const WITHHELD_REASON: &str =
+    "static evidence is unknown or opaque, so they are static limitations, not gaps";
+
+/// Why an empty ranking with withheld seams is not a clean result.
+const WITHHELD_ONLY_VERDICT: &str = "were withheld because their static evidence is unknown or opaque. ripr cannot tell whether a test discriminates them, so this is not a clean result.";
+
+/// Closing line for [`WITHHELD_ONLY_VERDICT`]: no gap to test, no snapshot
+/// pair to compare.
+const WITHHELD_ONLY_NEXT: &str = "No gap to test: each withheld seam's evidence in the repo exposure report names the stage ripr could not resolve.";
+
+/// [`WITHHELD_ONLY_NEXT`], unless a seam limit cut seams pilot never
+/// classified: those may hold gaps, so "no gap to test" would claim an
+/// absence the run did not establish, and raising the limit is the step.
+fn withheld_only_next(seam_limit: Option<&crate::analysis::SeamLimitInfo>) -> String {
+    match seam_limit {
+        Some(limit) => format!(
+            "No gap ranked among the {} seams pilot analyzed, but the seam limit left {} of {} seams unanalyzed and they may hold gaps: raise or remove RIPR_PILOT_SEAM_BUDGET and RIPR_REPO_EXPOSURE_SEAM_LIMIT, then rerun pilot. Each withheld seam's evidence in the repo exposure report names the stage ripr could not resolve.",
+            limit.analyzed,
+            limit.total.saturating_sub(limit.analyzed),
+            limit.total
+        ),
+        None => WITHHELD_ONLY_NEXT.to_string(),
+    }
+}
+
+fn seam_count_label(count: usize) -> String {
+    format!("{count} {}", if count == 1 { "seam" } else { "seams" })
+}
+
+/// Withheld seams counted over the kept seams only are a lower bound once a
+/// seam limit cut the list (#6602).
+fn withheld_count_label(
+    count: usize,
+    seam_limit: Option<&crate::analysis::SeamLimitInfo>,
+) -> String {
+    match seam_limit {
+        Some(_) => format!("at least {}", seam_count_label(count)),
+        None => seam_count_label(count),
+    }
+}
 
 /// Closing line for [`UNANALYZED_ONLY_VERDICT`]: no ripr command applies.
 const NO_ANALYZED_LANGUAGE_COMMAND: &str =

@@ -1,0 +1,41 @@
+{
+  "subject_id": "authored-spec-harness",
+  "origin": "authored",
+  "version_label": "authored 2026-10-07 for spec cells with no runtime-truth case (RIPR-SPEC-0153, 0166, 0173); libtest-mimic pinned to 0.8.2 and assert_cmd to 2.2.2",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "Cargo.toml",
+      "sha256": "54b5ffb379f21802aadcc62508851730ed6c7e93c7ae193a3f6fcd2efd485577"
+    },
+    {
+      "path": "ripr.toml",
+      "sha256": "a1eb0fae55e83b9daddec15e8fd400524669928aad1cfd5d4c369961cdf7328c"
+    },
+    {
+      "path": "src/lib.rs",
+      "sha256": "b97b8cc79ec68f391c96c541031d50ea2b9be476839b2757dbd65a1556a81b97"
+    },
+    {
+      "path": "src/bin/tool.rs",
+      "sha256": "c2bb92969c2a86a8c59164bfd7e104c8e160c6f191b05d4241e393001ce3638e"
+    },
+    {
+      "path": "tests/trials.rs",
+      "sha256": "6d55a049cbe1c47cc4148bce0334c64b843ce7429708aa9b7df4b66922275ec6"
+    },
+    {
+      "path": "tests/cli.rs",
+      "sha256": "3ee22e3cfd6c741fc22db1a66321f7235989cc12542e1bacf74f3d61e77a0e51"
+    },
+    {
+      "path": "xtask/Cargo.toml",
+      "sha256": "0f2e5ab0c9d82bbd6d294eb9b3d84212638b0cd8fd1c6794280a60acce1855c6"
+    },
+    {
+      "path": "xtask/src/main.rs",
+      "sha256": "46f28278e4ff52001a62223e4f64bdcf7b68014ac5981931a143f3880e0cfda8"
+    }
+  ]
+}

@@ -44,13 +44,12 @@ use super::{
 };
 use crate::agent::loop_commands;
 use crate::analysis::ClassifiedSeam;
-use crate::analysis::cancellation::{AnalysisAbortKind, is_cancellation_error};
+use crate::analysis::cancellation::AnalysisAbortKind;
 use crate::config::{
     CONFIG_FILE_NAME, LspDiagnosticProfile, PYTHON_PROJECT_MARKERS, PYTHON_SOURCE_DIR_MARKERS,
     is_detectable_python_source_name, is_python_excluded_dir_everywhere,
     python_project_marker_name, python_source_dir_marker_name,
 };
-use crate::domain::context_packet::ContextPacket;
 use crate::domain::{StageEvidence, StageState};
 use crate::lsp::diagnostic_budget::DiagnosticDeliveryOutcome;
 use crate::output::agent_seam_packets::{
@@ -597,7 +596,8 @@ impl Backend {
                 diagnostics
             }
             Ok(Err(err)) => {
-                if self.refresh_request_is_current(request) && !is_cancellation_error(&err) {
+                let cancelled = analysis_error_was_cancellation(&request.cancellation);
+                if self.refresh_request_is_current(request) && !cancelled {
                     self.report_refresh_failure_after(
                         request,
                         err,
@@ -607,7 +607,7 @@ impl Backend {
                     .await;
                     return RefreshAttemptOutcome::Failed;
                 }
-                if !is_cancellation_error(&err) {
+                if !cancelled {
                     self.client
                         .log_message(
                             MessageType::WARNING,
@@ -2002,15 +2002,20 @@ impl Backend {
                         .collect::<Vec<_>>(),
                     value.analysis_outcome.clone(),
                     withheld_unknown_summary(value),
+                    value.partial_scope.clone(),
                 )
             })
         });
-        let (snapshot_identity, components, analysis_outcome, withheld_summary) =
+        let (snapshot_identity, components, analysis_outcome, withheld_summary, partial_scope) =
             match snapshot_state {
-                Some((identity, components, analysis_outcome, withheld)) => {
-                    (identity, components, analysis_outcome, withheld)
-                }
-                None => (None, Vec::new(), None, None),
+                Some((identity, components, analysis_outcome, withheld, partial_scope)) => (
+                    identity,
+                    components,
+                    analysis_outcome,
+                    withheld,
+                    partial_scope,
+                ),
+                None => (None, Vec::new(), None, None, None),
             };
         let snapshot_input = snapshot_identity.map(|identity| identity.status_payload());
         let current_input = match (
@@ -2082,6 +2087,29 @@ impl Backend {
             .last_success_at
             .and_then(|generated_at| generated_at.elapsed().ok())
             .map(|duration| duration.as_millis() as u64);
+        // #5999: for a budget-bound `limited_partial_scope` run, `ripr.refresh`
+        // provably re-runs the identical limited partition, so the retry
+        // pointer must not advertise it as the remedy. `retry_recovery` names
+        // the only route that widens the partition: raise the budget override
+        // the selector names, then restart the sidecar so the new environment
+        // is read. Every other run status keeps `retry_command: ripr.refresh`
+        // — refresh genuinely lifts `seams_deferred` and `stale` snapshots.
+        let run_status = health.run_status();
+        let budget_recovery = if run_status == crate::analysis::PartialDiffScope::RUN_STATUS {
+            // One wording owner for the raise + restart route (#6853 review):
+            // the run-level recovery and the per-document recovery must not
+            // drift apart.
+            let detail = outside_partition_recovery(partial_scope.as_ref());
+            Some(serde_json::json!({
+                "kind": "increase_configured_limit",
+                "detail": format!(
+                    "ripr.refresh re-runs the identical limited partition and cannot widen it; {}",
+                    detail
+                ),
+            }))
+        } else {
+            None
+        };
         serde_json::json!({
             "schema_version": "0.1",
             "tool": "ripr",
@@ -2119,7 +2147,16 @@ impl Backend {
             "pending_attempt_id": health.pending_attempt_id.map(|id| id.to_string()),
             "pending_reason": health.pending_reason,
             "pending_scope": health.pending_scope,
-            "retry_command": REFRESH_COMMAND,
+            // #5999: null exactly when the binding limitation is a process
+            // budget refresh cannot lift; `retry_recovery` then names the
+            // env-var + restart route. Every refresh-liftable state keeps the
+            // command pointer.
+            "retry_command": if budget_recovery.is_some() {
+                serde_json::Value::Null
+            } else {
+                serde_json::Value::String(REFRESH_COMMAND.to_string())
+            },
+            "retry_recovery": budget_recovery.unwrap_or(serde_json::Value::Null),
             "repair_actions_available": health.allows_current_repairs()
                 && root.allows_analysis(),
             "root_state": root.state.as_str(),
@@ -3224,10 +3261,13 @@ impl Backend {
             // shadow the new seam-evidence hover. Prefer the
             // seam-bearing diagnostic, then the finding-bearing one.
             // Caught by chatgpt-codex on PR #242.
-            let overlapping: Vec<&Diagnostic> = diagnostics
+            let mut overlapping: Vec<&Diagnostic> = diagnostics
                 .iter()
                 .filter(|d| diagnostic_covers_position(d, position))
                 .collect();
+            // A line-level diagnostic covers its whole line, so it must not
+            // shadow a column-precise one the cursor is on.
+            overlapping.sort_by_key(|d| super::hover::is_line_level_range(&d.range));
             for diagnostic in &overlapping {
                 if let Some(seam) = snapshot.classified_seam_for_diagnostic(diagnostic) {
                     return Some(hover_with_snapshot_status(
@@ -4225,6 +4265,20 @@ fn bounded_failure_message(message: &str) -> String {
     super::component_outcome::bounded_message(message)
 }
 
+/// #4860: whether a refresh analysis error is the attempt's cancellation.
+/// The attempt's token, not the error text, says whether the work stopped
+/// because a checkpoint handed it an abort. A wrapped cancellation is still a
+/// cancellation; an ordinary failure that reads like one is still a failure.
+/// The observed abort is sticky for a sequential walk, whose later failure
+/// cannot happen once the abort stopped it. A parallel batch that propagates
+/// a sibling's ordinary failure instead names the attempt as that failure
+/// (#6721).
+fn analysis_error_was_cancellation(
+    cancellation: &crate::analysis::cancellation::AnalysisCancellationToken,
+) -> bool {
+    cancellation.observed_abort().is_some()
+}
+
 fn cancellation_outcome(request: &RefreshRequest) -> RefreshAttemptOutcome {
     match request.cancellation.checkpoint() {
         Err(error) if error.kind == AnalysisAbortKind::Cancelled => {
@@ -4568,13 +4622,12 @@ impl Backend {
             .map(|finding| {
                 serde_json::json!({
                     "finding_id": finding.id,
-                    "file": display_path(
-                        finding
-                            .probe
-                            .location
-                            .file
-                            .strip_prefix(&snapshot.root)
-                            .unwrap_or(&finding.probe.location.file),
+                    // The shared finding-location owner (#5996): the same
+                    // workspace-relative string the check/context/MCP
+                    // surfaces emit for this finding.
+                    "file": crate::analysis::finding_location_text(
+                        &snapshot.root,
+                        &finding.probe.location.file,
                     ),
                     "line": finding.probe.location.line,
                     "class": finding.class.as_str(),
@@ -4617,13 +4670,12 @@ impl Backend {
             .map(|finding| {
                 serde_json::json!({
                     "finding_id": finding.id,
-                    "file": display_path(
-                        finding
-                            .probe
-                            .location
-                            .file
-                            .strip_prefix(&snapshot.root)
-                            .unwrap_or(&finding.probe.location.file),
+                    // The shared finding-location owner (#5996): the same
+                    // workspace-relative string the check/context/MCP
+                    // surfaces emit for this finding.
+                    "file": crate::analysis::finding_location_text(
+                        &snapshot.root,
+                        &finding.probe.location.file,
                     ),
                     "line": finding.probe.location.line,
                     "class": finding.class.as_str(),
@@ -4647,6 +4699,12 @@ impl Backend {
             // responses nor docs may represent it as that contract. The
             // immutable handle binding lands with #1602.
             "snapshot_id": snapshot.refresh.snapshot_id,
+            // The seam continuation identity (#6848 review): a listed seam
+            // `canonical_id` resolves through `ripr.collectContext` /
+            // `ripr.collectEvidenceContext` only together with this value as
+            // `evidence_identity` (`seam_command_stale_reason` rejects a
+            // seam id cited without one on a current snapshot).
+            "seam_evidence_identity": snapshot.evidence_identity(),
             "selected_count": result.selected.len(),
             "omitted_count": result.omitted.len(),
             "total_count": result.total_canonical_items,
@@ -5902,13 +5960,22 @@ impl Backend {
             .analysis_config()
             .map(|config| config.repo_config().reports().max_related_tests())
             .unwrap_or(crate::config::DEFAULT_CONTEXT_RELATED_TESTS);
-        let stop_reasons = finding
-            .effective_stop_reasons()
-            .iter()
-            .map(|reason| reason.as_str().to_string())
-            .collect();
-        let packet = ContextPacket::from_finding(finding, max_related_tests, stop_reasons);
-        let rendered = crate::output::json::render_context_packet_dto(&packet);
+        // #5994: this session's evidence came from the saved-worktree
+        // analysis (staged and unstaged tracked edits), so the packet's
+        // witness command must replay that diff source — the same override
+        // the CLI context route applies (#4909). Without it the packet ships
+        // a command that cannot see its own finding.
+        let explain_command = self.analysis_config().map(|config| {
+            let input = config.check_input(&snapshot.root);
+            crate::app::finding_navigation_with_worktree(&input, None, false, true)
+                .explain_command(&finding.id)
+        });
+        let rendered = crate::output::json::render_context_packet_with_explain_command(
+            finding,
+            max_related_tests,
+            explain_command,
+            &snapshot.root,
+        );
         serde_json::from_str(&rendered).ok()
     }
 
@@ -6016,7 +6083,15 @@ impl Backend {
     /// saved-state diagnostics as current for a dirty buffer. Identities
     /// are SHA-256 digests of saved content only; unsaved buffer text is
     /// never included.
-    fn open_document_statuses_json(&self) -> serde_json::Value {
+    ///
+    /// #5998: a document whose changed lines sit outside the committed
+    /// snapshot's analyzed partition is reported `not_analyzed` — never
+    /// `clean`/`served` — with the budget raise and sidecar restart as the
+    /// recovery, so "no diagnostics" can never read as "analyzed and clean".
+    fn open_document_statuses_json(
+        &self,
+        snapshot: Option<&AnalysisSnapshot>,
+    ) -> serde_json::Value {
         let Ok(documents) = self.documents.lock() else {
             return serde_json::json!([]);
         };
@@ -6025,13 +6100,45 @@ impl Backend {
             .values()
             .map(|state| {
                 let quarantined = state.is_quarantined();
+                let outside_partition = snapshot
+                    .and_then(|snapshot| {
+                        super::uri::file_uri_relative_to_root(&snapshot.root, &state.uri)
+                    })
+                    .is_some_and(|relative| {
+                        snapshot
+                            .and_then(|snapshot| snapshot.partial_scope.as_ref())
+                            .is_some_and(|scope| scope.changed_outside_partition(&relative))
+                    });
                 serde_json::json!({
                     "uri": state.uri.as_str(),
                     "path": state.path.display().to_string(),
                     "version": state.version,
-                    "state": if quarantined { "quarantined" } else { "clean" },
+                    "state": if quarantined {
+                        "quarantined"
+                    } else if outside_partition {
+                        "not_analyzed"
+                    } else {
+                        "clean"
+                    },
                     "diagnostics_authority": "saved_workspace",
-                    "line_local_diagnostics": if quarantined { "withdrawn" } else { "served" },
+                    "line_local_diagnostics": if quarantined {
+                        "withdrawn"
+                    } else if outside_partition {
+                        "not_analyzed"
+                    } else {
+                        "served"
+                    },
+                    "not_analyzed_reason": if outside_partition {
+                        serde_json::Value::String("outside_analyzed_partition".to_string())
+                    } else {
+                        serde_json::Value::Null
+                    },
+                    "not_analyzed_recovery": match (outside_partition, snapshot) {
+                        (true, Some(snapshot)) => serde_json::Value::String(
+                            outside_partition_recovery(snapshot.partial_scope.as_ref()),
+                        ),
+                        _ => serde_json::Value::Null,
+                    },
                     "staleness_reason": state
                         .quarantine
                         .as_ref()
@@ -6049,7 +6156,7 @@ impl Backend {
         let health = self.analysis_health_snapshot();
         let authority = self.workspace_root_authority();
         let latest_analysis = self.latest_analysis.lock().ok()?.clone();
-        let open_documents = self.open_document_statuses_json();
+        let open_documents = self.open_document_statuses_json(latest_analysis.as_deref());
         let snapshot = match latest_analysis {
             None => {
                 let top_limitation = top_limitation_dto(&health, None, &authority).into_json();
@@ -6804,6 +6911,25 @@ fn workspace_status_receipt_summary(
     })
 }
 
+/// #5998: the recovery route an opened document outside the analyzed
+/// partition carries on the workspace status payload. Refreshing inside the
+/// session re-runs the identical limited partition, so the route names the
+/// budget override the selector computed plus the sidecar restart that makes
+/// it effective — the same route the run-level disclosures name (#5999). The
+/// selector minimum admits the next excluded file, not necessarily every
+/// unselected document, so the route says to raise further when the document
+/// is still reported not_analyzed (#6853 review).
+fn outside_partition_recovery(partial_scope: Option<&crate::analysis::PartialDiffScope>) -> String {
+    let raise = match partial_scope {
+        Some(scope) => scope.budget_raise_instruction(),
+        None => "raise RIPR_PARTIAL_DIFF_FILE_BUDGET or RIPR_PARTIAL_DIFF_LINE_BUDGET".to_string(),
+    };
+    format!(
+        "{raise}, then restart the language server so the raised environment is read; \
+         raise further if this document is still reported not_analyzed"
+    )
+}
+
 fn workspace_status_run_status(snapshot: &AnalysisSnapshot) -> &'static str {
     super::diagnostics::derive_run_status_with_outcome(
         &snapshot.findings,
@@ -7400,6 +7526,7 @@ mod top_limitation_selection_tests {
             line_budget: 10,
             budget_disclosures: Vec::new(),
             selected_files: vec!["src/lib.rs".to_string()],
+            unselected_files: vec!["src/mod_cap.rs".to_string()],
             selected_changed_lines: 4,
             uninspected_files_lower_bound: 2,
             uninspected_changed_lines_lower_bound: 6,
@@ -10894,6 +11021,51 @@ mod list_actionable_items_tests {
     use tower_lsp_server::LspService;
     use tower_lsp_server::ls_types::{Diagnostic, Uri};
 
+    /// #5994: a worktree-diff session's `ripr.collectContext` must ship an
+    /// explain command that re-selects its own finding. The LSP analyzes
+    /// staged and unstaged tracked edits, so the witness command carries
+    /// `--worktree` with the session root — the same diff-source-aware
+    /// override the CLI context route applies (#4909). The previously
+    /// hardcoded domain command (`ripr explain --root . <id>`) exited 2 with
+    /// "no finding matched" because the committed default-branch diff never
+    /// saw the finding.
+    #[test]
+    fn collect_context_packet_witness_command_replays_the_worktree_session() -> Result<(), String> {
+        let harness = handler_harness()?;
+        let mut snapshot = snapshot_with_selection(None);
+        let mut finding = crate::lsp::tests::sample_finding();
+        finding.probe.location.file = PathBuf::from("/workspace/src/main.rs");
+        snapshot.findings = vec![finding];
+        install_snapshot(&harness, snapshot)?;
+
+        let args_value = serde_json::json!({ "finding_id": "probe:pricing:88:predicate" });
+        let packet = harness
+            .runtime
+            .block_on(
+                harness
+                    .service
+                    .inner()
+                    .collect_context_packet(&[args_value]),
+            )
+            .ok_or_else(|| "expected context packet for the session finding".to_string())?;
+
+        let command = packet["witness"]["explain_command"]
+            .as_str()
+            .ok_or_else(|| format!("packet must embed a witness command: {packet}"))?;
+        // `/workspace` binds through the shared root rule (#3948); on Windows
+        // it is not absolute and gains the current drive.
+        let root = loop_commands::shell_arg(&loop_commands::bound_root("/workspace"));
+        assert_eq!(
+            command,
+            format!("ripr explain --root {root} --worktree probe:pricing:88:predicate"),
+            "the packet's own command must replay the session's worktree diff source"
+        );
+        // The packet location renders through the shared finding-location
+        // owner (#5996): the same string the check/context/MCP surfaces emit.
+        assert_eq!(packet["probe"]["file"], "./src/main.rs");
+        Ok(())
+    }
+
     struct HandlerHarness {
         service: LspService<Backend>,
         // Keep the socket alive for the whole test, mirroring the other LSP
@@ -11066,6 +11238,14 @@ mod list_actionable_items_tests {
         // snapshot (see the handler's interim-binding comment; the immutable
         // #1602 handle contract is a later slice).
         assert_eq!(response["snapshot_id"], "snapshot:test-handler");
+        // The seam continuation identity (#6848 review): exactly the value
+        // `seam_command_stale_reason` compares a cited `evidence_identity`
+        // against, so a listed seam id plus this field resolves through the
+        // collectContext seam route.
+        assert_eq!(
+            response["seam_evidence_identity"],
+            serde_json::json!({ "snapshot_id": "snapshot:test-handler" })
+        );
         assert_eq!(response["selected_count"], 1);
         assert_eq!(response["omitted_count"], 0);
         assert_eq!(response["total_count"], 1);
@@ -11352,6 +11532,7 @@ mod list_actionable_items_tests {
                 "omitted",
                 "omitted_count",
                 "omitted_truncated",
+                "seam_evidence_identity",
                 "selected",
                 "selected_count",
                 "snapshot_id",
@@ -11427,5 +11608,41 @@ mod list_actionable_items_tests {
             error.message
         );
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod analysis_error_cancellation_tests {
+    use super::analysis_error_was_cancellation;
+    use crate::analysis::cancellation::{AnalysisAbortKind, AnalysisCancellationToken};
+
+    #[test]
+    fn refresh_error_is_a_cancellation_only_when_the_token_handed_the_abort_to_the_work() {
+        // #4860: the backend's decision reads the attempt's token, never the
+        // error text. A live token is a failure whatever the error says.
+        let live = AnalysisCancellationToken::new();
+        assert!(!analysis_error_was_cancellation(&live));
+
+        // A recorded deadline that no checkpoint handed to the work is not the
+        // attempt's outcome: the work failed on its own first.
+        let unobserved = AnalysisCancellationToken::new();
+        assert!(unobserved.cancel(AnalysisAbortKind::DeadlineExceeded));
+        assert!(!analysis_error_was_cancellation(&unobserved));
+
+        // Once a checkpoint hands the deadline to the work, the (possibly
+        // wrapped) error is that abort for every kind.
+        for kind in [
+            AnalysisAbortKind::DeadlineExceeded,
+            AnalysisAbortKind::Superseded,
+            AnalysisAbortKind::Cancelled,
+        ] {
+            let token = AnalysisCancellationToken::new();
+            assert!(token.cancel(kind));
+            assert!(token.checkpoint().is_err());
+            assert!(
+                analysis_error_was_cancellation(&token),
+                "{kind:?} observed at a checkpoint must classify as cancellation"
+            );
+        }
     }
 }

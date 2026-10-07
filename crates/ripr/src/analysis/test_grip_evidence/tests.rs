@@ -74,7 +74,7 @@ fn index_from_files_at_stamp(
         index
             .files()
             .iter()
-            .map(|(path, facts)| (path, facts.data().source.as_str())),
+            .map(|(path, facts)| (path, facts.data().source.as_ref())),
     ));
     Ok(FixtureIndex {
         index,
@@ -353,7 +353,7 @@ fn production_target_evidence_carries_portable_root_and_currentness_authority() 
     let relocated_target = evidence_for_seam(&relocated_seam, &relocated_index)
         .related_tests
         .into_iter()
-        .find_map(|related| related.test_target)
+        .find_map(|related| related.test_target.clone())
         .ok_or_else(|| "relocated fixture must remain accepted".to_string())?;
     if relocated_target.workspace_identity != target.workspace_identity {
         return Err("relocation changed portable workspace identity".to_string());
@@ -2603,6 +2603,321 @@ fn import_only_mentions_owner() {
     Ok(())
 }
 
+#[test]
+fn evidence_for_seams_shares_one_record_per_distinct_related_test() -> Result<(), String> {
+    // #5341: seams relating to the same test under the same reason hold one
+    // shared record, not a copy each. Keyed memoization alone would keep the
+    // values equal; only pointer identity proves the memory is shared.
+    let prod = PathBuf::from("src/pricing.rs");
+    let prod_src = r#"
+pub fn discounted_total(amount: i32, threshold: i32) -> i32 {
+    if amount >= threshold { amount - 10 } else { amount }
+}
+
+pub fn shipping(amount: i32, threshold: i32) -> i32 {
+    if amount > threshold { 0 } else { 5 }
+}
+"#;
+    let tests = PathBuf::from("tests/pricing_tests.rs");
+    let tests_src = r#"
+#[test]
+fn equality_boundary_returns_discount() {
+    assert_eq!(discounted_total(100, 100), 90);
+    assert_eq!(shipping(100, 50), 0);
+}
+"#;
+    let index = index_from_files(&[(prod, prod_src), (tests, tests_src)])?;
+    let seams = inventory_seams_from_index(&[PathBuf::from("src/pricing.rs")], &index);
+    let batch = evidence_for_seams(&seams, &index);
+    let grips: Vec<&std::sync::Arc<RelatedTestGrip>> = batch
+        .iter()
+        .flat_map(|evidence| evidence.related_tests.iter())
+        .collect();
+    let mut pairs = 0;
+    for (position, left) in grips.iter().enumerate() {
+        for right in &grips[position + 1..] {
+            if left == right {
+                pairs += 1;
+                assert!(
+                    std::sync::Arc::ptr_eq(left, right),
+                    "equal related-test records must share one allocation"
+                );
+            }
+        }
+    }
+    if pairs == 0 {
+        return Err(format!(
+            "fixture must relate one test to several seams; got {} grips over {} seams",
+            grips.len(),
+            batch.len()
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn shared_grips_keep_each_path_spelling() -> Result<(), String> {
+    // `PathBuf` equality ignores `./` segments, so these two grips compare
+    // equal. Sharing them would print the first spelling for both seams.
+    let index = index_from_files(&[(PathBuf::from("src/lib.rs"), "pub fn f() {}\n")])?;
+    let context = CompactGripContext::new(&index);
+    let grip = |file: &str| RelatedTestGrip {
+        test_name: "f_works".to_string(),
+        file: PathBuf::from(file),
+        line: 3,
+        test_target: None,
+        oracle_kind: OracleKind::ExactValue,
+        oracle_strength: OracleStrength::Strong,
+        evidence_summary: "exact value assertion".to_string(),
+        relation_reason: RelationReason::DirectOwnerCall,
+        relation_confidence: RelationConfidence::High,
+    };
+    let plain = context.share_grip(grip("tests/f.rs"));
+    let dotted = context.share_grip(grip("tests/./f.rs"));
+    let again = context.share_grip(grip("tests/f.rs"));
+    let dotted_again = context.share_grip(grip("tests/./f.rs"));
+    assert_eq!(*plain, *dotted, "fixture spellings must compare equal");
+    assert!(!std::sync::Arc::ptr_eq(&plain, &dotted));
+    assert_eq!(dotted.file.as_os_str(), "tests/./f.rs");
+    assert!(std::sync::Arc::ptr_eq(&plain, &again));
+    assert!(
+        std::sync::Arc::ptr_eq(&dotted, &dotted_again),
+        "a second spelling must be shared too"
+    );
+    Ok(())
+}
+
+#[test]
+fn window_boundaries_release_only_unheld_shared_grips() -> Result<(), String> {
+    // A streamed review drops each window's seams it does not keep; the
+    // shared records only those seams held must go with them.
+    let index = index_from_files(&[(PathBuf::from("src/lib.rs"), "pub fn f() {}\n")])?;
+    let context = CompactGripContext::new(&index);
+    let grip = |test_name: &str| RelatedTestGrip {
+        test_name: test_name.to_string(),
+        file: PathBuf::from("tests/f.rs"),
+        line: 3,
+        test_target: None,
+        oracle_kind: OracleKind::ExactValue,
+        oracle_strength: OracleStrength::Strong,
+        evidence_summary: "exact value assertion".to_string(),
+        relation_reason: RelationReason::DirectOwnerCall,
+        relation_confidence: RelationConfidence::High,
+    };
+    let kept = context.share_grip(grip("kept_works"));
+    let discarded = std::sync::Arc::downgrade(&context.share_grip(grip("discarded_works")));
+    context.clear_window_memos();
+    assert!(
+        discarded.upgrade().is_none(),
+        "a record no seam holds must be released at the window boundary"
+    );
+    assert!(
+        std::sync::Arc::ptr_eq(&kept, &context.share_grip(grip("kept_works"))),
+        "a record a kept seam holds must stay shared"
+    );
+    Ok(())
+}
+
+#[test]
+fn shared_grips_keep_every_semantic_field_distinct() -> Result<(), String> {
+    // #5341: two records share backing only when every semantic field is
+    // equal. Each variant below differs from `base` in exactly one field.
+    let index = index_from_files(&[(PathBuf::from("src/lib.rs"), "pub fn f() {}\n")])?;
+    let context = CompactGripContext::new(&index);
+    let base = RelatedTestGrip {
+        test_name: "f_works".to_string(),
+        file: PathBuf::from("tests/f.rs"),
+        line: 3,
+        test_target: None,
+        oracle_kind: OracleKind::ExactValue,
+        oracle_strength: OracleStrength::Strong,
+        evidence_summary: "exact value assertion".to_string(),
+        relation_reason: RelationReason::DirectOwnerCall,
+        relation_confidence: RelationConfidence::High,
+    };
+    let target = TestTargetEvidence::from_index(
+        crate::domain::SymbolId("tests/f.rs::f_works".to_string()),
+        PathBuf::from("tests/f.rs"),
+        3,
+        TestKind::Integration,
+        RelationReason::DirectOwnerCall,
+        "sha256:workspace".to_string(),
+    );
+    let variants = [
+        (
+            "test_name",
+            RelatedTestGrip {
+                test_name: "f_fails".to_string(),
+                ..base.clone()
+            },
+        ),
+        (
+            "file",
+            RelatedTestGrip {
+                file: PathBuf::from("tests/g.rs"),
+                ..base.clone()
+            },
+        ),
+        (
+            "line",
+            RelatedTestGrip {
+                line: 4,
+                ..base.clone()
+            },
+        ),
+        (
+            "test_target",
+            RelatedTestGrip {
+                test_target: Some(target.clone()),
+                ..base.clone()
+            },
+        ),
+        (
+            "oracle_kind",
+            RelatedTestGrip {
+                oracle_kind: OracleKind::RelationalCheck,
+                ..base.clone()
+            },
+        ),
+        (
+            "oracle_strength",
+            RelatedTestGrip {
+                oracle_strength: OracleStrength::Weak,
+                ..base.clone()
+            },
+        ),
+        (
+            "evidence_summary",
+            RelatedTestGrip {
+                evidence_summary: "relational assertion".to_string(),
+                ..base.clone()
+            },
+        ),
+        (
+            "relation_reason",
+            RelatedTestGrip {
+                relation_reason: RelationReason::SameModule,
+                ..base.clone()
+            },
+        ),
+        (
+            "relation_confidence",
+            RelatedTestGrip {
+                relation_confidence: RelationConfidence::Low,
+                ..base.clone()
+            },
+        ),
+    ];
+    let shared_base = context.share_grip(base.clone());
+    for (field, variant) in variants {
+        assert_ne!(variant, base, "{field}: fixture must differ from the base");
+        let shared = context.share_grip(variant.clone());
+        assert!(
+            !Arc::ptr_eq(&shared, &shared_base),
+            "{field}: a record differing only in {field} must not share the base"
+        );
+        assert_eq!(
+            *shared, variant,
+            "{field}: sharing must not rewrite the record"
+        );
+        assert!(
+            Arc::ptr_eq(&shared, &context.share_grip(variant)),
+            "{field}: a repeat of the variant must share it"
+        );
+    }
+    // Two present targets that differ only in their identity stay distinct.
+    let other_target = TestTargetEvidence::from_index(
+        crate::domain::SymbolId("tests/f.rs::f_works_too".to_string()),
+        PathBuf::from("tests/f.rs"),
+        3,
+        TestKind::Integration,
+        RelationReason::DirectOwnerCall,
+        "sha256:workspace".to_string(),
+    );
+    let with_target = context.share_grip(RelatedTestGrip {
+        test_target: Some(target),
+        ..base.clone()
+    });
+    let with_other = context.share_grip(RelatedTestGrip {
+        test_target: Some(other_target),
+        ..base.clone()
+    });
+    assert_ne!(*with_target, *with_other, "fixture targets must differ");
+    assert!(!Arc::ptr_eq(&with_target, &with_other));
+    assert!(Arc::ptr_eq(&shared_base, &context.share_grip(base)));
+    Ok(())
+}
+
+#[test]
+fn shared_grips_retain_one_record_per_distinct_grip_at_high_fan_out() -> Result<(), String> {
+    // #5341: retained related-test records scale with distinct records, not
+    // with seam x test occurrences. Before sharing, 6,000 occurrences meant
+    // 6,000 records.
+    let index = index_from_files(&[(PathBuf::from("src/lib.rs"), "pub fn f() {}\n")])?;
+    let context = CompactGripContext::new(&index);
+    let grip = |test_name: &str| RelatedTestGrip {
+        test_name: test_name.to_string(),
+        file: PathBuf::from("tests/f.rs"),
+        line: 3,
+        test_target: None,
+        oracle_kind: OracleKind::ExactValue,
+        oracle_strength: OracleStrength::Strong,
+        evidence_summary: "exact value assertion".to_string(),
+        relation_reason: RelationReason::DirectOwnerCall,
+        relation_confidence: RelationConfidence::High,
+    };
+    let names = ["a_works", "b_works", "c_works"];
+    let seams: Vec<Vec<Arc<RelatedTestGrip>>> = (0..2_000)
+        .map(|_| {
+            names
+                .iter()
+                .map(|name| context.share_grip(grip(name)))
+                .collect()
+        })
+        .collect();
+    let occurrences: usize = seams.iter().map(Vec::len).sum();
+    let records: std::collections::HashSet<*const RelatedTestGrip> =
+        seams.iter().flatten().map(Arc::as_ptr).collect();
+    assert_eq!(occurrences, 6_000);
+    assert_eq!(records.len(), names.len());
+    Ok(())
+}
+
+#[test]
+fn window_boundaries_keep_a_held_second_spelling_shared() -> Result<(), String> {
+    // A window boundary may drop the first spelling's holders while a kept
+    // seam still holds the second spelling; that record must stay shared.
+    let index = index_from_files(&[(PathBuf::from("src/lib.rs"), "pub fn f() {}\n")])?;
+    let context = CompactGripContext::new(&index);
+    let grip = |file: &str| RelatedTestGrip {
+        test_name: "f_works".to_string(),
+        file: PathBuf::from(file),
+        line: 3,
+        test_target: None,
+        oracle_kind: OracleKind::ExactValue,
+        oracle_strength: OracleStrength::Strong,
+        evidence_summary: "exact value assertion".to_string(),
+        relation_reason: RelationReason::DirectOwnerCall,
+        relation_confidence: RelationConfidence::High,
+    };
+    let plain = Arc::downgrade(&context.share_grip(grip("tests/f.rs")));
+    let dotted = context.share_grip(grip("tests/./f.rs"));
+    context.clear_window_memos();
+    assert!(
+        plain.upgrade().is_none(),
+        "an unheld first spelling must be released even while a second is held"
+    );
+    assert!(Arc::ptr_eq(
+        &dotted,
+        &context.share_grip(grip("tests/./f.rs"))
+    ));
+    assert_eq!(
+        context.share_grip(grip("tests/f.rs")).file.as_os_str(),
+        "tests/f.rs"
+    );
+    Ok(())
+}
+
 fn parallel_evidence_fixture() -> Result<(FixtureIndex, Vec<RepoSeam>), String> {
     let prod = PathBuf::from("src/pricing.rs");
     let prod_src = r#"
@@ -3402,6 +3717,7 @@ fn first_grip_for(
         .related_tests
         .into_iter()
         .next()
+        .map(|test| test.as_ref().clone())
         .ok_or_else(|| "at least one related test".to_string())
 }
 
@@ -3683,7 +3999,7 @@ fn producer_rejects_same_file_production_helper_as_test_target() -> Result<(), S
         file: file.clone(),
         start_line: 10,
         end_line: 12,
-        body: "fn discounted_total_helper() {}".to_string(),
+        body: "fn discounted_total_helper() {}".into(),
         calls: Vec::new(),
         returns: Vec::new(),
         literals: Vec::new(),
@@ -3715,7 +4031,6 @@ fn producer_rejects_same_file_production_helper_as_test_target() -> Result<(), S
             path: file.clone(),
             functions: vec![function],
             tests: vec![test.clone()],
-            calls: Vec::new(),
             returns: Vec::new(),
             literals: Vec::new(),
             probe_shapes: Vec::new(),
@@ -3723,7 +4038,9 @@ fn producer_rejects_same_file_production_helper_as_test_target() -> Result<(), S
             module_declarations: Vec::new(),
             unresolved_property_macros: Vec::new(),
             role_provenance: Default::default(),
-            source: "fn discounted_total_helper() {}".to_string(),
+            source: "fn discounted_total_helper() {}".into(),
+            item_scopes: None,
+            macro_candidates: None,
         },
     );
     let seam = RepoSeam::new(
@@ -11904,7 +12221,7 @@ fn assertion_targets_seam_returns_false_for_empty_token_list() {
         file: PathBuf::from("tests/x.rs"),
         start_line: 1,
         end_line: 5,
-        body: "assert_eq!(1, 1);".to_string(),
+        body: "assert_eq!(1, 1);".into(),
         calls: Vec::new(),
         assertions: Vec::new(),
         literals: Vec::new(),
@@ -12594,7 +12911,7 @@ fn closure_boundary_operand_route_ignores_comment_only_closure_pattern() {
             file: PathBuf::from("src/lib.rs"),
             start_line: 1,
             end_line: 5,
-            body: "pub fn score(raw_amount: i32, threshold: i32) -> bool {\n    // values.iter().any(|amount| amount >= threshold)\n    let amount = raw_amount + 1;\n    amount >= threshold\n}".to_string(),
+            body: "pub fn score(raw_amount: i32, threshold: i32) -> bool {\n    // values.iter().any(|amount| amount >= threshold)\n    let amount = raw_amount + 1;\n    amount >= threshold\n}".into(),
             calls: Vec::new(),
             returns: Vec::new(),
             literals: Vec::new(),
@@ -13649,7 +13966,7 @@ fn same_file_test_helper_call_counts_as_owner_call_evidence() {
                 file: file.clone(),
                 start_line: 1,
                 end_line: 5,
-                body: "pub fn discounted_total(amount: i32, threshold: i32) -> i32 { if amount >= threshold { amount - 10 } else { amount } }".to_string(),
+                body: "pub fn discounted_total(amount: i32, threshold: i32) -> i32 { if amount >= threshold { amount - 10 } else { amount } }".into(),
                 calls: Vec::new(),
                 returns: Vec::new(),
                 literals: Vec::new(),
@@ -13666,7 +13983,7 @@ fn same_file_test_helper_call_counts_as_owner_call_evidence() {
                 file: file.clone(),
                 start_line: 10,
                 end_line: 12,
-                body: "fn case_at_threshold() -> i32 { discounted_total(100, 100) }".to_string(),
+                body: "fn case_at_threshold() -> i32 { discounted_total(100, 100) }".into(),
                 calls: vec![CallFact {
                     line: 11,
                     name: "discounted_total".to_string(),
@@ -13687,7 +14004,7 @@ fn same_file_test_helper_call_counts_as_owner_call_evidence() {
                 file: file.clone(),
                 start_line: 20,
                 end_line: 23,
-                body: "#[test] fn unit_test_uses_same_file_helper() { assert_eq!(case_at_threshold(), 90); }".to_string(),
+                body: "#[test] fn unit_test_uses_same_file_helper() { assert_eq!(case_at_threshold(), 90); }".into(),
                 calls: vec![CallFact {
                     line: 21,
                     name: "case_at_threshold".to_string(),
@@ -13871,6 +14188,96 @@ fn guarded_result_match_discrimination_follows_the_exact_variant() -> Result<(),
         routing.text
     );
     Ok(())
+}
+
+// #6695: an `ok_or(Type::Variant)?` seam reads its variant through the
+// shared `changed_error_variant` owner in repo mode too. The exact pin
+// discriminates; a sibling pin of the same enum does not, on both the
+// error-variant and the return-value comparison.
+#[test]
+fn ok_or_question_mark_seam_discriminates_only_the_returned_variant() {
+    use crate::analysis::facts::OracleFact;
+    use crate::domain::OracleStrength;
+
+    // Production-shaped tail seam text (syntax/ra.rs builds ErrorPath seams
+    // from `return` and tail expressions).
+    const LINE: &str = "slot.ok_or_else(|| CodeError::NotDigit)?";
+
+    fn oracle(kind: OracleKind, text: &str) -> OracleFact {
+        OracleFact {
+            line: 3,
+            text: text.to_string(),
+            kind,
+            strength: OracleStrength::Strong,
+            observed_tokens: crate::analysis::rust_index::extract_identifier_tokens(text),
+            ok_value_observed: Some(true),
+        }
+    }
+
+    fn seam(kind: SeamKind, discriminator: RequiredDiscriminator) -> RepoSeam {
+        let sink = if kind == SeamKind::ErrorVariant {
+            ExpectedSink::ErrorChannel
+        } else {
+            ExpectedSink::ReturnValue
+        };
+        RepoSeam::new(
+            std::path::PathBuf::from("src/lib.rs"),
+            "src/lib.rs::parse_code",
+            kind,
+            7,
+            14,
+            LINE.to_string(),
+            discriminator,
+            sink,
+        )
+    }
+
+    let error_seam = seam(
+        SeamKind::ErrorVariant,
+        RequiredDiscriminator::ErrorVariant {
+            variant: crate::analysis::classify::changed_error_variant(LINE)
+                .unwrap_or_else(|| LINE.to_string()),
+        },
+    );
+    let exact_guarded = oracle(
+        OracleKind::GuardedResultMatch,
+        "match parse_code(..) { Ok(..) => .., Err(..) => CodeError::NotDigit }",
+    );
+    let sibling_guarded = oracle(
+        OracleKind::GuardedResultMatch,
+        "match parse_code(..) { Ok(..) => .., Err(..) => CodeError::TooLong }",
+    );
+    assert!(oracle_discriminates_seam(&error_seam, &exact_guarded));
+    assert!(!oracle_discriminates_seam(&error_seam, &sibling_guarded));
+    assert!(oracle_discriminates_seam(
+        &error_seam,
+        &oracle(
+            OracleKind::ExactErrorVariant,
+            "assert_eq!(err, CodeError::NotDigit)"
+        )
+    ));
+    assert!(!oracle_discriminates_seam(
+        &error_seam,
+        &oracle(
+            OracleKind::ExactErrorVariant,
+            "assert_eq!(err, CodeError::TooLong)"
+        )
+    ));
+
+    // Return-value comparison: before the shared owner, an `ok_or` seam read
+    // as a success-payload change, so any observing guarded match credited
+    // it, sibling pin included.
+    let return_seam = seam(
+        SeamKind::ReturnValue,
+        RequiredDiscriminator::ReturnValue {
+            description: LINE.to_string(),
+        },
+    );
+    assert!(oracle_discriminates_seam(&return_seam, &exact_guarded));
+    assert!(
+        !oracle_discriminates_seam(&return_seam, &sibling_guarded),
+        "a sibling-variant guard must not discriminate the ok_or variant"
+    );
 }
 
 #[test]
@@ -14303,7 +14710,7 @@ fn index_from_edition2021_diagnostics_workspace(
         index
             .files()
             .iter()
-            .map(|(path, facts)| (path, facts.data().source.as_str())),
+            .map(|(path, facts)| (path, facts.data().source.as_ref())),
     ));
     Ok(FixtureIndex {
         index,
@@ -14460,7 +14867,7 @@ fn route_must_be_ready(case: &ConstructorFieldCase) -> Result<(), String> {
             case.classified.evidence.activate.state,
             case.classified.evidence.discriminate.state,
             missing,
-            related.cloned().map(|test| (
+            related.map(|test| test.as_ref().clone()).map(|test| (
                 test.test_name,
                 test.relation_reason,
                 test.test_target.is_some(),
@@ -16984,6 +17391,164 @@ fn trait_method_reached_only_by_delegation_is_opaque_not_ungripped() -> Result<(
         reach.summary
     );
     assert_eq!(class, SeamGripClass::Opaque);
+    Ok(())
+}
+
+// --- #6026: a boundary assert whose expected value contradicts static
+// evaluation must not close the gap ---
+
+/// The issue #6026 crate shape: an `amount_cents >= discount_threshold_cents`
+/// boundary whose discounted arm folds (`5_000 * 70 / 100`).
+const WRONGVAL_OWNER_SRC: &str = r#"
+pub fn discounted_total(amount_cents: u64, discount_threshold_cents: u64) -> u64 {
+    if amount_cents >= discount_threshold_cents {
+        amount_cents * 70 / 100
+    } else {
+        amount_cents
+    }
+}
+"#;
+
+fn wrongval_seam_evidence(
+    test_source: &str,
+) -> Result<(TestGripEvidence, RepoSeam, FixtureIndex), String> {
+    let prod = PathBuf::from("src/main.rs");
+    let tests = PathBuf::from("tests/main_tests.rs");
+    let index = index_from_files(&[(prod, WRONGVAL_OWNER_SRC), (tests, test_source)])?;
+    let seams = inventory_seams_from_index(&[PathBuf::from("src/main.rs")], &index);
+    let predicate = seams
+        .iter()
+        .find(|seam| seam.kind() == SeamKind::PredicateBoundary)
+        .ok_or_else(|| "expected predicate boundary seam".to_string())?
+        .clone();
+    let evidence = evidence_for_seam(&predicate, &index);
+    Ok((evidence, predicate, index))
+}
+
+/// The issue's exact wrongval scenario: the test follows the repair packet's
+/// `exact_return_value` recipe but computes the expected literal wrong —
+/// `5_000` is the value the `>=` -> `>` flip would produce, while the owner
+/// folds to `3_500` at that input. The statically-evaluably-false assert is
+/// a discriminator pointing the wrong way: it fails at baseline and would
+/// pass under the mutation. It must not grade the seam's discrimination up,
+/// must not close the gap, and the receipt must name the contradiction
+/// instead of reporting an empty weak/unknown section.
+#[test]
+fn wrongval_boundary_assert_does_not_close_the_gap() -> Result<(), String> {
+    let (evidence, seam, _index) = wrongval_seam_evidence(
+        r#"
+#[test]
+fn boundary_asserts_flipped_value() {
+    assert_eq!(discounted_total(5_000, 5_000), 5_000);
+}
+"#,
+    )?;
+    if evidence.discriminate.state == StageState::Yes {
+        return Err(format!(
+            "a statically-contradicted assert must not grade discrimination Yes: {}",
+            evidence.discriminate.summary
+        ));
+    }
+    let class = crate::analysis::seam_classification::classify_seam(&seam, &evidence);
+    if class == SeamGripClass::StronglyGripped {
+        return Err("the wrongval assert must not close the gap into strongly_gripped".to_string());
+    }
+    assert!(
+        evidence
+            .discriminate
+            .summary
+            .contains("contradicts static evaluation"),
+        "the stage summary must name the contradiction: {}",
+        evidence.discriminate.summary
+    );
+    let related = evidence
+        .related_tests
+        .iter()
+        .find(|test| test.test_name == "boundary_asserts_flipped_value")
+        .ok_or_else(|| "the wrongval test must stay related to the seam".to_string())?;
+    assert_eq!(related.oracle_strength, OracleStrength::Weak);
+    assert!(
+        related
+            .evidence_summary
+            .contains("contradicts static evaluation")
+            && related.evidence_summary.contains("5_000")
+            && related.evidence_summary.contains("3500"),
+        "the related-test summary must state the contradiction: {}",
+        related.evidence_summary
+    );
+    Ok(())
+}
+
+/// The control: the identical scenario with the correct boundary literal
+/// (`3_500`) still credits the strong oracle and closes the gap.
+#[test]
+fn correct_boundary_literal_still_closes_the_gap() -> Result<(), String> {
+    let (evidence, seam, _index) = wrongval_seam_evidence(
+        r#"
+#[test]
+fn boundary_asserts_true_value() {
+    assert_eq!(discounted_total(5_000, 5_000), 3_500);
+}
+"#,
+    )?;
+    if evidence.discriminate.state != StageState::Yes {
+        return Err(format!(
+            "the correct boundary assert must still discriminate: {}",
+            evidence.discriminate.summary
+        ));
+    }
+    let class = crate::analysis::seam_classification::classify_seam(&seam, &evidence);
+    if class != SeamGripClass::StronglyGripped {
+        return Err(format!(
+            "the correct assert must close the gap, got {class:?}"
+        ));
+    }
+    let related = evidence
+        .related_tests
+        .iter()
+        .find(|test| test.test_name == "boundary_asserts_true_value")
+        .ok_or_else(|| "the control test must stay related".to_string())?;
+    assert_eq!(related.oracle_strength, OracleStrength::Strong);
+    assert_eq!(related.evidence_summary, "exact value assertion");
+    Ok(())
+}
+
+/// The limitation stays honest in the other direction: when the owner is not
+/// statically evaluable, the wrong-valued assert keeps today's credit and
+/// the gap closes. No fabrication either way.
+#[test]
+fn non_evaluable_owner_keeps_the_prior_credit() -> Result<(), String> {
+    let prod = PathBuf::from("src/main.rs");
+    let prod_src = r#"
+pub fn discounted_total(amount_cents: u64, discount_threshold_cents: u64) -> u64 {
+    if amount_cents >= discount_threshold_cents {
+        discount_factor(amount_cents)
+    } else {
+        amount_cents
+    }
+}
+fn discount_factor(amount_cents: u64) -> u64 { amount_cents * 70 / 100 }
+"#;
+    let tests = PathBuf::from("tests/main_tests.rs");
+    let tests_src = r#"
+#[test]
+fn boundary_asserts_flipped_value() {
+    assert_eq!(discounted_total(5_000, 5_000), 5_000);
+}
+"#;
+    let index = index_from_files(&[(prod, prod_src), (tests, tests_src)])?;
+    let seams = inventory_seams_from_index(&[PathBuf::from("src/main.rs")], &index);
+    let predicate = seams
+        .iter()
+        .find(|seam| seam.kind() == SeamKind::PredicateBoundary)
+        .ok_or_else(|| "expected predicate boundary seam".to_string())?;
+    let evidence = evidence_for_seam(predicate, &index);
+    if evidence.discriminate.state != StageState::Yes {
+        return Err(format!(
+            "a non-evaluable owner keeps the prior oracle credit: {}",
+            evidence.discriminate.summary
+        ));
+    }
     Ok(())
 }
 

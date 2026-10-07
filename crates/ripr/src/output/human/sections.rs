@@ -19,16 +19,21 @@ use crate::output::typescript_preview_card::{
     TypeScriptPreviewCard, bun_cross_language_advisory_packet, stable_byte_proof_mode,
     typescript_preview_card,
 };
+use std::path::Path;
 
 use super::evidence_lines::{evidence_path_lines, weakness_lines};
 use super::{is_wrappable_advisory_prose, wrap_human_prose};
 
-pub(crate) fn render_finding_digest_with_config(finding: &Finding, config: &RiprConfig) -> String {
+pub(crate) fn render_finding_digest_with_config(
+    finding: &Finding,
+    config: &RiprConfig,
+    root: &Path,
+) -> String {
     let mut out = String::new();
     let severity = config.severity().for_exposure(&finding.class).as_str();
     out.push_str(&format!(
         "  File: {}:{}\n",
-        display_path(&finding.probe.location.file),
+        crate::analysis::finding_location_text(root, &finding.probe.location.file),
         finding.probe.location.line
     ));
     if should_render_language_metadata(finding) {
@@ -49,6 +54,18 @@ pub(crate) fn render_finding_digest_with_config(finding: &Finding, config: &Ripr
     // WHY the finding is at this class without reading the full form.
     if let Some(hint) = classification_hint(&finding.class, &finding.ripr) {
         out.push_str(&format!("  Why {}: {hint}\n", finding.class.plain_label()));
+    }
+    // The refusal names a file and a blocker; a cut would drop the blocker,
+    // so it wraps like the next step instead of truncating.
+    if let Some(refusal) = evidence_value(finding, crate::domain::ASSERTION_NOT_CREDITED_PREFIX) {
+        const NOT_CREDITED_PREFIX: &str = "  Not credited: ";
+        let collapsed = refusal.split_whitespace().collect::<Vec<_>>().join(" ");
+        if NOT_CREDITED_PREFIX.chars().count() + collapsed.chars().count() <= LINE_BUDGET {
+            out.push_str(&format!("{NOT_CREDITED_PREFIX}{collapsed}\n"));
+        } else {
+            out.push_str(&wrap_human_prose(&collapsed, NOT_CREDITED_PREFIX, "    "));
+            out.push('\n');
+        }
     }
     if let Some(gap) = &finding.canonical_gap {
         out.push_str(&format!("  Canonical gap: {}\n", gap.id));
@@ -298,13 +315,19 @@ fn wrapped_fragment(label: &str, value: &str) -> String {
     out
 }
 
-pub(crate) fn render_finding_with_config(finding: &Finding, config: &RiprConfig) -> String {
+pub(crate) fn render_finding_with_config(
+    finding: &Finding,
+    config: &RiprConfig,
+    root: &Path,
+) -> String {
     let mut out = String::new();
     let severity = config.severity().for_exposure(&finding.class).as_str();
     out.push_str(&format!(
         "{} {}:{}\n",
         severity.to_ascii_uppercase(),
-        display_path(&finding.probe.location.file),
+        // The shared finding-location owner (#5996): the header line an
+        // agent joins against check JSON, MCP items and LSP packets.
+        crate::analysis::finding_location_text(root, &finding.probe.location.file),
         finding.probe.location.line
     ));
     // #4321: name the finding this block carries, so a reader routed here by
@@ -1057,7 +1080,12 @@ fn classification_hint(class: &ExposureClass, ripr: &RiprEvidence) -> Option<Str
             }
         }
         ExposureClass::ReachableUnrevealed => {
-            if reveal.observe.state == StageState::No {
+            if reveal.observe.summary == crate::domain::ASSERTION_CONTEXT_UNESTABLISHED {
+                Some(
+                    "a related test asserts here, but ripr could not establish that the assertion runs and is the standard `assert_eq!`"
+                        .to_string(),
+                )
+            } else if reveal.observe.state == StageState::No {
                 Some(
                     "a related test reaches this change, but no assertion observes the changed behavior"
                         .to_string(),
@@ -1073,10 +1101,14 @@ fn classification_hint(class: &ExposureClass, ripr: &RiprEvidence) -> Option<Str
                 Some("no static path from a related test to this change was found".to_string())
             }
         }
-        ExposureClass::InfectionUnknown => Some(
-            "the change reaches a sink but infection could not be determined statically"
-                .to_string(),
-        ),
+        // "reaches a sink" is a propagation claim: only a `yes` propagation
+        // stage supports it (CodeRabbit review on #6796).
+        ExposureClass::InfectionUnknown => Some(if ripr.propagate.state == StageState::Yes {
+            "the change reaches a sink but infection could not be determined statically".to_string()
+        } else {
+            "infection could not be determined statically, and no sink the change reaches was established"
+                .to_string()
+        }),
         ExposureClass::PropagationUnknown => Some(
             "the path from the changed behavior to an observable sink is not statically clear"
                 .to_string(),
@@ -1183,6 +1215,26 @@ mod classification_hint_tests {
                 .is_some_and(|hint| !hint.contains("no related test")),
             "a reaching test must never be described as absent: {partial:?}"
         );
+    }
+
+    #[test]
+    fn infection_unknown_hint_claims_a_sink_only_when_propagation_is_yes() {
+        let mut evidence = ripr(StageState::Yes, StageState::Yes);
+        evidence.propagate = StageEvidence::new(StageState::Yes, Confidence::Medium, "x");
+        let reached = classification_hint(&ExposureClass::InfectionUnknown, &evidence);
+        assert_eq!(
+            reached.as_deref(),
+            Some("the change reaches a sink but infection could not be determined statically")
+        );
+        for state in [StageState::Unknown, StageState::Weak, StageState::No] {
+            evidence.propagate = StageEvidence::new(state.clone(), Confidence::Low, "x");
+            let hint = classification_hint(&ExposureClass::InfectionUnknown, &evidence);
+            assert!(
+                hint.as_deref()
+                    .is_some_and(|hint| !hint.contains("reaches a sink")),
+                "{state:?}: {hint:?}"
+            );
+        }
     }
 
     #[test]

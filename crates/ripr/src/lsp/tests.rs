@@ -81,6 +81,7 @@ use tower_lsp_server::ls_types::{
 };
 use tower_lsp_server::{LspService, Server};
 
+mod analysis_thread_routing_tests;
 mod consumed_source_tests;
 mod shutdown_clear_tests;
 
@@ -2250,6 +2251,37 @@ fn lsp_saved_worktree_refresh_analyzes_uncommitted_tracked_edit() -> Result<(), 
     {
         return Err("saved tracked source edit did not reach the LSP diagnostic batch".to_string());
     }
+    // #3948: the production projection binds every finding's drill-in to the
+    // workspace folder, never the server process's `--root .`.
+    let bound_prefix = format!(
+        "ripr explain --root {} ",
+        crate::agent::loop_commands::shell_arg(&crate::agent::loop_commands::bound_root(
+            &root.path().to_string_lossy()
+        ))
+    );
+    let explain_commands = diagnostics
+        .batches
+        .iter()
+        .flat_map(|batch| batch.diagnostics.iter())
+        .filter_map(|diagnostic| {
+            diagnostic
+                .data
+                .as_ref()
+                .and_then(|data| data.get("explain_command"))
+                .and_then(serde_json::Value::as_str)
+        })
+        .collect::<Vec<_>>();
+    if explain_commands.is_empty() {
+        return Err("published finding diagnostics carried no explain_command".to_string());
+    }
+    if let Some(unbound) = explain_commands
+        .iter()
+        .find(|command| !command.starts_with(&bound_prefix) || !command.contains(" --worktree "))
+    {
+        return Err(format!(
+            "published explain_command is not bound to the workspace root: {unbound}"
+        ));
+    }
     Ok(())
 }
 
@@ -2490,8 +2522,7 @@ fn finding_diagnostic_and_hover_include_canonical_gap_id() -> Result<(), String>
     }
 }
 
-#[test]
-fn discriminator_witness_stays_aligned_across_lsp_surfaces() -> Result<(), String> {
+fn witness_finding() -> Finding {
     let mut finding = sample_finding();
     finding.recommended_next_step = None;
     finding.canonical_gap = Some(sample_canonical_gap());
@@ -2522,6 +2553,12 @@ fn discriminator_witness_stays_aligned_across_lsp_surfaces() -> Result<(), Strin
         miss: None,
     }];
 
+    finding
+}
+
+#[test]
+fn discriminator_witness_stays_aligned_across_lsp_surfaces() -> Result<(), String> {
+    let finding = witness_finding();
     let diagnostic = diagnostic_for_finding(Path::new("/workspace"), &finding);
     let witness = diagnostic
         .data
@@ -2566,7 +2603,7 @@ fn discriminator_witness_stays_aligned_across_lsp_surfaces() -> Result<(), Strin
     assert!(markup.value.contains("tests/pricing.rs:10"));
     assert!(markup.value.contains("suggested_assertion_unavailable"));
 
-    let context_packet = crate::output::json::render_context_packet(&finding, 5);
+    let context_packet = crate::output::json::render_context_packet(&finding, 5, Path::new("."));
     let context_packet: serde_json::Value =
         serde_json::from_str(&context_packet).map_err(|err| format!("packet JSON: {err}"))?;
     assert_eq!(context_packet["witness"], witness);
@@ -2589,6 +2626,85 @@ fn discriminator_witness_stays_aligned_across_lsp_surfaces() -> Result<(), Strin
     assert_eq!(
         context_target.and_then(|target| target.get("witness")),
         Some(&witness)
+    );
+    Ok(())
+}
+
+/// #3948: the LSP diagnostic witness names the workspace root and the
+/// session's worktree diff source, not the portable `--root .`, in the raw
+/// payload, the witness and the hover alike; equivalent checkouts still share
+/// one payload digest.
+#[test]
+fn diagnostic_witness_command_binds_the_workspace_root() -> Result<(), String> {
+    let finding = witness_finding();
+    let project = |root: &Path| -> Result<(String, Diagnostic), String> {
+        let input = crate::app::CheckInput {
+            root: root.to_path_buf(),
+            ..crate::app::CheckInput::default()
+        };
+        let navigation = crate::app::finding_navigation_with_worktree(&input, None, false, true);
+        let grouped = finding_diagnostics_by_uri_with_profile(
+            root,
+            std::slice::from_ref(&finding),
+            &crate::config::SeverityConfig::default(),
+            true,
+            FindingDiagnosticProjection::new(
+                crate::config::LspDiagnosticProfile::Full,
+                &PositionEncodingKind::UTF16,
+                &crate::analysis::diagnostic_origin::RustDiagnosticOrigins::default(),
+            )
+            .with_navigation(Some(&navigation)),
+        )?;
+        let diagnostic = grouped
+            .into_values()
+            .flatten()
+            .next()
+            .ok_or("expected the witness finding to project")?;
+        Ok((navigation.explain_command(&finding.id), diagnostic))
+    };
+
+    let (expected, diagnostic) = project(Path::new("/workspace"))?;
+    let root = crate::agent::loop_commands::shell_arg(&crate::agent::loop_commands::bound_root(
+        "/workspace",
+    ));
+    assert!(
+        expected.starts_with(&format!("ripr explain --root {root} "))
+            && expected.contains("--worktree"),
+        "the session route names the workspace and its worktree diff: {expected}"
+    );
+    let data = diagnostic.data.as_ref().ok_or("expected diagnostic data")?;
+    assert_eq!(data["explain_command"], expected.as_str());
+    assert_eq!(data["witness"]["explain_command"], expected.as_str());
+    let hover = super::hover::finding_hover_response(&finding, &diagnostic);
+    let HoverContents::Markup(markup) = hover.contents else {
+        return Err("expected witness hover markdown".to_string());
+    };
+    assert!(
+        markup.value.contains(&format!("- explain: `{expected}`")),
+        "hover must show the bound command: {}",
+        markup.value
+    );
+    assert!(!markup.value.contains("--root ."), "{}", markup.value);
+
+    let (_, relocated) = project(Path::new("/elsewhere/check out's"))?;
+    assert_ne!(
+        relocated
+            .data
+            .as_ref()
+            .map(|data| data["explain_command"].clone()),
+        Some(data["explain_command"].clone()),
+        "each checkout's command names its own root"
+    );
+    assert_eq!(
+        super::diagnostics::normalized_diagnostic_payload_digest(
+            Path::new("/workspace"),
+            &[diagnostic]
+        ),
+        super::diagnostics::normalized_diagnostic_payload_digest(
+            Path::new("/elsewhere/check out's"),
+            &[relocated]
+        ),
+        "equivalent checkouts share one cache identity"
     );
     Ok(())
 }
@@ -5028,17 +5144,19 @@ fn route_ready_seam_with_external_language_related_test() -> crate::analysis::Cl
     };
 
     let mut seam = sample_classified_seam();
-    seam.evidence.related_tests.push(RelatedTestGrip {
-        test_name: "discounted total at threshold".to_string(),
-        file: PathBuf::from("tests/pricing.test.ts"),
-        line: 4,
-        test_target: None,
-        oracle_kind: OracleKind::ExactValue,
-        oracle_strength: OracleStrength::Strong,
-        evidence_summary: "exact value assertion".to_string(),
-        relation_reason: RelationReason::DirectOwnerCall,
-        relation_confidence: RelationConfidence::High,
-    });
+    seam.evidence
+        .related_tests
+        .push(std::sync::Arc::new(RelatedTestGrip {
+            test_name: "discounted total at threshold".to_string(),
+            file: PathBuf::from("tests/pricing.test.ts"),
+            line: 4,
+            test_target: None,
+            oracle_kind: OracleKind::ExactValue,
+            oracle_strength: OracleStrength::Strong,
+            evidence_summary: "exact value assertion".to_string(),
+            relation_reason: RelationReason::DirectOwnerCall,
+            relation_confidence: RelationConfidence::High,
+        }));
     seam
 }
 
@@ -5051,6 +5169,7 @@ fn eligible_seam_with_inline_test_module_target() -> crate::analysis::Classified
 
     let mut seam = sample_classified_seam();
     for related in &mut seam.evidence.related_tests {
+        let related = std::sync::Arc::make_mut(related);
         related.file = PathBuf::from("src/pricing.rs");
         related.line = 120;
         related.test_target = Some(TestTargetEvidence::fixture(
@@ -6514,8 +6633,10 @@ fn seam_code_actions_cross_language_unresolved_yields_disabled_preview_limitatio
         ExpectedSink::ReturnValue,
     );
     seam.evidence.seam_id = seam.seam.id().clone();
-    seam.evidence.related_tests[0].file = PathBuf::from("test/js/web/fetch/blob.test.ts");
-    seam.evidence.related_tests[0].test_name = "blob copies shared buffers".to_string();
+    std::sync::Arc::make_mut(&mut seam.evidence.related_tests[0]).file =
+        PathBuf::from("test/js/web/fetch/blob.test.ts");
+    std::sync::Arc::make_mut(&mut seam.evidence.related_tests[0]).test_name =
+        "blob copies shared buffers".to_string();
     let diagnostic = diagnostic_for_classified_seam(Path::new("/workspace"), &seam)
         .ok_or_else(|| "expected seam diagnostic".to_string())?;
     let uri = test_uri("file:///workspace/src/jsc/Blob.rs")?;
@@ -6999,8 +7120,10 @@ fn seam_code_actions_fail_closed_for_cross_language_target_unresolved() -> Resul
         ExpectedSink::ReturnValue,
     );
     seam.evidence.seam_id = seam.seam.id().clone();
-    seam.evidence.related_tests[0].file = PathBuf::from("test/js/web/fetch/blob.test.ts");
-    seam.evidence.related_tests[0].test_name = "blob copies shared buffers".to_string();
+    std::sync::Arc::make_mut(&mut seam.evidence.related_tests[0]).file =
+        PathBuf::from("test/js/web/fetch/blob.test.ts");
+    std::sync::Arc::make_mut(&mut seam.evidence.related_tests[0]).test_name =
+        "blob copies shared buffers".to_string();
     let diagnostic = diagnostic_for_classified_seam(Path::new("/workspace"), &seam)
         .ok_or_else(|| "expected seam diagnostic".to_string())?;
     let uri = test_uri("file:///workspace/src/jsc/Blob.rs")?;
@@ -7262,7 +7385,7 @@ fn seam_code_actions_open_strong_related_test_before_first_related_test() -> Res
 
     let mut seam = sample_classified_seam();
     seam.evidence.related_tests = vec![
-        RelatedTestGrip {
+        std::sync::Arc::new(RelatedTestGrip {
             test_name: "nearby_smoke_reaches_owner".to_string(),
             file: PathBuf::from("tests/smoke.rs"),
             line: 7,
@@ -7272,8 +7395,8 @@ fn seam_code_actions_open_strong_related_test_before_first_related_test() -> Res
             evidence_summary: "smoke-only assertion".to_string(),
             relation_reason: RelationReason::DirectOwnerCall,
             relation_confidence: RelationConfidence::High,
-        },
-        RelatedTestGrip {
+        }),
+        std::sync::Arc::new(RelatedTestGrip {
             test_name: "below_threshold_has_no_discount".to_string(),
             file: PathBuf::from("tests/pricing.rs"),
             line: 12,
@@ -7283,7 +7406,7 @@ fn seam_code_actions_open_strong_related_test_before_first_related_test() -> Res
             evidence_summary: "exact value assertion".to_string(),
             relation_reason: RelationReason::DirectOwnerCall,
             relation_confidence: RelationConfidence::Medium,
-        },
+        }),
     ];
     let diagnostic = diagnostic_for_classified_seam(Path::new("/workspace"), &seam)
         .ok_or_else(|| "expected seam diagnostic".to_string())?;
@@ -7326,7 +7449,7 @@ fn seam_code_actions_open_highest_confidence_related_test_when_no_strong_test_ex
 
     let mut seam = sample_classified_seam();
     seam.evidence.related_tests = vec![
-        RelatedTestGrip {
+        std::sync::Arc::new(RelatedTestGrip {
             test_name: "opaque_fixture_hint".to_string(),
             file: PathBuf::from("tests/opaque.rs"),
             line: 3,
@@ -7336,8 +7459,8 @@ fn seam_code_actions_open_highest_confidence_related_test_when_no_strong_test_ex
             evidence_summary: "opaque relation".to_string(),
             relation_reason: RelationReason::FixtureOwnerAffinity,
             relation_confidence: RelationConfidence::Opaque,
-        },
-        RelatedTestGrip {
+        }),
+        std::sync::Arc::new(RelatedTestGrip {
             test_name: "low_confidence_smoke".to_string(),
             file: PathBuf::from("tests/low.rs"),
             line: 5,
@@ -7347,8 +7470,8 @@ fn seam_code_actions_open_highest_confidence_related_test_when_no_strong_test_ex
             evidence_summary: "smoke-only assertion".to_string(),
             relation_reason: RelationReason::FixtureOwnerAffinity,
             relation_confidence: RelationConfidence::Low,
-        },
-        RelatedTestGrip {
+        }),
+        std::sync::Arc::new(RelatedTestGrip {
             test_name: "medium_confidence_property".to_string(),
             file: PathBuf::from("tests/medium.rs"),
             line: 9,
@@ -7358,8 +7481,8 @@ fn seam_code_actions_open_highest_confidence_related_test_when_no_strong_test_ex
             evidence_summary: "medium oracle".to_string(),
             relation_reason: RelationReason::SameModule,
             relation_confidence: RelationConfidence::Medium,
-        },
-        RelatedTestGrip {
+        }),
+        std::sync::Arc::new(RelatedTestGrip {
             test_name: "high_confidence_weak_assertion".to_string(),
             file: PathBuf::from("tests/high.rs"),
             line: 11,
@@ -7369,7 +7492,7 @@ fn seam_code_actions_open_highest_confidence_related_test_when_no_strong_test_ex
             evidence_summary: "weak oracle".to_string(),
             relation_reason: RelationReason::DirectOwnerCall,
             relation_confidence: RelationConfidence::High,
-        },
+        }),
     ];
     let diagnostic = diagnostic_for_classified_seam(Path::new("/workspace"), &seam)
         .ok_or_else(|| "expected seam diagnostic".to_string())?;
@@ -7490,7 +7613,7 @@ fn seam_code_actions_keep_navigation_when_related_test_is_unresolved() -> Result
     };
 
     let mut seam = sample_side_effect_seam_without_related_tests();
-    seam.evidence.related_tests = vec![RelatedTestGrip {
+    seam.evidence.related_tests = vec![std::sync::Arc::new(RelatedTestGrip {
         test_name: "publish_event_emits_bus_message".to_string(),
         file: PathBuf::from("tests/service.rs"),
         line: 21,
@@ -7500,7 +7623,7 @@ fn seam_code_actions_keep_navigation_when_related_test_is_unresolved() -> Result
         evidence_summary: "related smoke test reaches event publishing".to_string(),
         relation_reason: RelationReason::DirectOwnerCall,
         relation_confidence: RelationConfidence::High,
-    }];
+    })];
     let diagnostic = diagnostic_for_classified_seam(Path::new("/workspace"), &seam)
         .ok_or_else(|| "expected seam diagnostic".to_string())?;
     let uri = test_uri("file:///workspace/src/service.rs")?;
@@ -7558,6 +7681,55 @@ fn boundary_gap_lsp_diagnostics_match_fixture_expectation() -> Result<(), String
 fn boundary_gap_lsp_code_actions_match_fixture_expectation() -> Result<(), String> {
     let (_, actions) = boundary_gap_lsp_fixture_outputs()?;
     assert_json_fixture("lsp-code-actions.json", actions)
+}
+
+/// #4001: these goldens were hand-kept and still showed `--root .` after
+/// production bound the workspace root; only their headings were checked.
+/// The non-blank lines under `heading` in a Markdown page, up to the next
+/// heading.
+fn markdown_section<'a>(page: &'a str, heading: &str) -> Vec<&'a str> {
+    page.lines()
+        .skip_while(|line| *line != heading)
+        .skip(1)
+        .take_while(|line| !line.starts_with('#'))
+        .filter(|line| !line.trim().is_empty())
+        .collect()
+}
+
+#[test]
+fn editor_lsp_workflow_lsp_goldens_match_production() -> Result<(), String> {
+    let (diagnostics, actions, production_hover) = lsp_fixture_render("editor_lsp_workflow")?;
+    // The hover golden is a workflow page around the production hover: it
+    // keeps its own evidence, status and limits sections, but the sections it
+    // shares with `classified_seam_hover_markdown` must be the production
+    // lines verbatim, labels included.
+    let hover_path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures/editor_lsp_workflow/expected/lsp-hover.md");
+    let hover = std::fs::read_to_string(&hover_path)
+        .map_err(|err| format!("failed to read {}: {err}", hover_path.display()))?;
+    for heading in [
+        "## Missing discriminator",
+        "## Suggested test shape",
+        "## Handoff, verify, and receipt commands",
+    ] {
+        let expected = markdown_section(&production_hover, heading);
+        if expected.is_empty() {
+            return Err(format!(
+                "production hover has no `{heading}` section:\n{production_hover}"
+            ));
+        }
+        let shown = markdown_section(&hover, heading);
+        if shown != expected {
+            return Err(format!(
+                "{} `{heading}` differs from production\nexpected:\n{}\nactual:\n{}",
+                hover_path.display(),
+                expected.join("\n"),
+                shown.join("\n")
+            ));
+        }
+    }
+    assert_named_json_fixture("editor_lsp_workflow", "lsp-diagnostics.json", diagnostics)?;
+    assert_named_json_fixture("editor_lsp_workflow", "lsp-code-actions.json", actions)
 }
 
 #[test]
@@ -13011,7 +13183,26 @@ fn first_seam_diagnostic(
 }
 
 fn boundary_gap_lsp_fixture_outputs() -> Result<(serde_json::Value, serde_json::Value), String> {
-    let fixture_root = boundary_gap_fixture_root();
+    lsp_fixture_outputs("boundary_gap")
+}
+
+/// Render a seam fixture's diagnostics and code actions through the
+/// production LSP path, projected for a checked-in golden. `editor_lsp_workflow`
+/// shares `boundary_gap`'s seam, so both goldens come from the same renderer
+/// and cannot keep a command form production no longer emits (#4001).
+fn lsp_fixture_outputs(fixture: &str) -> Result<(serde_json::Value, serde_json::Value), String> {
+    lsp_fixture_render(fixture).map(|(diagnostics, actions, _)| (diagnostics, actions))
+}
+
+/// The production diagnostics, code actions and seam hover for a fixture's
+/// single classified seam, with the workspace projected to `<root>`.
+fn lsp_fixture_render(
+    fixture: &str,
+) -> Result<(serde_json::Value, serde_json::Value, String), String> {
+    let fixture_root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures")
+        .join(fixture)
+        .join("input");
     let (mut seams, _) = crate::analysis::inventory_classified_seams_at_with_config(
         &fixture_root,
         &crate::config::RiprConfig::default(),
@@ -13019,7 +13210,7 @@ fn boundary_gap_lsp_fixture_outputs() -> Result<(serde_json::Value, serde_json::
     seams.sort_by(|left, right| left.seam.id().as_str().cmp(right.seam.id().as_str()));
     if seams.len() != 1 {
         return Err(format!(
-            "expected one boundary_gap classified seam, got {}",
+            "expected one {fixture} classified seam, got {}",
             seams.len()
         ));
     }
@@ -13047,22 +13238,38 @@ fn boundary_gap_lsp_fixture_outputs() -> Result<(serde_json::Value, serde_json::
         Some(&snapshot),
         &vscode_client_features()?,
     );
+    let hover = match classified_seam_hover_response(&seam, &diagnostic, Some(&snapshot)).contents {
+        HoverContents::Markup(markup) => markup.value,
+        _ => return Err(format!("expected a markup hover for {fixture}")),
+    };
+    let hover = crate::testing::cwd_placeholder::project_cwd_text(
+        &crate::testing::cwd_placeholder::project_root_text(&hover, &fixture_root),
+    );
 
     Ok((
         serde_json::json!({
-            "fixture": "boundary_gap",
+            "fixture": fixture,
             "diagnostics": [project_diagnostic(&fixture_root, &uri, &diagnostic)?],
         }),
         serde_json::json!({
-            "fixture": "boundary_gap",
+            "fixture": fixture,
             "actions": project_code_actions(&fixture_root, &actions)?,
         }),
+        hover,
     ))
 }
 
 fn assert_json_fixture(name: &str, actual: serde_json::Value) -> Result<(), String> {
+    assert_named_json_fixture("boundary_gap", name, actual)
+}
+
+fn assert_named_json_fixture(
+    fixture: &str,
+    name: &str,
+    actual: serde_json::Value,
+) -> Result<(), String> {
     let path = Path::new("fixtures")
-        .join("boundary_gap")
+        .join(fixture)
         .join("expected")
         .join(name);
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -13487,7 +13694,7 @@ fn sample_classified_seam() -> crate::analysis::ClassifiedSeam {
         seam,
         evidence: TestGripEvidence {
             seam_id,
-            related_tests: vec![RelatedTestGrip {
+            related_tests: vec![std::sync::Arc::new(RelatedTestGrip {
                 test_name: "below_threshold_has_no_discount".to_string(),
                 file: PathBuf::from("tests/pricing.rs"),
                 line: 12,
@@ -13501,7 +13708,7 @@ fn sample_classified_seam() -> crate::analysis::ClassifiedSeam {
                 evidence_summary: "exact value assertion".to_string(),
                 relation_reason: RelationReason::DirectOwnerCall,
                 relation_confidence: RelationConfidence::High,
-            }],
+            })],
             reach: StageEvidence::new(
                 StageState::Yes,
                 Confidence::High,
@@ -13764,6 +13971,372 @@ fn typescript_preview_finding_diagnostic_carries_actionability_context() -> Resu
     Ok(())
 }
 
+/// A TypeScript preview finding shaped like the production corpus finding:
+/// packet-not-ready (`repair_packet_ready: false`) yet candidate-actionable
+/// (witness with missing discriminators and a fix site), so it passes
+/// `finding_is_visible_in_profile` under BOTH diagnostic profiles — the
+/// exact shape #6847 was filed against.
+fn packet_not_ready_preview_finding_for_profile() -> Finding {
+    let mut finding = sample_typescript_preview_actionability_finding();
+    finding.activation.missing_discriminators = vec![MissingDiscriminatorFact {
+        value: "amount == threshold".to_string(),
+        reason: "changed TypeScript equality-boundary lacks a concrete discriminator".to_string(),
+        flow_sink: None,
+    }];
+    finding.related_tests.push(RelatedTest {
+        name: "discount_at_threshold".to_string(),
+        file: PathBuf::from("tests/pricing.test.ts"),
+        line: 5,
+        oracle: Some("expect(result).toBe(50)".to_string()),
+        oracle_kind: OracleKind::ExactValue,
+        oracle_strength: OracleStrength::Weak,
+        relation_reason: None,
+        relation_confidence: None,
+        miss: None,
+    });
+    finding
+}
+
+/// #6847 discriminating test (red before the fix: the publish batch was
+/// empty and the delivery budget selected zero of one in BOTH profiles while
+/// workspace status claimed one actionable diagnostic). The producer stamps
+/// `delivery_eligible: true` after profile admission; the shared validator's
+/// packet verdict gates the repair-packet surface, not delivery. The finding
+/// must publish at advisory severity under both profiles, be the one
+/// selected delivered item, and never appear in the omitted list.
+#[test]
+fn typescript_preview_finding_publishes_in_both_profiles_despite_incomplete_packet()
+-> Result<(), String> {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|err| format!("failed to start test runtime: {err}"))?;
+    runtime.block_on(async {
+        for profile in [
+            crate::config::LspDiagnosticProfile::Actionable,
+            crate::config::LspDiagnosticProfile::Full,
+        ] {
+            // A fresh backend per profile: both profiles deliver identical
+            // payloads, and a shared backend would correctly plan the second
+            // round as unchanged rather than republishing.
+            let (service, _socket) =
+                LspService::new(|client| Backend::new(client, PathBuf::from(".")));
+            let backend = service.inner();
+            let finding = packet_not_ready_preview_finding_for_profile();
+            let grouped = finding_diagnostics_by_uri_with_profile(
+                Path::new("/workspace"),
+                std::slice::from_ref(&finding),
+                &crate::config::SeverityConfig::default(),
+                true,
+                FindingDiagnosticProjection::new(
+                    profile,
+                    &PositionEncodingKind::UTF16,
+                    &crate::analysis::diagnostic_origin::RustDiagnosticOrigins::default(),
+                ),
+            )?;
+            if grouped.len() != 1 {
+                return Err(format!(
+                    "expected the preview finding to project under {profile:?}, got {grouped:?}"
+                ));
+            }
+            let (uri, diagnostics) = grouped
+                .into_iter()
+                .next()
+                .ok_or_else(|| "expected the preview finding diagnostic group".to_string())?;
+            if diagnostics.len() != 1 {
+                return Err(format!(
+                    "expected one preview diagnostic, got {}",
+                    diagnostics.len()
+                ));
+            }
+            let data = diagnostics[0]
+                .data
+                .as_ref()
+                .and_then(|value| value.as_object())
+                .ok_or_else(|| "expected preview diagnostic data".to_string())?;
+            if data.get("delivery_eligible") != Some(&serde_json::Value::Bool(true)) {
+                return Err("the producer must stamp delivery eligibility".to_string());
+            }
+            if data
+                .get("preview_actionability")
+                .and_then(|value| value.get("repair_packet_ready"))
+                .and_then(|value| value.as_bool())
+                != Some(false)
+            {
+                return Err("the fixture must stay packet-not-ready".to_string());
+            }
+            if diagnostics[0].severity != Some(DiagnosticSeverity::INFORMATION) {
+                return Err("preview findings publish at advisory severity".to_string());
+            }
+
+            let workspace = sample_workspace_diagnostics(
+                PathBuf::from("/workspace"),
+                uri.clone(),
+                diagnostics.clone(),
+                vec![finding],
+            );
+            let transaction = backend
+                .prepare_refresh_transaction(workspace)
+                .ok_or_else(|| "expected the preview snapshot to prepare".to_string())?;
+            let super::backend::RefreshTransaction { plan, snapshot, .. } = transaction;
+            let batch = plan
+                .publish_batches
+                .iter()
+                .find(|batch| batch.uri == uri)
+                .ok_or_else(|| "expected a publish batch for the preview document".to_string())?;
+            if batch.diagnostics.len() != 1 {
+                return Err(format!(
+                    "the preview finding must reach the publish batch, got {}",
+                    batch.diagnostics.len()
+                ));
+            }
+            let selection = snapshot
+                .delivery_selection
+                .clone()
+                .ok_or_else(|| "expected the prepared delivery selection".to_string())?;
+            let crate::lsp::diagnostic_budget::DiagnosticDeliveryOutcome::Applied {
+                result, ..
+            } = &selection.outcome
+            else {
+                return Err("expected an applied delivery selection".to_string());
+            };
+            if result.selected.len() != 1 || !result.omitted.is_empty() {
+                return Err(format!(
+                    "the packet-not-ready preview finding must be the one selected item with \
+                     nothing omitted (profile {profile:?}): selected={:?}, omitted={:?}",
+                    result.selected, result.omitted
+                ));
+            }
+            // Status agreement (#6847): the actionable projection and the
+            // delivered selection must agree in the same payload.
+            if snapshot.actionable_diagnostic_count() != result.selected.len() {
+                return Err(format!(
+                    "workspace status claims {} actionable diagnostics but the budget \
+                     delivered {}: the contradiction #6847 filed is back",
+                    snapshot.actionable_diagnostic_count(),
+                    result.selected.len()
+                ));
+            }
+            let pending_analyzed = BTreeMap::new();
+            let pending_entered = Vec::new();
+            if backend
+                .commit_refresh_snapshot(snapshot, &plan, &pending_analyzed, &pending_entered)
+                .is_none()
+            {
+                return Err("expected the preview snapshot to commit".to_string());
+            }
+            let committed = backend
+                .latest_analysis_snapshot()
+                .ok_or_else(|| "expected the committed snapshot".to_string())?;
+            let served = committed.served_diagnostics_for_uri(&uri);
+            if served.len() != 1 {
+                return Err(format!(
+                    "the delivered surface must serve the preview finding, got {}",
+                    served.len()
+                ));
+            }
+        }
+        Ok(())
+    })
+}
+
+/// #6847 control: Python preview delivery is byte-stable. Python published
+/// before the fix and must publish identically after it — same payload bytes
+/// in both profiles, and the delivery selection still selects the one item.
+#[test]
+fn python_preview_finding_delivery_is_byte_stable_across_profiles() -> Result<(), String> {
+    let project = |profile| {
+        let mut finding = sample_finding();
+        finding.language = Some(LanguageId::Python);
+        finding.language_status = Some(LanguageStatus::Preview);
+        finding.static_limit_kind = Some(StaticLimitKind::MissingImportGraph);
+        finding.activation.missing_discriminators = vec![MissingDiscriminatorFact {
+            value: "amount >= threshold".to_string(),
+            reason: "changed Python boundary lacks a concrete discriminator".to_string(),
+            flow_sink: None,
+        }];
+        finding.related_tests.push(RelatedTest {
+            name: "discount_at_threshold".to_string(),
+            file: PathBuf::from("tests/pricing.py"),
+            line: 5,
+            oracle: Some("assert total == 50".to_string()),
+            oracle_kind: OracleKind::ExactValue,
+            oracle_strength: OracleStrength::Weak,
+            relation_reason: None,
+            relation_confidence: None,
+            miss: None,
+        });
+        let grouped = finding_diagnostics_by_uri_with_profile(
+            Path::new("/workspace"),
+            &[finding],
+            &crate::config::SeverityConfig::default(),
+            true,
+            FindingDiagnosticProjection::new(
+                profile,
+                &PositionEncodingKind::UTF16,
+                &crate::analysis::diagnostic_origin::RustDiagnosticOrigins::default(),
+            ),
+        )?;
+        grouped
+            .into_iter()
+            .next()
+            .map(|(_, diagnostics)| diagnostics)
+            .ok_or_else(|| "expected the python finding to project".to_string())
+    };
+    let actionable = project(crate::config::LspDiagnosticProfile::Actionable)?;
+    let full = project(crate::config::LspDiagnosticProfile::Full)?;
+    let bytes_for = |diagnostics: &[Diagnostic]| {
+        serde_json::to_vec(diagnostics).map_err(|err| format!("serialize payload: {err}"))
+    };
+    if bytes_for(&actionable)? != bytes_for(&full)? {
+        return Err("python preview payload must be byte-identical across profiles".to_string());
+    }
+    for diagnostics in [&actionable, &full] {
+        let uri = file_uri_for_path(Path::new("/workspace/src/pricing.rs"))
+            .map_err(|err| format!("root URI construction failed: {err}"))?;
+        let by_uri = BTreeMap::from([(uri, diagnostics.clone())]);
+        let selection = crate::lsp::diagnostic_budget::DiagnosticDeliverySelection::evaluate(
+            &by_uri,
+            &crate::lsp::diagnostic_budget::DiagnosticBudget::default(),
+            "snapshot:s1:profile:python",
+            "evidence:e1",
+        );
+        let crate::lsp::diagnostic_budget::DiagnosticDeliveryOutcome::Applied { result, .. } =
+            &selection.outcome
+        else {
+            return Err("expected an applied delivery selection".to_string());
+        };
+        if result.selected.len() != 1 || !result.omitted.is_empty() {
+            return Err(format!(
+                "python preview delivery must stay 1/1: selected={:?}, omitted={:?}",
+                result.selected, result.omitted
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// #6848 discriminating test (red before the fix: the listing exposed the
+/// projection-local `finding:<hash>` / canonical gap ids, which
+/// `ripr.collectContext` rejects with -32602 while its recovery advice
+/// loops). The #5996-style cross-surface identity promise: every canonical
+/// id `ripr/listActionableItems` lists is the producer id the continuation
+/// route resolves — for ALL language classes, plus the seam surface.
+#[test]
+fn list_actionable_item_ids_resolve_through_collect_context_for_all_language_classes()
+-> Result<(), String> {
+    let mut rust_finding = sample_finding();
+    rust_finding.probe.location.file = PathBuf::from("src/pricing.rs");
+
+    let mut python_finding = sample_finding();
+    python_finding.id = "probe:src_pricing.py:88:predicate".to_string();
+    python_finding.probe.id = ProbeId(python_finding.id.clone());
+    python_finding.probe.location.file = PathBuf::from("src/pricing.py");
+    python_finding.language = Some(LanguageId::Python);
+    python_finding.language_status = Some(LanguageStatus::Preview);
+    python_finding.canonical_gap = Some(sample_canonical_gap());
+
+    let mut typescript_finding = sample_typescript_preview_actionability_finding();
+    typescript_finding.id = "probe:src_pricing.ts:typescript_preview:bd772dc8".to_string();
+    typescript_finding.probe.id = ProbeId(typescript_finding.id.clone());
+    typescript_finding.probe.location.file = PathBuf::from("src/pricing.ts");
+
+    let mut javascript_finding = sample_typescript_preview_actionability_finding();
+    javascript_finding.id = "probe:src_pricing.js:javascript_preview:bd772dc8".to_string();
+    javascript_finding.probe.id = ProbeId(javascript_finding.id.clone());
+    javascript_finding.probe.location.file = PathBuf::from("src/pricing.js");
+    javascript_finding.language = Some(LanguageId::JavaScript);
+
+    let mut perl_finding = sample_typescript_preview_actionability_finding();
+    perl_finding.id = "probe:src_pricing.pl:perl_preview:1a2b3c4d".to_string();
+    perl_finding.probe.id = ProbeId(perl_finding.id.clone());
+    perl_finding.probe.location.file = PathBuf::from("src/pricing.pl");
+    perl_finding.language = Some(LanguageId::Perl);
+
+    let findings = vec![
+        rust_finding,
+        python_finding,
+        typescript_finding,
+        javascript_finding,
+        perl_finding,
+    ];
+    // The full profile publishes every canonical finding, so the budget
+    // lists exactly one item per language class.
+    let grouped = finding_diagnostics_by_uri_with_profile(
+        Path::new("/workspace"),
+        &findings,
+        &crate::config::SeverityConfig::default(),
+        true,
+        FindingDiagnosticProjection::new(
+            crate::config::LspDiagnosticProfile::Full,
+            &PositionEncodingKind::UTF16,
+            &crate::analysis::diagnostic_origin::RustDiagnosticOrigins::default(),
+        ),
+    )?;
+    let items = crate::lsp::diagnostic_budget::build_budget_items_from_diagnostics(&grouped)
+        .map_err(|err| format!("build budget items: {err}"))?;
+    if items.len() != findings.len() {
+        return Err(format!(
+            "expected one budget item per finding, got {} items for {} findings",
+            items.len(),
+            findings.len()
+        ));
+    }
+    let snapshot_uri = file_uri_for_path(Path::new("/workspace/src/pricing.rs"))
+        .map_err(|err| format!("root URI construction failed: {err}"))?;
+    let mut snapshot = sample_analysis_snapshot(
+        PathBuf::from("/workspace"),
+        snapshot_uri.clone(),
+        Vec::new(),
+        findings.clone(),
+    );
+    snapshot.classified_seams = vec![sample_classified_seam()];
+    for item in &items {
+        let resolved = snapshot.finding_by_id(&item.canonical_id).ok_or_else(|| {
+            format!(
+                "listed canonical id {:?} does not resolve through the \
+                 ripr.collectContext finding_id route",
+                item.canonical_id
+            )
+        })?;
+        if resolved.id != item.canonical_id {
+            return Err(format!(
+                "the listed id must be the producer finding id, got {item:?}"
+            ));
+        }
+    }
+
+    // The seam surface: the seam diagnostic's listed id is the producer seam
+    // id the seam continuation route resolves.
+    let seam = sample_classified_seam();
+    let seam_diagnostic = diagnostic_for_classified_seam(Path::new("/workspace"), &seam)
+        .ok_or_else(|| "expected a seam diagnostic".to_string())?;
+    let seam_items = crate::lsp::diagnostic_budget::build_budget_items_from_diagnostics(
+        &BTreeMap::from([(snapshot_uri, vec![seam_diagnostic])]),
+    )
+    .map_err(|err| format!("build seam budget items: {err}"))?;
+    if seam_items.len() != 1 {
+        return Err(format!("expected one seam budget item, got {seam_items:?}"));
+    }
+    let seam_id = seam.seam.id().as_str().to_string();
+    if seam_items[0].canonical_id != seam_id {
+        return Err(format!(
+            "the listed seam id must be the producer seam id {seam_id:?}, got {:?}",
+            seam_items[0].canonical_id
+        ));
+    }
+    if snapshot
+        .classified_seam_by_id(&seam_items[0].canonical_id)
+        .is_none()
+    {
+        return Err(format!(
+            "listed seam id {:?} does not resolve through the seam continuation route",
+            seam_items[0].canonical_id
+        ));
+    }
+    Ok(())
+}
+
 #[test]
 fn preview_finding_hover_shows_boundary_before_evidence() -> Result<(), String> {
     use super::hover::finding_hover_response;
@@ -13981,6 +14554,186 @@ fn hover_for_position_uses_snapshot_finding_hover() -> Result<(), String> {
 }
 
 #[test]
+fn hover_for_position_reaches_a_coarse_zero_width_finding_diagnostic() -> Result<(), String> {
+    let finding = sample_finding();
+    let line = diagnostic_for_finding(Path::new("/workspace"), &finding)
+        .range
+        .start
+        .line;
+    // Coarse origin: column precision refused, so the producer publishes a
+    // zero-width range at the start of the finding line, or the LSP projects
+    // it to the fixed full-line span. Both cover every column of that line,
+    // including columns past the span's fixed width.
+    let past_span = crate::lsp::position::MAX_LINE_SPAN_WIDTH + 10;
+    for coarse_range in [
+        Range {
+            start: Position { line, character: 0 },
+            end: Position { line, character: 0 },
+        },
+        crate::lsp::position::line_span_range(line),
+    ] {
+        let (service, _socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
+        let backend = service.inner();
+        let mut diagnostic = diagnostic_for_finding(Path::new("/workspace"), &finding);
+        diagnostic.range = coarse_range;
+        let uri = test_uri("file:///workspace/src/pricing.rs")?;
+        let diagnostics = sample_workspace_diagnostics(
+            PathBuf::from("/workspace"),
+            uri.clone(),
+            vec![diagnostic],
+            vec![finding.clone()],
+        );
+        let Some(_) = backend.refresh_plan(diagnostics) else {
+            return Err("expected refresh plan".to_string());
+        };
+
+        for character in [0, 12, past_span] {
+            let Some(hover) =
+                backend.hover_for_position(&hover_params(uri.clone(), line, character))
+            else {
+                return Err(format!(
+                    "expected finding hover at {line}:{character} for {coarse_range:?}"
+                ));
+            };
+            let HoverContents::Markup(markup) = hover.contents else {
+                return Err("expected markup hover".to_string());
+            };
+            assert!(markup.value.contains("**ripr** `weakly_exposed`"));
+            assert!(markup.value.contains("## RIPR Evidence"));
+            // The hover highlights the line the cursor is on, not an empty span.
+            assert_eq!(
+                hover.range,
+                Some(crate::lsp::position::line_span_range(line))
+            );
+        }
+        // The coarse range covers its own line only.
+        assert!(
+            backend
+                .hover_for_position(&hover_params(uri, line + 1, 0))
+                .is_none(),
+            "a line-level range must not reach the next line"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn hover_for_position_prefers_a_precise_diagnostic_over_a_coarse_one_on_its_line()
+-> Result<(), String> {
+    let precise_finding = sample_finding();
+    let precise = diagnostic_for_finding(Path::new("/workspace"), &precise_finding);
+    let line = precise.range.start.line;
+    // Both line-level shapes: a zero-width range, and the full-line span that
+    // `range_from_encoded_origin` projects for a coarse origin.
+    let coarse_ranges = [
+        Range {
+            start: Position { line, character: 0 },
+            end: Position { line, character: 0 },
+        },
+        crate::lsp::position::line_span_range(line),
+    ];
+    for coarse_range in coarse_ranges {
+        let (service, _socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
+        let backend = service.inner();
+        let mut coarse_finding = sample_finding();
+        coarse_finding.id = "probe:pricing:88:coarse".to_string();
+        coarse_finding.probe.id = ProbeId(coarse_finding.id.clone());
+        coarse_finding.class = ExposureClass::NoStaticPath;
+        let mut coarse = diagnostic_for_finding(Path::new("/workspace"), &coarse_finding);
+        coarse.range = coarse_range;
+        assert!(
+            precise.range.start != precise.range.end
+                && precise.range != crate::lsp::position::line_span_range(line),
+            "fixture needs a precise range"
+        );
+        let inside = precise.range.start.character;
+        let past_end = precise.range.end.character + 2;
+        let uri = test_uri("file:///workspace/src/pricing.rs")?;
+        // The coarse diagnostic comes first, so first-match scanning would pick it.
+        let diagnostics = sample_workspace_diagnostics(
+            PathBuf::from("/workspace"),
+            uri.clone(),
+            vec![coarse, precise.clone()],
+            vec![coarse_finding, precise_finding.clone()],
+        );
+        let Some(_) = backend.refresh_plan(diagnostics) else {
+            return Err("expected refresh plan".to_string());
+        };
+
+        for (character, expected) in [(inside, "weakly_exposed"), (past_end, "no_static_path")] {
+            let Some(hover) =
+                backend.hover_for_position(&hover_params(uri.clone(), line, character))
+            else {
+                return Err(format!("expected finding hover at {line}:{character}"));
+            };
+            let HoverContents::Markup(markup) = hover.contents else {
+                return Err("expected markup hover".to_string());
+            };
+            assert!(
+                markup.value.contains(&format!("**ripr** `{expected}`")),
+                "hover at {line}:{character} with coarse {coarse_range:?} should describe {expected}: {}",
+                markup.value
+            );
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn diagnostic_at_position_prefers_a_precise_range_over_a_coarse_one() {
+    use super::hover::diagnostic_at_position;
+
+    let finding = sample_finding();
+    let precise = diagnostic_for_finding(Path::new("/workspace"), &finding);
+    let line = precise.range.start.line;
+    let inside = Position {
+        line,
+        character: precise.range.start.character,
+    };
+    let past_end = Position {
+        line,
+        character: precise.range.end.character + 2,
+    };
+    for coarse_range in [
+        Range {
+            start: Position { line, character: 0 },
+            end: Position { line, character: 0 },
+        },
+        crate::lsp::position::line_span_range(line),
+    ] {
+        let mut coarse = precise.clone();
+        coarse.message = "coarse".to_string();
+        coarse.range = coarse_range;
+
+        let both = vec![coarse.clone(), precise.clone()];
+        assert_eq!(
+            diagnostic_at_position(&both, &inside).map(|d| d.range),
+            Some(precise.range),
+            "coarse {coarse_range:?}"
+        );
+        assert_eq!(
+            diagnostic_at_position(&both, &past_end).map(|d| d.message.as_str()),
+            Some("coarse")
+        );
+        let coarse_only = vec![coarse];
+        assert_eq!(
+            diagnostic_at_position(&coarse_only, &inside).map(|d| d.message.as_str()),
+            Some("coarse")
+        );
+        assert!(
+            diagnostic_at_position(
+                &coarse_only,
+                &Position {
+                    line: line + 1,
+                    character: 0
+                }
+            )
+            .is_none()
+        );
+    }
+}
+
+#[test]
 fn finding_hover_avoids_mutation_runtime_language() -> Result<(), String> {
     use super::hover::finding_hover_response;
 
@@ -14048,11 +14801,22 @@ fn execute_command_collect_context_returns_packet_for_known_finding() -> Result<
             .iter()
             .map(|reason| reason.as_str().to_string())
             .collect();
-        let expected_context_packet = crate::domain::context_packet::ContextPacket::from_finding(
-            &expected_finding,
-            crate::config::DEFAULT_CONTEXT_RELATED_TESTS,
-            expected_stop_reasons,
-        );
+        let mut expected_context_packet =
+            crate::domain::context_packet::ContextPacket::from_finding(
+                &expected_finding,
+                crate::config::DEFAULT_CONTEXT_RELATED_TESTS,
+                expected_stop_reasons,
+                Path::new("/workspace"),
+            );
+        // #5994: the session analyzed the saved worktree (staged and
+        // unstaged tracked edits), so the packet's witness command replays
+        // that diff source with the session root — re-running it re-selects
+        // the finding the packet ships with, instead of exiting 2 with "no
+        // finding matched" against the committed default-branch diff.
+        if let Some(witness) = expected_context_packet.witness.as_mut() {
+            witness.explain_command =
+                "ripr explain --root /workspace --worktree probe:pricing:88:predicate".to_string();
+        }
         let expected_json =
             crate::output::json::render_context_packet_dto(&expected_context_packet);
         let expected_packet: serde_json::Value = serde_json::from_str(&expected_json)
@@ -19007,6 +19771,317 @@ async fn save_with_changed_content_lifts_quarantine_and_resumes_refresh() -> Res
     Ok(())
 }
 
+// ---------------------------------------------------------------------------
+// Outside-partition disclosure (#5998) and the budget-bound retry recovery
+// (#5999): a document beyond the partial-diff budget is never clean/served,
+// and the retry pointer never advertises a refresh that cannot widen the
+// partition.
+// ---------------------------------------------------------------------------
+
+const PARTITION_TEXTS: [&str; 3] = [
+    "fn selected() -> bool { true }\n",
+    "fn beyond() -> bool { true }\n",
+    "fn unchanged() -> bool { true }\n",
+];
+
+struct PartitionFixture {
+    _temp: TempLspRoot,
+    root: PathBuf,
+    uris: Vec<tower_lsp_server::ls_types::Uri>,
+}
+
+fn partition_fixture(name: &str) -> Result<PartitionFixture, String> {
+    let temp = unique_lsp_test_root(name)?;
+    let root = temp.path().to_path_buf();
+    std::fs::create_dir_all(root.join("src")).map_err(|err| format!("create src failed: {err}"))?;
+    let mut uris = Vec::new();
+    for (index, text) in PARTITION_TEXTS.iter().enumerate() {
+        let path = root.join(format!("src/file{index}.rs"));
+        std::fs::write(&path, text).map_err(|err| format!("write file{index}.rs failed: {err}"))?;
+        uris.push(
+            file_uri_for_path(&path).map_err(|err| format!("file{index}.rs URI failed: {err}"))?,
+        );
+    }
+    Ok(PartitionFixture {
+        _temp: temp,
+        root,
+        uris,
+    })
+}
+
+/// The bounded partition the fixture's snapshot pretends the selector built:
+/// `file0.rs` was analyzed, `file1.rs` is a changed file beyond the file
+/// budget, and `file2.rs` is not part of the diff at all.
+fn partition_partial_scope() -> crate::analysis::PartialDiffScope {
+    crate::analysis::PartialDiffScope {
+        run_status: crate::analysis::PartialDiffScope::RUN_STATUS.to_string(),
+        diff_identity: "sha256:diff".to_string(),
+        file_budget: 1,
+        line_budget: 1,
+        budget_disclosures: Vec::new(),
+        selected_files: vec!["src/file0.rs".to_string()],
+        unselected_files: vec!["src/file1.rs".to_string()],
+        selected_changed_lines: 1,
+        uninspected_files_lower_bound: 1,
+        uninspected_changed_lines_lower_bound: 1,
+        stop_reason: crate::analysis::PartialDiffStopReason::FileBudget,
+        next_file_changed_lines: Some(1),
+        partition_identity: "sha256:partition".to_string(),
+    }
+}
+
+fn partition_workspace_diagnostics(
+    fixture: &PartitionFixture,
+    seams_deferred: bool,
+    partial_scope: Option<crate::analysis::PartialDiffScope>,
+) -> WorkspaceDiagnostics {
+    // The selected document carries the only finding, exactly as a bounded
+    // partition would produce: the beyond-budget document was never probed.
+    let finding = quarantine_finding("probe:selected:1:predicate", "src/file0.rs");
+    let mut diagnostic = diagnostic_for_finding(&fixture.root, &finding);
+    if let Some(data) = diagnostic
+        .data
+        .as_mut()
+        .and_then(serde_json::Value::as_object_mut)
+    {
+        data.insert("headline_eligible".to_string(), serde_json::json!(true));
+    }
+    let mut diagnostics_by_uri = BTreeMap::new();
+    diagnostics_by_uri.insert(fixture.uris[0].clone(), vec![diagnostic.clone()]);
+    let input_identity = LspAnalysisInputIdentity::from_refresh_inputs(
+        fixture.root.clone(),
+        1,
+        &LspAnalysisConfig::default(),
+    );
+    // Open saved documents are index inputs, so the producer commits their
+    // bytes even outside the changed-line partition; the partition facts
+    // above are what decide changed-line coverage.
+    let mut rust_consumed_sources =
+        crate::analysis::consumed_source::ConsumedRustSources::default();
+    for (index, text) in PARTITION_TEXTS.iter().enumerate() {
+        rust_consumed_sources.record(
+            Path::new(&format!("src/file{index}.rs")),
+            Some(text.as_bytes()),
+        );
+    }
+    let snapshot = AnalysisSnapshot {
+        root: fixture.root.clone(),
+        rust_consumed_sources,
+        input_identity: Some(input_identity),
+        base: Some("origin/main".to_string()),
+        mode: Mode::Draft,
+        refresh: RefreshMetadata::generated_now(),
+        findings: vec![finding],
+        analysis_outcome: None,
+        diagnostic_profile: crate::config::LspDiagnosticProfile::Full,
+        classified_seams: Vec::new(),
+        gap_artifacts: Vec::new(),
+        gap_artifact_rejections: Vec::new(),
+        harness_facts: HarnessFactsOnSnapshot::NotRegistered,
+        diagnostics_by_uri,
+        diagnostic_uri_index: None,
+        delivery_selection: None,
+        seams_deferred,
+        partial_scope,
+        component_outcomes: Vec::new(),
+        out_of_scope_test_file_findings: 0,
+    };
+    WorkspaceDiagnostics {
+        snapshot,
+        batches: vec![DiagnosticBatch {
+            uri: fixture.uris[0].clone(),
+            diagnostics: vec![diagnostic],
+        }],
+    }
+}
+
+/// #5998: an opened changed document beyond the partial-diff budget was
+/// never analyzed, so the workspace status must NOT report it `clean` /
+/// `served`. It carries the typed `not_analyzed` state with the partition
+/// reason and the budget-raise + restart recovery, while the selected and
+/// unchanged documents keep their exact prior projections.
+#[tokio::test]
+async fn workspace_status_reports_outside_partition_document_not_analyzed() -> Result<(), String> {
+    let fixture = partition_fixture("outside-partition-status")?;
+    let (service, socket) = LspService::new(|client| Backend::new(client, fixture.root.clone()));
+    drop(socket);
+    let backend = service.inner();
+    for (uri, text) in fixture.uris.iter().zip(PARTITION_TEXTS.iter()) {
+        backend.did_open(quarantine_open_params(uri, text)).await;
+    }
+    backend
+        .refresh_plan(partition_workspace_diagnostics(
+            &fixture,
+            false,
+            Some(partition_partial_scope()),
+        ))
+        .ok_or_else(|| "expected committed snapshot".to_string())?;
+
+    let status = workspace_status_json(backend).await?;
+    if status["run_status"].as_str() != Some("limited_partial_scope") {
+        return Err(format!(
+            "fixture must reproduce the partial-scope run: {status}"
+        ));
+    }
+
+    // The analyzed document keeps the prior projection.
+    let selected = open_document_entry(&status, fixture.uris[0].as_str())?;
+    if selected["state"].as_str() != Some("clean")
+        || selected["line_local_diagnostics"].as_str() != Some("served")
+        || !selected["not_analyzed_reason"].is_null()
+    {
+        return Err(format!(
+            "analyzed document must stay clean/served: {selected}"
+        ));
+    }
+
+    // The beyond-budget document must NOT read as analyzed-and-clean.
+    let beyond = open_document_entry(&status, fixture.uris[1].as_str())?;
+    if beyond["line_local_diagnostics"].as_str() == Some("served") {
+        return Err(format!(
+            "a document outside the analyzed partition must not claim served: {beyond}"
+        ));
+    }
+    if beyond["state"].as_str() == Some("clean") {
+        return Err(format!(
+            "a document outside the analyzed partition must not claim clean: {beyond}"
+        ));
+    }
+    if beyond["state"].as_str() != Some("not_analyzed")
+        || beyond["line_local_diagnostics"].as_str() != Some("not_analyzed")
+    {
+        return Err(format!("unexpected outside-partition state: {beyond}"));
+    }
+    if beyond["not_analyzed_reason"].as_str() != Some("outside_analyzed_partition") {
+        return Err(format!(
+            "the outside-partition state must name its reason: {beyond}"
+        ));
+    }
+    let recovery = beyond["not_analyzed_recovery"]
+        .as_str()
+        .ok_or_else(|| format!("outside-partition state must carry a recovery: {beyond}"))?;
+    // The selector minimum admits the next excluded file, not necessarily
+    // every unselected document, so the route must say to raise further
+    // when the document is still reported not_analyzed (#6853 review).
+    for needle in ["RIPR_PARTIAL_DIFF_FILE_BUDGET", "restart", "raise further"] {
+        if !recovery.contains(needle) {
+            return Err(format!("recovery must name {needle:?}: {recovery}"));
+        }
+    }
+
+    // A changed-file partition never covers an unchanged opened document:
+    // it legitimately has no line-local findings and stays clean/served.
+    let unchanged = open_document_entry(&status, fixture.uris[2].as_str())?;
+    if unchanged["state"].as_str() != Some("clean")
+        || unchanged["line_local_diagnostics"].as_str() != Some("served")
+        || !unchanged["not_analyzed_reason"].is_null()
+    {
+        return Err(format!(
+            "an opened unchanged document must stay clean/served: {unchanged}"
+        ));
+    }
+    Ok(())
+}
+
+/// #5999: for a budget-bound `limited_partial_scope` run the status must not
+/// advertise `ripr.refresh` as the retry — refresh provably re-runs the
+/// identical partition. The recovery must name the budget override and the
+/// sidecar restart. A refresh-liftable state (`seams_deferred`) keeps the
+/// command pointer and no recovery object.
+#[tokio::test]
+async fn analysis_status_retry_names_budget_restart_for_limited_partial_scope() -> Result<(), String>
+{
+    let fixture = partition_fixture("partial-retry-recovery")?;
+    let (service, socket) = LspService::new(|client| Backend::new(client, fixture.root.clone()));
+    drop(socket);
+    let backend = service.inner();
+    backend
+        .refresh_plan(partition_workspace_diagnostics(
+            &fixture,
+            false,
+            Some(partition_partial_scope()),
+        ))
+        .ok_or_else(|| "expected committed snapshot".to_string())?;
+
+    let decision = backend.refresh_scheduler_for_test().request(
+        fixture.root.clone(),
+        LspAnalysisConfig::default(),
+        1,
+        0,
+        RefreshScope::Interactive,
+        RefreshReason::DidSave,
+    );
+    let request = started_request(&decision)?;
+    backend.record_health_outcome(&request, RefreshAttemptOutcome::Published);
+    let status = backend.analysis_status_payload();
+    if status["run_status"].as_str() != Some("limited_partial_scope") {
+        return Err(format!(
+            "fixture must reproduce the partial-scope run: {status}"
+        ));
+    }
+    if !status["retry_command"].is_null() {
+        return Err(format!(
+            "retry_command must not advertise refresh for a budget-bound partial run: {status}"
+        ));
+    }
+    let recovery = &status["retry_recovery"];
+    if recovery["kind"].as_str() != Some("increase_configured_limit") {
+        return Err(format!("retry_recovery must be typed: {status}"));
+    }
+    let detail = recovery["detail"]
+        .as_str()
+        .ok_or_else(|| format!("retry_recovery must carry a detail: {status}"))?;
+    for needle in [
+        "ripr.refresh",
+        "RIPR_PARTIAL_DIFF_FILE_BUDGET",
+        "restart the language server",
+    ] {
+        if !detail.contains(needle) {
+            return Err(format!("recovery detail must name {needle:?}: {detail}"));
+        }
+    }
+    if backend
+        .refresh_scheduler_for_test()
+        .finish(&request, false)
+        .is_some()
+    {
+        return Err("the finished partial attempt should leave no pending request".to_string());
+    }
+
+    // Contrast control: refresh genuinely lifts a seams_deferred snapshot to
+    // full, so that state keeps retry_command and carries no recovery object.
+    backend
+        .refresh_plan(partition_workspace_diagnostics(&fixture, true, None))
+        .ok_or_else(|| "expected committed seams_deferred snapshot".to_string())?;
+    let decision = backend.refresh_scheduler_for_test().request(
+        fixture.root.clone(),
+        LspAnalysisConfig::default(),
+        2,
+        0,
+        RefreshScope::Interactive,
+        RefreshReason::ExplicitRefresh,
+    );
+    let request = started_request(&decision)?;
+    backend.record_health_outcome(&request, RefreshAttemptOutcome::Published);
+    let status = backend.analysis_status_payload();
+    if status["run_status"].as_str() != Some("seams_deferred") {
+        return Err(format!(
+            "fixture must reproduce the seams_deferred run: {status}"
+        ));
+    }
+    if status["retry_command"].as_str() != Some("ripr.refresh") {
+        return Err(format!(
+            "a refresh-liftable state must keep the refresh retry pointer: {status}"
+        ));
+    }
+    if !status["retry_recovery"].is_null() {
+        return Err(format!(
+            "a refresh-liftable state must not carry a budget recovery: {status}"
+        ));
+    }
+    Ok(())
+}
+
 #[tokio::test]
 async fn did_save_without_text_during_unknown_buffer_authority_holds_the_quarantine()
 -> Result<(), String> {
@@ -21857,7 +22932,7 @@ fn framed_lsp_zero_git_timeout_commits_limited_once_and_recovers() -> Result<(),
     })
 }
 
-/// #5927: hover splits related-test rows the way human output does. A
+/// #5927: hover shares human output's label and reason for related-test rows. A
 /// matched row that still misses keeps its oracle kind and strength and adds
 /// the reason; only an unmatched row uses the `misses ...; checked` form.
 #[test]
@@ -21887,6 +22962,11 @@ fn hover_keeps_oracle_kind_on_a_matched_row_that_still_misses() -> Result<(), St
             RelatedTestMiss::AssertionNotObserving,
         ),
         no_assertion,
+        related(
+            "observer_unconfirmed",
+            40,
+            RelatedTestMiss::ObservationUnconfirmed,
+        ),
     ];
     let diagnostic = diagnostic_for_finding(Path::new("/workspace"), &finding);
     let HoverContents::Markup(markup) =
@@ -21918,5 +22998,104 @@ fn hover_keeps_oracle_kind_on_a_matched_row_that_still_misses() -> Result<(), St
         row("calls_only")?,
         "- `src/lib.rs:30` `calls_only` misses: has no assertion"
     );
+    // #6702: an unknown observation edge reads `unconfirmed`, not `misses`,
+    // and keeps the oracle it could not confirm.
+    assert_eq!(
+        row("observer_unconfirmed")?,
+        "- `src/lib.rs:40` `observer_unconfirmed` \u{2014} weak relational_check oracle: \
+         assert!(matches!(value, _)); unconfirmed: ripr could not confirm that this \
+         assertion observes the changed behavior"
+    );
+    Ok(())
+}
+
+/// #5510: the packet-backed Perl finding's rows reach hover, related
+/// information and the diagnostic data with the shared sentence on the
+/// direct row only.
+#[cfg(feature = "lang-perl")]
+#[test]
+fn perl_packet_backed_rows_agree_in_hover_related_information_and_data() -> Result<(), String> {
+    use crate::output::related_test_miss::{related_test_miss_label, related_test_miss_reason};
+    let finding = crate::analysis::perl_direct_and_advisory_finding()?;
+    let [direct, advisory] = finding.related_tests.as_slice() else {
+        return Err(format!("expected two rows: {:?}", finding.related_tests));
+    };
+    let why = related_test_miss_reason(direct, &finding.activation.missing_discriminators)
+        .ok_or("the direct row should have a reason")?;
+    let label = related_test_miss_label(direct);
+    let explained = format!("{label}: {why}");
+
+    let hover = finding_hover_markdown_for(&finding)?;
+    let hover_row = |name: &str| {
+        hover
+            .lines()
+            .find(|line| line.starts_with("- `") && line.contains(&format!("`{name}`")))
+            .ok_or_else(|| format!("no hover row for `{name}`:\n{hover}"))
+    };
+    // #6299: a matched row keeps its oracle projection and appends the
+    // labelled reason.
+    assert!(hover_row(&direct.name)?.contains(&explained), "{hover}");
+    let advisory_row = hover_row(&advisory.name)?;
+    assert!(
+        !advisory_row.contains(&why) && !advisory_row.contains(&format!("{label}:")),
+        "{advisory_row}"
+    );
+
+    let mut diagnostic = diagnostic_for_finding(Path::new("/workspace"), &finding);
+    let examined = diagnostic
+        .related_information
+        .iter()
+        .flatten()
+        .filter(|row| row.message.contains(&why))
+        .collect::<Vec<_>>();
+    let [examined] = examined.as_slice() else {
+        return Err(format!("expected one explained row: {examined:?}"));
+    };
+    assert!(
+        examined.message.contains(&format!("`{}`", direct.name))
+            && examined.message.ends_with(&explained),
+        "{}",
+        examined.message
+    );
+    assert_eq!(
+        examined.location.range.start.line,
+        u32::try_from(direct.line.saturating_sub(1)).map_err(|error| error.to_string())?
+    );
+    assert_eq!(
+        examined.location.uri.as_str(),
+        format!("file:///workspace/{}", direct.file.display())
+    );
+    assert!(
+        diagnostic
+            .related_information
+            .iter()
+            .flatten()
+            .all(|row| !row.message.contains(&format!("`{}`", advisory.name)))
+    );
+
+    add_canonical_group_data(
+        Path::new("/workspace"),
+        &mut diagnostic,
+        &finding,
+        std::slice::from_ref(&finding),
+    );
+    let data = diagnostic.data.as_ref().ok_or("expected diagnostic data")?;
+    for rows in [
+        &data["related_tests"],
+        &data["raw_findings"][0]["related_tests"],
+    ] {
+        let row = |name: &str| {
+            rows.as_array()
+                .into_iter()
+                .flatten()
+                .find(|row| row["name"] == name)
+                .ok_or_else(|| format!("no data row for `{name}`: {rows}"))
+        };
+        let direct_row = row(&direct.name)?;
+        assert_eq!(direct_row["miss"], "observation_unconfirmed");
+        assert_eq!(direct_row["why"], why.as_str());
+        let advisory_row = row(&advisory.name)?;
+        assert!(advisory_row["miss"].is_null() && advisory_row["why"].is_null());
+    }
     Ok(())
 }

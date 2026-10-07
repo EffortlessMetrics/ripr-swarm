@@ -73,6 +73,7 @@ pub(crate) fn collect_context_with_config_and_worktree(
             finding,
             max_related_tests,
             Some(navigation.explain_command(&finding.id)),
+            &output.root,
         )),
         None => Err(super::explain::no_finding_matched(
             selector,
@@ -110,6 +111,9 @@ pub(crate) fn collect_context_from_artifact(
             finding,
             max_related_tests,
             Some(navigation.explain_command(&finding.id)),
+            // The artifact records the analyzed root; the packet location
+            // renders against it like every fresh route (#5996).
+            input.root.as_path(),
         )),
         None => Err(super::explain::no_finding_matched(
             selector,
@@ -162,7 +166,13 @@ mod tests {
         let diff = input
             .diff_file
             .as_ref()
-            .map(|path| crate::agent::loop_commands::shell_arg(&path.display().to_string()))
+            .map(|path| {
+                // The drill-in binds a relative --diff to the producing
+                // directory (#3948), rendered with the shared root rule.
+                crate::agent::loop_commands::shell_arg(&crate::agent::loop_commands::bound_root(
+                    &path.display().to_string(),
+                ))
+            })
             .ok_or("sample input must carry a diff file")?;
         let selector = "probe:crates_ripr_examples_sample_src_lib.rs:error_path:a776c683";
         let rendered = collect_context_with_input(input, selector, 2)?;

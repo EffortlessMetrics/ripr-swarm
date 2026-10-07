@@ -11,6 +11,18 @@
   "findings": [
     {
       "id": "probe:src_lib.rs:predicate:908b0e30",
+      "canonical_gap_id": "gap:rust:src/lib.rs:apply_fee:predicate_boundary:predicate:amount==fee",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:apply_fee:predicate_boundary:predicate:amount==fee",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "apply_fee",
+        "behavior_kind": "predicate_boundary",
+        "probe_kind": "predicate",
+        "normalized_discriminator": "amount==fee"
+
+      },
       "classification": "no_static_path",
       "severity": "warning",
       "confidence": 0.48,
@@ -18,7 +30,7 @@
         "id": "probe:src_lib.rs:predicate:908b0e30",
         "family": "predicate",
         "delta": "control",
-        "file": "fixtures/rust_transitive_reach_negative/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 2,
         "expression": "if amount >= fee {"
        },
