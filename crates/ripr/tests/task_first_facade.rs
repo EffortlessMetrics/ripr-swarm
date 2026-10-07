@@ -1294,7 +1294,7 @@ fn repair_skips_severity_off_seams_with_named_omission() -> Result<(), String> {
     Ok(())
 }
 
-// Trust-bound exclusion is proven beside the selector
+// Trust-bound exclusion is demonstrated beside the selector
 // (`app::task_first::tests::implicit_continue_skips_trust_bound_attempts`),
 // not here: the attempt commitment forbids staging a binding by editing
 // a manifest, and the full trust ceremony belongs to the binding
