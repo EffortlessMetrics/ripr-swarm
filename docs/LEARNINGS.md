@@ -393,6 +393,20 @@ fallback fail-closes to the whole argument list so a buried literal in the
 aliased slot cannot restore pairing. The reverse direction, helper-built
 inputs that read as gaps, is #6615.
 
+## 2026-10-07: A reassigned boundary binding is a stale pairing, not an observed result (#7004)
+
+Same-test pairing kept a `let`-bound boundary name live until a re-`let`
+shadowed it. `let mut got = gate(10); got = true; assert_eq!(got, true)`
+therefore paired the assertion with a call whose result it no longer
+observed, promoting the predicate toward `exposed`. A post-`let`
+reassignment, compound assignment, or `&mut` borrow now voids the binding
+fail-closed. `let mut` alone still pairs, and a mutation before the
+boundary `let` does not void the fresh binding. Compound assignment voids
+even when the shift preserves the value (`got += 1`): without value
+analysis the rule cannot tell a preserving shift from a destroying one
+(`*= 0`), so it fail-closes. Do not "fix" this with dataflow; alias and
+field/index mutation stay unmodeled by design.
+
 ## 2026-09-29: Whole-object equality is not an effect observer of a different collection (#4575)
 
 A SideEffect `items.push(...)` on a passed collection can be confirmed by

@@ -13,5 +13,8 @@
   "changed_since_labeling": false,
   "observed_classifications": [],
   "outcome": "abstained",
-  "contradictions": []
+  "contradictions": [],
+  "findings_scored": 0,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
 }

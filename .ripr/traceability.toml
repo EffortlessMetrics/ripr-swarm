@@ -8722,7 +8722,9 @@ tests = [
   "crates/ripr/src/analysis/test_stub/tests.rs::owners_behind_a_non_test_cfg_are_refused",
   "crates/ripr/src/analysis/test_stub/tests.rs::comments_and_strings_do_not_count_as_naming_the_owner",
   "crates/ripr/src/analysis/probes/diff.rs::tests::predicate_before_is_cut_to_the_parser_shape_span",
-  "crates/ripr/src/analysis/probes/diff.rs::tests::match_arm_before_keeps_the_whole_old_arm",
+  "crates/ripr/src/analysis/probes/diff.rs::tests::match_arm_head_edit_cuts_before_to_the_old_head",
+  "crates/ripr/src/analysis/probes/diff.rs::tests::match_arm_body_edit_keeps_the_whole_old_arm",
+  "crates/ripr/src/analysis/probes/diff.rs::tests::match_arm_head_edit_on_a_two_arrow_line_keeps_the_whole_old_line",
   "crates/ripr/src/analysis/probes/diff.rs::tests::removed_span_of_shape_cuts_only_when_the_edit_is_inside_the_shape",
 ]
 fixtures = []
@@ -9825,8 +9827,10 @@ tests = [
   "crates/ripr/src/analysis/syntax/module_tree.rs::tests::unresolved_path_declarations_report_the_targets_they_spell",
   "crates/ripr/src/analysis/workspace/module_graph.rs::tests::unresolved_path_routes_name_the_declaration_for_files_only_it_reaches",
   "crates/ripr/src/analysis/workspace/module_graph.rs::tests::unresolved_route_yields_to_a_resolved_path_from_another_package",
+  "crates/ripr/src/analysis/facts/test_styles/tests.rs::test_under_a_cfg_that_is_false_in_a_test_build_is_not_a_test",
 ]
 fixtures = [
+  "fixtures/rust_test_under_false_cfg_not_grip",
   "crates/ripr/tests/data/source-role-corpus",
 ]
 code = [
@@ -11002,11 +11006,19 @@ tests = [
   "crates/ripr/src/analysis/classify/boundary_pairing.rs::tests::aliased_operand_buried_literal_does_not_pair_via_activation",
   "crates/ripr/src/analysis/classify/boundary_pairing.rs::tests::aliased_operand_named_constant_activation_still_pairs",
   "crates/ripr/src/analysis/classify/boundary_pairing.rs::tests::typed_literal_argument_pairs",
-  "crates/ripr/src/analysis/classify/boundary_pairing.rs::tests::pairing_argument_values_keep_direct_inputs_and_drop_buried_literals"
+  "crates/ripr/src/analysis/classify/boundary_pairing.rs::tests::pairing_argument_values_keep_direct_inputs_and_drop_buried_literals",
+  "crates/ripr/src/analysis/classify/boundary_pairing.rs::tests::reassigned_boundary_binding_does_not_pair",
+  "crates/ripr/src/analysis/classify/boundary_pairing.rs::tests::compound_assigned_boundary_binding_does_not_pair",
+  "crates/ripr/src/analysis/classify/boundary_pairing.rs::tests::mutably_borrowed_boundary_binding_does_not_pair",
+  "crates/ripr/src/analysis/classify/boundary_pairing.rs::tests::unmutated_let_mut_binding_still_pairs",
+  "crates/ripr/src/analysis/classify/boundary_pairing.rs::tests::segment_mutation_detector_reads_assignments_and_borrows"
 ]
 fixtures = [
   "fixtures/split_test_boundary_oracle",
-  "fixtures/strong_boundary_oracle"
+  "fixtures/strong_boundary_oracle",
+  "fixtures/predicate_pairing_reassigned_binding",
+  "fixtures/predicate_pairing_compound_assigned_binding",
+  "fixtures/predicate_pairing_mutably_borrowed_binding"
 ]
 code = [
   "crates/ripr/src/analysis/classify/boundary_pairing.rs",
@@ -11576,6 +11588,10 @@ tests = [
   "crates/ripr/src/analysis/syntax/ra/property_macros.rs::tests::empty_local_macro_calls_preserve_real_call_text_and_original_source",
   "crates/ripr/tests/owner_pin_execution.rs::async_test_discovery_does_not_supply_execution_provenance",
   "crates/ripr/tests/owner_pin_execution.rs::equality_execution_uses_statement_prefix_and_closure_invocation",
+  "crates/ripr/tests/owner_pin_execution.rs::spawned_thread_assertion_matched_static_and_runtime_controls",
+  "crates/ripr/tests/owner_pin_execution.rs::an_extern_crate_named_thread_refuses_spawned_thread_credit",
+  "crates/ripr/tests/owner_pin_execution.rs::a_leading_colon_thread_path_refuses_spawned_thread_credit",
+  "crates/ripr/tests/owner_pin_execution.rs::an_out_of_line_super_glob_refuses_spawned_thread_credit",
   "crates/ripr/tests/owner_pin_execution.rs::equality_oracle_family_matched_static_and_runtime_controls",
   "crates/ripr/tests/owner_pin_execution.rs::lexical_source_values_do_not_claim_observed_oracles",
   "crates/ripr/tests/owner_pin_execution.rs::equality_family_admission_preserves_mixed_oracle_identity_and_projection",
@@ -12557,6 +12573,9 @@ tests = [
   "xtask/src/reports/verdict_corpus_tests.rs::corpus_records_load_in_file_name_order_and_must_match_their_ids",
   "xtask/src/reports/verdict_corpus_tests.rs::split_moves_the_one_file_layout_into_records_without_loss",
   "xtask/src/reports/verdict_corpus_tests.rs::drift_names_moved_missing_and_stale_rows_and_a_subset_compares_only_its_rows",
+  "xtask/src/reports/verdict_corpus_tests.rs::summary_derived_from_blessed_rows_equals_the_run_summary",
+  "xtask/src/reports/dx_scoreboard/tests.rs::verdict_corpus_sources_derive_each_rate_from_the_committed_rows",
+  "xtask/src/public_proof.rs::tests::verdict_receipt_derives_the_summary_from_rows_in_file_name_order",
   "xtask/src/reports/verdict_corpus_tests.rs::validator_rejects_a_case_that_borrows_another_cases_diff",
   "xtask/src/reports/verdict_corpus_tests.rs::check_all_finds_every_language_corpus_and_refuses_one_without_a_header",
   "xtask/src/reports/verdict_corpus_tests.rs::validator_requires_a_replayable_mutated_line_that_changes_the_anchor",
@@ -12584,7 +12603,6 @@ code = [
   "xtask/src/reports/verdict_corpus_relabel.rs",
 ]
 outputs = [
-  "fixtures/rust-verdict-corpus/expected/summary.json",
   "fixtures/rust-verdict-corpus/expected/rows",
 ]
 metrics = [

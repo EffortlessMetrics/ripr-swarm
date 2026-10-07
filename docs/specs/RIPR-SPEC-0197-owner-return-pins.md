@@ -109,6 +109,36 @@ rule only for an assertion whose context was admitted.
    call in the binding's same live statement block. Both the binding and call
    must have an ordinary statement path to the test. Aliases, mutation, rebinding,
    conditional calls, deferred calls and nested closure chains are unknown.
+   A spawned thread's closure counts only where its panic reaches the test
+   thread (#6966): the plain closure is the only argument of
+   `std::thread::spawn(..)` chained directly into `.join().unwrap()` or
+   `.join().expect(..)`, or of `s.spawn(..)` where `s` is the sole parameter of
+   the nearest enclosing closure, that closure is the only argument of
+   `std::thread::scope(..)`, and the spawn is either a bare statement (the
+   scope re-raises an unjoined thread's panic) or carries the same join chain.
+   The closure `std::thread::scope` runs is itself on an ordinary path: it is
+   called once on the test thread and its panic propagates. A `::thread::`
+   path names an extern crate, so it never matches. Names are not
+   resolved, so the test's file refuses when it holds an item, alias or
+   binding named `std` or `thread`; an `extern crate thread;`; a `use` ending in `std` or `thread`
+   other than exactly `use std::thread;`, or a `self` in a `use` list under
+   a `std` or `thread` prefix; a glob `use` other than `use super::*;`
+   inside an inline module (at the top of an out-of-line module file it
+   globs a parent in another file);
+   `use`, `mod` or `extern` inside macro tokens; `include!`; or an item- or
+   statement-position macro other than a std statement macro (`println!`,
+   `assert_eq!` and the like). A `thread::` path also needs
+   `use std::thread;` directly in the test's own module. Residuals: a bare
+   scoped spawn followed by a diverging call in the scope body
+   (`std::process::exit`), an
+   attribute or derive macro that emits such an import, a cfg'd-off
+   `use std::thread;` beside an extern crate renamed `thread`, a `#![no_std]`
+   root aliasing `std` in another file, and a `#[macro_use]` macro from
+   another file that reuses a std statement-macro name (`assert_eq!`) to emit
+   one. Only a whole `use std::thread;` counts as the import; the same path
+   nested in a list (`use crate::fake::{std::thread};`) refuses. Detached threads, bound handles,
+   and joins whose result is dropped or converted (`.ok()`, `let _ =`) stay
+   unknown.
    `?` in a root test remains supported (an error fails an ordinary Result
    test); `?` in a closure is refused because its result could be discarded.
    Exactly

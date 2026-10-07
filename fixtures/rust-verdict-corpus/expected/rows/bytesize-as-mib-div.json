@@ -17,5 +17,10 @@
   "outcome": "abstained",
   "contradictions": [
     "no_static_path_with_related_tests"
-  ]
+  ],
+  "findings_scored": 1,
+  "findings_contradicted": 1,
+  "contradiction_counts": {
+    "no_static_path_with_related_tests": 1
+  }
 }
