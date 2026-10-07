@@ -1,0 +1,58 @@
+{
+  "case_id": "trap-glow-debug-nonempty",
+  "subject_id": "authored-trap-reach",
+  "diff": "cases/trap-glow-debug-nonempty.diff",
+  "anchor": {
+    "file": "src/glows.rs",
+    "line": 2
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "assert_debug_render_nonempty",
+  "hard_case": "The test asserts only that the Debug rendering of the result is non-empty, which holds for every u32.",
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "base * 34",
+        "mutated_line": "base * 34",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: replaces `33 * base` with `base * 34`, which changes the result, but no executed assertion observes it"
+      },
+      {
+        "replacement": "base + 33",
+        "mutated_line": "base + 33",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: replaces `33 * base` with `base + 33`, which changes the result, but no executed assertion observes it"
+      },
+      {
+        "replacement": "base * 32",
+        "mutated_line": "base * 32",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: replaces `33 * base` with `base * 32`, which changes the result, but no executed assertion observes it"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "glow_renders asserts !format!(\"{:?}\", glow(2)).is_empty(). Adversarial shape (smoke assertion on a rendering of the result). ripr's gap here is incidental today: it grades any owner call wrapped in a projection below an exact pin, even one that keeps the value, so the paired control (trap-shine-debug-exact-control) scores false_actionable. This case guards the fix: once faithful projections earn credit, this lossy one must not.",
+  "labeling_observation": {
+    "ripr_commit": "fce75e1",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

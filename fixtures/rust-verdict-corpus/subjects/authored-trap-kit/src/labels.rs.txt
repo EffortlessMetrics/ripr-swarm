@@ -1,0 +1,17 @@
+pub fn fee(amount: u32) -> u32 {
+    amount / 50 + 1
+}
+
+pub fn describe_fee() -> String {
+    String::from("fee: 2")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fee_is_described() {
+        assert_eq!(describe_fee(), "fee: 2");
+    }
+}
