@@ -964,22 +964,31 @@ const SPLIT_KEYS: [&str; 3] = ["corpus_version", "subjects", "cases"];
 
 /// One libtest test name: a path without spaces or commas, or rustdoc's
 /// doctest name `<file> - <item> (line <n>)`, which libtest prints as is.
+/// A crate-root doctest has no item (`<file> - (line <n>)`), and libtest
+/// appends ` - compile fail` to a `compile_fail` doctest. Items whose
+/// pretty-printed type holds a space or comma are refused, so a list of
+/// names can never pass.
 fn is_one_test_name(name: &str) -> bool {
     let plain =
         |part: &str| !part.is_empty() && !part.contains(char::is_whitespace) && !part.contains(',');
     if plain(name) {
         return true;
     }
+    let name = name.strip_suffix(" - compile fail").unwrap_or(name);
     let Some((file, rest)) = name.split_once(" - ") else {
         return false;
     };
-    let Some((item, line)) = rest.rsplit_once(" (line ") else {
-        return false;
+    let (item_ok, line) = match rest.strip_prefix("(line ") {
+        Some(line) => (true, line),
+        None => match rest.rsplit_once(" (line ") {
+            Some((item, line)) => (plain(item), line),
+            None => return false,
+        },
     };
     let Some(line) = line.strip_suffix(')') else {
         return false;
     };
-    plain(file) && plain(item) && !line.is_empty() && line.bytes().all(|b| b.is_ascii_digit())
+    plain(file) && item_ok && !line.is_empty() && line.bytes().all(|b| b.is_ascii_digit())
 }
 
 /// The corpus as one JSON value: the `corpus.json` header with `subjects`

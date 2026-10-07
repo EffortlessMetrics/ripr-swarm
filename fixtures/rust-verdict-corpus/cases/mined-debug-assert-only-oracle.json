@@ -17,14 +17,14 @@
     "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
     "mutants": [
       {
-        "replacement": "        let index = (b & 0x0f) as usize;",
+        "replacement": "let index = (b & 0x0f) as usize;",
         "mutated_line": "let index = (b & 0x0f) as usize;",
         "outcome": "tests_failed",
         "failing_test": "tests::encode_runs_over_every_byte",
         "equivalence_review": "not equivalent: bytes 8 and 255 index past the alphabet and trip the debug_assert"
       },
       {
-        "replacement": "        let index = (b % 9) as usize;",
+        "replacement": "let index = (b % 9) as usize;",
         "mutated_line": "let index = (b % 9) as usize;",
         "outcome": "tests_failed",
         "failing_test": "tests::encode_runs_over_every_byte",

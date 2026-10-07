@@ -9,7 +9,7 @@
   "edit_kind": "behavior_preserving_rewrite",
   "behavior_family": "return_value",
   "test_shape": "doctest_marked_ignore",
-  "hard_case": "The doc example names the right value but is fenced `ignore`, so `cargo test` never runs it. Negative twin of mined-doctest-only-read-u16: crediting doc examples must follow whether rustdoc runs them.",
+  "hard_case": "The doc example names the right value but is fenced `ignore`, so `cargo test` never runs it. Negative twin of mined-doctest-only-read-u16 (a little-endian sibling function, so the two doc examples can sit in one crate): crediting doc examples must follow whether rustdoc runs them.",
   "truth": {
     "state": "not_discriminated",
     "method": "runtime_mutant_kill",

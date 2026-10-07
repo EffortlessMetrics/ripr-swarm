@@ -1270,6 +1270,9 @@ fn one_test_name_accepts_a_doctest_name_and_refuses_lists() {
         "x",
         "src/lib.rs - read_u16 (line 8)",
         "src/lib.rs - Codec::decode (line 120)",
+        "src/lib.rs - Foo<T>::bar (line 3)",
+        "src/lib.rs - (line 1)",
+        "src/lib.rs - read_u16 (line 8) - compile fail",
     ] {
         assert!(is_one_test_name(good), "{good}");
     }
@@ -1282,6 +1285,10 @@ fn one_test_name_accepts_a_doctest_name_and_refuses_lists() {
         "src/lib.rs - read u16 (line 8)",
         "src/lib.rs - a, b (line 8)",
         " - read_u16 (line 8)",
+        "src/lib.rs - HashMap<K, V>::get (line 4)",
+        "src/lib.rs - a (line 1), src/lib.rs - b (line 2)",
+        "src/lib.rs - (line 1) - compile fail - compile fail",
+        "src/lib.rs - (line )",
     ] {
         assert!(!is_one_test_name(bad), "{bad:?}");
     }

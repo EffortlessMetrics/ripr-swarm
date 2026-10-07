@@ -17,14 +17,14 @@
     "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
     "mutants": [
       {
-        "replacement": "        \"gopher\" => Some(71),",
+        "replacement": "\"gopher\" => Some(71),",
         "mutated_line": "\"gopher\" => Some(71),",
         "outcome": "tests_passed",
         "failing_test": null,
         "equivalence_review": "not equivalent: gopher's default port changes to 71, which matches the table's own gopher row, so only the skip hides it"
       },
       {
-        "replacement": "        \"gopher\" => Some(0),",
+        "replacement": "\"gopher\" => Some(0),",
         "mutated_line": "\"gopher\" => Some(0),",
         "outcome": "tests_passed",
         "failing_test": null,
