@@ -72,6 +72,15 @@ fn an_eagerly_called_local_check_helper_lends_its_assertion() -> Result<(), Stri
         helper_assertion_admitted(&module(HELPER, &mixed))?,
         (true, true)
     );
+    // A loop over a non-empty constant-row table runs its body (#5328), as
+    // for the test's own assertion.
+    assert_eq!(
+        helper_assertion_admitted(&module(
+            HELPER,
+            "for (b, t, w) in [(40, 6, 46)] { check_tip(b, t, w); }"
+        ))?,
+        (true, true)
+    );
     // A directly invoked closure is an eager path, as for the test's own.
     assert_eq!(
         helper_assertion_admitted(&module(HELPER, "(|| check_tip(40, 6, 46))();"))?,
@@ -88,7 +97,7 @@ fn a_helper_call_off_the_eager_path_lends_nothing() -> Result<(), String> {
         "control"
     );
     for body in [
-        "for (b, t, w) in [(40, 6, 46)] { check_tip(b, t, w); }",
+        "for (b, t, w) in std::iter::once((40, 6, 46)) { check_tip(b, t, w); }",
         "if true { check_tip(40, 6, 46); }",
         "let _later = || check_tip(40, 6, 46);",
         "let _ = Some(check_tip(40, 6, 46));",
@@ -380,4 +389,66 @@ fn helper_assertion_refusal(source: &str) -> Result<Option<AssertionRefusal>, St
         .ok_or("premise: the helper's assert_eq! parses")?;
     let probe = return_probe(owner(&index, "with_tip"), "tip + bill");
     Ok(OwnerPinSyntax::default().equality_assertion_refusal(&probe, test, &assertion, &index))
+}
+
+/// Whether the owner pin admits the first `assert_eq!` in `check_tip` for
+/// `tip_is_added`, and whether it admits the test's own last assertion.
+fn borrowed_and_own_pins(source: &str) -> Result<(bool, bool), String> {
+    let index = index(&[(LIB, source)]);
+    let test = index
+        .tests()
+        .iter()
+        .find(|test| test.name == "tip_is_added")
+        .ok_or("premise: `tip_is_added` is indexed")?;
+    let helper = index
+        .functions()
+        .iter()
+        .find(|function| function.name == "check_tip")
+        .ok_or("premise: `check_tip` is indexed")?;
+    let borrowed = parser_oracles_for_function(&helper.body, helper.start_line)
+        .unwrap_or_default()
+        .into_iter()
+        .find(|oracle| oracle.text.starts_with("assert_eq!("))
+        .ok_or("premise: the helper's assert_eq! parses")?;
+    let owner = owner(&index, "with_tip");
+    let pin = OwnerReturnPin::establish(&return_probe(owner, "tip + bill"), owner, &index)
+        .ok_or("premise: the free owner establishes a pin")?;
+    let syntax = OwnerPinSyntax::default();
+    let own = test
+        .assertions
+        .iter()
+        .rfind(|assertion| (test.start_line..=test.end_line).contains(&assertion.line))
+        .is_some_and(|assertion| pin.admits(test, assertion, &index, &|_, _| false, &syntax));
+    Ok((
+        pin.admits(test, &borrowed, &index, &|_, _| false, &syntax),
+        own,
+    ))
+}
+
+/// The #6974 path and let-bound pins read the test's own bindings and
+/// scope, so a borrowed helper assertion never takes them: a path the
+/// helper writes is not checked against the loan, and a helper parameter
+/// named like the test's `let` is not that binding.
+#[test]
+fn a_borrowed_assertion_takes_neither_the_path_nor_the_let_bound_pin() -> Result<(), String> {
+    let path = "    fn check_tip(b: u64, t: u64, want: u64) {\n        assert_eq!(super::with_tip(b, t), want);\n    }\n";
+    assert_eq!(
+        borrowed_and_own_pins(&module(
+            path,
+            "check_tip(40, 6, 46);\n        assert_eq!(super::with_tip(1, 2), 3);"
+        ))?,
+        (false, true),
+        "path"
+    );
+    let bound =
+        "    fn check_tip(total: u64, want: u64) {\n        assert_eq!(total, want);\n    }\n";
+    assert_eq!(
+        borrowed_and_own_pins(&module(
+            bound,
+            "let total = with_tip(40, 6);\n        check_tip(5, 46);\n        let sum = with_tip(1, 2);\n        assert_eq!(sum, 3);"
+        ))?,
+        (false, true),
+        "let-bound"
+    );
+    Ok(())
 }

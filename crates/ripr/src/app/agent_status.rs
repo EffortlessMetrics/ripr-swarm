@@ -5235,4 +5235,141 @@ mod tests {
         }
         Ok(())
     }
+
+    /// Control 9 (#6305, renderer half): human and JSON status derive from
+    /// one semantic state for every attempt state. Both renderers consume
+    /// the same report value, so the attempt identity, operational state,
+    /// status class, and receipt presence must agree on both surfaces; the
+    /// process half (`status_human_and_json_agree_on_live_attempts`) pins
+    /// live attempts through the façade binary.
+    #[test]
+    fn status_projections_agree_for_every_attempt_state() -> Result<(), String> {
+        struct Row {
+            state: Option<&'static str>,
+            status_class: &'static str,
+            receipt: Option<AgentStatusAttemptReceipt>,
+        }
+        let rows = vec![
+            Row {
+                state: Some("prepared"),
+                status_class: "prepared",
+                receipt: None,
+            },
+            Row {
+                state: Some("awaiting_edit"),
+                status_class: "awaiting_edit",
+                receipt: None,
+            },
+            Row {
+                state: Some("ready_to_finish"),
+                status_class: "finished_current",
+                receipt: Some(AgentStatusAttemptReceipt::Issued {
+                    path:
+                        "target/ripr/repair-attempts/repair-attempt-01/artifacts/agent-receipt.json"
+                            .to_string(),
+                    reading: open_gap_reading(),
+                }),
+            },
+            Row {
+                state: Some("stale"),
+                status_class: "stale",
+                receipt: None,
+            },
+            Row {
+                state: Some("incomparable"),
+                status_class: "incomparable",
+                receipt: Some(AgentStatusAttemptReceipt::Unavailable {
+                    path: None,
+                    reason: "retention unreadable".to_string(),
+                }),
+            },
+            Row {
+                state: Some("failed"),
+                status_class: "failed",
+                receipt: None,
+            },
+            Row {
+                state: None,
+                status_class: "corrupt_or_unavailable",
+                receipt: None,
+            },
+        ];
+        for row in rows {
+            let report = AgentAttemptStatusReport {
+                root: ".".to_string(),
+                store: AgentAttemptStatusStore {
+                    locator: "target/ripr/repair-attempts".to_string(),
+                    location_class: "default_repository",
+                    currentness: "present",
+                },
+                attempt: AgentAttemptStatusAttempt {
+                    attempt_id: "repair-attempt-0123456789abcdef01234567".to_string(),
+                    seam_id: Some("seam:demo".to_string()),
+                    manifest: "store/repair-attempt-01/attempt.json".to_string(),
+                    state: row.state,
+                    status_class: row.status_class,
+                    head_current: Some(true),
+                    currentness: "current",
+                    evidence_head: Some("abc123".to_string()),
+                    receipt: row.receipt,
+                    last_after_refusal: None,
+                    diverged_recovery: None,
+                    unreadable_reason: None,
+                },
+                next_action: None,
+                canonical_next_action: None,
+                test_run: None,
+                claim_boundary: Vec::new(),
+                limitations: Vec::new(),
+                non_claims: Vec::new(),
+            };
+            let human = render_agent_attempt_status_markdown(&report);
+            let rendered = render_agent_attempt_status_json(&report)?;
+            let value: Value = serde_json::from_str(&rendered)
+                .map_err(|error| format!("parse status JSON: {error}"))?;
+            let label = row.status_class;
+            if value["attempt"]["attempt_id"] != "repair-attempt-0123456789abcdef01234567" {
+                return Err(format!("{label}: JSON lost the attempt id: {rendered}"));
+            }
+            if !human.contains("repair-attempt-0123456789abcdef01234567") {
+                return Err(format!("{label}: human lost the attempt id:\n{human}"));
+            }
+            if value["attempt"]["status_class"] != label {
+                return Err(format!("{label}: JSON lost the class: {rendered}"));
+            }
+            if !human.contains(&format!("Status: {label}")) {
+                return Err(format!("{label}: human lost the class:\n{human}"));
+            }
+            match row.state {
+                Some(state) => {
+                    if value["attempt"]["state"] != state {
+                        return Err(format!("{label}: JSON lost the state: {rendered}"));
+                    }
+                    if !human.contains(&format!("Operational state: {state}")) {
+                        return Err(format!("{label}: human lost the state:\n{human}"));
+                    }
+                }
+                None => {
+                    if !value["attempt"]["state"].is_null() {
+                        return Err(format!("{label}: JSON must null the state: {rendered}"));
+                    }
+                    if human.contains("Operational state:") {
+                        return Err(format!("{label}: human must omit the state:\n{human}"));
+                    }
+                }
+            }
+            let receipt_present = !value["attempt"]["receipt"].is_null();
+            if receipt_present != human.contains("Receipt:") {
+                return Err(format!(
+                    "{label}: receipt presence disagrees (json={receipt_present}):\n{human}\n{rendered}"
+                ));
+            }
+            if !human.contains("Status names no next action") {
+                return Err(format!(
+                    "{label}: human lost the empty next action:\n{human}"
+                ));
+            }
+        }
+        Ok(())
+    }
 }

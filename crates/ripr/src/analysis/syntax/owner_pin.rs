@@ -11,7 +11,10 @@ use super::ra::{LineIndex, slice_macro_call_text, slice_text};
 use crate::analysis::facts::cfg_predicates::attribute_test_build_availability;
 use ra_ap_syntax::{
     AstNode, SyntaxNode, TextSize,
-    ast::{self, HasArgList, HasAttrs, HasGenericArgs, HasGenericParams, HasName, HasVisibility},
+    ast::{
+        self, HasArgList, HasAttrs, HasGenericArgs, HasGenericParams, HasLoopBody, HasName,
+        HasVisibility,
+    },
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -1701,6 +1704,22 @@ fn eager_path(
             }) {
                 return Err("a `loop` after a `break` or `continue` that can skip it");
             }
+        } else if let Some(table) = ast::ForExpr::cast(parent.clone()) {
+            // A `for` over a non-empty table of constant rows runs its body
+            // at least once, like `loop` above (RIPR-SPEC-0197 rule 8). Any
+            // other iterable may be empty and stays refused.
+            if table.loop_body().is_none_or(|body| body.syntax() != &node)
+                || table.label().is_some()
+                || !constant_row_table(&table, function)
+            {
+                return Err(conditional_construct(&parent));
+            }
+            if table.syntax().descendants().any(|node| {
+                (ast::BreakExpr::can_cast(node.kind()) || ast::ContinueExpr::can_cast(node.kind()))
+                    && node.text_range().start() < execution_start
+            }) {
+                return Err("a `for` loop after a `break` or `continue` that can skip it");
+            }
         } else if let Some(binding) = ast::LetStmt::cast(parent.clone()) {
             if binding.let_else().is_some()
                 || binding
@@ -1742,6 +1761,169 @@ fn conditional_construct(node: &SyntaxNode) -> &'static str {
         "an argument of a call"
     } else {
         "an expression ripr cannot see evaluated on every run"
+    }
+}
+
+/// Whether `table` iterates a non-empty array of constant rows, written
+/// inline (`for row in [..]`, `&[..]`) or bound once by a plain `let` in the
+/// statement list that holds the loop and named nowhere else in the test.
+/// A row is constant when every leaf is a literal, a variant or tuple-struct
+/// constructor, or `vec![..]` of literal tokens: it cannot call the owner,
+/// so an expected value in the row is never the owner's own output.
+fn constant_row_table(table: &ast::ForExpr, function: &ast::Fn) -> bool {
+    let Some(mut iterable) = table.iterable() else {
+        return false;
+    };
+    while let ast::Expr::RefExpr(reference) = &iterable {
+        if reference.mut_token().is_some() || reference.raw_token().is_some() {
+            return false;
+        }
+        let Some(inner) = reference.expr() else {
+            return false;
+        };
+        iterable = inner;
+    }
+    match iterable {
+        ast::Expr::ArrayExpr(rows) => constant_rows(&rows),
+        ast::Expr::PathExpr(path) => {
+            let Some(name) = path
+                .path()
+                .filter(|path| path.qualifier().is_none())
+                .and_then(|path| path.segment())
+                .and_then(|segment| segment.name_ref())
+                .map(|name| name.text().to_string())
+            else {
+                return false;
+            };
+            bound_constant_rows(table, function, &name)
+        }
+        _ => false,
+    }
+}
+
+fn bound_constant_rows(table: &ast::ForExpr, function: &ast::Fn, name: &str) -> bool {
+    let Some(scope) = table
+        .syntax()
+        .ancestors()
+        .find(|node| ast::StmtList::can_cast(node.kind()))
+    else {
+        return false;
+    };
+    // The binding and the loop's iterable are the name's only two tokens:
+    // no shadowing, mutation, alias or second use can change the rows.
+    if name.starts_with("r#")
+        || function
+            .syntax()
+            .descendants_with_tokens()
+            .filter_map(|element| element.into_token())
+            .filter(|token| token.text().trim_start_matches("r#") == name)
+            .count()
+            != 2
+    {
+        return false;
+    }
+    scope.children().filter_map(ast::LetStmt::cast).any(|binding| {
+        binding.syntax().text_range().end() <= table.syntax().text_range().start()
+            && binding.let_else().is_none()
+            && !binding
+                .syntax()
+                .children()
+                .any(|node| ast::Attr::can_cast(node.kind()))
+            && matches!(
+                binding.pat(),
+                Some(ast::Pat::IdentPat(pattern))
+                    if pattern.mut_token().is_none()
+                        && pattern.ref_token().is_none()
+                        && pattern.at_token().is_none()
+                        && pattern.name().is_some_and(|bound| bound.text() == name)
+            )
+            && matches!(binding.initializer(), Some(ast::Expr::ArrayExpr(rows)) if constant_rows(&rows))
+    })
+}
+
+fn constant_rows(rows: &ast::ArrayExpr) -> bool {
+    // `[#[cfg(any())] (4, 0)]` is an empty array: an attribute anywhere in
+    // the rows may remove one, so none is allowed.
+    !rows
+        .syntax()
+        .descendants()
+        .any(|node| ast::Attr::can_cast(node.kind()))
+        && rows.semicolon_token().is_none()
+        && rows.exprs().next().is_some()
+        && rows.exprs().all(|row| constant_value(&row))
+}
+
+fn constant_value(value: &ast::Expr) -> bool {
+    match value {
+        ast::Expr::Literal(_) => true,
+        ast::Expr::PrefixExpr(prefix) => {
+            prefix.op_kind() == Some(ast::UnaryOp::Neg)
+                && matches!(prefix.expr(), Some(ast::Expr::Literal(_)))
+        }
+        ast::Expr::ParenExpr(inner) => inner.expr().is_some_and(|expr| constant_value(&expr)),
+        ast::Expr::RefExpr(reference) => {
+            reference.mut_token().is_none()
+                && reference.raw_token().is_none()
+                && reference.expr().is_some_and(|expr| constant_value(&expr))
+        }
+        ast::Expr::TupleExpr(tuple) => tuple.fields().all(|field| constant_value(&field)),
+        ast::Expr::ArrayExpr(items) => {
+            items.semicolon_token().is_none() && items.exprs().all(|item| constant_value(&item))
+        }
+        ast::Expr::PathExpr(path) => path.path().is_some_and(|path| variant_path(&path)),
+        ast::Expr::CallExpr(call) => {
+            matches!(call.expr(), Some(ast::Expr::PathExpr(callee))
+                if callee.path().is_some_and(|path| variant_path(&path)))
+                && call
+                    .arg_list()
+                    .is_some_and(|args| args.args().all(|arg| constant_value(&arg)))
+        }
+        // `vec!` is matched by name; a workspace rebinding of it is refused
+        // by the trusted-macro binding check every admitted test passes.
+        ast::Expr::MacroExpr(expression) => expression.macro_call().is_some_and(|call| {
+            call.path()
+                .is_some_and(|path| path.syntax().text() == "vec")
+                && call.token_tree().is_some_and(|tree| {
+                    tree.syntax()
+                        .descendants_with_tokens()
+                        .filter_map(|element| element.into_token())
+                        .filter(|token| !token.kind().is_trivia())
+                        .all(|token| {
+                            token.kind().is_literal()
+                                || matches!(token.text(), "[" | "]" | "(" | ")" | "," | "-" | "&")
+                        })
+                })
+        }),
+        _ => false,
+    }
+}
+
+/// `None`, `Some`, `Ok`, `Err`, or a qualified `Type::Variant` whose
+/// segments are all CamelCase: a variant or constructor by convention. A
+/// bare CamelCase name may be a `fn` or `const` that calls the owner, and a
+/// SCREAMING_CASE `const` may be computed by the owner, so both are refused.
+fn variant_path(path: &ast::Path) -> bool {
+    let segments: Vec<_> = path.segments().collect();
+    let names: Option<Vec<String>> = segments
+        .iter()
+        .map(|segment| {
+            (segment.generic_arg_list().is_none())
+                .then(|| segment.name_ref().map(|name| name.text().to_string()))
+                .flatten()
+        })
+        .collect();
+    let Some(names) = names else {
+        return false;
+    };
+    let camel = |text: &str| {
+        text.starts_with(|c: char| c.is_ascii_uppercase())
+            && text.chars().any(|c| c.is_ascii_lowercase())
+            && text != "Self"
+    };
+    match names.as_slice() {
+        [single] => matches!(single.as_str(), "None" | "Some" | "Ok" | "Err"),
+        [] => false,
+        qualified => qualified.iter().all(|name| camel(name)),
     }
 }
 

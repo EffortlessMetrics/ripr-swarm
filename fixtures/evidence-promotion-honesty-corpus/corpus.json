@@ -4431,6 +4431,38 @@
           "class": "weakly_exposed"
         }
       ]
+    },
+    {
+      "id": "rust_free_function_receiver_qualified_call",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_adversarial_free_function_receiver",
+      "vector": "free_function_receiver_qualified_call_not_direct_owner_call",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_disclose_scope"
+        },
+        {
+          "type": "must_not_emit_repair_packet"
+        },
+        {
+          "type": "must_not_have_receipt_command"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "maximum_class",
+          "class": "weakly_exposed"
+        }
+      ]
     }
   ]
 }
