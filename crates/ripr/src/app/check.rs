@@ -146,6 +146,18 @@ pub(crate) fn check_with_progress(
     scope: AnalysisProgressScope,
     sink: Option<&dyn AnalysisProgressSink>,
 ) -> Result<CheckOutput, String> {
+    check_with_progress_core(input, config, scope, sink).map_err(Into::into)
+}
+
+/// Typed core of [`check_with_progress`]: the same run, with failures kept
+/// as [`CoreError`] so the `check --json` refusal envelope (#6834) can match
+/// failure families structurally instead of re-reading rendered text.
+pub(crate) fn check_with_progress_core(
+    input: CheckInput,
+    config: &RiprConfig,
+    scope: AnalysisProgressScope,
+    sink: Option<&dyn AnalysisProgressSink>,
+) -> Result<CheckOutput, CoreError> {
     Ok(check_with_progress_and_origins(input, config, scope, sink)?.0)
 }
 
@@ -309,7 +321,10 @@ fn check_with_progress_and_origins_with_open_rust_paths(
         output.unlinked_python_tests = crate::analysis::discover_python_test_files(&output.root)?;
     }
     if let Some(policy) = suppression_policy {
-        apply_suppression_policy(&mut output, &policy)?;
+        // #6834: this call site is the suppression family, structurally —
+        // no message inspection, whatever text the loader produced.
+        apply_suppression_policy(&mut output, &policy)
+            .map_err(CoreError::suppression_policy_invalid)?;
     }
     progress.complete();
     Ok((output, origins, consumed_sources))

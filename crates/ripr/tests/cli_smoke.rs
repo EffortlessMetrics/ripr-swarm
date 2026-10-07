@@ -2914,6 +2914,403 @@ fn check_json_diff_scope_oversized_emits_limited_artifact() -> Result<(), String
     Ok(())
 }
 
+/// #6834: shared shape assertions for a `check --json` refusal document —
+/// the one non-consumable envelope the scope guards already use, with the
+/// typed identity selecting run_status/category/limitation/basis.
+fn assert_check_json_refusal(
+    output: &Output,
+    identity: &str,
+    repair_route: &str,
+) -> Result<serde_json::Value, String> {
+    if output.status.code() != Some(2) {
+        return Err(format!(
+            "expected exit 2 for {identity}, got {:?}\nstderr:\n{}",
+            output.status.code(),
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+    // The assertion that fails before the fix: stdout carried zero bytes.
+    if output.stdout.is_empty() {
+        return Err(format!(
+            "check --json must emit a refusal document on stdout for {identity}, got zero bytes"
+        ));
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let value: serde_json::Value = serde_json::from_str(&stdout)
+        .map_err(|err| format!("refusal stdout should parse as JSON: {err}\n{stdout}"))?;
+    for (pointer, expected) in [
+        ("/schema_version", "0.2"),
+        ("/tool", "ripr"),
+        ("/analysis_scope/scope", "diff"),
+        ("/analysis_scope/run_status", identity),
+        ("/analysis_scope/basis", identity),
+        ("/analysis_scope/limitation", identity),
+        ("/analysis_scope/repair_route", repair_route),
+        ("/run_limitations/0/category", identity),
+        ("/run_limitations/0/run_status", identity),
+        ("/run_limitations/0/basis", identity),
+        ("/run_limitations/0/repair_route", repair_route),
+    ] {
+        let actual = value.pointer(pointer).and_then(serde_json::Value::as_str);
+        if actual != Some(expected) {
+            return Err(format!(
+                "{pointer}: expected {expected}, got {actual:?}\n{stdout}"
+            ));
+        }
+    }
+    for pointer in [
+        "/analysis_scope/downstream_consumable",
+        "/run_limitations/0/downstream_consumable",
+    ] {
+        if value.pointer(pointer) != Some(&serde_json::Value::Bool(false)) {
+            return Err(format!("{pointer} must be false\n{stdout}"));
+        }
+    }
+    if value["findings"].as_array().map(Vec::len) != Some(0) {
+        return Err(format!("refusal findings must be empty\n{stdout}"));
+    }
+    if value["run_limitations"][0]["message"]
+        .as_str()
+        .is_none_or(str::is_empty)
+    {
+        return Err(format!("refusal must carry a human message\n{stdout}"));
+    }
+    Ok(value)
+}
+
+/// #6834: a git fixture repo with `commits` commits on `main`.
+fn init_check_refusal_repo(label: &str, commits: usize) -> Result<PathBuf, String> {
+    let root = unique_temp_workspace(label);
+    std::fs::create_dir_all(root.join("src")).map_err(|e| format!("create src dir: {e}"))?;
+    run_git(&root, &["init", "--initial-branch=main"])?;
+    run_git(&root, &["config", "user.email", "refusal@t.st"])?;
+    run_git(&root, &["config", "user.name", "refusal"])?;
+    for n in 0..commits {
+        std::fs::write(
+            root.join("src/lib.rs"),
+            format!("pub fn v{n}() -> u8 {{ {n} }}\n"),
+        )
+        .map_err(|e| format!("write lib.rs: {e}"))?;
+        run_git(&root, &["add", "."])?;
+        run_git(&root, &["commit", "-qm", &format!("commit {n}")])?;
+    }
+    Ok(root)
+}
+
+/// #6834: the demonstrated case — an unresolvable `--base` emits a typed
+/// refusal naming `base_unresolvable`, with the caller-supplied invocation
+/// context echoed and the stderr prose unchanged.
+#[test]
+fn check_json_unresolvable_base_emits_refusal_envelope() -> Result<(), String> {
+    let root = init_check_refusal_repo("check-json-bad-base", 1)?;
+    let root_arg = root.display().to_string();
+    let output = run_ripr(&[
+        "check",
+        "--json",
+        "--root",
+        &root_arg,
+        "--base",
+        "definitely-not-a-real-ref-9f2a-6834",
+    ]);
+    let value =
+        assert_check_json_refusal(&output, "base_unresolvable", "analysis/base-resolution")?;
+    if value["base"] != "definitely-not-a-real-ref-9f2a-6834" {
+        return Err(format!(
+            "refusal must echo the caller-supplied base: {value}"
+        ));
+    }
+    if value["root"] != root_arg.as_str() {
+        return Err(format!(
+            "refusal must echo the caller-supplied root: {value}"
+        ));
+    }
+    let message = value["run_limitations"][0]["message"]
+        .as_str()
+        .ok_or("refusal must carry a message")?;
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if !stderr.contains(message) {
+        return Err(format!(
+            "the envelope message must be the stderr diagnostic verbatim; stderr: {stderr}"
+        ));
+    }
+    ignore_remove_dir_all(&root);
+    Ok(())
+}
+
+/// #6834 (owner ruling): argv usage errors stay prose-only. There is no
+/// successfully parsed invocation to echo, so no envelope exists: exit 2,
+/// empty stdout, the cause on stderr.
+#[test]
+fn check_json_argv_usage_errors_stay_prose_only() -> Result<(), String> {
+    let output = run_ripr(&["check", "--json", "--bogus-flag-6834"]);
+    if output.status.code() != Some(2) {
+        return Err(format!(
+            "expected exit 2, got {:?}\nstderr:\n{}",
+            output.status.code(),
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+    if !output.stdout.is_empty() {
+        return Err(format!(
+            "argv usage errors must not emit an envelope, got {} stdout bytes",
+            output.stdout.len()
+        ));
+    }
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if !stderr.contains("--bogus-flag-6834") {
+        return Err(format!("stderr must name the flag, got: {stderr}"));
+    }
+    Ok(())
+}
+
+/// #6834: a `--root` Git cannot work with — a missing directory or a
+/// directory outside any work tree — names `repository_root_unusable`.
+#[test]
+fn check_json_unusable_root_emits_repository_root_unusable() -> Result<(), String> {
+    let missing = unique_temp_workspace("check-json-missing-root").join("no-such-dir");
+    let missing_arg = missing.display().to_string();
+    let output = run_ripr(&["check", "--json", "--root", &missing_arg, "--base", "main"]);
+    assert_check_json_refusal(
+        &output,
+        "repository_root_unusable",
+        "analysis/repository-root",
+    )?;
+
+    // Outside the repository: the temp dir sits under target/, where git
+    // discovery would walk up into the checkout and resolve the base.
+    let plain = unique_external_workspace("check-json-plain-dir")?;
+    std::fs::create_dir_all(&plain).map_err(|e| format!("create plain dir: {e}"))?;
+    let plain_arg = plain.display().to_string();
+    let output = run_ripr(&["check", "--json", "--root", &plain_arg, "--base", "main"]);
+    let value = assert_check_json_refusal(
+        &output,
+        "repository_root_unusable",
+        "analysis/repository-root",
+    )?;
+    if value["root"] != plain_arg.as_str() {
+        return Err(format!(
+            "refusal must echo the caller-supplied root: {value}"
+        ));
+    }
+    ignore_remove_dir_all(&plain);
+    Ok(())
+}
+
+/// #6834: a malformed `ripr.toml` names `config_invalid`, and the envelope
+/// message carries the redacted summary — the config source excerpt never
+/// enters machine output (RIPR-SPEC-0007) while stderr keeps the full prose.
+#[test]
+fn check_json_malformed_config_emits_redacted_refusal() -> Result<(), String> {
+    let root = unique_temp_workspace("check-json-bad-config");
+    std::fs::create_dir_all(&root).map_err(|e| format!("create workspace: {e}"))?;
+    std::fs::write(root.join("ripr.toml"), "canary_config_secret_6834 = [\n")
+        .map_err(|e| format!("write ripr.toml: {e}"))?;
+    let root_arg = root.display().to_string();
+    let output = run_ripr(&["check", "--json", "--root", &root_arg, "--base", "main"]);
+    let value = assert_check_json_refusal(&output, "config_invalid", "analysis/config-load")?;
+    let message = value["run_limitations"][0]["message"]
+        .as_str()
+        .ok_or("refusal must carry a message")?;
+    if message.contains("canary_config_secret_6834") {
+        return Err(format!(
+            "config source excerpt must not enter stdout: {message}"
+        ));
+    }
+    if !message.contains("invalid ripr.toml") {
+        return Err(format!(
+            "the actionable summary must survive redaction: {message}"
+        ));
+    }
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if !stderr.contains("canary_config_secret_6834") {
+        return Err(format!("stderr keeps the full human diagnostic: {stderr}"));
+    }
+    ignore_remove_dir_all(&root);
+    Ok(())
+}
+
+/// #6834: a malformed `--suppression-policy` names
+/// `suppression_policy_invalid` after analysis ran.
+#[test]
+fn check_json_malformed_suppression_policy_emits_refusal() -> Result<(), String> {
+    let root = init_check_refusal_repo("check-json-bad-policy", 2)?;
+    std::fs::write(root.join("badpolicy.toml"), "not [[[ valid\n")
+        .map_err(|e| format!("write policy: {e}"))?;
+    let root_arg = root.display().to_string();
+    let output = run_ripr(&[
+        "check",
+        "--json",
+        "--root",
+        &root_arg,
+        "--base",
+        "HEAD~1",
+        "--suppression-policy",
+        "badpolicy.toml",
+    ]);
+    let value = assert_check_json_refusal(
+        &output,
+        "suppression_policy_invalid",
+        "analysis/suppression-policy",
+    )?;
+    let message = value["run_limitations"][0]["message"]
+        .as_str()
+        .ok_or("refusal must carry a message")?;
+    if !message.contains("suppression policy") {
+        return Err(format!(
+            "the message must name the policy failure: {message}"
+        ));
+    }
+    ignore_remove_dir_all(&root);
+    Ok(())
+}
+
+/// #6834: an analysis-path failure outside every named family — here an
+/// unreadable `--diff` file — still emits a document, on the honest
+/// `analysis_failed` fallback rather than as zero bytes.
+#[test]
+fn check_json_unmigrated_analysis_failure_emits_analysis_failed() -> Result<(), String> {
+    let root = workspace_root().display().to_string();
+    let output = run_ripr(&[
+        "check",
+        "--json",
+        "--root",
+        &root,
+        "--diff",
+        "definitely-not-a-diff-9f2a-6834.diff",
+    ]);
+    let value = assert_check_json_refusal(&output, "analysis_failed", "analysis/failure")?;
+    let message = value["run_limitations"][0]["message"]
+        .as_str()
+        .ok_or("refusal must carry a message")?;
+    if !message.contains("failed to read diff file") {
+        return Err(format!(
+            "the message must carry the loader diagnostic: {message}"
+        ));
+    }
+    Ok(())
+}
+
+/// #6834: a `git_invocation_timeout` and an unresolvable base produce
+/// different identities, so a consumer can tell them apart. The timeout is
+/// forced deterministically: every git invocation hangs, and
+/// `RIPR_GIT_TIMEOUT=1` cuts the diff call.
+#[cfg(unix)]
+#[test]
+fn check_json_timeout_and_bad_base_have_distinct_identities() -> Result<(), String> {
+    let root = init_check_refusal_repo("check-json-timeout", 1)?;
+    let root_arg = root.display().to_string();
+
+    // A `git` shim that hangs on every invocation; nothing passes through,
+    // so the fixture setup above (real git) must finish before this PATH
+    // override is installed for the `ripr` run below.
+    let shim_dir = unique_temp_workspace("check-json-timeout-shim");
+    std::fs::create_dir_all(&shim_dir).map_err(|err| format!("create shim dir: {err}"))?;
+    let shim = shim_dir.join("git");
+    std::fs::write(&shim, "#!/bin/sh\nexec sleep 60\n")
+        .map_err(|err| format!("write git shim: {err}"))?;
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&shim, std::fs::Permissions::from_mode(0o755))
+            .map_err(|err| format!("make git shim executable: {err}"))?;
+    }
+    let mut paths = vec![shim_dir.clone()];
+    paths.extend(std::env::split_paths(
+        &std::env::var_os("PATH").unwrap_or_default(),
+    ));
+    let search_path = std::env::join_paths(paths)
+        .map_err(|err| format!("build shim PATH: {err}"))?
+        .to_string_lossy()
+        .into_owned();
+
+    let started = std::time::Instant::now();
+    let output = run_command_with_env(
+        env!("CARGO_BIN_EXE_ripr"),
+        &root,
+        &[
+            "check",
+            "--json",
+            "--root",
+            root_arg.as_str(),
+            "--base",
+            "HEAD",
+            "--git-timeout",
+            "1",
+        ],
+        &[("PATH", search_path.as_str())],
+    )
+    .map_err(|err| format!("run check with hanging git: {err}"))?;
+    let elapsed = started.elapsed();
+    let timeout_value =
+        assert_check_json_refusal(&output, "git_invocation_timeout", "analysis/git-timeout")?;
+    assert!(
+        elapsed < std::time::Duration::from_secs(45),
+        "check waited {elapsed:?} on hung git under --git-timeout 1"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if !stderr.contains("git_invocation_timeout") {
+        return Err(format!("stderr must keep the timeout prose: {stderr}"));
+    }
+
+    // Control on the same repo with a working git: the bad base names its
+    // own family, distinct from the timeout above.
+    let output = run_ripr(&[
+        "check",
+        "--json",
+        "--root",
+        &root_arg,
+        "--base",
+        "definitely-not-a-real-ref-9f2a-6834",
+    ]);
+    let base_value =
+        assert_check_json_refusal(&output, "base_unresolvable", "analysis/base-resolution")?;
+    let timeout_identity = timeout_value["analysis_scope"]["run_status"]
+        .as_str()
+        .ok_or("timeout refusal must name its identity")?;
+    let base_identity = base_value["analysis_scope"]["run_status"]
+        .as_str()
+        .ok_or("base refusal must name its identity")?;
+    if timeout_identity == base_identity {
+        return Err(format!(
+            "timeout and bad base must have distinct identities, got {timeout_identity}"
+        ));
+    }
+    ignore_remove_dir_all(&root);
+    ignore_remove_dir_all(&shim_dir);
+    Ok(())
+}
+
+/// #6834: the success path carries no refusal shape — no `analysis_scope`
+/// or `run_limitations` keys — so the envelope cannot be mistaken for a
+/// result and no success field moved. Byte-identity against the base
+/// binary is demonstrated in the PR evidence.
+#[test]
+fn check_json_success_carries_no_refusal_shape() -> Result<(), String> {
+    let root = workspace_root().display().to_string();
+    let diff = sample_diff().display().to_string();
+    let output = run_ripr(&["check", "--root", &root, "--diff", &diff, "--json"]);
+    assert_success(&output);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let value: serde_json::Value = serde_json::from_str(&stdout)
+        .map_err(|err| format!("success stdout should parse as JSON: {err}\n{stdout}"))?;
+    if value.get("analysis_scope").is_some() {
+        return Err(format!(
+            "success output must not carry analysis_scope: {value}"
+        ));
+    }
+    if value.get("run_limitations").is_some() {
+        return Err(format!(
+            "success output must not carry run_limitations: {value}"
+        ));
+    }
+    if value["schema_version"] != "0.2" {
+        return Err(format!("success schema_version must stay 0.2: {value}"));
+    }
+    if value["findings"].as_array().is_none() {
+        return Err(format!("success output must carry findings: {value}"));
+    }
+    Ok(())
+}
+
 /// #5448: an invalid `RIPR_DIFF_DEPENDENT_SCOPE` names itself even when the
 /// diff has no dependent packages to narrow.
 #[test]
