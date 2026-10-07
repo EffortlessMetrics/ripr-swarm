@@ -3553,8 +3553,9 @@ pub(in crate::analysis) fn test_module_shadows_type(
 /// enclosing module scope beyond its own file. A `struct`, `enum`, `union`
 /// or `type` alias that is a direct item of a parent file's root shadows
 /// the production type for the test exactly as an enclosing inline
-/// declaration does (#6905), so a binding of that name names the
-/// test-local type and the pin is refused.
+/// declaration does (#6905), as does a root-level `use ... as <name>`
+/// rebinding, so a binding of that name names the test-local type and
+/// the pin is refused.
 ///
 /// Only parent roots count: the module-declaration producer emits
 /// top-level declarations only, so a recorded edge's parent scope is the
@@ -3603,9 +3604,12 @@ pub(in crate::analysis) fn parent_chain_shadows_type(
 }
 
 /// Whether one parent file's root declares the receiver type name: the
-/// per-edge step of [`parent_chain_shadows_type`]. The owner's own root
-/// (the file holding a root-level owner) is the production declaration's
-/// scope, never a shadow; every other declaring root refuses.
+/// per-edge step of [`parent_chain_shadows_type`]. A root-level
+/// `use ... as <name>` rebinds the name to a different type and shadows
+/// too; a plain root-level `use` may re-export production, so only
+/// renames refuse. The owner's own root (the file holding a root-level
+/// owner) is the production declaration's scope, never a shadow; every
+/// other declaring root refuses.
 fn parent_root_shadows_type(
     parent_source: &str,
     parent_file: &Path,
@@ -3618,6 +3622,7 @@ fn parent_root_shadows_type(
     if !declares_type(&masked, base)
         && !masked.contains(raw.as_str())
         && !file_aliases_type(parent_source, base)
+        && !file_renames_to(parent_source, base)
     {
         return false;
     }
@@ -3625,10 +3630,14 @@ fn parent_root_shadows_type(
         return true;
     };
     let root = parse.tree().syntax().clone();
-    if !root
-        .children()
-        .filter_map(ast::Item::cast)
-        .any(|item| module_item_names_type(&item, base))
+    let root_items: Vec<ast::Item> = root.children().filter_map(ast::Item::cast).collect();
+    if !root_items
+        .iter()
+        .any(|item| module_item_names_type(item, base))
+        && !root_items.iter().any(|item| {
+            matches!(item, ast::Item::Use(_))
+                && file_renames_to(&item.syntax().text().to_string(), base)
+        })
     {
         return false;
     }

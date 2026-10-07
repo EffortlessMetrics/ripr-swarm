@@ -2799,6 +2799,14 @@ mod stack_tests;
 /// (`mod` token on line 1).
 const HELPERS_PLAIN: &str = "mod stack_tests;\n";
 
+/// #6950 review: the `helpers` module rebinds the receiver with a
+/// root-level `use ... as Stack` (`mod` token on line 3).
+const HELPERS_RENAME: &str = "use crate::other::Gauge as Stack;\n\nmod stack_tests;\n";
+
+/// #6950 review precision: the `helpers` module plainly imports the
+/// receiver, which may re-export production (`mod` token on line 3).
+const HELPERS_IMPORT: &str = "use crate::Stack;\n\nmod stack_tests;\n";
+
 /// #6950: the nested child test binds `Stack` (the `helpers` shadow, via
 /// `use super::*;`) and asserts `depth`.
 const CHILD_TEST: &str = r#"use super::*;
@@ -2886,6 +2894,86 @@ fn an_out_of_line_test_without_a_parent_shadow_keeps_its_pin() {
     );
     let pin = establish(&index, "depth", "self.items.len() + 1");
     assert!(pin.is_some(), "the unshadowed control must establish");
+    let Some(pin) = pin else { return };
+    assert_eq!(admitted_texts(&index, &pin).len(), 1);
+}
+
+/// #6950 review: a root-level `use ... as Stack` in the parent module
+/// rebinds the receiver to a different type, so the nested child test
+/// names that type, not the production one — the pin is refused.
+#[test]
+fn a_parent_root_rename_of_the_receiver_refuses_the_pin() {
+    let index = index_with_provenance(
+        &[
+            (LIB, LIB_OUT_OF_LINE),
+            (HELPERS, HELPERS_RENAME),
+            (CHILD, CHILD_TEST),
+        ],
+        &[
+            (
+                HELPERS,
+                SourceRoleProvenance {
+                    edges: vec![module_edge(LIB, HELPERS, "helpers", 12, true)],
+                    earliest_unresolved_reason: None,
+                },
+            ),
+            (
+                CHILD,
+                SourceRoleProvenance {
+                    edges: vec![
+                        module_edge(LIB, HELPERS, "helpers", 12, true),
+                        module_edge(HELPERS, CHILD, "stack_tests", 3, false),
+                    ],
+                    earliest_unresolved_reason: None,
+                },
+            ),
+        ],
+    );
+    let pin = establish(&index, "depth", "self.items.len() + 1");
+    assert!(
+        pin.is_some(),
+        "the pin establishes from the production type"
+    );
+    let Some(pin) = pin else { return };
+    assert!(
+        admitted_texts(&index, &pin).is_empty(),
+        "a parent-root rename names a different type than the owner"
+    );
+}
+
+/// #6950 review precision: a plain root-level `use` of the receiver in
+/// the parent module may re-export production, so it is not a shadow —
+/// the nested child keeps its pin.
+#[test]
+fn a_parent_root_plain_import_of_the_receiver_keeps_its_pin() {
+    let index = index_with_provenance(
+        &[
+            (LIB, LIB_OUT_OF_LINE),
+            (HELPERS, HELPERS_IMPORT),
+            (CHILD, CHILD_TEST),
+        ],
+        &[
+            (
+                HELPERS,
+                SourceRoleProvenance {
+                    edges: vec![module_edge(LIB, HELPERS, "helpers", 12, true)],
+                    earliest_unresolved_reason: None,
+                },
+            ),
+            (
+                CHILD,
+                SourceRoleProvenance {
+                    edges: vec![
+                        module_edge(LIB, HELPERS, "helpers", 12, true),
+                        module_edge(HELPERS, CHILD, "stack_tests", 3, false),
+                    ],
+                    earliest_unresolved_reason: None,
+                },
+            ),
+        ],
+    );
+    let pin = establish(&index, "depth", "self.items.len() + 1");
+    assert!(pin.is_some(), "the plain-import control must establish");
     let Some(pin) = pin else { return };
     assert_eq!(admitted_texts(&index, &pin).len(), 1);
 }

@@ -3368,6 +3368,15 @@ mod tests {
     /// (`mod` token on line 1).
     const OUT_OF_LINE_HELPERS_PLAIN_SOURCE: &str = "mod window_tests;\n";
 
+    /// #6950 review: the `helpers` module rebinds the receiver with a
+    /// root-level `use ... as Window` (`mod` token on line 3).
+    const OUT_OF_LINE_HELPERS_RENAME_SOURCE: &str =
+        "use crate::other::Gauge as Window;\n\nmod window_tests;\n";
+
+    /// #6950 review precision: the `helpers` module plainly imports the
+    /// receiver, which may re-export production (`mod` token on line 3).
+    const OUT_OF_LINE_HELPERS_IMPORT_SOURCE: &str = "use crate::Window;\n\nmod window_tests;\n";
+
     /// #6950: the nested child test binds `Window` (the `helpers` shadow)
     /// and clones it. The test fn spans lines 4-7.
     const OUT_OF_LINE_CHILD_SOURCE: &str = "use super::*;\n\n#[test]\nfn a_clone_equals_its_original() {\n    let window = Window { start: 3, end: 9 };\n    assert_eq!(window.clone(), window);\n}\n";
@@ -3465,6 +3474,60 @@ mod tests {
                         "src/helpers/window_tests.rs",
                         "window_tests",
                         1,
+                        false,
+                    ),
+                ],
+                earliest_unresolved_reason: None,
+            },
+        );
+        assert_eq!(reason, RelationReason::DirectOwnerCall);
+    }
+
+    /// #6950 review: a root-level `use ... as Window` in the parent
+    /// module rebinds the receiver to a different type, so the nested
+    /// child test's call is name-only, not `direct_owner_call`.
+    #[test]
+    fn given_parent_root_rename_when_test_calls_owner_method_then_name_only_relation() {
+        let reason = out_of_line_clone_relation(
+            OUT_OF_LINE_LIB_SOURCE,
+            &[("src/helpers.rs", OUT_OF_LINE_HELPERS_RENAME_SOURCE)],
+            SourceRoleProvenance {
+                edges: vec![
+                    composed_module_edge("src/lib.rs", "src/helpers.rs", "helpers", 16, true),
+                    composed_module_edge(
+                        "src/helpers.rs",
+                        "src/helpers/window_tests.rs",
+                        "window_tests",
+                        3,
+                        false,
+                    ),
+                ],
+                earliest_unresolved_reason: None,
+            },
+        );
+        assert_eq!(
+            reason,
+            RelationReason::WeakTokenSubstring,
+            "a parent-root rename names a different type than the owner"
+        );
+    }
+
+    /// #6950 review precision: a plain root-level `use` of the receiver in
+    /// the parent module may re-export production, so the nested child
+    /// keeps `direct_owner_call`.
+    #[test]
+    fn given_parent_root_plain_import_when_test_calls_owner_then_direct() {
+        let reason = out_of_line_clone_relation(
+            OUT_OF_LINE_LIB_SOURCE,
+            &[("src/helpers.rs", OUT_OF_LINE_HELPERS_IMPORT_SOURCE)],
+            SourceRoleProvenance {
+                edges: vec![
+                    composed_module_edge("src/lib.rs", "src/helpers.rs", "helpers", 16, true),
+                    composed_module_edge(
+                        "src/helpers.rs",
+                        "src/helpers/window_tests.rs",
+                        "window_tests",
+                        3,
                         false,
                     ),
                 ],

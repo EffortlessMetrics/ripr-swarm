@@ -162,9 +162,11 @@ rule only for an assertion whose context was admitted.
      declaration of the name at an out-of-line parent module's root
      shadows the same way (#6950): the test file's composed parent chain
      is its enclosing scope beyond its own file, except the parent root
-     holding a root-level owner, which is the production scope. An
-     unresolved chain, an `include!` edge, or a missing or unparseable
-     parent refuses rather than guessing.
+     holding a root-level owner, which is the production scope. A
+     root-level `use ... as <name>` rebinds the name to a different type
+     and shadows too; a plain root-level `use` may re-export production,
+     so only renames refuse. An unresolved chain, an `include!` edge, or
+     a missing or unparseable parent refuses rather than guessing.
    - The receiver type must dispatch to the owner: the inherent `impl`'s
      self type, the trait impl's self type, or, for a trait default method,
      a type with an `impl .. Trait for <type>` in the workspace. A trait
