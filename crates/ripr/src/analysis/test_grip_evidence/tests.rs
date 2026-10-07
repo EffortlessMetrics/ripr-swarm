@@ -2642,8 +2642,6 @@ fn equality_boundary_returns_discount() {
                     std::sync::Arc::ptr_eq(left, right),
                     "equal related-test records must share one allocation"
                 );
-            } else {
-                assert!(!std::sync::Arc::ptr_eq(left, right));
             }
         }
     }
@@ -2654,6 +2652,33 @@ fn equality_boundary_returns_discount() {
             batch.len()
         ));
     }
+    Ok(())
+}
+
+#[test]
+fn shared_grips_keep_each_path_spelling() -> Result<(), String> {
+    // `PathBuf` equality ignores `./` segments, so these two grips compare
+    // equal. Sharing them would print the first spelling for both seams.
+    let index = index_from_files(&[(PathBuf::from("src/lib.rs"), "pub fn f() {}\n")])?;
+    let context = CompactGripContext::new(&index);
+    let grip = |file: &str| RelatedTestGrip {
+        test_name: "f_works".to_string(),
+        file: PathBuf::from(file),
+        line: 3,
+        test_target: None,
+        oracle_kind: OracleKind::ExactValue,
+        oracle_strength: OracleStrength::Strong,
+        evidence_summary: "exact value assertion".to_string(),
+        relation_reason: RelationReason::DirectOwnerCall,
+        relation_confidence: RelationConfidence::High,
+    };
+    let plain = context.share_grip(grip("tests/f.rs"));
+    let dotted = context.share_grip(grip("tests/./f.rs"));
+    let again = context.share_grip(grip("tests/f.rs"));
+    assert_eq!(*plain, *dotted, "fixture spellings must compare equal");
+    assert!(!std::sync::Arc::ptr_eq(&plain, &dotted));
+    assert_eq!(dotted.file.as_os_str(), "tests/./f.rs");
+    assert!(std::sync::Arc::ptr_eq(&plain, &again));
     Ok(())
 }
 
