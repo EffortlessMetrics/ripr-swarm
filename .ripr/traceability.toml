@@ -7562,6 +7562,12 @@ tests = [
   "crates/ripr/src/analysis/classify/related_tests.rs::tests::given_unique_impl_method_when_test_module_shadows_type_then_name_only_relation",
   "crates/ripr/src/analysis/classify/related_tests.rs::tests::given_unique_impl_method_when_no_shadow_then_direct_owner_call",
   "crates/ripr/src/analysis/classify/related_tests.rs::tests::given_two_impls_when_test_module_shadows_owner_type_then_name_only_relation",
+  "crates/ripr/src/analysis/classify/related_tests.rs::tests::given_out_of_line_parent_shadow_when_test_calls_owner_method_then_name_only_relation",
+  "crates/ripr/src/analysis/classify/related_tests.rs::tests::given_out_of_line_test_without_parent_shadow_when_test_calls_owner_then_direct",
+  "crates/ripr/src/analysis/classify/related_tests.rs::tests::given_out_of_line_test_when_parent_chain_is_unresolvable_then_name_only_relation",
+  "crates/ripr/src/analysis/classify/related_tests.rs::tests::given_really_ambiguous_parent_when_test_calls_owner_method_then_name_only_relation",
+  "crates/ripr/src/analysis/classify/related_tests.rs::tests::given_parent_root_rename_when_test_calls_owner_method_then_name_only_relation",
+  "crates/ripr/src/analysis/classify/related_tests.rs::tests::given_parent_root_plain_import_when_test_calls_owner_then_direct",
   "crates/ripr/src/analysis/classify/reveal.rs::tests::related_tests_cap_keeps_a_second_test_when_one_test_has_many_oracles",
   "crates/ripr/src/analysis/test_grip_evidence/tests.rs::given_two_impls_when_compact_grip_sees_other_type_call_then_not_direct_owner_call",
   "crates/ripr/src/analysis/test_grip_evidence/tests.rs::given_two_impls_when_compact_grip_sees_owner_type_call_then_direct_owner_call",
@@ -11679,6 +11685,11 @@ tests = [
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_nested_production_module_does_not_shadow_its_own_owner_pin",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_nested_test_module_shadow_alongside_a_nested_production_declaration_refuses",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_cross_file_test_module_shadow_of_a_nested_owner_still_refuses",
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::an_out_of_line_parent_module_shadow_of_the_receiver_refuses_the_pin",
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::an_out_of_line_test_without_a_parent_shadow_keeps_its_pin",
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::an_out_of_line_production_module_at_the_parent_root_keeps_its_pin",
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_parent_root_rename_of_the_receiver_refuses_the_pin",
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_parent_root_plain_import_of_the_receiver_keeps_its_pin",
 ]
 fixtures = [
   "fixtures/predicate_boundary_oracle_refused",
@@ -11724,6 +11735,7 @@ fixtures = [
   "fixtures/owner_return_pin_cfg_attr_module",
   "fixtures/owner_return_pin_out_of_line_cfg",
   "fixtures/owner_return_pin_test_module_shadow",
+  "fixtures/owner_return_pin_out_of_line_test_module_shadow",
 ]
 code = [
   "crates/ripr/src/output/observed_values.rs",
