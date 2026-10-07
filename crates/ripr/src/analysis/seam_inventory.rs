@@ -1356,13 +1356,20 @@ pub(crate) fn diff_only_rust_files(
     changed_files: &[PathBuf],
 ) -> Vec<(PathBuf, workspace::DiffOnlySource)> {
     let generated = super::language::GeneratedRustSources::for_repo(root, &config.languages().rust);
-    // Only files `ripr check` can index: a changed path missing from the
-    // working tree (sparse checkout, deleted since the diff) or a symlink is
+    // Only files `ripr check` can index, by the shared worktree admission:
+    // a changed path missing from the working tree (sparse checkout, deleted
+    // since the diff), a symlink, or a file below a symlinked directory is
     // refused by Rust discovery, so check has no probes for it either.
+    let absent = workspace::changed_source_files_absent_from_worktree(
+        root,
+        changed_files.iter().map(PathBuf::as_path),
+    );
     let candidates = changed_files
         .iter()
         .filter(|path| {
-            std::fs::symlink_metadata(root.join(path)).is_ok_and(|meta| meta.file_type().is_file())
+            !absent
+                .iter()
+                .any(|missing| missing == Path::new(&workspace::normalize_path(path)))
         })
         .filter(|path| !generated.contains(path))
         .collect::<Vec<_>>();
@@ -3585,6 +3592,17 @@ pub fn classify(amount: i32, service: &mut Service) -> Result<Quote, Error> {
             std::os::unix::fs::symlink(root.join("build.rs"), root.join("xtask/src/link.rs"))
                 .map_err(|err| format!("symlink: {err}"))?;
             changed.push(PathBuf::from("xtask/src/link.rs"));
+            // A build script below a symlinked directory (here, a package
+            // outside the checkout) is refused too.
+            let outside = temp.join("outside");
+            write_file(
+                &outside.join("Cargo.toml"),
+                "[package]\nname = 'outside'\nversion = '0.1.0'\n",
+            )?;
+            write_file(&outside.join("build.rs"), "fn main() {}\n")?;
+            std::os::unix::fs::symlink(&outside, root.join("linked"))
+                .map_err(|err| format!("symlink: {err}"))?;
+            changed.push(PathBuf::from("linked/build.rs"));
         }
         let named = diff_only_rust_files(&root, &RiprConfig::default(), &changed);
         let _ = std::fs::remove_dir_all(&temp);
