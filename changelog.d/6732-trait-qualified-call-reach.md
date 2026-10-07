@@ -6,5 +6,7 @@
   with "No test is seen calling render". The new relation needs three
   things: the owner takes `self`, its trait is not generic, and the
   argument names its type by its own syntax. That syntax can be a
-  suffixed literal, a typed `let` binding, a constructor or a struct
-  literal. Any other call stays name-only (#6732).
+  suffixed literal, a typed `let` binding, or a struct, tuple-struct
+  or variant literal. Any other call stays name-only, including one
+  whose argument is an associated function such as `Site::new()`
+  (#6732).

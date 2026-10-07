@@ -2457,8 +2457,8 @@ fn qualified_self_type_matches(
 
 /// Whether the first argument of the call whose name ends at `after_name`
 /// has type `impl_type`: a suffixed literal (`&-0.0f64`), a `let` binding
-/// typed as `impl_type`, or a constructor or struct literal head
-/// (`&Site::new()`). Anything else fails closed.
+/// typed as `impl_type`, or a struct, tuple-struct or variant literal
+/// (`&Site { .. }`, `&Site(1)`). Anything else fails closed.
 fn first_argument_has_type(
     text: &str,
     after_name: usize,
@@ -2501,26 +2501,39 @@ fn first_argument_has_type(
         return ty == impl_type;
     }
     if !arg.is_empty() && arg.bytes().all(is_ident_byte) {
-        return let_binding_mentions_type(body_for_lets, arg, impl_type);
+        // A binding is typed by its annotation or, as an argument is, by a
+        // literal initializer; `let s = Site::new();` names no type.
+        return last_let_statement(body_for_lets, arg).is_some_and(|stmt| {
+            let Some(eq) = stmt.find('=') else {
+                return false;
+            };
+            match stmt[..eq].find(':') {
+                Some(_) => let_statement_type_head(stmt) == Some(impl_type),
+                None => literal_type_head(&stmt[eq + 1..]) == Some(impl_type),
+            }
+        });
     }
-    // Only heads whose syntax fixes the type: a struct or tuple-struct
-    // literal, a variant, or `new`/`default`/`from`. The `with_*`, `new_*`
-    // and `from_*` naming conventions `initializer_type_head` also accepts
-    // may return another type (`Site::with_cache() -> Cache`), and a
-    // turbofish names a specialisation the compact `impl_type` cannot tell
-    // apart, so both fail closed here.
-    let named_by_convention = type_head(arg).is_some_and(|(segments, next)| {
-        next == Some(b'(')
-            && segments.last().is_some_and(|call| {
-                ["with_", "new_", "from_"]
-                    .iter()
-                    .any(|prefix| call.starts_with(prefix))
-            })
+    literal_type_head(arg) == Some(impl_type)
+}
+
+/// Type named by a struct literal (`Site { .. }`), tuple-struct literal
+/// (`Site(1)`) or enum variant (`Shape::Circle(1)`) that is the whole of
+/// `expr`. An associated function or constant (`Site::new()`,
+/// `Site::with_cache()`, `Site::CACHE`) may have any declared type, which
+/// ripr does not look up, and a turbofish names a specialisation the compact
+/// impl type cannot tell apart, so both give `None`.
+fn literal_type_head(expr: &str) -> Option<&str> {
+    let expr = expr.trim();
+    let expr = expr.strip_suffix(';').map_or(expr, str::trim_end);
+    let literal = type_head(expr).is_some_and(|(segments, next)| match next {
+        Some(b'{') => true,
+        Some(b'(') => segments.last().is_some_and(|call| is_variant_name(call)),
+        _ => false,
     });
-    !named_by_convention
-        && !arg.contains("::<")
-        && initializer_is_one_head_expr(arg)
-        && initializer_type_head(arg).is_some_and(|head| head == impl_type)
+    if !literal || expr.contains("::<") || !initializer_is_one_head_expr(expr) {
+        return None;
+    }
+    initializer_type_head(expr)
 }
 
 /// Whether the bracketed receiver expression ending just before the `.` at
@@ -3441,14 +3454,22 @@ mod tests {
         }
     }
 
-    /// #6732: a constructor or struct-literal first argument names its type.
+    /// #6732: a struct, tuple-struct or variant literal argument names its
+    /// type; an associated function or constant does not.
     #[test]
     fn trait_qualified_call_resolves_a_constructor_argument() {
         for (body, expected) in [
-            ("Render::render(&Site::new());", true),
+            ("Render::render(&Site::new());", false),
             ("Render::render(&Site { x: 1 });", true),
             ("Render::render(&Site::new().cache());", false),
-            ("Render::render(&Site::default());", true),
+            ("Render::render(&Site::default());", false),
+            ("Render::render(&Site::CACHE);", false),
+            ("Render::render(&m::Site(1));", true),
+            ("Render::render(&Kind::Site(1));", false),
+            ("let s = Site::new(); Render::render(&s);", false),
+            ("let s: Site = Site::new(); Render::render(&s);", true),
+            ("let s = Site { x: 1 }; Render::render(&s);", true),
+            ("let s = Site { x: 1 }.cache(); Render::render(&s);", false),
             ("Render::render(&Site(1));", true),
             ("Render::render(&Site::with_cache());", false),
             ("Render::render(&Site::from_parts(1));", false),
