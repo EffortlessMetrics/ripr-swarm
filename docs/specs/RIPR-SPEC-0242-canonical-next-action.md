@@ -48,7 +48,10 @@ One shared selector, `select_canonical_next_action`, projects exactly one
 - Exact subject/currentness/root binding: the producer-bound root (never the
   process working directory), the exact diff-source mode (working tree vs
   committed), and one bound item — or no item exactly when the action is a
-  selection among stop-carried candidates.
+  selection among stop-carried candidates. Diff-source names the subject
+  the action acts on: the analyzed diff for check replay (bound from the
+  producer's declared provenance, never derived from base presence), the
+  tree state the route reads for card and status.
 - Typed prerequisites and stops instead of best-effort strings: check/card
   disagreement, stale head or config, route refusal, missing platform
   rendering, manual steps, terminal completion, and producer limitations

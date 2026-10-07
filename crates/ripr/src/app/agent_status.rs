@@ -2251,6 +2251,12 @@ fn canonical_next_action_for_attempt(
         item_candidates: Vec::new(),
         attempts: vec![NextActionAttemptView {
             id: id.to_string(),
+            // A finished attempt is terminal whether current or
+            // historical (RIPR-SPEC-0242 acceptance): the receipt is
+            // retained evidence, not a claim the gap stays closed at
+            // today's HEAD. The historical qualification travels in the
+            // sibling status fields and prose; terminal DTOs
+            // structurally carry no transition.
             terminal: matches!(status_class, "finished_current" | "finished_historical"),
             awaits_edit: status_class == "awaiting_edit",
             restart_recommended,
@@ -2259,7 +2265,16 @@ fn canonical_next_action_for_attempt(
         }],
         // The producer's class already compared the prepared and current
         // heads; the selector branches on that reading, never re-deriving
-        // lifecycle from raw heads.
+        // lifecycle from raw heads. The observed axis stays unbound on
+        // purpose: the attempt authority adjudicates currentness by
+        // ancestry (repair_attempt_head_reading), while the selector's
+        // divergence gate adjudicates by equality and runs before the
+        // attempt fan-out — binding observed here would flip
+        // ancestry-admitted and historical attempts into a retry the
+        // authority did not order. Currency stays disclosed via the
+        // sibling status fields (`status_class`, `currentness`,
+        // `head_current`, `evidence_head`) adjacent to the embedded
+        // decision — terminal DTOs structurally carry no transition.
         currentness: NextActionCurrentness {
             head_expected: Some(manifest.repository_head.clone()),
             head_observed: None,

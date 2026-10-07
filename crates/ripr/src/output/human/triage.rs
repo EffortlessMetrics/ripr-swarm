@@ -1,5 +1,5 @@
 use crate::agent::loop_commands::shell_arg;
-use crate::app::{CheckOutput, FindingDrillIn};
+use crate::app::{CheckDiffProvenance, CheckOutput, FindingDrillIn};
 use crate::config::RiprConfig;
 use crate::domain::{
     CanonicalNextActionV1, ExposureClass, Finding, LanguageId, NextActionAlternative,
@@ -132,6 +132,7 @@ pub(crate) fn render_human_triage(
     output: &CheckOutput,
     config: &RiprConfig,
     drill_in: Option<&FindingDrillIn>,
+    provenance: CheckDiffProvenance,
 ) {
     out.push_str("Start here:\n");
     out.push_str(&format!(
@@ -142,7 +143,7 @@ pub(crate) fn render_human_triage(
     // The canonical decision (#6304) selects the line family; the prose
     // below is unchanged, so the decision has one authority while rendered
     // bytes stay put.
-    match check_case_or_fallback(triage, output, drill_in) {
+    match check_case_or_fallback(triage, output, drill_in, provenance) {
         NextActionCheckCase::TopGap => out.push_str(
             "  Safe next action: inspect or repair the selected non-exposed gap; this is static advisory evidence only.\n",
         ),
@@ -388,6 +389,7 @@ pub(crate) fn canonical_next_action_for_triage(
     triage: &HumanTriage<'_>,
     output: &CheckOutput,
     drill_in: Option<&FindingDrillIn>,
+    provenance: CheckDiffProvenance,
 ) -> Result<CanonicalNextActionV1, String> {
     let root = output.root.display().to_string();
     let scope = check_scope_descriptor(triage, output);
@@ -424,12 +426,21 @@ pub(crate) fn canonical_next_action_for_triage(
     let input = NextActionInput {
         producer: NextActionProducer::CheckTopResult,
         root,
-        diff_source: match &output.base {
-            Some(base) => NextActionDiffSource::Committed {
-                base: Some(base.clone()),
+        // The diff-source mode comes from the producer's declared
+        // provenance, never from base presence: a `--worktree` run
+        // resolves a base yet analyzes the live tree, while a supplied
+        // scope has no base yet is fixed replayable content, not the
+        // live tree.
+        diff_source: match provenance {
+            CheckDiffProvenance::Worktree => NextActionDiffSource::WorkingTree { head: None },
+            CheckDiffProvenance::SuppliedScope => NextActionDiffSource::Committed {
+                base: None,
                 head: None,
             },
-            None => NextActionDiffSource::WorkingTree { head: None },
+            CheckDiffProvenance::CommittedHistory => NextActionDiffSource::Committed {
+                base: output.base.clone(),
+                head: None,
+            },
         },
         item_id,
         check_item: triage.selected.map(|finding| finding.id.clone()),
@@ -496,8 +507,9 @@ fn check_case_or_fallback(
     triage: &HumanTriage<'_>,
     output: &CheckOutput,
     drill_in: Option<&FindingDrillIn>,
+    provenance: CheckDiffProvenance,
 ) -> NextActionCheckCase {
-    canonical_next_action_for_triage(triage, output, drill_in)
+    canonical_next_action_for_triage(triage, output, drill_in, provenance)
         .ok()
         .and_then(|action| match action.stop() {
             Some(NextActionStop::CheckTriage { case }) => Some(*case),
@@ -1048,7 +1060,12 @@ mod tests {
         };
         let navigation = crate::app::FindingNavigation::legacy();
         let drill_in = FindingDrillIn::Commands(navigation);
-        let action = canonical_next_action_for_triage(&triage, &output, Some(&drill_in))?;
+        let action = canonical_next_action_for_triage(
+            &triage,
+            &output,
+            Some(&drill_in),
+            CheckDiffProvenance::CommittedHistory,
+        )?;
         if action.action_class() != NextActionClass::InspectDetails {
             return Err("top gap must inspect its details".to_string());
         }
@@ -1080,7 +1097,12 @@ mod tests {
             selected: None,
             omitted: Vec::new(),
         };
-        let action = canonical_next_action_for_triage(&triage, &output, None)?;
+        let action = canonical_next_action_for_triage(
+            &triage,
+            &output,
+            None,
+            CheckDiffProvenance::CommittedHistory,
+        )?;
         if action.action_class() != NextActionClass::SatisfyPrerequisite {
             return Err("missing scope must satisfy its prerequisite".to_string());
         }
@@ -1110,7 +1132,12 @@ mod tests {
             selected: None,
             omitted: Vec::new(),
         };
-        let action = canonical_next_action_for_triage(&triage, &output, None)?;
+        let action = canonical_next_action_for_triage(
+            &triage,
+            &output,
+            None,
+            CheckDiffProvenance::Worktree,
+        )?;
         if action.subject().item.as_deref() != Some("working_tree") {
             return Err("working-tree scope mislabeled".to_string());
         }
@@ -1125,9 +1152,70 @@ mod tests {
         let mut scoped = test_output(Vec::new());
         scoped.base = None;
         scoped.no_scope_provided = true;
-        let action = canonical_next_action_for_triage(&triage, &scoped, None)?;
+        let action = canonical_next_action_for_triage(
+            &triage,
+            &scoped,
+            None,
+            CheckDiffProvenance::CommittedHistory,
+        )?;
         if action.subject().item.as_deref() != Some("no_scope") {
             return Err("missing scope mislabeled".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn check_adapter_binds_diff_source_from_provenance_not_base() -> Result<(), String> {
+        // Base presence identifies neither mode: a `--worktree` run
+        // resolves a base yet analyzes the live tree, while a supplied
+        // scope has no base yet is fixed replayable content.
+        let top = test_finding("finding:top");
+        let triage = HumanTriage {
+            state: HumanTriageState::TopGap,
+            selected: Some(&top),
+            omitted: Vec::new(),
+        };
+        // Worktree with a resolved base stays the live tree.
+        let output = test_output(vec![top.clone()]);
+        let action = canonical_next_action_for_triage(
+            &triage,
+            &output,
+            None,
+            CheckDiffProvenance::Worktree,
+        )?;
+        match &action.subject().diff_source {
+            NextActionDiffSource::WorkingTree { .. } => {}
+            other => return Err(format!("worktree run mislabeled: {other:?}")),
+        }
+        // A supplied scope without a base is fixed content, not the tree.
+        let mut supplied = test_output(vec![top.clone()]);
+        supplied.base = None;
+        let action = canonical_next_action_for_triage(
+            &triage,
+            &supplied,
+            None,
+            CheckDiffProvenance::SuppliedScope,
+        )?;
+        match &action.subject().diff_source {
+            NextActionDiffSource::Committed {
+                base: None,
+                head: None,
+            } => {}
+            other => return Err(format!("supplied scope mislabeled: {other:?}")),
+        }
+        // Committed history carries the compared base.
+        let action = canonical_next_action_for_triage(
+            &triage,
+            &output,
+            None,
+            CheckDiffProvenance::CommittedHistory,
+        )?;
+        match &action.subject().diff_source {
+            NextActionDiffSource::Committed {
+                base: Some(base),
+                head: None,
+            } if base == "HEAD~1" => {}
+            other => return Err(format!("committed run mislabeled: {other:?}")),
         }
         Ok(())
     }
@@ -1150,8 +1238,13 @@ mod tests {
                 selected: Some(&top),
                 omitted: Vec::new(),
             };
-            let action = canonical_next_action_for_triage(&triage, &output, None)
-                .map_err(|error| format!("{} must project: {error}", state.as_str()))?;
+            let action = canonical_next_action_for_triage(
+                &triage,
+                &output,
+                None,
+                CheckDiffProvenance::CommittedHistory,
+            )
+            .map_err(|error| format!("{} must project: {error}", state.as_str()))?;
             let fallback = check_case_for_triage(&triage, &output);
             match action.stop() {
                 Some(NextActionStop::CheckTriage { case }) if *case == fallback => {}

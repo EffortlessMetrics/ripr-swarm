@@ -219,6 +219,12 @@ fn canonical_next_action_for_card(
     select_canonical_next_action(&NextActionInput {
         producer: NextActionProducer::RepairCard,
         root: input.snapshot.workspace_identity.clone(),
+        // The card's diff-source names the tree state the card's routes
+        // read, not the historical analysis input (the card producer
+        // gathers from the live tree and never sees the check mode): a
+        // clean scope reads committed content, an accepted dirty draft
+        // reads working-tree content. The label tracks the evidence
+        // actually bound.
         diff_source: match input.snapshot.currentness {
             RepairCardSnapshotCurrentness::Current => NextActionDiffSource::Committed {
                 base: None,

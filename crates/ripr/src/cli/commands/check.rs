@@ -1079,6 +1079,15 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
     // #4945: repo seam-driven formats run their walks inside the render arms,
     // so the sink threads through rendering to bracket those walks with
     // repo-scope stage boundaries; diff-scoped arms ignore it.
+    // The canonical triage adapter binds its diff-source mode from this
+    // declared provenance (#6304): base presence cannot identify it.
+    let provenance = if worktree_explicitly_provided {
+        app::CheckDiffProvenance::Worktree
+    } else if input_diff_file_is_some || candidate_tree.is_some() {
+        app::CheckDiffProvenance::SuppliedScope
+    } else {
+        app::CheckDiffProvenance::CommittedHistory
+    };
     write_stdout_chunked(
         &app::render_check_with_config_and_navigation_and_progress(
             &output,
@@ -1086,6 +1095,7 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
             &config,
             Some(&drill_in),
             progress_sink,
+            provenance,
         )
         .map_err(|err| refuse_check(&envelope_input, effective_format, err))?,
     )
