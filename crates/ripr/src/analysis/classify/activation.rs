@@ -1550,7 +1550,7 @@ fn field_overwritten_before(
     let Some(prefix) = masked.get(..position) else {
         return false;
     };
-    let tainted = receiver_derived_bindings(prefix, receiver);
+    let tainted = receiver_derived_bindings(prefix, receiver, owner_call);
     let fresh = |value: &str| {
         !mentions_ident(value, receiver)
             && !tainted.iter().any(|name| mentions_ident(value, name))
@@ -1576,25 +1576,34 @@ fn field_overwritten_before(
     false
 }
 
-/// Names `let`-bound in `body` from the receiver, directly or through
-/// another such name (`let t = q.total; let u = t;`): a value built from them
-/// may be the owner's own field value.
-fn receiver_derived_bindings(body: &str, receiver: &str) -> Vec<String> {
+/// Names bound in `body` from the receiver or another owner call, directly
+/// or through another such name (`let t = q.total; let u = t;`,
+/// `t = q.total;`, `let base = bundle(3);`): a value built from them may be
+/// the owner's own field value.
+fn receiver_derived_bindings(body: &str, receiver: &str, owner_call: &str) -> Vec<String> {
     let is_ident = |ch: char| ch.is_ascii_alphanumeric() || ch == '_';
-    let lets: Vec<(&str, &str)> = body
-        .match_indices("let ")
-        .filter(|(start, _)| !body[..*start].chars().next_back().is_some_and(is_ident))
-        .filter_map(|(start, _)| {
-            let statement = body[start + 4..].split(';').next()?;
+    // `let pattern = init;` and plain `name = value;` statements.
+    let bindings: Vec<(&str, &str)> = body
+        .split(|ch| ch == ';' || ch == '{' || ch == '}')
+        .filter_map(|statement| {
+            let statement = statement.trim();
+            let statement = statement.strip_prefix("let ").unwrap_or(statement);
             let (pattern, initializer) = statement.split_once('=')?;
+            if initializer.starts_with('=')
+                || pattern.ends_with(['!', '<', '>', '+', '-', '*', '/', '|', '&', '^', '%'])
+            {
+                return None;
+            }
             Some((pattern, initializer))
         })
         .collect();
     let mut tainted = vec![receiver.to_string()];
     loop {
         let before = tainted.len();
-        for (pattern, initializer) in &lets {
-            if tainted.iter().any(|name| mentions_ident(initializer, name)) {
+        for (pattern, initializer) in &bindings {
+            if initializer.contains(owner_call)
+                || tainted.iter().any(|name| mentions_ident(initializer, name))
+            {
                 for name in pattern.split(|ch: char| !is_ident(ch)) {
                     if !name.is_empty()
                         && name != "mut"
@@ -3306,6 +3315,9 @@ mod tests {
             // A value copied out of the receiver first is still the owner's.
             "let q = bundle(3);\n let t = q.total;\n let q = Quote { total: t, ..q };\n assert_eq!(q.total, 45);",
             "let mut q = bundle(3);\n let t = q.total;\n let u = t + 0;\n q.total = u;\n assert_eq!(q.total, 45);",
+            // Plain assignment and a second owner binding carry the value too.
+            "let mut q = bundle(3);\n let mut t = 0;\n t = q.total;\n q.total = t;\n assert_eq!(q.total, 45);",
+            "let base = bundle(3);\n let q = bundle(1);\n let q = Quote { total: base.total, ..q };\n assert_eq!(q.total, 45);",
             // A char literal quote does not hide a closing brace.
             "let q = bundle(3);\n { let c = '\"'; let q = Quote { total: 1, ..q }; drop((c, q)); }\n assert_eq!(q.total, 45);",
             // Only a statement still in scope at the assertion counts.
