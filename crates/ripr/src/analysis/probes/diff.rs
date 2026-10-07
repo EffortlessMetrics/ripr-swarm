@@ -917,29 +917,31 @@ fn replaced_line_counterpart(added_new_side_line: usize, changed: &ChangedFile) 
 /// `added_line`, when the edit between the two lines falls inside the shape.
 /// Outside that case (the edit touches text around the shape, or the shape
 /// is not on this line) there is no faithful cut, so the caller keeps the
-/// whole old line.
+/// whole old line. The shape text must occur once on the line: a repeat
+/// (`"a >= b"` in a literal before `if a >= b`) could align the cut with
+/// the wrong occurrence.
 fn removed_span_of_shape(added_line: &str, shape_text: &str, removed_line: &str) -> Option<String> {
+    if shape_text.is_empty() || added_line.matches(shape_text).count() != 1 {
+        return None;
+    }
     let start = added_line.find(shape_text)?;
     let end = start + shape_text.len();
-    let prefix = added_line
-        .char_indices()
-        .zip(removed_line.chars())
-        .find(|((_, added), removed)| added != removed)
-        .map_or(added_line.len().min(removed_line.len()), |((at, _), _)| at);
+    let mut prefix = 0;
+    for (added, removed) in added_line.chars().zip(removed_line.chars()) {
+        if added != removed {
+            break;
+        }
+        prefix += added.len_utf8();
+    }
+    // The suffix may not reach back into the prefix.
     let room = added_line.len().min(removed_line.len()) - prefix;
-    let suffix = added_line
-        .chars()
-        .rev()
-        .zip(removed_line.chars().rev())
-        .take_while(|(added, removed)| added == removed)
-        .map(|(added, _)| added.len_utf8())
-        .scan(0usize, |total, width| {
-            *total += width;
-            Some(*total)
-        })
-        .take_while(|total| *total <= room)
-        .last()
-        .unwrap_or(0);
+    let mut suffix = 0;
+    for (added, removed) in added_line.chars().rev().zip(removed_line.chars().rev()) {
+        if added != removed || suffix + added.len_utf8() > room {
+            break;
+        }
+        suffix += added.len_utf8();
+    }
     if prefix < start || added_line.len() - suffix > end {
         return None;
     }
@@ -1227,6 +1229,25 @@ mod tests {
         // Identical lines: nothing changed inside the shape.
         assert_eq!(
             removed_span_of_shape("if a >= b {", "a >= b", "if a >= b {"),
+            None
+        );
+        // A repeated shape text cannot say which occurrence the parser
+        // chose: an unchanged decoy before a changed predicate, and a changed
+        // decoy before an unchanged predicate, both keep the whole old line.
+        assert_eq!(
+            removed_span_of_shape(
+                "let d = \"a >= b\"; if a >= b {",
+                "a >= b",
+                "let d = \"a >= b\"; if a > b {"
+            ),
+            None
+        );
+        assert_eq!(
+            removed_span_of_shape(
+                "let d = \"a >= b\"; if a >= b {",
+                "a >= b",
+                "let d = \"a > b\"; if a >= b {"
+            ),
             None
         );
     }
