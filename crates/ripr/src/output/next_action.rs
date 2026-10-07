@@ -152,7 +152,10 @@ fn bind_route_root(route: &str, bound: Option<&str>) -> String {
         return route.to_string();
     }
     let tokens: Vec<&str> = trimmed.split_whitespace().collect();
-    if tokens.contains(&"--root") {
+    if tokens
+        .iter()
+        .any(|token| *token == "--root" || token.starts_with("--root="))
+    {
         return route.to_string();
     }
     let after_words = if tokens.get(1) == Some(&"agent") {
@@ -161,6 +164,14 @@ fn bind_route_root(route: &str, bound: Option<&str>) -> String {
         2
     };
     if tokens.len() < after_words {
+        return route.to_string();
+    }
+    // The splice point must sit between bare subcommand words: a quote in
+    // the prefix means this is not a `ripr <sub> [sub]` route shape.
+    if tokens[..after_words]
+        .iter()
+        .any(|token| token.contains(['\'', '"']))
+    {
         return route.to_string();
     }
     // Splice at a byte offset instead of rejoining tokens: quoted arguments
@@ -612,6 +623,20 @@ mod tests {
             bound.contains("ripr agent packet --root /repo --seam-id seam:demo --json"),
             "{bound}"
         );
+        // `--root=value` is already bound; a quoted prefix is not a route
+        // shape, so both pass through without a second splice.
+        for unchanged in [
+            "ripr agent packet --root=/repo --seam-id seam:demo --json",
+            "ripr 'a b' c",
+            "ripr agent",
+        ] {
+            let action = stopped_action(NextActionStop::ProvideInput {
+                input: "readiness".to_string(),
+                detail_route: unchanged.to_string(),
+            })?;
+            let bound = render_next_action_human_at_root(&action, Path::new("/repo/checkout"));
+            assert!(bound.contains(unchanged), "{bound}");
+        }
         // Receipt routes and recovery instructions are not `ripr` commands.
         assert!(bound.contains("attempt.json#receipt"), "{bound}");
         let recovery = stopped_action(NextActionStop::DoctorRecovery {
