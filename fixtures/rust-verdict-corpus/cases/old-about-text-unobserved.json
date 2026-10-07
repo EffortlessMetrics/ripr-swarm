@@ -1,0 +1,43 @@
+{
+  "case_id": "old-about-text-unobserved",
+  "subject_id": "authored-old-errors",
+  "diff": "cases/old-about-text-unobserved.diff",
+  "anchor": {
+    "file": "src/help.rs",
+    "line": 5
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "return_value",
+  "test_shape": "help_text_const_only_nonempty",
+  "hard_case": null,
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "pub const ABOUT: &str = \"Counts lines and words.\";",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: the about text changes"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "about_is_present only checks the text is non-empty, so rewording it passes. Spec cells: RIPR-SPEC-0043 (visible but unobserved text).",
+  "labeling_observation": {
+    "ripr_commit": "e19e16c",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "static_unknown"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

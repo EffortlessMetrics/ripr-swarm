@@ -1,0 +1,50 @@
+{
+  "case_id": "old-tool-out-of-line-test-helper",
+  "subject_id": "authored-old-tool",
+  "diff": "cases/old-tool-out-of-line-test-helper.diff",
+  "anchor": {
+    "file": "src/tests.rs",
+    "line": 4
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "test_helper_value",
+  "test_shape": "helper_in_out_of_line_cfg_test_module",
+  "hard_case": "The helper file is reached only through #[cfg(test)] mod tests;, so it is evidence and silent is the expected reading.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "\"a b\"",
+        "mutated_line": "\"a b\"",
+        "outcome": "tests_failed",
+        "failing_test": "tests::counts_the_sample_words",
+        "equivalence_review": "not equivalent: the sample has two words"
+      },
+      {
+        "replacement": "\"a b c d\"",
+        "mutated_line": "\"a b c d\"",
+        "outcome": "tests_failed",
+        "failing_test": "tests::counts_the_sample_words",
+        "equivalence_review": "not equivalent: the sample has four words"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "sample_words lives in the out-of-line #[cfg(test)] mod tests; and counts_the_sample_words pins 3 words, so changing the sample fails it. Spec cells: RIPR-SPEC-0169, RIPR-SPEC-0153.",
+  "labeling_observation": {
+    "ripr_commit": "e19e16c",
+    "full_checkout_verdict": "silent",
+    "full_checkout_classifications": [],
+    "excerpt_parity": "matched"
+  }
+}
