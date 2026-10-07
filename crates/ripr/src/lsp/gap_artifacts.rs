@@ -1486,18 +1486,19 @@ pub(super) fn bind_portable_command(root: &Path, command: &str) -> String {
         Some((body, tail)) => (body, Some(tail)),
         None => (trimmed, None),
     };
-    let tokens = body.split(' ').collect::<Vec<_>>();
-    let Some(index) = tokens.windows(2).position(|pair| pair == ["--root", "."]) else {
+    // Only a top-level `--root .` pair is the route's root; the same text
+    // inside a quoted argument (a recorded `--verify-command '...'`) is data.
+    let spans = top_level_token_spans(body);
+    let Some(dot) = spans
+        .windows(2)
+        .find(|pair| &body[pair[0].clone()] == "--root" && &body[pair[1].clone()] == ".")
+        .map(|pair| pair[1].clone())
+    else {
         return command.to_string();
     };
     let bound = crate::agent::loop_commands::bound_root(&root.to_string_lossy());
     let bound_arg = crate::agent::loop_commands::shell_arg(&bound);
-    let mut rebound = tokens
-        .iter()
-        .map(|token| (*token).to_string())
-        .collect::<Vec<_>>();
-    rebound[index + 1] = bound_arg;
-    let mut display = rebound.join(" ");
+    let mut display = format!("{}{bound_arg}{}", &body[..dot.start], &body[dot.end..]);
     if let Some(tail) = redirect {
         let Some(target) = shell_arg_token(tail) else {
             return command.to_string();
@@ -1511,6 +1512,44 @@ pub(super) fn bind_portable_command(root: &Path, command: &str) -> String {
     } else {
         command.to_string()
     }
+}
+
+/// Byte spans of the whitespace-separated tokens of `command` that contain
+/// no quote, so each span names literal top-level text. Quoted text, and
+/// any token that touches a quote, is skipped.
+fn top_level_token_spans(command: &str) -> Vec<std::ops::Range<usize>> {
+    let mut spans = Vec::new();
+    let mut quote = None;
+    let mut start = None;
+    let mut quoted = false;
+    for (index, character) in command.char_indices() {
+        match (quote, character) {
+            (Some(active), value) if value == active => quote = None,
+            (Some(_), _) => {}
+            (None, '"' | '\'') => {
+                quote = Some(character);
+                quoted = true;
+                start.get_or_insert(index);
+            }
+            (None, value) if value.is_whitespace() => {
+                if let Some(begin) = start.take()
+                    && !quoted
+                {
+                    spans.push(begin..index);
+                }
+                quoted = false;
+            }
+            _ => {
+                start.get_or_insert(index);
+            }
+        }
+    }
+    if let Some(begin) = start
+        && !quoted
+    {
+        spans.push(begin..command.len());
+    }
+    spans
 }
 
 /// Split off the one stdout redirect the producers append (#4306 persists
@@ -1772,6 +1811,50 @@ mod tests {
     use std::fs;
     use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    /// #4001 review: only a top-level `--root .` is the route's root. Text
+    /// inside a quoted argument is data and stays as recorded, a root with a
+    /// space is quoted once, and binding twice changes nothing.
+    #[test]
+    fn bind_portable_command_binds_only_the_top_level_root() -> Result<(), String> {
+        let root = std::env::temp_dir().join("ripr bind root");
+        let bound = crate::agent::loop_commands::shell_arg(
+            &crate::agent::loop_commands::bound_root(&root.to_string_lossy()),
+        );
+        let cases = [
+            (
+                "ripr agent verify --root . --json".to_string(),
+                format!("ripr agent verify --root {bound} --json"),
+            ),
+            // A recorded verify command inside a quoted argument is data.
+            (
+                "ripr receipt write --gap G --verify-command 'ripr check --root . --json' --status not_run".to_string(),
+                "ripr receipt write --gap G --verify-command 'ripr check --root . --json' --status not_run".to_string(),
+            ),
+            (
+                "ripr agent verify --note 'a --root . b' --root . --json".to_string(),
+                format!("ripr agent verify --note 'a --root . b' --root {bound} --json"),
+            ),
+            // No portable root: unchanged.
+            (
+                "ripr agent verify --root ./sub --json".to_string(),
+                "ripr agent verify --root ./sub --json".to_string(),
+            ),
+        ];
+        for (command, expected) in cases {
+            let once = bind_portable_command(&root, &command);
+            if once != expected {
+                return Err(format!(
+                    "{command:?} bound to {once:?}, expected {expected:?}"
+                ));
+            }
+            let twice = bind_portable_command(&root, &once);
+            if twice != once {
+                return Err(format!("binding is not idempotent: {once:?} -> {twice:?}"));
+            }
+        }
+        Ok(())
+    }
 
     fn root() -> PathBuf {
         PathBuf::from("/workspace")
