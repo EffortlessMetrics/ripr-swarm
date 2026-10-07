@@ -1554,8 +1554,11 @@ fn generated_test_sites<'a>(file: &'a Path, source: &str) -> Vec<GeneratedTestSi
     let lines: Vec<&str> = masked.lines().collect();
     let mut sites = Vec::new();
     for invocation in macro_invocations_in_text(&masked, 1) {
-        let Some(&(macro_name, macro_line)) =
-            generators.iter().find(|(name, _)| *name == invocation.name)
+        // `macro_rules!` is textually scoped: an invocation above the
+        // definition cannot expand it.
+        let Some(&(macro_name, macro_line)) = generators
+            .iter()
+            .find(|(name, line)| *name == invocation.name && *line <= invocation.line)
         else {
             continue;
         };
@@ -3258,6 +3261,24 @@ const NOTE: &str = \"case!(in_a_string)\";
             })
             .collect();
         assert_eq!(found, vec![("real_one", 11, 1)]);
+    }
+
+    #[test]
+    fn an_invocation_above_the_generator_definition_is_not_a_generated_test() {
+        let source = "case!(too_early);
+macro_rules! case {
+    ($name:ident) => {
+        #[test]
+        fn $name() { owner(); }
+    };
+}
+case!(after_definition);
+";
+        let names: Vec<String> = generated_test_sites(Path::new("src/lib.rs"), source)
+            .into_iter()
+            .map(|site| site.test_name)
+            .collect();
+        assert_eq!(names, vec!["after_definition".to_string()]);
     }
 
     #[test]
