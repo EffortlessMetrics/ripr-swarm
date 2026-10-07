@@ -114,11 +114,22 @@ pub(crate) fn probes_for_file_with_relations(
                     new_side_line: shape.start_line,
                     text: canonical_text.clone(),
                 };
+                let before = removed_before(shape.start_line, &canonical_text, changed);
+                // #6995: a predicate's `after` is the parser shape, not the
+                // whole line, so cut the same span from the old line. Match
+                // arms keep the whole old arm: their consumers parse it.
+                let before = if shape.family == ProbeFamily::Predicate {
+                    before.map(|line| {
+                        removed_span_of_shape(text, &canonical_text, &line).unwrap_or(line)
+                    })
+                } else {
+                    before
+                };
                 let probe = build_probe(
                     &build_context,
                     &canonical_line,
                     shape.family,
-                    removed_before(shape.start_line, &canonical_text, changed),
+                    before,
                     Some(canonical_text.clone()),
                 );
                 probes.push(SeededProbe::maybe_with_span(probe, parser_span));
@@ -902,6 +913,41 @@ fn replaced_line_counterpart(added_new_side_line: usize, changed: &ChangedFile) 
         .map(|line| line.text.trim().to_string())
 }
 
+/// The span of `removed_line` that corresponds to `shape_text` within
+/// `added_line`, when the edit between the two lines falls inside the shape.
+/// Outside that case (the edit touches text around the shape, or the shape
+/// is not on this line) there is no faithful cut, so the caller keeps the
+/// whole old line.
+fn removed_span_of_shape(added_line: &str, shape_text: &str, removed_line: &str) -> Option<String> {
+    let start = added_line.find(shape_text)?;
+    let end = start + shape_text.len();
+    let prefix = added_line
+        .char_indices()
+        .zip(removed_line.chars())
+        .find(|((_, added), removed)| added != removed)
+        .map_or(added_line.len().min(removed_line.len()), |((at, _), _)| at);
+    let room = added_line.len().min(removed_line.len()) - prefix;
+    let suffix = added_line
+        .chars()
+        .rev()
+        .zip(removed_line.chars().rev())
+        .take_while(|(added, removed)| added == removed)
+        .map(|(added, _)| added.len_utf8())
+        .scan(0usize, |total, width| {
+            *total += width;
+            Some(*total)
+        })
+        .take_while(|total| *total <= room)
+        .last()
+        .unwrap_or(0);
+    if prefix < start || added_line.len() - suffix > end {
+        return None;
+    }
+    let removed_end = removed_line.len().checked_sub(added_line.len() - end)?;
+    let span = removed_line.get(start..removed_end)?.trim();
+    (!span.is_empty()).then(|| span.to_string())
+}
+
 /// A probe's `before` text: the positional counterpart when the replacement
 /// block pairs one, so it names the same old line that shape selection
 /// compared against, else the nearest token-sharing removed line.
@@ -1047,6 +1093,141 @@ mod tests {
                 .expected_sinks
                 .iter()
                 .any(|sink| sink == "branch result")
+        );
+    }
+
+    /// One changed line `removed` -> `added` with a single parser shape.
+    fn single_shape_probes(
+        added: &str,
+        removed: &str,
+        kind: ProbeShapeKind,
+        shape_text: &str,
+    ) -> Vec<Probe> {
+        let path = PathBuf::from("src/lib.rs");
+        let line = |text: &str| ChangedLine {
+            line: 3,
+            new_side_line: 3,
+            text: text.to_string(),
+        };
+        let changed = ChangedFile {
+            path: path.clone(),
+            added_lines: vec![line(added)],
+            removed_lines: vec![line(removed)],
+        };
+        let start_byte = 20 + added.find(shape_text).unwrap_or(0);
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            files: BTreeMap::from([(
+                path.clone(),
+                FileFacts {
+                    path: path.clone(),
+                    functions: vec![FunctionFact {
+                        id: SymbolId("buf::format".to_string()),
+                        name: "format".to_string(),
+                        file: path.clone(),
+                        start_line: 1,
+                        end_line: 5,
+                        body: format!("fn format() {{ {added} }}").into(),
+                        calls: vec![],
+                        returns: vec![],
+                        literals: vec![],
+                        source_role: FunctionSourceRole::Production,
+                        attrs: vec![],
+                        impl_attrs: Vec::new(),
+                        nested_fn_names: Vec::new(),
+                        let_bindings: Vec::new(),
+                        item: Default::default(),
+                        impl_context: Default::default(),
+                    }],
+                    probe_shapes: vec![ProbeShapeFact {
+                        start_line: 3,
+                        end_line: 3,
+                        start_byte,
+                        end_byte: start_byte + shape_text.len(),
+                        kind,
+                        text: shape_text.into(),
+                    }],
+                    ..FileFacts::default()
+                },
+            )]),
+            ..Default::default()
+        });
+        probes_for_file(Path::new("workspace"), &changed, &index)
+    }
+
+    /// #6995: a predicate shape narrower than its line takes the same span
+    /// of the old line as `before`, so the two sides read alike
+    /// (`a > b` / `a >= b`, not `if a > b {` / `a >= b`).
+    #[test]
+    fn predicate_before_is_cut_to_the_parser_shape_span() {
+        let probes = single_shape_probes(
+            "if string.len() >= MAX_LEN {",
+            "if string.len() > MAX_LEN {",
+            ProbeShapeKind::Predicate,
+            "string.len() >= MAX_LEN",
+        );
+
+        assert_eq!(probes.len(), 1);
+        let probe = &probes[0];
+        assert_eq!(probe.family, ProbeFamily::Predicate);
+        assert_eq!(probe.after.as_deref(), Some("string.len() >= MAX_LEN"));
+        assert_eq!(probe.before.as_deref(), Some("string.len() > MAX_LEN"));
+    }
+
+    /// #6995: a match arm keeps the whole old arm as `before`, because the
+    /// arm consumers (`tuple_match`) parse its body too.
+    #[test]
+    fn match_arm_before_keeps_the_whole_old_arm() {
+        let probes = single_shape_probes(
+            "x if x <= 10 => panic!(\"old\"),",
+            "x if x < 10 => panic!(\"old\"),",
+            ProbeShapeKind::MatchArm,
+            "x if x <= 10 =>",
+        );
+
+        let arm = probes
+            .iter()
+            .find(|probe| probe.family == ProbeFamily::MatchArm);
+        assert_eq!(
+            arm.and_then(|probe| probe.before.as_deref()),
+            Some("x if x < 10 => panic!(\"old\"),"),
+            "{probes:?}"
+        );
+    }
+
+    #[test]
+    fn removed_span_of_shape_cuts_only_when_the_edit_is_inside_the_shape() {
+        assert_eq!(
+            removed_span_of_shape("if a >= b {", "a >= b", "if a > b {").as_deref(),
+            Some("a > b")
+        );
+        // The edit is the shape's whole tail, including the line's end.
+        assert_eq!(
+            removed_span_of_shape("x if x <= 10 =>", "x <= 10", "x if x < 10 =>").as_deref(),
+            Some("x < 10")
+        );
+        // Multibyte text around the edit keeps byte offsets on char boundaries.
+        assert_eq!(
+            removed_span_of_shape("if é >= ü {", "é >= ü", "if é > ü {").as_deref(),
+            Some("é > ü")
+        );
+        // An edit outside the shape has no faithful cut.
+        assert_eq!(
+            removed_span_of_shape("if a >= b {", "a >= b", "while a > b {"),
+            None
+        );
+        assert_eq!(
+            removed_span_of_shape("if a >= b {", "a >= b", "if a >= b { x"),
+            None
+        );
+        // A shape that is not on the added line.
+        assert_eq!(
+            removed_span_of_shape("if a >= b {", "c < d", "if a > b {"),
+            None
+        );
+        // Identical lines: nothing changed inside the shape.
+        assert_eq!(
+            removed_span_of_shape("if a >= b {", "a >= b", "if a >= b {"),
+            None
         );
     }
 
