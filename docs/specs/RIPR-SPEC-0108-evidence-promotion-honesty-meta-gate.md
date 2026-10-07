@@ -464,6 +464,7 @@ gate-specific artifacts.
 | rust_macro_wrapped_test_call_named_limitation | rust | rust_macro_wrapped_test_call_limitation | direct_test_macro_call_named_not_silently_clean (also `must_not_report_clean` + `must_disclose_scope` + `must_emit_limitation: rust_macro_wrapped_test_call_unresolved` + `must_not_emit_repair_packet` + no verify/receipt commands + `must_disclose_witness` + `must_disclose_limitation_detail` + `expected_limitation_detail` + `expected_limitation_route: analysis/rust-macro-aware-reach` + `must_not_claim_no_tests_found`) |
 | rust_macro_wrapped_assertion_named_limitation | rust | rust_macro_wrapped_assertion_limitation | custom_assertion_macro_named_not_silently_clean (also `must_not_report_clean` + `must_disclose_scope` + `must_emit_limitation: rust_macro_wrapped_assertion_unresolved` + `must_not_emit_repair_packet` + no verify/receipt commands + `must_disclose_witness` + `must_disclose_limitation_detail` + `expected_limitation_detail` + `expected_limitation_route: analysis/rust-macro-assertion-oracle` + `must_not_claim_no_tests_found`) |
 | rust_same_method_other_type | rust | rust_adversarial_same_method_other_type | method_owner_same_name_different_impl_type_identity (also `expected_class=weakly_exposed`, `must_not_report_clean`, `must_disclose_scope`, and no repair packet or receipt command) |
+| rust_free_function_receiver_qualified_call | rust | rust_adversarial_free_function_receiver | free_function_receiver_qualified_call_not_direct_owner_call (also `expected_class=weakly_exposed`, `must_not_report_clean`, `must_disclose_scope`, and no repair packet or receipt command) |
 | perl_preview_card_advisory_no_repair_packet | perl | reports/perl-preview-advisory-no-packet.json | perl_preview_card_advisory_only (also `expected_class=weakly_exposed`, production-shaped `perl_preview_card.v1`, `must_not_report_clean`, `must_disclose_scope`, no `verify_command`/`receipt_command` delegation fields, no promotion, and no repair packet) |
 | scope_committed_diff_changed_rust_file | rust | boundary_gap | committed_diff_changed_file_scope_count (also `must_not_report_clean` + `must_disclose_scope` + `expected_changed_rust_files: 1` + no verify/receipt commands + no repair packet + `expected_class: weakly_exposed`) |
 | scope_no_scope_empty_not_clean | rust | reports/scope-no-scope-empty-not-clean.json | empty_result_no_scope_disclosure_not_clean (also `must_disclose_no_scope`) |
@@ -559,6 +560,10 @@ ripr check --perl-facts fixtures/evidence-promotion-honesty-corpus/perl-packets/
   > fixtures/evidence-promotion-honesty-corpus/reports/<case>.json
 ```
 
+Run it in a checkout whose diff against `origin/main` is non-empty. On a
+clean checkout the command exits 2 with "analysis outcome NoScope requires
+every count to be zero". This note stands until that defect is fixed.
+
 The packet is the input (the tempting wrong relation or boundary is encoded
 there); the report is the byte-pinned consumer output the gate enforces.
 Packet fingerprints follow the `recompute_packet_fingerprint` recipe in
@@ -582,6 +587,12 @@ Rust family coverage for same-method-other-impl identity (#4760):
 |---|---|---|
 | same trait method name on a different impl type | `rust_same_method_other_type` | `weakly_exposed` (name-only; trait impl may be reached unseen) |
 | true owner constructed and observed | `rust_same_method_owner_type_positive_control` | `exposed` (`direct_owner_call`) |
+
+Rust family coverage for free-function receiver identity (#7006):
+
+| family | corpus case | expected state |
+|---|---|---|
+| receiver-qualified-only call against a free-function owner | `rust_free_function_receiver_qualified_call` | `weakly_exposed` (name-only; method-call syntax never resolves to a free function) |
 
 Positive controls (same-entity relations must still fire; preview/advisory
 per support policy, no gate, badge, or RIPR Zero role):
@@ -783,6 +794,14 @@ the gate has over-corrected or the fixture needs re-blessing
 | Dispatch | `xtask/src/dispatch.rs` |
 | CI routed | `.github/workflows/routed-rust.yml` |
 | CI fast | `.github/workflows/ci.yml` |
+
+## Later Amendment
+
+RIPR-SPEC-0235 (2026-10-04) states the classification rules behind the
+Perl corpus outcomes pinned here. On the same date a note was added under
+the Perl regeneration command: on a clean checkout the command exits 2
+with a NoScope error, so it must run with a non-empty diff against
+`origin/main` until that defect is fixed.
 
 ## Metrics
 

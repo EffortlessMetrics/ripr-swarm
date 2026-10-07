@@ -54,7 +54,8 @@ This slice names the limitation honestly:
 
 ### Trigger condition
 
-After the direct-call classifier returns `ExposureClass::NoStaticPath` with empty `related_tests`,
+After the direct-call classifier returns `ExposureClass::NoStaticPath` with empty `related_tests`
+(or `WeaklyExposed` with `weak` reach and only proximity relations, #7071; see RIPR-SPEC-0117),
 the Rust adapter runs a bounded BFS walk over the lexical call facts in the RustIndex:
 
 1. Collect all tests from the index (unit + integration).
@@ -81,14 +82,20 @@ non-integration helper chains keep `rust_transitive_reach_unresolved`. The stop
 reason, classification, witness language, and fail-closed boundaries remain
 unchanged.
 
+#7071 extends the trigger to `weakly_exposed` findings whose related tests are
+all proximity-only; RIPR-SPEC-0117 states the rule. The class stays
+`weakly_exposed`.
+
 ### When NOT found
 
-Leave the finding exactly as today (bare `no_static_path`, no `static_limit_kind`).
+Leave the finding exactly as today (bare `no_static_path`, or a proximity-only
+`weakly_exposed` finding with its gap, and no `static_limit_kind`).
 Genuinely-untested stays genuinely-untested.
 
 ### Fail-closed boundaries
 
-- NEVER change the classification from `no_static_path`. No promotion of any kind.
+- NEVER change the classification from `no_static_path` (or from `weakly_exposed` on the
+  proximity-only path, #7071). No promotion of any kind.
 - Walk is NAME matching over LEXICAL call facts only — no AST resolution, no visibility tracking.
 - Depth is bounded at MAX 5 hops; any callee beyond depth 5 is not walked.
 - Macro invocations (`name!`) stop the walk immediately at that branch.
@@ -99,7 +106,7 @@ Genuinely-untested stays genuinely-untested.
 
 | Field | Value when fires | Value when not fires |
 |-------|------------------|----------------------|
-| `classification` | `no_static_path` (unchanged) | `no_static_path` (unchanged) |
+| `classification` | unchanged (`no_static_path`, or `weakly_exposed` when proximity-only) | unchanged |
 | `static_limit_kind` | `"rust_transitive_reach_unresolved"` | omitted / null |
 | `stop_reasons` | includes `"transitive_reach_unresolved"` | unchanged |
 | `evidence` | includes the limitation message | unchanged |
@@ -140,7 +147,7 @@ transitive helper witnesses keep `rust_transitive_reach_unresolved`.
    Classification stays bare `no_static_path`.
 
 6. **Existing tests found directly**: direct-call classifier finds a test for the owner (related_tests
-   non-empty). BFS does NOT run. Finding classified normally (infection_unknown or higher).
+   non-empty, with at least one relation that is not proximity-only). BFS does NOT run. Finding classified normally (infection_unknown or higher).
 
 ## Required Evidence
 
