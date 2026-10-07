@@ -104,12 +104,37 @@ impl<'a> ProbeContext<'a> {
         source: &str,
         callee: &str,
     ) -> bool {
-        let names = &self.index.package_names;
+        let names = self.own_crate_names(file);
         match self.file_use_statements {
-            Some(memo) => memo.imports_foreign_callee_name(file, source, callee, names),
+            Some(memo) => memo.imports_foreign_callee_name(file, source, callee, &names),
             None => FileUseStatements::default()
-                .imports_foreign_callee_name(file, source, callee, names),
+                .imports_foreign_callee_name(file, source, callee, &names),
         }
+    }
+
+    /// Crate names whose imports bind the owner for a test in `file`: the
+    /// root manifest's `package_names`, plus the names under which the
+    /// test's crate imports the owner's workspace-member library, read from
+    /// the manifests (`MemberCrates`; RIPR-SPEC-0197 rule 5).
+    fn own_crate_names(
+        &self,
+        file: &std::path::Path,
+    ) -> std::borrow::Cow<'_, std::collections::BTreeSet<String>> {
+        let owner_file = self
+            .owner_fn
+            .map_or(self.probe.location.file.as_path(), |owner| {
+                owner.file.as_path()
+            });
+        let member = self.index.member_crates.import_names(file, owner_file);
+        if member
+            .iter()
+            .all(|name| self.index.package_names.contains(name))
+        {
+            return std::borrow::Cow::Borrowed(&self.index.package_names);
+        }
+        let mut names = self.index.package_names.clone();
+        names.extend(member);
+        std::borrow::Cow::Owned(names)
     }
 
     /// Borrow just the `TestSummary` references for callers that don't need

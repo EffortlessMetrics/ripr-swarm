@@ -346,6 +346,36 @@ fn an_inline_constructor_types_the_receiver_like_a_binding() {
 }
 
 #[test]
+fn an_unsafe_block_holding_only_the_owner_call_pins_it() {
+    // `assert_eq!(unsafe { byte_at(b"xyz", 1) }, b'y')`: calling an
+    // `unsafe fn` needs the block, and its value is the call's value.
+    let lib = "pub unsafe fn byte_at(bytes: &[u8], index: usize) -> u8 {\n    *bytes.get_unchecked(index)\n}\n";
+    let changed = "*bytes.get_unchecked(index)";
+    for (operand, admitted) in [
+        ("unsafe { byte_at(b\"xyz\", 1) }", 1),
+        ("unsafe{byte_at(b\"xyz\", 1)}", 1),
+        ("unsafe {\n        byte_at(b\"xyz\", 1)\n    }", 1),
+        // A statement in the block means its value is not only the call.
+        ("unsafe { let v = byte_at(b\"xyz\", 1); v }", 0),
+        ("unsafe { byte_at(b\"xyz\", 1); 121 }", 0),
+        // Something chained after the block, or after the call inside it.
+        ("unsafe { byte_at(b\"xyz\", 1) }.wrapping_add(0)", 0),
+        ("unsafe { byte_at(b\"xyz\", 1).wrapping_add(0) }", 0),
+        // A function merely named like the keyword is not a block.
+        ("unsafe_byte_at(b\"xyz\", 1)", 0),
+    ] {
+        let tests = format!(
+            "use demo::byte_at;\n\n#[test]\nfn reads() {{\n    assert_eq!({operand}, b'y');\n}}\n"
+        );
+        let index = index(&[(LIB, lib), (TESTS, &tests)]);
+        let pin = establish(&index, "byte_at", changed);
+        assert!(pin.is_some());
+        let Some(pin) = pin else { return };
+        assert_eq!(admitted_texts(&index, &pin).len(), admitted, "{operand}");
+    }
+}
+
+#[test]
 fn bare_call_names_only_a_module_level_function() {
     // B2: `decode(..)` in a test names the free function, so an associated
     // `Codec::decode` owner never takes a bare call.

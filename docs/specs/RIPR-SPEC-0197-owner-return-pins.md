@@ -111,6 +111,10 @@ rule only for an assertion whose context was admitted.
    one compared operand is a complete call of the owner's name with nothing
    chained after it, and the other operand does not mention the owner's
    name (`assert_eq!(f(4), f(2) + f(2))` compares the owner with itself).
+   An `unsafe { .. }` block whose only content is that complete call (no
+   statement, nothing chained after the call or the block) is the call:
+   calling an `unsafe fn` needs the block, and the block's value is the
+   call's value.
 2. Call identity, from the parser's item-container fact on the owner
    (`FunctionFact.item`: free, local, inherent, trait impl, or trait, with
    the `self`-receiver and body flags; the lexical fallback leaves it
@@ -212,6 +216,23 @@ rule only for an assertion whose context was admitted.
    import, a same-named function in the test's own package when the owner
    lives in another package, and the exact variant when the changed
    expression constructs an error variant.
+   An import is not foreign when its first segment names the owner's own
+   library from the test's crate, as the manifests declare it: the owner
+   file sits in its package's library tree (`src/`, outside `src/main.rs`
+   and `src/bin/`), and either the test is in the same package (the `[lib]`
+   name, else the package name) or the test's nearest manifest has a
+   `[dependencies]` or `[dev-dependencies]` entry (`[target.*]` tables
+   included) whose `path`, directly or through `[workspace.dependencies]`
+   for `workspace = true`, resolves to the owner's package directory. A
+   `package =` rename must name the owner's package and imports under its
+   key; without one the key must be the package name and imports under the
+   library name. A `git` or `registry` key, a `package.workspace`, a
+   `[patch]` entry for the name or any `[replace]` between the test and the
+   root, and a `.cargo/config` on either file's path that mentions the name
+   or sets `paths`, `[patch]`, `[source]` or `include` leave the import
+   foreign. So `use pricing::score;` in a sibling member that depends on
+   `pricing` by path pins `score`, and the same line under
+   `pricing = { package = "fake-pricing", .. }` does not.
 6. Clone field pins (#6692). A `field_construction` probe on field `f` of
    a hand-written `impl Clone for T` is confirmed by
    `assert_eq!(recv.clone(), recv)` (either operand order). The owner is

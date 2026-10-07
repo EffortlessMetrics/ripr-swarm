@@ -6,6 +6,7 @@ pub(crate) mod drop_in;
 mod harness_registry;
 mod includes;
 mod index;
+pub(crate) mod member_crates;
 mod model;
 mod parameterized_tests;
 mod role_composition;

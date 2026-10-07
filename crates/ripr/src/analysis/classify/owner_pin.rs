@@ -1293,6 +1293,9 @@ enum CallShape<'a> {
 /// with a plain identifier receiver and nothing chained after the call.
 fn owner_call_shape<'a>(operand: &'a str, name: &str) -> Option<CallShape<'a>> {
     let operand = operand.trim();
+    if let Some(inner) = unsafe_block_value(operand) {
+        return owner_call_shape(inner, name);
+    }
     if let Some(receiver) = constructed_receiver(operand, name) {
         let call_start = receiver.len() + 1;
         let masked = mask_comments_and_strings(operand);
@@ -1330,6 +1333,24 @@ fn owner_call_shape<'a>(operand: &'a str, name: &str) -> Option<CallShape<'a>> {
     } else {
         CallShape::Method(&operand[..call_start - 1])
     })
+}
+
+/// The value expression of `unsafe { <expr> }` when `operand` is exactly that
+/// block and the block holds one expression and no statement. Calling an
+/// `unsafe fn` needs the block, and the block's value is the call's value.
+fn unsafe_block_value(operand: &str) -> Option<&str> {
+    let rest = operand.strip_prefix("unsafe")?;
+    let open = operand.len() - rest.trim_start().len();
+    if !operand[open..].starts_with('{') {
+        return None;
+    }
+    let masked = mask_comments_and_strings(operand);
+    let close = matching_close(&masked, open, b'{', b'}')?;
+    if !operand[close + 1..].trim().is_empty() || masked[open + 1..close].contains(';') {
+        return None;
+    }
+    let inner = operand[open + 1..close].trim();
+    (!inner.is_empty()).then_some(inner)
 }
 
 /// The receiver of `Type::constructor(..).name(` when `operand` starts with

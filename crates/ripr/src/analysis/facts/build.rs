@@ -117,6 +117,7 @@ fn build_index_with_file_fact_cache(
     index.package_names = manifest_package_names(root);
     index.macro_owned_crates = macro_owned_crates(root, &index);
     index.drop_in_manifests = super::drop_in::DropInManifests::new(root);
+    index.member_crates = super::member_crates::MemberCrates::new(root);
     cancellation::checkpoint()?;
     Ok(CachedRustIndex {
         index,
@@ -410,16 +411,16 @@ fn build_index_with_adapters(
     index.package_names = manifest_package_names(root);
     index.macro_owned_crates = macro_owned_crates(root, &index);
     index.drop_in_manifests = super::drop_in::DropInManifests::new(root);
+    index.member_crates = super::member_crates::MemberCrates::new(root);
     cancellation::checkpoint()?;
     Ok(index)
 }
 
 /// The crate names of the analyzed root manifest: the `[package] name`
 /// plus the `[lib] name` target when the manifest declares one. Root
-/// manifest only: member manifests are not resolved here, so multi-crate
-/// workspaces leave member-crate names unlisted and the same-name-import
-/// gate treats member imports as foreign (fail-closed under-credit; see
-/// `RustIndex.package_names`). Each name is stored in BOTH spellings —
+/// manifest only: a member crate's import of another member's owner is
+/// admitted per test and owner by `MemberCrates`, which reads the member
+/// manifests (RIPR-SPEC-0197 rule 5). Each name is stored in BOTH spellings —
 /// raw and crate-identifier form (#3731 review F23: hyphens normalize to
 /// underscores in crate identifiers, so a package named `foo-bar` is
 /// imported as `foo_bar`, and integration tests import the `[lib]`
