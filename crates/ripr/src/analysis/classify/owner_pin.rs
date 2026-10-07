@@ -4272,6 +4272,10 @@ fn parent_chain_shadows_item(
         return false;
     };
     let chain = &facts.role_provenance;
+    let owner_ancestors = match kind {
+        ShadowKind::Type => Vec::new(),
+        ShadowKind::Trait => owner_module_ancestors(owner, index),
+    };
     // The reason leads: an immediately ambiguous parent composes to empty
     // edges with the reason set, which is unresolved, not standalone.
     if chain.earliest_unresolved_reason.is_some() {
@@ -4287,7 +4291,14 @@ fn parent_chain_shadows_item(
         let Some(parent) = index.files().get(&edge.parent) else {
             return true;
         };
-        parent_root_shadows_item(&parent.source, &edge.parent, base, owner, kind)
+        parent_root_shadows_item(
+            &parent.source,
+            &edge.parent,
+            base,
+            owner,
+            kind,
+            &owner_ancestors,
+        )
     })
 }
 
@@ -4305,6 +4316,7 @@ fn parent_root_shadows_item(
     base: &str,
     owner: OwnerScope<'_>,
     kind: ShadowKind,
+    owner_ancestors: &[PathBuf],
 ) -> bool {
     let masked = mask_comments_and_strings(parent_source);
     // `r#Window` denotes `Window`: a raw-identifier declaration shadows too.
@@ -4345,7 +4357,36 @@ fn parent_root_shadows_item(
     if owner.file == parent_file && owner_at_file_root(&root, parent_source, owner) {
         return false;
     }
+    // A trait is commonly declared in an ancestor file of the file holding
+    // its impls (#7111): a declaring root on the owner's own module chain is
+    // the production declaration, not a shadow.
+    if owner_ancestors
+        .iter()
+        .any(|ancestor| ancestor == parent_file)
+    {
+        return false;
+    }
     true
+}
+
+/// The files whose module scope encloses the owner's file: the file itself
+/// (its root encloses every inline module in it) and the parents on its
+/// composed module chain. Empty when the owner file is not indexed, which
+/// keeps the fail-closed shadow check.
+fn owner_module_ancestors(owner: OwnerScope<'_>, index: &RustIndex) -> Vec<PathBuf> {
+    let Some(facts) = index.files().get(owner.file) else {
+        return Vec::new();
+    };
+    std::iter::once(owner.file.to_path_buf())
+        .chain(
+            facts
+                .role_provenance
+                .edges
+                .iter()
+                .filter(|edge| edge.kind == SourceRoleProvenanceEdgeKind::Module)
+                .map(|edge| edge.parent.clone()),
+        )
+        .collect()
 }
 
 /// The text range of the inline module directly enclosing the owner
