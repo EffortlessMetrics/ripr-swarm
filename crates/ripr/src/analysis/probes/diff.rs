@@ -942,7 +942,12 @@ fn removed_span_of_shape(added_line: &str, shape_text: &str, removed_line: &str)
         }
         suffix += added.len_utf8();
     }
-    if prefix < start || added_line.len() - suffix > end {
+    // Unchanged text must anchor both ends of the shape: when the shape ends
+    // the line and no common suffix reaches into it (`if a != b` from
+    // `if a == b {`), the old line's tail cannot be split from the shape.
+    let tail = added_line.len() - end;
+    if prefix < start || suffix < tail || (start == 0 && prefix == 0) || (tail == 0 && suffix == 0)
+    {
         return None;
     }
     let removed_end = removed_line.len().checked_sub(added_line.len() - end)?;
@@ -1211,6 +1216,16 @@ mod tests {
         assert_eq!(
             removed_span_of_shape("if é >= ü {", "é >= ü", "if é > ü {").as_deref(),
             Some("é > ü")
+        );
+        // A shape that ends its line is anchored by a common suffix inside it…
+        assert_eq!(
+            removed_span_of_shape("return a >= b", "a >= b", "return a > b").as_deref(),
+            Some("a > b")
+        );
+        // …and without one the old tail cannot be told apart from the shape.
+        assert_eq!(
+            removed_span_of_shape("if a != b", "a != b", "if a == b {"),
+            None
         );
         // An edit outside the shape has no faithful cut.
         assert_eq!(
