@@ -194,6 +194,138 @@ fn trait_default_pinned_through_a_byte_slice_receiver() {
     );
 }
 
+/// #7083: a trait default method kept by a unit struct, called on the
+/// struct's own name or on a `let` bound to it.
+const KEPT_DEFAULT_LIB: &str = r#"pub trait Counter {
+    fn step(&self) -> u32;
+
+    fn advance(&self) -> u32 {
+        4 * self.step()
+    }
+}
+
+pub struct Unit;
+
+impl Counter for Unit {
+    fn step(&self) -> u32 {
+        2
+    }
+}
+"#;
+
+/// The kept-default library with its tests in the same file.
+fn kept_default_with_tests(body: &str) -> String {
+    format!(
+        "{KEPT_DEFAULT_LIB}\n#[cfg(test)]\nmod tests {{\n    use super::*;\n\n    #[test]\n    fn advances() {{\n{body}\n    }}\n}}\n"
+    )
+}
+
+#[test]
+fn unit_struct_receiver_is_typed_by_its_own_name() {
+    let lib = kept_default_with_tests(
+        "        let bound = Unit;\n        assert_eq!(Unit.advance(), 8);\n        assert_eq!(bound.advance(), 8);\n        assert_eq!(unit.advance(), 8);",
+    );
+    let index = index(&[(LIB, &lib)]);
+    let pin = establish(&index, "advance", "4 * self.step()");
+    assert!(pin.is_some(), "the kept default must establish a pin");
+    let Some(pin) = pin else { return };
+    // A lower-case receiver no `let` binds is not a unit struct.
+    assert_eq!(
+        admitted_texts(&index, &pin),
+        vec![
+            "assert_eq!(Unit.advance(), 8);".to_string(),
+            "assert_eq!(bound.advance(), 8);".to_string(),
+        ]
+    );
+}
+
+/// #7083 review: the 2024 prelude's `IntoFuture::into_future(self)` is found
+/// at the by-value step, before a `&self` trait default of the same name.
+#[test]
+fn edition_2024_into_future_is_a_by_value_prelude_method() {
+    let lib = kept_default_with_tests("        assert_eq!(Unit.into_future(), 8);")
+        .replace("fn advance(&self)", "fn into_future(&self)");
+    let index = index(&[(LIB, &lib)]);
+    let pin = establish(&index, "into_future", "4 * self.step()");
+    assert!(pin.is_some(), "the kept default must establish a pin");
+    let Some(pin) = pin else { return };
+    assert!(admitted_texts(&index, &pin).is_empty());
+}
+
+#[test]
+fn unit_struct_value_admits_only_spellings_nothing_else_can_bind() {
+    let lib = kept_default_with_tests("        assert_eq!(Unit.advance(), 8);");
+    let decide = |extra: &str| {
+        let index = index(&[(LIB, &lib), (HELPERS, extra)]);
+        unit_struct_value("Unit", Path::new(LIB), &index)
+    };
+    // Comments, other names, method calls and `let` initializers.
+    assert!(decide(
+        "mod inner {\n    use super::*;\n    use crate::inner::*;\n}\n"
+    ));
+    assert!(decide(
+        "// struct Unit { x: u32 }\npub struct Units;\nconst UNIT: u32 = 1;\nfn n() -> u32 {\n    let v = Unit;\n    Unit.advance() + v.advance()\n}\nimpl Unit {}\n"
+    ));
+    for rival in [
+        // Another declaration, or a non-unit or generic one.
+        "pub struct Unit;\n",
+        "pub struct Unit(u32);\n",
+        "pub struct Unit<T>;\n",
+        "pub enum Unit { A }\n",
+        "pub union Unit { a: u32 }\n",
+        // Rivals in the value namespace, renames and imports.
+        "pub const Unit: u32 = 1;\n",
+        "pub static Unit: u32 = 1;\n",
+        "pub static mut Unit: u32 = 1;\n",
+        "pub fn Unit() {}\n",
+        "pub type Unit = u32;\n",
+        "pub use other::Thing as Unit;\n",
+        "pub use std::u32::MAX as Unit;\n",
+        "pub use crate::m::Unit;\n",
+        "pub enum Text { Unit }\n",
+        "use self::Text::Unit;\n",
+        "const r#Unit: &str = \"\";\n",
+        "fn f(x: Kind) -> u32 { match x { Unit => 1 } }\n",
+        // Type positions and macro input are not read.
+        "fn take(u: &mut Unit) {}\n",
+        "value!(Unit);\n",
+        "constant!(= Unit);\n",
+        // A macro that may declare any name it is given.
+        "macro_rules! constant { ($name:ident) => {}; }\n",
+        "macro_rules! constant { ($name : tt) => {}; }\n",
+        // #7083 round 3: a left-to-right mark is whitespace to rustc, and
+        // `include!`/`#[path]` splice in text the scan never reads.
+        "macro_rules! constant { (= $name:\u{200E}ident;) => {}; }\n",
+        "include!(\"shadow.in\");\n",
+        "#[path = \"other.rs\"]\nmod other;\n",
+        // A foreign glob in any file can reach the test through `crate::*`.
+        "pub use std::u32::*;\n",
+        // #7083 round 4: an outside module renamed or re-exported into the
+        // crate, then globbed through a `crate::` path.
+        "use std::u32 as nums;\nuse crate::nums::*;\n",
+        "pub use std::u32;\nuse crate::u32::*;\n",
+        "extern crate core as k;\nuse crate::k::u32::*;\n",
+        "use crate::Kind::*;\n",
+        "use crate::{helpers::*, Counter};\n",
+        // #7083 round 5: one spelling in a macro body declares a struct per
+        // invocation.
+        "macro_rules! unit { () => { pub struct Other; }; }\nfn n() -> u32 {\n    Unit.advance()\n}\n",
+    ] {
+        assert!(!decide(rival), "{rival}");
+    }
+    // A declaration outside the test's file, or a foreign glob in it.
+    // A prelude value is in scope without an import.
+    let prelude =
+        kept_default_with_tests("        assert_eq!(None.advance(), 8);").replace("Unit", "None");
+    let prelude_index = index(&[(LIB, &prelude)]);
+    assert!(!unit_struct_value("None", Path::new(LIB), &prelude_index));
+    let own = index(&[(LIB, &lib)]);
+    assert!(!unit_struct_value("Unit", Path::new(HELPERS), &own));
+    let glob = lib.replace("use super::*;", "use super::*;\n    use std::u32::*;");
+    let foreign = index(&[(LIB, &glob)]);
+    assert!(!unit_struct_value("Unit", Path::new(LIB), &foreign));
+}
+
 #[test]
 fn trait_method_needs_its_trait_imported_from_the_workspace() {
     for imports in [

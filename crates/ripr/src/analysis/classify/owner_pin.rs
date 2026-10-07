@@ -2873,8 +2873,21 @@ fn test_receiver_type(
     imports_foreign: ForeignImport<'_>,
     owner: OwnerScope<'_>,
 ) -> Option<ReceiverType> {
+    let bindings = receiver_let_bindings(test, receiver)?;
+    if bindings.is_empty() {
+        // No `let` binds the receiver, so it is a path expression: a unit
+        // struct names its own value (`Unit.advance()`).
+        return binding_type(
+            &format!("= {receiver}"),
+            test,
+            test_source,
+            index,
+            imports_foreign,
+            owner,
+        );
+    }
     let mut bound: Option<ReceiverType> = None;
-    for binding in receiver_let_bindings(test, receiver)? {
+    for binding in bindings {
         let receiver_type =
             binding_type(binding, test, test_source, index, imports_foreign, owner)?;
         match &bound {
@@ -3279,6 +3292,25 @@ fn binding_type(
         return Some(ReceiverType::ByteSlice);
     }
     let (initializer, unwrapped) = strip_unwrap(initializer);
+    if !unwrapped
+        && !initializer.is_empty()
+        && initializer
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+    {
+        // `= Unit`: only a unit struct's own name is a value of that type.
+        if !unit_struct_value(initializer, &test.file, index) {
+            return None;
+        }
+        return named_or_slice(
+            initializer,
+            test,
+            test_source,
+            index,
+            imports_foreign,
+            owner,
+        );
+    }
     let type_end = initializer
         .find(|character: char| !(character.is_ascii_alphanumeric() || character == '_'))?;
     let type_name = &initializer[..type_end];
@@ -3308,6 +3340,159 @@ fn binding_type(
         return None;
     }
     named_or_slice(type_name, test, test_source, index, imports_foreign, owner)
+}
+
+/// Whether the bare name `name`, spelled in `test_file`, evaluates to the
+/// workspace unit struct `name` (#7083). Reading what a bare name resolves
+/// to needs name resolution, so the rule admits only a shape where nothing
+/// else can supply the name:
+///
+/// - the workspace declares it exactly once, as a non-generic unit struct
+///   (`struct name;`), in the test's own file;
+/// - every other spelling of the name in the workspace is an `impl` header
+///   (`impl name {`, `impl Trait for name {`), a method call (`name.f(..)`)
+///   or a `let` initializer (`= name;`). An import, a type position, a raw
+///   identifier (`r#name`), a pattern, an enum variant, a macro argument or
+///   any `const`, `static`, `fn`, `type` or `as` rename refuses;
+/// - no workspace `macro_rules!` matcher takes an `ident` or `tt` fragment,
+///   which could declare the name from a spelling the scan reads as inert,
+///   and no file that defines a macro spells the name, since one `struct
+///   name;` in a macro body declares a type per invocation;
+/// - every workspace glob import is a `crate`, `self` or `super` path
+///   through declared workspace modules, so no glob brings in an outside
+///   item (directly or through a renamed or re-exported outside module);
+/// - the name is not a prelude value, and no workspace file uses `include!`
+///   or `#[path]`, which splice in text the scan never reads.
+///
+/// Items a derive or attribute proc macro emits stay invisible, as for
+/// every other pin rule.
+fn unit_struct_value(name: &str, test_file: &Path, index: &RustIndex) -> bool {
+    // A prelude value (`None`, `Some`, `Ok`, `Err`) is in scope without any
+    // import, so the struct may not be the item the test names.
+    if PRELUDE_VALUES.contains(&name) {
+        return false;
+    }
+    let modules = workspace_module_names(index);
+    let mut declared_in_test_file = 0usize;
+    for (file, facts) in index.files().iter() {
+        let masked = mask_comments_and_strings(&facts.source);
+        // A glob that reaches outside the workspace's modules, in any file,
+        // can bring the name to the test without spelling it.
+        if glob_reaches_outside(&masked, &modules) {
+            return false;
+        }
+        // `include!` and `#[path]` splice in text the index may never
+        // read, so no spelling scan covers them.
+        if masked.contains("include") || masked.contains("#[path") {
+            let compact = without_rust_whitespace(&masked);
+            if compact.contains("include!") || compact.contains("#[path") {
+                return false;
+            }
+        }
+        // A macro may take the name as an `ident` or `tt` fragment, or emit
+        // `struct name;` more than once from one spelling in its body.
+        if masked.contains("macro_rules") {
+            let compact = without_rust_whitespace(&masked);
+            if compact.contains(":ident")
+                || compact.contains(":tt")
+                || !whole_word_offsets(&masked, name).is_empty()
+            {
+                return false;
+            }
+        }
+        if !facts.source.contains(name) {
+            continue;
+        }
+        for offset in whole_word_offsets(&masked, name) {
+            let before = masked[..offset].trim_end();
+            let after = masked[offset + name.len()..].trim_start();
+            let word_start = before
+                .rfind(|character: char| !(character.is_ascii_alphanumeric() || character == '_'))
+                .map_or(0, |position| position + 1);
+            let word = &before[word_start..];
+            let item_end = after.starts_with('{') || starts_with_word(after, "where");
+            let inert = match word {
+                "struct" if after.starts_with(';') && file.as_path() == test_file => {
+                    declared_in_test_file += 1;
+                    true
+                }
+                "impl" | "for" => item_end,
+                "" => {
+                    (after.starts_with('.') && !after.starts_with(".."))
+                        || (before.ends_with('=')
+                            && !before.ends_with("==")
+                            && !before.ends_with("!=")
+                            && !before.ends_with("<=")
+                            && !before.ends_with(">=")
+                            && after.starts_with(';'))
+                }
+                _ => false,
+            };
+            if !inert {
+                return false;
+            }
+        }
+    }
+    declared_in_test_file == 1
+}
+
+/// The prelude's value-namespace names a unit struct could share.
+const PRELUDE_VALUES: &[&str] = &["None", "Some", "Ok", "Err"];
+
+/// `text` without the characters rustc lexes as whitespace (Unicode
+/// `Pattern_White_Space`: `char::is_whitespace` plus the left-to-right and
+/// right-to-left marks).
+fn without_rust_whitespace(text: &str) -> String {
+    text.chars()
+        .filter(|character| {
+            !(character.is_whitespace() || matches!(character, '\u{200E}' | '\u{200F}'))
+        })
+        .collect()
+}
+
+/// Every name a workspace file declares with `mod`.
+fn workspace_module_names(index: &RustIndex) -> BTreeSet<String> {
+    let mut modules = BTreeSet::new();
+    for (_, facts) in index.files().iter() {
+        let masked = mask_comments_and_strings(&facts.source);
+        for offset in whole_word_offsets(&masked, "mod") {
+            let rest = masked[offset + "mod".len()..].trim_start();
+            let end = rest
+                .find(|character: char| !(character.is_ascii_alphanumeric() || character == '_'))
+                .unwrap_or(rest.len());
+            if end > 0 {
+                modules.insert(rest[..end].to_string());
+            }
+        }
+    }
+    modules
+}
+
+/// Whether `masked` holds a glob `use` that may reach items outside the
+/// workspace's own modules. Only a plain `crate::`, `self::` or `super::`
+/// path whose further segments are `super` or declared module names
+/// passes. A foreign root, a renamed or re-exported outside module
+/// (`use std::u32 as nums;` then `use crate::nums::*`), an enum's variants
+/// and a glob inside a `{..}` group all refuse.
+fn glob_reaches_outside(masked: &str, modules: &BTreeSet<String>) -> bool {
+    whole_word_offsets(masked, "use").into_iter().any(|start| {
+        let rest = &masked[start + "use".len()..];
+        let Some(end) = rest.find(';') else {
+            return false;
+        };
+        let statement = without_rust_whitespace(&rest[..end]);
+        if !statement.contains('*') {
+            return false;
+        }
+        let Some(path) = statement.trim_start_matches("::").strip_suffix("::*") else {
+            return true;
+        };
+        let mut segments = path.split("::");
+        let rooted = segments
+            .next()
+            .is_some_and(|root| matches!(root, "crate" | "self" | "super"));
+        !(rooted && segments.all(|segment| segment == "super" || modules.contains(segment)))
+    })
 }
 
 /// The initializer without a trailing `?`, `.unwrap()` or `.expect(..)`,
@@ -4055,6 +4240,8 @@ const BY_VALUE_PRELUDE_METHODS: &[&str] = &[
     "inspect",
     "into",
     "into_iter",
+    // Edition 2024 prelude: `IntoFuture` for every `Future` (#7083).
+    "into_future",
     "is_sorted",
     "is_sorted_by",
     "is_sorted_by_key",

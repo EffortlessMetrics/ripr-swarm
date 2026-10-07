@@ -2116,6 +2116,147 @@ fn bool_owner_assert_pin_matched_static_and_runtime_controls() -> Result<(), Str
     Ok(())
 }
 
+/// #7083: a unit struct's own name types the receiver of a kept trait
+/// default. An impl that overrides the default runs the override instead,
+/// so its test passes a wrong default and must not be credited.
+#[test]
+fn unit_struct_receiver_matched_static_and_runtime_controls() -> Result<(), String> {
+    let kept = "impl Counter for Unit {\n    fn step(&self) -> u32 {\n        2\n    }\n}\n";
+    let overridden = "impl Counter for Unit {\n    fn step(&self) -> u32 {\n        2\n    }\n\n    fn advance(&self) -> u32 {\n        8\n    }\n}\n";
+    for (case, unit_impl, body, exposed) in [
+        (
+            "unit_receiver",
+            kept,
+            "assert_eq!(Unit.advance(), 8);",
+            true,
+        ),
+        (
+            "let_bound_unit",
+            kept,
+            "let unit = Unit;\n        assert_eq!(unit.advance(), 8);",
+            true,
+        ),
+        (
+            "overridden_default",
+            overridden,
+            "assert_eq!(Unit.advance(), 8);",
+            false,
+        ),
+    ] {
+        let production = format!(
+            "pub trait Counter {{\n    fn step(&self) -> u32;\n\n    fn advance(&self) -> u32 {{\n        4 * self.step()\n    }}\n}}\n\npub struct Unit;\n\n{unit_impl}"
+        );
+        let diff = "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -3,5 +3,5 @@ pub trait Counter {\n \n     fn advance(&self) -> u32 {\n-        self.step() * 4\n+        4 * self.step()\n     }\n }\n";
+        let tests = format!(
+            "#[cfg(test)]\nmod tests {{\n    use super::*;\n\n    #[test]\n    fn advances() {{\n        {body}\n    }}\n}}\n"
+        );
+        let workspace = Scratch::create()?;
+        std::fs::create_dir(workspace.0.join("src")).map_err(|error| error.to_string())?;
+        std::fs::write(
+            workspace.0.join("Cargo.toml"),
+            "[package]\nname = \"unit_receiver_control\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+        )
+        .map_err(|error| error.to_string())?;
+        std::fs::write(
+            workspace.0.join("src/lib.rs"),
+            format!("{production}\n{tests}"),
+        )
+        .map_err(|error| error.to_string())?;
+        std::fs::write(workspace.0.join("diff.patch"), diff).map_err(|error| error.to_string())?;
+        let report = check_workspace(CheckInput {
+            root: workspace.0.clone(),
+            diff_file: Some(workspace.0.join("diff.patch")),
+            mode: Mode::Fast,
+            format: OutputFormat::Json,
+            ..CheckInput::default()
+        })?;
+        let finding = report
+            .findings
+            .iter()
+            .find(|finding| {
+                finding.probe.family == ProbeFamily::ReturnValue && finding.probe.location.line == 5
+            })
+            .ok_or(format!(
+                "{case}: no return_value finding on the changed tail"
+            ))?;
+        assert_eq!(
+            finding.class == ExposureClass::Exposed,
+            exposed,
+            "{case}: {:?}",
+            finding.class
+        );
+        // The rewrite keeps the test green; only a test that runs the
+        // default notices the `+` mutant.
+        for (label, tail, should_fail) in [
+            ("rewrite", "4 * self.step()", false),
+            ("mutant", "4 + self.step()", exposed),
+        ] {
+            source_runtime_control(
+                &format!("{}\n{tests}", production.replace("4 * self.step()", tail)),
+                &format!("unit receiver {case} {label}"),
+                1,
+                should_fail,
+            )?;
+        }
+    }
+    Ok(())
+}
+
+/// #7083 review: a lower-case `pub use std::u32::MAX;` re-export puts
+/// `u32::MAX` under the unit struct's name, so `MAX.count_ones()` runs the
+/// inherent `u32::count_ones` and a wrong default passes. The import refuses
+/// the bare-name receiver.
+#[test]
+fn reexported_value_under_a_unit_struct_name_is_not_credited() -> Result<(), String> {
+    let production = "pub trait Counter {\n    fn step(&self) -> u32;\n\n    fn count_ones(&self) -> u32 {\n        4 * self.step()\n    }\n}\n\n#[allow(non_camel_case_types)]\npub struct MAX;\n\nimpl Counter for MAX {\n    fn step(&self) -> u32 {\n        8\n    }\n}\n\npub mod limits;\n";
+    let limits = "#![allow(deprecated)]\npub use std::u32::MAX;\n";
+    let tests = "#[cfg(test)]\nmod tests {\n    use super::Counter;\n    use crate::limits::MAX;\n\n    #[test]\n    fn counts() {\n        assert_eq!(MAX.count_ones(), 32);\n    }\n}\n";
+    let diff = "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -3,5 +3,5 @@ pub trait Counter {\n \n     fn count_ones(&self) -> u32 {\n-        self.step() * 4\n+        4 * self.step()\n     }\n }\n";
+    let workspace = Scratch::create()?;
+    std::fs::create_dir(workspace.0.join("src")).map_err(|error| error.to_string())?;
+    std::fs::write(
+        workspace.0.join("Cargo.toml"),
+        "[package]\nname = \"reexported_value_control\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )
+    .map_err(|error| error.to_string())?;
+    std::fs::write(
+        workspace.0.join("src/lib.rs"),
+        format!("{production}\n{tests}"),
+    )
+    .map_err(|error| error.to_string())?;
+    std::fs::write(workspace.0.join("src/limits.rs"), limits).map_err(|error| error.to_string())?;
+    std::fs::write(workspace.0.join("diff.patch"), diff).map_err(|error| error.to_string())?;
+    let report = check_workspace(CheckInput {
+        root: workspace.0.clone(),
+        diff_file: Some(workspace.0.join("diff.patch")),
+        mode: Mode::Fast,
+        format: OutputFormat::Json,
+        ..CheckInput::default()
+    })?;
+    let finding = report
+        .findings
+        .iter()
+        .find(|finding| {
+            finding.probe.family == ProbeFamily::ReturnValue && finding.probe.location.line == 5
+        })
+        .ok_or("no return_value finding on the changed tail")?;
+    assert_ne!(finding.class, ExposureClass::Exposed, "{:?}", finding.class);
+    // The mutant passes: the test never runs the default.
+    for (label, tail) in [
+        ("rewrite", "4 * self.step()"),
+        ("mutant", "4 + self.step()"),
+    ] {
+        source_runtime_control_with(
+            &format!("{}\n{tests}", production.replace("4 * self.step()", tail)),
+            &[("limits.rs", limits)],
+            &format!("reexported value {label}"),
+            1,
+            false,
+        )?;
+    }
+    Ok(())
+}
+
 /// A block-level `extern crate thread;` shadows the module's
 /// `use std::thread;` (#6966 review). When a dependency is named `thread`,
 /// `thread::spawn` is that crate's, and a fake `spawn` that never runs the
