@@ -1360,17 +1360,9 @@ pub(crate) fn diff_only_rust_files(
     // a changed path missing from the working tree (sparse checkout, deleted
     // since the diff), a symlink, or a file below a symlinked directory is
     // refused by Rust discovery, so check has no probes for it either.
-    let absent = workspace::changed_source_files_absent_from_worktree(
-        root,
-        changed_files.iter().map(PathBuf::as_path),
-    );
     let candidates = changed_files
         .iter()
-        .filter(|path| {
-            !absent
-                .iter()
-                .any(|missing| missing == Path::new(&workspace::normalize_path(path)))
-        })
+        .filter(|path| workspace::worktree_contains_regular_source_file(root, path))
         .filter(|path| !generated.contains(path))
         .collect::<Vec<_>>();
     if candidates.is_empty() {

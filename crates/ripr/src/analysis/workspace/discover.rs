@@ -68,7 +68,7 @@ pub(crate) fn limitations_for_absent_changed_files(
         .collect()
 }
 
-fn worktree_contains_regular_source_file(root: &Path, relative: &Path) -> bool {
+pub(crate) fn worktree_contains_regular_source_file(root: &Path, relative: &Path) -> bool {
     if relative.is_absolute()
         || relative
             .components()
