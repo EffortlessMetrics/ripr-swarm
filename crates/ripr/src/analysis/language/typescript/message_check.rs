@@ -156,6 +156,12 @@ pub(crate) struct MessageOnlyChange {
     pub(crate) old_message: Option<String>,
     /// The new message, assembled the same way.
     pub(crate) new_message: Option<String>,
+    /// What `String(err)` puts before the message, the text a `node:assert`
+    /// regex is tested against: `"TypeError: "` for a built-in error
+    /// constructor, `""` for a thrown primitive. `None` for any other
+    /// constructor, whose `name` the line does not show (a subclass that
+    /// never sets `name` still prints `Error: `).
+    pub(crate) string_prefix: Option<String>,
 }
 
 /// What the diff says about the old side of an added line.
@@ -184,10 +190,11 @@ pub(crate) fn guarded_message_change(
         ReplacedLine::Paired(old) => message_only_change(old, new),
         ReplacedLine::Unpaired => {
             let tokens = lex_line(new)?;
-            let range = message_argument_range(&tokens)?;
+            let (range, string_prefix) = message_argument_range(&tokens)?;
             Some(MessageOnlyChange {
                 old_message: None,
                 new_message: joined_literal_message(&tokens[range]),
+                string_prefix,
             })
         }
     }
@@ -200,8 +207,8 @@ pub(crate) fn message_only_change(old: &str, new: &str) -> Option<MessageOnlyCha
     if old_tokens.len() != new_tokens.len() {
         return None;
     }
-    let old_range = message_argument_range(&old_tokens)?;
-    let new_range = message_argument_range(&new_tokens)?;
+    let (old_range, string_prefix) = message_argument_range(&old_tokens)?;
+    let (new_range, _) = message_argument_range(&new_tokens)?;
     if old_range != new_range {
         return None;
     }
@@ -242,6 +249,7 @@ pub(crate) fn message_only_change(old: &str, new: &str) -> Option<MessageOnlyCha
     changed.then(|| MessageOnlyChange {
         old_message: joined_literal_message(&old_tokens[old_range.clone()]),
         new_message: joined_literal_message(&new_tokens[new_range]),
+        string_prefix,
     })
 }
 
@@ -273,7 +281,8 @@ pub(crate) fn message_check_tells_change_apart(
             | TypeScriptErrorPayloadKind::AssertRejectsObject => Some(check == message),
             TypeScriptErrorPayloadKind::AssertThrowsRegex
             | TypeScriptErrorPayloadKind::AssertRejectsRegex => {
-                plain_anchored_regex_text(check).map(|text| text == message)
+                let prefix = change.string_prefix.as_deref()?;
+                plain_anchored_regex_text(check).map(|text| text == format!("{prefix}{message}"))
             }
             _ => None,
         }
@@ -285,9 +294,7 @@ pub(crate) fn message_check_tells_change_apart(
 }
 
 /// The literal text an anchored regex matches when it has no metacharacter
-/// between its anchors other than an escaped punctuation character, with its
-/// leading `Identifier: ` (`node:assert` tests `String(err)`, such as
-/// `Error: blank`) removed. `None` when that prefix is missing.
+/// between its anchors other than an escaped punctuation character.
 fn plain_anchored_regex_text(pattern: &str) -> Option<String> {
     let inner = pattern.strip_prefix('^')?.strip_suffix('$')?;
     let mut text = String::new();
@@ -308,10 +315,7 @@ fn plain_anchored_regex_text(pattern: &str) -> Option<String> {
             _ => text.push(ch),
         }
     }
-    // An Error's `String(err)` always carries the `Name: ` prefix, so a
-    // pattern without one never matches the thrown error at all.
-    let (name, message) = text.split_once(": ")?;
-    is_safe_javascript_identifier(name).then(|| message.to_string())
+    Some(text)
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -430,8 +434,9 @@ fn is_code(token: Option<&Token>, text: &str) -> bool {
 /// after `throw` or `Promise.reject(`, either the first argument of an
 /// error constructor call (`new Error(msg)`, `Error(msg)`,
 /// `new errors.Parse(msg)`) or a thrown primitive up to the end of the
-/// expression.
-fn message_argument_range(tokens: &[Token]) -> Option<std::ops::Range<usize>> {
+/// expression. Also returns the `String(err)` prefix
+/// ([`MessageOnlyChange::string_prefix`]).
+fn message_argument_range(tokens: &[Token]) -> Option<(std::ops::Range<usize>, Option<String>)> {
     let (mut cursor, in_reject_call) = tokens.iter().enumerate().find_map(|(index, _)| {
         if is_code(tokens.get(index), "throw") {
             Some((index + 1, false))
@@ -460,7 +465,13 @@ fn message_argument_range(tokens: &[Token]) -> Option<std::ops::Range<usize>> {
     }
     if path_end > cursor && is_code(tokens.get(path_end), "(") {
         let start = path_end + 1;
-        return Some(start..argument_end(tokens, start));
+        let prefix = match &tokens[cursor..path_end] {
+            [Token::Code(name)] if BUILTIN_ERROR_CONSTRUCTORS.contains(&name.as_str()) => {
+                Some(format!("{name}: "))
+            }
+            _ => None,
+        };
+        return Some((start..argument_end(tokens, start), prefix));
     }
     // A thrown or rejected primitive: up to `;` (or the reject call's `)`).
     let end = if in_reject_call {
@@ -471,8 +482,20 @@ fn message_argument_range(tokens: &[Token]) -> Option<std::ops::Range<usize>> {
             .position(|token| matches!(token, Token::Code(code) if code == ";"))
             .map_or(tokens.len(), |offset| cursor + offset)
     };
-    (end > cursor).then_some(cursor..end)
+    (end > cursor).then_some((cursor..end, Some(String::new())))
 }
+
+/// Error constructors whose first argument is the message and whose
+/// `String(err)` is `Name: message`. `AggregateError` takes its errors first.
+const BUILTIN_ERROR_CONSTRUCTORS: [&str; 7] = [
+    "Error",
+    "TypeError",
+    "RangeError",
+    "SyntaxError",
+    "ReferenceError",
+    "EvalError",
+    "URIError",
+];
 
 /// The index of the `,` or `)` that ends the argument starting at `start`.
 fn argument_end(tokens: &[Token], start: usize) -> usize {
@@ -498,9 +521,9 @@ fn joined_literal_message(tokens: &[Token]) -> Option<String> {
     let mut expect_literal = true;
     for token in tokens {
         match (token, expect_literal) {
-            (Token::Str(text), true) => message.push_str(&unescape(text)),
+            (Token::Str(text), true) => message.push_str(&unescape(text)?),
             (Token::Template(parts), true) => match parts.as_slice() {
-                [TemplatePart::Text(text)] => message.push_str(&unescape(text)),
+                [TemplatePart::Text(text)] => message.push_str(&unescape(text)?),
                 _ => return None,
             },
             (Token::Code(code), false) if code == "+" => {}
@@ -512,8 +535,9 @@ fn joined_literal_message(tokens: &[Token]) -> Option<String> {
 }
 
 /// Resolve the simple escapes a message literal uses (`\"`, `\'`, `\\`,
-/// `\n`, `\t`); any other escape keeps its character.
-fn unescape(text: &str) -> String {
+/// `\n`, `\t`). Any other escape (`\x61`, `\u{…}`) is `None`: the runtime
+/// message is not the source text, so no check can be judged against it.
+fn unescape(text: &str) -> Option<String> {
     let mut out = String::new();
     let mut chars = text.chars();
     while let Some(ch) = chars.next() {
@@ -524,9 +548,9 @@ fn unescape(text: &str) -> String {
         match chars.next() {
             Some('n') => out.push('\n'),
             Some('t') => out.push('\t'),
-            Some(other) => out.push(other),
-            None => {}
+            Some(quoted @ ('"' | '\'' | '`' | '\\')) => out.push(quoted),
+            Some(_) | None => return None,
         }
     }
-    out
+    Some(out)
 }

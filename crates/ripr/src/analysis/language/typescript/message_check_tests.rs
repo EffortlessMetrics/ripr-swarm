@@ -159,6 +159,7 @@ fn messages(old: Option<&str>, new: Option<&str>) -> MessageOnlyChange {
     MessageOnlyChange {
         old_message: old.map(str::to_string),
         new_message: new.map(str::to_string),
+        string_prefix: Some("Error: ".to_string()),
     }
 }
 
@@ -181,7 +182,10 @@ fn message_only_change_reads_both_messages() {
     );
     assert_eq!(
         change("throw \"bad\";", "throw \"worse\";"),
-        Some(messages(Some("bad"), Some("worse")))
+        Some(MessageOnlyChange {
+            string_prefix: Some(String::new()),
+            ..messages(Some("bad"), Some("worse"))
+        })
     );
     // An interpolated operand leaves the messages unknown.
     assert_eq!(
@@ -548,6 +552,7 @@ fn inserted_and_non_message_changes_keep_the_credit() -> Result<(), String> {
         Some(MessageOnlyChange {
             old_message: None,
             new_message: Some("blank".to_string()),
+            string_prefix: Some("Error: ".to_string()),
         })
     );
     assert_eq!(guarded_message_change(ReplacedLine::Inserted, new), None);
@@ -628,9 +633,87 @@ fn anchored_regex_without_the_name_prefix_does_not_tell_apart() {
     assert!(!message_check_tells_change_apart(&regex, &change));
     let regex = payload(
         TypeScriptErrorPayloadKind::AssertThrowsRegex,
-        "^TypeError: blank$",
+        "^Error: blank$",
     );
     assert!(message_check_tells_change_apart(&regex, &change));
+    // A `TypeError` pin never matches an `Error`.
+    let regex = payload(
+        TypeScriptErrorPayloadKind::AssertThrowsRegex,
+        "^TypeError: blank$",
+    );
+    assert!(!message_check_tells_change_apart(&regex, &change));
+}
+
+/// The prefix comes from the thrown constructor: a built-in error prints
+/// its own name, a primitive prints bare, and any other class is unknown.
+#[test]
+fn string_prefix_follows_the_thrown_constructor() {
+    let prefix =
+        |old: &str, new: &str| message_only_change(old, new).map(|change| change.string_prefix);
+    assert_eq!(
+        prefix("throw new TypeError(\"a\");", "throw new TypeError(\"b\");"),
+        Some(Some("TypeError: ".to_string()))
+    );
+    assert_eq!(
+        prefix("throw Error(\"a\");", "throw Error(\"b\");"),
+        Some(Some("Error: ".to_string()))
+    );
+    assert_eq!(
+        prefix("throw \"a\";", "throw \"b\";"),
+        Some(Some(String::new()))
+    );
+    assert_eq!(
+        prefix(
+            "throw new ParseError(\"a\");",
+            "throw new ParseError(\"b\");"
+        ),
+        Some(None)
+    );
+    assert_eq!(
+        prefix(
+            "throw new errors.Error(\"a\");",
+            "throw new errors.Error(\"b\");"
+        ),
+        Some(None)
+    );
+
+    let typed = MessageOnlyChange {
+        string_prefix: Some("TypeError: ".to_string()),
+        ..messages(Some("empty"), Some("blank"))
+    };
+    let regex = payload(
+        TypeScriptErrorPayloadKind::AssertThrowsRegex,
+        "^TypeError: blank$",
+    );
+    assert!(message_check_tells_change_apart(&regex, &typed));
+    let unknown = MessageOnlyChange {
+        string_prefix: None,
+        ..messages(Some("empty"), Some("blank"))
+    };
+    assert!(!message_check_tells_change_apart(&regex, &unknown));
+    // The `{ message }` object compares `err.message`, whatever the class.
+    let object = payload(TypeScriptErrorPayloadKind::AssertThrowsObject, "blank");
+    assert!(message_check_tells_change_apart(&object, &unknown));
+}
+
+/// A message with an escape the lexer does not decode is unknown, so no
+/// check is judged against the source text.
+#[test]
+fn undecoded_escapes_leave_the_message_unknown() {
+    let change = message_only_change("throw new Error(\"\\x61\");", "throw new Error(\"b\");");
+    assert_eq!(
+        change.as_ref().map(|change| change.old_message.clone()),
+        Some(None),
+        "{change:?}"
+    );
+    let change = message_only_change(
+        "throw new Error(\"say \\\"hi\\\"\");",
+        "throw new Error(\"say \\\"bye\\\"\");",
+    );
+    assert_eq!(
+        change.map(|change| change.old_message),
+        Some(Some("say \"hi\"".to_string()))
+    );
 }
 
 /// RIPR-SPEC-0243 example 35: `rejects` with a `{ message }` object.
