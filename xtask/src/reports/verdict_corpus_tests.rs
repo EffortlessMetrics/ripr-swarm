@@ -1425,7 +1425,18 @@ fn language_names_its_own_corpus_directory_and_nothing_else() -> Result<(), Stri
         language_corpus_dir_in(&fixtures, "rust")?,
         fixtures.join("rust-verdict-corpus")
     );
-    for bad in ["..", "", "type/script"] {
+    // The name is pasted into re-bless hints, so shell metacharacters,
+    // spaces and option-like names are refused before any path is built.
+    for bad in [
+        "..",
+        "",
+        "type/script",
+        "x;touch PWN",
+        "x y",
+        "$(id)",
+        "-rf",
+        "TypeScript",
+    ] {
         let err = language_corpus_dir_in(&fixtures, bad)
             .err()
             .ok_or(format!("`{bad}` was accepted"))?;
@@ -1503,10 +1514,17 @@ fn language_option_parses_in_any_position_and_refuses_misuse() -> Result<(), Str
     for given in [
         args(&["--language", "typescript"]),
         args(&["check", "--language", "typescript"]),
+        args(&["--language", "typescript", "check"]),
     ] {
         let parsed = parse_corpus_args(&given)?;
         assert_eq!(parsed.sub, "check", "{given:?}");
         assert_eq!(parsed.language.as_deref(), Some("typescript"), "{given:?}");
+    }
+    // A leading --language keeps the subcommand that follows it.
+    for sub in ["validate", "report", "bless", "split"] {
+        let parsed = parse_corpus_args(&args(&["--language", "typescript", sub]))?;
+        assert_eq!(parsed.sub, sub);
+        assert_eq!(parsed.language.as_deref(), Some("typescript"), "{sub}");
     }
     assert_eq!(parse_corpus_args(&[])?.sub, "check");
     for (given, refusal) in [
@@ -1523,6 +1541,11 @@ fn language_option_parses_in_any_position_and_refuses_misuse() -> Result<(), Str
             "takes only --language",
         ),
         (args(&["check", "--language"]), "needs a corpus language"),
+        (args(&["check", "bless"]), "unknown argument `bless`"),
+        (
+            args(&["--language", "typescript", "check-all"]),
+            "drop --language",
+        ),
     ] {
         let err = parse_corpus_args(&given)
             .err()
@@ -1552,5 +1575,15 @@ fn a_report_and_its_rebless_hint_name_the_corpus_language() -> Result<(), String
     );
     assert_eq!(language_flag("typescript"), " --language typescript");
     assert_eq!(language_flag("rust"), "");
+    // A corpus directory found by check-all names the language in the hint;
+    // a name that would need shell quoting is refused instead of printed.
+    assert_eq!(
+        corpus_language(Path::new("fixtures/typescript-verdict-corpus"))?,
+        "typescript"
+    );
+    let err = corpus_language(Path::new("fixtures/x;touch PWN-verdict-corpus"))
+        .err()
+        .ok_or("a hostile corpus directory name was accepted")?;
+    assert!(err.contains("names no usable language"), "{err}");
     Ok(())
 }

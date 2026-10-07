@@ -2337,7 +2337,7 @@ fn corpus_language(dir: &Path) -> Result<String, String> {
         .map(|name| name.to_string_lossy().into_owned())
         .unwrap_or_default();
     let language = name.strip_suffix(CORPUS_SUFFIX).unwrap_or(&name);
-    if safe_id(language) {
+    if language_name(language) {
         Ok(language.to_string())
     } else {
         Err(format!(
@@ -2498,6 +2498,17 @@ fn language_flag(language: &str) -> String {
     }
 }
 
+/// A corpus language name: lowercase ASCII letters, digits, `-` and `_`.
+/// The name is pasted into re-bless commands, so it must need no shell
+/// quoting, and it is a directory component.
+fn language_name(language: &str) -> bool {
+    !language.is_empty()
+        && !language.starts_with('-')
+        && language
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-' || b == b'_')
+}
+
 /// The corpus `--language <language>` names: `fixtures/<language>-verdict-corpus`.
 /// The name must be usable as a directory component and the corpus must
 /// exist, so a typo fails here instead of as a missing `corpus.json`.
@@ -2506,7 +2517,7 @@ pub(crate) fn language_corpus_dir(language: &str) -> Result<PathBuf, String> {
 }
 
 pub(crate) fn language_corpus_dir_in(fixtures: &Path, language: &str) -> Result<PathBuf, String> {
-    if !safe_id(language) {
+    if !language_name(language) {
         return Err(format!(
             "verdict-corpus: --language `{language}` is not a usable language name"
         ));
@@ -2530,18 +2541,13 @@ pub(crate) struct CorpusArgs {
     pub(crate) cases: Option<Vec<String>>,
 }
 
-/// Parse `verdict-corpus` arguments without touching the filesystem. With no
-/// subcommand, or when the first argument is an option, the subcommand is
-/// `check`.
+/// Parse `verdict-corpus` arguments without touching the filesystem. The
+/// subcommand may come before or after the options; with none, it is `check`.
 pub(crate) fn parse_corpus_args(args: &[String]) -> Result<CorpusArgs, String> {
-    let mut iter = args.iter().peekable();
-    let sub = match iter.peek() {
-        Some(first) if !first.starts_with("--") => iter.next().cloned(),
-        _ => None,
-    }
-    .unwrap_or_else(|| "check".to_string());
+    let mut iter = args.iter();
+    let mut sub: Option<String> = None;
     let mut parsed = CorpusArgs {
-        sub,
+        sub: String::new(),
         language: None,
         out: None,
         cases: None,
@@ -2574,9 +2580,11 @@ pub(crate) fn parse_corpus_args(args: &[String]) -> Result<CorpusArgs, String> {
                         .collect(),
                 );
             }
+            other if !other.starts_with("--") && sub.is_none() => sub = Some(other.to_string()),
             other => return Err(format!("verdict-corpus: unknown argument `{other}`")),
         }
     }
+    parsed.sub = sub.unwrap_or_else(|| "check".to_string());
     let sub = parsed.sub.as_str();
     if sub == "check-all" && parsed.language.is_some() {
         return Err("verdict-corpus check-all checks every corpus; drop --language".to_string());

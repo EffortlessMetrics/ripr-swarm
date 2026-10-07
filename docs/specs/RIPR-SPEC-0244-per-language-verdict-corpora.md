@@ -67,9 +67,12 @@ cases under `target/ripr/verdict-corpus/<language>/`.
 
 `cargo xtask verdict-corpus validate|check|report|bless|split` take
 `--language <language>` and act on `fixtures/<language>-verdict-corpus`;
-without it they act on the Rust corpus, as before. A language name that
-cannot be a directory component, or that names no directory holding a
-`corpus.json`, is refused before anything runs. `check-all` refuses
+without it they act on the Rust corpus, as before. A language name is
+lowercase ASCII letters, digits, `-` and `_`, not starting with `-`, so it
+is a directory component and can be pasted into a command unquoted; any
+other name, or one that names no directory holding a `corpus.json`, is
+refused before anything runs, and `check-all` refuses a corpus directory
+whose name gives no such language. `check-all` refuses
 `--language`, since it checks every corpus. A drifted `check` names the
 `bless --language <language>` command that re-blesses it, and a report's
 `report.md` title names its language.
