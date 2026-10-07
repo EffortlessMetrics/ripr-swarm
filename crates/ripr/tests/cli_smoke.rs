@@ -14796,10 +14796,7 @@ fn pilot_ranks_the_current_change_past_the_inventory_seam_limit() -> Result<(), 
     // Precondition: the inventory limit fired and kept one seam, which is
     // not on the change; the changed seams it cut were classified on their
     // own and count as analyzed.
-    assert!(
-        md.contains("- Seam limit reached: ranked "),
-        "{md}"
-    );
+    assert!(md.contains("- Seam limit reached: ranked "), "{md}");
     assert!(!md.contains("ranked 1 of "), "{md}");
     assert!(md.contains("ranked 4 of 6 seams"), "{md}");
     // `ripr check` never classifies the added seams, so the snapshot is not
