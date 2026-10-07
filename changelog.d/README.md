@@ -27,8 +27,11 @@ Allowed sections are the ones in `docs/CHANGELOG_POLICY.md`: `Added`,
 
 ## What this is not
 
-- Nothing enforces the format or the presence of a fragment. Reviewers check
-  that a PR which needs an entry carries one. The fold step below is manual.
+- `cargo xtask check-changelog-fragments` (run by `precommit`) checks the
+  format: the section line, a `- ` bullet entry, an issue or PR reference, and
+  a lowercase kebab-case name that is more than a number. Nothing checks that
+  a PR which needs an entry carries one; reviewers do. The fold step below is
+  manual.
 - Existing `CHANGELOG.md` entries stay where they are. Do not move them.
 - `cargo xtask check-static-language` scans fragments, although
   `CHANGELOG.md` is exempt, so a fragment cannot reuse runtime-mutation
@@ -41,4 +44,6 @@ At the release cut, in the same step that resolves `CHANGELOG.md`, take every
 (everything after the `<!-- section: ... -->` line) at the end of the first
 `### <Section>` heading of that name in `Unreleased`, adding the heading if it
 is missing. Delete the folded fragment files in that commit. The fold happens
-once, at the cut, never inside an ordinary PR.
+once, at the cut, never inside an ordinary PR. After the fold,
+`cargo xtask check-changelog-fragments --release-cut` must pass: it fails on
+any fragment still here.
