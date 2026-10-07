@@ -159,7 +159,10 @@ rule only for an assertion whose context was admitted.
    unpinned. An expected operand naming a `let` whose initializer mentions
    the owner, directly or through further `let`s, compares the owner with
    itself and is refused, and so is one naming a value ripr cannot trace
-   to a simple `let` (`let (same, _) = (f(4), 0);`). Residual, shared with
+   to a simple `let` (`let (same, _) = (f(4), 0);`). This binding scan runs
+   only when the test names the owner outside the assertion under review;
+   with no other mention, no binding can hold an owner call, so an
+   unrelated `let (want, _) = (12, 0);` keeps the pin. Residual, shared with
    the bare call on main: an item `const` or `static` initialized from a
    `const fn` owner (`const W: u32 = crate::weight(4);`) is not followed.
 2. Call identity, from the parser's item-container fact on the owner
@@ -193,7 +196,10 @@ rule only for an assertion whose context was admitted.
        or `type` of the name, a `use` of the name, or any glob, in a file of
        the test's crate).
      The owner must sit directly in a module (not a fn body or an `impl`)
-     that ripr can place by parsing its file. Any `r#name` of the owner's
+     that ripr can place by parsing its file. Neither the owner nor any
+     enclosing inline module may carry a `cfg` or `cfg_attr` attribute: a
+     complementary cfg may compile a same-named `static`, `const`, `use` or
+     module in its place, so the path no longer has to reach the owner. Any `r#name` of the owner's
      name in the workspace (a raw twin the uniqueness gate's name match
      misses) and any macro invocation in the owner's crate whose input names
      the owner (`twin!(name)` may emit a `fn name`
@@ -846,7 +852,9 @@ assertions. This repair shares the existing callback without that larger migrati
   `an_integration_path_is_closed_to_raw_and_macro_shadows`,
   `a_macro_that_may_emit_the_owners_name_defeats_every_path`,
   `an_expected_binding_ripr_cannot_read_is_not_a_distinct_value`,
-  `a_bound_method_result_pins_like_the_method_call`); crate-local
+  `a_bound_method_result_pins_like_the_method_call`,
+  `an_unreadable_expected_binding_is_scanned_only_beside_another_owner_call`,
+  `a_cfg_gated_owner_is_not_reached_by_a_path`); crate-local
   bindings in another target
   (`a_crate_local_binding_in_another_target_does_not_reach_the_test`,
   `a_crate_local_site_another_crate_can_compile_stays_workspace_wide`,

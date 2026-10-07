@@ -3462,6 +3462,58 @@ fn a_result_bound_once_and_only_asserted_pins_like_the_call() {
 }
 
 #[test]
+fn an_unreadable_expected_binding_is_scanned_only_beside_another_owner_call() {
+    // #7061 review: the self-comparison binding scan fails closed on a
+    // binding it cannot read, but only a test that names the owner outside
+    // the assertion can bind an owner call, so an unrelated destructured
+    // expected value keeps the bare-call pin.
+    let pinned = "let (want, _) = (12, 0);\n        assert_eq!(weight(4), want);";
+    let lib =
+        unit_tests("", pinned).replace("mod tests {\n", "mod tests {\n    use super::weight;\n");
+    assert_eq!(
+        path_admitted(&lib, "x * 3", None),
+        ["assert_eq!(weight(4), want);"],
+        "{pinned}"
+    );
+    // A second owner call can fill the same pattern, so the scan refuses.
+    let refused = "let (want, _) = (weight(4), 0);\n        assert_eq!(weight(4), want);";
+    let lib =
+        unit_tests("", refused).replace("mod tests {\n", "mod tests {\n    use super::weight;\n");
+    assert!(path_admitted(&lib, "x * 3", None).is_empty(), "{refused}");
+}
+
+#[test]
+fn a_cfg_gated_owner_is_not_reached_by_a_path() {
+    // #7061 review: a complementary cfg may compile a same-named `static`,
+    // `const`, `use` or module where the owner was, so "the path names the
+    // owner's module" no longer means it reaches the owner.
+    let twin = "pub fn helper(_: u32) -> u32 {\n    12\n}\n#[cfg(test)]\n#[allow(non_upper_case_globals)]\npub static weight: fn(u32) -> u32 = helper;\n\n";
+    for body in [
+        "assert_eq!(crate::weight(4), 12);",
+        "assert_eq!(super::weight(4), 12);",
+        "let total = super::weight(4);\n        assert_eq!(total, 12);",
+    ] {
+        let lib =
+            unit_tests(twin, body).replace("pub fn weight", "#[cfg(not(test))]\npub fn weight");
+        assert!(lib.contains("#[cfg(not(test))]\npub fn weight"), "{lib}");
+        assert!(path_admitted(&lib, "x * 3", None).is_empty(), "{body}");
+    }
+    // An enclosing inline module's cfg gates it too.
+    let lib = unit_tests("", "assert_eq!(crate::b::weight(4), 12);").replace(
+        "pub fn weight(x: u32) -> u32 {\n    x * 3\n}",
+        "#[cfg(not(test))]\npub mod b {\n    pub fn weight(x: u32) -> u32 {\n        x * 3\n    }\n}",
+    );
+    assert!(lib.contains("pub mod b"), "{lib}");
+    assert!(path_admitted(&lib, "x * 3", None).is_empty());
+    // Control: the same module without the cfg pins.
+    let lib = lib.replace("#[cfg(not(test))]\npub mod b", "pub mod b");
+    assert_eq!(
+        path_admitted(&lib, "x * 3", None),
+        ["assert_eq!(crate::b::weight(4), 12);"]
+    );
+}
+
+#[test]
 fn review_holes_in_path_and_let_bound_pins_stay_closed() {
     // A lower-case type alias reached as a "module" segment.
     let lib = unit_tests(

@@ -6,5 +6,6 @@
   returned value, as the imported bare call `f(..)` already did. These read
   `weakly_exposed` before, a false actionable gap. A path to any other
   module (a re-export, another crate), a raw-identifier or macro shadow of
-  the name, and a binding that is mutable, rebound, borrowed or used outside
-  its assertions stay unpinned (#6974).
+  the name, an owner or enclosing module behind a `cfg`, and a binding that
+  is mutable, rebound, borrowed or used outside its assertions stay
+  unpinned (#6974).

@@ -123,12 +123,12 @@ pub(in crate::analysis) struct OwnerPinSyntax {
 /// #6974: run-scoped answers for [`OwnerReturnPin::path_reaches_owner`].
 #[derive(Clone, Debug, Default)]
 struct PathCallMemo {
-    /// Per (owner file, owner name, path prefix, test file, test line): the
-    /// verdict.
-    verdicts: BTreeMap<(PathBuf, String, String, PathBuf, usize), bool>,
+    /// Per (owner file, owner start line, owner name, path prefix, test
+    /// file, test line): the verdict.
+    verdicts: BTreeMap<(PathBuf, usize, String, String, PathBuf, usize), bool>,
     /// Per (file, fn name, start line): the inline modules enclosing that
     /// item, or `None` when ripr cannot place it.
-    nesting: BTreeMap<(PathBuf, String, usize), Option<Vec<String>>>,
+    nesting: BTreeMap<(PathBuf, String, usize), Option<ItemNesting>>,
     /// Per (owner crate root, owner name): whether the crate may hold an
     /// item of the name ripr cannot see.
     hidden: BTreeMap<(PathBuf, String), bool>,
@@ -227,7 +227,7 @@ impl OwnerPinSyntax {
         file: &Path,
         name: &str,
         line: usize,
-    ) -> Option<Vec<String>> {
+    ) -> Option<ItemNesting> {
         let key = (file.to_path_buf(), name.to_string(), line);
         if let Some(known) = self.path_memo.borrow().nesting.get(&key) {
             return known.clone();
@@ -1309,7 +1309,9 @@ impl OwnerReturnPin {
                 (Some(call), None) => (call, operands[1]),
                 (None, Some(call)) => (call, operands[0]),
                 // #6974: `let result = owner(..); assert_eq!(result, 7);`.
-                (None, None) => {
+                // Only a test that names the owner outside this assertion
+                // can bind its result.
+                (None, None) if owner_named_outside(test, &assertion.text, &self.name) => {
                     let bound = |at: usize| {
                         let_bound_owner_call(test, assertion, operands[at], &self.name)
                             .and_then(|call| owner_call_shape(call, &self.name))
@@ -1347,7 +1349,8 @@ impl OwnerReturnPin {
         }
         // `assert_eq!(f(4), f(2) + f(2))` compares the owner with itself.
         if contains_as_whole_word(&mask_comments_and_strings(expected), &self.name)
-            || expected_binding_calls_owner(test, expected, &self.name)
+            || (owner_named_outside(test, &assertion.text, &self.name)
+                && expected_binding_calls_owner(test, expected, &self.name))
         {
             return false;
         }
@@ -1483,6 +1486,7 @@ impl OwnerReturnPin {
     ) -> bool {
         let key = (
             self.owner_file.clone(),
+            self.owner_start_line,
             self.name.clone(),
             prefix.to_string(),
             test.file.clone(),
@@ -1518,8 +1522,10 @@ impl OwnerReturnPin {
                 if test.file != self.owner_file {
                     return false;
                 }
-                let Some(mut module) =
-                    syntax.item_nesting(index, &test.file, &test.name, test.start_line)
+                let Some(ItemNesting {
+                    modules: mut module,
+                    ..
+                }) = syntax.item_nesting(index, &test.file, &test.name, test.start_line)
                 else {
                     return false;
                 };
@@ -1563,7 +1569,7 @@ impl OwnerReturnPin {
         }
         syntax
             .item_nesting(index, &self.owner_file, &self.name, self.owner_start_line)
-            .is_some_and(|owner_module| owner_module == module)
+            .is_some_and(|owner| !owner.cfg_gated && owner.modules == module)
             && !syntax.crate_may_hide_name(index, &owner_root, &self.name, roots)
     }
 
@@ -1747,7 +1753,19 @@ fn test_crate_may_bind(
 /// on `line` (1-based) in `source`, outermost first, with `r#` dropped.
 /// `None` when the file does not parse, no single such item is found, or
 /// it sits anywhere but directly in a module (a fn body, an `impl`).
-fn item_nesting(source: &str, name: &str, line: usize) -> Option<Vec<String>> {
+/// Where a `fn` sits among its file's inline modules (#6974).
+#[derive(Clone, Debug)]
+struct ItemNesting {
+    /// The inline modules enclosing the `fn`, outermost first.
+    modules: Vec<String>,
+    /// Whether the `fn` or an enclosing inline module carries a `cfg` or
+    /// `cfg_attr` attribute. A complementary cfg may then compile a
+    /// same-named `static`, `const`, `use` or module in its place, so a path
+    /// to the module no longer has to reach the `fn` (#7061 review).
+    cfg_gated: bool,
+}
+
+fn item_nesting(source: &str, name: &str, line: usize) -> Option<ItemNesting> {
     let parse = parse_clean_source_file(source)?;
     let line_of = |offset: u32| source[..offset as usize].matches('\n').count() + 1;
     let base = |text: String| text.strip_prefix("r#").map_or(text.clone(), str::to_string);
@@ -1773,8 +1791,11 @@ fn item_nesting(source: &str, name: &str, line: usize) -> Option<Vec<String>> {
         return None;
     }
     let mut modules = Vec::new();
+    let mut cfg_gated = has_cfg_attr(&function);
     for ancestor in function.syntax().ancestors().skip(1) {
         if let Some(module) = ast::Module::cast(ancestor.clone()) {
+            cfg_gated |= has_cfg_attr(&module)
+                || module.item_list().is_some_and(|items| has_cfg_attr(&items));
             modules.push(base(module.name()?.text().to_string()));
         } else if !ast::ItemList::can_cast(ancestor.kind())
             && !ast::SourceFile::can_cast(ancestor.kind())
@@ -1783,7 +1804,18 @@ fn item_nesting(source: &str, name: &str, line: usize) -> Option<Vec<String>> {
         }
     }
     modules.reverse();
-    Some(modules)
+    Some(ItemNesting { modules, cfg_gated })
+}
+
+/// Whether `node` carries a `cfg` or `cfg_attr` attribute, outer or inner.
+fn has_cfg_attr(node: &impl ast::HasAttrs) -> bool {
+    // `cfg` and `cfg_attr` parse to their own metas, which have no `path`.
+    node.attrs().any(|attr| {
+        matches!(
+            attr.meta(),
+            Some(ast::Meta::CfgMeta(_) | ast::Meta::CfgAttrMeta(_))
+        )
+    })
 }
 
 /// #6974 review: whether any workspace file spells `r#name`, a raw
@@ -3391,6 +3423,16 @@ fn let_bound_owner_call<'a>(
     };
     let initializer = initializer.strip_prefix('=')?;
     (!initializer.starts_with(['=', '>'])).then(|| initializer.trim())
+}
+
+/// #6974 review: whether the test body names the owner anywhere but the
+/// assertion under review. When it does not, no binding in the test can
+/// hold an owner call, so table-driven expected values (`#[case] want`,
+/// `for (x, want) in cases`) need no binding scan.
+fn owner_named_outside(test: &TestSummary, assertion: &str, name: &str) -> bool {
+    let in_body = whole_word_offsets(&mask_comments_and_strings(&test.body), name).len();
+    let in_assertion = whole_word_offsets(&mask_comments_and_strings(assertion), name).len();
+    in_body > in_assertion
 }
 
 /// #6974 review: whether an identifier in the expected operand is a test
