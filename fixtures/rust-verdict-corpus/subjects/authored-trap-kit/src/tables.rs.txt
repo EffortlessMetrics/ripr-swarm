@@ -1,0 +1,16 @@
+pub fn halve(value: u32) -> u32 {
+    value / 2
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn halve_table() {
+        let cases: [(u32, u32); 0] = [];
+        for (input, want) in cases {
+            assert_eq!(halve(input), want);
+        }
+    }
+}

@@ -1,0 +1,13 @@
+diff --git a/src/grid.rs b/src/grid.rs
+index 9e23bf5..979563f 100644
+--- a/src/grid.rs
++++ b/src/grid.rs
+@@ -9,7 +9,7 @@ impl Grid {
+     }
+ 
+     pub fn row_of(&self, index: usize) -> usize {
+-        if index >= 100 {
++        if index > 99 {
+             panic!("index out of range");
+         }
+         index / self.cols

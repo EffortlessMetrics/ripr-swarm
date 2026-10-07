@@ -1,0 +1,13 @@
+diff --git a/src/counter.rs b/src/counter.rs
+index 16caf6e..7649818 100644
+--- a/src/counter.rs
++++ b/src/counter.rs
+@@ -5,7 +5,7 @@ pub struct Card {
+ 
+ pub fn with_bonus(base: &Card) -> Card {
+     Card {
+-        points: base.points * 3,
++        points: 3 * base.points,
+     }
+ }
+ 

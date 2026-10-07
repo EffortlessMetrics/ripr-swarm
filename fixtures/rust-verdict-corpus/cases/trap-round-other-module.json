@@ -1,0 +1,58 @@
+{
+  "case_id": "trap-round-other-module",
+  "subject_id": "authored-trap-kit",
+  "diff": "cases/trap-round-other-module.diff",
+  "anchor": {
+    "file": "src/units.rs",
+    "line": 3
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "same_name_function_other_module",
+  "hard_case": "The test imports imperial::round; the edit is in metric::round, a same-named free function in a sibling module.",
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "(value + 2) / 10 * 10",
+        "mutated_line": "(value + 2) / 10 * 10",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: replaces `(5 + value) / 10 * 10` with `(value + 2) / 10 * 10`, which changes the result, but no executed assertion observes it"
+      },
+      {
+        "replacement": "(value - 5) / 10 * 10",
+        "mutated_line": "(value - 5) / 10 * 10",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: replaces `(5 + value) / 10 * 10` with `(value - 5) / 10 * 10`, which changes the result, but no executed assertion observes it"
+      },
+      {
+        "replacement": "(value + 5) * 10 * 10",
+        "mutated_line": "(value + 5) * 10 * 10",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: replaces `(5 + value) / 10 * 10` with `(value + 5) * 10 * 10`, which changes the result, but no executed assertion observes it"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "round_snaps_to_the_unit calls round(17) after `use super::imperial::round`, so metric::round never runs. Adversarial shape (same-named function in another module); paired with trap-snap-imported-owner-control.",
+  "labeling_observation": {
+    "ripr_commit": "6487826",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}
