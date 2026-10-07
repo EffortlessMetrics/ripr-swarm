@@ -962,6 +962,35 @@ fn parse_json(path: &Path) -> Result<Value, String> {
 /// Keys the one-file layout kept in `corpus.json`; `split` moves them out.
 const SPLIT_KEYS: [&str; 3] = ["corpus_version", "subjects", "cases"];
 
+/// One libtest test name: a path without spaces or commas, or rustdoc's
+/// doctest name `<file> - <item> (line <n>)`, which libtest prints as is.
+/// A crate-root doctest has no item (`<file> - (line <n>)`), and libtest
+/// appends ` - compile fail` to a `compile_fail` doctest. Items whose
+/// pretty-printed type holds a space or comma are refused, so a list of
+/// names can never pass.
+fn is_one_test_name(name: &str) -> bool {
+    let plain =
+        |part: &str| !part.is_empty() && !part.contains(char::is_whitespace) && !part.contains(',');
+    if plain(name) {
+        return true;
+    }
+    let name = name.strip_suffix(" - compile fail").unwrap_or(name);
+    let Some((file, rest)) = name.split_once(" - ") else {
+        return false;
+    };
+    let (item_ok, line) = match rest.strip_prefix("(line ") {
+        Some(line) => (true, line),
+        None => match rest.rsplit_once(" (line ") {
+            Some((item, line)) => (plain(item), line),
+            None => return false,
+        },
+    };
+    let Some(line) = line.strip_suffix(')') else {
+        return false;
+    };
+    plain(file) && item_ok && !line.is_empty() && line.bytes().all(|b| b.is_ascii_digit())
+}
+
 /// The corpus as one JSON value: the `corpus.json` header with `subjects`
 /// and `cases` gathered from their per-record files in file-name order.
 pub(crate) fn corpus_value(dir: &Path) -> Result<Value, String> {
@@ -1560,7 +1589,7 @@ pub(crate) fn case_violations(case: &Case, subject: &Subject, dir: &Path) -> Vec
             ));
         }
         if let Some(name) = &mutant.failing_test
-            && (name.is_empty() || name.contains(char::is_whitespace) || name.contains(','))
+            && !is_one_test_name(name)
         {
             violations.push(format!(
                 "case `{id}` mutant `{}` failing_test `{name}` is not one test name; name one test that failed and put any other observations in equivalence_review",

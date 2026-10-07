@@ -67,6 +67,8 @@ mod module_entries;
 #[cfg(test)]
 mod new_declaration_tests;
 mod oracle;
+#[cfg(test)]
+mod owner_path_tests;
 mod owners;
 mod package;
 pub(crate) use package::detect_framework_for_root;

@@ -774,13 +774,24 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
     // gates that reject subject combinations outright.
     let mut config = config;
     if let Some(subject) = input.git_candidate.as_ref() {
-        config = crate::config::config_for_candidate(subject, &config).map_err(|err| {
-            refuse_check(
-                &envelope_input,
-                effective_format,
-                CoreError::config_invalid(err),
-            )
-        })?;
+        config = crate::config::config_for_candidate(subject, &config, input.git_timeout).map_err(
+            |err| {
+                // #6956: a stalled candidate-tree config read is a timeout,
+                // not a broken config file; only genuine load/parse failures
+                // take `config_invalid`.
+                let refusal = match err {
+                    crate::config::CandidateConfigError::Timeout {
+                        operation,
+                        timeout_ms,
+                        spawned,
+                    } => CoreError::git_invocation_timeout(operation, timeout_ms, spawned),
+                    crate::config::CandidateConfigError::Other(message) => {
+                        CoreError::config_invalid(message)
+                    }
+                };
+                refuse_check(&envelope_input, effective_format, refusal)
+            },
+        )?;
         apply_to_check_input(&mut input, &config, explicit);
         // Post-subject-config snapshot: the candidate tree's config won.
         envelope_input = input.clone();
@@ -1079,6 +1090,15 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
     // #4945: repo seam-driven formats run their walks inside the render arms,
     // so the sink threads through rendering to bracket those walks with
     // repo-scope stage boundaries; diff-scoped arms ignore it.
+    // The canonical triage adapter binds its diff-source mode from this
+    // declared provenance (#6304): base presence cannot identify it.
+    let provenance = if worktree_explicitly_provided {
+        app::CheckDiffProvenance::Worktree
+    } else if input_diff_file_is_some || candidate_tree.is_some() {
+        app::CheckDiffProvenance::SuppliedScope
+    } else {
+        app::CheckDiffProvenance::CommittedHistory
+    };
     write_stdout_chunked(
         &app::render_check_with_config_and_navigation_and_progress(
             &output,
@@ -1086,6 +1106,7 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
             &config,
             Some(&drill_in),
             progress_sink,
+            provenance,
         )
         .map_err(|err| refuse_check(&envelope_input, effective_format, err))?,
     )

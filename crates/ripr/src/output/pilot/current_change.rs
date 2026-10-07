@@ -9,7 +9,7 @@
 //! `<base>...HEAD`); this module only maps its changed new-side lines onto
 //! seams.
 
-use crate::analysis::{ClassifiedSeam, RepoSeam, SeamLimitInfo};
+use crate::analysis::{ClassifiedSeam, DiffOnlySource, RepoSeam, SeamLimitInfo};
 use crate::output::path::display_path;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -31,6 +31,10 @@ pub(crate) enum PilotCurrentChange {
         /// The analyzed seams on changed lines, counted before the pilot
         /// budget cut, which drops the ones pilot cannot recommend.
         seams: ChangeSeams,
+        /// Changed files diff analysis covers but the repo inventory leaves
+        /// out by design (build scripts, `xtask/`, roots outside `src`),
+        /// root-relative and slash separated (#6944).
+        diff_only: Vec<(String, DiffOnlySource)>,
     },
     /// The default diff loaded and is empty: there is no current change.
     NoChange { base: Option<String> },
@@ -81,6 +85,7 @@ impl PilotCurrentChange {
             lines,
             working_tree: false,
             seams: ChangeSeams::default(),
+            diff_only: Vec::new(),
         }
     }
 
@@ -208,6 +213,25 @@ impl PilotCurrentChange {
             *working_tree = from_working_tree;
         }
         self
+    }
+
+    /// Record the changed files only diff analysis covers (#6944).
+    pub(crate) fn with_diff_only_files(mut self, files: Vec<(PathBuf, DiffOnlySource)>) -> Self {
+        if let Self::Changed { diff_only, .. } = &mut self {
+            *diff_only = files
+                .into_iter()
+                .map(|(path, source)| (normalized(&path), source))
+                .collect();
+        }
+        self
+    }
+
+    /// The changed files only diff analysis covers; empty without a change.
+    pub(crate) fn diff_only_files(&self) -> &[(String, DiffOnlySource)] {
+        match self {
+            Self::Changed { diff_only, .. } => diff_only,
+            Self::NoChange { .. } | Self::Unavailable { .. } => &[],
+        }
     }
 
     /// The `ripr check` flags that select this same diff.

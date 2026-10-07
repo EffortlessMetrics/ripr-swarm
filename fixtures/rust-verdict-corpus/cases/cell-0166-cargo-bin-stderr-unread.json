@@ -1,0 +1,51 @@
+{
+  "case_id": "cell-0166-cargo-bin-stderr-unread",
+  "subject_id": "authored-spec-harness",
+  "diff": "cases/cell-0166-cargo-bin-stderr-unread.diff",
+  "anchor": {
+    "file": "src/bin/tool.rs",
+    "line": 8
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "side_effect",
+  "test_shape": "assert_cmd_cargo_bin_stdout_only",
+  "hard_case": "Twin of cell-0166-cargo-bin-stdout: the edit changes the binary's stderr line, and the subprocess test asserts only success and stdout.",
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test --workspace",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "format!(\"n={}\", n + 2)",
+        "mutated_line": "format!(\"n={}\", n + 2)",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: tool 6 writes n=8 to stderr"
+      },
+      {
+        "replacement": "format!(\"n={}\", n)",
+        "mutated_line": "format!(\"n={}\", n)",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: tool 6 writes n=6 to stderr"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "tool_prints_the_doubled_value never reads stderr, so both mutants pass. Spec cells: RIPR-SPEC-0166 subprocess reach with an unobserved output.",
+  "labeling_observation": {
+    "ripr_commit": "128f794f6",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "no_static_path"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

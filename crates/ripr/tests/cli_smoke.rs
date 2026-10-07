@@ -26,6 +26,8 @@ mod findings_byte_budget;
 #[cfg(feature = "lang-python")]
 #[path = "cli_smoke/implicit_git_root.rs"]
 mod implicit_git_root;
+#[path = "cli_smoke/next_action.rs"]
+mod next_action;
 #[cfg(feature = "lang-python")]
 #[path = "cli_smoke/python_source_admission.rs"]
 mod python_source_admission;
@@ -3272,6 +3274,148 @@ fn check_json_timeout_and_bad_base_have_distinct_identities() -> Result<(), Stri
     if timeout_identity == base_identity {
         return Err(format!(
             "timeout and bad base must have distinct identities, got {timeout_identity}"
+        ));
+    }
+    ignore_remove_dir_all(&root);
+    ignore_remove_dir_all(&shim_dir);
+    Ok(())
+}
+
+/// #6956: a `git` shim that hangs on every invocation, first on `PATH`.
+/// Fixture setup with real git must finish before installing the override.
+/// Returns the shim dir (for cleanup) and the search path for the run.
+#[cfg(unix)]
+fn hanging_git_path_override(label: &str) -> Result<(PathBuf, String), String> {
+    let shim_dir = unique_temp_workspace(label);
+    std::fs::create_dir_all(&shim_dir).map_err(|err| format!("create shim dir: {err}"))?;
+    let shim = shim_dir.join("git");
+    std::fs::write(&shim, "#!/bin/sh\nexec sleep 60\n")
+        .map_err(|err| format!("write git shim: {err}"))?;
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&shim, std::fs::Permissions::from_mode(0o755))
+            .map_err(|err| format!("make git shim executable: {err}"))?;
+    }
+    let mut paths = vec![shim_dir.clone()];
+    paths.extend(std::env::split_paths(
+        &std::env::var_os("PATH").unwrap_or_default(),
+    ));
+    let search_path = std::env::join_paths(paths)
+        .map_err(|err| format!("build shim PATH: {err}"))?
+        .to_string_lossy()
+        .into_owned();
+    Ok((shim_dir, search_path))
+}
+
+/// #6956: with no `--base`, a stalled default-base probe is a timeout,
+/// not a missing ref: the refusal names `git_invocation_timeout` while
+/// stderr keeps the timeout diagnostic.
+#[cfg(unix)]
+#[test]
+fn check_json_omitted_base_git_timeout_names_timeout_identity() -> Result<(), String> {
+    let root = init_check_refusal_repo("check-json-omitted-base-timeout", 1)?;
+    let root_arg = root.display().to_string();
+    let (shim_dir, search_path) =
+        hanging_git_path_override("check-json-omitted-base-timeout-shim")?;
+
+    let started = std::time::Instant::now();
+    let output = run_command_with_env(
+        env!("CARGO_BIN_EXE_ripr"),
+        &root,
+        &[
+            "check",
+            "--json",
+            "--root",
+            root_arg.as_str(),
+            "--worktree",
+            "--git-timeout",
+            "1",
+        ],
+        &[("PATH", search_path.as_str())],
+    )
+    .map_err(|err| format!("run check with hanging git: {err}"))?;
+    let elapsed = started.elapsed();
+    let value =
+        assert_check_json_refusal(&output, "git_invocation_timeout", "analysis/git-timeout")?;
+    assert!(
+        elapsed < std::time::Duration::from_mins(1),
+        "check waited {elapsed:?} on hung git under --git-timeout 1"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if !stderr.contains("git_invocation_timeout") {
+        return Err(format!("stderr must keep the timeout prose: {stderr}"));
+    }
+    let message = value["run_limitations"][0]["message"]
+        .as_str()
+        .ok_or("refusal must carry a message")?;
+    if !message.contains("git_invocation_timeout") {
+        return Err(format!(
+            "the envelope message must echo the timeout diagnostic: {message}"
+        ));
+    }
+    ignore_remove_dir_all(&root);
+    ignore_remove_dir_all(&shim_dir);
+    Ok(())
+}
+
+/// #6956: a stalled candidate-tree config read is a timeout, not a broken
+/// config file: the refusal names `git_invocation_timeout` while stderr
+/// keeps the timeout diagnostic. The read honors the caller's
+/// `--git-timeout`, so a 1s deadline both keeps this test fast and proves
+/// the knob reaches the read (the old fixed 30s read would report
+/// `30000ms` here instead of `1000ms`).
+#[cfg(unix)]
+#[test]
+fn check_json_bound_subject_config_timeout_names_timeout_identity() -> Result<(), String> {
+    use common::fixture_git::fixture_git_output;
+    let root = init_check_refusal_repo("check-json-subject-config-timeout", 1)?;
+    let root_arg = root.display().to_string();
+    let tree = fixture_git_output(&root, &["rev-parse", "HEAD^{tree}"])?;
+    let tree = tree.trim().to_string();
+    let (shim_dir, search_path) =
+        hanging_git_path_override("check-json-subject-config-timeout-shim")?;
+
+    let started = std::time::Instant::now();
+    let output = run_command_with_env(
+        env!("CARGO_BIN_EXE_ripr"),
+        &root,
+        &[
+            "check",
+            "--json",
+            "--root",
+            root_arg.as_str(),
+            "--candidate-tree",
+            tree.as_str(),
+            "--candidate-base",
+            "HEAD",
+            "--git-timeout",
+            "1",
+        ],
+        &[("PATH", search_path.as_str())],
+    )
+    .map_err(|err| format!("run check with hanging git: {err}"))?;
+    let elapsed = started.elapsed();
+    let value =
+        assert_check_json_refusal(&output, "git_invocation_timeout", "analysis/git-timeout")?;
+    assert!(
+        elapsed < std::time::Duration::from_mins(1),
+        "check waited {elapsed:?} on hung git for the candidate config read"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if !stderr.contains("git_invocation_timeout") {
+        return Err(format!("stderr must keep the timeout prose: {stderr}"));
+    }
+    let message = value["run_limitations"][0]["message"]
+        .as_str()
+        .ok_or("refusal must carry a message")?;
+    if !message.contains("git_invocation_timeout") {
+        return Err(format!(
+            "the envelope message must echo the timeout diagnostic: {message}"
+        ));
+    }
+    if !message.contains("1000ms") {
+        return Err(format!(
+            "the timeout must name the caller-supplied 1s deadline, got: {message}"
         ));
     }
     ignore_remove_dir_all(&root);
@@ -15222,6 +15366,94 @@ fn pilot_ranks_the_current_change_past_the_inventory_seam_limit() -> Result<(), 
         !stdout.contains("may have seams pilot did not see"),
         "{stdout}"
     );
+    ignore_remove_dir_all(&root);
+    ignore_remove_dir_all(&out_dir);
+    Ok(())
+}
+
+/// #6944: `ripr check` analyzes a changed build script, but pilot's repo
+/// inventory leaves build scripts out by design. Pilot must name that
+/// exclusion rather than say the change has no analyzed seam.
+#[test]
+fn pilot_names_a_changed_build_script_its_ranking_leaves_out() -> Result<(), String> {
+    let build = "fn main() {\n    let level = std::env::var(\"OPT_LEVEL\").map(|v| v.len()).unwrap_or(0);\n    if level > 2 {\n        println!(\"cargo:rustc-cfg=fast\");\n    }\n}\n";
+    let root = pilot_language_fixture_repo(
+        "pilot-build-script-change",
+        &[
+            (
+                "Cargo.toml",
+                "[package]\nname = \"shop\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+            ),
+            ("build.rs", build),
+            (
+                "src/lib.rs",
+                "pub fn discounted(amount: u32) -> u32 {\n    if amount > 100 { amount - 10 } else { amount }\n}\n",
+            ),
+            (
+                "tests/pricing.rs",
+                "#[test]\nfn big_orders_get_a_discount() {\n    assert_eq!(shop::discounted(200), 190);\n}\n",
+            ),
+        ],
+        ("build.rs", &build.replace("level > 2", "level >= 2")),
+    )?;
+    let out_dir = unique_temp_workspace("pilot-build-script-change-out");
+    let (stdout, md, summary, _) = run_pilot_language_fixture(&root, &out_dir)?;
+    // Precondition: the change is loaded and pilot ranked a seam elsewhere.
+    assert_eq!(summary["current_change"]["state"], "changed", "{summary}");
+    assert_eq!(
+        summary["current_change"]["top_recommendation_in_change"], false,
+        "{summary}"
+    );
+    assert!(
+        stdout.contains(
+            "current change: not part of it. No seam pilot analyzed is on a line changed since origin/main: every changed Rust line is in build.rs, a Cargo build script, which pilot's repo-wide ranking leaves out. This recommendation is elsewhere in the repo"
+        ),
+        "{stdout}"
+    );
+    assert!(
+        md.contains("every changed Rust line is in `build.rs`, a Cargo build script"),
+        "{md}"
+    );
+    ignore_remove_dir_all(&root);
+    ignore_remove_dir_all(&out_dir);
+    Ok(())
+}
+
+/// #6987: with Rust disabled neither `ripr check` nor pilot analyzes Rust,
+/// so pilot must not name a changed build script as one `ripr check`
+/// covers. With the gate removed, the unranked-change reason would name it
+/// ("every changed Rust line is in build.rs").
+#[test]
+#[cfg(feature = "lang-python")]
+fn pilot_names_no_build_script_when_rust_is_disabled() -> Result<(), String> {
+    let build = "fn main() {\n    let level = std::env::var(\"OPT_LEVEL\").map(|v| v.len()).unwrap_or(0);\n    if level > 2 {\n        println!(\"cargo:rustc-cfg=fast\");\n    }\n}\n";
+    let root = pilot_language_fixture_repo(
+        "pilot-build-script-rust-disabled",
+        &[
+            (
+                "Cargo.toml",
+                "[package]\nname = \"shop\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+            ),
+            ("ripr.toml", "[languages]\nenabled = [\"python\"]\n"),
+            ("build.rs", build),
+            (
+                "src/lib.rs",
+                "pub fn discounted(amount: u32) -> u32 {\n    if amount > 100 { amount - 10 } else { amount }\n}\n",
+            ),
+        ],
+        ("build.rs", &build.replace("level > 2", "level >= 2")),
+    )?;
+    let out_dir = unique_temp_workspace("pilot-build-script-rust-disabled-out");
+    let (stdout, md, summary, _) = run_pilot_language_fixture(&root, &out_dir)?;
+    // Precondition: the change is loaded, so only the Rust gate can keep
+    // the build script unnamed.
+    assert_eq!(summary["current_change"]["state"], "changed", "{summary}");
+    assert!(
+        stdout.contains("not enabled in ripr.toml [languages]"),
+        "Rust must be reported as disabled: {stdout}"
+    );
+    assert!(!stdout.contains("build.rs"), "{stdout}");
+    assert!(!md.contains("build.rs"), "{md}");
     ignore_remove_dir_all(&root);
     ignore_remove_dir_all(&out_dir);
     Ok(())

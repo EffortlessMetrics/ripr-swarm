@@ -1,0 +1,13 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 8840c6e..e297876 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -28,7 +28,7 @@ pub fn audit(amount: u32) {
+ /// Prints to stderr; the test pins only the returned flag.
+ pub fn warn_low(stock: u32) -> bool {
+     if stock < 3 {
+-        eprintln!("low stock: {}", stock * 2);
++        eprintln!("low stock: {}", 2 * stock);
+         true
+     } else {
+         false

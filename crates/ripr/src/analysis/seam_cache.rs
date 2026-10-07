@@ -320,7 +320,10 @@ pub(crate) struct CachedSeamLimitInfo {
 /// `1.43`: inventory keeps one error_variant seam per error constructor;
 /// the `return` around `Err(X)` and the payload call inside `Err(..)` are
 /// twins and drop out (#6914).
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.43";
+/// `1.44`: a `return` around a method chain on an error constructor
+/// (`return Err(X).context(..)`, #6935) and a call wrapping one
+/// (`Poll::Ready(Err(X))`, #6938) are that constructor's twins too.
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.44";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -403,7 +406,8 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.43";
 /// `0.47`: same asserted-Err/`ok_or?` transition as full `1.41`.
 /// `0.48`: same unresolved-boundary-input transition as full `1.42`.
 /// `0.49`: same single error_variant transition as full `1.43`.
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.49";
+/// `0.50`: same wrapper twin transition as full `1.44`.
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.50";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -488,7 +492,8 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.49";
 /// `0.47`: same asserted-Err/`ok_or?` transition as full `1.41`.
 /// `0.48`: same unresolved-boundary-input transition as full `1.42`.
 /// `0.49`: same single error_variant transition as full `1.43`.
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.49";
+/// `0.50`: same wrapper twin transition as full `1.44`.
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.50";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -645,7 +650,10 @@ pub(crate) const COUNT_CACHE_SCHEMA_VERSION: &str = "0.2";
 /// (diverging Ok arm, exact assertion Err arm), and a `return`/tail
 /// `x.ok_or(Type::Variant)?` line now produces an ErrorPath probe shape
 /// (#6695); `1.30` facts lack both.
-pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.31";
+/// `1.32`: parser-backed facts carry the file's compact module item scopes,
+/// so same-file helper crediting stops reparsing test files on warm runs
+/// (#5363). `1.31` facts lack them.
+pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.32";
 
 /// Keep the best-effort classified-seam cache from turning a successful live
 /// analysis into an unbounded post-analysis stall on large repos. Larger live
@@ -3948,7 +3956,8 @@ mod tests {
         // 1.29 -> 1.30: Rust 2021 parse fallback and char/byte literal
         // facts (#5359).
         // 1.30 -> 1.31: the #6673 asserted-Err guarded-match form.
-        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.31");
+        // 1.31 -> 1.32: compact module item scopes for helper crediting (#5363).
+        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.32");
         // 1.4 -> 1.5: metadata-sourced harness validation (#3634) flips
         // verdicts for workspaces the manifest emulation approximated.
         // 1.5 -> 1.6: the #3636 reachability authority excludes
@@ -4009,7 +4018,9 @@ mod tests {
         // 1.41 -> 1.42: unresolved boundary inputs read infection unknown
         // (#6674, #6693, #6672, #6671).
         // 1.42 -> 1.43: one error_variant seam per error constructor (#6914).
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.43");
+        // 1.43 -> 1.44: returned chains and wrapping calls are twins (#6935,
+        // #6938).
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.44");
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
         // for the sharded and compact envelopes.
@@ -4045,8 +4056,8 @@ mod tests {
         // 0.47: same #6673/#6695 transition as full 1.41.
         // 0.47 -> 0.48: same unresolved-boundary-input transition as 1.42.
         // 0.48 -> 0.49: same #6914 transition as full 1.43.
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.49");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.49");
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.50");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.50");
     }
 
     #[test]

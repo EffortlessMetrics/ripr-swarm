@@ -336,3 +336,77 @@ fn helper_outside_the_test_module_is_not_credited() -> Result<(), Box<dyn Error>
     }
     Ok(())
 }
+
+#[test]
+fn the_parser_stores_the_scopes_crediting_would_parse_and_the_cache_keeps_them()
+-> Result<(), Box<dyn Error>> {
+    // Warm crediting reads the producer's stored scopes instead of parsing
+    // the test file again (#5363), so they must answer every question
+    // crediting asks exactly as a fresh parse does, and survive the
+    // file-fact cache's wire form.
+    let source = format!(
+        "{GATE}#[cfg(test)]\nmod tests {{\n    use super::*;\n\n    fn check(x: u32, want: bool) {{\n        let check_twice = |v| gate(v);\n        assert_eq!(gate(x), want);\n        assert!(check_twice(x) || true);\n    }}\n\n    #[test]\n    fn boundary() {{\n        let local = 1;\n        check(10, false);\n        helper_elsewhere();\n    }}\n\n    #[cfg(feature = \"x\")]\n    #[test]\n    fn gated() {{ check(1, false); }}\n}}\n"
+    );
+    let facts =
+        crate::analysis::syntax::ra::summarize_file_with_parser(Path::new("src/lib.rs"), &source)?;
+    let stored = facts
+        .item_scopes
+        .clone()
+        .ok_or("premise: parser-backed facts carry scopes")?;
+    let fresh = module_item_scopes(&source).ok_or("premise: the source parses cleanly")?;
+
+    assert_eq!(stored.item_fns, fresh.item_fns);
+    assert_eq!(stored.fns_with_local_use, fresh.fns_with_local_use);
+    assert_eq!(stored.fns_with_deferred_code, fresh.fns_with_deferred_code);
+    assert_eq!(stored.fns_with_cfg, fresh.fns_with_cfg);
+    let function_names: BTreeSet<&str> = facts
+        .functions
+        .iter()
+        .map(|function| function.name.as_str())
+        .collect();
+    for (key, called) in &fresh.direct_calls {
+        let kept: BTreeSet<&String> = called
+            .iter()
+            .filter(|name| function_names.contains(name.as_str()))
+            .collect();
+        let stored_called = stored
+            .direct_calls
+            .get(key)
+            .ok_or("direct calls kept per fn")?;
+        assert!(
+            kept.iter().all(|name| stored_called.contains(*name)),
+            "{key:?}"
+        );
+    }
+    for (key, bound) in &fresh.bound_names {
+        let stored_bound = stored
+            .bound_names
+            .get(key)
+            .ok_or("bound names kept per fn")?;
+        assert!(stored_bound.is_subset(bound), "{key:?}");
+        for function in facts.functions.iter() {
+            let asked = std::iter::once(function.name.as_str())
+                .chain(function.calls.iter().map(|call| call.name.as_str()));
+            for name in asked {
+                assert_eq!(
+                    stored_bound.contains(name),
+                    bound.contains(name),
+                    "{key:?} binds {name}"
+                );
+            }
+        }
+    }
+    // A local binding that names no function or call is dropped.
+    assert!(
+        stored
+            .bound_names
+            .values()
+            .all(|bound| !bound.contains("local")),
+        "{stored:?}"
+    );
+
+    let wire = serde_json::to_string(&facts)?;
+    let decoded: crate::analysis::facts::FileFacts = serde_json::from_str(&wire)?;
+    assert_eq!(decoded.item_scopes, facts.item_scopes);
+    Ok(())
+}

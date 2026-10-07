@@ -1,53 +1,53 @@
 {
   "abstention_rate": {
-    "denominator": 209,
-    "numerator": 69,
-    "rate": "0.3301"
+    "denominator": 243,
+    "numerator": 79,
+    "rate": "0.3251"
   },
   "by_observed_verdict": {
-    "credited": 31,
-    "gap": 109,
-    "limited": 68,
+    "credited": 40,
+    "gap": 124,
+    "limited": 78,
     "silent": 1
   },
   "by_origin": {
     "authored": {
       "abstention_rate": {
-        "denominator": 175,
-        "numerator": 45,
-        "rate": "0.2571"
+        "denominator": 209,
+        "numerator": 55,
+        "rate": "0.2632"
       },
       "by_observed_verdict": {
-        "credited": 26,
-        "gap": 104,
-        "limited": 44,
+        "credited": 35,
+        "gap": 119,
+        "limited": 54,
         "silent": 1
       },
-      "cases_total": 175,
+      "cases_total": 209,
       "false_actionable_rate": {
-        "denominator": 91,
-        "numerator": 47,
-        "rate": "0.5165"
+        "denominator": 111,
+        "numerator": 55,
+        "rate": "0.4955"
       },
       "false_exposed_rate": {
-        "denominator": 84,
-        "numerator": 6,
-        "rate": "0.0714"
+        "denominator": 98,
+        "numerator": 8,
+        "rate": "0.0816"
       },
       "false_silent_rate": {
-        "denominator": 84,
+        "denominator": 98,
         "numerator": 0,
         "rate": "0.0000"
       },
       "false_verdict_rate": {
-        "denominator": 175,
-        "numerator": 53,
-        "rate": "0.3029"
+        "denominator": 209,
+        "numerator": 63,
+        "rate": "0.3014"
       },
       "ideal_rate": {
-        "denominator": 175,
-        "numerator": 77,
-        "rate": "0.4400"
+        "denominator": 209,
+        "numerator": 91,
+        "rate": "0.4354"
       }
     },
     "upstream": {
@@ -90,49 +90,49 @@
     }
   },
   "by_outcome": {
-    "abstained": 69,
-    "false_actionable": 50,
-    "false_exposed": 6,
-    "ideal": 84
+    "abstained": 79,
+    "false_actionable": 58,
+    "false_exposed": 8,
+    "ideal": 98
   },
   "by_truth": {
-    "discriminated": 111,
-    "not_discriminated": 64,
+    "discriminated": 131,
+    "not_discriminated": 78,
     "partially_discriminated": 34
   },
-  "cases_total": 209,
+  "cases_total": 243,
   "contradiction_rate": {
-    "denominator": 281,
+    "denominator": 323,
     "numerator": 2,
-    "rate": "0.0071"
+    "rate": "0.0062"
   },
   "contradictions_by_code": {
     "no_static_path_with_related_tests": 2
   },
   "false_actionable_rate": {
-    "denominator": 111,
-    "numerator": 50,
-    "rate": "0.4505"
+    "denominator": 131,
+    "numerator": 58,
+    "rate": "0.4427"
   },
   "false_exposed_rate": {
-    "denominator": 98,
-    "numerator": 6,
-    "rate": "0.0612"
+    "denominator": 112,
+    "numerator": 8,
+    "rate": "0.0714"
   },
   "false_silent_rate": {
-    "denominator": 98,
+    "denominator": 112,
     "numerator": 0,
     "rate": "0.0000"
   },
   "false_verdict_rate": {
-    "denominator": 209,
-    "numerator": 56,
-    "rate": "0.2679"
+    "denominator": 243,
+    "numerator": 66,
+    "rate": "0.2716"
   },
   "ideal_rate": {
-    "denominator": 209,
-    "numerator": 84,
-    "rate": "0.4019"
+    "denominator": 243,
+    "numerator": 98,
+    "rate": "0.4033"
   },
   "non_claims": [
     "Rates describe this corpus only; they are not a population estimate for Rust code or for ripr in general.",
@@ -355,6 +355,387 @@
       "subject_id": "bytesize",
       "test_shape": "unit_test_assert_eq",
       "truth": "discriminated"
+    },
+    {
+      "anchor": "src/lib.rs:109",
+      "behavior_family": "field_construction",
+      "case_id": "cell-0005-same-name-owner-tested",
+      "changed_since_labeling": false,
+      "contradictions": [],
+      "followed_retarget": false,
+      "hard_case": true,
+      "ideal_verdict": "credited",
+      "observed_classifications": [
+        "exposed"
+      ],
+      "observed_verdict": "credited",
+      "origin": "authored",
+      "outcome": "ideal",
+      "subject_id": "authored-spec-confirm",
+      "test_shape": "same_name_owner_glob_import",
+      "truth": "discriminated"
+    },
+    {
+      "anchor": "src/lib.rs:120",
+      "behavior_family": "field_construction",
+      "case_id": "cell-0005-same-name-owner-unreached",
+      "changed_since_labeling": false,
+      "contradictions": [],
+      "followed_retarget": false,
+      "hard_case": true,
+      "ideal_verdict": "gap",
+      "observed_classifications": [
+        "exposed"
+      ],
+      "observed_verdict": "credited",
+      "origin": "authored",
+      "outcome": "false_exposed",
+      "subject_id": "authored-spec-confirm",
+      "test_shape": "same_name_owner_other_module_tested",
+      "truth": "not_discriminated"
+    },
+    {
+      "anchor": "src/lib.rs:90",
+      "behavior_family": "field_construction",
+      "case_id": "cell-0005-shadowed-field-binding",
+      "changed_since_labeling": false,
+      "contradictions": [],
+      "followed_retarget": false,
+      "hard_case": true,
+      "ideal_verdict": "gap",
+      "observed_classifications": [
+        "exposed"
+      ],
+      "observed_verdict": "credited",
+      "origin": "authored",
+      "outcome": "false_exposed",
+      "subject_id": "authored-spec-confirm",
+      "test_shape": "shadowed_binding_overwrites_field",
+      "truth": "not_discriminated"
+    },
+    {
+      "anchor": "src/lib.rs:82",
+      "behavior_family": "field_construction",
+      "case_id": "cell-0005-wrapper-field-binding",
+      "changed_since_labeling": false,
+      "contradictions": [],
+      "followed_retarget": false,
+      "hard_case": true,
+      "ideal_verdict": "credited",
+      "observed_classifications": [
+        "exposed"
+      ],
+      "observed_verdict": "credited",
+      "origin": "authored",
+      "outcome": "ideal",
+      "subject_id": "authored-spec-confirm",
+      "test_shape": "wrapped_owner_result_field_assert",
+      "truth": "discriminated"
+    },
+    {
+      "anchor": "src/lib.rs:10",
+      "behavior_family": "return_value_arithmetic",
+      "case_id": "cell-0094-const-token-confirmed",
+      "changed_since_labeling": false,
+      "contradictions": [],
+      "followed_retarget": false,
+      "hard_case": true,
+      "ideal_verdict": "credited",
+      "observed_classifications": [
+        "exposed"
+      ],
+      "observed_verdict": "credited",
+      "origin": "authored",
+      "outcome": "ideal",
+      "subject_id": "authored-spec-confirm",
+      "test_shape": "unit_test_assert_eq_names_const",
+      "truth": "discriminated"
+    },
+    {
+      "anchor": "src/lib.rs:15",
+      "behavior_family": "return_value_arithmetic",
+      "case_id": "cell-0094-mixed-confirmation",
+      "changed_since_labeling": false,
+      "contradictions": [],
+      "followed_retarget": false,
+      "hard_case": true,
+      "ideal_verdict": "credited",
+      "observed_classifications": [
+        "weakly_exposed"
+      ],
+      "observed_verdict": "gap",
+      "origin": "authored",
+      "outcome": "false_actionable",
+      "subject_id": "authored-spec-confirm",
+      "test_shape": "relational_and_exact_assert_same_test",
+      "truth": "discriminated"
+    },
+    {
+      "anchor": "src/lib.rs:68",
+      "behavior_family": "side_effect",
+      "case_id": "cell-0096-drop-of-stored-result",
+      "changed_since_labeling": false,
+      "contradictions": [],
+      "followed_retarget": false,
+      "hard_case": true,
+      "ideal_verdict": "credited",
+      "observed_classifications": [
+        "propagation_unknown"
+      ],
+      "observed_verdict": "limited",
+      "origin": "authored",
+      "outcome": "abstained",
+      "subject_id": "authored-spec-confirm",
+      "test_shape": "unit_test_assert_eq_field",
+      "truth": "discriminated"
+    },
+    {
+      "anchor": "src/lib.rs:31",
+      "behavior_family": "side_effect",
+      "case_id": "cell-0096-eprintln-flag-only",
+      "changed_since_labeling": false,
+      "contradictions": [],
+      "followed_retarget": false,
+      "hard_case": true,
+      "ideal_verdict": "gap",
+      "observed_classifications": [
+        "propagation_unknown",
+        "weakly_exposed"
+      ],
+      "observed_verdict": "gap",
+      "origin": "authored",
+      "outcome": "ideal",
+      "subject_id": "authored-spec-confirm",
+      "test_shape": "unit_test_assert_bool",
+      "truth": "not_discriminated"
+    },
+    {
+      "anchor": "src/lib.rs:25",
+      "behavior_family": "side_effect",
+      "case_id": "cell-0096-log-info-captured",
+      "changed_since_labeling": false,
+      "contradictions": [],
+      "followed_retarget": false,
+      "hard_case": true,
+      "ideal_verdict": "credited",
+      "observed_classifications": [
+        "weakly_exposed"
+      ],
+      "observed_verdict": "gap",
+      "origin": "authored",
+      "outcome": "false_actionable",
+      "subject_id": "authored-spec-confirm",
+      "test_shape": "captured_log_record_assert",
+      "truth": "discriminated"
+    },
+    {
+      "anchor": "src/lib.rs:20",
+      "behavior_family": "side_effect",
+      "case_id": "cell-0096-log-info-smoke-only",
+      "changed_since_labeling": false,
+      "contradictions": [],
+      "followed_retarget": false,
+      "hard_case": true,
+      "ideal_verdict": "gap",
+      "observed_classifications": [
+        "weakly_exposed"
+      ],
+      "observed_verdict": "gap",
+      "origin": "authored",
+      "outcome": "ideal",
+      "subject_id": "authored-spec-confirm",
+      "test_shape": "smoke_call_no_assert",
+      "truth": "not_discriminated"
+    },
+    {
+      "anchor": "xtask/src/main.rs:4",
+      "behavior_family": "return_value_arithmetic",
+      "case_id": "cell-0153-xtask-edit-seeds",
+      "changed_since_labeling": false,
+      "contradictions": [],
+      "followed_retarget": false,
+      "hard_case": true,
+      "ideal_verdict": "credited",
+      "observed_classifications": [
+        "exposed"
+      ],
+      "observed_verdict": "credited",
+      "origin": "authored",
+      "outcome": "ideal",
+      "subject_id": "authored-spec-harness",
+      "test_shape": "unit_test_assert_eq",
+      "truth": "discriminated"
+    },
+    {
+      "anchor": "src/bin/tool.rs:8",
+      "behavior_family": "side_effect",
+      "case_id": "cell-0166-cargo-bin-stderr-unread",
+      "changed_since_labeling": false,
+      "contradictions": [],
+      "followed_retarget": false,
+      "hard_case": true,
+      "ideal_verdict": "gap",
+      "observed_classifications": [
+        "no_static_path"
+      ],
+      "observed_verdict": "limited",
+      "origin": "authored",
+      "outcome": "abstained",
+      "subject_id": "authored-spec-harness",
+      "test_shape": "assert_cmd_cargo_bin_stdout_only",
+      "truth": "not_discriminated"
+    },
+    {
+      "anchor": "src/bin/tool.rs:4",
+      "behavior_family": "return_value_arithmetic",
+      "case_id": "cell-0166-cargo-bin-stdout",
+      "changed_since_labeling": false,
+      "contradictions": [],
+      "followed_retarget": false,
+      "hard_case": true,
+      "ideal_verdict": "credited",
+      "observed_classifications": [
+        "no_static_path"
+      ],
+      "observed_verdict": "limited",
+      "origin": "authored",
+      "outcome": "abstained",
+      "subject_id": "authored-spec-harness",
+      "test_shape": "assert_cmd_cargo_bin_stdout",
+      "truth": "discriminated"
+    },
+    {
+      "anchor": "src/lib.rs:7",
+      "behavior_family": "return_value_arithmetic",
+      "case_id": "cell-0173-trial-callback-pin",
+      "changed_since_labeling": false,
+      "contradictions": [],
+      "followed_retarget": false,
+      "hard_case": true,
+      "ideal_verdict": "credited",
+      "observed_classifications": [
+        "static_unknown"
+      ],
+      "observed_verdict": "limited",
+      "origin": "authored",
+      "outcome": "abstained",
+      "subject_id": "authored-spec-harness",
+      "test_shape": "harness_trial_bare_identifier_callback",
+      "truth": "discriminated"
+    },
+    {
+      "anchor": "src/lib.rs:18",
+      "behavior_family": "return_value_arithmetic",
+      "case_id": "cell-0173-trial-never-run",
+      "changed_since_labeling": false,
+      "contradictions": [],
+      "followed_retarget": false,
+      "hard_case": true,
+      "ideal_verdict": "gap",
+      "observed_classifications": [
+        "no_static_path"
+      ],
+      "observed_verdict": "limited",
+      "origin": "authored",
+      "outcome": "abstained",
+      "subject_id": "authored-spec-harness",
+      "test_shape": "harness_trial_never_registered",
+      "truth": "not_discriminated"
+    },
+    {
+      "anchor": "src/lib.rs:13",
+      "behavior_family": "ok_value",
+      "case_id": "cell-0173-trial-unwrap-only",
+      "changed_since_labeling": false,
+      "contradictions": [],
+      "followed_retarget": false,
+      "hard_case": true,
+      "ideal_verdict": "gap",
+      "observed_classifications": [
+        "weakly_exposed"
+      ],
+      "observed_verdict": "gap",
+      "origin": "authored",
+      "outcome": "ideal",
+      "subject_id": "authored-spec-harness",
+      "test_shape": "harness_trial_unwrap_smoke",
+      "truth": "not_discriminated"
+    },
+    {
+      "anchor": "src/lib.rs:152",
+      "behavior_family": "return_value_arithmetic",
+      "case_id": "cell-0197-kept-default",
+      "changed_since_labeling": false,
+      "contradictions": [],
+      "followed_retarget": false,
+      "hard_case": true,
+      "ideal_verdict": "credited",
+      "observed_classifications": [
+        "weakly_exposed"
+      ],
+      "observed_verdict": "gap",
+      "origin": "authored",
+      "outcome": "false_actionable",
+      "subject_id": "authored-spec-confirm",
+      "test_shape": "trait_default_kept_by_tested_impl",
+      "truth": "discriminated"
+    },
+    {
+      "anchor": "src/lib.rs:184",
+      "behavior_family": "error_propagation_question_mark",
+      "case_id": "cell-0197-ok-return-path",
+      "changed_since_labeling": false,
+      "contradictions": [],
+      "followed_retarget": false,
+      "hard_case": true,
+      "ideal_verdict": "credited",
+      "observed_classifications": [
+        "exposed"
+      ],
+      "observed_verdict": "credited",
+      "origin": "authored",
+      "outcome": "ideal",
+      "subject_id": "authored-spec-confirm",
+      "test_shape": "unit_test_assert_eq_ok",
+      "truth": "discriminated"
+    },
+    {
+      "anchor": "src/lib.rs:179",
+      "behavior_family": "error_propagation_question_mark",
+      "case_id": "cell-0197-other-return-path",
+      "changed_since_labeling": false,
+      "contradictions": [],
+      "followed_retarget": false,
+      "hard_case": true,
+      "ideal_verdict": "gap",
+      "observed_classifications": [
+        "weakly_exposed"
+      ],
+      "observed_verdict": "gap",
+      "origin": "authored",
+      "outcome": "ideal",
+      "subject_id": "authored-spec-confirm",
+      "test_shape": "error_path_only_assert",
+      "truth": "not_discriminated"
+    },
+    {
+      "anchor": "src/lib.rs:131",
+      "behavior_family": "return_value_arithmetic",
+      "case_id": "cell-0197-overridden-default",
+      "changed_since_labeling": false,
+      "contradictions": [],
+      "followed_retarget": false,
+      "hard_case": true,
+      "ideal_verdict": "gap",
+      "observed_classifications": [
+        "weakly_exposed"
+      ],
+      "observed_verdict": "gap",
+      "origin": "authored",
+      "outcome": "ideal",
+      "subject_id": "authored-spec-confirm",
+      "test_shape": "trait_default_overridden_in_tested_impl",
+      "truth": "not_discriminated"
     },
     {
       "anchor": "src/rates.rs:32",
@@ -2239,6 +2620,272 @@
       "subject_id": "authored-ledger",
       "test_shape": "unit_test_assert_eq_accessor",
       "truth": "discriminated"
+    },
+    {
+      "anchor": "src/lib.rs:73",
+      "behavior_family": "match_arm",
+      "case_id": "mined-allowlist-listed-row-ftp",
+      "changed_since_labeling": false,
+      "contradictions": [],
+      "followed_retarget": false,
+      "hard_case": true,
+      "ideal_verdict": "credited",
+      "observed_classifications": [
+        "weakly_exposed"
+      ],
+      "observed_verdict": "gap",
+      "origin": "authored",
+      "outcome": "false_actionable",
+      "subject_id": "authored-mined-codec",
+      "test_shape": "table_harness_row_not_allowlisted",
+      "truth": "discriminated"
+    },
+    {
+      "anchor": "src/lib.rs:74",
+      "behavior_family": "match_arm",
+      "case_id": "mined-allowlisted-row-gopher",
+      "changed_since_labeling": false,
+      "contradictions": [],
+      "followed_retarget": false,
+      "hard_case": true,
+      "ideal_verdict": "gap",
+      "observed_classifications": [
+        "weakly_exposed"
+      ],
+      "observed_verdict": "gap",
+      "origin": "authored",
+      "outcome": "ideal",
+      "subject_id": "authored-mined-codec",
+      "test_shape": "table_harness_expected_failures_allowlist",
+      "truth": "not_discriminated"
+    },
+    {
+      "anchor": "src/lib.rs:62",
+      "behavior_family": "return_value",
+      "case_id": "mined-blanket-trait-negative-zero",
+      "changed_since_labeling": false,
+      "contradictions": [],
+      "followed_retarget": false,
+      "hard_case": true,
+      "ideal_verdict": "credited",
+      "observed_classifications": [
+        "weakly_exposed"
+      ],
+      "observed_verdict": "gap",
+      "origin": "authored",
+      "outcome": "false_actionable",
+      "subject_id": "authored-mined-codec",
+      "test_shape": "trait_impl_reached_through_blanket_impl",
+      "truth": "discriminated"
+    },
+    {
+      "anchor": "src/lib.rs:26",
+      "behavior_family": "return_value",
+      "case_id": "mined-bool-property-read-u32",
+      "changed_since_labeling": false,
+      "contradictions": [],
+      "followed_retarget": false,
+      "hard_case": true,
+      "ideal_verdict": "credited",
+      "observed_classifications": [
+        "weakly_exposed"
+      ],
+      "observed_verdict": "gap",
+      "origin": "authored",
+      "outcome": "false_actionable",
+      "subject_id": "authored-mined-wire",
+      "test_shape": "bool_property_fn_in_loop",
+      "truth": "discriminated"
+    },
+    {
+      "anchor": "src/lib.rs:11",
+      "behavior_family": "return_value",
+      "case_id": "mined-debug-assert-after-index",
+      "changed_since_labeling": false,
+      "contradictions": [],
+      "followed_retarget": false,
+      "hard_case": true,
+      "ideal_verdict": "gap",
+      "observed_classifications": [
+        "propagation_unknown"
+      ],
+      "observed_verdict": "limited",
+      "origin": "authored",
+      "outcome": "abstained",
+      "subject_id": "authored-mined-codec",
+      "test_shape": "production_debug_assert_not_on_edited_value",
+      "truth": "not_discriminated"
+    },
+    {
+      "anchor": "src/lib.rs:9",
+      "behavior_family": "return_value_arithmetic",
+      "case_id": "mined-debug-assert-only-oracle",
+      "changed_since_labeling": false,
+      "contradictions": [],
+      "followed_retarget": false,
+      "hard_case": true,
+      "ideal_verdict": "credited",
+      "observed_classifications": [
+        "static_unknown"
+      ],
+      "observed_verdict": "limited",
+      "origin": "authored",
+      "outcome": "abstained",
+      "subject_id": "authored-mined-codec",
+      "test_shape": "production_debug_assert_as_only_oracle",
+      "truth": "discriminated"
+    },
+    {
+      "anchor": "src/lib.rs:21",
+      "behavior_family": "return_value",
+      "case_id": "mined-doctest-ignored-read-u16-le",
+      "changed_since_labeling": false,
+      "contradictions": [],
+      "followed_retarget": false,
+      "hard_case": true,
+      "ideal_verdict": "gap",
+      "observed_classifications": [
+        "weakly_exposed"
+      ],
+      "observed_verdict": "gap",
+      "origin": "authored",
+      "outcome": "ideal",
+      "subject_id": "authored-mined-wire",
+      "test_shape": "doctest_marked_ignore",
+      "truth": "not_discriminated"
+    },
+    {
+      "anchor": "src/lib.rs:12",
+      "behavior_family": "return_value",
+      "case_id": "mined-doctest-only-read-u16",
+      "changed_since_labeling": false,
+      "contradictions": [],
+      "followed_retarget": false,
+      "hard_case": true,
+      "ideal_verdict": "credited",
+      "observed_classifications": [
+        "weakly_exposed"
+      ],
+      "observed_verdict": "gap",
+      "origin": "authored",
+      "outcome": "false_actionable",
+      "subject_id": "authored-mined-wire",
+      "test_shape": "doctest_only_oracle",
+      "truth": "discriminated"
+    },
+    {
+      "anchor": "src/lib.rs:56",
+      "behavior_family": "field_construction",
+      "case_id": "mined-hex-table-tested-row",
+      "changed_since_labeling": false,
+      "contradictions": [],
+      "followed_retarget": false,
+      "hard_case": true,
+      "ideal_verdict": "credited",
+      "observed_classifications": [
+        "static_unknown"
+      ],
+      "observed_verdict": "limited",
+      "origin": "authored",
+      "outcome": "abstained",
+      "subject_id": "authored-mined-wire",
+      "test_shape": "static_lookup_table_row_asserted",
+      "truth": "discriminated"
+    },
+    {
+      "anchor": "src/lib.rs:57",
+      "behavior_family": "field_construction",
+      "case_id": "mined-hex-table-unasserted-row",
+      "changed_since_labeling": false,
+      "contradictions": [],
+      "followed_retarget": false,
+      "hard_case": true,
+      "ideal_verdict": "gap",
+      "observed_classifications": [
+        "static_unknown"
+      ],
+      "observed_verdict": "limited",
+      "origin": "authored",
+      "outcome": "abstained",
+      "subject_id": "authored-mined-wire",
+      "test_shape": "static_lookup_table_row_unasserted",
+      "truth": "not_discriminated"
+    },
+    {
+      "anchor": "src/lib.rs:39",
+      "behavior_family": "return_value_arithmetic",
+      "case_id": "mined-macro-closure-header-length",
+      "changed_since_labeling": false,
+      "contradictions": [],
+      "followed_retarget": false,
+      "hard_case": true,
+      "ideal_verdict": "credited",
+      "observed_classifications": [
+        "weakly_exposed"
+      ],
+      "observed_verdict": "gap",
+      "origin": "authored",
+      "outcome": "false_actionable",
+      "subject_id": "authored-mined-wire",
+      "test_shape": "macro_test_closure_body_assert",
+      "truth": "discriminated"
+    },
+    {
+      "anchor": "src/lib.rs:32",
+      "behavior_family": "field_construction",
+      "case_id": "mined-multi-line-struct-literal-field",
+      "changed_since_labeling": false,
+      "contradictions": [],
+      "followed_retarget": false,
+      "hard_case": true,
+      "ideal_verdict": "credited",
+      "observed_classifications": [
+        "exposed"
+      ],
+      "observed_verdict": "credited",
+      "origin": "authored",
+      "outcome": "ideal",
+      "subject_id": "authored-mined-codec",
+      "test_shape": "multi_line_struct_literal_accessor_assert",
+      "truth": "discriminated"
+    },
+    {
+      "anchor": "src/lib.rs:25",
+      "behavior_family": "field_construction",
+      "case_id": "mined-one-line-struct-literal-field",
+      "changed_since_labeling": true,
+      "contradictions": [],
+      "followed_retarget": false,
+      "hard_case": true,
+      "ideal_verdict": "credited",
+      "observed_classifications": [
+        "exposed"
+      ],
+      "observed_verdict": "credited",
+      "origin": "authored",
+      "outcome": "ideal",
+      "subject_id": "authored-mined-codec",
+      "test_shape": "one_line_struct_literal_accessor_assert",
+      "truth": "discriminated"
+    },
+    {
+      "anchor": "src/lib.rs:45",
+      "behavior_family": "behavior_selector_const",
+      "case_id": "mined-roundtrip-symmetric-mask",
+      "changed_since_labeling": false,
+      "contradictions": [],
+      "followed_retarget": false,
+      "hard_case": true,
+      "ideal_verdict": "gap",
+      "observed_classifications": [
+        "static_unknown"
+      ],
+      "observed_verdict": "limited",
+      "origin": "authored",
+      "outcome": "abstained",
+      "subject_id": "authored-mined-wire",
+      "test_shape": "roundtrip_only_symmetric_constant",
+      "truth": "not_discriminated"
     },
     {
       "anchor": "src/lib.rs:5",
