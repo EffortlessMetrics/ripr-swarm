@@ -102,7 +102,8 @@ body, so condition 1 has no test to start from. When no indexed test yields a
 macro edge, the witness falls back to an invocation of a generator: a macro
 whose body contains `#[test]`, whose single definition in the index lexically
 mentions the owner, invoked in its own file, below the definition (`macro_rules!` is textually
-scoped), outside any macro body. The scan
+scoped), at module scope (every enclosing block is a `mod`; Rust registers no
+test for an item nested in a function), outside any macro body. The scan
 masks comments and strings first, so a commented-out invocation or a `#[test]`
 inside a string does not count. Body exclusion is by whole line, so an
 invocation sharing a line with a macro body's first or last line is skipped too. The witness names the

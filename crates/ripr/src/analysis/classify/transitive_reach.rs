@@ -1552,8 +1552,18 @@ fn generated_test_sites<'a>(file: &'a Path, source: &str) -> Vec<GeneratedTestSi
         return Vec::new();
     }
     let lines: Vec<&str> = masked.lines().collect();
+    let item_lines = module_scope_lines(&masked);
     let mut sites = Vec::new();
     for invocation in macro_invocations_in_text(&masked, 1) {
+        // Rust registers no test for a `#[test]` item nested in a function
+        // or other non-module block ("cannot test inner items").
+        if !item_lines
+            .get(invocation.line.saturating_sub(1))
+            .copied()
+            .unwrap_or(false)
+        {
+            continue;
+        }
         // `macro_rules!` is textually scoped: an invocation above the
         // definition cannot expand it.
         let Some(&(macro_name, macro_line)) = generators
@@ -1585,6 +1595,32 @@ fn generated_test_sites<'a>(file: &'a Path, source: &str) -> Vec<GeneratedTestSi
         });
     }
     sites
+}
+
+/// Per line of `masked`, whether the line starts at module scope: every
+/// brace enclosing it opens a `mod` block. A block whose header does not
+/// name `mod` (a function, impl, const or plain block) is not module scope.
+fn module_scope_lines(masked: &str) -> Vec<bool> {
+    let mut lines = vec![true];
+    let mut stack: Vec<bool> = Vec::new();
+    let mut header_start = 0usize;
+    for (offset, byte) in masked.bytes().enumerate() {
+        match byte {
+            b'{' => {
+                let header = masked.get(header_start..offset).unwrap_or_default();
+                stack.push(contains_identifier(header, "mod"));
+                header_start = offset + 1;
+            }
+            b'}' => {
+                stack.pop();
+                header_start = offset + 1;
+            }
+            b';' => header_start = offset + 1,
+            b'\n' => lines.push(stack.iter().all(|is_mod| *is_mod)),
+            _ => {}
+        }
+    }
+    lines
 }
 
 /// The identifier right after the first `macro_name!(` (or `[`/`{`) in
@@ -3279,6 +3315,28 @@ case!(after_definition);
             .map(|site| site.test_name)
             .collect();
         assert_eq!(names, vec!["after_definition".to_string()]);
+    }
+
+    #[test]
+    fn a_generator_invoked_inside_a_function_is_not_a_generated_test() {
+        let source = "macro_rules! case {
+    ($name:ident) => {
+        #[test]
+        fn $name() { owner(); }
+    };
+}
+fn helper() {
+    case!(inner_item);
+}
+mod tests {
+    case!(in_a_module);
+}
+";
+        let names: Vec<String> = generated_test_sites(Path::new("src/lib.rs"), source)
+            .into_iter()
+            .map(|site| site.test_name)
+            .collect();
+        assert_eq!(names, vec!["in_a_module".to_string()]);
     }
 
     #[test]
