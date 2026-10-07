@@ -31,6 +31,5 @@ The test is not discovered. Reach is `no` and the finding is `no_static_path`
 ## Known limits
 
 Not covered here, and stated so the fixture is not read as a broader claim:
-a `cfg_attr(..., cfg(...))` wrapper is not evaluated, and on the lexical
-fallback a gate attribute spanning more than 32 lines is not seen. In both
-cases the test stays discovered (fail open). Tracked in #7043.
+on the lexical fallback a gate attribute spanning more than 32 lines is not
+seen, so the test stays discovered (fail open). Tracked in #7043.
