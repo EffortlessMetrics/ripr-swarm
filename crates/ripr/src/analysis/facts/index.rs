@@ -3,6 +3,7 @@
 //! Parser/cache `FileFacts` remains the owned wire DTO. Its facts are moved into
 //! these arenas once; membership is never inferred from a name, span or path.
 use super::model::*;
+use crate::analysis::syntax::ModuleItemScopes;
 use serde::ser::{SerializeMap, SerializeStruct};
 use std::collections::{BTreeMap, BTreeSet};
 use std::marker::PhantomData;
@@ -163,6 +164,7 @@ pub struct FileData {
     pub unresolved_property_macros: Vec<UnresolvedPropertyMacroFact>,
     pub role_provenance: SourceRoleProvenance,
     pub source: std::sync::Arc<str>,
+    pub(crate) item_scopes: Option<Box<ModuleItemScopes>>,
 }
 
 /// A borrowed ordered view; it cannot outlive or retain an index generation.
@@ -338,7 +340,7 @@ impl serde::Serialize for FileFactsView<'_> {
             .iter()
             .map(|fact| ProbeShapeFactWire::attached(fact, &self.source))
             .collect();
-        let mut state = serializer.serialize_struct("FileFacts", 10)?;
+        let mut state = serializer.serialize_struct("FileFacts", 11)?;
         state.serialize_field("path", &self.path)?;
         state.serialize_field("functions", &functions)?;
         state.serialize_field("tests", &tests)?;
@@ -352,6 +354,7 @@ impl serde::Serialize for FileFactsView<'_> {
             &self.unresolved_property_macros,
         )?;
         state.serialize_field("source", self.source.as_ref())?;
+        state.serialize_field("item_scopes", &self.item_scopes)?;
         state.end()
     }
 }
@@ -489,6 +492,7 @@ impl RustIndex {
             unresolved_property_macros,
             role_provenance,
             source,
+            item_scopes,
         } = facts;
         // Allocate handle storage explicitly: an in-place map collection can retain
         // the much larger FunctionFact source allocation for these small IDs.
@@ -528,6 +532,7 @@ impl RustIndex {
                     unresolved_property_macros,
                     role_provenance,
                     source,
+                    item_scopes,
                 },
                 functions,
                 tests,
@@ -715,6 +720,7 @@ impl RustIndex {
             unresolved_property_macros,
             role_provenance,
             source,
+            item_scopes,
         } = file.data().clone();
         Some(FileFacts {
             path,
@@ -728,6 +734,7 @@ impl RustIndex {
             unresolved_property_macros,
             role_provenance,
             source,
+            item_scopes,
         })
     }
     #[cfg(test)]
