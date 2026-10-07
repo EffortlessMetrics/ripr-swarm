@@ -203,8 +203,13 @@ rule only for an assertion whose context was admitted.
      file, and neither the owner nor any enclosing inline module may carry
      a `cfg` or `cfg_attr` attribute, outer or inner (#7082): a
      complementary cfg may compile a same-named `static`, `const` or `use`
-     that the bare name reaches instead
-     (`a_cfg_gated_owner_is_not_reached_by_a_bare_call`).
+     that the bare name reaches instead. Nor may the owner's file be
+     droppable by a cfg: a file-level `#![cfg]`/`#![cfg_attr]`, or one on
+     any out-of-line `mod name;` declaration on the chain that compiles the
+     file into its crate (a cfg'd `#[path]` included), lets a same-named
+     module replace the whole file; an include edge or an unresolved chain
+     fails closed (`a_cfg_gated_owner_is_not_reached_by_a_bare_call`). The
+     same file rule applies to a path call.
    - A path call `a::b::name(..)` (#6974) names the same free function only
      when the path resolves to exactly the module that declares the owner.
      There an explicit `fn name` takes the value name from every glob, and

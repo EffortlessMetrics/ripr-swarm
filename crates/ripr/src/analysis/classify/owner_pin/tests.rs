@@ -1084,6 +1084,57 @@ fn a_cfg_gated_owner_is_not_reached_by_a_bare_call() {
     if let Some(pin) = pin {
         assert!(admitted_texts(&ix, &pin).is_empty());
     }
+    // An out-of-line module behind a cfg, or with a cfg'd `#[path]`, or a
+    // file-level `#![cfg]` in the owner's file: a cfg may swap the whole
+    // file for a same-named module holding the twin.
+    let scale = "pub fn weight(x: u32) -> u32 {\n    x * 3\n}\n";
+    let twin_mod = "#[cfg(feature = \"alt\")]\npub mod scale {\n    pub fn helper(_: u32) -> u32 {\n        12\n    }\n    #[allow(non_upper_case_globals)]\n    pub static weight: fn(u32) -> u32 = helper;\n}\n";
+    let tests =
+        "use demo::scale::weight;\n\n#[test]\nfn weighs() {\n    assert_eq!(weight(4), 12);\n}\n";
+    let file_admitted = |lib: &str, scale: &str, extra: &[(&str, &str)]| {
+        let mut files = vec![(LIB, lib), ("src/scale.rs", scale), (TESTS, tests)];
+        files.extend_from_slice(extra);
+        // Role composition records the `mod scale;` edge for the file.
+        let line = lib
+            .lines()
+            .position(|line| line.contains("mod scale;"))
+            .map_or(0, |at| at + 1);
+        assert!(line > 0, "{lib}");
+        let chain = SourceRoleProvenance {
+            edges: vec![module_edge(LIB, "src/scale.rs", "scale", line, false)],
+            earliest_unresolved_reason: None,
+        };
+        let ix = index_with_provenance(&files, &[("src/scale.rs", chain)]);
+        let owner = ix.functions().iter().find(|function| {
+            function.name == "weight" && function.file == Path::new("src/scale.rs")
+        });
+        assert!(
+            owner.is_some(),
+            "the owner must be indexed from src/scale.rs"
+        );
+        let pin = owner
+            .and_then(|owner| OwnerReturnPin::establish(&return_probe(owner, "x * 3"), owner, &ix));
+        assert!(pin.is_some(), "the file owner must establish: {lib}");
+        pin.map(|pin| admitted_texts(&ix, &pin)).unwrap_or_default()
+    };
+    let gated_decl = format!("#[cfg(not(feature = \"alt\"))]\npub mod scale;\n{twin_mod}");
+    assert!(file_admitted(&gated_decl, scale, &[]).is_empty());
+    let alt_file = "pub fn helper(_: u32) -> u32 {\n    12\n}\n#[allow(non_upper_case_globals)]\npub static weight: fn(u32) -> u32 = helper;\n";
+    assert!(
+        file_admitted(
+            "#[cfg_attr(feature = \"alt\", path = \"alt_scale.rs\")]\npub mod scale;\n",
+            scale,
+            &[("src/alt_scale.rs", alt_file)]
+        )
+        .is_empty()
+    );
+    let inner_gated = format!("#![cfg(not(feature = \"alt\"))]\n{scale}");
+    assert!(file_admitted("pub mod scale;\n", &inner_gated, &[]).is_empty());
+    // Control: the plain declaration pins.
+    assert_eq!(
+        file_admitted("pub mod scale;\n", scale, &[]),
+        ["assert_eq!(weight(4), 12);"]
+    );
     // Control: the ungated integration owner pins.
     assert_eq!(
         weight_admitted(

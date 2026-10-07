@@ -135,6 +135,8 @@ struct PathCallMemo {
     /// Per (owner crate root, owner name): whether the crate may hold an
     /// item of the name ripr cannot see.
     hidden: BTreeMap<(PathBuf, String), bool>,
+    /// Per file: whether a `cfg` may drop the whole file (#7082).
+    file_gated: BTreeMap<PathBuf, bool>,
     /// Per (test crate root, path root): whether the test's crate may bind
     /// the root itself.
     test_crate_binds: BTreeMap<(PathBuf, String), bool>,
@@ -244,6 +246,32 @@ impl OwnerPinSyntax {
             .nesting
             .insert(key, nesting.clone());
         nesting
+    }
+
+    /// #7082: whether a `cfg` may drop `file` as a whole, kept per file: an
+    /// inner `#![cfg]` or `#![cfg_attr]` at its top, or one on any `mod`
+    /// declaration on the chain that compiles it into its crate. A
+    /// complementary cfg may then compile a same-named module in its place.
+    /// An include edge, an unresolved chain or an unparsable file fails
+    /// closed.
+    fn file_cfg_gated(&self, index: &RustIndex, file: &Path) -> bool {
+        if let Some(known) = self.path_memo.borrow().file_gated.get(file) {
+            return *known;
+        }
+        let gated = index.files().get(file).is_none_or(|facts| {
+            let provenance = &facts.role_provenance;
+            parse_clean_source_file(&facts.source).is_none_or(|parse| has_cfg_attr(&parse.tree()))
+                || provenance.earliest_unresolved_reason.is_some()
+                || provenance.edges.iter().any(|edge| {
+                    edge.kind != SourceRoleProvenanceEdgeKind::Module
+                        || module_declaration_cfg_gated(index, &edge.parent, &edge.declaration)
+                })
+        });
+        self.path_memo
+            .borrow_mut()
+            .file_gated
+            .insert(file.to_path_buf(), gated);
+        gated
     }
 
     /// #6974: whether the crate rooted at `owner_root` may hold an item
@@ -1451,6 +1479,7 @@ impl OwnerReturnPin {
                 !syntax
                     .item_nesting(index, &self.owner_file, &self.name, self.owner_start_line)
                     .is_none_or(|owner| owner.cfg_gated)
+                    && !syntax.file_cfg_gated(index, &self.owner_file)
                     && !test_body_shadows_owner(test, &self.name)
                     && !binds_outside_let(&masked_body, &self.name)
                     && !bound_by_macro(&masked_body, &self.name)
@@ -1626,6 +1655,7 @@ impl OwnerReturnPin {
         syntax
             .item_nesting(index, &self.owner_file, &self.name, self.owner_start_line)
             .is_some_and(|owner| !owner.cfg_gated && owner.modules == module)
+            && !syntax.file_cfg_gated(index, &self.owner_file)
             && !syntax.crate_may_hide_name(index, &owner_root, &self.name, roots)
     }
 
@@ -1877,6 +1907,42 @@ fn has_cfg_attr(node: &impl ast::HasAttrs) -> bool {
             Some(ast::Meta::CfgMeta(_) | ast::Meta::CfgAttrMeta(_))
         )
     })
+}
+
+/// #7082: whether `parent` declares the out-of-line module that
+/// `declaration` (`mod <name>;`) names under a `cfg` or `cfg_attr`. Any
+/// same-named out-of-line declaration with one counts; an unreadable
+/// parent or declaration fails closed.
+fn module_declaration_cfg_gated(index: &RustIndex, parent: &Path, declaration: &str) -> bool {
+    let name = declaration
+        .split_whitespace()
+        .skip_while(|word| *word != "mod")
+        .nth(1)
+        .map(|word| word.trim_end_matches(';'));
+    let Some(name) = name.filter(|name| !name.is_empty()) else {
+        return true;
+    };
+    let name = name.strip_prefix("r#").unwrap_or(name);
+    let Some(parse) = index
+        .files()
+        .get(parent)
+        .and_then(|facts| parse_clean_source_file(&facts.source))
+    else {
+        return true;
+    };
+    parse
+        .tree()
+        .syntax()
+        .descendants()
+        .filter_map(ast::Module::cast)
+        .filter(|module| module.item_list().is_none())
+        .filter(|module| {
+            module.name().is_some_and(|ident| {
+                let text = ident.text().to_string();
+                text.strip_prefix("r#").unwrap_or(&text) == name
+            })
+        })
+        .any(|module| has_cfg_attr(&module))
 }
 
 /// #6974 review: whether any workspace file spells `r#name`, a raw
