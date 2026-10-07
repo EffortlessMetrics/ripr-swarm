@@ -1189,20 +1189,68 @@ fn marker_path_is_exact(marker: &str) -> bool {
 )]
 mod tests;
 
+/// Typed `config_for_candidate` failure (#6956): a stalled
+/// candidate-tree config read stays a timeout so the refusal names
+/// `git_invocation_timeout`, never `config_invalid`. Every other failure
+/// keeps its existing message verbatim.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum CandidateConfigError {
+    Timeout {
+        operation: String,
+        timeout_ms: u128,
+        spawned: bool,
+    },
+    Other(String),
+}
+
+impl std::fmt::Display for CandidateConfigError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Timeout {
+                operation,
+                timeout_ms,
+                spawned,
+            } => crate::core_error::CoreError::git_invocation_timeout(
+                operation.clone(),
+                *timeout_ms,
+                *spawned,
+            )
+            .fmt(formatter),
+            Self::Other(message) => formatter.write_str(message),
+        }
+    }
+}
+
 /// The config a bound immutable-subject run uses (#3279 R4): the
 /// candidate tree's own `ripr.toml` when the tree carries one, else the
 /// default config. The worktree file (already loaded as `worktree`)
 /// contributes nothing — `source_path`/`source_text` are cleared so the
 /// recorded identity cannot claim the worktree file as its source.
+///
+/// The config read honors the run's effective git deadline (#6956), so
+/// `--git-timeout`/`RIPR_GIT_TIMEOUT` (and `0` for no deadline) reach it
+/// like every other git wait, and the timeout repair guidance stays
+/// effective.
 pub(crate) fn config_for_candidate(
     subject: &crate::domain::GitCandidateSubject,
     worktree: &RiprConfig,
-) -> Result<RiprConfig, String> {
-    let bytes = crate::analysis::git_candidate_execution::candidate_config_bytes(
-        subject,
-        Some(std::time::Duration::from_secs(30)),
-    )
-    .map_err(|error| error.to_string())?;
+    git_timeout: Option<std::time::Duration>,
+) -> Result<RiprConfig, CandidateConfigError> {
+    use crate::domain::GitCandidateSubjectError;
+    let bytes =
+        crate::analysis::git_candidate_execution::candidate_config_bytes(subject, git_timeout)
+            .map_err(|error| match error {
+                GitCandidateSubjectError::ExecutionTimedOut {
+                    operation,
+                    timeout_ms,
+                    spawned,
+                } => CandidateConfigError::Timeout {
+                    operation,
+                    timeout_ms,
+                    spawned,
+                },
+                other => CandidateConfigError::Other(other.to_string()),
+            })?;
     let Some(text) = bytes else {
         // Pure default: no worktree fact may enter a subject run
         // (#3279 review B1 — the worktree's enabled-languages list is
@@ -1211,8 +1259,8 @@ pub(crate) fn config_for_candidate(
         let _ = worktree;
         return Ok(RiprConfig::default());
     };
-    let mut config =
-        parse_config(&text).map_err(|err| format!("candidate tree ripr.toml: {err}"))?;
+    let mut config = parse_config(&text)
+        .map_err(|err| CandidateConfigError::Other(format!("candidate tree ripr.toml: {err}")))?;
     config.source_path = None;
     config.source_text = Some(text);
     Ok(config)
