@@ -13243,6 +13243,10 @@ tests = [
   "crates/ripr/tests/cli_smoke/check_artifact_stdin.rs::javascript_stdin_artifact_refusal_preserves_named_recovery",
   "crates/ripr/tests/cli_smoke/implicit_git_root.rs::git_launch_failure_stops_root_discovery_with_consumer_recovery",
   "crates/ripr/src/cli/commands/check.rs::config_load_refusal_without_any_config_entry_falls_back",
+  "crates/ripr/tests/cli_smoke.rs::check_json_omitted_base_git_timeout_names_timeout_identity",
+  "crates/ripr/tests/cli_smoke.rs::check_json_bound_subject_config_timeout_names_timeout_identity",
+  "crates/ripr/src/config/tests.rs::candidate_config_error_timeout_renders_the_timeout_diagnostic",
+  "crates/ripr/src/analysis/diff/load.rs::core_error_for_git_root_probe_matches_the_legacy_messages",
 ]
 fixtures = []
 code = [
@@ -13250,6 +13254,9 @@ code = [
   "crates/ripr/src/core_error.rs",
   "crates/ripr/src/output/limited_check.rs",
   "crates/ripr/src/analysis/diff/load.rs",
+  "crates/ripr/src/analysis/git_candidate_execution.rs",
+  "crates/ripr/src/config.rs",
+  "crates/ripr/src/domain/git_candidate.rs",
   "crates/ripr/src/app.rs",
   "crates/ripr/src/app/check.rs",
   "crates/ripr/src/app/progress.rs",

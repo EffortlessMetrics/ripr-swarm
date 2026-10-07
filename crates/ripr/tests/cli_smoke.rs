@@ -3279,6 +3279,139 @@ fn check_json_timeout_and_bad_base_have_distinct_identities() -> Result<(), Stri
     Ok(())
 }
 
+/// #6956: a `git` shim that hangs on every invocation, first on `PATH`.
+/// Fixture setup with real git must finish before installing the override.
+/// Returns the shim dir (for cleanup) and the search path for the run.
+#[cfg(unix)]
+fn hanging_git_path_override(label: &str) -> Result<(PathBuf, String), String> {
+    let shim_dir = unique_temp_workspace(label);
+    std::fs::create_dir_all(&shim_dir).map_err(|err| format!("create shim dir: {err}"))?;
+    let shim = shim_dir.join("git");
+    std::fs::write(&shim, "#!/bin/sh\nexec sleep 60\n")
+        .map_err(|err| format!("write git shim: {err}"))?;
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&shim, std::fs::Permissions::from_mode(0o755))
+            .map_err(|err| format!("make git shim executable: {err}"))?;
+    }
+    let mut paths = vec![shim_dir.clone()];
+    paths.extend(std::env::split_paths(
+        &std::env::var_os("PATH").unwrap_or_default(),
+    ));
+    let search_path = std::env::join_paths(paths)
+        .map_err(|err| format!("build shim PATH: {err}"))?
+        .to_string_lossy()
+        .into_owned();
+    Ok((shim_dir, search_path))
+}
+
+/// #6956: with no `--base`, a stalled default-base probe is a timeout,
+/// not a missing ref: the refusal names `git_invocation_timeout` while
+/// stderr keeps the timeout diagnostic.
+#[cfg(unix)]
+#[test]
+fn check_json_omitted_base_git_timeout_names_timeout_identity() -> Result<(), String> {
+    let root = init_check_refusal_repo("check-json-omitted-base-timeout", 1)?;
+    let root_arg = root.display().to_string();
+    let (shim_dir, search_path) =
+        hanging_git_path_override("check-json-omitted-base-timeout-shim")?;
+
+    let started = std::time::Instant::now();
+    let output = run_command_with_env(
+        env!("CARGO_BIN_EXE_ripr"),
+        &root,
+        &[
+            "check",
+            "--json",
+            "--root",
+            root_arg.as_str(),
+            "--worktree",
+            "--git-timeout",
+            "1",
+        ],
+        &[("PATH", search_path.as_str())],
+    )
+    .map_err(|err| format!("run check with hanging git: {err}"))?;
+    let elapsed = started.elapsed();
+    let value =
+        assert_check_json_refusal(&output, "git_invocation_timeout", "analysis/git-timeout")?;
+    assert!(
+        elapsed < std::time::Duration::from_secs(60),
+        "check waited {elapsed:?} on hung git under --git-timeout 1"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if !stderr.contains("git_invocation_timeout") {
+        return Err(format!("stderr must keep the timeout prose: {stderr}"));
+    }
+    let message = value["run_limitations"][0]["message"]
+        .as_str()
+        .ok_or("refusal must carry a message")?;
+    if !message.contains("git_invocation_timeout") {
+        return Err(format!(
+            "the envelope message must echo the timeout diagnostic: {message}"
+        ));
+    }
+    ignore_remove_dir_all(&root);
+    ignore_remove_dir_all(&shim_dir);
+    Ok(())
+}
+
+/// #6956: a stalled candidate-tree config read is a timeout, not a broken
+/// config file: the refusal names `git_invocation_timeout` while stderr
+/// keeps the timeout diagnostic. The config read deadline is 30s, so this
+/// test owns a ~30s hang by construction.
+#[cfg(unix)]
+#[test]
+fn check_json_bound_subject_config_timeout_names_timeout_identity() -> Result<(), String> {
+    use common::fixture_git::fixture_git_output;
+    let root = init_check_refusal_repo("check-json-subject-config-timeout", 1)?;
+    let root_arg = root.display().to_string();
+    let tree = fixture_git_output(&root, &["rev-parse", "HEAD^{tree}"])?;
+    let tree = tree.trim().to_string();
+    let (shim_dir, search_path) =
+        hanging_git_path_override("check-json-subject-config-timeout-shim")?;
+
+    let started = std::time::Instant::now();
+    let output = run_command_with_env(
+        env!("CARGO_BIN_EXE_ripr"),
+        &root,
+        &[
+            "check",
+            "--json",
+            "--root",
+            root_arg.as_str(),
+            "--candidate-tree",
+            tree.as_str(),
+            "--candidate-base",
+            "HEAD",
+        ],
+        &[("PATH", search_path.as_str())],
+    )
+    .map_err(|err| format!("run check with hanging git: {err}"))?;
+    let elapsed = started.elapsed();
+    let value =
+        assert_check_json_refusal(&output, "git_invocation_timeout", "analysis/git-timeout")?;
+    assert!(
+        elapsed < std::time::Duration::from_secs(120),
+        "check waited {elapsed:?} on hung git for the candidate config read"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if !stderr.contains("git_invocation_timeout") {
+        return Err(format!("stderr must keep the timeout prose: {stderr}"));
+    }
+    let message = value["run_limitations"][0]["message"]
+        .as_str()
+        .ok_or("refusal must carry a message")?;
+    if !message.contains("git_invocation_timeout") {
+        return Err(format!(
+            "the envelope message must echo the timeout diagnostic: {message}"
+        ));
+    }
+    ignore_remove_dir_all(&root);
+    ignore_remove_dir_all(&shim_dir);
+    Ok(())
+}
+
 /// #6834: the success path carries no refusal shape — no `analysis_scope`
 /// or `run_limitations` keys — so the envelope cannot be mistaken for a
 /// result and no success field moved. Byte-identity against the base

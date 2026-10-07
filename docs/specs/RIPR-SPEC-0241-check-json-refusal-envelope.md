@@ -140,3 +140,36 @@ exists.
 
 - None. Refusal rendering is a single document write on an already-failing
   path; no timing budget governs it.
+
+## Amendment (#6956): stalled probes and config reads name the timeout
+
+The Non-Goals deferral above ("no new identity for timeout-vs-absence
+conflations") is superseded for these two producers. No new identity was
+introduced: both now report the existing `git_invocation_timeout`
+identity with route `analysis/git-timeout`, which is what a stalled
+probe observes.
+
+- A default-base probe that exceeds its deadline yields
+  `git_invocation_timeout` instead of `base_unresolvable`, with the
+  timeout diagnostic on stderr echoed verbatim into the envelope
+  message. A genuinely unanswered probe (no timeout evidence) still
+  keeps `base_unresolvable`.
+- A candidate-tree config read that exceeds its deadline yields
+  `git_invocation_timeout` instead of `config_invalid`, with the same
+  echo parity. Genuine load/parse failures stay `config_invalid`.
+
+## Test Mapping (Amendment #6956)
+
+- `crates/ripr/tests/cli_smoke.rs::check_json_omitted_base_git_timeout_names_timeout_identity`
+- `crates/ripr/tests/cli_smoke.rs::check_json_bound_subject_config_timeout_names_timeout_identity`
+- `crates/ripr/src/config/tests.rs::candidate_config_error_timeout_renders_the_timeout_diagnostic`
+- `crates/ripr/src/analysis/diff/load.rs::core_error_for_git_root_probe_matches_the_legacy_messages`
+  (extended with the `TimedOut` arm)
+- `crates/ripr/src/domain/git_candidate.rs::error_display_names_each_failure_class`
+  (extended with the `ExecutionTimedOut` case)
+
+## Implementation Mapping (Amendment #6956)
+
+- `crates/ripr/src/analysis/diff/load.rs::GitRootProbe::TimedOut`
+- `crates/ripr/src/domain/git_candidate.rs::GitCandidateSubjectError::ExecutionTimedOut`
+- `crates/ripr/src/config.rs::CandidateConfigError`

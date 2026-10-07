@@ -354,10 +354,10 @@ pub(crate) fn resolve_effective_base_core(
 /// message constructor — with the probe enum selecting the typed variant
 /// structurally. A root Git cannot work with is `RepositoryRootUnusable`;
 /// missing git stays an untyped message (environmental, not a root or ref
-/// verdict); an unanswered probe keeps the default-base error as
-/// `BaseUnresolvable`. The `None` arms are defensive: these probes always
-/// render, but a silent change there must keep the default-base error,
-/// never panic.
+/// verdict); a timed-out probe keeps its timeout identity (#6956); an
+/// unanswered probe keeps the default-base error as `BaseUnresolvable`.
+/// The `None` arms are defensive: these probes always render, but a silent
+/// change there must keep the default-base error, never panic.
 fn core_error_for_git_root_probe(
     probe: GitRootProbe,
     root: &Path,
@@ -374,6 +374,11 @@ fn core_error_for_git_root_probe(
             Some(message) => CoreError::message(message),
             None => CoreError::base_unresolvable(default_base_error),
         },
+        GitRootProbe::TimedOut {
+            operation,
+            timeout_ms,
+            spawned,
+        } => CoreError::git_invocation_timeout(operation, timeout_ms, spawned),
         GitRootProbe::Unanswered => CoreError::base_unresolvable(default_base_error),
     }
 }
@@ -394,6 +399,14 @@ enum GitRootProbe {
     /// Git ran and could not read the repository (a bad `.git/config`, a
     /// damaged ref store); the message carries Git's own reason and a repair.
     Unreadable(String),
+    /// The probe exceeded its deadline and was terminated (#6956). A
+    /// stalled probe established nothing about refs or roots, so the
+    /// refusal names `git_invocation_timeout`, never `base_unresolvable`.
+    TimedOut {
+        operation: String,
+        timeout_ms: u128,
+        spawned: bool,
+    },
     Unanswered,
 }
 
@@ -424,6 +437,11 @@ fn message_for_git_root_probe(probe: GitRootProbe, root: &Path) -> Option<String
         GitRootProbe::DubiousOwnership(message) | GitRootProbe::Unreadable(message) => {
             Some(message)
         }
+        GitRootProbe::TimedOut {
+            operation,
+            timeout_ms,
+            spawned,
+        } => Some(CoreError::git_invocation_timeout(operation, timeout_ms, spawned).to_string()),
         GitRootProbe::Unanswered => None,
     }
 }
@@ -531,6 +549,15 @@ fn probe_git_root(root: &Path, git_timeout: Option<Duration>) -> GitRootProbe {
         &["rev-parse", "--is-inside-work-tree"],
         git_timeout,
     ) {
+        Err(CoreError::GitInvocationTimeout {
+            operation,
+            timeout_ms,
+            spawned,
+        }) => GitRootProbe::TimedOut {
+            operation,
+            timeout_ms,
+            spawned,
+        },
         Err(err) => classify_git_root_probe(Err(&err.to_string())),
         Ok(output) => {
             let inside =
@@ -577,7 +604,9 @@ fn not_a_work_tree(root: &Path, git_timeout: Option<Duration>) -> Option<String>
         GitRootProbe::DubiousOwnership(message) | GitRootProbe::Unreadable(message) => {
             Some(message)
         }
-        GitRootProbe::GitNotFoundOnPath | GitRootProbe::Unanswered => None,
+        GitRootProbe::GitNotFoundOnPath
+        | GitRootProbe::TimedOut { .. }
+        | GitRootProbe::Unanswered => None,
     }
 }
 
@@ -2008,35 +2037,63 @@ mod tests {
             GitRootProbe::GitNotFoundOnPath,
             GitRootProbe::DubiousOwnership("dubious ownership repair".to_string()),
             GitRootProbe::Unreadable("unreadable repair".to_string()),
+            GitRootProbe::TimedOut {
+                operation: "git rev-parse".to_string(),
+                timeout_ms: 1_000,
+                spawned: true,
+            },
             GitRootProbe::Unanswered,
         ];
         for probe in probes {
             let label = format!("{probe:?}");
-            let (for_legacy, for_typed, expected_kind) = match probe {
+            let (for_legacy, for_typed, expected_kind, expected_timeout) = match probe {
                 GitRootProbe::NotAWorkTree => (
                     GitRootProbe::NotAWorkTree,
                     GitRootProbe::NotAWorkTree,
                     Some(CheckFailureKind::RepositoryRootUnusable),
+                    false,
                 ),
                 GitRootProbe::GitNotFoundOnPath => (
                     GitRootProbe::GitNotFoundOnPath,
                     GitRootProbe::GitNotFoundOnPath,
                     None,
+                    false,
                 ),
                 GitRootProbe::DubiousOwnership(message) => (
                     GitRootProbe::DubiousOwnership(message.clone()),
                     GitRootProbe::DubiousOwnership(message),
                     Some(CheckFailureKind::RepositoryRootUnusable),
+                    false,
                 ),
                 GitRootProbe::Unreadable(message) => (
                     GitRootProbe::Unreadable(message.clone()),
                     GitRootProbe::Unreadable(message),
                     Some(CheckFailureKind::RepositoryRootUnusable),
+                    false,
+                ),
+                GitRootProbe::TimedOut {
+                    operation,
+                    timeout_ms,
+                    spawned,
+                } => (
+                    GitRootProbe::TimedOut {
+                        operation: operation.clone(),
+                        timeout_ms,
+                        spawned,
+                    },
+                    GitRootProbe::TimedOut {
+                        operation,
+                        timeout_ms,
+                        spawned,
+                    },
+                    None,
+                    true,
                 ),
                 GitRootProbe::Unanswered => (
                     GitRootProbe::Unanswered,
                     GitRootProbe::Unanswered,
                     Some(CheckFailureKind::BaseUnresolvable),
+                    false,
                 ),
             };
             let legacy = message_for_git_root_probe(for_legacy, root)
@@ -2044,6 +2101,11 @@ mod tests {
             let typed = core_error_for_git_root_probe(for_typed, root, default_error.clone());
             assert_eq!(typed.to_string(), legacy, "{label}");
             assert_eq!(typed.check_failure_kind(), expected_kind, "{label}");
+            assert_eq!(
+                typed.is_git_invocation_timeout(),
+                expected_timeout,
+                "{label}"
+            );
         }
     }
 
