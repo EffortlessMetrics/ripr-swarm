@@ -3668,7 +3668,9 @@ mod tests {
         let gauge_test = "#[test]\nfn gauge_pins_both_arms() {\n    \
                           assert_eq!(scope_a::quarble_gauge(true), true);\n    \
                           assert_eq!(scope_a::quarble_gauge(false), false);\n}\n";
-        let glob_e = "use proptest::prelude::*;\n\npub fn unrelated() -> u8 {\n    1\n}\n";
+        // A re-exported glob is workspace-wide; a private one at a crate
+        // root reaches only that crate (#5352), checked below.
+        let glob_e = "pub use proptest::prelude::*;\n\npub fn unrelated() -> u8 {\n    1\n}\n";
 
         let root = temp_root("dependent-scope-macro-bindings")?;
         write_dependent_scope_workspace(&root, glob_e)?;
@@ -3694,6 +3696,58 @@ mod tests {
             rooted(&plain_full, &plain_root),
             rooted(&full, &root),
             "the withheld glob must change the full closure's decision"
+        );
+
+        let private_root = temp_root("dependent-scope-macro-bindings-private")?;
+        write_dependent_scope_workspace(
+            &private_root,
+            "use proptest::prelude::*;\n\npub fn unrelated() -> u8 {\n    1\n}\n",
+        )?;
+        write(&private_root.join("a/tests/gauge_tests.rs"), gauge_test)?;
+        let (private_full, _, _) = scoped_findings(&private_root, DependentScopeMode::Full)?;
+        let (private_named, private_main, _) =
+            scoped_findings(&private_root, DependentScopeMode::NameAdmitted)?;
+        let private_main = slash_paths(&private_main.ok_or("the named mode must narrow")?);
+        assert!(
+            !private_main.contains(&"e/src/lib.rs".to_string()),
+            "the private glob's crate root must stay withheld: {private_main:?}"
+        );
+        assert_eq!(
+            private_named, private_full,
+            "a withheld crate root's private glob must be routed like the full closure's"
+        );
+        assert_eq!(
+            rooted(&private_full, &private_root),
+            rooted(&plain_full, &plain_root),
+            "a private glob in another crate's root must not refuse this crate's tests"
+        );
+
+        // #6909: a `cfg_attr` path has no static target, so the full index
+        // stops routing crate-local sites; the named mode must admit the
+        // file rather than route its private glob from the withheld side.
+        let path_root = temp_root("dependent-scope-macro-bindings-cfg-attr-path")?;
+        write_dependent_scope_workspace(
+            &path_root,
+            "use proptest::prelude::*;\n\n#[cfg_attr(unix, path = \"unix.rs\")]\nmod platform;\n\n\
+             pub fn unrelated() -> u8 {\n    1\n}\n",
+        )?;
+        write(&path_root.join("a/tests/gauge_tests.rs"), gauge_test)?;
+        let (path_full, _, _) = scoped_findings(&path_root, DependentScopeMode::Full)?;
+        let (path_named, path_main, _) =
+            scoped_findings(&path_root, DependentScopeMode::NameAdmitted)?;
+        let path_main = slash_paths(&path_main.ok_or("the named mode must narrow")?);
+        assert!(
+            path_main.contains(&"e/src/lib.rs".to_string()),
+            "a `cfg_attr` path must admit its file: {path_main:?}"
+        );
+        assert_ne!(
+            rooted(&path_full, &path_root),
+            rooted(&plain_full, &plain_root),
+            "fixture premise: the unresolvable path keeps the private glob workspace-wide"
+        );
+        assert_eq!(
+            path_named, path_full,
+            "a crate root with a `cfg_attr` path must be decided like the full closure"
         );
         Ok(())
     }

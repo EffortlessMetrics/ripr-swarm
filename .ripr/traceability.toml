@@ -8069,6 +8069,8 @@ tests = [
   "crates/ripr/src/domain/verification_result.rs::tests::malformed_commitments_and_heads_fail_closed",
   "crates/ripr/src/domain/verification_result.rs::tests::impossible_process_and_currentness_states_fail_closed",
   "crates/ripr/src/domain/verification_result.rs::tests::command_spec_digest_is_pinned_to_serialized_field_order",
+  "crates/ripr/src/domain/verification_result.rs::tests::command_spec_digest_ignores_display_but_covers_typed_route",
+  "crates/ripr/src/agent/command_specs.rs::tests::relocated_checkouts_share_identity_and_substituted_roots_fail_closed",
   "crates/ripr/src/app/verification_execution.rs::tests::digest_is_prefixed_and_stable",
   "crates/ripr/src/app/verification_execution.rs::tests::output_reader_caps_without_returning_raw_content",
   "crates/ripr/src/app/verification_execution.rs::tests::accepts_the_canonical_producer_array_shape",
