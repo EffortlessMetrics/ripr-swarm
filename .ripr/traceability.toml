@@ -7550,6 +7550,9 @@ tests = [
   "crates/ripr/src/analysis/classify/reveal.rs::tests::related_tests_cap_keeps_a_second_test_when_one_test_has_many_oracles",
   "crates/ripr/src/analysis/test_grip_evidence/tests.rs::given_two_impls_when_compact_grip_sees_other_type_call_then_not_direct_owner_call",
   "crates/ripr/src/analysis/test_grip_evidence/tests.rs::given_two_impls_when_compact_grip_sees_owner_type_call_then_direct_owner_call",
+  "crates/ripr/src/analysis/classify/related_tests.rs::tests::given_two_impls_when_test_calls_through_trait_path_then_argument_type_decides",
+  "crates/ripr/src/analysis/classify/related_tests.rs::tests::given_trait_path_call_to_a_function_without_self_then_name_only_relation",
+  "crates/ripr/src/analysis/test_grip_evidence/tests.rs::given_two_impls_when_compact_grip_sees_trait_path_call_then_argument_type_decides",
 ]
 fixtures = [
   "fixtures/wildcard_oracle_wildcard_original",
@@ -8347,6 +8350,10 @@ tests = [
   "crates/ripr/src/analysis/classify/related_tests.rs::tests::suffixed_numeric_literal_receiver_resolves_to_its_primitive_type",
   "crates/ripr/src/analysis/classify/related_tests.rs::tests::suffixed_numeric_literal_type_reads_only_well_formed_literals",
   "crates/ripr/src/analysis/classify/related_tests.rs::tests::quoted_suffixed_literal_on_a_raw_call_line_does_not_resolve",
+  "crates/ripr/src/analysis/classify/related_tests.rs::tests::impl_trait_name_reads_only_trait_impl_segments",
+  "crates/ripr/src/analysis/classify/related_tests.rs::tests::trait_qualified_call_resolves_by_its_first_argument",
+  "crates/ripr/src/analysis/classify/related_tests.rs::tests::trait_qualified_call_resolves_a_constructor_argument",
+  "crates/ripr/src/analysis/classify/related_tests.rs::tests::quoted_trait_path_call_on_a_raw_call_line_does_not_resolve",
   "crates/ripr/src/analysis/classify/transitive_reach.rs::tests::witness_pointer_uses_may_language_and_no_coverage_claim",
   "crates/ripr/src/analysis/classify/transitive_reach.rs::tests::witness_pointer_normalizes_backslashes_in_path",
   "crates/ripr/src/analysis/classify/transitive_reach.rs::tests::witness_pointer_reports_plural_other_tests",

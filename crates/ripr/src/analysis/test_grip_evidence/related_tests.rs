@@ -1,6 +1,6 @@
 use super::*;
 use crate::analysis::classify::{
-    impl_self_type_name, impl_trait_name, method_call_resolves_to_impl,
+    impl_self_type_name, method_call_resolves_to_impl, owner_dispatch_trait,
 };
 use std::sync::Arc;
 
@@ -74,7 +74,7 @@ impl OwnerContext {
             .map(|file| context.fixture_names_for_owner_file(file))
             .unwrap_or_default();
         let impl_type = owner_fn.and_then(|owner| impl_self_type_name(&owner.id.0));
-        let impl_trait = owner_fn.and_then(|owner| impl_trait_name(&owner.id.0));
+        let impl_trait = owner_fn.and_then(owner_dispatch_trait);
         let same_name_count = context.function_name_count(&name);
         Self {
             name,
