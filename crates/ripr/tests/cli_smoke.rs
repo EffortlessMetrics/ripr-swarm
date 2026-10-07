@@ -14693,14 +14693,12 @@ fn pilot_says_it_withholds_the_seam_on_the_current_change() -> Result<(), String
         ("src/lib.rs", &lib.replace("total > 100", "total >= 100")),
     )?;
     let out_dir = unique_temp_workspace("pilot-withheld-current-change-out");
-    let output = std::process::Command::new(env!("CARGO_BIN_EXE_ripr"))
-        .args(["pilot", "--root"])
-        .arg(&root)
-        .arg("--out")
-        .arg(&out_dir)
-        .env("RIPR_PILOT_SEAM_BUDGET", "1")
-        .output()
-        .map_err(|err| format!("run ripr pilot: {err}"))?;
+    let root_arg = root.display().to_string();
+    let out_arg = out_dir.display().to_string();
+    let output = run_ripr_with_env(
+        &["pilot", "--root", &root_arg, "--out", &out_arg],
+        &[("RIPR_PILOT_SEAM_BUDGET", "1")],
+    );
     assert_success(&output);
     let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
     let summary: serde_json::Value = serde_json::from_str(
