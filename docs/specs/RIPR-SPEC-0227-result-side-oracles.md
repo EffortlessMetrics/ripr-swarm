@@ -20,7 +20,7 @@ Linked plan:
 
 Linked issues:
 
-- None yet
+- #7063 (false verdicts: broad error oracle and `?` cluster)
 
 Linked PRs:
 
@@ -216,6 +216,23 @@ rejected alternative. Any can be reversed later without touching the rest.
    tells the original from the change; when any of these is not established,
    RIPR-SPEC-0107 still applies. RIPR-SPEC-0107 records this exception.
    Rejected: leave `?` under RIPR-SPEC-0107 (always weak with a broad oracle).
+4. **Establishing rule 3b without evaluating the input.** Adopted
+   (2026-10-07): when the changed `?` is the owner's only possible source of
+   `Err`, a passing test that asserts the owner call returns `Err` proves
+   condition 2 (that call took the `?`'s `Err`), and condition 3 follows
+   because swallowing the `?` leaves no other way to return `Err`. "Only
+   source" means a free, attribute-free function returning `Result<..>` whose
+   body has exactly one `?`, no `return`, no `Err` path, no closure, macro or
+   nested item, and an `Ok(..)` tail; the `?` operand must not shape the
+   error (`map_err`, `ok_or`, `or_else`, `context`, or a value path naming a
+   type or variant), because rule 1 still holds. The assertion must be a
+   top-level statement of a plain `#[test]` that calls the owner directly by
+   name (`is_err()`, `!is_ok()`, `matches!(.., Err(_))`, or a bare
+   `unwrap_err()` / `expect_err()`). Any other shape keeps the
+   RIPR-SPEC-0107 reading. Rejected: evaluate `c` on the test input (a
+   std-library and user-code interpreter ripr does not have) or withhold
+   these findings as `static_unknown` (rule 1 keeps the gap for a weak
+   oracle ripr did read).
 
 ## Required Evidence
 
@@ -292,6 +309,11 @@ Source: `check` as in Problem.
   for rules 3 and 3b.
 - `crates/ripr/src/analysis/classify/reveal.rs`: rule 1 and rules 3 and 3b
   gates.
+- `crates/ripr/src/analysis/classifier/evidence/side_flip.rs`: rule 3b by
+  decision 4, a producer that refines a weak `error_path` discriminator on a
+  sole-source `?` line (corpus cases `spec0227-total-question-mark-is-err`
+  and `grid-try-exact`; controls `spec0227-total-question-mark-earlier-err`
+  and `spec0227-total-question-mark-ok-input` keep their gap).
 
 ## Metrics
 
