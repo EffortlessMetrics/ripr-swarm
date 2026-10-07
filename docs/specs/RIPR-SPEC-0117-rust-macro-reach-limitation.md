@@ -92,9 +92,23 @@ Leave the finding exactly as before. Do not emit the limitation merely because a
 test file contains an unrelated macro, an external macro is invoked, or a macro
 definition does not mention the changed owner name.
 
+### Proximity-only weak reach (#7071)
+
+A `weakly_exposed` finding faces the same unresolved negative when its reach is
+`weak` and every related test is proximity-only (`same_test_file`,
+`same_module` or `weak_token_substring`): no test is seen calling the owner,
+only sharing its file or a name token. For that finding the Rust adapter runs
+the RIPR-SPEC-0114 transitive witness, then this macro witness, and names the
+first one found exactly as above. The class stays `weakly_exposed`. The
+recommended next step names the witnessing test and entry symbol and says the
+limitation does not establish a missing test. A finding with any related test
+that calls the owner keeps reach established and gets no limit. The
+subprocess-binary and property-macro limits stay `no_static_path`-only.
+
 ### Fail-closed boundaries
 
-- Never change classification from `no_static_path`.
+- Never change classification from `no_static_path`, or from `weakly_exposed`
+  for a proximity-only finding.
 - Never add the witness to `related_tests`.
 - Never claim the test reaches, covers, tests, or exercises the changed owner.
 - Only same-repo `macro_rules!` definitions are considered.

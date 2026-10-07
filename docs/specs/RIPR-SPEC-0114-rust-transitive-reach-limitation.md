@@ -81,6 +81,9 @@ non-integration helper chains keep `rust_transitive_reach_unresolved`. The stop
 reason, classification, witness language, and fail-closed boundaries remain
 unchanged.
 
+RIPR-SPEC-0117 extends the trigger to `weakly_exposed` findings whose related
+tests are all proximity-only (#7071); the class stays `weakly_exposed`.
+
 ### When NOT found
 
 Leave the finding exactly as today (bare `no_static_path`, no `static_limit_kind`).

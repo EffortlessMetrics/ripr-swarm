@@ -1229,6 +1229,22 @@ fn needs_no_static_path_limit(finding: &Finding) -> bool {
         && finding.static_limit_kind.is_none()
 }
 
+/// Whether a `weakly_exposed` finding's only reach is proximity: every
+/// related test shares the owner's file, module or a name token, and none is
+/// seen calling it. The weak reach then rests on ripr not tracing a path, the
+/// same unresolved negative a `no_static_path` finding has, so a transitive or
+/// macro witness names the limit instead of a gap.
+fn needs_proximity_reach_limit(finding: &Finding) -> bool {
+    finding.class == ExposureClass::WeaklyExposed
+        && finding.static_limit_kind.is_none()
+        && finding.ripr.reach.state == crate::domain::StageState::Weak
+        && !finding.related_tests.is_empty()
+        && finding.related_tests.iter().all(|test| {
+            test.relation_reason
+                .is_some_and(classify::is_proximity_only)
+        })
+}
+
 fn apply_rust_no_static_path_limit(
     finding: &mut Finding,
     probe: &Probe,
@@ -1236,6 +1252,10 @@ fn apply_rust_no_static_path_limit(
     property_macro_mentions: &oracles::PropertyMacroMentionIndex<'_>,
     transitive_reach: &classify::TransitiveReachIndex<'_>,
 ) {
+    if needs_proximity_reach_limit(finding) {
+        apply_rust_proximity_reach_limit(finding, probe, transitive_reach);
+        return;
+    }
     if !needs_no_static_path_limit(finding) {
         return;
     }
@@ -1297,6 +1317,72 @@ fn apply_rust_no_static_path_limit(
     ) {
         replace_witnessed_no_path_infection_summary(finding);
     }
+}
+
+/// RIPR-SPEC-0114/0117 for a proximity-only `weakly_exposed` finding: the
+/// class stays, and a transitive or macro witness names the limit. The
+/// subprocess and property-macro limits stay `no_static_path`-only.
+fn apply_rust_proximity_reach_limit(
+    finding: &mut Finding,
+    probe: &Probe,
+    transitive_reach: &classify::TransitiveReachIndex<'_>,
+) {
+    let Some(owner_name) = owner_name_from_id(&probe.owner, &probe.location.file) else {
+        return;
+    };
+    if let Some(witness) = transitive_reach.transitive_witness(&owner_name) {
+        finding.static_limit_kind = Some(classify::transitive_reach_limit_kind(&witness.test_file));
+        finding
+            .stop_reasons
+            .push(StopReason::TransitiveReachUnresolved);
+        finding
+            .evidence
+            .push(classify::RUST_TRANSITIVE_REACH_MESSAGE.to_string());
+        finding
+            .evidence
+            .push(classify::transitive_reach_witness_pointer(&witness));
+        finding
+            .evidence
+            .extend(classify::transitive_reach_limitation_detail_lines(
+                &witness,
+                &owner_name,
+            ));
+        proximity_reach_next_step(
+            finding,
+            &witness.test_name,
+            &witness.entry_symbol,
+            &owner_name,
+        );
+    } else if let Some(witness) = transitive_reach.macro_reach_witness(&owner_name) {
+        finding.static_limit_kind = Some(classify::macro_reach_limit_kind(&witness.macro_host));
+        finding.stop_reasons.push(StopReason::MacroReachUnresolved);
+        finding
+            .evidence
+            .push(classify::RUST_MACRO_REACH_MESSAGE.to_string());
+        finding
+            .evidence
+            .push(classify::macro_reach_witness_pointer(&witness));
+        finding
+            .evidence
+            .extend(classify::macro_reach_limitation_detail_lines(
+                &witness,
+                &owner_name,
+            ));
+        proximity_reach_next_step(
+            finding,
+            &witness.test_name,
+            &witness.entry_symbol,
+            &owner_name,
+        );
+    }
+}
+
+/// The proximity-only finding's next step was the gap's ("replace broad
+/// assertions"); with the reach unresolved, it points at the witness instead.
+fn proximity_reach_next_step(finding: &mut Finding, test: &str, entry: &str, owner: &str) {
+    finding.recommended_next_step = Some(format!(
+        "Check whether `{test}`, which may reach `{owner}` through `{entry}`, asserts on the changed behavior; ripr does not trace that path, so this limitation does not establish a missing test."
+    ));
 }
 
 fn find_subprocess_binary_test<'a>(
@@ -7929,3 +8015,5 @@ fn absent_delimiter_boundary_returns_head() {
 
 #[cfg(test)]
 mod handwritten_files_tests;
+#[cfg(test)]
+mod proximity_reach_tests;
