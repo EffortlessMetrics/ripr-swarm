@@ -21,21 +21,21 @@
         "mutated_line": "base * 18",
         "outcome": "tests_passed",
         "failing_test": null,
-        "equivalence_review": "not equivalent: replaces `17 * base` with `base * 18`, which changes the result, but no executed assertion observes it"
+        "equivalence_review": "not equivalent: replaces `17 * base` with `base * 18`, which changes the result, but the test never joins the worker, so the worker's assertion may run and fail without failing the test"
       },
       {
         "replacement": "base + 17",
         "mutated_line": "base + 17",
         "outcome": "tests_passed",
         "failing_test": null,
-        "equivalence_review": "not equivalent: replaces `17 * base` with `base + 17`, which changes the result, but no executed assertion observes it"
+        "equivalence_review": "not equivalent: replaces `17 * base` with `base + 17`, which changes the result, but the test never joins the worker, so the worker's assertion may run and fail without failing the test"
       },
       {
         "replacement": "base * 16",
         "mutated_line": "base * 16",
         "outcome": "tests_passed",
         "failing_test": null,
-        "equivalence_review": "not equivalent: replaces `17 * base` with `base * 16`, which changes the result, but no executed assertion observes it"
+        "equivalence_review": "not equivalent: replaces `17 * base` with `base * 16`, which changes the result, but the test never joins the worker, so the worker's assertion may run and fail without failing the test"
       }
     ]
   },

@@ -21,21 +21,21 @@
         "mutated_line": "base * 28",
         "outcome": "tests_passed",
         "failing_test": null,
-        "equivalence_review": "not equivalent: replaces `27 * base` with `base * 28`, which changes the result, but no executed assertion observes it"
+        "equivalence_review": "not equivalent: replaces `27 * base` with `base * 28`, which changes the result, but the assertion's expected side is computed by the same code and changes with it"
       },
       {
         "replacement": "base + 27",
         "mutated_line": "base + 27",
         "outcome": "tests_passed",
         "failing_test": null,
-        "equivalence_review": "not equivalent: replaces `27 * base` with `base + 27`, which changes the result, but no executed assertion observes it"
+        "equivalence_review": "not equivalent: replaces `27 * base` with `base + 27`, which changes the result, but the assertion's expected side is computed by the same code and changes with it"
       },
       {
         "replacement": "base * 26",
         "mutated_line": "base * 26",
         "outcome": "tests_passed",
         "failing_test": null,
-        "equivalence_review": "not equivalent: replaces `27 * base` with `base * 26`, which changes the result, but no executed assertion observes it"
+        "equivalence_review": "not equivalent: replaces `27 * base` with `base * 26`, which changes the result, but the assertion's expected side is computed by the same code and changes with it"
       }
     ]
   },
