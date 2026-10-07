@@ -15229,6 +15229,54 @@ fn pilot_ranks_the_current_change_past_the_inventory_seam_limit() -> Result<(), 
     Ok(())
 }
 
+/// #6944: `ripr check` analyzes a changed build script, but pilot's repo
+/// inventory leaves build scripts out by design. Pilot must name that
+/// exclusion rather than say the change has no analyzed seam.
+#[test]
+fn pilot_names_a_changed_build_script_its_ranking_leaves_out() -> Result<(), String> {
+    let build = "fn main() {\n    let level = std::env::var(\"OPT_LEVEL\").map(|v| v.len()).unwrap_or(0);\n    if level > 2 {\n        println!(\"cargo:rustc-cfg=fast\");\n    }\n}\n";
+    let root = pilot_language_fixture_repo(
+        "pilot-build-script-change",
+        &[
+            (
+                "Cargo.toml",
+                "[package]\nname = \"shop\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+            ),
+            ("build.rs", build),
+            (
+                "src/lib.rs",
+                "pub fn discounted(amount: u32) -> u32 {\n    if amount > 100 { amount - 10 } else { amount }\n}\n",
+            ),
+            (
+                "tests/pricing.rs",
+                "#[test]\nfn big_orders_get_a_discount() {\n    assert_eq!(shop::discounted(200), 190);\n}\n",
+            ),
+        ],
+        ("build.rs", &build.replace("level > 2", "level >= 2")),
+    )?;
+    let out_dir = unique_temp_workspace("pilot-build-script-change-out");
+    let (stdout, md, summary, _) = run_pilot_language_fixture(&root, &out_dir)?;
+    // Precondition: the change is loaded and pilot ranked a seam elsewhere.
+    assert_eq!(summary["current_change"]["state"], "changed", "{summary}");
+    assert_eq!(
+        summary["current_change"]["top_recommendation_in_change"], false,
+        "{summary}"
+    );
+    assert!(
+        stdout.contains(
+            "current change: not part of it. No seam pilot analyzed is on a line changed since origin/main: every changed Rust line is in build.rs, a Cargo build script, which pilot's repo-wide ranking leaves out. This recommendation is elsewhere in the repo"
+        ),
+        "{stdout}"
+    );
+    assert!(
+        md.contains("every changed Rust line is in `build.rs`, a Cargo build script"),
+        "{md}"
+    );
+    ignore_remove_dir_all(&root);
+    ignore_remove_dir_all(&out_dir);
+    Ok(())
+}
+
 #[test]
 fn pilot_ranks_and_labels_seams_in_the_current_change() -> Result<(), String> {
     let lib = "pub fn discounted(amount: u32) -> u32 {\n    if amount > 100 { amount - 10 } else { amount }\n}\n\npub fn is_digit(byte: u8) -> bool {\n    byte >= b'0' && byte <= b'9'\n}\n";

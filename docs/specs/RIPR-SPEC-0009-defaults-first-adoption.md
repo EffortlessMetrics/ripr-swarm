@@ -196,7 +196,11 @@ lines first, and says in the terminal, Markdown and
 of the change. When the change has no ranked seam, pilot says the
 recommendation is elsewhere in the repo, says why no seam on the change ranks
 (pilot withholds its seams as static limitations, they are already gripped,
-intentional or suppressed, the seam limit left seams unanalyzed, or no seam
+intentional or suppressed, the seam limit left seams unanalyzed, the change is
+in a file pilot's repo-wide ranking leaves out by design (a Cargo build script,
+repository automation under `xtask/`, or a crate source declared outside
+`src`, which only diff analysis covers, also named after a reason drawn from
+the change's analyzed seams; #6944), or no seam
 pilot analyzed is on a changed line), and names `ripr check` for the change
 itself, with `--worktree` when the change is uncommitted, since plain `ripr
 check` reads committed history only. When the repo-exposure seam limit cuts
@@ -443,6 +447,11 @@ limitations (opaque or an unknown class),
 when a user runs ripr pilot,
 then pilot says it withholds the seams on the change and why, rather than that
 no seam pilot analyzed is on a changed line, and `withheld_seams_in_change` counts them.
+
+Given a branch whose only Rust change is in a Cargo build script,
+when a user runs ripr pilot,
+then pilot names the build script and says its repo-wide ranking leaves it
+out, rather than that no seam pilot analyzed is on a changed line.
 
 Given a repository past the inventory seam limit whose changed lines hold
 seams the limit cut,
