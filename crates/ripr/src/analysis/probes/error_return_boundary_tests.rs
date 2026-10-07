@@ -477,6 +477,7 @@ fn inventory_keeps_wrappers_that_add_error_behavior() -> Result<(), String> {
         "    if s == \"u\" { return Err(Error::V).context(c) /* ( */ .map_err(|_| B); }\n",
         "    if s == \"v\" { return Ready(Err(Error::W)); }\n",
         "    if s == \"w\" { return Err(Error::X).context('(').map_err(|_| B); }\n",
+        "    if s == \"x\" { return Err(Error::Y).context(r#\"\"(\"#).map_err(|_| B); }\n",
         "    wrap(Err(Error::Tail)).map_err(|_| Error::Other)\n",
         "}\n",
     );
@@ -552,9 +553,15 @@ fn inventory_keeps_wrappers_that_add_error_behavior() -> Result<(), String> {
             // A char literal in the chain fails closed.
             (22, "return Err(Error::X).context('(').map_err(|_| B)"),
             (22, "Err(Error::X)"),
+            // A raw string in the chain fails closed.
+            (
+                23,
+                "return Err(Error::Y).context(r#\"\"(\"#).map_err(|_| B)"
+            ),
+            (23, "Err(Error::Y)"),
             // The tail chain adds a conversion; only the call goes.
-            (23, "wrap(Err(Error::Tail)).map_err(|_| Error::Other)"),
-            (23, "Err(Error::Tail)"),
+            (24, "wrap(Err(Error::Tail)).map_err(|_| Error::Other)"),
+            (24, "Err(Error::Tail)"),
         ],
         "{seams:?}"
     );

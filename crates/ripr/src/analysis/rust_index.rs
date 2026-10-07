@@ -477,7 +477,8 @@ fn mark_returns(
 /// `inspect_err`, `inspect` or `into`. Any other method may replace the
 /// error (`map_err`, `or_else`, `unwrap_or_else`, an extension trait), so
 /// the chain fails closed and the `return` keeps its seam. Arguments are
-/// skipped; a comment, a char literal or a lifetime fails closed.
+/// skipped; a comment, a char literal, a lifetime or a raw string fails
+/// closed.
 fn keeps_error(chain: &str) -> bool {
     const KEEPS: [&str; 9] = [
         "context",
@@ -495,17 +496,27 @@ fn keeps_error(chain: &str) -> bool {
     while let Some((at, c)) = chars.next() {
         match c {
             '"' => {
-                // Skip the string literal, escapes included.
+                // Skip the string literal, escapes included. An unclosed
+                // string fails closed.
+                let mut closed = false;
                 while let Some((_, c)) = chars.next() {
                     match c {
                         '\\' => {
                             chars.next();
                         }
-                        '"' => break,
+                        '"' => {
+                            closed = true;
+                            break;
+                        }
                         _ => {}
                     }
                 }
+                if !closed {
+                    return false;
+                }
             }
+            // A raw string (`r#"..."#`) may hold unescaped quotes.
+            '#' => return false,
             '(' | '[' | '{' => depth += 1,
             ')' | ']' | '}' => depth = depth.saturating_sub(1),
             // A comment may hide a delimiter or a method; a lifetime or
