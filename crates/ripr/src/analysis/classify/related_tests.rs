@@ -633,19 +633,22 @@ fn find_related_tests_with_candidates<'a>(
     // and Combinations). The uniqueness bypass above only gates *cross-crate*
     // package-prefix filtering; this count is the receiver-identity gate
     // (#4760) and uses whatever the index actually contains.
-    let indexed_same_name_count = if owner_name.is_empty() {
-        0
+    let indexed_same_name_ids: Vec<&str> = if owner_name.is_empty() {
+        Vec::new()
     } else {
         match candidates {
-            RelatedTestCandidates::Indexed(candidate_index) => {
-                candidate_index.function_indices(owner_name).len()
-            }
+            RelatedTestCandidates::Indexed(candidate_index) => candidate_index
+                .function_indices(owner_name)
+                .iter()
+                .map(|&function_index| index.functions().at(function_index).id.0.as_str())
+                .collect(),
             #[cfg(test)]
             RelatedTestCandidates::FullScan => index
                 .functions()
                 .iter()
                 .filter(|function| function.name == owner_name)
-                .count(),
+                .map(|function| function.id.0.as_str())
+                .collect(),
         }
     };
 
@@ -959,7 +962,7 @@ fn find_related_tests_with_candidates<'a>(
                 test,
                 owner_fn,
                 owner_name,
-                indexed_same_name_count,
+                &indexed_same_name_ids,
                 test_source,
                 index,
             )
@@ -2792,14 +2795,23 @@ fn owner_call_relation_reason(
     test: &TestSummary,
     owner_fn: Option<&FunctionSummary>,
     owner_name: &str,
-    indexed_same_name_count: usize,
+    same_name_ids: &[&str],
     test_source: Option<&str>,
     index: &RustIndex,
 ) -> RelationReason {
+    let indexed_same_name_count = same_name_ids.len();
     let Some(owner) = owner_fn else {
         return RelationReason::DirectOwnerCall;
     };
     let Some(impl_type) = impl_self_type_name(&owner.id.0) else {
+        // RIPR-SPEC-0005: a free function whose name another module also
+        // defines is not reached when the test's own `use` binds the bare
+        // name to that other module's twin.
+        if indexed_same_name_count > 1
+            && test_imports_same_name_twin(&test.body, &owner.id.0, owner_name, same_name_ids)
+        {
+            return RelationReason::WeakTokenSubstring;
+        }
         return RelationReason::DirectOwnerCall;
     };
     // #6951: when the test's own module scope declares the owner's impl
@@ -2834,6 +2846,71 @@ fn owner_call_relation_reason(
     } else {
         RelationReason::WeakTokenSubstring
     }
+}
+
+/// Whether a `use` written directly in the test body binds `owner_name` to a
+/// same-name twin of the owner: the import path (after `super`/`self`/`crate`)
+/// ends in a module that exactly one indexed definition of `owner_name` sits
+/// in, and that definition is not the owner (`use super::retail::*;` beside
+/// `wholesale::price_quote`). A block-level import shadows the module scope,
+/// so the bare call binds the twin. Fail-open: a module-level import, an
+/// import in a nested block, an import path no twin matches or the owner also
+/// matches (a re-export), and `use super::*` all keep the relation.
+fn test_imports_same_name_twin(
+    body: &str,
+    owner_id: &str,
+    owner_name: &str,
+    same_name_ids: &[&str],
+) -> bool {
+    let Some(body_open) = body.find('{') else {
+        return false;
+    };
+    let is_ident = |ch: char| ch.is_ascii_alphanumeric() || ch == '_';
+    let mut bound_module = None;
+    for (start, _) in body.match_indices("use ") {
+        if start <= body_open || body[..start].chars().next_back().is_some_and(is_ident) {
+            continue;
+        }
+        let depth = body[body_open..start]
+            .chars()
+            .fold(0isize, |depth, ch| match ch {
+                '{' => depth + 1,
+                '}' => depth - 1,
+                _ => depth,
+            });
+        let Some(path) = body[start + 4..].split(';').next() else {
+            continue;
+        };
+        let path: String = path.chars().filter(|ch| !ch.is_whitespace()).collect();
+        let Some((module, leaf)) = path.rsplit_once("::") else {
+            continue;
+        };
+        if leaf != "*" && leaf != owner_name {
+            continue;
+        }
+        if depth != 1 {
+            return false;
+        }
+        bound_module = Some(module.to_string());
+    }
+    let Some(module) = bound_module else {
+        return false;
+    };
+    let segments: Vec<&str> = module
+        .split("::")
+        .skip_while(|segment| matches!(*segment, "super" | "self" | "crate"))
+        .collect();
+    if segments.is_empty()
+        || segments
+            .iter()
+            .any(|segment| !segment.chars().all(is_ident))
+    {
+        return false;
+    }
+    let suffix = format!("::{}::{owner_name}", segments.join("::"));
+    let mut twins = same_name_ids.iter().filter(|id| id.ends_with(&suffix));
+    matches!((twins.next(), twins.next()), (Some(twin), None) if *twin != owner_id)
+        && !owner_id.ends_with(&suffix)
 }
 
 /// True when `body` mentions `owner_name` immediately followed by `(`.
@@ -2894,6 +2971,55 @@ mod tests {
     };
     use std::path::{Path, PathBuf};
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn a_test_import_of_a_same_name_twin_does_not_reach_the_owner() {
+        let ids = [
+            "src/lib.rs::retail::price_quote",
+            "src/lib.rs::wholesale::price_quote",
+        ];
+        let owner = "src/lib.rs::wholesale::price_quote";
+        let twin =
+            |body: &str, owner: &str| test_imports_same_name_twin(body, owner, "price_quote", &ids);
+        let glob = "fn t() {\n use super::retail::*;\n price_quote(3);\n}";
+        assert!(twin(glob, owner));
+        let named = "fn t() {\n use crate::retail::price_quote;\n price_quote(3);\n}";
+        assert!(twin(named, owner));
+        // RIPR-SPEC-0005: the import naming the owner's own module reaches it.
+        assert!(!twin(glob, "src/lib.rs::retail::price_quote"));
+        // Fail-open shapes keep the relation: no import, a parent glob, a
+        // module no twin sits in (a re-export), a nested-block import, and
+        // an import that does not bind the name.
+        assert!(!twin("fn t() {\n price_quote(3);\n}", owner));
+        assert!(!twin(
+            "fn t() {\n use super::*;\n price_quote(3);\n}",
+            owner
+        ));
+        assert!(!twin(
+            "fn t() {\n use super::api::*;\n price_quote(3);\n}",
+            owner
+        ));
+        assert!(!twin(
+            "fn t() {\n { use super::retail::*; }\n price_quote(3);\n}",
+            owner
+        ));
+        assert!(!twin(
+            "fn t() {\n use super::retail::Quote;\n price_quote(3);\n}",
+            owner
+        ));
+        // Two twins in modules with the same name stay undecided.
+        let nested = [
+            "src/lib.rs::a::retail::price_quote",
+            "src/lib.rs::b::retail::price_quote",
+            owner,
+        ];
+        assert!(!test_imports_same_name_twin(
+            glob,
+            owner,
+            "price_quote",
+            &nested
+        ));
+    }
 
     #[test]
     fn opaque_declarations_do_not_supply_body_owner_calls() {

@@ -235,6 +235,19 @@ proximity-related test with unknown owner activation must not receive a missing
 fact that would reclassify the seam as weakly gripped. Helper-transfer and
 unresolved callees remain named limitations, not ready repair routes.
 
+Diff-mode classification applies the same two identity rules. A field read
+on a receiver whose nearest earlier `let` names that field in a struct literal
+(`let q = Quote { total: 99, ..q };`), or after a `q.total = ..` assignment
+that follows the owner binding, does not observe the constructed field, so the
+`field_value` missing fact stays and the finding is not `exposed`. A struct
+update that leaves the field to its `..q` base passes the owner's value
+through. A free-function owner whose name another indexed definition shares
+is not `direct_owner_call` when a `use` written directly in the test body
+binds the bare name to exactly one such twin in another module
+(`use super::retail::*;` beside `wholesale::price_quote`). An import in a
+nested block, `use super::*`, a path that names no twin or also the owner (a
+re-export), and an ambiguous assertion position keep the existing relation.
+
 ## Non-Goals
 
 This spec does not require:

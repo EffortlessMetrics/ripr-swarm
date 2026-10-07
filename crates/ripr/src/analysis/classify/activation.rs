@@ -1518,7 +1518,120 @@ fn reads_owner_result_field(body: &str, assertion: &str, read: &str, owner: &str
             .rfind(|ch: char| !is_ident(ch))
             .map_or(0, |index| index + 1);
         let receiver = &before[receiver_start..];
-        !receiver.is_empty() && binds_from_owner_call(body, receiver, &owner_call)
+        !receiver.is_empty()
+            && binds_from_owner_call(body, receiver, &owner_call)
+            && !field_overwritten_before(body, assertion, receiver, &read[1..], &owner_call)
+    })
+}
+
+/// Whether the owner's value of `field` provably no longer sits in
+/// `receiver` where `assertion` reads it (RIPR-SPEC-0005: field credit holds
+/// only before shadow or field overwrite). Walking back from the assertion,
+/// the nearest `let receiver` that names `field` in a struct literal
+/// (`let q = Quote { total: 99, ..q };`) overwrites it; a struct update that
+/// leaves `field` to its `..receiver` base passes it through; and a
+/// `receiver.field = ..` between the owner binding and the assertion
+/// overwrites it. Anything else, including an assertion that is not found
+/// exactly once in the body, keeps the credit.
+fn field_overwritten_before(
+    body: &str,
+    assertion: &str,
+    receiver: &str,
+    field: &str,
+    owner_call: &str,
+) -> bool {
+    let mut found = body.match_indices(assertion).map(|(index, _)| index);
+    let (Some(position), None) = (found.next(), found.next()) else {
+        return false;
+    };
+    let mut after = position;
+    for (start, initializer) in receiver_lets(&body[..position], receiver).into_iter().rev() {
+        if initializer.contains(owner_call) {
+            return field_assigned(&body[start..after], receiver, field);
+        }
+        let Some((fields, base)) = struct_literal_fields(initializer) else {
+            return false;
+        };
+        if fields.contains(&field) {
+            return true;
+        }
+        if base != Some(receiver) {
+            return false;
+        }
+        after = start;
+    }
+    false
+}
+
+/// The `let [mut] receiver [: Type] = initializer;` statements in `body`, in
+/// order, as (statement start, initializer).
+fn receiver_lets<'a>(body: &'a str, receiver: &str) -> Vec<(usize, &'a str)> {
+    let is_ident = |ch: char| ch.is_ascii_alphanumeric() || ch == '_';
+    body.match_indices("let ")
+        .filter(|(start, _)| !body[..*start].chars().next_back().is_some_and(is_ident))
+        .filter_map(|(start, _)| {
+            let statement = body[start + 4..].split(';').next().unwrap_or_default();
+            let rest = statement.trim_start();
+            let rest = rest.strip_prefix("mut ").unwrap_or(rest).trim_start();
+            let rest = rest.strip_prefix(receiver)?;
+            if rest.starts_with(is_ident) {
+                return None;
+            }
+            let (_, initializer) = rest.split_once('=')?;
+            let initializer = initializer.trim();
+            (!initializer.starts_with('=')).then_some((start, initializer))
+        })
+        .collect()
+}
+
+/// The field names and `..base` of a struct literal `Path { a: x, b, ..base }`;
+/// `None` for any other initializer.
+fn struct_literal_fields(initializer: &str) -> Option<(Vec<&str>, Option<&str>)> {
+    let open = initializer.find('{')?;
+    let path = initializer[..open].trim();
+    if path.is_empty()
+        || !path.starts_with(|ch: char| ch.is_ascii_uppercase())
+        || !path
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == ':')
+    {
+        return None;
+    }
+    let inner = initializer[open + 1..].strip_suffix('}')?;
+    let mut fields = Vec::new();
+    let mut base = None;
+    let mut depth = 0usize;
+    let mut entry_start = 0;
+    for (index, ch) in inner.char_indices().chain([(inner.len(), ',')]) {
+        match ch {
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => depth = depth.checked_sub(1)?,
+            ',' if depth == 0 => {
+                let entry = inner[entry_start..index].trim();
+                entry_start = index + 1;
+                if let Some(rest) = entry.strip_prefix("..") {
+                    base = Some(rest.trim());
+                } else if !entry.is_empty() {
+                    let name = entry.split(':').next().unwrap_or_default().trim();
+                    fields.push(name);
+                }
+            }
+            _ => {}
+        }
+    }
+    Some((fields, base))
+}
+
+/// Whether `text` assigns `receiver.field = ..` (not `==`).
+fn field_assigned(text: &str, receiver: &str, field: &str) -> bool {
+    let target = format!("{receiver}.{field}");
+    text.match_indices(&target).any(|(start, matched)| {
+        let before_ok = !text[..start]
+            .chars()
+            .next_back()
+            .is_some_and(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '.');
+        let rest = text[start + matched.len()..].trim_start();
+        before_ok && rest.starts_with('=') && !rest.starts_with("==")
     })
 }
 
@@ -3059,6 +3172,37 @@ mod tests {
             ".retries",
             "default_config"
         ));
+    }
+
+    #[test]
+    fn a_field_overwritten_before_the_assertion_is_not_the_owner_field() {
+        let reads = |body: &str, assertion: &str| {
+            reads_owner_result_field(body, assertion, ".total", "bundle")
+        };
+        // RIPR-SPEC-0005: credit holds only before shadow or field overwrite.
+        let shadowed =
+            "let q = bundle(3);\n let q = Quote { total: 99, ..q };\n assert_eq!(q.total, 99);";
+        assert!(!reads(shadowed, "assert_eq!(q.total, 99);"));
+        let shorthand = "let q = bundle(3);\n let total = 1;\n let q = Quote { total, ..q };\n assert_eq!(q.total, 1);";
+        assert!(!reads(shorthand, "assert_eq!(q.total, 1);"));
+        let assigned = "let mut q = bundle(3);\n q.total = 99;\n assert_eq!(q.total, 99);";
+        assert!(!reads(assigned, "assert_eq!(q.total, 99);"));
+        // A struct update that leaves the field to its base passes it through.
+        let other_field =
+            "let q = bundle(3);\n let q = Quote { items: 4, ..q };\n assert_eq!(q.total, 45);";
+        assert!(reads(other_field, "assert_eq!(q.total, 45);"));
+        // Reads before the overwrite, comparisons, and other fields keep it.
+        let before = "let mut q = bundle(3);\n assert_eq!(q.total, 45);\n q.total = 1;";
+        assert!(reads(before, "assert_eq!(q.total, 45);"));
+        let compared = "let q = bundle(3);\n assert!(q.total == 45);";
+        assert!(reads(compared, "assert!(q.total == 45);"));
+        let sibling = "let mut q = bundle(3);\n q.total_cap = 1;\n assert_eq!(q.total, 45);";
+        assert!(reads(sibling, "assert_eq!(q.total, 45);"));
+        // Ambiguous rebinding keeps today's credit.
+        let rebound = "let q = bundle(3);\n let q = adjust(q);\n assert_eq!(q.total, 45);";
+        assert!(reads(rebound, "assert_eq!(q.total, 45);"));
+        let twice = "let q = bundle(3);\n let q = Quote { total: 9, ..q };\n assert_eq!(q.total, 9);\n assert_eq!(q.total, 9);";
+        assert!(reads(twice, "assert_eq!(q.total, 9);"));
     }
 
     use super::*;
