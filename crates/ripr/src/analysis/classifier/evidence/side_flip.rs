@@ -23,7 +23,7 @@ use super::tuple_match::{parsed, same_current_file};
 use crate::analysis::classify::ProbeContext;
 use crate::analysis::rust_index::find_file_facts;
 use crate::domain::{Confidence, ProbeFamily, RelationReason, StageEvidence, StageState};
-use ra_ap_syntax::ast::{HasArgList, HasAttrs, HasName};
+use ra_ap_syntax::ast::{HasArgList, HasAttrs, HasGenericArgs, HasName};
 use ra_ap_syntax::{AstNode, SyntaxNode, ast};
 
 pub(super) const QUESTION_MARK_SIDE_FLIP: &str = "Result-side oracle observes the `?` side flip: this `?` is the owner's only source of `Err`, and a test asserts the owner call returns `Err` (RIPR-SPEC-0227 rule 3b)";
@@ -61,8 +61,8 @@ pub(super) fn discrimination(
     // another fallible function) is a change a side oracle cannot vouch for.
     let after = context.probe.after.as_deref()?;
     let before = context.probe.before.as_deref()?;
-    let operand = sole_try_operand(after)?;
-    if sole_try_operand(before)? != operand {
+    let statement = canonical_try_statement(after)?;
+    if canonical_try_statement(before)? != statement {
         return None;
     }
     let owner = context.owner_fn?;
@@ -140,11 +140,16 @@ pub(super) fn discrimination(
     None
 }
 
-/// The `?` operand of a one-line statement or expression, normalized so a
-/// behavior-preserving respelling compares equal: parentheses around an
-/// expression and generic arguments (`parse::<u16>()`) are dropped, and
-/// whitespace is ignored. `None` unless the text holds exactly one `?`.
-fn sole_try_operand(line: &str) -> Option<String> {
+/// The changed statement, normalized so only a behavior-preserving
+/// respelling of the same `?` statement compares equal: whitespace is
+/// ignored, parentheses that wrap the whole `?` operand are dropped
+/// (`(digit(c))?` is `digit(c)?`), and a single turbofish on the `?` call
+/// of a `let` without a type reads as that type's annotation
+/// (`let p = s.parse::<u16>()?` is `let p: u16 = s.parse()?`). Every other
+/// token stays, so a changed callee, generic argument, annotation or
+/// enclosing call does not compare equal (rule 1). `None` unless the text
+/// is one statement with exactly one `?`.
+fn canonical_try_statement(line: &str) -> Option<String> {
     let line = line.trim();
     let source = if line.ends_with(';') || line.ends_with('}') {
         format!("fn __try() {{ {line} }}")
@@ -152,45 +157,149 @@ fn sole_try_operand(line: &str) -> Option<String> {
         format!("fn __try() {{ {line}; }}")
     };
     let root = parsed(&source)?;
-    let mut tries = root.syntax().descendants().filter_map(ast::TryExpr::cast);
+    let function = root.syntax().children().find_map(ast::Fn::cast)?;
+    let body = function.body()?.stmt_list()?;
+    let statements = body.statements().collect::<Vec<_>>();
+    let [statement] = statements.as_slice() else {
+        return None;
+    };
+    if body.tail_expr().is_some() {
+        return None;
+    }
+    let mut tries = statement
+        .syntax()
+        .descendants()
+        .filter_map(ast::TryExpr::cast);
     let try_expr = tries.next()?;
     if tries.next().is_some() {
         return None;
     }
-    let operand = try_expr.expr()?;
+    if let ast::Stmt::LetStmt(binding) = statement {
+        if binding.let_else().is_some() {
+            return None;
+        }
+        let pattern = canonical_tokens(binding.pat()?.syntax(), None);
+        let initializer = binding.initializer()?;
+        let (ty, moved) = match binding.ty() {
+            Some(ty) => (Some(canonical_tokens(ty.syntax(), None)), None),
+            None => match turbofish_type(&initializer, &try_expr) {
+                Some((ty, list)) => (Some(ty), Some(list)),
+                None => (None, None),
+            },
+        };
+        let initializer = canonical_tokens(initializer.syntax(), moved.as_ref());
+        return Some(match ty {
+            Some(ty) => format!("let {pattern}: {ty} = {initializer};"),
+            None => format!("let {pattern} = {initializer};"),
+        });
+    }
+    Some(canonical_tokens(statement.syntax(), None))
+}
+
+/// The single type argument of a turbofish on the method call that is the
+/// whole `?` operand of a `let` initializer, with the list to skip.
+fn turbofish_type(
+    initializer: &ast::Expr,
+    try_expr: &ast::TryExpr,
+) -> Option<(String, ast::GenericArgList)> {
+    if initializer.syntax() != try_expr.syntax() {
+        return None;
+    }
+    let ast::Expr::MethodCallExpr(call) = unwrap_parens(try_expr.expr()?) else {
+        return None;
+    };
+    let list = call.generic_arg_list()?;
+    let arguments = list.generic_args().collect::<Vec<_>>();
+    let [ast::GenericArg::TypeArg(argument)] = arguments.as_slice() else {
+        return None;
+    };
+    Some((canonical_tokens(argument.syntax(), None), list))
+}
+
+fn unwrap_parens(mut expression: ast::Expr) -> ast::Expr {
+    while let ast::Expr::ParenExpr(paren) = &expression {
+        let Some(inner) = paren.expr() else {
+            break;
+        };
+        expression = inner;
+    }
+    expression
+}
+
+fn canonical_tokens(node: &SyntaxNode, skip: Option<&ast::GenericArgList>) -> String {
     let mut text = String::new();
-    for element in operand.syntax().descendants_with_tokens() {
+    for element in node.descendants_with_tokens() {
         let Some(token) = element.into_token() else {
             continue;
         };
         if token.kind().is_trivia() {
             continue;
         }
-        let parent = token.parent()?;
-        if parent
-            .ancestors()
-            .any(|node| ast::GenericArgList::can_cast(node.kind()))
+        let Some(parent) = token.parent() else {
+            continue;
+        };
+        if skip.is_some_and(|list| parent.ancestors().any(|node| node == *list.syntax())) {
+            continue;
+        }
+        // Only parentheses that wrap the whole `?` operand are a
+        // respelling; elsewhere they can change the callee or precedence
+        // (`(cfg.parse)(s)` is not `cfg.parse(s)`).
+        if matches!(token.text(), "(" | ")")
+            && ast::ParenExpr::can_cast(parent.kind())
+            && parent
+                .ancestors()
+                .skip(1)
+                .find(|node| !ast::ParenExpr::can_cast(node.kind()))
+                .is_some_and(|node| ast::TryExpr::can_cast(node.kind()))
         {
             continue;
         }
-        if ast::ParenExpr::can_cast(parent.kind()) && matches!(token.text(), "(" | ")") {
-            continue;
+        if !text.is_empty() && needs_space(&text, token.text()) {
+            text.push(' ');
         }
         text.push_str(token.text());
     }
-    Some(text)
+    text
 }
 
-/// No `macro_rules!` anywhere in the test file (it can shadow `assert!` or
-/// `matches!`), and no inner attribute other than `#![cfg(test)]` (an inner
-/// `cfg` compiles the test out without touching its function or modules).
+/// Keep adjacent words apart (`let mut d`), nothing else.
+fn needs_space(text: &str, next: &str) -> bool {
+    let word = |c: char| c.is_alphanumeric() || c == '_';
+    text.ends_with(word) && next.starts_with(word)
+}
+
+/// Nothing in the test file can shadow `assert!` or `matches!`: no
+/// `macro_rules!`, no `#[macro_use]`, no `use` naming `assert` or
+/// `matches`, and no glob import other than `super::*`, `self::*` or
+/// `crate::*`. No inner attribute other than `#![cfg(test)]` either: an
+/// inner `cfg` compiles the test out without touching its function or
+/// modules.
 fn test_file_macros_and_inner_cfg_are_plain(root: &SyntaxNode) -> bool {
     root.descendants().all(|node| {
         if ast::MacroRules::can_cast(node.kind()) {
             return false;
         }
+        if let Some(tree) = ast::UseTree::cast(node.clone()) {
+            let names_macro = tree
+                .path()
+                .and_then(|path| path.segment())
+                .is_some_and(|segment| {
+                    let name = segment.syntax().text().to_string();
+                    name == "assert" || name == "matches"
+                });
+            let foreign_glob = tree.star_token().is_some()
+                && !tree.path().is_some_and(|path| {
+                    matches!(
+                        path.syntax().text().to_string().as_str(),
+                        "super" | "self" | "crate"
+                    )
+                });
+            return !names_macro && !foreign_glob;
+        }
         ast::Attr::cast(node).is_none_or(|attribute| {
-            attribute.excl_token().is_none() || attribute.syntax().text() == "#![cfg(test)]"
+            let text = attribute.syntax().text().to_string();
+            !text.contains("macro_use")
+                && (attribute.excl_token().is_none() || text == "#![cfg(test)]")
         })
     })
 }
@@ -324,6 +433,18 @@ fn asserts_owner_err_inner(function: &ast::Fn, owner: &str) -> Option<bool> {
         if ast::ReturnExpr::can_cast(node.kind())
             || ast::ClosureExpr::can_cast(node.kind())
             || ast::Fn::can_cast(node.kind())
+        {
+            return None;
+        }
+        // Any other macro may expand to an early `return` (a skip macro)
+        // before the assertion runs.
+        if let Some(call) = ast::MacroCall::cast(node.clone())
+            && !call.path().is_some_and(|path| {
+                matches!(
+                    path.syntax().text().to_string().as_str(),
+                    "assert" | "assert_eq" | "assert_ne" | "matches"
+                )
+            })
         {
             return None;
         }
@@ -639,6 +760,10 @@ mod tests {
                 "#[test]\nfn t() {\n    #[cfg(any())]\n    assert!(port(\"x\").is_err());\n}\n",
             ),
             (
+                "skip macro",
+                "#[test]\nfn t() {\n    skip_if_offline!();\n    assert!(port(\"x\").is_err());\n}\n",
+            ),
+            (
                 "early return",
                 "#[test]\nfn t() {\n    return;\n    assert!(port(\"x\").is_err());\n}\n",
             ),
@@ -661,37 +786,56 @@ mod tests {
 
     #[test]
     fn a_respelled_operand_compares_equal_and_a_changed_one_does_not() {
-        let same = sole_try_operand("let port = text.trim().parse::<u16>()?;");
-        assert_eq!(same.as_deref(), Some("text.trim().parse()"));
+        let same = canonical_try_statement("let port = text.trim().parse::<u16>()?;");
         assert_eq!(
-            sole_try_operand("let port: u16 = text.trim().parse()?;"),
+            same.as_deref(),
+            Some("let port: u16 = text.trim().parse()?;")
+        );
+        assert_eq!(
+            canonical_try_statement("let port: u16 = text.trim().parse()?;"),
             same
         );
         assert_eq!(
-            sole_try_operand("let d = (digit(c))?;"),
-            sole_try_operand("let d = digit(c)?;")
+            canonical_try_statement("let d = (digit(c))?;"),
+            canonical_try_statement("let d = digit(c)?;")
         );
         for changed in [
             "let port: u16 = text.parse()?;",
             "let port: u16 = text.trim().parse_strict()?;",
             "let port: u16 = text.trim().parse().and_then(check)?;",
+            "let port = text.trim().parse::<u8>()?;",
+            "let port: u8 = text.trim().parse()?;",
+            "let port: u16 = (text.trim().parse)()?;",
         ] {
-            assert_ne!(sole_try_operand(changed), same, "{changed}");
+            assert_ne!(canonical_try_statement(changed), same, "{changed}");
         }
-        assert_eq!(sole_try_operand("let d = digit(c).unwrap_or(0);"), None);
-        assert_eq!(sole_try_operand("let d = a(c)? + b(c)?;"), None);
+        assert_ne!(
+            canonical_try_statement("push_u8(s.parse()?);"),
+            canonical_try_statement("push_u16(s.parse()?);")
+        );
+        assert_ne!(
+            canonical_try_statement("let d = (cfg.parse)(s)?;"),
+            canonical_try_statement("let d = cfg.parse(s)?;")
+        );
+        assert_eq!(
+            canonical_try_statement("let d = digit(c).unwrap_or(0);"),
+            None
+        );
+        assert_eq!(canonical_try_statement("let d = a(c)? + b(c)?;"), None);
     }
 
     #[test]
     fn macro_definitions_and_inner_cfg_make_a_test_file_unreadable() {
-        let plain =
-            "#![cfg(test)]\nuse super::*;\n#[test]\nfn t() { assert!(port(\"x\").is_err()); }\n";
+        let plain = "#![cfg(test)]\nuse super::*;\nuse std::fmt;\n#[test]\nfn t() { assert!(port(\"x\").is_err()); }\n";
         let root = parsed(plain).map(|root| root.syntax().clone());
         assert!(root.is_some_and(|root| test_file_macros_and_inner_cfg_are_plain(&root)));
         for source in [
             "macro_rules! assert { ($($t:tt)*) => {}; }\n#[test]\nfn t() { assert!(port(\"x\").is_err()); }\n",
             "mod tests {\n    #![cfg(any())]\n    #[test]\n    fn t() { assert!(port(\"x\").is_err()); }\n}\n",
             "#![cfg(any())]\n#[test]\nfn t() { assert!(port(\"x\").is_err()); }\n",
+            "use helpers::assert;\n#[test]\nfn t() { assert!(port(\"x\").is_err()); }\n",
+            "use helpers::*;\n#[test]\nfn t() { assert!(port(\"x\").is_err()); }\n",
+            "#[macro_use]\nmod helpers;\n#[test]\nfn t() { assert!(port(\"x\").is_err()); }\n",
         ] {
             let root = parsed(source).map(|root| root.syntax().clone());
             assert!(

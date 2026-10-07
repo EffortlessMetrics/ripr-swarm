@@ -219,12 +219,17 @@ rejected alternative. Any can be reversed later without touching the rest.
 4. **Establishing rule 3b without evaluating the input.** Adopted
    (2026-10-07). It also widens condition 1: a changed line that keeps the
    same `?` call is covered, and the claim is that a test would notice if
-   that `?` were swallowed. "The same call" means the `?` operand on the old
-   and new line reads equal after dropping whitespace, parentheses around an
-   expression and generic arguments (`parse::<u16>()` and `: u16 = parse()`
-   agree; `parse_lenient(s)?` to `parse_strict(s)?` does not, since a side
-   oracle cannot see which error comes back, rule 1). A removed line, an added
-   `?` and a changed operand keep the RIPR-SPEC-0107 reading.
+   that `?` were swallowed. "The same `?`" means the old and new statement
+   read equal after ignoring whitespace, dropping parentheses that wrap the
+   whole `?` operand, and reading a single turbofish on the `?` call of an
+   unannotated `let` as that type's annotation (`let p = s.parse::<u16>()?`
+   and `let p: u16 = s.parse()?` agree). Every other token counts, so a
+   changed callee, generic argument, annotation or enclosing call does not
+   agree (`parse_lenient(s)?` to `parse_strict(s)?`, `parse::<u16>` to
+   `parse::<u8>`, `push_u16(s.parse()?)` to `push_u8(..)`), since a side
+   oracle cannot see which error or which failing inputs come back
+   (rule 1). A removed line, a `?` with no same-statement removed
+   counterpart and any other change keep the RIPR-SPEC-0107 reading.
    When the changed `?` is the owner's only possible source of
    `Err`, a passing test that asserts the owner call returns `Err` proves
    condition 2 (that call took the `?`'s `Err`), and condition 3 follows
@@ -238,7 +243,10 @@ rejected alternative. Any can be reversed later without touching the rest.
    name (`is_err()`, `!is_ok()`, `matches!(.., Err(_))`, or a bare
    `unwrap_err()` / `expect_err()`), in a test file with no `macro_rules!`,
    no inherited parent context and no inner attribute other than
-   `#![cfg(test)]`, and with no attribute on the assertion statement. The
+   `#![cfg(test)]`, no `#[macro_use]`, no `use` naming `assert` or
+   `matches` and no glob import other than `super::*`, `self::*` or
+   `crate::*`; no other macro call in the test body (a skip macro can
+   return early) and no attribute on the assertion statement. The
    premise that the test passes on the current code is assumed, as it is for
    every ripr reading, not checked. Any other shape keeps the
    RIPR-SPEC-0107 reading. Rejected: evaluate `c` on the test input (a
@@ -314,8 +322,9 @@ Source: `check` as in Problem.
 - Decision 4: `classifier/evidence/side_flip.rs::tests` (owner, operand and
   test-shape refusals) and `crates/ripr/tests/question_mark_side_flip.rs`
   (end to end: `is_err()` and `matches!(.., Err(_))` read `exposed`; an
-  `is_ok()` test, an earlier `?`, a changed operand, a wrapped or unexecuted
-  assertion and a file-local `assert!` macro do not). Corpus:
+  `is_ok()` test, an earlier `?`, a changed operand or statement, a removed
+  `?` line, a wrapped or unexecuted assertion and a file-local `assert!`
+  macro do not). Corpus:
   `spec0227-total-question-mark-is-err` and `grid-try-exact`.
 - Planned: oracle-scan unit tests for bare `unwrap_err()` and `should_panic`.
   Until those land, a bare `unwrap_err()` statement is no oracle and decision

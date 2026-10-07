@@ -13091,6 +13091,11 @@ tests = [
   "crates/ripr/tests/question_mark_side_flip.rs::an_err_side_assertion_exposes_a_sole_source_question_mark",
   "crates/ripr/tests/question_mark_side_flip.rs::a_changed_question_mark_operand_keeps_the_gap",
   "crates/ripr/tests/question_mark_side_flip.rs::an_earlier_error_source_keeps_the_gap",
+  "crates/ripr/tests/question_mark_side_flip.rs::an_ok_side_assertion_keeps_the_gap",
+  "crates/ripr/tests/question_mark_side_flip.rs::a_wrapped_or_shadowed_assertion_keeps_the_gap",
+  "crates/ripr/tests/question_mark_side_flip.rs::a_changed_statement_around_the_same_operand_keeps_the_gap",
+  "crates/ripr/tests/question_mark_side_flip.rs::a_removed_question_mark_line_is_never_exposed",
+  "crates/ripr/src/analysis/classifier/evidence/side_flip.rs::tests::macro_definitions_and_inner_cfg_make_a_test_file_unreadable",
 ]
 fixtures = []
 code = [

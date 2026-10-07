@@ -247,3 +247,62 @@ fn a_wrapped_or_shadowed_assertion_keeps_the_gap() -> Result<(), String> {
     assert!(!exposed, "a file-local `assert!` macro may be a no-op");
     Ok(())
 }
+
+/// The edit adds a type annotation the old statement did not carry: a
+/// changed statement around the same operand is not a respelling.
+#[test]
+fn a_changed_statement_around_the_same_operand_keeps_the_gap() -> Result<(), String> {
+    let class = error_path_class(
+        SOLE_SOURCE,
+        SOLE_LINE,
+        "        let d: u32 = digit(c)?;",
+        "assert!(total(\"x\").is_err());",
+    )?;
+    assert_ne!(class, ExposureClass::Exposed);
+    Ok(())
+}
+
+/// Deleting an earlier `?` lands the removed-line probe on the surviving
+/// sole `?` line; that deletion is not what the test's `is_err()` sees.
+#[test]
+fn a_removed_question_mark_line_is_never_exposed() -> Result<(), String> {
+    let removed = "        check(c)?;";
+    let lines: Vec<&str> = SOLE_SOURCE.lines().collect();
+    let mut body = String::new();
+    for (index, line) in lines.iter().enumerate() {
+        if index + 1 == SOLE_LINE {
+            body.push_str(&format!("-{removed}\n"));
+        }
+        body.push_str(&format!(" {line}\n"));
+    }
+    let diff = format!(
+        "diff --git a/src/lib.rs b/src/lib.rs\nindex 1111111..2222222 100644\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,{old} +1,{new} @@\n{body}",
+        old = lines.len() + 1,
+        new = lines.len()
+    );
+    let repo = TempRepo::create(
+        SOLE_SOURCE,
+        &test_file("assert!(total(\"x\").is_err());"),
+        &diff,
+    )?;
+    let output = repo.check()?;
+    let removed_probe = output.findings.iter().any(|finding| {
+        finding
+            .probe
+            .before
+            .as_deref()
+            .is_some_and(|text| text.contains("check(c)?"))
+    });
+    assert!(
+        removed_probe,
+        "the fixture must produce the removed-line probe"
+    );
+    let exposed = output
+        .findings
+        .iter()
+        .filter(|finding| finding.class == ExposureClass::Exposed)
+        .map(|finding| finding.probe.expression.clone())
+        .collect::<Vec<_>>();
+    assert!(exposed.is_empty(), "{exposed:?}");
+    Ok(())
+}
