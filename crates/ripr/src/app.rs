@@ -36,6 +36,11 @@ pub(crate) mod repair_card_handoff;
 /// real-opportunity accounting that back the versioned decision receipt.
 pub mod repair_card_usability;
 pub(crate) mod ripr_plus;
+/// Task-first repair selection services behind `ripr repair` and
+/// `ripr continue` (#6305). The CLI adapter parses and renders; the
+/// decisions here reuse the inventory, eligibility, selector, and attempt
+/// authorities.
+pub(crate) mod task_first;
 
 /// Shared final qualification boundary for legacy RIPR+ receipt composition.
 /// Exposure summaries and gap ledgers preserve useful observed counts, but

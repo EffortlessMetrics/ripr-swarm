@@ -9805,6 +9805,15 @@ Campaign 17 ledgers that only contain `reviewed` and `reason`, or no entry
 review object at all, remain valid inputs for baseline diff and shrink-only
 update.
 
+No binary command writes `owner` or `review_after` values: `baseline create`
+records them as `null` (with the default `reason` and the creation timestamp in
+`created_at`), and shrink-only `baseline update` preserves existing entries.
+Review ownership and deadlines are operator-set ledger content, set by editing
+the baseline ledger after creation. `ripr zero status` evaluates `review_after`
+only when the complete record (`owner`, `reason`, `created_at`, and
+`review_after`) is present, and classifies an incomparable deadline as
+`unknown`, not `current`.
+
 ## Gate Baseline Update
 
 `ripr baseline update --remove-resolved` refreshes a reviewed baseline ledger in
@@ -18031,7 +18040,7 @@ targeted-rerun receipt shape:
     "recomputation_reasons": ["selected_test_scope_recomputed"],
     "invalidation_status": "not_available",
     "input_fingerprint": {
-      "schema_version": "1.46",
+      "schema_version": "1.47",
       "analyzer_version": "0.11.0+0123456789abcdef0123456789abcdef01234567",
       "workspace_root_hash": "…",
       "files_content_hash": "…",

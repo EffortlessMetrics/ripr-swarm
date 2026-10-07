@@ -3,6 +3,7 @@ mod arm_selection;
 mod boundary_pairing;
 mod context;
 mod decision;
+mod effect_carrier;
 mod flow;
 mod gap_admission;
 mod helper_transfer;
@@ -33,6 +34,7 @@ pub(in crate::analysis) use decision::{
     classify, confidence_score, ensure_unknown_stop_reason, missing_evidence,
     recommended_next_step, stop_reasons,
 };
+pub(in crate::analysis) use effect_carrier::EffectStateCarrier;
 pub(in crate::analysis) use flow::{local_flow_sinks, propagation_evidence_with_witness};
 pub(in crate::analysis) use gap_admission::{
     REFUSALS_ARE_ANALYZER_LIMITS, withhold_unsupported_gap,

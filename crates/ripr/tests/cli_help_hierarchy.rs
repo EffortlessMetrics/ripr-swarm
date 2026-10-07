@@ -189,7 +189,7 @@ fn default_help_keeps_the_task_roles_distinct() -> Result<(), String> {
             "Diagnose setup ripr doctor",
             "Inspect one change ripr check",
             "Guided repo adoption ripr pilot --root .",
-            "Repair one named gap ripr agent repair",
+            "Repair one named gap ripr repair",
             "Compose PR evidence ripr first-pr",
             "Adopt advisory CI ripr init --ci github",
             "ripr help --all",
@@ -212,7 +212,7 @@ fn exhaustive_help_keeps_the_same_roles_and_boundaries() -> Result<(), String> {
         "Diagnose setup ripr doctor",
         "Inspect one change ripr check",
         "Guided repo adoption ripr pilot --root .",
-        "Repair one named gap ripr agent repair --seam-id ID --phase before|after|verify",
+        "Repair one named gap ripr repair [<item>] | ripr continue | ripr status",
         "Compose PR evidence ripr first-pr --root . --base BASE --head HEAD",
         "Adopt advisory CI ripr init --ci github",
         "`ripr check` is the ordinary first-value analysis; `ripr pilot` is the guided repo-adoption workflow.",
@@ -237,6 +237,10 @@ fn exhaustive_help_marks_non_public_rows_visibly() -> Result<(), String> {
     let rendered = rendered_help(&["help", "--all"])?;
     let stdout = normalized(&rendered);
     for needle in [
+        "ripr agent repair --root . --seam-id ID --phase before [advanced]",
+        "ripr agent repair --root . (--attempt ID | --seam-id ID) --phase after [advanced]",
+        "ripr agent repair --root . --attempt ID --phase verify --verify-authorized --verify-authority ID [advanced]",
+        "ripr agent status --root . [--json] [advanced]",
         "ripr agent start --root . --seam-id ID [--out target/ripr/workflow] [advanced]",
         "ripr agent brief --root . (--diff PATH|--base REV|--files PATHS|--seam-id ID) --json [advanced]",
         "ripr agent packet --root . (--seam-id ID | --gap-ledger PATH --gap-id ID) --json [advanced]",
@@ -255,7 +259,9 @@ fn exhaustive_help_marks_non_public_rows_visibly() -> Result<(), String> {
     let rendered_rows: Vec<String> = rendered.lines().map(normalized).collect();
     for needle in [
         "ripr check [--base REV] [--worktree] [--diff PATH] [--mode draft] [--format FORMAT]",
-        "ripr agent status --root . [--json]",
+        "ripr repair [<item>] [--root PATH]",
+        "ripr continue [--attempt ID] [--root PATH]",
+        "ripr status [--attempt ID] [--root PATH] [--json]",
     ] {
         let mut found = false;
         for row in &rendered_rows {
@@ -297,10 +303,7 @@ fn help_screens_state_the_surfaces_the_parsers_accept() -> Result<(), String> {
     // path, and the full invocation lives in `help --all` and
     // `agent repair --help`.
     let default_help = normalized(&rendered_help(&["--help"])?);
-    for needle in [
-        "ripr agent repair --seam-id ID --phase before",
-        "ripr agent repair --attempt ID --phase after",
-    ] {
+    for needle in ["ripr repair [<item>]", "ripr continue"] {
         assert_contains("default help (`ripr --help`)", &default_help, needle)?;
     }
     if default_help.contains("ripr agent repair --attempt ID --phase verify") {
@@ -332,10 +335,11 @@ fn help_screens_state_the_surfaces_the_parsers_accept() -> Result<(), String> {
         assert_contains("exhaustive help (`ripr help --all`)", &all, needle)?;
     }
 
-    // Discriminators. The `Repair one named gap` role line keeps
-    // `--phase before|after|verify`: it names which phases exist rather than
-    // how to invoke one, and `default_help_keeps_the_task_roles_distinct`
-    // pins it as role vocabulary.
+    // Discriminators. The `Repair one named gap` role line is the task-first
+    // alternation `repair | continue | status`: it names the ordinary
+    // commands rather than the internal phase vocabulary, and
+    // `default_help_keeps_the_task_roles_distinct` pins it as role
+    // vocabulary.
     for (surface, text, stale) in [
         (
             "exhaustive help",
@@ -602,8 +606,8 @@ fn assert_doc_command_routes(doc: &str) -> Result<(), String> {
     for (task, expected) in [
         ("Inspect one change", "ripr check"),
         ("Explore the repository", "ripr pilot --root ."),
-        ("Repair a selected Rust gap", "ripr agent repair"),
-        ("Resume a repair", "ripr agent status --root ."),
+        ("Repair a selected Rust gap", "ripr repair"),
+        ("Resume a repair", "ripr status --root ."),
         ("Compose PR evidence", "ripr first-pr"),
         ("Add advisory CI", "ripr init --ci github"),
         ("Diagnose setup", "ripr doctor"),
