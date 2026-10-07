@@ -1,13 +1,13 @@
 {
   "subject_id": "authored-spec-confirm",
   "origin": "authored",
-  "version_label": "authored 2026-10-07 for spec cells with no runtime-truth case (RIPR-SPEC-0005, 0094, 0096, 0197); labeled with log 0.4.34",
+  "version_label": "authored 2026-10-07 for spec cells with no runtime-truth case (RIPR-SPEC-0005, 0094, 0096, 0197); log pinned to 0.4.34",
   "license": "MIT OR Apache-2.0",
   "shared_corpus": null,
   "retained_files": [
     {
       "path": "Cargo.toml",
-      "sha256": "4de0498900719dc4eb13c0b4ba4b56f29257450365c3064a574d6c19520613c8"
+      "sha256": "6406c6476d68eed4074967b3d503263cad8c67d85c99e5519e9cf9828bd17fb7"
     },
     {
       "path": "src/lib.rs",

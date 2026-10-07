@@ -1,53 +1,53 @@
 {
   "abstention_rate": {
-    "denominator": 233,
-    "numerator": 73,
-    "rate": "0.3133"
+    "denominator": 232,
+    "numerator": 72,
+    "rate": "0.3103"
   },
   "by_observed_verdict": {
     "credited": 38,
     "gap": 122,
-    "limited": 72,
+    "limited": 71,
     "silent": 1
   },
   "by_origin": {
     "authored": {
       "abstention_rate": {
-        "denominator": 199,
-        "numerator": 49,
-        "rate": "0.2462"
+        "denominator": 198,
+        "numerator": 48,
+        "rate": "0.2424"
       },
       "by_observed_verdict": {
         "credited": 33,
         "gap": 117,
-        "limited": 48,
+        "limited": 47,
         "silent": 1
       },
-      "cases_total": 199,
+      "cases_total": 198,
       "false_actionable_rate": {
         "denominator": 103,
         "numerator": 54,
         "rate": "0.5243"
       },
       "false_exposed_rate": {
-        "denominator": 96,
+        "denominator": 95,
         "numerator": 8,
-        "rate": "0.0833"
+        "rate": "0.0842"
       },
       "false_silent_rate": {
-        "denominator": 96,
+        "denominator": 95,
         "numerator": 0,
         "rate": "0.0000"
       },
       "false_verdict_rate": {
-        "denominator": 199,
+        "denominator": 198,
         "numerator": 62,
-        "rate": "0.3116"
+        "rate": "0.3131"
       },
       "ideal_rate": {
-        "denominator": 199,
+        "denominator": 198,
         "numerator": 88,
-        "rate": "0.4422"
+        "rate": "0.4444"
       }
     },
     "upstream": {
@@ -90,19 +90,19 @@
     }
   },
   "by_outcome": {
-    "abstained": 73,
+    "abstained": 72,
     "false_actionable": 57,
     "false_exposed": 8,
     "ideal": 95
   },
   "by_truth": {
     "discriminated": 123,
-    "not_discriminated": 76,
+    "not_discriminated": 75,
     "partially_discriminated": 34
   },
-  "cases_total": 233,
+  "cases_total": 232,
   "contradiction_rate": {
-    "denominator": 313,
+    "denominator": 311,
     "numerator": 2,
     "rate": "0.0064"
   },
@@ -115,24 +115,24 @@
     "rate": "0.4634"
   },
   "false_exposed_rate": {
-    "denominator": 110,
+    "denominator": 109,
     "numerator": 8,
-    "rate": "0.0727"
+    "rate": "0.0734"
   },
   "false_silent_rate": {
-    "denominator": 110,
+    "denominator": 109,
     "numerator": 0,
     "rate": "0.0000"
   },
   "false_verdict_rate": {
-    "denominator": 233,
+    "denominator": 232,
     "numerator": 65,
-    "rate": "0.2790"
+    "rate": "0.2802"
   },
   "ideal_rate": {
-    "denominator": 233,
+    "denominator": 232,
     "numerator": 95,
-    "rate": "0.4077"
+    "rate": "0.4095"
   },
   "non_claims": [
     "Rates describe this corpus only; they are not a population estimate for Rust code or for ripr in general.",
@@ -507,25 +507,6 @@
       "outcome": "ideal",
       "subject_id": "authored-spec-confirm",
       "test_shape": "unit_test_assert_bool",
-      "truth": "not_discriminated"
-    },
-    {
-      "anchor": "src/lib.rs:43",
-      "behavior_family": "side_effect_push",
-      "case_id": "cell-0096-local-dropped-push",
-      "changed_since_labeling": false,
-      "contradictions": [],
-      "followed_retarget": false,
-      "hard_case": true,
-      "ideal_verdict": "gap",
-      "observed_classifications": [
-        "propagation_unknown"
-      ],
-      "observed_verdict": "limited",
-      "origin": "authored",
-      "outcome": "abstained",
-      "subject_id": "authored-spec-confirm",
-      "test_shape": "unit_test_assert_eq",
       "truth": "not_discriminated"
     },
     {
