@@ -1875,7 +1875,9 @@ fn a_for_loop_over_a_non_empty_literal_table_runs_its_assertion() {
         format!("for (x, want) in [(4, 12), (1, 3)] {{ {pin} }}"),
         format!("for (x, want) in &[(4, 12)] {{ let (x, want) = (*x, *want); {pin} }}"),
         format!("let cases = [(4, 12), (1, 3)];\nfor (x, want) in cases {{ {pin} }}"),
-        format!("let cases: [(u32, u32); 1] = [(4, 12)];\nfor (x, want) in cases.into_iter() {{ {pin} }}"),
+        format!(
+            "let cases: [(u32, u32); 1] = [(4, 12)];\nfor (x, want) in cases.into_iter() {{ {pin} }}"
+        ),
         format!("let cases = [(4, 12)];\nfor &(x, want) in cases.iter() {{ {pin} }}"),
     ] {
         assert_eq!(refusal(&admitted), None, "{admitted}");
@@ -1893,15 +1895,35 @@ fn a_for_loop_over_a_non_empty_literal_table_runs_its_assertion() {
         format!("for (x, want) in ROWS {{ {pin} }}"),
         // The table name must be one plain immutable `let` of a literal.
         format!("let mut cases = [(4, 12)];\ncases = [];\nfor (x, want) in cases {{ {pin} }}"),
-        format!("let cases = [(4, 12)];\nlet cases: [(u32, u32); 0] = [];\nfor (x, want) in cases {{ {pin} }}"),
+        format!(
+            "let cases = [(4, 12)];\nlet cases: [(u32, u32); 0] = [];\nfor (x, want) in cases {{ {pin} }}"
+        ),
         format!("let cases = rows();\nfor (x, want) in cases {{ {pin} }}"),
         format!("{{ let cases = [(4, 12)]; }}\nfor (x, want) in cases {{ {pin} }}"),
         format!("for (x, want) in cases {{ {pin} }}\nlet cases = [(4, 12)];"),
+        // An inner item, a raw-identifier twin or a gated `let` can leave
+        // the loop reading an empty table.
+        format!(
+            "let cases = [(4, 12)];\n{{ const cases: [(u32, u32); 0] = []; for (x, want) in cases {{ {pin} }} }}"
+        ),
+        format!(
+            "let cases = [(4, 12)];\n{{ use crate::EMPTY as cases; for (x, want) in cases {{ {pin} }} }}"
+        ),
+        format!(
+            "let cases = [(4, 12)];\nlet r#cases: [(u32, u32); 0] = [];\nfor (x, want) in cases {{ {pin} }}"
+        ),
+        format!("#[cfg(any())]\nlet cases = [(4, 12)];\nfor (x, want) in cases {{ {pin} }}"),
+        // A file-local `iter` method may take the call before the slice's.
+        format!(
+            "trait Rows {{ fn iter(&self) -> std::iter::Empty<&(u32, u32)>; }}\nfor (x, want) in [(4, 12)].iter() {{ {pin} }}"
+        ),
     ] {
         assert_eq!(refusal(&refused), skipped, "{refused}");
     }
     assert_eq!(
-        refusal(&format!("for (x, want) in [(4, 12)] {{ if x > 9 {{ continue; }} {pin} }}")),
+        refusal(&format!(
+            "for (x, want) in [(4, 12)] {{ if x > 9 {{ continue; }} {pin} }}"
+        )),
         Some(AssertionRefusal::Syntax(
             AssertionContextRefusal::ConditionalPath(
                 "a `for` loop after a `break` or `continue` that can skip it"

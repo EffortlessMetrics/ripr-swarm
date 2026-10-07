@@ -106,7 +106,11 @@ rule only for an assertion whose context was admitted.
    is an array literal with at least one element (`[a, ..]`, `&[a, ..]`,
    optionally followed by a bare `.iter()` or `.into_iter()`), or a local name
    bound exactly once in the test by a plain immutable `let` to such a literal,
-   in a block enclosing the loop and before it. Empty and repeat arrays,
+   in a block enclosing the loop and before it; the `let` carries no
+   attribute, no item in the test body (`const`, `static`, `use .. as`)
+   mentions the name, and names compare with any `r#` prefix removed. A
+   bare `.iter()`/`.into_iter()` is refused when the test's file declares a
+   function of that name, which a trait could dispatch first. Empty and repeat arrays,
    ranges, `vec!`, constants, calls and every other iterable may run zero
    times and stay refused; `while` stays refused. For a bound closure, use the invocation position, not
    its earlier definition; any closure return remains conservatively refused.

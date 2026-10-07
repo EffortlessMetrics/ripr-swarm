@@ -1240,6 +1240,21 @@ fn equality_execution_uses_statement_prefix_and_closure_invocation() -> Result<(
                 format!("while false {{ {direct} }}"),
                 false,
             ),
+            (
+                "non_empty_literal_table_for",
+                format!("let rows = [1, 2];\nfor _row in rows {{ {direct} }}"),
+                true,
+            ),
+            (
+                "empty_literal_table_for",
+                format!("let rows: [u8; 0] = [];\nfor _row in rows {{ {direct} }}"),
+                false,
+            ),
+            (
+                "continue_before_assertion_in_table_for",
+                format!("for row in [1, 2] {{ if row > 0 {{ continue; }}\n{direct} }}"),
+                false,
+            ),
         ] {
             let scratch = Scratch::create()?;
             let source = format!("{prefix}    #[test]\n    fn checks() {{\n{body}\n    }}\n}}\n");

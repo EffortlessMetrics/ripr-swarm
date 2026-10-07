@@ -1360,9 +1360,7 @@ fn eager_path(
             // A `for` over a non-empty literal table runs its body at least
             // once, like `loop`. Ranges, iterators and empty tables may run
             // zero times and stay refused (#5328).
-            if table
-                .loop_body()
-                .is_none_or(|body| body.syntax() != &node)
+            if table.loop_body().is_none_or(|body| body.syntax() != &node)
                 || !table
                     .iterable()
                     .is_some_and(|rows| non_empty_literal_table(&rows, &table, function))
@@ -1411,29 +1409,41 @@ fn non_empty_literal_table(rows: &ast::Expr, table: &ast::ForExpr, function: &as
         else {
             return false;
         };
+        let name = unraw(&name.text()).to_string();
         let mut bindings = function
             .syntax()
             .descendants()
             .filter_map(ast::IdentPat::cast)
-            .filter(|pat| pat.name().is_some_and(|bound| bound.text() == name.text()));
+            .filter(|pat| pat.name().is_some_and(|bound| unraw(&bound.text()) == name));
         let (Some(binding), None) = (bindings.next(), bindings.next()) else {
             return false;
         };
-        if binding.mut_token().is_some()
-            || binding.ref_token().is_some()
-            || binding.pat().is_some()
+        if binding.mut_token().is_some() || binding.ref_token().is_some() || binding.pat().is_some()
         {
             return false;
         }
         let Some(statement) = binding.syntax().parent().and_then(ast::LetStmt::cast) else {
             return false;
         };
-        let encloses = statement.syntax().parent().is_some_and(|block| {
-            table
-                .syntax()
-                .ancestors()
-                .any(|ancestor| ancestor == block)
-        });
+        // An item in the body (`const`, `static`, `use .. as`) may take the
+        // name in an inner scope, and a gated `let` may not exist at all.
+        let item_names_it = function
+            .syntax()
+            .descendants()
+            .skip(1)
+            .filter(|node| ast::Item::can_cast(node.kind()))
+            .any(|item| {
+                item.descendants_with_tokens()
+                    .filter_map(|element| element.into_token())
+                    .any(|token| unraw(token.text()) == name)
+            });
+        if item_names_it || statement.attrs().next().is_some() {
+            return false;
+        }
+        let encloses = statement
+            .syntax()
+            .parent()
+            .is_some_and(|block| table.syntax().ancestors().any(|ancestor| ancestor == block));
         return encloses
             && statement.let_else().is_none()
             && statement.syntax().text_range().end() <= table.syntax().text_range().start()
@@ -1452,7 +1462,10 @@ fn literal_table_operand(expr: &ast::Expr) -> ast::Expr {
             .map_or_else(|| expr.clone(), |inner| literal_table_operand(&inner)),
         ast::Expr::MethodCallExpr(call)
             if call.generic_arg_list().is_none()
-                && call.arg_list().is_some_and(|args| args.args().next().is_none())
+                && !declares_iter_method(call.syntax())
+                && call
+                    .arg_list()
+                    .is_some_and(|args| args.args().next().is_none())
                 && call
                     .name_ref()
                     .is_some_and(|name| name.text() == "iter" || name.text() == "into_iter") =>
@@ -1465,6 +1478,21 @@ fn literal_table_operand(expr: &ast::Expr) -> ast::Expr {
             .map_or_else(|| expr.clone(), |inner| literal_table_operand(&inner)),
         _ => expr.clone(),
     }
+}
+
+/// A trait method named `iter`/`into_iter` declared in the test's file can
+/// take a method call on an array before the slice's own `iter`.
+fn declares_iter_method(node: &SyntaxNode) -> bool {
+    node.ancestors().last().is_some_and(|root| {
+        root.descendants()
+            .filter_map(ast::Fn::cast)
+            .filter_map(|function| function.name())
+            .any(|name| matches!(unraw(&name.text()), "iter" | "into_iter"))
+    })
+}
+
+fn unraw(name: &str) -> &str {
+    name.strip_prefix("r#").unwrap_or(name)
 }
 
 fn non_empty_array(expr: &ast::Expr) -> bool {
