@@ -2240,7 +2240,13 @@ fn reexported_value_under_a_unit_struct_name_is_not_credited() -> Result<(), Str
             finding.probe.family == ProbeFamily::ReturnValue && finding.probe.location.line == 5
         })
         .ok_or("no return_value finding on the changed tail")?;
-    assert_ne!(finding.class, ExposureClass::Exposed, "{:?}", finding.class);
+    // Refused receiver typing leaves the proximity-only gap, not a credit.
+    assert_eq!(
+        finding.class,
+        ExposureClass::WeaklyExposed,
+        "{:?}",
+        finding.class
+    );
     // The mutant passes: the test never runs the default.
     for (label, tail) in [
         ("rewrite", "4 * self.step()"),

@@ -252,6 +252,34 @@ fn edition_2024_into_future_is_a_by_value_prelude_method() {
     assert!(admitted_texts(&index, &pin).is_empty());
 }
 
+/// #7083 review: `Iterator`'s comparisons take `self`, so `Unit.ne(..)` on an
+/// iterator type runs `Iterator::ne` before a `&self` trait default `ne`.
+#[test]
+fn iterator_by_value_comparisons_are_prelude_methods() {
+    for name in [
+        "cmp",
+        "eq",
+        "ge",
+        "gt",
+        "is_partitioned",
+        "le",
+        "lt",
+        "ne",
+        "partial_cmp",
+    ] {
+        let lib = kept_default_with_tests(&format!("        assert_eq!(Unit.{name}(), 8);"))
+            .replace("fn advance(&self)", &format!("fn {name}(&self)"));
+        let index = index(&[(LIB, &lib)]);
+        let pin = establish(&index, name, "4 * self.step()");
+        assert!(
+            pin.is_some(),
+            "the kept default `{name}` must establish a pin"
+        );
+        let Some(pin) = pin else { continue };
+        assert!(admitted_texts(&index, &pin).is_empty(), "`{name}` admitted");
+    }
+}
+
 #[test]
 fn unit_struct_value_admits_only_spellings_nothing_else_can_bind() {
     let lib = kept_default_with_tests("        assert_eq!(Unit.advance(), 8);");

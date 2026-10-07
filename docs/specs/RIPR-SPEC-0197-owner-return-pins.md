@@ -228,7 +228,7 @@ rule only for an assertion whose context was admitted.
      receiver never credits a name `&[u8]` itself resolves (slice methods,
      prelude and `std::io` trait methods). A named receiver never credits
      a by-value prelude trait method name (`count`, `map`, `into`,
-     `into_future`, ...):
+     `into_future`, `Iterator`'s `eq`/`ne`/`cmp`/`partial_cmp`/`lt`/...):
      method lookup tries `T` before `&T`, so `Iterator::count(self)` takes
      `c.count()` before an inherent `count(&self)` whenever the type is an
      iterator, and ripr cannot see which std traits a type implements.
@@ -833,7 +833,8 @@ assertions. This repair shares the existing callback without that larger migrati
   constructor signatures; unit-struct receivers
   (`unit_struct_receiver_is_typed_by_its_own_name`,
   `unit_struct_value_admits_only_spellings_nothing_else_can_bind`,
-  `edition_2024_into_future_is_a_by_value_prelude_method`);
+  `edition_2024_into_future_is_a_by_value_prelude_method`,
+  `iterator_by_value_comparisons_are_prelude_methods`);
   macro-bound, aliased and parameter receivers;
   lexical fallback; the item-container fact.
 - Unit execution and macro context controls: `owner_pin_requires_an_executed_assertion_context`,
