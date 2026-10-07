@@ -1071,10 +1071,10 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
         command_entry(
             "verdict-corpus bless",
             "mutating",
-            "fixtures/rust-verdict-corpus/expected/{summary.json,rows/<case>.json}",
+            "fixtures/rust-verdict-corpus/expected/rows/<case>.json",
             false,
             false,
-            "Runs the whole corpus and replaces the reviewed expected state: summary.json and one row file per case, removing rows of deleted cases. Use it only when a verdict change is intended, and state why each moved row changed in the PR.",
+            "Runs the whole corpus and replaces the reviewed expected state: one row file per case, removing rows of deleted cases. The aggregate rates are derived from the rows, not committed. Use it only when a verdict change is intended, and state why each moved row changed in the PR.",
         ),
         command_entry(
             "verdict-corpus split",

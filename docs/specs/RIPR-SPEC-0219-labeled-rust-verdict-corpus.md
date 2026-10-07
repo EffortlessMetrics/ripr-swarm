@@ -166,16 +166,16 @@ summary counts that disagree with the findings list.
 - `check [--cases <id,...>] [--out <dir>]` does the same and fails, naming
   each case, when a row differs from
   `fixtures/rust-verdict-corpus/expected/rows/<case_id>.json`. A
-  whole-corpus run also fails when the summary differs from
-  `expected/summary.json`, a row file is missing, or `expected/` holds any
-  other file. `--cases` compares only the named rows, for the inner loop
+  whole-corpus run also fails when a row file is missing or `expected/`
+  holds any other file, including a `summary.json`: the summary is derived
+  from the rows, never committed. `--cases` compares only the named rows, for the inner loop
   while writing a case.
 - `check-all` runs `check` on every `fixtures/<language>-verdict-corpus`
   directory, found by name, and fails if any drifts or a corpus directory
   has no `corpus.json`. Reports for languages other than Rust nest under
   `target/ripr/reports/verdict-corpus/<language>/`.
-- `bless` runs the whole corpus and replaces `expected/` with the summary and
-  one row file per case.
+- `bless` runs the whole corpus and replaces `expected/` with one row file
+  per case.
 - `split` moves a one-file `corpus.json`'s subjects and cases into record
   files and drops its `corpus_version`, skipping records that already exist
   with the same content and naming any that differ.
@@ -248,7 +248,11 @@ whole `ripr check` run, not only the anchor line, because a
 self-contradicting finding anywhere is an internal inconsistency.
 `contradictions_by_code` uses the same unit: findings carrying each code,
 plus one per run for a summary-count code. A row's `contradictions` lists
-the distinct codes seen in that case's run.
+the distinct codes seen in that case's run, and its `findings_scored`,
+`findings_contradicted` and `contradiction_counts` hold that run's share of
+the corpus counts. The summary is therefore a function of the rows: the dx
+scoreboard (`verdict-corpus:` sources) and the public proof receipt derive
+it from the committed rows, so parallel case PRs share no line.
 
 ## Required Evidence
 
@@ -259,8 +263,10 @@ the distinct codes seen in that case's run.
   arithmetic are pinned by unit tests.
 - The committed expected rows agree with the corpus labels row by row.
 - A record file named after another id is refused; `split` reproduces the
-  one-file corpus exactly; a moved, missing, or stale row and a drifted
-  summary are each named, and a `--cases` run compares only its rows.
+  one-file corpus exactly; a moved, missing, or stale row and a leftover
+  summary file are each named, and a `--cases` run compares only its rows.
+- The summary derived from the committed rows equals the summary of the run
+  that blessed them.
 - The validator holds upstream subjects to a pinned URL, commit, and license
   file, and authored subjects to the `authored-` id prefix, no upstream
   provenance, no license file, and this repository's license; the report
@@ -380,6 +386,9 @@ Tests live in `xtask/src/reports/verdict_corpus_tests.rs`:
 - `corpus_records_load_in_file_name_order_and_must_match_their_ids`
 - `split_moves_the_one_file_layout_into_records_without_loss`
 - `drift_names_moved_missing_and_stale_rows_and_a_subset_compares_only_its_rows`
+- `summary_derived_from_blessed_rows_equals_the_run_summary`
+- `verdict_corpus_sources_derive_each_rate_from_the_committed_rows`
+- `verdict_receipt_derives_the_summary_from_rows_in_file_name_order`
 - `validator_rejects_a_case_that_borrows_another_cases_diff`
 - `check_all_finds_every_language_corpus_and_refuses_one_without_a_header`
 - `contradiction_counts_use_one_per_finding_unit`

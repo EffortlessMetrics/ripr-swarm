@@ -451,7 +451,8 @@ pub(crate) fn parse_config(text: &str) -> Result<Config, String> {
         let source_ok = metric.source == "measured"
             || metric.source == "pending"
             || metric.source.starts_with("ingest:")
-            || metric.source.starts_with("file:");
+            || metric.source.starts_with("file:")
+            || metric.source.starts_with("verdict-corpus:");
         if !source_ok {
             return Err(format!(
                 "metric `{}` has unknown source `{}`",
@@ -1467,13 +1468,19 @@ pub(crate) fn mutation_spot_check_to_input(value: &Value) -> Result<Value, Strin
     }))
 }
 
-/// Metrics read from committed receipts (`file:<path>#<json.path>`). The
-/// referenced object uses the judged-panel `{numerator, denominator}` shape;
-/// a zero denominator is `not_measured`, not a perfect rate.
+/// Metrics read from committed receipts (`file:<path>#<json.path>`) or from
+/// a verdict corpus's committed rows (`verdict-corpus:<corpus dir>#<rate>`,
+/// the summary derived as `verdict-corpus check` derives it). The referenced
+/// object uses the judged-panel `{numerator, denominator}` shape; a zero
+/// denominator is `not_measured`, not a perfect rate.
 fn file_samples(config: &Config, boards: &[String]) -> Result<Vec<Sample>, String> {
     let mut samples = Vec::new();
     for metric in &config.metric {
         if !boards.contains(&metric.board) {
+            continue;
+        }
+        if let Some(reference) = metric.source.strip_prefix("verdict-corpus:") {
+            samples.push(verdict_corpus_sample(metric, reference));
             continue;
         }
         let Some(reference) = metric.source.strip_prefix("file:") else {
@@ -1503,6 +1510,25 @@ fn file_samples(config: &Config, boards: &[String]) -> Result<Vec<Sample>, Strin
         samples.push(sample);
     }
     Ok(samples)
+}
+
+fn verdict_corpus_sample(metric: &MetricDef, reference: &str) -> Sample {
+    let (dir, pointer) = reference.split_once('#').unwrap_or((reference, ""));
+    let report = super::verdict_corpus::expected_report(Path::new(dir)).and_then(|report| {
+        serde_json::to_value(&report).map_err(|err| format!("render {dir} report: {err}"))
+    });
+    match report {
+        Ok(json) => ratio_sample(&metric.id, dir, pointer, &json),
+        Err(err) => Sample {
+            metric: metric.id.clone(),
+            repo: None,
+            outcome: SampleOutcome::NotMeasured,
+            detail: match &metric.pending_reason {
+                Some(reason) => format!("{err}; {reason}"),
+                None => err,
+            },
+        },
+    }
 }
 
 pub(crate) fn ratio_sample(metric: &str, path: &str, pointer: &str, json: &Value) -> Sample {

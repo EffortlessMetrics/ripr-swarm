@@ -275,7 +275,7 @@ impl Verdict {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum Outcome {
     Ideal,
@@ -601,7 +601,11 @@ pub(crate) fn ratio(numerator: usize, denominator: usize) -> Ratio {
     }
 }
 
-#[derive(Clone, Debug, Serialize)]
+/// One scored case. The committed expected state is these rows alone: each
+/// carries its own contradiction counts, so the corpus summary is a function
+/// of the rows (`summarize`) and no shared summary file is committed.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct CaseRow {
     pub(crate) case_id: String,
     pub(crate) subject_id: String,
@@ -622,6 +626,13 @@ pub(crate) struct CaseRow {
     pub(crate) observed_classifications: Vec<String>,
     pub(crate) outcome: Outcome,
     pub(crate) contradictions: Vec<String>,
+    /// Candidate-current findings anywhere in the case's check.
+    pub(crate) findings_scored: usize,
+    /// Of those, the findings with at least one contradiction.
+    pub(crate) findings_contradicted: usize,
+    /// Occurrences per contradiction code, including the per-check
+    /// summary-count codes.
+    pub(crate) contradiction_counts: BTreeMap<String, usize>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -698,7 +709,7 @@ pub(crate) fn case_row(
     origin: SubjectOrigin,
     check: &Value,
     anchor_line: Option<&str>,
-) -> (CaseRow, usize, usize, BTreeMap<String, usize>) {
+) -> CaseRow {
     let anchored = anchored_findings(check, &case.anchor, anchor_line);
     let followed_retarget = anchored
         .iter()
@@ -736,7 +747,7 @@ pub(crate) fn case_row(
         *code_counts.entry(code.clone()).or_insert(0) += 1;
         contradictions.insert(code);
     }
-    let row = CaseRow {
+    CaseRow {
         case_id: case.case_id.clone(),
         subject_id: case.subject_id.clone(),
         origin,
@@ -753,8 +764,10 @@ pub(crate) fn case_row(
         observed_classifications: classes,
         outcome: score(case.truth.state, observed),
         contradictions: contradictions.into_iter().collect(),
-    };
-    (row, scored, contradicted, code_counts)
+        findings_scored: scored,
+        findings_contradicted: contradicted,
+        contradiction_counts: code_counts,
+    }
 }
 
 /// `anchor_lines` maps a case id to its anchor line's text, read from the
@@ -771,9 +784,6 @@ pub(crate) fn build_report(
         .map(|s| (s.subject_id.as_str(), s.origin))
         .collect();
     let mut rows = Vec::new();
-    let mut findings_scored = 0;
-    let mut findings_contradicted = 0;
-    let mut by_code = BTreeMap::new();
     for case in &corpus.cases {
         let check = by_id
             .get(case.case_id.as_str())
@@ -787,19 +797,24 @@ pub(crate) fn build_report(
                     case.case_id, case.subject_id
                 )
             })?;
-        let (row, scored, contradicted, code_counts) = case_row(
+        rows.push(case_row(
             case,
             origin,
             check,
             anchor_lines.get(&case.case_id).map(String::as_str),
-        );
-        findings_scored += scored;
-        findings_contradicted += contradicted;
-        for (code, n) in code_counts {
-            *by_code.entry(code).or_insert(0) += n;
-        }
-        rows.push(row);
+        ));
     }
+    Ok(summarize(
+        corpus.spec.clone(),
+        corpus.non_claims.clone(),
+        rows,
+    ))
+}
+
+/// The aggregate counts and rates over `rows`. Every number is read from the
+/// rows, so a summary rebuilt from the committed row files equals the one the
+/// run produced.
+pub(crate) fn summarize(spec: String, non_claims: Vec<String>, rows: Vec<CaseRow>) -> Report {
     let count = |outcome: Outcome| rows.iter().filter(|r| r.outcome == outcome).count();
     let truth_count =
         |pred: &dyn Fn(TruthState) -> bool| rows.iter().filter(|r| pred(r.truth)).count();
@@ -811,6 +826,9 @@ pub(crate) fn build_report(
     let mut by_truth = BTreeMap::new();
     let mut by_outcome = BTreeMap::new();
     let mut by_observed = BTreeMap::new();
+    let mut findings_scored = 0;
+    let mut findings_contradicted = 0;
+    let mut by_code = BTreeMap::new();
     for row in &rows {
         *by_truth.entry(row.truth.as_str().to_string()).or_insert(0) += 1;
         *by_outcome
@@ -819,6 +837,11 @@ pub(crate) fn build_report(
         *by_observed
             .entry(row.observed_verdict.as_str().to_string())
             .or_insert(0) += 1;
+        findings_scored += row.findings_scored;
+        findings_contradicted += row.findings_contradicted;
+        for (code, n) in &row.contradiction_counts {
+            *by_code.entry(code.clone()).or_insert(0) += n;
+        }
     }
     let mut by_origin = BTreeMap::new();
     for origin in [SubjectOrigin::Upstream, SubjectOrigin::Authored] {
@@ -827,9 +850,9 @@ pub(crate) fn build_report(
             by_origin.insert(origin.as_str().to_string(), origin_rates(&subset));
         }
     }
-    Ok(Report {
+    Report {
         schema_version: REPORT_SCHEMA.to_string(),
-        spec: corpus.spec.clone(),
+        spec,
         cases_total: rows.len(),
         by_truth,
         by_outcome,
@@ -844,8 +867,33 @@ pub(crate) fn build_report(
         contradictions_by_code: by_code,
         by_origin,
         rows,
-        non_claims: corpus.non_claims.clone(),
-    })
+        non_claims,
+    }
+}
+
+/// The report the committed expected state describes: the `corpus.json`
+/// header's spec and non-claims with every `expected/rows/<case>.json`, in
+/// file-name order. Scoreboards and the public proof read the corpus rates
+/// through this instead of a committed summary file.
+pub(crate) fn expected_report(dir: &Path) -> Result<Report, String> {
+    // Only the fields the report repeats; `validate` owns the full header.
+    #[derive(Deserialize)]
+    struct Header {
+        spec: String,
+        non_claims: Vec<String>,
+    }
+    let header_path = dir.join("corpus.json");
+    let header: Header = serde_json::from_value(parse_json(&header_path)?)
+        .map_err(|err| format!("parse {}: {err}", normalize_path(&header_path)))?;
+    let rows_dir = dir.join("expected").join(ROWS_DIR);
+    let rows = record_files(&rows_dir, "case_id")?
+        .into_iter()
+        .map(|value| {
+            serde_json::from_value::<CaseRow>(value)
+                .map_err(|err| format!("parse a row under {}: {err}", normalize_path(&rows_dir)))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(summarize(header.spec, header.non_claims, rows))
 }
 
 pub(crate) fn render_report_json(report: &Report) -> Result<String, String> {
@@ -2083,57 +2131,11 @@ fn first_differing_line(expected: &str, actual: &str) -> String {
     "length differs".to_string()
 }
 
-/// The committed expected state: aggregate rates in `summary.json` and one
-/// `rows/<case_id>.json` per case. A PR that adds a case adds one row file;
-/// only the summary's counts are shared lines.
-pub(crate) const SUMMARY_FILE: &str = "summary.json";
+/// The committed expected state: one `rows/<case_id>.json` per case and
+/// nothing else. A PR that adds a case adds one row file. The aggregate rates
+/// are derived from the rows (`expected_report`), so no line is shared between
+/// case PRs.
 pub(crate) const ROWS_DIR: &str = "rows";
-
-/// The report without its rows, borrowed field by field so the summary keeps
-/// the report's field order.
-#[derive(Serialize)]
-struct Summary<'a> {
-    schema_version: &'a str,
-    spec: &'a str,
-    cases_total: usize,
-    by_truth: &'a BTreeMap<String, usize>,
-    by_outcome: &'a BTreeMap<String, usize>,
-    by_observed_verdict: &'a BTreeMap<String, usize>,
-    false_verdict_rate: &'a Ratio,
-    false_actionable_rate: &'a Ratio,
-    false_exposed_rate: &'a Ratio,
-    false_silent_rate: &'a Ratio,
-    ideal_rate: &'a Ratio,
-    abstention_rate: &'a Ratio,
-    contradiction_rate: &'a Ratio,
-    contradictions_by_code: &'a BTreeMap<String, usize>,
-    by_origin: &'a BTreeMap<String, OriginRates>,
-    non_claims: &'a [String],
-}
-
-pub(crate) fn render_summary_json(report: &Report) -> Result<String, String> {
-    pretty(
-        &Summary {
-            schema_version: &report.schema_version,
-            spec: &report.spec,
-            cases_total: report.cases_total,
-            by_truth: &report.by_truth,
-            by_outcome: &report.by_outcome,
-            by_observed_verdict: &report.by_observed_verdict,
-            false_verdict_rate: &report.false_verdict_rate,
-            false_actionable_rate: &report.false_actionable_rate,
-            false_exposed_rate: &report.false_exposed_rate,
-            false_silent_rate: &report.false_silent_rate,
-            ideal_rate: &report.ideal_rate,
-            abstention_rate: &report.abstention_rate,
-            contradiction_rate: &report.contradiction_rate,
-            contradictions_by_code: &report.contradictions_by_code,
-            by_origin: &report.by_origin,
-            non_claims: &report.non_claims,
-        },
-        "verdict corpus summary",
-    )
-}
 
 pub(crate) fn render_row_json(row: &CaseRow) -> Result<String, String> {
     pretty(row, "verdict corpus row")
@@ -2141,7 +2143,7 @@ pub(crate) fn render_row_json(row: &CaseRow) -> Result<String, String> {
 
 /// Every difference between `report` and the committed expected state. With
 /// `whole_corpus` false (a `--cases` run) only the selected rows are
-/// compared; the summary and stale-row checks need every case.
+/// compared; the stale-file check needs every case.
 pub(crate) fn expected_drift(
     expected_dir: &Path,
     report: &Report,
@@ -2174,25 +2176,14 @@ pub(crate) fn expected_drift(
     if !whole_corpus {
         return Ok(drift);
     }
-    let summary_path = expected_dir.join(SUMMARY_FILE);
-    let summary = render_summary_json(report)?;
-    match fs::read_to_string(&summary_path) {
-        Ok(expected) if expected == summary => {}
-        Ok(expected) => drift.push(format!(
-            "{}: {}",
-            normalize_path(&summary_path),
-            first_differing_line(&expected, &summary)
-        )),
-        Err(_) => drift.push(format!("{} is missing", normalize_path(&summary_path))),
-    }
     let ids: BTreeSet<&str> = report.rows.iter().map(|r| r.case_id.as_str()).collect();
     for entry in files_under(expected_dir)? {
-        let stale = match entry.strip_prefix("rows/") {
-            Some(name) => name
-                .strip_suffix(".json")
-                .is_none_or(|id| !ids.contains(id)),
-            None => entry != SUMMARY_FILE,
-        };
+        // A `summary.json` left from the old layout is stale too: the
+        // summary is derived from the rows, never committed.
+        let stale = entry
+            .strip_prefix("rows/")
+            .and_then(|name| name.strip_suffix(".json"))
+            .is_none_or(|id| !ids.contains(id));
         if stale {
             drift.push(format!(
                 "{} is not part of the expected state; remove it",
@@ -2217,10 +2208,6 @@ fn bless(expected_dir: &Path, report: &Report) -> Result<(), String> {
     let write = |path: PathBuf, text: String| {
         fs::write(&path, text).map_err(|err| format!("write {}: {err}", normalize_path(&path)))
     };
-    write(
-        expected_dir.join(SUMMARY_FILE),
-        render_summary_json(report)?,
-    )?;
     for row in &report.rows {
         write(
             rows_dir.join(format!("{}.json", row.case_id)),
@@ -2488,7 +2475,7 @@ pub(crate) fn verdict_corpus(args: &[String]) -> Result<(), String> {
             let report = run_corpus(dir, &corpus, &work_root(dir)?)?;
             bless(&expected_dir, &report)?;
             println!(
-                "verdict-corpus: blessed {} rows and the summary into {}; state why each moved row changed in the PR",
+                "verdict-corpus: blessed {} rows into {}; state why each moved row changed in the PR",
                 report.rows.len(),
                 normalize_path(&expected_dir)
             );
