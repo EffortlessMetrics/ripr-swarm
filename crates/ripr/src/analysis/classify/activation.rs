@@ -1563,7 +1563,11 @@ fn field_overwritten_before(
         }
         if let Some((fields, base)) = struct_literal_fields(initializer) {
             match fields.iter().find(|(name, _)| *name == field) {
-                Some((_, value)) => return value.is_some_and(fresh),
+                // A copied value is the owner's until a later assignment.
+                Some((_, value)) => {
+                    return value.is_some_and(fresh)
+                        || field_assigned(prefix, start, receiver, field, &fresh);
+                }
                 None if base == Some(receiver) => continue,
                 None => return false,
             }
@@ -1582,21 +1586,26 @@ fn field_overwritten_before(
 /// the owner's own field value.
 fn receiver_derived_bindings(body: &str, receiver: &str, owner_call: &str) -> Vec<String> {
     let is_ident = |ch: char| ch.is_ascii_alphanumeric() || ch == '_';
-    // `let pattern = init;` and plain `name = value;` statements.
-    let bindings: Vec<(&str, &str)> = body
-        .split([';', '{', '}'])
-        .filter_map(|statement| {
-            let statement = statement.trim();
-            let statement = statement.strip_prefix("let ").unwrap_or(statement);
-            let (pattern, initializer) = statement.split_once('=')?;
-            if initializer.starts_with('=')
-                || pattern.ends_with(['!', '<', '>', '+', '-', '*', '/', '|', '&', '^', '%'])
-            {
-                return None;
-            }
-            Some((pattern, initializer))
-        })
-        .collect();
+    fn binding(statement: &str) -> Option<(&str, &str)> {
+        let statement = statement.trim();
+        let statement = statement.strip_prefix("let ").unwrap_or(statement);
+        let (pattern, initializer) = statement.split_once('=')?;
+        if initializer.starts_with('=')
+            || pattern.ends_with(['!', '<', '>', '+', '-', '*', '/', '|', '&', '^', '%'])
+        {
+            return None;
+        }
+        Some((pattern, initializer))
+    }
+    // `let pattern = init;` and plain `name = value;` statements. A whole
+    // `let` statement is read again up to its `;` so a destructuring pattern
+    // (`let Quote { total, .. } = bundle(3);`) keeps its braced names.
+    let mut bindings: Vec<(&str, &str)> = body.split([';', '{', '}']).filter_map(binding).collect();
+    bindings.extend(
+        body.match_indices("let ")
+            .filter(|(start, _)| !body[..*start].chars().next_back().is_some_and(is_ident))
+            .filter_map(|(start, _)| binding(body[start..].split(';').next().unwrap_or_default())),
+    );
     let mut tainted = vec![receiver.to_string()];
     loop {
         let before = tainted.len();
@@ -3300,6 +3309,8 @@ mod tests {
             "let q = Quote { total: 99, ..bundle(3) };\n assert_eq!(q.total, 99);",
             // An assignment after a pass-through update still overwrites.
             "let q = bundle(3);\n let mut q = Quote { items: 4, ..q };\n q.total = 1;\n assert_eq!(q.total, 1);",
+            // So does one after a value copied back from the receiver.
+            "let q = bundle(3);\n let mut q = Quote { total: q.total, ..q };\n q.total = 99;\n assert_eq!(q.total, 99);",
         ];
         for body in withheld {
             let assertion = body.rsplit('\n').next().unwrap_or_default().trim();
@@ -3318,6 +3329,9 @@ mod tests {
             // Plain assignment and a second owner binding carry the value too.
             "let mut q = bundle(3);\n let mut t = 0;\n t = q.total;\n q.total = t;\n assert_eq!(q.total, 45);",
             "let base = bundle(3);\n let q = bundle(1);\n let q = Quote { total: base.total, ..q };\n assert_eq!(q.total, 45);",
+            // A destructuring `let` binds its braced names from the owner.
+            "let mut q = bundle(1);\n let Quote { total, .. } = bundle(3);\n q.total = total;\n assert_eq!(q.total, 45);",
+            "let mut q = bundle(1);\n let Quote { total: t, .. } = bundle(3);\n q.total = t;\n assert_eq!(q.total, 45);",
             // A char literal quote does not hide a closing brace.
             "let q = bundle(3);\n { let c = '\"'; let q = Quote { total: 1, ..q }; drop((c, q)); }\n assert_eq!(q.total, 45);",
             // Only a statement still in scope at the assertion counts.

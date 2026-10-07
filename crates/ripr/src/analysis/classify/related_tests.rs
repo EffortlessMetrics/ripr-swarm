@@ -2808,7 +2808,13 @@ fn owner_call_relation_reason(
         // defines is not reached when the test's own `use` binds the bare
         // name to that other module's twin.
         if indexed_same_name_count > 1
-            && test_imports_same_name_twin(&test.body, &owner.id.0, owner_name, same_name_ids)
+            && test_imports_same_name_twin(
+                &test.body,
+                &test.file,
+                &owner.id.0,
+                owner_name,
+                same_name_ids,
+            )
         {
             return RelationReason::WeakTokenSubstring;
         }
@@ -2862,6 +2868,7 @@ fn owner_call_relation_reason(
 /// also matches (a re-export), and `use super::*` all keep the relation.
 fn test_imports_same_name_twin(
     body: &str,
+    test_file: &std::path::Path,
     owner_id: &str,
     owner_name: &str,
     same_name_ids: &[&str],
@@ -2955,10 +2962,27 @@ fn test_imports_same_name_twin(
     {
         return false;
     }
-    let suffix = format!("::{}::{owner_name}", segments.join("::"));
-    let mut twins = same_name_ids.iter().filter(|id| id.ends_with(&suffix));
-    matches!((twins.next(), twins.next()), (Some(twin), None) if *twin != owner_id)
-        && !owner_id.ends_with(&suffix)
+    // Every same-name definition must sit in the test's own file, and the
+    // import must name the twin's full in-file module path. A twin in another
+    // file or crate, a file-backed module, or a nested module of the same
+    // name may not be what the import binds, so the relation stays.
+    let in_file = |id: &str| -> Option<String> {
+        let (file, _) = id.split_once(".rs::")?;
+        Some(format!("{file}.rs"))
+    };
+    let test_file = test_file.to_string_lossy().replace('\\', "/");
+    let Some(file) = in_file(owner_id) else {
+        return false;
+    };
+    if !(test_file == file || test_file.ends_with(&format!("/{file}")))
+        || same_name_ids
+            .iter()
+            .any(|id| in_file(id).as_deref() != Some(file.as_str()))
+    {
+        return false;
+    }
+    let twin = format!("{file}::{}::{owner_name}", segments.join("::"));
+    twin != owner_id && same_name_ids.contains(&twin.as_str())
 }
 
 /// True when `body` mentions `owner_name` immediately followed by `(`.
@@ -3027,8 +3051,10 @@ mod tests {
             "src/lib.rs::wholesale::price_quote",
         ];
         let owner = "src/lib.rs::wholesale::price_quote";
-        let twin =
-            |body: &str, owner: &str| test_imports_same_name_twin(body, owner, "price_quote", &ids);
+        let lib = Path::new("src/lib.rs");
+        let twin = |body: &str, owner: &str| {
+            test_imports_same_name_twin(body, lib, owner, "price_quote", &ids)
+        };
         let glob = "fn t() {\n use super::retail::*;\n price_quote(3);\n}";
         assert!(twin(glob, owner));
         let named = "fn t() {\n use crate::retail::price_quote;\n price_quote(3);\n}";
@@ -3109,10 +3135,41 @@ mod tests {
         ];
         assert!(!test_imports_same_name_twin(
             glob,
+            lib,
             owner,
             "price_quote",
             &nested
         ));
+        // The import binds a module of the test's own file, so a twin that
+        // only shares a path suffix (another crate, a file-backed owner, a
+        // nested module of the same name) or a test in another file keeps
+        // the relation.
+        let undecided = |test_file: &str, owner: &str, ids: &[&str]| {
+            !test_imports_same_name_twin(glob, Path::new(test_file), owner, "price_quote", ids)
+        };
+        assert!(undecided(
+            "crates/b/src/retail.rs",
+            "crates/b/src/retail.rs::price_quote",
+            &[
+                "crates/a/src/lib.rs::retail::price_quote",
+                "crates/b/src/retail.rs::price_quote"
+            ],
+        ));
+        assert!(undecided(
+            "src/lib.rs",
+            "src/retail.rs::price_quote",
+            &[
+                "src/lib.rs::legacy::retail::price_quote",
+                "src/retail.rs::price_quote"
+            ],
+        ));
+        assert!(undecided(
+            "src/lib.rs",
+            owner,
+            &["src/lib.rs::legacy::retail::price_quote", owner],
+        ));
+        assert!(undecided("tests/quote.rs", owner, &ids));
+        assert!(!undecided("/work/repo/src/lib.rs", owner, &ids));
     }
 
     #[test]
