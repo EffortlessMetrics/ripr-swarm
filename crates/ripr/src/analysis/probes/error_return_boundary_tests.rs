@@ -126,6 +126,11 @@ fn inventory_keeps_one_error_seam_per_constructor() -> Result<(), String> {
         "    if s == \"z\" { return pick(s, Err(Error::A), Err(Error::B)); }\n",
         "    if s == \"w\" { return wrap(Error::Bad(1)); }\n",
         "    if s == \"x\" { return s.parse::<u8>().map_err(Error::from); }\n",
+        "    if s == \"v\" {\n",
+        "        return Err(\n",
+        "            Error::Bad(4),\n",
+        "        );\n",
+        "    }\n",
         "    Ok(1)\n",
         "}\n",
     );
@@ -151,6 +156,8 @@ fn inventory_keeps_one_error_seam_per_constructor() -> Result<(), String> {
             (7, "Error::Bad(1)"),
             // A returned method chain has no constructor shape to keep.
             (8, "return s.parse::<u8>().map_err(Error::from)"),
+            // rustfmt's vertical `Err(\n payload,\n)` keeps only `Err(..)`.
+            (10, "Err(\n            Error::Bad(4),\n        )"),
         ],
         "{seams:?}"
     );

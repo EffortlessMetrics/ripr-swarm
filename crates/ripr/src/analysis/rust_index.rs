@@ -296,7 +296,10 @@ fn is_err_payload(inner: &ProbeShapeFact, outer: &ProbeShapeFact, source: &str) 
         .rsplit(|c: char| !(c.is_alphanumeric() || c == '_'))
         .next()
         .is_some_and(|name| name == "Err");
-    named_err && suffix.trim() == ")"
+    // rustfmt's vertical layout leaves `Err(\n    payload,\n)`.
+    let closing = suffix.trim();
+    let closing = closing.strip_prefix(',').map_or(closing, str::trim_start);
+    named_err && closing == ")"
 }
 
 /// Source text of `outer` before and after `inner`, when `inner` is a
