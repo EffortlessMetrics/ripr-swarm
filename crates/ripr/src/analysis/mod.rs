@@ -242,6 +242,7 @@ pub(crate) fn targeted_typescript_findings_for_scope(
         include_unchanged_tests: config.analysis().include_unchanged_tests().unwrap_or(true),
         resolve_tsconfig_paths: config.typescript().resolve_tsconfig_paths(),
         perl_facts_path: None,
+        perl_producer_failure: None,
         git_timeout: None,
         git_candidate: None,
         production_like_targets: Default::default(),
@@ -641,6 +642,16 @@ pub struct AnalysisOptions {
     /// limitation (no analysis). When `Some`, the adapter reads the packet
     /// and produces Findings + limitations from it.
     pub perl_facts_path: Option<PathBuf>,
+    /// Verbatim failure reason from a *configured, managed* Perl facts
+    /// exporter that was invoked and failed (spawn error, timeout, or
+    /// non-zero exit). Set only by the managed-producer funnel in
+    /// `app::check` (#6828). When `Some`, the Perl adapter fails closed with
+    /// this reason instead of the generic missing-packet reason, so the
+    /// `language_runs` record and the typed outcome limitation name the real
+    /// cause instead of re-advising a configuration the user already made.
+    /// A config that names a producer but has a broken exporter is a
+    /// materially different state from "no packet configured".
+    pub(crate) perl_producer_failure: Option<String>,
     /// Cooperative per-invocation git deadline for the diff-load path
     /// (#2303). `None` keeps every git invocation unbounded — the CLI
     /// behavior, byte-identical to the pre-#2303 path. Only the LSP refresh
@@ -819,6 +830,12 @@ pub enum LanguageRunStatus {
     /// The adapter could not run at all (e.g. required Cargo feature is off,
     /// or the producer binary is missing).
     Invalid,
+    /// A *configured* managed fact producer was invoked and failed (spawn
+    /// error, timeout, or non-zero exit). Distinct from `Unavailable`
+    /// (nothing configured) so the typed limitation and `language_runs`
+    /// reason carry the real exporter failure instead of re-advising a
+    /// configuration the user already made (#6828).
+    Failed,
 }
 
 impl LanguageRunStatus {
@@ -829,6 +846,7 @@ impl LanguageRunStatus {
             Self::Unavailable => "unavailable",
             Self::Partial => "partial",
             Self::Invalid => "invalid",
+            Self::Failed => "failed",
         }
     }
 }
@@ -1373,6 +1391,7 @@ index 0000000..1111111 100644
             include_unchanged_tests: true,
             resolve_tsconfig_paths: false,
             perl_facts_path: None,
+            perl_producer_failure: None,
             git_timeout: None,
             git_candidate: None,
             resolved_subject_identity: None,
@@ -1396,6 +1415,7 @@ index 0000000..1111111 100644
             include_unchanged_tests: true,
             resolve_tsconfig_paths: false,
             perl_facts_path: None,
+            perl_producer_failure: None,
             git_timeout: None,
             git_candidate: None,
             resolved_subject_identity: None,
@@ -1451,6 +1471,7 @@ fn premium_customer_gets_discount() {
             include_unchanged_tests: true,
             resolve_tsconfig_paths: false,
             perl_facts_path: None,
+            perl_producer_failure: None,
             git_timeout: None,
             git_candidate: None,
             resolved_subject_identity: None,
@@ -1667,6 +1688,7 @@ fn test_with_predicate() {
             include_unchanged_tests: true,
             resolve_tsconfig_paths: false,
             perl_facts_path: None,
+            perl_producer_failure: None,
             git_timeout: None,
             git_candidate: None,
             resolved_subject_identity: None,
@@ -1737,6 +1759,7 @@ index 0000000..1111111 100644
             include_unchanged_tests: true,
             resolve_tsconfig_paths: false,
             perl_facts_path: None,
+            perl_producer_failure: None,
             git_timeout: None,
             git_candidate: None,
             resolved_subject_identity: None,
@@ -1757,6 +1780,7 @@ index 0000000..1111111 100644
             include_unchanged_tests: true,
             resolve_tsconfig_paths: false,
             perl_facts_path: None,
+            perl_producer_failure: None,
             git_timeout: None,
             git_candidate: None,
             resolved_subject_identity: None,
@@ -1804,6 +1828,7 @@ mod git_candidate_entry_tests {
             include_unchanged_tests: true,
             resolve_tsconfig_paths: false,
             perl_facts_path: None,
+            perl_producer_failure: None,
             git_timeout: None,
             git_candidate: None,
             resolved_subject_identity: None,

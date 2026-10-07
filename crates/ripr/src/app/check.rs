@@ -211,19 +211,19 @@ fn check_with_progress_and_origins_with_open_rust_paths(
     // a fact packet, then consume it automatically. NO silent invocation
     // unless explicitly configured.
     let perl_config = config.perl();
+    let mut perl_producer_failure: Option<String> = None;
     if let Some(producer) = perl_config.producer()
         && is_managed_perl_producer(producer)
         && input.perl_facts_path.is_none()
     {
         // Item 4b: producer failure must NOT abort the whole `ripr check`.
         // If invocation fails (missing binary, timeout, non-zero exit, no
-        // packet), leave perl_facts_path as None so the pipeline records a
-        // Perl `unavailable` language_runs[] entry and the other languages'
-        // findings still emit. Known gap: the producer error is surfaced
-        // only as the stderr warning below. The Perl `language_runs` reason
-        // and the typed outcome limitation carry the adapter's generic
-        // missing-packet reason, because the pipeline has no carrier for
-        // this error (threading one needs a new `AnalysisOptions` field).
+        // packet), leave perl_facts_path as None and thread the verbatim
+        // exporter failure through `AnalysisOptions::perl_producer_failure`
+        // (#6828): the Perl adapter fails closed with a `failed`
+        // language_runs[] entry and a `producer_failure` typed limitation
+        // carrying the real cause, and the other languages' findings still
+        // emit. The stderr warnings remain for the human stdout path.
         match invoke_perl_lsp_producer(perl_config, &input) {
             Ok(packet_path) => input.perl_facts_path = Some(packet_path),
             Err(reason) => {
@@ -232,6 +232,7 @@ fn check_with_progress_and_origins_with_open_rust_paths(
                     terminal_safe(format!("warning: Perl facts exporter failed: {reason}"))
                 );
                 eprintln!("warning: Perl analysis will be unavailable; other languages continue.");
+                perl_producer_failure = Some(reason);
             }
         }
     }
@@ -240,12 +241,19 @@ fn check_with_progress_and_origins_with_open_rust_paths(
     options
         .open_rust_index_paths
         .clone_from(open_rust_index_paths);
+    options.perl_producer_failure = perl_producer_failure;
 
     // Build the language list from config. When --perl-facts is provided,
     // automatically add Perl to the enabled list (the user explicitly opted in
-    // by supplying a packet path). Campaign 31, #1429.
+    // by supplying a packet path). Campaign 31, #1429. A configured producer
+    // whose invocation FAILED (#6828 review) must dispatch Perl too: on
+    // success the produced packet adds Perl, so a failed exporter may not
+    // silently vanish from the typed record — the adapter fails closed with
+    // the `failed` language_runs entry instead.
     let mut languages = config.languages().enabled().to_vec();
-    if options.perl_facts_path.is_some() && !languages.contains(&LanguageId::Perl) {
+    if (options.perl_facts_path.is_some() || options.perl_producer_failure.is_some())
+        && !languages.contains(&LanguageId::Perl)
+    {
         languages.push(LanguageId::Perl);
     }
 
