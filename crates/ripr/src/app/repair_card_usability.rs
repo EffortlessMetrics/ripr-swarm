@@ -27,7 +27,7 @@ use serde_json::{Value, json};
 use crate::agent::command_specs::{AgentArtifactRoute, agent_inspection_command_spec};
 use crate::analysis::ClassifiedSeam;
 use crate::analysis::seams::{
-    ExpectedSink, RepoSeam, RequiredDiscriminator, SeamGripClass, SeamKind,
+    ExpectedSink, OwnerCallShape, RepoSeam, RequiredDiscriminator, SeamGripClass, SeamKind,
 };
 use crate::analysis::test_grip_evidence::TestGripEvidence;
 use crate::cli::commands::agent_card::agent_card_prose_lines;
@@ -73,6 +73,8 @@ fn boundary_seam() -> RepoSeam {
         },
         ExpectedSink::ReturnValue,
     )
+    // The synthetic owner models a module-level function (#5357).
+    .with_owner_call(OwnerCallShape::Free)
 }
 
 fn classified_entry() -> ClassifiedSeam {

@@ -251,6 +251,9 @@ pub enum ValueContext {
     BuilderMethod,
     TableRow,
     EnumVariant,
+    /// A qualified path whose spelling establishes a constant (`u64::MAX`,
+    /// `crate::KIB`), not an enum variant (#5357).
+    Constant,
     ReturnValue,
     Unknown,
 }
@@ -263,6 +266,7 @@ impl ValueContext {
             ValueContext::BuilderMethod => "builder_method",
             ValueContext::TableRow => "table_row",
             ValueContext::EnumVariant => "enum_variant",
+            ValueContext::Constant => "constant",
             ValueContext::ReturnValue => "return_value",
             ValueContext::Unknown => "unknown",
         }
@@ -732,6 +736,7 @@ mod tests {
             (ValueContext::BuilderMethod, "builder_method"),
             (ValueContext::TableRow, "table_row"),
             (ValueContext::EnumVariant, "enum_variant"),
+            (ValueContext::Constant, "constant"),
             (ValueContext::ReturnValue, "return_value"),
             (ValueContext::Unknown, "unknown"),
         ];

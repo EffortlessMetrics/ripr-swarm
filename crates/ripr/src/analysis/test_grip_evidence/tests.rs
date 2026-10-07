@@ -4173,6 +4173,59 @@ mod tests {{
     Ok(())
 }
 
+/// #6732: compact grip relates a trait-path call (`Render::render(&-0.0f64)`)
+/// to the impl its argument selects, and only to that impl.
+#[test]
+fn given_two_impls_when_compact_grip_sees_trait_path_call_then_argument_type_decides()
+-> Result<(), String> {
+    let prod_src = r#"
+pub trait Render { fn render(&self) -> String; }
+impl Render for f64 {
+    fn render(&self) -> String {
+        if *self == 0.0 && self.is_sign_negative() { return String::from("-0.0"); }
+        format!("{self:?}")
+    }
+}
+impl Render for u8 {
+    fn render(&self) -> String { format!("{self}") }
+}
+"#;
+    let test_src = r#"
+#[test]
+fn negative_zero_keeps_its_sign() {
+    assert_eq!(Render::render(&-0.0f64), "-0.0");
+}
+"#;
+    let files: Vec<(PathBuf, &str)> = vec![
+        (PathBuf::from("src/lib.rs"), prod_src),
+        (PathBuf::from("tests/render.rs"), test_src),
+    ];
+    let index = index_from_files(&files)?;
+    let seams = inventory_seams_from_index(&[PathBuf::from("src/lib.rs")], &index);
+    let reason_for = |expression: &str| -> Result<Option<RelationReason>, String> {
+        let seam = seams
+            .iter()
+            .find(|s| s.kind() == SeamKind::ReturnValue && s.expression().contains(expression))
+            .ok_or_else(|| format!("return seam `{expression}` present; seams: {seams:?}"))?;
+        Ok(evidence_for_seam(seam, &index)
+            .related_tests
+            .iter()
+            .find(|g| g.test_name == "negative_zero_keeps_its_sign")
+            .map(|g| g.relation_reason))
+    };
+    assert_eq!(
+        reason_for("String::from(\"-0.0\")")?,
+        Some(RelationReason::DirectOwnerCall),
+        "the f64 impl is reached through the trait path"
+    );
+    assert_ne!(
+        reason_for("format!(\"{self}\")")?,
+        Some(RelationReason::DirectOwnerCall),
+        "the u8 impl is not reached by an f64 argument"
+    );
+    Ok(())
+}
+
 #[test]
 fn producer_records_real_rust_test_symbol_identity_for_inline_and_integration_tests()
 -> Result<(), String> {

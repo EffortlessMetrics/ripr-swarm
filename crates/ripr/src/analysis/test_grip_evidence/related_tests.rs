@@ -1,7 +1,7 @@
 use super::*;
 use crate::analysis::classify::{
-    call_text_may_call_free_function, impl_self_type_name, method_call_resolves_to_impl_type,
-    test_calls_free_function,
+    call_text_may_call_free_function, impl_self_type_name, method_call_resolves_to_impl,
+    owner_dispatch_trait, test_calls_free_function,
 };
 use crate::analysis::facts::FunctionImplContext;
 use std::sync::Arc;
@@ -62,6 +62,7 @@ pub(super) struct OwnerContext {
     /// The owner is a module-level `fn` (parser-established), so a
     /// receiver or type-path call of its name reaches something else.
     free_function: bool,
+    impl_trait: Option<String>,
     same_name_count: usize,
 }
 
@@ -80,6 +81,7 @@ impl OwnerContext {
         let impl_type = owner_fn.and_then(|owner| impl_self_type_name(&owner.id.0));
         let free_function =
             owner_fn.is_some_and(|owner| owner.impl_context == FunctionImplContext::Free);
+        let impl_trait = owner_fn.and_then(owner_dispatch_trait);
         let same_name_count = context.function_name_count(&name);
         Self {
             name,
@@ -90,6 +92,7 @@ impl OwnerContext {
             fixture_names,
             impl_type,
             free_function,
+            impl_trait,
             same_name_count,
         }
     }
@@ -225,7 +228,12 @@ pub(super) fn match_direct_owner_call(
             let Some(impl_type) = owner.impl_type.as_deref() else {
                 continue;
             };
-            if !method_call_resolves_to_impl_type(indexed.test, &owner.name, impl_type) {
+            if !method_call_resolves_to_impl(
+                indexed.test,
+                &owner.name,
+                impl_type,
+                owner.impl_trait.as_deref(),
+            ) {
                 continue;
             }
         }

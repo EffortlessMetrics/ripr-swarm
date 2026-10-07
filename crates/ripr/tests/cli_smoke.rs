@@ -4738,17 +4738,19 @@ fn agent_card_identity_is_portable_across_equivalent_checkout_roots()
     Ok(())
 }
 
-/// A statically admitted inline test is not an executable repair surface.
-/// The default card must disclose the same refusal as the Before phase,
-/// while a separate test file remains ready and can publish an attempt.
+/// The card's readiness agrees with the Before phase for every target shape:
+/// a separate test file and one governed inline `#[cfg(test)]` module are
+/// ready and publish an attempt (#5210), while a file with two candidate
+/// inline test modules stays an ambiguous edit target and the card discloses
+/// the same refusal as the Before phase.
 #[test]
 fn agent_card_readiness_agrees_with_repair_target_admission()
 -> Result<(), Box<dyn std::error::Error>> {
-    for inline in [true, false] {
-        let root = unbuilt_repair_fixture(if inline {
-            "agent-card-inline-admission"
-        } else {
-            "agent-card-separate-admission"
+    for (inline, ambiguous) in [(true, false), (true, true), (false, false)] {
+        let root = unbuilt_repair_fixture(match (inline, ambiguous) {
+            (true, false) => "agent-card-inline-admission",
+            (true, true) => "agent-card-ambiguous-inline-admission",
+            _ => "agent-card-separate-admission",
         })?;
         if inline {
             let tests = std::fs::read_to_string(root.join("tests/pricing.rs"))?.replace(
@@ -4757,6 +4759,11 @@ fn agent_card_readiness_agrees_with_repair_target_admission()
             );
             let mut source = std::fs::read_to_string(root.join("src/lib.rs"))?;
             source.push_str(&format!("\n#[cfg(test)]\nmod tests {{\n{tests}\n}}\n"));
+            if ambiguous {
+                source.push_str(
+                    "\n#[cfg(test)]\nmod more_tests {\n    #[test]\n    fn smoke() {\n        assert_eq!(1 + 1, 2);\n    }\n}\n",
+                );
+            }
             std::fs::write(root.join("src/lib.rs"), source)?;
             std::fs::remove_file(root.join("tests/pricing.rs"))?;
             run_git(&root, &["add", "src/lib.rs", "tests/pricing.rs"])?;
@@ -4784,9 +4791,9 @@ fn agent_card_readiness_agrees_with_repair_target_admission()
                 "tests/pricing.rs"
             }
         );
-        assert_eq!(card["readiness"]["repair_ready"], !inline, "{card:#}");
+        assert_eq!(card["readiness"]["repair_ready"], !ambiguous, "{card:#}");
         let before = run_repair_phase(&root, &["--seam-id", BOUNDARY_GAP_SEAM_ID], "before")?;
-        if inline {
+        if ambiguous {
             assert_failure(&before);
             let blocker = card["exact_blocker"]
                 .as_str()
@@ -4821,7 +4828,11 @@ fn agent_card_readiness_agrees_with_repair_target_admission()
             assert_success(&before);
             assert_eq!(
                 card["allowed_files"],
-                serde_json::json!(["tests/pricing.rs"])
+                serde_json::json!([if inline {
+                    "src/lib.rs"
+                } else {
+                    "tests/pricing.rs"
+                }])
             );
             assert_eq!(card["readiness"]["missing_evidence"], serde_json::json!([]));
             let (attempt_id, manifest) = sole_repair_attempt(&root)?;
@@ -7434,14 +7445,25 @@ fn repo_scope_formats_reject_unresolvable_base_and_missing_diff()
     Ok(())
 }
 
-/// F15-12: a seam whose only related test lives inline in another crate has
-/// no test file the repair can edit. The before phase refuses before it
-/// writes any workflow artifact and never prints a completion line first, so
-/// neither the phase nor a later `agent status` reads as a started repair.
+/// F15-12: a seam whose only related tests live inline in a crate file with
+/// two candidate `#[cfg(test)]` modules has no test target the repair can
+/// edit. The before phase refuses before it writes any workflow artifact and
+/// never prints a completion line first, so neither the phase nor a later
+/// `agent status` reads as a started repair. With one governed inline module
+/// the same seam starts an attempt confined to that module (#5210).
 #[test]
 fn agent_repair_before_refuses_a_seam_without_a_test_file_before_writing_anything()
 -> Result<(), Box<dyn std::error::Error>> {
-    let root = unique_temp_workspace("agent-repair-no-test-target");
+    agent_repair_before_inline_only_seam(true)?;
+    agent_repair_before_inline_only_seam(false)
+}
+
+fn agent_repair_before_inline_only_seam(ambiguous: bool) -> Result<(), Box<dyn std::error::Error>> {
+    let root = unique_temp_workspace(if ambiguous {
+        "agent-repair-no-test-target"
+    } else {
+        "agent-repair-inline-test-target"
+    });
     std::fs::create_dir_all(root.join("crates/rates/src"))?;
     std::fs::write(
         root.join("Cargo.toml"),
@@ -7453,7 +7475,14 @@ fn agent_repair_before_refuses_a_seam_without_a_test_file_before_writing_anythin
     )?;
     std::fs::write(
         root.join("crates/rates/src/lib.rs"),
-        "/// Tax in basis points for the given region code.\npub fn tax_bps(region: &str) -> u32 {\n    match region {\n        \"EU\" => 2000,\n        _ => 0,\n    }\n}\n\n/// Orders at or above this many items ship free.\npub fn ships_free(items: u32) -> bool {\n    items >= 10\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    #[test]\n    fn eu_tax() {\n        assert_eq!(tax_bps(\"EU\"), 2000);\n    }\n}\n",
+        format!(
+            "/// Tax in basis points for the given region code.\npub fn tax_bps(region: &str) -> u32 {{\n    match region {{\n        \"EU\" => 2000,\n        _ => 0,\n    }}\n}}\n\n/// Orders at or above this many items ship free.\npub fn ships_free(items: u32) -> bool {{\n    items >= 10\n}}\n\n#[cfg(test)]\nmod tests {{\n    use super::*;\n\n    #[test]\n    fn eu_tax() {{\n        assert_eq!(tax_bps(\"EU\"), 2000);\n    }}\n\n    #[test]\n    fn large_order_ships_free() {{\n        assert!(ships_free(20));\n    }}\n}}\n{}",
+            if ambiguous {
+                "\n#[cfg(test)]\nmod more_tests {\n    #[test]\n    fn smoke() {\n        assert_eq!(1 + 1, 2);\n    }\n}\n"
+            } else {
+                ""
+            }
+        ),
     )?;
     std::fs::write(root.join(".gitignore"), "/target\n")?;
     run_git(&root, &["init", "-q"])?;
@@ -7482,10 +7511,26 @@ fn agent_repair_before_refuses_a_seam_without_a_test_file_before_writing_anythin
         .as_str()
         .ok_or("seam has no id")?
         .to_string();
-    // Fixture construction: the seam's only related test is the inline one.
+    // Fixture construction: the seam's related tests are inline, and a
+    // weak `assert!(ships_free(20))` keeps the route ready (a seam with no
+    // calling test reads `activation_unknown`, which no repair targets).
     assert_eq!(seam["related_tests"][0]["file"], "crates/rates/src/lib.rs");
+    assert_eq!(seam["grip_class"], "weakly_gripped", "{seam:#}");
 
     let before = run_repair_phase(&root, &["--seam-id", &seam_id], "before")?;
+    if !ambiguous {
+        assert_success(&before);
+        let before: serde_json::Value = serde_json::from_slice(&before.stdout)?;
+        assert_eq!(
+            before["packets"][0]["allowed_edit_surface"],
+            serde_json::json!(["crates/rates/src/lib.rs"]),
+            "{before:#}"
+        );
+        let (_attempt_id, manifest) = sole_repair_attempt(&root)?;
+        assert_eq!(manifest["state"], "awaiting_edit");
+        std::fs::remove_dir_all(root)?;
+        return Ok(());
+    }
     assert_failure(&before);
     let stderr = String::from_utf8_lossy(&before.stderr);
     assert!(
@@ -10687,7 +10732,7 @@ fn doctor_json_reports_current_schema() -> Result<(), String> {
 
     let report: serde_json::Value = serde_json::from_slice(&output.stdout)
         .map_err(|err| format!("doctor JSON did not parse: {err}"))?;
-    assert_eq!(report["schema_version"], "0.3");
+    assert_eq!(report["schema_version"], "0.4");
     assert_eq!(report["tool"], "ripr");
     assert_eq!(report["profile"], "analysis");
     assert_eq!(report["ripr_version"], env!("CARGO_PKG_VERSION"));
@@ -10696,7 +10741,504 @@ fn doctor_json_reports_current_schema() -> Result<(), String> {
         report["runtime_probes"].is_array(),
         "doctor JSON must expose typed runtime probe results: {report}"
     );
+    // #5214: schema 0.3 published a `sections` array that could never carry
+    // content, because its only mutator and only reader were `#[cfg(test)]`.
+    // It is gone rather than permanently empty.
+    assert!(
+        report.get("sections").is_none(),
+        "a dead sections array must not stay in the released document: {report}"
+    );
     std::fs::remove_dir_all(workspace).map_err(|err| format!("remove workspace: {err}"))?;
+    Ok(())
+}
+
+/// A workspace that makes the human doctor screen print every environment fact
+/// #5214 types: detected languages, an unanalyzed language, a detected-but-
+/// disabled preview language, cache state, detected test surfaces, and the Perl
+/// preview. `ripr.toml` exists and enables only Rust, so Python stays detected
+/// and disabled instead of being auto-enabled by the no-config default path.
+/// It also configures `[profiles.bun_ub]` with a custom bridge-hints path, so
+/// the parity assertions cover the profile facts on both surfaces.
+/// Git-initialized so the core checks decide the exit status, not the fixture
+/// location.
+fn doctor_environment_fact_root(label: &str) -> Result<PathBuf, String> {
+    let root = unique_temp_workspace(label);
+    for dir in ["src", "lib", "t"] {
+        std::fs::create_dir_all(root.join(dir)).map_err(|err| format!("create {dir}: {err}"))?;
+    }
+    for (path, text) in [
+        (
+            "Cargo.toml",
+            "[package]\nname = \"doctor-json-parity\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+        ),
+        ("src/lib.rs", "pub fn placeholder() {}\n"),
+        (
+            "ripr.toml",
+            "[languages]\nenabled = [\"rust\"]\n[profiles.bun_ub]\ntest_roots = [\"bun-tests\"]\nbridge_hints = \"custom/bridge-hints.toml\"\n",
+        ),
+        (
+            "pyproject.toml",
+            "[project]\nname = \"fixture\"\nversion = \"0.1.0\"\n",
+        ),
+        ("calc.py", "def add(a, b):\n    return a + b\n"),
+        (
+            "Makefile.PL",
+            "use ExtUtils::MakeMaker;\nWriteMakefile(NAME => 'Pricing');\n",
+        ),
+        (
+            "lib/Pricing.pm",
+            "package Pricing;\nsub discount { return 0; }\n1;\n",
+        ),
+        (
+            "t/pricing.t",
+            "use Test::More;\nok(1, 'placeholder');\ndone_testing();\n",
+        ),
+        ("tool.go", "package main\n\nfunc main() {}\n"),
+    ] {
+        std::fs::write(root.join(path), text).map_err(|err| format!("write {path}: {err}"))?;
+    }
+    run_git(&root, &["init"])?;
+    Ok(root)
+}
+
+fn doctor_json_for(root: &Path) -> Result<serde_json::Value, String> {
+    let root_arg = root.display().to_string();
+    let output = run_ripr(&["doctor", "--root", &root_arg, "--json"]);
+    serde_json::from_slice(&output.stdout).map_err(|err| {
+        format!(
+            "doctor JSON did not parse: {err}\n{}",
+            String::from_utf8_lossy(&output.stdout)
+        )
+    })
+}
+
+fn doctor_human_stdout(root: &Path) -> Result<String, String> {
+    let root_arg = root.display().to_string();
+    let output = run_ripr(&["doctor", "--root", &root_arg]);
+    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
+fn json_array<'a>(
+    report: &'a serde_json::Value,
+    key: &str,
+) -> Result<&'a [serde_json::Value], String> {
+    report[key]
+        .as_array()
+        .map(Vec::as_slice)
+        .ok_or_else(|| format!("`{key}` must be an array in the doctor report: {report}"))
+}
+
+/// #5214 acceptance 2 — coverage, not presence. For one root where the human
+/// screen prints each fact, every corresponding typed JSON field must be
+/// present and non-empty, and must name the same value the screen printed.
+/// Dropping a fact from either surface makes this red.
+#[test]
+fn doctor_json_carries_every_environment_fact_the_human_screen_prints() -> Result<(), String> {
+    let root = doctor_environment_fact_root("doctor-json-parity")?;
+    let human = doctor_human_stdout(&root)?;
+    let report = doctor_json_for(&root)?;
+    let outcome = (|| -> Result<(), String> {
+        // Detected languages, with the tier the screen prints in parentheses.
+        let detected = json_array(&report, "detected_languages")?;
+        let rust = detected
+            .iter()
+            .find(|entry| entry["language"] == "rust")
+            .ok_or_else(|| format!("detected_languages must name rust: {detected:?}"))?;
+        if rust["status"] != "stable" {
+            return Err(format!("rust must carry its tier: {rust}"));
+        }
+        assert!(
+            human.contains("- Detected languages: rust (stable)"),
+            "the screen must print the detected tier: {human}"
+        );
+        let python = detected
+            .iter()
+            .find(|entry| entry["language"] == "python")
+            .ok_or_else(|| format!("detected_languages must name python: {detected:?}"))?;
+        if python["status"] != "preview" {
+            return Err(format!("python must carry its tier: {python}"));
+        }
+        assert!(
+            human.contains("python (preview)"),
+            "the screen must print python as a preview: {human}"
+        );
+        // Unanalyzed source languages.
+        let unanalyzed = json_array(&report, "unanalyzed_source_languages")?;
+        let go = unanalyzed
+            .iter()
+            .find(|entry| entry["language"] == "Go")
+            .ok_or_else(|| format!("unanalyzed_source_languages must name Go: {unanalyzed:?}"))?;
+        let count = go["file_count"].as_u64().unwrap_or(0);
+        if count < 1 {
+            return Err(format!("Go must carry its file count: {go}"));
+        }
+        assert!(
+            human.contains(&format!("~ Unanalyzed languages: Go ({count} file(s))")),
+            "the screen must print the same Go count the JSON carries: {human}"
+        );
+        // Preview enablement gap. A gap is suggested only for a preview
+        // language whose adapter is compiled in: telling a rust-only binary's
+        // user to enable python would mislead, since nothing could analyze
+        // it. Parity therefore means presence in python builds and agreed
+        // absence otherwise.
+        if cfg!(feature = "lang-python") {
+            let gaps = json_array(&report, "preview_language_gaps")?;
+            let gap = gaps
+                .iter()
+                .find(|entry| entry["config_entry"] == "python")
+                .ok_or_else(|| format!("preview_language_gaps must name python: {gaps:?}"))?;
+            if gap["detected_language"] != "python" {
+                return Err(format!("the gap must name its detected source: {gap}"));
+            }
+            assert!(
+                human.contains("- Tip: python files detected but not enabled"),
+                "the screen must print the enablement tip: {human}"
+            );
+        } else {
+            assert!(
+                report
+                    .get("preview_language_gaps")
+                    .is_none_or(serde_json::Value::is_null),
+                "without the python adapter no gap may be suggested: {report}"
+            );
+            assert!(
+                !human.contains("files detected but not enabled"),
+                "without the python adapter no enablement tip may print: {human}"
+            );
+        }
+        // Cache state.
+        let cache = &report["cache"];
+        let cache_dir = cache["cache_dir"].as_str().unwrap_or_default();
+        if !cache_dir.ends_with("target/ripr/cache") {
+            return Err(format!("cache_dir must name the workspace cache: {cache}"));
+        }
+        if cache["size_bytes"].as_u64().is_none() {
+            return Err(format!("cache must carry a numeric size: {cache}"));
+        }
+        assert!(
+            human.contains(&format!("- Cache location: {cache_dir}")),
+            "the screen must print the same cache directory: {human}"
+        );
+        assert!(
+            human.contains(&format!(
+                "- Cache size: {}",
+                cache["size_display"].as_str().unwrap_or_default()
+            )),
+            "the screen must print the same cache size: {human}"
+        );
+        // Detected test surfaces.
+        let surfaces = json_array(&report, "test_surfaces")?;
+        let rust_surface = surfaces
+            .iter()
+            .find(|surface| surface["language"] == "rust")
+            .ok_or_else(|| format!("test_surfaces must carry the rust surface: {surfaces:?}"))?;
+        if rust_surface["framework"] != "cargo test" {
+            return Err(format!(
+                "the rust surface must type its framework: {rust_surface}"
+            ));
+        }
+        let rendered = surfaces
+            .iter()
+            .map(|surface| surface["evidence"].as_str().unwrap_or_default())
+            .collect::<Vec<_>>()
+            .join("; ");
+        assert!(
+            !rendered.is_empty()
+                && human.contains(&format!("- Detected test surfaces: {rendered}")),
+            "the screen must print exactly the JSON evidence fragments: {human}"
+        );
+        // Perl preview / exporter state.
+        let preview = &report["perl_preview"];
+        if preview.is_null() {
+            return Err(format!("a Perl root must carry perl_preview: {report}"));
+        }
+        if preview["pm_files"].as_u64() != Some(1) || preview["t_files"].as_u64() != Some(1) {
+            return Err(format!(
+                "perl_preview must carry the real file counts: {preview}"
+            ));
+        }
+        if preview["expected_schema"] != "ripr-perl-facts-v1" {
+            return Err(format!(
+                "perl_preview must carry the packet schema it consumes: {preview}"
+            ));
+        }
+        let state = preview["exporter"]["state"].as_str().unwrap_or_default();
+        if !matches!(state, "compatible" | "incompatible" | "not_found") {
+            return Err(format!(
+                "exporter state must be typed, not free text: {preview}"
+            ));
+        }
+        assert!(
+            human.contains("- Perl preview:")
+                && human.contains(&format!(
+                    "  project: {} .pm, {} .pl, {} .t",
+                    preview["pm_files"], preview["pl_files"], preview["t_files"]
+                ))
+                && human.contains(&format!(
+                    "  schema: {} expected",
+                    preview["expected_schema"].as_str().unwrap_or_default()
+                )),
+            "the screen must print the counts and schema the JSON carries: {human}"
+        );
+        // Exact block shape, heading flush and body indented by two. The
+        // refactor that produced the typed preview briefly indented the
+        // heading too, and only this assertion caught it.
+        assert!(
+            human.contains(&format!(
+                "- Perl preview:\n  project: {} .pm, {} .pl, {} .t\n",
+                preview["pm_files"], preview["pl_files"], preview["t_files"]
+            )),
+            "the Perl preview block shape must not drift: {human}"
+        );
+        assert!(
+            human.contains(&format!("  test roots: {}", human_test_roots(preview))),
+            "the screen must print the test roots the JSON carries: {human}"
+        );
+        assert!(
+            human.contains(&format!(
+                "  frameworks: {}",
+                human_perl_list(&preview["frameworks"], "none detected")
+            )),
+            "the screen must print the frameworks the JSON carries: {human}"
+        );
+        assert!(
+            human.contains(&format!(
+                "  runners: {}",
+                human_perl_list(&preview["runners"], "none found on PATH")
+            )),
+            "the screen must print the runners the JSON carries: {human}"
+        );
+        assert!(
+            human.contains(&format!(
+                "  next: {}",
+                preview["next_command"].as_str().unwrap_or_default()
+            )),
+            "the screen must print the next command the JSON carries: {human}"
+        );
+        // Effective configuration defaults.
+        let defaults = &report["config_defaults"];
+        if defaults.is_null() {
+            return Err(format!(
+                "a loadable config must carry config_defaults: {report}"
+            ));
+        }
+        assert!(
+            human.contains(&format!(
+                "- Analysis mode default: {}",
+                defaults["analysis_mode"].as_str().unwrap_or_default()
+            )) && human.contains(&format!(
+                "- LSP seam diagnostics default: {}",
+                defaults["lsp_seam_diagnostics"]
+            )) && human.contains(&format!(
+                "- Suppressions path: {}",
+                defaults["suppressions_path"].as_str().unwrap_or_default()
+            )),
+            "the screen must print the config defaults the JSON carries: {human}"
+        );
+        // Bun UB profile facts, including the custom bridge-hints path: the
+        // screen and the JSON must carry the same actionable values (#5283).
+        if defaults["bun_ub_profile_configured"] != true {
+            return Err(format!(
+                "the fixture profile must read as configured: {defaults}"
+            ));
+        }
+        let roots = defaults["bun_ub_test_roots"]
+            .as_array()
+            .map(|entries| {
+                entries
+                    .iter()
+                    .map(|value| value.as_str().unwrap_or_default().to_string())
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        if roots != vec!["bun-tests".to_string()] {
+            return Err(format!(
+                "the JSON must carry the fixture test roots: {defaults}"
+            ));
+        }
+        let hints = defaults["bun_ub_bridge_hints"].as_str().unwrap_or_default();
+        if hints != "custom/bridge-hints.toml" {
+            return Err(format!(
+                "the JSON must carry the custom bridge-hints path: {defaults}"
+            ));
+        }
+        assert!(
+            human.contains("- Bun UB profile: configured (preview advisory only)")
+                && human.contains("- Bun UB test roots: bun-tests")
+                && human.contains(&format!("- Bun UB bridge hints: {hints}")),
+            "the screen must print the profile facts the JSON carries: {human}"
+        );
+        Ok(())
+    })();
+    let human_status = run_ripr(&["doctor", "--root", &root.display().to_string()]).status;
+    let json_status = run_ripr(&["doctor", "--root", &root.display().to_string(), "--json"]).status;
+    ignore_remove_dir_all(&root);
+    outcome?;
+    // #5214 acceptance 7: the two surfaces answer with the same status for the
+    // same root. The value itself is #5102's contract, not this issue's.
+    assert_eq!(
+        human_status.code(),
+        json_status.code(),
+        "doctor and doctor --json must share one exit status for one root"
+    );
+    Ok(())
+}
+
+fn human_test_roots(preview: &serde_json::Value) -> String {
+    let roots = preview["test_roots"]
+        .as_array()
+        .map(|entries| {
+            entries
+                .iter()
+                .map(|value| value.as_str().unwrap_or_default().to_string())
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    match roots.as_slice() {
+        [] => "none detected".to_string(),
+        [only] => format!("{only} detected"),
+        [first, .., last] => format!("{first} and {last} detected"),
+    }
+}
+
+fn human_perl_list(values: &serde_json::Value, empty: &str) -> String {
+    let entries = values.as_array().cloned().unwrap_or_default();
+    if entries.is_empty() {
+        return empty.to_string();
+    }
+    entries
+        .iter()
+        .map(|value| value.as_str().unwrap_or_default())
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// #5214 acceptance 1's live correctness trap. `languages` is what `ripr.toml`
+/// enables; `detected_languages` is what the root contains. A repo with a
+/// `pyproject.toml` and no Python in `[languages] enabled` must let a consumer
+/// see that Python was detected and never enabled, rather than reading a
+/// plausible `languages` array and concluding Python is analyzed.
+#[test]
+fn doctor_json_separates_detected_languages_from_enabled_languages() -> Result<(), String> {
+    let root = doctor_environment_fact_root("doctor-json-detected-vs-enabled")?;
+    let report = doctor_json_for(&root)?;
+    ignore_remove_dir_all(&root);
+
+    let enabled = json_array(&report, "languages")?
+        .iter()
+        .map(|value| value.as_str().unwrap_or_default().to_string())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        enabled,
+        vec!["rust".to_string()],
+        "the enabled set must stay the configured one: {report}"
+    );
+
+    let detected = json_array(&report, "detected_languages")?;
+    let python = detected
+        .iter()
+        .find(|entry| entry["language"] == "python")
+        .ok_or_else(|| format!("python must be reported as detected: {detected:?}"))?;
+    assert_eq!(
+        python["enabled"], false,
+        "a detected language must carry whether the config enables it: {python}"
+    );
+    // The conflation this guards: if `detected_languages` echoed the enabled
+    // set, python would read as analyzed.
+    assert!(
+        !enabled.iter().any(|language| language == "python"),
+        "python must not appear in the enabled set for this fixture: {report}"
+    );
+    assert!(
+        detected.iter().any(|entry| entry["language"] == "perl"
+            && entry["status"] == "preview"
+            && entry["enabled"] == false),
+        "a detected preview language must carry its tier and its disabled state: {report}"
+    );
+    Ok(())
+}
+
+/// #5214 acceptance 6 / RIPR-SPEC-0007. A malformed `ripr.toml` must not leak
+/// its source excerpt into any newly typed field, and the document must not
+/// claim a configuration default it never verified.
+#[test]
+fn doctor_json_keeps_config_parse_errors_redacted_in_the_typed_fields() -> Result<(), String> {
+    let root = unique_temp_workspace("doctor-json-redaction");
+    std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+    // Both markers sit on the offending line, because `toml`'s error Display
+    // embeds the source excerpt for the failing line and only that line. A
+    // marker on a later line would sit outside the excerpt and the test would
+    // pass against a leak.
+    std::fs::write(
+        root.join("ripr.toml"),
+        "secret_marker_9f2b = \"do-not-publish\n",
+    )
+    .map_err(|err| format!("write config: {err}"))?;
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"redaction\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )
+    .map_err(|err| format!("write Cargo.toml: {err}"))?;
+
+    let root_arg = root.display().to_string();
+    let output = run_ripr(&["doctor", "--root", &root_arg, "--json"]);
+    let document = String::from_utf8_lossy(&output.stdout).into_owned();
+    ignore_remove_dir_all(&root);
+
+    assert!(
+        !document.contains("secret_marker_9f2b") && !document.contains("do-not-publish"),
+        "ripr.toml source text must never reach the doctor JSON document: {document}"
+    );
+    let report: serde_json::Value = serde_json::from_str(&document)
+        .map_err(|err| format!("doctor JSON did not parse: {err}\n{document}"))?;
+    let config = report["checks"]
+        .as_array()
+        .and_then(|checks| checks.iter().find(|check| check["name"] == "config"))
+        .ok_or_else(|| format!("doctor JSON must report the config check: {report}"))?;
+    assert_eq!(config["status"], "fail");
+    // The environment fields are still computed from the filesystem, so the
+    // leak had every chance to happen and did not.
+    assert!(
+        report["cache"]["cache_dir"].is_string(),
+        "cache facts must still be reported: {report}"
+    );
+    assert!(
+        report["config_defaults"].is_null(),
+        "an unloadable config must not claim verified defaults: {report}"
+    );
+    Ok(())
+}
+
+/// An unloadable `ripr.toml` must not be reported as carrying verified
+/// configuration defaults: the field is `null`, not a guess.
+#[test]
+fn doctor_json_reports_no_config_defaults_for_an_unloadable_config() -> Result<(), String> {
+    let root = unique_temp_workspace("doctor-json-no-defaults");
+    std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+    std::fs::write(root.join("ripr.toml"), "[languages\n")
+        .map_err(|err| format!("write config: {err}"))?;
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"no-defaults\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )
+    .map_err(|err| format!("write Cargo.toml: {err}"))?;
+
+    let report = doctor_json_for(&root)?;
+    ignore_remove_dir_all(&root);
+
+    assert!(
+        report["config_defaults"].is_null(),
+        "an unreadable config must not claim verified defaults: {report}"
+    );
+    let detected = json_array(&report, "detected_languages")?;
+    let rust = detected
+        .iter()
+        .find(|entry| entry["language"] == "rust")
+        .ok_or_else(|| format!("rust must still be reported as detected: {detected:?}"))?;
+    assert!(
+        rust["enabled"].is_null(),
+        "an unreadable config must leave enablement unknown, not disabled: {rust}"
+    );
     Ok(())
 }
 
@@ -13467,38 +14009,17 @@ fn first_pr_and_gap_ledger_refuse_a_root_that_does_not_exist() -> Result<(), Str
     Ok(())
 }
 
-/// A seam whose only test is an inline `#[cfg(test)]` module gets a focused-test
-/// suggestion but no repair target. The README sends readers to the
-/// `ripr agent repair` command pilot prints, so the terminal must say none is
-/// coming instead of going silent and offering the snapshot choreography as if
-/// it were the repair route.
+/// A seam whose only tests sit in a file with two candidate inline
+/// `#[cfg(test)]` modules gets a focused-test suggestion but no repair target.
+/// The README sends readers to the `ripr agent repair` command pilot prints,
+/// so the terminal must say none is coming instead of going silent and
+/// offering the snapshot choreography as if it were the repair route.
 #[test]
 fn pilot_says_so_when_the_top_seam_has_no_repair_command() -> Result<(), String> {
-    let root = unique_temp_workspace("pilot-no-repair-command");
-    let src = root.join("src");
-    std::fs::create_dir_all(&src).map_err(|e| format!("create src: {e}"))?;
-    std::fs::write(
-        root.join("Cargo.toml"),
-        "[package]\nname = \"demo\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
-    )
-    .map_err(|e| format!("write manifest: {e}"))?;
-    std::fs::write(
-        src.join("lib.rs"),
-        "pub fn price(amount: u32, threshold: u32) -> u32 {\n    if amount >= threshold { amount - 10 } else { amount }\n}\n\n#[cfg(test)]\nmod t {\n    use super::*;\n    #[test]\n    fn below() {\n        assert_eq!(price(1, 100), 1);\n    }\n}\n",
-    )
-    .map_err(|e| format!("write lib: {e}"))?;
-    let out_dir = unique_temp_workspace("pilot-no-repair-command-out");
-    let output = run_ripr(&[
-        "pilot",
-        "--root",
-        &root.display().to_string(),
-        "--out",
-        &out_dir.display().to_string(),
-    ]);
-    assert_success(&output);
-    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-    let _ = std::fs::remove_dir_all(&root);
-    let _ = std::fs::remove_dir_all(&out_dir);
+    let stdout = pilot_inline_only_stdout(
+        "pilot-no-repair-command",
+        "\n#[cfg(test)]\nmod more {\n    #[test]\n    fn smoke() {\n        assert_eq!(1 + 1, 2);\n    }\n}\n",
+    )?;
     assert!(stdout.contains("focused test: add "), "{stdout}");
     assert!(
         stdout.contains("repair this seam: not available for this seam"),
@@ -13513,6 +14034,58 @@ fn pilot_says_so_when_the_top_seam_has_no_repair_command() -> Result<(), String>
         "no repair command may be printed for an ineligible seam:\n{stdout}"
     );
     Ok(())
+}
+
+/// The `cargo new --lib` layout, one governed inline `#[cfg(test)]` module,
+/// gets the repair command, and the next step confines the edit to new test
+/// functions inside that module (#5210).
+#[test]
+fn pilot_prints_a_module_confined_repair_for_one_inline_test_module() -> Result<(), String> {
+    let stdout = pilot_inline_only_stdout("pilot-inline-repair-command", "")?;
+    assert!(stdout.contains("focused test: add "), "{stdout}");
+    assert!(
+        stdout.contains("repair this seam: ripr agent repair --root"),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains(
+            "2. add the focused test named above (new test functions inside `mod t` of src/lib.rs only; production code and existing tests stay unchanged)"
+        ),
+        "{stdout}"
+    );
+    assert!(!stdout.contains("not available for this seam"), "{stdout}");
+    Ok(())
+}
+
+fn pilot_inline_only_stdout(label: &str, extra_source: &str) -> Result<String, String> {
+    let root = unique_temp_workspace(label);
+    let src = root.join("src");
+    std::fs::create_dir_all(&src).map_err(|e| format!("create src: {e}"))?;
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"demo\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    )
+    .map_err(|e| format!("write manifest: {e}"))?;
+    std::fs::write(
+        src.join("lib.rs"),
+        format!(
+            "pub fn price(amount: u32, threshold: u32) -> u32 {{\n    if amount >= threshold {{ amount - 10 }} else {{ amount }}\n}}\n\n#[cfg(test)]\nmod t {{\n    use super::*;\n    #[test]\n    fn below() {{\n        assert_eq!(price(1, 100), 1);\n    }}\n}}\n{extra_source}"
+        ),
+    )
+    .map_err(|e| format!("write lib: {e}"))?;
+    let out_dir = unique_temp_workspace(&format!("{label}-out"));
+    let output = run_ripr(&[
+        "pilot",
+        "--root",
+        &root.display().to_string(),
+        "--out",
+        &out_dir.display().to_string(),
+    ]);
+    assert_success(&output);
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    let _ = std::fs::remove_dir_all(&root);
+    let _ = std::fs::remove_dir_all(&out_dir);
+    Ok(stdout)
 }
 
 #[test]

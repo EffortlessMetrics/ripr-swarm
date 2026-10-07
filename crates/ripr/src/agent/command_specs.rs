@@ -199,6 +199,40 @@ pub(crate) fn agent_inspection_command_spec(
     )
 }
 
+/// Typed task-first repair-start route for one bound seam (#6305). The
+/// `ripr repair` producer offers this spec only when it binds exactly one
+/// eligible subject. Argv stays portable (`--root .`, #3999) while the
+/// display binds the selected root for copy/paste, like the inspection
+/// route above.
+pub(crate) fn repair_start_command_spec(root: &str, seam_id: &str) -> CommandSpec {
+    let display = format!(
+        "ripr repair {} --root {}",
+        shell_arg(seam_id),
+        shell_arg(&root_display(root))
+    );
+    let mut spec = command_spec(
+        "ripr:repair:start",
+        CommandRole::RepairStart,
+        CommandExecutionMode::Direct,
+        vec![
+            "repair".to_string(),
+            seam_id.to_string(),
+            "--root".to_string(),
+            PORTABLE_ROOT.to_string(),
+        ],
+        vec![
+            "target/ripr/workflow".to_string(),
+            crate::app::repair_attempt::REPAIR_ATTEMPT_DIRECTORY.to_string(),
+        ],
+        display,
+    );
+    // The start prints human summaries, not a JSON document: the façade has
+    // no `--json` flag, and the packet/card artifacts stay in their files.
+    spec.expected_result_parser = ExpectedResultParser::DeclaredText;
+    spec.cost_class = CommandCostClass::FullRepoAnalysis;
+    spec
+}
+
 /// The artifact-input flags `pr-review front-panel` accepts. FIX (round-2
 /// review): mirrors `parse_pr_review_front_panel_options` — the panel
 /// requires at least one of these, so a display without any input flag is
@@ -843,6 +877,7 @@ fn command_spec(
             CommandRole::Regeneration => CommandAuthorityBoundary::RegenerationRouteOnly,
             CommandRole::Inspection => CommandAuthorityBoundary::InspectionRouteOnly,
             CommandRole::TargetedRerun => CommandAuthorityBoundary::TargetedRerunRouteOnly,
+            CommandRole::RepairStart => CommandAuthorityBoundary::RepairStartRouteOnly,
         },
     }
 }

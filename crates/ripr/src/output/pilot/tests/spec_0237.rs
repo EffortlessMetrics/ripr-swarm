@@ -39,6 +39,7 @@ fn proposed_integration_target(file: &str, owner: &str) -> NewTestTargetAdmissio
         }),
         region: None,
         blocker: None,
+        owner_inline_region: None,
     }
 }
 
