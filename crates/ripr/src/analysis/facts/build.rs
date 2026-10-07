@@ -5,12 +5,11 @@ mod incremental_edit_tests;
 
 use super::super::syntax::{LexicalRustSyntaxAdapter, RaRustSyntaxAdapter, RustSyntaxAdapter};
 use super::model::{RustIndex, WorkspaceRootAuthority};
-use crate::analysis::cancellation;
+use crate::analysis::cancellation::{self, WorkerError};
 use crate::analysis::seam_cache::{
-    CacheLoad, FileFactCacheStats, RepoFileFactCache, RepoFileFactCacheKey,
+    CacheLoad, FileFactCacheStats, KnownFilePaths, RepoFileFactCache, RepoFileFactCacheKey,
 };
 use rayon::prelude::*;
-use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 /// Files parsed per parallel batch. Each worker installs the owning request's
@@ -28,15 +27,30 @@ pub(crate) struct CachedRustIndex {
     pub(crate) file_fact_cache: FileFactCacheStats,
 }
 
+/// Whether a cached build names which misses replaced an entry this build
+/// could have served (`FileFactCacheStats::invalidated_files`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum MissAttribution {
+    /// Read every cached entry once, at the first miss, to name the
+    /// invalidated files. For callers that report them.
+    Named,
+    /// Skip that read. Its cost grows with the whole cache directory, not
+    /// with the build, so an edit-loop rerun with one miss decoded every
+    /// entry ripr ever stored; callers that discard the stats skip it.
+    Skipped,
+}
+
 pub(crate) fn build_index_from_loaded_files_with_cache(
     root: &Path,
     files: &[(PathBuf, Vec<u8>)],
+    attribution: MissAttribution,
 ) -> Result<CachedRustIndex, String> {
     build_index_from_loaded_files_with_cache_and_adapters(
         root,
         files,
         &RaRustSyntaxAdapter,
         &LexicalRustSyntaxAdapter,
+        attribution,
     )
 }
 
@@ -45,11 +59,20 @@ fn build_index_from_loaded_files_with_cache_and_adapters(
     files: &[(PathBuf, Vec<u8>)],
     adapter: &(dyn RustSyntaxAdapter + Send + Sync),
     fallback: &(dyn RustSyntaxAdapter + Send + Sync),
+    attribution: MissAttribution,
 ) -> Result<CachedRustIndex, String> {
     let cache = RepoFileFactCache::at(root);
-    build_index_with_file_fact_cache(root, files, adapter, fallback, &cache, || {
-        cache.known_file_paths()
-    })
+    build_index_with_file_fact_cache(
+        root,
+        files,
+        adapter,
+        fallback,
+        &cache,
+        || match attribution {
+            MissAttribution::Named => cache.known_file_paths(),
+            MissAttribution::Skipped => KnownFilePaths::default(),
+        },
+    )
 }
 
 fn build_index_with_file_fact_cache(
@@ -58,7 +81,7 @@ fn build_index_with_file_fact_cache(
     adapter: &(dyn RustSyntaxAdapter + Send + Sync),
     fallback: &(dyn RustSyntaxAdapter + Send + Sync),
     cache: &RepoFileFactCache,
-    mut load_known_file_paths: impl FnMut() -> HashSet<PathBuf>,
+    mut load_known_file_paths: impl FnMut() -> KnownFilePaths,
 ) -> Result<CachedRustIndex, String> {
     let mut accounting = CacheAccounting::default();
     let batched = insert_cached_file_batches(
@@ -88,10 +111,13 @@ fn build_index_with_file_fact_cache(
         index
             .files()
             .iter()
-            .map(|(path, facts)| (path, facts.data().source.as_str())),
+            .map(|(path, facts)| (path, facts.data().source.as_ref())),
     ));
     cancellation::checkpoint()?;
     index.package_names = manifest_package_names(root);
+    index.macro_owned_crates = macro_owned_crates(root, &index);
+    index.drop_in_manifests = super::drop_in::DropInManifests::new(root);
+    index.member_crates = super::member_crates::MemberCrates::new(root);
     cancellation::checkpoint()?;
     Ok(CachedRustIndex {
         index,
@@ -125,7 +151,7 @@ fn insert_cached_file_batches(
     adapter: &(dyn RustSyntaxAdapter + Send + Sync),
     fallback: &(dyn RustSyntaxAdapter + Send + Sync),
     cache: &RepoFileFactCache,
-    load_known_file_paths: &mut impl FnMut() -> HashSet<PathBuf>,
+    load_known_file_paths: &mut impl FnMut() -> KnownFilePaths,
     accounting: &mut CacheAccounting,
 ) -> Result<RustIndex, String> {
     let CacheAccounting {
@@ -140,16 +166,32 @@ fn insert_cached_file_batches(
     // All-hit, corrupt-only, empty, and already-cancelled builds must not walk
     // and decode the entire cache directory just to discard the inventory.
     // Initialized once, at the first miss.
-    let mut known_cached_file_paths: Option<HashSet<PathBuf>> = None;
+    let mut known_cached_file_paths: Option<KnownFilePaths> = None;
     let mut index = RustIndex::default();
     let token = cancellation::current_token();
     for batch in files.chunks(PARSE_BATCH_FILES) {
-        // Phase 1 (sequential): this batch's cache lookups, in input order.
+        // Phase 1: this batch's cache lookups. Reading, decoding and
+        // verifying an entry is most of a warm build, so the lookups run on
+        // the rayon workers; the outcomes are then accounted sequentially in
+        // input order, exactly as a sequential lookup would.
+        cancellation::checkpoint()?;
+        let lookups: Vec<Result<(RepoFileFactCacheKey, CacheLoad<super::FileFacts>), String>> =
+            batch
+                .par_iter()
+                .map(|(file, bytes)| {
+                    cancellation::with_optional_token(token.as_ref(), || {
+                        cancellation::checkpoint()?;
+                        let key = RepoFileFactCacheKey::new(file, bytes);
+                        let load = cache.load_file_facts(&key);
+                        Ok((key, load))
+                    })
+                })
+                .collect();
         let mut pending: Vec<Pending> = Vec::with_capacity(batch.len());
-        for (file, bytes) in batch {
+        for ((file, _), lookup) in batch.iter().zip(lookups) {
             cancellation::checkpoint()?;
-            let key = RepoFileFactCacheKey::new(file, bytes);
-            match cache.load_file_facts(&key) {
+            let (key, load) = lookup?;
+            match load {
                 CacheLoad::Hit(facts) => {
                     stats.hits += 1;
                     pending.push(Pending::Ready(facts));
@@ -187,27 +229,33 @@ fn insert_cached_file_batches(
         parsed.resize_with(batch.len(), || None);
         if !parse_positions.is_empty() {
             cancellation::checkpoint()?;
-            let results: Vec<(usize, Result<super::FileFacts, String>)> = parse_positions
+            let results: Vec<(usize, Result<super::FileFacts, WorkerError>)> = parse_positions
                 .par_iter()
                 .map(|&position| {
                     let result = cancellation::with_optional_token(token.as_ref(), || {
-                        cancellation::checkpoint()?;
+                        cancellation::checkpoint_typed()?;
                         let (file, bytes) = &batch[position];
-                        let facts = summarize_loaded_file(file, bytes, adapter, fallback)?;
-                        cancellation::checkpoint()?;
+                        let facts = summarize_loaded_file(file, bytes, adapter, fallback)
+                            .map_err(WorkerError::Failed)?;
+                        cancellation::checkpoint_typed()?;
                         Ok(facts)
                     });
                     (position, result)
                 })
                 .collect();
             // Do not replace an observed failure with a deadline noticed
-            // only after joining.
-            if let Some(error) = results.iter().find_map(|(_, result)| result.as_ref().err()) {
-                return Err(error.clone());
+            // only after joining, nor with a sibling's abort (#6721).
+            if let Some(error) = cancellation::select_batch_error(
+                token.as_ref(),
+                results
+                    .iter()
+                    .filter_map(|(_, result)| result.as_ref().err()),
+            ) {
+                return Err(error);
             }
             cancellation::checkpoint()?;
             for (position, result) in results {
-                parsed[position] = Some(result?);
+                parsed[position] = Some(result.map_err(WorkerError::into_message)?);
             }
         }
         #[cfg(test)]
@@ -308,23 +356,30 @@ fn build_index_with_adapters(
         // Read + parse run on rayon workers; every file is independent.
         // `collect` on an indexed parallel iterator preserves input order,
         // so `results[i]` corresponds to `batch[i]`.
-        let results: Vec<Result<(PathBuf, super::FileFacts, bool), String>> = batch
+        let results: Vec<Result<(PathBuf, super::FileFacts, bool), WorkerError>> = batch
             .par_iter()
             .map(|file| {
                 cancellation::with_optional_token(token.as_ref(), || {
-                    cancellation::checkpoint()?;
+                    cancellation::checkpoint_typed()?;
                     let full = root.join(file);
-                    let bytes = std::fs::read(&full)
-                        .map_err(|err| format!("failed to read {}: {err}", full.display()))?;
-                    cancellation::checkpoint()?;
-                    let summary = summarize_loaded_file(file, &bytes, adapter, fallback)?;
-                    cancellation::checkpoint()?;
+                    let bytes = std::fs::read(&full).map_err(|err| {
+                        WorkerError::Failed(format!("failed to read {}: {err}", full.display()))
+                    })?;
+                    cancellation::checkpoint_typed()?;
+                    let summary = summarize_loaded_file(file, &bytes, adapter, fallback)
+                        .map_err(WorkerError::Failed)?;
+                    cancellation::checkpoint_typed()?;
                     Ok((file.clone(), summary, rust_source_text(&bytes).not_utf8))
                 })
             })
             .collect();
-        if let Some(error) = results.iter().find_map(|result| result.as_ref().err()) {
-            return Err(error.clone());
+        // The first ordinary failure in input order wins over a sibling's
+        // abort (#6721); with none, the first abort in input order.
+        if let Some(error) = cancellation::select_batch_error(
+            token.as_ref(),
+            results.iter().filter_map(|result| result.as_ref().err()),
+        ) {
+            return Err(error);
         }
         cancellation::checkpoint()?;
         // Insert sequentially in original input order: `RustIndex.tests`
@@ -333,7 +388,7 @@ fn build_index_with_adapters(
         // in input order wins and the per-iteration checkpoint ordering
         // (error first, then checkpoint) is unchanged.
         for result in results {
-            let (file, summary, not_utf8) = result?;
+            let (file, summary, not_utf8) = result.map_err(WorkerError::into_message)?;
             if not_utf8 {
                 index.non_utf8_sources.insert(file.clone());
             }
@@ -350,20 +405,22 @@ fn build_index_with_adapters(
         index
             .files()
             .iter()
-            .map(|(path, facts)| (path, facts.data().source.as_str())),
+            .map(|(path, facts)| (path, facts.data().source.as_ref())),
     ));
     cancellation::checkpoint()?;
     index.package_names = manifest_package_names(root);
+    index.macro_owned_crates = macro_owned_crates(root, &index);
+    index.drop_in_manifests = super::drop_in::DropInManifests::new(root);
+    index.member_crates = super::member_crates::MemberCrates::new(root);
     cancellation::checkpoint()?;
     Ok(index)
 }
 
 /// The crate names of the analyzed root manifest: the `[package] name`
 /// plus the `[lib] name` target when the manifest declares one. Root
-/// manifest only: member manifests are not resolved here, so multi-crate
-/// workspaces leave member-crate names unlisted and the same-name-import
-/// gate treats member imports as foreign (fail-closed under-credit; see
-/// `RustIndex.package_names`). Each name is stored in BOTH spellings —
+/// manifest only: a member crate's import of another member's owner is
+/// admitted per test and owner by `MemberCrates`, which reads the member
+/// manifests (RIPR-SPEC-0197 rule 5). Each name is stored in BOTH spellings —
 /// raw and crate-identifier form (#3731 review F23: hyphens normalize to
 /// underscores in crate identifiers, so a package named `foo-bar` is
 /// imported as `foo_bar`, and integration tests import the `[lib]`
@@ -398,6 +455,68 @@ fn manifest_package_names(root: &Path) -> std::collections::BTreeSet<String> {
         .and_then(toml::Value::as_str)
     {
         insert(name);
+    }
+    names
+}
+
+/// `index.package_names` plus every `[workspace] members` crate (literal
+/// paths and trailing `/*` globs, minus `exclude`) that has an indexed file.
+/// A member whose files are not indexed stays foreign: its macro
+/// definitions were not scanned.
+fn macro_owned_crates(root: &Path, index: &RustIndex) -> std::collections::BTreeSet<String> {
+    let mut names = index.package_names.clone();
+    let Ok(text) = std::fs::read_to_string(root.join("Cargo.toml")) else {
+        return names;
+    };
+    let Ok(value) = text.parse::<toml::Table>() else {
+        return names;
+    };
+    let Some(workspace) = value.get("workspace").and_then(toml::Value::as_table) else {
+        return names;
+    };
+    let patterns = |key: &str| {
+        workspace
+            .get(key)
+            .and_then(toml::Value::as_array)
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(toml::Value::as_str)
+                    .map(|item| item.trim_end_matches('/').to_string())
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default()
+    };
+    let excluded = patterns("exclude");
+    let mut members = Vec::new();
+    for pattern in patterns("members") {
+        if let Some(parent) = pattern.strip_suffix("/*") {
+            let Ok(entries) = std::fs::read_dir(root.join(parent)) else {
+                continue;
+            };
+            for entry in entries.flatten() {
+                if let Some(name) = entry.file_name().to_str() {
+                    members.push(format!("{parent}/{name}"));
+                }
+            }
+        } else if !pattern.contains(['*', '?', '[']) {
+            members.push(pattern);
+        }
+    }
+    for member in members {
+        if excluded.contains(&member) {
+            continue;
+        }
+        let directory = Path::new(&member);
+        if !index.files().iter().any(|(path, _)| {
+            let path = path.strip_prefix(root).unwrap_or(path);
+            path.strip_prefix("./")
+                .unwrap_or(path)
+                .starts_with(directory)
+        }) {
+            continue;
+        }
+        names.extend(manifest_package_names(&root.join(directory)));
     }
     names
 }
@@ -507,6 +626,46 @@ mod tests {
             root.join("Cargo.toml"),
             "[package]\nname='test'\nversion='0.1.0'\nedition='2024'\n",
         )?;
+        Ok(())
+    }
+
+    #[test]
+    fn macro_owned_crates_add_indexed_workspace_members_only() -> Result<(), Box<dyn Error>> {
+        let root = temp_dir("macro_owned_crates")?;
+        fs::write(
+            root.join("Cargo.toml"),
+            "[workspace]\nmembers = ['regex-syntax', 'crates/*']\nexclude = ['crates/skip']\n",
+        )?;
+        for (dir, manifest) in [
+            ("regex-syntax", "[package]\nname = 'regex-syntax'\n"),
+            (
+                "crates/cli",
+                "[package]\nname = 'grep-cli'\n[lib]\nname = 'grep_cli_lib'\n",
+            ),
+            ("crates/unindexed", "[package]\nname = 'unindexed'\n"),
+            ("crates/skip", "[package]\nname = 'skip'\n"),
+        ] {
+            fs::create_dir_all(root.join(dir).join("src"))?;
+            fs::write(root.join(dir).join("Cargo.toml"), manifest)?;
+            fs::write(root.join(dir).join("src/lib.rs"), "pub fn f() {}\n")?;
+        }
+        let files = vec![
+            PathBuf::from("regex-syntax/src/lib.rs"),
+            PathBuf::from("crates/cli/src/lib.rs"),
+            PathBuf::from("crates/skip/src/lib.rs"),
+        ];
+        let index = build_index(&root, &files)?;
+        // The root is a virtual manifest: no package names of its own.
+        assert!(index.package_names.is_empty());
+        let owned = index.macro_scope_crates();
+        for name in ["regex_syntax", "regex-syntax", "grep_cli", "grep_cli_lib"] {
+            assert!(owned.contains(name), "{name}: {owned:?}");
+        }
+        // Not indexed, or excluded: its macros were not scanned.
+        for name in ["unindexed", "skip"] {
+            assert!(!owned.contains(name), "{name}: {owned:?}");
+        }
+        fs::remove_dir_all(&root)?;
         Ok(())
     }
 
@@ -679,7 +838,12 @@ fn some_fn() -> i32 {
         let index = build_index(&root, &[PathBuf::from("src/lib.rs")])?;
         let file_facts = index.files().get(&PathBuf::from("src/lib.rs"));
         assert!(file_facts.is_some());
-        assert!(file_facts.is_some_and(|facts| !facts.calls.is_empty()));
+        assert!(file_facts.is_some_and(|facts| {
+            facts
+                .functions
+                .iter()
+                .any(|function| !function.calls.is_empty())
+        }));
         assert!(
             index
                 .files()
@@ -759,7 +923,7 @@ pub fn check(x: i32) -> bool {
         ) -> Result<super::super::FileFacts, String> {
             Ok(super::super::FileFacts {
                 path: path.to_path_buf(),
-                source: text.to_string(),
+                source: text.into(),
                 ..super::super::FileFacts::default()
             })
         }
@@ -789,7 +953,7 @@ pub fn check(x: i32) -> bool {
             index
                 .files()
                 .get(&PathBuf::from("src/lib.rs"))
-                .map_or("", |facts| facts.data().source.as_str()),
+                .map_or("", |facts| facts.data().source.as_ref()),
             "pub fn fallback() {}\n"
         );
         assert!(
@@ -819,14 +983,14 @@ pub fn check(x: i32) -> bool {
         let bytes = b"pub fn cached(value: i32) -> bool { value >= 10 }\n".to_vec();
         let files = [(file.clone(), bytes.clone())];
 
-        let cold = build_index_from_loaded_files_with_cache(&root, &files)?;
+        let cold = build_index_from_loaded_files_with_cache(&root, &files, MissAttribution::Named)?;
         assert_eq!(cold.file_fact_cache.hits, 0);
         assert_eq!(cold.file_fact_cache.misses, 1);
         assert_eq!(cold.file_fact_cache.stores, 1);
         assert!(cold.index.files().contains_key(&file));
         assert!(!cold.index.functions().is_empty());
 
-        let warm = build_index_from_loaded_files_with_cache(&root, &files)?;
+        let warm = build_index_from_loaded_files_with_cache(&root, &files, MissAttribution::Named)?;
         assert_eq!(warm.file_fact_cache.hits, 1);
         assert_eq!(warm.file_fact_cache.misses, 0);
         assert_eq!(warm.file_fact_cache.stores, 0);
@@ -842,8 +1006,9 @@ pub fn check(x: i32) -> bool {
         let first = [(file.clone(), b"pub fn cached() -> i32 { 1 }\n".to_vec())];
         let second = [(file.clone(), b"pub fn cached() -> i32 { 2 }\n".to_vec())];
 
-        let _ = build_index_from_loaded_files_with_cache(&root, &first)?;
-        let changed = build_index_from_loaded_files_with_cache(&root, &second)?;
+        let _ = build_index_from_loaded_files_with_cache(&root, &first, MissAttribution::Named)?;
+        let changed =
+            build_index_from_loaded_files_with_cache(&root, &second, MissAttribution::Named)?;
 
         assert_eq!(changed.file_fact_cache.hits, 0);
         assert_eq!(changed.file_fact_cache.misses, 1);
@@ -855,6 +1020,55 @@ pub fn check(x: i32) -> bool {
                 .files()
                 .get(&file)
                 .is_some_and(|facts| facts.source.contains("{ 2 }"))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn skipped_attribution_misses_without_reading_the_cache_inventory() -> Result<(), Box<dyn Error>>
+    {
+        let root = temp_dir("index_file_fact_cache_unattributed")?;
+        fs::create_dir_all(root.join("src"))?;
+        let file = PathBuf::from("src/lib.rs");
+        let first = [(file.clone(), b"pub fn cached() -> i32 { 1 }\n".to_vec())];
+        let second = [(file.clone(), b"pub fn cached() -> i32 { 2 }\n".to_vec())];
+        let cache = RepoFileFactCache::at(&root);
+        let _ = build_index_from_loaded_files_with_cache(&root, &first, MissAttribution::Named)?;
+
+        let mut inventory_reads = 0;
+        let unattributed = build_index_with_file_fact_cache(
+            &root,
+            &second,
+            &RaRustSyntaxAdapter,
+            &LexicalRustSyntaxAdapter,
+            &cache,
+            || {
+                inventory_reads += 1;
+                cache.known_file_paths()
+            },
+        )?;
+        // The control: the same miss under `Named` reads the inventory once
+        // and names the file, so the empty set below is the skipped read.
+        assert_eq!(inventory_reads, 1);
+        assert!(
+            unattributed
+                .file_fact_cache
+                .invalidated_files
+                .contains(&file)
+        );
+
+        let third = [(file.clone(), b"pub fn cached() -> i32 { 3 }\n".to_vec())];
+        let skipped =
+            build_index_from_loaded_files_with_cache(&root, &third, MissAttribution::Skipped)?;
+        assert_eq!(skipped.file_fact_cache.misses, 1);
+        assert_eq!(skipped.file_fact_cache.stores, 1);
+        assert!(skipped.file_fact_cache.invalidated_files.is_empty());
+        assert!(
+            skipped
+                .index
+                .files()
+                .get(&file)
+                .is_some_and(|facts| facts.source.contains("{ 3 }"))
         );
         Ok(())
     }
@@ -1504,7 +1718,7 @@ pub fn check(x: i32) -> bool {
                 }
                 Ok(super::super::FileFacts {
                     path: path.to_path_buf(),
-                    source: text.to_string(),
+                    source: text.into(),
                     ..super::super::FileFacts::default()
                 })
             }
@@ -1537,7 +1751,7 @@ pub fn check(x: i32) -> bool {
                     &adapter,
                     &StubSyntaxAdapter,
                     &fixture.cache,
-                    HashSet::new,
+                    KnownFilePaths::default,
                 )
             })
         });
@@ -1614,6 +1828,7 @@ pub fn check(x: i32) -> bool {
             &files,
             &PathNamingFailure,
             &PathNamingFailure,
+            MissAttribution::Named,
         );
         let Err(error) = result else {
             return Err("expected failing adapters to fail the cached build".into());
@@ -1640,7 +1855,8 @@ pub fn check(x: i32) -> bool {
             .iter()
             .map(|file| Ok((file.clone(), fs::read(root.join(file))?)))
             .collect::<Result<_, Box<dyn Error>>>()?;
-        let cached = build_index_from_loaded_files_with_cache(&root, &loaded)?;
+        let cached =
+            build_index_from_loaded_files_with_cache(&root, &loaded, MissAttribution::Named)?;
 
         assert_eq!(cached.index.tests(), uncached.tests());
         assert_eq!(cached.index.functions(), uncached.functions());
@@ -1674,7 +1890,7 @@ pub fn check(x: i32) -> bool {
                 }
                 Ok(super::super::FileFacts {
                     path: path.to_path_buf(),
-                    source: text.to_string(),
+                    source: text.into(),
                     ..super::super::FileFacts::default()
                 })
             }
@@ -1729,7 +1945,7 @@ pub fn check(x: i32) -> bool {
                         &adapter,
                         &adapter,
                         &fixture.cache,
-                        HashSet::new,
+                        KnownFilePaths::default,
                     )
                     .err()
                 } else {

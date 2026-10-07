@@ -31,6 +31,7 @@ use crate::output::evidence_record::{
 };
 use serde_json::Value;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use tower_lsp_server::ls_types::{
     CodeAction, CodeActionDisabled, CodeActionKind, CodeActionOrCommand, CodeActionParams,
     CodeActionResponse, Command, Diagnostic, LSPAny,
@@ -2337,6 +2338,7 @@ fn best_related_test_for_editor(seam: &ClassifiedSeam) -> Option<&RelatedTestGri
                 .iter()
                 .min_by_key(|test| relation_confidence_rank(test.relation_confidence))
         })
+        .map(Arc::as_ref)
 }
 
 fn relation_confidence_rank(confidence: RelationConfidence) -> u8 {

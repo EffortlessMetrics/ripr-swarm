@@ -1,6 +1,6 @@
 use crate::app::{CheckOutput, FindingDrillIn};
 use crate::config::RiprConfig;
-use crate::domain::{ExposureClass, Finding, LanguageId, ProbeFamily};
+use crate::domain::{ExposureClass, Finding, LanguageId, ProbeFamily, StaticLimitKind};
 use crate::output::path::display_path;
 use crate::output::preview_actionability::preview_actionability_for;
 use crate::output::python_repair_card::python_repair_card;
@@ -230,7 +230,11 @@ pub(crate) fn render_human_triage(
         }
     }
     if let Some(finding) = triage.selected {
-        out.push_str(&render_finding_digest_with_config(finding, config));
+        out.push_str(&render_finding_digest_with_config(
+            finding,
+            config,
+            &output.root,
+        ));
         if let Some(FindingDrillIn::Commands(navigation)) = drill_in {
             out.push_str("\nNext: drill into the top finding:\n");
             for command in [
@@ -241,7 +245,12 @@ pub(crate) fn render_human_triage(
                 super::push_powershell_variant(out, "  ", &command);
             }
             // #5355: a Rust gap gets the one-step route to a runnable test.
+            // A gap withheld because ripr could not read the related
+            // assertions (RIPR-SPEC-0240) claims no missing test, so it gets
+            // no test-writing route either.
             if finding.class != ExposureClass::Exposed
+                && finding.static_limit_kind
+                    != Some(StaticLimitKind::RustAssertionContextUnresolved)
                 && matches!(
                     finding.probe.family,
                     ProbeFamily::Predicate

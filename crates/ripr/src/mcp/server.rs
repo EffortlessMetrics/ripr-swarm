@@ -32,11 +32,16 @@ impl McpServer {
         status: WorkspaceStatus,
         analysis_root: Option<PathBuf>,
     ) -> Result<Self, ErrorData> {
+        // The session profile resolves the workspace's own configuration
+        // once at startup (#6825): the same `load_for_root` posture the
+        // refresh attempt runs under, so `ripr_workspace_status` never
+        // discloses a language gate the analysis does not have.
+        let profile = workspace::SessionProfile::resolve(analysis_root.as_deref());
         let mut server = Self {
             tools: typed(protocol::tools_list_result())?,
             resources: typed(protocol::resources_list_result())?,
             resource_templates: typed(protocol::resource_templates_list_result())?,
-            profile: workspace::SessionProfile::built_in(),
+            profile,
             root_identity: status.root.identity.clone(),
             analysis_root,
             status,

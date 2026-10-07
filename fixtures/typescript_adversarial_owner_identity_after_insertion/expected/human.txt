@@ -28,8 +28,8 @@ Start here:
     - 8 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
-  ripr explain --root fixtures/typescript_adversarial_owner_identity_after_insertion/input --diff fixtures/typescript_adversarial_owner_identity_after_insertion/diff.patch --mode fast probe:src_pricing.ts:typescript_preview:fff3ea84
-  ripr context --root fixtures/typescript_adversarial_owner_identity_after_insertion/input --diff fixtures/typescript_adversarial_owner_identity_after_insertion/diff.patch --mode fast --at probe:src_pricing.ts:typescript_preview:fff3ea84
+  ripr explain --root <cwd>/fixtures/typescript_adversarial_owner_identity_after_insertion/input --diff <cwd>/fixtures/typescript_adversarial_owner_identity_after_insertion/diff.patch --mode fast probe:src_pricing.ts:typescript_preview:fff3ea84
+  ripr context --root <cwd>/fixtures/typescript_adversarial_owner_identity_after_insertion/input --diff <cwd>/fixtures/typescript_adversarial_owner_identity_after_insertion/diff.patch --mode fast --at probe:src_pricing.ts:typescript_preview:fff3ea84
 
 Hidden:
   1 lower-priority finding(s) omitted from default human output (TypeScript preview: 1).

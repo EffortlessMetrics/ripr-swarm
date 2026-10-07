@@ -1,0 +1,50 @@
+{
+  "schema_version": "work_local_state.v1",
+  "root": "\\\\builds\\ripr-swarm",
+  "branches": [
+    {
+      "name": "feat/work-9107-a"
+    },
+    {
+      "name": "feat/work-9103"
+    },
+    {
+      "name": "feat/work-9301"
+    },
+    {
+      "name": "feat/work-9102"
+    },
+    {
+      "name": "feat/work-9107-b"
+    },
+    {
+      "name": "feat/work-9101"
+    },
+    {
+      "name": "feat/work-9108"
+    },
+    {
+      "name": "main"
+    }
+  ],
+  "worktrees": [
+    {
+      "path": "\\\\builds\\ripr-swarm\\wt-9107-a"
+    },
+    {
+      "path": "\\\\builds\\ripr-swarm\\wt-9103"
+    },
+    {
+      "path": "\\\\builds\\ripr-swarm\\wt-9101"
+    },
+    {
+      "path": "\\\\builds\\ripr-swarm\\wt-9102"
+    },
+    {
+      "path": "\\\\builds\\ripr-swarm\\wt-9108"
+    },
+    {
+      "path": "\\\\builds\\ripr-swarm\\wt-9107-b"
+    }
+  ]
+}
