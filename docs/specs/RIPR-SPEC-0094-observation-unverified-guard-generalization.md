@@ -311,6 +311,60 @@ Proof: `match_arm_proximity_test_cannot_confirm_beside_reaching_test`, the
 `match_arm_proximity_wrapper_confirms` (a same-file test of a public wrapper
 keeps `exposed`), both registered in the honesty corpus.
 
+## Owner-scoped tokens and self-computed expected values (#5830)
+
+A token confirms observation only when the shared word can name the same
+thing in the test. On a `return_value` or `field_construction` probe, three
+kinds of token in the changed expression cannot:
+
+- a name the owner's signature binds as a parameter;
+- a name the owner binds with `let`;
+- a numeric literal.
+
+A test never holds the owner's binding, and a number in the changed
+expression matches any test input with the same digits. Such a token
+confirms observation only in an assertion that calls the owner, as
+`tax(subtotal)` does for `fn tax(subtotal: i64)`. In
+`assert_eq!(subtotal(3, 100), 300)` the words `subtotal` and `100` are
+coincidence for a changed `subtotal * 8 / 100` in `tax`. Field names,
+called functions, methods and constants in the changed expression confirm
+as before. The constructed field's own name confirms even when it is also a
+parameter (`storage` in the shorthand `HirLet { storage }`), and an
+assertion naming a test `let` bound from an owner call counts as calling
+the owner. Effect families keep their existing token rule.
+
+The owner-return pin (#4478) is then the path that credits an exact pin
+such as `assert_eq!(sku_family("BOLT-M8"), "BOLT")`. Its return-path gate
+now reads the owner's tail past a comment (`// SAFETY:` before an `unsafe`
+block), so that pin still confirms once the parameter token no longer
+does.
+
+An `assert_eq!` whose one operand calls the owner, and whose other operand
+calls a function that reaches the owner within six call hops (a
+`#[cfg(test)]` helper such as `reference_tax` counts), computes its
+expected value through the changed code (RIPR-SPEC-0035, self-computed
+expected value). In `assert_eq!(invoice(3, 100), sub + tax(sub))`, where
+`invoice` calls `tax`, both sides move with `tax`. Such an assertion never
+confirms observation, and its probe-relative strength is at most `weak`, for
+every family. Callers are found by name over indexed call facts. A
+same-named function elsewhere also counts as a caller, so name collisions
+can only withhold credit. An expected side that is a literal, or that calls
+only functions that do not reach the owner, keeps the assertion's strength.
+A value bound from the owner in an earlier `let` is not followed. When no
+test reaches the owner (reach ruled out), a stage these rules leave `weak`
+reads as unreached, like a `yes` stage, because an unconfirmed oracle in a
+test that never runs the owner discriminates nothing. These
+rules govern diff-mode reveal; repo exposure grading (`test_grip_evidence`)
+does not apply them yet.
+
+Proof: `owner_parameter_name_confirms_only_in_an_assertion_calling_the_owner`,
+`numeric_literal_token_confirms_only_in_an_assertion_calling_the_owner`,
+`self_computed_expected_value_is_weak_and_unconfirmed`, the
+`owner_parameter_token_coincidence`, `self_computed_expected_value` and
+`self_computed_expected_helper` fixtures registered in the honesty corpus, and the
+`checkout-tax-self-computed-expected` and `ledger-sku-variant-unsafe`
+verdict-corpus rows.
+
 ## Test Mapping
 
 - `crates/ripr/src/analysis/classify/reveal.rs` unit tests for all new families.

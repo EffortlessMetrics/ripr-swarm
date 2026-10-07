@@ -2933,3 +2933,16 @@ fn a_definition_covering_the_test_outranks_a_may_rebind_site_elsewhere() {
     );
     assert!(only_macro_use.is_some_and(|refusal| refusal.is_analyzer_limit()));
 }
+
+/// #5830: a comment between the last statement and the tail (`// SAFETY:`
+/// before an `unsafe` block) is not part of the tail.
+#[test]
+fn return_path_gate_reads_the_tail_past_a_comment() {
+    let body = "fn family(sku: &str) -> &str {\n    let end = sku.find('-').unwrap_or(sku.len());\n    // SAFETY: `end` is a char boundary.\n    unsafe { sku.get_unchecked(..end) }\n}";
+    assert!(matches!(
+        gate(body, "unsafe { sku.get_unchecked(..end) }"),
+        Some(ReturnPathGate::Any)
+    ));
+    // The comment does not make a different tail match.
+    assert!(gate(body, "unsafe { sku.get_unchecked(end..) }").is_none());
+}

@@ -37,7 +37,7 @@ The page is generated. A unit test that CI requires fails when the page no longe
 | Trust | Commands that exit 0 when pointed at a missing repository | 0 commands | <= 0 commands | meets the bar | -2 commands since c6ccf9d (was 2 commands) |
 | Trust | Hostile-repository journeys (odd file names, symlink loops, shallow clones, submodules) where ripr neither finds nor refuses cleanly | 0 journeys | <= 0 journeys | meets the bar | no earlier measurement |
 | Trust | Findings or seams whose own evidence contradicts itself | 0 findings | <= 0 findings | meets the bar | -1 finding since c6ccf9d (was 1 finding) |
-| Trust | Wrong verdicts on hand-checked changes from real repositories | **8.8%** | <= 5.0% | below the bar | first receipt (verdict corpus, upstream cases only; all 204 cases: 27.0%) |
+| Trust | Wrong verdicts on hand-checked changes from real repositories | **8.8%** | <= 5.0% | below the bar | first receipt (verdict corpus, upstream cases only; all 204 cases: 26.0%) |
 | Trust | Hand-checked edits the crate's tests fully catch that ripr still flags as a gap | **62.3%** | <= 5.0% | below the bar | no earlier measurement |
 | Trust | Hand-checked edits where ripr gives no specific verdict | **28.6%** | <= 20.0% | below the bar | no earlier measurement |
 | Trust | Hand-checked edits the crate's tests miss that ripr reports as fine (counterweight to abstaining less) | 0.0% | <= 0.0% | meets the bar | no earlier measurement |
@@ -146,11 +146,11 @@ Only the upstream cases come from real repositories. The authored cases were wri
 
 | Rate | All cases | Upstream (real repositories) | Authored |
 | --- | --- | --- | --- |
-| False verdicts (all cases) | 55/204 (27.0%) | 3/34 (8.8%) | 52/170 (30.6%) |
+| False verdicts (all cases) | 53/204 (26.0%) | 3/34 (8.8%) | 50/170 (29.4%) |
 | False actionable (of discriminated) | 49/106 (46.2%) | 3/20 (15.0%) | 46/86 (53.5%) |
-| False exposed (of not fully discriminated) | 6/98 (6.1%) | 0/14 (0.0%) | 6/84 (7.1%) |
+| False exposed (of not fully discriminated) | 4/98 (4.1%) | 0/14 (0.0%) | 4/84 (4.8%) |
 | False silent (of not fully discriminated) | 0/98 (0.0%) | 0/14 (0.0%) | 0/84 (0.0%) |
-| Ideal verdict | 83/204 (40.7%) | 7/34 (20.6%) | 76/170 (44.7%) |
+| Ideal verdict | 85/204 (41.7%) | 7/34 (20.6%) | 78/170 (45.9%) |
 | Abstained (limited or silent where acceptable) | 66/204 (32.4%) | 24/34 (70.6%) | 42/170 (24.7%) |
 | Findings with a contradiction | 2/275 (0.7%) | not split by origin | not split by origin |
 
@@ -204,7 +204,7 @@ Only the upstream cases come from real repositories. The authored cases were wri
 | `ledger-stock-insert` | authored | discriminated | credited | gap | exposed, weakly_exposed | false_actionable | none |
 | `ledger-ship-exact-stock` | authored | not_discriminated | gap | limited | infection_unknown | abstained | none |
 | `ledger-sku-family-unsafe` | authored | discriminated | credited | credited | exposed, static_unknown | ideal | none |
-| `ledger-sku-variant-unsafe` | authored | partially_discriminated | gap | credited | exposed, static_unknown | false_exposed | none |
+| `ledger-sku-variant-unsafe` | authored | partially_discriminated | gap | gap | static_unknown, weakly_exposed | ideal | none |
 | `config-missing-equals-line` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | none |
 | `config-empty-key-error` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | none |
 | `config-log-level-warn` | authored | discriminated | credited | gap | exposed, weakly_exposed | false_actionable | none |
@@ -226,7 +226,7 @@ Only the upstream cases come from real repositories. The authored cases were wri
 | `checkout-withdraw-sibling-variant` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | none |
 | `checkout-refund-matches-variant` | authored | discriminated | credited | gap | exposed, weakly_exposed | false_actionable | none |
 | `checkout-deposit-cap-happy-path-only` | authored | not_discriminated | gap | gap | exposed, weakly_exposed | ideal | none |
-| `checkout-tax-self-computed-expected` | authored | not_discriminated | gap | credited | exposed | false_exposed | none |
+| `checkout-tax-self-computed-expected` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | none |
 | `checkout-daily-limit-imported-const` | authored | discriminated | credited | credited | exposed, propagation_unknown | ideal | none |
 | `checkout-minimum-same-file-const` | authored | discriminated | credited | credited | exposed, propagation_unknown | ideal | none |
 | `checkout-review-split-boundary-tests` | authored | not_discriminated | gap | gap | exposed, weakly_exposed | ideal | none |
