@@ -2346,7 +2346,9 @@ fn text_resolves_method_to_type(
                     if recv == impl_type
                         // `1.5f64.m()` reads only the fragment after the `.`
                         // (`5f64`), which still carries the literal's suffix.
-                        || suffixed_numeric_literal_type(recv) == Some(impl_type)
+                        // A raw call line is unmasked, so a literal quoted in
+                        // a string or comment there must not type a receiver.
+                        || (whole_body && suffixed_numeric_literal_type(recv) == Some(impl_type))
                         || let_binding_mentions_type(body_for_lets, recv, impl_type)
                     {
                         return true;
@@ -5674,6 +5676,30 @@ let r = try_parse_summary(\"x\");",
                 method_call_resolves_to_impl_type(&summary, "render", impl_type),
                 expected,
                 "{body} as {impl_type}"
+            );
+        }
+    }
+
+    // (#7019 review) A captured call line is raw: a suffixed literal quoted in
+    // a string or comment beside an unrelated `other.render()` must not
+    // resolve the call to the literal's primitive impl.
+    #[test]
+    fn quoted_suffixed_literal_on_a_raw_call_line_does_not_resolve() {
+        let cases = [
+            "let x = other.render(); println!(\"2u8.render()\");",
+            "let x = other.render(); // 2u8.render()",
+            "let x = other.render(); /* (2u8).render() */",
+        ];
+        for line in cases {
+            let mut summary = test("tests/render.rs", "t", line);
+            summary.calls = vec![CallFact {
+                line: 1,
+                name: "render".to_string(),
+                text: line.to_string(),
+            }];
+            assert!(
+                !method_call_resolves_to_impl_type(&summary, "render", "u8"),
+                "{line}"
             );
         }
     }
