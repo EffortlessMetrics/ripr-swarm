@@ -8,21 +8,21 @@
     "partially_discriminated": 34
   },
   "by_outcome": {
-    "abstained": 76,
+    "abstained": 78,
     "false_actionable": 67,
-    "false_exposed": 13,
+    "false_exposed": 11,
     "ideal": 122
   },
   "by_observed_verdict": {
-    "credited": 47,
+    "credited": 45,
     "gap": 155,
-    "limited": 75,
+    "limited": 77,
     "silent": 1
   },
   "false_verdict_rate": {
-    "numerator": 80,
+    "numerator": 78,
     "denominator": 278,
-    "rate": "0.2878"
+    "rate": "0.2806"
   },
   "false_actionable_rate": {
     "numerator": 67,
@@ -30,9 +30,9 @@
     "rate": "0.4820"
   },
   "false_exposed_rate": {
-    "numerator": 13,
+    "numerator": 11,
     "denominator": 139,
-    "rate": "0.0935"
+    "rate": "0.0791"
   },
   "false_silent_rate": {
     "numerator": 0,
@@ -45,9 +45,9 @@
     "rate": "0.4388"
   },
   "abstention_rate": {
-    "numerator": 76,
+    "numerator": 78,
     "denominator": 278,
-    "rate": "0.2734"
+    "rate": "0.2806"
   },
   "contradiction_rate": {
     "numerator": 2,
@@ -61,15 +61,15 @@
     "authored": {
       "cases_total": 244,
       "by_observed_verdict": {
-        "credited": 42,
+        "credited": 40,
         "gap": 150,
-        "limited": 51,
+        "limited": 53,
         "silent": 1
       },
       "false_verdict_rate": {
-        "numerator": 77,
+        "numerator": 75,
         "denominator": 244,
-        "rate": "0.3156"
+        "rate": "0.3074"
       },
       "false_actionable_rate": {
         "numerator": 64,
@@ -77,9 +77,9 @@
         "rate": "0.5378"
       },
       "false_exposed_rate": {
-        "numerator": 13,
+        "numerator": 11,
         "denominator": 125,
-        "rate": "0.1040"
+        "rate": "0.0880"
       },
       "false_silent_rate": {
         "numerator": 0,
@@ -92,9 +92,9 @@
         "rate": "0.4713"
       },
       "abstention_rate": {
-        "numerator": 52,
+        "numerator": 54,
         "denominator": 244,
-        "rate": "0.2131"
+        "rate": "0.2213"
       }
     },
     "upstream": {

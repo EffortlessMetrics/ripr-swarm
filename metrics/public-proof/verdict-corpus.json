@@ -1,26 +1,26 @@
 {
   "abstention_rate": {
     "denominator": 278,
-    "numerator": 76,
-    "rate": "0.2734"
+    "numerator": 78,
+    "rate": "0.2806"
   },
   "by_observed_verdict": {
-    "credited": 47,
+    "credited": 45,
     "gap": 155,
-    "limited": 75,
+    "limited": 77,
     "silent": 1
   },
   "by_origin": {
     "authored": {
       "abstention_rate": {
         "denominator": 244,
-        "numerator": 52,
-        "rate": "0.2131"
+        "numerator": 54,
+        "rate": "0.2213"
       },
       "by_observed_verdict": {
-        "credited": 42,
+        "credited": 40,
         "gap": 150,
-        "limited": 51,
+        "limited": 53,
         "silent": 1
       },
       "cases_total": 244,
@@ -31,8 +31,8 @@
       },
       "false_exposed_rate": {
         "denominator": 125,
-        "numerator": 13,
-        "rate": "0.1040"
+        "numerator": 11,
+        "rate": "0.0880"
       },
       "false_silent_rate": {
         "denominator": 125,
@@ -41,8 +41,8 @@
       },
       "false_verdict_rate": {
         "denominator": 244,
-        "numerator": 77,
-        "rate": "0.3156"
+        "numerator": 75,
+        "rate": "0.3074"
       },
       "ideal_rate": {
         "denominator": 244,
@@ -90,9 +90,9 @@
     }
   },
   "by_outcome": {
-    "abstained": 76,
+    "abstained": 78,
     "false_actionable": 67,
-    "false_exposed": 13,
+    "false_exposed": 11,
     "ideal": 122
   },
   "by_truth": {
@@ -116,8 +116,8 @@
   },
   "false_exposed_rate": {
     "denominator": 139,
-    "numerator": 13,
-    "rate": "0.0935"
+    "numerator": 11,
+    "rate": "0.0791"
   },
   "false_silent_rate": {
     "denominator": 139,
@@ -126,8 +126,8 @@
   },
   "false_verdict_rate": {
     "denominator": 278,
-    "numerator": 80,
-    "rate": "0.2878"
+    "numerator": 78,
+    "rate": "0.2806"
   },
   "ideal_rate": {
     "denominator": 278,
@@ -4797,17 +4797,17 @@
       "anchor": "src/charges.rs:2",
       "behavior_family": "return_value_arithmetic",
       "case_id": "trap-charge-unbuilt-integration-test",
-      "changed_since_labeling": false,
+      "changed_since_labeling": true,
       "contradictions": [],
       "followed_retarget": false,
       "hard_case": true,
       "ideal_verdict": "gap",
       "observed_classifications": [
-        "exposed"
+        "no_static_path"
       ],
-      "observed_verdict": "credited",
+      "observed_verdict": "limited",
       "origin": "authored",
-      "outcome": "false_exposed",
+      "outcome": "abstained",
       "subject_id": "authored-trap-reach",
       "test_shape": "integration_test_not_built_autotests_off",
       "truth": "not_discriminated"
@@ -5329,17 +5329,17 @@
       "anchor": "src/spares.rs:2",
       "behavior_family": "return_value_arithmetic",
       "case_id": "trap-spare-undeclared-test-file",
-      "changed_since_labeling": false,
+      "changed_since_labeling": true,
       "contradictions": [],
       "followed_retarget": false,
       "hard_case": true,
       "ideal_verdict": "gap",
       "observed_classifications": [
-        "exposed"
+        "no_static_path"
       ],
-      "observed_verdict": "credited",
+      "observed_verdict": "limited",
       "origin": "authored",
-      "outcome": "false_exposed",
+      "outcome": "abstained",
       "subject_id": "authored-trap-reach",
       "test_shape": "test_in_undeclared_source_file",
       "truth": "not_discriminated"
