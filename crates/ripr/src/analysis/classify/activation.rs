@@ -4009,7 +4009,7 @@ assert_eq!(input.amount, 100);"#
             file: PathBuf::from("tests/value.rs"),
             start_line: 10,
             end_line: 12,
-            body: assertion.to_string(),
+            body: assertion.to_string().into(),
             calls: Vec::new(),
             assertions: vec![oracle_fact(assertion, OracleKind::ExactValue)],
             literals: Vec::new(),

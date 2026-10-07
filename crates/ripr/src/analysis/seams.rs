@@ -443,6 +443,7 @@ impl OwnerCallShape {
             }
         }
     }
+}
 
 impl RepoSeam {
     /// Construct a seam, computing a deterministic ID from the canonical
