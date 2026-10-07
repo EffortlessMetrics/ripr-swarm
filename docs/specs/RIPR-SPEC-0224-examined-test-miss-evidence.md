@@ -215,17 +215,26 @@ position rules as the witness (#5527):
    boundary input, but no such assertion witnesses it. The input is present,
    so this is never a missing input.
 4. `missed_boundary`: the owner module pins the boundary statically (the
-   `typescript_boundary_input` or `typescript_boundary_parameters` fact) and
-   the owner does not call itself. The test reaches the owner through a
-   direct, import-alias or namespace call, with no import of the owner name
-   from a source the resolver cannot place. Every owner reference in its body
-   is a plain call on no receiver other than an owner-module namespace, and
-   every assertion observes exactly one owner call (directly or through a
-   one-hop body local), so no hook, describe-level binding, helper or other
-   production function can carry a hidden input. Every owner call passes
-   plain integer inputs off the boundary, with no constant argument an
-   enclosing scope rebinds. This is the only state that may support a
-   row-owned `missing_input`.
+   `typescript_boundary_input` or `typescript_boundary_parameters` fact), and
+   every input the test can feed the owner is visible, by one closed rule:
+   - The owner module names the owner only at its declaration, so no
+     recursion, mutual recursion or self alias re-enters it.
+   - The test reaches the owner through a direct, import-alias or namespace
+     call, and its assertion admission is `recognized`.
+   - Outside every test body (with its imports dropped), the test file never
+     names the owner, its aliases or its namespaces, and it loads no module
+     dynamically.
+   - The file imports only the owner's names, owner-module namespaces,
+     constant-shaped names and test frameworks.
+   - The body is closed: every statement is
+     `expect(<one owner call or body local>)<literal matcher chain>`, a
+     `const` bound to one owner call, or a `const` integer.
+   - Every owner call passes plain integer inputs off the boundary, and no
+     constant argument is rebound by an enclosing scope.
+
+   A visible owner call at the boundary is checked first and yields
+   `reached_without_discriminator`. This is the only state that may support
+   a row-owned `missing_input`.
 5. `unresolved`: anything else (an untrusted or shadowed path, an unparsed or
    underived boundary, a computed, absent or spread input, or an owner
    reference that is not a plain call). Never a missing input.

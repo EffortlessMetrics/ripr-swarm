@@ -416,6 +416,21 @@ pub(crate) fn ts_observation_guard_limitation(
 
 // ── Predicate boundary witness (RIPR-SPEC-0027) ──────────────────────────────
 
+/// The finding-wide inputs every row's boundary activation reads (#5527).
+#[derive(Clone, Copy)]
+pub(crate) struct TsBoundaryRowContext<'a> {
+    pub(crate) boundary: &'a TsPredicateBoundary,
+    /// The module-derived boundary fact, when loaded; only a row that does
+    /// not witness reads it.
+    pub(crate) boundary_fact: Option<&'a TypeScriptBoundaryFact>,
+    pub(crate) line_text: &'a str,
+    pub(crate) owner: &'a TypeScriptOwner,
+    /// Every parsed test, so a row can blank its file's other test bodies.
+    pub(crate) sibling_tests: &'a [TypeScriptTest],
+    pub(crate) alias_map: Option<&'a TsAliasMap>,
+    pub(crate) workspace_root: Option<&'a Path>,
+}
+
 /// One related test's activation of the changed predicate boundary (#5527).
 /// `Witnessed` when static evidence shows that a strong, family-matching
 /// assertion of THIS test observes an owner call that sits at the changed
@@ -480,14 +495,18 @@ pub(crate) fn ts_observation_guard_limitation(
 /// parameter, so any position the known arity reads is accepted. That stays
 /// advisory.
 pub(crate) fn ts_predicate_boundary_row_activation(
-    boundary: &TsPredicateBoundary,
-    boundary_fact: Option<&TypeScriptBoundaryFact>,
-    line_text: &str,
-    owner: &TypeScriptOwner,
+    context: &TsBoundaryRowContext<'_>,
     candidate: &TypeScriptRelatedCandidate<'_>,
-    alias_map: Option<&TsAliasMap>,
-    workspace_root: Option<&Path>,
 ) -> TypeScriptPredicateActivation {
+    let TsBoundaryRowContext {
+        boundary,
+        boundary_fact,
+        line_text,
+        owner,
+        sibling_tests,
+        alias_map,
+        workspace_root,
+    } = *context;
     let (left, right, nullish_boundary) = match boundary {
         TsPredicateBoundary::NotPredicate => return TypeScriptPredicateActivation::NotApplicable,
         TsPredicateBoundary::Unparsed => return TypeScriptPredicateActivation::Unresolved,
@@ -639,6 +658,7 @@ pub(crate) fn ts_predicate_boundary_row_activation(
         boundary_fact,
         owner,
         candidate,
+        sibling_tests,
         &owner_receivers,
         alias_map,
         workspace_root,
@@ -651,97 +671,136 @@ pub(crate) fn ts_predicate_boundary_row_activation(
 /// when the comparison reads a read-only owner parameter against a plain
 /// integer (or a second read-only parameter) on a line that runs on every
 /// call. A wrong miss is worse than no miss, so the row must also show that
-/// the test body is the whole input surface it observes:
+/// every input the test can feed the owner is visible here, by one closed
+/// rule rather than a list of excluded shapes:
 ///
-/// - a plain owner call path (direct, import alias, or namespace import; no
-///   receiver, re-export chain, or module entry in between), with no import
-///   of the owner name from a source the resolver does not place on the
-///   owner (a barrel), and an owner that does not call itself;
-/// - every owner reference in the body is a plain call, on no receiver other
-///   than an owner-module namespace (a `require` or dynamic-import namespace
-///   is not established, so it refuses);
-/// - every assertion observes exactly one owner call, directly or through
-///   a one-hop body local, so a value built in a hook, a describe-level
-///   binding, a test helper or another production function never hides a
-///   boundary input;
+/// - the owner module names the owner only at its declaration (no
+///   recursion, mutual recursion, or self alias can re-enter it);
+/// - the test reaches the owner through a direct, import-alias or namespace
+///   call, and its assertion admission is `Recognized`;
+/// - the test file outside every test body never names the owner, its
+///   aliases or its namespace receivers, loads no module dynamically, and
+///   imports nothing a hook or helper could reach the owner through: only
+///   the owner's own names, owner-module namespaces, constant-shaped
+///   names, and test frameworks;
+/// - the test body is closed: every top-level statement is
+///   `expect(<one owner call or body local>)<matcher chain>`, a `const`
+///   local bound to one owner call, or a `const` integer constant;
 /// - every owner call passes plain integer inputs off the boundary, with no
-///   constant argument an enclosing scope rebinds.
+///   constant argument an enclosing scope or the body rebinds.
 ///
-/// Any call at the boundary means the input is present; anything else the
-/// fact cannot read leaves the row unresolved.
+/// A visible owner call at the boundary is checked first: the input is
+/// present (`reached_without_discriminator`) whatever else the test does.
+/// Anything else the fact cannot read leaves the row unresolved.
 fn row_boundary_input_activation(
     boundary_fact: Option<&TypeScriptBoundaryFact>,
     owner: &TypeScriptOwner,
     candidate: &TypeScriptRelatedCandidate<'_>,
+    sibling_tests: &[TypeScriptTest],
     owner_receivers: &[String],
     alias_map: Option<&TsAliasMap>,
     workspace_root: Option<&Path>,
 ) -> TypeScriptPredicateActivation {
-    let Some(fact) = boundary_fact else {
-        return TypeScriptPredicateActivation::Unresolved;
+    let unresolved = TypeScriptPredicateActivation::Unresolved;
+    let (Some(fact), Some(root)) = (boundary_fact, workspace_root) else {
+        return unresolved;
     };
+    let test = candidate.test;
     if !matches!(
         candidate.relation,
         TypeScriptRelationKind::DirectOwnerCall
             | TypeScriptRelationKind::ImportAliasOwnerCall
             | TypeScriptRelationKind::ImportedOwnerCall
-    ) || owner_calls_itself(owner)
-    {
-        return TypeScriptPredicateActivation::Unresolved;
+    ) {
+        return unresolved;
     }
-    let test = candidate.test;
-    let mut call_names = vec![owner.name.as_str()];
-    for import in test
-        .imports_in_file
-        .iter()
-        .filter(|import| !import.namespace)
+    // A visible owner call at the boundary settles presence before any of
+    // the closure rules below: the input exists, whatever else the test does.
+    let alias_locals = test.imports_in_file.iter().filter(|import| {
+        !import.namespace
+            && import.imported.as_deref() == Some(owner.name.as_str())
+            && import.local != owner.name
+            && import_source_matches_owner(import, &test.file, owner, alias_map, workspace_root)
+    });
+    let reach_names = std::iter::once(owner.name.as_str())
+        .chain(alias_locals.map(|import| import.local.as_str()))
+        .filter(|name| !local_identifier_declared_in_test_body(&test.body_text, name));
+    for name in reach_names {
+        for arguments in owner_call_arguments(&test.body_text, name, owner_receivers) {
+            let arguments =
+                substitute_constant_arguments(arguments, test, owner, alias_map, workspace_root);
+            if fact.call_hits_boundary(&arguments) == Some(true) {
+                return TypeScriptPredicateActivation::ReachedWithoutDiscriminator;
+            }
+        }
+    }
+    if test.assertions.is_empty()
+        || test.assertion_admission != TypeScriptAssertionAdmission::Recognized
+        || !owner_module_names_owner_once(owner, root)
     {
-        let names_owner =
-            import.imported.as_deref() == Some(owner.name.as_str()) || import.local == owner.name;
-        if !names_owner {
+        return unresolved;
+    }
+    let mut call_names = vec![owner.name.as_str()];
+    for import in &test.imports_in_file {
+        if import.namespace {
+            if !owner_receivers.contains(&import.local) {
+                return unresolved;
+            }
             continue;
         }
-        if !import_source_matches_owner(import, &test.file, owner, alias_map, workspace_root) {
-            return TypeScriptPredicateActivation::Unresolved;
-        }
-        if import.local != owner.name {
-            call_names.push(import.local.as_str());
+        let names_owner =
+            import.imported.as_deref() == Some(owner.name.as_str()) || import.local == owner.name;
+        if names_owner {
+            if !import_source_matches_owner(import, &test.file, owner, alias_map, workspace_root) {
+                return unresolved;
+            }
+            if import.local != owner.name {
+                call_names.push(import.local.as_str());
+            }
+        } else if !is_constant_shaped_operand(&import.local)
+            && !is_test_framework_source(&import.source)
+        {
+            return unresolved;
         }
     }
+    let mut names: Vec<&str> = call_names.clone();
+    names.extend(owner_receivers.iter().map(String::as_str));
+    if !test_file_names_owner_only_in_test_bodies(test, sibling_tests, &names, root) {
+        return unresolved;
+    }
+    let Some(body_constants) = closed_test_body_constants(test, &call_names, owner_receivers)
+    else {
+        return unresolved;
+    };
     let mut calls = Vec::new();
     for name in &call_names {
         if local_identifier_declared_in_test_body(&test.body_text, name)
             || !every_owner_reference_is_a_call(&test.body_text, name, owner_receivers)
         {
-            return TypeScriptPredicateActivation::Unresolved;
+            return unresolved;
         }
         calls.extend(owner_call_arguments(&test.body_text, name, owner_receivers));
     }
-    if calls.is_empty()
-        || !test.assertions.iter().all(|assertion| {
-            assertion_observes_one_owner_call(
-                test,
-                assertion,
-                &call_names,
-                &owner.name,
-                owner_receivers,
-            )
-        })
-    {
-        return TypeScriptPredicateActivation::Unresolved;
+    if calls.is_empty() {
+        return unresolved;
     }
     let mut every_call_missed = true;
     for arguments in calls {
         let rebound_constant = arguments.iter().any(|argument| {
             let argument = argument.trim();
             is_constant_shaped_operand(argument)
-                && test
+                && (test
                     .scope_bindings
                     .iter()
                     .any(|binding| binding.name == argument)
+                    || (body_constants.iter().any(|name| name == argument)
+                        && test
+                            .imports_in_file
+                            .iter()
+                            .any(|import| import.local == argument)))
         });
         if rebound_constant {
-            return TypeScriptPredicateActivation::Unresolved;
+            return unresolved;
         }
         let arguments =
             substitute_constant_arguments(arguments, test, owner, alias_map, workspace_root);
@@ -754,55 +813,270 @@ fn row_boundary_input_activation(
     if every_call_missed {
         TypeScriptPredicateActivation::MissedBoundary
     } else {
-        TypeScriptPredicateActivation::Unresolved
+        unresolved
     }
 }
 
-/// `true` when the owner's own source calls its name after the declaration
-/// (recursion): an off-boundary input can then reach the boundary inside the
-/// owner. An owner without retained source cannot be checked, so it counts.
-fn owner_calls_itself(owner: &TypeScriptOwner) -> bool {
-    let Some(source) = owner.source_text.as_deref() else {
-        return true;
-    };
-    let name = owner.name.as_str();
-    if name.is_empty() {
-        return true;
-    }
-    source.match_indices(name).any(|(idx, _)| {
-        let before = &source[..idx];
-        let after = &source[idx + name.len()..];
-        let is_ident = |ch: char| ch.is_ascii_alphanumeric() || ch == '_' || ch == '$';
-        !before.chars().next_back().is_some_and(is_ident)
-            && !after.chars().next().is_some_and(is_ident)
-            && !before.trim_end().ends_with("function")
-            && after.trim_start().starts_with('(')
-    })
+/// Test-runner modules whose imports cannot reach the owner.
+fn is_test_framework_source(source: &str) -> bool {
+    matches!(
+        source,
+        "vitest" | "@jest/globals" | "jest" | "bun:test" | "node:test" | "node:assert" | "assert"
+    ) || source.starts_with("node:assert/")
 }
 
-/// `true` when the assertion's observed expression is exactly one owner
-/// call (optionally awaited, on an owner-module namespace receiver), or a
-/// bare body local whose single immutable initializer is one owner call.
-fn assertion_observes_one_owner_call(
-    test: &TypeScriptTest,
-    assertion: &TypeScriptAssertion,
-    call_names: &[&str],
-    owner_name: &str,
-    owner_receivers: &[String],
-) -> bool {
-    let Some(observed) = assertion.observed_expression.as_deref() else {
+/// `true` when the word-bounded owner name occurs exactly once in the
+/// owner's module (its declaration). A second occurrence may be a
+/// recursive or mutually recursive call, a self alias, or a re-export that
+/// lets another path re-enter the owner with a different input.
+fn owner_module_names_owner_once(owner: &TypeScriptOwner, root: &Path) -> bool {
+    let Ok(source) = std::fs::read_to_string(root.join(&owner.file)) else {
         return false;
     };
-    let observed = observed.trim();
-    let observed = observed
-        .strip_prefix("await ")
-        .map(str::trim)
-        .unwrap_or(observed);
-    let spans_one_call = call_names.iter().any(|name| {
-        let callee_rest = observed.strip_prefix(*name).or_else(|| {
-            owner_receivers
-                .iter()
-                .find_map(|receiver| observed.strip_prefix(format!("{receiver}.{name}").as_str()))
+    word_occurrences(&source, &owner.name) == 1
+}
+
+/// Count of word-bounded occurrences of `name` in `text`.
+fn word_occurrences(text: &str, name: &str) -> usize {
+    if name.is_empty() {
+        return 0;
+    }
+    let is_ident = |ch: char| ch.is_ascii_alphanumeric() || ch == '_' || ch == '$';
+    text.match_indices(name)
+        .filter(|(idx, _)| {
+            !text[..*idx].chars().next_back().is_some_and(is_ident)
+                && !text[idx + name.len()..]
+                    .chars()
+                    .next()
+                    .is_some_and(is_ident)
+        })
+        .count()
+}
+
+/// `true` when the test file, with every test body from that file blanked
+/// and import statements dropped, never names any of `names` and loads no
+/// module dynamically: no hook, describe-level binding or file-level helper
+/// can then feed the owner an input this row cannot see.
+fn test_file_names_owner_only_in_test_bodies(
+    test: &TypeScriptTest,
+    sibling_tests: &[TypeScriptTest],
+    names: &[&str],
+    root: &Path,
+) -> bool {
+    let Ok(mut source) = std::fs::read_to_string(root.join(&test.file)) else {
+        return false;
+    };
+    if source.matches(test.body_text.as_str()).count() != 1 {
+        return false;
+    }
+    for body in sibling_tests
+        .iter()
+        .filter(|sibling| sibling.file == test.file && !sibling.body_text.is_empty())
+        .map(|sibling| sibling.body_text.as_str())
+    {
+        source = source.replace(body, "");
+    }
+    let mut in_import = false;
+    let outside: String = source
+        .lines()
+        .filter(|line| {
+            let trimmed = line.trim_start();
+            if in_import || trimmed.starts_with("import ") || trimmed.starts_with("import{") {
+                in_import = !(trimmed.contains(" from ") || trimmed.ends_with(';'));
+                return false;
+            }
+            true
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    !outside.contains("require(")
+        && !outside.contains("import(")
+        && names
+            .iter()
+            .all(|name| word_occurrences(&outside, name) == 0)
+}
+
+/// The test body's `const` integer constant names when the body is closed:
+/// its callback block holds only `expect(<one owner call or body local>)`
+/// statements with a literal matcher chain, `const` locals bound to one
+/// owner call, and `const NAME = <integer>` constants, each ending in `;`.
+/// `None` for any other statement, nested block, or body shape.
+fn closed_test_body_constants(
+    test: &TypeScriptTest,
+    call_names: &[&str],
+    owner_receivers: &[String],
+) -> Option<Vec<String>> {
+    let block = test_callback_block(&test.body_text)?;
+    let statements = top_level_statements(block)?;
+    let mut locals: Vec<String> = Vec::new();
+    let mut constants: Vec<String> = Vec::new();
+    for statement in &statements {
+        if let Some(rest) = statement.strip_prefix("const ") {
+            let (name, value) = rest.split_once('=')?;
+            let name = name.trim();
+            if !is_bare_identifier(name) {
+                return None;
+            }
+            let value = value.trim();
+            let value = value.strip_prefix("await ").map(str::trim).unwrap_or(value);
+            if integer_literal_text(value) {
+                constants.push(name.to_string());
+            } else if is_one_owner_call(value, call_names, owner_receivers) {
+                locals.push(name.to_string());
+            } else {
+                return None;
+            }
+            continue;
+        }
+        let statement = statement
+            .strip_prefix("await ")
+            .map(str::trim)
+            .unwrap_or(statement);
+        let after_open = statement.strip_prefix("expect(")?;
+        let close = balanced_close_offset(after_open)?;
+        let observed = after_open[..close].trim();
+        let observed = observed
+            .strip_prefix("await ")
+            .map(str::trim)
+            .unwrap_or(observed);
+        if !(is_one_owner_call(observed, call_names, owner_receivers)
+            || locals.iter().any(|local| local == observed))
+        {
+            return None;
+        }
+        if !is_literal_matcher_chain(&after_open[close + 1..]) {
+            return None;
+        }
+    }
+    Some(constants)
+}
+
+/// The text inside a test callback's braces (`() => { ... }`, `async () =>
+/// { ... }`, `function () { ... }`), or `None` for any other shape.
+fn test_callback_block(body: &str) -> Option<&str> {
+    let arrow = body.find("=>");
+    let open = match arrow {
+        Some(arrow) => {
+            let after = body[arrow + 2..].trim_start();
+            if !after.starts_with('{') {
+                return None;
+            }
+            body.len() - after.len()
+        }
+        None => {
+            let function = body.find("function")?;
+            function + body[function..].find('{')?
+        }
+    };
+    let inner = &body[open + 1..];
+    let close = balanced_brace_close(inner)?;
+    Some(&inner[..close])
+}
+
+/// Offset of the `}` closing a block whose `{` sits just before `inner`.
+fn balanced_brace_close(inner: &str) -> Option<usize> {
+    let mut depth = 0usize;
+    let mut quote: Option<char> = None;
+    let mut escaped = false;
+    for (offset, ch) in inner.char_indices() {
+        if let Some(open) = quote {
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == open {
+                quote = None;
+            }
+            continue;
+        }
+        match ch {
+            '"' | '\'' | '`' => quote = Some(ch),
+            '(' | '[' | '{' => depth += 1,
+            '}' if depth == 0 => return Some(offset),
+            ')' | ']' | '}' => depth = depth.checked_sub(1)?,
+            _ => {}
+        }
+    }
+    None
+}
+
+/// The block's top-level statements, each terminated by `;`, trimmed.
+/// `None` when the block holds a comment, a nested block statement, or
+/// trailing text without a `;`.
+fn top_level_statements(block: &str) -> Option<Vec<String>> {
+    if block.contains("//") || block.contains("/*") {
+        return None;
+    }
+    let mut statements = Vec::new();
+    let mut current = String::new();
+    let mut depth = 0usize;
+    let mut quote: Option<char> = None;
+    let mut escaped = false;
+    for ch in block.chars() {
+        if let Some(open) = quote {
+            current.push(ch);
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == open {
+                quote = None;
+            }
+            continue;
+        }
+        match ch {
+            '"' | '\'' | '`' => {
+                quote = Some(ch);
+                current.push(ch);
+            }
+            '(' | '[' | '{' => {
+                depth += 1;
+                current.push(ch);
+            }
+            ')' | ']' | '}' => {
+                depth = depth.checked_sub(1)?;
+                current.push(ch);
+            }
+            ';' if depth == 0 => {
+                let statement = current.trim();
+                if !statement.is_empty() {
+                    statements.push(statement.to_string());
+                }
+                current.clear();
+            }
+            _ => current.push(ch),
+        }
+    }
+    if !current.trim().is_empty() || quote.is_some() || depth != 0 {
+        return None;
+    }
+    Some(statements)
+}
+
+/// True when `text` is one identifier (`[A-Za-z_$][A-Za-z0-9_$]*`).
+fn is_bare_identifier(text: &str) -> bool {
+    let mut chars = text.chars();
+    chars
+        .next()
+        .is_some_and(|ch| ch.is_ascii_alphabetic() || ch == '_' || ch == '$')
+        && chars.all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '$')
+}
+
+/// A plain decimal integer literal token (`100`, `1_000`).
+fn integer_literal_text(text: &str) -> bool {
+    !text.is_empty() && text.chars().all(|ch| ch.is_ascii_digit() || ch == '_')
+}
+
+/// `true` when `text` is exactly one owner call: a call name or an
+/// owner-module namespace member, then one balanced argument list.
+fn is_one_owner_call(text: &str, call_names: &[&str], owner_receivers: &[String]) -> bool {
+    call_names.iter().any(|name| {
+        let callee_rest = text.strip_prefix(*name).or_else(|| {
+            owner_receivers.iter().find_map(|receiver| {
+                text.strip_prefix(receiver.as_str())
+                    .and_then(|rest| rest.strip_prefix('.'))
+                    .and_then(|rest| rest.strip_prefix(*name))
+            })
         });
         callee_rest
             .and_then(|rest| rest.strip_prefix('('))
@@ -811,10 +1085,39 @@ fn assertion_observes_one_owner_call(
                     .map(|close| after_open[close + 1..].trim().is_empty())
             })
             .unwrap_or(false)
-    });
-    spans_one_call
-        || ts_observed_local_owner_call_arguments(test, assertion, owner_name, owner_receivers)
-            .is_some()
+    })
+}
+
+/// `true` when `text` (after `expect(...)`) is a matcher chain of member
+/// names, each optionally called with arguments that contain no call:
+/// `.toBe(90)`, `.not.toBe(1)`, `.resolves.toEqual({ a: 1 })`.
+fn is_literal_matcher_chain(text: &str) -> bool {
+    let mut rest = text.trim();
+    if rest.is_empty() {
+        return false;
+    }
+    while !rest.is_empty() {
+        let Some(after_dot) = rest.strip_prefix('.') else {
+            return false;
+        };
+        let name_len = after_dot
+            .find(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_' || ch == '$'))
+            .unwrap_or(after_dot.len());
+        if name_len == 0 {
+            return false;
+        }
+        rest = after_dot[name_len..].trim_start();
+        if let Some(after_open) = rest.strip_prefix('(') {
+            let Some(close) = balanced_close_offset(after_open) else {
+                return false;
+            };
+            if after_open[..close].contains('(') {
+                return false;
+            }
+            rest = after_open[close + 1..].trim_start();
+        }
+    }
+    true
 }
 
 /// `true` when every reference to `name` in `body` is a plain call `name(`
@@ -837,12 +1140,11 @@ fn every_owner_reference_is_a_call(body: &str, name: &str, owner_receivers: &[St
         {
             return true;
         }
-        if before.trim_end().ends_with('.')
-            && !owner_receivers
-                .iter()
-                .any(|receiver| receiver == &receiver_before_dot(before))
-        {
-            return false;
+        if before.trim_end().ends_with('.') {
+            let receiver = receiver_before_dot(before);
+            if !owner_receivers.contains(&receiver) {
+                return false;
+            }
         }
         after.trim_start().starts_with('(')
     })
@@ -864,6 +1166,9 @@ pub(crate) enum TsPredicateBoundary {
     },
 }
 
+/// The changed predicate's boundary for per-row activation: not a
+/// predicate, a predicate whose discriminator did not parse, or the parsed
+/// `left == right` (or nullish) pair the rows are checked against.
 pub(crate) fn ts_predicate_boundary(
     probe_shape: &TypeScriptProbeShape,
     line_text: &str,
@@ -2808,23 +3113,39 @@ pub(crate) fn classify_change_with_alias_state(
     // the same value later feeds the boundary-input evidence line.
     let predicate_boundary = ts_predicate_boundary(&probe_shape, line_text);
     let row_activation = |candidate: &TypeScriptRelatedCandidate<'_>,
-                          fact: Option<&TypeScriptBoundaryFact>| {
-        ts_predicate_boundary_row_activation(
-            &predicate_boundary,
-            fact,
+                          boundary_fact: Option<&TypeScriptBoundaryFact>| {
+        let context = TsBoundaryRowContext {
+            boundary: &predicate_boundary,
+            boundary_fact,
             line_text,
             owner,
-            candidate,
+            sibling_tests: all_tests,
             alias_map,
             workspace_root,
-        )
+        };
+        ts_predicate_boundary_row_activation(&context, candidate)
     };
     let mut predicate_activations: Vec<TypeScriptPredicateActivation> = related_candidates
         .iter()
         .map(|candidate| row_activation(candidate, None))
         .collect();
     let mut boundary_fact: Option<Option<TypeScriptBoundaryFact>> = None;
-    if predicate_activations.contains(&TypeScriptPredicateActivation::Unresolved) {
+    // Only an unresolved row on a plain owner call path can change with the
+    // fact; heuristic, receiver and module-entry rows never read it.
+    let fact_can_change_a_row = matches!(predicate_boundary, TsPredicateBoundary::Parsed { .. })
+        && related_candidates
+            .iter()
+            .zip(&predicate_activations)
+            .any(|(candidate, activation)| {
+                *activation == TypeScriptPredicateActivation::Unresolved
+                    && matches!(
+                        candidate.relation,
+                        TypeScriptRelationKind::DirectOwnerCall
+                            | TypeScriptRelationKind::ImportAliasOwnerCall
+                            | TypeScriptRelationKind::ImportedOwnerCall
+                    )
+            });
+    if fact_can_change_a_row {
         let fact =
             ts_boundary_fact_for_change(&probe_shape, line, line_text, owner, workspace_root);
         if let Some(fact) = &fact {

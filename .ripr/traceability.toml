@@ -12649,6 +12649,8 @@ tests = [
   "crates/ripr/src/analysis/language/typescript/predicate_activation_tests.rs::unproven_receiver_or_barrel_import_never_hides_a_boundary_input",
   "crates/ripr/src/analysis/language/typescript/predicate_activation_tests.rs::constant_rebound_in_an_enclosing_scope_is_unresolved",
   "crates/ripr/src/analysis/language/typescript/predicate_activation_tests.rs::recursive_owner_is_unresolved_not_missed",
+  "crates/ripr/src/analysis/language/typescript/predicate_activation_tests.rs::open_test_body_or_file_is_unresolved_not_missed",
+  "crates/ripr/src/analysis/language/typescript/predicate_activation_tests.rs::mutually_recursive_owner_is_unresolved_not_missed",
   "crates/ripr/src/analysis/language/typescript/predicate_activation_tests.rs::body_local_shadow_is_not_owner_activation",
   "crates/ripr/src/analysis/language/typescript/predicate_activation_tests.rs::namespace_and_alias_owner_calls_keep_their_answer",
   "crates/ripr/src/analysis/language/typescript/predicate_activation_tests.rs::owner_module_named_constant_resolves_the_boundary",

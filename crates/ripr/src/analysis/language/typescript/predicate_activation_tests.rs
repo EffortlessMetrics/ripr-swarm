@@ -52,6 +52,19 @@ const OWNER_SOURCE: &str = concat!(
     "  }\n",
     "  return tier(total + 1);\n",
     "}\n",
+    "\n",
+    "export const SMALL = 50;\n",
+    "\n",
+    "export function band(total: number): number {\n",
+    "  if (total >= 10) {\n",
+    "    return 1;\n",
+    "  }\n",
+    "  return step(total);\n",
+    "}\n",
+    "\n",
+    "function step(total: number): number {\n",
+    "  return band(total + 5);\n",
+    "}\n",
 );
 
 /// A changed line of `OWNER_SOURCE`, with the owner it belongs to.
@@ -88,6 +101,12 @@ const TIER: Change = Change {
     text: "  if (total >= 10) {",
 };
 
+const BAND: Change = Change {
+    owner: "band",
+    line: 42,
+    text: "  if (total >= 10) {",
+};
+
 /// One evaluated finding: each row's test name, relation and activation,
 /// in candidate order, plus the finding-wide witness.
 struct Evaluated {
@@ -100,6 +119,7 @@ struct Evaluated {
 }
 
 impl Evaluated {
+    /// The row recorded for `test`, or an error naming every row present.
     fn row(
         &self,
         test: &str,
@@ -117,11 +137,14 @@ impl Evaluated {
             .ok_or_else(|| format!("no related row for `{test}`: {:?}", self.rows))
     }
 
+    /// The activation recorded on `test`'s row.
     fn activation(&self, test: &str) -> Result<TypeScriptPredicateActivation, String> {
         Ok(self.row(test)?.2)
     }
 }
 
+/// Runs the classifier on `change` against `test_source` in a fresh
+/// tempdir, removing the tempdir afterwards.
 fn evaluate(change: &Change, test_source: &str, expect_fact: bool) -> Result<Evaluated, String> {
     let root = ts_unique_tempdir("predicate-activation")?;
     let result = evaluate_in(&root, change, test_source, expect_fact);
@@ -129,6 +152,8 @@ fn evaluate(change: &Change, test_source: &str, expect_fact: bool) -> Result<Eva
     result
 }
 
+/// Writes the owner module and test file under `root`, checks the fixture
+/// (changed line text and boundary-fact presence), then classifies.
 fn evaluate_in(
     root: &Path,
     change: &Change,
@@ -138,6 +163,9 @@ fn evaluate_in(
     std::fs::create_dir_all(root.join("src")).map_err(|err| format!("mkdir src: {err}"))?;
     std::fs::write(root.join(OWNER_FILE), OWNER_SOURCE)
         .map_err(|err| format!("write owner: {err}"))?;
+    std::fs::create_dir_all(root.join("tests")).map_err(|err| format!("mkdir tests: {err}"))?;
+    std::fs::write(root.join(TEST_FILE), test_source)
+        .map_err(|err| format!("write test file: {err}"))?;
     let owner = extract_owners(Path::new(OWNER_FILE), OWNER_SOURCE)
         .into_iter()
         .find(|owner| owner.name == change.owner)
@@ -164,33 +192,24 @@ fn evaluate_in(
             change.text
         ));
     }
+    let context = |boundary_fact| TsBoundaryRowContext {
+        boundary: &boundary,
+        boundary_fact,
+        line_text: change.text,
+        owner: &owner,
+        sibling_tests: &tests,
+        alias_map: None,
+        workspace_root: Some(root),
+    };
     let activations: Vec<TypeScriptPredicateActivation> = candidates
         .iter()
-        .map(|candidate| {
-            ts_predicate_boundary_row_activation(
-                &boundary,
-                fact.as_ref(),
-                change.text,
-                &owner,
-                candidate,
-                None,
-                Some(root),
-            )
-        })
+        .map(|candidate| ts_predicate_boundary_row_activation(&context(fact.as_ref()), candidate))
         .collect();
     let witnessed = ts_predicate_boundary_witnessed_by_rows(&boundary, &activations);
     // The fact only splits non-witnessing rows: evaluating without it never
     // moves a row into or out of `Witnessed`.
     for (candidate, activation) in candidates.iter().zip(&activations) {
-        let without_fact = ts_predicate_boundary_row_activation(
-            &boundary,
-            None,
-            change.text,
-            &owner,
-            candidate,
-            None,
-            Some(root),
-        );
+        let without_fact = ts_predicate_boundary_row_activation(&context(None), candidate);
         assert_eq!(
             without_fact == TypeScriptPredicateActivation::Witnessed,
             *activation == TypeScriptPredicateActivation::Witnessed,
@@ -216,6 +235,7 @@ fn evaluate_in(
     })
 }
 
+/// A test file holding `imports` and one `test(name, ...)` with `body`.
 fn one_test(name: &str, imports: &str, body: &str) -> String {
     format!("{imports}\ntest('{name}', () => {{\n{body}\n}});\n")
 }
@@ -656,24 +676,91 @@ fn unproven_receiver_or_barrel_import_never_hides_a_boundary_input() -> Result<(
     Ok(())
 }
 
-/// Review (#5527): a describe-level binding of a constant name may shadow
-/// the imported constant, so the miss check never substitutes the module's
-/// value for it.
+/// Review (#5527): a describe-level binding of a constant name shadows the
+/// imported constant, so the miss check never substitutes the module's
+/// value (50, off the boundary) for the describe-level 100 the test passes.
 #[test]
 fn constant_rebound_in_an_enclosing_scope_is_unresolved() -> Result<(), String> {
     let source = concat!(
-        "import { applyFee, FEE_THRESHOLD } from '../src/pricing';\n",
-        "describe('fees', () => {\n",
-        "  const FEE_THRESHOLD = 20;\n",
+        "import { applyDiscount, SMALL } from '../src/pricing';\n",
+        "describe('discounts', () => {\n",
+        "  const SMALL = 100;\n",
         "  test('rebound constant', () => {\n",
-        "    expect(applyFee(FEE_THRESHOLD)).toBe(5);\n",
+        "    expect(applyDiscount(SMALL)).toBe(90);\n",
         "  });\n",
         "});\n",
     );
-    let evaluated = evaluate(&FEE, source, true)?;
-    let (_, relation, activation) = evaluated.row("fees rebound constant")?;
+    let evaluated = evaluate(&DISCOUNT, source, true)?;
+    let (_, relation, activation) = evaluated.row("discounts rebound constant")?;
     assert_eq!(*relation, R::DirectOwnerCall);
-    assert_ne!(*activation, A::MissedBoundary);
+    assert_eq!(*activation, A::Unresolved);
+    Ok(())
+}
+
+/// Review (#5527): only a closed body can establish a miss. An unobserved
+/// boundary call in a hook, a helper that asserts, a hand-written check, a
+/// nested block, an unrecognized matcher, or a test with no assertion all
+/// leave inputs or checks the row cannot see.
+#[test]
+fn open_test_body_or_file_is_unresolved_not_missed() -> Result<(), String> {
+    let observed = "  expect(applyDiscount(150)).toBe(135);";
+    let cases = [
+        (
+            "unobserved hook call",
+            format!("{IMPORT_DISCOUNT}\nbeforeEach(() => {{\n  applyDiscount(100);\n}});\n"),
+            observed.to_string(),
+        ),
+        (
+            "asserting helper",
+            format!(
+                "{IMPORT_DISCOUNT}\nfunction expectDiscountAt(n: number, e: number) {{\n  expect(applyDiscount(n)).toBe(e);\n}}\n"
+            ),
+            format!("{observed}\n  expectDiscountAt(100, 90);"),
+        ),
+        (
+            "hand-written check",
+            "import { applyDiscount, checkoutTotal } from '../src/pricing';\n".to_string(),
+            format!(
+                "{observed}\n  if (checkoutTotal(100) !== 90) {{\n    throw new Error('bad');\n  }}"
+            ),
+        ),
+        (
+            "nested block constant",
+            format!("{IMPORT_DISCOUNT}\n"),
+            format!("  {{\n    const LIMIT = 50;\n  }}\n{observed}"),
+        ),
+        (
+            "custom matcher only",
+            format!("{IMPORT_DISCOUNT}\n"),
+            "  expect(applyDiscount(150)).toBeDiscounted();".to_string(),
+        ),
+        (
+            "no assertion",
+            format!("{IMPORT_DISCOUNT}\n"),
+            "  applyDiscount(150);".to_string(),
+        ),
+    ];
+    for (name, imports, body) in cases {
+        let source = one_test(name, &imports, &body);
+        let evaluated = evaluate(&DISCOUNT, &source, true)?;
+        assert_eq!(evaluated.row(name)?.1, R::DirectOwnerCall, "{name}");
+        assert_eq!(evaluated.activation(name)?, A::Unresolved, "{name}");
+    }
+    Ok(())
+}
+
+/// Review (#5527): an owner reached again through another function (mutual
+/// recursion) can carry an off-boundary input to the boundary.
+#[test]
+fn mutually_recursive_owner_is_unresolved_not_missed() -> Result<(), String> {
+    let source = one_test(
+        "mutual recursion",
+        "import { band } from '../src/pricing';",
+        "  expect(band(5)).toBe(1);",
+    );
+    let evaluated = evaluate(&BAND, &source, true)?;
+    assert_eq!(evaluated.row("mutual recursion")?.1, R::DirectOwnerCall);
+    assert_eq!(evaluated.activation("mutual recursion")?, A::Unresolved);
     Ok(())
 }
 
