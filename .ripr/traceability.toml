@@ -8716,7 +8716,9 @@ tests = [
   "crates/ripr/src/analysis/test_stub/tests.rs::owners_behind_a_non_test_cfg_are_refused",
   "crates/ripr/src/analysis/test_stub/tests.rs::comments_and_strings_do_not_count_as_naming_the_owner",
   "crates/ripr/src/analysis/probes/diff.rs::tests::predicate_before_is_cut_to_the_parser_shape_span",
-  "crates/ripr/src/analysis/probes/diff.rs::tests::match_arm_before_keeps_the_whole_old_arm",
+  "crates/ripr/src/analysis/probes/diff.rs::tests::match_arm_head_edit_cuts_before_to_the_old_head",
+  "crates/ripr/src/analysis/probes/diff.rs::tests::match_arm_body_edit_keeps_the_whole_old_arm",
+  "crates/ripr/src/analysis/probes/diff.rs::tests::match_arm_head_edit_on_a_two_arrow_line_keeps_the_whole_old_line",
   "crates/ripr/src/analysis/probes/diff.rs::tests::removed_span_of_shape_cuts_only_when_the_edit_is_inside_the_shape",
 ]
 fixtures = []
