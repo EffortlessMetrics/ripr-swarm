@@ -241,16 +241,20 @@ the constructed field when the nearest `let` of that receiver still in scope
 at the assertion sets the field in a struct literal to a value not read from
 the receiver (`let q = Quote { total: 99, ..q };`), or when an in-scope
 `q.total = value` follows the owner binding; the `field_value` missing fact
-then stays and the finding is not `exposed`. A struct update that leaves the
+then stays and the finding is not `exposed`. A value is fresh only when it
+mentions neither the receiver, a binding derived from it (by `let` or plain
+assignment, transitively), nor the owner call. A struct update that leaves the
 field to its `..q` base, a value read back from the receiver (`total:
-q.total`, or shorthand), a `let` or assignment in a block that has closed,
-and an assertion text that occurs more than once keep the credit. A
+q.total`, a copy taken through a derived binding, or shorthand), a `let` or
+assignment in a block that has closed, and an assertion text that occurs more
+than once keep the credit. A
 free-function owner whose name another indexed definition shares is not
 `direct_owner_call` when every call of the name in the test is bare and a
 `use` at the top level of the test body binds it to exactly one twin in
 another inline module (`use super::retail::*;` beside
 `wholesale::price_quote`); a named import beats a glob. A path-qualified call
-of the name, an import in a nested block or at module level, two globs,
+of the name, a braced or renamed import naming it, an import in a nested
+block or at module level, two globs,
 `use super::*`, and a path that names no twin or also the owner (a re-export,
 or a file-backed module) keep the existing relation.
 
