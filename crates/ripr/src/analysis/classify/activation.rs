@@ -1604,29 +1604,29 @@ fn owner_call_parameter_values(
                 .iter()
                 .enumerate()
                 .filter_map(|(idx, argument)| {
-                    Some((
-                        parameters.get(idx)?,
-                        owner_argument_values(test, argument),
-                        argument.trim(),
-                    ))
+                    let values = owner_argument_values(test, argument);
+                    let table_column = !values.is_empty()
+                        && crate::analysis::syntax::constant_table_column(
+                            &test.body,
+                            argument.trim(),
+                        )
+                        .is_some();
+                    Some((parameters.get(idx)?, values, argument.trim(), table_column))
                 })
-                .filter(|(_, values, _)| !values.is_empty())
+                .filter(|(_, values, _, _)| !values.is_empty())
                 .collect::<Vec<_>>();
-            let table_column = |argument: &str| {
-                crate::analysis::syntax::constant_table_column(&test.body, argument).is_some()
-            };
             let case_column = |argument: &str| {
                 !crate::analysis::value_resolution::test_case_bound_literals(test, argument)
                     .is_empty()
             };
-            let by_row = cells.iter().any(|(_, _, argument)| table_column(argument))
-                && cells.iter().all(|(_, values, argument)| {
-                    table_column(argument) || (values.len() == 1 && !case_column(argument))
+            let by_row = cells.iter().any(|(_, _, _, table)| *table)
+                && cells.iter().all(|(_, values, argument, table)| {
+                    *table || (values.len() == 1 && !case_column(argument))
                 });
             let height = if by_row {
                 cells
                     .iter()
-                    .map(|(_, values, _)| values.len())
+                    .map(|(_, values, _, _)| values.len())
                     .max()
                     .unwrap_or(0)
             } else {
@@ -1635,7 +1635,7 @@ fn owner_call_parameter_values(
             for position in 0..height {
                 let row = cells
                     .iter()
-                    .filter_map(|(parameter, values, _)| {
+                    .filter_map(|(parameter, values, _, _)| {
                         let value = match values.len() {
                             _ if !by_row => values.first(),
                             1 => values.first(),
@@ -4820,6 +4820,9 @@ assert_eq!(input.amount, 100);"#
             // A jump after the call: only the first row reaches it.
             "fn table() {\n    for (cents, want) in [(4_999, false), (5_000, true)] {\n        assert_eq!(score(cents, 7), want);\n        break;\n    }\n}",
             "fn table() {\n    for (cents, want) in [(4_999, false), (5_000, true)] {\n        assert_eq!(score(cents, 7), want);\n        return;\n    }\n}",
+            // A row-dependent branch skips the assertion for some rows.
+            "fn table() {\n    for (cents, want) in [(4_999, None), (5_000, Some(true))] {\n        if let Some(want) = want {\n            assert_eq!(score(cents, 7), want);\n        }\n    }\n}",
+            "fn table() {\n    for (cents, want) in [(4_999, false), (5_000, true)] {\n        match cents {\n            5_000 => assert_eq!(score(cents, 7), want),\n            _ => {}\n        }\n    }\n}",
             // A closure inside the macro rebinds the name the parser cannot see.
             "fn table() {\n    for (cents, want) in [(4_999, false), (5_000, true)] {\n        assert_eq!([1].map(|cents| score(cents, 7)), [want]);\n    }\n}",
         ] {

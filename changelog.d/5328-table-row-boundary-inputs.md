@@ -5,4 +5,5 @@
   changed boundary makes the predicate `exposed`. Cells of one row stay
   together, and each owner call now contributes one input row per table
   row instead of only the first. A loop that can `break`, `continue` or
-  `return` gives no rows (RIPR-SPEC-0186, #5328).
+  `return`, or that branches inside its body, gives no rows
+  (RIPR-SPEC-0186, #5328).

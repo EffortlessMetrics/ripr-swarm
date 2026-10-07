@@ -1518,6 +1518,10 @@ fn bound_constant_rows(
 /// must be a tuple of the pattern's arity. `None` when any part is not
 /// established.
 pub(crate) fn constant_table_column(fn_text: &str, name: &str) -> Option<Vec<String>> {
+    // Most tests hold no `for` at all; skip the parse for them.
+    if !fn_text.contains("for") || !fn_text.contains(name) {
+        return None;
+    }
     let parse = parse_clean_source_file(fn_text)?;
     let function = parse
         .tree()
@@ -1568,14 +1572,22 @@ pub(crate) fn constant_table_column(fn_text: &str, name: &str) -> Option<Vec<Str
         return None;
     }
     // Every row reaches the call only when nothing in the body leaves an
-    // iteration early: `{ assert_eq!(gate(cents), 99); break; }` runs the
-    // first row alone. Tokens, so a jump inside a macro counts too.
+    // iteration early or runs code for some rows alone:
+    // `{ assert_eq!(gate(cents), 99); break; }` runs the first row alone,
+    // and `if let Some(want) = want { assert_eq!(gate(cents), want) }` skips
+    // the `None` rows. Tokens, so control flow inside a macro counts too; a
+    // `|` may open a closure that never runs.
     let body = table.loop_body()?;
     if body
         .syntax()
         .descendants_with_tokens()
         .filter_map(|element| element.into_token())
-        .any(|token| matches!(token.text(), "break" | "continue" | "return"))
+        .any(|token| {
+            matches!(
+                token.text(),
+                "break" | "continue" | "return" | "if" | "match" | "while" | "loop" | "for" | "|"
+            )
+        })
     {
         return None;
     }
