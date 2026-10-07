@@ -1146,7 +1146,7 @@ mod tests {
             );
             Ok((bound, display))
         };
-        let outcome = (|| {
+        (|| {
             let (bound_a, display_a) = render(&root_a)?;
             let (bound_b, display_b) = render(&root_b)?;
             let spec_a = agent_command_spec_from_display(&display_a, &root_a)
@@ -1195,8 +1195,7 @@ mod tests {
                 ));
             }
             Ok(())
-        })();
-        outcome
+        })()
     }
 
     /// #3231: inside single quotes a backslash is literal, so a
