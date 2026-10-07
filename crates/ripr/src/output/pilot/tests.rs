@@ -2454,6 +2454,86 @@ fn pilot_explains_the_change_when_nothing_ranks() {
     assert!(!render_pilot_summary_md(&[], context).contains("Current change"));
 }
 
+/// #6944: a change in files the repo inventory leaves out by design names
+/// them, also when nothing ranks; the wording says whether they are the
+/// whole change.
+#[test]
+fn pilot_names_changed_files_its_ranking_leaves_out() {
+    use crate::analysis::DiffOnlySource;
+    let artifacts = pilot_artifacts();
+    let diff = |files: &[&str]| {
+        files
+            .iter()
+            .map(|file| one_line_diff(file, 3))
+            .collect::<String>()
+    };
+    let render = |change: &PilotCurrentChange| {
+        let context = PilotSummaryContext {
+            current_change: Some(change),
+            ..pilot_context(&artifacts)
+        };
+        (
+            render_pilot_terminal(&[], context),
+            render_pilot_summary_md(&[], context),
+        )
+    };
+
+    let only_build = PilotCurrentChange::from_diff_text(
+        Path::new("."),
+        Some("origin/main".to_string()),
+        &diff(&["build.rs"]),
+    )
+    .with_diff_only_files(vec![(
+        PathBuf::from("build.rs"),
+        DiffOnlySource::BuildScript,
+    )])
+    .with_seams_counted(&[], None);
+    let (terminal, md) = render(&only_build);
+    assert!(
+        terminal.contains("  current change: No seam pilot analyzed is on a line changed since origin/main: the change is in build.rs, a Cargo build script, which pilot's repo-wide ranking leaves out.\n"),
+        "{terminal}"
+    );
+    assert!(
+        md.contains("- Current change: No seam pilot analyzed is on a line changed since `origin/main`: the change is in `build.rs`, a Cargo build script, which pilot's repo-wide ranking leaves out.\n"),
+        "{md}"
+    );
+
+    let partly = PilotCurrentChange::from_diff_text(
+        Path::new("."),
+        Some("origin/main".to_string()),
+        &diff(&["xtask/src/main.rs", "src/lib.rs"]),
+    )
+    .with_diff_only_files(vec![(
+        PathBuf::from("xtask/src/main.rs"),
+        DiffOnlySource::RepoAutomation,
+    )])
+    .with_seams_counted(&[], None);
+    let (terminal, _) = render(&partly);
+    assert!(
+        terminal.contains("the change includes xtask/src/main.rs, repository automation, which"),
+        "{terminal}"
+    );
+
+    let several = PilotCurrentChange::from_diff_text(
+        Path::new("."),
+        Some("origin/main".to_string()),
+        &diff(&["build.rs", "lib/odd.rs"]),
+    )
+    .with_diff_only_files(vec![
+        (PathBuf::from("build.rs"), DiffOnlySource::BuildScript),
+        (
+            PathBuf::from("lib/odd.rs"),
+            DiffOnlySource::DeclaredOutsideSrc,
+        ),
+    ])
+    .with_seams_counted(&[], None);
+    let (terminal, _) = render(&several);
+    assert!(
+        terminal.contains("the change includes 2 files pilot's repo-wide ranking leaves out, such as build.rs (a Cargo build script)"),
+        "{terminal}"
+    );
+}
+
 #[test]
 fn pilot_renderers_say_whether_the_top_recommendation_is_in_the_current_change()
 -> Result<(), String> {

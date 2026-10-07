@@ -1343,24 +1343,37 @@ pub(crate) fn classify_seams_in_files_at_with_config(
 /// The changed Rust files (root-relative) that diff analysis covers but the
 /// repo seam inventory leaves out by design (#6944): Cargo build scripts,
 /// repository automation, and crate roots declared outside `src`. Roles come
-/// from the same context the inventory uses to pick its production files.
+/// from the context the inventory and `ripr check` build, over the changed
+/// files only: a file's build script, declared roots and module directories
+/// come from its own package's manifest, so the rest of the corpus adds
+/// nothing. As in `ripr check`, generated files are dropped and a file no
+/// module tree reaches (#4435) is not named.
 pub(crate) fn diff_only_rust_files(
     root: &Path,
     config: &RiprConfig,
     changed_files: &[PathBuf],
-) -> Result<Vec<(PathBuf, workspace::DiffOnlySource)>, String> {
-    if changed_files.is_empty() {
-        return Ok(Vec::new());
-    }
-    let corpus = scan_corpus_fingerprint(root, config)?;
-    let context =
-        production_role_context(root, config, corpus.analyzable.iter().map(PathBuf::as_path));
-    Ok(changed_files
+) -> Vec<(PathBuf, workspace::DiffOnlySource)> {
+    let generated = super::language::GeneratedRustSources::for_repo(root, &config.languages().rust);
+    let candidates = changed_files
         .iter()
+        .filter(|path| !generated.contains(path))
+        .collect::<Vec<_>>();
+    if candidates.is_empty() {
+        return Vec::new();
+    }
+    let mut context =
+        production_role_context(root, config, candidates.iter().map(|path| path.as_path()));
+    workspace::apply_module_graph_evidence(
+        root,
+        &mut context,
+        candidates.iter().map(|path| path.as_path()),
+    );
+    candidates
+        .into_iter()
         .filter_map(|path| {
             workspace::diff_only_source(path, &context).map(|source| (path.clone(), source))
         })
-        .collect())
+        .collect()
 }
 
 /// A bounded consumer of classified windows. Implementations retain their

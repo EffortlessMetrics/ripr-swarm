@@ -813,6 +813,8 @@ struct DiffOnlyNote {
     file: String,
     source: crate::analysis::DiffOnlySource,
     count: usize,
+    /// Every changed Rust file is one of them.
+    whole_change: bool,
 }
 
 impl DiffOnlyNote {
@@ -823,6 +825,7 @@ impl DiffOnlyNote {
             file: file.clone(),
             source: *source,
             count: files.len(),
+            whole_change: files.len() == change.changed_rust_files().len(),
         })
     }
 
@@ -840,11 +843,14 @@ impl DiffOnlyNote {
         } else {
             self.file.clone()
         };
-        match self.count {
-            1 => format!(
+        match (self.count, self.whole_change) {
+            (1, true) => format!(
                 "the change is in {file}, {kind}, which pilot's repo-wide ranking leaves out"
             ),
-            count => format!(
+            (1, false) => format!(
+                "the change includes {file}, {kind}, which pilot's repo-wide ranking leaves out"
+            ),
+            (count, _) => format!(
                 "the change includes {count} files pilot's repo-wide ranking leaves out, such as {file} ({kind})"
             ),
         }
