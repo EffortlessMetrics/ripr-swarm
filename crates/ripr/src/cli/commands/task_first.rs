@@ -56,10 +56,11 @@ Without an ID, continue runs only when exactly one current attempt is
 eligible under the selected root. Several current attempts print a bounded
 selection list with a retry command instead of selecting one implicitly;
 no current attempt reports that honestly. An explicitly selected attempt
-that ended with a receipt reports its already-complete status instead of
-running again; one that ended without a receipt (stale, failed, or
-incomparable) reports its state and refuses with exit 3 instead of
-claiming completion.
+whose status confirms a compliant receipt reports its already-complete
+status instead of running again; one that ended without a receipt (stale,
+failed, or incomparable), and one whose finished state no compliant
+receipt confirms (unissued, unavailable, or compatibility-only), reports
+its state and refuses with exit 3 instead of claiming completion.
 
 Continue runs the accepted after path: currentness admission, the edit
 cage, verification composition, and the receipt. A stale head, drifted
@@ -308,29 +309,35 @@ fn run_facade_repair(options: RepairFacadeOptions) -> Result<(), CommandError> {
             }
         },
     };
-    let attempt_id =
-        crate::cli::drive_before_phase(facade_before_options(&options.root, &seam_id))?;
-    // The compact handoff renders after the start through the same card
-    // service the advanced route serves. The attempt is already
-    // published here, so a card failure must name the started attempt
-    // and its recovery instead of implying no attempt exists.
-    if let Err(error) = super::agent_card::run_agent_card(AgentCardOptions {
+    // The start's stdout is held until the handoff card renders too:
+    // `cmd:repair` declares `EXIT_TYPED_REFUSAL_EMPTY_STDOUT`, so a card
+    // failure after publication must leave stdout empty — a refusal
+    // preceded by a success document would hand an orchestrator
+    // success-shaped output on a retry that already started (#7032).
+    let (attempt_id, before_stdout) = crate::cli::drive_before_phase_deferring_stdout(
+        facade_before_options(&options.root, &seam_id),
+    )?;
+    // The compact handoff renders through the same card service the
+    // advanced route serves. The attempt is already published here, so a
+    // card failure must name the started attempt and its recovery
+    // instead of implying no attempt exists.
+    let card_stdout = super::agent_card::agent_card_stdout(AgentCardOptions {
         root: options.root.clone(),
         seam_id: seam_id.clone(),
         json: false,
-    }) {
-        let root = crate::agent::loop_commands::shell_arg(
-            &crate::agent::loop_commands::bound_root(&options.root.to_string_lossy()),
-        );
-        return Err(CommandError::Decision(
-            crate::app::task_first::card_after_publish_message(
-                &attempt_id,
-                &seam_id,
-                &root,
-                error.message(),
-            ),
-        ));
-    }
+    })
+    .map_err(|error| {
+        CommandError::Decision(crate::app::task_first::card_after_publish_message(
+            &attempt_id,
+            &seam_id,
+            &crate::agent::loop_commands::shell_arg(&crate::agent::loop_commands::bound_root(
+                &options.root.to_string_lossy(),
+            )),
+            error.message(),
+        ))
+    })?;
+    print!("{before_stdout}");
+    print!("{card_stdout}");
     Ok(())
 }
 
@@ -411,6 +418,26 @@ fn run_facade_continue(options: ContinueFacadeOptions) -> Result<(), CommandErro
                 report.attempt.attempt_id, report.attempt.status_class, report.attempt.attempt_id
             )))
         }
+        ContinueSelection::EndedUnconfirmed { report } => {
+            // The after phase committed, but the status authority's
+            // fail-closed projection cannot confirm a compliant receipt
+            // (unissued, unbound, unavailable, or compatibility-only).
+            // Like the unsuccessful arm, the facts print on stderr while
+            // `cmd:continue` keeps stdout empty
+            // (`EXIT_TYPED_REFUSAL_EMPTY_STDOUT`), exit 3, no completion
+            // claim: a `ready_to_finish` manifest alone is not one.
+            eprint!(
+                "{}",
+                crate::app::agent_status::render_agent_attempt_status_markdown(&report)
+            );
+            let root = crate::agent::loop_commands::shell_arg(
+                &crate::agent::loop_commands::bound_root(&options.root.to_string_lossy()),
+            );
+            Err(CommandError::Decision(format!(
+                "ripr: repair attempt `{}` ended `{}` without confirming completion; no completion is claimed. Inspect: `ripr status --attempt {} --root {root}`; start fresh when appropriate: `ripr repair --root {root}`",
+                report.attempt.attempt_id, report.attempt.status_class, report.attempt.attempt_id
+            )))
+        }
         ContinueSelection::NoneAvailable {
             prepared,
             terminal,
@@ -478,12 +505,23 @@ fn none_available_detail(
     trust_bound: usize,
     root_display: &str,
 ) -> String {
-    let mut detail = match (prepared, terminal) {
-        (0, 0) => "no attempts recorded".to_string(),
-        (prepared, 0) => format!("{prepared} prepared, none awaiting"),
-        (0, terminal) => format!("{terminal} terminal, none awaiting"),
-        (prepared, terminal) => {
+    let mut detail = match (prepared, terminal, trust_bound) {
+        (0, 0, 0) => "no attempts recorded".to_string(),
+        // A trust-bound-only store is not empty: the awaiting rows are
+        // named by the authorization route below, so "no attempts
+        // recorded" would contradict it (#7032).
+        (0, 0, _) => String::new(),
+        (prepared, 0, 0) => format!("{prepared} prepared, none awaiting"),
+        (0, terminal, 0) => format!("{terminal} terminal, none awaiting"),
+        (prepared, terminal, 0) => {
             format!("{prepared} prepared and {terminal} terminal, none awaiting")
+        }
+        // With trust-bound rows also awaiting, "none awaiting" would
+        // contradict the same route; name only the unbound rows here.
+        (prepared, 0, _) => format!("{prepared} prepared"),
+        (0, terminal, _) => format!("{terminal} terminal"),
+        (prepared, terminal, _) => {
+            format!("{prepared} prepared and {terminal} terminal")
         }
     };
     // A trust-bound attempt can never continue on this route: the
@@ -495,8 +533,9 @@ fn none_available_detail(
         } else {
             format!("{trust_bound} awaiting attempts require")
         };
+        let lead = if detail.is_empty() { "" } else { "; " };
         detail.push_str(&format!(
-            "; {noun} edit authorization, which `ripr continue` cannot supply: run `ripr agent repair --attempt <id> --phase after --edit-authorized --edit-authority <identity> --root {root_display}` (IDs in `ripr status --root {root_display}`)"
+            "{lead}{noun} edit authorization, which `ripr continue` cannot supply: run `ripr agent repair --attempt <id> --phase after --edit-authorized --edit-authority <identity> --root {root_display}` (IDs in `ripr status --root {root_display}`)"
         ));
     }
     detail
@@ -781,7 +820,8 @@ mod tests {
 
     /// Review repair (#7032): a trust-bound awaiting attempt names the
     /// exact advanced spelling, since `continue` cannot supply edit
-    /// authorization. The unbound rows keep their legacy text.
+    /// authorization. The unbound rows keep their legacy text, and a
+    /// trust-bound store never reads as empty or awaiting-free.
     #[test]
     fn none_available_detail_names_the_trust_bound_route() -> Result<(), String> {
         if none_available_detail(0, 0, 0, "ROOT") != "no attempts recorded" {
@@ -789,6 +829,19 @@ mod tests {
         }
         if none_available_detail(1, 2, 0, "ROOT") != "1 prepared and 2 terminal, none awaiting" {
             return Err("unbound detail must keep its legacy text".to_string());
+        }
+        for (prepared, terminal, trust_bound) in [(0, 0, 1), (0, 0, 2), (1, 0, 1), (0, 2, 1)] {
+            let detail = none_available_detail(prepared, terminal, trust_bound, "ROOT");
+            if detail.contains("no attempts recorded") {
+                return Err(format!(
+                    "a store with {trust_bound} trust-bound rows is not empty:\n{detail}"
+                ));
+            }
+            if trust_bound > 0 && prepared + terminal > 0 && detail.contains("none awaiting") {
+                return Err(format!(
+                    "the awaiting trust-bound rows contradict \"none awaiting\":\n{detail}"
+                ));
+            }
         }
         let detail = none_available_detail(0, 0, 1, "ROOT");
         for expected in [
@@ -802,9 +855,142 @@ mod tests {
                 ));
             }
         }
+        let mixed = none_available_detail(1, 2, 1, "ROOT");
+        for expected in ["1 prepared and 2 terminal", "1 awaiting attempt requires"] {
+            if !mixed.contains(expected) {
+                return Err(format!("mixed detail must carry {expected:?}:\n{mixed}"));
+            }
+        }
         let plural = none_available_detail(0, 0, 2, "ROOT");
         if !plural.contains("2 awaiting attempts require edit authorization") {
             return Err(format!("trust-bound detail must pluralize:\n{plural}"));
+        }
+        Ok(())
+    }
+
+    /// Owns a temp test root so a mid-test failure cleans up instead of
+    /// leaking the directory; mirrors the app-level facade guard.
+    struct TempRootGuard {
+        root: std::path::PathBuf,
+    }
+
+    impl Drop for TempRootGuard {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.root);
+        }
+    }
+
+    /// Review repair (#7032, post-start card refusal): the façade composes
+    /// its stdout from `drive_before_phase_deferring_stdout` plus
+    /// `agent_card_stdout`, printing only when both succeed. This control
+    /// drives that exact composition against a real fixture: a card
+    /// refusal after publication surfaces as a typed decision naming the
+    /// seam, the held document was never printed, and the attempt stays
+    /// inspectable in the store. A card failure cannot be injected from
+    /// outside one process, so the composition — not a spawned CLI — is
+    /// what is under test here; the refusal message and the store facts
+    /// are pinned end to end by the facade integration suite.
+    #[test]
+    fn facade_holds_stdout_until_the_card_renders() -> Result<(), String> {
+        use crate::testing::fixture_git::fixture_git_ok as run_git;
+
+        const FIXTURE_CARGO_TOML: &str = "[package]\nname = \"boundary_gap_fixture\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\n[lib]\nname = \"boundary_gap_fixture\"\npath = \"src/lib.rs\"\n";
+        const FIXTURE_LIB: &str = "pub fn discounted_total(amount: i32, discount_threshold: i32) -> i32 {\n    if amount >= discount_threshold {\n        amount - 10\n    } else {\n        amount\n    }\n}\n";
+        const FIXTURE_WEAK_TEST: &str = "use boundary_gap_fixture::discounted_total;\n\n#[test]\nfn below_threshold_has_no_discount() {\n    assert_eq!(discounted_total(50, 100), 50);\n}\n\n#[test]\nfn far_above_threshold_discounts() {\n    assert_eq!(discounted_total(10_000, 100), 9_990);\n}\n";
+        // The boundary fixture's stable seam identity.
+        const FIXTURE_SEAM: &str = "67fc764ba37d77bd";
+
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|error| format!("test clock failed: {error}"))?
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "ripr-task-first-card-{}-{stamp}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(root.join("src"))
+            .map_err(|error| format!("create src failed: {error}"))?;
+        std::fs::create_dir_all(root.join("tests"))
+            .map_err(|error| format!("create tests failed: {error}"))?;
+        std::fs::write(root.join("Cargo.toml"), FIXTURE_CARGO_TOML)
+            .map_err(|error| format!("write Cargo.toml failed: {error}"))?;
+        std::fs::write(root.join("src/lib.rs"), FIXTURE_LIB)
+            .map_err(|error| format!("write lib.rs failed: {error}"))?;
+        std::fs::write(root.join("tests/pricing.rs"), FIXTURE_WEAK_TEST)
+            .map_err(|error| format!("write pricing.rs failed: {error}"))?;
+        let root = root
+            .canonicalize()
+            .map_err(|error| format!("canonicalize {} failed: {error}", root.display()))?;
+        let _guard = TempRootGuard { root: root.clone() };
+        run_git(&root, &["init"])?;
+        // Ordinary Rust repair fixtures meet the build-output precondition
+        // through the local Git exclude, like the facade integration suite.
+        std::fs::write(root.join(".git/info/exclude"), "/target/\n")
+            .map_err(|error| format!("write git exclude: {error}"))?;
+        run_git(
+            &root,
+            &["config", "user.email", "ripr-test@example.invalid"],
+        )?;
+        run_git(&root, &["config", "user.name", "RIPR Test"])?;
+        run_git(&root, &["config", "core.autocrlf", "false"])?;
+        run_git(&root, &["add", "."])?;
+        run_git(&root, &["commit", "--no-gpg-sign", "-m", "fixture"])?;
+
+        // The start holds its document: it comes back as a value, so
+        // nothing reaches stdout before the card has rendered.
+        let (attempt_id, before_stdout) = crate::cli::drive_before_phase_deferring_stdout(
+            facade_before_options(&root, FIXTURE_SEAM),
+        )
+        .map_err(|error| error.to_string())?;
+        if before_stdout.trim().is_empty() {
+            return Err("the held before-phase stdout must not be empty".to_string());
+        }
+        if !before_stdout.contains("Next, after the test edit:") {
+            return Err(format!(
+                "the held stdout must carry the after-step pointer:\n{before_stdout}"
+            ));
+        }
+        let attempts_in_store = || -> Result<usize, String> {
+            Ok(crate::app::repair_attempt::inventory_repair_attempts_from(&root, None)?.len())
+        };
+        if attempts_in_store()? != 1 {
+            return Err("the start must publish exactly one attempt".to_string());
+        }
+
+        // Remove the seam from the live tree, so the card's fresh
+        // inventory no longer finds it: a refusal after publication, the
+        // window the façade must survive with stdout empty.
+        std::fs::write(root.join("src/lib.rs"), "// no public behavior yet\n")
+            .map_err(|error| format!("rewrite lib.rs failed: {error}"))?;
+        match crate::cli::commands::agent_card::agent_card_stdout(AgentCardOptions {
+            root: root.clone(),
+            seam_id: FIXTURE_SEAM.to_string(),
+            json: false,
+        }) {
+            Ok(_) => return Err("a vanished seam must refuse the card".to_string()),
+            Err(error) => {
+                if error.exit_code() != crate::cli::EXIT_DECISION_OR_REFUSAL {
+                    return Err(format!(
+                        "the post-publication card refusal must be a typed decision, got exit {}: {error}",
+                        error.exit_code()
+                    ));
+                }
+                if !error.message().contains(FIXTURE_SEAM) {
+                    return Err(format!("the card refusal must name the seam:\n{error}"));
+                }
+            }
+        }
+        if attempts_in_store()? != 1 {
+            return Err("a refused card must retain the started attempt".to_string());
+        }
+        let named = crate::app::task_first::card_after_publish_message(
+            &attempt_id,
+            FIXTURE_SEAM,
+            "ROOT",
+            "card refused",
+        );
+        if !named.contains(&attempt_id) {
+            return Err("the refusal message must name the started attempt".to_string());
         }
         Ok(())
     }

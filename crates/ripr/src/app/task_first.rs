@@ -324,6 +324,16 @@ pub(crate) enum ContinueSelection {
     EndedUnsuccessfully {
         report: Box<AgentAttemptStatusReport>,
     },
+    /// The selected attempt's manifest says `ready_to_finish`, but the
+    /// status authority's fail-closed projection cannot confirm a
+    /// compliant receipt (`limited`, `corrupt_or_unavailable`, or
+    /// `legacy_compatibility_only`): the after phase committed, yet no
+    /// retained evidence confirms the gap closed. Report the facts and
+    /// refuse with a typed outcome instead of claiming completion
+    /// (#7032): the manifest state alone is not a completion claim.
+    EndedUnconfirmed {
+        report: Box<AgentAttemptStatusReport>,
+    },
     /// No current nonterminal attempt exists under the selected root.
     NoneAvailable {
         prepared: usize,
@@ -353,10 +363,26 @@ pub(crate) fn select_continue_attempt(
             return Ok(ContinueSelection::Proceed { attempt_id: parsed });
         }
         let report = build_agent_attempt_status(root, root, None, &parsed)?;
-        // Only a receipt-ready attempt is complete. The other terminal
-        // states ended without success; the CLI reports them and refuses.
+        // The status authority owns the completion claim: its fail-closed
+        // projection (#4798) reads `finished_current`/`finished_historical`
+        // only from a compliant, bound receipt. A `ready_to_finish` manifest
+        // whose receipt is unissued, unbound, unreadable, or shows the gap
+        // still open (`limited`), whose retained receipt is unavailable
+        // (`corrupt_or_unavailable`), or that predates attempt-local
+        // terminal retention (`legacy_compatibility_only`) stays
+        // unconfirmed — the façade refuses instead of overriding the
+        // authoritative reading. The other terminal states ended without
+        // success; the CLI reports them and refuses too.
         if matches!(manifest.state, RepairAttemptState::ReadyToFinish) {
-            return Ok(ContinueSelection::AlreadyComplete {
+            if matches!(
+                report.attempt.status_class,
+                "finished_current" | "finished_historical"
+            ) {
+                return Ok(ContinueSelection::AlreadyComplete {
+                    report: Box::new(report),
+                });
+            }
+            return Ok(ContinueSelection::EndedUnconfirmed {
                 report: Box::new(report),
             });
         }

@@ -1249,6 +1249,144 @@ fn continue_on_unsuccessful_terminal_attempts_refuses_without_completion() -> Re
     Ok(())
 }
 
+/// Review repair (#7032, ReadyToFinish receipt honesty): a `ready_to_finish`
+/// attempt is already complete only when the status authority confirms a
+/// compliant receipt. With the retained receipt file removed, status reads
+/// the attempt `corrupt_or_unavailable`; `continue --attempt` must report
+/// the facts and refuse with exit 3 instead of claiming completion.
+#[test]
+fn continue_on_unconfirmed_ready_to_finish_refuses_without_completion() -> Result<(), String> {
+    let fixture = Fixture::boundary("facade-terminal-unconfirmed")?;
+    let root = &fixture.root;
+    let root_arg = root.to_string_lossy().into_owned();
+    let before = run_ripr(
+        root,
+        &[
+            "agent",
+            "repair",
+            "--root",
+            &root_arg,
+            "--seam-id",
+            FIXTURE_SEAM,
+            "--phase",
+            "before",
+        ],
+    )?;
+    assert_exit(&before, 0, "advanced before phase");
+    let attempt_id = attempt_id_from_before_stderr(&stderr_text(&before))?;
+    let pricing = std::fs::read_to_string(root.join("tests/pricing.rs"))
+        .map_err(|error| format!("read pricing tests: {error}"))?;
+    std::fs::write(
+        root.join("tests/pricing.rs"),
+        format!("{pricing}{FIXTURE_BOUNDARY_TEST}"),
+    )
+    .map_err(|error| format!("write focused edit: {error}"))?;
+    let after = run_ripr(
+        root,
+        &[
+            "agent",
+            "repair",
+            "--root",
+            &root_arg,
+            "--attempt",
+            &attempt_id,
+            "--phase",
+            "after",
+        ],
+    )?;
+    assert_exit(&after, 0, "advanced after phase");
+    // The finished attempt first reads already-complete with its issued
+    // receipt, so the refusal below is caused by the removed receipt
+    // alone, not by the fixture.
+    let complete = run_ripr(
+        root,
+        &["continue", "--attempt", &attempt_id, "--root", &root_arg],
+    )?;
+    assert_exit(&complete, 0, "continue on the issued attempt");
+    assert!(
+        stdout_text(&complete).contains("Receipt: issued"),
+        "the control state must carry its issued receipt:\n{}",
+        stdout_text(&complete)
+    );
+    // Remove the retained terminal receipt: the manifest still declares
+    // it, so the status authority's fail-closed projection downgrades the
+    // attempt instead of reading a compliant receipt.
+    let manifest: serde_json::Value = read_manifest(root, &attempt_id)?;
+    let receipt_path = manifest["terminal_artifacts"]
+        .as_array()
+        .and_then(|artifacts| {
+            artifacts
+                .iter()
+                .find(|artifact| artifact["role"] == "agent_receipt")
+        })
+        .and_then(|artifact| artifact["path"].as_str())
+        .ok_or("finished manifest must retain an agent_receipt artifact")?;
+    let receipt_file = root.join(receipt_path);
+    std::fs::remove_file(&receipt_file)
+        .map_err(|error| format!("remove {}: {error}", receipt_file.display()))?;
+    let status = run_ripr(
+        root,
+        &["status", "--root", &root_arg, "--attempt", &attempt_id],
+    )?;
+    assert_exit(&status, 0, "status still reports the attempt");
+    assert!(
+        stdout_text(&status).contains("corrupt_or_unavailable"),
+        "the receipt-less attempt must downgrade:\n{}",
+        stdout_text(&status)
+    );
+    let sealed = manifest_bytes(root, &attempt_id)?;
+    let refused = run_ripr(
+        root,
+        &["continue", "--attempt", &attempt_id, "--root", &root_arg],
+    )?;
+    assert_exit(
+        &refused,
+        3,
+        "continue on a receipt-less finished attempt must refuse",
+    );
+    let stderr = stderr_text(&refused);
+    assert!(
+        stderr.contains("without confirming completion")
+            && stderr.contains("no completion is claimed"),
+        "an unconfirmed finish must not claim completion:\n{stderr}"
+    );
+    assert!(
+        !stderr.contains("already complete"),
+        "an unconfirmed finish is never already complete:\n{stderr}"
+    );
+    assert!(
+        !stdout_text(&refused).contains("already complete"),
+        "an unconfirmed finish must not claim completion on stdout:\n{}",
+        stdout_text(&refused)
+    );
+    assert!(
+        stdout_text(&refused).is_empty(),
+        "a refused continue must keep stdout empty:\n{}",
+        stdout_text(&refused)
+    );
+    for needle in [
+        "# RIPR Repair Attempt Status",
+        "corrupt_or_unavailable",
+        attempt_id.as_str(),
+    ] {
+        assert!(
+            stderr.contains(needle),
+            "an unconfirmed refusal must carry the status facts ({needle:?}):\n{stderr}"
+        );
+    }
+    assert_eq!(
+        manifest_bytes(root, &attempt_id)?,
+        sealed,
+        "a refused continue must not rewrite terminal evidence"
+    );
+    assert_eq!(
+        attempt_ids(root),
+        vec![attempt_id.clone()],
+        "no further attempt may be created"
+    );
+    Ok(())
+}
+
 /// Review repair (#7032): the auto selector applies the same
 /// severity-off omission as the before-phase packet producer. With the
 /// sole seam's class configured off, `ripr repair` reports no eligible
