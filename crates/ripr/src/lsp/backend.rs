@@ -6958,9 +6958,11 @@ fn workspace_status_top_actionable_packet(snapshot: &AnalysisSnapshot) -> serde_
     // #4001: the status packet names the selected workspace, like the
     // diagnostic, hover and action projections of the same artifact.
     let bind = |command: Option<&String>| {
-        command.map_or_else(String::new, |command| {
-            super::gap_artifacts::bind_portable_command(&snapshot.root, command)
-        })
+        command
+            .and_then(|command| {
+                super::gap_artifacts::bind_portable_command(&snapshot.root, command)
+            })
+            .unwrap_or_default()
     };
     let verify_command = bind(artifact.verify_commands.first());
     let receipt_command = bind(artifact.receipt_commands.first());
@@ -8182,11 +8184,10 @@ fn collect_receipt_status_fields(
                 .first()
                 .map(String::as_str)
                 .unwrap_or("");
-            if super::gap_artifacts::command_payload_is_safe(root, cmd) {
-                serde_json::Value::String(super::gap_artifacts::bind_portable_command(root, cmd))
-            } else {
-                serde_json::Value::String("not_available".to_string())
-            }
+            let bound = super::gap_artifacts::command_payload_is_safe(root, cmd)
+                .then(|| super::gap_artifacts::bind_portable_command(root, cmd))
+                .flatten();
+            serde_json::Value::String(bound.unwrap_or_else(|| "not_available".to_string()))
         } else {
             // Incomplete packet — no receipt command shown.
             serde_json::Value::String("not_available".to_string())

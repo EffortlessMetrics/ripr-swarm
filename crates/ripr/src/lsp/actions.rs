@@ -1872,7 +1872,7 @@ fn safe_commands_at(root: &Path, data: &Value, path: &[&str]) -> Vec<String> {
         .filter_map(Value::as_str)
         .map(str::trim)
         .filter(|command| command_payload_is_safe(root, command))
-        .map(|command| bind_portable_command(root, command))
+        .filter_map(|command| bind_portable_command(root, command))
         .collect()
 }
 
@@ -1885,7 +1885,7 @@ fn first_safe_receipt_command(root: &Path, data: &Value) -> Option<String> {
     .iter()
     .filter_map(|path| string_at(data, path))
     .find(|command| command_payload_is_safe(root, command))
-    .map(|command| bind_portable_command(root, command))
+    .and_then(|command| bind_portable_command(root, command))
 }
 
 fn gap_related_test_target(snapshot: &AnalysisSnapshot, data: &Value) -> Option<LSPAny> {

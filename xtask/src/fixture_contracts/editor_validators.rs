@@ -144,12 +144,17 @@ fn validate_editor_commands_name_selected_root(
     Ok(())
 }
 
+/// Whether `text` holds `--root .` or `--root=.` as a whole argument: the
+/// dot is not the start of a longer path such as `./sub` or `.cache`, so any
+/// quote, bracket, separator or escape may follow it.
 fn contains_portable_root_arg(text: &str) -> bool {
-    text.match_indices("--root .").any(|(index, needle)| {
-        text[index + needle.len()..]
-            .chars()
-            .next()
-            .is_none_or(|next| matches!(next, ' ' | '"' | '`' | '\\' | '\n'))
+    ["--root .", "--root=."].iter().any(|form| {
+        text.match_indices(form).any(|(index, needle)| {
+            text[index + needle.len()..]
+                .chars()
+                .next()
+                .is_none_or(|next| !(next.is_alphanumeric() || matches!(next, '/' | '.' | '_' | '-')))
+        })
     })
 }
 
@@ -1704,4 +1709,36 @@ fn editor_actionable_gap_queue_allowed_commands(case: &str) -> BTreeSet<&'static
         &["ripr.refresh"]
     };
     commands.iter().copied().collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::contains_portable_root_arg;
+
+    #[test]
+    fn portable_root_detector_matches_whole_dot_arguments_only() {
+        for text in [
+            "ripr agent verify --root .",
+            "ripr agent verify --root . --json",
+            "\"ripr agent verify --root .\"",
+            "`ripr agent verify --root .`",
+            "'ripr agent verify --root .'",
+            "(--root .)",
+            "--root .,",
+            "--root .\t--json",
+            "--root .\r\n",
+            "ripr agent verify --root=. --json",
+        ] {
+            assert!(contains_portable_root_arg(text), "{text:?}");
+        }
+        for text in [
+            "ripr agent verify --root <root> --json",
+            "ripr agent verify --root ./sub --json",
+            "ripr agent verify --root .cache --json",
+            "ripr agent verify --root ..",
+            "ripr agent verify --root=./sub",
+        ] {
+            assert!(!contains_portable_root_arg(text), "{text:?}");
+        }
+    }
 }

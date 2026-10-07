@@ -1475,12 +1475,14 @@ pub(super) fn command_payload_is_safe(root: &Path, command: &str) -> bool {
 /// display names the selected workspace instead: `--root .` becomes the bound
 /// root and a relative redirect target is anchored under it, like every other
 /// editor command (#3948). A command that is not a safe payload, or carries
-/// no `--root .`, is returned unchanged so the validator still sees it as
-/// written.
-pub(super) fn bind_portable_command(root: &Path, command: &str) -> String {
+/// no top-level `--root .`, is returned unchanged so the validator still sees
+/// it as written. A `--root .` route that cannot be bound is withheld
+/// (`None`) rather than shown portable, since a pasted portable route
+/// analyzes whatever directory the terminal is in.
+pub(super) fn bind_portable_command(root: &Path, command: &str) -> Option<String> {
     let trimmed = command.trim();
     if !command_payload_is_safe(root, trimmed) {
-        return command.to_string();
+        return Some(command.to_string());
     }
     let (body, redirect) = match trimmed.rsplit_once(" > ") {
         Some((body, tail)) => (body, Some(tail)),
@@ -1488,68 +1490,94 @@ pub(super) fn bind_portable_command(root: &Path, command: &str) -> String {
     };
     // Only a top-level `--root .` pair is the route's root; the same text
     // inside a quoted argument (a recorded `--verify-command '...'`) is data.
+    // A whole token written `'.'` is the same root once the shell unquotes it.
+    // The token scan does not decode `\` escapes (a producer's `'\''` for an
+    // apostrophe reopens a quote), so a body carrying one is not split: its
+    // `--root .` route, if any, is withheld rather than guessed at.
+    if body.contains('\\') {
+        let portable = ["--root .", "--root '.'", "--root \".\""]
+            .iter()
+            .any(|form| body.contains(form));
+        return (!portable).then(|| command.to_string());
+    }
     let spans = top_level_token_spans(body);
     let Some(dot) = spans
         .windows(2)
-        .find(|pair| &body[pair[0].clone()] == "--root" && &body[pair[1].clone()] == ".")
+        .find(|pair| {
+            literal_token(&body[pair[0].clone()]) == Some("--root")
+                && literal_token(&body[pair[1].clone()]) == Some(".")
+        })
         .map(|pair| pair[1].clone())
     else {
-        return command.to_string();
+        return Some(command.to_string());
     };
     let bound = crate::agent::loop_commands::bound_root(&root.to_string_lossy());
+    if bound
+        .chars()
+        .any(crate::agent::loop_commands::needs_terminal_escape)
+    {
+        return None;
+    }
     let bound_arg = crate::agent::loop_commands::shell_arg(&bound);
-    let mut display = format!("{}{bound_arg}{}", &body[..dot.start], &body[dot.end..]);
+    let (before, after) = (&body[..dot.start], &body[dot.end..]);
+    let mut display = format!("{before}{bound_arg}{after}");
+    // The bound root is renderer-owned and `shell_arg`-quoted, so a workspace
+    // path's `&` or `;` is inert; re-check everything else with the portable
+    // root in its place. The anchored redirect is checked as rendered.
+    let mut probe = format!("{before}.{after}");
     if let Some(tail) = redirect {
-        let Some(target) = shell_arg_token(tail) else {
-            return command.to_string();
-        };
-        let anchored = crate::agent::loop_commands::anchored_redirect_target(&bound, target);
+        let target = shell_arg_token(tail)?;
+        let anchored = crate::agent::loop_commands::shell_arg(
+            &crate::agent::loop_commands::anchored_redirect_target(&bound, target),
+        );
         display.push_str(" > ");
-        display.push_str(&crate::agent::loop_commands::shell_arg(&anchored));
+        display.push_str(&anchored);
+        probe.push_str(" > ");
+        probe.push_str(&anchored);
     }
-    if command_payload_is_safe(root, &display) {
-        display
-    } else {
-        command.to_string()
-    }
+    command_payload_is_safe(root, &probe).then_some(display)
 }
 
-/// Byte spans of the whitespace-separated tokens of `command` that contain
-/// no quote, so each span names literal top-level text. Quoted text, and
-/// any token that touches a quote, is skipped.
+/// Byte spans of the whitespace-separated shell tokens of `command`. A quoted
+/// span, including its whitespace, stays inside one token.
 fn top_level_token_spans(command: &str) -> Vec<std::ops::Range<usize>> {
     let mut spans = Vec::new();
     let mut quote = None;
     let mut start = None;
-    let mut quoted = false;
     for (index, character) in command.char_indices() {
         match (quote, character) {
             (Some(active), value) if value == active => quote = None,
             (Some(_), _) => {}
             (None, '"' | '\'') => {
                 quote = Some(character);
-                quoted = true;
                 start.get_or_insert(index);
             }
             (None, value) if value.is_whitespace() => {
-                if let Some(begin) = start.take()
-                    && !quoted
-                {
+                if let Some(begin) = start.take() {
                     spans.push(begin..index);
                 }
-                quoted = false;
             }
             _ => {
                 start.get_or_insert(index);
             }
         }
     }
-    if let Some(begin) = start
-        && !quoted
-    {
+    if let Some(begin) = start {
         spans.push(begin..command.len());
     }
     spans
+}
+
+/// The literal text of one shell token: bare text, or one whole quoted span
+/// with no other quote. Any other mix of quotes is not read.
+fn literal_token(token: &str) -> Option<&str> {
+    if !token.contains(['\'', '"']) {
+        return Some(token);
+    }
+    ['\'', '"'].into_iter().find_map(|quote| {
+        let inner = token.strip_prefix(quote)?.strip_suffix(quote)?;
+        (!inner.contains(['\'', '"'])).then_some(inner)
+    })
 }
 
 /// Split off the one stdout redirect the producers append (#4306 persists
@@ -1574,7 +1602,7 @@ fn strip_workspace_redirect<'a>(root: &Path, command: &'a str) -> Option<&'a str
 /// Undo `loop_commands::shell_arg` for one token: bare when every character is
 /// in `[A-Za-z0-9._/:-]`, otherwise one single-quoted span with no embedded
 /// quote (the `'\''` escape is refused rather than decoded).
-fn shell_arg_token(token: &str) -> Option<&str> {
+pub(super) fn shell_arg_token(token: &str) -> Option<&str> {
     let bare = |value: &str| {
         !value.is_empty()
             && value
@@ -1840,18 +1868,78 @@ mod tests {
                 "ripr agent verify --root ./sub --json".to_string(),
                 "ripr agent verify --root ./sub --json".to_string(),
             ),
+            // A whole quoted `'.'` is the same root once the shell unquotes it.
+            (
+                "ripr agent verify --root '.' --json".to_string(),
+                format!("ripr agent verify --root {bound} --json"),
+            ),
         ];
         for (command, expected) in cases {
-            let once = bind_portable_command(&root, &command);
-            if once != expected {
-                return Err(format!(
-                    "{command:?} bound to {once:?}, expected {expected:?}"
-                ));
-            }
-            let twice = bind_portable_command(&root, &once);
-            if twice != once {
-                return Err(format!("binding is not idempotent: {once:?} -> {twice:?}"));
-            }
+            assert_binds(&root, &command, &expected)?;
+        }
+
+        // A workspace path's `&` is inert inside the bound root's quotes, so
+        // the route is bound rather than left portable (Devin review).
+        let amp_root = std::env::temp_dir().join("ripr a & b");
+        let amp_bound = crate::agent::loop_commands::bound_root(&amp_root.to_string_lossy());
+        let amp_arg = crate::agent::loop_commands::shell_arg(&amp_bound);
+        assert_binds(
+            &amp_root,
+            "ripr agent verify --root . --json",
+            &format!("ripr agent verify --root {amp_arg} --json"),
+        )?;
+
+        // A relative redirect target is anchored under the bound root.
+        let target = "target/ripr/agent/agent-verify.json";
+        let anchored = crate::agent::loop_commands::shell_arg(
+            &crate::agent::loop_commands::anchored_redirect_target(&amp_bound, target),
+        );
+        assert_binds(
+            &amp_root,
+            &format!("ripr agent verify --root . --json > {target}"),
+            &format!("ripr agent verify --root {amp_arg} --json > {anchored}"),
+        )?;
+        Ok(())
+    }
+
+    /// #4001 review: a `--root .` route the binder cannot bind is withheld,
+    /// never shown portable.
+    #[test]
+    fn bind_portable_command_withholds_a_route_it_cannot_bind() {
+        let control_root = std::env::temp_dir().join("ripr\u{202e}root");
+        assert_eq!(
+            bind_portable_command(&control_root, "ripr agent verify --root . --json"),
+            None
+        );
+        // A `'\''` escape reopens a quote the token scan cannot follow, so a
+        // route next to one is withheld rather than bound in the wrong place.
+        let root = std::env::temp_dir().join("ripr-escape-root");
+        assert_eq!(
+            bind_portable_command(
+                &root,
+                "ripr receipt write --verify-command 'ripr check --note it'\\''s --root . --json' --root . --json",
+            ),
+            None
+        );
+        // Without a portable root there is nothing to withhold.
+        assert_eq!(
+            bind_portable_command(&control_root, "ripr agent verify --root ./sub --json"),
+            Some("ripr agent verify --root ./sub --json".to_string())
+        );
+    }
+
+    fn assert_binds(root: &Path, command: &str, expected: &str) -> Result<(), String> {
+        let once = bind_portable_command(root, command);
+        if once.as_deref() != Some(expected) {
+            return Err(format!(
+                "{command:?} bound to {once:?}, expected {expected:?}"
+            ));
+        }
+        let twice = bind_portable_command(root, expected);
+        if twice.as_deref() != Some(expected) {
+            return Err(format!(
+                "binding is not idempotent: {expected:?} -> {twice:?}"
+            ));
         }
         Ok(())
     }

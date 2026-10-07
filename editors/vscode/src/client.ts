@@ -4879,8 +4879,10 @@ interface AgentLoopCommandContract {
   // payload cannot have produced one. Equality leaves no room for an extra
   // token such as `$(cmd)` (#4225).
   expectedBody?: (target: RiprAgentLoopCommandTarget, commandRoot: string) => string | undefined;
-  // Labels the payload does not pin down are checked by prefix and substrings.
-  startsWith?: string;
+  // Labels the payload does not pin down are checked by `<rootedPrefix> --root
+  // <root>` and substrings, where `<root>` is `.` or a selected workspace
+  // spelling (#4001).
+  rootedPrefix?: string;
   includes?: string[];
   // The command ends in `> <targetArtifact>`. Since #3938 the server anchors
   // that redirect at the resolved `--root`, so the tail is checked by
@@ -4924,11 +4926,11 @@ const AGENT_LOOP_COMMAND_CONTRACTS: Record<string, AgentLoopCommandContract> = {
     )
   },
   gap_verify: {
-    startsWith: 'ripr agent verify --root .',
+    rootedPrefix: 'ripr agent verify',
     includes: ['--json']
   },
   gap_receipt: {
-    startsWith: 'ripr agent receipt --root .',
+    rootedPrefix: 'ripr agent receipt',
     includes: ['--json']
   }
 };
@@ -4986,17 +4988,7 @@ export function validatedAgentLoopCommand(
     // entire server-rendered body and, when present, its redirect against the
     // SAME selected spelling. An absolute command with a relative or other-root
     // redirect is never equivalent (#4396).
-    for (const root of redirectRoots) {
-      if (!path.isAbsolute(root) || (process.platform !== 'win32' && root.includes('\\'))) {
-        continue;
-      }
-      const displayRoot = path.normalize(root).replace(/\\/g, '/');
-      // Apostrophe/backslash quoting is not portable across supported shells;
-      // likewise refuse characters that can end or alter a quoted span.
-      if (/[\r\n\0`\\"'\u2018-\u201f]/.test(displayRoot)) {
-        continue;
-      }
-      const commandRoot = serverShellArg(displayRoot);
+    for (const { displayRoot, commandRoot } of selectedCommandRoots(redirectRoots)) {
       let body = command;
       if (contract.redirectsToTargetArtifact && contract.targetArtifact !== undefined) {
         const expectedTail = serverShellArg(
@@ -5032,18 +5024,54 @@ export function validatedAgentLoopCommand(
     }
     body = command.slice(0, redirectAt);
   }
-  if (hasUnsafeShellMetacharacter(body)) {
+  // Since #4001 the server binds the gap route's `--root .` to the selected
+  // workspace; the legacy portable form is still accepted. The root token is
+  // replaced by `.` before the metacharacter check, as for exact bodies, so a
+  // workspace path's quoted `&` or `;` is not read as an operator.
+  const rootArgs = ['.', ...selectedCommandRoots(redirectRoots).map(({ commandRoot }) => commandRoot)];
+  const rootArg = rootArgs.find((candidate) => {
+    const prefix = `${contract.rootedPrefix ?? ''} --root ${candidate}`;
+    return body === prefix || body.startsWith(`${prefix} `);
+  });
+  if (rootArg === undefined) {
+    return undefined;
+  }
+  const portableBody = body.replace(`--root ${rootArg}`, '--root .');
+  if (hasUnsafeShellMetacharacter(portableBody)) {
     return undefined;
   }
   // One redirect only: a `>` here would truncate some other file.
   if (
-    body.includes('>') ||
-    !body.startsWith(contract.startsWith ?? '') ||
-    !(contract.includes ?? []).every((expected) => body.includes(expected))
+    portableBody.includes('>') ||
+    !(contract.includes ?? []).every((expected) => portableBody.includes(expected))
   ) {
     return undefined;
   }
   return command;
+}
+
+/**
+ * The selected workspace spellings a bound command may name, each with the
+ * `shell_arg` rendering the server writes after `--root`. Apostrophe and
+ * backslash quoting is not portable across supported shells, so roots that
+ * would need it, or that carry characters able to end or alter a quoted span,
+ * are skipped.
+ */
+function selectedCommandRoots(
+  redirectRoots: readonly string[]
+): { displayRoot: string; commandRoot: string }[] {
+  const roots: { displayRoot: string; commandRoot: string }[] = [];
+  for (const root of redirectRoots) {
+    if (!path.isAbsolute(root) || (process.platform !== 'win32' && root.includes('\\'))) {
+      continue;
+    }
+    const displayRoot = path.normalize(root).replace(/\\/g, '/');
+    if (/[\r\n\0`\\"'\u2018-\u201f]/.test(displayRoot)) {
+      continue;
+    }
+    roots.push({ displayRoot, commandRoot: serverShellArg(displayRoot) });
+  }
+  return roots;
 }
 
 /**

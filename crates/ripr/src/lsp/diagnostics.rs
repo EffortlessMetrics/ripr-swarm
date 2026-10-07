@@ -545,11 +545,19 @@ fn project_bound_root(root: &Path, command: &str) -> String {
         &root.display().to_string(),
     ));
     let raw = crate::agent::loop_commands::bound_root(&root.display().to_string());
-    // The root argument first, then any redirect anchored under the root.
-    command
-        .replace(&format!("--root {bound}"), "--root repo://")
-        .replace(&format!("'{raw}/"), "'repo://")
-        .replace(&format!(" {raw}/"), " repo://")
+    // The root argument first, then a redirect anchored under the root. The
+    // redirect is compared unquoted: one checkout's path may need quoting
+    // where another's does not, and both name the same artifact.
+    let projected = command.replace(&format!("--root {bound}"), "--root repo://");
+    let Some((body, tail)) = projected.rsplit_once(" > ") else {
+        return projected;
+    };
+    match super::gap_artifacts::shell_arg_token(tail)
+        .and_then(|target| target.strip_prefix(&format!("{raw}/")))
+    {
+        Some(artifact) => format!("{body} > repo://{artifact}"),
+        None => projected,
+    }
 }
 
 fn normalize_path_values(root: &Path, value: &mut serde_json::Value, key: Option<&str>) {
@@ -2457,14 +2465,14 @@ fn gap_record_diagnostic_data_with_causal(
         "verification_commands": record
             .verification_commands
             .iter()
-            .map(|command| bind_portable_command(root, command))
+            .filter_map(|command| bind_portable_command(root, command))
             .collect::<Vec<_>>(),
         "regeneration_commands": record.regeneration_commands,
         "regeneration_command_specs": regeneration_command_specs,
         "receipt_command": record
             .receipt_command
             .as_deref()
-            .map(|command| bind_portable_command(root, command)),
+            .and_then(|command| bind_portable_command(root, command)),
         "receipt": record.receipt,
         "authority_boundary": record.authority_boundary,
     });
@@ -4011,7 +4019,9 @@ mod seam_diagnostic_tests {
     #[test]
     fn gap_diagnostic_commands_bind_the_selected_root_not_the_server_cwd() -> Result<(), String> {
         let root_a = temp_gap_root()?;
-        let root_b = temp_gap_root()?;
+        // A path that needs quoting where `root_a` does not: the projection
+        // must still give both the same identity.
+        let root_b = temp_gap_root_named("relocated checkout")?;
         let result = (|| {
             let mut record = gap_record(true);
             record.verification_commands = vec!["ripr agent verify --root . --json".to_string()];
@@ -4237,14 +4247,15 @@ mod seam_diagnostic_tests {
     }
 
     fn temp_gap_root() -> Result<PathBuf, String> {
+        temp_gap_root_named("ripr-lsp-gap-diagnostics")
+    }
+
+    fn temp_gap_root_named(name: &str) -> Result<PathBuf, String> {
         let stamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_err(|err| format!("system clock before UNIX_EPOCH: {err}"))?
             .as_nanos();
-        let root = std::env::temp_dir().join(format!(
-            "ripr-lsp-gap-diagnostics-{}-{stamp}",
-            std::process::id()
-        ));
+        let root = std::env::temp_dir().join(format!("{name}-{}-{stamp}", std::process::id()));
         fs::create_dir_all(root.join("target/ripr/reports"))
             .map_err(|err| format!("create temp root {} failed: {err}", root.display()))?;
         Ok(root)
