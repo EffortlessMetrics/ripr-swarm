@@ -18,7 +18,10 @@ to its owner; eleven `authored-grid-*` crates crossing cargo-mutants operator
 classes with five test styles: exact pin, table-driven loop, property-style
 invariant, helper-wrapped assert and no assertion; `authored-mined-wire` and
 `authored-mined-codec` for test shapes mined from real crates, each case naming
-the real-crate shape it mirrors, or its twin, without copying code), and
+the real-crate shape it mirrors, or its twin, without copying code;
+`authored-spec-confirm` for spec cells that had no runtime-truth case:
+oracle confirmation (RIPR-SPEC-0094), non-escaping sinks (0096), owner-result
+field bindings (0005) and owner-return identity traps (0197)), and
 one-line edits under `cases/`. Each case is labeled
 with what the crate's own test suite discriminates, established by running
 the listed mutants of the edited expression against the full pinned

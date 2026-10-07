@@ -1,0 +1,51 @@
+{
+  "case_id": "cell-0005-shadowed-field-binding",
+  "subject_id": "authored-spec-confirm",
+  "diff": "cases/cell-0005-shadowed-field-binding.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 90
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "field_construction",
+  "test_shape": "shadowed_binding_overwrites_field",
+  "hard_case": "The test binds bundle(3), then shadows it with a struct update that overwrites total before asserting total; only items is read from the owner.",
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "total: 15 + items,",
+        "mutated_line": "total: 15 + items,",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent"
+      },
+      {
+        "replacement": "total: 15 * items + 1,",
+        "mutated_line": "total: 15 * items + 1,",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "overridden_bundle_keeps_its_item_count asserts the overwritten total (99) and items, so neither mutant of the edited total is seen. Spec cells: RIPR-SPEC-0005 shadowed binding is not the owner result.",
+  "labeling_observation": {
+    "ripr_commit": "128f794f6",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

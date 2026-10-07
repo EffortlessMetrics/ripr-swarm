@@ -1,0 +1,13 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 8840c6e..17649ad 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -40,7 +40,7 @@ pub fn tally(values: &[u32]) -> u32 {
+     let mut scratch = Vec::new();
+     let mut total = 0;
+     for &v in values {
+-        scratch.push(v * 2);
++        scratch.push(2 * v);
+         total += v;
+     }
+     total

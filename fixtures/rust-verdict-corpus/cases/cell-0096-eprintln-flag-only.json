@@ -1,0 +1,52 @@
+{
+  "case_id": "cell-0096-eprintln-flag-only",
+  "subject_id": "authored-spec-confirm",
+  "diff": "cases/cell-0096-eprintln-flag-only.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 31
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "side_effect",
+  "test_shape": "unit_test_assert_bool",
+  "hard_case": "The changed value reaches only eprintln!, and the test pins the returned flag on the same branch.",
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "eprintln!(\"low stock: {}\", 2 + stock);",
+        "mutated_line": "eprintln!(\"low stock: {}\", 2 + stock);",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: the printed amount changes"
+      },
+      {
+        "replacement": "(delete the line)",
+        "mutated_line": "",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: nothing is printed"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "low_stock_is_flagged asserts only the bool; stderr is not captured, so both mutants pass. Spec cells: RIPR-SPEC-0096 eprintln! is non-escaping.",
+  "labeling_observation": {
+    "ripr_commit": "128f794f6",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "propagation_unknown",
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

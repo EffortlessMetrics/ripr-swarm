@@ -1,0 +1,52 @@
+{
+  "case_id": "cell-0094-mixed-confirmation",
+  "subject_id": "authored-spec-confirm",
+  "diff": "cases/cell-0094-mixed-confirmation.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 15
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "relational_and_exact_assert_same_test",
+  "hard_case": "One test holds a relational assert that names MULTIPLIER and an exact assert_eq on 12; only the exact assert carries the kill.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "MULTIPLIER * points + 1",
+        "mutated_line": "MULTIPLIER * points + 1",
+        "outcome": "tests_failed",
+        "failing_test": "tests::bonus_beats_the_multiplier_and_is_twelve",
+        "equivalence_review": "not equivalent: bonus_beats_the_multiplier_and_is_twelve fails on it"
+      },
+      {
+        "replacement": "MULTIPLIER + points",
+        "mutated_line": "MULTIPLIER + points",
+        "outcome": "tests_failed",
+        "failing_test": "tests::bonus_beats_the_multiplier_and_is_twelve",
+        "equivalence_review": "not equivalent: bonus_beats_the_multiplier_and_is_twelve fails on it"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "bonus_beats_the_multiplier_and_is_twelve fails on both mutants through assert_eq!(b, 12); the b > MULTIPLIER assert alone would pass the +1 mutant. Spec cells: RIPR-SPEC-0094 oracle_confirmation_mixed.",
+  "labeling_observation": {
+    "ripr_commit": "128f794f6",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}
