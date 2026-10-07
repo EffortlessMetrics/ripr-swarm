@@ -535,6 +535,7 @@ mod tests {
             unlinked_python_tests: None,
             suppression: None,
             partial_scope: None,
+            analyzed_revisions: None,
         })
     }
 
