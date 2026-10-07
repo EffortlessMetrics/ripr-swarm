@@ -150,17 +150,19 @@ fn validate_editor_commands_name_selected_root(
 /// single-quoted option value (`--verify-command 'ripr check --root .'`) is
 /// recorded data, which the server leaves as is, not the copied command's root.
 fn contains_portable_root_arg(text: &str) -> bool {
-    ["--root .", "--root=."].iter().any(|form| {
-        text.match_indices(form).any(|(index, needle)| {
-            let whole = text[index + needle.len()..]
-                .chars()
-                .next()
-                .is_none_or(|next| {
-                    !(next.is_alphanumeric() || matches!(next, '/' | '.' | '_' | '-'))
-                });
-            whole && !inside_quoted_option_value(text, index)
+    ["--root .", "--root=.", "--root '.'", "--root \".\""]
+        .iter()
+        .any(|form| {
+            text.match_indices(form).any(|(index, needle)| {
+                let whole = text[index + needle.len()..]
+                    .chars()
+                    .next()
+                    .is_none_or(|next| {
+                        !(next.is_alphanumeric() || matches!(next, '/' | '.' | '_' | '-'))
+                    });
+                whole && !inside_quoted_option_value(text, index)
+            })
         })
-    })
 }
 
 /// Whether `index` falls inside a `'...'` span on its line that opens as the
@@ -1774,6 +1776,8 @@ mod tests {
         for text in [
             "ripr receipt write --verify-command 'ripr check --root . --json' --root . --json",
             "\"ripr receipt write --note 'x' --root . --json\"",
+            "ripr agent verify --root '.' --json",
+            "ripr agent verify --root \".\" --json",
         ] {
             assert!(contains_portable_root_arg(text), "{text:?}");
         }
