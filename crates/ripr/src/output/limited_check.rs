@@ -401,7 +401,7 @@ mod tests {
     #[test]
     fn refusal_envelope_redacts_config_contents_but_keeps_the_summary() -> Result<(), String> {
         use crate::core_error::CoreError;
-        let full = "C:\\repo\\ripr.toml: invalid ripr.toml: TOML parse error at line 1, column 9\n  |\n1 | canary_config_secret = [\n  |         ^\nexpected value";
+        let full = "/repo/ripr.toml: invalid ripr.toml: TOML parse error at line 1, column 9\n  |\n1 | canary_config_secret = [\n  |         ^\nexpected value";
         let error = CoreError::config_invalid(full);
         let rendered = render_check_failure_json(&input(), &error)?;
         let value: Value =
