@@ -21,6 +21,8 @@ Linked issues:
   container fact, not parser-derived `CallFact`)
 - #6675 (a binary bitwise `|` tail is unconditional; closures and `||` stay refused)
 - #6692 (a hand-written `Clone` field pinned by `assert_eq!(recv.clone(), recv)` through derived equality)
+- #6957 (the owner's own enclosing module is not a shadow: nested
+  production declarations keep their pin)
 - RIPR-SPEC-0219 verdict corpus: `assert!(owner(..))` on a bool owner read
   as a weak relational check (bool-owner pins below)
 
@@ -180,7 +182,11 @@ rule only for an assertion whose context was admitted.
      production type for that test (#6905), so it refuses the pin rather
      than crediting the production method. A macro definition or invocation
      in that scope whose text declares the name may emit the type, so it
-     shadows the same way (#6948 review).
+     shadows the same way (#6948 review). The owner's own enclosing module
+     is not a shadow (#6957): when the production declaration sits in an
+     enclosing non-root module, a binding of that name still names the
+     production type. A same-file test-module declaration alongside it, and
+     any test-file declaration for a cross-file owner, still refuses.
    - The receiver type must dispatch to the owner: the inherent `impl`'s
      self type, the trait impl's self type, or, for a trait default method,
      a type with an `impl .. Trait for <type>` in the workspace. A trait
