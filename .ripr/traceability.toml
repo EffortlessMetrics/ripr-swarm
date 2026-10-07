@@ -9763,6 +9763,7 @@ tests = [
   "crates/ripr/src/analysis/language/rust/mod.rs::tests::diff_analysis_ignores_tests_in_a_file_no_module_declares",
   "crates/ripr/src/analysis/language/rust/mod.rs::tests::diff_analysis_ignores_a_new_test_file_whose_mod_was_forgotten",
   "crates/ripr/src/analysis/language/rust/mod.rs::tests::diff_analysis_ignores_integration_tests_autotests_false_leaves_unbuilt",
+  "crates/ripr/src/analysis/language/rust/mod.rs::tests::an_unreached_file_of_registered_attribute_tests_drops",
   "crates/ripr/src/analysis/workspace/module_graph.rs::tests::workspace_listing_reads_a_root_given_as_the_current_directory",
   "crates/ripr/src/analysis/syntax/module_tree.rs::tests::scan_reports_default_path_include_and_nested_inline_edges",
   "crates/ripr/src/analysis/syntax/module_tree.rs::tests::scan_is_incomplete_for_edges_it_cannot_resolve",

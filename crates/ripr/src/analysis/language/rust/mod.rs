@@ -275,8 +275,9 @@ fn selection_with_open_files(selected: &[PathBuf], open: &BTreeSet<PathBuf>) -> 
 /// reaches (#6965). rustc never compiles such a file, so its tests never
 /// run. A changed file is dropped when its own #4435 orphan check already
 /// proved it unreached; an unchanged one when the walk below does. A file
-/// that never spells `test` cannot register one (`#[test]`,
-/// `#[tokio::test]`, `#[rstest]`, `proptest!`) and is kept.
+/// that spells neither `test` nor the last segment of a configured harness
+/// marker cannot register one (`#[test]`, `#[tokio::test]`, `#[rstest]`,
+/// `proptest!`, a registered `#[myco::spec]`) and is kept.
 ///
 /// The module-tree walk parses every module of a package, so it runs only
 /// for suspects: test files whose module name no loaded file of their
@@ -292,8 +293,20 @@ fn drop_unreached_test_files(
     root: &Path,
     source_role_context: &workspace::SourceRoleContext,
     changed_rust_paths: &[PathBuf],
+    test_harnesses: &[crate::config::TestHarnessRegistration],
     loaded_files: Vec<(PathBuf, Vec<u8>)>,
 ) -> Vec<(PathBuf, Vec<u8>)> {
+    // A registered attribute such as `myco::spec` need not spell `test`
+    // (#6984 review), so its marker's last segment also marks a test file.
+    let mut needles = vec![b"test".as_slice()];
+    needles.extend(
+        test_harnesses
+            .iter()
+            .filter_map(|harness| harness.marker.rsplit("::").next())
+            .filter(|segment| !segment.is_empty())
+            .map(str::as_bytes),
+    );
+    let holds_tests = |bytes: &[u8]| needles.iter().any(|needle| contains_bytes(bytes, needle));
     let changed = changed_rust_paths
         .iter()
         .map(|path| workspace::normalize_path(path))
@@ -304,7 +317,7 @@ fn drop_unreached_test_files(
     let suspects = loaded_files
         .iter()
         .filter(|(path, bytes)| {
-            !changed.contains(&workspace::normalize_path(path)) && contains_bytes(bytes, b"test")
+            !changed.contains(&workspace::normalize_path(path)) && holds_tests(bytes)
         })
         .filter(|(path, _)| {
             let mentioned = mentioned
@@ -326,7 +339,7 @@ fn drop_unreached_test_files(
         .filter(|path| !workspace::seeds_diff_probes(Path::new(path), source_role_context))
         .filter(|path| {
             loaded_files.iter().any(|(loaded, bytes)| {
-                workspace::normalize_path(loaded) == *path && contains_bytes(bytes, b"test")
+                workspace::normalize_path(loaded) == *path && holds_tests(bytes)
             })
         })
         .collect::<BTreeSet<_>>();
@@ -1837,6 +1850,7 @@ impl RustAdapter {
             &options.root,
             &source_role_context,
             &changed_rust_paths,
+            &options.test_harnesses,
             loaded_files,
         );
         let cached = rust_index::build_analysis_index_from_loaded_files(
@@ -6738,9 +6752,47 @@ fn absent_delimiter_boundary_returns_head() {
                 Path::new("."),
                 &context,
                 std::slice::from_ref(&file),
+                &[],
                 loaded.clone(),
             );
             assert_eq!(kept.len(), usize::from(opted_in), "opted_in={opted_in}");
+        }
+    }
+
+    #[test]
+    fn an_unreached_file_of_registered_attribute_tests_drops() {
+        // #6984 review: a registered marker that never spells `test` still
+        // marks the file as holding tests. Without the registration the
+        // file holds no tests and stays.
+        let file = PathBuf::from("tests/contracts.rs");
+        let loaded = vec![(file.clone(), b"#[myco::spec]\nfn check() {}\n".to_vec())];
+        let harness = crate::config::TestHarnessRegistration {
+            registration_id: "contracts".to_string(),
+            target: file.clone(),
+            kind: crate::config::TestHarnessKind::RegisteredAttribute,
+            adapter: crate::config::TestHarnessAdapter::ExactAttributeV1,
+            marker: "myco::spec".to_string(),
+        };
+        let mut context = crate::analysis::workspace::SourceRoleContext::empty();
+        context.module_graph_orphans.insert(file.clone());
+        for registered in [false, true] {
+            let harnesses = if registered {
+                vec![harness.clone()]
+            } else {
+                Vec::new()
+            };
+            let kept = super::drop_unreached_test_files(
+                Path::new("."),
+                &context,
+                std::slice::from_ref(&file),
+                &harnesses,
+                loaded.clone(),
+            );
+            assert_eq!(
+                kept.len(),
+                usize::from(!registered),
+                "registered={registered}"
+            );
         }
     }
 
