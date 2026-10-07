@@ -25,6 +25,8 @@ Linked issues:
   production declarations keep their pin)
 - #6950 (an out-of-line parent module declaring the receiver shadows it:
   the parent chain refuses the pin and direct reach)
+- #7067 (a single-file `use ... as <name>` rename rebinds the receiver in
+  either spelling: the raw form refuses the pin and direct reach too)
 - RIPR-SPEC-0219 verdict corpus: `assert!(owner(..))` on a bool owner read
   as a weak relational check (bool-owner pins below)
 
@@ -247,7 +249,11 @@ rule only for an assertion whose context was admitted.
      parameters, a macro that mentions it) leaves the type unestablished. A
      named type must be a struct, enum or union declared in the workspace,
      and the test's file must not import it from outside the workspace,
-     rename another item to it, or declare a `type` alias of it. A type
+     rename another item to it, or declare a `type` alias of it. A rename
+     refuses in either spelling: `r#Window` denotes `Window`, so a
+     raw-identifier alias rebinds the same name (#7067). Related-test
+     reach shares the single-file rename refusal: a rebound receiver keeps
+     a name-only relation, never `direct_owner_call`. A type
      declaration of the name in the test's own module scope shadows the
      production type for that test (#6905), so it refuses the pin rather
      than crediting the production method. A macro definition or invocation
@@ -525,6 +531,11 @@ string literal is not a call or a reference. These rules hold for
   non-exposed (`fixtures/owner_return_pin_out_of_line_test_module_shadow`,
   #6950): the nested child test binds the parent module's own `Window`,
   so the pin is refused and the relation stays name-only
+  (`weak_token_substring`).
+- A fixture pins a single-file raw-identifier rename as non-exposed
+  (`fixtures/owner_return_pin_single_file_raw_rename_shadow`, #7067):
+  the test binds the renamed item through the plain spelling, so the
+  pin is refused and the relation stays name-only
   (`weak_token_substring`).
 - Unit tests pin every gate with a positive and a discriminating negative.
 - Twenty matched fixtures keep effective and ineffective tests separate:
