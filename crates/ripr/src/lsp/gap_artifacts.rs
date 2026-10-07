@@ -1501,16 +1501,24 @@ pub(super) fn bind_portable_command(root: &Path, command: &str) -> Option<String
         return (!portable).then(|| command.to_string());
     }
     let spans = top_level_token_spans(body);
-    let Some(dot) = spans
+    let dots: Vec<_> = spans
         .windows(2)
-        .find(|pair| {
+        .filter(|pair| {
             literal_token(&body[pair[0].clone()]) == Some("--root")
                 && literal_token(&body[pair[1].clone()]) == Some(".")
         })
         .map(|pair| pair[1].clone())
-    else {
-        return Some(command.to_string());
+        .collect();
+    let [dot] = dots.as_slice() else {
+        // No portable root passes through; two are ambiguous and withheld.
+        return dots.is_empty().then(|| command.to_string());
     };
+    // A word starting with `#` begins a shell comment, which could hide the
+    // bound root and run the command in the paste directory instead.
+    if spans.iter().any(|span| body[span.clone()].starts_with('#')) {
+        return None;
+    }
+    let dot = dot.clone();
     // A root the editor cannot copy is withheld. These are the characters the
     // VS Code client refuses in a selected root (`selectedCommandRoots`): `'`
     // and `\` need escapes that read differently across shells, and the rest
@@ -1998,6 +2006,20 @@ mod tests {
                 "{name:?}"
             );
         }
+        // A shell comment could hide the bound root, and two portable roots
+        // are ambiguous; neither is bound.
+        for command in [
+            "ripr agent verify # --root . --json",
+            "ripr agent verify --root . --json #note",
+            "ripr agent verify --root . --root . --json",
+        ] {
+            assert_eq!(bind_portable_command(&root, command), None, "{command:?}");
+        }
+        // A quoted `#` is data, not a comment.
+        assert!(
+            bind_portable_command(&root, "ripr agent verify --root . --note '#1' --json")
+                .is_some_and(|bound| !bound.contains("--root . "))
+        );
         // Without a portable root there is nothing to withhold.
         assert_eq!(
             bind_portable_command(&control_root, "ripr agent verify --root ./sub --json"),

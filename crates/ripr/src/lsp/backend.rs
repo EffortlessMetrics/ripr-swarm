@@ -8525,9 +8525,7 @@ fn validate_and_render_actionable_gap_packet(
         super::gap_artifacts::bind_portable_command(root, &verify_command),
         super::gap_artifacts::bind_portable_command(root, &receipt_command),
     ) else {
-        return Some(repair_packet_sentinel(
-            "actionable packet commands cannot be bound to the selected workspace",
-        ));
+        return Some(repair_packet_sentinel(UNBOUND_PACKET_COMMANDS_REASON));
     };
 
     let allowed_edit_surface: Vec<serde_json::Value> = packet
@@ -8649,10 +8647,13 @@ fn collect_repair_packet_from_ledger(
 
     let route = record.repair_route.as_ref()?;
     // #4001: the copied commands name the selected workspace, not `.`.
-    let verify_command =
-        super::gap_artifacts::bind_portable_command(root, record.verification_commands.first()?)?;
-    let receipt_command =
-        super::gap_artifacts::bind_portable_command(root, record.receipt_command.as_deref()?)?;
+    let bind = |command: &str| super::gap_artifacts::bind_portable_command(root, command);
+    let (Some(verify_command), Some(receipt_command)) = (
+        bind(record.verification_commands.first()?),
+        bind(record.receipt_command.as_deref()?),
+    ) else {
+        return Some(repair_packet_sentinel(UNBOUND_PACKET_COMMANDS_REASON));
+    };
     let allowed_edit_surface =
         crate::output::agent_seam_packets::allowed_edit_surface_for_gap_route(route);
     let must_not_change: Vec<String> =
@@ -8732,6 +8733,9 @@ fn repair_packet_sentinel(reason: &str) -> LSPAny {
 /// client must be able to tell "no packet" apart from "packet source corrupt;
 /// artifact regeneration required before exposure can be assessed".
 const MALFORMED_ACTIONABLE_GAPS_REASON: &str = "actionable-gaps.json is malformed; artifact regeneration required before exposure can be assessed";
+const UNBOUND_PACKET_COMMANDS_REASON: &str =
+    "packet commands cannot be bound to the selected workspace";
+
 const MALFORMED_GAP_LEDGER_REASON: &str = "gap-decision-ledger.json is malformed; artifact regeneration required before exposure can be assessed";
 
 fn gap_record_matches(record: &GapRecord, gap_id: &str) -> bool {

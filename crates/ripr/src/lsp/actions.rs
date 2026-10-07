@@ -1884,8 +1884,8 @@ fn first_safe_receipt_command(root: &Path, data: &Value) -> Option<String> {
     ]
     .iter()
     .filter_map(|path| string_at(data, path))
-    .find(|command| editor_command_is_safe(root, command))
-    .and_then(|command| bind_portable_command(root, command))
+    .filter(|command| editor_command_is_safe(root, command))
+    .find_map(|command| bind_portable_command(root, command))
 }
 
 fn gap_related_test_target(snapshot: &AnalysisSnapshot, data: &Value) -> Option<LSPAny> {
@@ -2385,6 +2385,24 @@ mod tests {
     use tower_lsp_server::ls_types::{
         CodeActionContext, DiagnosticSeverity, Position, Range, TextDocumentIdentifier, Uri,
     };
+
+    #[test]
+    fn receipt_command_falls_back_past_a_route_it_cannot_bind() {
+        // #4001: a safe receipt route the binder withholds (a `\` escape next
+        // to `--root .`) does not hide a later bindable candidate.
+        let root = std::env::temp_dir().join("ripr-receipt-fallback");
+        let data = serde_json::json!({
+            "receipt_command": "ripr receipt write --note it\\s --root . --json",
+            "commands": { "receipt": "ripr agent receipt --root . --json" },
+        });
+        let bound = crate::agent::loop_commands::shell_arg(
+            &crate::agent::loop_commands::bound_root(&root.to_string_lossy()),
+        );
+        assert_eq!(
+            first_safe_receipt_command(&root, &data),
+            Some(format!("ripr agent receipt --root {bound} --json"))
+        );
+    }
 
     #[test]
     fn path_matches_diagnostic_language_covers_modern_ts_js_extensions() {
