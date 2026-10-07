@@ -11,7 +11,9 @@
 //! [`crate::app::repair_card`], the status adapter in
 //! [`crate::app::agent_status`].
 
+use crate::agent::loop_commands::{bound_root, shell_arg};
 use crate::domain::{CanonicalNextActionV1, NextActionDiffSource, NextActionStop};
+use std::path::Path;
 
 /// The machine projection as a JSON value for envelope embedding. A DTO
 /// that cannot serialize degrades to null rather than breaking the envelope.
@@ -36,7 +38,28 @@ fn render_next_action_json(action: &CanonicalNextActionV1) -> Result<String, Str
 /// `next action` block in card-prose style. Executable actions name their
 /// referenced command; stopped actions name their typed stop. No branch
 /// emits a command display for a non-executable action (control 8).
+///
+/// Route strings keep their portable DTO spelling here. CLI surfaces that
+/// print this block for copy/paste must use
+/// [`render_next_action_human_at_root`] so every rendered `ripr` route binds
+/// the selected root (#6304 paste-robustness).
 pub(crate) fn render_next_action_human(action: &CanonicalNextActionV1) -> String {
+    render_next_action_human_inner(action, None)
+}
+
+/// [`render_next_action_human`] with every rendered `ripr` route bound to
+/// `root` (#3999): a pasted route analyzes the repository that was selected
+/// when it was rendered, not the directory it is later pasted into. Already
+/// root-bound displays pass through unchanged.
+pub(crate) fn render_next_action_human_at_root(
+    action: &CanonicalNextActionV1,
+    root: &Path,
+) -> String {
+    let bound = bound_root(&root.to_string_lossy());
+    render_next_action_human_inner(action, Some(bound.as_str()))
+}
+
+fn render_next_action_human_inner(action: &CanonicalNextActionV1, bound: Option<&str>) -> String {
     let mut out = format!("  next action: {}\n", action.action_class().as_str());
     out.push_str(&format!("  producer: {}\n", action.producer().as_str()));
     let subject = action.subject();
@@ -52,17 +75,24 @@ pub(crate) fn render_next_action_human(action: &CanonicalNextActionV1) -> String
             .ok()
             .and_then(|role| role.as_str().map(str::to_string))
             .unwrap_or_else(|| "unknown".to_string());
+        let display = bind_route_root(&command.display, bound);
         out.push_str(&format!(
             "  command: {} [{}]: {}\n",
-            command.command_id, role, command.display
+            command.command_id, role, display
         ));
+        if bound.is_some()
+            && let Some(pair) = powershell_pair_line(&display)
+        {
+            out.push_str(&format!("{pair}\n"));
+        }
     }
     if let Some(stop) = action.stop() {
-        out.push_str(&format!(
-            "  stop [{}]: {}\n",
-            stop.kind(),
-            render_stop(stop)
-        ));
+        let mut rendered = render_stop(stop, bound);
+        let first = rendered.remove(0);
+        out.push_str(&format!("  stop [{}]: {}\n", stop.kind(), first));
+        for extra in rendered {
+            out.push_str(&format!("{extra}\n"));
+        }
     }
     if let Some(transition) = action.expected_transition() {
         out.push_str(&format!(
@@ -73,10 +103,13 @@ pub(crate) fn render_next_action_human(action: &CanonicalNextActionV1) -> String
     if !action.alternatives().is_empty() {
         out.push_str("  alternatives:\n");
         for alternative in action.alternatives() {
-            out.push_str(&format!(
-                "    - {} :: {}\n",
-                alternative.label, alternative.route
-            ));
+            let route = bind_route_root(&alternative.route, bound);
+            out.push_str(&format!("    - {} :: {}\n", alternative.label, route));
+            if bound.is_some()
+                && let Some(pair) = powershell_pair_line(&route)
+            {
+                out.push_str(&format!("{pair}\n"));
+            }
         }
     }
     if !action.limitations().is_empty() {
@@ -104,48 +137,123 @@ fn render_diff_source(diff_source: &NextActionDiffSource) -> String {
     }
 }
 
-/// One human line per typed stop. Command displays appear only inside the
-/// qualified manual-step instruction; nothing here is an unqualified command
-/// string (control 8).
-fn render_stop(stop: &NextActionStop) -> String {
-    match stop {
-        NextActionStop::SelectItem { candidates, total } => format!(
-            "select one of {total}: {}",
-            render_candidates(candidates, *total)
+/// Bind a rendered `ripr` route to the selected root for copy/paste (#3999).
+/// Portable DTO routes (`ripr <sub> ...` with no `--root`) gain
+/// `--root <bound>` after the subcommand (`ripr agent <sub>` routes bind
+/// after the nested subcommand); already-bound routes and non-command
+/// strings pass through unchanged. Fail-closed: an unrecognized shape is
+/// returned verbatim rather than spliced into a different command.
+fn bind_route_root(route: &str, bound: Option<&str>) -> String {
+    let Some(bound) = bound else {
+        return route.to_string();
+    };
+    let trimmed = route.trim();
+    if !trimmed.starts_with("ripr ") {
+        return route.to_string();
+    }
+    let tokens: Vec<&str> = trimmed.split_whitespace().collect();
+    if tokens.contains(&"--root") {
+        return route.to_string();
+    }
+    let splice_at = if tokens.get(1) == Some(&"agent") {
+        3
+    } else {
+        2
+    };
+    if tokens.len() < splice_at {
+        return route.to_string();
+    }
+    let mut bound_tokens: Vec<String> = tokens[..splice_at]
+        .iter()
+        .map(|token| token.to_string())
+        .collect();
+    bound_tokens.push("--root".to_string());
+    bound_tokens.push(shell_arg(bound));
+    bound_tokens.extend(tokens[splice_at..].iter().map(|token| token.to_string()));
+    bound_tokens.join(" ")
+}
+
+/// The paired PowerShell form of one rendered route for plain-text paste
+/// surfaces: the same shared translator as every other command surface
+/// ([`crate::output::markdown::powershell_text_variant`]). `None` when
+/// PowerShell runs the bash spelling unchanged.
+fn powershell_pair_line(route: &str) -> Option<String> {
+    crate::output::markdown::powershell_text_variant(route)
+        .map(|form| format!("  (PowerShell) {form}"))
+}
+
+/// One human line per typed stop, plus a paired `(PowerShell)` line when a
+/// rendered route needs a different spelling there. Command displays appear
+/// only inside the qualified manual-step instruction; nothing here is an
+/// unqualified command string (control 8).
+fn render_stop(stop: &NextActionStop, bound: Option<&str>) -> Vec<String> {
+    let (text, route) = match stop {
+        NextActionStop::SelectItem { candidates, total } => (
+            format!(
+                "select one of {total}: {}",
+                render_candidates(candidates, *total)
+            ),
+            None,
         ),
-        NextActionStop::SelectAttempt { candidates, total } => format!(
-            "select one of {total} attempts: {}",
-            render_candidates(candidates, *total)
+        NextActionStop::SelectAttempt { candidates, total } => (
+            format!(
+                "select one of {total} attempts: {}",
+                render_candidates(candidates, *total)
+            ),
+            None,
         ),
         NextActionStop::ResolveDisagreement {
             check_item,
             card_item,
-        } => format!(
-            "check selected {check_item} but the card selected {card_item}; reconcile the two before acting"
+        } => (
+            format!(
+                "check selected {check_item} but the card selected {card_item}; reconcile the two before acting"
+            ),
+            None,
         ),
         NextActionStop::RefreshCurrentness {
             observed,
             expected,
             restart_route,
-        } => format!("observed head {observed} but expected {expected}; {restart_route}"),
+        } => {
+            let route = bind_route_root(restart_route, bound);
+            (
+                format!("observed head {observed} but expected {expected}; {route}"),
+                Some(route),
+            )
+        }
         NextActionStop::RefreshConfig {
             observed,
             expected,
             restart_route,
-        } => format!("observed config {observed} but expected {expected}; {restart_route}"),
+        } => {
+            let route = bind_route_root(restart_route, bound);
+            (
+                format!("observed config {observed} but expected {expected}; {route}"),
+                Some(route),
+            )
+        }
         NextActionStop::ProvideInput {
             input,
             detail_route,
         } => {
-            format!("{input}; see {detail_route}")
+            let route = bind_route_root(detail_route, bound);
+            (format!("{input}; see {route}"), Some(route))
         }
         NextActionStop::RestartAttempt {
             attempt_id,
             restart_route,
-        } => format!("restart attempt {attempt_id}; {restart_route}"),
-        NextActionStop::RouteRefused { command_id, reason } => {
-            format!("{command_id} refused the selected target: {reason}")
+        } => {
+            let route = bind_route_root(restart_route, bound);
+            (
+                format!("restart attempt {attempt_id}; {route}"),
+                Some(route),
+            )
         }
+        NextActionStop::RouteRefused { command_id, reason } => (
+            format!("{command_id} refused the selected target: {reason}"),
+            None,
+        ),
         NextActionStop::PlatformUnavailable {
             command_id,
             supported_platforms,
@@ -160,33 +268,68 @@ fn render_stop(stop: &NextActionStop) -> String {
                         .unwrap_or_else(|| "unknown".to_string())
                 })
                 .collect();
-            format!(
-                "{command_id} renders on {}; instead: {alternative_route}",
-                platforms.join(", ")
+            let route = bind_route_root(alternative_route, bound);
+            (
+                format!(
+                    "{command_id} renders on {}; instead: {route}",
+                    platforms.join(", ")
+                ),
+                Some(route),
             )
         }
         NextActionStop::ManualStep {
             command_id,
             instruction,
-        } => format!("{command_id} is a manual step, not a runnable command: {instruction}"),
-        NextActionStop::TerminalComplete { receipt_ref } => {
-            format!("already complete; repeated invocation changes nothing; details: {receipt_ref}")
-        }
+        } => (
+            format!("{command_id} is a manual step, not a runnable command: {instruction}"),
+            None,
+        ),
+        NextActionStop::TerminalComplete { receipt_ref } => (
+            format!(
+                "already complete; repeated invocation changes nothing; details: {receipt_ref}"
+            ),
+            None,
+        ),
         NextActionStop::Unsupported {
             limitation,
             detail_route,
-        } => format!("{limitation}; see {detail_route}"),
-        NextActionStop::InspectTarget { detail_route } => format!("see {detail_route}"),
-        NextActionStop::CheckTriage { case } => format!("check case {}", case.as_str()),
+        } => {
+            let route = bind_route_root(detail_route, bound);
+            (format!("{limitation}; see {route}"), Some(route))
+        }
+        NextActionStop::InspectTarget { detail_route } => {
+            let route = bind_route_root(detail_route, bound);
+            (format!("see {route}"), Some(route))
+        }
+        NextActionStop::CheckTriage { case } => (format!("check case {}", case.as_str()), None),
         NextActionStop::DoctorRecovery {
             check_name,
             recovery_route,
-        } => format!("{check_name}: {recovery_route}"),
+        } => {
+            let route = bind_route_root(recovery_route, bound);
+            (format!("{check_name}: {route}"), Some(route))
+        }
         NextActionStop::PilotDelegated {
             transaction_ref,
             route,
-        } => format!("delegated transaction {transaction_ref}: {route}"),
+        } => {
+            let route = bind_route_root(route, bound);
+            (
+                format!("delegated transaction {transaction_ref}: {route}"),
+                Some(route),
+            )
+        }
+    };
+    let mut lines = vec![text];
+    // Paste surfaces pair the bash route with its PowerShell spelling on
+    // the next line; portable renders carry no paste target.
+    if bound.is_some()
+        && let Some(route) = route
+        && let Some(pair) = powershell_pair_line(&route)
+    {
+        lines.push(pair);
     }
+    lines
 }
 
 fn render_candidates(candidates: &[String], total: usize) -> String {
@@ -407,6 +550,59 @@ mod tests {
     }
 
     #[test]
+    fn bound_render_binds_rootless_packet_routes_for_paste() -> Result<(), String> {
+        // #6304 paste-robustness: a stopped card action embeds the portable
+        // packet route in its stop text; the CLI-bound render must splice the
+        // selected root in (#3999) so a foreign paste still analyzes the
+        // selected repository.
+        let rootless = "ripr agent packet --seam-id seam:demo --json".to_string();
+        let action = stopped_action(NextActionStop::ProvideInput {
+            input: "repair readiness for this seam".to_string(),
+            detail_route: rootless.clone(),
+        })?;
+        let portable = render_next_action_human(&action);
+        assert!(portable.contains(&rootless), "{portable}");
+        let bound = render_next_action_human_at_root(&action, Path::new("/repo/checkout"));
+        let expected = format!(
+            "ripr agent packet --root {} --seam-id seam:demo --json",
+            bound_root("/repo/checkout")
+        );
+        assert!(bound.contains(&expected), "{bound}");
+        assert!(!bound.contains(&format!("; see {rootless}")), "{bound}");
+        // A hostile root (apostrophe) pairs the bash route with its
+        // PowerShell spelling on the next line, the plain-text convention.
+        let hostile = render_next_action_human_at_root(&action, Path::new("/repo/check'out"));
+        assert!(hostile.contains("(PowerShell)"), "{hostile}");
+        assert!(!render_next_action_human(&action).contains("(PowerShell)"));
+        Ok(())
+    }
+
+    #[test]
+    fn bound_render_leaves_bound_and_non_command_strings_unchanged() -> Result<(), String> {
+        let action = stopped_action(NextActionStop::Unsupported {
+            limitation: "limited".to_string(),
+            detail_route: "ripr agent packet --root /repo --seam-id seam:demo --json".to_string(),
+        })?;
+        let bound = render_next_action_human_at_root(&action, Path::new("/repo/checkout"));
+        assert!(
+            bound.contains("ripr agent packet --root /repo --seam-id seam:demo --json"),
+            "{bound}"
+        );
+        // Receipt routes and recovery instructions are not `ripr` commands.
+        assert!(bound.contains("attempt.json#receipt"), "{bound}");
+        let recovery = stopped_action(NextActionStop::DoctorRecovery {
+            check_name: "git".to_string(),
+            recovery_route: "install git and rerun ripr doctor".to_string(),
+        })?;
+        let bound = render_next_action_human_at_root(&recovery, Path::new("/repo/checkout"));
+        assert!(
+            bound.contains("install git and rerun ripr doctor"),
+            "{bound}"
+        );
+        Ok(())
+    }
+
+    #[test]
     fn human_block_shape_is_stable() -> Result<(), String> {
         let human = render_next_action_human(&run_action()?);
         let lines: Vec<&str> = human.lines().collect();
@@ -496,7 +692,9 @@ mod tests {
         ];
         assert_eq!(stops.len(), 16);
         for stop in stops {
-            let line = render_stop(&stop);
+            let lines = render_stop(&stop, None);
+            assert_eq!(lines.len(), 1, "kind {}", stop.kind());
+            let line = &lines[0];
             assert!(!line.trim().is_empty(), "kind {}", stop.kind());
             assert!(!line.contains('\n'), "kind {}", stop.kind());
             let human = render_next_action_human(&stopped_action(stop.clone())?);

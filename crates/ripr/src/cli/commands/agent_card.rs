@@ -70,7 +70,7 @@ pub(super) fn run_agent_card(options: AgentCardOptions) -> Result<(), CommandErr
     }
     let packet_command =
         crate::app::repair_card_handoff::bound_packet_command(&options.root, &options.seam_id);
-    for line in agent_card_prose_lines(&card, &packet_command) {
+    for line in agent_card_prose_lines(&card, &packet_command, Some(&options.root)) {
         println!("{line}");
     }
     Ok(())
@@ -192,7 +192,14 @@ fn wire_name<T: serde::Serialize>(value: &T) -> String {
         .unwrap_or_else(|| "unknown".to_string())
 }
 
-pub(crate) fn agent_card_prose_lines(card: &RepairCardV1, packet_command: &str) -> Vec<String> {
+/// `paste_root` binds the canonical next-action block to the selected
+/// repository for copy/paste (#3999); measurement callers with no checkout
+/// pass `None` and keep the portable render.
+pub(crate) fn agent_card_prose_lines(
+    card: &RepairCardV1,
+    packet_command: &str,
+    paste_root: Option<&std::path::Path>,
+) -> Vec<String> {
     let mut lines = Vec::new();
     lines.push(format!("Repair card {}", card.repair_card_id));
     lines.push(format!("  schema: {}", card.schema_version));
@@ -258,7 +265,13 @@ pub(crate) fn agent_card_prose_lines(card: &RepairCardV1, packet_command: &str) 
     // the canonical field keep the legacy reference-only rendering.
     match &card.canonical_next_action {
         Some(action) => {
-            for line in crate::output::next_action::render_next_action_human(action).lines() {
+            let block = match paste_root {
+                Some(root) => {
+                    crate::output::next_action::render_next_action_human_at_root(action, root)
+                }
+                None => crate::output::next_action::render_next_action_human(action),
+            };
+            for line in block.lines() {
                 lines.push(line.to_string());
             }
         }
@@ -551,7 +564,8 @@ mod tests {
     fn prose_renders_the_canonical_block() -> Result<(), String> {
         let mut card = prose_test_card();
         card.canonical_next_action = Some(prose_test_decision()?);
-        let lines = agent_card_prose_lines(&card, "ripr agent packet --seam-id seam:demo --json");
+        let lines =
+            agent_card_prose_lines(&card, "ripr agent packet --seam-id seam:demo --json", None);
         let text = lines.join("\n");
         for expected in [
             "  next action: run_command",
@@ -569,6 +583,21 @@ mod tests {
                 "canonical prose kept the legacy refusal line:\n{text}"
             ));
         }
+        // A paste root binds the block's routes (#3999); without one the
+        // portable DTO spelling is preserved for measurement.
+        let lines = agent_card_prose_lines(
+            &card,
+            "ripr agent packet --seam-id seam:demo --json",
+            Some(std::path::Path::new("/repo/checkout")),
+        );
+        let text = lines.join("\n");
+        let expected = format!(
+            "  command: ripr:agent:packet [inspection]: ripr agent packet --root {} --seam-id seam:demo --json",
+            crate::agent::loop_commands::bound_root("/repo/checkout")
+        );
+        if !text.contains(&expected) {
+            return Err(format!("paste root did not bind the block:\n{text}"));
+        }
         Ok(())
     }
 
@@ -582,7 +611,8 @@ mod tests {
             role: "inspection".to_string(),
             display: "ripr agent packet --seam-id seam:demo --json".to_string(),
         });
-        let lines = agent_card_prose_lines(&card, "ripr agent packet --seam-id seam:demo --json");
+        let lines =
+            agent_card_prose_lines(&card, "ripr agent packet --seam-id seam:demo --json", None);
         let text = lines.join("\n");
         if !text.contains(
             "  next action: ripr agent packet --seam-id seam:demo --json (ripr:agent:packet)",
@@ -591,7 +621,8 @@ mod tests {
         }
 
         let card = prose_test_card();
-        let lines = agent_card_prose_lines(&card, "ripr agent packet --seam-id seam:demo --json");
+        let lines =
+            agent_card_prose_lines(&card, "ripr agent packet --seam-id seam:demo --json", None);
         let text = lines.join("\n");
         if !text.contains("  next action: none (instruction FixSiteReady") {
             return Err(format!("legacy refusal line lost:\n{text}"));
