@@ -156,7 +156,7 @@ fn effect_probe(owner: &FunctionSummary, expression: &str) -> Probe {
 
 fn establish(index: &RustIndex, expression: &str) -> Option<EffectStateCarrier> {
     let owner = owner(index, "receive");
-    EffectStateCarrier::establish(&effect_probe(owner, expression), owner, index)
+    EffectStateCarrier::establish(&effect_probe(owner, expression), owner, index, true)
 }
 
 fn whole_object(text: &str) -> OracleFact {
@@ -607,4 +607,49 @@ fn escapes_found_in_review_keep_the_part_c_reading() {
     );
     let idx = index(&[(LIB, &pure)]);
     assert!(establish(&idx, "self.refresh_low_stock(sku);").is_some());
+}
+
+#[test]
+fn partial_indexes_user_field_types_and_handed_receivers_keep_the_part_c_reading() {
+    // #7046 review: a partial index cannot prove the callee bounded.
+    let idx = index(&[(LIB, LEDGER)]);
+    let receive = owner(&idx, "receive");
+    let probe = effect_probe(receive, "self.refresh_low_stock(sku);");
+    assert!(EffectStateCarrier::establish(&probe, receive, &idx, true).is_some());
+    assert!(EffectStateCarrier::establish(&probe, receive, &idx, false).is_none());
+
+    // A written field of a user type dispatches `insert`/`remove` to user
+    // code that may publish state.
+    let user_field = LEDGER.replace("low_stock: BTreeSet<String>,", "low_stock: LowSet,");
+    assert!(user_field.contains("low_stock: LowSet,"));
+    let idx = index(&[(LIB, &user_field)]);
+    assert!(establish(&idx, "self.refresh_low_stock(sku);").is_none());
+    // So does a std collection of a user element type (`Ord` runs on insert).
+    let user_elem = LEDGER.replace("low_stock: BTreeSet<String>,", "low_stock: BTreeSet<Sku>,");
+    let idx = index(&[(LIB, &user_elem)]);
+    assert!(establish(&idx, "self.refresh_low_stock(sku);").is_none());
+
+    // A receiver handed by value or shared reference to a helper may be
+    // read and published by it.
+    let run = |body: &str| {
+        let tests = format!(
+            "use demo::*;\n\n#[test]\nfn after_receive() {{\n    let mut inv = Inventory::new(5);\n    inv.receive(\"A\", 2);\n    {body}\n    assert_eq!(std::fs::read_to_string(\"low\").ok(), None);\n}}\n"
+        );
+        let idx = index(&[(LIB, LEDGER), ("tests/ledger.rs", &tests)]);
+        let carrier = establish(&idx, "self.refresh_low_stock(sku);");
+        assert!(
+            carrier.is_some(),
+            "the ledger shape must establish a carrier"
+        );
+        carrier.is_some_and(|carrier| {
+            carrier.admits(
+                the_test(&idx),
+                &whole_object("assert_eq!(std::fs::read_to_string(\"low\").ok(), None);"),
+            )
+        })
+    };
+    assert!(run("publish(&inv);"));
+    assert!(run("audit.record(inv);"));
+    assert!(run("publish(1, &inv);"));
+    assert!(!run("publish(1, 2);"));
 }

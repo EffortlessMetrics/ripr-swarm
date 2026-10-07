@@ -508,6 +508,98 @@ fn scan_self_access(body: &[Tok], index: usize, uses: &mut FieldUse) {
     uses.reads.insert(field);
 }
 
+/// The `(` opening the argument list that holds `index`.
+fn enclosing_call_open(tokens: &[Tok], index: usize) -> Option<usize> {
+    let mut depth = 0usize;
+    let mut cursor = index;
+    while cursor > 0 {
+        cursor -= 1;
+        match tokens.get(cursor) {
+            Some(Tok::Punct(')')) => depth += 1,
+            Some(Tok::Punct('(')) if depth == 0 => return Some(cursor),
+            Some(Tok::Punct('(')) => depth -= 1,
+            _ => {}
+        }
+    }
+    None
+}
+
+/// The declared field types of the self type's one `struct` definition in
+/// the workspace, by field name; `None` when it is missing, defined more than
+/// once, generic or not a braced struct.
+fn self_type_field_types(self_ty: &str, index: &RustIndex) -> Option<BTreeMap<String, String>> {
+    let mut found = None;
+    for facts in index.files().values() {
+        let source =
+            crate::analysis::language::mask_rust_comments_and_strings(&facts.data().source);
+        let needle = format!("struct {self_ty}");
+        for (start, matched) in source.match_indices(&needle) {
+            let before_ok = !source[..start]
+                .chars()
+                .next_back()
+                .is_some_and(|ch| ch.is_ascii_alphanumeric() || ch == '_');
+            let rest = source[start + matched.len()..].trim_start();
+            if !before_ok || rest.starts_with(|ch: char| ch.is_ascii_alphanumeric() || ch == '_') {
+                continue;
+            }
+            if found.is_some() {
+                return None;
+            }
+            let body = rest.strip_prefix('{')?;
+            let mut depth = 0usize;
+            let mut end = None;
+            for (offset, ch) in body.char_indices() {
+                match ch {
+                    '{' | '(' | '[' | '<' => depth += 1,
+                    '}' if depth == 0 => {
+                        end = Some(offset);
+                        break;
+                    }
+                    '}' | ')' | ']' | '>' => depth = depth.saturating_sub(1),
+                    _ => {}
+                }
+            }
+            found = Some(parse_struct_fields(&body[..end?])?);
+        }
+    }
+    found
+}
+
+fn parse_struct_fields(body: &str) -> Option<BTreeMap<String, String>> {
+    let mut fields = BTreeMap::new();
+    let mut depth = 0usize;
+    let mut entry_start = 0;
+    for (index, ch) in body.char_indices().chain([(body.len(), ',')]) {
+        match ch {
+            '(' | '[' | '<' | '{' => depth += 1,
+            ')' | ']' | '>' | '}' => depth = depth.saturating_sub(1),
+            ',' if depth == 0 => {
+                let entry = body[entry_start..index].trim();
+                entry_start = index + 1;
+                if entry.is_empty() {
+                    continue;
+                }
+                let (name, ty) = entry.split_once(':')?;
+                let name = name
+                    .split_whitespace()
+                    .last()?
+                    .trim_start_matches(|ch: char| !ch.is_ascii_alphanumeric() && ch != '_');
+                fields.insert(name.to_string(), ty.trim().to_string());
+            }
+            _ => {}
+        }
+    }
+    Some(fields)
+}
+
+/// Whether every type name in `ty` is a std collection, wrapper or
+/// primitive, so field methods and operators run no user code.
+fn std_only_type(ty: &str) -> bool {
+    ty.split(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_'))
+        .filter(|segment| !segment.is_empty())
+        .all(|segment| STD_FIELD_TYPES.contains(&segment) || STD_ROOTS.contains(&segment))
+}
+
 /// Methods of the owner's self type, by name.
 struct SelfTypeMethods<'a> {
     by_name: BTreeMap<&'a str, Vec<&'a FunctionSummary>>,
@@ -577,7 +669,14 @@ impl EffectStateCarrier {
         probe: &Probe,
         owner: &FunctionSummary,
         index: &RustIndex,
+        workspace_complete: bool,
     ) -> Option<Self> {
+        // An omitted file may hold a same-name method, a `Drop` impl or the
+        // self type's definition, so a partial index proves nothing bounded
+        // (#7046 review).
+        if !workspace_complete {
+            return None;
+        }
         if !matches!(
             probe.family,
             ProbeFamily::CallDeletion | ProbeFamily::SideEffect
@@ -615,6 +714,18 @@ impl EffectStateCarrier {
         }
         let written_fields = transitive_writes(callee, &methods)?;
         if written_fields.is_empty() {
+            return None;
+        }
+        // A field method or operator dispatches through the field's type: a
+        // user type's `push` or `AddAssign` may publish state, so every
+        // written field must be declared with std and primitive types only
+        // (#7046 review).
+        let field_types = self_type_field_types(&self_ty, index)?;
+        if !written_fields.iter().all(|field| {
+            field_types
+                .get(field.as_str())
+                .is_some_and(|ty| std_only_type(ty))
+        }) {
             return None;
         }
         let reader_methods = reader_methods(&methods, &written_fields);
@@ -734,8 +845,37 @@ impl EffectStateCarrier {
                 && punct(test_body, index + 1, '=')
                 && !punct(test_body, index + 2, '=')
         });
+        // A binding passed by value or shared reference to a call
+        // (`publish(&inv)`, `audit.record(inv)`) may reach code that reads
+        // the written field and publishes it (#7046 review); only a resolved
+        // non-reader of the self type is known not to.
+        let passes_binding = test_body.iter().enumerate().any(|(index, token)| {
+            let Tok::Ident(name) = token else {
+                return false;
+            };
+            if KEYWORDS.contains(&name.as_str())
+                || name == "self"
+                || !name.starts_with(|ch: char| ch.is_lowercase() || ch == '_')
+            {
+                return false;
+            }
+            let start = if index > 0 && punct(test_body, index - 1, '&') {
+                index - 1
+            } else {
+                index
+            };
+            start > 0
+                && (punct(test_body, start - 1, '(') || punct(test_body, start - 1, ','))
+                && (punct(test_body, index + 1, ')') || punct(test_body, index + 1, ','))
+                && enclosing_call_open(test_body, index).is_some_and(|open| {
+                    open > 0
+                        && ident(test_body, open - 1).is_some()
+                        && !self.lent_to_non_reader(test_body, index)
+                })
+        });
         lends_mut
             || reassigns
+            || passes_binding
             || test_body.iter().enumerate().any(|(index, token)| {
                 matches!(token, Tok::Ident(name) if self.mutating_readers.contains(name))
                     && index > 0
@@ -1060,6 +1200,21 @@ fn single_let_initializer(body: &[Tok], name: &str) -> Option<(Vec<Tok>, Vec<Tok
 
 /// Path roots whose functions are std library calls, decided by their
 /// arguments rather than treated as fixture helpers.
+/// Std types whose methods and operators on a field stay in the object.
+const STD_FIELD_TYPES: &[&str] = &[
+    "BTreeMap",
+    "BTreeSet",
+    "BinaryHeap",
+    "HashMap",
+    "HashSet",
+    "Option",
+    "Vec",
+    "VecDeque",
+    "collections",
+    "std",
+    "alloc",
+];
+
 const STD_ROOTS: &[&str] = &[
     "std", "core", "alloc", "u8", "u16", "u32", "u64", "u128", "i8", "i16", "i32", "i64", "i128",
     "usize", "isize", "f32", "f64", "bool", "char", "str", "String",

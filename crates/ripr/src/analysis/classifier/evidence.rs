@@ -180,9 +180,14 @@ impl ClassifiedProbeEvidence {
             });
         // RIPR-SPEC-0094 Part D: the state a deleted `self.callee(..)` writes,
         // established once per probe; `None` keeps the Part C reading.
-        let effect_carrier = context
-            .owner_fn
-            .and_then(|owner| EffectStateCarrier::establish(context.probe, owner, context.index));
+        let effect_carrier = context.owner_fn.and_then(|owner| {
+            EffectStateCarrier::establish(
+                context.probe,
+                owner,
+                context.index,
+                context.workspace_complete,
+            )
+        });
         let package_defeats_by_file = FileDefeatMemo::default();
         // Built lazily: only a match arm beside an owner-calling test asks
         // whether a same-file test may run the owner (#6297).

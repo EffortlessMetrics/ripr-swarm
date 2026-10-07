@@ -283,7 +283,12 @@ when the written state is statically bounded:
   is in), no `borrow`/`get_mut` handle access, no non-pure macro, no `ref mut` pattern, no interior
   mutability marker or `unsafe`, and every transitive self call resolves the
   same way;
-- the callee writes at least one field;
+- the callee writes at least one field, and the self type's single braced
+  `struct` declares every written field with std collections, `Option` and
+  primitives only (a user type's `push` or `AddAssign`, or a user key's
+  `Ord`, runs user code);
+- the workspace index is complete, since an omitted file may hold a
+  same-name method, a `Drop` impl or the type's definition;
 - the workspace has no user `Drop` impl, since a collection mutator that
   removes or replaces a value would run it;
 - the owner itself, apart from the changed call, reads no written field,
@@ -330,8 +335,10 @@ indirectly. A `&mut self` method that reads no written field (`inv.ship(..)`
 in the corpus case) does not admit: it cannot move the written state. A
 test that takes a `&mut` borrow of a binding (`restock(&mut inv)`,
 `let r = &mut inv;`) other than as an argument to a resolved non-reading
-method of the self type, or that reassigns a binding (`inv = restocked(inv);`),
-is admitted too, since a helper may call a reader.
+method of the self type, that passes a binding by value or shared reference
+as a call argument (`publish(&inv)`, `audit.record(inv)`), or that reassigns a
+binding (`inv = restocked(inv);`), is admitted too, since a helper may call a
+reader or read the field itself.
 
 When any owner-side gate fails, the Part C reading stands: any whole-object
 equality confirms. Refusing the confirmation would turn `exposed` into an
