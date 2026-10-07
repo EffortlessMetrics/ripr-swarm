@@ -516,25 +516,28 @@ impl WorkspaceSession {
         // carry its structured copy (#6021 review): shrink the byte-fitted
         // page until the complete double envelope measures under the bound.
         // The probe carries the exact final-page fields (has_more and
-        // next_offset derived from the selection), so a listing that fits
-        // whole is measured without a next-page route and never truncated
-        // spuriously. Envelope size is monotone in the page length, so
-        // bisect for the largest fitting prefix.
+        // next_offset derived from the selection). The complete page is not
+        // strictly larger than every shorter prefix — the selection-
+        // exhausting page omits the next-page route — so probe it first and
+        // keep it whole when it fits; only then bisect the strictly
+        // monotone continuation prefixes for the largest fitting page.
+        let page_fields = |count: usize| GapPage {
+            // The window echoes the requested offset; a past-end request is
+            // an empty disclosed page at that offset, not a renumbered one.
+            offset: window.offset,
+            limit: window.limit,
+            returned: count,
+            has_more: start + count < selected_items.len(),
+            next_offset: (start + count < selected_items.len()).then_some(start + count),
+        };
         if !items.is_empty() {
             let structured_fit = |count: usize| -> Result<bool, AttemptFailure> {
-                let probe_page = GapPage {
-                    offset: window.offset,
-                    limit: window.limit,
-                    returned: count,
-                    has_more: start + count < selected_items.len(),
-                    next_offset: (start + count < selected_items.len()).then_some(start + count),
-                };
                 let probe = self.gap_list_document(
                     snapshot,
                     selection,
                     requested,
                     items[..count].to_vec(),
-                    &probe_page,
+                    &page_fields(count),
                 )?;
                 crate::mcp::protocol::structured_envelope_overflows(&probe)
                     .map(|overflows| !overflows)
@@ -542,48 +545,40 @@ impl WorkspaceSession {
                         AttemptFailure::new(CODE_ANALYSIS_FAILED, error, "retry with ripr_refresh")
                     })
             };
-            // Probe with the final-page field margin reserved.
-            let mut low = 1usize;
-            let mut high = items.len();
-            let mut fitting = 0usize;
-            while low <= high {
-                let mid = (low + high) / 2;
-                if structured_fit(mid)? {
-                    fitting = mid;
-                    low = mid + 1;
-                } else {
-                    high = mid.saturating_sub(1);
+            if !structured_fit(items.len())? {
+                let mut low = 1usize;
+                let mut high = items.len() - 1;
+                let mut fitting = 0usize;
+                while low <= high {
+                    let mid = (low + high) / 2;
+                    if structured_fit(mid)? {
+                        fitting = mid;
+                        low = mid + 1;
+                    } else {
+                        high = mid.saturating_sub(1);
+                    }
                 }
+                if fitting == 0 {
+                    // Even one summary cannot fit beside the shell in the
+                    // structured envelope: no page can carry the advertised
+                    // structured result, so fail closed instead of shipping
+                    // a text-only success that breaks the outputSchema
+                    // contract (#6021 review).
+                    return Err(AttemptFailure::new(
+                        CODE_RESULT_TOO_LARGE,
+                        format!(
+                            "gap list cannot serve even one page with its structured result: the non-pageable disclosure alone fills the {}-byte envelope budget",
+                            super::MAX_RESPONSE_BYTES
+                        ),
+                        "read identities through the ripr://snapshot/{snapshot_id} resource and single items through ripr_get_gap",
+                    )
+                    .with_data(json!({ "current_snapshot_id": snapshot.snapshot_id })));
+                }
+                items.truncate(fitting);
             }
-            if fitting == 0 {
-                // Even one summary cannot fit beside the shell in the
-                // structured envelope: no page can carry the advertised
-                // structured result, so fail closed instead of shipping a
-                // text-only success that breaks the outputSchema contract
-                // (#6021 review).
-                return Err(AttemptFailure::new(
-                    CODE_RESULT_TOO_LARGE,
-                    format!(
-                        "gap list cannot serve even one page with its structured result: the non-pageable disclosure alone fills the {}-byte envelope budget",
-                        super::MAX_RESPONSE_BYTES
-                    ),
-                    "read identities through the ripr://snapshot/{snapshot_id} resource and single items through ripr_get_gap",
-                )
-                .with_data(json!({ "current_snapshot_id": snapshot.snapshot_id })));
-            }
-            items.truncate(fitting);
         }
 
-        let page = GapPage {
-            // The window echoes the requested offset; a past-end request is
-            // an empty disclosed page at that offset, not a renumbered one.
-            offset: window.offset,
-            limit: window.limit,
-            returned: items.len(),
-            has_more: start + items.len() < selected_items.len(),
-            next_offset: (start + items.len() < selected_items.len())
-                .then_some(start + items.len()),
-        };
+        let page = page_fields(items.len());
 
         let document = self.gap_list_document(snapshot, selection, requested, items, &page)?;
         // A listing whose non-pageable shell (for example an omission
