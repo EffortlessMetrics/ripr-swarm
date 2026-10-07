@@ -1054,8 +1054,14 @@ fn expected_computed_through_owner(
             .any(|(ty, called)| called != owner && reaches_owner(ty.as_deref(), called))
     };
     match (text_calls(left, owner), text_calls(right, owner)) {
-        // Both sides run the owner, so equality holds whatever it returns.
-        (true, true) => true,
+        // Identical owner calls on both sides are equal whatever the owner
+        // returns. Different expressions (`tax(250) * 2` against
+        // `tax(250) + 8`) can still pin its value, so they keep their
+        // strength (#6970 review).
+        (true, true) => {
+            let normalized = |operand: &str| operand.split_whitespace().collect::<String>();
+            normalized(left) == normalized(right)
+        }
         (true, false) => reaches(right),
         (false, true) => reaches(left),
         _ => false,
@@ -6981,9 +6987,16 @@ return Err(\"typed pin\".into());
             "tax",
             &reaches
         ));
-        // Both sides run the owner: the equality holds whatever it returns.
+        // The same owner call on both sides holds whatever it returns.
         assert!(expected_computed_through_owner(
             "assert_eq!(tax(250), tax(250));",
+            "tax",
+            &|_: Option<&str>, _: &str| false
+        ));
+        // Different owner-dependent expressions can pin the owner's value:
+        // this passes only when `tax(250)` is 8.
+        assert!(!expected_computed_through_owner(
+            "assert_eq!(tax(250) * 2, tax(250) + 8);",
             "tax",
             &|_: Option<&str>, _: &str| false
         ));
