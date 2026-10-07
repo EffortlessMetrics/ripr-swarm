@@ -440,6 +440,7 @@ mod tests {
             unresolved_property_macros: Vec::new(),
             role_provenance: Default::default(),
             source: std::sync::Arc::from(source),
+            item_scopes: None,
         }
     }
 

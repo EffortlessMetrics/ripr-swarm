@@ -1684,6 +1684,7 @@ mod tests {
                 unresolved_property_macros: Vec::new(),
                 role_provenance: Default::default(),
                 source: source.into(),
+                item_scopes: None,
             },
         );
         RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
@@ -2837,6 +2838,7 @@ mod tests {
                     unresolved_property_macros: Vec::new(),
                     role_provenance: Default::default(),
                     source: source.into(),
+                    item_scopes: None,
                 },
             )
         };
