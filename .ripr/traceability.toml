@@ -8681,6 +8681,7 @@ tests = [
   "crates/ripr/src/analysis/probes/diff.rs::tests::predicate_before_is_cut_to_the_parser_shape_span",
   "crates/ripr/src/analysis/probes/diff.rs::tests::match_arm_head_edit_cuts_before_to_the_old_head",
   "crates/ripr/src/analysis/probes/diff.rs::tests::match_arm_body_edit_keeps_the_whole_old_arm",
+  "crates/ripr/src/analysis/probes/diff.rs::tests::match_arm_head_edit_on_a_two_arrow_line_keeps_the_whole_old_line",
   "crates/ripr/src/analysis/probes/diff.rs::tests::removed_span_of_shape_cuts_only_when_the_edit_is_inside_the_shape",
 ]
 fixtures = []

@@ -120,9 +120,17 @@ pub(crate) fn probes_for_file_with_relations(
                 // old line. #7020: the arm consumers that parse `before` as a
                 // whole arm (`tuple_match`) need an arm whose body changed;
                 // a body edit falls outside the head shape and is never cut.
+                // An old line with a second `=>` (two arms, or a nested match
+                // in the body) stays whole so arm selection keeps reading it
+                // as unknown: which arm changed is not established there.
                 let before =
                     if matches!(shape.family, ProbeFamily::Predicate | ProbeFamily::MatchArm) {
                         before.map(|line| {
+                            if shape.family == ProbeFamily::MatchArm
+                                && line.matches("=>").count() > 1
+                            {
+                                return line;
+                            }
                             removed_span_of_shape(text, &canonical_text, &line).unwrap_or(line)
                         })
                     } else {
@@ -1223,6 +1231,32 @@ mod tests {
             Some("(true, false) => \"old\","),
             "{probes:?}"
         );
+    }
+
+    #[test]
+    fn match_arm_head_edit_on_a_two_arrow_line_keeps_the_whole_old_line() {
+        for (added, removed, shape) in [
+            (
+                "\"a\" => 1, \"b\" | \"d\" => 2,",
+                "\"a\" => 1, \"b\" | \"c\" => 2,",
+                "\"b\" | \"d\" =>",
+            ),
+            (
+                "\"b\" | \"d\" => match n { 0 => 3, _ => 2 },",
+                "\"b\" | \"c\" => match n { 0 => 3, _ => 2 },",
+                "\"b\" | \"d\" =>",
+            ),
+        ] {
+            let probes = single_shape_probes(added, removed, ProbeShapeKind::MatchArm, shape);
+            let arm = probes
+                .iter()
+                .find(|probe| probe.family == ProbeFamily::MatchArm);
+            assert_eq!(
+                arm.and_then(|probe| probe.before.as_deref()),
+                Some(removed),
+                "{probes:?}"
+            );
+        }
     }
 
     #[test]
