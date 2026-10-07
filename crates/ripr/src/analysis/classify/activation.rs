@@ -1546,9 +1546,15 @@ fn field_overwritten_before(
     let (Some(position), None) = (found.next(), found.next()) else {
         return false;
     };
-    let masked = crate::analysis::language::mask_rust_comments_and_strings(body);
+    let masked = crate::analysis::extract::mask_comments_and_strings(body);
     let Some(prefix) = masked.get(..position) else {
         return false;
+    };
+    let tainted = receiver_derived_bindings(prefix, receiver);
+    let fresh = |value: &str| {
+        !mentions_ident(value, receiver)
+            && !tainted.iter().any(|name| mentions_ident(value, name))
+            && !value.contains(owner_call)
     };
     let visible = |start: usize| visible_at(prefix, start);
     for (start, initializer) in receiver_lets(prefix, receiver).into_iter().rev() {
@@ -1557,21 +1563,55 @@ fn field_overwritten_before(
         }
         if let Some((fields, base)) = struct_literal_fields(initializer) {
             match fields.iter().find(|(name, _)| *name == field) {
-                Some((_, value)) => {
-                    return value.is_some_and(|value| {
-                        !mentions_ident(value, receiver) && !value.contains(owner_call)
-                    });
-                }
+                Some((_, value)) => return value.is_some_and(fresh),
                 None if base == Some(receiver) => continue,
                 None => return false,
             }
         }
         if initializer.contains(owner_call) {
-            return field_assigned(prefix, start, receiver, field);
+            return field_assigned(prefix, start, receiver, field, &fresh);
         }
         return false;
     }
     false
+}
+
+/// Names `let`-bound in `body` from the receiver, directly or through
+/// another such name (`let t = q.total; let u = t;`): a value built from them
+/// may be the owner's own field value.
+fn receiver_derived_bindings(body: &str, receiver: &str) -> Vec<String> {
+    let is_ident = |ch: char| ch.is_ascii_alphanumeric() || ch == '_';
+    let lets: Vec<(&str, &str)> = body
+        .match_indices("let ")
+        .filter(|(start, _)| !body[..*start].chars().next_back().is_some_and(is_ident))
+        .filter_map(|(start, _)| {
+            let statement = body[start + 4..].split(';').next()?;
+            let (pattern, initializer) = statement.split_once('=')?;
+            Some((pattern, initializer))
+        })
+        .collect();
+    let mut tainted = vec![receiver.to_string()];
+    loop {
+        let before = tainted.len();
+        for (pattern, initializer) in &lets {
+            if tainted.iter().any(|name| mentions_ident(initializer, name)) {
+                for name in pattern.split(|ch: char| !is_ident(ch)) {
+                    if !name.is_empty()
+                        && name != "mut"
+                        && name.starts_with(|ch: char| ch.is_ascii_lowercase() || ch == '_')
+                        && !tainted.iter().any(|known| known == name)
+                    {
+                        tainted.push(name.to_string());
+                    }
+                }
+            }
+        }
+        if tainted.len() == before {
+            break;
+        }
+    }
+    tainted.remove(0);
+    tainted
 }
 
 /// Whether a statement starting at `start` is still in scope at the end of
@@ -1668,7 +1708,13 @@ fn struct_literal_fields(initializer: &str) -> Option<StructLiteral<'_>> {
 /// Whether `prefix`, after `from`, assigns `receiver.field = value` (not
 /// `==`, not a value read from the receiver) in a statement still in scope
 /// at its end.
-fn field_assigned(prefix: &str, from: usize, receiver: &str, field: &str) -> bool {
+fn field_assigned(
+    prefix: &str,
+    from: usize,
+    receiver: &str,
+    field: &str,
+    fresh: &dyn Fn(&str) -> bool,
+) -> bool {
     let target = format!("{receiver}.{field}");
     prefix[from..]
         .match_indices(&target)
@@ -1690,7 +1736,7 @@ fn field_assigned(prefix: &str, from: usize, receiver: &str, field: &str) -> boo
                 return false;
             };
             let value = value.split(';').next().unwrap_or_default();
-            before_ok && !mentions_ident(value, receiver) && visible_at(prefix, start)
+            before_ok && fresh(value) && visible_at(prefix, start)
         })
 }
 
@@ -3257,6 +3303,11 @@ mod tests {
             "let q = bundle(3);\n let q = Quote { total: q.total, ..q };\n assert_eq!(q.total, 45);",
             "let q = bundle(3);\n let total = q.total;\n let q = Quote { total, ..q };\n assert_eq!(q.total, 45);",
             "let mut q = bundle(3);\n q.total = q.total;\n assert_eq!(q.total, 45);",
+            // A value copied out of the receiver first is still the owner's.
+            "let q = bundle(3);\n let t = q.total;\n let q = Quote { total: t, ..q };\n assert_eq!(q.total, 45);",
+            "let mut q = bundle(3);\n let t = q.total;\n let u = t + 0;\n q.total = u;\n assert_eq!(q.total, 45);",
+            // A char literal quote does not hide a closing brace.
+            "let q = bundle(3);\n { let c = '\"'; let q = Quote { total: 1, ..q }; drop((c, q)); }\n assert_eq!(q.total, 45);",
             // Only a statement still in scope at the assertion counts.
             "let q = bundle(3);\n { let q = Quote { total: 1, ..q }; drop(q); }\n assert_eq!(q.total, 45);",
             "let mut q = bundle(3);\n if false { q.total = 0; }\n assert_eq!(q.total, 45);",

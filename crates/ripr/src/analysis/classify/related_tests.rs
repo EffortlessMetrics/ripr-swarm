@@ -2871,9 +2871,25 @@ fn test_imports_same_name_twin(
         return false;
     };
     let is_ident = |ch: char| ch.is_ascii_alphanumeric() || ch == '_';
+    // Any qualified or method mention of the name (a call, a fn pointer
+    // `super::wholesale::price_quote`, a turbofish) may reach the owner.
+    let use_spans: Vec<(usize, usize)> = body
+        .match_indices("use ")
+        .filter(|(start, _)| !body[..*start].chars().next_back().is_some_and(is_ident))
+        .map(|(start, _)| {
+            let end = body[start..]
+                .find(';')
+                .map_or(body.len(), |end| start + end);
+            (start, end)
+        })
+        .collect();
     let only_bare_calls = body.match_indices(owner_name).all(|(start, matched)| {
-        let after = body[start + matched.len()..].trim_start();
-        if body[..start].chars().next_back().is_some_and(is_ident) || !after.starts_with('(') {
+        if use_spans
+            .iter()
+            .any(|(from, to)| (*from..*to).contains(&start))
+            || body[..start].chars().next_back().is_some_and(is_ident)
+            || body[start + matched.len()..].starts_with(is_ident)
+        {
             return true;
         }
         let before = body[..start].trim_end();
@@ -2891,6 +2907,16 @@ fn test_imports_same_name_twin(
         let Some(path) = body[start + 4..].split(';').next() else {
             continue;
         };
+        // A brace list or a rename that names the owner (`{price_quote, Quote}`,
+        // `price_quote as wq`) may bind the owner itself: undecided.
+        if (path.contains('{') || path.contains(" as "))
+            && path.match_indices(owner_name).any(|(index, matched)| {
+                !path[..index].chars().next_back().is_some_and(is_ident)
+                    && !path[index + matched.len()..].starts_with(is_ident)
+            })
+        {
+            return false;
+        }
         let path: String = path.chars().filter(|ch| !ch.is_whitespace()).collect();
         let Some((module, leaf)) = path.rsplit_once("::") else {
             continue;
@@ -3050,6 +3076,20 @@ mod tests {
         ));
         assert!(!twin(
             "fn t() {\n use super::retail::*;\n use super::other::*;\n price_quote(3);\n}",
+            owner
+        ));
+        // A brace list or rename naming the owner leaves the import undecided.
+        assert!(!twin(
+            "fn t() {\n use super::wholesale::{price_quote, Quote};\n use super::retail::*;\n price_quote(3);\n}",
+            owner
+        ));
+        assert!(!twin(
+            "fn t() {\n use super::wholesale::price_quote as wq;\n use super::retail::*;\n price_quote(1);\n wq(3);\n}",
+            owner
+        ));
+        // A qualified non-call mention may reach the owner too.
+        assert!(!twin(
+            "fn t() {\n use super::retail::*;\n let f: fn(u32) -> Quote = super::wholesale::price_quote;\n f(3);\n}",
             owner
         ));
         // Comments and strings are not imports.
