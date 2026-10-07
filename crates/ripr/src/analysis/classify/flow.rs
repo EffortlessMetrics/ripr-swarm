@@ -1180,16 +1180,17 @@ mod tests {
         }
 
         // A discarded turbofish `Err` propagates nowhere.
-        let probe = probe(
-            ProbeFamily::SideEffect,
+        for discarded in [
             "drop(Err::<(), PayError>(PayError::Limit));",
-            3,
-        );
-        let sinks = local_flow_sinks(&probe, Some(&owner));
-        assert!(
-            sinks.iter().all(|sink| sink.kind == FlowSinkKind::Unknown),
-            "{sinks:?}"
-        );
+            "let _ = Err::<(), PayError>(PayError::Limit);",
+        ] {
+            let probe = probe(ProbeFamily::SideEffect, discarded, 3);
+            let sinks = local_flow_sinks(&probe, Some(&owner));
+            assert!(
+                sinks.iter().all(|sink| sink.kind == FlowSinkKind::Unknown),
+                "{discarded}: {sinks:?}"
+            );
+        }
     }
 
     #[test]

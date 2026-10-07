@@ -7663,6 +7663,7 @@ fixtures = [
   "fixtures/rust_adversarial_same_method_other_type",
   "fixtures/rust_same_method_owner_type_positive",
   "fixtures/rust_adversarial_free_function_receiver",
+  "fixtures/rust_adversarial_shared_error_variant_proximity",
   "fixtures/typescript_adversarial_token_substring",
   "fixtures/typescript_adversarial_render_unobserved_sink",
   "fixtures/typescript_adversarial_owner_identity_after_insertion",
