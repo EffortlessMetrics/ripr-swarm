@@ -10,9 +10,9 @@
 //! identifiers name the owner's library crate from the test's crate, read
 //! from the manifests themselves (RIPR-SPEC-0197):
 //!
-//! - the owner must sit in its package's library tree (`src/`, outside
-//!   `src/main.rs` and `src/bin/`), because another crate can only import a
-//!   library;
+//! - the owner must compose under its package's library root, the default
+//!   `src/lib.rs` with no `[lib] path` and `autolib` on, because another
+//!   crate can only import a library;
 //! - a test in the same package names it by its library identifier (`[lib]
 //!   name`, else the package name with hyphens as underscores);
 //! - a test in another package names it by the key of a `[dependencies]` or
@@ -39,12 +39,15 @@ use super::drop_in::{config_mentions, normalized, patches};
 /// dependencies reach only the build script.
 const TEST_DEPENDENCY_TABLES: &[&str] = &["dependencies", "dev-dependencies", "dev_dependencies"];
 
-/// Per-analysis cache of member-crate import names, keyed by the test and
-/// owner files' directories. Clones share the cache.
+/// Per-analysis cache of member-crate import names, keyed by the test file's
+/// directory and the owner's crate root. Clones share the cache.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct MemberCrates {
     root: Option<PathBuf>,
     names: Arc<Mutex<BTreeMap<(PathBuf, PathBuf), Vec<String>>>>,
+    /// Per (crate root, item name): whether the library may export a
+    /// foreign item of that name, computed by the classifier.
+    foreign_exports: Arc<Mutex<BTreeMap<(PathBuf, String), bool>>>,
 }
 
 impl MemberCrates {
@@ -52,13 +55,39 @@ impl MemberCrates {
         Self {
             root: Some(root.to_path_buf()),
             names: Arc::default(),
+            foreign_exports: Arc::default(),
         }
     }
 
+    /// `compute`'s answer for (`owner_root`, `name`), computed once per
+    /// analysis.
+    pub(crate) fn may_export_foreign(
+        &self,
+        owner_root: &Path,
+        name: &str,
+        compute: impl FnOnce() -> bool,
+    ) -> bool {
+        let key = (owner_root.to_path_buf(), name.to_string());
+        if let Some(known) = self
+            .foreign_exports
+            .lock()
+            .ok()
+            .and_then(|known| known.get(&key).copied())
+        {
+            return known;
+        }
+        let answer = compute();
+        if let Ok(mut known) = self.foreign_exports.lock() {
+            known.insert(key, answer);
+        }
+        answer
+    }
+
     /// The crate identifiers through which `test_file`'s crate imports the
-    /// library that holds `owner_file`. Both paths are root-relative, as index
-    /// paths are; an absolute path is used as is.
-    pub(crate) fn import_names(&self, test_file: &Path, owner_file: &Path) -> Vec<String> {
+    /// library whose crate root is `owner_root`, the root module file the
+    /// owner composes under. Both paths are root-relative, as index paths
+    /// are; an absolute path is used as is.
+    pub(crate) fn import_names(&self, test_file: &Path, owner_root: &Path) -> Vec<String> {
         let Some(root) = &self.root else {
             return Vec::new();
         };
@@ -66,11 +95,11 @@ impl MemberCrates {
         // `.`, and a lexical file path no longer starts with it.
         let root = lexical(root);
         let test_file = lexical(&root.join(test_file));
-        let owner_file = lexical(&root.join(owner_file));
-        let (Some(test_dir), Some(owner_dir)) = (test_file.parent(), owner_file.parent()) else {
+        let owner_root = lexical(&root.join(owner_root));
+        let (Some(test_dir), Some(owner_dir)) = (test_file.parent(), owner_root.parent()) else {
             return Vec::new();
         };
-        let key = (test_dir.to_path_buf(), owner_file.clone());
+        let key = (test_dir.to_path_buf(), owner_root.clone());
         if let Some(names) = self
             .names
             .lock()
@@ -79,7 +108,7 @@ impl MemberCrates {
         {
             return names;
         }
-        let names = resolve(&root, test_dir, owner_dir, &owner_file).unwrap_or_default();
+        let names = resolve(&root, test_dir, owner_dir, &owner_root).unwrap_or_default();
         if let Ok(mut cache) = self.names.lock() {
             cache.insert(key, names.clone());
         }
@@ -113,18 +142,18 @@ fn resolve(
     root: &Path,
     test_dir: &Path,
     owner_dir: &Path,
-    owner_file: &Path,
+    owner_root: &Path,
 ) -> Option<Vec<String>> {
     let (owner, owner_chain) = nearest_package(root, owner_dir)?;
     let (test, test_chain) = nearest_package(root, test_dir)?;
     let owner_name = owner.name()?;
     let library = owner.library_identifier()?;
-    if !in_library_tree(&owner.directory, owner_file) {
+    if !is_default_library_root(&owner, owner_root) {
         return None;
     }
     // Cargo configuration and manifests between either file and the root can
     // substitute the owner's package under a name Rust source never shows.
-    let mentions = [owner_name.to_string(), library.clone()];
+    let mentions = [normalized(owner_name), library.clone()];
     if owner_chain
         .iter()
         .chain(&test_chain)
@@ -133,7 +162,11 @@ fn resolve(
         return None;
     }
     if test.directory == owner.directory {
-        return Some(vec![library]);
+        // A dependency keyed by the library's own name would shadow it.
+        let shadowed = test_dependency_tables(&test.manifest)
+            .iter()
+            .any(|table| table.keys().any(|key| normalized(key) == library));
+        return (!shadowed).then(|| vec![library]);
     }
     let manifests = ancestor_manifests(&test_chain)?;
     if manifests
@@ -260,13 +293,22 @@ fn ancestor_manifests(chain: &[PathBuf]) -> Option<Vec<(PathBuf, toml::Table)>> 
     Some(manifests)
 }
 
-/// Whether `file` belongs to the default library tree of the package at
-/// `directory`: under `src/`, but not `src/main.rs` or `src/bin/`.
-fn in_library_tree(directory: &Path, file: &Path) -> bool {
-    let Ok(relative) = file.strip_prefix(directory.join("src")) else {
-        return false;
-    };
-    relative != Path::new("main.rs") && !relative.starts_with("bin")
+/// Whether `owner_root` is the package's library target: the default
+/// `src/lib.rs`, with no `[lib] path` moving the target and `autolib` on. A
+/// module of `src/main.rs` or of a `src/bin/` target sits under `src/` too,
+/// but no other crate can import it.
+fn is_default_library_root(package: &Package, owner_root: &Path) -> bool {
+    let manifest = &package.manifest;
+    let moved = manifest
+        .get("lib")
+        .and_then(|lib| lib.get("path"))
+        .is_some();
+    let autolib_off = manifest
+        .get("package")
+        .and_then(|package| package.get("autolib"))
+        .and_then(toml::Value::as_bool)
+        == Some(false);
+    !moved && !autolib_off && owner_root == package.directory.join("src").join("lib.rs")
 }
 
 fn test_dependency_tables(manifest: &toml::Table) -> Vec<&toml::Table> {
@@ -337,7 +379,7 @@ mod tests {
             ["pricing"]
         );
         assert_eq!(
-            names(&files, "./orders/tests/t.rs", "./pricing/src/x/y.rs")?,
+            names(&files, "./orders/tests/t.rs", "./pricing/src/lib.rs")?,
             ["pricing"]
         );
         let dev = orders("[dev-dependencies]\npricing = { path = \"../pricing\" }\n");
@@ -407,6 +449,18 @@ mod tests {
         assert_eq!(
             names(&files, "pricing/tests/t.rs", "pricing/src/lib.rs")?,
             ["pricing"]
+        );
+        // A dev-dependency keyed by the library's own name shadows it.
+        let shadowing =
+            format!("{PRICING}[dev-dependencies]\npricing = {{ path = \"../fake\" }}\n");
+        let files = [
+            ("Cargo.toml", ROOT),
+            ("pricing/Cargo.toml", shadowing.as_str()),
+            ("orders/Cargo.toml", "[package]\nname = \"orders\"\n"),
+        ];
+        assert_eq!(
+            names(&files, "pricing/tests/t.rs", "pricing/src/lib.rs")?,
+            Vec::<String>::new()
         );
         Ok(())
     }
@@ -487,6 +541,38 @@ mod tests {
                 vec![("orders/Cargo.toml", plain.clone())],
                 "orders/tests/t.rs",
                 "pricing/src/bin/tool.rs",
+            ),
+            // A module under `src/` that composes under another root.
+            (
+                "module of the binary".into(),
+                vec![("orders/Cargo.toml", plain.clone())],
+                "orders/tests/t.rs",
+                "pricing/src/cli.rs",
+            ),
+            // A manifest that moves or disables the default library.
+            (
+                "moved library".into(),
+                vec![
+                    ("orders/Cargo.toml", plain.clone()),
+                    (
+                        "pricing/Cargo.toml",
+                        format!("{PRICING}[lib]\npath = \"src/core.rs\"\n"),
+                    ),
+                ],
+                "orders/tests/t.rs",
+                "pricing/src/lib.rs",
+            ),
+            (
+                "autolib off".into(),
+                vec![
+                    ("orders/Cargo.toml", plain.clone()),
+                    (
+                        "pricing/Cargo.toml",
+                        PRICING.replace("version", "autolib = false\nversion"),
+                    ),
+                ],
+                "orders/tests/t.rs",
+                "pricing/src/lib.rs",
             ),
             (
                 "test owner".into(),

@@ -1624,25 +1624,48 @@ fn drop_in_crate_admission_matches_cargo_resolution() -> Result<(), String> {
 
 /// A test in one workspace member that imports the owner from another
 /// member (`use pricing::score;`) pins it only when the manifests bind that
-/// crate name to the owner's package. Under a `package =` rename the same
-/// import binds another package, and a wrong owner then passes the test.
+/// crate name to the owner's package. When the dependency under that key is
+/// another package (`package = "fake-pricing"` at another path), the same
+/// import binds it, and a wrong owner then passes the test. So it does when
+/// the owner's library re-exports a foreign item under the owner's name.
 #[test]
 fn member_crate_import_admission_matches_cargo_resolution() -> Result<(), String> {
     let owner = "pub fn score(points: i64) -> i64 {\n    3 * points\n}\n";
-    let diff = "diff --git a/pricing/src/lib.rs b/pricing/src/lib.rs\n--- a/pricing/src/lib.rs\n+++ b/pricing/src/lib.rs\n@@ -1,3 +1,3 @@\n pub fn score(points: i64) -> i64 {\n-    points * 3\n+    3 * points\n }\n";
+    let diff = |path: &str| {
+        format!(
+            "diff --git a/{path} b/{path}\n--- a/{path}\n+++ b/{path}\n@@ -1,3 +1,3 @@\n pub fn score(points: i64) -> i64 {{\n-    points * 3\n+    3 * points\n }}\n"
+        )
+    };
     let test = "use pricing::score;\n\n#[test]\nfn score_triples_points() {\n    assert_eq!(score(7), 21);\n}\n";
     let package = |name: &str| {
         format!("[package]\nname = \"{name}\"\nversion = \"0.1.0\"\nedition = \"2021\"\n")
     };
-    for (case, dependency, exposed) in [
+    let path_dependency = "pricing = { path = \"../pricing\" }";
+    // (case, orders' dependency, owner file, pricing's lib.rs when the owner
+    // is elsewhere, pricing's dependencies, exposed)
+    for (case, dependency, owner_path, library, pricing_dependencies, exposed) in [
         (
             "path_dependency",
-            "pricing = { path = \"../pricing\" }",
+            path_dependency,
+            "pricing/src/lib.rs",
+            None,
+            "",
             true,
         ),
         (
             "renamed_package",
             "pricing = { package = \"fake-pricing\", path = \"../../fake\" }",
+            "pricing/src/lib.rs",
+            None,
+            "",
+            false,
+        ),
+        (
+            "foreign_reexport",
+            path_dependency,
+            "pricing/src/a.rs",
+            Some("pub mod a;\npub use fake_pricing::score;\n"),
+            "fake-pricing = { path = \"../../fake\" }",
             false,
         ),
     ] {
@@ -1666,8 +1689,17 @@ fn member_crate_import_admission_matches_cargo_resolution() -> Result<(), String
             root.join("Cargo.toml"),
             "[workspace]\nmembers = [\"pricing\", \"orders\"]\nresolver = \"2\"\n",
         )?;
-        write(root.join("pricing/Cargo.toml"), &package("pricing"))?;
-        write(root.join("pricing/src/lib.rs"), owner)?;
+        write(
+            root.join("pricing/Cargo.toml"),
+            &format!(
+                "{}\n[dependencies]\n{pricing_dependencies}\n",
+                package("pricing")
+            ),
+        )?;
+        if let Some(library) = library {
+            write(root.join("pricing/src/lib.rs"), library)?;
+        }
+        write(root.join(owner_path), owner)?;
         write(
             root.join("orders/Cargo.toml"),
             &format!("{}\n[dependencies]\n{dependency}\n", package("orders")),
@@ -1680,7 +1712,7 @@ fn member_crate_import_admission_matches_cargo_resolution() -> Result<(), String
             "pub fn score(points: i64) -> i64 {\n    points * 3\n}\n",
         )?;
         let diff_file = scratch.0.join("diff.patch");
-        write(diff_file.clone(), diff)?;
+        write(diff_file.clone(), &diff(owner_path))?;
         let report = check_workspace(CheckInput {
             root: root.clone(),
             diff_file: Some(diff_file),
@@ -1698,7 +1730,7 @@ fn member_crate_import_admission_matches_cargo_resolution() -> Result<(), String
         );
         // A wrong owner fails the test exactly when the import binds it.
         write(
-            root.join("pricing/src/lib.rs"),
+            root.join(owner_path),
             &owner.replace("3 * points", "2 * points"),
         )?;
         let cargo = PathBuf::from(std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into()));

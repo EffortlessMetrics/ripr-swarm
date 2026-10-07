@@ -480,7 +480,15 @@ impl TargetRoots {
     }
 }
 
-fn target_root(file: &Path, index: &RustIndex, src_dirs: &BTreeSet<PathBuf>) -> Option<PathBuf> {
+/// The crate root file `file` composes under: a recognized Cargo target root
+/// (`src/lib.rs`, `src/main.rs`, `src/bin/*.rs`, an integration test, bench,
+/// example or build script), or `None` when composition is unresolved, goes
+/// through `include!`, or ends at an unrecognized file.
+pub(super) fn target_root(
+    file: &Path,
+    index: &RustIndex,
+    src_dirs: &BTreeSet<PathBuf>,
+) -> Option<PathBuf> {
     let facts = index.files().get(file)?;
     let provenance = &facts.role_provenance;
     if provenance.earliest_unresolved_reason.is_some()
@@ -1965,6 +1973,60 @@ fn is_workspace_root(root: &str, index: &RustIndex) -> bool {
             .package_names
             .iter()
             .any(|name| name.replace('-', "_") == root)
+}
+
+/// Whether the library whose crate root is `owner_root` may export some other
+/// item named `name` from outside itself: a `pub use` in one of its files,
+/// rooted anywhere but `crate`, `self` or `super`, that names `name` or globs
+/// (`pub use fastscore::score;`, `pub use other::*;`). Another crate's
+/// `use library::name;` could then bind that item instead of the owner, which
+/// the workspace's indexed definitions cannot show.
+pub(super) fn library_may_export_other(index: &RustIndex, owner_root: &Path, name: &str) -> bool {
+    let src_dirs = BTreeSet::new();
+    index.files().iter().any(|(path, facts)| {
+        target_root(path, index, &src_dirs).as_deref() == Some(owner_root)
+            && public_use_statements(&facts.source)
+                .iter()
+                .any(|statement| {
+                    (contains_as_whole_word(statement, name) || statement.contains('*'))
+                        && use_statement_first_segment(statement)
+                            .is_none_or(|root| !matches!(root, "crate" | "self" | "super"))
+                })
+    })
+}
+
+/// The `use ..;` text of every `pub use` declaration in `source` (plain
+/// `pub` only: a `pub(crate)` or `pub(in ..)` import is not visible to
+/// another crate).
+fn public_use_statements(source: &str) -> Vec<&str> {
+    let masked = mask_comments_and_strings(source);
+    let bytes = masked.as_bytes();
+    let word = |at: usize, text: &str| {
+        masked[at..].starts_with(text)
+            && (at == 0 || !is_ident_byte(bytes[at - 1]))
+            && bytes
+                .get(at + text.len())
+                .is_none_or(|byte| !is_ident_byte(*byte))
+    };
+    let mut statements = Vec::new();
+    let mut at = 0;
+    while let Some(offset) = masked[at..].find("pub") {
+        let start = at + offset;
+        at = start + 3;
+        if !word(start, "pub") {
+            continue;
+        }
+        let use_at = at + (masked[at..].len() - masked[at..].trim_start().len());
+        if !word(use_at, "use") {
+            continue;
+        }
+        let Some(end) = masked[use_at..].find(';') else {
+            break;
+        };
+        statements.push(&source[use_at..use_at + end]);
+        at = use_at + end;
+    }
+    statements
 }
 
 /// Whether a workspace path may lead to some item named `base` other than

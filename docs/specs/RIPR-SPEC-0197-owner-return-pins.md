@@ -217,22 +217,32 @@ rule only for an assertion whose context was admitted.
    lives in another package, and the exact variant when the changed
    expression constructs an error variant.
    An import is not foreign when its first segment names the owner's own
-   library from the test's crate, as the manifests declare it: the owner
-   file sits in its package's library tree (`src/`, outside `src/main.rs`
-   and `src/bin/`), and either the test is in the same package (the `[lib]`
-   name, else the package name) or the test's nearest manifest has a
-   `[dependencies]` or `[dev-dependencies]` entry (`[target.*]` tables
-   included) whose `path`, directly or through `[workspace.dependencies]`
-   for `workspace = true`, resolves to the owner's package directory. A
-   `package =` rename must name the owner's package and imports under its
-   key; without one the key must be the package name and imports under the
-   library name. A `git` or `registry` key, a `package.workspace`, a
-   `[patch]` entry for the name or any `[replace]` between the test and the
-   root, and a `.cargo/config` on either file's path that mentions the name
-   or sets `paths`, `[patch]`, `[source]` or `include` leave the import
-   foreign. So `use pricing::score;` in a sibling member that depends on
-   `pricing` by path pins `score`, and the same line under
-   `pricing = { package = "fake-pricing", .. }` does not.
+   library from the test's crate, as the manifests declare it. The owner
+   file must compose (through its `mod` declarations) under its package's
+   default library root, `src/lib.rs`, with no `[lib] path` and `autolib`
+   not turned off. Then either the test is in the same package (the
+   `[lib]` name, else the package name), or the test's nearest manifest has
+   a `[dependencies]` or `[dev-dependencies]` entry (also spelled
+   `dev_dependencies`; `[target.*]` tables included) whose `path`, directly
+   or through `[workspace.dependencies]` for `workspace = true`, resolves to
+   the owner's package directory. A `package =` rename must name the
+   owner's package and imports under its key; without one the key must be
+   the package name and imports under the library name. A `git` or
+   `registry` key, a `package.workspace`, a `[patch]` entry for the name or
+   any `[replace]` between the test and the root, and a `.cargo/config`
+   between either file and the analysis root that mentions the name or sets
+   `paths`, `[patch]`, `[source]` or `include` leave the import foreign
+   (configuration above the root or in `$CARGO_HOME` is not read). A test
+   in the owner's own package whose dependency key is the library name, and
+   a `pub use` in any file of the owner's library rooted outside `crate`,
+   `self` and `super` that names the callee or globs (it may re-export a
+   foreign item under that name), also leave the import foreign. The same
+   own-crate reading serves every consumer of the same-name import defeat
+   (the reveal-side owner binding, RIPR-SPEC-0229 arm withholding and tuple
+   match observations), as the root package's names already did. So
+   `use pricing::score;` in a sibling member that depends on `pricing` by
+   path pins `score`, and the same line under a `pricing` key that names
+   another package does not.
 6. Clone field pins (#6692). A `field_construction` probe on field `f` of
    a hand-written `impl Clone for T` is confirmed by
    `assert_eq!(recv.clone(), recv)` (either operand order). The owner is

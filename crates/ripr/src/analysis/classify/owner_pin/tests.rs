@@ -346,6 +346,30 @@ fn an_inline_constructor_types_the_receiver_like_a_binding() {
 }
 
 #[test]
+fn only_plain_pub_use_statements_can_export_to_another_crate() {
+    let source = "pub use fastscore::score;\npub(crate) use other::score;\nuse private::score;\n// pub use commented::score;\npub  use  spaced::*;\nfn republish() {}\n";
+    assert_eq!(
+        public_use_statements(source),
+        ["use fastscore::score", "use  spaced::*"]
+    );
+    let lib = "pub mod a;\npub use self::a::score;\n";
+    let root = Path::new("pricing/src/lib.rs");
+    let local = index(&[("pricing/src/lib.rs", lib)]);
+    assert!(!library_may_export_other(&local, root, "score"));
+    let foreign = index(&[(
+        "pricing/src/lib.rs",
+        "pub mod a;\npub use fastscore::score;\n",
+    )]);
+    assert!(library_may_export_other(&foreign, root, "score"));
+    assert!(!library_may_export_other(&foreign, root, "rebate"));
+    let glob = index(&[("pricing/src/lib.rs", "pub mod a;\npub use fastscore::*;\n")]);
+    assert!(library_may_export_other(&glob, root, "rebate"));
+    // Another crate root's re-exports do not speak for this library.
+    let binary = index(&[("pricing/src/main.rs", "pub use fastscore::score;\n")]);
+    assert!(!library_may_export_other(&binary, root, "score"));
+}
+
+#[test]
 fn an_unsafe_block_holding_only_the_owner_call_pins_it() {
     // `assert_eq!(unsafe { byte_at(b"xyz", 1) }, b'y')`: calling an
     // `unsafe fn` needs the block, and its value is the call's value.
@@ -361,6 +385,8 @@ fn an_unsafe_block_holding_only_the_owner_call_pins_it() {
         // Something chained after the block, or after the call inside it.
         ("unsafe { byte_at(b\"xyz\", 1) }.wrapping_add(0)", 0),
         ("unsafe { byte_at(b\"xyz\", 1).wrapping_add(0) }", 0),
+        // Another call wrapping the owner call is not the owner's value.
+        ("unsafe { u8::from(byte_at(b\"xyz\", 1)) }", 0),
         // A function merely named like the keyword is not a block.
         ("unsafe_byte_at(b\"xyz\", 1)", 0),
     ] {
