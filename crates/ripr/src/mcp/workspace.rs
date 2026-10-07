@@ -1442,6 +1442,7 @@ mod tests {
             unlinked_python_tests: None,
             suppression: None,
             partial_scope: None,
+            analyzed_revisions: None,
         };
         let snapshot = Snapshot::from_output(&output, Some("root:sha256:test"))
             .map_err(|failure| failure.detail)?;
