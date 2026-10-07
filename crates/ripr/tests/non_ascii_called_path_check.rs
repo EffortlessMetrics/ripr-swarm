@@ -68,7 +68,6 @@ impl TempRepo {
                 diff.as_str(),
                 "--format",
                 "json",
-                "--include-unchanged-tests",
             ])
             .output()
             .map_err(|error| format!("run ripr check --diff: {error}"))
