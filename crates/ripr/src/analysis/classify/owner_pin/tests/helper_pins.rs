@@ -287,6 +287,19 @@ fn the_loan_maps_only_plain_parameters_and_lone_eager_calls() -> Result<(), Stri
     ))?
     .ok_or("the loan still exists")?;
     assert_eq!(shared.call_lines.len(), 1);
+    // A further deferred call keeps the eager call's credit but adds no
+    // call line, so pairing never reads the loop's or closure's input.
+    for deferred in [
+        "for _ in 0..1 { check_tip(10, 0, 10); }",
+        "let _later = || check_tip(10, 0, 10);",
+    ] {
+        let mixed = loan(&module(
+            HELPER,
+            &format!("check_tip(40, 6, 46);\n        {deferred}"),
+        ))?
+        .ok_or("the eager call still lends the assertion")?;
+        assert_eq!(mixed.call_lines, plain.call_lines[..1], "{deferred}");
+    }
     for helper in [
         // A rebound parameter no longer holds the call's argument.
         "    fn check_tip(b: u64, t: u64, want: u64) {\n        let b = b + 1;\n        assert_eq!(with_tip(b, t), want);\n    }\n",
