@@ -199,7 +199,8 @@ recommendation is elsewhere in the repo, says why no seam on the change ranks
 intentional or suppressed, the seam limit left seams unanalyzed, the change is
 in a file pilot's repo-wide ranking leaves out by design (a Cargo build script,
 repository automation under `xtask/`, or a crate source declared outside
-`src`, which only diff analysis covers; #6944), or no seam
+`src`, which only diff analysis covers, also named after a reason drawn from
+the change's analyzed seams; #6944), or no seam
 pilot analyzed is on a changed line), and names `ripr check` for the change
 itself, with `--worktree` when the change is uncommitted, since plain `ripr
 check` reads committed history only. When the repo-exposure seam limit cuts

@@ -2490,11 +2490,11 @@ fn pilot_names_changed_files_its_ranking_leaves_out() {
     .with_seams_counted(&[], None);
     let (terminal, md) = render(&only_build);
     assert!(
-        terminal.contains("  current change: No seam pilot analyzed is on a line changed since origin/main: the change is in build.rs, a Cargo build script, which pilot's repo-wide ranking leaves out.\n"),
+        terminal.contains("  current change: No seam pilot analyzed is on a line changed since origin/main: every changed Rust line is in build.rs, a Cargo build script, which pilot's repo-wide ranking leaves out.\n"),
         "{terminal}"
     );
     assert!(
-        md.contains("- Current change: No seam pilot analyzed is on a line changed since `origin/main`: the change is in `build.rs`, a Cargo build script, which pilot's repo-wide ranking leaves out.\n"),
+        md.contains("- Current change: No seam pilot analyzed is on a line changed since `origin/main`: every changed Rust line is in `build.rs`, a Cargo build script, which pilot's repo-wide ranking leaves out.\n"),
         "{md}"
     );
 
@@ -2530,6 +2530,31 @@ fn pilot_names_changed_files_its_ranking_leaves_out() {
     let (terminal, _) = render(&several);
     assert!(
         terminal.contains("the change includes 2 files pilot's repo-wide ranking leaves out, such as build.rs (a Cargo build script)"),
+        "{terminal}"
+    );
+
+    // A reason drawn from analyzed seams on the change still names the
+    // build script it does not cover.
+    let opaque = classified_with(
+        SeamGripClass::Opaque,
+        "src/lib.rs",
+        3,
+        Vec::new(),
+        Vec::new(),
+    );
+    let with_seam = PilotCurrentChange::from_diff_text(
+        Path::new("."),
+        Some("origin/main".to_string()),
+        &diff(&["build.rs", "src/lib.rs"]),
+    )
+    .with_diff_only_files(vec![(
+        PathBuf::from("build.rs"),
+        DiffOnlySource::BuildScript,
+    )])
+    .with_seams_counted(&[opaque], None);
+    let (terminal, _) = render(&with_seam);
+    assert!(
+        terminal.contains("so it is a static limitation, not a gap; the change also includes build.rs, a Cargo build script, which pilot's repo-wide ranking leaves out.\n"),
         "{terminal}"
     );
 }

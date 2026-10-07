@@ -829,9 +829,21 @@ impl DiffOnlyNote {
         })
     }
 
-    /// "the change is in `build.rs`, a Cargo build script, which pilot's
-    /// repo-wide ranking leaves out"
+    /// "every changed Rust line is in `build.rs`, a Cargo build script,
+    /// which pilot's repo-wide ranking leaves out". `whole_change` counts
+    /// the files with new-side lines, so a deleted file does not make the
+    /// note claim less than it can.
     fn reason(&self, code: bool) -> String {
+        self.phrase(code, false)
+    }
+
+    /// The same note after a reason drawn from analyzed seams on the
+    /// change: "the change also includes `build.rs`, ...".
+    fn also(&self, code: bool) -> String {
+        self.phrase(code, true)
+    }
+
+    fn phrase(&self, code: bool, also: bool) -> String {
         use crate::analysis::DiffOnlySource;
         let kind = match self.source {
             DiffOnlySource::BuildScript => "a Cargo build script",
@@ -843,15 +855,20 @@ impl DiffOnlyNote {
         } else {
             self.file.clone()
         };
-        match (self.count, self.whole_change) {
+        let includes = if also {
+            "the change also includes"
+        } else {
+            "the change includes"
+        };
+        match (self.count, self.whole_change && !also) {
             (1, true) => format!(
-                "the change is in {file}, {kind}, which pilot's repo-wide ranking leaves out"
+                "every changed Rust line is in {file}, {kind}, which pilot's repo-wide ranking leaves out"
             ),
-            (1, false) => format!(
-                "the change includes {file}, {kind}, which pilot's repo-wide ranking leaves out"
-            ),
+            (1, false) => {
+                format!("{includes} {file}, {kind}, which pilot's repo-wide ranking leaves out")
+            }
             (count, _) => format!(
-                "the change includes {count} files pilot's repo-wide ranking leaves out, such as {file} ({kind})"
+                "{includes} {count} files pilot's repo-wide ranking leaves out, such as {file} ({kind})"
             ),
         }
     }
@@ -988,6 +1005,13 @@ impl CurrentChangeLabel {
         } else {
             return format!("No seam pilot analyzed is on {}.", lines(1));
         };
+        if touched > 0
+            && let Some(note) = diff_only
+        {
+            // The analyzed seams explain only part of the change.
+            reason.push_str("; ");
+            reason.push_str(&note.also(code));
+        }
         if let Some(unseen) = unseen {
             reason.push_str(", but ");
             reason.push_str(&unseen);

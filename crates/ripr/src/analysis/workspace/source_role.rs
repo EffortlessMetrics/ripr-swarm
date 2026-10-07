@@ -350,31 +350,54 @@ pub(crate) enum DiffOnlySource {
 /// (they are in the inventory), test evidence, data, and files no module
 /// tree reaches.
 pub(crate) fn diff_only_source(path: &Path, context: &SourceRoleContext) -> Option<DiffOnlySource> {
-    let role = classify_with(path, context);
     let normalized = normalize(path);
-    if role != SourceRole::FixtureOrReceiptEvidence
-        || context.module_graph_orphans.contains(&normalized)
-    {
+    if context.module_graph_orphans.contains(&normalized) {
+        return None;
+    }
+    match diff_only_candidate(path, context)? {
+        DiffOnlyCandidate::Automation => Some(DiffOnlySource::RepoAutomation),
+        DiffOnlyCandidate::Declarable if context.build_scripts.contains(&normalized) => {
+            Some(DiffOnlySource::BuildScript)
+        }
+        DiffOnlyCandidate::Declarable
+            if context.declared_production_sources.contains(&normalized) =>
+        {
+            Some(DiffOnlySource::DeclaredOutsideSrc)
+        }
+        DiffOnlyCandidate::Declarable => None,
+    }
+}
+
+/// Whether `path` could be a [`DiffOnlySource`] under some module-graph
+/// evidence. This reads only what the module-graph pass leaves unchanged
+/// (it updates declared roots and orphans), so a caller can skip that pass,
+/// which may scan the whole corpus, for every file that fails here.
+pub(crate) fn may_be_diff_only_source(path: &Path, context: &SourceRoleContext) -> bool {
+    diff_only_candidate(path, context).is_some()
+}
+
+enum DiffOnlyCandidate {
+    /// Root `xtask/` automation.
+    Automation,
+    /// A build script or declared root, depending on the manifests.
+    Declarable,
+}
+
+fn diff_only_candidate(path: &Path, context: &SourceRoleContext) -> Option<DiffOnlyCandidate> {
+    let role = classify_with(path, context);
+    if role != SourceRole::FixtureOrReceiptEvidence {
         return None;
     }
     if is_repo_automation_subject(path, role) {
-        return Some(DiffOnlySource::RepoAutomation);
+        return Some(DiffOnlyCandidate::Automation);
     }
-    let in_non_source_directory = normalized.components().any(|component| {
+    let in_non_source_directory = normalize(path).components().any(|component| {
         component
             .as_os_str()
             .to_str()
             .is_some_and(|name| NON_SOURCE_DIRECTORIES.contains(&name))
     });
-    if in_non_source_directory {
-        None
-    } else if context.build_scripts.contains(&normalized) {
-        Some(DiffOnlySource::BuildScript)
-    } else if context.declared_production_sources.contains(&normalized) {
-        Some(DiffOnlySource::DeclaredOutsideSrc)
-    } else {
-        None
-    }
+    (!in_non_source_directory).then_some(DiffOnlyCandidate::Declarable)
 }
 
 fn component_name(component: &std::path::Component) -> String {

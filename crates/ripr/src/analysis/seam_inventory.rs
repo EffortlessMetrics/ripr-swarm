@@ -1347,7 +1347,9 @@ pub(crate) fn classify_seams_in_files_at_with_config(
 /// files only: a file's build script, declared roots and module directories
 /// come from its own package's manifest, so the rest of the corpus adds
 /// nothing. As in `ripr check`, generated files are dropped and a file no
-/// module tree reaches (#4435) is not named.
+/// module tree reaches (#4435) is not named. The module-graph pass, which
+/// can read the whole corpus, runs only for files that could still be
+/// diff-only.
 pub(crate) fn diff_only_rust_files(
     root: &Path,
     config: &RiprConfig,
@@ -1363,6 +1365,13 @@ pub(crate) fn diff_only_rust_files(
     }
     let mut context =
         production_role_context(root, config, candidates.iter().map(|path| path.as_path()));
+    let candidates = candidates
+        .into_iter()
+        .filter(|path| workspace::may_be_diff_only_source(path, &context))
+        .collect::<Vec<_>>();
+    if candidates.is_empty() {
+        return Vec::new();
+    }
     workspace::apply_module_graph_evidence(
         root,
         &mut context,
@@ -3527,6 +3536,54 @@ pub fn classify(amount: i32, service: &mut Service) -> Result<Quote, Error> {
                 .map_err(|err| format!("mkdir {}: {err}", parent.display()))?;
         }
         std::fs::write(path, content).map_err(|err| format!("write {}: {err}", path.display()))
+    }
+
+    /// #6944: the files pilot names as left out of its ranking. Generated
+    /// files are dropped as in `ripr check`, sources outside every diff-only
+    /// shape are not named, and a root below a `src` directory still finds
+    /// its own manifest.
+    #[test]
+    fn diff_only_rust_files_names_build_scripts_and_automation_only() -> Result<(), String> {
+        use super::workspace::DiffOnlySource;
+        let temp = make_tempdir("diff-only")?;
+        let root = temp.join("src").join("shop");
+        let files = [
+            (
+                "Cargo.toml",
+                "[package]\nname = 'shop'\nversion = '0.1.0'\n",
+            ),
+            ("build.rs", "fn main() {}\n"),
+            ("src/lib.rs", "pub fn f() -> bool { true }\n"),
+            ("lib/stray.rs", "pub fn g() {}\n"),
+            (
+                "xtask/Cargo.toml",
+                "[package]\nname = 'xtask'\nversion = '0.1.0'\n",
+            ),
+            ("xtask/src/main.rs", "mod gen;\nfn main() {}\n"),
+            ("xtask/src/gen.rs", "// @generated\npub fn h() {}\n"),
+            ("tests/fixtures/case.rs", "fn main() {}\n"),
+        ];
+        for (path, content) in files {
+            write_file(&root.join(path), content)?;
+        }
+        let changed = files
+            .iter()
+            .map(|(path, _)| PathBuf::from(path))
+            .filter(|path| path.extension().is_some_and(|ext| ext == "rs"))
+            .collect::<Vec<_>>();
+        let named = diff_only_rust_files(&root, &RiprConfig::default(), &changed);
+        let _ = std::fs::remove_dir_all(&temp);
+        assert_eq!(
+            named,
+            vec![
+                (PathBuf::from("build.rs"), DiffOnlySource::BuildScript),
+                (
+                    PathBuf::from("xtask/src/main.rs"),
+                    DiffOnlySource::RepoAutomation
+                ),
+            ]
+        );
+        Ok(())
     }
 
     /// Rewrite `path` with identical content until the inode change time

@@ -15262,12 +15262,12 @@ fn pilot_names_a_changed_build_script_its_ranking_leaves_out() -> Result<(), Str
     );
     assert!(
         stdout.contains(
-            "current change: not part of it. No seam pilot analyzed is on a line changed since origin/main: the change is in build.rs, a Cargo build script, which pilot's repo-wide ranking leaves out. This recommendation is elsewhere in the repo"
+            "current change: not part of it. No seam pilot analyzed is on a line changed since origin/main: every changed Rust line is in build.rs, a Cargo build script, which pilot's repo-wide ranking leaves out. This recommendation is elsewhere in the repo"
         ),
         "{stdout}"
     );
     assert!(
-        md.contains("the change is in `build.rs`, a Cargo build script"),
+        md.contains("every changed Rust line is in `build.rs`, a Cargo build script"),
         "{md}"
     );
     ignore_remove_dir_all(&root);
