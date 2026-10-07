@@ -16957,12 +16957,18 @@ fn execute_command_collect_repair_packet_complete_gap_returns_full_packet() -> R
                 .is_some_and(|v| !v.is_empty()),
             "raw_evidence_refs must be non-empty"
         );
+        // #4001: the copied commands name the selected workspace, not `.`.
+        let bound = crate::agent::loop_commands::shell_arg(
+            &crate::agent::loop_commands::bound_root(&root.path().to_string_lossy()),
+        );
         assert_eq!(
-            packet["verify_command"], "ripr agent verify --root . --json",
+            packet["verify_command"],
+            format!("ripr agent verify --root {bound} --json"),
             "must carry verify_command"
         );
         assert_eq!(
-            packet["receipt_command"], "ripr agent receipt --root . --json",
+            packet["receipt_command"],
+            format!("ripr agent receipt --root {bound} --json"),
             "must carry receipt_command"
         );
         assert_eq!(

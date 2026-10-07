@@ -8468,10 +8468,13 @@ fn collect_repair_packet_from_actionable_gaps(
         return Some(sentinel);
     }
 
-    validate_and_render_actionable_gap_packet(packet)
+    validate_and_render_actionable_gap_packet(root, packet)
 }
 
-fn validate_and_render_actionable_gap_packet(packet: &serde_json::Value) -> Option<LSPAny> {
+fn validate_and_render_actionable_gap_packet(
+    root: &Path,
+    packet: &serde_json::Value,
+) -> Option<LSPAny> {
     use super::gap_artifacts::{GapArtifactRejection, require_actionable_packet_render_fields};
 
     // The render-field contract is owned by the ingest boundary
@@ -8515,6 +8518,15 @@ fn validate_and_render_actionable_gap_packet(packet: &serde_json::Value) -> Opti
     let Some(receipt_command) = str_field("receipt_command") else {
         return Some(repair_packet_sentinel(
             "actionable packet is missing receipt_command",
+        ));
+    };
+    // #4001: the copied commands name the selected workspace, not `.`.
+    let (Some(verify_command), Some(receipt_command)) = (
+        super::gap_artifacts::bind_portable_command(root, &verify_command),
+        super::gap_artifacts::bind_portable_command(root, &receipt_command),
+    ) else {
+        return Some(repair_packet_sentinel(
+            "actionable packet commands cannot be bound to the selected workspace",
         ));
     };
 
@@ -8636,8 +8648,11 @@ fn collect_repair_packet_from_ledger(
     }
 
     let route = record.repair_route.as_ref()?;
-    let verify_command = record.verification_commands.first()?.clone();
-    let receipt_command = record.receipt_command.as_deref().map(ToOwned::to_owned)?;
+    // #4001: the copied commands name the selected workspace, not `.`.
+    let verify_command =
+        super::gap_artifacts::bind_portable_command(root, record.verification_commands.first()?)?;
+    let receipt_command =
+        super::gap_artifacts::bind_portable_command(root, record.receipt_command.as_deref()?)?;
     let allowed_edit_surface =
         crate::output::agent_seam_packets::allowed_edit_surface_for_gap_route(route);
     let must_not_change: Vec<String> =

@@ -1985,7 +1985,7 @@ mod tests {
         );
         // A root the editor client refuses to copy (an apostrophe needs the
         // `'\''` escape) is withheld rather than shown uncopyable.
-        let mut uncopyable = vec!["o'connor", "say \"hi\"", "tick`root", "curly\u{2019}root"];
+        let mut uncopyable = vec!["o'connor", "say \"hi\"", "tick`root", "smart\u{2019}quote"];
         // On Windows `\` is a separator and renders as `/`.
         if cfg!(unix) {
             uncopyable.push("back\\slash");
