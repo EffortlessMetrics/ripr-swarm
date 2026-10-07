@@ -211,6 +211,20 @@ pub(crate) fn render_with_config(output: &CheckOutput, config: &RiprConfig) -> S
     // `GITHUB_ANNOTATIONS_PER_LEVEL` annotations of each level per step, so
     // a trailing notice is the first line dropped on a busy run.
     let mut out = String::new();
+    // RIPR-SPEC-0116 amendment: name the analyzed base and head first, so a
+    // PR check states whether it read committed history or the working
+    // tree. Absent for diff-file, stdin and candidate-tree inputs.
+    if let Some(revisions) = output.analyzed_revisions.as_ref() {
+        *per_level.entry("notice").or_default() += 1;
+        out.push_str(&format!(
+            "::notice title=ripr analyzed::{}\n",
+            escape_data(&format!(
+                "base {}; head {}",
+                crate::output::analyzed_revisions::base_label(revisions),
+                crate::output::analyzed_revisions::head_label(revisions)
+            ))
+        ));
+    }
     let incomplete = output
         .analysis_outcome
         .as_ref()
@@ -302,23 +316,14 @@ fn unanalyzed_state_warnings(output: &CheckOutput) -> Vec<String> {
         // #5258: mirrors the human note's wording decision — untracked
         // files need the staging repair, not `--worktree`.
         let message = if output.untracked_working_tree_source_paths.is_empty() {
-            "Uncommitted source and test changes were not analyzed; `ripr check` reads each file as committed at HEAD. An empty result here does NOT mean those changes are covered; add `--worktree` to include staged and unstaged tracked edits (for example `ripr check --worktree`).".to_string()
+            "Uncommitted source and test changes were not analyzed; this run read each file as committed at HEAD. An empty result here does NOT mean those changes are covered; drop `--committed` (or pass `--worktree`) to include staged and unstaged tracked edits (for example `ripr check --worktree`).".to_string()
         } else {
-            let untracked = &output.untracked_working_tree_source_paths;
-            const NAMED_PATHS: usize = 3;
-            let named = untracked
-                .iter()
-                .take(NAMED_PATHS)
-                .cloned()
-                .collect::<Vec<_>>();
-            let more = untracked.len().saturating_sub(NAMED_PATHS);
-            let listing = if more > 0 {
-                format!("{} and {more} more", named.join(", "))
-            } else {
-                named.join(", ")
-            };
+            let listing = crate::output::analyzed_revisions::name_paths(
+                &output.untracked_working_tree_source_paths,
+                str::to_string,
+            );
             format!(
-                "Uncommitted source and test changes were not analyzed; `ripr check` reads each \
+                "Uncommitted source and test changes were not analyzed; this run read each \
                  file as committed at HEAD, and `--worktree` adds staged and unstaged tracked \
                  edits only. Untracked files ({listing}) are invisible to both; stage them first \
                  (`git add <paths>`, or `git add -N <paths>` intent-to-add makes a new file \
@@ -335,8 +340,29 @@ fn unanalyzed_state_warnings(output: &CheckOutput) -> Vec<String> {
             escape_data(&message)
         ));
     }
+    // RIPR-SPEC-0116: a working-tree read names the untracked routed files
+    // its diff does not contain; `--worktree` is already in effect, so the
+    // remedy is intent-to-add or staging.
+    if !output.unanalyzed_working_tree
+        && crate::output::analyzed_revisions::is_working_tree_read(output)
+        && let Some(message) = crate::output::analyzed_revisions::working_tree_untracked_message(
+            &output.untracked_working_tree_source_paths,
+            str::to_string,
+        )
+    {
+        warnings.push(format!(
+            "::warning title=ripr untracked files not analyzed::{}\n",
+            escape_data(&message)
+        ));
+    }
     if output.no_scope_provided {
-        let message = if let Some(base) = output.base.as_deref() {
+        let message = if let Some(base) = output.base.as_deref()
+            && crate::output::analyzed_revisions::is_working_tree_read(output)
+        {
+            format!(
+                "The working tree has no changed tracked files against `{base}` (diff from the merge base of `{base}` and HEAD to the working tree), so there was nothing to analyze. An empty result means no tracked behavior changed against it — it does NOT mean your changes are covered."
+            )
+        } else if let Some(base) = output.base.as_deref() {
             format!(
                 "`{base}...HEAD` contains no changed files, so there was nothing to analyze; the compared base was `{base}`. An empty result means no behavior changed against it — it does NOT mean your changes are covered."
             )
@@ -548,6 +574,7 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         };
 
         let rendered = render(&output);
@@ -555,6 +582,79 @@ mod tests {
         assert_eq!(
             rendered,
             "::notice title=ripr::No static exposure findings found\n"
+        );
+    }
+
+    fn revisions(working_tree: bool) -> crate::analysis::AnalyzedRevisions {
+        crate::analysis::AnalyzedRevisions {
+            base_ref: "origin/main".to_string(),
+            base_commit: Some("1a2b3c4d5e6f".to_string()),
+            merge_base_commit: Some("9f8e7d6c5b4a".to_string()),
+            head_commit: Some("5d6e7f8a9b0c".to_string()),
+            working_tree,
+        }
+    }
+
+    /// RIPR-SPEC-0116 amendment: a live-repository run leads the stream with
+    /// one notice naming the analyzed base and head, so a PR check says
+    /// whether it read committed history or the working tree.
+    #[test]
+    fn render_leads_with_analyzed_base_and_head_notice() {
+        let mut output = output_with_unknown_finding();
+        output.analyzed_revisions = Some(revisions(true));
+        let rendered = render(&output);
+        assert!(
+            rendered.starts_with(
+                "::notice title=ripr analyzed::base origin/main 1a2b3c4 (diff from merge base 9f8e7d6); head working tree (uncommitted changes on HEAD 5d6e7f8)\n"
+            ),
+            "{rendered}"
+        );
+        output.analyzed_revisions = Some(revisions(false));
+        let committed = render(&output);
+        assert!(
+            committed.starts_with(
+                "::notice title=ripr analyzed::base origin/main 1a2b3c4 (diff from merge base 9f8e7d6); head HEAD 5d6e7f8\n"
+            ),
+            "{committed}"
+        );
+        output.analyzed_revisions = None;
+        assert!(!render(&output).contains("title=ripr analyzed::"));
+    }
+
+    /// RIPR-SPEC-0116: a working-tree read names untracked routed files its
+    /// diff cannot contain, and its empty-range warning describes the
+    /// working-tree diff instead of `<base>...HEAD`.
+    #[test]
+    fn working_tree_read_warns_on_untracked_files_and_describes_its_range() {
+        let mut output = output_with_unknown_finding();
+        output.findings.clear();
+        output.base = Some("origin/main".to_string());
+        output.no_scope_provided = true;
+        output.untracked_working_tree_source_paths = vec!["src/new.rs".to_string()];
+        output.analyzed_revisions = Some(revisions(true));
+        let rendered = render(&output);
+        assert!(
+            rendered.contains(
+                "::warning title=ripr untracked files not analyzed::Untracked files (src/new.rs) are not in the working-tree diff"
+            ),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains(
+                "::warning title=ripr no analysis scope::The working tree has no changed tracked files against `origin/main`"
+            ),
+            "{rendered}"
+        );
+        assert!(!rendered.contains("origin/main...HEAD"), "{rendered}");
+        output.analyzed_revisions = Some(revisions(false));
+        let committed = render(&output);
+        assert!(
+            !committed.contains("untracked files not analyzed"),
+            "{committed}"
+        );
+        assert!(
+            committed.contains("`origin/main...HEAD` contains no changed files"),
+            "{committed}"
         );
     }
 
@@ -947,6 +1047,7 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         };
 
         let rendered = render(&output);
@@ -1022,6 +1123,7 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         };
 
         let rendered = render(&output);
@@ -1724,6 +1826,7 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         }
     }
 
@@ -2070,6 +2173,7 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         };
 
         let rendered = render(&output);

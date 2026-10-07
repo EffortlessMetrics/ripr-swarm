@@ -1603,6 +1603,7 @@ fn happy_path_passes() {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         }
     }
 

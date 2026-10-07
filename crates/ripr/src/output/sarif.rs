@@ -55,7 +55,13 @@ pub(crate) fn render_findings_sarif(
         .filter(|finding| finding.is_candidate_actionable())
         .filter_map(|finding| finding_result(&output.root, finding, config, suppressions, &today))
         .collect::<Vec<_>>();
-    sarif_document("finding", rules, results, output.analysis_outcome.as_ref())
+    sarif_document(
+        "finding",
+        rules,
+        results,
+        output.analysis_outcome.as_ref(),
+        output.analyzed_revisions.as_ref(),
+    )
 }
 
 /// Render repo-scoped classified seams as SARIF.
@@ -126,6 +132,7 @@ fn sarif_document(
     rules: Vec<Value>,
     results: Vec<Value>,
     analysis_outcome: Option<&AnalysisOutcome>,
+    revisions: Option<&crate::analysis::AnalyzedRevisions>,
 ) -> String {
     let mut properties = Map::new();
     properties.insert("tool".to_string(), json!("ripr"));
@@ -134,6 +141,27 @@ fn sarif_document(
         json!(RIPR_SARIF_SCHEMA_VERSION),
     );
     properties.insert("scope".to_string(), json!(scope));
+    // RIPR-SPEC-0116 amendment: the run names the base and head it analyzed,
+    // with the same field names the check JSON uses. Additive; absent for
+    // diff-file, stdin and candidate-tree inputs.
+    if let Some(revisions) = revisions {
+        properties.insert("base".to_string(), json!(revisions.base_ref));
+        if let Some(commit) = &revisions.base_commit {
+            properties.insert("base_commit".to_string(), json!(commit));
+        }
+        if let Some(commit) = &revisions.merge_base_commit {
+            properties.insert("merge_base_commit".to_string(), json!(commit));
+        }
+        let mut head = Map::new();
+        head.insert(
+            "source".to_string(),
+            json!(crate::output::analyzed_revisions::head_source(revisions)),
+        );
+        if let Some(commit) = &revisions.head_commit {
+            head.insert("commit".to_string(), json!(commit));
+        }
+        properties.insert("head".to_string(), Value::Object(head));
+    }
     if let Some(outcome) = analysis_outcome {
         properties.insert(
             "run_status".to_string(),
@@ -1025,6 +1053,39 @@ mod tests {
         Ok(())
     }
 
+    /// RIPR-SPEC-0116 amendment: the run properties name the analyzed base
+    /// and head with the check JSON's field names; absent without revisions.
+    #[test]
+    fn sarif_run_properties_name_analyzed_base_and_head() -> Result<(), String> {
+        let mut output = sample_output();
+        output.analyzed_revisions = Some(crate::analysis::AnalyzedRevisions {
+            base_ref: "origin/main".to_string(),
+            base_commit: Some("1a2b3c4d5e6f".to_string()),
+            merge_base_commit: Some("9f8e7d6c5b4a".to_string()),
+            head_commit: Some("5d6e7f8a9b0c".to_string()),
+            working_tree: true,
+        });
+        let sarif = parse_json(&render_findings_sarif(&output, &RiprConfig::default(), &[]))?;
+        let properties = &sarif["runs"][0]["properties"];
+        assert_eq!(properties["base"], "origin/main");
+        assert_eq!(properties["base_commit"], "1a2b3c4d5e6f");
+        assert_eq!(properties["merge_base_commit"], "9f8e7d6c5b4a");
+        assert_eq!(
+            properties["head"],
+            serde_json::json!({ "source": "working_tree", "commit": "5d6e7f8a9b0c" })
+        );
+        output.analyzed_revisions = None;
+        let plain = parse_json(&render_findings_sarif(&output, &RiprConfig::default(), &[]))?;
+        let plain_properties = &plain["runs"][0]["properties"];
+        for key in ["base", "base_commit", "merge_base_commit", "head"] {
+            assert!(
+                plain_properties.get(key).is_none(),
+                "{key}: {plain_properties}"
+            );
+        }
+        Ok(())
+    }
+
     #[test]
     fn sarif_discloses_incomplete_zero_finding_outcome_at_run_level() -> Result<(), String> {
         let mut output = sample_output();
@@ -1879,6 +1940,7 @@ weakly_gripped = "note"
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         }
     }
 
