@@ -306,14 +306,30 @@ fn run_facade_repair(options: RepairFacadeOptions) -> Result<(), CommandError> {
             }
         },
     };
-    crate::cli::drive_before_phase(facade_before_options(&options.root, &seam_id))?;
+    let attempt_id =
+        crate::cli::drive_before_phase(facade_before_options(&options.root, &seam_id))?;
     // The compact handoff renders after the start through the same card
-    // service the advanced route serves.
-    super::agent_card::run_agent_card(AgentCardOptions {
-        root: options.root,
-        seam_id,
+    // service the advanced route serves. The attempt is already
+    // published here, so a card failure must name the started attempt
+    // and its recovery instead of implying no attempt exists.
+    if let Err(error) = super::agent_card::run_agent_card(AgentCardOptions {
+        root: options.root.clone(),
+        seam_id: seam_id.clone(),
         json: false,
-    })
+    }) {
+        let root = crate::agent::loop_commands::shell_arg(
+            &crate::agent::loop_commands::bound_root(&options.root.to_string_lossy()),
+        );
+        return Err(CommandError::Decision(
+            crate::app::task_first::card_after_publish_message(
+                &attempt_id,
+                &seam_id,
+                &root,
+                error.message(),
+            ),
+        ));
+    }
+    Ok(())
 }
 
 fn facade_before_options(root: &std::path::Path, seam_id: &str) -> AgentRepairOptions {
@@ -374,13 +390,33 @@ fn run_facade_continue(options: ContinueFacadeOptions) -> Result<(), CommandErro
             );
             Ok(())
         }
-        ContinueSelection::NoneAvailable { prepared, terminal } => {
+        ContinueSelection::EndedUnsuccessfully { report } => {
+            // The facts still print like status; the outcome refuses.
+            // A stale, failed, or incomparable attempt ended without a
+            // receipt, so exit 3 and no completion claim.
+            print!(
+                "{}",
+                crate::app::agent_status::render_agent_attempt_status_markdown(&report)
+            );
+            let root = crate::agent::loop_commands::shell_arg(
+                &crate::agent::loop_commands::bound_root(&options.root.to_string_lossy()),
+            );
+            Err(CommandError::Decision(format!(
+                "ripr: repair attempt `{}` ended {} without a receipt; no completion is claimed. Inspect: `ripr status --attempt {} --root {root}`; start fresh: `ripr repair --root {root}`",
+                report.attempt.attempt_id, report.attempt.status_class, report.attempt.attempt_id
+            )))
+        }
+        ContinueSelection::NoneAvailable {
+            prepared,
+            terminal,
+            trust_bound,
+        } => {
             let root = crate::agent::loop_commands::shell_arg(
                 &crate::agent::loop_commands::bound_root(&options.root.to_string_lossy()),
             );
             Err(CommandError::Decision(format!(
                 "no current attempt to continue under {root}: {}. Next: `ripr status --root {root}`; start with `ripr repair --root {root}`",
-                none_available_detail(prepared, terminal)
+                none_available_detail(prepared, terminal, trust_bound, &root)
             )))
         }
         ContinueSelection::Ambiguous { candidates } => {
@@ -431,15 +467,34 @@ fn no_eligible_seam_message(
     message
 }
 
-fn none_available_detail(prepared: usize, terminal: usize) -> String {
-    match (prepared, terminal) {
+fn none_available_detail(
+    prepared: usize,
+    terminal: usize,
+    trust_bound: usize,
+    root_display: &str,
+) -> String {
+    let mut detail = match (prepared, terminal) {
         (0, 0) => "no attempts recorded".to_string(),
         (prepared, 0) => format!("{prepared} prepared, none awaiting"),
         (0, terminal) => format!("{terminal} terminal, none awaiting"),
         (prepared, terminal) => {
             format!("{prepared} prepared and {terminal} terminal, none awaiting")
         }
+    };
+    // A trust-bound attempt can never continue on this route: the
+    // façade passes no edit authorization. Name the exact advanced
+    // spelling instead of leaving a dead end.
+    if trust_bound > 0 {
+        let noun = if trust_bound == 1 {
+            "1 awaiting attempt requires".to_string()
+        } else {
+            format!("{trust_bound} awaiting attempts require")
+        };
+        detail.push_str(&format!(
+            "; {noun} edit authorization, which `ripr continue` cannot supply: run `ripr agent repair --attempt <id> --phase after --edit-authorized --edit-authority <identity> --root {root_display}` (IDs in `ripr status --root {root_display}`)"
+        ));
     }
+    detail
 }
 
 fn run_facade_status(options: StatusFacadeOptions) -> Result<(), CommandError> {
@@ -715,6 +770,36 @@ mod tests {
                     "repair-gap lost the advanced alternative {expected}"
                 ));
             }
+        }
+        Ok(())
+    }
+
+    /// Review repair (#7032): a trust-bound awaiting attempt names the
+    /// exact advanced spelling, since `continue` cannot supply edit
+    /// authorization. The unbound rows keep their legacy text.
+    #[test]
+    fn none_available_detail_names_the_trust_bound_route() -> Result<(), String> {
+        if none_available_detail(0, 0, 0, "ROOT") != "no attempts recorded" {
+            return Err("empty detail must keep its legacy text".to_string());
+        }
+        if none_available_detail(1, 2, 0, "ROOT") != "1 prepared and 2 terminal, none awaiting" {
+            return Err("unbound detail must keep its legacy text".to_string());
+        }
+        let detail = none_available_detail(0, 0, 1, "ROOT");
+        for expected in [
+            "1 awaiting attempt requires edit authorization",
+            "ripr agent repair --attempt <id> --phase after --edit-authorized --edit-authority <identity> --root ROOT",
+            "ripr status --root ROOT",
+        ] {
+            if !detail.contains(expected) {
+                return Err(format!(
+                    "trust-bound detail must carry {expected:?}:\n{detail}"
+                ));
+            }
+        }
+        let plural = none_available_detail(0, 0, 2, "ROOT");
+        if !plural.contains("2 awaiting attempts require edit authorization") {
+            return Err(format!("trust-bound detail must pluralize:\n{plural}"));
         }
         Ok(())
     }

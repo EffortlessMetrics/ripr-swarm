@@ -82,23 +82,25 @@ const FIXTURE_SEAM: &str = "67fc764ba37d77bd";
 const SECOND_SEAM: &str = "59fe960b7be4b8d6";
 const FIXTURE_BOUNDARY_TEST: &str = "\n#[test]\nfn at_threshold_discounts() {\n    assert_eq!(discounted_total(100, 100), 90);\n}\n";
 
-/// A committed single-seam workspace ready for `ripr repair`.
-fn boundary_fixture(label: &str) -> Result<PathBuf, String> {
-    let root = unique_temp_workspace(label);
+/// Populate a committed single-seam workspace ready for `ripr repair`.
+/// Takes the root instead of minting it so the [`Fixture`] guard owns
+/// the directory before any fallible step can leak it.
+fn populate_boundary_fixture(root: &Path) -> Result<(), String> {
     std::fs::create_dir_all(root.join("src")).map_err(|e| e.to_string())?;
     std::fs::create_dir_all(root.join("tests")).map_err(|e| e.to_string())?;
     std::fs::write(root.join("Cargo.toml"), FIXTURE_CARGO_TOML).map_err(|e| e.to_string())?;
     std::fs::write(root.join("src/lib.rs"), FIXTURE_LIB).map_err(|e| e.to_string())?;
     std::fs::write(root.join("tests/pricing.rs"), FIXTURE_WEAK_TEST).map_err(|e| e.to_string())?;
-    init_repo(&root)?;
-    run_git(&root, &["add", "Cargo.toml", "src", "tests"])?;
-    git_commit(&root, "fixture source")?;
-    Ok(root)
+    init_repo(root)?;
+    run_git(root, &["add", "Cargo.toml", "src", "tests"])?;
+    git_commit(root, "fixture source")?;
+    Ok(())
 }
 
-/// A committed workspace with two actionable boundary seams.
-fn two_seam_fixture(label: &str) -> Result<PathBuf, String> {
-    let root = unique_temp_workspace(label);
+/// Populate a committed workspace with two actionable boundary seams.
+/// Takes the root instead of minting it so the [`Fixture`] guard owns
+/// the directory before any fallible step can leak it.
+fn populate_two_seam_fixture(root: &Path) -> Result<(), String> {
     std::fs::create_dir_all(root.join("src")).map_err(|e| e.to_string())?;
     std::fs::create_dir_all(root.join("tests")).map_err(|e| e.to_string())?;
     std::fs::write(root.join("Cargo.toml"), FIXTURE_CARGO_TOML).map_err(|e| e.to_string())?;
@@ -112,23 +114,24 @@ fn two_seam_fixture(label: &str) -> Result<PathBuf, String> {
         "use boundary_gap_fixture::{discounted_total, shipping_fee};\n\n#[test]\nfn below_threshold_has_no_discount() {\n    assert_eq!(discounted_total(50, 100), 50);\n}\n\n#[test]\nfn far_above_threshold_discounts() {\n    assert_eq!(discounted_total(10_000, 100), 9_990);\n}\n\n#[test]\nfn small_order_pays_shipping() {\n    assert_eq!(shipping_fee(1, 10), 499);\n}\n\n#[test]\nfn huge_order_ships_free() {\n    assert_eq!(shipping_fee(10_000, 10), 0);\n}\n",
     )
     .map_err(|e| e.to_string())?;
-    init_repo(&root)?;
-    run_git(&root, &["add", "Cargo.toml", "src", "tests"])?;
-    git_commit(&root, "two-seam fixture source")?;
-    Ok(root)
+    init_repo(root)?;
+    run_git(root, &["add", "Cargo.toml", "src", "tests"])?;
+    git_commit(root, "two-seam fixture source")?;
+    Ok(())
 }
 
-/// A committed workspace with no actionable seam: an empty library.
-fn empty_fixture(label: &str) -> Result<PathBuf, String> {
-    let root = unique_temp_workspace(label);
+/// Populate a committed workspace with no actionable seam: an empty
+/// library. Takes the root instead of minting it so the [`Fixture`]
+/// guard owns the directory before any fallible step can leak it.
+fn populate_empty_fixture(root: &Path) -> Result<(), String> {
     std::fs::create_dir_all(root.join("src")).map_err(|e| e.to_string())?;
     std::fs::write(root.join("Cargo.toml"), FIXTURE_CARGO_TOML).map_err(|e| e.to_string())?;
     std::fs::write(root.join("src/lib.rs"), "// no public behavior yet\n")
         .map_err(|e| e.to_string())?;
-    init_repo(&root)?;
-    run_git(&root, &["add", "Cargo.toml", "src"])?;
-    git_commit(&root, "empty fixture source")?;
-    Ok(root)
+    init_repo(root)?;
+    run_git(root, &["add", "Cargo.toml", "src"])?;
+    git_commit(root, "empty fixture source")?;
+    Ok(())
 }
 
 /// A self-cleaning fixture workspace: dropping it removes the directory, so
@@ -139,27 +142,35 @@ struct Fixture {
 
 impl Fixture {
     fn boundary(label: &str) -> Result<Self, String> {
-        Ok(Self {
-            root: boundary_fixture(label)?,
-        })
+        let fixture = Self {
+            root: unique_temp_workspace(label),
+        };
+        populate_boundary_fixture(&fixture.root)?;
+        Ok(fixture)
     }
 
     fn two_seam(label: &str) -> Result<Self, String> {
-        Ok(Self {
-            root: two_seam_fixture(label)?,
-        })
+        let fixture = Self {
+            root: unique_temp_workspace(label),
+        };
+        populate_two_seam_fixture(&fixture.root)?;
+        Ok(fixture)
     }
 
     fn empty(label: &str) -> Result<Self, String> {
-        Ok(Self {
-            root: empty_fixture(label)?,
-        })
+        let fixture = Self {
+            root: unique_temp_workspace(label),
+        };
+        populate_empty_fixture(&fixture.root)?;
+        Ok(fixture)
     }
 
     fn dir(label: &str) -> Result<Self, String> {
-        let root = unique_temp_workspace(label);
-        std::fs::create_dir_all(&root).map_err(|error| format!("cwd: {error}"))?;
-        Ok(Self { root })
+        let fixture = Self {
+            root: unique_temp_workspace(label),
+        };
+        std::fs::create_dir_all(&fixture.root).map_err(|error| format!("cwd: {error}"))?;
+        Ok(fixture)
     }
 }
 
@@ -1114,3 +1125,162 @@ fn facade_argument_errors_stay_usage_errors() -> Result<(), String> {
     );
     Ok(())
 }
+
+/// Rewrite one manifest field in place. Used to stage terminal states
+/// and trust bindings the test drives through the real selector; the
+/// attempt lifecycle that produces them is covered beside the
+/// authority, not here.
+fn patch_manifest(root: &Path, attempt_id: &str, patch: &serde_json::Value) -> Result<(), String> {
+    let path = root
+        .join("target/ripr/repair-attempts")
+        .join(attempt_id)
+        .join("attempt.json");
+    let mut manifest: serde_json::Value = read_manifest(root, attempt_id)?;
+    for (key, value) in patch.as_object().cloned().unwrap_or_default() {
+        manifest[key.as_str()] = value;
+    }
+    let bytes = serde_json::to_vec_pretty(&manifest)
+        .map_err(|error| format!("rewrite manifest: {error}"))?;
+    std::fs::write(&path, &bytes).map_err(|error| format!("write manifest: {error}"))?;
+    Ok(())
+}
+
+/// Review repair (#7032): only a receipt-ready attempt is already
+/// complete. A stale, failed, or incomparable attempt ends without a
+/// receipt, so `continue --attempt` reports the facts and refuses with
+/// exit 3 instead of claiming completion.
+#[test]
+fn continue_on_unsuccessful_terminal_attempts_refuses_without_completion() -> Result<(), String> {
+    let fixture = Fixture::boundary("facade-terminal-refusal")?;
+    let root = &fixture.root;
+    let root_arg = root.to_string_lossy().into_owned();
+    let before = run_ripr(
+        root,
+        &[
+            "agent",
+            "repair",
+            "--root",
+            &root_arg,
+            "--seam-id",
+            FIXTURE_SEAM,
+            "--phase",
+            "before",
+        ],
+    )?;
+    assert_exit(&before, 0, "advanced before phase");
+    let attempt_id = attempt_id_from_before_stderr(&stderr_text(&before))?;
+    let pricing = std::fs::read_to_string(root.join("tests/pricing.rs"))
+        .map_err(|error| format!("read pricing tests: {error}"))?;
+    std::fs::write(
+        root.join("tests/pricing.rs"),
+        format!("{pricing}{FIXTURE_BOUNDARY_TEST}"),
+    )
+    .map_err(|error| format!("write focused edit: {error}"))?;
+    let after = run_ripr(
+        root,
+        &[
+            "agent",
+            "repair",
+            "--root",
+            &root_arg,
+            "--attempt",
+            &attempt_id,
+            "--phase",
+            "after",
+        ],
+    )?;
+    assert_exit(&after, 0, "advanced after phase");
+    for state in ["stale", "failed", "incomparable"] {
+        patch_manifest(root, &attempt_id, &serde_json::json!({ "state": state }))?;
+        let sealed = manifest_bytes(root, &attempt_id)?;
+        let repeated = run_ripr(
+            root,
+            &["continue", "--attempt", &attempt_id, "--root", &root_arg],
+        )?;
+        assert_exit(
+            &repeated,
+            3,
+            &format!("continue on a {state} attempt must refuse"),
+        );
+        let stderr = stderr_text(&repeated);
+        assert!(
+            stderr.contains("without a receipt") && stderr.contains("no completion is claimed"),
+            "a {state} attempt must not claim completion:\n{stderr}"
+        );
+        assert!(
+            stderr.contains(&attempt_id),
+            "the refusal must name the attempt:\n{stderr}"
+        );
+        assert!(
+            !stderr.contains("already complete"),
+            "a {state} attempt is never already complete:\n{stderr}"
+        );
+        assert!(
+            stdout_text(&repeated).contains(&attempt_id),
+            "the facts still print like status:\n{}",
+            stdout_text(&repeated)
+        );
+        assert_eq!(
+            manifest_bytes(root, &attempt_id)?,
+            sealed,
+            "a refused continue must not rewrite terminal evidence"
+        );
+    }
+    assert_eq!(
+        attempt_ids(root),
+        vec![attempt_id.clone()],
+        "no further attempt may be created"
+    );
+    Ok(())
+}
+
+/// Review repair (#7032): the auto selector applies the same
+/// severity-off omission as the before-phase packet producer. With the
+/// sole seam's class configured off, `ripr repair` reports no eligible
+/// seam and starts nothing; restoring the severity starts the repair,
+/// proving the omission caused the refusal.
+#[test]
+fn repair_skips_severity_off_seams_with_named_omission() -> Result<(), String> {
+    let fixture = Fixture::boundary("facade-severity-off")?;
+    let root = &fixture.root;
+    let root_arg = root.to_string_lossy().into_owned();
+    std::fs::write(
+        root.join("ripr.toml"),
+        "[severity.seams]\nweakly_gripped = \"off\"\n",
+    )
+    .map_err(|error| format!("write severity config: {error}"))?;
+    let repair = run_ripr(root, &["repair", "--root", &root_arg])?;
+    assert_exit(&repair, 3, "repair with the sole seam configured off");
+    let stderr = stderr_text(&repair);
+    assert!(
+        stderr.contains("none repair-eligible"),
+        "must report no eligible seam:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("configured off"),
+        "must name the policy omission:\n{stderr}"
+    );
+    assert!(
+        attempt_ids(root).is_empty(),
+        "a refused start must create no attempt"
+    );
+    std::fs::write(
+        root.join("ripr.toml"),
+        "[severity.seams]\nweakly_gripped = \"warning\"\n",
+    )
+    .map_err(|error| format!("restore severity config: {error}"))?;
+    let retry = run_ripr(root, &["repair", "--root", &root_arg])?;
+    assert_exit(&retry, 0, "repair after restoring severity");
+    assert_eq!(
+        attempt_ids(root).len(),
+        1,
+        "restoring the severity must start the repair"
+    );
+    Ok(())
+}
+
+// Trust-bound exclusion is proven beside the selector
+// (`app::task_first::tests::implicit_continue_skips_trust_bound_attempts`),
+// not here: the attempt commitment forbids staging a binding by editing
+// a manifest, and the full trust ceremony belongs to the binding
+// authority's own suite (`python_repair_attempt.rs`).

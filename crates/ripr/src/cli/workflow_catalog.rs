@@ -351,7 +351,7 @@ const WORKFLOWS: &[WorkflowCatalogEntry] = &[
         applicability: "One selected seam has an authorized edit and verify route.",
         prerequisites: &[
             "a repair subject or attempt identity",
-            "the authorized verify route for the after phase (--verify-authorized)",
+            "an authorized verify route for the attempt: advanced `ripr agent repair --attempt ID --phase verify --verify-authorized --verify-authority ID`; the after phase runs through `ripr continue`",
             "the edit itself stays with the user or agent outside ripr",
         ],
         first_command: "cmd:repair",
@@ -408,7 +408,7 @@ const WORKFLOWS: &[WorkflowCatalogEntry] = &[
                 from: "cmd:continue",
                 family: "verify refused",
                 next: WorkflowNext::Limitation(
-                    "the refusal without --verify-authorized and a matching authority is recorded on the attempt",
+                    "a refusal from `ripr continue` is recorded on the attempt; verification authorization belongs to the advanced verify route",
                 ),
             },
             WorkflowResultFamily {
@@ -435,8 +435,8 @@ const WORKFLOWS: &[WorkflowCatalogEntry] = &[
             },
         ],
         stop_conditions: &[
-            "--phase verify refuses without --verify-authorized and a matching authority",
-            "a refused after phase is recorded on the attempt instead of repeating the command",
+            "`ripr agent repair --attempt ID --phase verify` refuses without `--verify-authorized` and `--verify-authority ID`",
+            "a refusal from `ripr continue` is recorded on the attempt instead of repeating the command",
         ],
         advanced_alternatives: &[
             "cmd:agent.repair",

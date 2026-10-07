@@ -14,10 +14,12 @@ use crate::agent::command_specs::repair_start_command_spec;
 use crate::agent::loop_commands::{bound_root, shell_arg};
 use crate::analysis::canonical_gap::canonical_gap_identity;
 use crate::analysis::repair_route::{RepairPacketIneligibility, repair_packet_eligibility};
+use crate::app::agent_brief::AgentBriefPolicy;
 use crate::app::agent_status::{AgentAttemptStatusReport, build_agent_attempt_status};
 use crate::app::repair_attempt::{
     RepairAttemptId, RepairAttemptInventoryEntry, RepairAttemptState,
-    inventory_repair_attempts_from, load_repair_attempt_manifest_from,
+    find_manifest_artifact_by_role, inventory_repair_attempts_from,
+    load_repair_attempt_manifest_from,
 };
 use crate::app::repair_card::command_effect_label;
 use crate::config::load_for_root;
@@ -170,14 +172,29 @@ pub(crate) fn resolve_repair_start(root: &Path) -> Result<RepairStartDecision, S
     }
     let mut eligible_ids = Vec::new();
     let mut reasons: Vec<String> = Vec::new();
+    // The before-phase packet producer refuses policy-omitted seams
+    // (#4332), so the auto selector must apply the same omission: a
+    // severity-off seam is never a start candidate, and the omission is
+    // reported among the no-eligible reasons. The policy only fires for
+    // classes this selector already excludes, or for configured-off
+    // classes, so no eligible seam is lost.
+    let policy = AgentBriefPolicy::from_config(&config);
     for entry in &classified {
         let eligibility = repair_packet_eligibility(entry);
-        if eligibility.eligible() {
+        let omitted = policy.omission_reason_for_class(entry.class);
+        if eligibility.eligible() && omitted.is_none() {
             eligible_ids.push(entry.seam.id().as_str().to_string());
         } else if let Some(reason) = eligibility.ineligibility {
             let label = ineligibility_label(reason).to_string();
             if reasons.len() < 3 && !reasons.contains(&label) {
                 reasons.push(label);
+            }
+        } else if let Some(omission) = omitted {
+            // Eligible by the packet flip but omitted by policy: name
+            // the shared policy's own reason among the no-eligible
+            // reasons so the limitation is diagnosable.
+            if reasons.len() < 3 && !reasons.contains(&omission) {
+                reasons.push(omission);
             }
         }
     }
@@ -272,6 +289,22 @@ fn ambiguous_gap_item(root: &Path, item: &str, matches: &[&str]) -> String {
     message
 }
 
+/// Message when the façade's follow-on card render fails after the
+/// before phase already published `attempt_id`: the start succeeded, so
+/// the message names the attempt and its recovery instead of implying no
+/// attempt exists. The card's own reason is preserved verbatim after the
+/// start facts; a retry must reuse this attempt, not start another.
+pub(crate) fn card_after_publish_message(
+    attempt_id: &str,
+    seam_id: &str,
+    root_display: &str,
+    card_error: &str,
+) -> String {
+    format!(
+        "repair started attempt `{attempt_id}` for seam `{seam_id}`, but the handoff card is unavailable: {card_error}. The attempt awaits its edit; inspect it with `ripr status --attempt {attempt_id} --root {root_display}`, or continue after editing with `ripr continue --attempt {attempt_id} --root {root_display}`"
+    )
+}
+
 /// What `ripr continue` resolved to: run the after path, report an ended
 /// attempt, or ask for a current attempt explicitly.
 pub(crate) enum ContinueSelection {
@@ -284,8 +317,19 @@ pub(crate) enum ContinueSelection {
     AlreadyComplete {
         report: Box<AgentAttemptStatusReport>,
     },
+    /// The selected attempt ended without a receipt (`stale`, `failed`,
+    /// or `incomparable`): report it, but refuse with a typed outcome
+    /// instead of claiming completion. Scripts must not read a failed
+    /// repair as finished.
+    EndedUnsuccessfully {
+        report: Box<AgentAttemptStatusReport>,
+    },
     /// No current nonterminal attempt exists under the selected root.
-    NoneAvailable { prepared: usize, terminal: usize },
+    NoneAvailable {
+        prepared: usize,
+        terminal: usize,
+        trust_bound: usize,
+    },
     /// Several current attempts exist: select one explicitly.
     Ambiguous { candidates: Vec<String> },
 }
@@ -309,18 +353,45 @@ pub(crate) fn select_continue_attempt(
             return Ok(ContinueSelection::Proceed { attempt_id: parsed });
         }
         let report = build_agent_attempt_status(root, root, None, &parsed)?;
-        return Ok(ContinueSelection::AlreadyComplete {
+        // Only a receipt-ready attempt is complete. The other terminal
+        // states ended without success; the CLI reports them and refuses.
+        if matches!(manifest.state, RepairAttemptState::ReadyToFinish) {
+            return Ok(ContinueSelection::AlreadyComplete {
+                report: Box::new(report),
+            });
+        }
+        return Ok(ContinueSelection::EndedUnsuccessfully {
             report: Box::new(report),
         });
     }
     let mut eligible = Vec::new();
     let mut prepared = 0usize;
     let mut terminal = 0usize;
+    let mut trust_bound = 0usize;
     for entry in inventory_repair_attempts_from(root, None)? {
         match entry {
             RepairAttemptInventoryEntry::Valid(manifest) => match manifest.state {
                 RepairAttemptState::AwaitingEdit => {
-                    eligible.push(manifest.repair_attempt_id.as_str().to_string());
+                    // The façade passes no edit authorization, so a
+                    // trust-bound attempt can never continue on this
+                    // route: the after phase would refuse it. Exclude it
+                    // from implicit selection and name the advanced
+                    // route instead. The binding is an immutable
+                    // manifest fact, so this filter cannot go stale
+                    // between selection and the after phase. An
+                    // explicitly named bound attempt still proceeds
+                    // into the shared after selection, whose refusal
+                    // names the missing signals.
+                    if find_manifest_artifact_by_role(
+                        &manifest,
+                        crate::app::python_repair_binding::BINDING_ARTIFACT_ROLE,
+                    )
+                    .is_some()
+                    {
+                        trust_bound += 1;
+                    } else {
+                        eligible.push(manifest.repair_attempt_id.as_str().to_string());
+                    }
                 }
                 RepairAttemptState::Prepared => prepared += 1,
                 RepairAttemptState::ReadyToFinish
@@ -345,7 +416,11 @@ pub(crate) fn select_continue_attempt(
             attempt_id: RepairAttemptId::parse(id)
                 .map_err(|error| format!("continue selection: {error}"))?,
         }),
-        None => Ok(ContinueSelection::NoneAvailable { prepared, terminal }),
+        None => Ok(ContinueSelection::NoneAvailable {
+            prepared,
+            terminal,
+            trust_bound,
+        }),
     }
 }
 
@@ -425,5 +500,124 @@ mod tests {
                 Err("one eligible seam is not a zero outcome".to_string())
             }
         }
+    }
+
+    /// A card failure after publication names the started attempt and its
+    /// recovery: the message must never imply no attempt exists.
+    #[test]
+    fn card_after_publish_message_names_the_started_attempt() -> Result<(), String> {
+        let message = card_after_publish_message("attempt-1", "seam:demo", "ROOT", "card refused");
+        for expected in [
+            "repair started attempt `attempt-1`",
+            "seam `seam:demo`",
+            "card refused",
+            "ripr status --attempt attempt-1 --root ROOT",
+            "ripr continue --attempt attempt-1 --root ROOT",
+        ] {
+            if !message.contains(expected) {
+                return Err(format!("message must carry {expected:?}:\n{message}"));
+            }
+        }
+        for forbidden in ["failed to start", "no attempt"] {
+            if message.contains(forbidden) {
+                return Err(format!(
+                    "message must not imply no attempt exists:\n{message}"
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// Implicit continue skips trust-bound awaiting attempts: the façade
+    /// passes no edit authorization, so they can never continue on this
+    /// route. The attempts are minted by the attempt authority itself,
+    /// so the store and its commitments are exactly what production
+    /// reads; only the selector's exclusion is under test.
+    #[test]
+    fn implicit_continue_skips_trust_bound_attempts() -> Result<(), String> {
+        use crate::app::python_repair_binding::BINDING_ARTIFACT_ROLE;
+        use crate::app::repair_attempt::{
+            BeforeArtifactSource, BeginRepairAttemptOptions, begin_repair_attempt_with,
+        };
+        use crate::testing::fixture_git::fixture_git_ok as run_git;
+
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|error| format!("test clock failed: {error}"))?
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "ripr-task-first-trust-{}-{stamp}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&root)
+            .map_err(|error| format!("create {} failed: {error}", root.display()))?;
+        let root = root
+            .canonicalize()
+            .map_err(|error| format!("canonicalize {} failed: {error}", root.display()))?;
+        run_git(&root, &["init"])?;
+        run_git(
+            &root,
+            &["config", "user.email", "ripr-test@example.invalid"],
+        )?;
+        run_git(&root, &["config", "user.name", "RIPR Test"])?;
+        std::fs::write(root.join("README.md"), "# test\n")
+            .map_err(|error| format!("write README failed: {error}"))?;
+        run_git(&root, &["add", "."])?;
+        run_git(&root, &["commit", "--no-gpg-sign", "-m", "initial"])?;
+
+        let before = root.join("before.json");
+        std::fs::write(&before, "{}").map_err(|error| format!("write before failed: {error}"))?;
+        let binding = root.join("binding.json");
+        std::fs::write(&binding, "{}").map_err(|error| format!("write binding failed: {error}"))?;
+        let begin = |seam_id: &str, bound: bool| {
+            let mut sources = vec![BeforeArtifactSource {
+                role: "before_snapshot",
+                path: &before,
+            }];
+            if bound {
+                sources.push(BeforeArtifactSource {
+                    role: BINDING_ARTIFACT_ROLE,
+                    path: &binding,
+                });
+            }
+            begin_repair_attempt_with(BeginRepairAttemptOptions {
+                root: &root,
+                root_argument: &root,
+                seam_id,
+                sources: &sources,
+                expected_repository_head: None,
+                next_command_suffix: None,
+                store: None,
+            })
+        };
+
+        begin("seam:bound", true)?;
+        match select_continue_attempt(&root, None)? {
+            ContinueSelection::NoneAvailable {
+                prepared,
+                terminal,
+                trust_bound,
+            } => {
+                if (prepared, terminal, trust_bound) != (0, 0, 1) {
+                    return Err(format!(
+                        "a bound-only store must report one trust-bound attempt, got prepared={prepared} terminal={terminal} trust_bound={trust_bound}"
+                    ));
+                }
+            }
+            _ => {
+                return Err("a lone trust-bound attempt must not proceed implicitly".to_string());
+            }
+        }
+        let unbound = begin("seam:plain", false)?;
+        match select_continue_attempt(&root, None)? {
+            ContinueSelection::Proceed { attempt_id }
+                if attempt_id.as_str() == unbound.manifest.repair_attempt_id.as_str() => {}
+            _ => {
+                return Err("implicit continue must select the lone unbound attempt".to_string());
+            }
+        }
+        std::fs::remove_dir_all(&root)
+            .map_err(|error| format!("remove {} failed: {error}", root.display()))?;
+        Ok(())
     }
 }

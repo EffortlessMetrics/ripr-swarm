@@ -1647,7 +1647,7 @@ const METADATA: &[CommandMetadata] = &[
         effects: ANALYSIS_RUNNER,
         primary_inputs: &[
             "--seam-id or --attempt identity",
-            "the authorized verify route for the after phase (--verify-authorized)",
+            "a verify authorization pair for the verify phase (--verify-authorized and --verify-authority ID); the after phase runs through `ripr continue`",
         ],
         outputs: CommandOutputs {
             default: Some("target/ripr/workflow/ (before and after snapshots)"),
@@ -1658,7 +1658,7 @@ const METADATA: &[CommandMetadata] = &[
         example: "ripr agent repair --root . --seam-id ID --phase before",
         next_routes: &["agent status", "receipt write"],
         stop_states: &[
-            "--phase verify refuses without --verify-authorized and a matching authority",
+            "`ripr agent repair --attempt ID --phase verify` refuses without `--verify-authorized` and `--verify-authority ID`",
         ],
         exit: EXIT_TYPED_REFUSAL_JSON_OPTIONAL_STDOUT,
         limitations: "before and after phases record static snapshots and the verify phase composes `ripr agent verify` snapshot comparison; ripr never compiles or runs tests itself (test execution stays outside ripr). No network, no mutation, no source edits by ripr itself.",

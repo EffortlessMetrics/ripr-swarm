@@ -150,9 +150,11 @@ fn run_command(mut args: Vec<String>) -> Result<(), CommandError> {
 /// shared workflow, and persist the attempt. Shared by the advanced
 /// `agent repair --phase before` spelling and the task-first `ripr repair`
 /// façade (#6305), so both produce the same attempt from the same subject.
+/// Returns the published attempt id so the façade can name the started
+/// attempt when its follow-on card render fails (#7032).
 pub(in crate::cli) fn drive_before_phase(
     options: agent::AgentRepairOptions,
-) -> Result<(), CommandError> {
+) -> Result<String, CommandError> {
     let _before_lock = lock_before_repair_attempt(&options.root)?;
     let seam_id = options
         .seam_id
@@ -162,7 +164,7 @@ pub(in crate::cli) fn drive_before_phase(
         crate::app::repair_attempt::BeforeRepairAttemptIdentity::prepare(&options.root, seam_id)?;
     commands::run_before_repair_with_identity(options.clone(), &identity)?;
     persist_before_repair_attempt(&options, &identity)?;
-    Ok(())
+    Ok(identity.attempt_id().to_string())
 }
 
 /// Serialize before-phase execution and attempt publication per repository.
