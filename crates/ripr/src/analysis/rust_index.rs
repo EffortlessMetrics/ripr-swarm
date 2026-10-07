@@ -356,9 +356,10 @@ fn mark_wrappers(
 /// (`Error::Bad(Error::Inner(1))`) builds its own error around the inner one
 /// and stays, as does a function on a type (`io::Error::new(kind, ..)`,
 /// `Error::wrap(..)`), unless the inner shape is an `Err(..)` that the callee
-/// only wraps (`Poll::Ready(Err(X))`). A callee path naming an error type
-/// (`Error::Outer(Err(..))`, `MyErr::Wrap(Err(..))`) builds an error even
-/// around an `Err(..)` and stays. A prefix with a quote or a `/` may
+/// only wraps (`Poll::Ready(Err(X))`). Only known pure wrappers count:
+/// any other capitalised callee (`Error::Outer(Err(..))`,
+/// `Self::Outer(Err(..))`, `Outer(Err(..))`) may build an error around the
+/// `Err(..)` and stays. A prefix with a quote or a `/` may
 /// hide a delimiter in a literal or comment, so it keeps both shapes. An
 /// `Err(..)` inside a macro argument before the inner shape has no shape of
 /// its own, so `wrap(vec![Err(A)], Err(B))` keeps only `Err(B)`.
@@ -384,8 +385,7 @@ fn wraps_argument(prefix: &str, inner_is_err: bool) -> bool {
     let builds_error = path
         .split("::")
         .any(|segment| segment.starts_with(char::is_uppercase));
-    let names_error = path.split("::").any(|segment| segment.contains("Err"));
-    if !is_path || name == "Err" || (builds_error && (!inner_is_err || names_error)) {
+    if !is_path || name == "Err" || (builds_error && !(inner_is_err && pure_wrapper(path))) {
         return false;
     }
     let mut depth = 0_usize;
@@ -404,6 +404,24 @@ fn wraps_argument(prefix: &str, inner_is_err: bool) -> bool {
     }
     let before = arguments.trim_end();
     depth == 0 && (before.is_empty() || before.ends_with(','))
+}
+
+/// A capitalised callee that only carries its argument: `Ok`, `Some`,
+/// `Poll::Ready`, `Box::new` and the like.
+fn pure_wrapper(path: &str) -> bool {
+    const WRAPPERS: [&str; 10] = [
+        "Ok",
+        "Some",
+        "Ready",
+        "Poll::Ready",
+        "std::task::Poll::Ready",
+        "core::task::Poll::Ready",
+        "Box::new",
+        "Rc::new",
+        "Arc::new",
+        "Cow::Owned",
+    ];
+    WRAPPERS.contains(&path)
 }
 
 /// `text` starts with an `Err(` or `Err::<T, E>(` call.
@@ -453,11 +471,26 @@ fn mark_returns(
     }
 }
 
-/// A method chain whose text can replace the error it is called on.
+/// A method chain whose text can replace the error it is called on: a
+/// `map_err`, `or` or `or_else` call (turbofish and spacing allowed), a new
+/// `Err(..)`, or an error macro. `.context(..)` and other chains keep the
+/// constructor's error.
 fn converts_error(chain: &str) -> bool {
-    ["Err", "map_err", ".or(", ".or_else(", "bail!", "anyhow!"]
-        .iter()
-        .any(|marker| chain.contains(marker))
+    let calls_method = |name: &str| {
+        chain.match_indices(name).any(|(at, _)| {
+            let before = chain.get(..at).unwrap_or_default().trim_end();
+            let after = chain.get(at + name.len()..).unwrap_or_default().trim_start();
+            before.ends_with('.') && (after.starts_with('(') || after.starts_with("::"))
+        })
+    };
+    calls_method("map_err")
+        || calls_method("or")
+        || calls_method("or_else")
+        || chain
+            .match_indices("Err")
+            .any(|(at, _)| chain.get(at..).is_some_and(err_call_opening_at_start))
+        || chain.contains("bail!")
+        || chain.contains("anyhow!")
 }
 
 /// Marks each payload in `inners` that some `Err(..)` in `outers` closes

@@ -464,6 +464,10 @@ fn inventory_keeps_wrappers_that_add_error_behavior() -> Result<(), String> {
         "    if s == \"k\" { return Err(Error::L).map_err(|_| Error::B); }\n",
         "    if s == \"l\" { let v = Error::Outer(Err(Error::C)); }\n",
         "    if s == \"m\" { return Ok(wrap(Err(Error::M)).map_err(convert)); }\n",
+        "    if s == \"n\" { return Err(Error::O).or_else::<Error, _>(recover); }\n",
+        "    if s == \"o\" { let v = Self::Outer(Err(Error::P)); }\n",
+        "    if s == \"p\" { return Err(Error::Q).context(Error::Ctx); }\n",
+        "    if s == \"q\" { return Box::new(Err(Error::R)); }\n",
         "    wrap(Err(Error::Tail)).map_err(|_| Error::Other)\n",
         "}\n",
     );
@@ -513,9 +517,18 @@ fn inventory_keeps_wrappers_that_add_error_behavior() -> Result<(), String> {
             // `Ok(..)` holds a converted error, not the bare call.
             (13, "Ok(wrap(Err(Error::M)).map_err(convert))"),
             (13, "Err(Error::M)"),
+            // A turbofish `or_else` replaces the error too.
+            (14, "return Err(Error::O).or_else::<Error, _>(recover)"),
+            (14, "Err(Error::O)"),
+            // Only known pure wrappers drop around `Err(..)`.
+            (15, "Self::Outer(Err(Error::P))"),
+            (15, "Err(Error::P)"),
+            // `.context(..)` keeps the constructor's error.
+            (16, "Err(Error::Q)"),
+            (17, "Err(Error::R)"),
             // The tail chain adds a conversion; only the call goes.
-            (14, "wrap(Err(Error::Tail)).map_err(|_| Error::Other)"),
-            (14, "Err(Error::Tail)"),
+            (18, "wrap(Err(Error::Tail)).map_err(|_| Error::Other)"),
+            (18, "Err(Error::Tail)"),
         ],
         "{seams:?}"
     );
