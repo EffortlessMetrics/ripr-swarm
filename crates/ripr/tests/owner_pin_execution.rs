@@ -2190,6 +2190,70 @@ fn an_extern_crate_named_thread_refuses_spawned_thread_credit() -> Result<(), St
     Ok(())
 }
 
+/// A `use super::*;` at the top of an out-of-line test module globs a
+/// parent in another file, which may declare its own `std` (#7022 review).
+/// The fake `std::thread::spawn` never runs the closure, so a wrong owner
+/// passes; ripr refuses the credit.
+#[test]
+fn an_out_of_line_super_glob_refuses_spawned_thread_credit() -> Result<(), String> {
+    let production = "pub fn weight(input: u32) -> u32 {\n    3 * input\n}\n";
+    let diff = "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,3 +1,3 @@\n pub fn weight(input: u32) -> u32 {\n-    input * 3\n+    3 * input\n }\n";
+    let parent = "pub mod std {\n    pub mod thread {\n        pub struct Handle;\n        impl Handle {\n            pub fn join(self) -> Result<(), ()> {\n                Ok(())\n            }\n        }\n        pub fn spawn<F: FnOnce()>(_f: F) -> Handle {\n            Handle\n        }\n    }\n}\n#[cfg(test)]\nmod tests;\n";
+    let tests = "use super::*;\n#[test]\nfn weight_in_worker() {\n    std::thread::spawn(|| assert_eq!(weight(4), 12)).join().unwrap();\n}\n";
+    let scratch = Scratch::create()?;
+    let root = scratch.0.join("ws");
+    std::fs::create_dir_all(root.join("src")).map_err(|error| error.to_string())?;
+    let write =
+        |path: PathBuf, text: &str| std::fs::write(path, text).map_err(|error| error.to_string());
+    write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"thread_glob_control\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\n[workspace]\n",
+    )?;
+    write(root.join("src/lib.rs"), &format!("{production}{parent}"))?;
+    write(root.join("src/tests.rs"), tests)?;
+    write(root.join("diff.patch"), diff)?;
+    let report = check_workspace(CheckInput {
+        root: root.clone(),
+        diff_file: Some(root.join("diff.patch")),
+        mode: Mode::Fast,
+        format: OutputFormat::Json,
+        ..CheckInput::default()
+    })?;
+    let finding = report
+        .findings
+        .iter()
+        .find(|finding| finding.probe.family == ProbeFamily::ReturnValue)
+        .ok_or("no return-value finding")?;
+    assert_ne!(finding.class, ExposureClass::Exposed);
+    // The mutant passes: the glob's `std` shadows the standard library.
+    write(
+        root.join("src/lib.rs"),
+        &format!("{}{parent}", production.replace("3 * input", "input * 2")),
+    )?;
+    let cargo = PathBuf::from(std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into()));
+    let manifest_path = root.join("Cargo.toml");
+    let target_dir = scratch.0.join("target");
+    let result = run(
+        &cargo,
+        &[
+            "test".as_ref(),
+            "--offline".as_ref(),
+            "--quiet".as_ref(),
+            "--manifest-path".as_ref(),
+            manifest_path.as_os_str(),
+            "--target-dir".as_ref(),
+            target_dir.as_os_str(),
+        ],
+    )?;
+    let stdout = String::from_utf8_lossy(&result.stdout);
+    assert!(
+        result.status.success() && stdout.contains("1 passed; 0 failed;"),
+        "the mutant must survive under the parent's fake std: {stdout}; {}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    Ok(())
+}
+
 /// #6966: an assertion inside a spawned thread earns exact credit only where
 /// the thread's panic reaches the test thread. Each row runs the same test
 /// against the rewrite and an `input * 2` mutant; `kills` is the runtime

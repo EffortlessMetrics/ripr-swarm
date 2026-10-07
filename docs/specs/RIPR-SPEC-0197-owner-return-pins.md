@@ -117,12 +117,15 @@ rule only for an assertion whose context was admitted.
    resolved, so the test's file refuses when it holds an item, alias or
    binding named `std` or `thread`; an `extern crate thread;`; a `use` ending in `std` or `thread`
    other than exactly `use std::thread;`, or a `self` in a `use` list under
-   a `std` or `thread` prefix; a glob `use` other than `use super::*;`;
+   a `std` or `thread` prefix; a glob `use` other than `use super::*;`
+   inside an inline module (at the top of an out-of-line module file it
+   globs a parent in another file);
    `use`, `mod` or `extern` inside macro tokens; `include!`; or an item- or
    statement-position macro other than a std statement macro (`println!`,
    `assert_eq!` and the like). A `thread::` path also needs
-   `use std::thread;` directly in the test's own module. Residuals: a `std`
-   or `thread` module that `use super::*;` brings in from another file, an
+   `use std::thread;` directly in the test's own module. Residuals: a bare
+   scoped spawn followed by a diverging call in the scope body
+   (`std::process::exit`), an
    attribute or derive macro that emits such an import, a cfg'd-off
    `use std::thread;` beside an extern crate renamed `thread`, a `#![no_std]`
    root aliasing `std` in another file, and a `#[macro_use]` macro from

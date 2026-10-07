@@ -1395,7 +1395,15 @@ fn std_thread_item(path: &ast::PathExpr, function: &ast::Fn) -> Option<String> {
                 .collect::<String>()
         });
         if tree.star_token().is_some() {
-            if path_text.as_deref() != Some("super") {
+            // `use super::*;` is read only inside an inline module, where
+            // the parent's items sit in this file and the scan sees them. At
+            // the top of an out-of-line module file it globs a parent in
+            // another file, which may declare its own `std` (#7022 review).
+            let inline = tree
+                .syntax()
+                .ancestors()
+                .any(|ancestor| ast::Module::can_cast(ancestor.kind()));
+            if path_text.as_deref() != Some("super") || !inline {
                 return None;
             }
             continue;
