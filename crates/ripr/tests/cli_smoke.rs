@@ -19390,8 +19390,11 @@ fn check_committed_rejects_conflicting_diff_sources() {
     // on stdout (#6834), with the prose kept on stderr.
     let json_output = run_ripr(&["check", "--committed", "--worktree", "--json"]);
     let json_stderr = String::from_utf8_lossy(&json_output.stderr);
-    let refusal: serde_json::Value = serde_json::from_slice(&json_output.stdout)
-        .expect("a --committed conflict with --json must print a refusal envelope on stdout");
+    // A non-envelope stdout parses to Null, which fails the `findings`
+    // assertion below with the raw bytes attached (no `expect`: the
+    // no-panic-family policy).
+    let refusal: serde_json::Value =
+        serde_json::from_slice(&json_output.stdout).unwrap_or(serde_json::Value::Null);
     assert!(
         !json_output.status.success()
             && refusal.get("findings").is_some()
