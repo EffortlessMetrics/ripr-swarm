@@ -60,7 +60,7 @@ use crate::analysis::syntax::{
 };
 use crate::domain::{Probe, ProbeFamily};
 use ra_ap_syntax::{
-    AstNode,
+    AstNode, SyntaxNode, TextRange,
     ast::{self, HasModuleItem, HasName},
 };
 use rayon::prelude::*;
@@ -73,6 +73,11 @@ pub(in crate::analysis) struct OwnerReturnPin {
     name: String,
     call: PinCall,
     path: ReturnPathGate,
+    /// Where the owner `fn` starts, for the #6957 exemption: a same-name
+    /// type declaration in the owner's own enclosing module is the
+    /// production declaration, not a test-local shadow.
+    owner_file: PathBuf,
+    owner_start_line: usize,
     /// The owner declares `-> bool`, so `assert!(owner(..))` pins its whole
     /// return value to `true` and `assert!(!owner(..))` to `false`.
     returns_bool: bool,
@@ -1107,6 +1112,8 @@ impl OwnerReturnPin {
             call,
             path,
             returns_bool,
+            owner_file: owner.file.clone(),
+            owner_start_line: owner.start_line,
             trait_scope_by_file: RefCell::default(),
         })
     }
@@ -1186,6 +1193,8 @@ impl OwnerReturnPin {
             },
             path: ReturnPathGate::CloneReceiver,
             returns_bool: false,
+            owner_file: owner.file.clone(),
+            owner_start_line: owner.start_line,
             trait_scope_by_file: RefCell::default(),
         })
     }
@@ -1284,6 +1293,15 @@ impl OwnerReturnPin {
             .files()
             .get(&test.file)
             .map(|facts| facts.data().source.as_ref());
+        // #6957: the exemption resolves the owner's enclosing module in the
+        // test file's own parse, so only a same-file owner supplies one; a
+        // cross-file owner keeps the fail-closed shadow check.
+        let owner_scope = OwnerScope::same_file(
+            self.name.as_str(),
+            self.owner_start_line,
+            &self.owner_file,
+            &test.file,
+        );
         let masked_body = mask_comments_and_strings(&test.body);
         match (&self.call, call) {
             (PinCall::Bare, CallShape::Bare) => {
@@ -1304,7 +1322,14 @@ impl OwnerReturnPin {
                         if bound_by_macro(&masked_body, receiver) {
                             return false;
                         }
-                        test_receiver_type(test, receiver, test_source, index, imports_foreign)
+                        test_receiver_type(
+                            test,
+                            receiver,
+                            test_source,
+                            index,
+                            imports_foreign,
+                            owner_scope,
+                        )
                     }
                     // An inline constructor types the receiver the same way
                     // a `let receiver = Type::constructor(..);` binding does.
@@ -1314,6 +1339,7 @@ impl OwnerReturnPin {
                         test_source,
                         index,
                         imports_foreign,
+                        owner_scope,
                     ),
                     CallShape::Bare => None,
                 };
@@ -2840,10 +2866,12 @@ fn test_receiver_type(
     test_source: Option<&str>,
     index: &RustIndex,
     imports_foreign: ForeignImport<'_>,
+    owner: Option<OwnerScope<'_>>,
 ) -> Option<ReceiverType> {
     let mut bound: Option<ReceiverType> = None;
     for binding in receiver_let_bindings(test, receiver)? {
-        let receiver_type = binding_type(binding, test, test_source, index, imports_foreign)?;
+        let receiver_type =
+            binding_type(binding, test, test_source, index, imports_foreign, owner)?;
         match &bound {
             None => bound = Some(receiver_type),
             Some(existing) if *existing == receiver_type => {}
@@ -3230,6 +3258,7 @@ fn binding_type(
     test_source: Option<&str>,
     index: &RustIndex,
     imports_foreign: ForeignImport<'_>,
+    owner: Option<OwnerScope<'_>>,
 ) -> Option<ReceiverType> {
     let binding = binding.trim();
     let (annotation, initializer) = if let Some(rest) = binding.strip_prefix(':') {
@@ -3239,7 +3268,7 @@ fn binding_type(
         (None, binding.strip_prefix('=')?.trim())
     };
     if let Some(annotation) = annotation {
-        return named_or_slice(annotation, test, test_source, imports_foreign);
+        return named_or_slice(annotation, test, test_source, imports_foreign, owner);
     }
     if is_byte_slice_expression(initializer) {
         return Some(ReceiverType::ByteSlice);
@@ -3273,7 +3302,7 @@ fn binding_type(
     if !constructor {
         return None;
     }
-    named_or_slice(type_name, test, test_source, imports_foreign)
+    named_or_slice(type_name, test, test_source, imports_foreign, owner)
 }
 
 /// The initializer without a trailing `?`, `.unwrap()` or `.expect(..)`,
@@ -3359,6 +3388,7 @@ fn named_or_slice(
     test: &TestSummary,
     test_source: Option<&str>,
     imports_foreign: ForeignImport<'_>,
+    owner: Option<OwnerScope<'_>>,
 ) -> Option<ReceiverType> {
     if is_byte_slice_type(type_text) {
         return Some(ReceiverType::ByteSlice);
@@ -3374,11 +3404,35 @@ fn named_or_slice(
     if imports_foreign(&test.file, base)
         || file_renames_to(source, base)
         || file_aliases_type(source, base)
-        || test_module_shadows_type(test, source, base)
+        || test_module_shadows_type(test, source, base, owner)
     {
         return None;
     }
     Some(ReceiverType::Named(base.to_string()))
+}
+
+/// A same-file owner, for the #6957 shadow exemption: the owner's own
+/// enclosing module holds the production declaration, so it is not a
+/// test-local shadow. Only the test file's own parse resolves it, so a
+/// cross-file owner supplies no scope and keeps the fail-closed check.
+#[derive(Clone, Copy)]
+pub(in crate::analysis) struct OwnerScope<'a> {
+    name: &'a str,
+    start_line: usize,
+}
+
+impl<'a> OwnerScope<'a> {
+    /// A scope for a same-file owner, or `None` when the owner lives in
+    /// another file and keeps the fail-closed shadow check. Related-test
+    /// reach reuses the #6957 exemption through this constructor (#6951).
+    pub(in crate::analysis) fn same_file(
+        name: &'a str,
+        start_line: usize,
+        owner_file: &Path,
+        test_file: &Path,
+    ) -> Option<Self> {
+        (test_file == owner_file).then_some(Self { name, start_line })
+    }
 }
 
 /// Whether the test's own inline-module scope declares the receiver type
@@ -3388,10 +3442,14 @@ fn named_or_slice(
 /// changed owner, and the pin is refused. Only direct items of enclosing
 /// inline modules count: a same-name declaration in a sibling module or at
 /// the file root (the production declaration itself, for same-file tests)
-/// does not shadow the test's view. An explicit import naming the type in
-/// an inner scope would disambiguate, but this stays lexical and fails
-/// closed. A file that textually declares the name nowhere needs no parse;
-/// one that fails to parse fails closed.
+/// does not shadow the test's view. Nor does one in the owner's own
+/// enclosing module (#6957): when the production declaration sits in an
+/// enclosing non-root module, that module is the owner's scope, not a
+/// shadow. A same-name declaration in any other enclosing module — the
+/// test's own `mod tests` included — still refuses. An explicit import
+/// naming the type in an inner scope would disambiguate, but this stays
+/// lexical and fails closed. A file that textually declares the name
+/// nowhere needs no parse; one that fails to parse fails closed.
 ///
 /// Shared with related-test classification (#6951): a shadowed receiver
 /// type also refuses `direct_owner_call` reach credit, for the same
@@ -3400,6 +3458,7 @@ pub(in crate::analysis) fn test_module_shadows_type(
     test: &TestSummary,
     source: &str,
     base: &str,
+    owner: Option<OwnerScope<'_>>,
 ) -> bool {
     let masked = mask_comments_and_strings(source);
     // `r#Window` denotes `Window`: a raw-identifier declaration shadows too.
@@ -3416,6 +3475,12 @@ pub(in crate::analysis) fn test_module_shadows_type(
     // 1-based file lines, matching `TestSummary`.
     let line_of = |offset: u32| source[..offset as usize].matches('\n').count() + 1;
     let root = parse.tree().syntax().clone();
+    let owner_module = owner.and_then(|owner| owner_enclosing_module(&root, source, owner));
+    // The owner's own module is the production declaration's scope, never a
+    // shadow; every other enclosing module still counts.
+    let counts = |module: &ast::Module| {
+        owner_module.is_none_or(|exempt| module.syntax().text_range() != exempt)
+    };
     // Exact scope first: the test fn's own ancestor modules. Line spans can
     // coincide for same-line siblings (`mod s { struct W; } #[test] fn t()
     // {...}`), where byte-exact ancestry refuses nothing, so ancestry
@@ -3442,6 +3507,7 @@ pub(in crate::analysis) fn test_module_shadows_type(
             func.syntax()
                 .ancestors()
                 .filter_map(ast::Module::cast)
+                .filter(|module| counts(module))
                 .any(|module| {
                     module.item_list().is_some_and(|items| {
                         items
@@ -3460,10 +3526,52 @@ pub(in crate::analysis) fn test_module_shadows_type(
             let end: u32 = range.end().into();
             line_of(start) <= test.start_line
                 && test.end_line <= line_of(end)
+                && counts(&module)
                 && items
                     .items()
                     .any(|item| module_item_names_type(&item, base))
         })
+}
+
+/// The text range of the inline module directly enclosing the owner
+/// (#6957): for inline code the owner's own nearest enclosing `mod`
+/// is the `impl`'s module, and a same-name type declared there is the
+/// production declaration, not a shadow. `None` keeps the fail-closed
+/// shadow check: a root-level owner has no enclosing module, and an owner
+/// whose `fn` node does not resolve exactly once (macro-shaped, out-of-line
+/// or ambiguous) resolves to no scope. Byte-exact ancestry, not line spans,
+/// decides, so a same-line sibling module is never the owner's scope.
+fn owner_enclosing_module(
+    root: &SyntaxNode,
+    source: &str,
+    owner: OwnerScope<'_>,
+) -> Option<TextRange> {
+    // 1-based file lines, matching `FunctionSummary`.
+    let line_of = |offset: u32| source[..offset as usize].matches('\n').count() + 1;
+    let name = owner.name.strip_prefix("r#").unwrap_or(owner.name);
+    let mut owners = root.descendants().filter_map(ast::Fn::cast).filter(|func| {
+        func.name().is_some_and(|func_name| {
+            let text = func_name.text().to_string();
+            text.strip_prefix("r#").unwrap_or(&text) == name
+        }) && {
+            let range = func.syntax().text_range();
+            let start: u32 = range.start().into();
+            let end: u32 = range.end().into();
+            line_of(start) <= owner.start_line && owner.start_line <= line_of(end)
+        }
+    });
+    let found = owners.next()?;
+    // A nested same-name `fn` sharing the owner's start line resolves to no
+    // scope rather than the wrong module.
+    if owners.next().is_some() {
+        return None;
+    }
+    found
+        .syntax()
+        .ancestors()
+        .filter_map(ast::Module::cast)
+        .next()
+        .map(|module| module.syntax().text_range())
 }
 
 /// Whether a direct module item declares the type name `base` (`r#Window`

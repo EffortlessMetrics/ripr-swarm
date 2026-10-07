@@ -2024,6 +2024,81 @@ fn ident_ending_at(text: &str, end_exclusive: usize) -> Option<&str> {
     (start < end).then(|| &text[start..end])
 }
 
+/// The primitive type a suffixed numeric literal names (`5f64`, `0xffu8`,
+/// `1_000usize`, `2e3f32`), or `None` for anything else. An unsuffixed
+/// literal gets its type from inference, which ripr does not run, so it stays
+/// unresolved and fails closed. In hex, octal and binary only an integer
+/// suffix counts: `0x1f32` is the integer `0x1f32`, not an `f32`.
+fn suffixed_numeric_literal_type(literal: &str) -> Option<&str> {
+    const INTEGER_SUFFIXES: [&str; 12] = [
+        "i128", "isize", "i16", "i32", "i64", "i8", "u128", "usize", "u16", "u32", "u64", "u8",
+    ];
+    const FLOAT_SUFFIXES: [&str; 2] = ["f32", "f64"];
+    if !literal.as_bytes().first().is_some_and(u8::is_ascii_digit) {
+        return None;
+    }
+    let radix_digits = |body: &str| -> Option<fn(u8) -> bool> {
+        let digits: fn(u8) -> bool = if body.starts_with("0x") {
+            |b| b.is_ascii_hexdigit()
+        } else if body.starts_with("0o") {
+            |b| (b'0'..=b'7').contains(&b)
+        } else if body.starts_with("0b") {
+            |b| b == b'0' || b == b'1'
+        } else {
+            return None;
+        };
+        Some(digits)
+    };
+    for suffix in INTEGER_SUFFIXES {
+        let Some(body) = literal.strip_suffix(suffix) else {
+            continue;
+        };
+        let valid = match radix_digits(body) {
+            Some(digits) => {
+                let rest = &body.as_bytes()[2..];
+                rest.iter().any(|&b| b != b'_') && rest.iter().all(|&b| b == b'_' || digits(b))
+            }
+            None => body.bytes().all(|b| b == b'_' || b.is_ascii_digit()),
+        };
+        if valid {
+            return Some(suffix);
+        }
+    }
+    for suffix in FLOAT_SUFFIXES {
+        let Some(body) = literal.strip_suffix(suffix) else {
+            continue;
+        };
+        if radix_digits(body).is_none() && is_decimal_float_body(body) {
+            return Some(suffix);
+        }
+    }
+    None
+}
+
+/// `1`, `1.5`, `1_0.2_5`, `2e3`, `1.5E-3`: a decimal literal body that a float
+/// suffix may follow. A trailing `.` (`1.f64`) is a field access, not a
+/// literal, so it is refused.
+fn is_decimal_float_body(body: &str) -> bool {
+    let digits = |part: &str| {
+        part.as_bytes().first().is_some_and(u8::is_ascii_digit)
+            && part.bytes().all(|b| b == b'_' || b.is_ascii_digit())
+    };
+    let (mantissa, exponent) = match body.find(['e', 'E']) {
+        Some(at) => (&body[..at], Some(&body[at + 1..])),
+        None => (body, None),
+    };
+    let mantissa_ok = match mantissa.split_once('.') {
+        Some((whole, fraction)) => digits(whole) && digits(fraction),
+        None => digits(mantissa),
+    };
+    let exponent_ok = exponent.is_none_or(|exp| {
+        let exp = exp.strip_prefix(['+', '-']).unwrap_or(exp);
+        exp.bytes().any(|b| b.is_ascii_digit())
+            && exp.bytes().all(|b| b == b'_' || b.is_ascii_digit())
+    });
+    mantissa_ok && exponent_ok
+}
+
 fn skip_ws_if_paren(text: &str, after_name: usize) -> bool {
     let bytes = text.as_bytes();
     let mut i = after_name;
@@ -2281,6 +2356,11 @@ fn text_resolves_method_to_type(
             } else if at > 0 && bytes[at - 1] == b'.' {
                 if let Some(recv) = ident_ending_at(text, at - 1) {
                     if recv == impl_type
+                        // `1.5f64.m()` reads only the fragment after the `.`
+                        // (`5f64`), which still carries the literal's suffix.
+                        // A raw call line is unmasked, so a literal quoted in
+                        // a string or comment there must not type a receiver.
+                        || (whole_body && suffixed_numeric_literal_type(recv) == Some(impl_type))
                         || let_binding_mentions_type(body_for_lets, recv, impl_type)
                     {
                         return true;
@@ -2372,6 +2452,11 @@ fn bracketed_expr_has_type(
             let inner = text[open + 1..close].trim();
             let inner = inner.strip_prefix('&').map_or(inner, str::trim_start);
             let inner = inner.strip_prefix("mut ").map_or(inner, str::trim_start);
+            // `(-0.0f64).m()` / `(&3u8).m()`: a suffixed literal names its type.
+            let literal = inner.strip_prefix('-').map_or(inner, str::trim_start);
+            if let Some(ty) = suffixed_numeric_literal_type(literal) {
+                return ty == impl_type;
+            }
             if !inner.is_empty() && inner.bytes().all(is_ident_byte) {
                 return inner == impl_type
                     || let_binding_mentions_type(body_for_lets, inner, impl_type);
@@ -2526,10 +2611,19 @@ fn owner_call_relation_reason(
     // the production type — the same entity-identity refusal as the #6905
     // owner pin. A shadowed receiver keeps a name-only relation instead of
     // direct production reach, in both the unique-name and ambiguous-name
-    // branches. No source (or no shadow) preserves existing credit.
-    if test_source
-        .is_some_and(|source| super::owner_pin::test_module_shadows_type(test, source, &impl_type))
-    {
+    // branches. No source (or no shadow) preserves existing credit. The
+    // owner's own enclosing module is not a shadow (#6957), so a
+    // same-file owner supplies its scope; a cross-file owner keeps the
+    // fail-closed check.
+    let owner_scope = super::owner_pin::OwnerScope::same_file(
+        owner.name.as_str(),
+        owner.start_line,
+        &owner.file,
+        &test.file,
+    );
+    if test_source.is_some_and(|source| {
+        super::owner_pin::test_module_shadows_type(test, source, &impl_type, owner_scope)
+    }) {
         return RelationReason::WeakTokenSubstring;
     }
     if indexed_same_name_count <= 1 {
@@ -5688,6 +5782,94 @@ let r = try_parse_summary(\"x\");",
                 method_call_resolves_to_impl_type(&summary, "build", "Site"),
                 expected,
                 "{body}"
+            );
+        }
+    }
+
+    // (#6732) A suffixed numeric literal names its primitive type, so
+    // `(-0.0f64).render()` resolves to `impl Render for f64` exactly as
+    // `let z: f64 = -0.0; z.render()` does. Unsuffixed literals, hex digits
+    // that only look like a float suffix, and other suffixes stay unresolved.
+    #[test]
+    fn suffixed_numeric_literal_receiver_resolves_to_its_primitive_type() {
+        let cases = [
+            ("assert_eq!((-0.0f64).render(), \"-0.0\");", "f64", true),
+            ("assert_eq!(1.5f64.render(), \"1.5\");", "f64", true),
+            ("(&3u8).render();", "u8", true),
+            ("(- 2i64).render();", "i64", true),
+            ("0xffu8.render();", "u8", true),
+            ("1_000usize.render();", "usize", true),
+            ("1.5e3f32.render();", "f32", true),
+            ("1e-3f64.render();", "f64", true),
+            ("(1.5f32).render();", "f64", false),
+            ("1.5.render();", "f64", false),
+            ("(-0.0).render();", "f64", false),
+            ("3.render();", "i32", false),
+            ("0x1f32.render();", "f32", false),
+            ("0x1f32.render();", "i32", false),
+            ("2u8.render();", "u16", false),
+            ("(make(1u8)).render();", "u8", false),
+            ("(1u8, 2u8).render();", "u8", false),
+        ];
+        for (body, impl_type, expected) in cases {
+            let summary = test("tests/render.rs", "t", body);
+            assert_eq!(
+                method_call_resolves_to_impl_type(&summary, "render", impl_type),
+                expected,
+                "{body} as {impl_type}"
+            );
+        }
+    }
+
+    // (#7019 review) A captured call line is raw: a suffixed literal quoted in
+    // a string or comment beside an unrelated `other.render()` must not
+    // resolve the call to the literal's primitive impl.
+    #[test]
+    fn quoted_suffixed_literal_on_a_raw_call_line_does_not_resolve() {
+        let cases = [
+            "let x = other.render(); println!(\"2u8.render()\");",
+            "let x = other.render(); // 2u8.render()",
+            "let x = other.render(); /* (2u8).render() */",
+        ];
+        for line in cases {
+            let mut summary = test("tests/render.rs", "t", line);
+            summary.calls = vec![CallFact {
+                line: 1,
+                name: "render".to_string(),
+                text: line.to_string(),
+            }];
+            assert!(
+                !method_call_resolves_to_impl_type(&summary, "render", "u8"),
+                "{line}"
+            );
+        }
+    }
+
+    #[test]
+    fn suffixed_numeric_literal_type_reads_only_well_formed_literals() {
+        let cases = [
+            ("5f64", Some("f64")),
+            ("1_0.2_5f32", Some("f32")),
+            ("2E+3f64", Some("f64")),
+            ("0o17u32", Some("u32")),
+            ("0b1010i8", Some("i8")),
+            ("12i128", Some("i128")),
+            ("12isize", Some("isize")),
+            ("1.5u8", None),
+            ("0xu8", None),
+            ("0b12u8", None),
+            ("1.f64", None),
+            ("1e f64", None),
+            ("1ef64", None),
+            ("f64", None),
+            ("x1f64", None),
+            ("12", None),
+        ];
+        for (literal, expected) in cases {
+            assert_eq!(
+                suffixed_numeric_literal_type(literal),
+                expected,
+                "{literal}"
             );
         }
     }

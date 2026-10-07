@@ -1,0 +1,13 @@
+pub fn cap(base: u32) -> u32 {
+    base * 23
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cap_is_at_least_one() {
+        assert_eq!(cap(2).min(1), 1);
+    }
+}

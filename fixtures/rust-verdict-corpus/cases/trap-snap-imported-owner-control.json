@@ -1,0 +1,59 @@
+{
+  "case_id": "trap-snap-imported-owner-control",
+  "subject_id": "authored-trap-kit",
+  "diff": "cases/trap-snap-imported-owner-control.diff",
+  "anchor": {
+    "file": "src/units_checked.rs",
+    "line": 3
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "same_name_function_imported_owner",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "(value + 2) / 10 * 10",
+        "mutated_line": "(value + 2) / 10 * 10",
+        "outcome": "tests_failed",
+        "failing_test": "units_checked::tests::snap_rounds_to_the_unit",
+        "equivalence_review": "not equivalent: replaces `(5 + value) / 10 * 10` with `(value + 2) / 10 * 10`, which changes the result"
+      },
+      {
+        "replacement": "(value - 5) / 10 * 10",
+        "mutated_line": "(value - 5) / 10 * 10",
+        "outcome": "tests_failed",
+        "failing_test": "units_checked::tests::snap_rounds_to_the_unit",
+        "equivalence_review": "not equivalent: replaces `(5 + value) / 10 * 10` with `(value - 5) / 10 * 10`, which changes the result"
+      },
+      {
+        "replacement": "(value + 5) * 10 * 10",
+        "mutated_line": "(value + 5) * 10 * 10",
+        "outcome": "tests_failed",
+        "failing_test": "units_checked::tests::snap_rounds_to_the_unit",
+        "equivalence_review": "not equivalent: replaces `(5 + value) / 10 * 10` with `(value + 5) * 10 * 10`, which changes the result"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "Negative control for trap-round-other-module: two sibling modules with a same-named snap function, and the test imports celsius::snap (the edited one) and pins snap(17) == 20, so every listed mutant fails it.",
+  "labeling_observation": {
+    "ripr_commit": "6487826",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

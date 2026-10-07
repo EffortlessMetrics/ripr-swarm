@@ -441,13 +441,21 @@ fn resolve_declared_path(root: &Path, declared: &str) -> PathBuf {
 /// root, so a root that keeps a `..` after a symlink (#6960) still prefixes
 /// its own sources, relative or absolute. That cleaner keeps a `..` that
 /// follows a symlink, so any `..` left below the root fails closed: it
-/// could leave the root through a symlinked directory.
+/// could leave the root through a symlinked directory. A source that names
+/// the root itself is a directory, not an artifact, and also falls back
+/// (#7017).
+///
+/// Containment is lexical against the root's own spelling. An absolute
+/// source spelled through the root's resolved target (the directory a
+/// symlink-parent root reaches) does not share that spelling and falls
+/// back to the default: a safe false negative, not an escape.
 fn contained_source_path(command_root: &Path, declared: &str) -> Option<PathBuf> {
     let cleaned = clean_bound_path(&resolve_declared_path(command_root, declared));
     let below_root = cleaned.strip_prefix(command_root).ok()?;
-    if below_root
-        .components()
-        .any(|component| !matches!(component, std::path::Component::Normal(_)))
+    if below_root.as_os_str().is_empty()
+        || below_root
+            .components()
+            .any(|component| !matches!(component, std::path::Component::Normal(_)))
     {
         return None;
     }
@@ -653,7 +661,9 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn declared_source_survives_a_root_that_keeps_a_symlink_parent() -> Result<(), String> {
-        let base = unique_test_dir("symlink-parent-declared-source");
+        // Removed on drop, so a failed setup step does not leak it (#7005).
+        let scratch = RemoveOnDrop(unique_test_dir("symlink-parent-declared-source"));
+        let base = scratch.0.clone();
         for dir in ["outside/child", "outside/repo", "work/repo"] {
             std::fs::create_dir_all(base.join(dir)).map_err(|err| err.to_string())?;
         }
@@ -677,8 +687,15 @@ mod tests {
             ("../outside.json".to_string(), None),
             ("reports/../../outside.json".to_string(), None),
             (absolute("../outside.json"), None),
+            // The root itself is a directory, not a source artifact (#7017).
+            ("".to_string(), None),
+            (".".to_string(), None),
+            ("reports/..".to_string(), None),
+            (absolute(""), None),
             // `escape/..` resolves to `outside/`, not the checkout.
             ("escape/../repo-exposure.json".to_string(), None),
+            // The root's resolved spelling does not share its prefix: a safe
+            // false negative that falls back to the default (#7017).
             (
                 base.join("outside/repo/reports/repo-exposure.json")
                     .to_string_lossy()
@@ -702,7 +719,6 @@ mod tests {
             Some("repo_exposure"),
             Some("reports/repo-exposure.json"),
         );
-        std::fs::remove_dir_all(&base).map_err(|err| err.to_string())?;
 
         // Fixture: the root really keeps its `..`.
         assert_eq!(bound, root);
@@ -851,6 +867,14 @@ mod tests {
             None,
         );
         assert!(!legacy.refresh_replayable());
+    }
+
+    struct RemoveOnDrop(PathBuf);
+
+    impl Drop for RemoveOnDrop {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
     }
 
     fn unique_test_dir(name: &str) -> PathBuf {

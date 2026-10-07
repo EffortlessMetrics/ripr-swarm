@@ -1,0 +1,19 @@
+{
+  "case_id": "trap-retries-unsigned-nonnegative",
+  "subject_id": "authored-trap-kit",
+  "origin": "authored",
+  "anchor": "src/retries.rs:2",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "always_true_unsigned_comparison",
+  "hard_case": true,
+  "truth": "not_discriminated",
+  "ideal_verdict": "gap",
+  "observed_verdict": "gap",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "weakly_exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": []
+}
