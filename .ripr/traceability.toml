@@ -776,6 +776,8 @@ tests = [
   "crates/ripr/src/output/doctor.rs::tests::the_dead_sections_array_is_gone_from_the_serialized_report",
   "crates/ripr/src/output/doctor.rs::tests::typed_environment_fields_serialize_the_human_values",
   "crates/ripr/src/cli/commands/doctor.rs::tests::registered_doctor_fixture_perl_state_is_reachable_from_the_producer",
+  "crates/ripr/src/cli/commands/doctor.rs::tests::detected_entries_map_javascript_to_its_typescript_entry",
+  "crates/ripr/src/cli/commands/doctor.rs::tests::detected_entries_stay_unknown_without_a_loaded_configuration",
   "crates/ripr/src/output/doctor.rs::tests::doctor_tool_check_names_non_missing_launch_failure",
   "crates/ripr/src/output/doctor.rs::tests::doctor_spawn_failure_retry_policy_covers_transient_kinds",
   "crates/ripr/src/output/doctor.rs::tests::doctor_tool_check_fails_closed_for_guaranteed_missing_tool",
