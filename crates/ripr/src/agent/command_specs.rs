@@ -915,6 +915,33 @@ fn ensure_role(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A unique scratch directory removed on drop, so a failed assertion or
+    /// an early `?` does not leave it behind (#7005).
+    struct ScratchDir {
+        path: std::path::PathBuf,
+    }
+
+    impl ScratchDir {
+        fn new(label: &str) -> Result<Self, String> {
+            let nonce = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_err(|err| err.to_string())?
+                .as_nanos();
+            let path = std::env::temp_dir().join(format!("{label}-{}-{nonce}", std::process::id()));
+            Ok(Self { path })
+        }
+
+        fn path(&self) -> &Path {
+            &self.path
+        }
+    }
+
+    impl Drop for ScratchDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.path);
+        }
+    }
     use crate::agent::loop_commands::{
         WORKFLOW_AFTER_SNAPSHOT_ARTIFACT, WORKFLOW_AGENT_RECEIPT_ARTIFACT,
         WORKFLOW_AGENT_VERIFY_ARTIFACT, WORKFLOW_BEFORE_SNAPSHOT_ARTIFACT,
@@ -1104,14 +1131,8 @@ mod tests {
     {
         use crate::agent::loop_commands::{agent_verify_command, bound_root, shell_arg};
         use crate::domain::CommandSpecDigest;
-        let nonce = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_err(|err| err.to_string())?
-            .as_nanos();
-        let base = std::env::temp_dir().join(format!(
-            "ripr-relocated-identity-{}-{nonce}",
-            std::process::id()
-        ));
+        let scratch = ScratchDir::new("ripr-relocated-identity")?;
+        let base = scratch.path().to_path_buf();
         let root_a = base.join("checkout a");
         let root_b = base.join("checkout b's");
         let render = |root: &Path| -> Result<(String, String), String> {
@@ -1175,7 +1196,6 @@ mod tests {
             }
             Ok(())
         })();
-        std::fs::remove_dir_all(&base).map_err(|err| err.to_string())?;
         outcome
     }
 
@@ -1615,20 +1635,13 @@ mod tests {
     #[test]
     fn backslash_root_display_recovers_its_typed_route() -> Result<(), String> {
         use crate::agent::loop_commands::{bound_root, check_repo_exposure_command};
-        let nonce = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_err(|err| err.to_string())?
-            .as_nanos();
-        let base = std::env::temp_dir().join(format!(
-            "ripr-backslash-recovery-{}-{nonce}",
-            std::process::id()
-        ));
+        let scratch = ScratchDir::new("ripr-backslash-recovery")?;
+        let base = scratch.path().to_path_buf();
         let root = base.join("team\\repo");
         std::fs::create_dir_all(&root).map_err(|err| err.to_string())?;
         let bound = bound_root(&root.to_string_lossy());
         let display = check_repo_exposure_command(&bound, "instant", "target/ripr/out.json");
         let spec = super::report_regeneration_command_spec_from_display(&display, &root);
-        std::fs::remove_dir_all(&base).map_err(|err| err.to_string())?;
         let spec =
             spec.ok_or_else(|| format!("backslash-root display did not recover: {display}"))?;
         if spec.expected_writes != ["target/ripr/out.json"]
@@ -1646,14 +1659,8 @@ mod tests {
     #[test]
     fn symlink_parent_root_display_recovers_its_typed_route() -> Result<(), String> {
         use crate::agent::loop_commands::{bound_root, check_repo_exposure_command};
-        let nonce = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_err(|err| err.to_string())?
-            .as_nanos();
-        let base = std::env::temp_dir().join(format!(
-            "ripr-symlink-recovery-{}-{nonce}",
-            std::process::id()
-        ));
+        let scratch = ScratchDir::new("ripr-symlink-recovery")?;
+        let base = scratch.path().to_path_buf();
         std::fs::create_dir_all(base.join("outside/child")).map_err(|err| err.to_string())?;
         std::fs::create_dir_all(base.join("outside/repo")).map_err(|err| err.to_string())?;
         std::fs::create_dir_all(base.join("work")).map_err(|err| err.to_string())?;
@@ -1663,7 +1670,6 @@ mod tests {
         let bound = bound_root(&root.to_string_lossy());
         let display = check_repo_exposure_command(&bound, "instant", "target/ripr/out.json");
         let spec = super::report_regeneration_command_spec_from_display(&display, &root);
-        std::fs::remove_dir_all(&base).map_err(|err| err.to_string())?;
         if !bound.ends_with("/work/link/../repo") {
             return Err(format!("bound root lost the symlink's `..`: {bound}"));
         }
