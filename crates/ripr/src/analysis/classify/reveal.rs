@@ -8,6 +8,7 @@ use super::propagation_witness::{
 };
 use super::reach::{invokes_opaque_macro, is_proximity_only};
 use super::rust_string_literals;
+use crate::analysis::classifier::oracle_binds_sink_identity;
 use crate::domain::*;
 
 /// Shared oracle provenance at the reveal admission boundary. The same
@@ -20,6 +21,20 @@ pub(in crate::analysis) struct ReturnOracleAdmission<'a> {
     /// (#6297). One that cannot, by any name path, does not confirm a match
     /// arm while another related test reaches the owner.
     pub(in crate::analysis) proximity_may_reach_owner: &'a dyn Fn(&TestSummary) -> bool,
+    /// Names the changed owner's signature binds. A test can never hold
+    /// the owner's parameter, so for a value probe a shared parameter name
+    /// confirms observation only in an assertion that calls the owner
+    /// (#5830: `subtotal` in `tax(subtotal)` matched an unrelated
+    /// `subtotal(3, 100)` test).
+    pub(in crate::analysis) owner_parameters: &'a [String],
+    /// Whether a function of this name transitively calls the changed
+    /// owner. An equality whose one side calls the owner and whose other
+    /// side reaches it computes its expected value through the changed
+    /// code, so the two sides move together (RIPR-SPEC-0035
+    /// self-computed expected value, #5830). The first argument is the
+    /// type a call names (`Money` in `Money::new(8)`), when it names one:
+    /// such a call reaches the owner only through that type's function.
+    pub(in crate::analysis) expected_reaches_owner: &'a dyn Fn(Option<&str>, &str) -> bool,
 }
 
 #[cfg(test)]
@@ -38,6 +53,8 @@ fn reveal_evidence(
             owner_return_pin: &|_, _| false,
             assertion_admitted: &|_, _| true,
             proximity_may_reach_owner: &|_| false,
+            owner_parameters: &[],
+            expected_reaches_owner: &|_, _| false,
         },
         None,
     );
@@ -425,6 +442,43 @@ fn analyze_related_assertions(
             ProbeFamily::ErrorPath | ProbeFamily::ReturnValue
         )
         && wrapper_error_seam_expression(&[probe.expression.as_str(), analysis_expression]);
+    // #5830: on a value probe, a token naming the owner's own parameter or
+    // `let` local (`subtotal` in `subtotal * 8 / 100`, `sku` in
+    // `sku.get_unchecked(start..)`) is a binding no test holds, and a
+    // numeric literal (`100`) matches any test input of the same number.
+    // Both confirm only in an assertion that calls the owner. Effect
+    // families already drop owner locals from their tokens above and keep
+    // parameters, because a test commonly passes its receiver by the same
+    // name.
+    // The constructed field's own name stays a confirming token even when
+    // it is also a parameter (`storage` in the shorthand `HirLet { storage }`):
+    // `statement.storage` names the field, not the binding. A return-value
+    // probe on a field initializer of the returned literal (`storage,`) has
+    // the same shape.
+    // The probe's own changed text names the field; the analysis expression
+    // may be the whole enclosing literal.
+    let field_fragment = matches!(probe.family, ProbeFamily::FieldConstruction)
+        || probe.expression.trim_end().ends_with(',');
+    let constructed_field = field_fragment
+        .then(|| constructed_field_name(&probe.expression))
+        .flatten();
+    let owner_scoped_tokens: Vec<String> = if matches!(
+        probe.family,
+        ProbeFamily::ReturnValue | ProbeFamily::FieldConstruction
+    ) {
+        probe_tokens
+            .iter()
+            .filter(|token| constructed_field != Some(token.as_str()))
+            .filter(|token| {
+                return_admission.owner_parameters.contains(token)
+                    || owner_local_bindings.contains(token)
+                    || token.starts_with(|ch: char| ch.is_ascii_digit())
+            })
+            .cloned()
+            .collect()
+    } else {
+        Vec::new()
+    };
     let match_context = RevealMatchContext {
         probe_tokens: &probe_tokens,
         effect_literals: &effect_literals,
@@ -444,6 +498,7 @@ fn analyze_related_assertions(
         }),
         arm_selector: arm_selector.filter(|_| matches!(probe.family, ProbeFamily::MatchArm)),
         arm_inputs_readable: false,
+        owner_scoped_tokens: &owner_scoped_tokens,
     };
     let confirm_required = needs_token_confirmation(&probe.family);
     let mut related = Vec::new();
@@ -595,6 +650,12 @@ fn analyze_related_assertions(
             } && (return_admission.owner_return_pin)(test, assertion);
             let bool_owner_pinned =
                 owner_pinned && matches!(assertion.kind, OracleKind::RelationalCheck);
+            let owner_bound = !match_context.owner_scoped_tokens.is_empty()
+                && oracle_binds_sink_identity(
+                    &assertion.text,
+                    &test.body,
+                    match_context.owner_callee,
+                );
             let (matched, has_token_match) = assertion_matches_probe_detail_with_literals(
                 &match_context,
                 assertion,
@@ -602,13 +663,26 @@ fn analyze_related_assertions(
                 import_defeats_owner,
                 cross_package_defeats_owner,
                 owner_pinned,
+                owner_bound,
             );
+            // RIPR-SPEC-0035 / #5830: an equality whose expected side is
+            // computed through the changed owner moves with it, so it
+            // neither pins the value nor confirms observation.
+            let self_computed = matched
+                && match_context.owner_callee.is_some_and(|owner| {
+                    expected_computed_through_owner(
+                        &assertion.text,
+                        owner,
+                        return_admission.expected_reaches_owner,
+                    )
+                });
             // #6692: the owner pin is credited only through an assertion
             // that matched, from a test that may supply the oracle, with the
             // pin surviving the reveal-side defeats. The missing-field
             // cleanup in `ClassifiedProbeEvidence::gather` reads this.
             owner_pin_credited |= matched
                 && credits_oracle
+                && !self_computed
                 && owner_return_pin_holds(
                     &match_context,
                     assertion,
@@ -623,19 +697,24 @@ fn analyze_related_assertions(
                     line: test.start_line,
                     oracle: Some(assertion.text.clone()),
                     oracle_kind: assertion.kind.clone(),
-                    oracle_strength: probe_relative_oracle_strength(&probe.family, assertion),
+                    oracle_strength: self_computed_cap(
+                        probe_relative_oracle_strength(&probe.family, assertion),
+                        self_computed,
+                    ),
                     relation_reason,
                     relation_confidence,
                     miss: Some(RelatedTestMiss::NoCallPath),
                 });
             } else if matched {
-                let observation_confirmed = !confirm_required
-                    || (confirms_observation
-                        && (collection_observer_confirms(&probe.expression, assertion)
-                            || (direct_collection_mutation_receiver(&probe.expression).is_none()
-                                && (has_token_match
-                                    || (is_effect_family(&probe.family)
-                                        && effect_observer_confirms(assertion))))));
+                let observation_confirmed = !self_computed
+                    && (!confirm_required
+                        || (confirms_observation
+                            && (collection_observer_confirms(&probe.expression, assertion)
+                                || (direct_collection_mutation_receiver(&probe.expression)
+                                    .is_none()
+                                    && (has_token_match
+                                        || (is_effect_family(&probe.family)
+                                            && effect_observer_confirms(assertion)))))));
                 proximity_confirmation_withheld |= !confirms_observation;
                 if confirm_required {
                     // Observation is confirmed when the assertion specifically
@@ -659,11 +738,12 @@ fn analyze_related_assertions(
                     }
                 }
                 matched_any = true;
-                let relative_strength = if bool_owner_pinned {
+                let mut relative_strength = if bool_owner_pinned {
                     OracleStrength::Strong
                 } else {
                     probe_relative_oracle_strength(&probe.family, assertion)
                 };
+                relative_strength = self_computed_cap(relative_strength, self_computed);
                 // Keep strength, kind, and confirmation on one assertion.
                 // An equally strong confirmed oracle wins over an unrelated
                 // one regardless of encounter order; a weaker oracle cannot.
@@ -862,6 +942,189 @@ struct RevealMatchContext<'a> {
     /// direct call the selector reads. A `let reason = |x| ..` closure or
     /// any other local use of the name may shadow the owner.
     arm_inputs_readable: bool,
+    /// Probe tokens that name a binding only the owner holds (a parameter
+    /// or `let` local) on a value probe. They confirm observation only in
+    /// an assertion that calls the owner; anywhere else the shared name is
+    /// coincidence (#5830).
+    owner_scoped_tokens: &'a [String],
+}
+
+/// The field a `field_construction` expression assigns: the identifier
+/// before a single `:` (`total: a + b`), or the whole shorthand
+/// identifier (`storage,`).
+fn constructed_field_name(expression: &str) -> Option<&str> {
+    let expression = expression.trim().trim_end_matches(',').trim();
+    let head = match expression.find(':') {
+        Some(colon) if !expression[colon + 1..].starts_with(':') => &expression[..colon],
+        Some(_) => return None,
+        None => expression,
+    };
+    let head = head.trim();
+    (!head.is_empty() && head.bytes().all(is_ident_byte)).then_some(head)
+}
+
+/// True when `text`, comments and strings masked, calls `name`: the whole
+/// word followed by `(` or a turbofish, as `name(..)`, `recv.name(..)` or
+/// `Path::name(..)`.
+fn text_calls(text: &str, name: &str) -> bool {
+    called_names(text).iter().any(|called| called == name)
+}
+
+/// Every identifier `text` calls (comments and strings masked), excluding
+/// macro invocations: the word immediately before `(` or `::<`.
+fn called_names(text: &str) -> Vec<String> {
+    called_paths(text)
+        .into_iter()
+        .map(|(_, name)| name)
+        .collect()
+}
+
+/// Every call in `text` as (named type, identifier): the type is the
+/// upper-case path segment directly before the identifier (`Money` in
+/// `Money::new(8)`), and `None` for a bare call, a method call, a module
+/// path or `Self::`, whose callee the text alone does not tie to a type.
+fn called_paths(text: &str) -> Vec<(Option<String>, String)> {
+    let masked = crate::analysis::extract::mask_comments_and_strings(text);
+    let bytes = masked.as_bytes();
+    let mut names = Vec::new();
+    let mut index = 0;
+    while index < bytes.len() {
+        if !(bytes[index].is_ascii_alphabetic() || bytes[index] == b'_') {
+            index += 1;
+            continue;
+        }
+        let start = index;
+        while index < bytes.len() && is_ident_byte(bytes[index]) {
+            index += 1;
+        }
+        let preceded_by_ident = start > 0 && is_ident_byte(bytes[start - 1]);
+        let rest = masked[index..].trim_start();
+        if !preceded_by_ident && (rest.starts_with('(') || rest.starts_with("::<")) {
+            let qualifier = masked[..start]
+                .trim_end()
+                .strip_suffix("::")
+                .map(|path| {
+                    let path = path.trim_end();
+                    let begin = path
+                        .rfind(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_'))
+                        .map_or(0, |at| at + 1);
+                    &path[begin..]
+                })
+                .filter(|segment| {
+                    *segment != "Self" && segment.starts_with(|ch: char| ch.is_ascii_uppercase())
+                })
+                .map(str::to_string);
+            names.push((qualifier, masked[start..index].to_string()));
+        }
+    }
+    names
+}
+
+/// A self-computed assertion's probe-relative strength is at most `weak`.
+fn self_computed_cap(strength: OracleStrength, self_computed: bool) -> OracleStrength {
+    if self_computed && strength.rank() > OracleStrength::Weak.rank() {
+        OracleStrength::Weak
+    } else {
+        strength
+    }
+}
+
+/// RIPR-SPEC-0035 self-computed expected value (#5830): an `assert_eq!`
+/// with one operand calling `owner` and the other calling a function that
+/// transitively reaches `owner`. Both sides then carry the changed
+/// behavior, so a wrong owner value moves them together and the equality
+/// still holds: `assert_eq!(invoice(3, 100), sub + tax(sub))` for a
+/// changed `tax` that `invoice` calls. An operand that computes its
+/// value without the owner (a literal, or a call that never reaches it)
+/// keeps the assertion's strength.
+fn expected_computed_through_owner(
+    text: &str,
+    owner: &str,
+    reaches_owner: &dyn Fn(Option<&str>, &str) -> bool,
+) -> bool {
+    if !text.contains("assert_eq!") {
+        return false;
+    }
+    let Some([left, right]) = assertion_comparison_operands(text) else {
+        return false;
+    };
+    let reaches = |operand: &str| {
+        called_paths(operand)
+            .iter()
+            .any(|(ty, called)| called != owner && reaches_owner(ty.as_deref(), called))
+    };
+    match (text_calls(left, owner), text_calls(right, owner)) {
+        // Both sides run the owner. Unless the code around the owner calls
+        // differs (`tax(250) * 2` against `tax(250) + 8` pins the owner's
+        // value), the sides move together; reordering, parentheses or a
+        // path prefix (`2 * tax(250)`, `crate::tax(250)`) do not count as
+        // a difference (#6970 review).
+        (true, true) => {
+            terms_outside_owner_calls(left, owner) == terms_outside_owner_calls(right, owner)
+        }
+        (true, false) => reaches(right),
+        (false, true) => reaches(left),
+        _ => false,
+    }
+}
+
+/// The identifiers and literals of `operand` outside every call of `owner`
+/// (its arguments and any `path::` prefix included), sorted, with
+/// comments and string contents masked. Operators and grouping are
+/// dropped, so equal multisets mean the operands differ at most in order,
+/// grouping or what they pass the owner.
+fn terms_outside_owner_calls(operand: &str, owner: &str) -> Vec<String> {
+    let masked = crate::analysis::extract::mask_comments_and_strings(operand);
+    let bytes = masked.as_bytes();
+    let is_word = |byte: u8| byte.is_ascii_alphanumeric() || byte == b'_';
+    let mut terms = Vec::new();
+    let mut path = Vec::new();
+    let mut index = 0;
+    while index < bytes.len() {
+        if !is_word(bytes[index]) {
+            if !(bytes[index] == b':' && bytes.get(index + 1) == Some(&b':')) {
+                terms.append(&mut path);
+            }
+            index += if bytes[index] == b':' && bytes.get(index + 1) == Some(&b':') {
+                2
+            } else {
+                1
+            };
+            continue;
+        }
+        let start = index;
+        while index < bytes.len() && is_word(bytes[index]) {
+            index += 1;
+        }
+        let word = &masked[start..index];
+        let rest = masked[index..].trim_start();
+        if word == owner && rest.starts_with('(') {
+            // Drop the path prefix and skip the balanced argument list.
+            path.clear();
+            let mut depth = 0usize;
+            let mut cursor = masked.len() - rest.len();
+            while cursor < bytes.len() {
+                match bytes[cursor] {
+                    b'(' => depth += 1,
+                    b')' => {
+                        depth = depth.saturating_sub(1);
+                        if depth == 0 {
+                            cursor += 1;
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+                cursor += 1;
+            }
+            index = cursor;
+            continue;
+        }
+        path.push(word.to_string());
+    }
+    terms.append(&mut path);
+    terms.sort();
+    terms
 }
 
 /// The bare-scrutinee convention of the synthesized guarded-Result-match
@@ -1517,6 +1780,7 @@ fn assertion_matches_probe_detail_with_literals(
     import_defeats_owner: bool,
     cross_package_defeats_owner: bool,
     owner_pinned: bool,
+    owner_bound: bool,
 ) -> (bool, bool) {
     let RevealMatchContext {
         probe_tokens,
@@ -1531,6 +1795,7 @@ fn assertion_matches_probe_detail_with_literals(
         owner_callee,
         arm_selector,
         arm_inputs_readable,
+        owner_scoped_tokens,
     } = *context;
     // #4748: use the same operand boundary as extraction, including token and
     // exact-variant matching. A genuine error oracle cannot borrow its changed
@@ -1548,6 +1813,14 @@ fn assertion_matches_probe_detail_with_literals(
     let token_match = probe_tokens
         .iter()
         .any(|token| contains_as_whole_word(&assertion.text, token));
+    // #5830: the subset of `token_match` that can confirm observation. An
+    // owner-scoped token counts only when the assertion is bound to the
+    // owner's result: it calls the owner, or names a test `let` bound from
+    // an owner call (`let value = score(1); assert!(matches!(value, 2))`).
+    let confirming_token_match = probe_tokens.iter().any(|token| {
+        contains_as_whole_word(&assertion.text, token)
+            && (owner_bound || !owner_scoped_tokens.contains(token))
+    });
     let effect_literal_match = !effect_literals.is_empty()
         && rust_string_literals(&assertion.text)
             .iter()
@@ -1679,7 +1952,10 @@ fn assertion_matches_probe_detail_with_literals(
         // the same error type would otherwise clear the unverified flag.
         producer_owned_result
     } else {
-        token_match || effect_literal_match || producer_owned_result || owner_return_pinned
+        confirming_token_match
+            || effect_literal_match
+            || producer_owned_result
+            || owner_return_pinned
     };
     // PR #6786 review: an assertion of any other kind (an `exact_value`
     // `assert!(matches!(e, PayError::Limit))` inside a match arm) that names
@@ -1772,9 +2048,11 @@ fn assertion_matches_probe_detail(
             owner_callee,
             arm_selector: None,
             arm_inputs_readable: false,
+            owner_scoped_tokens: &[],
         },
         assertion,
         assertion_count,
+        false,
         false,
         false,
         false,
@@ -3100,6 +3378,8 @@ mod tests {
                     owner_return_pin: &|_, _| false,
                     assertion_admitted: &|_, _| true,
                     proximity_may_reach_owner: &|_| false,
+                    owner_parameters: &[],
+                    expected_reaches_owner: &|_, _| false,
                 },
                 None,
             )
@@ -3190,6 +3470,8 @@ mod tests {
                     owner_return_pin: &pin,
                     assertion_admitted: &|_, _| true,
                     proximity_may_reach_owner: &|_| false,
+                    owner_parameters: &[],
+                    expected_reaches_owner: &|_, _| false,
                 },
                 None,
             )
@@ -3537,6 +3819,8 @@ mod tests {
                 owner_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
                 proximity_may_reach_owner: &|_| false,
+                owner_parameters: &[],
+                expected_reaches_owner: &|_, _| false,
             },
             None,
         );
@@ -3603,6 +3887,8 @@ mod tests {
                 owner_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
                 proximity_may_reach_owner: &|_| false,
+                owner_parameters: &[],
+                expected_reaches_owner: &|_, _| false,
             },
             None,
         );
@@ -3879,6 +4165,7 @@ mod tests {
                 owner_callee: Some("route"),
                 arm_selector: None,
                 arm_inputs_readable: false,
+                owner_scoped_tokens: &empty,
             };
             let (_, has_token) = assertion_matches_probe_detail_with_literals(
                 &context,
@@ -3886,6 +4173,7 @@ mod tests {
                 2,
                 import_defeats_owner,
                 cross_package_defeats_owner,
+                false,
                 false,
             );
             assert_eq!(
@@ -5125,6 +5413,8 @@ return Err(\"typed pin\".into());
                 owner_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
                 proximity_may_reach_owner: &|_| false,
+                owner_parameters: &[],
+                expected_reaches_owner: &|_, _| false,
             },
             None,
         );
@@ -5176,6 +5466,8 @@ return Err(\"typed pin\".into());
                 owner_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
                 proximity_may_reach_owner: &|_| false,
+                owner_parameters: &[],
+                expected_reaches_owner: &|_, _| false,
             },
             None,
         );
@@ -5198,6 +5490,8 @@ return Err(\"typed pin\".into());
                 owner_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
                 proximity_may_reach_owner: &|_| false,
+                owner_parameters: &[],
+                expected_reaches_owner: &|_, _| false,
             },
             None,
         );
@@ -5239,6 +5533,8 @@ return Err(\"typed pin\".into());
                 owner_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
                 proximity_may_reach_owner: &|_| false,
+                owner_parameters: &[],
+                expected_reaches_owner: &|_, _| false,
             },
             None,
         );
@@ -5282,6 +5578,8 @@ return Err(\"typed pin\".into());
                 owner_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
                 proximity_may_reach_owner: &|_| false,
+                owner_parameters: &[],
+                expected_reaches_owner: &|_, _| false,
             },
             None,
         );
@@ -5450,6 +5748,8 @@ return Err(\"typed pin\".into());
                 owner_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
                 proximity_may_reach_owner: &|_| false,
+                owner_parameters: &[],
+                expected_reaches_owner: &|_, _| false,
             },
             None,
         );
@@ -5475,6 +5775,8 @@ return Err(\"typed pin\".into());
                 owner_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
                 proximity_may_reach_owner: &|_| false,
+                owner_parameters: &[],
+                expected_reaches_owner: &|_, _| false,
             },
             None,
         );
@@ -5987,6 +6289,8 @@ return Err(\"typed pin\".into());
                 owner_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
                 proximity_may_reach_owner: &|test| test.name == "from_str_fortnight",
+                owner_parameters: &[],
+                expected_reaches_owner: &|_, _| false,
             },
             None,
         );
@@ -6286,6 +6590,8 @@ return Err(\"typed pin\".into());
                 owner_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
                 proximity_may_reach_owner: &|_| false,
+                owner_parameters: &[],
+                expected_reaches_owner: &|_, _| false,
             },
             None,
         );
@@ -6557,5 +6863,269 @@ return Err(\"typed pin\".into());
         ];
         let credits = oracle_crediting_relations(&proximity_only);
         assert!(credits(RelationReason::OwnerNamedTest));
+    }
+
+    /// Runs reveal for a `tax(subtotal)` return-value probe with the owner's
+    /// parameter list and a caller set, and returns the discriminate stage
+    /// plus the first related row's strength.
+    fn tax_reveal(
+        expression: &str,
+        test: &TestSummary,
+        owner_parameters: &[String],
+        reaches: &dyn Fn(Option<&str>, &str) -> bool,
+    ) -> (StageEvidence, OracleStrength) {
+        let probe = owned_probe(ProbeFamily::ReturnValue, expression, "tax");
+        let (_, discriminate, related, _) = reveal_evidence_with_expression(
+            &probe,
+            &probe.expression,
+            &[(test, RelationReason::DirectOwnerCall)],
+            &[],
+            &|_, _| false,
+            &|_, _| false,
+            &ReturnOracleAdmission {
+                owner_return_pin: &|_, _| false,
+                assertion_admitted: &|_, _| true,
+                proximity_may_reach_owner: &|_| false,
+                owner_parameters,
+                expected_reaches_owner: reaches,
+            },
+            None,
+        );
+        let strength = related
+            .first()
+            .map_or(OracleStrength::None, |row| row.oracle_strength.clone());
+        (discriminate, strength)
+    }
+
+    fn exact(text: &str) -> OracleFact {
+        oracle(text, OracleKind::ExactValue, OracleStrength::Strong)
+    }
+
+    /// #5830: `subtotal` names `tax`'s parameter. A test of the unrelated
+    /// `subtotal` function shares the word, not the binding, so it cannot
+    /// confirm that it observes `tax`'s return value.
+    #[test]
+    fn owner_parameter_name_confirms_only_in_an_assertion_calling_the_owner() {
+        let params = vec!["subtotal".to_string()];
+        let unrelated = test_with_assertions(
+            "subtotal_multiplies",
+            vec![exact("assert_eq!(subtotal(3, 5), 15);")],
+        );
+        let (discriminate, _) =
+            tax_reveal("subtotal * 8 / 1000", &unrelated, &params, &|_, _| false);
+        assert_eq!(
+            discriminate.state,
+            StageState::Weak,
+            "{}",
+            discriminate.summary
+        );
+
+        let calling = test_with_assertions(
+            "tax_of_subtotal",
+            vec![exact("assert_eq!(tax(subtotal), 24);")],
+        );
+        let (discriminate, _) = tax_reveal("subtotal * 8 / 1000", &calling, &params, &|_, _| false);
+        assert_eq!(
+            discriminate.state,
+            StageState::Yes,
+            "{}",
+            discriminate.summary
+        );
+
+        // A test `let` bound from an owner call holds the owner's result,
+        // so naming it confirms whatever the binding is called.
+        let bound = test_with_body_assertions(
+            "bound_tax",
+            "let subtotal = tax(300);\nassert_eq!(subtotal, 24);",
+            vec![exact("assert_eq!(subtotal, 24);")],
+        );
+        let (discriminate, _) = tax_reveal("subtotal * 8 / 1000", &bound, &params, &|_, _| false);
+        assert_eq!(
+            discriminate.state,
+            StageState::Yes,
+            "{}",
+            discriminate.summary
+        );
+
+        // Without the parameter list the old token rule still confirms, which
+        // is what the first case relied on before #5830.
+        let (discriminate, _) = tax_reveal("subtotal * 8 / 1000", &unrelated, &[], &|_, _| false);
+        assert_eq!(
+            discriminate.state,
+            StageState::Yes,
+            "{}",
+            discriminate.summary
+        );
+    }
+
+    /// #5830: a numeric literal in the changed expression matches any test
+    /// input of the same number; only an assertion calling the owner counts.
+    #[test]
+    fn numeric_literal_token_confirms_only_in_an_assertion_calling_the_owner() {
+        let unrelated = test_with_assertions(
+            "subtotal_multiplies",
+            vec![exact("assert_eq!(subtotal(3, 100), 300);")],
+        );
+        let (discriminate, _) = tax_reveal("amount * 8 / 100", &unrelated, &[], &|_, _| false);
+        assert_eq!(
+            discriminate.state,
+            StageState::Weak,
+            "{}",
+            discriminate.summary
+        );
+
+        let calling = test_with_assertions("tax_of_100", vec![exact("assert_eq!(tax(100), 8);")]);
+        let (discriminate, _) = tax_reveal("amount * 8 / 100", &calling, &[], &|_, _| false);
+        assert_eq!(
+            discriminate.state,
+            StageState::Yes,
+            "{}",
+            discriminate.summary
+        );
+    }
+
+    /// RIPR-SPEC-0035 / #5830: the expected side `subtotal + tax(subtotal)`
+    /// calls the owner and the actual side `invoice(..)` reaches it, so both
+    /// sides move together and the equality pins nothing about `tax`.
+    #[test]
+    fn self_computed_expected_value_is_weak_and_unconfirmed() {
+        let params = vec!["subtotal".to_string()];
+        let test = test_with_assertions(
+            "invoice_adds_tax",
+            vec![exact(
+                "assert_eq!(invoice(3, 100), subtotal + tax(subtotal));",
+            )],
+        );
+        let (discriminate, strength) =
+            tax_reveal("subtotal * 8 / 1000", &test, &params, &|_, name| {
+                name == "invoice"
+            });
+        assert_eq!(strength, OracleStrength::Weak);
+        assert_eq!(
+            discriminate.state,
+            StageState::Weak,
+            "{}",
+            discriminate.summary
+        );
+
+        // The same assertion against an `invoice` that never calls `tax`
+        // compares tax with an independent value and keeps its credit.
+        let (discriminate, strength) =
+            tax_reveal("subtotal * 8 / 1000", &test, &params, &|_, _| false);
+        assert_eq!(strength, OracleStrength::Strong);
+        assert_eq!(
+            discriminate.state,
+            StageState::Yes,
+            "{}",
+            discriminate.summary
+        );
+    }
+
+    #[test]
+    fn expected_computed_through_owner_reads_either_side_and_masks_strings() {
+        let reaches = |_: Option<&str>, name: &str| name == "invoice";
+        assert!(expected_computed_through_owner(
+            "assert_eq!(sub + tax(sub), invoice(3, 100));",
+            "tax",
+            &reaches
+        ));
+        assert!(expected_computed_through_owner(
+            "assert_eq!(cart.invoice(3), tax(300) + 300);",
+            "tax",
+            &reaches
+        ));
+        // A literal expected value is independent of the owner.
+        assert!(!expected_computed_through_owner(
+            "assert_eq!(tax(300), 24);",
+            "tax",
+            &reaches
+        ));
+        // `tax(` inside a message string is not a call.
+        assert!(!expected_computed_through_owner(
+            "assert_eq!(invoice(3, 100), 324, \"tax(sub)\");",
+            "tax",
+            &reaches
+        ));
+        // The same owner call on both sides holds whatever it returns.
+        assert!(expected_computed_through_owner(
+            "assert_eq!(tax(250), tax(250));",
+            "tax",
+            &|_: Option<&str>, _: &str| false
+        ));
+        // Different owner-dependent expressions can pin the owner's value:
+        // this passes only when `tax(250)` is 8.
+        assert!(!expected_computed_through_owner(
+            "assert_eq!(tax(250) * 2, tax(250) + 8);",
+            "tax",
+            &|_: Option<&str>, _: &str| false
+        ));
+        // Reordering, grouping and a path prefix leave the sides equal.
+        for text in [
+            "assert_eq!(tax(250) * 2, 2 * tax(250));",
+            "assert_eq!((tax(250)), tax(250));",
+            "assert_eq!(crate::tax(250), tax(250u64));",
+            "assert_eq!(tax(250) /* same */, tax(250));",
+        ] {
+            assert!(
+                expected_computed_through_owner(text, "tax", &|_: Option<&str>, _: &str| false),
+                "{text}"
+            );
+        }
+        // Different code around the owner keeps strength.
+        assert!(!expected_computed_through_owner(
+            "assert_eq!(tax(250) + base, tax(250) + other);",
+            "tax",
+            &|_: Option<&str>, _: &str| false
+        ));
+        // Inequality is never strong in the first place.
+        assert!(!expected_computed_through_owner(
+            "assert_ne!(invoice(3, 100), tax(300));",
+            "tax",
+            &reaches
+        ));
+        assert_eq!(constructed_field_name("storage,"), Some("storage"));
+        assert_eq!(
+            constructed_field_name("total_cents: shipping + subtotal,"),
+            Some("total_cents")
+        );
+        assert_eq!(constructed_field_name("Storage::Local"), None);
+        assert_eq!(
+            called_names("a.tax(1) + vec![x] + Tax::new::<u8>(2) + taxes (3)"),
+            vec!["tax", "new", "taxes"]
+        );
+    }
+
+    /// #5830 review: a type-qualified expected-side call (`Money::new(8)`)
+    /// reaches the owner only through that type's function. A same-named
+    /// `Invoice::new` that calls the owner leaves a genuine pin strong.
+    #[test]
+    fn a_type_qualified_expected_call_reaches_only_through_its_own_type() {
+        let reaches =
+            |ty: Option<&str>, name: &str| name == "new" && ty.is_none_or(|ty| ty == "Invoice");
+        assert!(!expected_computed_through_owner(
+            "assert_eq!(tax(100), Money::new(8));",
+            "tax",
+            &reaches
+        ));
+        assert!(expected_computed_through_owner(
+            "assert_eq!(tax(100), Invoice::new(100).tax);",
+            "tax",
+            &reaches
+        ));
+        // A method or `Self::` call names no type, so it matches by name.
+        assert!(expected_computed_through_owner(
+            "assert_eq!(tax(100), cart.new(100));",
+            "tax",
+            &reaches
+        ));
+        assert_eq!(
+            called_paths("Money::new(8) + crate::fees::Invoice::new(1) + Self::new(2) + new(3)"),
+            vec![
+                (Some("Money".to_string()), "new".to_string()),
+                (Some("Invoice".to_string()), "new".to_string()),
+                (None, "new".to_string()),
+                (None, "new".to_string()),
+            ]
+        );
     }
 }

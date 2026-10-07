@@ -1534,8 +1534,16 @@ fn return_path_gate(body: &str, expression: &str, changed_line: usize) -> Option
         (line_of(first)..=line_of(last)).contains(&changed_line)
     };
     let (after_semicolon, after_brace) = top_level_tail_starts(inner);
+    // Comments between the last statement and the tail (`// SAFETY: ..`
+    // before an `unsafe` block) are not part of the tail, so the tail is
+    // compared with comments and strings masked on both sides. Masking
+    // also hides string contents, so the unmasked tail must still end
+    // with the changed text (`Ok("a")` is not `Ok("b")`).
+    let masked_changed = collapse_whitespace(&mask_comments_and_strings(changed));
     let tail_is_changed = [after_semicolon, after_brace].into_iter().any(|start| {
-        collapse_whitespace(&inner_text[start..]) == changed
+        let tail = collapse_whitespace(&inner_text[start..]);
+        (tail == changed
+            || (collapse_whitespace(&inner[start..]) == masked_changed && tail.ends_with(changed)))
             && spans_changed_line(start, inner_text.len())
     });
     // `return <changed>;` as the final statement is also the tail.

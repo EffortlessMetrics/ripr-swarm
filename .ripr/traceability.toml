@@ -6945,11 +6945,26 @@ tests = [
   "crates/ripr/src/analysis/test_grip_evidence.rs::tests::direct_collection_mutation_discriminates_actual_observer_not_sibling_collection",
   "crates/ripr/src/analysis/classify/reveal.rs::tests::name_only_test_cannot_supply_the_oracle_for_reach_from_another_test",
   "crates/ripr/src/analysis/classify/reveal.rs::tests::match_arm_proximity_test_cannot_confirm_beside_reaching_test",
-  "crates/ripr/src/analysis/classify/transitive_reach.rs::tests::test_may_reach_owner_by_name_unknown_call_or_implicit_dispatch"
+  "crates/ripr/src/analysis/classify/transitive_reach.rs::tests::test_may_reach_owner_by_name_unknown_call_or_implicit_dispatch",
+  "crates/ripr/src/analysis/classify/reveal.rs::tests::owner_parameter_name_confirms_only_in_an_assertion_calling_the_owner",
+  "crates/ripr/src/analysis/classify/reveal.rs::tests::numeric_literal_token_confirms_only_in_an_assertion_calling_the_owner",
+  "crates/ripr/src/analysis/classify/reveal.rs::tests::self_computed_expected_value_is_weak_and_unconfirmed",
+  "crates/ripr/src/analysis/classify/reveal.rs::tests::expected_computed_through_owner_reads_either_side_and_masks_strings",
+  "crates/ripr/src/analysis/classifier/evidence.rs::tests::caller_walk_follows_qualified_chains_and_skips_foreign_same_names",
+  "crates/ripr/src/analysis/classifier/evidence.rs::tests::caller_walk_names_a_free_owner_by_bare_or_module_path_only",
+  "crates/ripr/src/analysis/classifier/evidence.rs::tests::caller_walk_stops_after_six_hops",
+  "crates/ripr/src/analysis/classifier/evidence.rs::tests::caller_walk_ignores_owner_names_in_comments_and_strings_on_the_call_line",
+  "crates/ripr/src/analysis/classifier/evidence.rs::tests::owner_parameters_are_read_from_a_multiline_signature",
+  "crates/ripr/src/analysis/classify/reveal.rs::tests::a_type_qualified_expected_call_reaches_only_through_its_own_type",
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::return_path_gate_reads_the_tail_past_a_comment"
 ]
 fixtures = [
   "fixtures/benches_harness_evidence",
   "fixtures/oracle_confirmation_mixed",
+  "fixtures/owner_parameter_token_coincidence",
+  "fixtures/self_computed_expected_value",
+  "fixtures/self_computed_expected_helper",
+  "fixtures/owner_name_collision_helper_keeps_credit",
   "fixtures/proximity_name_oracle_not_credited",
   "fixtures/match_arm_proximity_confirmation_not_credited",
   "fixtures/match_arm_proximity_wrapper_confirms",
@@ -6964,13 +6979,27 @@ fixtures = [
   "fixtures/match_arm_type_token_blind"
 ]
 code = [
-  "crates/ripr/src/analysis/classify/reveal.rs"
+  "crates/ripr/src/analysis/classify/reveal.rs",
+  "crates/ripr/src/analysis/classifier/evidence.rs",
+  "crates/ripr/src/analysis/classify/owner_pin.rs"
 ]
 outputs = [
   "docs/specs/RIPR-SPEC-0094-observation-unverified-guard-generalization.md",
   "fixtures/oracle_confirmation_mixed/expected/check.json",
   "fixtures/oracle_confirmation_mixed/expected/human.txt",
   "fixtures/oracle_confirmation_mixed/expected/human-full.txt",
+  "fixtures/owner_parameter_token_coincidence/expected/check.json",
+  "fixtures/owner_parameter_token_coincidence/expected/human.txt",
+  "fixtures/owner_parameter_token_coincidence/expected/human-full.txt",
+  "fixtures/self_computed_expected_value/expected/check.json",
+  "fixtures/self_computed_expected_value/expected/human.txt",
+  "fixtures/self_computed_expected_value/expected/human-full.txt",
+  "fixtures/self_computed_expected_helper/expected/check.json",
+  "fixtures/self_computed_expected_helper/expected/human.txt",
+  "fixtures/self_computed_expected_helper/expected/human-full.txt",
+  "fixtures/owner_name_collision_helper_keeps_credit/expected/check.json",
+  "fixtures/owner_name_collision_helper_keeps_credit/expected/human.txt",
+  "fixtures/owner_name_collision_helper_keeps_credit/expected/human-full.txt",
   "fixtures/proximity_name_oracle_not_credited/expected/check.json",
   "fixtures/proximity_name_oracle_not_credited/expected/human.txt",
   "fixtures/match_arm_proximity_confirmation_not_credited/expected/check.json",
