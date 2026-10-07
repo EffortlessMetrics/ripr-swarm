@@ -291,10 +291,14 @@ fn twin_check_reads_every_shape_in_a_start_group() {
     let shapes = [error_shape(0, 16), error_shape(7, 13), error_shape(7, 16)];
     assert_eq!(error_path_twins(&shapes, source), vec![true, false, false]);
 
-    // A method chain on `Err(..)` makes the `return` a twin; a range does not.
+    // An annotating chain on `Err(..)` makes the `return` a twin; an unknown
+    // method or a range does not.
+    let source = "return Err(X).context(m)";
+    let shapes = [error_shape(0, 24), error_shape(7, 13)];
+    assert_eq!(error_path_twins(&shapes, source), vec![true, false]);
     let source = "return Err(X).m()";
     let shapes = [error_shape(0, 17), error_shape(7, 13)];
-    assert_eq!(error_path_twins(&shapes, source), vec![true, false]);
+    assert_eq!(error_path_twins(&shapes, source), vec![false, false]);
     let source = "return Err(X)..y";
     let shapes = [error_shape(0, 16), error_shape(7, 13)];
     assert_eq!(error_path_twins(&shapes, source), vec![false, false]);
@@ -468,6 +472,8 @@ fn inventory_keeps_wrappers_that_add_error_behavior() -> Result<(), String> {
         "    if s == \"o\" { let v = Self::Outer(Err(Error::P)); }\n",
         "    if s == \"p\" { return Err(Error::Q).context(Error::Ctx); }\n",
         "    if s == \"q\" { return Box::new(Err(Error::R)); }\n",
+        "    if s == \"r\" { return Err(Error::S).recover(); }\n",
+        "    if s == \"t\" { return Err(Error::U).context(\"a ) b\").inspect_err(log); }\n",
         "    wrap(Err(Error::Tail)).map_err(|_| Error::Other)\n",
         "}\n",
     );
@@ -526,9 +532,14 @@ fn inventory_keeps_wrappers_that_add_error_behavior() -> Result<(), String> {
             // `.context(..)` keeps the constructor's error.
             (16, "Err(Error::Q)"),
             (17, "Err(Error::R)"),
+            // An unknown method may replace the error; fail closed.
+            (18, "return Err(Error::S).recover()"),
+            (18, "Err(Error::S)"),
+            // Annotating methods keep the error, even with `)` in a message.
+            (19, "Err(Error::U)"),
             // The tail chain adds a conversion; only the call goes.
-            (18, "wrap(Err(Error::Tail)).map_err(|_| Error::Other)"),
-            (18, "Err(Error::Tail)"),
+            (20, "wrap(Err(Error::Tail)).map_err(|_| Error::Other)"),
+            (20, "Err(Error::Tail)"),
         ],
         "{seams:?}"
     );

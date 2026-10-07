@@ -437,9 +437,9 @@ fn err_call_opening_at_start(text: &str) -> bool {
 /// inside it, when only closing parentheses follow that shape, or a method
 /// chain on it when it is an `Err(..)` (`return Err(X).context(..)`, #6935).
 /// The constructor is then the innermost receiver, so its own seam carries
-/// the error. A chain that converts or replaces the error
-/// (`return Err(A).map_err(|_| Error::B)`, `.or_else(..)`) has no shape of
-/// its own and keeps the return. A chain on any other error shape
+/// the error. Any chain that may convert or replace the error
+/// (`return Err(A).map_err(|_| Error::B)`, `.or_else(..)`, an unknown
+/// method) has no shape of its own and keeps the return. A chain on any other error shape
 /// (`return load(Error::A).map_err(Error::Io)`) adds a conversion and keeps
 /// its seam, as does a `return x.map_err(..)` with no inner shape.
 fn mark_returns(
@@ -463,7 +463,7 @@ fn mark_returns(
                     || (inner_is_err
                         && rest.starts_with('.')
                         && !rest.starts_with("..")
-                        && !converts_error(rest))
+                        && keeps_error(rest))
             });
         if closes && let Some(twin) = twins.get_mut(outer_index) {
             *twin = true;
@@ -471,29 +471,59 @@ fn mark_returns(
     }
 }
 
-/// A method chain whose text can replace the error it is called on: a
-/// `map_err`, `or` or `or_else` call (turbofish and spacing allowed), a new
-/// `Err(..)`, or an error macro. `.context(..)` and other chains keep the
-/// constructor's error.
-fn converts_error(chain: &str) -> bool {
-    let calls_method = |name: &str| {
-        chain.match_indices(name).any(|(at, _)| {
-            let before = chain.get(..at).unwrap_or_default().trim_end();
-            let after = chain
-                .get(at + name.len()..)
-                .unwrap_or_default()
-                .trim_start();
-            before.ends_with('.') && (after.starts_with('(') || after.starts_with("::"))
-        })
-    };
-    calls_method("map_err")
-        || calls_method("or")
-        || calls_method("or_else")
-        || chain
-            .match_indices("Err")
-            .any(|(at, _)| chain.get(at..).is_some_and(err_call_opening_at_start))
-        || chain.contains("bail!")
-        || chain.contains("anyhow!")
+/// A method chain that only annotates or inspects the error it is called
+/// on: every top-level method is one of `context`, `with_context`,
+/// `wrap_err`, `wrap_err_with`, `attach`, `attach_printable`,
+/// `inspect_err`, `inspect` or `into`. Any other method may replace the
+/// error (`map_err`, `or_else`, `unwrap_or_else`, an extension trait), so
+/// the chain fails closed and the `return` keeps its seam. Arguments are
+/// skipped; a char literal or lifetime at the top level also fails closed.
+fn keeps_error(chain: &str) -> bool {
+    const KEEPS: [&str; 9] = [
+        "context",
+        "with_context",
+        "wrap_err",
+        "wrap_err_with",
+        "attach",
+        "attach_printable",
+        "inspect_err",
+        "inspect",
+        "into",
+    ];
+    let mut depth = 0_usize;
+    let mut chars = chain.char_indices().peekable();
+    while let Some((at, c)) = chars.next() {
+        match c {
+            '"' => {
+                // Skip the string literal, escapes included.
+                while let Some((_, c)) = chars.next() {
+                    match c {
+                        '\\' => {
+                            chars.next();
+                        }
+                        '"' => break,
+                        _ => {}
+                    }
+                }
+            }
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => depth = depth.saturating_sub(1),
+            '\'' if depth == 0 => return false,
+            '.' if depth == 0 => {
+                let name: String = chain
+                    .get(at + 1..)
+                    .unwrap_or_default()
+                    .chars()
+                    .take_while(|c| c.is_alphanumeric() || *c == '_')
+                    .collect();
+                if !KEEPS.contains(&name.as_str()) {
+                    return false;
+                }
+            }
+            _ => {}
+        }
+    }
+    true
 }
 
 /// Marks each payload in `inners` that some `Err(..)` in `outers` closes
