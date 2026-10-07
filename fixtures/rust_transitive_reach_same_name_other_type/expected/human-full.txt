@@ -11,7 +11,7 @@ WARNING ./src/queue.rs:11
   id: probe:src_queue.rs:predicate:95e16c2d
 
 Changed
-  before: if !lang.feeds {
+  before: !lang.feeds
   after:  lang.feeds == false
 
 Probe

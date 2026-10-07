@@ -1998,10 +1998,14 @@ mod tests {
                 "seed linked worktree",
             ],
         )?;
-        let linked_arg = linked.to_str().ok_or("fixture linked path is not UTF-8")?;
+        // Relative on purpose: the fixture root is a canonicalized verbatim
+        // path on Windows, and Git for Windows rejects a verbatim worktree
+        // path argument ("could not create leading directories", #6855).
+        // `repo` and `linked` are siblings under the same fixture root, so
+        // `../linked` names the same directory on every host.
         crate::testing::fixture_git::fixture_git_ok(
             &repo,
-            &["worktree", "add", "--detach", linked_arg, "HEAD"],
+            &["worktree", "add", "--detach", "../linked", "HEAD"],
         )?;
         assert!(linked.join(".git").is_file(), "fixture must use a Git file");
         let nested = linked.join("src");
