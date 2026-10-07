@@ -240,6 +240,7 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
         &current_change,
         inventory_limit_info.is_some(),
         spent_timeout_ms.saturating_sub(elapsed_ms(analysis_started)),
+        !options.quiet,
     );
     let folded = current_change.fold_classified_change(
         &mut classified,
@@ -372,6 +373,7 @@ fn classify_change_past_seam_limit(
     change: &output::pilot::PilotCurrentChange,
     inventory_limited: bool,
     remaining_ms: u64,
+    announce: bool,
 ) -> Option<Result<Vec<analysis::ClassifiedSeam>, String>> {
     if !inventory_limited {
         return None;
@@ -382,6 +384,12 @@ fn classify_change_past_seam_limit(
     }
     if remaining_ms == 0 {
         return Some(Err("the inventory used pilot's whole deadline".to_string()));
+    }
+    if announce {
+        eprintln!(
+            "ripr: pilot hit the seam limit; classifying the current change's {} Rust file(s) on their own...",
+            files.len()
+        );
     }
     let (root, config, change) = (root.to_path_buf(), config.clone(), change.clone());
     Some(
@@ -1062,5 +1070,35 @@ mod tests {
             "a file occupying --out is not a not-writable tree: {error}"
         );
         Ok(())
+    }
+
+    #[test]
+    fn change_classification_past_the_limit_runs_only_when_it_can_matter() {
+        let change = output::pilot::PilotCurrentChange::from_diff_text(
+            Path::new("."),
+            None,
+            "diff --git a/src/a.rs b/src/a.rs\n--- a/src/a.rs\n+++ b/src/a.rs\n@@ -1 +1 @@\n-a\n+b\n",
+        );
+        let config = RiprConfig::default();
+        let root = Path::new("/nonexistent/ripr-pilot-root");
+        // No limit fired: the inventory already holds every seam.
+        assert!(
+            classify_change_past_seam_limit(root, &config, &change, false, 1_000, false).is_none()
+        );
+        // No Rust file in the change: nothing to classify.
+        let docs = output::pilot::PilotCurrentChange::from_diff_text(
+            Path::new("."),
+            None,
+            "diff --git a/README.md b/README.md\n--- a/README.md\n+++ b/README.md\n@@ -1 +1 @@\n-a\n+b\n",
+        );
+        assert!(
+            classify_change_past_seam_limit(root, &config, &docs, true, 1_000, false).is_none()
+        );
+        // The inventory spent the deadline: an error, so the caveat stays.
+        assert_eq!(
+            classify_change_past_seam_limit(root, &config, &change, true, 0, false)
+                .map(|result| result.map(|classified| classified.len())),
+            Some(Err("the inventory used pilot's whole deadline".to_string()))
+        );
     }
 }
