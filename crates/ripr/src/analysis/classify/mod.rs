@@ -3,6 +3,7 @@ mod arm_selection;
 mod boundary_pairing;
 mod context;
 mod decision;
+mod effect_carrier;
 mod flow;
 mod gap_admission;
 mod helper_transfer;
@@ -32,6 +33,7 @@ pub(in crate::analysis) use decision::{
     classify, confidence_score, ensure_unknown_stop_reason, missing_evidence,
     recommended_next_step, stop_reasons,
 };
+pub(in crate::analysis) use effect_carrier::EffectStateCarrier;
 pub(in crate::analysis) use flow::{local_flow_sinks, propagation_evidence_with_witness};
 pub(in crate::analysis) use gap_admission::{
     REFUSALS_ARE_ANALYZER_LIMITS, withhold_unsupported_gap,
@@ -48,7 +50,7 @@ pub(in crate::analysis) use propagation_witness::{
     direct_collection_mutation_receiver,
 };
 pub(in crate::analysis) use reach::{
-    is_trait_impl_method, owner_may_be_reached_unseen, reach_evidence,
+    is_proximity_only, is_trait_impl_method, owner_may_be_reached_unseen, reach_evidence,
 };
 pub(in crate::analysis) use related_tests::{
     DependencyEdgeContext, RelatedTestCandidateIndex, body_contains_owner_call,

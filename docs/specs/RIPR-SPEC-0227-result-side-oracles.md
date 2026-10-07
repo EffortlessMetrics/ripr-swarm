@@ -20,7 +20,7 @@ Linked plan:
 
 Linked issues:
 
-- None yet
+- #7063 (false verdicts: broad error oracle and `?` cluster)
 
 Linked PRs:
 
@@ -216,6 +216,47 @@ rejected alternative. Any can be reversed later without touching the rest.
    tells the original from the change; when any of these is not established,
    RIPR-SPEC-0107 still applies. RIPR-SPEC-0107 records this exception.
    Rejected: leave `?` under RIPR-SPEC-0107 (always weak with a broad oracle).
+4. **Establishing rule 3b without evaluating the input.** Adopted
+   (2026-10-07). It also widens condition 1: a changed line that keeps the
+   same `?` call is covered, and the claim is that a test would notice if
+   that `?` were swallowed. "The same `?`" means the old and new statement
+   read equal after ignoring whitespace, dropping parentheses that wrap the
+   whole `?` operand when that operand is already a call, method call,
+   path, field, index, literal or `.await` (`(a + b)?` is not `a + b?`),
+   and reading a single turbofish on the `?` call of an
+   unannotated `let` as that type's annotation (`let p = s.parse::<u16>()?`
+   and `let p: u16 = s.parse()?` agree). Every other token counts, so a
+   changed callee, generic argument, annotation or enclosing call does not
+   agree, and neither does an attribute on the `let`
+   (`parse_lenient(s)?` to `parse_strict(s)?`, `parse::<u16>` to
+   `parse::<u8>`, `push_u16(s.parse()?)` to `push_u8(..)`), since a side
+   oracle cannot see which error or which failing inputs come back
+   (rule 1). A removed line, a `?` with no same-statement removed
+   counterpart and any other change keep the RIPR-SPEC-0107 reading.
+   When the changed `?` is the owner's only possible source of
+   `Err`, a passing test that asserts the owner call returns `Err` proves
+   condition 2 (that call took the `?`'s `Err`), and condition 3 follows
+   because swallowing the `?` leaves no other way to return `Err`. "Only
+   source" means a free, attribute-free function returning `Result<..>` whose
+   body has exactly one `?`, no `return`, no `Err` path, no closure, macro or
+   nested item, and an `Ok(..)` tail; the `?` operand must not shape the
+   error (`map_err`, `ok_or`, `or_else`, `context`, or a value path naming a
+   type or variant), because rule 1 still holds. The assertion must be a
+   top-level statement of a plain `#[test]` that calls the owner directly by
+   name (`is_err()`, `!is_ok()`, `matches!(.., Err(_))`, or a bare
+   `unwrap_err()` / `expect_err()`), in a test file with no `macro_rules!`,
+   no inherited parent context and no inner attribute other than
+   `#![cfg(test)]`, no `#[macro_use]`, no `use` or `use .. as` naming
+   `assert`, `assert_eq`, `assert_ne` or `matches` and no glob import other than `super::*`, `self::*` or
+   `crate::*`; no other macro call in the test body or in the owner call's
+   arguments, no `return`, closure or block in those arguments (a skip
+   macro can return early), and no attribute on the assertion statement. The
+   premise that the test passes on the current code is assumed, as it is for
+   every ripr reading, not checked. Any other shape keeps the
+   RIPR-SPEC-0107 reading. Rejected: evaluate `c` on the test input (a
+   std-library and user-code interpreter ripr does not have) or withhold
+   these findings as `static_unknown` (rule 1 keeps the gap for a weak
+   oracle ripr did read).
 
 ## Required Evidence
 
@@ -282,7 +323,16 @@ Source: `check` as in Problem.
   and 13, each naming its example in its reasoning and labeled with runtime
   mutant truth. Examples 10 and 11 are covered by the existing cases
   `checkout-withdraw-sibling-variant` and `accounts-parse-too-long-variant`.
+- Decision 4: `classifier/evidence/side_flip.rs::tests` (owner, operand and
+  test-shape refusals) and `crates/ripr/tests/question_mark_side_flip.rs`
+  (end to end: `is_err()` and `matches!(.., Err(_))` read `exposed`; an
+  `is_ok()` test, an earlier `?`, a changed operand or statement, a removed
+  `?` line, a wrapped or unexecuted assertion and a file-local `assert!`
+  macro do not). Corpus:
+  `spec0227-total-question-mark-is-err` and `grid-try-exact`.
 - Planned: oracle-scan unit tests for bare `unwrap_err()` and `should_panic`.
+  Until those land, a bare `unwrap_err()` statement is no oracle and decision
+  4 cannot credit it.
 
 ## Implementation Mapping
 
@@ -292,6 +342,11 @@ Source: `check` as in Problem.
   for rules 3 and 3b.
 - `crates/ripr/src/analysis/classify/reveal.rs`: rule 1 and rules 3 and 3b
   gates.
+- `crates/ripr/src/analysis/classifier/evidence/side_flip.rs`: rule 3b by
+  decision 4, a producer that refines a weak `error_path` discriminator on a
+  sole-source `?` line (corpus cases `spec0227-total-question-mark-is-err`
+  and `grid-try-exact`; controls `spec0227-total-question-mark-earlier-err`
+  and `spec0227-total-question-mark-ok-input` keep their gap).
 
 ## Metrics
 

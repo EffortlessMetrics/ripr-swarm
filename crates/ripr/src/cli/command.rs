@@ -53,6 +53,11 @@ pub(super) enum CliCommand {
     /// server never runs CLI initialization; the variant exists so the
     /// command catalog stays exhaustive (#3525 review).
     Mcp(Vec<String>),
+    /// Task-first repair façade (#6305): thin top-level commands over the
+    /// RepairAttempt authority and the #6304 canonical next action.
+    Repair(Vec<String>),
+    Continue(Vec<String>),
+    Status(Vec<String>),
 }
 
 impl CliCommand {
@@ -204,6 +209,9 @@ fn cli_command_from_dispatch(
         CommandDispatch::Cache => CliCommand::Cache(command_args),
         CommandDispatch::Rerun => CliCommand::Rerun(command_args),
         CommandDispatch::Mcp => CliCommand::Mcp(command_args),
+        CommandDispatch::Repair => CliCommand::Repair(command_args),
+        CommandDispatch::Continue => CliCommand::Continue(command_args),
+        CommandDispatch::Status => CliCommand::Status(command_args),
     }
 }
 

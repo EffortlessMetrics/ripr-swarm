@@ -37,6 +37,17 @@ use super::agent::unknown_seam_id_hint;
 const AGENT_CARD_REFUSAL_SCHEMA_VERSION: &str = "0.1";
 
 pub(super) fn run_agent_card(options: AgentCardOptions) -> Result<(), CommandError> {
+    print!("{}", agent_card_stdout(options)?);
+    Ok(())
+}
+
+/// The card command's stdout document without printing it: the pretty JSON
+/// card under `--json`, the human prose lines otherwise. Shared by
+/// `ripr agent card` (prints immediately) and the task-first `ripr repair`
+/// façade, which holds the whole start+card stdout until both succeed so a
+/// post-publication card refusal keeps stdout empty (#7032). Byte-identical
+/// to what [`run_agent_card`] writes on success.
+pub(super) fn agent_card_stdout(options: AgentCardOptions) -> Result<String, CommandError> {
     ensure_command_root(&options.root, "agent card")?;
     let card = match render_agent_card(&options) {
         Ok(card) => card,
@@ -64,16 +75,19 @@ pub(super) fn run_agent_card(options: AgentCardOptions) -> Result<(), CommandErr
         }
     };
     if options.json {
-        let rendered = output::json::render_pretty_with_newline(&card, "agent card")?;
-        print!("{rendered}");
-        return Ok(());
+        return Ok(output::json::render_pretty_with_newline(
+            &card,
+            "agent card",
+        )?);
     }
     let packet_command =
         crate::app::repair_card_handoff::bound_packet_command(&options.root, &options.seam_id);
+    let mut rendered = String::new();
     for line in agent_card_prose_lines(&card, &packet_command, Some(&options.root)) {
-        println!("{line}");
+        rendered.push_str(&line);
+        rendered.push('\n');
     }
-    Ok(())
+    Ok(rendered)
 }
 
 /// Render the versioned typed-refusal document of an `agent card` refusal:
