@@ -1,0 +1,59 @@
+{
+  "case_id": "spec0118-unit-helper-chain",
+  "subject_id": "authored-spec0118-4",
+  "diff": "cases/spec0118-unit-helper-chain.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 9
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "unit_test_helper_to_public_api_chain",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "x + 5",
+        "mutated_line": "x + 5",
+        "outcome": "tests_failed",
+        "failing_test": "tests::outer_scales_the_offset_value",
+        "equivalence_review": "not equivalent: tests::outer_scales_the_offset_value fails on it"
+      },
+      {
+        "replacement": "x * 4",
+        "mutated_line": "x * 4",
+        "outcome": "tests_failed",
+        "failing_test": "tests::outer_scales_the_offset_value",
+        "equivalence_review": "not equivalent: tests::outer_scales_the_offset_value fails on it"
+      },
+      {
+        "replacement": "x + 3",
+        "mutated_line": "x + 3",
+        "outcome": "tests_failed",
+        "failing_test": "tests::outer_scales_the_offset_value",
+        "equivalence_review": "not equivalent: tests::outer_scales_the_offset_value fails on it"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "The unit test calls the helper check, which pins outer(1) to 50 and outer(0) to 40; outer is the only caller of the private inner. Spec cells: RIPR-SPEC-0118 example 4.",
+  "labeling_observation": {
+    "ripr_commit": "2059890",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "static_unknown"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

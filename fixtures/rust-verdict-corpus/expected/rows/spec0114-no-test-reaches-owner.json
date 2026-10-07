@@ -1,0 +1,21 @@
+{
+  "case_id": "spec0114-no-test-reaches-owner",
+  "subject_id": "authored-spec0114-3",
+  "origin": "authored",
+  "anchor": "src/lib.rs:4",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "unrelated_test_only",
+  "hard_case": false,
+  "truth": "not_discriminated",
+  "ideal_verdict": "gap",
+  "observed_verdict": "limited",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "no_static_path"
+  ],
+  "outcome": "abstained",
+  "contradictions": [
+    "no_static_path_with_related_tests"
+  ]
+}

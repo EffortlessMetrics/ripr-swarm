@@ -1,0 +1,59 @@
+{
+  "case_id": "spec0114-direct-unit-test",
+  "subject_id": "authored-spec0114-6",
+  "diff": "cases/spec0114-direct-unit-test.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 4
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "unit_test_calls_owner_directly",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "price + price / 10",
+        "mutated_line": "price + price / 10",
+        "outcome": "tests_failed",
+        "failing_test": "tests::takes_ten_percent_off",
+        "equivalence_review": "not equivalent: tests::takes_ten_percent_off fails on it"
+      },
+      {
+        "replacement": "price - price / 9",
+        "mutated_line": "price - price / 9",
+        "outcome": "tests_failed",
+        "failing_test": "tests::takes_ten_percent_off",
+        "equivalence_review": "not equivalent: tests::takes_ten_percent_off fails on it"
+      },
+      {
+        "replacement": "price / 10",
+        "mutated_line": "price / 10",
+        "outcome": "tests_failed",
+        "failing_test": "tests::takes_ten_percent_off",
+        "equivalence_review": "not equivalent: tests::takes_ten_percent_off fails on it"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "takes_ten_percent_off calls discount(200) directly and pins 180. Spec cells: RIPR-SPEC-0114 example 6.",
+  "labeling_observation": {
+    "ripr_commit": "2059890",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

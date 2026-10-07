@@ -1,0 +1,6 @@
+use spec0114_4::call_inner;
+
+#[test]
+fn the_macro_triples_its_input() {
+    assert_eq!(call_inner!(4), 12);
+}

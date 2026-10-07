@@ -1,0 +1,5 @@
+#[test]
+fn inner_adds_four() {
+    let result = spec0120_2::inner(3);
+    assert_eq!(result, 7);
+}

@@ -1,0 +1,15 @@
+//! RIPR-SPEC-0117 example 1, RIPR-SPEC-0119 example 2.
+
+macro_rules! call_inner {
+    ($x:expr) => {
+        inner($x)
+    };
+}
+
+pub fn outer(x: u32) -> u32 {
+    call_inner!(x) + 1
+}
+
+fn inner(x: u32) -> u32 {
+    x * 4
+}

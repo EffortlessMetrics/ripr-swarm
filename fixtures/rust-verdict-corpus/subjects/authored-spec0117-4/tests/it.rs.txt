@@ -1,0 +1,6 @@
+use spec0117_4::outer;
+
+#[test]
+fn outer_sums_both_paths() {
+    assert_eq!(outer(1), 18);
+}

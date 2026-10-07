@@ -1,0 +1,19 @@
+{
+  "case_id": "spec0117-macro-without-owner-mention",
+  "subject_id": "authored-spec0117-2",
+  "origin": "authored",
+  "anchor": "src/lib.rs:18",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "public_api_invokes_macro_not_naming_owner",
+  "hard_case": false,
+  "truth": "discriminated",
+  "ideal_verdict": "credited",
+  "observed_verdict": "limited",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "no_static_path"
+  ],
+  "outcome": "abstained",
+  "contradictions": []
+}

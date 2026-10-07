@@ -1,0 +1,51 @@
+{
+  "case_id": "spec0125-broad-error-control",
+  "subject_id": "authored-spec0125-1",
+  "diff": "cases/spec0125-broad-error-control.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 14
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "error_variant",
+  "test_shape": "is_err_only_oracle",
+  "hard_case": null,
+  "truth": {
+    "state": "partially_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "return Err(NameError::Empty);",
+        "mutated_line": "return Err(NameError::Empty);",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: check_name(\"abcdefghij\") returns Err(Empty) instead of Err(TooLong)"
+      },
+      {
+        "replacement": "return Ok(s);",
+        "mutated_line": "return Ok(s);",
+        "outcome": "tests_failed",
+        "failing_test": "tests::rejects_bad_names",
+        "equivalence_review": "not equivalent: tests::rejects_bad_names fails on it"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "rejects_bad_names checks only is_err() for the long name, so the wrong variant passes while Ok fails; the exact TooLong variant is the missing evidence. Spec cells: RIPR-SPEC-0125 example 1.",
+  "labeling_observation": {
+    "ripr_commit": "2059890",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

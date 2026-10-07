@@ -1,0 +1,6 @@
+use spec0117_2::outer;
+
+#[test]
+fn outer_routes_through_the_macro() {
+    assert_eq!(outer(2), 9);
+}

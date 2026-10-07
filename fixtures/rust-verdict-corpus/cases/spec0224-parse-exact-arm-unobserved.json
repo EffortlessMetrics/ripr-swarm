@@ -1,0 +1,44 @@
+{
+  "case_id": "spec0224-parse-exact-arm-unobserved",
+  "subject_id": "authored-spec0224-1",
+  "diff": "cases/spec0224-parse-exact-arm-unobserved.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 25
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "match_arm_pattern",
+  "test_shape": "assert_to_string_helper_other_arms",
+  "hard_case": null,
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "Some(&b'>') => (Op::Exact, &s[1..]),",
+        "mutated_line": null,
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "the edit itself: the Exact arm can no longer match, so '=1.2' parses as a caret comparator"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "test_comparator_parse checks only caret and >= inputs through assert_to_string, so the Exact arm never runs; the edit makes it unreachable and '=1.2' parses as caret, and no test notices. Spec cells: RIPR-SPEC-0224 example 1.",
+  "labeling_observation": {
+    "ripr_commit": "2059890",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

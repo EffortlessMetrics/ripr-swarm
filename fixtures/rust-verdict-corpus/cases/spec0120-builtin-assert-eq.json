@@ -1,0 +1,59 @@
+{
+  "case_id": "spec0120-builtin-assert-eq",
+  "subject_id": "authored-spec0120-2",
+  "diff": "cases/spec0120-builtin-assert-eq.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 4
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "integration_test_assert_eq",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "x + 5",
+        "mutated_line": "x + 5",
+        "outcome": "tests_failed",
+        "failing_test": "inner_adds_four",
+        "equivalence_review": "not equivalent: inner_adds_four fails on it"
+      },
+      {
+        "replacement": "x * 4",
+        "mutated_line": "x * 4",
+        "outcome": "tests_failed",
+        "failing_test": "inner_adds_four",
+        "equivalence_review": "not equivalent: inner_adds_four fails on it"
+      },
+      {
+        "replacement": "x + 3",
+        "mutated_line": "x + 3",
+        "outcome": "tests_failed",
+        "failing_test": "inner_adds_four",
+        "equivalence_review": "not equivalent: inner_adds_four fails on it"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "tests/it.rs calls inner(3) directly and checks it with assert_eq!(result, 7). Spec cells: RIPR-SPEC-0120 example 2.",
+  "labeling_observation": {
+    "ripr_commit": "2059890",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

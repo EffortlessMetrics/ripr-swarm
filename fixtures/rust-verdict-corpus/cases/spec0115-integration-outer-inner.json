@@ -1,0 +1,59 @@
+{
+  "case_id": "spec0115-integration-outer-inner",
+  "subject_id": "authored-spec0115-1",
+  "diff": "cases/spec0115-integration-outer-inner.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 8
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "integration_test_public_api_to_private_owner",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "x * 3",
+        "mutated_line": "x * 3",
+        "outcome": "tests_failed",
+        "failing_test": "test_uses_outer",
+        "equivalence_review": "not equivalent: test_uses_outer fails on it"
+      },
+      {
+        "replacement": "x + 2",
+        "mutated_line": "x + 2",
+        "outcome": "tests_failed",
+        "failing_test": "test_uses_outer",
+        "equivalence_review": "not equivalent: test_uses_outer fails on it"
+      },
+      {
+        "replacement": "x / 2",
+        "mutated_line": "x / 2",
+        "outcome": "tests_failed",
+        "failing_test": "test_uses_outer",
+        "equivalence_review": "not equivalent: test_uses_outer fails on it"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "test_uses_outer in tests/it.rs pins outer(5) to 11, and outer is the only caller of the private inner. Spec cells: RIPR-SPEC-0115 example 1.",
+  "labeling_observation": {
+    "ripr_commit": "2059890",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

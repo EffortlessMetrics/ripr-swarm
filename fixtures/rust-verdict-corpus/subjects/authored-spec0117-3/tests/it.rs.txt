@@ -1,0 +1,6 @@
+use spec0117_3::label;
+
+#[test]
+fn label_formats_seven_times_the_input() {
+    assert_eq!(label(2), "#14");
+}

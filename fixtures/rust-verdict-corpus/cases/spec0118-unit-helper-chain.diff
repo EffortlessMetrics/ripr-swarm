@@ -1,0 +1,13 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index e8d2865..fca0c83 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -6,7 +6,7 @@ pub fn outer(x: u32) -> u32 {
+ }
+ 
+ fn inner(x: u32) -> u32 {
+-    x + 4
++    4 + x
+ }
+ 
+ #[cfg(test)]

@@ -1,0 +1,59 @@
+{
+  "case_id": "spec0117-macro-names-owner",
+  "subject_id": "authored-spec0117-1",
+  "diff": "cases/spec0117-macro-names-owner.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 14
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "public_api_invokes_macro_naming_owner",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "x * 5",
+        "mutated_line": "x * 5",
+        "outcome": "tests_failed",
+        "failing_test": "outer_quadruples_then_adds_one",
+        "equivalence_review": "not equivalent: outer_quadruples_then_adds_one fails on it"
+      },
+      {
+        "replacement": "x + 4",
+        "mutated_line": "x + 4",
+        "outcome": "tests_failed",
+        "failing_test": "outer_quadruples_then_adds_one",
+        "equivalence_review": "not equivalent: outer_quadruples_then_adds_one fails on it"
+      },
+      {
+        "replacement": "x / 4",
+        "mutated_line": "x / 4",
+        "outcome": "tests_failed",
+        "failing_test": "outer_quadruples_then_adds_one",
+        "equivalence_review": "not equivalent: outer_quadruples_then_adds_one fails on it"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "tests/it.rs pins outer(3) to 13; outer reaches the private inner only through call_inner!, whose definition names inner. Spec cells: RIPR-SPEC-0117 example 1, RIPR-SPEC-0119 example 2.",
+  "labeling_observation": {
+    "ripr_commit": "2059890",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "no_static_path"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

@@ -1,0 +1,6 @@
+use spec0115_1::outer;
+
+#[test]
+fn test_uses_outer() {
+    assert_eq!(outer(5), 11);
+}

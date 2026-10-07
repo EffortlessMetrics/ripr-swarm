@@ -1,0 +1,9 @@
+//! RIPR-SPEC-0117 example 3: the only path to the owner runs through a std macro.
+
+pub fn label(x: u32) -> String {
+    format!("#{}", inner(x))
+}
+
+fn inner(x: u32) -> u32 {
+    x * 7
+}

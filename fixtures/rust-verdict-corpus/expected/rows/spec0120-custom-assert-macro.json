@@ -1,0 +1,19 @@
+{
+  "case_id": "spec0120-custom-assert-macro",
+  "subject_id": "authored-spec0120-1",
+  "origin": "authored",
+  "anchor": "src/lib.rs:4",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "integration_test_custom_assert_macro",
+  "hard_case": false,
+  "truth": "discriminated",
+  "ideal_verdict": "credited",
+  "observed_verdict": "limited",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "reachable_unrevealed"
+  ],
+  "outcome": "abstained",
+  "contradictions": []
+}

@@ -1,0 +1,61 @@
+//! RIPR-SPEC-0224 example 1: a semver-shaped comparator parser.
+
+use std::fmt;
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Op {
+    Exact,
+    Greater,
+    GreaterEq,
+    Caret,
+}
+
+pub struct Comparator {
+    pub op: Op,
+    pub version: String,
+}
+
+pub fn parse(s: &str) -> Comparator {
+    let bytes = s.as_bytes();
+    let (op, rest) = match bytes.first() {
+        Some(&b'>') => match bytes.get(1) {
+            Some(&b'=') => (Op::GreaterEq, &s[2..]),
+            _ => (Op::Greater, &s[1..]),
+        },
+        Some(&b'=') => (Op::Exact, &s[1..]),
+        Some(&b'^') => (Op::Caret, &s[1..]),
+        _ => (Op::Caret, s),
+    };
+    Comparator {
+        op,
+        version: rest.to_string(),
+    }
+}
+
+impl fmt::Display for Comparator {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let prefix = match self.op {
+            Op::Exact => "=",
+            Op::Greater => ">",
+            Op::GreaterEq => ">=",
+            Op::Caret => "^",
+        };
+        write!(f, "{prefix}{}", self.version)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn assert_to_string(parsed: Comparator, expected: &str) {
+        assert_eq!(parsed.to_string(), expected);
+    }
+
+    #[test]
+    fn test_comparator_parse() {
+        let parsed = parse("1.2.3-alpha");
+        assert_to_string(parsed, "^1.2.3-alpha");
+        assert_to_string(parse(">=1.0.0"), ">=1.0.0");
+    }
+}

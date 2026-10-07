@@ -1,0 +1,5 @@
+//! RIPR-SPEC-0120 example 2.
+
+pub fn inner(x: u32) -> u32 {
+    x + 4
+}

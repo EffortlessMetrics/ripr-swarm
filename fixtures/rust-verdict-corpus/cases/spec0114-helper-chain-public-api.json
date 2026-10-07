@@ -1,0 +1,60 @@
+{
+  "case_id": "spec0114-helper-chain-public-api",
+  "subject_id": "authored-spec0114-2",
+  "diff": "cases/spec0114-helper-chain-public-api.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 20
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "integration_test_helper_to_public_api_chain",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "version >= min",
+        "mutated_line": "version >= min",
+        "outcome": "tests_failed",
+        "failing_test": "greater_than_accepts_only_larger_versions",
+        "equivalence_review": "not equivalent: greater_than_accepts_only_larger_versions fails on it"
+      },
+      {
+        "replacement": "version < min",
+        "mutated_line": "version < min",
+        "outcome": "tests_failed",
+        "failing_test": "greater_than_accepts_only_larger_versions",
+        "equivalence_review": "not equivalent: greater_than_accepts_only_larger_versions fails on it"
+      },
+      {
+        "replacement": "version == min",
+        "mutated_line": "version == min",
+        "outcome": "tests_failed",
+        "failing_test": "greater_than_accepts_only_larger_versions",
+        "equivalence_review": "not equivalent: greater_than_accepts_only_larger_versions fails on it"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "tests/version_req.rs calls the helper assert_public_api_accepts, which calls Req::parse and Req::matches, which call the private matches_greater; the helper pins >2 against 3, 2 and 1. Spec cells: RIPR-SPEC-0114 example 2, RIPR-SPEC-0115 example 2, RIPR-SPEC-0118 example 2.",
+  "labeling_observation": {
+    "ripr_commit": "2059890",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "infection_unknown",
+      "propagation_unknown"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

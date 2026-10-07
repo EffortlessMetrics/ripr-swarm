@@ -1,0 +1,19 @@
+{
+  "case_id": "spec0224-parse-exact-arm-unobserved",
+  "subject_id": "authored-spec0224-1",
+  "origin": "authored",
+  "anchor": "src/lib.rs:25",
+  "behavior_family": "match_arm_pattern",
+  "test_shape": "assert_to_string_helper_other_arms",
+  "hard_case": false,
+  "truth": "not_discriminated",
+  "ideal_verdict": "gap",
+  "observed_verdict": "gap",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "weakly_exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": []
+}

@@ -1,0 +1,13 @@
+//! RIPR-SPEC-0114 example 4, RIPR-SPEC-0119 example 1.
+
+#[macro_export]
+macro_rules! call_inner {
+    ($x:expr) => {
+        $crate::inner($x)
+    };
+}
+
+#[doc(hidden)]
+pub fn inner(x: u32) -> u32 {
+    x * 3
+}

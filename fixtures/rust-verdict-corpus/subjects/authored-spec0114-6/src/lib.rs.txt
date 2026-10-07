@@ -1,0 +1,15 @@
+//! RIPR-SPEC-0114 example 6: a test calls the owner directly.
+
+pub fn discount(price: u32) -> u32 {
+    price - price / 10
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn takes_ten_percent_off() {
+        assert_eq!(discount(200), 180);
+    }
+}

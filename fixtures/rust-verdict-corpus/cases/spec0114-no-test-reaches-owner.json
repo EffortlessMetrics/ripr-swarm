@@ -1,0 +1,58 @@
+{
+  "case_id": "spec0114-no-test-reaches-owner",
+  "subject_id": "authored-spec0114-3",
+  "diff": "cases/spec0114-no-test-reaches-owner.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 4
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "unrelated_test_only",
+  "hard_case": null,
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "total - 15",
+        "mutated_line": "total - 15",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: apply_fee(20) becomes 5 instead of 35"
+      },
+      {
+        "replacement": "total * 15",
+        "mutated_line": "total * 15",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: apply_fee(2) becomes 30 instead of 17"
+      },
+      {
+        "replacement": "total + 16",
+        "mutated_line": "total + 16",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: apply_fee(0) becomes 16 instead of 15"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "The only test checks currency(); nothing calls apply_fee, so no mutant of it can fail a test. RIPR-SPEC-0114 example 3 (a crate with no tests at all) cannot be labeled, because verdict-corpus relabel needs at least one test to run. ripr lists the unrelated test as related while reading no_static_path, which the report counts as a no_static_path_with_related_tests contradiction (#6580). Spec cells: RIPR-SPEC-0115 example 3.",
+  "labeling_observation": {
+    "ripr_commit": "2059890",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "no_static_path"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

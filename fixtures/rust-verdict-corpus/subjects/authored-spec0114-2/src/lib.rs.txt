@@ -1,0 +1,22 @@
+//! RIPR-SPEC-0114 example 2, RIPR-SPEC-0115 example 2, RIPR-SPEC-0118 example 2.
+
+pub struct Req {
+    min: u32,
+}
+
+impl Req {
+    pub fn parse(s: &str) -> Option<Req> {
+        let min = s.strip_prefix('>')?.parse().ok()?;
+        Some(Req { min })
+    }
+
+    pub fn matches(&self, version: u32) -> bool {
+        compare::matches_greater(self.min, version)
+    }
+}
+
+mod compare {
+    pub(crate) fn matches_greater(min: u32, version: u32) -> bool {
+        version > min
+    }
+}

@@ -1,0 +1,19 @@
+{
+  "case_id": "spec0117-external-std-macro",
+  "subject_id": "authored-spec0117-3",
+  "origin": "authored",
+  "anchor": "src/lib.rs:8",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "public_api_reaches_owner_inside_std_macro",
+  "hard_case": false,
+  "truth": "discriminated",
+  "ideal_verdict": "credited",
+  "observed_verdict": "gap",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "weakly_exposed"
+  ],
+  "outcome": "false_actionable",
+  "contradictions": []
+}

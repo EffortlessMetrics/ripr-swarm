@@ -1,0 +1,23 @@
+//! RIPR-SPEC-0118 example 4: a unit test reaches the owner through a helper chain
+//! in ordinary source, not an integration test.
+
+pub fn outer(x: u32) -> u32 {
+    inner(x) * 10
+}
+
+fn inner(x: u32) -> u32 {
+    x + 4
+}
+
+#[cfg(test)]
+mod tests {
+    fn check(x: u32, want: u32) {
+        assert_eq!(super::outer(x), want);
+    }
+
+    #[test]
+    fn outer_scales_the_offset_value() {
+        check(1, 50);
+        check(0, 40);
+    }
+}

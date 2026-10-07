@@ -1,0 +1,11 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 484db38..1139623 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -5,5 +5,5 @@ pub fn outer(x: u32) -> u32 {
+ }
+ 
+ pub(crate) fn inner(x: u32) -> u32 {
+-    x * 2
++    x + x
+ }

@@ -1,0 +1,20 @@
+{
+  "case_id": "spec0114-helper-chain-public-api",
+  "subject_id": "authored-spec0114-2",
+  "origin": "authored",
+  "anchor": "src/lib.rs:20",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "integration_test_helper_to_public_api_chain",
+  "hard_case": false,
+  "truth": "discriminated",
+  "ideal_verdict": "credited",
+  "observed_verdict": "limited",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "infection_unknown",
+    "propagation_unknown"
+  ],
+  "outcome": "abstained",
+  "contradictions": []
+}

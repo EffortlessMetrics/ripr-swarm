@@ -1,0 +1,19 @@
+{
+  "case_id": "spec0114-test-calls-owner-macro",
+  "subject_id": "authored-spec0114-4",
+  "origin": "authored",
+  "anchor": "src/lib.rs:12",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "integration_test_invokes_macro_naming_owner",
+  "hard_case": false,
+  "truth": "discriminated",
+  "ideal_verdict": "credited",
+  "observed_verdict": "limited",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "no_static_path"
+  ],
+  "outcome": "abstained",
+  "contradictions": []
+}
