@@ -15653,7 +15653,8 @@ budget; a changed seam the budget dropped is not in `repo-exposure.json` until
 seam on the change ranks (pilot withholds them, they are already gripped,
 intentional or suppressed, the seam limit left seams unanalyzed, or no seam
 pilot analyzed is on a changed line; a reason drawn from analyzed seams adds the seam-limit
-caveat when the inventory limit left seams unanalyzed), say the
+caveat when the inventory limit left seams unanalyzed and the change's own
+files could not be classified past it; #6943), say the
 recommendation is elsewhere in the repo and name `ripr check --root <root>` for
 the change itself, adding `--worktree` when the diff came from the working tree
 (plain `ripr check` reads committed history only). The partial (timeout) summary carries no `current_change`.

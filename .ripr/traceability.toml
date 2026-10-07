@@ -1002,6 +1002,7 @@ tests = [
   "crates/ripr/tests/cli_smoke.rs::pilot_keeps_rust_output_byte_identical_when_rust_seams_exist",
   "crates/ripr/tests/cli_smoke.rs::pilot_ranks_and_labels_seams_in_the_current_change",
   "crates/ripr/tests/cli_smoke.rs::pilot_says_it_withholds_the_seam_on_the_current_change",
+  "crates/ripr/tests/cli_smoke.rs::pilot_ranks_the_current_change_past_the_inventory_seam_limit",
   "crates/ripr/src/output/outcome/mod.rs::tests::targeted_test_outcome_report_buckets_seam_movement",
   "crates/ripr/src/output/outcome/mod.rs::tests::targeted_test_outcome_json_and_markdown_are_structured",
   "crates/ripr/src/output/outcome/mod.rs::tests::targeted_test_outcome_from_repo_exposure_json_parses_static_evidence",

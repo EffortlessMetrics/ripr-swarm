@@ -2044,7 +2044,18 @@ fn change_seams_cut_by_the_inventory_limit_are_added_once() {
     let already = classified_with(SeamGripClass::WeaklyGripped, "src/a.rs", 10, vec![], vec![]);
     let mut classified = vec![kept, already.clone()];
     let cut_on_change = ClassifiedSeam {
-        seam: seam("src/a.rs", 10, "other >= operand"),
+        seam: RepoSeam::new(
+            "src/a.rs",
+            "pricing::other_total",
+            SeamKind::PredicateBoundary,
+            105,
+            10,
+            "other >= operand",
+            RequiredDiscriminator::BoundaryValue {
+                description: "other >= operand".to_string(),
+            },
+            ExpectedSink::ReturnValue,
+        ),
         ..classified_with(SeamGripClass::Ungripped, "src/a.rs", 10, vec![], vec![])
     };
     let cut_off_change = classified_with(SeamGripClass::Ungripped, "src/a.rs", 40, vec![], vec![]);
@@ -2054,6 +2065,7 @@ fn change_seams_cut_by_the_inventory_limit_are_added_once() {
     );
     assert_eq!(added, 1);
     assert_eq!(classified.len(), 3);
+    assert_ne!(classified[1].seam.id(), cut_on_change.seam.id());
     assert_eq!(classified[2].seam.id(), cut_on_change.seam.id());
 }
 
