@@ -548,6 +548,9 @@ mod tests {
             (".", artifact.to_string()),
             ("my repo", format!("my repo/{artifact}")),
             ("./sub/../my repo", format!("my repo/{artifact}")),
+            // A leading `..` stays: the redirect resolves from the same
+            // directory as `--root ../repo`, one level up.
+            ("../repo", format!("../repo/{artifact}")),
         ] {
             let target = portable_redirect_target(root, artifact);
             if target != expected {
