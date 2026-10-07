@@ -3752,11 +3752,9 @@ fn resolve_owner_fn(root: &SyntaxNode, source: &str, owner: OwnerScope<'_>) -> O
     owners.next().is_none().then_some(found)
 }
 
-/// Whether a direct module item declares the type name `base` (`r#Window`
-/// denotes `Window`). A macro definition or invocation may emit the type
-/// (#6948 review): the parsed item is the macro, not the struct, enum,
-/// union or alias it generates, so a lexical declaration of the name inside
-/// the macro's own text fails closed.
+/// Whether a direct module item declares `base` as the given kind: a type
+/// (see [`module_item_names_type`]) or, for [`ShadowKind::Trait`] (#7053), a
+/// `trait` item or a macro whose own text declares one.
 fn module_item_names(item: &ast::Item, base: &str, kind: ShadowKind) -> bool {
     if kind == ShadowKind::Type {
         return module_item_names_type(item, base);
@@ -3781,6 +3779,11 @@ fn module_item_names(item: &ast::Item, base: &str, kind: ShadowKind) -> bool {
     )
 }
 
+/// Whether a direct module item declares the type name `base` (`r#Window`
+/// denotes `Window`). A macro definition or invocation may emit the type
+/// (#6948 review): the parsed item is the macro, not the struct, enum,
+/// union or alias it generates, so a lexical declaration of the name inside
+/// the macro's own text fails closed.
 fn module_item_names_type(item: &ast::Item, base: &str) -> bool {
     let name = match item {
         ast::Item::Struct(item) => item.name(),

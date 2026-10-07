@@ -3859,8 +3859,44 @@ mod tests {
         }
     }
 
-    /// #7053: a generic production trait (`impl From<f64> for Meters`) is
-    /// shadowed by a test-local `trait From` just the same.
+    /// #7053 precision: a `trait Render` that is not in the test's own module
+    /// scope (a sibling module, or only the file root's production trait)
+    /// shadows nothing, in both name branches.
+    #[test]
+    fn given_trait_declared_outside_the_test_scope_then_direct_owner_call() {
+        let body = r#"assert_eq!((-0.0f64).render(), "");"#;
+        let source = format!(
+            "pub trait Render {{ fn render(&self) -> String; }}\nimpl Render for f64 {{ fn render(&self) -> String {{ String::new() }} }}\n\nmod sibling {{\n    trait Render {{ fn render(&self) -> String; }}\n}}\n\n#[cfg(test)]\nmod tests {{\n    use super::Render;\n    #[test]\n    fn t() {{ {body} }}\n}}\n"
+        );
+        let end = source.matches('\n').count() - 1;
+        for two_impls in [true, false] {
+            let owner = impl_function("src/lib.rs", "render", "impl Render for f64");
+            let mut test = test_with_call("src/lib.rs", "t", body, "render");
+            test.start_line = end;
+            test.end_line = end;
+            let mut functions = vec![owner.clone()];
+            if two_impls {
+                functions.push(impl_function("src/lib.rs", "render", "impl Render for u8"));
+            }
+            let mut index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+                functions,
+                tests: vec![test],
+                ..Default::default()
+            });
+            with_source(&mut index, "src/lib.rs", &source);
+            let probe = probe("src/lib.rs", "String::new()");
+            let related = find_related_tests(&probe, Some(&owner), &index, true, None, None);
+            assert_eq!(related.len(), 1);
+            assert_eq!(
+                related[0].1,
+                RelationReason::DirectOwnerCall,
+                "two_impls={two_impls}"
+            );
+        }
+    }
+
+    /// #7053: a generic production trait (`impl Render<f64> for Meters`) is
+    /// shadowed by a test-local `trait Render<T>` just the same.
     #[test]
     fn given_test_module_redeclares_generic_owner_trait_then_name_only_relation() {
         let source = "pub struct Meters(f64);\nimpl Render<f64> for Meters { fn render(&self) -> String { String::new() } }\n\n#[cfg(test)]\nmod tests {\n    trait Render<T> { fn render(&self) -> String; }\n    #[test]\n    fn t() { assert_eq!(Meters(1.0).render(), \"\"); }\n}\n";
