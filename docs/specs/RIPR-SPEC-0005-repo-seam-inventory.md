@@ -235,18 +235,24 @@ proximity-related test with unknown owner activation must not receive a missing
 fact that would reclassify the seam as weakly gripped. Helper-transfer and
 unresolved callees remain named limitations, not ready repair routes.
 
-Diff-mode classification applies the same two identity rules. A field read
-on a receiver whose nearest earlier `let` names that field in a struct literal
-(`let q = Quote { total: 99, ..q };`), or after a `q.total = ..` assignment
-that follows the owner binding, does not observe the constructed field, so the
-`field_value` missing fact stays and the finding is not `exposed`. A struct
-update that leaves the field to its `..q` base passes the owner's value
-through. A free-function owner whose name another indexed definition shares
-is not `direct_owner_call` when a `use` written directly in the test body
-binds the bare name to exactly one such twin in another module
-(`use super::retail::*;` beside `wholesale::price_quote`). An import in a
-nested block, `use super::*`, a path that names no twin or also the owner (a
-re-export), and an ambiguous assertion position keep the existing relation.
+Diff-mode classification applies the same two identity rules, on test text
+with comments and strings masked. A field read on a receiver does not observe
+the constructed field when the nearest `let` of that receiver still in scope
+at the assertion sets the field in a struct literal to a value not read from
+the receiver (`let q = Quote { total: 99, ..q };`), or when an in-scope
+`q.total = value` follows the owner binding; the `field_value` missing fact
+then stays and the finding is not `exposed`. A struct update that leaves the
+field to its `..q` base, a value read back from the receiver (`total:
+q.total`, or shorthand), a `let` or assignment in a block that has closed,
+and an assertion text that occurs more than once keep the credit. A
+free-function owner whose name another indexed definition shares is not
+`direct_owner_call` when every call of the name in the test is bare and a
+`use` at the top level of the test body binds it to exactly one twin in
+another inline module (`use super::retail::*;` beside
+`wholesale::price_quote`); a named import beats a glob. A path-qualified call
+of the name, an import in a nested block or at module level, two globs,
+`use super::*`, and a path that names no twin or also the owner (a re-export,
+or a file-backed module) keep the existing relation.
 
 ## Non-Goals
 

@@ -2849,35 +2849,45 @@ fn owner_call_relation_reason(
 }
 
 /// Whether a `use` written directly in the test body binds `owner_name` to a
-/// same-name twin of the owner: the import path (after `super`/`self`/`crate`)
-/// ends in a module that exactly one indexed definition of `owner_name` sits
-/// in, and that definition is not the owner (`use super::retail::*;` beside
-/// `wholesale::price_quote`). A block-level import shadows the module scope,
-/// so the bare call binds the twin. Fail-open: a module-level import, an
-/// import in a nested block, an import path no twin matches or the owner also
-/// matches (a re-export), and `use super::*` all keep the relation.
+/// same-name twin of the owner, so the test's bare `owner_name(..)` calls
+/// reach the twin (`use super::retail::*;` beside `wholesale::price_quote`).
+/// Comments and strings are masked. A block-level import shadows the module
+/// scope, and a named import beats a glob. The import path (after
+/// `super`/`self`/`crate`) must end in an inline module that exactly one
+/// indexed definition of `owner_name` sits in, and that definition is not
+/// the owner; the leading keywords are dropped, so that single match is
+/// what makes the path unambiguous. Fail-open: a path-qualified or method
+/// call of the name anywhere in the test, a module-level import, an import
+/// in a nested block, two globs, an import path no twin matches or the owner
+/// also matches (a re-export), and `use super::*` all keep the relation.
 fn test_imports_same_name_twin(
     body: &str,
     owner_id: &str,
     owner_name: &str,
     same_name_ids: &[&str],
 ) -> bool {
+    let body = mask_comments_and_strings(body);
     let Some(body_open) = body.find('{') else {
         return false;
     };
     let is_ident = |ch: char| ch.is_ascii_alphanumeric() || ch == '_';
-    let mut bound_module = None;
+    let only_bare_calls = body.match_indices(owner_name).all(|(start, matched)| {
+        let after = body[start + matched.len()..].trim_start();
+        if body[..start].chars().next_back().is_some_and(is_ident) || !after.starts_with('(') {
+            return true;
+        }
+        let before = body[..start].trim_end();
+        !before.ends_with("::") && !before.ends_with('.')
+    });
+    if !only_bare_calls {
+        return false;
+    }
+    let mut named = Vec::new();
+    let mut globs = Vec::new();
     for (start, _) in body.match_indices("use ") {
         if start <= body_open || body[..start].chars().next_back().is_some_and(is_ident) {
             continue;
         }
-        let depth = body[body_open..start]
-            .chars()
-            .fold(0isize, |depth, ch| match ch {
-                '{' => depth + 1,
-                '}' => depth - 1,
-                _ => depth,
-            });
         let Some(path) = body[start + 4..].split(';').next() else {
             continue;
         };
@@ -2888,13 +2898,25 @@ fn test_imports_same_name_twin(
         if leaf != "*" && leaf != owner_name {
             continue;
         }
+        let depth = body[body_open..start]
+            .chars()
+            .fold(0isize, |depth, ch| match ch {
+                '{' => depth + 1,
+                '}' => depth - 1,
+                _ => depth,
+            });
         if depth != 1 {
             return false;
         }
-        bound_module = Some(module.to_string());
+        if leaf == "*" {
+            globs.push(module.to_string());
+        } else {
+            named.push(module.to_string());
+        }
     }
-    let Some(module) = bound_module else {
-        return false;
+    let module = match (named.as_slice(), globs.as_slice()) {
+        ([module], _) | ([], [module]) => module,
+        _ => return false,
     };
     let segments: Vec<&str> = module
         .split("::")
@@ -3005,6 +3027,38 @@ mod tests {
         ));
         assert!(!twin(
             "fn t() {\n use super::retail::Quote;\n price_quote(3);\n}",
+            owner
+        ));
+        // A path-qualified or method call of the name keeps the relation.
+        assert!(!twin(
+            "fn t() {\n use super::retail::*;\n super::wholesale::price_quote(3);\n}",
+            owner
+        ));
+        assert!(!twin(
+            "fn t() {\n use super::retail::*;\n price_quote(1);\n wholesale::price_quote(3);\n}",
+            owner
+        ));
+        // A named import beats a glob; two named imports or two globs stay
+        // undecided.
+        assert!(!twin(
+            "fn t() {\n use super::wholesale::price_quote;\n use super::retail::*;\n price_quote(3);\n}",
+            owner
+        ));
+        assert!(twin(
+            "fn t() {\n use super::retail::price_quote;\n use super::wholesale::*;\n price_quote(3);\n}",
+            owner
+        ));
+        assert!(!twin(
+            "fn t() {\n use super::retail::*;\n use super::other::*;\n price_quote(3);\n}",
+            owner
+        ));
+        // Comments and strings are not imports.
+        assert!(!twin(
+            "fn t() {\n // use super::retail::*;\n price_quote(3);\n}",
+            owner
+        ));
+        assert!(!twin(
+            "fn t() {\n let s = \"use super::retail::*;\";\n price_quote(3);\n}",
             owner
         ));
         // Two twins in modules with the same name stay undecided.

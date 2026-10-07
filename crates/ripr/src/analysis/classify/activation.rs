@@ -1524,13 +1524,15 @@ fn reads_owner_result_field(body: &str, assertion: &str, read: &str, owner: &str
     })
 }
 
-/// Whether the owner's value of `field` provably no longer sits in
-/// `receiver` where `assertion` reads it (RIPR-SPEC-0005: field credit holds
-/// only before shadow or field overwrite). Walking back from the assertion,
-/// the nearest `let receiver` that names `field` in a struct literal
-/// (`let q = Quote { total: 99, ..q };`) overwrites it; a struct update that
-/// leaves `field` to its `..receiver` base passes it through; and a
-/// `receiver.field = ..` between the owner binding and the assertion
+/// Whether the owner's value of `field` no longer sits in `receiver` where
+/// `assertion` reads it (RIPR-SPEC-0005: field credit holds only before
+/// shadow or field overwrite). Comments and strings are masked, and only a
+/// `let` or assignment in the assertion's own block or an enclosing one
+/// counts. Walking back from the assertion, the nearest visible
+/// `let receiver` that sets `field` in a struct literal to a value not read
+/// from the receiver (`let q = Quote { total: 99, ..q };`) overwrites it; a
+/// struct update that leaves `field` to its `..receiver` base passes it
+/// through; and a visible `receiver.field = value` after the owner binding
 /// overwrites it. Anything else, including an assertion that is not found
 /// exactly once in the body, keeps the credit.
 fn field_overwritten_before(
@@ -1544,23 +1546,59 @@ fn field_overwritten_before(
     let (Some(position), None) = (found.next(), found.next()) else {
         return false;
     };
-    let mut after = position;
-    for (start, initializer) in receiver_lets(&body[..position], receiver).into_iter().rev() {
+    let masked = crate::analysis::language::mask_rust_comments_and_strings(body);
+    let Some(prefix) = masked.get(..position) else {
+        return false;
+    };
+    let visible = |start: usize| visible_at(prefix, start);
+    for (start, initializer) in receiver_lets(prefix, receiver).into_iter().rev() {
+        if !visible(start) {
+            continue;
+        }
+        if let Some((fields, base)) = struct_literal_fields(initializer) {
+            match fields.iter().find(|(name, _)| *name == field) {
+                Some((_, value)) => {
+                    return value.is_some_and(|value| {
+                        !mentions_ident(value, receiver) && !value.contains(owner_call)
+                    });
+                }
+                None if base == Some(receiver) => continue,
+                None => return false,
+            }
+        }
         if initializer.contains(owner_call) {
-            return field_assigned(&body[start..after], receiver, field);
+            return field_assigned(prefix, start, receiver, field);
         }
-        let Some((fields, base)) = struct_literal_fields(initializer) else {
-            return false;
-        };
-        if fields.contains(&field) {
-            return true;
-        }
-        if base != Some(receiver) {
-            return false;
-        }
-        after = start;
+        return false;
     }
     false
+}
+
+/// Whether a statement starting at `start` is still in scope at the end of
+/// `prefix`: no block it sits in has closed since.
+fn visible_at(prefix: &str, start: usize) -> bool {
+    let mut depth = 0isize;
+    for ch in prefix[start..].chars() {
+        match ch {
+            '{' => depth += 1,
+            '}' => {
+                depth -= 1;
+                if depth < 0 {
+                    return false;
+                }
+            }
+            _ => {}
+        }
+    }
+    true
+}
+
+fn mentions_ident(text: &str, name: &str) -> bool {
+    let is_ident = |ch: char| ch.is_ascii_alphanumeric() || ch == '_';
+    text.match_indices(name).any(|(start, matched)| {
+        !text[..start].chars().next_back().is_some_and(is_ident)
+            && !text[start + matched.len()..].starts_with(is_ident)
+    })
 }
 
 /// The `let [mut] receiver [: Type] = initializer;` statements in `body`, in
@@ -1584,9 +1622,12 @@ fn receiver_lets<'a>(body: &'a str, receiver: &str) -> Vec<(usize, &'a str)> {
         .collect()
 }
 
-/// The field names and `..base` of a struct literal `Path { a: x, b, ..base }`;
-/// `None` for any other initializer.
-fn struct_literal_fields(initializer: &str) -> Option<(Vec<&str>, Option<&str>)> {
+/// The fields (with their value, `None` for shorthand) and `..base` of a
+/// struct literal `Path { a: x, b, ..base }`; `None` for any other
+/// initializer.
+type StructLiteral<'a> = (Vec<(&'a str, Option<&'a str>)>, Option<&'a str>);
+
+fn struct_literal_fields(initializer: &str) -> Option<StructLiteral<'_>> {
     let open = initializer.find('{')?;
     let path = initializer[..open].trim();
     if path.is_empty()
@@ -1612,8 +1653,10 @@ fn struct_literal_fields(initializer: &str) -> Option<(Vec<&str>, Option<&str>)>
                 if let Some(rest) = entry.strip_prefix("..") {
                     base = Some(rest.trim());
                 } else if !entry.is_empty() {
-                    let name = entry.split(':').next().unwrap_or_default().trim();
-                    fields.push(name);
+                    match entry.split_once(':') {
+                        Some((name, value)) => fields.push((name.trim(), Some(value.trim()))),
+                        None => fields.push((entry, None)),
+                    }
                 }
             }
             _ => {}
@@ -1622,17 +1665,33 @@ fn struct_literal_fields(initializer: &str) -> Option<(Vec<&str>, Option<&str>)>
     Some((fields, base))
 }
 
-/// Whether `text` assigns `receiver.field = ..` (not `==`).
-fn field_assigned(text: &str, receiver: &str, field: &str) -> bool {
+/// Whether `prefix`, after `from`, assigns `receiver.field = value` (not
+/// `==`, not a value read from the receiver) in a statement still in scope
+/// at its end.
+fn field_assigned(prefix: &str, from: usize, receiver: &str, field: &str) -> bool {
     let target = format!("{receiver}.{field}");
-    text.match_indices(&target).any(|(start, matched)| {
-        let before_ok = !text[..start]
-            .chars()
-            .next_back()
-            .is_some_and(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '.');
-        let rest = text[start + matched.len()..].trim_start();
-        before_ok && rest.starts_with('=') && !rest.starts_with("==")
-    })
+    prefix[from..]
+        .match_indices(&target)
+        .any(|(offset, matched)| {
+            let start = from + offset;
+            let before_ok = !prefix[..start]
+                .chars()
+                .next_back()
+                .is_some_and(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '.');
+            let rest = &prefix[start + matched.len()..];
+            if rest.starts_with(|ch: char| ch.is_ascii_alphanumeric() || ch == '_') {
+                return false;
+            }
+            let rest = rest.trim_start();
+            let Some(value) = rest
+                .strip_prefix('=')
+                .filter(|value| !value.starts_with('='))
+            else {
+                return false;
+            };
+            let value = value.split(';').next().unwrap_or_default();
+            before_ok && !mentions_ident(value, receiver) && visible_at(prefix, start)
+        })
 }
 
 /// Whether the call whose `)` ends `before` is a call of `owner`: the
@@ -3179,28 +3238,45 @@ mod tests {
         let reads = |body: &str, assertion: &str| {
             reads_owner_result_field(body, assertion, ".total", "bundle")
         };
-        // RIPR-SPEC-0005: credit holds only before shadow or field overwrite.
-        let shadowed =
-            "let q = bundle(3);\n let q = Quote { total: 99, ..q };\n assert_eq!(q.total, 99);";
-        assert!(!reads(shadowed, "assert_eq!(q.total, 99);"));
-        let shorthand = "let q = bundle(3);\n let total = 1;\n let q = Quote { total, ..q };\n assert_eq!(q.total, 1);";
-        assert!(!reads(shorthand, "assert_eq!(q.total, 1);"));
-        let assigned = "let mut q = bundle(3);\n q.total = 99;\n assert_eq!(q.total, 99);";
-        assert!(!reads(assigned, "assert_eq!(q.total, 99);"));
-        // A struct update that leaves the field to its base passes it through.
-        let other_field =
-            "let q = bundle(3);\n let q = Quote { items: 4, ..q };\n assert_eq!(q.total, 45);";
-        assert!(reads(other_field, "assert_eq!(q.total, 45);"));
-        // Reads before the overwrite, comparisons, and other fields keep it.
+        let withheld = [
+            // RIPR-SPEC-0005: credit holds only before shadow or overwrite.
+            "let q = bundle(3);\n let q = Quote { total: 99, ..q };\n assert_eq!(q.total, 99);",
+            "let mut q = bundle(3);\n q.total = 99;\n assert_eq!(q.total, 99);",
+            "let q = Quote { total: 99, ..bundle(3) };\n assert_eq!(q.total, 99);",
+            // An assignment after a pass-through update still overwrites.
+            "let q = bundle(3);\n let mut q = Quote { items: 4, ..q };\n q.total = 1;\n assert_eq!(q.total, 1);",
+        ];
+        for body in withheld {
+            let assertion = body.rsplit('\n').next().unwrap_or_default().trim();
+            assert!(!reads(body, assertion), "{body}");
+        }
+        let credited = [
+            // A struct update that leaves the field to its base passes it
+            // through, as does a value read back from the receiver.
+            "let q = bundle(3);\n let q = Quote { items: 4, ..q };\n assert_eq!(q.total, 45);",
+            "let q = bundle(3);\n let q = Quote { total: q.total, ..q };\n assert_eq!(q.total, 45);",
+            "let q = bundle(3);\n let total = q.total;\n let q = Quote { total, ..q };\n assert_eq!(q.total, 45);",
+            "let mut q = bundle(3);\n q.total = q.total;\n assert_eq!(q.total, 45);",
+            // Only a statement still in scope at the assertion counts.
+            "let q = bundle(3);\n { let q = Quote { total: 1, ..q }; drop(q); }\n assert_eq!(q.total, 45);",
+            "let mut q = bundle(3);\n if false { q.total = 0; }\n assert_eq!(q.total, 45);",
+            "let q = bundle(3);\n let _f = |q: Quote| { let q = Quote { total: 0, ..q }; q };\n assert_eq!(q.total, 45);",
+            // Comments and strings are not code.
+            "let q = bundle(3);\n // let q = Quote { total: 0, ..q };\n assert_eq!(q.total, 45);",
+            "let q = bundle(3);\n let s = \"let q = Quote { total: 0 };\";\n assert_eq!(q.total, 45);",
+            "let mut q = bundle(3);\n // q.total = 0;\n assert_eq!(q.total, 45);",
+            // Reads before the overwrite, comparisons and other fields.
+            "let mut q = bundle(3);\n let ok = q.total == 45;\n assert_eq!(q.total, 45);",
+            "let mut q = bundle(3);\n q.total_cap = 1;\n assert_eq!(q.total, 45);",
+            // Ambiguous rebinding and positions keep today's credit.
+            "let q = bundle(3);\n let q = adjust(q);\n assert_eq!(q.total, 45);",
+        ];
+        for body in credited {
+            let assertion = body.rsplit('\n').next().unwrap_or_default().trim();
+            assert!(reads(body, assertion), "{body}");
+        }
         let before = "let mut q = bundle(3);\n assert_eq!(q.total, 45);\n q.total = 1;";
         assert!(reads(before, "assert_eq!(q.total, 45);"));
-        let compared = "let q = bundle(3);\n assert!(q.total == 45);";
-        assert!(reads(compared, "assert!(q.total == 45);"));
-        let sibling = "let mut q = bundle(3);\n q.total_cap = 1;\n assert_eq!(q.total, 45);";
-        assert!(reads(sibling, "assert_eq!(q.total, 45);"));
-        // Ambiguous rebinding keeps today's credit.
-        let rebound = "let q = bundle(3);\n let q = adjust(q);\n assert_eq!(q.total, 45);";
-        assert!(reads(rebound, "assert_eq!(q.total, 45);"));
         let twice = "let q = bundle(3);\n let q = Quote { total: 9, ..q };\n assert_eq!(q.total, 9);\n assert_eq!(q.total, 9);";
         assert!(reads(twice, "assert_eq!(q.total, 9);"));
     }
