@@ -962,8 +962,6 @@ fn parse_json(path: &Path) -> Result<Value, String> {
 /// Keys the one-file layout kept in `corpus.json`; `split` moves them out.
 const SPLIT_KEYS: [&str; 3] = ["corpus_version", "subjects", "cases"];
 
-/// The corpus as one JSON value: the `corpus.json` header with `subjects`
-/// and `cases` gathered from their per-record files in file-name order.
 /// One libtest test name: a path without spaces or commas, or rustdoc's
 /// doctest name `<file> - <item> (line <n>)`, which libtest prints as is.
 fn is_one_test_name(name: &str) -> bool {
@@ -984,6 +982,8 @@ fn is_one_test_name(name: &str) -> bool {
     plain(file) && plain(item) && !line.is_empty() && line.bytes().all(|b| b.is_ascii_digit())
 }
 
+/// The corpus as one JSON value: the `corpus.json` header with `subjects`
+/// and `cases` gathered from their per-record files in file-name order.
 pub(crate) fn corpus_value(dir: &Path) -> Result<Value, String> {
     let path = dir.join("corpus.json");
     let mut header = parse_json(&path)?;
