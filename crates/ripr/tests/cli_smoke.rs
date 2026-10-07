@@ -3336,7 +3336,7 @@ fn check_json_omitted_base_git_timeout_names_timeout_identity() -> Result<(), St
     let value =
         assert_check_json_refusal(&output, "git_invocation_timeout", "analysis/git-timeout")?;
     assert!(
-        elapsed < std::time::Duration::from_secs(60),
+        elapsed < std::time::Duration::from_mins(1),
         "check waited {elapsed:?} on hung git under --git-timeout 1"
     );
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -3392,7 +3392,7 @@ fn check_json_bound_subject_config_timeout_names_timeout_identity() -> Result<()
     let value =
         assert_check_json_refusal(&output, "git_invocation_timeout", "analysis/git-timeout")?;
     assert!(
-        elapsed < std::time::Duration::from_secs(120),
+        elapsed < std::time::Duration::from_mins(2),
         "check waited {elapsed:?} on hung git for the candidate config read"
     );
     let stderr = String::from_utf8_lossy(&output.stderr);
