@@ -21,6 +21,11 @@ mod typescript;
 pub(crate) use diagnostic::ConfigDiagnostic;
 #[cfg(test)]
 use diagnostic::ConfigLocationStatus;
+/// Test-only: lets output-layer unit tests construct an enabled-language set
+/// directly, because `load_for_root` intentionally refuses preview languages
+/// a feature-less binary cannot analyze.
+#[cfg(test)]
+pub(crate) use model::LanguagesConfig;
 use model::{BunUbProfileConfig, FindingSeverityConfig, ProfilesConfig, SeamSeverityConfig};
 pub use model::{
     CHECK_ARTIFACT_CONFIG_IDENTITY_VERSION, CheckInputExplicit, ConfigIdentityRole, ConfigSeverity,

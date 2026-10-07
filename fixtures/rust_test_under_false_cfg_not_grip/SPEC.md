@@ -18,7 +18,7 @@ ripr check \
 
 ## Then
 
-The test is not discovered. Reach is `no` and the finding is `static_unknown`
+The test is not discovered. Reach is `no` and the finding is `no_static_path`
 (not `weakly_exposed`): no test that can run is seen calling `price_with_tax`.
 
 ## Must Not
@@ -27,3 +27,11 @@ The test is not discovered. Reach is `no` and the finding is `static_unknown`
   Before this fixture the finding was `weakly_exposed` with that test named.
 - Drop tests under a cfg ripr cannot evaluate (feature, target or custom
   atoms): those stay discovered, as before.
+
+## Known limits
+
+Not covered here, and stated so the fixture is not read as a broader claim:
+this fixture runs on the parser-backed path and pins only `cfg(any())`. On the
+lexical fallback, a gate attribute is missed when it spans more than 32 lines
+or is separated from the function by a non-attribute line such as a comment.
+The test then stays discovered (fail open). Tracked in #7043.

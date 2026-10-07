@@ -296,11 +296,18 @@ than the changed line (`string.len() >= MAX`). In that case the producer cuts
 `before` to the same span of the old line (`string.len() > MAX`), so the
 `Changed` block does not set a whole old line (`if string.len() > MAX {`)
 against one expression (#6995, widened to every canonical-shape family by
-#5312). The cut is made only when the edit falls inside the shape. Match arms
-are exempt: they keep the whole old arm because the tuple_match witnesses
-parse it. Otherwise `before` keeps the whole old line. The same `before`
-reaches the MCP `changed_behavior.before` field and the LSP diagnostic witness;
-`ripr check --format json` never serializes `probe.before`, so it is unchanged.
+#5312). The cut is made only when the edit falls inside the shape. A match
+arm whose head changed (`x if x <= 10 =>` from `x if x < 10 => panic!(..)`)
+is cut the same way to its old head (#7020). An arm whose body changed keeps
+the whole old arm, because the edit falls outside the head shape and the arm
+consumers parse the old body. An old line with a second `=>` (two arms on one
+line, or a nested match in the body) is never cut: arm selection cannot tell
+which arm changed there and keeps that arm's selection unknown. A changed
+`match` scrutinee is cut the same way (`match kind` rather than
+`match kind {`). Otherwise `before` keeps the whole old line. The same
+`before` reaches the MCP `changed_behavior.before` field and the LSP
+diagnostic witness; `ripr check --format json` never serializes
+`probe.before`, so it is unchanged.
 
 ### Terminal safety
 
