@@ -1,5 +1,7 @@
 use super::*;
-use crate::analysis::classify::{impl_self_type_name, method_call_resolves_to_impl_type};
+use crate::analysis::classify::{
+    impl_self_type_name, method_call_resolves_to_impl, owner_dispatch_trait,
+};
 use std::sync::Arc;
 
 pub(super) mod context;
@@ -55,6 +57,7 @@ pub(super) struct OwnerContext {
     prefix: Option<String>,
     fixture_names: Arc<BTreeSet<String>>,
     impl_type: Option<String>,
+    impl_trait: Option<String>,
     same_name_count: usize,
 }
 
@@ -71,6 +74,7 @@ impl OwnerContext {
             .map(|file| context.fixture_names_for_owner_file(file))
             .unwrap_or_default();
         let impl_type = owner_fn.and_then(|owner| impl_self_type_name(&owner.id.0));
+        let impl_trait = owner_fn.and_then(owner_dispatch_trait);
         let same_name_count = context.function_name_count(&name);
         Self {
             name,
@@ -80,6 +84,7 @@ impl OwnerContext {
             prefix,
             fixture_names,
             impl_type,
+            impl_trait,
             same_name_count,
         }
     }
@@ -215,7 +220,12 @@ pub(super) fn match_direct_owner_call(
             let Some(impl_type) = owner.impl_type.as_deref() else {
                 continue;
             };
-            if !method_call_resolves_to_impl_type(indexed.test, &owner.name, impl_type) {
+            if !method_call_resolves_to_impl(
+                indexed.test,
+                &owner.name,
+                impl_type,
+                owner.impl_trait.as_deref(),
+            ) {
                 continue;
             }
         }

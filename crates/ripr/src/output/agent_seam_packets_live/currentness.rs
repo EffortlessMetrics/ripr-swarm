@@ -869,8 +869,8 @@ mod tests {
         assert!(!legacy.refresh_replayable());
     }
 
-    // Constructed only by the unix-only symlink test above; gate the helper
-    // too so non-unix clippy builds do not see it as dead code (#7023).
+    // Only the Unix symlink-parent test constructs this; without the gate the
+    // struct is dead code on other platforms.
     #[cfg(unix)]
     struct RemoveOnDrop(PathBuf);
 
