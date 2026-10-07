@@ -304,7 +304,10 @@ fn twin_check_stays_fast_on_deep_chains_that_share_a_start() {
     let link = ".m()";
     let chain = link.repeat(depth);
     // `Err(E.m()…)` closed, then chained again: an outer chain at byte 0
-    // whose payload chain starts at byte 4.
+    // whose payload chain starts at byte 4. The parser gives method calls no
+    // ErrorPath shape, so these spans are synthetic; a parsed run of
+    // same-start ErrorPath shapes comes from calls on calls
+    // (`f(Err(E))(a)(b)…`). The test bounds the algorithm, not a parse.
     let source = format!("Err(E{chain}){chain}");
     let payload_end = "Err(E".len();
     let outer_end = payload_end + chain.len() + 1;
