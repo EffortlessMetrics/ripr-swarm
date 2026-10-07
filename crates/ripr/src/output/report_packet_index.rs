@@ -1,4 +1,5 @@
 use super::assistant_loop_health::ASSISTANT_PROOF_COMMAND;
+use super::markdown::code_span;
 use crate::agent::loop_commands::{bound_root, bound_root_path, root_path_display, shell_arg};
 use serde::Serialize;
 use serde_json::Value;
@@ -400,9 +401,10 @@ pub(crate) fn render_report_packet_index_markdown(report: &ReportPacketIndexRepo
 fn push_next_command(out: &mut String, id: &str, next_command: &str) {
     match id {
         "assistant_proof" => out.push_str(&format!(
-            "  - next, after the repair's after phase writes the agent receipt: `{next_command}`\n"
+            "  - next, after the repair's after phase writes the agent receipt: {}\n",
+            code_span(next_command)
         )),
-        _ => out.push_str(&format!("  - next: `{next_command}`\n")),
+        _ => out.push_str(&format!("  - next: {}\n", code_span(next_command))),
     }
 }
 
@@ -710,7 +712,7 @@ fn command_at_root(template: &str, input: &ReportPacketIndexInput) -> String {
                 if bind || path.is_absolute() {
                     shell_arg(&root_path_display(&bound_root_path(&path)))
                 } else {
-                    shell_arg(&path.to_string_lossy().replace('\\', "/"))
+                    shell_arg(&root_path_display(&path))
                 }
             } else {
                 token.to_string()
@@ -1819,6 +1821,45 @@ mod tests {
                 "no relative root or artifact path may remain: {command}"
             );
         }
+        Ok(())
+    }
+
+    /// #4000: a bound root may hold a backtick, which `shell_arg` keeps
+    /// inside its quotes. The Markdown line must still carry the whole
+    /// command in one code span, or copying it drops part of the root.
+    #[test]
+    fn markdown_next_command_keeps_a_backtick_root_in_one_code_span() -> Result<(), String> {
+        let root = temp_root("backtick-root")?;
+        write(&root.join("target/ripr/review/comments.md"), "content\n")?;
+        let mut input = input_for_root(&root);
+        input.root = "my`repo".to_string();
+        let report = build_report_packet_index_report(input);
+        let markdown = render_report_packet_index_markdown(&report);
+        let mut checked = 0;
+        for missing in &report.missing_expected {
+            let Some(command) = &missing.next_command else {
+                continue;
+            };
+            assert!(
+                command.contains('`'),
+                "root must reach the command: {command}"
+            );
+            let Some(span) = markdown.lines().find_map(|line| {
+                let (_, span) = line.split_once(": ")?;
+                (crate::output::markdown::code_span_content(span).as_deref() == Some(command))
+                    .then_some(span)
+            }) else {
+                return Err(format!(
+                    "no line holds `{command}` as one code span:\n{markdown}"
+                ));
+            };
+            assert!(
+                span.starts_with("``"),
+                "fence must outrun the root's backtick: {span}"
+            );
+            checked += 1;
+        }
+        assert!(checked > 0, "fixture must yield regeneration commands");
         Ok(())
     }
 

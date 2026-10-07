@@ -5,4 +5,5 @@
   `--reports-dir`/`--review-dir`/... values were ignored in favor of the
   default `target/ripr/...` paths. Commands now name the input directories;
   for a non-default root they name the resolved repository with absolute
-  artifact paths. The default packet's output is unchanged (#4000).
+  artifact paths, and the Markdown keeps a root with a backtick inside one
+  code span. The default packet's output is unchanged (#4000).
