@@ -15815,7 +15815,9 @@ fn pilot_honors_ripr_git_timeout_for_the_current_change() -> Result<(), String> 
 /// change's seams are counted before the cut.
 #[test]
 fn pilot_says_it_withholds_the_seam_on_the_current_change() -> Result<(), String> {
-    let lib = "pub fn checkout(total: u32) -> u32 {\n    tier(total) * 10\n}\n\nfn tier(total: u32) -> u32 {\n    if total > 100 { 2 } else { 1 }\n}\n";
+    // The repo-wide seam lives in `checkout`'s own guard: `tier(total)` feeds
+    // `*`, so it is a consumed call and no seam of its own (#6896).
+    let lib = "pub fn checkout(total: u32) -> u32 {\n    if total == 0 {\n        return 0;\n    }\n    tier(total) * 10\n}\n\nfn tier(total: u32) -> u32 {\n    if total > 100 { 2 } else { 1 }\n}\n";
     let root = pilot_language_fixture_repo(
         "pilot-withheld-current-change",
         &[
