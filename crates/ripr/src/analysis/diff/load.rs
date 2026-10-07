@@ -589,8 +589,10 @@ fn probe_git_root(root: &Path, git_timeout: Option<Duration>) -> GitRootProbe {
 /// failure path alone, so the ordinary run still costs one `rev-parse`.
 ///
 /// It is evidence on the same terms as the base probe: `None` when the command
-/// could not run at all, because a probe that never ran may not assert that a
-/// directory is not a repository any more than it may assert a ref is absent.
+/// could not run at all or never answered (missing git, timeout, or an
+/// unanswered probe), because a probe that never established anything may not
+/// assert that a directory is not a repository any more than it may assert a
+/// ref is absent.
 /// `--is-inside-work-tree` prints `true` only inside a work tree, so a run that
 /// printed anything else — or failed, which is what it does outside a
 /// repository — is the case this names. Missing git is not this message; the
