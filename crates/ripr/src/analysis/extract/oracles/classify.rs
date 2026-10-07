@@ -7,8 +7,9 @@ use super::arguments::{
 use super::patterns::{
     contains_exact_comparison, is_broad_error_assertion, is_clear_exact_custom_assertion_helper,
     is_custom_assertion_helper, is_duplicative_comparison, is_duplicative_equality_assertion,
-    is_exact_error_variant_assertion, is_exact_value_assertion, is_mock_expectation_line,
-    is_side_effect_observer_assertion, is_snapshot_assertion, is_whole_object_equality_assertion,
+    is_exact_error_variant_assertion, is_exact_membership_any_assertion, is_exact_value_assertion,
+    is_mock_expectation_line, is_side_effect_observer_assertion, is_snapshot_assertion,
+    is_whole_object_equality_assertion,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -95,6 +96,16 @@ pub(crate) fn classify_assertion(line: &str) -> OracleClassification {
         OracleClassification {
             kind: OracleKind::Unknown,
             strength: OracleStrength::Unknown,
+        }
+    } else if is_exact_membership_any_assertion(line) {
+        // RIPR-SPEC-0231 rule 7 (#6991): an exact-equality `.any()`
+        // membership check fails for any wrong member value, so it pins
+        // an exact value. It sits after the custom-helper steps and
+        // before the bare-`assert!` catch-all below, which keeps every
+        // wider `.any()` shape (and `.contains()`) weak.
+        OracleClassification {
+            kind: OracleKind::ExactValue,
+            strength: OracleStrength::Strong,
         }
     } else if line.contains("> 0")
         || line.contains('<')
@@ -199,6 +210,74 @@ fn classify_fallible_assertion(line: &str) -> Option<OracleClassification> {
 mod tests {
     use super::classify_assertion;
     use crate::domain::{OracleKind, OracleStrength};
+
+    fn require_classification(
+        text: &str,
+        expected_kind: OracleKind,
+        expected_strength: OracleStrength,
+    ) -> Result<(), String> {
+        let actual = classify_assertion(text);
+        if actual.kind != expected_kind || actual.strength != expected_strength {
+            return Err(format!(
+                "oracle classification mismatch for {text}: got {actual:?}, want {expected_kind:?}/{expected_strength:?}"
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn exact_membership_any_assertion_admits_exact_equality() -> Result<(), String> {
+        for text in [
+            // Issue #6991 repro: exact membership over a captured log buffer.
+            r#"assert!(lines.iter().any(|l| l == "audited 42"), "{lines:?}");"#,
+            "assert!(ids.iter().any(|id| id == EXPECTED_ID));",
+            "assert!(xs.iter().any(|x| x == Config::LIMIT));",
+            "assert!(counts.into_iter().any(|n| n == 42));",
+            "debug_assert!(buf.iter_mut().any(|b| *b == 0xFF));",
+            "assert!(chars.iter().any(|c| c == 'a'));",
+            // Operator-lookalikes inside the literal must not defeat the shape.
+            r#"assert!(xs.iter().any(|x| x == "a>b"));"#,
+            r#"assert!(xs.iter().any(|x| x == "a|b"));"#,
+            r##"assert!(xs.iter().any(|x| x == r#"raw"#));"##,
+            "assert!(rows.iter().any(|r| r.total == 33));",
+            "assert!(xs.iter().any(|x| x == -1));",
+            r#"assert!(lines.iter().any(|l: &String| l == "audited 42"));"#,
+        ] {
+            require_classification(text, OracleKind::ExactValue, OracleStrength::Strong)?;
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn exact_membership_any_assertion_rejects_non_exact_shapes() -> Result<(), String> {
+        for text in [
+            "assert!(xs.iter().any(|x| x > 1));",
+            "assert!(xs.iter().any(|x| x != 1));",
+            "assert!(!xs.iter().any(|x| x == 1));",
+            "assert!(ready && xs.iter().any(|x| x == 1));",
+            "assert!(xs.iter().any(|x| x == 1 || x == 2));",
+            "assert!(xs.iter().any(|x| x == 1 && ready));",
+            "assert!(xs.iter().any(|x| x == expected()));",
+            "assert!(xs.iter().any(|x| x == other));",
+            "assert!(ready.any(|x| x == 1));",
+            "assert!(xs.any(|x| x == 1));",
+            "assert!(xs.iter().any(|x| x.len() == 1));",
+            "assert!(xs.iter().all(|x| x == 1));",
+            // Rule 12 keeps `.contains()` weak; out of scope for #6991.
+            "assert!(lines.contains(&expected));",
+            // The shape inside a string literal is not an assertion shape.
+            r#"assert!(x == ".any(|l| l == 1");"#,
+            // Constructor calls stay weak: only literals and const paths pin.
+            "assert!(xs.iter().any(|x| x == Some(1)));",
+            "assert!(xs.iter().any(|a, b| a == b));",
+            "assert!(xs.iter().any(move |x| x == 1));",
+            "assert!(xs.iter().any(|x| { x == 1 }));",
+            "assert!(a.any(b).iter().any(|x| x == 1));",
+        ] {
+            require_classification(text, OracleKind::RelationalCheck, OracleStrength::Weak)?;
+        }
+        Ok(())
+    }
 
     #[test]
     fn exact_fallible_oracle_requires_an_explicit_value_comparison() -> Result<(), String> {
