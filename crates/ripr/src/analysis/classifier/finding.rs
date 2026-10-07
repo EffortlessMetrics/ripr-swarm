@@ -351,7 +351,11 @@ fn oracle_text_aligns_with_sink(
 /// without such a binding, alignment is not credited and the repair guidance
 /// is retained (RIPR-SPEC-0001; AGENTS.md: align on entity identity, not
 /// token coincidence).
-fn oracle_binds_sink_identity(oracle: &str, test_body: &str, owner_name: Option<&str>) -> bool {
+pub(in crate::analysis) fn oracle_binds_sink_identity(
+    oracle: &str,
+    test_body: &str,
+    owner_name: Option<&str>,
+) -> bool {
     let Some(owner_name) = owner_name else {
         return false;
     };

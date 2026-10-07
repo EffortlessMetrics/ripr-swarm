@@ -1685,6 +1685,7 @@ mod tests {
                 role_provenance: Default::default(),
                 source: source.into(),
                 item_scopes: None,
+                macro_candidates: None,
             },
         );
         RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
@@ -2839,6 +2840,7 @@ mod tests {
                     role_provenance: Default::default(),
                     source: source.into(),
                     item_scopes: None,
+                    macro_candidates: None,
                 },
             )
         };

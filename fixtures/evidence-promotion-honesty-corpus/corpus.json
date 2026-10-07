@@ -1781,6 +1781,65 @@
       ]
     },
     {
+      "id": "rust_owner_parameter_token_coincidence",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/owner_parameter_token_coincidence",
+      "vector": "owner_parameter_or_literal_token_is_not_observation",
+      "probe_family": "return_value",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "weakly_exposed" },
+        { "type": "maximum_class", "class": "weakly_exposed" }
+      ]
+    },
+    {
+      "id": "rust_self_computed_expected_value",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/self_computed_expected_value",
+      "vector": "self_computed_expected_value_is_not_a_discriminator",
+      "probe_family": "return_value",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "weakly_exposed" },
+        { "type": "maximum_class", "class": "weakly_exposed" }
+      ]
+    },
+    {
+      "id": "rust_self_computed_expected_helper",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/self_computed_expected_helper",
+      "vector": "expected_value_computed_through_test_helper",
+      "probe_family": "return_value",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "weakly_exposed" },
+        { "type": "maximum_class", "class": "weakly_exposed" }
+      ]
+    },
+    {
+      "id": "rust_owner_name_collision_helper_keeps_credit",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/owner_name_collision_helper_keeps_credit",
+      "vector": "helper_calling_foreign_same_named_method_is_independent",
+      "probe_family": "return_value",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_promote" },
+        { "type": "expected_class", "class": "exposed" }
+      ]
+    },
+    {
       "id": "rust_proximity_name_oracle_not_credited",
       "language": "rust",
       "tier": "pure",
@@ -4198,6 +4257,130 @@
           "name": "a_clone_equals_its_original",
           "file": "src/lib.rs",
           "line": 34,
+          "kind": "exact_value",
+          "strength": "strong",
+          "relation_reason": "weak_token_substring"
+        },
+        {
+          "type": "maximum_class",
+          "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
+      "id": "rust_predicate_pairing_reassigned_binding",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/predicate_pairing_reassigned_binding",
+      "vector": "boundary_binding_reassigned_before_assertion",
+      "probe_family": "predicate",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "expected_oracle",
+          "kind": "exact_value",
+          "strength": "strong"
+        },
+        {
+          "type": "expected_related_test",
+          "name": "rebound",
+          "file": "tests/rebound.rs",
+          "line": 4,
+          "kind": "exact_value",
+          "strength": "strong"
+        },
+        {
+          "type": "maximum_class",
+          "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
+      "id": "rust_predicate_pairing_compound_assigned_binding",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/predicate_pairing_compound_assigned_binding",
+      "vector": "boundary_binding_compound_assigned_before_assertion",
+      "probe_family": "predicate",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "expected_oracle",
+          "kind": "exact_value",
+          "strength": "strong"
+        },
+        {
+          "type": "expected_related_test",
+          "name": "compounded",
+          "file": "tests/compounded.rs",
+          "line": 4,
+          "kind": "exact_value",
+          "strength": "strong"
+        },
+        {
+          "type": "maximum_class",
+          "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
+      "id": "rust_predicate_pairing_mutably_borrowed_binding",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/predicate_pairing_mutably_borrowed_binding",
+      "vector": "boundary_binding_mutably_borrowed_before_assertion",
+      "probe_family": "predicate",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "expected_oracle",
+          "kind": "exact_value",
+          "strength": "strong"
+        },
+        {
+          "type": "expected_related_test",
+          "name": "borrowed",
+          "file": "tests/borrowed.rs",
+          "line": 4,
           "kind": "exact_value",
           "strength": "strong"
         },

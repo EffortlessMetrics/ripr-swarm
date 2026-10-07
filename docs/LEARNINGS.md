@@ -3,6 +3,30 @@
 This log captures repo knowledge that should survive individual PRs and chat
 sessions. It is intentionally short and actionable.
 
+## 2026-10-06: The MCP tool envelope is a wire cost, not a free re-render (#6021)
+
+Serializing the same document twice into one tool response — pretty
+`content[0].text` plus `structuredContent` — made the wire response ~2.4x
+the compact document, so a listing the document guard approved at 65 KB
+died `result_too_large` at the 128 KiB bound after every budget layer had
+passed. Zero-finding fixtures cannot witness this; it needs hundreds of
+items. The envelope is now the calibration owner: compact text always,
+`structuredContent` only while the complete envelope measures under the
+bound, typed failure past that, and `ripr_list_gaps` byte-fills pages to
+`MAX_TOOL_DOCUMENT_BYTES` (half the response bound — worst-case JSON
+escaping doubles the text copy). When changing a wire shape, measure the
+final envelope, not the document.
+## 2026-10-07: Windows spawn and path spellings that tests must not assume (#6855)
+
+Windows `CreateProcess` resolves the executable through the parent's PATH
+and ignores the child's custom `PATH`, so restricting `PATH` to an empty
+directory never produces a missing-binary spawn failure on Windows (probed:
+bare `git` still spawns, exit 0). Force the miss with a deterministically
+absent absolute program instead. Separately, Git for Windows rejects
+verbatim path arguments (`worktree add` fails with "could not create
+leading directories"), so fixture setup must pass a plain or relative path
+even when the fixture root itself is verbatim.
+
 ## 2026-10-04: Operand-position error lexemes are not error observers (#5255)
 
 `assert_eq!((rdr.len(), error_count), (10, 0))` observes a successful length
@@ -350,6 +374,20 @@ compared operand is a local alias rather than a parameter name, activation
 fallback fail-closes to the whole argument list so a buried literal in the
 aliased slot cannot restore pairing. The reverse direction, helper-built
 inputs that read as gaps, is #6615.
+
+## 2026-10-07: A reassigned boundary binding is a stale pairing, not an observed result (#7004)
+
+Same-test pairing kept a `let`-bound boundary name live until a re-`let`
+shadowed it. `let mut got = gate(10); got = true; assert_eq!(got, true)`
+therefore paired the assertion with a call whose result it no longer
+observed, promoting the predicate toward `exposed`. A post-`let`
+reassignment, compound assignment, or `&mut` borrow now voids the binding
+fail-closed. `let mut` alone still pairs, and a mutation before the
+boundary `let` does not void the fresh binding. Compound assignment voids
+even when the shift preserves the value (`got += 1`): without value
+analysis the rule cannot tell a preserving shift from a destroying one
+(`*= 0`), so it fail-closes. Do not "fix" this with dataflow; alias and
+field/index mutation stay unmodeled by design.
 
 ## 2026-09-29: Whole-object equality is not an effect observer of a different collection (#4575)
 

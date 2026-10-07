@@ -17,6 +17,8 @@ pub(crate) use super::extract::{
     is_unwrap_err_bound_error_assertion, unwrap_err_bound_variables,
 };
 use super::facts::ModulePathTarget;
+#[cfg(test)]
+pub(crate) use super::facts::build_index_from_loaded_files_with_cache_and_test_harnesses;
 pub(crate) use super::facts::validated_file_wide_harness_targets;
 #[cfg(test)]
 pub use super::facts::{CallFact, FileFacts, LiteralFact, ReturnFact};
@@ -25,8 +27,7 @@ pub use super::facts::{
     RustIndex, SourceText, TestFact, TestSummary, build_index, build_index_with_test_harnesses,
 };
 pub(crate) use super::facts::{
-    build_analysis_index_from_loaded_files,
-    build_index_from_loaded_files_with_cache_and_test_harnesses,
+    build_analysis_index_from_loaded_files, build_index_from_paths_with_cache_and_test_harnesses,
 };
 #[cfg(test)]
 use super::syntax::LexicalRustSyntaxAdapter;
@@ -249,8 +250,11 @@ pub(in crate::analysis) fn summarize_file(path: PathBuf, text: String) -> FileFa
 /// the error path through the `return` span, and a change to only the
 /// constructor line through the `Err(X)` span. Inventory keeps the
 /// constructor and drops:
-/// - the `return` wrapped around it (`return Err(X)`, `return (Err(X))`);
-/// - the payload call inside an `Err(..)` (`Err(Error::X(off))`).
+/// - the `return` wrapped around it (`return Err(X)`, `return (Err(X))`,
+///   `return Err(X).context(..)`);
+/// - the payload call inside an `Err(..)` (`Err(Error::X(off))`);
+/// - a call wrapping it as an argument (`Poll::Ready(Err(X))`,
+///   `pick(s, Err(A), Err(B))`, `wrap(Error::X(1))`).
 ///
 /// The relation reads source bytes between the two spans, never `text`,
 /// which is a trimmed display snippet. Both relations pair a shape with an
@@ -273,31 +277,176 @@ pub(crate) fn error_path_twins(shapes: &[ProbeShapeFact], source: &str) -> Vec<b
     let groups: Vec<_> = errors
         .chunk_by(|(_, a), (_, b)| a.start_byte == b.start_byte)
         .collect();
-    for pair in groups.windows(2) {
-        let [outers, inners] = pair else { continue };
+    // Whether a group's call only wraps an `Err(..)`, so the call around it
+    // wraps that error too (`Ok(Poll::Ready(Err(X)))`). Pairs run from the
+    // last group back so the inner group is settled first.
+    let mut wraps_err = vec![false; groups.len()];
+    for at in (1..groups.len()).rev() {
+        let (Some(outers), Some(inners)) = (groups.get(at - 1), groups.get(at)) else {
+            continue;
+        };
         let (Some((_, outer)), Some((_, inner))) = (outers.first(), inners.first()) else {
             continue;
         };
         let Some(prefix) = source.get(outer.start_byte..inner.start_byte) else {
             continue;
         };
+        let inner_is_err = wraps_err.get(at).copied().unwrap_or(false)
+            || source
+                .get(inner.start_byte..)
+                .is_some_and(err_call_opening_at_start);
         if is_return_prefix(prefix) {
-            mark_returns(outers, inners, source, &mut twins);
+            mark_returns(outers, inners, inner_is_err, source, &mut twins);
         }
         if let Some(opening) = err_call_opening(prefix) {
             mark_payloads(outers, inners, opening, source, &mut twins);
+        }
+        if wraps_argument(prefix, inner_is_err)
+            && mark_wrappers(outers, inners, source, &mut twins)
+            && inner_is_err
+            && let Some(wraps) = wraps_err.get_mut(at - 1)
+        {
+            *wraps = true;
         }
     }
     twins
 }
 
-/// Marks each `return` in `outers` whose suffix after some inner shape is
-/// only closing parentheses. Only the inner shape that ends last inside the
-/// `return` needs checking: an earlier end leaves a longer suffix that holds
-/// the same bytes.
+/// Marks the call in `outers` that holds the inner shape: the prefix check
+/// already placed the inner group in the call's argument list (#6938). Only
+/// the shortest outer that contains it is the call; a longer shape from the
+/// same start (`wrap(Err(X)).map_err(..)` as a tail) adds behavior and stays.
+/// The inner shape must be the whole argument: in
+/// `Ok(wrap(Err(E)).map_err(convert))` the argument converts the error, so
+/// `Ok(..)` stays too. Returns whether a call was marked.
+fn mark_wrappers(
+    outers: &[(usize, &ProbeShapeFact)],
+    inners: &[(usize, &ProbeShapeFact)],
+    source: &str,
+    twins: &mut [bool],
+) -> bool {
+    let Some((_, inner)) = inners.first() else {
+        return false;
+    };
+    let first = outers.partition_point(|(_, outer)| outer.end_byte < inner.end_byte);
+    let Some(&(_, call)) = outers.get(first) else {
+        return false;
+    };
+    let whole_argument = source
+        .get(inner.end_byte..call.end_byte)
+        .is_some_and(|suffix| suffix.trim_start().starts_with([',', ')']));
+    if !whole_argument {
+        return false;
+    }
+    for &(outer_index, outer) in outers.get(first..).unwrap_or_default() {
+        if outer.end_byte != call.end_byte {
+            break;
+        }
+        if let Some(twin) = twins.get_mut(outer_index) {
+            *twin = true;
+        }
+    }
+    true
+}
+
+/// `prefix` opens a call whose argument list reaches the inner shape at the
+/// top level: `Poll::Ready(`, `Ok(`, `pick(s, `, `wrap(` (#6938). The inner
+/// error constructor carries the error, so the wrapping call is its twin.
+///
+/// Inside `Err(..)` the payload rule applies instead. A capitalised callee
+/// (`Error::Bad(Error::Inner(1))`) builds its own error around the inner one
+/// and stays, as does a function on a type (`io::Error::new(kind, ..)`,
+/// `Error::wrap(..)`), unless the inner shape is an `Err(..)` that the callee
+/// only wraps (`Poll::Ready(Err(X))`). Only known pure wrappers count:
+/// any other capitalised callee (`Error::Outer(Err(..))`,
+/// `Self::Outer(Err(..))`, `Outer(Err(..))`) may build an error around the
+/// `Err(..)` and stays. A prefix with a quote or a `/` may
+/// hide a delimiter in a literal or comment, so it keeps both shapes. An
+/// `Err(..)` inside a macro argument before the inner shape has no shape of
+/// its own, so `wrap(vec![Err(A)], Err(B))` keeps only `Err(B)`.
+fn wraps_argument(prefix: &str, inner_is_err: bool) -> bool {
+    let Some((callee, arguments)) = prefix.split_once('(') else {
+        return false;
+    };
+    let callee = callee.trim();
+    // `f::<T>(..)`: drop the turbofish before reading the path.
+    let path = match callee.find("::<") {
+        Some(turbofish) if callee.ends_with('>') => callee.get(..turbofish).unwrap_or(callee),
+        _ => callee,
+    };
+    // `return (..)` is a parenthesised value, not a call; the return rule
+    // owns it.
+    let is_path = !path.is_empty()
+        && path != "return"
+        && !path.starts_with(|c: char| c.is_ascii_digit())
+        && path
+            .chars()
+            .all(|c| c.is_alphanumeric() || c == '_' || c == ':');
+    let name = path.rsplit("::").next().unwrap_or(path);
+    let builds_error = path
+        .split("::")
+        .any(|segment| segment.starts_with(char::is_uppercase));
+    if !is_path || name == "Err" || (builds_error && !(inner_is_err && pure_wrapper(path))) {
+        return false;
+    }
+    let mut depth = 0_usize;
+    for c in arguments.chars() {
+        match c {
+            '"' | '\'' | '/' => return false,
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => {
+                let Some(outer) = depth.checked_sub(1) else {
+                    return false;
+                };
+                depth = outer;
+            }
+            _ => {}
+        }
+    }
+    let before = arguments.trim_end();
+    depth == 0 && (before.is_empty() || before.ends_with(','))
+}
+
+/// A capitalised callee that only carries its argument: `Ok`, `Some`,
+/// `Poll::Ready`, `Box::new` and the like.
+fn pure_wrapper(path: &str) -> bool {
+    // A bare `Ready` may be an imported variant of the user's own enum.
+    const WRAPPERS: [&str; 9] = [
+        "Ok",
+        "Some",
+        "Poll::Ready",
+        "std::task::Poll::Ready",
+        "core::task::Poll::Ready",
+        "Box::new",
+        "Rc::new",
+        "Arc::new",
+        "Cow::Owned",
+    ];
+    WRAPPERS.contains(&path)
+}
+
+/// `text` starts with an `Err(` or `Err::<T, E>(` call.
+fn err_call_opening_at_start(text: &str) -> bool {
+    let Some(rest) = text.strip_prefix("Err") else {
+        return false;
+    };
+    let rest = rest.trim_start();
+    rest.starts_with('(') || rest.starts_with("::<")
+}
+
+/// Marks each `return` in `outers` around the inner shape that ends last
+/// inside it, when only closing parentheses follow that shape, or a method
+/// chain on it when it is an `Err(..)` (`return Err(X).context(..)`, #6935).
+/// The constructor is then the innermost receiver, so its own seam carries
+/// the error. Any chain that may convert or replace the error
+/// (`return Err(A).map_err(|_| Error::B)`, `.or_else(..)`, an unknown
+/// method) has no shape of its own and keeps the return. A chain on any other error shape
+/// (`return load(Error::A).map_err(Error::Io)`) adds a conversion and keeps
+/// its seam, as does a `return x.map_err(..)` with no inner shape.
 fn mark_returns(
     outers: &[(usize, &ProbeShapeFact)],
     inners: &[(usize, &ProbeShapeFact)],
+    inner_is_err: bool,
     source: &str,
     twins: &mut [bool],
 ) {
@@ -308,11 +457,88 @@ fn mark_returns(
         };
         let closes = source
             .get(inner.end_byte..outer.end_byte)
-            .is_some_and(|suffix| suffix.chars().all(|c| c == ')' || c.is_whitespace()));
+            .is_some_and(|suffix| {
+                let rest = suffix.trim_start_matches(|c: char| c == ')' || c.is_whitespace());
+                // `..` after the constructor is a range, not a method chain.
+                rest.is_empty()
+                    || (inner_is_err
+                        && rest.starts_with('.')
+                        && !rest.starts_with("..")
+                        && keeps_error(rest))
+            });
         if closes && let Some(twin) = twins.get_mut(outer_index) {
             *twin = true;
         }
     }
+}
+
+/// A method chain that only annotates or inspects the error it is called
+/// on: every top-level method is one of `context`, `with_context`,
+/// `wrap_err`, `wrap_err_with`, `attach`, `attach_printable`,
+/// `inspect_err`, `inspect` or `into`. Any other method may replace the
+/// error (`map_err`, `or_else`, `unwrap_or_else`, an extension trait), so
+/// the chain fails closed and the `return` keeps its seam. Arguments are
+/// skipped; a comment, a char literal, a lifetime or a raw string fails
+/// closed.
+fn keeps_error(chain: &str) -> bool {
+    const KEEPS: [&str; 9] = [
+        "context",
+        "with_context",
+        "wrap_err",
+        "wrap_err_with",
+        "attach",
+        "attach_printable",
+        "inspect_err",
+        "inspect",
+        "into",
+    ];
+    let mut depth = 0_usize;
+    let mut chars = chain.char_indices().peekable();
+    while let Some((at, c)) = chars.next() {
+        match c {
+            '"' => {
+                // Skip the string literal, escapes included. An unclosed
+                // string fails closed.
+                let mut closed = false;
+                while let Some((_, c)) = chars.next() {
+                    match c {
+                        '\\' => {
+                            chars.next();
+                        }
+                        '"' => {
+                            closed = true;
+                            break;
+                        }
+                        _ => {}
+                    }
+                }
+                if !closed {
+                    return false;
+                }
+            }
+            // A raw string (`r#"..."#`) may hold unescaped quotes.
+            '#' => return false,
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => depth = depth.saturating_sub(1),
+            // A comment may hide a delimiter or a method; a lifetime or
+            // char literal may hide a quote.
+            '/' => return false,
+            '\'' => return false,
+            '.' if depth == 0 => {
+                let name: String = chain
+                    .get(at + 1..)
+                    .unwrap_or_default()
+                    .chars()
+                    .take_while(|c| c.is_alphanumeric() || *c == '_')
+                    .collect();
+                if !KEEPS.contains(&name.as_str()) {
+                    return false;
+                }
+            }
+            _ => {}
+        }
+    }
+    true
 }
 
 /// Marks each payload in `inners` that some `Err(..)` in `outers` closes
