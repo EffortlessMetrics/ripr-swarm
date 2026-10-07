@@ -1570,9 +1570,19 @@ fn owner_name_destructure_binding_mismatch(
                     workspace_root,
                 ));
             }
+            // A dynamic `import(...)` source is never parsed, so where it
+            // points stays unknown: a shadow for the legacy answer (the
+            // assertion stays unread), but not an affirmative mismatch.
+            if init
+                .trim_start_matches("await")
+                .trim_start()
+                .starts_with("import(")
+            {
+                return Some(OwnerBindingMismatch::Unresolved);
+            }
             // `<namespace>` where the namespace import binds the owner's
-            // module: not a shadow. Anything else (factory call, dynamic
-            // import, an unrelated binding) is.
+            // module: not a shadow. Anything else (factory call, an
+            // unrelated binding) is.
             let init_ident: String = init
                 .chars()
                 .take_while(|ch| ch.is_ascii_alphanumeric() || *ch == '_' || *ch == '$')

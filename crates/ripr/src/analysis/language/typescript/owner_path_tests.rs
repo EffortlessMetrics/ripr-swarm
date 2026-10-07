@@ -406,15 +406,27 @@ fn owner_path_unresolved_alias_import_is_unknown_at_the_gate() -> Result<(), Str
 }
 
 /// The projection itself: only present and unanchored paths are readable.
+/// The expected answer is an exhaustive `match` with no wildcard, written
+/// independently of `observes_owner_call`, so a new variant fails to compile
+/// here until someone decides whether it is readable.
 #[test]
 fn owner_path_projection_reads_only_present_and_unanchored_paths() {
     use TypeScriptOwnerPathDisposition as D;
-    let readable = [
+    fn expected(disposition: D) -> bool {
+        match disposition {
+            D::TrustedOwnerPath | D::ModuleEntryPath | D::OwnerNameCallUnanchored => true,
+            D::HeuristicOnly
+            | D::RejectedLocalShadow
+            | D::RejectedUnrelatedImportOrDestructure
+            | D::RejectedOwnerModuleMock
+            | D::RejectedSpyFabrication
+            | D::UnresolvedAliasOrReexport => false,
+        }
+    }
+    let all = [
         D::TrustedOwnerPath,
         D::ModuleEntryPath,
         D::OwnerNameCallUnanchored,
-    ];
-    let withheld = [
         D::HeuristicOnly,
         D::RejectedLocalShadow,
         D::RejectedUnrelatedImportOrDestructure,
@@ -422,10 +434,126 @@ fn owner_path_projection_reads_only_present_and_unanchored_paths() {
         D::RejectedSpyFabrication,
         D::UnresolvedAliasOrReexport,
     ];
-    for disposition in readable {
-        assert!(disposition.observes_owner_call(), "{disposition:?}");
+    for disposition in all {
+        assert_eq!(
+            disposition.observes_owner_call(),
+            expected(disposition),
+            "{disposition:?}"
+        );
     }
-    for disposition in withheld {
-        assert!(!disposition.observes_owner_call(), "{disposition:?}");
+}
+
+/// A dynamic `import()` of the owner module is never parsed, so the binding
+/// stays unknown rather than an affirmative mismatch. Its assertion stays
+/// unread, as before.
+#[test]
+fn owner_path_dynamic_import_destructure_stays_unknown() -> Result<(), String> {
+    check(&Case {
+        name: "dynamic import destructure",
+        test_source: "import { applyDiscount } from '../src/pricing';\ntest('discounts', async () => {\n  const { applyDiscount } = await import('../src/pricing');\n  expect(applyDiscount(100)).toBe(90);\n});\n",
+        relation: TypeScriptRelationKind::SameFileProximity,
+        disposition: TypeScriptOwnerPathDisposition::UnresolvedAliasOrReexport,
+        observes: false,
+        ..DIRECT
+    })
+}
+
+/// Known gap, pinned: a same-name binding in an enclosing `describe` scope
+/// refuses the direct relation, but the disposition gates do not check it
+/// yet, so the call reads as unanchored and its assertion stays readable,
+/// exactly as before #5523. Moving it to `RejectedLocalShadow` changes
+/// output and is tracked separately.
+#[test]
+fn owner_path_enclosing_scope_shadow_is_not_yet_a_rejection() -> Result<(), String> {
+    check(&Case {
+        name: "enclosing describe-scope shadow",
+        test_source: "import { applyDiscount } from '../src/pricing';\ndescribe('pricing', () => {\n  const applyDiscount = (x: number) => 42;\n  it('discounts', () => {\n    expect(applyDiscount(100)).toBe(42);\n  });\n});\n",
+        relation: TypeScriptRelationKind::SameFileProximity,
+        disposition: TypeScriptOwnerPathDisposition::OwnerNameCallUnanchored,
+        observes: true,
+        ..DIRECT
+    })
+}
+
+/// The binding gates' own truth table, asserted against fixed answers
+/// rather than the legacy formula (which calls the same helpers): each body
+/// is judged under a heuristic relation so only the gates decide.
+#[test]
+fn owner_path_binding_gate_truth_table() -> Result<(), String> {
+    use TypeScriptOwnerPathDisposition as D;
+    let owner = pick_owner(OwnerPick::Named(OWNER_FILE, "applyDiscount"))?;
+    let call = "  expect(applyDiscount(100)).toBe(90);\n";
+    let rows: [(&str, String, D); 8] = [
+        (
+            "require of the owner module",
+            format!(
+                "test('t', () => {{\n  const {{ applyDiscount }} = require('../src/pricing');\n{call}}});\n"
+            ),
+            D::OwnerNameCallUnanchored,
+        ),
+        (
+            "require of another module",
+            format!(
+                "test('t', () => {{\n  const {{ applyDiscount }} = require('../src/factory');\n{call}}});\n"
+            ),
+            D::RejectedUnrelatedImportOrDestructure,
+        ),
+        (
+            "require the resolver cannot place",
+            format!(
+                "test('t', () => {{\n  const {{ applyDiscount }} = require('@app/pricing');\n{call}}});\n"
+            ),
+            D::UnresolvedAliasOrReexport,
+        ),
+        (
+            "destructure of the owner namespace",
+            format!(
+                "import * as pricing from '../src/pricing';\ntest('t', () => {{\n  const {{ applyDiscount }} = pricing;\n{call}}});\n"
+            ),
+            D::OwnerNameCallUnanchored,
+        ),
+        (
+            "destructure of a factory call",
+            format!(
+                "test('t', () => {{\n  const {{ applyDiscount }} = makePricing();\n{call}}});\n"
+            ),
+            D::RejectedUnrelatedImportOrDestructure,
+        ),
+        (
+            "named import from the owner module",
+            format!(
+                "import {{ applyDiscount }} from '../src/pricing';\ntest('t', () => {{\n{call}}});\n"
+            ),
+            D::OwnerNameCallUnanchored,
+        ),
+        (
+            "owner module, different export bound to the owner name",
+            format!(
+                "import {{ discount as applyDiscount }} from '../src/pricing';\ntest('t', () => {{\n{call}}});\n"
+            ),
+            D::RejectedUnrelatedImportOrDestructure,
+        ),
+        (
+            "named import from another module",
+            format!(
+                "import {{ applyDiscount }} from '../src/factory';\ntest('t', () => {{\n{call}}});\n"
+            ),
+            D::RejectedUnrelatedImportOrDestructure,
+        ),
+    ];
+    for (name, source, expected) in rows {
+        let tests = parse_single_test("tests/pricing.test.ts", &source)?;
+        let test = tests.first().ok_or("parsed test missing")?;
+        let got = owner_path_disposition(
+            test,
+            TypeScriptRelationKind::SameFileProximity,
+            &owner,
+            None,
+            None,
+        );
+        if got != expected {
+            return Err(format!("{name}: got {got:?}, expected {expected:?}"));
+        }
     }
+    Ok(())
 }

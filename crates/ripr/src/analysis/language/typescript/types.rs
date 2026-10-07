@@ -319,8 +319,11 @@ pub(crate) enum TypeScriptOwnerPathDisposition {
     /// present, but whether each test's assertions observe the owner's effect
     /// stays unresolved.
     ModuleEntryPath,
-    /// A heuristic-linked test calls a function of the owner's name, no gate
-    /// found a mismatch, and no declaration anchors the name to the owner.
+    /// A heuristic-linked test calls a function of the owner's name, none of
+    /// the disposition's gates found a mismatch, and no declaration anchors
+    /// the name to the owner. A same-name binding in an enclosing `describe`
+    /// scope is not one of those gates yet (`enclosing_scope_shadows` only
+    /// refuses the direct relation), so such a test also lands here.
     OwnerNameCallUnanchored,
     /// Proximity or name evidence only: the test does not call the owner name.
     HeuristicOnly,
