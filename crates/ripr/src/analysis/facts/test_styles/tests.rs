@@ -1190,3 +1190,87 @@ fn equal_function_keys_keep_distinct_local_context_and_legacy_flat_roles() -> Re
     );
     Ok(())
 }
+
+/// The one-walk table (#5363) must give every function line the answer the
+/// per-function prefix walk gives, including lines inside a multi-line
+/// attribute, where the prefix walk stops mid-attribute.
+fn assert_table_matches_prefix_walks(source: &str, label: &str) {
+    let table = cfg_test_module_lines(source);
+    for start_line in 1..=source.lines().count() + 2 {
+        assert_eq!(
+            inside_cfg_test_module_at(&table, source, start_line),
+            is_inside_cfg_test_module(source, start_line),
+            "{label} line {start_line}"
+        );
+    }
+}
+
+#[test]
+fn one_walk_cfg_test_table_answers_like_each_prefix_walk() -> Result<(), Box<dyn Error>> {
+    let shapes = [
+        "#[cfg(test)]\nmod tests {\n    fn helper() {}\n}\nfn production() {}\n",
+        "#[cfg(\n    test\n)]\nmod tests {\n    #[cfg(\n        feature = \"x\"\n    )]\n    fn helper() {}\n}\n",
+        "#[cfg(test)] #[doc = \"x\"] mod tests {\n    mod inner {\n        fn helper() {}\n    }\n}\nmod later { fn f() {} }\n",
+        // An unclosed attribute must not swallow the rest of the file.
+        "#[cfg(test\nmod tests {\n    fn helper() {}\n}\n",
+        "",
+    ];
+    for (at, source) in shapes.iter().enumerate() {
+        assert_table_matches_prefix_walks(source, &format!("shape {at}"));
+    }
+    // Lines inside a multi-line attribute take the slow path; the table
+    // must mark them rather than guess.
+    let table = cfg_test_module_lines(shapes[1]);
+    assert_eq!(table[1], None, "premise: line 2 sits inside the attribute");
+    // Every other line starts a walk step, so the table answers it without
+    // the per-function prefix walk this table replaces.
+    let table = cfg_test_module_lines(shapes[0]);
+    assert!(
+        table.iter().all(Option::is_some),
+        "single-line steps must all be answered from the one walk: {table:?}"
+    );
+    // Expected answers written out by hand, independent of the shared walk:
+    // inside `mod tests` after its opening line, outside after its `}`.
+    assert_eq!(
+        table,
+        vec![
+            Some(false),
+            Some(false),
+            Some(true),
+            Some(true),
+            Some(false),
+            Some(false),
+        ]
+    );
+    // A deep non-test nest after the test module stays outside it.
+    let deep = format!(
+        "#[cfg(test)]\nmod tests {{\n    fn helper() {{}}\n}}\nfn generated() {{\n{}{}}}\n",
+        "{\n".repeat(200),
+        "}\n".repeat(200)
+    );
+    let table = cfg_test_module_lines(&deep);
+    assert_eq!(table[2], Some(true));
+    assert!(table[4..].iter().all(|entry| *entry == Some(false)));
+    assert_table_matches_prefix_walks(&deep, "deep nest");
+
+    // An independent corpus: this crate's own small files with test modules.
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let mut pending = vec![root];
+    let mut checked = 0;
+    while let Some(dir) = pending.pop() {
+        for entry in fs::read_dir(&dir)? {
+            let path = entry?.path();
+            if path.is_dir() {
+                pending.push(path);
+            } else if path.extension().and_then(|ext| ext.to_str()) == Some("rs") {
+                let source = fs::read_to_string(&path)?;
+                if source.contains("cfg(test)") && source.lines().count() <= 400 {
+                    assert_table_matches_prefix_walks(&source, &path.display().to_string());
+                    checked += 1;
+                }
+            }
+        }
+    }
+    assert!(checked > 20, "only {checked} files checked");
+    Ok(())
+}

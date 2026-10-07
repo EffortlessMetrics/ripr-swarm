@@ -19,6 +19,7 @@ Linked issues:
 - #6668 (argument must be the boundary literal, not merely contain it)
 - #6482 (an assertion borrowed from a test-local check helper pairs through
   the helper's call)
+- #7004 (post-`let` mutation voids a bound boundary name)
 
 Linked PRs:
 
@@ -87,6 +88,13 @@ merely contains the literal does not pair, including `gate(if false { 10 } else
 { 50 })`, `gate(std::cmp::max(10, 50))`, and a bool-owner `assert!(gate(..))`
 pin of either shape (#6668). Those cases fall back to `same_test_pairing_missing`.
 
+A `let`-bound boundary name stays paired only while the binding still holds
+the call's result. A post-`let` reassignment (`got = true`), compound
+assignment (`got += 1`), or `&mut` borrow (`&mut got`) voids the binding
+fail-closed, so a later exact assertion on the name does not pair (#7004).
+`let mut` alone does not void, and a mutation before the boundary `let`
+does not void the fresh binding. Re-`let` shadowing is unchanged.
+
 An assertion RIPR-SPEC-0197 rule 7 borrows from a test-local check helper
 (#6482) names the helper's parameters, not the test's inputs:
 
@@ -148,11 +156,14 @@ relation are out of scope.
   let-bound pairing including short names, buried-literal if-expression and
   `std::cmp::max` arguments (including `assert!`), typed literals, locals
   bound to the boundary, named-constant pairing through infection `==`,
-  and named-constant pairing when an unrelated extra argument is compound.
+  named-constant pairing when an unrelated extra argument is compound,
+  post-`let` reassignment, compound assignment, and `&mut` borrows (each
+  voiding the binding), and the unmutated `let mut` control that still pairs.
 - Golden drift is reviewed row by row: every downgrade names the missing
   same-test pairing, and no finding gains a class.
 - An honesty-corpus case independently prohibits `exposed` on the split
-  reproduction.
+  reproduction, and one case per post-`let` mutation variant
+  (reassignment, compound assignment, mutable borrow) does the same.
 
 ## Non-Goals
 
@@ -186,6 +197,11 @@ relation are out of scope.
   Given `let amount = raw; amount >= threshold` and
   `assert_eq!(gate(if false { 10 } else { 50 }, 10), true)`, pairing does
   not treat the aliased input as a boundary just because `threshold` is 10.
+- Given `let mut got = gate(10); got = true; assert_eq!(got, true)`, or
+  `got += 1` / `&mut got` in place of the reassignment, when the predicate
+  is classified, then it does not pair: the binding no longer holds the
+  boundary call's result. Given `let mut got = gate(10);` with no later
+  mutation, then `assert_eq!(got, true)` still pairs.
 
 ## Test Mapping
 
@@ -194,6 +210,9 @@ relation are out of scope.
 - `fixtures/split_test_boundary_oracle`
 - `fixtures/predicate_boundary_oracle_refused`
 - `fixtures/predicate_boundary_oracle_admitted`
+- `fixtures/predicate_pairing_reassigned_binding`
+- `fixtures/predicate_pairing_compound_assigned_binding`
+- `fixtures/predicate_pairing_mutably_borrowed_binding`
 - `crates/ripr/tests/owner_pin_execution.rs::predicate_pairing_cannot_reuse_refused_boundary_equalities`
 
 ## Implementation Mapping

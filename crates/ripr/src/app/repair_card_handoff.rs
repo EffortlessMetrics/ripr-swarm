@@ -35,8 +35,8 @@ use crate::domain::{
 };
 use crate::output::agent_seam_packets::{
     EDIT_CAGE_PRODUCTION_STATEMENT, EDIT_CAGE_TERMINALITY_WARNING, PacketCommandContext,
-    TASK_WRITE_TARGETED_TEST, recommended_test_for, render_agent_seam_packet_json_with_context,
-    task_for,
+    TASK_WRITE_TARGETED_TEST, inline_test_module_edit_statement, recommended_inline_test_module,
+    recommended_test_for, render_agent_seam_packet_json_with_context, task_for,
 };
 use crate::output::path::display_path;
 use crate::repair_card_budget::RepairCardDetailSource;
@@ -349,6 +349,12 @@ pub(crate) fn assemble_repair_card(
             "{EDIT_CAGE_TERMINALITY_WARNING} (allowed: {})",
             allowed_files.join(", ")
         ));
+    }
+    // A production file is allowed only as its inline test module (#5210);
+    // the card states that confinement in the packet's own words, so a
+    // compact handoff never reads as file-level permission.
+    if actionable && let Some(module) = recommended_inline_test_module(entry, &recommended.file) {
+        stop_conditions.push(inline_test_module_edit_statement(&recommended.file, module));
     }
 
     let changed_behavior = facts
@@ -777,6 +783,119 @@ mod tests {
             currentness: RepairCardSnapshotCurrentness::Current,
             next_command: None,
         }
+    }
+
+    /// A repair-ready seam whose weak related test lives in the seam's own
+    /// file, whose one governed inline module the InlineUnit producer
+    /// recorded (#5210): the card's allowed file is the production file.
+    fn own_file_inline_entry() -> ClassifiedSeam {
+        use crate::analysis::test_grip_evidence::{
+            RelatedTestGrip, RelationConfidence, RelationReason, TestTargetEvidence,
+        };
+        use crate::domain::{
+            FlowSinkFact, FlowSinkKind, MissingDiscriminatorFact, OracleKind, OracleStrength,
+            ValueContext, ValueFact,
+        };
+        let mut entry = weakly_gripped_entry();
+        entry.evidence.discriminate = stage(StageState::Weak);
+        entry.evidence.observed_values = vec![ValueFact {
+            line: 120,
+            text: "discounted_total(50, 100)".to_string(),
+            value: "50".to_string(),
+            context: ValueContext::FunctionArgument,
+        }];
+        entry.evidence.missing_discriminators = vec![MissingDiscriminatorFact {
+            value: "discount_threshold (equality boundary)".to_string(),
+            reason: "observed values do not include the equality-boundary case".to_string(),
+            flow_sink: Some(FlowSinkFact {
+                kind: FlowSinkKind::ReturnValue,
+                text: "return discounted_total".to_string(),
+                line: 88,
+                owner: None,
+            }),
+        }];
+        entry.evidence.related_tests = vec![std::sync::Arc::new(RelatedTestGrip {
+            test_name: "below_threshold_has_no_discount".to_string(),
+            file: std::path::PathBuf::from("src/pricing.rs"),
+            line: 120,
+            test_target: Some(TestTargetEvidence::fixture(
+                "below_threshold_has_no_discount",
+                Path::new("src/pricing.rs"),
+                120,
+            )),
+            oracle_kind: OracleKind::BroadError,
+            oracle_strength: OracleStrength::Weak,
+            evidence_summary: "broad assertion".to_string(),
+            relation_reason: RelationReason::DirectOwnerCall,
+            relation_confidence: RelationConfidence::High,
+        })];
+        entry.evidence.new_test_target =
+            Some(crate::analysis::new_test_target::NewTestTargetAdmission {
+                owner_inline_region: Some(
+                    crate::analysis::new_test_target::InlineTestRegionAuthority {
+                        file: std::path::PathBuf::from("src/pricing.rs"),
+                        module_name: "tests".to_string(),
+                        parent_modules: Vec::new(),
+                        body_start: 0,
+                        close_brace_start: 0,
+                        source_digest: String::new(),
+                    },
+                ),
+                ..Default::default()
+            });
+        entry
+    }
+
+    /// Devin 4179587247: a compact card that allows a production file must
+    /// carry the inline-module confinement in its stop conditions, in the
+    /// packet's own words, so the handoff is safe without the packet.
+    #[test]
+    fn inline_repair_card_stop_conditions_name_the_module_confinement() -> Result<(), String> {
+        let entry = own_file_inline_entry();
+        let packet = packet_for(&entry);
+        let card = assemble_repair_card(&facts_for(&entry, &packet))?;
+        if card.allowed_files != vec!["src/pricing.rs".to_string()] {
+            return Err(format!(
+                "fixture must allow the production file, got {:?}",
+                card.allowed_files
+            ));
+        }
+        let confinement = crate::output::agent_seam_packets::inline_test_module_edit_statement(
+            "src/pricing.rs",
+            "tests",
+        );
+        if !card.stop_conditions.contains(&confinement) {
+            return Err(format!(
+                "stop conditions omit the module confinement: {:?}",
+                card.stop_conditions
+            ));
+        }
+        // A test-surface card states no module confinement.
+        let mut under_tests = own_file_inline_entry();
+        for test in &mut under_tests.evidence.related_tests {
+            let test = std::sync::Arc::make_mut(test);
+            test.file = std::path::PathBuf::from("tests/pricing.rs");
+            test.test_target = Some(
+                crate::analysis::test_grip_evidence::TestTargetEvidence::fixture(
+                    "below_threshold_has_no_discount",
+                    Path::new("tests/pricing.rs"),
+                    120,
+                ),
+            );
+        }
+        let card = assemble_repair_card(&facts_for(&under_tests, &packet))?;
+        if card.allowed_files != vec!["tests/pricing.rs".to_string()]
+            || card
+                .stop_conditions
+                .iter()
+                .any(|condition| condition.contains("#[cfg(test)] mod"))
+        {
+            return Err(format!(
+                "a test-surface card must not be module-confined: {:?} {:?}",
+                card.allowed_files, card.stop_conditions
+            ));
+        }
+        Ok(())
     }
 
     #[test]
