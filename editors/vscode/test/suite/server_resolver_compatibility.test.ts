@@ -128,16 +128,17 @@ suite('Server resolver compatibility fallback', () => {
 
   test('a failed configured candidate carries a non-circular remedy', async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ripr-resolver-remedy-'));
+    const configured = path.join(root, 'nope', 'ripr.exe');
     const runtime: ServerResolverRuntime = {
       probeCandidate: async () => ({
-        message: 'configured ripr.server.path C:/nope/ripr.exe could not start.',
+        message: `configured ripr.server.path ${configured} could not start.`,
         detail: 'fixture start failure'
       })
     };
     try {
       const result = await resolveServer(
         stubContext(root),
-        { ...config(), serverPath: 'C:/nope/ripr.exe' },
+        { ...config(), serverPath: configured },
         stubOutput(),
         runtime
       );
