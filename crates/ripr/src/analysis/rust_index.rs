@@ -423,7 +423,9 @@ fn mark_returns(
             .get(inner.end_byte..outer.end_byte)
             .is_some_and(|suffix| {
                 let rest = suffix.trim_start_matches(|c: char| c == ')' || c.is_whitespace());
-                rest.is_empty() || (inner_is_err && rest.starts_with('.'))
+                // `..` after the constructor is a range, not a method chain.
+                rest.is_empty()
+                    || (inner_is_err && rest.starts_with('.') && !rest.starts_with(".."))
             });
         if closes && let Some(twin) = twins.get_mut(outer_index) {
             *twin = true;

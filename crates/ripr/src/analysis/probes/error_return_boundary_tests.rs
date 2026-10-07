@@ -290,6 +290,14 @@ fn twin_check_reads_every_shape_in_a_start_group() {
     let source = "return Err(X)(y)";
     let shapes = [error_shape(0, 16), error_shape(7, 13), error_shape(7, 16)];
     assert_eq!(error_path_twins(&shapes, source), vec![true, false, false]);
+
+    // A method chain on `Err(..)` makes the `return` a twin; a range does not.
+    let source = "return Err(X).m()";
+    let shapes = [error_shape(0, 17), error_shape(7, 13)];
+    assert_eq!(error_path_twins(&shapes, source), vec![true, false]);
+    let source = "return Err(X)..y";
+    let shapes = [error_shape(0, 16), error_shape(7, 13)];
+    assert_eq!(error_path_twins(&shapes, source), vec![false, false]);
 }
 
 /// Deep chains that share a start byte must not make the twin check
