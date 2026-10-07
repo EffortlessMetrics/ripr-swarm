@@ -9,6 +9,7 @@ Created: 2026-06-18
 Linked issues:
 
 - [#1292](https://github.com/EffortlessMetrics/ripr-swarm/issues/1292)
+- [#7071](https://github.com/EffortlessMetrics/ripr-swarm/issues/7071) (proximity-only weak reach)
 
 Linked PRs:
 
@@ -19,7 +20,8 @@ Support-tier impact:
 - No tier change. `docs/status/SUPPORT_TIERS.md` remains unchanged. This spec
   adds one additive `static_limit_kind` value, `rust_macro_reach_unresolved`,
   and one additive `stop_reasons` value, `macro_reach_unresolved`.
-- Classification stays `no_static_path`. This is a named limitation, not a
+- Classification stays `no_static_path` (or `weakly_exposed` on the
+  proximity-only path below). This is a named limitation, not a
   coverage claim, test relation, repair packet, release-readiness claim, or
   macro-expansion engine.
 - No `schema_version` bump is required because `static_limit_kind` and
@@ -54,7 +56,8 @@ no_static_path + static_limit_kind: rust_macro_reach_unresolved
 ### Trigger condition
 
 After direct related-test classification returns `no_static_path` with no
-related tests, and after the RIPR-SPEC-0114 bounded transitive witness check
+related tests (or `weakly_exposed` with only proximity relations; see
+"Proximity-only weak reach" below), and after the RIPR-SPEC-0114 bounded transitive witness check
 does not find a lexical path, the Rust adapter may emit the macro-reach
 limitation when all of these are true:
 
@@ -99,9 +102,14 @@ A `weakly_exposed` finding faces the same unresolved negative when its reach is
 `same_module` or `weak_token_substring`): no test is seen calling the owner,
 only sharing its file or a name token. For that finding the Rust adapter runs
 the RIPR-SPEC-0114 transitive witness, then this macro witness, and names the
-first one found exactly as above. The class stays `weakly_exposed`. The
-recommended next step names the witnessing test and entry symbol and says the
-limitation does not establish a missing test. A finding with any related test
+first one found as above. The witness walks match names, as they do for
+`no_static_path`, so a same-named function elsewhere can name the limit; that
+costs a reported gap and never adds credit. Withheld dependent files are
+searched as for `no_static_path`, without the over-limit disclosure. The class
+stays `weakly_exposed`. The recommended next step names the witnessing test and
+entry symbol and says the limitation does not establish a missing test; the
+gap's missing-discriminator lines are dropped, and human output offers no
+test-writing route. A finding with any related test
 that calls the owner keeps reach established and gets no limit. The
 subprocess-binary and property-macro limits stay `no_static_path`-only.
 
@@ -125,7 +133,7 @@ subprocess-binary and property-macro limits stay `no_static_path`-only.
 
 | Field | Value when fires | Value when not fires |
 |---|---|---|
-| `classification` | `no_static_path` | unchanged |
+| `classification` | unchanged (`no_static_path`, or `weakly_exposed` on the proximity-only path) | unchanged |
 | `static_limit_kind` | `rust_macro_reach_unresolved` | omitted / unchanged |
 | `stop_reasons` | includes `macro_reach_unresolved` | unchanged |
 | `related_tests` | unchanged (witness is not added) | unchanged |
@@ -155,6 +163,12 @@ subprocess-binary and property-macro limits stay `no_static_path`-only.
    integration-test witnesses, RIPR-SPEC-0118 refines the kind to
    `rust_integration_public_api_path_unresolved`; non-integration witnesses
    keep `rust_transitive_reach_unresolved`.
+5. **Proximity-only finding** (#7071): the only related test shares the
+   owner's file and calls `outer()`, which invokes `call_inner!`. Result:
+   `weakly_exposed` plus `static_limit_kind: rust_macro_reach_unresolved` and a
+   next step naming the witnessing test.
+6. **A test also calls the owner**: same shape plus a test calling `inner()`
+   directly. Reach is established, so the finding keeps its gap and no limit.
 
 ## Required Evidence
 
@@ -179,6 +193,10 @@ subprocess-binary and property-macro limits stay `no_static_path`-only.
 - `crates/ripr/src/analysis/classify/transitive_reach.rs::tests::macro_witness_pointer_uses_may_language_and_no_coverage_claim`
 - `crates/ripr/src/analysis/classify/transitive_reach.rs::tests::macro_reach_limitation_detail_names_edges_route_and_non_claim`
 - `crates/ripr/src/output/human.rs::tests::human_output_surfaces_static_limitation_detail`
+- `crates/ripr/src/analysis/language/rust/proximity_reach_tests.rs::proximity_only_reach_through_a_macro_names_the_macro_limit`
+- `crates/ripr/src/analysis/language/rust/proximity_reach_tests.rs::a_test_calling_the_owner_keeps_the_gap_despite_a_macro_witness`
+- `crates/ripr/src/analysis/language/rust/proximity_reach_tests.rs::proximity_only_reach_without_a_witness_keeps_the_gap`
+- `crates/ripr/src/analysis/language/rust/proximity_reach_tests.rs::proximity_only_reach_through_a_helper_names_the_transitive_limit`
 - `fixtures/rust_macro_reach_limitation/expected/check.json`
 - `cargo xtask check-evidence-promotion-honesty`
 

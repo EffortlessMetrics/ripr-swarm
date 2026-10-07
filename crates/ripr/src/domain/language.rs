@@ -440,8 +440,7 @@ impl StaticLimitKind {
             }
             StaticLimitKind::RustMacroReachUnresolved => {
                 "A test may reach this change through a Rust macro path ripr cannot expand. The \
-                 classification stays no_static_path because the macro edge is unresolved; this is \
-                 a named limitation, not a coverage claim."
+                 macro edge is unresolved; this is a named limitation, not a coverage claim."
             }
             StaticLimitKind::RustMacroWrappedTestCallUnresolved => {
                 "A test directly invokes a Rust macro whose definition mentions this change, but \

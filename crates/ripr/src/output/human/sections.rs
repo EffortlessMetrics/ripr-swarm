@@ -442,7 +442,8 @@ pub(crate) fn render_finding_with_config(
         ));
     }
 
-    // RIPR-SPEC-0115/0117: when a Rust no_static_path limitation named a
+    // RIPR-SPEC-0115/0117: when a Rust reach limitation (on a no_static_path
+    // finding, or a proximity-only weakly_exposed one, #7071) named a
     // witnessing test, surface it in human output as a concrete "Where to look"
     // pointer. The witness prose lives in `evidence` (the limitation channel);
     // we recognize it by the shared prefix so JSON evidence and human output

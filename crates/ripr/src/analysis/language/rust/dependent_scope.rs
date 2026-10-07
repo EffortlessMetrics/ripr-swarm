@@ -36,7 +36,8 @@
 //! names left open become admission tests. Nested packages, harness targets
 //! and composition or subprocess markers are admitted outright. The macro
 //! bindings of withheld files are folded into the owner-pin unions without
-//! indexing them. The witness walks run only for `no_static_path` findings;
+//! indexing them. The witness walks run only for `no_static_path` findings
+//! and proximity-only `weakly_exposed` ones (#7071);
 //! [`NarrowedScope::reach_index`] widens to the owner's caller levels on
 //! demand, bounded by the walks' own depth, and names an unsearched reach
 //! when that widening would exceed the narrowing threshold.

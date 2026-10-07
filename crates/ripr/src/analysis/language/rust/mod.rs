@@ -1230,15 +1230,19 @@ fn needs_no_static_path_limit(finding: &Finding) -> bool {
 }
 
 /// Whether a `weakly_exposed` finding's only reach is proximity: every
-/// related test shares the owner's file, module or a name token, and none is
-/// seen calling it. The weak reach then rests on ripr not tracing a path, the
-/// same unresolved negative a `no_static_path` finding has, so a transitive or
-/// macro witness names the limit instead of a gap.
+/// related test shares the owner's file, module or a name token. With reach
+/// `weak`, the reach stage has already found no test calling the owner, so
+/// the weak reach rests on ripr not tracing a path, the same unresolved
+/// negative a `no_static_path` finding has, and a transitive or macro witness
+/// names the limit instead of a gap.
 fn needs_proximity_reach_limit(finding: &Finding) -> bool {
     finding.class == ExposureClass::WeaklyExposed
         && finding.static_limit_kind.is_none()
         && finding.ripr.reach.state == crate::domain::StageState::Weak
         && !finding.related_tests.is_empty()
+        // The list is capped, but owner-calling relations rank above
+        // proximity ones, so a capped list of proximity rows dropped none;
+        // reach `weak` already rules them out.
         && finding.related_tests.iter().all(|test| {
             test.relation_reason
                 .is_some_and(classify::is_proximity_only)
@@ -1377,12 +1381,19 @@ fn apply_rust_proximity_reach_limit(
     }
 }
 
-/// The proximity-only finding's next step was the gap's ("replace broad
-/// assertions"); with the reach unresolved, it points at the witness instead.
+/// The proximity-only finding's next step and missing lines were the gap's
+/// ("replace broad assertions", "no strong discriminator"); with the reach
+/// unresolved, the next step points at the witness and the gap lines go, as
+/// RIPR-SPEC-0240 does for a withheld gap, so repair placement and agent
+/// packets never read a gap this limit withheld.
 fn proximity_reach_next_step(finding: &mut Finding, test: &str, entry: &str, owner: &str) {
     finding.recommended_next_step = Some(format!(
         "Check whether `{test}`, which may reach `{owner}` through `{entry}`, asserts on the changed behavior; ripr does not trace that path, so this limitation does not establish a missing test."
     ));
+    if let Some(limit) = finding.static_limit_kind {
+        finding.missing = vec![limit.describe().to_string()];
+    }
+    finding.activation.missing_discriminators.clear();
 }
 
 fn find_subprocess_binary_test<'a>(
@@ -2129,9 +2140,14 @@ impl RustAdapter {
                 // name a macro-reach limitation only when a same-repo macro
                 // definition lexically mentions the changed owner.
                 // #5320: with dependent files withheld, the witnesses search
-                // the owner's caller closure, widened on demand.
+                // the owner's caller closure, widened on demand. #7071: the
+                // same search runs for a proximity-only weakly_exposed
+                // finding.
                 let reach = match dependent_scope.as_mut() {
-                    Some(scope) if needs_no_static_path_limit(&finding) => {
+                    Some(scope)
+                        if needs_no_static_path_limit(&finding)
+                            || needs_proximity_reach_limit(&finding) =>
+                    {
                         match owner_name_from_id(&probe.owner, &probe.location.file) {
                             Some(owner) => scope.reach_index(&owner, &index, narrow_limit)?,
                             None => dependent_scope::ReachIndex::Main,

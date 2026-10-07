@@ -5,7 +5,9 @@ use super::RustAdapter;
 use crate::analysis::language::LanguageAdapter;
 use crate::analysis::{AnalysisMode, AnalysisOptions, diff};
 use crate::config::OraclePolicy;
-use crate::domain::{ExposureClass, Finding, RelationReason, StaticLimitKind};
+use crate::domain::{
+    ExposureClass, Finding, RelationReason, StageState, StaticLimitKind, StopReason,
+};
 use std::fs;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -100,9 +102,7 @@ fn proximity_only_reach_through_a_macro_names_the_macro_limit() -> Result<(), St
     // Fixture construction: the test reaches `inner_rate` only through
     // `call_inner!`, so its relation is proximity.
     assert!(
-        all_relations(&finding, |reason| reason == RelationReason::SameTestFile
-            || reason == RelationReason::SameModule
-            || reason == RelationReason::WeakTokenSubstring),
+        all_relations(&finding, crate::analysis::classify::is_proximity_only),
         "{:?}",
         finding.related_tests
     );
@@ -113,10 +113,84 @@ fn proximity_only_reach_through_a_macro_names_the_macro_limit() -> Result<(), St
         "{:?}",
         finding.evidence
     );
+    assert!(
+        finding
+            .stop_reasons
+            .contains(&StopReason::MacroReachUnresolved)
+    );
+    // The witness is a candidate path, never a related test, and the gap's
+    // discriminator lines go with the gap.
+    assert_eq!(
+        finding.related_tests.len(),
+        1,
+        "{:?}",
+        finding.related_tests
+    );
+    assert!(finding.activation.missing_discriminators.is_empty());
+    assert_eq!(
+        finding.missing,
+        vec![
+            StaticLimitKind::RustMacroReachUnresolved
+                .describe()
+                .to_string()
+        ]
+    );
     let next = finding.recommended_next_step.unwrap_or_default();
     assert!(
         next.contains("`outer_triples`") && next.contains("does not establish a missing test"),
         "{next}"
+    );
+    Ok(())
+}
+
+#[test]
+fn proximity_only_reach_through_a_helper_names_the_transitive_limit() -> Result<(), String> {
+    // A same-file test is proximity even when it calls a helper that calls
+    // the owner, so the transitive witness names the limit.
+    let fixture = Fixture::new(
+        "transitive",
+        "fn inner_rate(x: i64) -> i64 {
+    3 * x
+}
+pub fn outer(x: i64) -> i64 {
+    inner_rate(x)
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn outer_triples() {
+        assert_eq!(outer(4), 12);
+    }
+}
+",
+    )?;
+    let finding = fixture.rate_finding()?;
+    assert!(
+        all_relations(&finding, crate::analysis::classify::is_proximity_only),
+        "{:?}",
+        finding.related_tests
+    );
+    assert_eq!(finding.ripr.reach.state, StageState::Weak);
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+    assert_eq!(
+        finding.static_limit_kind,
+        Some(StaticLimitKind::RustTransitiveReachUnresolved),
+        "{:?}",
+        finding.evidence
+    );
+    assert!(
+        finding
+            .stop_reasons
+            .contains(&StopReason::TransitiveReachUnresolved)
+    );
+    assert!(
+        finding
+            .recommended_next_step
+            .as_deref()
+            .is_some_and(|next| next.contains("`outer_triples`") && next.contains("`outer`")),
+        "{:?}",
+        finding.recommended_next_step
     );
     Ok(())
 }
@@ -169,6 +243,12 @@ mod tests {
 ",
     )?;
     let finding = fixture.rate_finding()?;
+    assert!(
+        all_relations(&finding, crate::analysis::classify::is_proximity_only),
+        "{:?}",
+        finding.related_tests
+    );
+    assert_eq!(finding.ripr.reach.state, StageState::Weak);
     assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{finding:?}");
     assert_eq!(finding.static_limit_kind, None, "{:?}", finding.evidence);
     Ok(())
