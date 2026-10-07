@@ -92,6 +92,48 @@ impl TypeScriptBoundaryParameters {
     }
 }
 
+/// The statically derived boundary of a changed predicate: a call input
+/// that hits it, or the two parameters whose equal values hit it.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum TypeScriptBoundaryFact {
+    Input(TypeScriptBoundaryInput),
+    Parameters(TypeScriptBoundaryParameters),
+}
+
+impl TypeScriptBoundaryFact {
+    pub(crate) fn evidence_line(&self) -> String {
+        match self {
+            Self::Input(input) => input.evidence_line(),
+            Self::Parameters(parameters) => parameters.evidence_line(),
+        }
+    }
+
+    /// Whether one owner call with these (constant-substituted) arguments
+    /// hits the boundary: `Some(true)` at it, `Some(false)` definitely off
+    /// it, `None` when an argument the comparison reads is not a plain
+    /// integer literal (absent, spread, computed, negative, non-integer).
+    pub(crate) fn call_hits_boundary(&self, arguments: &[String]) -> Option<bool> {
+        let read = |index: usize| -> Option<i64> {
+            // A spread at or before the read position moves every later
+            // argument by an unknown amount.
+            if arguments
+                .iter()
+                .take(index + 1)
+                .any(|argument| argument.trim_start().starts_with("..."))
+            {
+                return None;
+            }
+            integer_literal(arguments.get(index)?)
+        };
+        match self {
+            Self::Input(input) => Some(read(input.index)? == input.value),
+            Self::Parameters(parameters) => {
+                Some(read(parameters.index)? == read(parameters.operand_index)?)
+            }
+        }
+    }
+}
+
 /// The boundary input for a changed predicate line, read from the owner's
 /// module through the workspace root, as its evidence line. `None` whenever
 /// any rule fails.
@@ -101,17 +143,27 @@ pub(crate) fn ts_boundary_fact_for_change(
     line_text: &str,
     owner: &TypeScriptOwner,
     workspace_root: Option<&Path>,
-) -> Option<String> {
+) -> Option<TypeScriptBoundaryFact> {
     if !probe_shape.specific || probe_shape.family != ProbeFamily::Predicate {
         return None;
     }
     let root = workspace_root?;
     let source = std::fs::read_to_string(root.join(&owner.file)).ok()?;
-    ts_boundary_input_in_source(&source, line, line_text, owner)
-        .map(|input| input.evidence_line())
+    ts_boundary_fact_in_source(&source, line, line_text, owner)
+}
+
+/// [`ts_boundary_fact_for_change`] over an already-read module source.
+pub(crate) fn ts_boundary_fact_in_source(
+    source: &str,
+    line: usize,
+    line_text: &str,
+    owner: &TypeScriptOwner,
+) -> Option<TypeScriptBoundaryFact> {
+    ts_boundary_input_in_source(source, line, line_text, owner)
+        .map(TypeScriptBoundaryFact::Input)
         .or_else(|| {
-            ts_boundary_parameters_in_source(&source, line, line_text, owner)
-                .map(|parameters| parameters.evidence_line())
+            ts_boundary_parameters_in_source(source, line, line_text, owner)
+                .map(TypeScriptBoundaryFact::Parameters)
         })
 }
 

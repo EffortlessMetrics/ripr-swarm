@@ -416,9 +416,13 @@ pub(crate) fn ts_observation_guard_limitation(
 
 // ── Predicate boundary witness (RIPR-SPEC-0027) ──────────────────────────────
 
-/// Returns `true` when static evidence shows that a strong, family-matching
-/// assertion observes an owner call that sits at the changed predicate's
-/// boundary. Non-predicate families are not gated here (`true`).
+/// One related test's activation of the changed predicate boundary (#5527).
+/// `Witnessed` when static evidence shows that a strong, family-matching
+/// assertion of THIS test observes an owner call that sits at the changed
+/// predicate's boundary; the finding-wide witness is
+/// [`ts_predicate_boundary_witnessed_by_rows`] over every row. Non-predicate
+/// families are not gated (`NotApplicable`). A row that does not witness is
+/// split by its input side in [`row_boundary_input_activation`].
 ///
 /// A strong exact assertion somewhere in a related test does not show that the
 /// changed comparison is discriminated: `shippingFee(60)` and `shippingFee(10)`
@@ -475,170 +479,430 @@ pub(crate) fn ts_observation_guard_limitation(
 /// derived local (`const total = raw * 2;`) the adapter cannot map it to a
 /// parameter, so any position the known arity reads is accepted. That stays
 /// advisory.
-pub(crate) fn ts_predicate_boundary_is_witnessed(
-    probe_shape: &TypeScriptProbeShape,
+pub(crate) fn ts_predicate_boundary_row_activation(
+    boundary: &TsPredicateBoundary,
+    boundary_fact: Option<&TypeScriptBoundaryFact>,
     line_text: &str,
     owner: &TypeScriptOwner,
-    candidates: &[TypeScriptRelatedCandidate<'_>],
+    candidate: &TypeScriptRelatedCandidate<'_>,
     alias_map: Option<&TsAliasMap>,
     workspace_root: Option<&Path>,
+) -> TypeScriptPredicateActivation {
+    let (left, right, nullish_boundary) = match boundary {
+        TsPredicateBoundary::NotPredicate => return TypeScriptPredicateActivation::NotApplicable,
+        TsPredicateBoundary::Unparsed => return TypeScriptPredicateActivation::Unresolved,
+        TsPredicateBoundary::Parsed {
+            left,
+            right,
+            nullish,
+        } => (left.as_str(), right.as_str(), *nullish),
+    };
+    if !candidate.relation.uses_oracle() {
+        return TypeScriptPredicateActivation::Unresolved;
+    }
+    // Shadow guard (#4102): a test body that declares its own
+    // `function <owner>(...)` / `const <owner> = ...` executes the local
+    // declaration, not the changed owner — its assertions cannot witness
+    // the owner's boundary however boundary-shaped they look.
+    if local_identifier_declared_in_test_body(&candidate.test.body_text, &owner.name) {
+        return TypeScriptPredicateActivation::Unresolved;
+    }
+    let owner_receivers =
+        owner_namespace_receivers(candidate.test, owner, alias_map, workspace_root);
+    // #4104-E3: a constant-shaped boundary operand reads its value from
+    // the owner's own module declaration. Resolution is per candidate so
+    // the test's scope never substitutes a value the owner cannot see;
+    // an unresolved or ambiguous constant keeps the operand text, which
+    // simply leaves the no-literal path below in charge.
+    let (effective_left, effective_right) =
+        resolve_owner_module_boundary_constants(left, right, owner, workspace_root);
+    let literals: Vec<&str> = [effective_left.as_str(), effective_right.as_str()]
+        .into_iter()
+        .filter(|operand| is_boundary_literal(operand))
+        .collect();
+
+    // The boundary input reached an observed owner call, but an
+    // expected-side guard refused the assertion: present, not discriminated.
+    let mut reached = false;
+    for assertion in &candidate.test.assertions {
+        if assertion.oracle_strength.rank() < OracleStrength::Strong.rank()
+            || !ts_oracle_kind_matches_seam(&assertion.oracle_kind, &ProbeFamily::Predicate)
+        {
+            continue;
+        }
+        let Some(observed) = assertion.observed_expression.as_deref() else {
+            continue;
+        };
+        // Expected-side guard (#4102): a dynamically resolved expected
+        // side cannot tie the assertion to a concrete boundary outcome.
+        if !assertion_expected_side_is_pinned(assertion) {
+            continue;
+        }
+        // Expected-side guard (#4102): a self-comparing expectation
+        // (`toBe(applyDiscount(100))`) is a tautology that discriminates
+        // nothing.
+        if assertion_is_self_comparing(assertion, observed) {
+            continue;
+        }
+        let mut argument_lists = owner_call_arguments(observed, &owner.name, &owner_receivers);
+        // #4104-E1: the canonical `const result = owner(...);
+        // expect(result).toBe(...)` idiom observes the owner call through
+        // a one-hop local binding. When the bare local carries no owner
+        // reference, its single immutable initializer IS the observed
+        // call, and its arguments flow through the same witness path.
+        if argument_lists.is_empty()
+            && let Some(initializer_arguments) = ts_observed_local_owner_call_arguments(
+                candidate.test,
+                assertion,
+                &owner.name,
+                &owner_receivers,
+            )
+        {
+            argument_lists.push(initializer_arguments);
+        }
+        for arguments in argument_lists {
+            // #4104-E3: an argument that names a boundary constant in the
+            // test's own scope is the resolved constant value by entity
+            // identity; everything downstream (position, arity,
+            // standalone-literal, object pin) reads the substitution.
+            let arguments = substitute_constant_arguments(
+                arguments,
+                candidate.test,
+                owner,
+                alias_map,
+                workspace_root,
+            );
+            let witnessed = if nullish_boundary {
+                // #4104-E2 repair (review thread PRRT_kwDOSiSx0c6mUkkI):
+                // for a nullish-coalescing boundary only the NULLISH
+                // input — `null` / `undefined` at the LEFT operand's read
+                // position — can flip the changed fallback. A non-nullish
+                // call (`pickLabel("temp")`) never evaluates the right
+                // fallback, so the fallback literal is never creditable
+                // through the comparison-literal path, and the
+                // identical-arguments coincidence cannot evaluate it
+                // either. A literal left operand makes the coalesce
+                // constant: no runtime input is ever nullish there.
+                !is_boundary_literal(&effective_left)
+                    && nullish_argument_reaches_read_argument(&arguments, &effective_left, owner)
+            } else if literals.is_empty() {
+                call_has_identical_arguments(&arguments, &owner.params)
+                    || object_argument_pins_operands_equal(
+                        &arguments,
+                        &effective_left,
+                        &effective_right,
+                        &owner.params,
+                    )
+            } else {
+                literals.iter().any(|literal| {
+                    boundary_literal_reaches_read_argument(
+                        &arguments,
+                        literal,
+                        &effective_left,
+                        &effective_right,
+                        owner,
+                    )
+                })
+            };
+            if !witnessed {
+                continue;
+            }
+            // Expected-side guards (#4102): a self-comparing expectation
+            // (`toBe(applyDiscount(100))`) never discriminates, and a dead
+            // expected literal (`toBe(999)` when the changed behavior
+            // produces `90` at the boundary input) proves nothing — the
+            // changed value never reaches a passing assertion.
+            if expected_side_calls_owner(&candidate.test.body_text, observed, &owner.name) {
+                reached = true;
+                continue;
+            }
+            if let Some(expected) = assertion.expected_value_or_variant.as_deref()
+                && expected_side_is_live(
+                    owner,
+                    line_text,
+                    &effective_left,
+                    &effective_right,
+                    &arguments,
+                    expected,
+                ) == Some(false)
+            {
+                reached = true;
+                continue;
+            }
+            return TypeScriptPredicateActivation::Witnessed;
+        }
+    }
+    if reached {
+        return TypeScriptPredicateActivation::ReachedWithoutDiscriminator;
+    }
+    row_boundary_input_activation(
+        boundary_fact,
+        owner,
+        candidate,
+        &owner_receivers,
+        alias_map,
+        workspace_root,
+    )
+}
+
+/// The input side of a row that did not witness the boundary (#5527).
+///
+/// Only the module-derived boundary fact can establish a miss: it holds
+/// when the comparison reads a read-only owner parameter against a plain
+/// integer (or a second read-only parameter) on a line that runs on every
+/// call. A wrong miss is worse than no miss, so the row must also show that
+/// the test body is the whole input surface it observes:
+///
+/// - a plain owner call path (direct, import alias, or namespace import; no
+///   receiver, re-export chain, or module entry in between), with no import
+///   of the owner name from a source the resolver does not place on the
+///   owner (a barrel), and an owner that does not call itself;
+/// - every owner reference in the body is a plain call, on no receiver other
+///   than an owner-module namespace (a `require` or dynamic-import namespace
+///   is not established, so it refuses);
+/// - every assertion observes exactly one owner call, directly or through
+///   a one-hop body local, so a value built in a hook, a describe-level
+///   binding, a test helper or another production function never hides a
+///   boundary input;
+/// - every owner call passes plain integer inputs off the boundary, with no
+///   constant argument an enclosing scope rebinds.
+///
+/// Any call at the boundary means the input is present; anything else the
+/// fact cannot read leaves the row unresolved.
+fn row_boundary_input_activation(
+    boundary_fact: Option<&TypeScriptBoundaryFact>,
+    owner: &TypeScriptOwner,
+    candidate: &TypeScriptRelatedCandidate<'_>,
+    owner_receivers: &[String],
+    alias_map: Option<&TsAliasMap>,
+    workspace_root: Option<&Path>,
+) -> TypeScriptPredicateActivation {
+    let Some(fact) = boundary_fact else {
+        return TypeScriptPredicateActivation::Unresolved;
+    };
+    if !matches!(
+        candidate.relation,
+        TypeScriptRelationKind::DirectOwnerCall
+            | TypeScriptRelationKind::ImportAliasOwnerCall
+            | TypeScriptRelationKind::ImportedOwnerCall
+    ) || owner_calls_itself(owner)
+    {
+        return TypeScriptPredicateActivation::Unresolved;
+    }
+    let test = candidate.test;
+    let mut call_names = vec![owner.name.as_str()];
+    for import in test
+        .imports_in_file
+        .iter()
+        .filter(|import| !import.namespace)
+    {
+        let names_owner =
+            import.imported.as_deref() == Some(owner.name.as_str()) || import.local == owner.name;
+        if !names_owner {
+            continue;
+        }
+        if !import_source_matches_owner(import, &test.file, owner, alias_map, workspace_root) {
+            return TypeScriptPredicateActivation::Unresolved;
+        }
+        if import.local != owner.name {
+            call_names.push(import.local.as_str());
+        }
+    }
+    let mut calls = Vec::new();
+    for name in &call_names {
+        if local_identifier_declared_in_test_body(&test.body_text, name)
+            || !every_owner_reference_is_a_call(&test.body_text, name, owner_receivers)
+        {
+            return TypeScriptPredicateActivation::Unresolved;
+        }
+        calls.extend(owner_call_arguments(&test.body_text, name, owner_receivers));
+    }
+    if calls.is_empty()
+        || !test.assertions.iter().all(|assertion| {
+            assertion_observes_one_owner_call(
+                test,
+                assertion,
+                &call_names,
+                &owner.name,
+                owner_receivers,
+            )
+        })
+    {
+        return TypeScriptPredicateActivation::Unresolved;
+    }
+    let mut every_call_missed = true;
+    for arguments in calls {
+        let rebound_constant = arguments.iter().any(|argument| {
+            let argument = argument.trim();
+            is_constant_shaped_operand(argument)
+                && test
+                    .scope_bindings
+                    .iter()
+                    .any(|binding| binding.name == argument)
+        });
+        if rebound_constant {
+            return TypeScriptPredicateActivation::Unresolved;
+        }
+        let arguments =
+            substitute_constant_arguments(arguments, test, owner, alias_map, workspace_root);
+        match fact.call_hits_boundary(&arguments) {
+            Some(true) => return TypeScriptPredicateActivation::ReachedWithoutDiscriminator,
+            Some(false) => {}
+            None => every_call_missed = false,
+        }
+    }
+    if every_call_missed {
+        TypeScriptPredicateActivation::MissedBoundary
+    } else {
+        TypeScriptPredicateActivation::Unresolved
+    }
+}
+
+/// `true` when the owner's own source calls its name after the declaration
+/// (recursion): an off-boundary input can then reach the boundary inside the
+/// owner. An owner without retained source cannot be checked, so it counts.
+fn owner_calls_itself(owner: &TypeScriptOwner) -> bool {
+    let Some(source) = owner.source_text.as_deref() else {
+        return true;
+    };
+    let name = owner.name.as_str();
+    if name.is_empty() {
+        return true;
+    }
+    source.match_indices(name).any(|(idx, _)| {
+        let before = &source[..idx];
+        let after = &source[idx + name.len()..];
+        let is_ident = |ch: char| ch.is_ascii_alphanumeric() || ch == '_' || ch == '$';
+        !before.chars().next_back().is_some_and(is_ident)
+            && !after.chars().next().is_some_and(is_ident)
+            && !before.trim_end().ends_with("function")
+            && after.trim_start().starts_with('(')
+    })
+}
+
+/// `true` when the assertion's observed expression is exactly one owner
+/// call (optionally awaited, on an owner-module namespace receiver), or a
+/// bare body local whose single immutable initializer is one owner call.
+fn assertion_observes_one_owner_call(
+    test: &TypeScriptTest,
+    assertion: &TypeScriptAssertion,
+    call_names: &[&str],
+    owner_name: &str,
+    owner_receivers: &[String],
 ) -> bool {
+    let Some(observed) = assertion.observed_expression.as_deref() else {
+        return false;
+    };
+    let observed = observed.trim();
+    let observed = observed
+        .strip_prefix("await ")
+        .map(str::trim)
+        .unwrap_or(observed);
+    let spans_one_call = call_names.iter().any(|name| {
+        let callee_rest = observed.strip_prefix(*name).or_else(|| {
+            owner_receivers
+                .iter()
+                .find_map(|receiver| observed.strip_prefix(format!("{receiver}.{name}").as_str()))
+        });
+        callee_rest
+            .and_then(|rest| rest.strip_prefix('('))
+            .and_then(|after_open| {
+                balanced_close_offset(after_open)
+                    .map(|close| after_open[close + 1..].trim().is_empty())
+            })
+            .unwrap_or(false)
+    });
+    spans_one_call
+        || ts_observed_local_owner_call_arguments(test, assertion, owner_name, owner_receivers)
+            .is_some()
+}
+
+/// `true` when every reference to `name` in `body` is a plain call `name(`
+/// with no receiver, or a call on an owner-module namespace receiver. A bare
+/// reference passed as a callback (`[10, 100].map(applyDiscount)`), a
+/// `.call`/`.apply`/`.bind`, a generic or optional call, a spy target string,
+/// and a member access on any receiver the resolver has not placed on the
+/// owner module (a `require` namespace, a dynamic import, an object) leave
+/// the inputs unseen.
+fn every_owner_reference_is_a_call(body: &str, name: &str, owner_receivers: &[String]) -> bool {
+    if name.is_empty() {
+        return false;
+    }
+    body.match_indices(name).all(|(idx, _)| {
+        let before = &body[..idx];
+        let after = &body[idx + name.len()..];
+        let is_ident = |ch: char| ch.is_ascii_alphanumeric() || ch == '_' || ch == '$';
+        if before.chars().next_back().is_some_and(is_ident)
+            || after.chars().next().is_some_and(is_ident)
+        {
+            return true;
+        }
+        if before.trim_end().ends_with('.')
+            && !owner_receivers
+                .iter()
+                .any(|receiver| receiver == &receiver_before_dot(before))
+        {
+            return false;
+        }
+        after.trim_start().starts_with('(')
+    })
+}
+
+/// The changed predicate's boundary, parsed once per finding (#5527).
+pub(crate) enum TsPredicateBoundary {
+    /// The changed line is not a predicate: the witness does not gate it.
+    NotPredicate,
+    /// An ambiguous fallback shape or a comparison the adapter cannot parse:
+    /// nothing statically ties a test to the changed branch.
+    Unparsed,
+    /// The `left == right` discriminator, and whether it is a nullish
+    /// coalesce.
+    Parsed {
+        left: String,
+        right: String,
+        nullish: bool,
+    },
+}
+
+pub(crate) fn ts_predicate_boundary(
+    probe_shape: &TypeScriptProbeShape,
+    line_text: &str,
+) -> TsPredicateBoundary {
     // An ambiguous fallback shape (`}`, an unrecognised statement) never names
     // a behavior an assertion could be shown to observe.
     if !probe_shape.specific {
-        return false;
+        return TsPredicateBoundary::Unparsed;
     }
     if probe_shape.family != ProbeFamily::Predicate {
-        return true;
+        return TsPredicateBoundary::NotPredicate;
     }
-    let Some((boundary, nullish_boundary)) =
-        typescript_boundary_discriminator_with_shape(line_text)
-    else {
-        return false;
+    let Some((boundary, nullish)) = typescript_boundary_discriminator_with_shape(line_text) else {
+        return TsPredicateBoundary::Unparsed;
     };
     let Some((left, right)) = boundary.split_once(" == ") else {
-        return false;
+        return TsPredicateBoundary::Unparsed;
     };
-    let left = left.to_string();
-    let right = right.to_string();
+    TsPredicateBoundary::Parsed {
+        left: left.to_string(),
+        right: right.to_string(),
+        nullish,
+    }
+}
 
-    for candidate in candidates {
-        if !candidate.relation.uses_oracle() {
-            continue;
-        }
-        // Shadow guard (#4102): a test body that declares its own
-        // `function <owner>(...)` / `const <owner> = ...` executes the local
-        // declaration, not the changed owner — its assertions cannot witness
-        // the owner's boundary however boundary-shaped they look.
-        if local_identifier_declared_in_test_body(&candidate.test.body_text, &owner.name) {
-            continue;
-        }
-        let owner_receivers =
-            owner_namespace_receivers(candidate.test, owner, alias_map, workspace_root);
-        // #4104-E3: a constant-shaped boundary operand reads its value from
-        // the owner's own module declaration. Resolution is per candidate so
-        // the test's scope never substitutes a value the owner cannot see;
-        // an unresolved or ambiguous constant keeps the operand text, which
-        // simply leaves the no-literal path below in charge.
-        let (effective_left, effective_right) =
-            resolve_owner_module_boundary_constants(&left, &right, owner, workspace_root);
-        let literals: Vec<&str> = [effective_left.as_str(), effective_right.as_str()]
-            .into_iter()
-            .filter(|operand| is_boundary_literal(operand))
-            .collect();
-
-        for assertion in &candidate.test.assertions {
-            if assertion.oracle_strength.rank() < OracleStrength::Strong.rank()
-                || !ts_oracle_kind_matches_seam(&assertion.oracle_kind, &ProbeFamily::Predicate)
-            {
-                continue;
-            }
-            let Some(observed) = assertion.observed_expression.as_deref() else {
-                continue;
-            };
-            // Expected-side guard (#4102): a dynamically resolved expected
-            // side cannot tie the assertion to a concrete boundary outcome.
-            if !assertion_expected_side_is_pinned(assertion) {
-                continue;
-            }
-            // Expected-side guard (#4102): a self-comparing expectation
-            // (`toBe(applyDiscount(100))`) is a tautology that discriminates
-            // nothing.
-            if assertion_is_self_comparing(assertion, observed) {
-                continue;
-            }
-            let mut argument_lists = owner_call_arguments(observed, &owner.name, &owner_receivers);
-            // #4104-E1: the canonical `const result = owner(...);
-            // expect(result).toBe(...)` idiom observes the owner call through
-            // a one-hop local binding. When the bare local carries no owner
-            // reference, its single immutable initializer IS the observed
-            // call, and its arguments flow through the same witness path.
-            if argument_lists.is_empty()
-                && let Some(initializer_arguments) = ts_observed_local_owner_call_arguments(
-                    candidate.test,
-                    assertion,
-                    &owner.name,
-                    &owner_receivers,
-                )
-            {
-                argument_lists.push(initializer_arguments);
-            }
-            for arguments in argument_lists {
-                // #4104-E3: an argument that names a boundary constant in the
-                // test's own scope is the resolved constant value by entity
-                // identity; everything downstream (position, arity,
-                // standalone-literal, object pin) reads the substitution.
-                let arguments = substitute_constant_arguments(
-                    arguments,
-                    candidate.test,
-                    owner,
-                    alias_map,
-                    workspace_root,
-                );
-                let witnessed = if nullish_boundary {
-                    // #4104-E2 repair (review thread PRRT_kwDOSiSx0c6mUkkI):
-                    // for a nullish-coalescing boundary only the NULLISH
-                    // input — `null` / `undefined` at the LEFT operand's read
-                    // position — can flip the changed fallback. A non-nullish
-                    // call (`pickLabel("temp")`) never evaluates the right
-                    // fallback, so the fallback literal is never creditable
-                    // through the comparison-literal path, and the
-                    // identical-arguments coincidence cannot evaluate it
-                    // either. A literal left operand makes the coalesce
-                    // constant: no runtime input is ever nullish there.
-                    !is_boundary_literal(&effective_left)
-                        && nullish_argument_reaches_read_argument(
-                            &arguments,
-                            &effective_left,
-                            owner,
-                        )
-                } else if literals.is_empty() {
-                    call_has_identical_arguments(&arguments, &owner.params)
-                        || object_argument_pins_operands_equal(
-                            &arguments,
-                            &effective_left,
-                            &effective_right,
-                            &owner.params,
-                        )
-                } else {
-                    literals.iter().any(|literal| {
-                        boundary_literal_reaches_read_argument(
-                            &arguments,
-                            literal,
-                            &effective_left,
-                            &effective_right,
-                            owner,
-                        )
-                    })
-                };
-                if !witnessed {
-                    continue;
-                }
-                // Expected-side guards (#4102): a self-comparing expectation
-                // (`toBe(applyDiscount(100))`) never discriminates, and a dead
-                // expected literal (`toBe(999)` when the changed behavior
-                // produces `90` at the boundary input) proves nothing — the
-                // changed value never reaches a passing assertion.
-                if expected_side_calls_owner(&candidate.test.body_text, observed, &owner.name) {
-                    continue;
-                }
-                if let Some(expected) = assertion.expected_value_or_variant.as_deref()
-                    && expected_side_is_live(
-                        owner,
-                        line_text,
-                        &effective_left,
-                        &effective_right,
-                        &arguments,
-                        expected,
-                    ) == Some(false)
-                {
-                    continue;
-                }
-                return true;
-            }
+/// The finding-wide RIPR-SPEC-0027 boundary witness, reduced from the
+/// per-row activations: a non-predicate is not gated, an unparsed boundary
+/// is never witnessed, and otherwise some row must be `Witnessed`.
+pub(crate) fn ts_predicate_boundary_witnessed_by_rows(
+    boundary: &TsPredicateBoundary,
+    activations: &[TypeScriptPredicateActivation],
+) -> bool {
+    match boundary {
+        TsPredicateBoundary::NotPredicate => true,
+        TsPredicateBoundary::Unparsed => false,
+        TsPredicateBoundary::Parsed { .. } => {
+            activations.contains(&TypeScriptPredicateActivation::Witnessed)
         }
     }
-    false
 }
 
 /// #4104-E2: the nullish boundary input (`null` / `undefined`) at the left
@@ -2537,15 +2801,44 @@ pub(crate) fn classify_change_with_alias_state(
     // when a strong assertion observes an owner call at the changed boundary,
     // and an ambiguous fallback shape is never `Exposed`.
     let strong_oracle_present = strongest_strength >= OracleStrength::Strong.rank();
-    let boundary_witnessed = !strong_oracle_present
-        || ts_predicate_boundary_is_witnessed(
-            &probe_shape,
+    // #5527: activation is computed per related test, and the finding-wide
+    // witness reduces those rows. The module-derived boundary fact is what
+    // lets a row establish a definite miss; it reads and parses the owner's
+    // module, so it is loaded only when some row is still unresolved, and
+    // the same value later feeds the boundary-input evidence line.
+    let predicate_boundary = ts_predicate_boundary(&probe_shape, line_text);
+    let row_activation = |candidate: &TypeScriptRelatedCandidate<'_>,
+                          fact: Option<&TypeScriptBoundaryFact>| {
+        ts_predicate_boundary_row_activation(
+            &predicate_boundary,
+            fact,
             line_text,
             owner,
-            &related_candidates,
+            candidate,
             alias_map,
             workspace_root,
-        );
+        )
+    };
+    let mut predicate_activations: Vec<TypeScriptPredicateActivation> = related_candidates
+        .iter()
+        .map(|candidate| row_activation(candidate, None))
+        .collect();
+    let mut boundary_fact: Option<Option<TypeScriptBoundaryFact>> = None;
+    if predicate_activations.contains(&TypeScriptPredicateActivation::Unresolved) {
+        let fact =
+            ts_boundary_fact_for_change(&probe_shape, line, line_text, owner, workspace_root);
+        if let Some(fact) = &fact {
+            for (candidate, activation) in related_candidates.iter().zip(&mut predicate_activations)
+            {
+                if *activation == TypeScriptPredicateActivation::Unresolved {
+                    *activation = row_activation(candidate, Some(fact));
+                }
+            }
+        }
+        boundary_fact = Some(fact);
+    }
+    let boundary_witnessed = !strong_oracle_present
+        || ts_predicate_boundary_witnessed_by_rows(&predicate_boundary, &predicate_activations);
     let observation_confirmed = strong_oracle_present
         && boundary_witnessed
         && ts_changed_value_is_observed(&probe_shape, line_text, &owner.name, &related_candidates);
@@ -2806,10 +3099,11 @@ pub(crate) fn classify_change_with_alias_state(
     // parameters (#4759). The repair-packet projection uses it in place of
     // an observed input that does not reach the boundary.
     if !missing_discriminators.is_empty()
-        && let Some(fact) =
+        && let Some(fact) = boundary_fact.unwrap_or_else(|| {
             ts_boundary_fact_for_change(&probe_shape, line, line_text, owner, workspace_root)
+        })
     {
-        evidence.push(fact);
+        evidence.push(fact.evidence_line());
     }
     if let Some(oracle) = &mock_payload_oracle {
         evidence.push(format!("mock_payload_evidence: {oracle}"));
