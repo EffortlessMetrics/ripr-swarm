@@ -33,7 +33,7 @@ use super::seam_cache::{
 use super::seam_classification::SeamGripClassCounts;
 use super::seam_classification::{self, ClassifiedSeam};
 use super::seams::{
-    ExpectedSink, RepoSeam, RequiredDiscriminator, SeamKind, build_line_starts,
+    ExpectedSink, OwnerCallShape, RepoSeam, RequiredDiscriminator, SeamKind, build_line_starts,
     byte_span_to_lines_with_starts,
 };
 use super::test_grip_evidence;
@@ -2509,6 +2509,7 @@ fn build_seam_from_shape(
     let expression = shape.text.clone();
     let required_discriminator = required_discriminator_for(kind, &expression);
     let expected_sink = expected_sink_for(kind);
+    let owner_call = OwnerCallShape::from_function(owner_fact);
     let seam = RepoSeam::new(
         path,
         owner,
@@ -2518,7 +2519,8 @@ fn build_seam_from_shape(
         expression,
         required_discriminator,
         expected_sink,
-    );
+    )
+    .with_owner_call(owner_call);
     // Span geometry is additional precision: when derivation fails (stale or
     // mismatched source), the seam keeps line-only behavior rather than
     // carrying wrong coordinates. Match-arm shapes are line-only by policy:
@@ -2737,6 +2739,73 @@ marker = "libtest_mimic::Trial"
             index.extend_functions(functions);
         }
         Ok(index)
+    }
+
+    /// #5357: the production inventory reads the owner's parser facts into
+    /// the seam's call shape. Before the fix every seam rendered
+    /// `name(..)`, so a `&self` method was suggested as a free call.
+    #[test]
+    fn inventory_seams_carry_owner_call_shape_from_parser_facts() -> Result<(), String> {
+        let source = concat!(
+            "pub fn clamp_units(units: u64) -> u64 { if units > 10 { 10 } else { units } }\n",
+            "pub struct ByteSize(pub u64);\n",
+            "impl ByteSize {\n",
+            "    pub fn as_whole_units(&self, unit: u64) -> u64 { if unit == 0 { 0 } else { self.0 / unit } }\n",
+            "    pub fn from_kib(kib: u64) -> u64 { if kib > 4 { kib * 1024 } else { 0 } }\n",
+            "    pub fn outer(&self) -> bool {\n",
+            "        fn local(n: u64) -> bool { n > 3 }\n",
+            "        local(self.0)\n",
+            "    }\n",
+            "}\n",
+            "pub trait Units {\n",
+            "    fn units(&self) -> u64 { if self.raw() > 1 { 1 } else { 0 } }\n",
+            "    fn raw(&self) -> u64;\n",
+            "}\n",
+            "impl Units for ByteSize { fn raw(&self) -> u64 { if self.0 > 7 { 7 } else { self.0 } } }\n",
+            "impl<T: Copy> Units for &T { fn raw(&self) -> u64 { if 2 > 1 { 2 } else { 3 } } }\n",
+        );
+        let path = PathBuf::from("src/lib.rs");
+        let index = index_from_files(&[(path.clone(), source)])?;
+        let seams = inventory_seams_from_index(std::slice::from_ref(&path), &index);
+        let shape_of = |owner_suffix: &str, expression: &str| {
+            seams
+                .iter()
+                .find(|seam| {
+                    seam.owner().ends_with(owner_suffix) && seam.expression().contains(expression)
+                })
+                .map(|seam| seam.owner_call().clone())
+        };
+        let method = |self_type: &str| {
+            Some(OwnerCallShape::Method {
+                self_type: self_type.to_string(),
+            })
+        };
+        assert_eq!(
+            shape_of("::clamp_units", "units > 10"),
+            Some(OwnerCallShape::Free)
+        );
+        assert_eq!(
+            shape_of("::as_whole_units", "unit == 0"),
+            method("ByteSize")
+        );
+        assert_eq!(
+            shape_of("::from_kib", "kib > 4"),
+            Some(OwnerCallShape::Associated {
+                self_type: "ByteSize".to_string()
+            })
+        );
+        // A function-local `fn` is not nameable from a test.
+        assert_eq!(shape_of("::local", "n > 3"), Some(OwnerCallShape::Unknown));
+        // A trait default method has no concrete receiver type.
+        assert_eq!(
+            shape_of("::units", "self.raw() > 1"),
+            Some(OwnerCallShape::Unknown)
+        );
+        // A trait impl for a named type is called with method syntax.
+        assert_eq!(shape_of("::raw", "self.0 > 7"), method("ByteSize"));
+        // A blanket impl's self type is not a plain named path.
+        assert_eq!(shape_of("::raw", "2 > 1"), Some(OwnerCallShape::Unknown));
+        Ok(())
     }
 
     /// Seam id, class and the full evidence payload, so a stage that
