@@ -592,9 +592,9 @@ export class RiprClientController {
         kind: 'serverUnavailable',
         summary: 'ripr server is not available.',
         detail: server.detail,
-        nextStep: `${missingServerRemedy(config.autoDownload)} Then run ripr: Restart Server.`
+        nextStep: `${server.remedy ?? missingServerRemedy(config.autoDownload)} Then run ripr: Restart Server.`
       });
-      await this.showMissingServerMessage(server.message, server.detail);
+      await this.showMissingServerMessage(server.message, server.detail, server.remedy);
       return;
     }
     this.server = server;
@@ -2404,11 +2404,11 @@ export class RiprClientController {
       this.server = server;
       return server;
     }
-    await this.showMissingServerMessage(server.message, server.detail);
+    await this.showMissingServerMessage(server.message, server.detail, server.remedy);
     return undefined;
   }
 
-  private async showMissingServerMessage(summary: string, detail: string): Promise<void> {
+  private async showMissingServerMessage(summary: string, detail: string, remedy?: string): Promise<void> {
     this.output.appendLine(summary);
     this.output.appendLine(detail);
     // Name the actual failure (HTTP/checksum/manifest) in the popup body —
@@ -2421,8 +2421,9 @@ export class RiprClientController {
       ? detail.split('\n')[0] || summary
       : summary;
     const separator = cause.endsWith('.') ? '' : '.';
+    const guidance = remedy ?? missingServerRemedy(this.runtime.getConfig().autoDownload);
     const selection = await this.runtime.showErrorMessage(
-      `ripr server is not available: ${cause}${separator} ${missingServerRemedy(this.runtime.getConfig().autoDownload)}`,
+      `ripr server is not available: ${cause}${separator} ${guidance}`,
       'Open Settings',
       'Copy Diagnostic',
       'Copy Install Command',
