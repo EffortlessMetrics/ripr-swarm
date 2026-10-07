@@ -411,7 +411,9 @@ rule only for an assertion whose context was admitted.
    caught; the downgrade claims only the dropped operand. Any other mention
    of `f` in a related test (a pin with a custom message, another assertion
    macro, a value read out of the result, a second receiver pinning another
-   value) keeps the credit, and so does anything else ripr cannot read (a
+   value) keeps the credit, as does a related test that calls the owner and
+   asserts without naming `f` (whole-struct equality, a snapshot, a helper),
+   and so does anything else ripr cannot read (a
    nested expression, a repeated initializer text).
 
 ### Bool-owner pins

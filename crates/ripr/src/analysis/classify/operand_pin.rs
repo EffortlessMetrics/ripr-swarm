@@ -70,6 +70,17 @@ pub(in crate::analysis) fn operand_only_pin(
             return None;
         }
         if field_pins.is_empty() {
+            // A test that runs the owner and asserts without naming the field
+            // may still observe it: whole-struct equality, a snapshot, or a
+            // helper (`assert_quote(&q, 1_499)`).
+            let calls_owner = whole_word_count(test.body.as_str(), owner_name) > 0
+                || test
+                    .assertions
+                    .iter()
+                    .any(|assertion| whole_word_count(&assertion.text, owner_name) > 0);
+            if calls_owner && !test.assertions.is_empty() {
+                return None;
+            }
             continue;
         }
         if field_pins.iter().any(|(receiver, _, _)| {
@@ -495,6 +506,22 @@ mod tests {
         ]);
 
         assert_eq!(found, None);
+    }
+
+    /// Re-review of #7077: a test that runs the owner and observes the
+    /// whole result never names the field, yet may see the dropped operand.
+    #[test]
+    fn a_whole_result_observer_keeps_the_credit() {
+        let paired = test_with(&[
+            "let q = quote(2_500, 4);",
+            "assert_eq!(q.subtotal_cents, 9_000);",
+            "assert_eq!(q.total_cents, 9_000);",
+        ]);
+        let whole = test_with(&["assert_eq!(quote(1_000, 1), expected_quote());"]);
+        let unrelated = test_with(&["assert_eq!(discounted(10_000), 9_000);"]);
+
+        assert_eq!(pin(&[paired.clone(), whole]), None);
+        assert!(pin(&[paired, unrelated]).is_some());
     }
 
     #[test]

@@ -11623,6 +11623,7 @@ tests = [
   "crates/ripr/src/analysis/classify/operand_pin.rs::tests::a_shadowed_receiver_is_not_read",
   "crates/ripr/src/analysis/classify/operand_pin.rs::tests::a_non_literal_expected_side_is_not_read",
   "crates/ripr/src/analysis/classify/operand_pin.rs::tests::tests_pairing_different_operands_keep_the_credit",
+  "crates/ripr/src/analysis/classify/operand_pin.rs::tests::a_whole_result_observer_keeps_the_credit",
   "crates/ripr/tests/owner_pin_execution.rs::predicate_pairing_cannot_reuse_refused_boundary_equalities",
   "crates/ripr/tests/owner_pin_execution.rs::local_empty_macro_preserves_independent_equality_execution",
   "crates/ripr/tests/owner_pin_execution.rs::empty_macro_arguments_cannot_activate_a_real_far_oracle",
