@@ -207,7 +207,7 @@ fn loan_pairs_boundary_call(
                 && matches!(fact.context, ValueContext::FunctionArgument)
                 && !fact.text.is_empty()
                 && fact.text.contains(&helper_call.text)
-                && fact_matches_fed_literals(test, &fact.value, &fed)
+                && fact_matches_fed_literals(&fact.value, &fed)
         })
     })
 }
@@ -215,34 +215,43 @@ fn loan_pairs_boundary_call(
 /// Whether an activation value (`input == 10`, or a conjunction such as
 /// `y == 0 && x == 0`) consists only of `parameter == literal` terms, each
 /// naming an owner parameter and the very literal this call feeds it.
-fn fact_matches_fed_literals(test: &TestSummary, value: &str, fed: &[(String, String)]) -> bool {
+fn fact_matches_fed_literals(value: &str, fed: &[(String, String)]) -> bool {
     !value.contains("||")
         && value.split(" && ").all(|term| {
             term.split_once(" == ").is_some_and(|(parameter, literal)| {
                 fed.iter().any(|(name, fed)| {
-                    name == parameter.trim() && same_scalar_literal(test, fed, literal.trim())
+                    name == parameter.trim() && same_scalar_literal(fed, literal.trim())
                 })
             })
         })
 }
 
-/// Two whole scalar literals that spell one value (`10u32` and `10`), read
-/// the way the direct path reads an owner argument. Anything that is not a
-/// whole literal on both sides must match exactly.
-fn same_scalar_literal(test: &TestSummary, fed: &str, literal: &str) -> bool {
-    if fed == literal {
-        return true;
-    }
-    if !argument_is_whole_scalar_literal(fed) || !argument_is_whole_scalar_literal(literal) {
-        return false;
-    }
-    match (
-        owner_argument_values(test, fed).as_slice(),
-        owner_argument_values(test, literal).as_slice(),
-    ) {
-        ([fed], [literal]) => fed == literal,
-        _ => false,
-    }
+/// Two literals that spell one value. Only plain decimal integers are read
+/// past their spelling (`10u32` and `10`, `1_000` and `1000`); a hex, octal,
+/// binary, float or other form must match exactly, since a partial reader
+/// would equate `0x10` with `0`.
+fn same_scalar_literal(fed: &str, literal: &str) -> bool {
+    fed == literal
+        || decimal_integer_value(fed)
+            .is_some_and(|value| Some(value) == decimal_integer_value(literal))
+}
+
+/// `-?digits` with `_` separators and an optional integer type suffix,
+/// as its canonical digits; `None` for any other spelling.
+fn decimal_integer_value(text: &str) -> Option<String> {
+    let (sign, rest) = text
+        .strip_prefix('-')
+        .map_or(("", text), |rest| ("-", rest));
+    let end = rest
+        .find(|ch: char| !(ch.is_ascii_digit() || ch == '_'))
+        .unwrap_or(rest.len());
+    let (digits, suffix) = rest.split_at(end);
+    let digits: String = digits.chars().filter(|ch| *ch != '_').collect();
+    let integer_suffix = [
+        "", "u8", "u16", "u32", "u64", "u128", "usize", "i8", "i16", "i32", "i64", "i128", "isize",
+    ];
+    (!digits.is_empty() && !rest.starts_with('_') && integer_suffix.contains(&suffix))
+        .then(|| format!("{sign}{digits}"))
 }
 
 /// The helper call's arguments when each is a whole scalar literal and no
@@ -2447,18 +2456,36 @@ mod tests {
             &eleven_loan,
             &eleven_activation
         ));
-        assert!(!same_scalar_literal(&test, "10", "ten"));
+        assert!(!same_scalar_literal("10", "ten"));
+        // Only decimal integers read past their spelling: `0x10` is 16, not
+        // the `0` a leading-digit reader would see.
+        let (hex, hex_assertion, hex_loan, mut hex_zero) =
+            loan_case(CHECK, "check(0x10, true);", 2);
+        hex_zero.observed_values[0].value = "input == 0".to_string();
+        assert!(!loan_pairs(&hex, &hex_assertion, &hex_loan, &hex_zero));
+        assert!(same_scalar_literal("0x10", "0x10"));
+        assert!(same_scalar_literal("1_000i64", "1000"));
+        assert!(same_scalar_literal("-10i32", "-10"));
+        for (fed, literal) in [
+            ("0x10", "0"),
+            ("0b1", "0"),
+            ("1.5", "1"),
+            ("1e3", "1"),
+            ("10u32", "-10"),
+        ] {
+            assert!(!same_scalar_literal(fed, literal), "{fed} vs {literal}");
+        }
         // A conjunction pairs only when every term is a literal the call
         // feeds (`gate(x, y)` reached with `check(0, 0)`).
         let fed = [
             ("x".to_string(), "0".to_string()),
             ("y".to_string(), "0".to_string()),
         ];
-        assert!(fact_matches_fed_literals(&test, "y == 0 && x == 0", &fed));
-        assert!(!fact_matches_fed_literals(&test, "y == 0 && x == 1", &fed));
-        assert!(!fact_matches_fed_literals(&test, "y == 0 || x == 0", &fed));
-        assert!(!fact_matches_fed_literals(&test, "y == 0 && x > 0", &fed));
-        assert!(!fact_matches_fed_literals(&test, "y == 0 && z == 0", &fed));
+        assert!(fact_matches_fed_literals("y == 0 && x == 0", &fed));
+        assert!(!fact_matches_fed_literals("y == 0 && x == 1", &fed));
+        assert!(!fact_matches_fed_literals("y == 0 || x == 0", &fed));
+        assert!(!fact_matches_fed_literals("y == 0 && x > 0", &fed));
+        assert!(!fact_matches_fed_literals("y == 0 && z == 0", &fed));
         // The fact must name the owner parameter that literal reaches.
         let mut renamed = activation.clone();
         renamed.observed_values[0].value = "other == 10".to_string();
