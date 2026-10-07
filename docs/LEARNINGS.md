@@ -10,6 +10,7 @@ the tail `dulo`, and `rfind(..) + 1` sliced inside `ó`, aborting `ripr
 check`. Non-ASCII bytes are identifier bytes there; the qualifier slice
 skips the whole found character. ASCII paths stay unchanged. Do not
 assume an ASCII identifier vocabulary is a char-boundary walk.
+
 ## 2026-10-07: Out-of-line shadows live at parent roots, and owner-side gates fire first (#6950)
 
 The module-declaration producer emits top-level `mod` declarations only, so
