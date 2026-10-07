@@ -1928,10 +1928,76 @@ pub(crate) fn function_parameters(function: &FunctionSummary) -> Vec<String> {
 /// Parameter names of `function` read from its whole signature, so a
 /// parameter list formatted across several lines is still seen. The
 /// signature ends at the body's first `{` (#6970 review).
+/// Names `function` binds as parameters, read from its whole signature:
+/// a parameter list formatted across several lines is still seen, and a
+/// destructuring pattern (`Input { subtotal }: Input`) yields the names it
+/// binds. Field names in a pattern are kept too, which only widens the
+/// owner-scoped set (#6970 review).
 pub(crate) fn signature_parameters(function: &FunctionSummary) -> Vec<String> {
     let body = function.body.as_str();
-    let signature = body.find('{').map_or(body, |open| &body[..open]);
-    parameters_in_signature(signature)
+    let Some(arguments) =
+        parameter_list_open(body).and_then(|open| delimited_contents_at(body, open))
+    else {
+        return Vec::new();
+    };
+    split_top_level_args(&arguments)
+        .iter()
+        .flat_map(|argument| pattern_bindings(top_level_pattern(argument)))
+        .collect()
+}
+
+/// The `(` opening the parameter list: the first one after `fn` that sits
+/// outside the generic parameter list (`fn apply<F: Fn(u8)>(f: F)`).
+fn parameter_list_open(body: &str) -> Option<usize> {
+    let start = body.find("fn ").map_or(0, |at| at + 3);
+    let mut angle = 0i32;
+    let mut previous = ' ';
+    for (offset, ch) in body[start..].char_indices() {
+        let arrow = previous == '-';
+        previous = ch;
+        match ch {
+            '<' => angle += 1,
+            '>' if !arrow => angle -= 1,
+            '(' if angle == 0 => return Some(start + offset),
+            '{' | ';' => return None,
+            _ => {}
+        }
+    }
+    None
+}
+
+/// The pattern of one parameter: the text before its top-level `:`.
+fn top_level_pattern(argument: &str) -> &str {
+    let bytes = argument.as_bytes();
+    let mut depth = 0i32;
+    for (index, &byte) in bytes.iter().enumerate() {
+        match byte {
+            b'(' | b'[' | b'{' | b'<' => depth += 1,
+            b')' | b']' | b'}' | b'>' => depth -= 1,
+            b':' if depth == 0 => {
+                let path = bytes.get(index + 1) == Some(&b':')
+                    || index.checked_sub(1).and_then(|at| bytes.get(at)) == Some(&b':');
+                if !path {
+                    return &argument[..index];
+                }
+            }
+            _ => {}
+        }
+    }
+    ""
+}
+
+/// Lowercase identifiers a parameter pattern names, without `ref`, `mut`,
+/// `self` or path roots.
+fn pattern_bindings(pattern: &str) -> Vec<String> {
+    pattern
+        .split(|c: char| !(c.is_alphanumeric() || c == '_'))
+        .filter(|word| {
+            word.starts_with(|c: char| c.is_ascii_lowercase() || c == '_')
+                && !matches!(*word, "_" | "ref" | "mut" | "self" | "crate" | "super")
+        })
+        .map(str::to_string)
+        .collect()
 }
 
 fn parameters_in_signature(signature: &str) -> Vec<String> {

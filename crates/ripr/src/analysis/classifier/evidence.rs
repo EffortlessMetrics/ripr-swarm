@@ -665,7 +665,10 @@ fn call_names_function(
             return receiver_is_self(receiver) && same_impl();
         }
         let Some(path) = prefix.strip_suffix("::") else {
-            return callee_type.is_none() && !prefix.ends_with(is_path_char);
+            // A bare call may follow a keyword (`return tax(v)`), a field
+            // label or any operator; only the declaration `fn tax(` is not
+            // a call.
+            return callee_type.is_none() && !ends_with_word(prefix, "fn");
         };
         let segments = trailing_path_segments(path);
         match (&callee_type, segments.last()) {
@@ -692,8 +695,9 @@ fn call_name_prefixes<'a>(text: &'a str, name: &'a str) -> impl Iterator<Item = 
     })
 }
 
-fn is_path_char(c: char) -> bool {
-    c.is_alphanumeric() || c == '_' || c == ':' || c == '.'
+fn ends_with_word(text: &str, word: &str) -> bool {
+    text.strip_suffix(word)
+        .is_some_and(|rest| !rest.ends_with(|c: char| c.is_alphanumeric() || c == '_'))
 }
 
 fn receiver_is_self(receiver: &str) -> bool {
@@ -1174,10 +1178,14 @@ mod tests {
             pub struct Rate;\n\
             impl Rate { pub fn tax(&self) -> i64 { 0 } pub fn apply(&self) -> i64 { self.tax() } }\n\
             pub fn typed() -> i64 { Rate::tax(&Rate) }\n\
-            pub fn std_rooted(v: &mut Vec<i64>) -> i64 { std::mem::take(v).len() as i64 }\n";
+            pub fn std_rooted(v: &mut Vec<i64>) -> i64 { std::mem::take(v).len() as i64 }\n\
+            pub fn returned(v: i64) -> i64 { return tax(v) }\n\
+            pub fn matched(v: i64) -> i64 { match tax(v) { t => t } }\n\
+            pub struct Out { t: i64 }\n\
+            pub fn labelled(v: i64) -> Out { Out { t: tax(v) } }\n";
         assert_eq!(
             caller_names_for(source, "src/lib.rs::tax")?,
-            ["pathed", "reference"],
+            ["labelled", "matched", "pathed", "reference", "returned"],
             "a free owner is reached by a bare or crate-path call, never by a \
              method call or a type-qualified call of the same name"
         );
@@ -1204,7 +1212,9 @@ mod tests {
     #[test]
     fn owner_parameters_are_read_from_a_multiline_signature() -> Result<(), String> {
         use crate::analysis::rust_index::{RaRustSyntaxAdapter, RustSyntaxAdapter};
-        let source = "pub fn tax(\n    subtotal: i64,\n    mut rate: i64,\n) -> i64 {\n    rate += 0;\n    subtotal * rate / 100\n}\n";
+        let source = "pub fn tax(\n    subtotal: i64,\n    mut rate: i64,\n) -> i64 {\n    rate += 0;\n    subtotal * rate / 100\n}\n\
+            pub struct Input { pub base: i64, pub fee: i64 }\n\
+            pub fn levy<F: Fn(i64) -> i64>(Input { base, fee: charge }: Input, f: F) -> i64 { f(base) + charge }\n";
         let facts = RaRustSyntaxAdapter.summarize_file(&PathBuf::from("src/lib.rs"), source)?;
         let owner = facts
             .functions
@@ -1215,6 +1225,16 @@ mod tests {
             super::owner_parameter_names(owner),
             ["rate", "subtotal"],
             "parameters on lines after `fn tax(` are owner-scoped tokens"
+        );
+        let levy = facts
+            .functions
+            .iter()
+            .find(|function| function.name == "levy")
+            .ok_or("levy indexed")?;
+        assert_eq!(
+            super::owner_parameter_names(levy),
+            ["base", "charge", "f", "fee"],
+            "a destructuring pattern binds its names; generic `Fn(..)` bounds are skipped"
         );
         Ok(())
     }
