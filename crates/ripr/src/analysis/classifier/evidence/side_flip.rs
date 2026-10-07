@@ -21,6 +21,9 @@
 
 use super::tuple_match::{parsed, same_current_file};
 use crate::analysis::classify::ProbeContext;
+use crate::analysis::facts::cfg_predicates::{
+    attribute_requires_test, attribute_test_build_availability,
+};
 use crate::analysis::rust_index::find_file_facts;
 use crate::domain::{Confidence, ProbeFamily, RelationReason, StageEvidence, StageState};
 use ra_ap_syntax::ast::{HasArgList, HasAttrs, HasGenericArgs, HasName};
@@ -324,7 +327,7 @@ fn test_file_macros_and_inner_cfg_are_plain(root: &SyntaxNode) -> bool {
         ast::Attr::cast(node).is_none_or(|attribute| {
             let text = attribute.syntax().text().to_string();
             !text.contains("macro_use")
-                && (attribute.excl_token().is_none() || text == "#![cfg(test)]")
+                && (attribute.excl_token().is_none() || is_test_build_gate(&text))
         })
     })
 }
@@ -495,6 +498,12 @@ fn asserts_owner_err_inner(function: &ast::Fn, owner: &str) -> Option<bool> {
     }))
 }
 
+/// A `cfg` gate that requires a test build and is enabled in one
+/// (`#[cfg(test)]`), read through the shared cfg-predicate authority.
+fn is_test_build_gate(attribute: &str) -> bool {
+    attribute_requires_test(attribute) && attribute_test_build_availability(attribute) == Some(true)
+}
+
 /// Only `#[cfg(test)]` modules may enclose the test: any other attribute
 /// could compile it out.
 fn enclosing_modules_are_test_only(function: &ast::Fn) -> bool {
@@ -505,7 +514,7 @@ fn enclosing_modules_are_test_only(function: &ast::Fn) -> bool {
         .all(|module| {
             module
                 .attrs()
-                .all(|attribute| attribute.syntax().text() == "#[cfg(test)]")
+                .all(|attribute| is_test_build_gate(&attribute.syntax().text().to_string()))
         })
 }
 
