@@ -3635,8 +3635,13 @@ fn parent_root_shadows_type(
         .iter()
         .any(|item| module_item_names_type(item, base))
         && !root_items.iter().any(|item| {
-            matches!(item, ast::Item::Use(_))
-                && file_renames_to(&item.syntax().text().to_string(), base)
+            if !matches!(item, ast::Item::Use(_)) {
+                return false;
+            }
+            let text = item.syntax().text().to_string();
+            // `r#Window` denotes `Window`: a raw-identifier alias rebinds
+            // the name too.
+            file_renames_to(&text, base) || file_renames_to(&text, raw.as_str())
         })
     {
         return false;

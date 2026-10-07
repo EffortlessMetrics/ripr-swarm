@@ -3373,6 +3373,11 @@ mod tests {
     const OUT_OF_LINE_HELPERS_RENAME_SOURCE: &str =
         "use crate::other::Gauge as Window;\n\nmod window_tests;\n";
 
+    /// #6950 review: the same rebinding spelled with a raw identifier
+    /// (`r#Window` denotes `Window`; `mod` token on line 3).
+    const OUT_OF_LINE_HELPERS_RENAME_RAW_SOURCE: &str =
+        "use crate::other::Gauge as r#Window;\n\nmod window_tests;\n";
+
     /// #6950 review precision: the `helpers` module plainly imports the
     /// receiver, which may re-export production (`mod` token on line 3).
     const OUT_OF_LINE_HELPERS_IMPORT_SOURCE: &str = "use crate::Window;\n\nmod window_tests;\n";
@@ -3485,31 +3490,37 @@ mod tests {
 
     /// #6950 review: a root-level `use ... as Window` in the parent
     /// module rebinds the receiver to a different type, so the nested
-    /// child test's call is name-only, not `direct_owner_call`.
+    /// child test's call is name-only, not `direct_owner_call`. The raw
+    /// spelling (`as r#Window`) rebinds the same name.
     #[test]
     fn given_parent_root_rename_when_test_calls_owner_method_then_name_only_relation() {
-        let reason = out_of_line_clone_relation(
-            OUT_OF_LINE_LIB_SOURCE,
-            &[("src/helpers.rs", OUT_OF_LINE_HELPERS_RENAME_SOURCE)],
-            SourceRoleProvenance {
-                edges: vec![
-                    composed_module_edge("src/lib.rs", "src/helpers.rs", "helpers", 16, true),
-                    composed_module_edge(
-                        "src/helpers.rs",
-                        "src/helpers/window_tests.rs",
-                        "window_tests",
-                        3,
-                        false,
-                    ),
-                ],
-                earliest_unresolved_reason: None,
-            },
-        );
-        assert_eq!(
-            reason,
-            RelationReason::WeakTokenSubstring,
-            "a parent-root rename names a different type than the owner"
-        );
+        for helpers in [
+            OUT_OF_LINE_HELPERS_RENAME_SOURCE,
+            OUT_OF_LINE_HELPERS_RENAME_RAW_SOURCE,
+        ] {
+            let reason = out_of_line_clone_relation(
+                OUT_OF_LINE_LIB_SOURCE,
+                &[("src/helpers.rs", helpers)],
+                SourceRoleProvenance {
+                    edges: vec![
+                        composed_module_edge("src/lib.rs", "src/helpers.rs", "helpers", 16, true),
+                        composed_module_edge(
+                            "src/helpers.rs",
+                            "src/helpers/window_tests.rs",
+                            "window_tests",
+                            3,
+                            false,
+                        ),
+                    ],
+                    earliest_unresolved_reason: None,
+                },
+            );
+            assert_eq!(
+                reason,
+                RelationReason::WeakTokenSubstring,
+                "a parent-root rename names a different type than the owner: {helpers}"
+            );
+        }
     }
 
     /// #6950 review precision: a plain root-level `use` of the receiver in

@@ -2803,6 +2803,10 @@ const HELPERS_PLAIN: &str = "mod stack_tests;\n";
 /// root-level `use ... as Stack` (`mod` token on line 3).
 const HELPERS_RENAME: &str = "use crate::other::Gauge as Stack;\n\nmod stack_tests;\n";
 
+/// #6950 review: the same rebinding spelled with a raw identifier
+/// (`r#Stack` denotes `Stack`; `mod` token on line 3).
+const HELPERS_RENAME_RAW: &str = "use crate::other::Gauge as r#Stack;\n\nmod stack_tests;\n";
+
 /// #6950 review precision: the `helpers` module plainly imports the
 /// receiver, which may re-export production (`mod` token on line 3).
 const HELPERS_IMPORT: &str = "use crate::Stack;\n\nmod stack_tests;\n";
@@ -2900,45 +2904,48 @@ fn an_out_of_line_test_without_a_parent_shadow_keeps_its_pin() {
 
 /// #6950 review: a root-level `use ... as Stack` in the parent module
 /// rebinds the receiver to a different type, so the nested child test
-/// names that type, not the production one — the pin is refused.
+/// names that type, not the production one — the pin is refused. The raw
+/// spelling (`as r#Stack`) rebinds the same name.
 #[test]
 fn a_parent_root_rename_of_the_receiver_refuses_the_pin() {
-    let index = index_with_provenance(
-        &[
-            (LIB, LIB_OUT_OF_LINE),
-            (HELPERS, HELPERS_RENAME),
-            (CHILD, CHILD_TEST),
-        ],
-        &[
-            (
-                HELPERS,
-                SourceRoleProvenance {
-                    edges: vec![module_edge(LIB, HELPERS, "helpers", 12, true)],
-                    earliest_unresolved_reason: None,
-                },
-            ),
-            (
-                CHILD,
-                SourceRoleProvenance {
-                    edges: vec![
-                        module_edge(LIB, HELPERS, "helpers", 12, true),
-                        module_edge(HELPERS, CHILD, "stack_tests", 3, false),
-                    ],
-                    earliest_unresolved_reason: None,
-                },
-            ),
-        ],
-    );
-    let pin = establish(&index, "depth", "self.items.len() + 1");
-    assert!(
-        pin.is_some(),
-        "the pin establishes from the production type"
-    );
-    let Some(pin) = pin else { return };
-    assert!(
-        admitted_texts(&index, &pin).is_empty(),
-        "a parent-root rename names a different type than the owner"
-    );
+    for helpers in [HELPERS_RENAME, HELPERS_RENAME_RAW] {
+        let index = index_with_provenance(
+            &[
+                (LIB, LIB_OUT_OF_LINE),
+                (HELPERS, helpers),
+                (CHILD, CHILD_TEST),
+            ],
+            &[
+                (
+                    HELPERS,
+                    SourceRoleProvenance {
+                        edges: vec![module_edge(LIB, HELPERS, "helpers", 12, true)],
+                        earliest_unresolved_reason: None,
+                    },
+                ),
+                (
+                    CHILD,
+                    SourceRoleProvenance {
+                        edges: vec![
+                            module_edge(LIB, HELPERS, "helpers", 12, true),
+                            module_edge(HELPERS, CHILD, "stack_tests", 3, false),
+                        ],
+                        earliest_unresolved_reason: None,
+                    },
+                ),
+            ],
+        );
+        let pin = establish(&index, "depth", "self.items.len() + 1");
+        assert!(
+            pin.is_some(),
+            "the pin establishes from the production type: {helpers}"
+        );
+        let Some(pin) = pin else { return };
+        assert!(
+            admitted_texts(&index, &pin).is_empty(),
+            "a parent-root rename names a different type than the owner: {helpers}"
+        );
+    }
 }
 
 /// #6950 review precision: a plain root-level `use` of the receiver in
