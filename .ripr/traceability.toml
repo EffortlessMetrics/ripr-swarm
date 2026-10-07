@@ -13227,6 +13227,9 @@ tests = [
   "crates/ripr/tests/cli_smoke.rs::check_json_timeout_and_bad_base_have_distinct_identities",
   "crates/ripr/tests/cli_smoke.rs::check_json_success_carries_no_refusal_shape",
   "crates/ripr/tests/cli_smoke.rs::check_json_argv_usage_errors_stay_prose_only",
+  "crates/ripr/tests/cli_smoke/check_artifact_stdin.rs::python_stdin_artifact_refusal_preserves_named_recovery",
+  "crates/ripr/tests/cli_smoke/check_artifact_stdin.rs::javascript_stdin_artifact_refusal_preserves_named_recovery",
+  "crates/ripr/src/cli/commands/check.rs::config_load_refusal_without_any_config_entry_falls_back",
 ]
 fixtures = []
 code = [
