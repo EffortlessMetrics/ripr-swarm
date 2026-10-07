@@ -458,6 +458,22 @@ fn owner_path_dynamic_import_destructure_stays_unknown() -> Result<(), String> {
     })
 }
 
+/// The destructure extractor reads one line, so a dynamic import whose
+/// `await` ends the line leaves only `await` as the initializer. Its source
+/// is unseen, so the binding stays unknown rather than an affirmative
+/// unrelated-source rejection.
+#[test]
+fn owner_path_multiline_dynamic_import_destructure_stays_unknown() -> Result<(), String> {
+    check(&Case {
+        name: "multi-line dynamic import destructure",
+        test_source: "import { applyDiscount } from '../src/pricing';\ntest('discounts', async () => {\n  const { applyDiscount } = await\n    import('../src/pricing');\n  expect(applyDiscount(100)).toBe(90);\n});\n",
+        relation: TypeScriptRelationKind::SameFileProximity,
+        disposition: TypeScriptOwnerPathDisposition::UnresolvedAliasOrReexport,
+        observes: false,
+        ..DIRECT
+    })
+}
+
 /// Known gap, pinned: a same-name binding in an enclosing `describe` scope
 /// refuses the direct relation, but the disposition gates do not check it
 /// yet, so the call reads as unanchored and its assertion stays readable,

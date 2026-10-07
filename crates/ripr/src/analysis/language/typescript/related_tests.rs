@@ -1572,12 +1572,12 @@ fn owner_name_destructure_binding_mismatch(
             }
             // A dynamic `import(...)` source is never parsed, so where it
             // points stays unknown: a shadow for the legacy answer (the
-            // assertion stays unread), but not an affirmative mismatch.
-            if init
-                .trim_start_matches("await")
-                .trim_start()
-                .starts_with("import(")
-            {
+            // assertion stays unread), but not an affirmative mismatch. The
+            // extractor is line-based, so an initializer that continues on
+            // the next line (`= await` / `=` then `import(...)`) leaves an
+            // empty remainder here: its source is unseen, hence unknown too.
+            let after_await = init.trim_start_matches("await").trim_start();
+            if after_await.is_empty() || after_await.starts_with("import(") {
                 return Some(OwnerBindingMismatch::Unresolved);
             }
             // `<namespace>` where the namespace import binds the owner's
