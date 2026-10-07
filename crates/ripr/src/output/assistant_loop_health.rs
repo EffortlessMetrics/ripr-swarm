@@ -942,14 +942,14 @@ fn decode_shell_word(word: &str) -> Option<String> {
         match ch {
             '\'' => {
                 let end = rest[1..].find('\'')?;
-                bytes.extend_from_slice(rest[1..=end].as_bytes());
+                bytes.extend_from_slice(&rest.as_bytes()[1..=end]);
                 rest = &rest[end + 2..];
             }
             '"' if rest.starts_with(PRINTF_OPEN) => {
                 let after = &rest[PRINTF_OPEN.len()..];
                 let end = after.find("')\"")?;
                 let escapes = &after[..end];
-                if escapes.is_empty() || escapes.len() % 4 != 0 {
+                if escapes.is_empty() || !escapes.len().is_multiple_of(4) {
                     return None;
                 }
                 for escape in escapes.as_bytes().chunks(4) {
