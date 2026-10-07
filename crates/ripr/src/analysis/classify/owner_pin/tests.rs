@@ -1954,6 +1954,14 @@ fn a_for_loop_over_a_constant_row_table_runs_its_assertion() {
         format!("for (x, want) in [(4, weight(4))] {{ {pin} }}"),
         format!("for (x, want) in [(4, EXPECTED)] {{ {pin} }}"),
         format!("for (x, want) in [(4, Wrap::of(12))] {{ {pin} }}"),
+        format!("for (x, want) in [(4, Expected(4))] {{ {pin} }}"),
+        format!("for (x, want) in [(4, Twelve)] {{ {pin} }}"),
+        // A `cfg` may remove every row.
+        format!("for (x, want) in [#[cfg(any())] (4, 0)] {{ {pin} }}"),
+        format!(
+            "let cases: [(u32, u32); 0] = [#[cfg(any())] (4, 0)];\nfor (x, want) in cases {{ {pin} }}"
+        ),
+        format!("for (x, want) in [(4, #[cfg(any())] 0)] {{ {pin} }}"),
         format!("for (x, want) in [(4, vec![weight(4)])] {{ {pin} }}"),
         // The bound rows may change or are not the ones iterated.
         format!("let mut cases = [(4, 12)];\ncases[0].1 = 0;\nfor (x, want) in cases {{ {pin} }}"),
@@ -1962,6 +1970,9 @@ fn a_for_loop_over_a_constant_row_table_runs_its_assertion() {
         ),
         format!("let cases = [(4, 12)];\nfor (x, want) in cases.iter().skip(1) {{ {pin} }}"),
         format!("let cases = rows();\nfor (x, want) in cases {{ {pin} }}"),
+        format!(
+            "let cases = [(4, 12)];\nlet r#cases: [(u32, u32); 0] = [];\nfor (x, want) in cases {{ {pin} }}"
+        ),
         format!("for (x, want) in &mut [(4, 12)] {{ {pin} }}"),
         format!("'rows: for (x, want) in [(4, 12)] {{ {pin} }}"),
     ] {

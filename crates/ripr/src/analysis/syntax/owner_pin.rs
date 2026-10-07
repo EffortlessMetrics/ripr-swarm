@@ -1468,7 +1468,7 @@ fn bound_constant_rows(table: &ast::ForExpr, function: &ast::Fn, name: &str) -> 
             .syntax()
             .descendants_with_tokens()
             .filter_map(|element| element.into_token())
-            .filter(|token| token.text() == name)
+            .filter(|token| token.text().trim_start_matches("r#") == name)
             .count()
             != 2
     {
@@ -1494,7 +1494,13 @@ fn bound_constant_rows(table: &ast::ForExpr, function: &ast::Fn, name: &str) -> 
 }
 
 fn constant_rows(rows: &ast::ArrayExpr) -> bool {
-    rows.semicolon_token().is_none()
+    // `[#[cfg(any())] (4, 0)]` is an empty array: an attribute anywhere in
+    // the rows may remove one, so none is allowed.
+    !rows
+        .syntax()
+        .descendants()
+        .any(|node| ast::Attr::can_cast(node.kind()))
+        && rows.semicolon_token().is_none()
         && rows.exprs().next().is_some()
         && rows.exprs().all(|row| constant_value(&row))
 }
@@ -1524,6 +1530,8 @@ fn constant_value(value: &ast::Expr) -> bool {
                     .arg_list()
                     .is_some_and(|args| args.args().all(|arg| constant_value(&arg)))
         }
+        // `vec!` is matched by name; a workspace rebinding of it is refused
+        // by the trusted-macro binding check every admitted test passes.
         ast::Expr::MacroExpr(expression) => expression.macro_call().is_some_and(|call| {
             call.path()
                 .is_some_and(|path| path.syntax().text() == "vec")
@@ -1542,20 +1550,33 @@ fn constant_value(value: &ast::Expr) -> bool {
     }
 }
 
-/// `None`, `Some`, `Ok`, `Status::Partial`: a path whose last segment is a
-/// CamelCase name, which a constructor or unit variant carries. A
-/// SCREAMING_CASE `const` may be computed by the owner, so it is refused.
+/// `None`, `Some`, `Ok`, `Err`, or a qualified `Type::Variant` whose
+/// segments are all CamelCase: a variant or constructor by convention. A
+/// bare CamelCase name may be a `fn` or `const` that calls the owner, and a
+/// SCREAMING_CASE `const` may be computed by the owner, so both are refused.
 fn variant_path(path: &ast::Path) -> bool {
-    path.segment()
-        .and_then(|segment| segment.name_ref())
-        .is_some_and(|name| {
-            let text = name.text();
-            text.starts_with(|c: char| c.is_ascii_uppercase())
-                && text.chars().any(|c| c.is_ascii_lowercase())
+    let segments: Vec<_> = path.segments().collect();
+    let names: Option<Vec<String>> = segments
+        .iter()
+        .map(|segment| {
+            (segment.generic_arg_list().is_none())
+                .then(|| segment.name_ref().map(|name| name.text().to_string()))
+                .flatten()
         })
-        && path
-            .segments()
-            .all(|segment| segment.generic_arg_list().is_none())
+        .collect();
+    let Some(names) = names else {
+        return false;
+    };
+    let camel = |text: &str| {
+        text.starts_with(|c: char| c.is_ascii_uppercase())
+            && text.chars().any(|c| c.is_ascii_lowercase())
+            && text != "Self"
+    };
+    match names.as_slice() {
+        [single] => matches!(single.as_str(), "None" | "Some" | "Ok" | "Err"),
+        [] => false,
+        qualified => qualified.iter().all(|name| camel(name)),
+    }
 }
 
 fn closure_invocation(
