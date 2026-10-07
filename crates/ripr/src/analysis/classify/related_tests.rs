@@ -2448,7 +2448,10 @@ fn qualified_self_type_matches(
     let Some((self_ty, trait_ty)) = text[open + 1..close].split_once(" as ") else {
         return false;
     };
-    compact_impl_type_name(self_ty).as_deref() == Some(impl_type)
+    // `<Wrapper<u16> as Render>` names one specialisation, but `impl_type`
+    // is the compact base name shared by `Wrapper<u8>`; fail closed.
+    !self_ty.contains('<')
+        && compact_impl_type_name(self_ty).as_deref() == Some(impl_type)
         && compact_impl_type_name(trait_ty).as_deref() == Some(impl_trait)
 }
 
@@ -2500,7 +2503,23 @@ fn first_argument_has_type(
     if !arg.is_empty() && arg.bytes().all(is_ident_byte) {
         return let_binding_mentions_type(body_for_lets, arg, impl_type);
     }
-    initializer_is_one_head_expr(arg)
+    // Only heads whose syntax fixes the type: a struct or tuple-struct
+    // literal, a variant, or `new`/`default`/`from`. The `with_*`, `new_*`
+    // and `from_*` naming conventions `initializer_type_head` also accepts
+    // may return another type (`Site::with_cache() -> Cache`), and a
+    // turbofish names a specialisation the compact `impl_type` cannot tell
+    // apart, so both fail closed here.
+    let named_by_convention = type_head(arg).is_some_and(|(segments, next)| {
+        next == Some(b'(')
+            && segments.last().is_some_and(|call| {
+                ["with_", "new_", "from_"]
+                    .iter()
+                    .any(|prefix| call.starts_with(prefix))
+            })
+    });
+    !named_by_convention
+        && !arg.contains("::<")
+        && initializer_is_one_head_expr(arg)
         && initializer_type_head(arg).is_some_and(|head| head == impl_type)
 }
 
@@ -3429,6 +3448,14 @@ mod tests {
             ("Render::render(&Site::new());", true),
             ("Render::render(&Site { x: 1 });", true),
             ("Render::render(&Site::new().cache());", false),
+            ("Render::render(&Site::default());", true),
+            ("Render::render(&Site(1));", true),
+            ("Render::render(&Site::with_cache());", false),
+            ("Render::render(&Site::from_parts(1));", false),
+            ("Render::render(&Site::new_empty());", false),
+            ("Render::render(&Site::<u8>::new());", false),
+            ("<Site<u16> as Render>::render(&s);", false),
+            ("<Site as Render>::render(&s);", true),
             ("Render::render(&Cache::new());", false),
         ] {
             let summary = test("tests/render.rs", "t", body);
