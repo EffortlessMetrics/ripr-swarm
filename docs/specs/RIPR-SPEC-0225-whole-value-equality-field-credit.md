@@ -39,7 +39,7 @@ Policy impact:
 
 - Register this spec in `policy/doc-artifacts.toml` and
   `.ripr/traceability.toml`.
-- No output schema version bump. The seam cache schema moves (1.47) because
+- No output schema version bump. The seam cache schema moves (1.48) because
   cached verdicts change.
 
 ## Problem

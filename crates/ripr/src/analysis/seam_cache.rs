@@ -368,11 +368,14 @@ pub(crate) struct CachedSeamLimitInfo {
 /// `1.46`: `RepoSeam.owner_call` (#5357) carries the owner's call shape, and
 /// path constants carry `ValueContext::Constant`. A warm `<= 1.45` hit would
 /// serve every seam with an `Unknown` call shape and the old enum label.
-/// `1.47`: a whole-value literal naming a constructed field pins it
+/// `1.47`: an assertion in a `for` loop over a non-empty constant-row
+/// table runs (#5328), so table-driven pins gain credit. Old entries would
+/// keep refusing them.
+/// `1.48`: a whole-value literal naming a constructed field pins it
 /// (RIPR-SPEC-0225), so field findings gain credit; a field read copied into
 /// the expected literal stops clearing the missing field value. Old entries
 /// would keep the previous verdicts.
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.47";
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.48";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -458,8 +461,9 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.47";
 /// `0.50`: same wrapper twin transition as full `1.44`.
 /// `0.51`: same never-true-cfg test transition as full `1.45` (#6293).
 /// `0.52`: same owner call shape and constant label as full `1.46` (#5357).
-/// `0.53`: same whole-value field transition as full `1.47` (RIPR-SPEC-0225).
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.53";
+/// `0.53`: same constant-row table transition as full `1.47` (#5328).
+/// `0.54`: same whole-value field transition as full `1.48` (RIPR-SPEC-0225).
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.54";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -547,8 +551,9 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.53";
 /// `0.50`: same wrapper twin transition as full `1.44`.
 /// `0.51`: same never-true-cfg test transition as full `1.45` (#6293).
 /// `0.52`: same owner call shape and constant label as full `1.46` (#5357).
-/// `0.53`: same whole-value field transition as full `1.47` (RIPR-SPEC-0225).
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.53";
+/// `0.53`: same constant-row table transition as full `1.47` (#5328).
+/// `0.54`: same whole-value field transition as full `1.48` (RIPR-SPEC-0225).
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.54";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -4161,8 +4166,9 @@ mod tests {
         // #6938).
         // 1.44 -> 1.45: a never-true-cfg test is not a test (#6293).
         // 1.45 -> 1.46: seam owner call shape and constant value context (#5357).
-        // 1.46 -> 1.47: whole-value field pins (RIPR-SPEC-0225).
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.47");
+        // 1.46 -> 1.47: constant-row table loops run their assertion (#5328).
+        // 1.47 -> 1.48: whole-value field pins (RIPR-SPEC-0225).
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.48");
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
         // for the sharded and compact envelopes.
@@ -4200,9 +4206,10 @@ mod tests {
         // 0.48 -> 0.49: same #6914 transition as full 1.43.
         // 0.50 -> 0.51: same #6293 transition as full 1.45.
         // 0.51 -> 0.52: same owner call shape transition as the outer cache.
-        // 0.52 -> 0.53: same RIPR-SPEC-0225 transition as full 1.47.
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.53");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.53");
+        // 0.52 -> 0.53: same constant-row table transition as full 1.47.
+        // 0.53 -> 0.54: same RIPR-SPEC-0225 transition as full 1.48.
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.54");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.54");
     }
 
     #[test]
