@@ -1688,6 +1688,20 @@ type StructLiteral<'a> = (Vec<(&'a str, Option<&'a str>)>, Option<&'a str>);
 fn struct_literal_fields(initializer: &str) -> Option<StructLiteral<'_>> {
     let open = initializer.find('{')?;
     let path = initializer[..open].trim();
+    // `Quote::<u8> { .. }`: drop the turbofish, whose arguments are type
+    // syntax only.
+    let path = match path.find('<') {
+        Some(generics) if path.ends_with('>') => {
+            if !path[generics..]
+                .chars()
+                .all(|ch| ch.is_ascii_alphanumeric() || "_:<>, &'".contains(ch))
+            {
+                return None;
+            }
+            path[..generics].trim_end().trim_end_matches("::")
+        }
+        _ => path,
+    };
     // `Quote { .. }` or a qualified `crate::Quote { .. }`: the last path
     // segment names the type.
     let type_name = path.rsplit("::").next().unwrap_or_default();
@@ -3311,6 +3325,7 @@ mod tests {
             "let mut q = bundle(3);\n q.total = 99;\n assert_eq!(q.total, 99);",
             "let q = Quote { total: 99, ..bundle(3) };\n assert_eq!(q.total, 99);",
             "let q = bundle(3);\n let q = crate::Quote { total: 99, ..q };\n assert_eq!(q.total, 99);",
+            "let q = bundle(3);\n let q = Quote::<u8> { total: 99, ..q };\n assert_eq!(q.total, 99);",
             // An assignment after a pass-through update still overwrites.
             "let q = bundle(3);\n let mut q = Quote { items: 4, ..q };\n q.total = 1;\n assert_eq!(q.total, 1);",
             // So does one after a value copied back from the receiver.
