@@ -748,6 +748,7 @@ fn check_prints_no_stub_route_when_it_analyzed_other_bytes_than_the_disk() -> Re
         "a route over other bytes must not be offered: {dirty}"
     );
     scratch.cleanup()
+}
 /// #5453: a producer-admitted `new_integration_file` stub must compile under
 /// the cargo command the CLI prints, including a `crate::` parameter type and
 /// a crate-root `pub const` boundary. rustc-on-lib.rs cannot see this path.

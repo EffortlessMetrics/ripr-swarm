@@ -348,7 +348,7 @@ mod tests {
             navigation.explain_command("probe:id"),
             navigation.context_command("probe:id"),
             navigation.list_command(),
-            navigation.stub_command("src/lib.rs", 5),
+            navigation.stub_command("src/lib.rs", 5, "predicate"),
         ] {
             assert!(
                 command.contains(&root_arg),
