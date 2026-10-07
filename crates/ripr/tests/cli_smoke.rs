@@ -3233,7 +3233,7 @@ fn check_json_timeout_and_bad_base_have_distinct_identities() -> Result<(), Stri
 /// #6834: the success path carries no refusal shape — no `analysis_scope`
 /// or `run_limitations` keys — so the envelope cannot be mistaken for a
 /// result and no success field moved. Byte-identity against the base
-/// binary is proven in the PR evidence.
+/// binary is demonstrated in the PR evidence.
 #[test]
 fn check_json_success_carries_no_refusal_shape() -> Result<(), String> {
     let root = workspace_root().display().to_string();
