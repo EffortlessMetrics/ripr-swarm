@@ -17972,7 +17972,7 @@ the route also carries `verify_command_specs` (a JSON array of full
 `CommandSpec` objects) beside the legacy `verify_commands` strings, and
 `receipt_command_spec` (a single `CommandSpec` object) beside
 `receipt_command`. The typed specs are deduplicated by their semantic digest
-(sha256 over the serialized spec), so distinct invocations that reuse one
+(sha256 over the serialized spec with its human `display` emptied; #3999), so distinct invocations that reuse one
 command id all survive in first-occurrence order. `receipt_command_spec` is
 present only when the legacy string side also agrees on exactly one receipt
 route: records without `command_specs` keep the route legacy-string-only, and
