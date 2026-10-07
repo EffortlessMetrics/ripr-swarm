@@ -1,9 +1,12 @@
 mod build;
+use build::MissAttribution;
 pub(crate) use build::{RUST_SOURCE_NOT_UTF8_REASON, rust_source_text};
 pub(crate) mod cfg_predicates;
+pub(crate) mod drop_in;
 mod harness_registry;
 mod includes;
 mod index;
+pub(crate) mod member_crates;
 mod model;
 mod parameterized_tests;
 mod role_composition;
@@ -72,7 +75,7 @@ pub(crate) fn parse_loaded_files_with_cache(
     files: &[(PathBuf, Vec<u8>)],
 ) -> Result<RustIndex, String> {
     let mut cached = index_phase("index_cached_parse", || {
-        build::build_index_from_loaded_files_with_cache(root, files)
+        build::build_index_from_loaded_files_with_cache(root, files, MissAttribution::Skipped)
     })?;
     cached.index.finalize()?;
     Ok(cached.index)
@@ -83,8 +86,28 @@ pub(crate) fn build_index_from_loaded_files_with_cache_and_test_harnesses(
     files: &[(PathBuf, Vec<u8>)],
     registrations: &[TestHarnessRegistration],
 ) -> Result<build::CachedRustIndex, String> {
+    build_cached_index_with_test_harnesses(root, files, registrations, MissAttribution::Named)
+}
+
+/// [`build_index_from_loaded_files_with_cache_and_test_harnesses`] for
+/// callers that never report which cache entries a miss replaced (diff
+/// analysis): it skips the whole-cache read that names them.
+pub(crate) fn build_analysis_index_from_loaded_files(
+    root: &Path,
+    files: &[(PathBuf, Vec<u8>)],
+    registrations: &[TestHarnessRegistration],
+) -> Result<build::CachedRustIndex, String> {
+    build_cached_index_with_test_harnesses(root, files, registrations, MissAttribution::Skipped)
+}
+
+fn build_cached_index_with_test_harnesses(
+    root: &Path,
+    files: &[(PathBuf, Vec<u8>)],
+    registrations: &[TestHarnessRegistration],
+    attribution: MissAttribution,
+) -> Result<build::CachedRustIndex, String> {
     let mut cached = index_phase("index_cached_parse", || {
-        build::build_index_from_loaded_files_with_cache(root, files)
+        build::build_index_from_loaded_files_with_cache(root, files, attribution)
     })?;
     index_phase("index_parameterized_tests", || {
         parameterized_tests::promote_explicit_test_case_functions(&mut cached.index);
@@ -134,7 +157,7 @@ pub use model::{
     HarnessSubjectClaim, HarnessSubjectFact, LetBindingFact, LiteralFact, ModuleDeclarationFact,
     ModulePathTarget, OracleFact, ProbeShapeFact, ProbeShapeKind, ResolvedIncludeParent,
     ReturnFact, RustIncludeLimitation, RustIndex, SourceRoleProvenance, SourceRoleProvenanceEdge,
-    SourceRoleProvenanceEdgeKind, TestFact, TestSummary, UnresolvedPropertyMacroFact,
+    SourceRoleProvenanceEdgeKind, SourceText, TestFact, TestSummary, UnresolvedPropertyMacroFact,
 };
 // Hot evidence loops hash each indexed file once and validate by digest.
 pub(crate) use model::WorkspaceFileAuthority;

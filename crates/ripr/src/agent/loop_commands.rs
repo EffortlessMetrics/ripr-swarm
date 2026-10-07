@@ -1,5 +1,8 @@
 use std::path::{Component, Path, PathBuf};
 
+/// How a builder renders its shell-redirect target from `(root, out_path)`.
+type RedirectTarget = fn(&str, &str) -> String;
+
 pub(crate) const AGENT_LOOP_COMMAND_TEMPLATE_VERSION: &str = "0.1";
 
 pub(crate) const WORKFLOW_BEFORE_SNAPSHOT_ARTIFACT: &str =
@@ -107,15 +110,16 @@ pub(crate) fn root_display(root: &str) -> String {
 }
 
 /// Render a shell-redirect target rooted at the bound `--root` (issues
-/// #3872, #3999): the target is absolute with stable separators, so a pasted
-/// funnel command reproduces the validated write location from any working
-/// directory under both shells and both .NET/provider resolution rules. An
-/// already absolute target passes through (normalized); a relative target
+/// #3872, #3999). The root and already-absolute output keep native Unix spelling
+/// and stable Windows separators; relative remainders use stable separators.
+/// A pasted funnel command reproduces the validated write location from any
+/// working directory under both shells and both .NET/provider resolution rules. An
+/// already absolute target passes through (lexically cleaned); a relative target
 /// joins [`bound_root`].
 pub(crate) fn anchored_redirect_target(root: &str, out_path: &str) -> String {
     let out = Path::new(out_path);
     if out.is_absolute() {
-        return display_path(&lexically_clean(out));
+        return root_path_display(&lexically_clean(out));
     }
     // The root keeps its native characters (#4287); only the root-relative
     // remainder is rendered with stable separators.
@@ -130,6 +134,22 @@ pub(crate) fn anchored_redirect_target(root: &str, out_path: &str) -> String {
         ),
         Err(_) => display_path(&target),
     }
+}
+
+/// Render a shell-redirect target for a portable command (#4000): one whose
+/// relative `--root` deliberately means the reader's own checkout, such as a
+/// review card published into a pull request. A relative root keeps the
+/// target relative to that same root, so the command analyzes and writes
+/// one repository wherever it is pasted. [`anchored_redirect_target`] would
+/// instead resolve the target against the renderer's working directory (often
+/// a CI runner), splitting analysis and write across two machines. An
+/// absolute root or target is anchored exactly as there.
+pub(crate) fn portable_redirect_target(root: &str, out_path: &str) -> String {
+    let root_path = Path::new(root);
+    if root_path.is_absolute() || Path::new(out_path).is_absolute() {
+        return anchored_redirect_target(root, out_path);
+    }
+    root_path_display(&lexically_clean(&root_path.join(out_path)))
 }
 
 /// Drop `.` segments and resolve `..` lexically (no filesystem I/O: the
@@ -203,6 +223,27 @@ pub(crate) fn check_analysis_outcome_command_with_base(
     mode: &str,
     out_path: &str,
 ) -> String {
+    analysis_outcome_command(root, base, mode, out_path, anchored_redirect_target)
+}
+
+/// [`check_analysis_outcome_command_with_base`] for a portable root; see
+/// [`portable_redirect_target`].
+pub(crate) fn portable_check_analysis_outcome_command_with_base(
+    root: &str,
+    base: Option<&str>,
+    mode: &str,
+    out_path: &str,
+) -> String {
+    analysis_outcome_command(root, base, mode, out_path, portable_redirect_target)
+}
+
+fn analysis_outcome_command(
+    root: &str,
+    base: Option<&str>,
+    mode: &str,
+    out_path: &str,
+    redirect_target: RedirectTarget,
+) -> String {
     let base_arg = base
         .map(|base| format!(" --base {}", shell_arg(base)))
         .unwrap_or_default();
@@ -211,7 +252,7 @@ pub(crate) fn check_analysis_outcome_command_with_base(
         shell_arg(&root_display(root)),
         base_arg,
         shell_arg(mode),
-        shell_arg(&anchored_redirect_target(root, out_path))
+        shell_arg(&redirect_target(root, out_path))
     )
 }
 
@@ -225,11 +266,26 @@ pub(crate) fn agent_packet_command(root: &str, seam_id: &str, out_path: &str) ->
 }
 
 pub(crate) fn agent_brief_command(root: &str, seam_id: &str, out_path: &str) -> String {
+    brief_command(root, seam_id, out_path, anchored_redirect_target)
+}
+
+/// [`agent_brief_command`] for a portable root; see
+/// [`portable_redirect_target`].
+pub(crate) fn portable_agent_brief_command(root: &str, seam_id: &str, out_path: &str) -> String {
+    brief_command(root, seam_id, out_path, portable_redirect_target)
+}
+
+fn brief_command(
+    root: &str,
+    seam_id: &str,
+    out_path: &str,
+    redirect_target: RedirectTarget,
+) -> String {
     format!(
         "ripr agent brief --root {} --seam-id {} --json > {}",
         shell_arg(&root_display(root)),
         shell_arg(seam_id),
-        shell_arg(&anchored_redirect_target(root, out_path))
+        shell_arg(&redirect_target(root, out_path))
     )
 }
 
@@ -239,13 +295,35 @@ pub(crate) fn agent_verify_command(
     after_path: &str,
     out_path: Option<&str>,
 ) -> String {
-    let command = format!(
+    let command = verify_command_head(root, before_path, after_path);
+    append_redirect(root, command, out_path)
+}
+
+/// [`agent_verify_command`] for a portable root; see
+/// [`portable_redirect_target`].
+pub(crate) fn portable_agent_verify_command(
+    root: &str,
+    before_path: &str,
+    after_path: &str,
+    out_path: Option<&str>,
+) -> String {
+    let command = verify_command_head(root, before_path, after_path);
+    match out_path {
+        Some(path) => format!(
+            "{command} > {}",
+            shell_arg(&portable_redirect_target(root, path))
+        ),
+        None => command,
+    }
+}
+
+fn verify_command_head(root: &str, before_path: &str, after_path: &str) -> String {
+    format!(
         "ripr agent verify --root {} --before {} --after {} --json",
         shell_arg(&root_display(root)),
         shell_arg(before_path),
         shell_arg(after_path)
-    );
-    append_redirect(root, command, out_path)
+    )
 }
 
 pub(crate) fn agent_receipt_command(
@@ -342,7 +420,7 @@ pub(crate) fn display_path(path: &Path) -> String {
 }
 
 pub(crate) fn workflow_artifact_path(out_dir: &Path, file_name: &str) -> String {
-    let out_dir = display_path(out_dir);
+    let out_dir = root_path_display(out_dir);
     if out_dir == "." {
         file_name.to_string()
     } else {
@@ -382,7 +460,67 @@ pub(crate) fn shell_arg(value: &str) -> String {
     {
         return value.to_string();
     }
+    if value.chars().any(needs_terminal_escape) {
+        return ansi_c_quote(value);
+    }
     format!("'{}'", value.replace('\'', r"'\''"))
+}
+
+/// Which characters must not reach a terminal raw: every control character
+/// except `\n` and `\t`, plus the bidi formatting characters. One owner for the
+/// policy; `output::human::terminal_safe` escapes the same set in reports. It
+/// lives here, dependency-free, because `xtask` includes this file by path.
+pub(crate) fn needs_terminal_escape(ch: char) -> bool {
+    match ch {
+        '\n' | '\t' => false,
+        c if c.is_control() => true,
+        // Arabic letter mark, LRM/RLM, embeddings/overrides (LRE..RLO), and
+        // isolates (LRI..PDI): they reorder text without any visible glyph.
+        '\u{61c}' | '\u{200e}' | '\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}' => {
+            true
+        }
+        _ => false,
+    }
+}
+
+/// Control and bidi characters cannot be printed raw in a report, and the
+/// report escape would change them inside `'...'` so the pasted command named a
+/// different argument. Each such character becomes an adjacent
+/// `"$(printf '\ooo')"` segment, one octal escape per UTF-8 byte; everything
+/// else stays in `'...'` runs. Unlike `$'...'` this is POSIX, so `sh`, dash, bash
+/// and zsh all rebuild the exact bytes. `output::markdown::powershell_command`
+/// lifts each such argument and rebuilds it as a `[char]` expression.
+fn ansi_c_quote(value: &str) -> String {
+    let mut out = String::with_capacity(value.len() + 8);
+    let mut in_run = false;
+    for ch in value.chars() {
+        if needs_terminal_escape(ch) {
+            if in_run {
+                out.push('\'');
+                in_run = false;
+            }
+            out.push_str("\"$(printf '");
+            let mut buf = [0u8; 4];
+            for byte in ch.encode_utf8(&mut buf).bytes() {
+                out.push_str(&format!("\\{byte:03o}"));
+            }
+            out.push_str("')\"");
+            continue;
+        }
+        if !in_run {
+            out.push('\'');
+            in_run = true;
+        }
+        if ch == '\'' {
+            out.push_str(r"'\''");
+        } else {
+            out.push(ch);
+        }
+    }
+    if in_run {
+        out.push('\'');
+    }
+    out
 }
 
 fn append_redirect(root: &str, command: String, out_path: Option<&str>) -> String {
@@ -398,6 +536,67 @@ fn append_redirect(root: &str, command: String, out_path: Option<&str>) -> Strin
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// #4000: a portable command's analyzed root and redirect target must
+    /// name one repository. A relative root keeps a relative target under
+    /// that root; the bound builders keep anchoring at the renderer's
+    /// resolved root, and an absolute root anchors either way.
+    #[test]
+    fn portable_redirect_stays_under_the_typed_root() -> Result<(), String> {
+        let artifact = WORKFLOW_AGENT_BRIEF_ARTIFACT;
+        for (root, expected) in [
+            (".", artifact.to_string()),
+            ("my repo", format!("my repo/{artifact}")),
+            ("./sub/../my repo", format!("my repo/{artifact}")),
+            // A leading `..` stays: the redirect resolves from the same
+            // directory as `--root ../repo`, one level up.
+            ("../repo", format!("../repo/{artifact}")),
+        ] {
+            let target = portable_redirect_target(root, artifact);
+            if target != expected {
+                return Err(format!("portable target for {root:?}: {target}"));
+            }
+            let command = portable_agent_brief_command(root, "seam", artifact);
+            if !command.ends_with(&format!("> {}", shell_arg(&expected))) {
+                return Err(format!("portable brief split root and write: {command}"));
+            }
+        }
+        let bound = agent_brief_command(".", "seam", artifact);
+        if !bound.ends_with(&format!(
+            "> {}",
+            shell_arg(&anchored_redirect_target(".", artifact))
+        )) || !Path::new(&anchored_redirect_target(".", artifact)).is_absolute()
+        {
+            return Err(format!("bound brief must stay anchored: {bound}"));
+        }
+        let absolute = bound_root("my repo");
+        if portable_redirect_target(&absolute, artifact)
+            != anchored_redirect_target(&absolute, artifact)
+        {
+            return Err("an absolute root must anchor the same way".to_string());
+        }
+        let verify = portable_agent_verify_command(
+            ".",
+            WORKFLOW_BEFORE_SNAPSHOT_ARTIFACT,
+            WORKFLOW_AFTER_SNAPSHOT_ARTIFACT,
+            Some(WORKFLOW_AGENT_VERIFY_ARTIFACT),
+        );
+        let outcome = portable_check_analysis_outcome_command_with_base(
+            ".",
+            Some("main"),
+            "draft",
+            WORKFLOW_ANALYSIS_OUTCOME_ARTIFACT,
+        );
+        for (command, target) in [
+            (verify, WORKFLOW_AGENT_VERIFY_ARTIFACT),
+            (outcome, WORKFLOW_ANALYSIS_OUTCOME_ARTIFACT),
+        ] {
+            if !command.ends_with(&format!("> {target}")) {
+                return Err(format!("portable command left the root: {command}"));
+            }
+        }
+        Ok(())
+    }
 
     #[test]
     fn analysis_outcome_preserves_selected_base_and_default_compatibility() -> Result<(), String> {
@@ -761,7 +960,52 @@ mod tests {
             ("ampersand", "a && b"),
             ("tilde", "~/notes"),
             ("leading dash", "--not-a-flag"),
+            ("escape sequence", "a\u{1b}[2Jb'c\\d"),
+            ("bell and carriage return", "x\u{7}y\rz"),
+            ("bidi override", "dir\u{202e}gnissim"),
         ]
+    }
+
+    #[test]
+    fn shell_arg_spells_control_and_bidi_characters_as_escapes() {
+        let quoted = shell_arg("a\u{1b}[2Jb'c\\d\u{202e}");
+        assert_eq!(
+            quoted,
+            r#"'a'"$(printf '\033')"'[2Jb'\''c\d'"$(printf '\342\200\256')""#
+        );
+        assert!(!quoted.chars().any(needs_terminal_escape), "{quoted:?}");
+        // Plain hostile text without control characters keeps `'...'` quoting.
+        assert_eq!(shell_arg("it's"), r"'it'\''s'");
+    }
+
+    /// The control-character form must be POSIX, not bash-only: a pasted line
+    /// runs under `/bin/sh` (dash on Debian) as often as under bash.
+    #[cfg(unix)]
+    #[test]
+    fn shell_arg_control_characters_round_trip_through_posix_sh() -> Result<(), String> {
+        let sh = std::path::Path::new("/bin/sh");
+        if !sh.exists() {
+            return Ok(());
+        }
+        for (label, value) in hostile_values() {
+            let script = format!(
+                "set -- {}\nprintf '%s\\n' \"$#\"\nprintf '%s' \"$1\"\n",
+                shell_arg(value)
+            );
+            let output = std::process::Command::new(sh)
+                .arg("-c")
+                .arg(&script)
+                .output()
+                .map_err(|err| format!("{label}: failed to run sh: {err}"))?;
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let expected = format!("1\n{value}");
+            if !output.status.success() || stdout != expected {
+                return Err(format!(
+                    "{label}: sh gave {stdout:?} for script {script:?}, expected {expected:?}"
+                ));
+            }
+        }
+        Ok(())
     }
 
     #[test]

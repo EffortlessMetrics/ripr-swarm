@@ -4,7 +4,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 #[path = "../../../crates/ripr/src/agent/loop_commands.rs"]
-mod loop_commands;
+pub(super) mod loop_commands;
 
 const TOP_WEAK_SEAMS_LIMIT: usize = 5;
 const BEFORE_SNAPSHOT_COMMAND: &str = "ripr pilot --out target/ripr/pilot";
@@ -234,6 +234,23 @@ fn keep_shared_loop_templates_reachable() {
             loop_commands::WORKFLOW_AGENT_BRIEF_ARTIFACT,
         ),
         loop_commands::agent_start_command(".", "seam-id", "target/ripr/workflow"),
+        loop_commands::portable_agent_brief_command(
+            ".",
+            "seam-id",
+            loop_commands::WORKFLOW_AGENT_BRIEF_ARTIFACT,
+        ),
+        loop_commands::portable_check_analysis_outcome_command_with_base(
+            ".",
+            None,
+            "draft",
+            loop_commands::WORKFLOW_ANALYSIS_OUTCOME_ARTIFACT,
+        ),
+        loop_commands::portable_agent_verify_command(
+            ".",
+            loop_commands::WORKFLOW_BEFORE_SNAPSHOT_ARTIFACT,
+            loop_commands::WORKFLOW_AFTER_SNAPSHOT_ARTIFACT,
+            Some(loop_commands::WORKFLOW_AGENT_VERIFY_ARTIFACT),
+        ),
         loop_commands::check_analysis_outcome_command(
             ".",
             "draft",

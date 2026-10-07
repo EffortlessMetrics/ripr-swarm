@@ -11,6 +11,18 @@
   "findings": [
     {
       "id": "probe:src_lib.rs:return_value:5e6d4294",
+      "canonical_gap_id": "gap:rust:src/lib.rs:try_get_int:return_value:return_value:ok_sign_extend_self.try_get_uint_nbytes_nbytes",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:try_get_int:return_value:return_value:ok_sign_extend_self.try_get_uint_nbytes_nbytes",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "try_get_int",
+        "behavior_kind": "return_value",
+        "probe_kind": "return_value",
+        "normalized_discriminator": "ok_sign_extend_self.try_get_uint_nbytes_nbytes"
+
+      },
       "classification": "exposed",
       "severity": "info",
       "confidence": 1.00,
@@ -18,7 +30,7 @@
         "id": "probe:src_lib.rs:return_value:5e6d4294",
         "family": "return_value",
         "delta": "value",
-        "file": "fixtures/owner_return_pin_trait_method/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 33,
         "expression": "Ok(sign_extend(self.try_get_uint(nbytes)?, nbytes))"
        },

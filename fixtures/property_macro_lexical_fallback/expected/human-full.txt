@@ -8,7 +8,7 @@ Analysis outcome: limitations below (analysis incomplete; partial_with_limitatio
   The 1 finding(s) below cover only the analyzed scope; behavior outside it has no finding.
   Limitation: some changed files were not analyzed during language analysis (language_scope_unsupported at language_adapter); file: tests/opaque.rs; affected items: 1; recovery: inspect the failure (inspect_failure) — An unchanged test file was indexed by lexical fallback after the reference parser refused it, so related-test evidence for a classified owner was weaker or missing. Check whether tests in the named file already exercise the change before trusting a no-path or weak result; rewrite nightly-only syntax or move those tests to a parser-valid file.
 
-WARNING fixtures/property_macro_lexical_fallback/input/src/lib.rs:2
+WARNING ./src/lib.rs:2
   id: probe:src_lib.rs:predicate:c80557eb
 
 Changed
@@ -52,8 +52,8 @@ Limitation detail
 Next step
   Inspect the property macro's definition and collected tests, then run its existing test suite; this limitation does not establish a missing test.
 Drill in:
-  ripr explain --root fixtures/property_macro_lexical_fallback/input --diff fixtures/property_macro_lexical_fallback/diff.patch --mode fast probe:src_lib.rs:predicate:c80557eb
-  ripr context --root fixtures/property_macro_lexical_fallback/input --diff fixtures/property_macro_lexical_fallback/diff.patch --mode fast --at probe:src_lib.rs:predicate:c80557eb
+  ripr explain --root <cwd>/fixtures/property_macro_lexical_fallback/input --diff <cwd>/fixtures/property_macro_lexical_fallback/diff.patch --mode fast probe:src_lib.rs:predicate:c80557eb
+  ripr context --root <cwd>/fixtures/property_macro_lexical_fallback/input --diff <cwd>/fixtures/property_macro_lexical_fallback/diff.patch --mode fast --at probe:src_lib.rs:predicate:c80557eb
 
 
 Note: ripr found no static test path for any of the 1 changed expression(s) in this diff. Scope

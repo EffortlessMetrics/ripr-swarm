@@ -110,6 +110,7 @@ static_limit_kind|mocked_module|Typed static limitation value.
 static_limit_kind|opaque_custom_assertion_helper|Typed static limitation value.
 static_limit_kind|property_based_test|Typed static limitation value.
 static_limit_kind|python_transitive_reach_unresolved|Typed static limitation value.
+static_limit_kind|rust_assertion_context_unresolved|Typed static limitation value.
 static_limit_kind|rust_integration_public_api_path_unresolved|Typed static limitation value.
 static_limit_kind|rust_macro_reach_unresolved|Typed static limitation value.
 static_limit_kind|rust_macro_wrapped_assertion_unresolved|Typed static limitation value.
@@ -125,6 +126,7 @@ stop_reason|dynamic_dispatch_unresolved|Static analysis stop reason value.
 stop_reason|external_crate_boundary|Static analysis stop reason value.
 stop_reason|feature_unknown|Static analysis stop reason value.
 stop_reason|fixture_opaque|Static analysis stop reason value.
+stop_reason|gap_evidence_unresolved|Static analysis stop reason value.
 stop_reason|infection_evidence_unknown|Static analysis stop reason value.
 stop_reason|macro_reach_unresolved|Static analysis stop reason value.
 stop_reason|max_depth_reached|Static analysis stop reason value.

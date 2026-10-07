@@ -32,8 +32,8 @@ Start here:
     - 5 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
-  ripr explain --root fixtures/python_parametrize_basic/input --diff fixtures/python_parametrize_basic/diff.patch --mode fast probe:src_tax.py:python_preview:076d8ade
-  ripr context --root fixtures/python_parametrize_basic/input --diff fixtures/python_parametrize_basic/diff.patch --mode fast --at probe:src_tax.py:python_preview:076d8ade
+  ripr explain --root <cwd>/fixtures/python_parametrize_basic/input --diff <cwd>/fixtures/python_parametrize_basic/diff.patch --mode fast probe:src_tax.py:python_preview:076d8ade
+  ripr context --root <cwd>/fixtures/python_parametrize_basic/input --diff <cwd>/fixtures/python_parametrize_basic/diff.patch --mode fast --at probe:src_tax.py:python_preview:076d8ade
 
 More:
   Full evidence: rerun with --format human-full

@@ -144,7 +144,7 @@ fn elapsed_ms(started: Instant) -> u64 {
 /// repo-scope progress boundaries (#4945).
 ///
 /// The repo-scoped formats drive the seam walkers from the render layer, so
-/// this is the repo-scope analog of [`crate::app::check_with_progress`]: the same closed
+/// this is the repo-scope analog of [`crate::app::check::check_with_progress`]: the same closed
 /// stage vocabulary at the same [`AnalysisProgressScope::Repo`] scope, emitted
 /// around the walk the caller owns. `LoadingInput` opens the run at the
 /// diff-path's entry boundary and is followed immediately by `Analyzing`:
