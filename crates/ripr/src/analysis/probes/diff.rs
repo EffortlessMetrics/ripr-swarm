@@ -1212,6 +1212,27 @@ mod tests {
         );
     }
 
+    /// #7037: the `match` scrutinee shape is a MatchArm shape too, so a
+    /// changed scrutinee is cut to the old scrutinee without the brace.
+    #[test]
+    fn match_scrutinee_edit_cuts_before_to_the_old_scrutinee() {
+        let probes = single_shape_probes(
+            "match kind.trim() {",
+            "match kind {",
+            ProbeShapeKind::MatchArm,
+            "match kind.trim()",
+        );
+
+        let arm = probes
+            .iter()
+            .find(|probe| probe.family == ProbeFamily::MatchArm);
+        assert_eq!(
+            arm.and_then(|probe| probe.before.as_deref()),
+            Some("match kind"),
+            "{probes:?}"
+        );
+    }
+
     /// #7020: a body edit falls outside the head shape, so `before` keeps
     /// the whole old arm that `tuple_match` parses for its old result.
     #[test]

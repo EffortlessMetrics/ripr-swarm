@@ -8719,6 +8719,10 @@ tests = [
   "crates/ripr/src/analysis/probes/diff.rs::tests::match_arm_head_edit_cuts_before_to_the_old_head",
   "crates/ripr/src/analysis/probes/diff.rs::tests::match_arm_body_edit_keeps_the_whole_old_arm",
   "crates/ripr/src/analysis/probes/diff.rs::tests::match_arm_head_edit_on_a_two_arrow_line_keeps_the_whole_old_line",
+  "crates/ripr/src/analysis/probes/diff.rs::tests::match_scrutinee_edit_cuts_before_to_the_old_scrutinee",
+  "crates/ripr/tests/match_arm_two_arrow_line.rs::a_one_arm_line_cuts_before_and_names_the_unselected_arm",
+  "crates/ripr/tests/match_arm_two_arrow_line.rs::two_arms_on_one_line_keep_the_whole_line_and_name_no_unselected_arm",
+  "crates/ripr/tests/match_arm_two_arrow_line.rs::a_nested_match_in_the_body_keeps_the_whole_line_and_names_no_unselected_arm",
   "crates/ripr/src/analysis/probes/diff.rs::tests::removed_span_of_shape_cuts_only_when_the_edit_is_inside_the_shape",
 ]
 fixtures = []
