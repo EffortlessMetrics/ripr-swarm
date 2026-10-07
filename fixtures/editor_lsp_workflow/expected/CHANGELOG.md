@@ -426,7 +426,7 @@ Updated:
 ## Pending — editor_lsp_workflow (16)
 
 Reason:
-#4001: the LSP code-actions and hover goldens are pinned to production output (`lsp::tests::editor_lsp_workflow_lsp_goldens_match_production`); handoff commands carry `--root <root>` and `<root>/` redirects, and the hover repeats the production brief's single missing discriminator and assertion guidance
+#4001: the LSP code-actions and hover goldens are pinned to production output (`lsp::tests::editor_lsp_workflow_lsp_goldens_match_production`); handoff commands carry `--root <root>` and `<root>/` redirects, and the hover page's missing-discriminator, suggested-test-shape and handoff sections are the production seam hover's lines verbatim
 
 Command:
 `cargo test -p ripr --lib editor_lsp_workflow_lsp_goldens_match_production`
