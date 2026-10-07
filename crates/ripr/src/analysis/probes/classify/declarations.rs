@@ -136,6 +136,7 @@ mod tests {
             role_provenance: facts.role_provenance,
             source: facts.source,
             item_scopes: facts.item_scopes,
+            macro_candidates: facts.macro_candidates,
         })
     }
 

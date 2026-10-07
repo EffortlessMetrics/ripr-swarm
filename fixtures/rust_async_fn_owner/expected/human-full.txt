@@ -11,7 +11,7 @@ NOTE ./src/lib.rs:2
   id: probe:src_lib.rs:predicate:736b22b0
 
 Changed
-  before: if capacity >= threshold { capacity - 10 } else { capacity }
+  before: capacity >= threshold
   after:  capacity > threshold
 
 Probe

@@ -59,3 +59,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — property_macro_noop_named_test (5)
+
+Reason:
+RIPR-SPEC-0122: a predicate's before is cut to the same span as its after (#6995)
+
+Command:
+`cargo xtask goldens bless property_macro_noop_named_test --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

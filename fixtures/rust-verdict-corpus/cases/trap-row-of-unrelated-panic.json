@@ -1,0 +1,58 @@
+{
+  "case_id": "trap-row-of-unrelated-panic",
+  "subject_id": "authored-trap-kit",
+  "diff": "cases/trap-row-of-unrelated-panic.diff",
+  "anchor": {
+    "file": "src/grid.rs",
+    "line": 12
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "should_panic_satisfied_by_unrelated_panic",
+  "hard_case": "#[should_panic] without `expected` passes on Grid::new(0)'s column assert before row_of() runs. Today ripr reads every should_panic test as having no assertion, so this trap mainly guards a future should_panic oracle: it must not credit a test whose panic can come from elsewhere.",
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "index >= 101",
+        "mutated_line": "if index >= 101 {",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: replaces the guard `index > 99` with `index >= 101`, which changes whether index 100 panics, but no executed assertion observes it"
+      },
+      {
+        "replacement": "index < 100",
+        "mutated_line": "if index < 100 {",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: replaces the guard `index > 99` with `index < 100`, which changes whether index 100 panics, but no executed assertion observes it"
+      },
+      {
+        "replacement": "false",
+        "mutated_line": "if false {",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: replaces the guard `index > 99` with `false`, which changes whether index 100 panics, but no executed assertion observes it"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "row_of_rejects_large_index calls Grid::new(0).row_of(100). Grid::new panics with \"grid needs columns\" first, so the bounds check in row_of is never reached and the test passes whatever it does. Adversarial shape (#[should_panic] for an unrelated panic); minimal pair with trap-slot-of-reached-panic-control (differs only in new(0) vs new(4)), plus trap-row-at-expected-panic-control.",
+  "labeling_observation": {
+    "ripr_commit": "6487826",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "reachable_unrevealed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

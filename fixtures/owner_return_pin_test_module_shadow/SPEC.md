@@ -29,10 +29,13 @@ ripr check --root fixtures/owner_return_pin_test_module_shadow/input \
 Exactly one field-construction finding reads `weakly_exposed`, never
 `exposed`: the test-module shadow refuses the owner-return pin
 (RIPR-SPEC-0197 rule 2, #6905), and the struct-field missing discriminator
-survives.
+survives. The related test keeps a name-only relation
+(`weak_token_substring`), never `direct_owner_call`: the receiver binds
+the test-local shadow, so no direct production reach is claimed (#6951).
 
 ## Must Not
 
 - Emit `exposed` for the shadowed clone field.
+- Claim `direct_owner_call` reach for the shadowed receiver.
 - Report zero findings, or drop the struct-field gap.
 - Use mutation-runtime outcome vocabulary.

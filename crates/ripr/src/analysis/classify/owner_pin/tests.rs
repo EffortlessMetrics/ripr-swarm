@@ -1,6 +1,7 @@
 use super::*;
 use crate::analysis::facts::FunctionItemFact;
 use crate::analysis::rust_index::summarize_file;
+use crate::analysis::syntax::macro_binding_candidates;
 use crate::domain::{DeltaKind, ProbeId, SourceLocation, SymbolId};
 use std::path::Path;
 
@@ -2660,6 +2661,73 @@ fn a_same_line_sibling_module_does_not_shadow() {
     assert_eq!(admitted_texts(&index, &pin).len(), 1);
 }
 
+/// #6957: when the production declaration sits in an enclosing non-root
+/// module, that module is the owner's own scope, not a test-local shadow,
+/// so the nested layout keeps its pin.
+#[test]
+fn a_nested_production_module_does_not_shadow_its_own_owner_pin() {
+    let lib = "mod inner {\n    pub struct Stack {\n        items: Vec<u32>,\n    }\n\n    impl Stack {\n        pub fn depth(&self) -> usize {\n            self.items.len() + 1\n        }\n    }\n\n    #[cfg(test)]\n    mod tests {\n        use super::*;\n\n        #[test]\n        fn depth_counts() {\n            let stack = Stack { items: Vec::new() };\n            assert_eq!(stack.depth(), 1);\n        }\n    }\n}\n";
+    let index = index(&[(LIB, lib)]);
+    let pin = establish(&index, "depth", "self.items.len() + 1");
+    assert!(pin.is_some(), "the nested-owner pin must establish");
+    let Some(pin) = pin else { return };
+    assert_eq!(admitted_texts(&index, &pin).len(), 1);
+}
+
+/// #6957 negative control: a same-name declaration in the test's own `mod
+/// tests` still refuses even when the nested production declaration is
+/// exempt, in plain and `r#` forms.
+#[test]
+fn a_nested_test_module_shadow_alongside_a_nested_production_declaration_refuses() {
+    let shadowed = "mod inner {\n    pub struct Stack {\n        items: Vec<u32>,\n    }\n\n    impl Stack {\n        pub fn depth(&self) -> usize {\n            self.items.len() + 1\n        }\n    }\n\n    #[cfg(test)]\n    mod tests {\n        use super::*;\n\n        struct Stack {\n            items: Vec<u32>,\n        }\n\n        #[test]\n        fn depth_counts() {\n            let stack = Stack { items: Vec::new() };\n            assert_eq!(stack.depth(), 1);\n        }\n    }\n}\n";
+    let raw = shadowed.replace("        struct Stack {", "        struct r#Stack {");
+    assert!(
+        raw.contains("struct r#Stack {"),
+        "fixture: the shadow must take the raw-identifier form"
+    );
+    for source in [shadowed, raw.as_str()] {
+        let index = index(&[(LIB, source)]);
+        let pin = establish(&index, "depth", "self.items.len() + 1");
+        assert!(
+            pin.is_some(),
+            "the pin establishes from the production type: {source}"
+        );
+        let Some(pin) = pin else { return };
+        assert!(
+            admitted_texts(&index, &pin).is_empty(),
+            "a nested test-module shadow names the test-local type: {source}"
+        );
+    }
+}
+
+/// #6957: cross-file owners keep the fail-closed shadow check. The
+/// exemption resolves only in the test file's own parse, so a same-name
+/// declaration in the test file's `mod tests` still refuses a nested
+/// owner's pin, in plain and `r#` forms.
+#[test]
+fn a_cross_file_test_module_shadow_of_a_nested_owner_still_refuses() {
+    let lib = "pub mod inner {\n    pub struct Stack {\n        pub items: Vec<u32>,\n    }\n\n    impl Stack {\n        pub fn depth(&self) -> usize {\n            self.items.len() + 1\n        }\n    }\n}\n";
+    let tests = "use demo::inner::Stack;\n\nmod tests {\n    struct Stack {\n        items: Vec<u32>,\n    }\n\n    #[test]\n    fn depth_counts() {\n        let stack = Stack { items: Vec::new() };\n        assert_eq!(stack.depth(), 1);\n    }\n}\n";
+    let raw = tests.replace("    struct Stack {", "    struct r#Stack {");
+    assert!(
+        raw.contains("struct r#Stack {"),
+        "fixture: the shadow must take the raw-identifier form"
+    );
+    for tests in [tests, raw.as_str()] {
+        let index = index(&[(LIB, lib), (TESTS, tests)]);
+        let pin = establish(&index, "depth", "self.items.len() + 1");
+        assert!(
+            pin.is_some(),
+            "the cross-file control must establish: {tests}"
+        );
+        let Some(pin) = pin else { return };
+        assert!(
+            admitted_texts(&index, &pin).is_empty(),
+            "a cross-file shadow names the test-local type: {tests}"
+        );
+    }
+}
+
 const GATE_LIB: &str = "pub fn gate(value: u32) -> bool {\n    10 <= value\n}\n\npub fn level(value: u32) -> u32 {\n    10 + value\n}\n";
 
 fn predicate_probe(owner: &FunctionSummary, expression: &str) -> Probe {
@@ -3008,6 +3076,29 @@ fn a_definition_covering_the_test_outranks_a_may_rebind_site_elsewhere() {
     assert!(only_macro_use.is_some_and(|refusal| refusal.is_analyzer_limit()));
 }
 
+/// #5830: a comment between the last statement and the tail (`// SAFETY:`
+/// before an `unsafe` block) is not part of the tail.
+#[test]
+fn return_path_gate_reads_the_tail_past_a_comment() {
+    let body = "fn family(sku: &str) -> &str {\n    let end = sku.find('-').unwrap_or(sku.len());\n    // SAFETY: `end` is a char boundary.\n    unsafe { sku.get_unchecked(..end) }\n}";
+    assert!(matches!(
+        gate(body, "unsafe { sku.get_unchecked(..end) }"),
+        Some(ReturnPathGate::Any)
+    ));
+    // The comment does not make a different tail match: the changed text
+    // sits on an earlier line, and the tail after the comment differs.
+    let other_tail = "fn family(sku: &str) -> &str {\n    let head = unsafe { sku.get_unchecked(..1) };\n    // SAFETY: `head` is a char boundary.\n    unsafe { sku.get_unchecked(head.len()..) }\n}";
+    assert!(gate(other_tail, "unsafe { sku.get_unchecked(..1) }").is_none());
+    // Masking hides string contents, so a same-length payload on the
+    // changed line must still match the real tail text (#6970 review).
+    let payload = "fn f() -> Result<&'static str, ()> {\n    // note\n    Ok(\"actual\")\n}";
+    assert!(matches!(
+        return_path_gate(payload, "Ok(\"actual\")", 2),
+        Some(ReturnPathGate::Any)
+    ));
+    assert!(return_path_gate(payload, "Ok(\"expect\")", 2).is_none());
+}
+
 #[test]
 fn a_shared_owner_pin_syntax_names_each_tests_own_covering_site() {
     // Two inline modules rebind `assert_eq!` at different lines. The memo is
@@ -3042,6 +3133,138 @@ mod second {\n    use super::weight;\n    macro_rules! assert_eq { ($a:expr, $b:
     }
     lines.sort_unstable();
     assert_eq!(lines, [3, 9]);
+}
+
+/// The stored candidates (#5363) are a skip filter for the trusted-macro
+/// scans, so a name they rule out must have no site under any trusted
+/// subset or workspace context. The maximal context is no workspace
+/// package, no resolved module and no verified drop-in: each widens the
+/// sites the scan reports.
+fn sites_in_widest_context(source: &str, trusted: &[&str]) -> Vec<(String, MacroBindingSite)> {
+    trusted_macro_binding_sites(source, &BTreeSet::new(), trusted, &|_, _| false, &|_| false)
+}
+
+fn stored_candidates(source: &str) -> Result<MacroBindingCandidates, String> {
+    crate::analysis::syntax::ra::summarize_file_with_parser(Path::new("src/lib.rs"), source)?
+        .macro_candidates
+        .map(|candidates| *candidates)
+        .ok_or_else(|| "premise: parser-backed facts carry macro candidates".to_string())
+}
+
+#[test]
+fn stored_macro_candidates_record_each_binding_construct() -> Result<(), String> {
+    let any = None;
+    let names = |names: &[&str]| Some(names.iter().map(|name| name.to_string()).collect());
+    for (source, expected) in [
+        // A trusted call's own name is not a site.
+        ("fn f() { assert_eq!(1, 1); }\n", names(&[])),
+        (
+            "macro_rules! assert_eq { () => {} }\n",
+            names(&["assert_eq"]),
+        ),
+        ("use pretty_assertions::assert_eq;\n", names(&["assert_eq"])),
+        ("use other::thing as panic;\n", names(&["panic"])),
+        (
+            "fn f() { wrap!(assert_eq!(1, 1)); }\n",
+            names(&["assert_eq"]),
+        ),
+        // Recorded although the full-set scan skips the trusted `assert!`:
+        // a scan for `vec` alone reads its arguments.
+        ("fn f() { assert!(vec![1] == vec![1]); }\n", names(&["vec"])),
+        ("use super::*;\nuse crate::a::{self, b};\n", names(&[])),
+        ("macro assert_eq($a:expr) { $a }\n", names(&["assert_eq"])),
+        ("macro_rules! r#panic { () => {} }\n", names(&["panic"])),
+        ("use a::{b::{assert_eq}};\n", names(&["assert_eq"])),
+        ("use a::assert_eq as _;\n", names(&[])),
+        ("use {a::*};\n", any.clone()),
+        ("use ::foo::*;\n", any.clone()),
+        (
+            "#[cfg_attr(test, macro_use)]\nextern crate log;\n",
+            any.clone(),
+        ),
+        ("use std::io::prelude::*;\n", any.clone()),
+        ("#[macro_use]\nextern crate log;\n", any.clone()),
+        ("#![no_implicit_prelude]\n", any.clone()),
+        ("wrap! { #[macro_use] mod m; }\n", any.clone()),
+    ] {
+        let expected = match expected {
+            None => MacroBindingCandidates::Any,
+            Some(names) => MacroBindingCandidates::Names(names),
+        };
+        assert_eq!(stored_candidates(source)?, expected, "{source}");
+    }
+    // The `vec` case is load-bearing: the single-name scan reports it.
+    assert!(
+        !sites_in_widest_context("fn f() { assert!(vec![1] == vec![1]); }\n", &["vec"]).is_empty()
+    );
+    assert!(
+        sites_in_widest_context(
+            "fn f() { assert!(vec![1] == vec![1]); }\n",
+            NON_RETURNING_MACROS
+        )
+        .is_empty()
+    );
+    Ok(())
+}
+
+#[test]
+fn stored_macro_candidates_never_hide_a_site_in_this_crate() -> Result<(), String> {
+    // An independent corpus: this crate's own sources, which use every
+    // construct the scan reads (definitions, drop-in imports, globs,
+    // `macro_rules!` in tests, nested macro calls).
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let mut pending = vec![root];
+    let mut checked = 0;
+    while let Some(dir) = pending.pop() {
+        for entry in std::fs::read_dir(&dir).map_err(|err| err.to_string())? {
+            let path = entry.map_err(|err| err.to_string())?.path();
+            if path.is_dir() {
+                pending.push(path);
+                continue;
+            }
+            if path.extension().and_then(|ext| ext.to_str()) != Some("rs") {
+                continue;
+            }
+            let source = std::fs::read_to_string(&path).map_err(|err| err.to_string())?;
+            // Large files cost minutes in a debug build and add no construct.
+            if source.len() > 24 * 1024 {
+                continue;
+            }
+            // The producer stores exactly this for a parser-clean file.
+            let Some(parse) = parse_clean_source_file(&source) else {
+                continue;
+            };
+            let candidates = macro_binding_candidates(&parse.tree());
+            let ruled_out: Vec<&str> = NON_RETURNING_MACROS
+                .iter()
+                .copied()
+                .filter(|name| !candidates.may_bind(name))
+                .collect();
+            if ruled_out.is_empty() {
+                continue;
+            }
+            checked += 1;
+            assert_eq!(
+                sites_in_widest_context(&source, &ruled_out),
+                Vec::new(),
+                "{}",
+                path.display()
+            );
+            for name in ["assert_eq", "vec"] {
+                if ruled_out.contains(&name) {
+                    assert_eq!(
+                        sites_in_widest_context(&source, &[name]),
+                        Vec::new(),
+                        "{} {name}",
+                        path.display()
+                    );
+                }
+            }
+        }
+    }
+    // Most files rule some name out; a vacuous pass would check none.
+    assert!(checked > 150, "only {checked} files ruled a name out");
+    Ok(())
 }
 
 mod helper_pins;

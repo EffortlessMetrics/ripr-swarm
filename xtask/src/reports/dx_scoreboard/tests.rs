@@ -2486,3 +2486,80 @@ fn a_checkout_whose_directory_name_ends_in_a_space_is_its_own_checkout() -> Resu
     let _ = fs::remove_dir_all(&root);
     verdict
 }
+
+#[test]
+fn verdict_corpus_sources_derive_each_rate_from_the_committed_rows() -> Result<(), String> {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    let config = load_config(&committed_config())?;
+    let mut seen = 0;
+    for metric in &config.metric {
+        let Some(reference) = metric.source.strip_prefix("verdict-corpus:") else {
+            continue;
+        };
+        seen += 1;
+        let (dir, rate) = reference.split_once('#').ok_or("no #rate")?;
+        let report = super::super::verdict_corpus::expected_report(&root.join(dir))?;
+        let expected = serde_json::to_value(&report).map_err(|err| err.to_string())?;
+        let numerator = expected[rate]["numerator"]
+            .as_f64()
+            .ok_or(rate.to_string())?;
+        let denominator = expected[rate]["denominator"]
+            .as_f64()
+            .ok_or(rate.to_string())?;
+        let mut absolute = metric.clone();
+        absolute.source = format!("verdict-corpus:{}#{rate}", root.join(dir).display());
+        let sample = verdict_corpus_sample(
+            &absolute,
+            absolute.source.trim_start_matches("verdict-corpus:"),
+        );
+        assert!(
+            matches!(sample.outcome, SampleOutcome::Value(v) if (v - numerator / denominator).abs() < 1e-12),
+            "{}: {:?} {}",
+            metric.id,
+            sample.outcome,
+            sample.detail
+        );
+    }
+    assert_eq!(seen, 5, "the five trust rates read the corpus rows");
+
+    // A corpus that cannot be read is not measured, never a perfect rate.
+    let mut missing = config
+        .metric
+        .iter()
+        .find(|metric| metric.source.starts_with("verdict-corpus:"))
+        .cloned()
+        .ok_or("no verdict-corpus metric")?;
+    missing.source = "verdict-corpus:no/such/corpus#false_verdict_rate".to_string();
+    let sample = verdict_corpus_sample(&missing, "no/such/corpus#false_verdict_rate");
+    assert!(
+        matches!(sample.outcome, SampleOutcome::NotMeasured),
+        "{:?}",
+        sample.outcome
+    );
+    assert!(
+        sample.detail.contains("restore the corpus"),
+        "{}",
+        sample.detail
+    );
+
+    // A corpus whose rows no longer parse is a failed instrument, not a gap.
+    let dir = crate::tests::temp_dir("dx-verdict-corpus-bad-row");
+    crate::tests::write(
+        &dir.join("corpus.json"),
+        r#"{"spec": "RIPR-SPEC-0219", "non_claims": []}"#,
+    );
+    crate::tests::write(&dir.join("cases/a-case.json"), r#"{"case_id": "a-case"}"#);
+    crate::tests::write(
+        &dir.join("expected/rows/a-case.json"),
+        r#"{"case_id": "a-case"}"#,
+    );
+    let reference = format!("{}#false_verdict_rate", dir.display());
+    let sample = verdict_corpus_sample(&missing, &reference);
+    assert!(
+        matches!(sample.outcome, SampleOutcome::Failed),
+        "{:?} {}",
+        sample.outcome,
+        sample.detail
+    );
+    Ok(())
+}

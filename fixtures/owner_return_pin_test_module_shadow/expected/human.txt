@@ -11,15 +11,15 @@ Start here:
   State: a test gap to inspect or repair (top_gap)
   Safe next action: inspect or repair the selected non-exposed gap; this is static advisory evidence only.
   File: ./src/lib.rs:17
-  Static exposure: weak (weakly_exposed, warning, confidence 0.92)
+  Static exposure: weak (weakly_exposed, warning, confidence 0.66)
   Why weak: a related test reaches this change but does not observe the exact changed value
   Canonical gap: gap:rust:src/lib.rs:impl Clone for Window::clone:field_construction:field_construction:start_self.start
   Changed behavior: start: self.start
   Missing discriminator (1 of 2): start: self.start
   Related test: src/lib.rs:34 a_clone_equals_its_original (no assertion pins `start: self.start`)
   Next step: Strengthen the related assertion so it discriminates the changed behavior.
-  Evidence: reach yes · infection yes · propagation yes · observation yes · discriminator weak
-    - reach yes: Related tests appear to reach clone: a_clone_equals_its_original
+  Evidence: reach weak · infection yes · propagation yes · observation yes · discriminator weak
+    - reach weak: No test is seen calling clone; tests share only its file or a name token: a_clone_equals_its_original
     - infection yes: Reachable tests can plausibly activate this changed behavior
     - 5 more detail line(s) in --format human-full
 
