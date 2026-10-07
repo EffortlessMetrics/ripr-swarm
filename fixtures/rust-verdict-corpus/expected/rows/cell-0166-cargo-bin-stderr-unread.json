@@ -1,0 +1,19 @@
+{
+  "case_id": "cell-0166-cargo-bin-stderr-unread",
+  "subject_id": "authored-spec-harness",
+  "origin": "authored",
+  "anchor": "src/bin/tool.rs:8",
+  "behavior_family": "side_effect",
+  "test_shape": "assert_cmd_cargo_bin_stdout_only",
+  "hard_case": true,
+  "truth": "not_discriminated",
+  "ideal_verdict": "gap",
+  "observed_verdict": "limited",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "no_static_path"
+  ],
+  "outcome": "abstained",
+  "contradictions": []
+}
