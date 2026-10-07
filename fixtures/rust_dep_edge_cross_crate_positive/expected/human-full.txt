@@ -34,5 +34,5 @@ Evidence
   - source assertion argument value 7 at line 6
   - source function argument value points = 7 at line 6
 Drill in:
-  ripr explain --root fixtures/rust_dep_edge_cross_crate_positive/input --diff fixtures/rust_dep_edge_cross_crate_positive/diff.patch --mode fast probe:crates_a_src_lib.rs:return_value:94e6eef7
-  ripr context --root fixtures/rust_dep_edge_cross_crate_positive/input --diff fixtures/rust_dep_edge_cross_crate_positive/diff.patch --mode fast --at probe:crates_a_src_lib.rs:return_value:94e6eef7
+  ripr explain --root <cwd>/fixtures/rust_dep_edge_cross_crate_positive/input --diff <cwd>/fixtures/rust_dep_edge_cross_crate_positive/diff.patch --mode fast probe:crates_a_src_lib.rs:return_value:94e6eef7
+  ripr context --root <cwd>/fixtures/rust_dep_edge_cross_crate_positive/input --diff <cwd>/fixtures/rust_dep_edge_cross_crate_positive/diff.patch --mode fast --at probe:crates_a_src_lib.rs:return_value:94e6eef7

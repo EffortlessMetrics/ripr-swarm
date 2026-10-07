@@ -1,8 +1,8 @@
+use super::assertion_selection::{PythonAssertionFocus, select_relevant_assertion};
 use super::source_utils::normalized_path;
 use super::{
-    PythonAssertion, PythonImport, PythonOwner, PythonTest, first_python_string_literal,
-    line_prefix_before, python_callee_start_has_boundary, python_prefix_hides_code,
-    python_string_literal_value,
+    PythonImport, PythonOwner, PythonTest, first_python_string_literal, line_prefix_before,
+    python_callee_start_has_boundary, python_prefix_hides_code, python_string_literal_value,
 };
 use crate::domain::{ExposureClass, OracleKind, OracleStrength, OwnerKind, RelatedTest};
 use std::collections::BTreeMap;
@@ -113,12 +113,13 @@ pub(super) fn related_test_candidates<'a>(
             .rank()
             .cmp(&left.relation.rank())
             .then_with(|| {
-                let left_rank = strongest_assertion(&left.test.assertions)
-                    .map(|assertion| assertion.oracle_strength.rank())
-                    .unwrap_or(0);
-                let right_rank = strongest_assertion(&right.test.assertions)
-                    .map(|assertion| assertion.oracle_strength.rank())
-                    .unwrap_or(0);
+                // Candidate order is owner-level and shared by every changed
+                // line of the owner, so it has no changed family: it ranks by
+                // the strongest assertion overall (focus `None`). Which
+                // assertion a row displays and the classifier judges is the
+                // per-change selection in `related_tests_for_candidates`.
+                let left_rank = strongest_rank(left.test);
+                let right_rank = strongest_rank(right.test);
                 right_rank.cmp(&left_rank)
             })
             .then_with(|| left.test.file.cmp(&right.test.file))
@@ -127,25 +128,47 @@ pub(super) fn related_test_candidates<'a>(
     candidates
 }
 
+fn strongest_rank(test: &PythonTest) -> u8 {
+    select_relevant_assertion(&test.assertions, None)
+        .assertion()
+        .map_or(0, |assertion| assertion.oracle_strength.rank())
+}
+
+/// The public related-test rows for one owner, each projecting the assertion
+/// relevant to `focus` (#5572). `focus` is the changed line's family; `None`
+/// only for owner-level surfaces that have no changed line.
 pub(super) fn find_related_tests(
     owner: &PythonOwner,
     all_tests: &[PythonTest],
+    focus: Option<&PythonAssertionFocus>,
 ) -> Vec<RelatedTest> {
-    related_test_candidates(owner, all_tests)
-        .into_iter()
+    related_tests_for_candidates(&related_test_candidates(owner, all_tests), focus)
+}
+
+/// Project already-matched candidates to public rows, in candidate order.
+/// The row's oracle is the assertion [`select_relevant_assertion`] picks for
+/// `focus`, the same identity every other consumer of that test judges.
+pub(super) fn related_tests_for_candidates(
+    candidates: &[PythonRelatedCandidate<'_>],
+    focus: Option<&PythonAssertionFocus>,
+) -> Vec<RelatedTest> {
+    candidates
+        .iter()
         .map(|candidate| {
-            let strongest = candidate
+            let selected = candidate
                 .relation
                 .uses_oracle()
-                .then(|| strongest_assertion(&candidate.test.assertions))
+                .then(|| select_relevant_assertion(&candidate.test.assertions, focus).assertion())
                 .flatten();
-            let (oracle_kind, oracle_strength, oracle) = match strongest {
+            let (oracle_kind, oracle_strength, oracle) = match selected {
                 Some(assertion) => (
                     assertion.oracle_kind.clone(),
                     assertion.oracle_strength.clone(),
                     Some(assertion.text.clone()),
                 ),
-                // Parameterization is input evidence, never an oracle (#5571).
+                // Parameterization is input evidence, never an oracle (#5571);
+                // a test whose assertions all observe another family has no
+                // oracle for this change either (#5572).
                 None => (OracleKind::Unknown, OracleStrength::Unknown, None),
             };
             RelatedTest {
@@ -246,12 +269,6 @@ pub(super) fn python_repair_placement(
         }),
         _ => None,
     }
-}
-
-pub(super) fn strongest_assertion(assertions: &[PythonAssertion]) -> Option<&PythonAssertion> {
-    assertions
-        .iter()
-        .max_by_key(|assertion| assertion.oracle_strength.rank())
 }
 
 pub(super) fn related_test_relation(

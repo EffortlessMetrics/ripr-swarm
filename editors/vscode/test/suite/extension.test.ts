@@ -871,13 +871,23 @@ suite('Extension Smoke', () => {
       );
       assert.ok(staticLimitText.includes('TypeScript preview smoke uses syntax-first evidence.'), staticLimitText);
 
+      // #4001: the copied gap route names the selected workspace (either
+      // spelling when the folder is a symlink), not the portable `--root .`.
+      const selectedRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+      assert.ok(selectedRoot, 'test workspace root must be open');
+      const rootArgs = [selectedRoot, await fs.realpath(selectedRoot)].map((root) =>
+        serverShellArg(root.replace(/\\/g, '/'))
+      );
+      const boundGapCommand = (verb: string) => (text: string) =>
+        rootArgs.some((rootArg) => text === `ripr agent ${verb} --root ${rootArg} --json`);
+
       await vscode.commands.executeCommand(verifyCommand.command, ...(verifyCommand.arguments ?? []));
-      const verifyText = await waitForClipboardText((text) => text.includes('ripr agent verify --root . --json'));
-      assert.strictEqual(verifyText, 'ripr agent verify --root . --json');
+      const verifyText = await waitForClipboardText((text) => text.startsWith('ripr agent verify --root '));
+      assert.ok(boundGapCommand('verify')(verifyText), verifyText);
 
       await vscode.commands.executeCommand(receiptCommand.command, ...(receiptCommand.arguments ?? []));
-      const receiptText = await waitForClipboardText((text) => text.includes('ripr agent receipt --root . --json'));
-      assert.strictEqual(receiptText, 'ripr agent receipt --root . --json');
+      const receiptText = await waitForClipboardText((text) => text.startsWith('ripr agent receipt --root '));
+      assert.ok(boundGapCommand('receipt')(receiptText), receiptText);
 
       await vscode.commands.executeCommand(relatedTestCommand.command, ...(relatedTestCommand.arguments ?? []));
       const activeEditor = vscode.window.activeTextEditor;
@@ -4202,6 +4212,15 @@ suite('Extension Smoke', () => {
         agentLoopCommandTarget(
           'gap_receipt',
           'ripr agent receipt --root . --json'
+        ),
+        // #4001: the server binds gap routes to the selected workspace.
+        agentLoopCommandTarget(
+          'gap_verify',
+          `ripr agent verify --root ${rootArg} --json`
+        ),
+        agentLoopCommandTarget(
+          'gap_receipt',
+          `ripr agent receipt --root ${rootArg} --json`
         )
       ];
 
@@ -4398,6 +4417,14 @@ suite('Extension Smoke', () => {
     )));
     assert.ok(!accepts(agentLoopCommandTarget('gap_verify', 'ripr agent verify --root . --json $(touch pwned)')));
     assert.ok(!accepts(agentLoopCommandTarget('gap_verify', 'ripr agent verify --root . --json <(touch pwned)')));
+    // #4001: a gap route bound to the selected workspace is accepted, even
+    // with the workspace path's quoted `&` and `$`; another root, or an
+    // operator after the bound root, is not.
+    assert.ok(accepts(agentLoopCommandTarget('gap_verify', `ripr agent verify --root ${commandRoot} --json`)));
+    assert.ok(accepts(agentLoopCommandTarget('gap_receipt', `ripr agent receipt --root ${commandRoot} --json`)));
+    assert.ok(!accepts(agentLoopCommandTarget('gap_verify', `ripr agent verify --root ${otherRoot} --json`)));
+    assert.ok(!accepts(agentLoopCommandTarget('gap_verify', `ripr agent verify --root ${commandRoot} --json; touch pwned`)));
+    assert.ok(!accepts(agentLoopCommandTarget('gap_verify', `ripr agent verify --root ${commandRoot}x --json`)));
     // The double-quoted base the client used to expect, and a base the payload
     // does not carry.
     assert.ok(!accepts(snapshot(' --base "HEAD~1"', 'HEAD~1')));

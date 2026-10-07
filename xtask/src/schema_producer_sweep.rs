@@ -216,6 +216,15 @@ const BINDINGS: &[Binding] = &[
         excluded: &[],
     },
     Binding {
+        schema_path: "schemas/ripr/doctor.schema.json",
+        pointer: None,
+        corpus: Corpus::RuntimeOnly(
+            "`ripr doctor --json` writes its report to stdout per run; no committed document holds those bytes",
+        ),
+        edge_fixtures: &["tests/fixtures/verification/ripr/doctor.valid.json"],
+        excluded: &[],
+    },
+    Binding {
         schema_path: "schemas/ripr/executed-control.schema.json",
         pointer: Some("/$defs/packet"),
         corpus: Corpus::Paths(&[

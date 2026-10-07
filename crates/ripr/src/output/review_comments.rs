@@ -2,8 +2,8 @@ use crate::agent::command_specs::command_displays_are_complete;
 use crate::agent::loop_commands::{
     WORKFLOW_AFTER_SNAPSHOT_ARTIFACT, WORKFLOW_AGENT_BRIEF_ARTIFACT,
     WORKFLOW_AGENT_VERIFY_ARTIFACT, WORKFLOW_ANALYSIS_OUTCOME_ARTIFACT,
-    WORKFLOW_BEFORE_SNAPSHOT_ARTIFACT, agent_brief_command, agent_verify_command,
-    check_analysis_outcome_command_with_base, display_path, shell_arg,
+    WORKFLOW_BEFORE_SNAPSHOT_ARTIFACT, display_path, portable_agent_brief_command,
+    portable_agent_verify_command, portable_check_analysis_outcome_command_with_base, shell_arg,
 };
 use crate::analysis::ClassifiedSeam;
 use crate::analysis::canonical_gap::canonical_gap_identity;
@@ -944,19 +944,19 @@ fn review_recommendation_json(
     let llm_guidance = if target_unresolved {
         json!({
             "prompt": limitation_prompt(navigation_target.as_ref()),
-            "command": agent_brief_command(&root_display, seam_id, WORKFLOW_AGENT_BRIEF_ARTIFACT),
+            "command": portable_agent_brief_command(&root_display, seam_id, WORKFLOW_AGENT_BRIEF_ARTIFACT),
         })
     } else if gap_state == "actionable" {
         json!({
             "prompt": llm_prompt(&recommended.file, nearest.map(|test| test.test_name.as_str()), missing_value.as_deref()),
-            "command": agent_brief_command(&root_display, seam_id, WORKFLOW_AGENT_BRIEF_ARTIFACT),
-            "analysis_outcome_command": check_analysis_outcome_command_with_base(
+            "command": portable_agent_brief_command(&root_display, seam_id, WORKFLOW_AGENT_BRIEF_ARTIFACT),
+            "analysis_outcome_command": portable_check_analysis_outcome_command_with_base(
                 &root_display,
                 Some(base),
                 "draft",
                 WORKFLOW_ANALYSIS_OUTCOME_ARTIFACT,
             ),
-            "verify_command": agent_verify_command(
+            "verify_command": portable_agent_verify_command(
                 &root_display,
                 WORKFLOW_BEFORE_SNAPSHOT_ARTIFACT,
                 WORKFLOW_AFTER_SNAPSHOT_ARTIFACT,
@@ -971,12 +971,12 @@ fn review_recommendation_json(
                 }
                 limitation => limitation_prompt_for(limitation),
             },
-            "command": agent_brief_command(&root_display, seam_id, WORKFLOW_AGENT_BRIEF_ARTIFACT),
+            "command": portable_agent_brief_command(&root_display, seam_id, WORKFLOW_AGENT_BRIEF_ARTIFACT),
         })
     } else {
         json!({
             "prompt": "No repair packet is available for this finding. Inspect the producer-owned evidence and policy state before taking action.",
-            "command": agent_brief_command(&root_display, seam_id, WORKFLOW_AGENT_BRIEF_ARTIFACT),
+            "command": portable_agent_brief_command(&root_display, seam_id, WORKFLOW_AGENT_BRIEF_ARTIFACT),
         })
     };
 
@@ -1011,7 +1011,8 @@ fn review_recommendation_json(
     // top-ranked related test, else no oracle observed (`unknown` / `none`).
     // This projects the same oracle facts agent briefs and seam packets carry;
     // the review card does not compute an oracle of its own.
-    let representative_oracle = nearest.or_else(|| entry.evidence.related_tests.first());
+    let representative_oracle =
+        nearest.or_else(|| entry.evidence.related_tests.first().map(AsRef::as_ref));
     let oracle_kind = representative_oracle
         .map(|test| test.oracle_kind.as_str())
         .unwrap_or_else(|| crate::domain::OracleKind::Unknown.as_str());
@@ -1751,14 +1752,15 @@ mod tests {
                 description: "amount == discount_threshold".to_string(),
             },
             ExpectedSink::ReturnValue,
-        );
+        )
+        .with_owner_call(crate::analysis::seams::OwnerCallShape::Free);
         let seam_id = seam.id().clone();
         ClassifiedSeam {
             seam,
             class: SeamGripClass::WeaklyGripped,
             evidence: TestGripEvidence {
                 seam_id,
-                related_tests: vec![RelatedTestGrip {
+                related_tests: vec![std::sync::Arc::new(RelatedTestGrip {
                     test_name: "above_threshold_gets_discount".to_string(),
                     file: PathBuf::from("tests/pricing.rs"),
                     line: 12,
@@ -1774,7 +1776,7 @@ mod tests {
                     evidence_summary: "exact returned value assertion".to_string(),
                     relation_reason: RelationReason::DirectOwnerCall,
                     relation_confidence: RelationConfidence::High,
-                }],
+                })],
                 reach: stage(StageState::Yes),
                 activate: stage(StageState::Yes),
                 propagate: stage(StageState::Yes),
@@ -1849,7 +1851,7 @@ mod tests {
             class: SeamGripClass::WeaklyGripped,
             evidence: TestGripEvidence {
                 seam_id,
-                related_tests: vec![RelatedTestGrip {
+                related_tests: vec![std::sync::Arc::new(RelatedTestGrip {
                     test_name: "blob copies resizable buffers".to_string(),
                     file: PathBuf::from("test/js/web/fetch/blob.test.ts"),
                     line: 41,
@@ -1860,7 +1862,7 @@ mod tests {
                         .to_string(),
                     relation_reason: RelationReason::DirectOwnerCall,
                     relation_confidence: RelationConfidence::High,
-                }],
+                })],
                 reach: stage(StageState::Yes),
                 activate: stage(StageState::Yes),
                 propagate: stage(StageState::Weak),
@@ -1892,7 +1894,7 @@ mod tests {
             class: SeamGripClass::WeaklyGripped,
             evidence: TestGripEvidence {
                 seam_id,
-                related_tests: vec![RelatedTestGrip {
+                related_tests: vec![std::sync::Arc::new(RelatedTestGrip {
                     test_name: "markdown snapshots resizable ArrayBuffer input".to_string(),
                     file: PathBuf::from("test/js/bun/md/md-edge-cases.test.ts"),
                     line: 42,
@@ -1903,7 +1905,7 @@ mod tests {
                         .to_string(),
                     relation_reason: RelationReason::DirectOwnerCall,
                     relation_confidence: RelationConfidence::High,
-                }],
+                })],
                 reach: stage(StageState::Yes),
                 activate: stage(StageState::Yes),
                 propagate: stage(StageState::Weak),
@@ -2438,11 +2440,14 @@ mod tests {
             .pointer("/comments/0/llm_guidance/verify_command")
             .and_then(Value::as_str)
             .ok_or("exact-line card omitted its verify command")?;
-        if project_cwd_text(verify)
-            != "ripr agent verify --root . --before target/ripr/workflow/before.repo-exposure.json --after target/ripr/workflow/after.repo-exposure.json --json > <cwd>/target/ripr/workflow/agent-verify.json"
+        // #4000: the card keeps the portable `--root .`, so its redirect
+        // stays relative to that same root rather than naming the renderer's
+        // checkout (often a CI runner) that the PR reader does not have.
+        if verify
+            != "ripr agent verify --root . --before target/ripr/workflow/before.repo-exposure.json --after target/ripr/workflow/after.repo-exposure.json --json > target/ripr/workflow/agent-verify.json"
         {
             return Err(format!(
-                "exact-line card must persist root-anchored verification: {verify}"
+                "exact-line card must persist root-relative verification: {verify}"
             ));
         }
         Ok(())
@@ -2461,9 +2466,12 @@ mod tests {
         );
         let eligible = classified(88);
         let mut ineligible = classified(88);
-        let mut observer = ineligible.evidence.related_tests[0].clone();
+        let mut observer = ineligible.evidence.related_tests[0].as_ref().clone();
         observer.file = PathBuf::from("tests/pricing.test.ts");
-        ineligible.evidence.related_tests.push(observer);
+        ineligible
+            .evidence
+            .related_tests
+            .push(std::sync::Arc::new(observer));
 
         for (entry, want_repair) in [(eligible, true), (ineligible, false)] {
             let seam_id = entry.seam.id().as_str().to_string();
@@ -4726,6 +4734,7 @@ mod tests {
         // Downgrade the sole related test below Strong so no strong match
         // exists; it remains the top-ranked related test.
         for test in &mut seam.evidence.related_tests {
+            let test = std::sync::Arc::make_mut(test);
             test.oracle_strength = crate::domain::OracleStrength::Weak;
         }
         let expected_canonical_gap_id = canonical_gap_identity(&seam)

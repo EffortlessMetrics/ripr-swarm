@@ -1,0 +1,22 @@
+{
+  "case_id": "spec0227-check-guard-far-is-err",
+  "subject_id": "authored-spec0227-3",
+  "origin": "authored",
+  "anchor": "src/lib.rs:10",
+  "behavior_family": "predicate_side_flip",
+  "test_shape": "far_input_is_err",
+  "hard_case": false,
+  "truth": "not_discriminated",
+  "ideal_verdict": "gap",
+  "observed_verdict": "gap",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "weakly_exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": [],
+  "findings_scored": 3,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

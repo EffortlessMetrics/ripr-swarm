@@ -16,7 +16,7 @@
 //!
 //! Both contracts are pinned by tests in this file.
 
-use super::classify::exact_error_variant;
+use super::classify::changed_error_variant;
 use super::generated_rust_corpus::{AnalyzableRustCorpus, discover_analyzable_rust_corpus};
 use super::rust_index::{self, ProbeShapeFact, ProbeShapeKind, RustIndex};
 #[cfg(test)]
@@ -25,15 +25,15 @@ use super::seam_cache::CLASSIFIED_SEAM_CACHE_STORE_LIMIT;
 use super::seam_cache::RepoSeamCountCache;
 use super::seam_cache::{
     CacheLoad, CachedSeamLimitInfo, CorpusFingerprintLookup, FileFactCacheStats,
-    RepoCorpusFingerprintCache, RepoSeamCacheKey, RepoSeamFactCache, WorkspaceKeyContext,
-    WorkspaceState, classified_seam_cache_store_limit, compact_classified_seam_cache_store_limit,
-    corpus_fingerprint,
+    FilesContentHashBuilder, RepoCorpusFingerprintCache, RepoSeamCacheKey, RepoSeamFactCache,
+    WorkspaceKeyContext, classified_seam_cache_store_limit,
+    compact_classified_seam_cache_store_limit, corpus_fingerprint,
 };
 #[cfg(test)]
 use super::seam_classification::SeamGripClassCounts;
 use super::seam_classification::{self, ClassifiedSeam};
 use super::seams::{
-    ExpectedSink, RepoSeam, RequiredDiscriminator, SeamKind, build_line_starts,
+    ExpectedSink, OwnerCallShape, RepoSeam, RequiredDiscriminator, SeamKind, build_line_starts,
     byte_span_to_lines_with_starts,
 };
 use super::test_grip_evidence;
@@ -706,11 +706,7 @@ fn inventory_compact_classified_seams_from_state_with_config(
         ),
         Duration::ZERO,
     );
-    let mut cached = rust_index::build_index_from_loaded_files_with_cache_and_test_harnesses(
-        &state.workspace_root,
-        &state.files,
-        harness_registrations(config),
-    )?;
+    let mut cached = state.build_index(config)?;
     cancellation::checkpoint()?;
     trace_latency_phase(
         "file_fact_cache",
@@ -752,11 +748,7 @@ fn inventory_classified_seams_from_state_with_config(
         ),
         Duration::ZERO,
     );
-    let mut cached = rust_index::build_index_from_loaded_files_with_cache_and_test_harnesses(
-        &state.workspace_root,
-        &state.files,
-        harness_registrations(config),
-    )?;
+    let mut cached = state.build_index(config)?;
     trace_latency_phase(
         "file_fact_cache",
         &cached.file_fact_cache.status_label(),
@@ -897,11 +889,7 @@ pub(crate) fn inventory_changed_test_classified_seams_at_with_config_node(
     let workspace_cache_key = state.cache_key();
     let changed_test_key = inventory_scope_key(changed_test);
     let changed_test = normalized_inventory_path(changed_test);
-    let mut cached = rust_index::build_index_from_loaded_files_with_cache_and_test_harnesses(
-        &state.workspace_root,
-        &state.files,
-        harness_registrations(config),
-    )?;
+    let mut cached = state.build_index(config)?;
     rust_index::apply_oracle_policy(&mut cached.index, config.oracles());
     let selector_limitation =
         |kind, message, selected_test_count| TargetedTestInventoryError::Selector {
@@ -1310,6 +1298,86 @@ pub(crate) fn inventory_diff_scoped_classified_seams_at_with_config(
     )
 }
 
+/// Classify the seams in `changed_files` (root-relative) for which
+/// `on_change` holds, and only those: the other seams in those files get no
+/// evidence. No owner names are passed, so no caller files join the scope.
+/// Pilot uses it when the repo inventory's seam limit cut the current
+/// change's seams (#6943): the cached inventory stays diff-independent and
+/// the change is classified on its own. The no-impact fast path is skipped:
+/// pilot asks only after the limit fired on a change with Rust files, where
+/// it would decline anyway.
+pub(crate) fn classify_seams_in_files_at_with_config(
+    root: &Path,
+    config: &RiprConfig,
+    changed_files: &[PathBuf],
+    on_change: &dyn Fn(&RepoSeam) -> bool,
+) -> Result<Vec<ClassifiedSeam>, String> {
+    let stages = DiffScopeEvidenceStages {
+        first: on_change,
+        sufficient: &|_| true,
+    };
+    inventory_diff_scoped_classified_seams_inner(
+        root,
+        config,
+        changed_files,
+        &[],
+        false,
+        Some(&stages),
+        None,
+    )
+    .map(|inventory| inventory.classified)
+}
+
+/// The changed Rust files (root-relative) that diff analysis covers but the
+/// repo seam inventory leaves out by design (#6944): Cargo build scripts,
+/// repository automation, and crate roots declared outside `src`. Roles come
+/// from the context the inventory and `ripr check` build, over the changed
+/// files only: a file's build script, declared roots and module directories
+/// come from its own package's manifest, so the rest of the corpus adds
+/// nothing. As in `ripr check`, generated files are dropped and a file no
+/// module tree reaches (#4435) is not named. The module-graph pass, which
+/// can read the whole corpus, runs only for files that could still be
+/// diff-only.
+pub(crate) fn diff_only_rust_files(
+    root: &Path,
+    config: &RiprConfig,
+    changed_files: &[PathBuf],
+) -> Vec<(PathBuf, workspace::DiffOnlySource)> {
+    let generated = super::language::GeneratedRustSources::for_repo(root, &config.languages().rust);
+    // Only files `ripr check` can index, by the shared worktree admission:
+    // a changed path missing from the working tree (sparse checkout, deleted
+    // since the diff), a symlink, or a file below a symlinked directory is
+    // refused by Rust discovery, so check has no probes for it either.
+    let candidates = changed_files
+        .iter()
+        .filter(|path| workspace::worktree_contains_regular_source_file(root, path))
+        .filter(|path| !generated.contains(path))
+        .collect::<Vec<_>>();
+    if candidates.is_empty() {
+        return Vec::new();
+    }
+    let mut context =
+        production_role_context(root, config, candidates.iter().map(|path| path.as_path()));
+    let candidates = candidates
+        .into_iter()
+        .filter(|path| workspace::may_be_diff_only_source(path, &context))
+        .collect::<Vec<_>>();
+    if candidates.is_empty() {
+        return Vec::new();
+    }
+    workspace::apply_module_graph_evidence(
+        root,
+        &mut context,
+        candidates.iter().map(|path| path.as_path()),
+    );
+    candidates
+        .into_iter()
+        .filter_map(|path| {
+            workspace::diff_only_source(path, &context).map(|source| (path.clone(), source))
+        })
+        .collect()
+}
+
 /// A bounded consumer of classified windows. Implementations retain their
 /// result payloads independently from the complete evaluation denominator.
 pub(crate) trait ScopedEvidenceConsumer {
@@ -1510,12 +1578,8 @@ fn inventory_diff_scoped_classified_seams_inner(
         ),
         Duration::ZERO,
     );
-    let mut cached = rust_index::build_index_from_loaded_files_with_cache_and_test_harnesses(
-        &state.workspace_root,
-        &state.files,
-        harness_registrations(config),
-    )?;
-    // The index and cache key own their data; release the raw corpus before evidence.
+    let mut cached = state.build_index(config)?;
+    // The index and cache key own their data; the state is not needed past here.
     drop(state);
     trace_latency_phase(
         "file_fact_cache",
@@ -1958,11 +2022,7 @@ fn inventory_seam_grip_class_counts_from_state_with_config(
         ),
         Duration::ZERO,
     );
-    let mut cached = rust_index::build_index_from_loaded_files_with_cache_and_test_harnesses(
-        &state.workspace_root,
-        &state.files,
-        harness_registrations(config),
-    )?;
+    let mut cached = state.build_index(config)?;
     trace_latency_phase(
         "file_fact_cache",
         &cached.file_fact_cache.status_label(),
@@ -2006,12 +2066,11 @@ fn production_files_from_state_with_role(
     let context = production_role_context(
         &state.workspace_root,
         config,
-        state.files.iter().map(|(path, _)| path.as_path()),
+        state.files.iter().map(PathBuf::as_path),
     );
     state
         .files
         .iter()
-        .map(|(path, _)| path)
         .filter(|path| workspace::classify_with(path, &context).seeds_production_findings())
         .cloned()
         .collect()
@@ -2038,9 +2097,9 @@ where
 }
 
 /// Collect the per-file content + intent + suppressions inputs the
-/// cache key derives from. The repo exposure cold path reuses these
-/// bytes when building cached file facts so file discovery and file
-/// reads are not repeated after a classified-seam cache miss.
+/// cache key derives from. The repo exposure cold path reuses the
+/// discovered paths when building cached file facts; that build reads the
+/// files again and is refused if they changed (`OwnedWorkspaceState::build_index`).
 ///
 /// Hashes the **same analyzable Rust file set fed to `build_index`** —
 /// production seam sources *and* test evidence sources, after the generated
@@ -2057,29 +2116,38 @@ fn collect_workspace_state(
     collect_workspace_state_from_files(root, config, rust_files)
 }
 
-/// Read the contents of a pre-discovered corpus file list. Callers that
-/// already ran discovery for the corpus fingerprint scan (issue #2108)
-/// pass the list through so the directory walk is not repeated.
+/// Collect the workspace state for a pre-discovered corpus file list.
+/// Callers that already ran discovery for the corpus fingerprint scan
+/// (issue #2108) pass the list through so the directory walk is not
+/// repeated.
+///
+/// Streaming form (issue #4996): each file is read once to fold its
+/// content identity into the aggregate corpus hash, then its bytes are
+/// released immediately. The state retains sorted paths plus the final
+/// `files_content_hash` — never the raw corpus — so peak live source
+/// bytes stay bounded by the largest single file while the hash remains
+/// byte-identical to [`super::seam_cache::files_content_hash`].
 fn collect_workspace_state_from_files(
     root: &Path,
     config: &RiprConfig,
     rust_files: Vec<PathBuf>,
 ) -> Result<OwnedWorkspaceState, String> {
-    let mut files: Vec<(PathBuf, Vec<u8>)> = Vec::with_capacity(rust_files.len());
-    for path in rust_files {
+    let mut sorted_files = rust_files;
+    sorted_files.sort();
+    let mut builder = FilesContentHashBuilder::new();
+    for path in &sorted_files {
         cancellation::checkpoint()?;
-        let bytes = std::fs::read(root.join(&path))
+        let bytes = std::fs::read(root.join(path))
             .map_err(|err| format!("read {} failed: {err}", path.display()))?;
-        files.push((path, bytes));
+        builder.push(path, &bytes);
+        // `bytes` drops here, before the next file is read.
     }
     #[cfg(test)]
-    let source_lifetime =
-        source_lifetime_probe::constructed(root, files.iter().map(|(_, bytes)| bytes.len()).sum());
+    between_passes::run(root);
     Ok(OwnedWorkspaceState {
-        #[cfg(test)]
-        _source_lifetime: source_lifetime,
         workspace_root: root.to_path_buf(),
-        files,
+        files: sorted_files,
+        files_content_hash: builder.finish(),
         config_text: config.source_text().map(str::to_string),
         test_intent_text: read_optional(&root.join(".ripr").join("test_intent.toml")),
         suppressions_text: read_optional(&root.join(config.suppressions().path())),
@@ -2160,8 +2228,7 @@ fn store_corpus_fingerprint_mapping(
     let Some(fingerprint) = pre_read_fingerprint else {
         return;
     };
-    let paths: Vec<PathBuf> = state.files.iter().map(|(path, _)| path.clone()).collect();
-    let post_read = corpus_fingerprint(&state.workspace_root, &paths);
+    let post_read = corpus_fingerprint(&state.workspace_root, &state.files);
     if post_read.as_deref() != Some(fingerprint.as_str()) {
         // The corpus changed while it was being read; the signature no
         // longer describes the hashed bytes, so storing would be dishonest.
@@ -2180,21 +2247,63 @@ fn read_optional(path: &Path) -> Option<String> {
     std::fs::read_to_string(path).ok()
 }
 
-/// Owned form of `WorkspaceState` so the inventory function can return
-/// it across the cache call boundary. `WorkspaceState` borrows; this
-/// converts to it on demand.
+/// Owned workspace state for the inventory pipeline (issue #4996).
+///
+/// Holds sorted corpus paths plus the aggregate `files_content_hash` —
+/// never the raw source bytes. The hash is folded incrementally at
+/// collect time and stays byte-identical to
+/// [`super::seam_cache::files_content_hash`], so cache keys keep their
+/// exact meaning while peak live source bytes stay bounded. The
+/// `files: Vec<PathBuf>` type (no `Vec<u8>` anywhere) is the
+/// compile-time bound: reintroducing a retained corpus breaks the
+/// `workspace_state_holds_no_source_bytes` test build.
 struct OwnedWorkspaceState {
     workspace_root: PathBuf,
-    files: Vec<(PathBuf, Vec<u8>)>,
+    files: Vec<PathBuf>,
+    files_content_hash: String,
     config_text: Option<String>,
     test_intent_text: Option<String>,
     suppressions_text: Option<String>,
-    #[cfg(test)]
-    _source_lifetime: source_lifetime_probe::Lease,
 }
 
+/// Test-only hook between the hashing read in
+/// [`collect_workspace_state_from_files`] and the streaming index read, so
+/// a test can change the workspace exactly where a concurrent edit would.
 #[cfg(test)]
-mod source_lifetime_probe {
+mod between_passes {
+    use std::cell::RefCell;
+    use std::path::{Path, PathBuf};
+
+    type Hook = (PathBuf, Box<dyn FnMut()>);
+    thread_local! {
+        static HOOK: RefCell<Option<Hook>> = const { RefCell::new(None) };
+    }
+
+    /// Run `hook` once after the next hashing read of `root` on this thread.
+    pub(super) fn install(root: &Path, hook: impl FnMut() + 'static) {
+        HOOK.with(|slot| *slot.borrow_mut() = Some((root.into(), Box::new(hook))));
+    }
+
+    pub(super) fn run(root: &Path) {
+        let hook = HOOK.with(|slot| {
+            let mut slot = slot.borrow_mut();
+            if slot.as_ref().is_some_and(|(path, _)| path == root) {
+                slot.take()
+            } else {
+                None
+            }
+        });
+        if let Some((_, mut hook)) = hook {
+            hook();
+        }
+    }
+}
+
+/// Test-only raw-source lifetime instrument (#5132). Streamed file-fact
+/// batches charge the bytes they hold until they drop, so the review path
+/// can prove no raw source is live at evidence construction.
+#[cfg(test)]
+pub(in crate::analysis) mod source_lifetime_probe {
     use std::{
         cell::RefCell,
         path::{Path, PathBuf},
@@ -2228,8 +2337,8 @@ mod source_lifetime_probe {
             });
         }
     }
-    pub(super) struct Lease(Option<(Arc<Mutex<Counts>>, usize)>);
-    pub(super) fn constructed(root: &Path, bytes: usize) -> Lease {
+    pub(in crate::analysis) struct Lease(Option<(Arc<Mutex<Counts>>, usize)>);
+    pub(in crate::analysis) fn constructed(root: &Path, bytes: usize) -> Lease {
         OBSERVER.with(|slot| {
             let slot = slot.borrow();
             let Some((_, counts)) = slot.as_ref().filter(|(path, _)| path == root) else {
@@ -2270,17 +2379,39 @@ mod source_lifetime_probe {
 }
 
 impl OwnedWorkspaceState {
+    /// Build the file-fact index for this state's corpus. The build reads
+    /// each file again, so it is refused when those bytes are not the ones
+    /// this state hashed: the caller's cache key would otherwise name
+    /// facts from a different workspace (#4996). Nothing is stored or
+    /// returned as complete from a refused build.
+    fn build_index(&self, config: &RiprConfig) -> Result<super::facts::CachedRustIndex, String> {
+        // The fold is in input order, and `files_content_hash` folds sorted
+        // paths, so the two compare only for sorted input.
+        debug_assert!(self.files.windows(2).all(|pair| pair[0] <= pair[1]));
+        let cached = rust_index::build_index_from_paths_with_cache_and_test_harnesses(
+            &self.workspace_root,
+            &self.files,
+            harness_registrations(config),
+        )?;
+        if cached.files_content_hash != self.files_content_hash {
+            return Err(format!(
+                "workspace Rust sources under {} changed during analysis; retry the run",
+                self.workspace_root.display()
+            ));
+        }
+        Ok(cached)
+    }
+
     fn cache_key(&self) -> super::seam_cache::RepoSeamCacheKey {
         let cfg_features = std::env::var("RIPR_CFG_FEATURES").ok();
-        WorkspaceState {
+        WorkspaceKeyContext {
             workspace_root: &self.workspace_root,
-            files: &self.files,
             cfg_features: cfg_features.as_deref(),
             config_text: self.config_text.as_deref(),
             test_intent_text: self.test_intent_text.as_deref(),
             suppressions_text: self.suppressions_text.as_deref(),
         }
-        .cache_key()
+        .cache_key(self.files_content_hash.clone())
     }
 }
 
@@ -2314,7 +2445,11 @@ pub(crate) fn inventory_seams_from_index(
         // One line index per file: span derivation reuses it for every shape
         // instead of rescanning the source per seam.
         let line_starts = build_line_starts(&facts.source);
-        for shape in &facts.probe_shapes {
+        let twins = rust_index::error_path_twins(&facts.probe_shapes, &facts.source);
+        for (shape, twin) in facts.probe_shapes.iter().zip(twins) {
+            if twin {
+                continue;
+            }
             let Some(seam) =
                 build_seam_from_shape(path, shape, &owners, &facts.source, &line_starts)
             else {
@@ -2381,6 +2516,7 @@ fn build_seam_from_shape(
     let expression = shape.text.clone();
     let required_discriminator = required_discriminator_for(kind, &expression);
     let expected_sink = expected_sink_for(kind);
+    let owner_call = OwnerCallShape::from_function(owner_fact);
     let seam = RepoSeam::new(
         path,
         owner,
@@ -2390,7 +2526,8 @@ fn build_seam_from_shape(
         expression,
         required_discriminator,
         expected_sink,
-    );
+    )
+    .with_owner_call(owner_call);
     // Span geometry is additional precision: when derivation fails (stale or
     // mismatched source), the seam keeps line-only behavior rather than
     // carrying wrong coordinates. Match-arm shapes are line-only by policy:
@@ -2440,7 +2577,10 @@ fn required_discriminator_for(kind: SeamKind, expression: &str) -> RequiredDiscr
             // expression. Activation evidence and route compatibility both
             // speak in terms of the exact error variant. Preserve an
             // unparseable expression so downstream checks remain fail-closed.
-            variant: exact_error_variant(expression).unwrap_or_else(|| expression.to_string()),
+            // `changed_error_variant` is the shared diff/repo identity owner,
+            // so an `ok_or(Type::Variant)?` line (#6695) is variant-gated here
+            // exactly as the diff-mode reveal gate gates it.
+            variant: changed_error_variant(expression).unwrap_or_else(|| expression.to_string()),
         },
         SeamKind::ReturnValue => RequiredDiscriminator::ReturnValue {
             description: expression.to_string(),
@@ -2606,6 +2746,73 @@ marker = "libtest_mimic::Trial"
             index.extend_functions(functions);
         }
         Ok(index)
+    }
+
+    /// #5357: the production inventory reads the owner's parser facts into
+    /// the seam's call shape. Before the fix every seam rendered
+    /// `name(..)`, so a `&self` method was suggested as a free call.
+    #[test]
+    fn inventory_seams_carry_owner_call_shape_from_parser_facts() -> Result<(), String> {
+        let source = concat!(
+            "pub fn clamp_units(units: u64) -> u64 { if units > 10 { 10 } else { units } }\n",
+            "pub struct ByteSize(pub u64);\n",
+            "impl ByteSize {\n",
+            "    pub fn as_whole_units(&self, unit: u64) -> u64 { if unit == 0 { 0 } else { self.0 / unit } }\n",
+            "    pub fn from_kib(kib: u64) -> u64 { if kib > 4 { kib * 1024 } else { 0 } }\n",
+            "    pub fn outer(&self) -> bool {\n",
+            "        fn local(n: u64) -> bool { n > 3 }\n",
+            "        local(self.0)\n",
+            "    }\n",
+            "}\n",
+            "pub trait Units {\n",
+            "    fn units(&self) -> u64 { if self.raw() > 1 { 1 } else { 0 } }\n",
+            "    fn raw(&self) -> u64;\n",
+            "}\n",
+            "impl Units for ByteSize { fn raw(&self) -> u64 { if self.0 > 7 { 7 } else { self.0 } } }\n",
+            "impl<T: Copy> Units for &T { fn raw(&self) -> u64 { if 2 > 1 { 2 } else { 3 } } }\n",
+        );
+        let path = PathBuf::from("src/lib.rs");
+        let index = index_from_files(&[(path.clone(), source)])?;
+        let seams = inventory_seams_from_index(std::slice::from_ref(&path), &index);
+        let shape_of = |owner_suffix: &str, expression: &str| {
+            seams
+                .iter()
+                .find(|seam| {
+                    seam.owner().ends_with(owner_suffix) && seam.expression().contains(expression)
+                })
+                .map(|seam| seam.owner_call().clone())
+        };
+        let method = |self_type: &str| {
+            Some(OwnerCallShape::Method {
+                self_type: self_type.to_string(),
+            })
+        };
+        assert_eq!(
+            shape_of("::clamp_units", "units > 10"),
+            Some(OwnerCallShape::Free)
+        );
+        assert_eq!(
+            shape_of("::as_whole_units", "unit == 0"),
+            method("ByteSize")
+        );
+        assert_eq!(
+            shape_of("::from_kib", "kib > 4"),
+            Some(OwnerCallShape::Associated {
+                self_type: "ByteSize".to_string()
+            })
+        );
+        // A function-local `fn` is not nameable from a test.
+        assert_eq!(shape_of("::local", "n > 3"), Some(OwnerCallShape::Unknown));
+        // A trait default method has no concrete receiver type.
+        assert_eq!(
+            shape_of("::units", "self.raw() > 1"),
+            Some(OwnerCallShape::Unknown)
+        );
+        // A trait impl for a named type is called with method syntax.
+        assert_eq!(shape_of("::raw", "self.0 > 7"), method("ByteSize"));
+        // A blanket impl's self type is not a plain named path.
+        assert_eq!(shape_of("::raw", "2 > 1"), Some(OwnerCallShape::Unknown));
+        Ok(())
     }
 
     /// Seam id, class and the full evidence payload, so a stage that
@@ -3208,6 +3415,69 @@ pub fn parse(value: &str) -> Result<i32, String> {
     }
 
     #[test]
+    fn ok_or_question_mark_discriminator_stores_the_returned_variant_identity() -> Result<(), String>
+    {
+        // #6695: production builds ErrorPath seams from `return` and tail
+        // expressions (syntax/ra.rs); an `ok_or(Type::Variant)?` in either
+        // position is recognised there and stores that variant through the
+        // shared identity owner, so a sibling pin cannot match it in repo
+        // mode. The short `E::Bad` has no `Error::` text to trip the older
+        // shape triggers.
+        let path = PathBuf::from("src/code.rs");
+        let source = r#"
+pub enum E {
+    Bad,
+    Other,
+}
+
+pub fn first_code(slot: Option<Result<u32, E>>) -> Result<u32, E> {
+    return slot.ok_or(E::Bad)?;
+}
+
+pub fn last_code(slot: Option<Result<u32, E>>) -> Result<u32, E> {
+    slot.ok_or_else(|| E::Bad)?
+}
+"#;
+        let index = index_from_files(&[(path.clone(), source)])?;
+        let seams = inventory_seams_from_index(&[path], &index);
+        let ok_or_seams: Vec<_> = seams
+            .iter()
+            .filter(|seam| {
+                seam.kind() == SeamKind::ErrorVariant && seam.expression().contains(".ok_or")
+            })
+            .collect();
+        if ok_or_seams.len() != 2 {
+            return Err(format!(
+                "expected the return and tail ok_or ErrorVariant seams, got {:?}",
+                seams
+                    .iter()
+                    .map(|seam| format!("{}:{}", seam.kind().as_str(), seam.expression()))
+                    .collect::<Vec<_>>()
+            ));
+        }
+        for seam in ok_or_seams {
+            assert_eq!(
+                seam.required_discriminator(),
+                &RequiredDiscriminator::ErrorVariant {
+                    variant: "E::Bad".to_string(),
+                },
+                "{}",
+                seam.expression()
+            );
+        }
+        // A closure-local `?` names no owner-level variant: the text stays
+        // opaque and downstream variant checks stay fail-closed.
+        let closure = "return |c| digit(c).ok_or(CodeError::NotDigit)?";
+        assert_eq!(
+            required_discriminator_for(SeamKind::ErrorVariant, closure),
+            RequiredDiscriminator::ErrorVariant {
+                variant: closure.to_string(),
+            }
+        );
+        Ok(())
+    }
+
+    #[test]
     fn unparseable_error_variant_discriminator_stays_fail_closed() {
         let expression = "return Err(format!(\"failed: {reason}\"));";
         assert_eq!(
@@ -3570,6 +3840,74 @@ pub fn classify(amount: i32, service: &mut Service) -> Result<Quote, Error> {
         std::fs::write(path, content).map_err(|err| format!("write {}: {err}", path.display()))
     }
 
+    /// #6944: the files pilot names as left out of its ranking. Generated
+    /// files are dropped as in `ripr check`, sources outside every diff-only
+    /// shape are not named, and a root below a `src` directory still finds
+    /// its own manifest.
+    #[test]
+    fn diff_only_rust_files_names_build_scripts_and_automation_only() -> Result<(), String> {
+        use super::workspace::DiffOnlySource;
+        let temp = make_tempdir("diff-only")?;
+        let root = temp.join("src").join("shop");
+        let files = [
+            (
+                "Cargo.toml",
+                "[package]\nname = 'shop'\nversion = '0.1.0'\n",
+            ),
+            ("build.rs", "fn main() {}\n"),
+            ("src/lib.rs", "pub fn f() -> bool { true }\n"),
+            ("lib/stray.rs", "pub fn g() {}\n"),
+            (
+                "xtask/Cargo.toml",
+                "[package]\nname = 'xtask'\nversion = '0.1.0'\n",
+            ),
+            ("xtask/src/main.rs", "mod gen;\nfn main() {}\n"),
+            ("xtask/src/gen.rs", "// @generated\npub fn h() {}\n"),
+            ("tests/fixtures/case.rs", "fn main() {}\n"),
+        ];
+        for (path, content) in files {
+            write_file(&root.join(path), content)?;
+        }
+        let changed = files
+            .iter()
+            .map(|(path, _)| PathBuf::from(path))
+            .filter(|path| path.extension().is_some_and(|ext| ext == "rs"))
+            .collect::<Vec<_>>();
+        // A changed path absent from the working tree is not named.
+        let mut changed = changed;
+        changed.push(PathBuf::from("xtask/src/absent.rs"));
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(root.join("build.rs"), root.join("xtask/src/link.rs"))
+                .map_err(|err| format!("symlink: {err}"))?;
+            changed.push(PathBuf::from("xtask/src/link.rs"));
+            // A build script below a symlinked directory (here, a package
+            // outside the checkout) is refused too.
+            let outside = temp.join("outside");
+            write_file(
+                &outside.join("Cargo.toml"),
+                "[package]\nname = 'outside'\nversion = '0.1.0'\n",
+            )?;
+            write_file(&outside.join("build.rs"), "fn main() {}\n")?;
+            std::os::unix::fs::symlink(&outside, root.join("linked"))
+                .map_err(|err| format!("symlink: {err}"))?;
+            changed.push(PathBuf::from("linked/build.rs"));
+        }
+        let named = diff_only_rust_files(&root, &RiprConfig::default(), &changed);
+        let _ = std::fs::remove_dir_all(&temp);
+        assert_eq!(
+            named,
+            vec![
+                (PathBuf::from("build.rs"), DiffOnlySource::BuildScript),
+                (
+                    PathBuf::from("xtask/src/main.rs"),
+                    DiffOnlySource::RepoAutomation
+                ),
+            ]
+        );
+        Ok(())
+    }
+
     /// Rewrite `path` with identical content until the inode change time
     /// advances, so ctime-based assertions hold on filesystems with coarse
     /// timestamp granularity. Bounded so a filesystem that never bumps
@@ -3646,6 +3984,346 @@ pub fn classify(amount: i32, service: &mut Service) -> Result<Quote, Error> {
         }
         out.sort();
         Ok(out)
+    }
+
+    // ---- streaming workspace state (issue #4996) ----------------------
+    //
+    // Production inventory folds content identity incrementally and builds
+    // file facts from bounded on-demand reads. These tests pin the
+    // streaming path to the legacy retain-everything oracle on the same
+    // fixture: identical hash, identical cache key, identical index, and
+    // identical seam identities/order.
+
+    fn streaming_probe_fixture(root: &Path) -> Result<Vec<(PathBuf, Vec<u8>)>, String> {
+        write_file(
+            &root.join("src/lib.rs"),
+            "pub fn check(value: i32) -> bool { value > 0 }\n",
+        )?;
+        write_file(
+            &root.join("src/other.rs"),
+            "pub fn other(flag: bool) -> i32 { if flag { 1 } else { 0 } }\n",
+        )?;
+        write_file(
+            &root.join("tests/basic.rs"),
+            "#[test]\nfn basic() {\n    assert!(crate::check(1));\n}\n",
+        )?;
+        // Enough production files to cross the 64-file parse-batch
+        // boundary, so the streaming path must drain several chunks. Each
+        // carries ~10 KiB of comment so the corpus (~2 MiB) is much larger
+        // than one batch, which the live-byte bound below relies on.
+        let padding = "x".repeat(10 * 1024);
+        for i in 0..200 {
+            write_file(
+                &root.join(format!("src/gen_{i:03}.rs")),
+                &format!("/*{padding}*/\npub fn gen_{i}(value: i32) -> bool {{ value > {i} }}\n"),
+            )?;
+        }
+        // Raw non-UTF-8 bytes in a comment: a stream that lossily
+        // normalized its reads would lose this file's disclosure and its
+        // raw-content cache key, which the whole-index comparison catches.
+        std::fs::write(
+            root.join("src/latin1.rs"),
+            b"// caf\xe9 \xff\xfe\npub fn latin(value: i32) -> bool { value < 0 }\n",
+        )
+        .map_err(|err| format!("write latin1 fixture: {err}"))?;
+        // Legacy oracle load in reverse discovery order: the hash must not
+        // depend on enumeration order.
+        let discovered = workspace::discover_rust_files(root)?;
+        let mut reversed = discovered;
+        reversed.reverse();
+        let mut loaded = Vec::with_capacity(reversed.len());
+        for rel in reversed {
+            let bytes = std::fs::read(root.join(&rel))
+                .map_err(|err| format!("read oracle {}: {err}", rel.display()))?;
+            loaded.push((rel, bytes));
+        }
+        Ok(loaded)
+    }
+
+    #[test]
+    fn streaming_collect_matches_legacy_hash_key_and_order() -> Result<(), String> {
+        let root = make_tempdir("stream-collect-oracle")?;
+        let loaded = streaming_probe_fixture(&root)?;
+        let config = RiprConfig::default();
+
+        let legacy_hash = super::super::seam_cache::files_content_hash(&loaded);
+        let state = collect_workspace_state(&root, &config)?;
+        // Compile-time bound (issue #4996 acceptance): the state retains
+        // sorted paths only — reintroducing a `Vec<u8>` corpus breaks
+        // this build.
+        let _: &Vec<PathBuf> = &state.files;
+        if state.files_content_hash != legacy_hash {
+            return Err(format!(
+                "streaming hash {} must equal legacy hash {legacy_hash}",
+                state.files_content_hash
+            ));
+        }
+        if state.files.windows(2).any(|pair| pair[0] > pair[1]) {
+            return Err("streaming state must retain paths in sorted order".into());
+        }
+
+        // Reverse-order input must fold to the same paths and hash.
+        let reversed_paths: Vec<PathBuf> =
+            loaded.iter().map(|(path, _)| path.clone()).rev().collect();
+        let restated = collect_workspace_state_from_files(&root, &config, reversed_paths)?;
+        if restated.files != state.files || restated.files_content_hash != legacy_hash {
+            return Err("collect must be independent of input enumeration order".into());
+        }
+
+        // The streaming key must equal the legacy snapshot key field for
+        // field, so warm cache entries stay authoritative across the cutover.
+        let cfg_features = std::env::var("RIPR_CFG_FEATURES").ok();
+        let legacy_key = super::super::seam_cache::WorkspaceState {
+            workspace_root: &root,
+            files: &loaded,
+            cfg_features: cfg_features.as_deref(),
+            config_text: config.source_text(),
+            test_intent_text: None,
+            suppressions_text: None,
+        }
+        .cache_key();
+        if state.cache_key() != legacy_key {
+            return Err("streaming cache key must equal the legacy snapshot key".into());
+        }
+
+        // A changed byte must change the aggregate identity.
+        write_file(
+            &root.join("src/lib.rs"),
+            "pub fn check(value: i32) -> bool { value >= 0 }\n",
+        )?;
+        let changed = collect_workspace_state(&root, &config)?;
+        if changed.files_content_hash == legacy_hash {
+            return Err("changed source bytes must change files_content_hash".into());
+        }
+        if changed.cache_key() == legacy_key {
+            return Err("changed source bytes must invalidate the workspace cache key".into());
+        }
+
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn streaming_index_build_matches_loaded_oracle() -> Result<(), String> {
+        let root = make_tempdir("stream-index-oracle")?;
+        let loaded = streaming_probe_fixture(&root)?;
+        let paths: Vec<PathBuf> = loaded.iter().map(|(path, _)| path.clone()).collect();
+
+        // Streaming first, so it runs cold (misses, parses, stores); the
+        // legacy oracle then runs warm against the same file-fact entries.
+        let streamed =
+            rust_index::build_index_from_paths_with_cache_and_test_harnesses(&root, &paths, &[])?;
+        if streamed.file_fact_cache.misses != paths.len() || streamed.file_fact_cache.hits != 0 {
+            return Err(format!(
+                "streaming cold build must miss every file, got {} misses {} hits over {} files",
+                streamed.file_fact_cache.misses,
+                streamed.file_fact_cache.hits,
+                paths.len()
+            ));
+        }
+        let legacy = rust_index::build_index_from_loaded_files_with_cache_and_test_harnesses(
+            &root,
+            &loaded,
+            &[],
+        )?;
+        if legacy.file_fact_cache.hits != paths.len() {
+            return Err(format!(
+                "legacy build after streaming must hit every file fact, got {} hits over {} files",
+                legacy.file_fact_cache.hits,
+                paths.len()
+            ));
+        }
+        let latin1 = PathBuf::from("src/latin1.rs");
+        if !legacy.index.non_utf8_sources.contains(&latin1) {
+            return Err("probe fixture must contain a non-UTF-8 source".into());
+        }
+        // Whole-index equality, not counts: the serialized index carries
+        // every file fact, include, authority, package name and non-UTF-8
+        // disclosure.
+        let streamed_json =
+            serde_json::to_string(&streamed.index).map_err(|err| err.to_string())?;
+        let legacy_json = serde_json::to_string(&legacy.index).map_err(|err| err.to_string())?;
+        if streamed_json != legacy_json {
+            return Err(format!(
+                "streaming index must match legacy oracle: {} vs {} files, {} vs {} functions",
+                streamed.index.files().len(),
+                legacy.index.files().len(),
+                streamed.index.functions().len(),
+                legacy.index.functions().len(),
+            ));
+        }
+
+        let config = RiprConfig::default();
+        let state = collect_workspace_state(&root, &config)?;
+        let production = production_files_from_state_with_role(&state, &config);
+        if production.is_empty() {
+            return Err("probe fixture must yield production files".into());
+        }
+        let streamed_seams = inventory_seams_from_index(&production, &streamed.index);
+        let legacy_seams = inventory_seams_from_index(&production, &legacy.index);
+        if streamed_seams != legacy_seams {
+            return Err("streaming seam identities and order must match the legacy oracle".into());
+        }
+        if streamed_seams.is_empty() {
+            return Err("probe fixture must yield at least one seam".into());
+        }
+
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn streaming_index_build_holds_at_most_one_batch_of_raw_source() -> Result<(), String> {
+        let root = make_tempdir("stream-live-bytes")?;
+        let loaded = streaming_probe_fixture(&root)?;
+        let paths: Vec<PathBuf> = loaded.iter().map(|(path, _)| path.clone()).collect();
+        let corpus_bytes: usize = loaded.iter().map(|(_, bytes)| bytes.len()).sum();
+        let largest_file = loaded
+            .iter()
+            .map(|(_, bytes)| bytes.len())
+            .max()
+            .unwrap_or_default();
+        let (streamed, high_water) = crate::analysis::facts::streamed_source_bytes::observe(|| {
+            rust_index::build_index_from_paths_with_cache_and_test_harnesses(&root, &paths, &[])
+        });
+        let streamed = streamed?;
+        let _ = std::fs::remove_dir_all(&root);
+        if streamed.index.files().len() != paths.len() {
+            return Err("streaming build must index every fixture file".into());
+        }
+        // The instrument saw the reads, and no more than one batch
+        // (64 of ~204 similar files) was live at once.
+        if high_water < largest_file {
+            return Err(format!(
+                "live-byte probe saw {high_water} bytes, less than one {largest_file}-byte file"
+            ));
+        }
+        if high_water * 2 > corpus_bytes {
+            return Err(format!(
+                "streaming build held {high_water} of {corpus_bytes} corpus bytes at once"
+            ));
+        }
+        Ok(())
+    }
+
+    /// Drive one inventory entry point that builds from collected state.
+    fn run_inventory_path(path: &str, root: &Path, config: &RiprConfig) -> Result<(), String> {
+        match path {
+            "full" => inventory_classified_seams_report_at_with_config(root, config).map(drop),
+            "compact" => inventory_compact_classified_seams_at_with_config(root, config).map(drop),
+            "counts" => inventory_seam_grip_class_counts_at_with_config(root, config).map(drop),
+            "review" => inventory_diff_scoped_classified_seams_at_with_config(
+                root,
+                config,
+                &[PathBuf::from("src/lib.rs")],
+                &["check".into()],
+            )
+            .map(drop),
+            "rerun" => inventory_changed_test_classified_seams_at_with_config_node(
+                root,
+                config,
+                Path::new("tests/basic.rs"),
+                None,
+            )
+            .map(drop)
+            .map_err(String::from),
+            other => Err(format!("unknown inventory path {other}")),
+        }
+    }
+
+    /// Whether that entry point's own cache holds an entry under `key`.
+    fn stored_inventory_entry(path: &str, root: &Path, key: &RepoSeamCacheKey) -> bool {
+        match path {
+            "full" => matches!(
+                RepoSeamFactCache::at(root).load_classified_seams_with_fallback(key),
+                CacheLoad::Hit(_)
+            ),
+            "compact" => matches!(
+                RepoSeamFactCache::at_compact_classified(root)
+                    .load_classified_seams_with_fallback(key),
+                CacheLoad::Hit(_)
+            ),
+            "counts" => matches!(
+                RepoSeamCountCache::at(root).load_counts(key),
+                CacheLoad::Hit(_)
+            ),
+            _ => false,
+        }
+    }
+
+    #[test]
+    fn a_source_edited_between_hash_and_index_reads_is_refused_and_never_cached()
+    -> Result<(), String> {
+        const ORIGINAL: &str = "pub fn check(value: i32) -> bool { value > 0 }\n";
+        const EDITED: &str = "pub fn check(value: i32) -> bool { value >= 10 }\n";
+        let config = RiprConfig::default();
+        for path in ["full", "compact", "counts", "review", "rerun"] {
+            let root = make_tempdir(&format!("stream-moved-{path}"))?;
+            let lib = root.join("src/lib.rs");
+            write_file(&lib, ORIGINAL)?;
+            write_file(
+                &root.join("tests/basic.rs"),
+                "#[test]\nfn basic() {\n    assert!(demo::check(1));\n}\n",
+            )?;
+            let original_key = collect_workspace_state(&root, &config)?.cache_key();
+
+            let edit = lib.clone();
+            between_passes::install(&root, move || {
+                let _ = std::fs::write(&edit, EDITED);
+            });
+            let refused = run_inventory_path(path, &root, &config);
+            if std::fs::read_to_string(&lib).map_err(|err| err.to_string())? != EDITED {
+                return Err(format!("{path}: the between-passes edit must have run"));
+            }
+            let edited_key = collect_workspace_state(&root, &config)?.cache_key();
+            if edited_key == original_key {
+                return Err(format!("{path}: the edit must change the workspace key"));
+            }
+            match refused {
+                Err(message) if message.contains("changed during analysis") => {}
+                other => {
+                    return Err(format!(
+                        "{path}: a moved source must be refused, got {other:?}"
+                    ));
+                }
+            }
+            for key in [&original_key, &edited_key] {
+                if stored_inventory_entry(path, &root, key) {
+                    return Err(format!("{path}: a refused build must store no entry"));
+                }
+            }
+
+            // Control: the same workspace, unmoved, completes and stores.
+            run_inventory_path(path, &root, &config)?;
+            if matches!(path, "full" | "compact" | "counts")
+                && !stored_inventory_entry(path, &root, &edited_key)
+            {
+                return Err(format!("{path}: an unmoved build must store its entry"));
+            }
+            let _ = std::fs::remove_dir_all(&root);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn streaming_collect_fails_closed_on_unreadable_file() -> Result<(), String> {
+        let root = make_tempdir("stream-collect-missing")?;
+        let config = RiprConfig::default();
+        match collect_workspace_state_from_files(
+            &root,
+            &config,
+            vec![PathBuf::from("src/missing.rs")],
+        ) {
+            Ok(_) => Err("collect must fail closed for an unreadable file".into()),
+            Err(err) => {
+                if err.contains("read ") && err.contains("missing.rs") {
+                    let _ = std::fs::remove_dir_all(&root);
+                    Ok(())
+                } else {
+                    Err(format!("unexpected collect error shape: {err}"))
+                }
+            }
+        }
     }
 
     #[test]

@@ -1,4 +1,4 @@
-use crate::app::{CheckOutput, FindingDrillIn, FindingNavigation};
+use crate::app::{CheckDiffProvenance, CheckOutput, FindingDrillIn, FindingNavigation};
 use crate::config::RiprConfig;
 use crate::domain::Finding;
 pub(crate) use crate::terminal_text::terminal_safe;
@@ -62,7 +62,14 @@ pub(crate) fn render_with_config(output: &CheckOutput, config: &RiprConfig) -> S
 
 pub(crate) fn render_bounded_with_config(output: &CheckOutput, config: &RiprConfig) -> String {
     let drill_in = FindingDrillIn::Commands(FindingNavigation::legacy());
-    render_bounded_with_config_and_navigation(output, config, Some(&drill_in))
+    // Library callers declare no provenance; the adapter falls back to the
+    // committed-history derivation from `output.base`.
+    render_bounded_with_config_and_navigation(
+        output,
+        config,
+        Some(&drill_in),
+        CheckDiffProvenance::CommittedHistory,
+    )
 }
 
 /// #4012: the no-scope note must describe what was actually analyzed. When
@@ -88,6 +95,7 @@ pub(crate) fn render_bounded_with_config_and_navigation(
     output: &CheckOutput,
     config: &RiprConfig,
     drill_in: Option<&FindingDrillIn>,
+    provenance: CheckDiffProvenance,
 ) -> String {
     let mut out = render_header_summary(output);
     render_analysis_outcome_disclosure(&mut out, output);
@@ -98,7 +106,7 @@ pub(crate) fn render_bounded_with_config_and_navigation(
         out.push_str("No diff-derived static exposure probes found.\n");
         if output.no_scope_provided {
             let triage = triage::select_human_triage(output, config);
-            triage::render_human_triage(&mut out, &triage, output, config, drill_in);
+            triage::render_human_triage(&mut out, &triage, output, config, drill_in, provenance);
         }
         if output.no_scope_provided && !output.unanalyzed_working_tree {
             out.push_str(&render_no_scope_note(output));
@@ -112,7 +120,7 @@ pub(crate) fn render_bounded_with_config_and_navigation(
     }
 
     let triage = triage::select_human_triage(output, config);
-    triage::render_human_triage(&mut out, &triage, output, config, drill_in);
+    triage::render_human_triage(&mut out, &triage, output, config, drill_in, provenance);
     render_all_no_path_disclosure(&mut out, output);
     if output.unanalyzed_working_tree {
         out.push_str(&unanalyzed_working_tree_note(output));
@@ -848,11 +856,11 @@ mod tests {
     use crate::analysis::PreviewLanguageAdvisory;
     use crate::app::{CheckOutput, Mode};
     use crate::domain::{
-        ActivationEvidence, Confidence, DeltaKind, ExposureClass, Finding, FindingCanonicalGap,
-        FlowSinkFact, FlowSinkKind, LanguageFileCount, LanguageId, LanguageStatus,
-        MISSING_DISCRIMINATOR_VALUE_PREFIX, MissingDiscriminatorFact, OracleKind, OracleStrength,
-        Probe, ProbeFamily, ProbeId, RelatedTest, RevealEvidence, RiprEvidence, SourceLocation,
-        StageEvidence, StageState, Summary, SymbolId, ValueContext, ValueFact,
+        ActivationEvidence, CALLEE_ONLY_REACH_PREFIX, Confidence, DeltaKind, ExposureClass,
+        Finding, FindingCanonicalGap, FlowSinkFact, FlowSinkKind, LanguageFileCount, LanguageId,
+        LanguageStatus, MISSING_DISCRIMINATOR_VALUE_PREFIX, MissingDiscriminatorFact, OracleKind,
+        OracleStrength, Probe, ProbeFamily, ProbeId, RelatedTest, RevealEvidence, RiprEvidence,
+        SourceLocation, StageEvidence, StageState, Summary, SymbolId, ValueContext, ValueFact,
     };
     use std::path::{Path, PathBuf};
 
@@ -2400,6 +2408,50 @@ mod tests {
         Ok(())
     }
 
+    // #7003: a seam-wrapped finding whose related tests are all
+    // `SeamCalleeCall` reports reach weak — and the digest hint must agree
+    // with that reach line instead of claiming a reaching test.
+    #[test]
+    fn digest_hint_for_callee_only_finding_names_no_reaching_test() {
+        let mut finding = sample_finding();
+        finding.class = ExposureClass::WeaklyExposed;
+        finding.ripr = RiprEvidence {
+            reach: stage(
+                StageState::Weak,
+                Confidence::Low,
+                &format!("{CALLEE_ONLY_REACH_PREFIX}: observes_callee_outcome"),
+            ),
+            infect: stage(StageState::Yes, Confidence::High, "boundary input present"),
+            propagate: stage(StageState::Weak, Confidence::Medium, "boxed error channel"),
+            reveal: RevealEvidence {
+                observe: stage(StageState::Yes, Confidence::High, "observed"),
+                discriminate: stage(
+                    StageState::Weak,
+                    Confidence::Low,
+                    "variant identity unconfirmed",
+                ),
+            },
+        };
+
+        let digest = super::sections::render_finding_digest_with_config(
+            &finding,
+            &crate::config::RiprConfig::default(),
+            Path::new("."),
+        );
+
+        assert!(
+            digest.contains("  Why weak: no test is seen calling this change"),
+            "callee-only digest must carry the no-calling-test hint; got:\n{digest}"
+        );
+        assert!(
+            !digest
+                .lines()
+                .any(|line| line.trim_start().starts_with("Why ")
+                    && line.contains("reaches this change")),
+            "no rendered hint may claim a reaching test for a callee-only finding; got:\n{digest}"
+        );
+    }
+
     #[test]
     fn digest_keeps_missing_discriminator_label_for_non_exposed_classes() {
         for class in [
@@ -3043,6 +3095,16 @@ mod tests {
 
     /// The drill-in commands for a `--worktree` check, built by the same
     /// owner `ripr check` uses, so the renderer tests see the real argv.
+    /// The drill-in binds `--root` to the resolved repository (#3948), so the
+    /// rendered text carries the renderer directory. These tests pin the scope
+    /// flags, not the machine path: project the bound root back to `repo`.
+    fn unbound_repo_root(rendered: String) -> String {
+        let bound = crate::agent::loop_commands::shell_arg(
+            &crate::agent::loop_commands::bound_root("repo"),
+        );
+        rendered.replace(&bound, "repo")
+    }
+
     fn worktree_drill_in() -> crate::app::FindingDrillIn {
         let input = crate::app::CheckInput {
             root: PathBuf::from("repo"),
@@ -3086,11 +3148,12 @@ mod tests {
             partial_scope: None,
         };
 
-        let rendered = super::render_bounded_with_config_and_navigation(
+        let rendered = unbound_repo_root(super::render_bounded_with_config_and_navigation(
             &output,
             &crate::config::RiprConfig::default(),
             Some(&worktree_drill_in()),
-        );
+            crate::app::CheckDiffProvenance::Worktree,
+        ));
 
         assert!(
             rendered.contains(&format!(
@@ -3139,11 +3202,11 @@ mod tests {
             partial_scope: None,
         };
 
-        let rendered = super::render_full_with_config_and_navigation(
+        let rendered = unbound_repo_root(super::render_full_with_config_and_navigation(
             &output,
             &crate::config::RiprConfig::default(),
             Some(&worktree_drill_in()),
-        );
+        ));
 
         for id in ["first", "second"] {
             assert!(
@@ -3210,11 +3273,11 @@ mod tests {
             analysis_outcome: None,
             partial_scope: None,
         };
-        super::render_full_with_config_and_navigation(
+        unbound_repo_root(super::render_full_with_config_and_navigation(
             &output,
             &crate::config::RiprConfig::default(),
             Some(drill_in),
-        )
+        ))
     }
 
     /// #4924 review: when policy suppresses every finding, no block prints,
@@ -5701,6 +5764,50 @@ mod tests {
         assert!(
             !rendered.contains("ripr found no static test path for any"),
             "must not claim no-static-path when a finding reaches; got:\n{rendered}"
+        );
+    }
+
+    #[test]
+    fn render_keeps_all_no_path_disclosure_for_callee_only_reach() {
+        // #7003: a callee-only finding reports reach weak — no test reaches
+        // the owner — so it must not suppress the all-no-path note the way
+        // a `reach: yes` finding does.
+        let mut finding = unknown_finding();
+        finding.ripr.reach = stage(
+            StageState::Weak,
+            Confidence::Low,
+            &format!("{CALLEE_ONLY_REACH_PREFIX}: observes_callee_outcome"),
+        );
+        let output = CheckOutput {
+            harness_projections: Vec::new(),
+            schema_version: "0.2".to_string(),
+            tool: "ripr".to_string(),
+            mode: Mode::Draft,
+            root: PathBuf::from("repo"),
+            base: None,
+            summary: Summary {
+                probes: 1,
+                findings: 1,
+                static_unknown: 1,
+                ..Summary::default()
+            },
+            findings: vec![finding],
+            preview_language_advisories: Vec::new(),
+            language_runs: Vec::new(),
+            no_scope_provided: false,
+            unanalyzed_working_tree: false,
+            untracked_working_tree_source_paths: Vec::new(),
+            unlinked_python_tests: None,
+            suppression: None,
+            analysis_outcome: None,
+            partial_scope: None,
+        };
+
+        let rendered = render(&output);
+
+        assert!(
+            rendered.contains("ripr found no static test path for any"),
+            "a callee-only (reach weak) finding must not suppress the all-no-path note; got:\n{rendered}"
         );
     }
 

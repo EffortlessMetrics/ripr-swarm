@@ -2,6 +2,8 @@ mod evidence;
 mod finding;
 mod owner;
 
+pub(in crate::analysis) use finding::oracle_binds_sink_identity;
+
 use self::evidence::ClassifiedProbeEvidence;
 use self::finding::build_finding;
 use self::owner::resolve_owner_function;

@@ -39,6 +39,7 @@ fn proposed_integration_target(file: &str, owner: &str) -> NewTestTargetAdmissio
         }),
         region: None,
         blocker: None,
+        owner_inline_region: None,
     }
 }
 
@@ -100,7 +101,10 @@ fn spec_seam(notation: &str) -> Result<ClassifiedSeam, String> {
         entry.evidence.missing_discriminators.push(missing());
     }
     if has("r") {
-        entry.evidence.related_tests.push(related_test());
+        entry
+            .evidence
+            .related_tests
+            .push(std::sync::Arc::new(related_test()));
     }
 
     let held = [
@@ -242,7 +246,10 @@ fn spec_0237_example_07_a_without_m_is_unbuildable() {
     // Keeps the doc comment above honest: dropping the exact discriminator
     // from an `a` seam removes the suggested assertion.
     let mut entry = classified_in_owner(SeamGripClass::WeaklyGripped, "src/a.rs", "f", 1);
-    entry.evidence.related_tests.push(related_test());
+    entry
+        .evidence
+        .related_tests
+        .push(std::sync::Arc::new(related_test()));
     assert!(suggested_assertion_for_classified_seam(&entry).is_none());
 }
 

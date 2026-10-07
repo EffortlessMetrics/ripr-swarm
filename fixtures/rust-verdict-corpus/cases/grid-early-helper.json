@@ -1,0 +1,59 @@
+{
+  "case_id": "grid-early-helper",
+  "subject_id": "authored-grid-early",
+  "diff": "cases/grid-early-helper.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 25
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "early_return_guard",
+  "test_shape": "helper_wrapped_assert",
+  "hard_case": "The assert_eq! inside a local check_* helper is refused by owner-pin admission (RIPR-SPEC-0197 rule 1: not in the test's own body; #6482).",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "if 100 >= total {",
+        "mutated_line": "if 100 >= total {",
+        "outcome": "tests_failed",
+        "failing_test": "tests::small_orders_get_no_discount",
+        "equivalence_review": "not equivalent: small_orders_get_no_discount fails on it"
+      },
+      {
+        "replacement": "if true {",
+        "mutated_line": "if true {",
+        "outcome": "tests_failed",
+        "failing_test": "tests::small_orders_get_no_discount",
+        "equivalence_review": "not equivalent: small_orders_get_no_discount fails on it"
+      },
+      {
+        "replacement": "if false {",
+        "mutated_line": "if false {",
+        "outcome": "tests_failed",
+        "failing_test": "tests::small_orders_get_no_discount",
+        "equivalence_review": "not equivalent: small_orders_get_no_discount fails on it"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "Grid cell: early-return guard (condition respelled; mutants negate it or force it true/false) x helper_wrapped_assert. The test routes every assertion through a local check_* helper; 3 of 3 listed mutants fail cargo test. Spec cells: RIPR-SPEC-0197, RIPR-SPEC-0231.",
+  "labeling_observation": {
+    "ripr_commit": "1273096",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

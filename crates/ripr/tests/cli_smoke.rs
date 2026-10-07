@@ -26,6 +26,8 @@ mod findings_byte_budget;
 #[cfg(feature = "lang-python")]
 #[path = "cli_smoke/implicit_git_root.rs"]
 mod implicit_git_root;
+#[path = "cli_smoke/next_action.rs"]
+mod next_action;
 #[cfg(feature = "lang-python")]
 #[path = "cli_smoke/python_source_admission.rs"]
 mod python_source_admission;
@@ -34,6 +36,8 @@ mod python_source_admission;
 mod receipt_recovery_root;
 #[path = "cli_smoke/related_test_count.rs"]
 mod related_test_count;
+#[path = "cli_smoke/shell_words.rs"]
+mod shell_words;
 #[cfg(unix)]
 #[path = "cli_smoke/workflow_directory.rs"]
 mod workflow_directory;
@@ -2229,14 +2233,40 @@ fn check_human_navigation_commands_replay_custom_scope() -> Result<(), String> {
         .lines()
         .find(|line| line.starts_with("  ripr context "))
         .ok_or_else(|| format!("check output omitted context command:\n{stdout}"))?;
-    let explain_args = explain_line.split_whitespace().collect::<Vec<_>>();
-    let context_args = context_line.split_whitespace().collect::<Vec<_>>();
+    // #6762: split as the shell would, so a checkout path that needs
+    // quoting (a space, an apostrophe) replays as one argument.
+    let explain_words = shell_words::posix_words(explain_line)?;
+    let context_words = shell_words::posix_words(context_line)?;
+    let explain_args = explain_words.iter().map(String::as_str).collect::<Vec<_>>();
+    let context_args = context_words.iter().map(String::as_str).collect::<Vec<_>>();
     if explain_args.first() != Some(&"ripr") || context_args.first() != Some(&"ripr") {
         return Err(format!(
             "unexpected navigation commands:\n{explain_line}\n{context_line}"
         ));
     }
 
+    // #3948: the drill-in names the resolved repository, not the typed `.`, so
+    // pasting it from another directory analyzes the same repository.
+    let printed_root = explain_args
+        .iter()
+        .position(|arg| *arg == "--root")
+        .and_then(|at| explain_args.get(at + 1))
+        .copied()
+        .ok_or_else(|| format!("explain command omitted --root:\n{explain_line}"))?;
+    assert!(
+        std::path::Path::new(printed_root).is_absolute(),
+        "drill-in repeated the typed relative root instead of the resolved one: {printed_root}"
+    );
+    let printed_diff = explain_args
+        .iter()
+        .position(|arg| *arg == "--diff")
+        .and_then(|at| explain_args.get(at + 1))
+        .copied()
+        .ok_or_else(|| format!("explain command omitted --diff:\n{explain_line}"))?;
+    assert!(
+        std::path::Path::new(printed_diff).is_absolute(),
+        "drill-in repeated the typed relative --diff: {printed_diff}"
+    );
     let explain = run_ripr_in_workspace(&explain_args[1..]).map_err(|err| err.to_string())?;
     assert_success(&explain);
     let selector = explain_args
@@ -2245,10 +2275,27 @@ fn check_human_navigation_commands_replay_custom_scope() -> Result<(), String> {
         .ok_or_else(|| "explain command omitted selector".to_string())?;
     let context = run_ripr_in_workspace(&context_args[1..]).map_err(|err| err.to_string())?;
     assert_success(&context);
-    if !String::from_utf8_lossy(&explain.stdout).contains(&format!(
-        "Next: ripr context --root {root} --diff {diff} --at {selector}"
-    )) {
-        return Err("explain output omitted its scope-preserving context command".to_string());
+    // Compare decoded words: the printed `Next:` command shell-quotes a root
+    // that needs it, while `printed_root` is already decoded (#6762).
+    let explain_stdout = String::from_utf8_lossy(&explain.stdout);
+    let next_line = explain_stdout
+        .lines()
+        .find_map(|line| line.trim_start().strip_prefix("Next: ripr context "))
+        .ok_or_else(|| "explain output omitted its scope-preserving context command".to_string())?;
+    let next_args = shell_words::posix_words(next_line)?;
+    if next_args
+        != [
+            "--root",
+            printed_root,
+            "--diff",
+            printed_diff,
+            "--at",
+            selector,
+        ]
+    {
+        return Err(format!(
+            "explain output's context command lost the scope: {next_line}"
+        ));
     }
     if !String::from_utf8_lossy(&context.stdout).contains("\"version\": \"1.0\"") {
         return Err("context command did not return its JSON packet".to_string());
@@ -2866,6 +2913,545 @@ fn check_json_diff_scope_oversized_emits_limited_artifact() -> Result<(), String
         stderr.contains("diff_scope_oversized"),
         "stderr should still report failed analysis: {stderr}"
     );
+    Ok(())
+}
+
+/// #6834: shared shape assertions for a `check --json` refusal document —
+/// the one non-consumable envelope the scope guards already use, with the
+/// typed identity selecting run_status/category/limitation/basis.
+fn assert_check_json_refusal(
+    output: &Output,
+    identity: &str,
+    repair_route: &str,
+) -> Result<serde_json::Value, String> {
+    if output.status.code() != Some(2) {
+        return Err(format!(
+            "expected exit 2 for {identity}, got {:?}\nstderr:\n{}",
+            output.status.code(),
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+    // The assertion that fails before the fix: stdout carried zero bytes.
+    if output.stdout.is_empty() {
+        return Err(format!(
+            "check --json must emit a refusal document on stdout for {identity}, got zero bytes"
+        ));
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let value: serde_json::Value = serde_json::from_str(&stdout)
+        .map_err(|err| format!("refusal stdout should parse as JSON: {err}\n{stdout}"))?;
+    for (pointer, expected) in [
+        ("/schema_version", "0.2"),
+        ("/tool", "ripr"),
+        ("/analysis_scope/scope", "diff"),
+        ("/analysis_scope/run_status", identity),
+        ("/analysis_scope/basis", identity),
+        ("/analysis_scope/limitation", identity),
+        ("/analysis_scope/repair_route", repair_route),
+        ("/run_limitations/0/category", identity),
+        ("/run_limitations/0/run_status", identity),
+        ("/run_limitations/0/basis", identity),
+        ("/run_limitations/0/repair_route", repair_route),
+    ] {
+        let actual = value.pointer(pointer).and_then(serde_json::Value::as_str);
+        if actual != Some(expected) {
+            return Err(format!(
+                "{pointer}: expected {expected}, got {actual:?}\n{stdout}"
+            ));
+        }
+    }
+    for pointer in [
+        "/analysis_scope/downstream_consumable",
+        "/run_limitations/0/downstream_consumable",
+    ] {
+        if value.pointer(pointer) != Some(&serde_json::Value::Bool(false)) {
+            return Err(format!("{pointer} must be false\n{stdout}"));
+        }
+    }
+    if value["findings"].as_array().map(Vec::len) != Some(0) {
+        return Err(format!("refusal findings must be empty\n{stdout}"));
+    }
+    if value["run_limitations"][0]["message"]
+        .as_str()
+        .is_none_or(str::is_empty)
+    {
+        return Err(format!("refusal must carry a human message\n{stdout}"));
+    }
+    Ok(value)
+}
+
+/// #6834: a git fixture repo with `commits` commits on `main`.
+fn init_check_refusal_repo(label: &str, commits: usize) -> Result<PathBuf, String> {
+    let root = unique_temp_workspace(label);
+    std::fs::create_dir_all(root.join("src")).map_err(|e| format!("create src dir: {e}"))?;
+    run_git(&root, &["init", "--initial-branch=main"])?;
+    run_git(&root, &["config", "user.email", "refusal@t.st"])?;
+    run_git(&root, &["config", "user.name", "refusal"])?;
+    for n in 0..commits {
+        std::fs::write(
+            root.join("src/lib.rs"),
+            format!("pub fn v{n}() -> u8 {{ {n} }}\n"),
+        )
+        .map_err(|e| format!("write lib.rs: {e}"))?;
+        run_git(&root, &["add", "."])?;
+        run_git(&root, &["commit", "-qm", &format!("commit {n}")])?;
+    }
+    Ok(root)
+}
+
+/// #6834: the demonstrated case — an unresolvable `--base` emits a typed
+/// refusal naming `base_unresolvable`, with the caller-supplied invocation
+/// context echoed and the stderr prose unchanged.
+#[test]
+fn check_json_unresolvable_base_emits_refusal_envelope() -> Result<(), String> {
+    let root = init_check_refusal_repo("check-json-bad-base", 1)?;
+    let root_arg = root.display().to_string();
+    let output = run_ripr(&[
+        "check",
+        "--json",
+        "--root",
+        &root_arg,
+        "--base",
+        "definitely-not-a-real-ref-9f2a-6834",
+    ]);
+    let value =
+        assert_check_json_refusal(&output, "base_unresolvable", "analysis/base-resolution")?;
+    if value["base"] != "definitely-not-a-real-ref-9f2a-6834" {
+        return Err(format!(
+            "refusal must echo the caller-supplied base: {value}"
+        ));
+    }
+    if value["root"] != root_arg.as_str() {
+        return Err(format!(
+            "refusal must echo the caller-supplied root: {value}"
+        ));
+    }
+    let message = value["run_limitations"][0]["message"]
+        .as_str()
+        .ok_or("refusal must carry a message")?;
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if !stderr.contains(message) {
+        return Err(format!(
+            "the envelope message must be the stderr diagnostic verbatim; stderr: {stderr}"
+        ));
+    }
+    ignore_remove_dir_all(&root);
+    Ok(())
+}
+
+/// #6834 (owner ruling): argv usage errors stay prose-only. There is no
+/// successfully parsed invocation to echo, so no envelope exists: exit 2,
+/// empty stdout, the cause on stderr.
+#[test]
+fn check_json_argv_usage_errors_stay_prose_only() -> Result<(), String> {
+    let output = run_ripr(&["check", "--json", "--bogus-flag-6834"]);
+    if output.status.code() != Some(2) {
+        return Err(format!(
+            "expected exit 2, got {:?}\nstderr:\n{}",
+            output.status.code(),
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+    if !output.stdout.is_empty() {
+        return Err(format!(
+            "argv usage errors must not emit an envelope, got {} stdout bytes",
+            output.stdout.len()
+        ));
+    }
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if !stderr.contains("--bogus-flag-6834") {
+        return Err(format!("stderr must name the flag, got: {stderr}"));
+    }
+    Ok(())
+}
+
+/// #6834: a `--root` Git cannot work with — a missing directory or a
+/// directory outside any work tree — names `repository_root_unusable`.
+#[test]
+fn check_json_unusable_root_emits_repository_root_unusable() -> Result<(), String> {
+    let missing = unique_temp_workspace("check-json-missing-root").join("no-such-dir");
+    let missing_arg = missing.display().to_string();
+    let output = run_ripr(&["check", "--json", "--root", &missing_arg, "--base", "main"]);
+    assert_check_json_refusal(
+        &output,
+        "repository_root_unusable",
+        "analysis/repository-root",
+    )?;
+
+    // Outside the repository: the temp dir sits under target/, where git
+    // discovery would walk up into the checkout and resolve the base.
+    let plain = unique_external_workspace("check-json-plain-dir")?;
+    std::fs::create_dir_all(&plain).map_err(|e| format!("create plain dir: {e}"))?;
+    let plain_arg = plain.display().to_string();
+    let output = run_ripr(&["check", "--json", "--root", &plain_arg, "--base", "main"]);
+    let value = assert_check_json_refusal(
+        &output,
+        "repository_root_unusable",
+        "analysis/repository-root",
+    )?;
+    if value["root"] != plain_arg.as_str() {
+        return Err(format!(
+            "refusal must echo the caller-supplied root: {value}"
+        ));
+    }
+    ignore_remove_dir_all(&plain);
+    Ok(())
+}
+
+/// #6834: a malformed `ripr.toml` names `config_invalid`, and the envelope
+/// message carries the redacted summary — the config source excerpt never
+/// enters machine output (RIPR-SPEC-0007) while stderr keeps the full prose.
+#[test]
+fn check_json_malformed_config_emits_redacted_refusal() -> Result<(), String> {
+    let root = unique_temp_workspace("check-json-bad-config");
+    std::fs::create_dir_all(&root).map_err(|e| format!("create workspace: {e}"))?;
+    std::fs::write(root.join("ripr.toml"), "canary_config_secret_6834 = [\n")
+        .map_err(|e| format!("write ripr.toml: {e}"))?;
+    let root_arg = root.display().to_string();
+    let output = run_ripr(&["check", "--json", "--root", &root_arg, "--base", "main"]);
+    let value = assert_check_json_refusal(&output, "config_invalid", "analysis/config-load")?;
+    let message = value["run_limitations"][0]["message"]
+        .as_str()
+        .ok_or("refusal must carry a message")?;
+    if message.contains("canary_config_secret_6834") {
+        return Err(format!(
+            "config source excerpt must not enter stdout: {message}"
+        ));
+    }
+    if !message.contains("invalid ripr.toml") {
+        return Err(format!(
+            "the actionable summary must survive redaction: {message}"
+        ));
+    }
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if !stderr.contains("canary_config_secret_6834") {
+        return Err(format!("stderr keeps the full human diagnostic: {stderr}"));
+    }
+    ignore_remove_dir_all(&root);
+    Ok(())
+}
+
+/// #6834: a malformed `--suppression-policy` names
+/// `suppression_policy_invalid` after analysis ran.
+#[test]
+fn check_json_malformed_suppression_policy_emits_refusal() -> Result<(), String> {
+    let root = init_check_refusal_repo("check-json-bad-policy", 2)?;
+    std::fs::write(root.join("badpolicy.toml"), "not [[[ valid\n")
+        .map_err(|e| format!("write policy: {e}"))?;
+    let root_arg = root.display().to_string();
+    let output = run_ripr(&[
+        "check",
+        "--json",
+        "--root",
+        &root_arg,
+        "--base",
+        "HEAD~1",
+        "--suppression-policy",
+        "badpolicy.toml",
+    ]);
+    let value = assert_check_json_refusal(
+        &output,
+        "suppression_policy_invalid",
+        "analysis/suppression-policy",
+    )?;
+    let message = value["run_limitations"][0]["message"]
+        .as_str()
+        .ok_or("refusal must carry a message")?;
+    if !message.contains("suppression policy") {
+        return Err(format!(
+            "the message must name the policy failure: {message}"
+        ));
+    }
+    ignore_remove_dir_all(&root);
+    Ok(())
+}
+
+/// #6834: an analysis-path failure outside every named family — here an
+/// unreadable `--diff` file — still emits a document, on the honest
+/// `analysis_failed` fallback rather than as zero bytes.
+#[test]
+fn check_json_unmigrated_analysis_failure_emits_analysis_failed() -> Result<(), String> {
+    let root = workspace_root().display().to_string();
+    let output = run_ripr(&[
+        "check",
+        "--json",
+        "--root",
+        &root,
+        "--diff",
+        "definitely-not-a-diff-9f2a-6834.diff",
+    ]);
+    let value = assert_check_json_refusal(&output, "analysis_failed", "analysis/failure")?;
+    let message = value["run_limitations"][0]["message"]
+        .as_str()
+        .ok_or("refusal must carry a message")?;
+    if !message.contains("failed to read diff file") {
+        return Err(format!(
+            "the message must carry the loader diagnostic: {message}"
+        ));
+    }
+    Ok(())
+}
+
+/// #6834: a `git_invocation_timeout` and an unresolvable base produce
+/// different identities, so a consumer can tell them apart. The timeout is
+/// forced deterministically: every git invocation hangs, and
+/// `RIPR_GIT_TIMEOUT=1` cuts the diff call.
+#[cfg(unix)]
+#[test]
+fn check_json_timeout_and_bad_base_have_distinct_identities() -> Result<(), String> {
+    let root = init_check_refusal_repo("check-json-timeout", 1)?;
+    let root_arg = root.display().to_string();
+
+    // A `git` shim that hangs on every invocation; nothing passes through,
+    // so the fixture setup above (real git) must finish before this PATH
+    // override is installed for the `ripr` run below.
+    let shim_dir = unique_temp_workspace("check-json-timeout-shim");
+    std::fs::create_dir_all(&shim_dir).map_err(|err| format!("create shim dir: {err}"))?;
+    let shim = shim_dir.join("git");
+    std::fs::write(&shim, "#!/bin/sh\nexec sleep 60\n")
+        .map_err(|err| format!("write git shim: {err}"))?;
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&shim, std::fs::Permissions::from_mode(0o755))
+            .map_err(|err| format!("make git shim executable: {err}"))?;
+    }
+    let mut paths = vec![shim_dir.clone()];
+    paths.extend(std::env::split_paths(
+        &std::env::var_os("PATH").unwrap_or_default(),
+    ));
+    let search_path = std::env::join_paths(paths)
+        .map_err(|err| format!("build shim PATH: {err}"))?
+        .to_string_lossy()
+        .into_owned();
+
+    let started = std::time::Instant::now();
+    let output = run_command_with_env(
+        env!("CARGO_BIN_EXE_ripr"),
+        &root,
+        &[
+            "check",
+            "--json",
+            "--root",
+            root_arg.as_str(),
+            "--base",
+            "HEAD",
+            "--git-timeout",
+            "1",
+        ],
+        &[("PATH", search_path.as_str())],
+    )
+    .map_err(|err| format!("run check with hanging git: {err}"))?;
+    let elapsed = started.elapsed();
+    let timeout_value =
+        assert_check_json_refusal(&output, "git_invocation_timeout", "analysis/git-timeout")?;
+    assert!(
+        elapsed < std::time::Duration::from_secs(45),
+        "check waited {elapsed:?} on hung git under --git-timeout 1"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if !stderr.contains("git_invocation_timeout") {
+        return Err(format!("stderr must keep the timeout prose: {stderr}"));
+    }
+
+    // Control on the same repo with a working git: the bad base names its
+    // own family, distinct from the timeout above.
+    let output = run_ripr(&[
+        "check",
+        "--json",
+        "--root",
+        &root_arg,
+        "--base",
+        "definitely-not-a-real-ref-9f2a-6834",
+    ]);
+    let base_value =
+        assert_check_json_refusal(&output, "base_unresolvable", "analysis/base-resolution")?;
+    let timeout_identity = timeout_value["analysis_scope"]["run_status"]
+        .as_str()
+        .ok_or("timeout refusal must name its identity")?;
+    let base_identity = base_value["analysis_scope"]["run_status"]
+        .as_str()
+        .ok_or("base refusal must name its identity")?;
+    if timeout_identity == base_identity {
+        return Err(format!(
+            "timeout and bad base must have distinct identities, got {timeout_identity}"
+        ));
+    }
+    ignore_remove_dir_all(&root);
+    ignore_remove_dir_all(&shim_dir);
+    Ok(())
+}
+
+/// #6956: a `git` shim that hangs on every invocation, first on `PATH`.
+/// Fixture setup with real git must finish before installing the override.
+/// Returns the shim dir (for cleanup) and the search path for the run.
+#[cfg(unix)]
+fn hanging_git_path_override(label: &str) -> Result<(PathBuf, String), String> {
+    let shim_dir = unique_temp_workspace(label);
+    std::fs::create_dir_all(&shim_dir).map_err(|err| format!("create shim dir: {err}"))?;
+    let shim = shim_dir.join("git");
+    std::fs::write(&shim, "#!/bin/sh\nexec sleep 60\n")
+        .map_err(|err| format!("write git shim: {err}"))?;
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&shim, std::fs::Permissions::from_mode(0o755))
+            .map_err(|err| format!("make git shim executable: {err}"))?;
+    }
+    let mut paths = vec![shim_dir.clone()];
+    paths.extend(std::env::split_paths(
+        &std::env::var_os("PATH").unwrap_or_default(),
+    ));
+    let search_path = std::env::join_paths(paths)
+        .map_err(|err| format!("build shim PATH: {err}"))?
+        .to_string_lossy()
+        .into_owned();
+    Ok((shim_dir, search_path))
+}
+
+/// #6956: with no `--base`, a stalled default-base probe is a timeout,
+/// not a missing ref: the refusal names `git_invocation_timeout` while
+/// stderr keeps the timeout diagnostic.
+#[cfg(unix)]
+#[test]
+fn check_json_omitted_base_git_timeout_names_timeout_identity() -> Result<(), String> {
+    let root = init_check_refusal_repo("check-json-omitted-base-timeout", 1)?;
+    let root_arg = root.display().to_string();
+    let (shim_dir, search_path) =
+        hanging_git_path_override("check-json-omitted-base-timeout-shim")?;
+
+    let started = std::time::Instant::now();
+    let output = run_command_with_env(
+        env!("CARGO_BIN_EXE_ripr"),
+        &root,
+        &[
+            "check",
+            "--json",
+            "--root",
+            root_arg.as_str(),
+            "--worktree",
+            "--git-timeout",
+            "1",
+        ],
+        &[("PATH", search_path.as_str())],
+    )
+    .map_err(|err| format!("run check with hanging git: {err}"))?;
+    let elapsed = started.elapsed();
+    let value =
+        assert_check_json_refusal(&output, "git_invocation_timeout", "analysis/git-timeout")?;
+    assert!(
+        elapsed < std::time::Duration::from_mins(1),
+        "check waited {elapsed:?} on hung git under --git-timeout 1"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if !stderr.contains("git_invocation_timeout") {
+        return Err(format!("stderr must keep the timeout prose: {stderr}"));
+    }
+    let message = value["run_limitations"][0]["message"]
+        .as_str()
+        .ok_or("refusal must carry a message")?;
+    if !message.contains("git_invocation_timeout") {
+        return Err(format!(
+            "the envelope message must echo the timeout diagnostic: {message}"
+        ));
+    }
+    ignore_remove_dir_all(&root);
+    ignore_remove_dir_all(&shim_dir);
+    Ok(())
+}
+
+/// #6956: a stalled candidate-tree config read is a timeout, not a broken
+/// config file: the refusal names `git_invocation_timeout` while stderr
+/// keeps the timeout diagnostic. The read honors the caller's
+/// `--git-timeout`, so a 1s deadline both keeps this test fast and proves
+/// the knob reaches the read (the old fixed 30s read would report
+/// `30000ms` here instead of `1000ms`).
+#[cfg(unix)]
+#[test]
+fn check_json_bound_subject_config_timeout_names_timeout_identity() -> Result<(), String> {
+    use common::fixture_git::fixture_git_output;
+    let root = init_check_refusal_repo("check-json-subject-config-timeout", 1)?;
+    let root_arg = root.display().to_string();
+    let tree = fixture_git_output(&root, &["rev-parse", "HEAD^{tree}"])?;
+    let tree = tree.trim().to_string();
+    let (shim_dir, search_path) =
+        hanging_git_path_override("check-json-subject-config-timeout-shim")?;
+
+    let started = std::time::Instant::now();
+    let output = run_command_with_env(
+        env!("CARGO_BIN_EXE_ripr"),
+        &root,
+        &[
+            "check",
+            "--json",
+            "--root",
+            root_arg.as_str(),
+            "--candidate-tree",
+            tree.as_str(),
+            "--candidate-base",
+            "HEAD",
+            "--git-timeout",
+            "1",
+        ],
+        &[("PATH", search_path.as_str())],
+    )
+    .map_err(|err| format!("run check with hanging git: {err}"))?;
+    let elapsed = started.elapsed();
+    let value =
+        assert_check_json_refusal(&output, "git_invocation_timeout", "analysis/git-timeout")?;
+    assert!(
+        elapsed < std::time::Duration::from_mins(1),
+        "check waited {elapsed:?} on hung git for the candidate config read"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if !stderr.contains("git_invocation_timeout") {
+        return Err(format!("stderr must keep the timeout prose: {stderr}"));
+    }
+    let message = value["run_limitations"][0]["message"]
+        .as_str()
+        .ok_or("refusal must carry a message")?;
+    if !message.contains("git_invocation_timeout") {
+        return Err(format!(
+            "the envelope message must echo the timeout diagnostic: {message}"
+        ));
+    }
+    if !message.contains("1000ms") {
+        return Err(format!(
+            "the timeout must name the caller-supplied 1s deadline, got: {message}"
+        ));
+    }
+    ignore_remove_dir_all(&root);
+    ignore_remove_dir_all(&shim_dir);
+    Ok(())
+}
+
+/// #6834: the success path carries no refusal shape — no `analysis_scope`
+/// or `run_limitations` keys — so the envelope cannot be mistaken for a
+/// result and no success field moved. Byte-identity against the base
+/// binary is demonstrated in the PR evidence.
+#[test]
+fn check_json_success_carries_no_refusal_shape() -> Result<(), String> {
+    let root = workspace_root().display().to_string();
+    let diff = sample_diff().display().to_string();
+    let output = run_ripr(&["check", "--root", &root, "--diff", &diff, "--json"]);
+    assert_success(&output);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let value: serde_json::Value = serde_json::from_str(&stdout)
+        .map_err(|err| format!("success stdout should parse as JSON: {err}\n{stdout}"))?;
+    if value.get("analysis_scope").is_some() {
+        return Err(format!(
+            "success output must not carry analysis_scope: {value}"
+        ));
+    }
+    if value.get("run_limitations").is_some() {
+        return Err(format!(
+            "success output must not carry run_limitations: {value}"
+        ));
+    }
+    if value["schema_version"] != "0.2" {
+        return Err(format!("success schema_version must stay 0.2: {value}"));
+    }
+    if value["findings"].as_array().is_none() {
+        return Err(format!("success output must carry findings: {value}"));
+    }
     Ok(())
 }
 
@@ -3489,20 +4075,15 @@ fn first_pr_check_missing_packet_suggests_rooted_out_dir() -> Result<(), Box<dyn
 }
 
 /// The write command a `first-pr --check` missing-packet recovery suggests,
-/// as arguments after `ripr` (each shell word decoded; the fixture paths have
-/// no spaces).
+/// as arguments after `ripr`, split the way the shell would so a quoted
+/// checkout path with spaces stays one argument (#6762).
 fn suggested_first_pr_write(stderr: &str) -> Result<Vec<String>, String> {
     let line = stderr
         .split("Create and validate it with:\n")
         .nth(1)
         .and_then(|rest| rest.lines().next())
         .ok_or_else(|| format!("no suggested write command:\n{stderr}"))?;
-    let mut args = line
-        .split_whitespace()
-        .map(|arg| {
-            decode_shell_token(arg).ok_or_else(|| format!("malformed shell word `{arg}`: {line}"))
-        })
-        .collect::<Result<Vec<_>, _>>()?;
+    let mut args = shell_words::posix_words(line)?;
     if args.first().map(String::as_str) != Some("ripr") {
         return Err(format!("suggested command is not a ripr command: {line}"));
     }
@@ -4157,17 +4738,19 @@ fn agent_card_identity_is_portable_across_equivalent_checkout_roots()
     Ok(())
 }
 
-/// A statically admitted inline test is not an executable repair surface.
-/// The default card must disclose the same refusal as the Before phase,
-/// while a separate test file remains ready and can publish an attempt.
+/// The card's readiness agrees with the Before phase for every target shape:
+/// a separate test file and one governed inline `#[cfg(test)]` module are
+/// ready and publish an attempt (#5210), while a file with two candidate
+/// inline test modules stays an ambiguous edit target and the card discloses
+/// the same refusal as the Before phase.
 #[test]
 fn agent_card_readiness_agrees_with_repair_target_admission()
 -> Result<(), Box<dyn std::error::Error>> {
-    for inline in [true, false] {
-        let root = unbuilt_repair_fixture(if inline {
-            "agent-card-inline-admission"
-        } else {
-            "agent-card-separate-admission"
+    for (inline, ambiguous) in [(true, false), (true, true), (false, false)] {
+        let root = unbuilt_repair_fixture(match (inline, ambiguous) {
+            (true, false) => "agent-card-inline-admission",
+            (true, true) => "agent-card-ambiguous-inline-admission",
+            _ => "agent-card-separate-admission",
         })?;
         if inline {
             let tests = std::fs::read_to_string(root.join("tests/pricing.rs"))?.replace(
@@ -4176,6 +4759,11 @@ fn agent_card_readiness_agrees_with_repair_target_admission()
             );
             let mut source = std::fs::read_to_string(root.join("src/lib.rs"))?;
             source.push_str(&format!("\n#[cfg(test)]\nmod tests {{\n{tests}\n}}\n"));
+            if ambiguous {
+                source.push_str(
+                    "\n#[cfg(test)]\nmod more_tests {\n    #[test]\n    fn smoke() {\n        assert_eq!(1 + 1, 2);\n    }\n}\n",
+                );
+            }
             std::fs::write(root.join("src/lib.rs"), source)?;
             std::fs::remove_file(root.join("tests/pricing.rs"))?;
             run_git(&root, &["add", "src/lib.rs", "tests/pricing.rs"])?;
@@ -4203,9 +4791,9 @@ fn agent_card_readiness_agrees_with_repair_target_admission()
                 "tests/pricing.rs"
             }
         );
-        assert_eq!(card["readiness"]["repair_ready"], !inline, "{card:#}");
+        assert_eq!(card["readiness"]["repair_ready"], !ambiguous, "{card:#}");
         let before = run_repair_phase(&root, &["--seam-id", BOUNDARY_GAP_SEAM_ID], "before")?;
-        if inline {
+        if ambiguous {
             assert_failure(&before);
             let blocker = card["exact_blocker"]
                 .as_str()
@@ -4240,7 +4828,11 @@ fn agent_card_readiness_agrees_with_repair_target_admission()
             assert_success(&before);
             assert_eq!(
                 card["allowed_files"],
-                serde_json::json!(["tests/pricing.rs"])
+                serde_json::json!([if inline {
+                    "src/lib.rs"
+                } else {
+                    "tests/pricing.rs"
+                }])
             );
             assert_eq!(card["readiness"]["missing_evidence"], serde_json::json!([]));
             let (attempt_id, manifest) = sole_repair_attempt(&root)?;
@@ -5731,11 +6323,12 @@ fn agent_repair_phases_materialize_snapshots_and_verify_json()
     // bug. This driver adds --json because the assertions below read the
     // after phase's result document from stdout; the seam-selected after
     // phase stays covered by the replay and receipt checks below.
-    let mut next_args: Vec<&str> = next_command
-        .strip_prefix("ripr ")
-        .ok_or_else(|| format!("next command is not a ripr command: {next_command}"))?
-        .split_whitespace()
-        .collect();
+    let next_words = shell_words::posix_words(
+        next_command
+            .strip_prefix("ripr ")
+            .ok_or_else(|| format!("next command is not a ripr command: {next_command}"))?,
+    )?;
+    let mut next_args: Vec<&str> = next_words.iter().map(String::as_str).collect();
     next_args.push("--json");
     let after = run_ripr(&next_args);
     assert_success(&after);
@@ -6852,14 +7445,25 @@ fn repo_scope_formats_reject_unresolvable_base_and_missing_diff()
     Ok(())
 }
 
-/// F15-12: a seam whose only related test lives inline in another crate has
-/// no test file the repair can edit. The before phase refuses before it
-/// writes any workflow artifact and never prints a completion line first, so
-/// neither the phase nor a later `agent status` reads as a started repair.
+/// F15-12: a seam whose only related tests live inline in a crate file with
+/// two candidate `#[cfg(test)]` modules has no test target the repair can
+/// edit. The before phase refuses before it writes any workflow artifact and
+/// never prints a completion line first, so neither the phase nor a later
+/// `agent status` reads as a started repair. With one governed inline module
+/// the same seam starts an attempt confined to that module (#5210).
 #[test]
 fn agent_repair_before_refuses_a_seam_without_a_test_file_before_writing_anything()
 -> Result<(), Box<dyn std::error::Error>> {
-    let root = unique_temp_workspace("agent-repair-no-test-target");
+    agent_repair_before_inline_only_seam(true)?;
+    agent_repair_before_inline_only_seam(false)
+}
+
+fn agent_repair_before_inline_only_seam(ambiguous: bool) -> Result<(), Box<dyn std::error::Error>> {
+    let root = unique_temp_workspace(if ambiguous {
+        "agent-repair-no-test-target"
+    } else {
+        "agent-repair-inline-test-target"
+    });
     std::fs::create_dir_all(root.join("crates/rates/src"))?;
     std::fs::write(
         root.join("Cargo.toml"),
@@ -6871,7 +7475,14 @@ fn agent_repair_before_refuses_a_seam_without_a_test_file_before_writing_anythin
     )?;
     std::fs::write(
         root.join("crates/rates/src/lib.rs"),
-        "/// Tax in basis points for the given region code.\npub fn tax_bps(region: &str) -> u32 {\n    match region {\n        \"EU\" => 2000,\n        _ => 0,\n    }\n}\n\n/// Orders at or above this many items ship free.\npub fn ships_free(items: u32) -> bool {\n    items >= 10\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    #[test]\n    fn eu_tax() {\n        assert_eq!(tax_bps(\"EU\"), 2000);\n    }\n}\n",
+        format!(
+            "/// Tax in basis points for the given region code.\npub fn tax_bps(region: &str) -> u32 {{\n    match region {{\n        \"EU\" => 2000,\n        _ => 0,\n    }}\n}}\n\n/// Orders at or above this many items ship free.\npub fn ships_free(items: u32) -> bool {{\n    items >= 10\n}}\n\n#[cfg(test)]\nmod tests {{\n    use super::*;\n\n    #[test]\n    fn eu_tax() {{\n        assert_eq!(tax_bps(\"EU\"), 2000);\n    }}\n\n    #[test]\n    fn large_order_ships_free() {{\n        assert!(ships_free(20));\n    }}\n}}\n{}",
+            if ambiguous {
+                "\n#[cfg(test)]\nmod more_tests {\n    #[test]\n    fn smoke() {\n        assert_eq!(1 + 1, 2);\n    }\n}\n"
+            } else {
+                ""
+            }
+        ),
     )?;
     std::fs::write(root.join(".gitignore"), "/target\n")?;
     run_git(&root, &["init", "-q"])?;
@@ -6900,10 +7511,26 @@ fn agent_repair_before_refuses_a_seam_without_a_test_file_before_writing_anythin
         .as_str()
         .ok_or("seam has no id")?
         .to_string();
-    // Fixture construction: the seam's only related test is the inline one.
+    // Fixture construction: the seam's related tests are inline, and a
+    // weak `assert!(ships_free(20))` keeps the route ready (a seam with no
+    // calling test reads `activation_unknown`, which no repair targets).
     assert_eq!(seam["related_tests"][0]["file"], "crates/rates/src/lib.rs");
+    assert_eq!(seam["grip_class"], "weakly_gripped", "{seam:#}");
 
     let before = run_repair_phase(&root, &["--seam-id", &seam_id], "before")?;
+    if !ambiguous {
+        assert_success(&before);
+        let before: serde_json::Value = serde_json::from_slice(&before.stdout)?;
+        assert_eq!(
+            before["packets"][0]["allowed_edit_surface"],
+            serde_json::json!(["crates/rates/src/lib.rs"]),
+            "{before:#}"
+        );
+        let (_attempt_id, manifest) = sole_repair_attempt(&root)?;
+        assert_eq!(manifest["state"], "awaiting_edit");
+        std::fs::remove_dir_all(root)?;
+        return Ok(());
+    }
     assert_failure(&before);
     let stderr = String::from_utf8_lossy(&before.stderr);
     assert!(
@@ -10105,7 +10732,7 @@ fn doctor_json_reports_current_schema() -> Result<(), String> {
 
     let report: serde_json::Value = serde_json::from_slice(&output.stdout)
         .map_err(|err| format!("doctor JSON did not parse: {err}"))?;
-    assert_eq!(report["schema_version"], "0.3");
+    assert_eq!(report["schema_version"], "0.4");
     assert_eq!(report["tool"], "ripr");
     assert_eq!(report["profile"], "analysis");
     assert_eq!(report["ripr_version"], env!("CARGO_PKG_VERSION"));
@@ -10114,7 +10741,504 @@ fn doctor_json_reports_current_schema() -> Result<(), String> {
         report["runtime_probes"].is_array(),
         "doctor JSON must expose typed runtime probe results: {report}"
     );
+    // #5214: schema 0.3 published a `sections` array that could never carry
+    // content, because its only mutator and only reader were `#[cfg(test)]`.
+    // It is gone rather than permanently empty.
+    assert!(
+        report.get("sections").is_none(),
+        "a dead sections array must not stay in the released document: {report}"
+    );
     std::fs::remove_dir_all(workspace).map_err(|err| format!("remove workspace: {err}"))?;
+    Ok(())
+}
+
+/// A workspace that makes the human doctor screen print every environment fact
+/// #5214 types: detected languages, an unanalyzed language, a detected-but-
+/// disabled preview language, cache state, detected test surfaces, and the Perl
+/// preview. `ripr.toml` exists and enables only Rust, so Python stays detected
+/// and disabled instead of being auto-enabled by the no-config default path.
+/// It also configures `[profiles.bun_ub]` with a custom bridge-hints path, so
+/// the parity assertions cover the profile facts on both surfaces.
+/// Git-initialized so the core checks decide the exit status, not the fixture
+/// location.
+fn doctor_environment_fact_root(label: &str) -> Result<PathBuf, String> {
+    let root = unique_temp_workspace(label);
+    for dir in ["src", "lib", "t"] {
+        std::fs::create_dir_all(root.join(dir)).map_err(|err| format!("create {dir}: {err}"))?;
+    }
+    for (path, text) in [
+        (
+            "Cargo.toml",
+            "[package]\nname = \"doctor-json-parity\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+        ),
+        ("src/lib.rs", "pub fn placeholder() {}\n"),
+        (
+            "ripr.toml",
+            "[languages]\nenabled = [\"rust\"]\n[profiles.bun_ub]\ntest_roots = [\"bun-tests\"]\nbridge_hints = \"custom/bridge-hints.toml\"\n",
+        ),
+        (
+            "pyproject.toml",
+            "[project]\nname = \"fixture\"\nversion = \"0.1.0\"\n",
+        ),
+        ("calc.py", "def add(a, b):\n    return a + b\n"),
+        (
+            "Makefile.PL",
+            "use ExtUtils::MakeMaker;\nWriteMakefile(NAME => 'Pricing');\n",
+        ),
+        (
+            "lib/Pricing.pm",
+            "package Pricing;\nsub discount { return 0; }\n1;\n",
+        ),
+        (
+            "t/pricing.t",
+            "use Test::More;\nok(1, 'placeholder');\ndone_testing();\n",
+        ),
+        ("tool.go", "package main\n\nfunc main() {}\n"),
+    ] {
+        std::fs::write(root.join(path), text).map_err(|err| format!("write {path}: {err}"))?;
+    }
+    run_git(&root, &["init"])?;
+    Ok(root)
+}
+
+fn doctor_json_for(root: &Path) -> Result<serde_json::Value, String> {
+    let root_arg = root.display().to_string();
+    let output = run_ripr(&["doctor", "--root", &root_arg, "--json"]);
+    serde_json::from_slice(&output.stdout).map_err(|err| {
+        format!(
+            "doctor JSON did not parse: {err}\n{}",
+            String::from_utf8_lossy(&output.stdout)
+        )
+    })
+}
+
+fn doctor_human_stdout(root: &Path) -> Result<String, String> {
+    let root_arg = root.display().to_string();
+    let output = run_ripr(&["doctor", "--root", &root_arg]);
+    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
+fn json_array<'a>(
+    report: &'a serde_json::Value,
+    key: &str,
+) -> Result<&'a [serde_json::Value], String> {
+    report[key]
+        .as_array()
+        .map(Vec::as_slice)
+        .ok_or_else(|| format!("`{key}` must be an array in the doctor report: {report}"))
+}
+
+/// #5214 acceptance 2 — coverage, not presence. For one root where the human
+/// screen prints each fact, every corresponding typed JSON field must be
+/// present and non-empty, and must name the same value the screen printed.
+/// Dropping a fact from either surface makes this red.
+#[test]
+fn doctor_json_carries_every_environment_fact_the_human_screen_prints() -> Result<(), String> {
+    let root = doctor_environment_fact_root("doctor-json-parity")?;
+    let human = doctor_human_stdout(&root)?;
+    let report = doctor_json_for(&root)?;
+    let outcome = (|| -> Result<(), String> {
+        // Detected languages, with the tier the screen prints in parentheses.
+        let detected = json_array(&report, "detected_languages")?;
+        let rust = detected
+            .iter()
+            .find(|entry| entry["language"] == "rust")
+            .ok_or_else(|| format!("detected_languages must name rust: {detected:?}"))?;
+        if rust["status"] != "stable" {
+            return Err(format!("rust must carry its tier: {rust}"));
+        }
+        assert!(
+            human.contains("- Detected languages: rust (stable)"),
+            "the screen must print the detected tier: {human}"
+        );
+        let python = detected
+            .iter()
+            .find(|entry| entry["language"] == "python")
+            .ok_or_else(|| format!("detected_languages must name python: {detected:?}"))?;
+        if python["status"] != "preview" {
+            return Err(format!("python must carry its tier: {python}"));
+        }
+        assert!(
+            human.contains("python (preview)"),
+            "the screen must print python as a preview: {human}"
+        );
+        // Unanalyzed source languages.
+        let unanalyzed = json_array(&report, "unanalyzed_source_languages")?;
+        let go = unanalyzed
+            .iter()
+            .find(|entry| entry["language"] == "Go")
+            .ok_or_else(|| format!("unanalyzed_source_languages must name Go: {unanalyzed:?}"))?;
+        let count = go["file_count"].as_u64().unwrap_or(0);
+        if count < 1 {
+            return Err(format!("Go must carry its file count: {go}"));
+        }
+        assert!(
+            human.contains(&format!("~ Unanalyzed languages: Go ({count} file(s))")),
+            "the screen must print the same Go count the JSON carries: {human}"
+        );
+        // Preview enablement gap. A gap is suggested only for a preview
+        // language whose adapter is compiled in: telling a rust-only binary's
+        // user to enable python would mislead, since nothing could analyze
+        // it. Parity therefore means presence in python builds and agreed
+        // absence otherwise.
+        if cfg!(feature = "lang-python") {
+            let gaps = json_array(&report, "preview_language_gaps")?;
+            let gap = gaps
+                .iter()
+                .find(|entry| entry["config_entry"] == "python")
+                .ok_or_else(|| format!("preview_language_gaps must name python: {gaps:?}"))?;
+            if gap["detected_language"] != "python" {
+                return Err(format!("the gap must name its detected source: {gap}"));
+            }
+            assert!(
+                human.contains("- Tip: python files detected but not enabled"),
+                "the screen must print the enablement tip: {human}"
+            );
+        } else {
+            assert!(
+                report
+                    .get("preview_language_gaps")
+                    .is_none_or(serde_json::Value::is_null),
+                "without the python adapter no gap may be suggested: {report}"
+            );
+            assert!(
+                !human.contains("files detected but not enabled"),
+                "without the python adapter no enablement tip may print: {human}"
+            );
+        }
+        // Cache state.
+        let cache = &report["cache"];
+        let cache_dir = cache["cache_dir"].as_str().unwrap_or_default();
+        if !cache_dir.ends_with("target/ripr/cache") {
+            return Err(format!("cache_dir must name the workspace cache: {cache}"));
+        }
+        if cache["size_bytes"].as_u64().is_none() {
+            return Err(format!("cache must carry a numeric size: {cache}"));
+        }
+        assert!(
+            human.contains(&format!("- Cache location: {cache_dir}")),
+            "the screen must print the same cache directory: {human}"
+        );
+        assert!(
+            human.contains(&format!(
+                "- Cache size: {}",
+                cache["size_display"].as_str().unwrap_or_default()
+            )),
+            "the screen must print the same cache size: {human}"
+        );
+        // Detected test surfaces.
+        let surfaces = json_array(&report, "test_surfaces")?;
+        let rust_surface = surfaces
+            .iter()
+            .find(|surface| surface["language"] == "rust")
+            .ok_or_else(|| format!("test_surfaces must carry the rust surface: {surfaces:?}"))?;
+        if rust_surface["framework"] != "cargo test" {
+            return Err(format!(
+                "the rust surface must type its framework: {rust_surface}"
+            ));
+        }
+        let rendered = surfaces
+            .iter()
+            .map(|surface| surface["evidence"].as_str().unwrap_or_default())
+            .collect::<Vec<_>>()
+            .join("; ");
+        assert!(
+            !rendered.is_empty()
+                && human.contains(&format!("- Detected test surfaces: {rendered}")),
+            "the screen must print exactly the JSON evidence fragments: {human}"
+        );
+        // Perl preview / exporter state.
+        let preview = &report["perl_preview"];
+        if preview.is_null() {
+            return Err(format!("a Perl root must carry perl_preview: {report}"));
+        }
+        if preview["pm_files"].as_u64() != Some(1) || preview["t_files"].as_u64() != Some(1) {
+            return Err(format!(
+                "perl_preview must carry the real file counts: {preview}"
+            ));
+        }
+        if preview["expected_schema"] != "ripr-perl-facts-v1" {
+            return Err(format!(
+                "perl_preview must carry the packet schema it consumes: {preview}"
+            ));
+        }
+        let state = preview["exporter"]["state"].as_str().unwrap_or_default();
+        if !matches!(state, "compatible" | "incompatible" | "not_found") {
+            return Err(format!(
+                "exporter state must be typed, not free text: {preview}"
+            ));
+        }
+        assert!(
+            human.contains("- Perl preview:")
+                && human.contains(&format!(
+                    "  project: {} .pm, {} .pl, {} .t",
+                    preview["pm_files"], preview["pl_files"], preview["t_files"]
+                ))
+                && human.contains(&format!(
+                    "  schema: {} expected",
+                    preview["expected_schema"].as_str().unwrap_or_default()
+                )),
+            "the screen must print the counts and schema the JSON carries: {human}"
+        );
+        // Exact block shape, heading flush and body indented by two. The
+        // refactor that produced the typed preview briefly indented the
+        // heading too, and only this assertion caught it.
+        assert!(
+            human.contains(&format!(
+                "- Perl preview:\n  project: {} .pm, {} .pl, {} .t\n",
+                preview["pm_files"], preview["pl_files"], preview["t_files"]
+            )),
+            "the Perl preview block shape must not drift: {human}"
+        );
+        assert!(
+            human.contains(&format!("  test roots: {}", human_test_roots(preview))),
+            "the screen must print the test roots the JSON carries: {human}"
+        );
+        assert!(
+            human.contains(&format!(
+                "  frameworks: {}",
+                human_perl_list(&preview["frameworks"], "none detected")
+            )),
+            "the screen must print the frameworks the JSON carries: {human}"
+        );
+        assert!(
+            human.contains(&format!(
+                "  runners: {}",
+                human_perl_list(&preview["runners"], "none found on PATH")
+            )),
+            "the screen must print the runners the JSON carries: {human}"
+        );
+        assert!(
+            human.contains(&format!(
+                "  next: {}",
+                preview["next_command"].as_str().unwrap_or_default()
+            )),
+            "the screen must print the next command the JSON carries: {human}"
+        );
+        // Effective configuration defaults.
+        let defaults = &report["config_defaults"];
+        if defaults.is_null() {
+            return Err(format!(
+                "a loadable config must carry config_defaults: {report}"
+            ));
+        }
+        assert!(
+            human.contains(&format!(
+                "- Analysis mode default: {}",
+                defaults["analysis_mode"].as_str().unwrap_or_default()
+            )) && human.contains(&format!(
+                "- LSP seam diagnostics default: {}",
+                defaults["lsp_seam_diagnostics"]
+            )) && human.contains(&format!(
+                "- Suppressions path: {}",
+                defaults["suppressions_path"].as_str().unwrap_or_default()
+            )),
+            "the screen must print the config defaults the JSON carries: {human}"
+        );
+        // Bun UB profile facts, including the custom bridge-hints path: the
+        // screen and the JSON must carry the same actionable values (#5283).
+        if defaults["bun_ub_profile_configured"] != true {
+            return Err(format!(
+                "the fixture profile must read as configured: {defaults}"
+            ));
+        }
+        let roots = defaults["bun_ub_test_roots"]
+            .as_array()
+            .map(|entries| {
+                entries
+                    .iter()
+                    .map(|value| value.as_str().unwrap_or_default().to_string())
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        if roots != vec!["bun-tests".to_string()] {
+            return Err(format!(
+                "the JSON must carry the fixture test roots: {defaults}"
+            ));
+        }
+        let hints = defaults["bun_ub_bridge_hints"].as_str().unwrap_or_default();
+        if hints != "custom/bridge-hints.toml" {
+            return Err(format!(
+                "the JSON must carry the custom bridge-hints path: {defaults}"
+            ));
+        }
+        assert!(
+            human.contains("- Bun UB profile: configured (preview advisory only)")
+                && human.contains("- Bun UB test roots: bun-tests")
+                && human.contains(&format!("- Bun UB bridge hints: {hints}")),
+            "the screen must print the profile facts the JSON carries: {human}"
+        );
+        Ok(())
+    })();
+    let human_status = run_ripr(&["doctor", "--root", &root.display().to_string()]).status;
+    let json_status = run_ripr(&["doctor", "--root", &root.display().to_string(), "--json"]).status;
+    ignore_remove_dir_all(&root);
+    outcome?;
+    // #5214 acceptance 7: the two surfaces answer with the same status for the
+    // same root. The value itself is #5102's contract, not this issue's.
+    assert_eq!(
+        human_status.code(),
+        json_status.code(),
+        "doctor and doctor --json must share one exit status for one root"
+    );
+    Ok(())
+}
+
+fn human_test_roots(preview: &serde_json::Value) -> String {
+    let roots = preview["test_roots"]
+        .as_array()
+        .map(|entries| {
+            entries
+                .iter()
+                .map(|value| value.as_str().unwrap_or_default().to_string())
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    match roots.as_slice() {
+        [] => "none detected".to_string(),
+        [only] => format!("{only} detected"),
+        [first, .., last] => format!("{first} and {last} detected"),
+    }
+}
+
+fn human_perl_list(values: &serde_json::Value, empty: &str) -> String {
+    let entries = values.as_array().cloned().unwrap_or_default();
+    if entries.is_empty() {
+        return empty.to_string();
+    }
+    entries
+        .iter()
+        .map(|value| value.as_str().unwrap_or_default())
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// #5214 acceptance 1's live correctness trap. `languages` is what `ripr.toml`
+/// enables; `detected_languages` is what the root contains. A repo with a
+/// `pyproject.toml` and no Python in `[languages] enabled` must let a consumer
+/// see that Python was detected and never enabled, rather than reading a
+/// plausible `languages` array and concluding Python is analyzed.
+#[test]
+fn doctor_json_separates_detected_languages_from_enabled_languages() -> Result<(), String> {
+    let root = doctor_environment_fact_root("doctor-json-detected-vs-enabled")?;
+    let report = doctor_json_for(&root)?;
+    ignore_remove_dir_all(&root);
+
+    let enabled = json_array(&report, "languages")?
+        .iter()
+        .map(|value| value.as_str().unwrap_or_default().to_string())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        enabled,
+        vec!["rust".to_string()],
+        "the enabled set must stay the configured one: {report}"
+    );
+
+    let detected = json_array(&report, "detected_languages")?;
+    let python = detected
+        .iter()
+        .find(|entry| entry["language"] == "python")
+        .ok_or_else(|| format!("python must be reported as detected: {detected:?}"))?;
+    assert_eq!(
+        python["enabled"], false,
+        "a detected language must carry whether the config enables it: {python}"
+    );
+    // The conflation this guards: if `detected_languages` echoed the enabled
+    // set, python would read as analyzed.
+    assert!(
+        !enabled.iter().any(|language| language == "python"),
+        "python must not appear in the enabled set for this fixture: {report}"
+    );
+    assert!(
+        detected.iter().any(|entry| entry["language"] == "perl"
+            && entry["status"] == "preview"
+            && entry["enabled"] == false),
+        "a detected preview language must carry its tier and its disabled state: {report}"
+    );
+    Ok(())
+}
+
+/// #5214 acceptance 6 / RIPR-SPEC-0007. A malformed `ripr.toml` must not leak
+/// its source excerpt into any newly typed field, and the document must not
+/// claim a configuration default it never verified.
+#[test]
+fn doctor_json_keeps_config_parse_errors_redacted_in_the_typed_fields() -> Result<(), String> {
+    let root = unique_temp_workspace("doctor-json-redaction");
+    std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+    // Both markers sit on the offending line, because `toml`'s error Display
+    // embeds the source excerpt for the failing line and only that line. A
+    // marker on a later line would sit outside the excerpt and the test would
+    // pass against a leak.
+    std::fs::write(
+        root.join("ripr.toml"),
+        "secret_marker_9f2b = \"do-not-publish\n",
+    )
+    .map_err(|err| format!("write config: {err}"))?;
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"redaction\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )
+    .map_err(|err| format!("write Cargo.toml: {err}"))?;
+
+    let root_arg = root.display().to_string();
+    let output = run_ripr(&["doctor", "--root", &root_arg, "--json"]);
+    let document = String::from_utf8_lossy(&output.stdout).into_owned();
+    ignore_remove_dir_all(&root);
+
+    assert!(
+        !document.contains("secret_marker_9f2b") && !document.contains("do-not-publish"),
+        "ripr.toml source text must never reach the doctor JSON document: {document}"
+    );
+    let report: serde_json::Value = serde_json::from_str(&document)
+        .map_err(|err| format!("doctor JSON did not parse: {err}\n{document}"))?;
+    let config = report["checks"]
+        .as_array()
+        .and_then(|checks| checks.iter().find(|check| check["name"] == "config"))
+        .ok_or_else(|| format!("doctor JSON must report the config check: {report}"))?;
+    assert_eq!(config["status"], "fail");
+    // The environment fields are still computed from the filesystem, so the
+    // leak had every chance to happen and did not.
+    assert!(
+        report["cache"]["cache_dir"].is_string(),
+        "cache facts must still be reported: {report}"
+    );
+    assert!(
+        report["config_defaults"].is_null(),
+        "an unloadable config must not claim verified defaults: {report}"
+    );
+    Ok(())
+}
+
+/// An unloadable `ripr.toml` must not be reported as carrying verified
+/// configuration defaults: the field is `null`, not a guess.
+#[test]
+fn doctor_json_reports_no_config_defaults_for_an_unloadable_config() -> Result<(), String> {
+    let root = unique_temp_workspace("doctor-json-no-defaults");
+    std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+    std::fs::write(root.join("ripr.toml"), "[languages\n")
+        .map_err(|err| format!("write config: {err}"))?;
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"no-defaults\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )
+    .map_err(|err| format!("write Cargo.toml: {err}"))?;
+
+    let report = doctor_json_for(&root)?;
+    ignore_remove_dir_all(&root);
+
+    assert!(
+        report["config_defaults"].is_null(),
+        "an unreadable config must not claim verified defaults: {report}"
+    );
+    let detected = json_array(&report, "detected_languages")?;
+    let rust = detected
+        .iter()
+        .find(|entry| entry["language"] == "rust")
+        .ok_or_else(|| format!("rust must still be reported as detected: {detected:?}"))?;
+    assert!(
+        rust["enabled"].is_null(),
+        "an unreadable config must leave enablement unknown, not disabled: {rust}"
+    );
     Ok(())
 }
 
@@ -12470,14 +13594,19 @@ fn pilot_snapshot_is_the_agent_verify_baseline() -> Result<(), Box<dyn std::erro
     let (check_part, redirect) = after_command
         .split_once(" > ")
         .ok_or_else(|| format!("after command has no redirect: {after_command}"))?;
-    let check_args: Vec<&str> = check_part
-        .strip_prefix("ripr ")
-        .ok_or_else(|| format!("after command is not a ripr command: {after_command}"))?
-        .split_whitespace()
-        .collect();
+    let check_words = shell_words::posix_words(
+        check_part
+            .strip_prefix("ripr ")
+            .ok_or_else(|| format!("after command is not a ripr command: {after_command}"))?,
+    )?;
+    let check_args: Vec<&str> = check_words.iter().map(String::as_str).collect();
     // Pilot anchors the redirect at the resolved root (#3938), so the printed
     // target may be absolute; either way it must land in pilot's own out dir.
-    let redirect_path = std::path::Path::new(redirect.trim().trim_matches('\''));
+    let redirect_words = shell_words::posix_words(redirect)?;
+    let [redirect_word] = redirect_words.as_slice() else {
+        return Err(format!("after command redirect is not one word: {after_command}").into());
+    };
+    let redirect_path = std::path::Path::new(redirect_word);
     let after = if redirect_path.is_absolute() {
         redirect_path.to_path_buf()
     } else {
@@ -12670,7 +13799,7 @@ fn pilot_snapshot_truncated_by_the_seam_budget_is_not_a_verify_baseline()
     let full_total = count(&full);
     assert!(
         summary.contains(&format!(
-            "- Seam limit reached: ranked the first 1 of {full_total} seams;"
+            "- Seam limit reached: ranked 1 of {full_total} seams;"
         )),
         "{summary}"
     );
@@ -12693,7 +13822,7 @@ fn pilot_snapshot_truncated_by_the_seam_budget_is_not_a_verify_baseline()
     let summary = std::fs::read_to_string(root.join("target/ripr/pilot/pilot-summary.md"))?;
     assert!(
         summary.contains(&format!(
-            "- Seam limit reached: ranked the first 1 of {full_total} seams;"
+            "- Seam limit reached: ranked 1 of {full_total} seams;"
         )),
         "{summary}"
     );
@@ -12880,38 +14009,17 @@ fn first_pr_and_gap_ledger_refuse_a_root_that_does_not_exist() -> Result<(), Str
     Ok(())
 }
 
-/// A seam whose only test is an inline `#[cfg(test)]` module gets a focused-test
-/// suggestion but no repair target. The README sends readers to the
-/// `ripr agent repair` command pilot prints, so the terminal must say none is
-/// coming instead of going silent and offering the snapshot choreography as if
-/// it were the repair route.
+/// A seam whose only tests sit in a file with two candidate inline
+/// `#[cfg(test)]` modules gets a focused-test suggestion but no repair target.
+/// The README sends readers to the `ripr agent repair` command pilot prints,
+/// so the terminal must say none is coming instead of going silent and
+/// offering the snapshot choreography as if it were the repair route.
 #[test]
 fn pilot_says_so_when_the_top_seam_has_no_repair_command() -> Result<(), String> {
-    let root = unique_temp_workspace("pilot-no-repair-command");
-    let src = root.join("src");
-    std::fs::create_dir_all(&src).map_err(|e| format!("create src: {e}"))?;
-    std::fs::write(
-        root.join("Cargo.toml"),
-        "[package]\nname = \"demo\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
-    )
-    .map_err(|e| format!("write manifest: {e}"))?;
-    std::fs::write(
-        src.join("lib.rs"),
-        "pub fn price(amount: u32, threshold: u32) -> u32 {\n    if amount >= threshold { amount - 10 } else { amount }\n}\n\n#[cfg(test)]\nmod t {\n    use super::*;\n    #[test]\n    fn below() {\n        assert_eq!(price(1, 100), 1);\n    }\n}\n",
-    )
-    .map_err(|e| format!("write lib: {e}"))?;
-    let out_dir = unique_temp_workspace("pilot-no-repair-command-out");
-    let output = run_ripr(&[
-        "pilot",
-        "--root",
-        &root.display().to_string(),
-        "--out",
-        &out_dir.display().to_string(),
-    ]);
-    assert_success(&output);
-    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-    let _ = std::fs::remove_dir_all(&root);
-    let _ = std::fs::remove_dir_all(&out_dir);
+    let stdout = pilot_inline_only_stdout(
+        "pilot-no-repair-command",
+        "\n#[cfg(test)]\nmod more {\n    #[test]\n    fn smoke() {\n        assert_eq!(1 + 1, 2);\n    }\n}\n",
+    )?;
     assert!(stdout.contains("focused test: add "), "{stdout}");
     assert!(
         stdout.contains("repair this seam: not available for this seam"),
@@ -12926,6 +14034,58 @@ fn pilot_says_so_when_the_top_seam_has_no_repair_command() -> Result<(), String>
         "no repair command may be printed for an ineligible seam:\n{stdout}"
     );
     Ok(())
+}
+
+/// The `cargo new --lib` layout, one governed inline `#[cfg(test)]` module,
+/// gets the repair command, and the next step confines the edit to new test
+/// functions inside that module (#5210).
+#[test]
+fn pilot_prints_a_module_confined_repair_for_one_inline_test_module() -> Result<(), String> {
+    let stdout = pilot_inline_only_stdout("pilot-inline-repair-command", "")?;
+    assert!(stdout.contains("focused test: add "), "{stdout}");
+    assert!(
+        stdout.contains("repair this seam: ripr agent repair --root"),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains(
+            "2. add the focused test named above (new test functions inside `mod t` of src/lib.rs only; production code and existing tests stay unchanged)"
+        ),
+        "{stdout}"
+    );
+    assert!(!stdout.contains("not available for this seam"), "{stdout}");
+    Ok(())
+}
+
+fn pilot_inline_only_stdout(label: &str, extra_source: &str) -> Result<String, String> {
+    let root = unique_temp_workspace(label);
+    let src = root.join("src");
+    std::fs::create_dir_all(&src).map_err(|e| format!("create src: {e}"))?;
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"demo\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    )
+    .map_err(|e| format!("write manifest: {e}"))?;
+    std::fs::write(
+        src.join("lib.rs"),
+        format!(
+            "pub fn price(amount: u32, threshold: u32) -> u32 {{\n    if amount >= threshold {{ amount - 10 }} else {{ amount }}\n}}\n\n#[cfg(test)]\nmod t {{\n    use super::*;\n    #[test]\n    fn below() {{\n        assert_eq!(price(1, 100), 1);\n    }}\n}}\n{extra_source}"
+        ),
+    )
+    .map_err(|e| format!("write lib: {e}"))?;
+    let out_dir = unique_temp_workspace(&format!("{label}-out"));
+    let output = run_ripr(&[
+        "pilot",
+        "--root",
+        &root.display().to_string(),
+        "--out",
+        &out_dir.display().to_string(),
+    ]);
+    assert_success(&output);
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    let _ = std::fs::remove_dir_all(&root);
+    let _ = std::fs::remove_dir_all(&out_dir);
+    Ok(stdout)
 }
 
 #[test]
@@ -13014,13 +14174,14 @@ fn pilot_writes_default_packet_outputs_for_boundary_gap_fixture() -> Result<(), 
         .lines()
         .find_map(|line| line.trim().strip_prefix("repair this seam: "))
         .ok_or_else(|| format!("pilot did not print a repair command:\n{stdout}"))?;
-    let tokens: Vec<&str> = repair_line.split_whitespace().collect();
+    let repair_words = shell_words::posix_words(repair_line)?;
+    let tokens: Vec<&str> = repair_words.iter().map(String::as_str).collect();
     let flag_value = |flag: &str| -> Option<&str> {
         tokens
             .iter()
             .position(|token| *token == flag)
             .and_then(|at| tokens.get(at + 1))
-            .map(|value| value.trim_matches('\''))
+            .copied()
     };
     assert_eq!(
         tokens.first().copied(),
@@ -14648,6 +15809,229 @@ fn pilot_honors_ripr_git_timeout_for_the_current_change() -> Result<(), String> 
 /// recommendation must not read as the next step for that change when it is
 /// a repo-wide seam elsewhere. Drives the real binary through the default
 /// base resolution and both diff routes (uncommitted and committed).
+/// #5309: a change whose only seam pilot withholds must not read as a
+/// change with no seams. With the pilot seam budget at one, the withheld
+/// changed seam is cut from the ranked artifacts, so this also proves the
+/// change's seams are counted before the cut.
+#[test]
+fn pilot_says_it_withholds_the_seam_on_the_current_change() -> Result<(), String> {
+    let lib = "pub fn checkout(total: u32) -> u32 {\n    tier(total) * 10\n}\n\nfn tier(total: u32) -> u32 {\n    if total > 100 { 2 } else { 1 }\n}\n";
+    let root = pilot_language_fixture_repo(
+        "pilot-withheld-current-change",
+        &[
+            (
+                "Cargo.toml",
+                "[package]\nname = \"shop\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+            ),
+            ("src/lib.rs", lib),
+            (
+                "tests/checkout.rs",
+                "#[test]\nfn checkout_large_order() {\n    assert_eq!(shop::checkout(150), 20);\n}\n",
+            ),
+        ],
+        ("src/lib.rs", &lib.replace("total > 100", "total >= 100")),
+    )?;
+    let out_dir = unique_temp_workspace("pilot-withheld-current-change-out");
+    let root_arg = root.display().to_string();
+    let out_arg = out_dir.display().to_string();
+    let output = run_ripr_with_env(
+        &["pilot", "--root", &root_arg, "--out", &out_arg],
+        &[("RIPR_PILOT_SEAM_BUDGET", "1")],
+    );
+    assert_success(&output);
+    let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+    let summary: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(out_dir.join("pilot-summary.json"))
+            .map_err(|err| format!("read pilot summary json: {err}"))?,
+    )
+    .map_err(|err| format!("parse pilot summary json: {err}"))?;
+    // Precondition: the budget cut the withheld seam from the ranked
+    // artifacts, so only a count taken before the cut can see it.
+    assert_eq!(summary["withheld_static_limitations_total"], 0, "{summary}");
+    assert_eq!(summary["current_change"]["state"], "changed", "{summary}");
+    assert_eq!(
+        summary["current_change"]["withheld_seams_in_change"], 1,
+        "{summary}"
+    );
+    assert_eq!(
+        summary["current_change"]["top_recommendation_in_change"], false,
+        "{summary}"
+    );
+    assert!(
+        stdout.contains(
+            "current change: not part of it. Pilot withholds the analyzed seam on a line changed since origin/main: its static evidence is unknown or opaque"
+        ),
+        "{stdout}"
+    );
+    ignore_remove_dir_all(&root);
+    ignore_remove_dir_all(&out_dir);
+    Ok(())
+}
+
+/// #6943: on a repo past the inventory seam limit, the seams on the current
+/// change used to be cut before pilot loaded the change, so change-first
+/// ranking had nothing to rank. With the limit at one, only the first
+/// function's seam survives the inventory; the changed `is_digit` seam must
+/// still be classified, ranked first and counted as analyzed.
+#[test]
+fn pilot_ranks_the_current_change_past_the_inventory_seam_limit() -> Result<(), String> {
+    let lib = "pub fn discounted(amount: u32) -> u32 {\n    if amount > 100 { amount - 10 } else { amount }\n}\n\npub fn is_digit(byte: u8) -> bool {\n    byte >= b'0' && byte <= b'9'\n}\n\npub fn is_large(amount: u32) -> bool {\n    amount > 1000\n}\n";
+    let root = pilot_language_fixture_repo(
+        "pilot-change-past-seam-limit",
+        &[
+            (
+                "Cargo.toml",
+                "[package]\nname = \"two_fns\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+            ),
+            ("src/lib.rs", lib),
+            (
+                "tests/pricing.rs",
+                "use two_fns::discounted;\n\n#[test]\nfn big_orders_get_a_discount() {\n    assert_eq!(discounted(200), 190);\n}\n",
+            ),
+        ],
+        ("src/lib.rs", &lib.replace("byte <= b'9'", "byte < b'9'")),
+    )?;
+    let out_dir = unique_temp_workspace("pilot-change-past-seam-limit-out");
+    let root_arg = root.display().to_string();
+    let out_arg = out_dir.display().to_string();
+    let output = run_ripr_with_env(
+        &["pilot", "--root", &root_arg, "--out", &out_arg],
+        &[("RIPR_REPO_EXPOSURE_SEAM_LIMIT", "1")],
+    );
+    assert_success(&output);
+    let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+    let summary: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(out_dir.join("pilot-summary.json"))
+            .map_err(|err| format!("read pilot summary json: {err}"))?,
+    )
+    .map_err(|err| format!("parse pilot summary json: {err}"))?;
+    let md = std::fs::read_to_string(out_dir.join("pilot-summary.md"))
+        .map_err(|err| format!("read pilot summary md: {err}"))?;
+    // Precondition: the inventory limit fired and kept one seam, which is
+    // not on the change; the changed seams it cut were classified on their
+    // own and count as analyzed.
+    assert!(md.contains("- Seam limit reached: ranked "), "{md}");
+    assert!(!md.contains("ranked 1 of "), "{md}");
+    assert!(md.contains("ranked 4 of 6 seams"), "{md}");
+    // `ripr check` never classifies the added seams, so the snapshot is not
+    // its population and carries no comparable identity.
+    let snapshot: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(out_dir.join("repo-exposure.json"))
+            .map_err(|err| format!("read repo exposure json: {err}"))?,
+    )
+    .map_err(|err| format!("parse repo exposure json: {err}"))?;
+    assert!(snapshot.get("artifact").is_none(), "{snapshot}");
+    assert_eq!(summary["current_change"]["state"], "changed", "{summary}");
+    assert_eq!(summary["top_actionable_seams"][0]["line"], 6, "{summary}");
+    assert_eq!(
+        summary["current_change"]["top_recommendation_in_change"], true,
+        "{summary}"
+    );
+    assert!(
+        stdout.contains(
+            "current change: part of it (this seam is on a line changed since origin/main)"
+        ),
+        "{stdout}"
+    );
+    // The change was classified, so the limit can no longer hide a seam on
+    // it, and pilot does not say it might.
+    assert!(
+        !stdout.contains("may have seams pilot did not see"),
+        "{stdout}"
+    );
+    ignore_remove_dir_all(&root);
+    ignore_remove_dir_all(&out_dir);
+    Ok(())
+}
+
+/// #6944: `ripr check` analyzes a changed build script, but pilot's repo
+/// inventory leaves build scripts out by design. Pilot must name that
+/// exclusion rather than say the change has no analyzed seam.
+#[test]
+fn pilot_names_a_changed_build_script_its_ranking_leaves_out() -> Result<(), String> {
+    let build = "fn main() {\n    let level = std::env::var(\"OPT_LEVEL\").map(|v| v.len()).unwrap_or(0);\n    if level > 2 {\n        println!(\"cargo:rustc-cfg=fast\");\n    }\n}\n";
+    let root = pilot_language_fixture_repo(
+        "pilot-build-script-change",
+        &[
+            (
+                "Cargo.toml",
+                "[package]\nname = \"shop\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+            ),
+            ("build.rs", build),
+            (
+                "src/lib.rs",
+                "pub fn discounted(amount: u32) -> u32 {\n    if amount > 100 { amount - 10 } else { amount }\n}\n",
+            ),
+            (
+                "tests/pricing.rs",
+                "#[test]\nfn big_orders_get_a_discount() {\n    assert_eq!(shop::discounted(200), 190);\n}\n",
+            ),
+        ],
+        ("build.rs", &build.replace("level > 2", "level >= 2")),
+    )?;
+    let out_dir = unique_temp_workspace("pilot-build-script-change-out");
+    let (stdout, md, summary, _) = run_pilot_language_fixture(&root, &out_dir)?;
+    // Precondition: the change is loaded and pilot ranked a seam elsewhere.
+    assert_eq!(summary["current_change"]["state"], "changed", "{summary}");
+    assert_eq!(
+        summary["current_change"]["top_recommendation_in_change"], false,
+        "{summary}"
+    );
+    assert!(
+        stdout.contains(
+            "current change: not part of it. No seam pilot analyzed is on a line changed since origin/main: every changed Rust line is in build.rs, a Cargo build script, which pilot's repo-wide ranking leaves out. This recommendation is elsewhere in the repo"
+        ),
+        "{stdout}"
+    );
+    assert!(
+        md.contains("every changed Rust line is in `build.rs`, a Cargo build script"),
+        "{md}"
+    );
+    ignore_remove_dir_all(&root);
+    ignore_remove_dir_all(&out_dir);
+    Ok(())
+}
+
+/// #6987: with Rust disabled neither `ripr check` nor pilot analyzes Rust,
+/// so pilot must not name a changed build script as one `ripr check`
+/// covers. With the gate removed, the unranked-change reason would name it
+/// ("every changed Rust line is in build.rs").
+#[test]
+#[cfg(feature = "lang-python")]
+fn pilot_names_no_build_script_when_rust_is_disabled() -> Result<(), String> {
+    let build = "fn main() {\n    let level = std::env::var(\"OPT_LEVEL\").map(|v| v.len()).unwrap_or(0);\n    if level > 2 {\n        println!(\"cargo:rustc-cfg=fast\");\n    }\n}\n";
+    let root = pilot_language_fixture_repo(
+        "pilot-build-script-rust-disabled",
+        &[
+            (
+                "Cargo.toml",
+                "[package]\nname = \"shop\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+            ),
+            ("ripr.toml", "[languages]\nenabled = [\"python\"]\n"),
+            ("build.rs", build),
+            (
+                "src/lib.rs",
+                "pub fn discounted(amount: u32) -> u32 {\n    if amount > 100 { amount - 10 } else { amount }\n}\n",
+            ),
+        ],
+        ("build.rs", &build.replace("level > 2", "level >= 2")),
+    )?;
+    let out_dir = unique_temp_workspace("pilot-build-script-rust-disabled-out");
+    let (stdout, md, summary, _) = run_pilot_language_fixture(&root, &out_dir)?;
+    // Precondition: the change is loaded, so only the Rust gate can keep
+    // the build script unnamed.
+    assert_eq!(summary["current_change"]["state"], "changed", "{summary}");
+    assert!(
+        stdout.contains("not enabled in ripr.toml [languages]"),
+        "Rust must be reported as disabled: {stdout}"
+    );
+    assert!(!stdout.contains("build.rs"), "{stdout}");
+    assert!(!md.contains("build.rs"), "{md}");
+    ignore_remove_dir_all(&root);
+    ignore_remove_dir_all(&out_dir);
+    Ok(())
+}
+
 #[test]
 fn pilot_ranks_and_labels_seams_in_the_current_change() -> Result<(), String> {
     let lib = "pub fn discounted(amount: u32) -> u32 {\n    if amount > 100 { amount - 10 } else { amount }\n}\n\npub fn is_digit(byte: u8) -> bool {\n    byte >= b'0' && byte <= b'9'\n}\n";
@@ -14676,13 +16060,14 @@ fn pilot_ranks_and_labels_seams_in_the_current_change() -> Result<(), String> {
     assert_eq!(summary["current_change"]["state"], "changed");
     assert_eq!(summary["current_change"]["base"], "origin/main");
     assert_eq!(summary["current_change"]["actionable_seams_in_change"], 0);
+    assert_eq!(summary["current_change"]["withheld_seams_in_change"], 0);
     assert_eq!(
         summary["current_change"]["top_recommendation_in_change"],
         false
     );
     assert!(
         stdout.contains(
-            "current change: not part of it. This recommendation is elsewhere in the repo"
+            "current change: not part of it. No seam pilot analyzed is on a line changed since origin/main. This recommendation is elsewhere in the repo"
         ),
         "{stdout}"
     );
@@ -21247,6 +22632,30 @@ fn pr_summary_root_from_foreign_cwd_anchors_artifacts_and_baseline() -> Result<(
         return Err(format!(
             "summary read foreign artifacts or baseline: {summary}"
         ));
+    }
+    // #4000: pasted from this foreign directory, the summary's own
+    // reproduction commands must name the selected repository, not `.`.
+    let commands = summary
+        .pointer("/local_reproduction_commands")
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| format!("summary has no reproduction commands: {summary}"))?;
+    let selected_root_arg = selected_arg.replace(std::path::MAIN_SEPARATOR, "/");
+    for prefix in ["ripr check ", "ripr first-pr "] {
+        let Some(command) = commands
+            .iter()
+            .filter_map(serde_json::Value::as_str)
+            .find(|command| command.starts_with(prefix))
+        else {
+            return Err(format!("no `{prefix}` reproduction command: {commands:?}"));
+        };
+        if !command.starts_with(&format!("{prefix}--root "))
+            || !command.contains(&selected_root_arg)
+            || command.contains("--root .")
+        {
+            return Err(format!(
+                "reproduction command does not name the selected repository: {command}"
+            ));
+        }
     }
     let relative_root = Path::new("..").join("selected répo");
     let relative_root_arg = relative_root

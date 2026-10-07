@@ -1,0 +1,13 @@
+diff --git a/src/score.rs b/src/score.rs
+index 46d09f6..ba72f65 100644
+--- a/src/score.rs
++++ b/src/score.rs
+@@ -2,7 +2,7 @@
+ //! local computed from the input.
+ 
+ fn capped<T: PartialOrd + Copy>(value: T, cap: T) -> T {
+-    if value > cap {
++    if cap < value {
+         cap
+     } else {
+         value

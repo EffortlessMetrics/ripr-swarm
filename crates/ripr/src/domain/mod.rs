@@ -15,6 +15,7 @@ mod git_candidate;
 mod identity;
 mod intervention_study;
 mod language;
+mod next_action;
 mod probe;
 mod repair_card;
 mod summary;
@@ -33,9 +34,10 @@ pub(crate) use classification::{
     ASSERTION_CONTEXT_UNESTABLISHED, ASSERTION_NOT_CREDITED_PREFIX,
     ASSERTION_SHAPED_INFECTION_UNKNOWN_NEXT_STEP, ASSERTION_SHAPED_NO_STATIC_PATH_NEXT_STEP,
     ASSERTION_SHAPED_OWNER_REASON, ASSERTION_SHAPED_REACHABLE_UNREVEALED_NEXT_STEP,
-    ASSERTION_SHAPED_WEAKLY_EXPOSED_NEXT_STEP, LIMITATION_ANALYZER_ROUTE_PREFIX,
-    LIMITATION_FIRST_UNRESOLVED_EDGE_PREFIX, LIMITATION_LAST_ESTABLISHED_EDGE_PREFIX,
-    LIMITATION_NON_CLAIM_PREFIX, NO_STATIC_PATH_NEXT_STEP, TRANSITIVE_REACH_WITNESS_PREFIX,
+    ASSERTION_SHAPED_WEAKLY_EXPOSED_NEXT_STEP, CALLEE_ONLY_REACH_PREFIX,
+    LIMITATION_ANALYZER_ROUTE_PREFIX, LIMITATION_FIRST_UNRESOLVED_EDGE_PREFIX,
+    LIMITATION_LAST_ESTABLISHED_EDGE_PREFIX, LIMITATION_NON_CLAIM_PREFIX, NO_STATIC_PATH_NEXT_STEP,
+    TRANSITIVE_REACH_WITNESS_PREFIX,
 };
 pub use command_spec::{
     CancellationPolicy, CommandAuthorityBoundary, CommandCostClass, CommandExecutionMode,
@@ -81,6 +83,14 @@ pub(crate) use language::PERL_FACT_EXPORTER;
 pub(crate) use language::perl_fact_packet_guidance;
 pub use language::{LanguageId, LanguageStatus, OwnerKind, StaticLimitKind};
 pub(crate) use language::{PYTEST_VERIFY_PROGRAM, is_pytest_verify_command};
+pub use next_action::{
+    CanonicalNextActionV1, NextActionAlternative, NextActionCheckCase, NextActionClass,
+    NextActionCommandRef, NextActionCurrentness, NextActionDiffSource, NextActionProducer,
+    NextActionStop, NextActionSubject, NextActionTransition,
+};
+pub(crate) use next_action::{
+    NextActionAttemptView, NextActionInput, current_command_platform, select_canonical_next_action,
+};
 pub(crate) use probe::{ARM_UNSELECTED_REASON_PREFIX, exact_assertion_fact, input_boundary_fact};
 pub use probe::{
     ActivationEvidence, DeltaKind, Finding, FindingCanonicalGap, FlowSinkFact, FlowSinkKind,
