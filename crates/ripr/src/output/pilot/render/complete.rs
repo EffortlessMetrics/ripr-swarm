@@ -867,7 +867,10 @@ impl DiffOnlyNote {
             (1, false) => {
                 format!("{includes} {file}, {kind}, which pilot's repo-wide ranking leaves out")
             }
-            (count, _) => format!(
+            (count, true) => format!(
+                "every changed Rust line is in {count} files pilot's repo-wide ranking leaves out, such as {file} ({kind})"
+            ),
+            (count, false) => format!(
                 "{includes} {count} files pilot's repo-wide ranking leaves out, such as {file} ({kind})"
             ),
         }

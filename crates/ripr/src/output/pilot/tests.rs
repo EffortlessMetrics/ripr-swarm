@@ -2517,7 +2517,7 @@ fn pilot_names_changed_files_its_ranking_leaves_out() {
     let several = PilotCurrentChange::from_diff_text(
         Path::new("."),
         Some("origin/main".to_string()),
-        &diff(&["build.rs", "lib/odd.rs"]),
+        &diff(&["build.rs", "lib/odd.rs", "src/lib.rs"]),
     )
     .with_diff_only_files(vec![
         (PathBuf::from("build.rs"), DiffOnlySource::BuildScript),
@@ -2530,6 +2530,25 @@ fn pilot_names_changed_files_its_ranking_leaves_out() {
     let (terminal, _) = render(&several);
     assert!(
         terminal.contains("the change includes 2 files pilot's repo-wide ranking leaves out, such as build.rs (a Cargo build script)"),
+        "{terminal}"
+    );
+
+    let only_several = PilotCurrentChange::from_diff_text(
+        Path::new("."),
+        Some("origin/main".to_string()),
+        &diff(&["build.rs", "lib/odd.rs"]),
+    )
+    .with_diff_only_files(vec![
+        (PathBuf::from("build.rs"), DiffOnlySource::BuildScript),
+        (
+            PathBuf::from("lib/odd.rs"),
+            DiffOnlySource::DeclaredOutsideSrc,
+        ),
+    ])
+    .with_seams_counted(&[], None);
+    let (terminal, _) = render(&only_several);
+    assert!(
+        terminal.contains("every changed Rust line is in 2 files pilot's repo-wide ranking leaves out, such as build.rs (a Cargo build script)"),
         "{terminal}"
     );
 
