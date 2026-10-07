@@ -61,7 +61,13 @@ fn fixture(label: &str, mixed: bool) -> Result<Fixture, String> {
         std::fs::write(fixture.root.join(path), source).map_err(|error| error.to_string())?;
     }
     run_git(&fixture.root, &["init"])?;
-    run_git(&fixture.root, &["config", "user.email", "ripr@example.invalid"])?;
+    run_git(&fixture.root, &["config", "core.autocrlf", "false"])?;
+    run_git(&fixture.root, &["config", "core.eol", "lf"])?;
+    run_git(&fixture.root, &["config", "commit.gpgsign", "false"])?;
+    run_git(
+        &fixture.root,
+        &["config", "user.email", "ripr@example.invalid"],
+    )?;
     run_git(&fixture.root, &["config", "user.name", "RIPR Test"])?;
     run_git(&fixture.root, &["add", "."])?;
     run_git(&fixture.root, &["commit", "-m", "base"])?;
@@ -172,8 +178,14 @@ fn run_subject(fixture: &Fixture, cache: &Path, args: &[&str]) -> Result<Run, St
             std::thread::sleep(Duration::from_millis(10));
         }
     })();
-    child.terminate_tree()?;
-    let status = outcome?;
+    let status = match (outcome, child.terminate_tree()) {
+        (Ok(status), Ok(())) => status,
+        (Err(primary), Ok(())) => return Err(primary),
+        (Err(primary), Err(cleanup)) => {
+            return Err(format!("{primary}; process cleanup also failed: {cleanup}"));
+        }
+        (Ok(_), Err(cleanup)) => return Err(format!("process cleanup failed: {cleanup}")),
+    };
     let stdout = read_bounded(&stdout_path)?;
     let stderr = read_bounded(&stderr_path)?;
     if !status.success() {
@@ -194,10 +206,15 @@ fn limited_repo(fixture: &Fixture, cache: &Path) -> Result<Value, String> {
     let output = run_subject(
         fixture,
         cache,
-        &["check", "--root", &root_arg, "--format", "repo-exposure-json"],
+        &[
+            "check",
+            "--root",
+            &root_arg,
+            "--format",
+            "repo-exposure-json",
+        ],
     )?;
-    let report: Value =
-        serde_json::from_str(&output.stdout).map_err(|error| error.to_string())?;
+    let report: Value = serde_json::from_str(&output.stdout).map_err(|error| error.to_string())?;
     assert_eq!(report["run_status"], "seam_limit_applied", "{report:#}");
     assert_eq!(report["limitations"][0]["seams_analyzed"], 1, "{report:#}");
     assert!(
@@ -206,7 +223,9 @@ fn limited_repo(fixture: &Fixture, cache: &Path) -> Result<Value, String> {
             .is_some_and(|count| count > 1),
         "{report:#}"
     );
-    let seams = report["seams"].as_array().ok_or("missing analyzed subjects")?;
+    let seams = report["seams"]
+        .as_array()
+        .ok_or("missing analyzed subjects")?;
     assert_eq!(seams.len(), 1, "{report:#}");
     assert_eq!(
         seams[0]["file"], "src/lib.rs",
@@ -260,7 +279,10 @@ fn pilot(fixture: &Fixture, cache: &Path, files: usize) -> Result<Pilot, String>
     );
     let summary = read_json(&out_dir.join("pilot-summary.json"))?;
     assert_eq!(summary["current_change"]["state"], "changed", "{summary:#}");
-    assert_eq!(summary["current_change"]["base"], "origin/main", "{summary:#}");
+    assert_eq!(
+        summary["current_change"]["base"], "origin/main",
+        "{summary:#}"
+    );
     let md = read_bounded(&out_dir.join("pilot-summary.md"))?;
     assert!(
         md.contains("- Seam limit reached: ranked "),
@@ -370,7 +392,13 @@ fn exercise_missing_coverage(label: &str, mixed: bool) -> Result<(), String> {
     run_git(&fixture.root, &["sparse-checkout", "init", "--no-cone"])?;
     run_git(
         &fixture.root,
-        &["sparse-checkout", "set", "--no-cone", "/*", "!/src/z_hidden.rs"],
+        &[
+            "sparse-checkout",
+            "set",
+            "--no-cone",
+            "/*",
+            "!/src/z_hidden.rs",
+        ],
     )?;
     assert!(
         !fixture.root.join("src/z_hidden.rs").exists(),
@@ -486,6 +514,7 @@ fn pilot_discloses_sparse_missing_changed_file_and_recovers_same_head() -> Resul
 }
 
 #[test]
-fn pilot_discloses_mixed_missing_changed_file_even_with_changed_recommendation() -> Result<(), String> {
+fn pilot_discloses_mixed_missing_changed_file_even_with_changed_recommendation()
+-> Result<(), String> {
     exercise_missing_coverage("pilot-mixed-changed-coverage", true)
 }
