@@ -9,9 +9,10 @@
 //!    function, never an associated function or a trait method. A method
 //!    call `recv.name(..)` names a function with a `self` receiver, and only
 //!    when the receiver's type dispatches to the owner: the test binds the
-//!    receiver to a type ripr can read, that type reaches the owner's `impl`
-//!    or trait, and no other definition of `name` in the workspace could
-//!    take the call instead.
+//!    receiver to a type ripr can read, no type declaration in the test's
+//!    own module scope shadows that name, that type reaches the owner's
+//!    `impl` or trait, and no other definition of `name` in the workspace
+//!    could take the call instead.
 //! 2. The call's return value came through the changed expression. The
 //!    changed expression must be the owner's tail and must evaluate all of
 //!    its parts on every input (no closure, `&&`/`||`, branch, or skipping
@@ -50,10 +51,14 @@ use crate::analysis::syntax::fn_signature::{LocalTypeEquality, local_type_equali
 use crate::analysis::syntax::{
     AssertionContextRefusal, MacroBindingKind, MacroBindingSite, OwnerPinAssertions,
     attribute_settles_test_outcome, empty_macro_binding_ambiguities, local_empty_macro_names,
-    macro_binding_scan, owner_pin_assertions, returns_leave_the_function,
+    macro_binding_scan, owner_pin_assertions, parse_clean_source_file, returns_leave_the_function,
     trusted_macro_binding_sites,
 };
 use crate::domain::{Probe, ProbeFamily};
+use ra_ap_syntax::{
+    AstNode,
+    ast::{self, HasModuleItem, HasName},
+};
 use rayon::prelude::*;
 use std::cell::{OnceCell, RefCell};
 use std::collections::{BTreeMap, BTreeSet};
@@ -3056,16 +3061,125 @@ fn named_or_slice(
         return None;
     }
     // A test file that imports the name from outside the workspace, renames
-    // another item to it, or aliases it binds a different type than the
-    // workspace declaration.
+    // another item to it, aliases it, or declares it in the test's own
+    // module scope binds a different type than the workspace declaration.
     let source = test_source?;
     if imports_foreign(&test.file, base)
         || file_renames_to(source, base)
         || file_aliases_type(source, base)
+        || test_module_shadows_type(test, source, base)
     {
         return None;
     }
     Some(ReceiverType::Named(base.to_string()))
+}
+
+/// Whether the test's own inline-module scope declares the receiver type
+/// name (#6905): a `struct`, `enum`, `union` or `type` alias that is a
+/// direct item of an enclosing `mod` shadows the production type for the
+/// test, so a binding of that name names the test-local type, not the
+/// changed owner, and the pin is refused. Only direct items of enclosing
+/// inline modules count: a same-name declaration in a sibling module or at
+/// the file root (the production declaration itself, for same-file tests)
+/// does not shadow the test's view. An explicit import naming the type in
+/// an inner scope would disambiguate, but this stays lexical and fails
+/// closed. A file that textually declares the name nowhere needs no parse;
+/// one that fails to parse fails closed.
+fn test_module_shadows_type(test: &TestSummary, source: &str, base: &str) -> bool {
+    let masked = mask_comments_and_strings(source);
+    // `r#Window` denotes `Window`: a raw-identifier declaration shadows too.
+    let raw = format!("r#{base}");
+    if !declares_type(&masked, base)
+        && !masked.contains(raw.as_str())
+        && !file_aliases_type(source, base)
+    {
+        return false;
+    }
+    let Some(parse) = parse_clean_source_file(source) else {
+        return true;
+    };
+    // 1-based file lines, matching `TestSummary`.
+    let line_of = |offset: u32| source[..offset as usize].matches('\n').count() + 1;
+    let root = parse.tree().syntax().clone();
+    // Exact scope first: the test fn's own ancestor modules. Line spans can
+    // coincide for same-line siblings (`mod s { struct W; } #[test] fn t()
+    // {...}`), where byte-exact ancestry refuses nothing, so ancestry
+    // decides whenever the test fn resolves. Macro-shaped tests whose fn
+    // has no matching node keep the line-span fallback below.
+    let test_name = test.name.strip_prefix("r#").unwrap_or(&test.name);
+    let test_fns: Vec<_> = root
+        .descendants()
+        .filter_map(ast::Fn::cast)
+        .filter(|func| {
+            func.name().is_some_and(|name| {
+                let text = name.text().to_string();
+                text.strip_prefix("r#").unwrap_or(&text) == test_name
+            }) && {
+                let range = func.syntax().text_range();
+                let start: u32 = range.start().into();
+                let end: u32 = range.end().into();
+                line_of(start) <= test.end_line && test.start_line <= line_of(end)
+            }
+        })
+        .collect();
+    if !test_fns.is_empty() {
+        return test_fns.iter().any(|func| {
+            func.syntax()
+                .ancestors()
+                .filter_map(ast::Module::cast)
+                .any(|module| {
+                    module.item_list().is_some_and(|items| {
+                        items
+                            .items()
+                            .any(|item| module_item_names_type(&item, base))
+                    })
+                })
+        });
+    }
+    root.descendants()
+        .filter_map(ast::Module::cast)
+        .filter_map(|module| module.item_list().map(|items| (module, items)))
+        .any(|(module, items)| {
+            let range = module.syntax().text_range();
+            let start: u32 = range.start().into();
+            let end: u32 = range.end().into();
+            line_of(start) <= test.start_line
+                && test.end_line <= line_of(end)
+                && items
+                    .items()
+                    .any(|item| module_item_names_type(&item, base))
+        })
+}
+
+/// Whether a direct module item declares the type name `base` (`r#Window`
+/// denotes `Window`). A macro definition or invocation may emit the type
+/// (#6948 review): the parsed item is the macro, not the struct, enum,
+/// union or alias it generates, so a lexical declaration of the name inside
+/// the macro's own text fails closed.
+fn module_item_names_type(item: &ast::Item, base: &str) -> bool {
+    let name = match item {
+        ast::Item::Struct(item) => item.name(),
+        ast::Item::Enum(item) => item.name(),
+        ast::Item::Union(item) => item.name(),
+        ast::Item::TypeAlias(item) => item.name(),
+        _ => None,
+    };
+    if name.is_some_and(|name| {
+        let text = name.text().to_string();
+        text.strip_prefix("r#").unwrap_or(&text) == base
+    }) {
+        return true;
+    }
+    if !matches!(
+        item,
+        ast::Item::MacroRules(_) | ast::Item::MacroDef(_) | ast::Item::MacroCall(_)
+    ) {
+        return false;
+    }
+    let text = mask_comments_and_strings(&item.syntax().text().to_string());
+    declares_type(&text, base)
+        || declares_type(&text, &format!("r#{base}"))
+        || file_aliases_type(&text, base)
 }
 
 /// A trait's methods are callable with method syntax only while the trait
