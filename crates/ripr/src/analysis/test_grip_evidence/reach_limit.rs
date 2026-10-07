@@ -298,12 +298,18 @@ fn location(file: &std::path::Path, line: usize) -> String {
 }
 
 fn transitive_summary(owner_name: &str, witness: &TransitiveWitness) -> String {
+    let entry = match &witness.via_derive {
+        Some(derive) => format!(
+            "is in a file that applies `#[derive({derive})]`, expanded by `{}`",
+            witness.entry_symbol
+        ),
+        None => format!("calls `{}`", witness.entry_symbol),
+    };
     format!(
-        "Reach unresolved ({}): `{}` ({}) calls `{}`, which may lead to `{owner_name}` through a call path ripr does not fully trace; no gap is reported",
+        "Reach unresolved ({}): `{}` ({}) {entry}, which may lead to `{owner_name}` through a call path ripr does not fully trace; no gap is reported",
         transitive_reach_limit_kind(&witness.test_file).as_str(),
         witness.test_name,
         location(&witness.test_file, witness.test_line),
-        witness.entry_symbol,
     )
 }
 
@@ -378,5 +384,28 @@ mod tests {
             tokens,
             vec![("Op".to_string(), false), ("Version".to_string(), true)]
         );
+    }
+
+    // A derive witness's test calls nothing on the path, so the summary must
+    // not say it calls the expanding function (#6924).
+    #[test]
+    fn transitive_summary_names_a_derive_entry_without_claiming_a_call() {
+        let mut witness = TransitiveWitness {
+            test_name: "test_display".to_string(),
+            test_file: std::path::PathBuf::from("tests/it.rs"),
+            test_line: 3,
+            entry_symbol: "derive_error".to_string(),
+            other_test_count: 0,
+            via_derive: Some("Error".to_string()),
+        };
+
+        let summary = transitive_summary("fmt_impl", &witness);
+        assert!(summary.contains(
+            "`test_display` (tests/it.rs:3) is in a file that applies `#[derive(Error)]`, expanded by `derive_error`, which may lead to `fmt_impl`"
+        ));
+        assert!(!summary.contains("calls `derive_error`"));
+
+        witness.via_derive = None;
+        assert!(transitive_summary("fmt_impl", &witness).contains("calls `derive_error`"));
     }
 }

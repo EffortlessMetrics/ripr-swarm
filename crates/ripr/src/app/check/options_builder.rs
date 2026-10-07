@@ -14,6 +14,10 @@ pub(crate) fn analysis_options_from_input_and_config(
         include_unchanged_tests: input.include_unchanged_tests,
         resolve_tsconfig_paths: config.typescript().resolve_tsconfig_paths(),
         perl_facts_path: input.perl_facts_path.clone(),
+        // Set by the managed-producer funnel in `check_with_progress_and_
+        // origins_with_open_rust_paths` when a configured exporter failed
+        // (#6828); the plain builder keeps it `None`.
+        perl_producer_failure: None,
         git_timeout: input.git_timeout,
         git_candidate: input.git_candidate.clone(),
         production_like_targets: config.analysis().production_like_targets().clone(),

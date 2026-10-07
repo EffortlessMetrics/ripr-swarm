@@ -20,7 +20,7 @@ use std::collections::BTreeSet;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 pub(crate) const REPAIR_ATTEMPT_SCHEMA_VERSION: &str = "0.1";
 pub(crate) const REPAIR_ATTEMPT_DIRECTORY: &str = "target/ripr/repair-attempts";
@@ -88,6 +88,40 @@ pub(crate) enum RepairAttemptState {
     Stale,
     Incomparable,
     Failed,
+}
+
+impl RepairAttemptState {
+    /// The serialized spelling of the state, for surfaces that must use the
+    /// same vocabulary the manifest serializes (the #6033 after-phase
+    /// failure envelope). One owner beside the enum so the serde rename and
+    /// this label cannot drift.
+    pub(crate) fn as_label(&self) -> &'static str {
+        match self {
+            Self::Prepared => "prepared",
+            Self::AwaitingEdit => "awaiting_edit",
+            Self::ReadyToFinish => "ready_to_finish",
+            Self::Stale => "stale",
+            Self::Incomparable => "incomparable",
+            Self::Failed => "failed",
+        }
+    }
+}
+
+/// The durable state a finished attempt carries for a given finish outcome.
+/// One owner beside the finish transition, so the manifest write, `agent
+/// status`, and the #6033 after-phase failure envelope cannot drift.
+pub(crate) fn repair_attempt_state_for_finish(after: &RepairAttemptAfter) -> RepairAttemptState {
+    if after.current {
+        match after.verdict.status {
+            crate::edit_cage::EditCageVerdictStatus::Compliant => RepairAttemptState::ReadyToFinish,
+            crate::edit_cage::EditCageVerdictStatus::Violated => RepairAttemptState::Failed,
+            crate::edit_cage::EditCageVerdictStatus::Incomparable => {
+                RepairAttemptState::Incomparable
+            }
+        }
+    } else {
+        RepairAttemptState::Stale
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -408,19 +442,19 @@ pub(crate) fn receipt_binding_from(
     }))
 }
 
-/// Ensure a verify document consumed for an exact attempt names that attempt's
-/// retained before snapshot and its committed content digest.
-pub(crate) fn validate_verify_binding_from(
+/// Resolve the retained before snapshot a verify document must name, and read
+/// its bytes. Shared path binding for receipt issuance
+/// ([`validate_verify_binding_from`]) and stored-receipt reads
+/// ([`validate_verify_before_commitment_to_manifest`]); each caller keeps its
+/// own content-digest check by design (full live validation at issuance,
+/// commitment recomputation at read).
+fn read_retained_before_snapshot(
     root: &Path,
-    store: Option<&Path>,
-    attempt_id: &str,
+    manifest: &RepairAttemptManifest,
     verify_before_path: &str,
-    verify_before_sha256: &str,
-) -> Result<(), String> {
-    let attempt_id = RepairAttemptId::parse(attempt_id.to_string())?;
-    let (store, _, manifest) = open_attempt(root, store, &attempt_id)?;
-    let root = store.canonical_root().to_path_buf();
-    let expected = find_manifest_artifact(&manifest, "before_snapshot")?;
+) -> Result<String, String> {
+    let attempt_id = manifest.repair_attempt_id.as_str();
+    let expected = find_manifest_artifact(manifest, "before_snapshot")?;
     let expected_path = root
         .join(&expected.path)
         .canonicalize()
@@ -433,15 +467,30 @@ pub(crate) fn validate_verify_binding_from(
         return Err(format!(
             "verify before snapshot {} is not the retained snapshot for attempt {}",
             actual_path.display(),
-            attempt_id.as_str()
+            attempt_id
         ));
     }
-    let before_snapshot = std::fs::read_to_string(&expected_path).map_err(|error| {
+    std::fs::read_to_string(&expected_path).map_err(|error| {
         format!(
             "read retained before snapshot {} failed: {error}",
             expected_path.display()
         )
-    })?;
+    })
+}
+
+/// Ensure a verify document consumed for an exact attempt names that attempt's
+/// retained before snapshot and its committed content digest.
+pub(crate) fn validate_verify_binding_from(
+    root: &Path,
+    store: Option<&Path>,
+    attempt_id: &str,
+    verify_before_path: &str,
+    verify_before_sha256: &str,
+) -> Result<(), String> {
+    let attempt_id = RepairAttemptId::parse(attempt_id.to_string())?;
+    let (store, _, manifest) = open_attempt(root, store, &attempt_id)?;
+    let root = store.canonical_root().to_path_buf();
+    let before_snapshot = read_retained_before_snapshot(&root, &manifest, verify_before_path)?;
     let validated = crate::agent::artifact::validate_repo_exposure_artifact(
         &root,
         &before_snapshot,
@@ -454,6 +503,328 @@ pub(crate) fn validate_verify_binding_from(
         ));
     }
     Ok(())
+}
+
+/// Bind a verify document's declared before content digest to the retained
+/// before snapshot's recomputed commitment, for readers that already hold a
+/// validated manifest. Unlike [`validate_verify_binding_from`] (receipt
+/// issuance, which fully validates the evidence), this performs no
+/// repository access beyond resolving the retained path: the retained bytes
+/// are already commitment-anchored, and issued receipts must stay readable
+/// at an unknown HEAD.
+pub(crate) fn validate_verify_before_commitment_to_manifest(
+    root: &Path,
+    manifest: &RepairAttemptManifest,
+    verify_before_path: &str,
+    verify_before_sha256: &str,
+) -> Result<(), String> {
+    let attempt_id = manifest.repair_attempt_id.as_str();
+    let before_snapshot = read_retained_before_snapshot(root, manifest, verify_before_path)?;
+    let recomputed = crate::agent::artifact::recompute_content_commitment(&before_snapshot)?;
+    if verify_before_sha256 != recomputed {
+        return Err(format!(
+            "verify before snapshot digest does not match attempt {attempt_id}"
+        ));
+    }
+    Ok(())
+}
+
+/// Validate a stored receipt against the verify document it claims, binding
+/// the verdict instead of trusting the receipt's verdict strings alone
+/// (#5256). This is the one verdict-binding authority for the terminal
+/// loader, the legacy compatibility read, and pending retention: every path
+/// that can report `finished` re-validates the pair through it.
+///
+/// The checks, in order: the verify document carries the current
+/// agent-verify schema; the receipt's recorded verify digest matches
+/// `verify_bytes`; the receipt names this attempt's seam in both rendered
+/// seam fields; the verify document names this attempt's retained before
+/// snapshot with its committed content digest; the receipt's seam change,
+/// movement, lifecycle state, and guidance kind equal the verdict the verify
+/// document records for this seam; and the receipt's status equals what its
+/// own recorded analysis-outcome projection renders. Anything else is a
+/// binding failure, never an issued reading.
+///
+/// This is digest-plus-semantics validation over stored bytes, deliberately
+/// not a canonical re-render: the named after snapshot may be superseded or
+/// gone, so readers must not recompute the verify document here. Promotion
+/// (pending retention) additionally runs the full canonical receipt-issuance
+/// validation while the workflow files are fresh. No repository access beyond
+/// path resolution happens here, so issued receipts stay readable at an
+/// unknown HEAD; only the before commitment is recomputed from the retained
+/// bytes, never re-validated as live evidence.
+///
+/// Passing this validator is necessary but not sufficient for an issued
+/// reading: both read paths additionally run
+/// [`canonically_admit_terminal_pair`], which refuses never-promoted and
+/// jointly rewritten pairs whenever the named snapshots are still present.
+pub(crate) fn validate_issued_receipt_evidence(
+    root: &Path,
+    manifest: &RepairAttemptManifest,
+    receipt: &serde_json::Value,
+    verify_bytes: &[u8],
+) -> Result<(), String> {
+    let verify: serde_json::Value = serde_json::from_slice(verify_bytes)
+        .map_err(|error| format!("repair attempt verify document is not JSON: {error}"))?;
+    let schema_version = verify
+        .get("schema_version")
+        .and_then(serde_json::Value::as_str);
+    if schema_version != Some(crate::output::outcome::AGENT_VERIFY_SCHEMA_VERSION) {
+        return Err(format!(
+            "repair attempt verify document has unsupported schema version `{}`; expected `{}` from ripr agent verify",
+            schema_version.unwrap_or("<missing>"),
+            crate::output::outcome::AGENT_VERIFY_SCHEMA_VERSION
+        ));
+    }
+    let recorded = receipt
+        .pointer("/provenance/verify_artifact/sha256")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| {
+            "repair attempt receipt does not record its verify artifact digest".to_string()
+        })?;
+    if recorded != sha256_bytes(verify_bytes) {
+        return Err(
+            "repair attempt receipt names a different verify document than the stored bytes"
+                .to_string(),
+        );
+    }
+    // The receipt must name the seam this attempt repaired, in both fields
+    // the producer renders: a receipt minted for another seam — even one
+    // with the same movement — is not this attempt's evidence.
+    for pointer in ["/seam/seam_id", "/provenance/seam_id"] {
+        let recorded_seam = receipt.pointer(pointer).and_then(serde_json::Value::as_str);
+        if recorded_seam != Some(manifest.seam_id.as_str()) {
+            return Err(format!(
+                "repair attempt receipt {pointer} `{}` is not the attempt seam `{}`",
+                recorded_seam.unwrap_or("<missing>"),
+                manifest.seam_id
+            ));
+        }
+    }
+    let input_paths =
+        crate::output::agent_receipt::agent_receipt_input_paths_from_value(&verify)
+            .map_err(|error| format!("repair attempt verify document is malformed: {error}"))?;
+    let before_sha256 = verify
+        .pointer("/inputs/before_content_sha256")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| {
+            "repair attempt verify document is missing before_content_sha256".to_string()
+        })?;
+    validate_verify_before_commitment_to_manifest(
+        root,
+        manifest,
+        &input_paths.before,
+        before_sha256,
+    )?;
+    let expected =
+        crate::output::agent_receipt::expected_receipt_verdict(&verify, &manifest.seam_id)
+            .map_err(|error| {
+                format!(
+                    "repair attempt verify document names no verdict for seam `{}`: {error}",
+                    manifest.seam_id
+                )
+            })?;
+    let field = |pointer: &str| receipt.pointer(pointer).and_then(serde_json::Value::as_str);
+    if field("/seam/change") != Some(expected.change.as_str()) {
+        return Err(format!(
+            "repair attempt receipt seam change `{}` does not match the verify verdict `{}` for seam `{}`",
+            field("/seam/change").unwrap_or("<missing>"),
+            expected.change,
+            manifest.seam_id
+        ));
+    }
+    if field("/provenance/movement") != Some(expected.change.as_str()) {
+        return Err(format!(
+            "repair attempt receipt movement `{}` does not match the verify verdict `{}` for seam `{}`",
+            field("/provenance/movement").unwrap_or("<missing>"),
+            expected.change,
+            manifest.seam_id
+        ));
+    }
+    let state = field("/summary/receipt_state")
+        .map(crate::output::receipt_lifecycle::normalize_receipt_lifecycle_state)
+        .unwrap_or_else(|| crate::output::receipt_lifecycle::RECEIPT_MISSING.to_string());
+    if state != expected.receipt_state {
+        return Err(format!(
+            "repair attempt receipt state `{}` does not match the verify verdict state `{}` for seam `{}`",
+            field("/summary/receipt_state").unwrap_or("<missing>"),
+            expected.receipt_state,
+            manifest.seam_id
+        ));
+    }
+    if field("/summary/next_action/kind") != Some(expected.guidance_kind.as_str()) {
+        return Err(format!(
+            "repair attempt receipt next-action kind `{}` does not match the verify verdict `{}` for seam `{}`",
+            field("/summary/next_action/kind").unwrap_or("<missing>"),
+            expected.guidance_kind,
+            manifest.seam_id
+        ));
+    }
+    // The receipt status must equal what its own recorded analysis-outcome
+    // projection renders: flipping `incomplete` to `advisory` while the
+    // projection still says incomplete is a binding failure, never finished.
+    let projection = receipt
+        .pointer("/analysis_outcome_status")
+        .and_then(serde_json::Value::as_str);
+    let Some(expected_status) =
+        crate::output::agent_receipt::expected_agent_receipt_status_for_projection(projection)
+    else {
+        return Err(format!(
+            "repair attempt receipt records no usable analysis outcome status (got `{}`)",
+            projection.unwrap_or("<missing>")
+        ));
+    };
+    if field("/status") != Some(expected_status) {
+        return Err(format!(
+            "repair attempt receipt status `{}` does not match its recorded analysis outcome status `{}`",
+            field("/status").unwrap_or("<missing>"),
+            projection.unwrap_or("<missing>")
+        ));
+    }
+    Ok(())
+}
+
+/// How a stored verify document compares to the canonical render of the
+/// snapshots it names, for readers that already passed
+/// [`validate_issued_receipt_evidence`].
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum CanonicalAdmission {
+    /// The named snapshots are present and the verify document matches their
+    /// canonical render: the pair reads as issued.
+    Admitted,
+    /// The named snapshots are present and the verify document is not their
+    /// canonical render: never-promoted or jointly rewritten evidence.
+    Refused { reason: String },
+    /// Admission cannot be evaluated: a named snapshot is gone (historical),
+    /// or the repository HEAD cannot be read (unknown). The caller keeps the
+    /// validator-only reading instead of inventing a refusal.
+    Unavailable { reason: String },
+}
+
+/// Opportunistically admit a stored verify document against the canonical
+/// render of the snapshots it names (#5256 review). This defeats
+/// never-promoted invalid pairs and post-promotion joint rewrites — a verify
+/// document rewritten together with its receipt to a consistent but false
+/// verdict is not the canonical render — whenever the snapshots are still
+/// present to compare against.
+///
+/// The comparison is semantic modulo `artifact_currentness`: that label is a
+/// read-time observation of HEAD and worktree state, so requiring byte
+/// identity would un-issue every retained receipt at any later or dirty
+/// HEAD, contradicting durable readability (#5399). Every verdict-relevant
+/// field — the inputs binding, seams, and summary — must match exactly.
+///
+/// Residual: a fully consistent fabrication of a HISTORICAL pair, whose
+/// snapshots are gone, is outside the file-local model: with nothing to
+/// compare against, the validator-only reading stands.
+pub(crate) fn canonically_admit_terminal_pair(
+    root: &Path,
+    verify_bytes: &[u8],
+) -> CanonicalAdmission {
+    let verify_value: serde_json::Value = match serde_json::from_slice(verify_bytes) {
+        Ok(value) => value,
+        Err(error) => {
+            return CanonicalAdmission::Refused {
+                reason: format!("repair attempt verify document is not JSON: {error}"),
+            };
+        }
+    };
+    let input_paths =
+        match crate::output::agent_receipt::agent_receipt_input_paths_from_value(&verify_value) {
+            Ok(paths) => paths,
+            Err(error) => {
+                return CanonicalAdmission::Refused {
+                    reason: format!("repair attempt verify document is malformed: {error}"),
+                };
+            }
+        };
+    for candidate in [&input_paths.before, &input_paths.after] {
+        let path = Path::new(candidate);
+        let resolved = if path.is_absolute() {
+            path.to_path_buf()
+        } else {
+            root.join(path)
+        };
+        if !resolved.is_file() {
+            return CanonicalAdmission::Unavailable {
+                reason: format!(
+                    "repair attempt verify document names snapshot `{candidate}` whose bytes are no longer present, so canonical admission cannot be evaluated"
+                ),
+            };
+        }
+    }
+    // Currentness and lineage are evaluated against the live repository HEAD;
+    // without it the canonical render cannot be recomputed, so an unknown
+    // HEAD keeps the validator-only reading (downstream currentness reports
+    // the unknown HEAD instead of inventing a refusal).
+    if crate::agent::artifact::current_git_head(root).is_err() {
+        return CanonicalAdmission::Unavailable {
+            reason:
+                "the repository HEAD cannot be read, so canonical admission cannot be evaluated"
+                    .to_string(),
+        };
+    }
+    let verify_text = match std::str::from_utf8(verify_bytes) {
+        Ok(text) => text,
+        Err(error) => {
+            return CanonicalAdmission::Refused {
+                reason: format!("repair attempt verify document is not UTF-8: {error}"),
+            };
+        }
+    };
+    let canonical =
+        match crate::app::agent_receipt::canonical_agent_receipt_verify_render(root, verify_text) {
+            Ok(canonical) => canonical,
+            Err(reason) => return CanonicalAdmission::Refused { reason },
+        };
+    let mut supplied = verify_value;
+    let mut expected = canonical.verify;
+    for document in [&mut supplied, &mut expected] {
+        if let Some(object) = document.as_object_mut() {
+            object.remove("artifact_currentness");
+        }
+    }
+    if supplied == expected {
+        return CanonicalAdmission::Admitted;
+    }
+    CanonicalAdmission::Refused {
+        reason: format!(
+            "repair attempt verify document is not the canonical render of its named snapshots ({})",
+            canonical_divergence_summary(&supplied, &expected)
+        ),
+    }
+}
+
+/// Name the top-level fields where a stored verify document diverges from the
+/// canonical render, bounded for refusal messages.
+fn canonical_divergence_summary(
+    supplied: &serde_json::Value,
+    expected: &serde_json::Value,
+) -> String {
+    let supplied_object = supplied.as_object();
+    let expected_object = expected.as_object();
+    let mut keys = BTreeSet::new();
+    if let Some(object) = supplied_object {
+        keys.extend(object.keys().cloned());
+    }
+    if let Some(object) = expected_object {
+        keys.extend(object.keys().cloned());
+    }
+    let mut differing = Vec::new();
+    for key in keys {
+        let left = supplied_object.and_then(|object| object.get(&key));
+        let right = expected_object.and_then(|object| object.get(&key));
+        if left != right {
+            differing.push(format!("`{key}`"));
+            if differing.len() >= 4 {
+                break;
+            }
+        }
+    }
+    if differing.is_empty() {
+        return "the documents differ below the top level".to_string();
+    }
+    format!("differing fields: {}", differing.join(", "))
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -594,8 +965,12 @@ pub(crate) fn begin_repair_attempt_with_identity(
             "prepared repair attempt identity does not match its root and seam".to_string(),
         );
     }
-    let repository_head = crate::agent::artifact::current_git_head(canonical_root)
+    // Head identity (not just HEAD) pins the publication: the finalize
+    // path re-verifies after staging, and an A-B-A swap inside that window
+    // is undetectable by commit comparison alone (#6822).
+    let repository_identity = crate::agent::artifact::current_git_head_identity(canonical_root)
         .map_err(|error| format!("repair attempt requires a concrete repository HEAD: {error}"))?;
+    let repository_head = repository_identity.head.clone();
     // Pre-publication head gate: compare the caller's verified pin against
     // the repository HEAD this publication would record, before the attempt
     // directory is reserved. On mismatch nothing exists to clean up.
@@ -621,7 +996,7 @@ pub(crate) fn begin_repair_attempt_with_identity(
         AttemptPublication {
             root_argument,
             seam_id,
-            repository_head,
+            repository_identity,
             expected_repository_head,
             created_unix_ms,
             repair_attempt_id,
@@ -634,7 +1009,9 @@ pub(crate) fn begin_repair_attempt_with_identity(
 struct AttemptPublication<'a> {
     root_argument: &'a Path,
     seam_id: &'a str,
-    repository_head: String,
+    /// The pre-staging pin the finalize path re-verifies: an identity, not
+    /// a commit, so an A-B-A swap inside the staging window refuses (#6822).
+    repository_identity: crate::agent::artifact::HeadIdentity,
     /// The caller's verified head pin, when the publication is trust-bound.
     /// Re-checked immediately before the durable manifest write, so the
     /// finalize path verifies rather than trusting the earlier read.
@@ -664,25 +1041,36 @@ fn complete_repair_attempt(
                 publication.next_command_suffix.unwrap_or_default()
             );
             // Finalize-path head re-verification: the earlier pre-publication
-            // gate read HEAD before the artifacts were staged; the durable
-            // manifest is the authority, so HEAD is re-read immediately
-            // before it is written and any move in the window aborts with the
-            // typed refusal instead of publishing a mismatched attempt.
-            let final_head = crate::agent::artifact::current_git_head(canonical_root)
-                .map_err(|error| {
-                    format!("repair attempt finalize head verification failed: {error}")
-                })?;
+            // gate pinned the head identity before the artifacts were staged;
+            // the durable manifest is the authority, so the identity is
+            // re-read immediately before it is written and any move in the
+            // window aborts with the typed refusal instead of publishing a
+            // mismatched attempt. Identity comparison (not just HEAD) keeps
+            // an A-B-A swap inside the window from publishing (#6822).
+            let final_identity =
+                crate::agent::artifact::current_git_head_identity(canonical_root).map_err(
+                    |error| {
+                        format!("repair attempt finalize head verification failed: {error}")
+                    },
+                )?;
             if let Some(expected) = publication.expected_repository_head
-                && expected != final_head
+                && expected != final_identity.head
             {
                 return Err(format!(
-                    "python repair-trust binding head moved during attempt publication; the binding pins head `{expected}` but the repository HEAD is now `{final_head}`; re-run the before phase to prepare a fresh binding"
+                    "python repair-trust binding head moved during attempt publication; the binding pins head `{expected}` but the repository HEAD is now `{}`; re-run the before phase to prepare a fresh binding",
+                    final_identity.head
                 ));
             }
-            if final_head != publication.repository_head {
+            if final_identity != publication.repository_identity {
+                let pinned = publication.repository_identity.head.clone();
+                if final_identity.head == pinned {
+                    return Err(format!(
+                        "repository HEAD moved during attempt publication; the attempt pins head `{pinned}` and the repository HEAD returned to the same commit after an intervening move; re-run the before phase to prepare a fresh attempt"
+                    ));
+                }
                 return Err(format!(
-                    "repository HEAD moved during attempt publication; the attempt pins head `{}` but the repository HEAD is now `{final_head}`; re-run the before phase to prepare a fresh attempt",
-                    publication.repository_head
+                    "repository HEAD moved during attempt publication; the attempt pins head `{pinned}` but the repository HEAD is now `{}`; re-run the before phase to prepare a fresh attempt",
+                    final_identity.head
                 ));
             }
             let manifest = RepairAttemptManifest {
@@ -691,7 +1079,7 @@ fn complete_repair_attempt(
                 repair_attempt_id: publication.repair_attempt_id,
                 state: RepairAttemptState::AwaitingEdit,
                 root: root_path_display(canonical_root),
-                repository_head: publication.repository_head,
+                repository_head: publication.repository_identity.head.clone(),
                 producer_version: env!("CARGO_PKG_VERSION").to_string(),
                 seam_id: publication.seam_id.to_string(),
                 created_unix_ms: publication.created_unix_ms,
@@ -902,13 +1290,16 @@ pub(crate) fn load_attempt_terminal_receipt(
             reason: "repair attempt declares terminal artifacts but no agent_verify".to_string(),
         };
     };
-    if let Err(reason) = read_terminal_artifact_bytes(root, manifest, verify_artifact) {
-        return AttemptTerminalReceipt::Unavailable {
-            path: Some(verify_artifact.path.clone()),
-            reason,
-        };
-    }
-    match read_bound_terminal_receipt(root, manifest, receipt_artifact) {
+    let verify_bytes = match read_terminal_artifact_bytes(root, manifest, verify_artifact) {
+        Ok(bytes) => bytes,
+        Err(reason) => {
+            return AttemptTerminalReceipt::Unavailable {
+                path: Some(verify_artifact.path.clone()),
+                reason,
+            };
+        }
+    };
+    match read_bound_terminal_receipt(root, manifest, receipt_artifact, &verify_bytes) {
         Ok((path, value)) => AttemptTerminalReceipt::Issued { path, value },
         Err(reason) => AttemptTerminalReceipt::Unavailable {
             path: Some(receipt_artifact.path.clone()),
@@ -921,6 +1312,7 @@ fn read_bound_terminal_receipt(
     root: &Path,
     manifest: &RepairAttemptManifest,
     artifact: &RepairAttemptArtifact,
+    verify_bytes: &[u8],
 ) -> Result<(String, serde_json::Value), String> {
     let bytes = read_terminal_artifact_bytes(root, manifest, artifact)?;
     let value: serde_json::Value = serde_json::from_slice(&bytes).map_err(|error| {
@@ -945,6 +1337,24 @@ fn read_bound_terminal_receipt(
             artifact.path
         ));
     }
+    // Attempt identity alone does not bind the verdict: the receipt's
+    // movement, seam change, lifecycle state, and guidance kind must equal
+    // what the retained verify document records for this seam (#5256).
+    validate_issued_receipt_evidence(root, manifest, &value, verify_bytes).map_err(|error| {
+        format!(
+            "repair attempt terminal receipt {} fails verdict binding: {error}",
+            artifact.path
+        )
+    })?;
+    // No canonical admission here: a retained pair claims a historical
+    // basis, while admission re-renders from the live shared snapshots,
+    // which a later attempt legitimately advances. Comparing the two
+    // false-refuses an honest earlier attempt after a later finish (the
+    // live basis is no longer this pair's basis). Canonical admission is
+    // enforced where the pair's basis is live by construction: pending
+    // promotion and the never-promoted legacy fallback. A pair admitted
+    // at promotion keeps its validator-only reading here, and retained
+    // storage stays trusted under the manifest digest model (#5256).
     Ok((artifact.path.clone(), value))
 }
 
@@ -1159,8 +1569,11 @@ pub(crate) fn retain_terminal_evidence_from(
 /// Completes terminal retention for a finished attempt whose after phase
 /// wrote the compatibility receipt but did not yet record attempt-local
 /// artifacts. No-op when the attempt is not finished, already retained, or
-/// the compatibility receipt is missing or bound to a different attempt.
-/// Does not re-run verify or rewrite committed bytes.
+/// the compatibility projection does not qualify. Promotion validates the
+/// verify document with the same canonical receipt-issuance checks the after
+/// phase applies, plus the shared receipt/verdict binding, so planted files
+/// are never laundered into terminal evidence (#5256). Does not rewrite
+/// committed bytes.
 #[cfg_attr(
     not(test),
     expect(
@@ -1224,6 +1637,20 @@ pub(crate) fn complete_pending_terminal_retention_from(
         return Ok(false);
     };
     if expected_verify != sha256_bytes(&verify_bytes) {
+        return Ok(false);
+    }
+    // Promotion is the explicit admission step for terminal evidence: the
+    // verify document must pass the same canonical validation the after
+    // phase's receipt issuance applies, and the receipt's verdict must bind
+    // to it. A projection that fails either check is left unpromoted — a
+    // no-op here, never a laundered promotion (#5256).
+    let Ok(verify_text) = std::str::from_utf8(&verify_bytes) else {
+        return Ok(false);
+    };
+    if crate::app::agent_receipt::validate_agent_receipt_verify_json(&root, verify_text).is_err() {
+        return Ok(false);
+    }
+    if validate_issued_receipt_evidence(&root, &manifest, &receipt, &verify_bytes).is_err() {
         return Ok(false);
     }
     retain_terminal_evidence_from(
@@ -1603,16 +2030,24 @@ pub(crate) fn write_edit_cage_baseline(
     path: &Path,
     policy: &EditCagePolicy,
 ) -> Result<(), String> {
-    let bytes = {
-        let baseline = crate::edit_cage::capture_attempt_baseline(root, policy)?;
-        serde_json::to_vec_pretty(&baseline)
-            .map_err(|error| format!("serialize edit-cage baseline failed: {error}"))?
-    };
+    let capture_started = Instant::now();
+    let baseline = crate::edit_cage::capture_attempt_baseline(root, policy)?;
+    crate::edit_cage::trace_persist_latency("baseline_capture", capture_started.elapsed());
+    let serialize_started = Instant::now();
+    let bytes = serde_json::to_vec_pretty(&baseline)
+        .map_err(|error| format!("serialize edit-cage baseline failed: {error}"))?;
+    crate::edit_cage::trace_persist_latency("baseline_serialize", serialize_started.elapsed());
+    // The pretty bytes stay; the baseline map drops before the file write,
+    // as before: only one copy is resident during the write.
+    drop(baseline);
     if path.exists() {
         std::fs::remove_file(path)
             .map_err(|error| format!("replace {} failed: {error}", path.display()))?;
     }
-    write_bytes_atomic(path, &bytes)
+    let write_started = Instant::now();
+    write_bytes_atomic(path, &bytes)?;
+    crate::edit_cage::trace_persist_latency("baseline_write", write_started.elapsed());
+    Ok(())
 }
 
 /// Resolve the durable before inputs for one after-phase invocation. Attempt ID
@@ -1773,6 +2208,31 @@ pub(crate) fn finish_repair_attempt(
     finish_repair_attempt_from(root, None, attempt_id, packet_path, movement)
 }
 
+/// After-phase currentness for an evaluation window bracketed by
+/// `before` (#5930): the window is current only when HEAD did not move
+/// during evaluation (identity comparison, so an A-B-A swap still shows)
+/// and the bracketing head is admitted against the manifest head. It
+/// returns the verdict with the head to record. `finish_repair_attempt_from`
+/// is the only caller; the signature keeps the decision testable without
+/// injecting movement mid-evaluation.
+fn after_phase_window_is_current(
+    root: &Path,
+    before: &crate::agent::artifact::HeadIdentity,
+    manifest_head: &str,
+    movement: HeadMovement,
+) -> Result<(bool, String), String> {
+    let current_head = before.head.clone();
+    let current = *before == crate::agent::artifact::current_git_head_identity(root)?
+        && (current_head == manifest_head
+            || (movement == HeadMovement::AdmitDescendantCommits
+                && crate::agent::artifact::git_merge_base_is_ancestor(
+                    root,
+                    manifest_head,
+                    &current_head,
+                )?));
+    Ok((current, current_head))
+}
+
 pub(crate) fn finish_repair_attempt_from(
     root: &Path,
     store: Option<&Path>,
@@ -1831,17 +2291,14 @@ pub(crate) fn finish_repair_attempt_from(
     if baseline.root() != root {
         return Err("edit-cage baseline root does not match selected repository".to_string());
     }
-    let current_head = crate::agent::artifact::current_git_head(&root)?;
+    // Head identity (not just HEAD) brackets the evaluation: an A-B-A
+    // swap inside the window is undetectable by commit comparison alone,
+    // so the reflog fingerprint makes `current` robust to it (#5930).
+    let before = crate::agent::artifact::current_git_head_identity(&root)?;
     let (delta, mut verdict) =
         evaluate_repository_edit_cage_with_head_movement(&baseline, movement)?;
-    let current = current_head == crate::agent::artifact::current_git_head(&root)?
-        && (current_head == manifest.repository_head
-            || (movement == HeadMovement::AdmitDescendantCommits
-                && crate::agent::artifact::git_merge_base_is_ancestor(
-                    &root,
-                    &manifest.repository_head,
-                    &current_head,
-                )?));
+    let (current, current_head) =
+        after_phase_window_is_current(&root, &before, &manifest.repository_head, movement)?;
     if !current {
         verdict.status = crate::edit_cage::EditCageVerdictStatus::Incomparable;
     }
@@ -1859,17 +2316,7 @@ pub(crate) fn finish_repair_attempt_from(
     // This after phase reached the durable finish, so an earlier refusal no
     // longer describes the attempt's last after phase.
     manifest.last_after_refusal = None;
-    manifest.state = if after.current {
-        match after.verdict.status {
-            crate::edit_cage::EditCageVerdictStatus::Compliant => RepairAttemptState::ReadyToFinish,
-            crate::edit_cage::EditCageVerdictStatus::Violated => RepairAttemptState::Failed,
-            crate::edit_cage::EditCageVerdictStatus::Incomparable => {
-                RepairAttemptState::Incomparable
-            }
-        }
-    } else {
-        RepairAttemptState::Stale
-    };
+    manifest.state = repair_attempt_state_for_finish(&after);
     let mut bytes = serde_json::to_vec_pretty(&manifest)
         .map_err(|error| format!("serialize completed repair attempt failed: {error}"))?;
     bytes.push(b'\n');
@@ -2615,6 +3062,7 @@ fn stage_before_artifacts(
         ".{REPAIR_ATTEMPT_ARTIFACTS_DIRECTORY}.tmp-{}-{nonce}",
         std::process::id()
     ));
+    let stage_started = Instant::now();
     let artifacts = match stage_sources(root, &staging_directory, &destination_directory, sources) {
         Ok(artifacts) => artifacts,
         Err(error) => {
@@ -2629,6 +3077,7 @@ fn stage_before_artifacts(
             destination_directory.display()
         ));
     }
+    crate::edit_cage::trace_persist_latency("attempt_stage_artifacts", stage_started.elapsed());
     Ok(artifacts)
 }
 
@@ -2641,6 +3090,9 @@ fn stage_sources(
     let mut roles = BTreeSet::new();
     let mut names = BTreeSet::new();
     let mut artifacts = Vec::with_capacity(sources.len());
+    // One trace-switch read per staging: the per-source span names
+    // allocate, so they are built only when tracing is on (#6917).
+    let trace_spans = crate::edit_cage::persist_latency_trace_enabled();
 
     for source in sources {
         if source.role.trim().is_empty() || !roles.insert(source.role) {
@@ -2674,10 +3126,24 @@ fn stage_sources(
                 file_name.to_string_lossy()
             ));
         }
+        let read_started = Instant::now();
         let bytes = std::fs::read(&source_path)
             .map_err(|error| format!("read {} failed: {error}", source_path.display()))?;
+        if trace_spans {
+            crate::edit_cage::trace_persist_latency(
+                &format!("attempt_stage_source_read:{}", source.role),
+                read_started.elapsed(),
+            );
+        }
         let staged = staging_directory.join(&file_name);
+        let write_started = Instant::now();
         write_bytes_atomic(&staged, &bytes)?;
+        if trace_spans {
+            crate::edit_cage::trace_persist_latency(
+                &format!("attempt_stage_source_write:{}", source.role),
+                write_started.elapsed(),
+            );
+        }
         let destination = destination_directory.join(&file_name);
         let relative = destination.strip_prefix(root).map_err(|error| {
             format!(
@@ -2686,10 +3152,18 @@ fn stage_sources(
                 root.display()
             )
         })?;
+        let digest_started = Instant::now();
+        let sha256 = sha256_bytes(&bytes);
+        if trace_spans {
+            crate::edit_cage::trace_persist_latency(
+                &format!("attempt_stage_source_digest:{}", source.role),
+                digest_started.elapsed(),
+            );
+        }
         artifacts.push(RepairAttemptArtifact {
             role: source.role.to_string(),
             path: display_path(relative),
-            sha256: sha256_bytes(&bytes),
+            sha256,
             bytes: u64::try_from(bytes.len()).map_err(|error| {
                 format!("repair attempt artifact size does not fit u64: {error}")
             })?,
@@ -3091,6 +3565,7 @@ fn write_bytes_atomic(path: &Path, bytes: &[u8]) -> Result<(), String> {
 mod tests {
     use super::*;
     use crate::testing::fixture_git::fixture_git_ok as run_git;
+    use crate::testing::verify_fixture::{mint_bound_receipt, mint_bound_receipt_pair};
 
     fn test_root(label: &str) -> Result<PathBuf, String> {
         let stamp = SystemTime::now()
@@ -3806,7 +4281,7 @@ mod tests {
         // so the occupied manifest path is what actually forces the publish
         // failure.
         let root = test_repo_root("publish")?;
-        let head = crate::agent::artifact::current_git_head(&root)?;
+        let pinned = crate::agent::artifact::current_git_head_identity(&root)?;
         let attempt_id = RepairAttemptId::parse("repair-attempt-0123456789abcdef01234567")?;
         let store = prepared_store(&root)?;
         let attempt_directory = reserve_attempt_directory(&store, &attempt_id)?;
@@ -3824,7 +4299,7 @@ mod tests {
             AttemptPublication {
                 root_argument: &root,
                 seam_id: "seam:sample",
-                repository_head: head,
+                repository_identity: pinned,
                 expected_repository_head: None,
                 created_unix_ms: 1,
                 repair_attempt_id: attempt_id,
@@ -3848,6 +4323,79 @@ mod tests {
                 "failed manifest write left the attempt directory and staged artifacts behind"
                     .to_string(),
             );
+        }
+        Ok(())
+    }
+
+    /// The begin path re-verifies the pinned head identity after staging
+    /// (#6822): a pin that predates an A-B-A swap refuses publication even
+    /// though the commit comparison alone would pass. The stale pin is
+    /// exactly what the pre-staging read passes after a mid-window swap;
+    /// movement cannot be injected mid-staging deterministically, so the
+    /// test drives the real `complete_repair_attempt` (real staging, real
+    /// finalize re-read) with that stale pin.
+    #[test]
+    fn begin_finalize_refuses_a_stale_pin_after_an_a_b_a_swap() -> Result<(), String> {
+        let root = test_repo_root("begin-aba")?;
+        let pinned = crate::agent::artifact::current_git_head_identity(&root)?;
+        let head = pinned.head.clone();
+        // A -> B -> A between the pin read and the finalize re-read.
+        run_git(
+            &root,
+            &[
+                "commit",
+                "--no-gpg-sign",
+                "--allow-empty",
+                "-qm",
+                "interleaved",
+            ],
+        )?;
+        run_git(&root, &["reset", "-q", "--soft", &head])?;
+        if crate::agent::artifact::current_git_head(&root)? != head {
+            return Err("the swap setup must return HEAD to the same commit".to_string());
+        }
+        let attempt_id = RepairAttemptId::parse("repair-attempt-0123456789abcdef01234568")?;
+        let store = prepared_store(&root)?;
+        let attempt_directory = reserve_attempt_directory(&store, &attempt_id)?;
+        let source = root.join("before.json");
+        std::fs::write(&source, b"{}")
+            .map_err(|error| format!("write {} failed: {error}", source.display()))?;
+        let result = complete_repair_attempt(
+            &store,
+            &attempt_directory,
+            AttemptPublication {
+                root_argument: &root,
+                seam_id: "seam:sample",
+                repository_identity: pinned,
+                expected_repository_head: None,
+                created_unix_ms: 1,
+                repair_attempt_id: attempt_id,
+                sources: &[BeforeArtifactSource {
+                    role: "before_snapshot",
+                    path: &source,
+                }],
+                next_command_suffix: None,
+            },
+        );
+        let attempt_remaining = attempt_directory.exists();
+        std::fs::remove_dir_all(&root)
+            .map_err(|error| format!("remove {} failed: {error}", root.display()))?;
+        match result {
+            Err(error) if error.contains("moved during attempt publication") => {}
+            Err(error) => {
+                return Err(format!(
+                    "stale pin refused with unexpected error: {error:?}"
+                ));
+            }
+            Ok(_) => {
+                return Err(
+                    "complete_repair_attempt published over a stale pin after an A-B-A swap"
+                        .to_string(),
+                );
+            }
+        }
+        if attempt_remaining {
+            return Err("a refused publish left its attempt directory behind".to_string());
         }
         Ok(())
     }
@@ -4839,6 +5387,62 @@ mod tests {
         Ok(())
     }
 
+    /// The after-phase window decision observes the production currentness
+    /// predicate `finish_repair_attempt_from` calls, not just helper
+    /// equality (#5930, #6827 review): a `before` identity that predates an
+    /// A-B-A swap decides `current=false` even though the commit comparison
+    /// alone would pass. Movement cannot be injected mid-evaluation
+    /// deterministically, so the test brackets the decision with a stale
+    /// `before`, which is exactly what the call site passes after a
+    /// mid-window swap.
+    #[test]
+    fn after_phase_window_reports_an_a_b_a_swap_as_not_current() -> Result<(), String> {
+        let root = test_repo_root("window-aba")?;
+        let head = crate::agent::artifact::current_git_head(&root)?;
+        let before = crate::agent::artifact::current_git_head_identity(&root)?;
+        let (current, recorded) = after_phase_window_is_current(
+            &root,
+            &before,
+            &head,
+            HeadMovement::AdmitDescendantCommits,
+        )?;
+        if !current {
+            return Err("a quiet window at the manifest head must be current".to_string());
+        }
+        if recorded != head {
+            return Err(format!(
+                "the window must record the bracketing head, got {recorded}"
+            ));
+        }
+        // A -> B -> A between the bracketing reads.
+        run_git(
+            &root,
+            &[
+                "commit",
+                "--no-gpg-sign",
+                "--allow-empty",
+                "-qm",
+                "interleaved",
+            ],
+        )?;
+        run_git(&root, &["reset", "-q", "--soft", &head])?;
+        if crate::agent::artifact::current_git_head(&root)? != head {
+            return Err("the swap setup must return HEAD to the same commit".to_string());
+        }
+        let (moved, _) = after_phase_window_is_current(
+            &root,
+            &before,
+            &head,
+            HeadMovement::AdmitDescendantCommits,
+        )?;
+        if moved {
+            return Err("an A-B-A swap inside the window must not be current".to_string());
+        }
+        std::fs::remove_dir_all(&root)
+            .map_err(|error| format!("remove {} failed: {error}", root.display()))?;
+        Ok(())
+    }
+
     fn prepare_sample_attempt(
         root: &Path,
         seam_id: &str,
@@ -4850,7 +5454,20 @@ mod tests {
         let before = workflow.join(format!("before-{label}.json"));
         let packet = workflow.join(format!("packet-{label}.json"));
         let baseline = workflow.join(format!("baseline-{label}.json"));
-        std::fs::write(&before, b"{}")
+        // Evidence-grade before snapshot, not an opaque blob: terminal-receipt
+        // and retention tests bind verify documents to its validated content
+        // digest, and every other consumer treats the bytes opaquely.
+        let before_snapshot = crate::testing::verify_fixture::mint_repo_exposure_snapshot(
+            root,
+            serde_json::json!([crate::testing::verify_fixture::snapshot_seam(
+                seam_id,
+                "predicate_boundary",
+                "src/lib.rs",
+                1,
+                "weakly_gripped",
+            )]),
+        )?;
+        std::fs::write(&before, before_snapshot.as_bytes())
             .map_err(|error| format!("write {} failed: {error}", before.display()))?;
         let packet_value = serde_json::json!({
             "seam_id": seam_id,
@@ -4930,6 +5547,96 @@ mod tests {
         bound_receipt_bytes_with_verify(manifest, None)
     }
 
+    /// Retain a receipt/verify pair through the production path and return
+    /// the reloaded manifest.
+    fn retain_minted_pair(
+        root: &Path,
+        finished: &RepairAttemptManifest,
+        receipt_bytes: &[u8],
+        verify_bytes: &[u8],
+    ) -> Result<RepairAttemptManifest, String> {
+        let reports = root.join("target/ripr/reports");
+        std::fs::create_dir_all(&reports)
+            .map_err(|error| format!("create {} failed: {error}", reports.display()))?;
+        let receipt_source = reports.join("agent-receipt.json");
+        let verify_source = root.join("target/ripr/workflow/agent-verify.json");
+        std::fs::write(&receipt_source, receipt_bytes)
+            .map_err(|error| format!("write receipt failed: {error}"))?;
+        std::fs::write(&verify_source, verify_bytes)
+            .map_err(|error| format!("write verify failed: {error}"))?;
+        retain_terminal_evidence(
+            root,
+            &finished.repair_attempt_id,
+            &[
+                BeforeArtifactSource {
+                    role: TERMINAL_RECEIPT_ROLE,
+                    path: &receipt_source,
+                },
+                BeforeArtifactSource {
+                    role: TERMINAL_VERIFY_ROLE,
+                    path: &verify_source,
+                },
+            ],
+        )?;
+        load_repair_attempt_manifest(root, &finished.repair_attempt_id)
+    }
+
+    /// Rewrite one retained terminal artifact's bytes and rebind its manifest
+    /// entry (bytes + sha256), as a forgery that also holds the manifest
+    /// would. Returns the reloaded manifest.
+    fn rewrite_retained_terminal_artifact(
+        root: &Path,
+        manifest: &RepairAttemptManifest,
+        role: &str,
+        bytes: &[u8],
+    ) -> Result<RepairAttemptManifest, String> {
+        let artifact_path = root.join(
+            &find_terminal_artifact_by_role(manifest, role)
+                .ok_or_else(|| format!("retained pair has no {role}"))?
+                .path,
+        );
+        std::fs::write(&artifact_path, bytes)
+            .map_err(|error| format!("write forged {role} failed: {error}"))?;
+        let manifest_path = repair_attempt_directory(root, &manifest.repair_attempt_id)
+            .join(REPAIR_ATTEMPT_MANIFEST);
+        let manifest_raw = std::fs::read_to_string(&manifest_path)
+            .map_err(|error| format!("read manifest failed: {error}"))?;
+        let mut manifest_value: serde_json::Value = serde_json::from_str(&manifest_raw)
+            .map_err(|error| format!("parse manifest failed: {error}"))?;
+        let entry = manifest_value["terminal_artifacts"]
+            .as_array_mut()
+            .ok_or("manifest lost terminal_artifacts")?
+            .iter_mut()
+            .find(|artifact| artifact["role"] == role)
+            .ok_or_else(|| format!("manifest lost its {role} entry"))?;
+        entry["sha256"] = serde_json::Value::String(sha256_bytes(bytes));
+        entry["bytes"] =
+            serde_json::Value::from(u64::try_from(bytes.len()).map_err(|error| error.to_string())?);
+        std::fs::write(
+            &manifest_path,
+            serde_json::to_vec_pretty(&manifest_value)
+                .map_err(|error| format!("serialize rebound manifest failed: {error}"))?,
+        )
+        .map_err(|error| format!("write rebound manifest failed: {error}"))?;
+        load_repair_attempt_manifest(root, &manifest.repair_attempt_id)
+    }
+
+    /// The CLI status disposition for one attempt, plus whether the
+    /// unconfirmed-receipt warning fired.
+    fn cli_disposition_for(root: &Path, attempt_id: &str) -> Result<(String, bool), String> {
+        let report = crate::app::agent_status::build_agent_status_report_from(root, root, None);
+        let attempt = report
+            .repair_attempts
+            .iter()
+            .find(|attempt| attempt.attempt_id == attempt_id)
+            .ok_or("status lost the attempt")?;
+        let warned = report
+            .warnings
+            .iter()
+            .any(|warning| warning.kind == "repair_receipt_unconfirmed");
+        Ok((attempt.disposition.to_string(), warned))
+    }
+
     fn bound_receipt_bytes_with_verify(
         manifest: &RepairAttemptManifest,
         verify_sha256: Option<&str>,
@@ -4975,9 +5682,10 @@ mod tests {
             .map_err(|error| format!("create {} failed: {error}", reports.display()))?;
         let receipt_path = reports.join("agent-receipt.json");
         let verify_path = root.join("target/ripr/workflow/agent-verify.json");
-        std::fs::write(&receipt_path, bound_receipt_bytes(&finished)?)
+        let (receipt_bytes, verify_bytes) = mint_bound_receipt_pair(&root, &finished, "unchanged")?;
+        std::fs::write(&receipt_path, &receipt_bytes)
             .map_err(|error| format!("write receipt failed: {error}"))?;
-        std::fs::write(&verify_path, b"{\"kind\":\"verify\"}\n")
+        std::fs::write(&verify_path, &verify_bytes)
             .map_err(|error| format!("write verify failed: {error}"))?;
 
         retain_terminal_evidence(
@@ -5120,9 +5828,10 @@ mod tests {
             .map_err(|error| format!("create {} failed: {error}", reports.display()))?;
         let receipt_source = reports.join("agent-receipt.json");
         let verify_source = root.join("target/ripr/workflow/agent-verify.json");
-        std::fs::write(&receipt_source, bound_receipt_bytes(&finished)?)
+        let (receipt_bytes, verify_bytes) = mint_bound_receipt_pair(&root, &finished, "unchanged")?;
+        std::fs::write(&receipt_source, &receipt_bytes)
             .map_err(|error| format!("write receipt failed: {error}"))?;
-        std::fs::write(&verify_source, b"{\"kind\":\"verify\"}\n")
+        std::fs::write(&verify_source, &verify_bytes)
             .map_err(|error| format!("write verify failed: {error}"))?;
         retain_terminal_evidence(
             &root,
@@ -5168,18 +5877,53 @@ mod tests {
         let root = test_repo_root("retain-pending")?;
         let prepared = prepare_sample_attempt(&root, "seam:sample", "pending")?;
         let finished = finish_sample_attempt(&root, &prepared)?;
+        // A qualifying projection: the canonical verify render over the
+        // retained before snapshot and a descendant-head after snapshot, plus
+        // a verdict-consistent receipt. Commit the finished test edit first
+        // so the after snapshot's head descends from the before head.
+        run_git(&root, &["add", "tests/target.rs"])?;
+        run_git(&root, &["commit", "--no-gpg-sign", "-m", "focused test"])?;
+        let after_path = root.join("target/ripr/workflow/after.json");
+        let after_snapshot = crate::testing::verify_fixture::mint_repo_exposure_snapshot(
+            root.as_path(),
+            serde_json::json!([crate::testing::verify_fixture::snapshot_seam(
+                "seam:sample",
+                "predicate_boundary",
+                "src/lib.rs",
+                1,
+                "strongly_gripped",
+            )]),
+        )?;
+        std::fs::write(&after_path, after_snapshot.as_bytes())
+            .map_err(|error| format!("write {} failed: {error}", after_path.display()))?;
+        let retained_before =
+            root.join(&find_manifest_artifact(&finished, "before_snapshot")?.path);
+        let verify = crate::testing::verify_fixture::mint_canonical_verify(
+            root.as_path(),
+            &retained_before,
+            &after_path,
+        )?;
+        let verify_value: serde_json::Value = serde_json::from_str(&verify)
+            .map_err(|error| format!("parse canonical verify failed: {error}"))?;
+        let movement = verify_value["changed_seams"][0]["change"]
+            .as_str()
+            .ok_or("canonical verify lost its seam movement")?;
+        if movement != "improved" {
+            return Err(format!(
+                "canonical verify must record improved movement, got {movement}"
+            ));
+        }
         let reports = root.join("target/ripr/reports");
         std::fs::create_dir_all(&reports)
             .map_err(|error| format!("create {} failed: {error}", reports.display()))?;
-        let verify_bytes = b"{\"kind\":\"verify\"}\n";
-        std::fs::write(
-            root.join("target/ripr/workflow/agent-verify.json"),
-            verify_bytes,
-        )
-        .map_err(|error| format!("write verify failed: {error}"))?;
+        let verify_path = root.join("target/ripr/workflow/agent-verify.json");
+        std::fs::write(&verify_path, verify.as_bytes())
+            .map_err(|error| format!("write verify failed: {error}"))?;
+        let verify_bytes =
+            std::fs::read(&verify_path).map_err(|error| format!("read verify failed: {error}"))?;
         std::fs::write(
             reports.join("agent-receipt.json"),
-            bound_receipt_bytes_with_verify(&finished, Some(&sha256_bytes(verify_bytes)))?,
+            mint_bound_receipt(&finished, movement, &sha256_bytes(&verify_bytes))?,
         )
         .map_err(|error| format!("write receipt failed: {error}"))?;
 
@@ -5235,6 +5979,809 @@ mod tests {
         Ok(())
     }
 
+    /// #5256 F1: flipping the terminal receipt's verdict strings
+    /// (`summary.receipt_state`, `summary.next_action.kind`, `seam.change`)
+    /// and rebinding the manifest digest must read as a binding failure —
+    /// never `finished` — with an `unconfirmed` disposition and warning.
+    /// The forgery leaves `/provenance/movement` behind exactly as filed, so
+    /// the receipt is also internally inconsistent.
+    #[test]
+    fn terminal_receipt_forged_verdict_never_reports_finished() -> Result<(), String> {
+        let root = test_repo_root("forged-verdict")?;
+        let prepared = prepare_sample_attempt(&root, "seam:sample", "forged")?;
+        let finished = finish_sample_attempt(&root, &prepared)?;
+        // Honest gap-open pair first: the positive control reads issued.
+        let (receipt_bytes, verify_bytes) = mint_bound_receipt_pair(&root, &finished, "unchanged")?;
+        let reports = root.join("target/ripr/reports");
+        std::fs::create_dir_all(&reports)
+            .map_err(|error| format!("create {} failed: {error}", reports.display()))?;
+        let receipt_source = reports.join("agent-receipt.json");
+        let verify_source = root.join("target/ripr/workflow/agent-verify.json");
+        std::fs::write(&receipt_source, &receipt_bytes)
+            .map_err(|error| format!("write receipt failed: {error}"))?;
+        std::fs::write(&verify_source, &verify_bytes)
+            .map_err(|error| format!("write verify failed: {error}"))?;
+        retain_terminal_evidence(
+            &root,
+            &finished.repair_attempt_id,
+            &[
+                BeforeArtifactSource {
+                    role: TERMINAL_RECEIPT_ROLE,
+                    path: &receipt_source,
+                },
+                BeforeArtifactSource {
+                    role: TERMINAL_VERIFY_ROLE,
+                    path: &verify_source,
+                },
+            ],
+        )?;
+        let retained = load_repair_attempt_manifest(&root, &finished.repair_attempt_id)?;
+        match load_attempt_terminal_receipt(&root, &retained) {
+            AttemptTerminalReceipt::Issued { .. } => {}
+            other => return Err(format!("honest pair must read issued, got {other:?}")),
+        }
+        // Forge the retained receipt exactly as filed, then rebind the
+        // manifest entry (bytes + sha256). The before commitment excludes
+        // `terminal_artifacts`, so the manifest itself stays valid.
+        let receipt_path = root.join(
+            &find_terminal_artifact_by_role(&retained, TERMINAL_RECEIPT_ROLE)
+                .ok_or("retained pair has no agent_receipt")?
+                .path,
+        );
+        let raw = std::fs::read(&receipt_path)
+            .map_err(|error| format!("read retained receipt failed: {error}"))?;
+        let mut forged: serde_json::Value = serde_json::from_slice(&raw)
+            .map_err(|error| format!("parse retained receipt failed: {error}"))?;
+        forged["summary"]["receipt_state"] =
+            serde_json::Value::String("receipt_movement_improved".to_string());
+        forged["summary"]["next_action"]["kind"] =
+            serde_json::Value::String("improved".to_string());
+        forged["seam"]["change"] = serde_json::Value::String("improved".to_string());
+        if forged["provenance"]["movement"] != "unchanged" {
+            return Err("forgery precondition lost its unchanged movement".to_string());
+        }
+        let mut forged_bytes = serde_json::to_vec_pretty(&forged)
+            .map_err(|error| format!("serialize forged receipt failed: {error}"))?;
+        forged_bytes.push(b'\n');
+        let forged_manifest = rewrite_retained_terminal_artifact(
+            &root,
+            &retained,
+            TERMINAL_RECEIPT_ROLE,
+            &forged_bytes,
+        )?;
+        match load_attempt_terminal_receipt(&root, &forged_manifest) {
+            AttemptTerminalReceipt::Unavailable { reason, .. } if reason.contains("verdict") => {}
+            other => {
+                return Err(format!(
+                    "a forged verdict must fail verdict binding, got {other:?}"
+                ));
+            }
+        }
+        let report = crate::app::agent_status::build_agent_status_report_from(&root, &root, None);
+        let attempt = report
+            .repair_attempts
+            .iter()
+            .find(|attempt| attempt.attempt_id == forged_manifest.repair_attempt_id.as_str())
+            .ok_or("status lost the forged attempt")?;
+        if attempt.disposition == "finished" {
+            return Err("a forged verdict must never report finished".to_string());
+        }
+        if attempt.disposition != "unconfirmed" {
+            return Err(format!(
+                "a forged verdict must read unconfirmed, got {}",
+                attempt.disposition
+            ));
+        }
+        if !report
+            .warnings
+            .iter()
+            .any(|warning| warning.kind == "repair_receipt_unconfirmed")
+        {
+            return Err("a forged verdict must warn it is unconfirmed".to_string());
+        }
+        std::fs::remove_dir_all(&root)
+            .map_err(|error| format!("remove {} failed: {error}", root.display()))?;
+        Ok(())
+    }
+
+    /// #5256 F2: planted workflow receipt+verify files that are 4-field bound
+    /// and digest-consistent — but verdict-inconsistent and non-canonical —
+    /// must not be promoted by pending retention, and status must not read
+    /// them as finished through the legacy fallback either.
+    #[test]
+    fn pending_terminal_retention_refuses_planted_projection() -> Result<(), String> {
+        let root = test_repo_root("planted-retention")?;
+        let prepared = prepare_sample_attempt(&root, "seam:sample", "planted")?;
+        let finished = finish_sample_attempt(&root, &prepared)?;
+        // The plant passes the old checks: the receipt is 4-field bound and
+        // records the planted verify's digest. It claims improved while the
+        // verify records unchanged, and the hand-shaped verify is not the
+        // canonical render of the named snapshots.
+        let (_, verify_bytes) = mint_bound_receipt_pair(&root, &finished, "unchanged")?;
+        let (receipt_bytes, _) = mint_bound_receipt_pair(&root, &finished, "improved")?;
+        let mut planted: serde_json::Value = serde_json::from_slice(&receipt_bytes)
+            .map_err(|error| format!("parse planted receipt failed: {error}"))?;
+        planted["provenance"]["verify_artifact"]["sha256"] =
+            serde_json::Value::String(sha256_bytes(&verify_bytes));
+        let mut planted_bytes = serde_json::to_vec_pretty(&planted)
+            .map_err(|error| format!("serialize planted receipt failed: {error}"))?;
+        planted_bytes.push(b'\n');
+        let reports = root.join("target/ripr/reports");
+        std::fs::create_dir_all(&reports)
+            .map_err(|error| format!("create {} failed: {error}", reports.display()))?;
+        std::fs::write(reports.join("agent-receipt.json"), &planted_bytes)
+            .map_err(|error| format!("plant receipt failed: {error}"))?;
+        std::fs::write(
+            root.join("target/ripr/workflow/agent-verify.json"),
+            &verify_bytes,
+        )
+        .map_err(|error| format!("plant verify failed: {error}"))?;
+        if complete_pending_terminal_retention(&root, finished.repair_attempt_id.as_str())? {
+            return Err("a planted projection must not complete retention".to_string());
+        }
+        let manifest = load_repair_attempt_manifest(&root, &finished.repair_attempt_id)?;
+        if !manifest.terminal_artifacts.is_empty() {
+            return Err("a refused plant must leave terminal_artifacts empty".to_string());
+        }
+        let report = crate::app::agent_status::build_agent_status_report_from(&root, &root, None);
+        let attempt = report
+            .repair_attempts
+            .iter()
+            .find(|attempt| attempt.attempt_id == finished.repair_attempt_id.as_str())
+            .ok_or("status lost the planted attempt")?;
+        if attempt.disposition == "finished" {
+            return Err("a planted projection must never report finished".to_string());
+        }
+        if attempt.disposition != "unconfirmed" {
+            return Err(format!(
+                "a planted projection must read unconfirmed, got {}",
+                attempt.disposition
+            ));
+        }
+        std::fs::remove_dir_all(&root)
+            .map_err(|error| format!("remove {} failed: {error}", root.display()))?;
+        Ok(())
+    }
+
+    /// Pending retention runs the full canonical receipt-issuance validation,
+    /// not just binding and consistency: a verdict-consistent pair that is
+    /// not the canonical render of the named snapshots must still be refused.
+    /// This isolates the canonical gate — the consistency gate alone would
+    /// admit this pair. The legacy status read refuses it too, through the
+    /// same canonical admission over the still-present snapshots.
+    #[test]
+    fn pending_terminal_retention_requires_canonical_verify() -> Result<(), String> {
+        let root = test_repo_root("retention-canonical")?;
+        let prepared = prepare_sample_attempt(&root, "seam:sample", "canonical")?;
+        let finished = finish_sample_attempt(&root, &prepared)?;
+        // Fully consistent improved pair, but hand-shaped: no canonical
+        // render of the named snapshots can match it.
+        let (receipt_bytes, verify_bytes) = mint_bound_receipt_pair(&root, &finished, "improved")?;
+        let reports = root.join("target/ripr/reports");
+        std::fs::create_dir_all(&reports)
+            .map_err(|error| format!("create {} failed: {error}", reports.display()))?;
+        std::fs::write(reports.join("agent-receipt.json"), &receipt_bytes)
+            .map_err(|error| format!("write receipt failed: {error}"))?;
+        std::fs::write(
+            root.join("target/ripr/workflow/agent-verify.json"),
+            &verify_bytes,
+        )
+        .map_err(|error| format!("write verify failed: {error}"))?;
+        // The snapshots are present, so readers can evaluate canonical
+        // admission against them.
+        let after_path = root.join("target/ripr/workflow/after.json");
+        let after_snapshot = crate::testing::verify_fixture::mint_repo_exposure_snapshot(
+            root.as_path(),
+            serde_json::json!([crate::testing::verify_fixture::snapshot_seam(
+                "seam:sample",
+                "predicate_boundary",
+                "src/lib.rs",
+                1,
+                "strongly_gripped",
+            )]),
+        )?;
+        std::fs::write(&after_path, after_snapshot.as_bytes())
+            .map_err(|error| format!("write {} failed: {error}", after_path.display()))?;
+        if complete_pending_terminal_retention(&root, finished.repair_attempt_id.as_str())? {
+            return Err("a non-canonical projection must not complete retention".to_string());
+        }
+        let manifest = load_repair_attempt_manifest(&root, &finished.repair_attempt_id)?;
+        if !manifest.terminal_artifacts.is_empty() {
+            return Err("a refused projection must leave terminal_artifacts empty".to_string());
+        }
+        match canonically_admit_terminal_pair(&root, &verify_bytes) {
+            CanonicalAdmission::Refused { .. } => {}
+            other => {
+                return Err(format!(
+                    "a non-canonical projection must be refused admission, got {other:?}"
+                ));
+            }
+        }
+        let (disposition, warned) =
+            cli_disposition_for(&root, finished.repair_attempt_id.as_str())?;
+        if disposition == "finished" {
+            return Err("a non-canonical projection must never report finished".to_string());
+        }
+        if disposition != "unconfirmed" {
+            return Err(format!(
+                "a refused non-canonical projection must read unconfirmed, got {disposition}"
+            ));
+        }
+        if !warned {
+            return Err(
+                "a refused non-canonical projection must warn it is unconfirmed".to_string(),
+            );
+        }
+        std::fs::remove_dir_all(&root)
+            .map_err(|error| format!("remove {} failed: {error}", root.display()))?;
+        Ok(())
+    }
+
+    /// #5256 review R1: a retained receipt rewritten to another seam — with
+    /// the same movement and a rebound manifest digest — must fail seam
+    /// binding, never report finished. Each rendered seam field binds
+    /// independently.
+    #[test]
+    fn terminal_receipt_wrong_seam_never_reports_finished() -> Result<(), String> {
+        let root = test_repo_root("wrong-seam")?;
+        let prepared = prepare_sample_attempt(&root, "seam:sample", "wrong-seam")?;
+        let finished = finish_sample_attempt(&root, &prepared)?;
+        let (receipt_bytes, verify_bytes) = mint_bound_receipt_pair(&root, &finished, "improved")?;
+        let retained = retain_minted_pair(&root, &finished, &receipt_bytes, &verify_bytes)?;
+        match load_attempt_terminal_receipt(&root, &retained) {
+            AttemptTerminalReceipt::Issued { .. } => {}
+            other => return Err(format!("honest pair must read issued, got {other:?}")),
+        }
+        // Each seam field binds independently: breaking either one alone
+        // fails the shared validator while the other still matches.
+        let honest: serde_json::Value = serde_json::from_slice(&receipt_bytes)
+            .map_err(|error| format!("parse honest receipt failed: {error}"))?;
+        for pointer in ["/seam/seam_id", "/provenance/seam_id"] {
+            let mut broken = honest.clone();
+            let slot = broken
+                .pointer_mut(pointer)
+                .ok_or_else(|| format!("honest receipt lost {pointer}"))?;
+            *slot = serde_json::Value::String("seam:other".to_string());
+            match validate_issued_receipt_evidence(&root, &finished, &broken, &verify_bytes) {
+                Err(reason) if reason.contains("is not the attempt seam") => {}
+                other => {
+                    return Err(format!(
+                        "breaking {pointer} alone must fail seam binding, got {other:?}"
+                    ));
+                }
+            }
+        }
+        let raw = std::fs::read(
+            root.join(
+                &find_terminal_artifact_by_role(&retained, TERMINAL_RECEIPT_ROLE)
+                    .ok_or("retained pair has no agent_receipt")?
+                    .path,
+            ),
+        )
+        .map_err(|error| format!("read retained receipt failed: {error}"))?;
+        let mut forged: serde_json::Value = serde_json::from_slice(&raw)
+            .map_err(|error| format!("parse retained receipt failed: {error}"))?;
+        // Same movement, another seam: the verdict checks alone would pass.
+        forged["seam"]["seam_id"] = serde_json::Value::String("seam:other".to_string());
+        forged["provenance"]["seam_id"] = serde_json::Value::String("seam:other".to_string());
+        let mut forged_bytes = serde_json::to_vec_pretty(&forged)
+            .map_err(|error| format!("serialize forged receipt failed: {error}"))?;
+        forged_bytes.push(b'\n');
+        let forged_manifest = rewrite_retained_terminal_artifact(
+            &root,
+            &retained,
+            TERMINAL_RECEIPT_ROLE,
+            &forged_bytes,
+        )?;
+        match load_attempt_terminal_receipt(&root, &forged_manifest) {
+            AttemptTerminalReceipt::Unavailable { reason, .. }
+                if reason.contains("is not the attempt seam") => {}
+            other => {
+                return Err(format!(
+                    "a wrong-seam receipt must fail seam binding, got {other:?}"
+                ));
+            }
+        }
+        let (disposition, warned) =
+            cli_disposition_for(&root, forged_manifest.repair_attempt_id.as_str())?;
+        if disposition == "finished" {
+            return Err("a wrong-seam receipt must never report finished".to_string());
+        }
+        if disposition != "unconfirmed" {
+            return Err(format!(
+                "a wrong-seam receipt must read unconfirmed, got {disposition}"
+            ));
+        }
+        if !warned {
+            return Err("a wrong-seam receipt must warn it is unconfirmed".to_string());
+        }
+        std::fs::remove_dir_all(&root)
+            .map_err(|error| format!("remove {} failed: {error}", root.display()))?;
+        Ok(())
+    }
+
+    /// #5256 review R1 (legacy path): a workflow receipt rewritten to another
+    /// seam — digest-consistent with its verify document — must read
+    /// unconfirmed through the legacy fallback, never finished, and must not
+    /// be promoted.
+    #[test]
+    fn legacy_workflow_receipt_wrong_seam_is_unconfirmed() -> Result<(), String> {
+        let root = test_repo_root("wrong-seam-legacy")?;
+        let prepared = prepare_sample_attempt(&root, "seam:sample", "wrong-seam")?;
+        let finished = finish_sample_attempt(&root, &prepared)?;
+        let (receipt_bytes, verify_bytes) = mint_bound_receipt_pair(&root, &finished, "improved")?;
+        let mut planted: serde_json::Value = serde_json::from_slice(&receipt_bytes)
+            .map_err(|error| format!("parse planted receipt failed: {error}"))?;
+        planted["seam"]["seam_id"] = serde_json::Value::String("seam:other".to_string());
+        planted["provenance"]["seam_id"] = serde_json::Value::String("seam:other".to_string());
+        // The verify digest still matches: only the seam binding is broken.
+        let mut planted_bytes = serde_json::to_vec_pretty(&planted)
+            .map_err(|error| format!("serialize planted receipt failed: {error}"))?;
+        planted_bytes.push(b'\n');
+        let reports = root.join("target/ripr/reports");
+        std::fs::create_dir_all(&reports)
+            .map_err(|error| format!("create {} failed: {error}", reports.display()))?;
+        std::fs::write(reports.join("agent-receipt.json"), &planted_bytes)
+            .map_err(|error| format!("plant receipt failed: {error}"))?;
+        std::fs::write(
+            root.join("target/ripr/workflow/agent-verify.json"),
+            &verify_bytes,
+        )
+        .map_err(|error| format!("plant verify failed: {error}"))?;
+        if complete_pending_terminal_retention(&root, finished.repair_attempt_id.as_str())? {
+            return Err("a wrong-seam projection must not complete retention".to_string());
+        }
+        let (disposition, warned) =
+            cli_disposition_for(&root, finished.repair_attempt_id.as_str())?;
+        if disposition == "finished" {
+            return Err("a wrong-seam projection must never report finished".to_string());
+        }
+        if disposition != "unconfirmed" {
+            return Err(format!(
+                "a wrong-seam projection must read unconfirmed, got {disposition}"
+            ));
+        }
+        if !warned {
+            return Err("a wrong-seam projection must warn it is unconfirmed".to_string());
+        }
+        std::fs::remove_dir_all(&root)
+            .map_err(|error| format!("remove {} failed: {error}", root.display()))?;
+        Ok(())
+    }
+
+    /// #5256 review R5: a retained receipt whose status says `advisory` while
+    /// its own recorded analysis-outcome projection still says incomplete is
+    /// a status-only forgery: it must fail status binding, never finished. A
+    /// consistent incomplete pair stays issued as the control.
+    #[test]
+    fn terminal_receipt_status_flip_never_reports_finished() -> Result<(), String> {
+        let root = test_repo_root("status-flip")?;
+        let prepared = prepare_sample_attempt(&root, "seam:sample", "status-flip")?;
+        let finished = finish_sample_attempt(&root, &prepared)?;
+        let (receipt_bytes, verify_bytes) = mint_bound_receipt_pair(&root, &finished, "improved")?;
+        let retained = retain_minted_pair(&root, &finished, &receipt_bytes, &verify_bytes)?;
+        match load_attempt_terminal_receipt(&root, &retained) {
+            AttemptTerminalReceipt::Issued { .. } => {}
+            other => return Err(format!("honest pair must read issued, got {other:?}")),
+        }
+        // Consistent incomplete control: status and projection agree, so the
+        // pair stays issued (the gap simply does not read closed).
+        let mut control: serde_json::Value = serde_json::from_slice(&receipt_bytes)
+            .map_err(|error| format!("parse retained receipt failed: {error}"))?;
+        control["status"] = serde_json::Value::String("incomplete".to_string());
+        control["analysis_outcome_status"] = serde_json::Value::String("incomplete".to_string());
+        let mut control_bytes = serde_json::to_vec_pretty(&control)
+            .map_err(|error| format!("serialize control receipt failed: {error}"))?;
+        control_bytes.push(b'\n');
+        let control_manifest = rewrite_retained_terminal_artifact(
+            &root,
+            &retained,
+            TERMINAL_RECEIPT_ROLE,
+            &control_bytes,
+        )?;
+        match load_attempt_terminal_receipt(&root, &control_manifest) {
+            AttemptTerminalReceipt::Issued { .. } => {}
+            other => {
+                return Err(format!(
+                    "a consistent incomplete receipt must stay issued, got {other:?}"
+                ));
+            }
+        }
+        // The attack: the projection says incomplete, the status says advisory.
+        let mut forged: serde_json::Value = serde_json::from_slice(&control_bytes)
+            .map_err(|error| format!("parse control receipt failed: {error}"))?;
+        forged["status"] = serde_json::Value::String("advisory".to_string());
+        let mut forged_bytes = serde_json::to_vec_pretty(&forged)
+            .map_err(|error| format!("serialize forged receipt failed: {error}"))?;
+        forged_bytes.push(b'\n');
+        let forged_manifest = rewrite_retained_terminal_artifact(
+            &root,
+            &control_manifest,
+            TERMINAL_RECEIPT_ROLE,
+            &forged_bytes,
+        )?;
+        match load_attempt_terminal_receipt(&root, &forged_manifest) {
+            AttemptTerminalReceipt::Unavailable { reason, .. }
+                if reason.contains("does not match its recorded analysis outcome status") => {}
+            other => {
+                return Err(format!(
+                    "a status-flipped receipt must fail status binding, got {other:?}"
+                ));
+            }
+        }
+        let (disposition, warned) =
+            cli_disposition_for(&root, forged_manifest.repair_attempt_id.as_str())?;
+        if disposition == "finished" {
+            return Err("a status-flipped receipt must never report finished".to_string());
+        }
+        if disposition != "unconfirmed" {
+            return Err(format!(
+                "a status-flipped receipt must read unconfirmed, got {disposition}"
+            ));
+        }
+        if !warned {
+            return Err("a status-flipped receipt must warn it is unconfirmed".to_string());
+        }
+        std::fs::remove_dir_all(&root)
+            .map_err(|error| format!("remove {} failed: {error}", root.display()))?;
+        Ok(())
+    }
+
+    /// #5256 review R6+R7: a joint rewrite of the verify document (seam
+    /// change) and receipt (verdict fields), with the receipt's verify
+    /// digest rebound, passes digest-plus-verdict validation — but the
+    /// rewritten verify is not the canonical render of the still-present
+    /// snapshots, so pending promotion must refuse it and readers must
+    /// stay unconfirmed. Retained reads are validator-only by design: a
+    /// retained pair claims a historical basis the live snapshots
+    /// legitimately advance past, so admission is enforced at the
+    /// promotion boundary, not at retained read.
+    #[test]
+    fn terminal_pair_joint_forgery_with_present_snapshots_is_refused() -> Result<(), String> {
+        let root = test_repo_root("joint-forgery")?;
+        let prepared = prepare_sample_attempt(&root, "seam:sample", "joint")?;
+        let finished = finish_sample_attempt(&root, &prepared)?;
+        // Honest canonical unchanged pair: commit the focused test so the
+        // after snapshot descends, then mint through the production render.
+        run_git(&root, &["add", "tests/target.rs"])?;
+        run_git(&root, &["commit", "--no-gpg-sign", "-m", "focused test"])?;
+        let after_path = root.join("target/ripr/workflow/after.json");
+        let after_snapshot = crate::testing::verify_fixture::mint_repo_exposure_snapshot(
+            root.as_path(),
+            serde_json::json!([crate::testing::verify_fixture::snapshot_seam(
+                "seam:sample",
+                "predicate_boundary",
+                "src/lib.rs",
+                1,
+                "weakly_gripped",
+            )]),
+        )?;
+        std::fs::write(&after_path, after_snapshot.as_bytes())
+            .map_err(|error| format!("write {} failed: {error}", after_path.display()))?;
+        let retained_before =
+            root.join(&find_manifest_artifact(&finished, "before_snapshot")?.path);
+        let verify = crate::testing::verify_fixture::mint_canonical_verify(
+            root.as_path(),
+            &retained_before,
+            &after_path,
+        )?;
+        let verify_value: serde_json::Value = serde_json::from_str(&verify)
+            .map_err(|error| format!("parse canonical verify failed: {error}"))?;
+        let movement = verify_value["unchanged_seams"][0]["change"]
+            .as_str()
+            .ok_or("canonical verify lost its seam movement")?;
+        if movement != "unchanged" {
+            return Err(format!(
+                "canonical verify must record unchanged movement, got {movement}"
+            ));
+        }
+        let verify_bytes = verify.into_bytes();
+        let receipt_bytes =
+            mint_bound_receipt(&finished, "unchanged", &sha256_bytes(&verify_bytes))?;
+        // Positive control: the honest canonical pair is admitted. The
+        // attempt stays unretained so the forged projection below can drive
+        // pending promotion (promotion is a no-op once terminal artifacts
+        // exist, which would make the refusal assertion vacuous).
+        match canonically_admit_terminal_pair(&root, &verify_bytes) {
+            CanonicalAdmission::Admitted => {}
+            other => return Err(format!("honest pair must be admitted, got {other:?}")),
+        }
+        // Joint rewrite: the verify seam change and every receipt verdict
+        // field move to improved together, with the digest and both manifest
+        // entries rebound. Digest-plus-verdict validation passes by
+        // construction; only canonical admission can refuse it.
+        // The joint rewrite lands as a never-promoted pending projection
+        // in the compatibility files, not as retained bytes.
+        let mut forged_verify: serde_json::Value = serde_json::from_slice(&verify_bytes)
+            .map_err(|error| format!("parse honest verify failed: {error}"))?;
+        let unchanged = forged_verify["unchanged_seams"]
+            .as_array_mut()
+            .ok_or("retained verify lost unchanged_seams")?
+            .pop()
+            .ok_or("retained verify lost its seam row")?;
+        let mut improved_row = unchanged;
+        improved_row["change"] = serde_json::Value::String("improved".to_string());
+        improved_row["after"] = serde_json::Value::String("strongly_gripped".to_string());
+        forged_verify["changed_seams"]
+            .as_array_mut()
+            .ok_or("retained verify lost changed_seams")?
+            .push(improved_row);
+        forged_verify["summary"]["unchanged"] = serde_json::json!(0);
+        forged_verify["summary"]["improved"] = serde_json::json!(1);
+        let mut forged_verify_bytes = serde_json::to_vec_pretty(&forged_verify)
+            .map_err(|error| format!("serialize forged verify failed: {error}"))?;
+        forged_verify_bytes.push(b'\n');
+        let mut forged_receipt: serde_json::Value = serde_json::from_slice(&receipt_bytes)
+            .map_err(|error| format!("parse honest receipt failed: {error}"))?;
+        forged_receipt["seam"]["change"] = serde_json::Value::String("improved".to_string());
+        forged_receipt["provenance"]["movement"] =
+            serde_json::Value::String("improved".to_string());
+        forged_receipt["summary"]["receipt_state"] =
+            serde_json::Value::String("receipt_movement_improved".to_string());
+        forged_receipt["summary"]["next_action"]["kind"] =
+            serde_json::Value::String("improved".to_string());
+        forged_receipt["provenance"]["verify_artifact"]["sha256"] =
+            serde_json::Value::String(sha256_bytes(&forged_verify_bytes));
+        let mut forged_receipt_bytes = serde_json::to_vec_pretty(&forged_receipt)
+            .map_err(|error| format!("serialize forged receipt failed: {error}"))?;
+        forged_receipt_bytes.push(b'\n');
+        // The validator alone passes: prove the joint rewrite is consistent.
+        let forged_value: serde_json::Value = serde_json::from_slice(&forged_receipt_bytes)
+            .map_err(|error| format!("parse forged receipt failed: {error}"))?;
+        validate_issued_receipt_evidence(&root, &finished, &forged_value, &forged_verify_bytes)
+            .map_err(|error| format!("joint forgery must pass the validator: {error}"))?;
+        // ...but canonical admission refuses it, so pending promotion must
+        // refuse it and readers stay unconfirmed.
+        match canonically_admit_terminal_pair(&root, &forged_verify_bytes) {
+            CanonicalAdmission::Refused { .. } => {}
+            other => {
+                return Err(format!(
+                    "joint forgery must be refused admission, got {other:?}"
+                ));
+            }
+        }
+        let reports = root.join("target/ripr/reports");
+        std::fs::create_dir_all(&reports)
+            .map_err(|error| format!("create {} failed: {error}", reports.display()))?;
+        std::fs::write(reports.join("agent-receipt.json"), &forged_receipt_bytes)
+            .map_err(|error| format!("write forged receipt failed: {error}"))?;
+        std::fs::write(
+            root.join("target/ripr/workflow/agent-verify.json"),
+            &forged_verify_bytes,
+        )
+        .map_err(|error| format!("write forged verify failed: {error}"))?;
+        if complete_pending_terminal_retention(&root, finished.repair_attempt_id.as_str())? {
+            return Err("a jointly forged projection must not complete retention".to_string());
+        }
+        let manifest = load_repair_attempt_manifest(&root, &finished.repair_attempt_id)?;
+        if !manifest.terminal_artifacts.is_empty() {
+            return Err("a refused projection must leave terminal_artifacts empty".to_string());
+        }
+        let (disposition, warned) =
+            cli_disposition_for(&root, finished.repair_attempt_id.as_str())?;
+        if disposition == "finished" {
+            return Err("a jointly forged pair must never report finished".to_string());
+        }
+        if disposition != "unconfirmed" {
+            return Err(format!(
+                "a jointly forged pair must read unconfirmed, got {disposition}"
+            ));
+        }
+        if !warned {
+            return Err("a jointly forged pair must warn it is unconfirmed".to_string());
+        }
+        std::fs::remove_dir_all(&root)
+            .map_err(|error| format!("remove {} failed: {error}", root.display()))?;
+        Ok(())
+    }
+
+    /// #5256 CI regression: a retained honest pair keeps its reading after
+    /// a later attempt advances the live shared snapshots. Canonical
+    /// admission is enforced at promotion, never at retained read, so the
+    /// earlier attempt still reports its retained outcome once its
+    /// historical basis is no longer live.
+    #[test]
+    fn retained_honest_pair_survives_later_snapshot_advance() -> Result<(), String> {
+        let root = test_repo_root("retained-advance")?;
+        let prepared = prepare_sample_attempt(&root, "seam:sample", "advance")?;
+        let finished = finish_sample_attempt(&root, &prepared)?;
+        run_git(&root, &["add", "tests/target.rs"])?;
+        run_git(&root, &["commit", "--no-gpg-sign", "-m", "focused test"])?;
+        let after_path = root.join("target/ripr/workflow/after.json");
+        let after_snapshot = crate::testing::verify_fixture::mint_repo_exposure_snapshot(
+            root.as_path(),
+            serde_json::json!([crate::testing::verify_fixture::snapshot_seam(
+                "seam:sample",
+                "predicate_boundary",
+                "src/lib.rs",
+                1,
+                "weakly_gripped",
+            )]),
+        )?;
+        std::fs::write(&after_path, after_snapshot.as_bytes())
+            .map_err(|error| format!("write {} failed: {error}", after_path.display()))?;
+        let retained_before =
+            root.join(&find_manifest_artifact(&finished, "before_snapshot")?.path);
+        let verify = crate::testing::verify_fixture::mint_canonical_verify(
+            root.as_path(),
+            &retained_before,
+            &after_path,
+        )?;
+        let verify_bytes = verify.into_bytes();
+        let receipt_bytes =
+            mint_bound_receipt(&finished, "unchanged", &sha256_bytes(&verify_bytes))?;
+        let retained = retain_minted_pair(&root, &finished, &receipt_bytes, &verify_bytes)?;
+        match load_attempt_terminal_receipt(&root, &retained) {
+            AttemptTerminalReceipt::Issued { .. } => {}
+            other => return Err(format!("honest pair must read issued, got {other:?}")),
+        }
+        let (first_disposition, _) =
+            cli_disposition_for(&root, finished.repair_attempt_id.as_str())?;
+        // A later attempt advances the live shared after snapshot. The
+        // retained pair's basis is historical; the advance must not
+        // un-issue it.
+        let advanced = crate::testing::verify_fixture::mint_repo_exposure_snapshot(
+            root.as_path(),
+            serde_json::json!([crate::testing::verify_fixture::snapshot_seam(
+                "seam:sample",
+                "predicate_boundary",
+                "src/lib.rs",
+                1,
+                "strongly_gripped",
+            )]),
+        )?;
+        std::fs::write(&after_path, advanced.as_bytes())
+            .map_err(|error| format!("advance {} failed: {error}", after_path.display()))?;
+        match load_attempt_terminal_receipt(&root, &retained) {
+            AttemptTerminalReceipt::Issued { .. } => {}
+            other => {
+                return Err(format!(
+                    "honest pair must stay issued after the snapshots advance, got {other:?}"
+                ));
+            }
+        }
+        let (later_disposition, _) =
+            cli_disposition_for(&root, finished.repair_attempt_id.as_str())?;
+        if later_disposition != first_disposition {
+            return Err(format!(
+                "honest pair must keep disposition {first_disposition} after the snapshots advance, got {later_disposition}"
+            ));
+        }
+        std::fs::remove_dir_all(&root)
+            .map_err(|error| format!("remove {} failed: {error}", root.display()))?;
+        Ok(())
+    }
+
+    /// #5256 review: a pending projection whose verify names a missing
+    /// after snapshot must stay unconfirmed. The validator binds digest,
+    /// seam, verdict, and status but does not check after-path existence,
+    /// so without fail-closed unavailable handling the legacy fallback
+    /// would issue a gap-closing receipt from an unevaluable basis.
+    #[test]
+    fn pending_pair_naming_missing_snapshot_stays_unconfirmed() -> Result<(), String> {
+        let root = test_repo_root("missing-after")?;
+        let prepared = prepare_sample_attempt(&root, "seam:sample", "missing")?;
+        let finished = finish_sample_attempt(&root, &prepared)?;
+        run_git(&root, &["add", "tests/target.rs"])?;
+        run_git(&root, &["commit", "--no-gpg-sign", "-m", "focused test"])?;
+        let after_path = root.join("target/ripr/workflow/after.json");
+        let after_snapshot = crate::testing::verify_fixture::mint_repo_exposure_snapshot(
+            root.as_path(),
+            serde_json::json!([crate::testing::verify_fixture::snapshot_seam(
+                "seam:sample",
+                "predicate_boundary",
+                "src/lib.rs",
+                1,
+                "weakly_gripped",
+            )]),
+        )?;
+        std::fs::write(&after_path, after_snapshot.as_bytes())
+            .map_err(|error| format!("write {} failed: {error}", after_path.display()))?;
+        let retained_before =
+            root.join(&find_manifest_artifact(&finished, "before_snapshot")?.path);
+        let verify = crate::testing::verify_fixture::mint_canonical_verify(
+            root.as_path(),
+            &retained_before,
+            &after_path,
+        )?;
+        // Control: the honest canonical pair is admitted while its basis
+        // is present.
+        match canonically_admit_terminal_pair(root.as_path(), verify.as_bytes()) {
+            CanonicalAdmission::Admitted => {}
+            other => return Err(format!("honest pair must be admitted, got {other:?}")),
+        }
+        // Attack: point inputs.after at a missing path and rebind the
+        // receipt's verify digest so the validator still passes.
+        let mut forged_verify: serde_json::Value = serde_json::from_str(&verify)
+            .map_err(|error| format!("parse honest verify failed: {error}"))?;
+        forged_verify["inputs"]["after"] =
+            serde_json::Value::String("target/ripr/workflow/after.gone.json".to_string());
+        let mut forged_verify_bytes = serde_json::to_vec_pretty(&forged_verify)
+            .map_err(|error| format!("serialize forged verify failed: {error}"))?;
+        forged_verify_bytes.push(b'\n');
+        let receipt_bytes =
+            mint_bound_receipt(&finished, "unchanged", &sha256_bytes(&forged_verify_bytes))?;
+        let receipt_value: serde_json::Value = serde_json::from_slice(&receipt_bytes)
+            .map_err(|error| format!("parse forged receipt failed: {error}"))?;
+        validate_issued_receipt_evidence(&root, &finished, &receipt_value, &forged_verify_bytes)
+            .map_err(|error| format!("missing-basis pair must pass the validator: {error}"))?;
+        match canonically_admit_terminal_pair(&root, &forged_verify_bytes) {
+            CanonicalAdmission::Unavailable { .. } => {}
+            other => {
+                return Err(format!(
+                    "missing-basis pair must be unavailable, not {other:?}"
+                ));
+            }
+        }
+        let reports = root.join("target/ripr/reports");
+        std::fs::create_dir_all(&reports)
+            .map_err(|error| format!("create {} failed: {error}", reports.display()))?;
+        std::fs::write(reports.join("agent-receipt.json"), &receipt_bytes)
+            .map_err(|error| format!("write forged receipt failed: {error}"))?;
+        std::fs::write(
+            root.join("target/ripr/workflow/agent-verify.json"),
+            &forged_verify_bytes,
+        )
+        .map_err(|error| format!("write forged verify failed: {error}"))?;
+        if complete_pending_terminal_retention(&root, finished.repair_attempt_id.as_str())? {
+            return Err("a missing-basis projection must not complete retention".to_string());
+        }
+        let (disposition, warned) =
+            cli_disposition_for(&root, finished.repair_attempt_id.as_str())?;
+        if disposition == "finished" {
+            return Err("a missing-basis pair must never report finished".to_string());
+        }
+        if disposition != "unconfirmed" {
+            return Err(format!(
+                "a missing-basis pair must read unconfirmed, got {disposition}"
+            ));
+        }
+        if !warned {
+            return Err("a missing-basis pair must warn it is unconfirmed".to_string());
+        }
+        std::fs::remove_dir_all(&root)
+            .map_err(|error| format!("remove {} failed: {error}", root.display()))?;
+        Ok(())
+    }
+
+    /// #5256 review R6 residual: a validator-consistent pair whose snapshots
+    /// are gone (historical) keeps its validator-only reading: canonical
+    /// admission is unavailable, not a refusal.
+    #[test]
+    fn historical_pair_without_snapshots_stays_readable() -> Result<(), String> {
+        let root = test_repo_root("historical-readable")?;
+        let prepared = prepare_sample_attempt(&root, "seam:sample", "historical")?;
+        let finished = finish_sample_attempt(&root, &prepared)?;
+        let (receipt_bytes, verify_bytes) = mint_bound_receipt_pair(&root, &finished, "improved")?;
+        let retained = retain_minted_pair(&root, &finished, &receipt_bytes, &verify_bytes)?;
+        // The minted after snapshot was never written: the pair is historical.
+        match canonically_admit_terminal_pair(&root, &verify_bytes) {
+            CanonicalAdmission::Unavailable { .. } => {}
+            other => {
+                return Err(format!(
+                    "a pair with gone snapshots must be unavailable, not {other:?}"
+                ));
+            }
+        }
+        match load_attempt_terminal_receipt(&root, &retained) {
+            AttemptTerminalReceipt::Issued { .. } => {}
+            other => {
+                return Err(format!(
+                    "a historical consistent pair must stay issued, got {other:?}"
+                ));
+            }
+        }
+        let (disposition, _) = cli_disposition_for(&root, retained.repair_attempt_id.as_str())?;
+        if disposition != "finished" {
+            return Err(format!(
+                "a historical improved pair must still report finished, got {disposition}"
+            ));
+        }
+        std::fs::remove_dir_all(&root)
+            .map_err(|error| format!("remove {} failed: {error}", root.display()))?;
+        Ok(())
+    }
+
     #[test]
     fn restored_attempt_may_replace_unpublished_terminal_files() -> Result<(), String> {
         let root = test_repo_root("retain-restore")?;
@@ -5245,9 +6792,10 @@ mod tests {
             .map_err(|error| format!("create {} failed: {error}", reports.display()))?;
         let receipt_path = reports.join("agent-receipt.json");
         let verify_path = root.join("target/ripr/workflow/agent-verify.json");
-        std::fs::write(&receipt_path, bound_receipt_bytes(&finished)?)
+        let (receipt_bytes, verify_bytes) = mint_bound_receipt_pair(&root, &finished, "unchanged")?;
+        std::fs::write(&receipt_path, &receipt_bytes)
             .map_err(|error| format!("write receipt failed: {error}"))?;
-        std::fs::write(&verify_path, b"{\"kind\":\"verify\"}\n")
+        std::fs::write(&verify_path, &verify_bytes)
             .map_err(|error| format!("write verify failed: {error}"))?;
         retain_terminal_evidence(
             &root,
@@ -5274,9 +6822,12 @@ mod tests {
             HeadMovement::AdmitDescendantCommits,
         )?;
         let retried = load_repair_attempt_manifest(&root, &finished.repair_attempt_id)?;
-        let mut receipt: serde_json::Value =
-            serde_json::from_slice(&bound_receipt_bytes(&retried)?)
-                .map_err(|error| format!("parse retried receipt: {error}"))?;
+        let (retried_receipt_bytes, retried_verify_bytes) =
+            mint_bound_receipt_pair(&root, &retried, "unchanged")?;
+        let mut receipt: serde_json::Value = serde_json::from_slice(&retried_receipt_bytes)
+            .map_err(|error| format!("parse retried receipt: {error}"))?;
+        // The marker changes the receipt bytes only; the recorded verify
+        // digest still covers the retried verify bytes minted above.
         receipt["generated_at"] = serde_json::json!("retry");
         std::fs::write(
             &receipt_path,
@@ -5284,7 +6835,7 @@ mod tests {
                 .map_err(|error| format!("serialize retried receipt: {error}"))?,
         )
         .map_err(|error| format!("write retried receipt failed: {error}"))?;
-        std::fs::write(&verify_path, b"{\"kind\":\"verify\",\"retry\":true}\n")
+        std::fs::write(&verify_path, &retried_verify_bytes)
             .map_err(|error| format!("write retried verify failed: {error}"))?;
 
         retain_terminal_evidence(

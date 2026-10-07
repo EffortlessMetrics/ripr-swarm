@@ -426,6 +426,7 @@ pub(crate) fn assemble_repair_card(
         packet_eligible: eligibility.eligible(),
         edit_cage_refusal,
         next_command,
+        packet_route,
         allowed_files,
         forbidden_files,
         done_when,
@@ -1030,6 +1031,100 @@ mod tests {
         }
         if gap_names_seam(&gap, "gap-1", "pricing::other_total") {
             return Err("a gap id shared with another owner must not name the seam".to_string());
+        }
+        Ok(())
+    }
+
+    /// #5268: the Rust producer now populates canonical gaps on diff
+    /// findings, but a producer gap id (`gap:rust:...`) is a different
+    /// identity scheme from the repo seam's content-hashed canonical gap id,
+    /// so a populated finding must still not be credited as this seam's
+    /// witness — the id match alone would bind a diff finding to a seam it
+    /// did not come from.
+    #[test]
+    fn rust_producer_gap_does_not_bind_a_seam_witness_by_id_coincidence() -> Result<(), String> {
+        use crate::domain::{
+            ActivationEvidence, DeltaKind, ExposureClass, OracleKind, OracleStrength, Probe,
+            ProbeFamily, ProbeId, RelatedTest, RevealEvidence, RiprEvidence, SourceLocation,
+            SymbolId,
+        };
+        let entry = weakly_gripped_entry();
+        let seam_gap_id = crate::analysis::canonical_gap::canonical_gap_identity(&entry)
+            .ok_or_else(|| {
+                "the weakly gripped seam must carry a canonical gap identity".to_string()
+            })?
+            .id;
+        // Weakly exposed with an oracle row, so a (wrong) id match would
+        // actually produce a witness and fail this control.
+        let finding = crate::domain::Finding {
+            id: "probe:src_lib.rs:predicate:4036edfa".to_string(),
+            canonical_gap: Some(FindingCanonicalGap {
+                id: "gap:rust:src/lib.rs:pricing::discounted_total:predicate_boundary:predicate:amount==discount_threshold"
+                    .to_string(),
+                language: "rust".to_string(),
+                file: "src/lib.rs".to_string(),
+                owner: "pricing::discounted_total".to_string(),
+                behavior_kind: "predicate_boundary".to_string(),
+                probe_kind: "predicate".to_string(),
+                normalized_discriminator: "amount==discount_threshold".to_string(),
+            }),
+            probe: Probe {
+                id: ProbeId("probe:src_lib.rs:predicate:4036edfa".to_string()),
+                location: SourceLocation::new("src/lib.rs", 2, 5),
+                owner: Some(SymbolId("src/lib.rs::pricing::discounted_total".to_string())),
+                family: ProbeFamily::Predicate,
+                delta: DeltaKind::Control,
+                before: None,
+                after: None,
+                expression: "if amount >= discount_threshold {".to_string(),
+                expected_sinks: Vec::new(),
+                required_oracles: Vec::new(),
+            },
+            class: ExposureClass::WeaklyExposed,
+            ripr: RiprEvidence {
+                reach: stage(StageState::Yes),
+                infect: stage(StageState::Weak),
+                propagate: stage(StageState::Yes),
+                reveal: RevealEvidence {
+                    observe: stage(StageState::Yes),
+                    discriminate: stage(StageState::Weak),
+                },
+            },
+            confidence: 0.5,
+            evidence: Vec::new(),
+            missing: vec!["Missing discriminator value: amount == discount_threshold".to_string()],
+            flow_sinks: Vec::new(),
+            activation: ActivationEvidence::default(),
+            stop_reasons: Vec::new(),
+            related_tests_matched_total: Some(1),
+            related_tests: vec![RelatedTest {
+                name: "below_threshold_has_no_discount".to_string(),
+                file: std::path::PathBuf::from("tests/pricing.rs"),
+                line: 2,
+                oracle: Some("assert_eq!(discounted_total(50, 100), 50)".to_string()),
+                oracle_kind: OracleKind::ExactValue,
+                oracle_strength: OracleStrength::Strong,
+                relation_reason: None,
+                relation_confidence: None,
+                miss: None,
+            }],
+            recommended_next_step: None,
+            language: Some(crate::domain::LanguageId::Rust),
+            language_status: None,
+            owner_kind: None,
+            static_limit_kind: None,
+            changed_sink: None,
+            observed_sink: None,
+            oracle_alignment: None,
+            alignment_reason: None,
+            source_currentness: crate::domain::SourceCurrentness::CandidateCurrent,
+        };
+        if witness_from_findings(std::slice::from_ref(&finding), &entry, Some(&seam_gap_id))
+            .is_some()
+        {
+            return Err(format!(
+                "a producer-gap finding must not bind as the seam witness for gap id {seam_gap_id}"
+            ));
         }
         Ok(())
     }

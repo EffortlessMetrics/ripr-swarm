@@ -174,7 +174,7 @@ interpretation guide and integration rules.
 | `dynamic_dispatch` | The call target is selected dynamically, such as computed member calls (`obj[name]` followed by invocation) or `getattr(obj, name)(...)`. |
 | `metaprogramming` | The code shape can change behavior through metaprogramming, such as decorators, proxies, or metaclasses. |
 | `missing_import_graph` | The adapter did not resolve a full project import graph. |
-| `decorator_indirection` | A Python decorator may change the callable boundary. Simple route decorators such as `@api.post(...)` can still be treated as static route metadata when the changed body has a supported repair shape. |
+| `decorator_indirection` | A Python decorator may change the callable boundary. Simple route decorators such as `@api.post(...)` can still be treated as static route metadata when the changed body has a supported repair shape. `functools.lru_cache`, `functools.cache`, and `functools.cached_property` are not this limit when they bind from `functools`. |
 | `mocked_module` | A test replaces or mocks the module or symbol under review. |
 | `opaque_custom_assertion_helper` | A Python test uses a custom assertion helper whose body is not inspected. |
 | `property_based_test` | A Python test uses generated inputs, such as Hypothesis `@given(...)`, whose concrete cases are not known statically. |
@@ -276,8 +276,22 @@ result, never silent skips.
 | `repo-badge-json` / `repo-badge-shields` | full | full | empty (stub) | seams: none rendered; capped/partial runs never badge-eligible |
 | `agent-seam-packets-json` | full | full | empty (stub) | seams: none rendered; evidence via repo analysis result |
 
-Diff-scoped formats (`check --json`, `check --format human`, SARIF from a diff,
-review-comments) work normally on all four languages.
+Diff-scoped `check` formats (`check --json`, `check --format human`, SARIF from
+a diff) work normally on all four languages. The base/head `review-comments`
+path is the one diff-scoped exception (#6832): it projects seam-backed
+findings, and preview-language findings are not seams, so a Python or
+TypeScript diff yields an empty report (`comments: 0`, run status
+`complete`) even when `ripr check` finds actionable evidence — the emitted
+warning names this exclusion instead of reading as "no findings". To render
+preview-language findings as review comments, build a gap decision ledger
+from the diff-scoped check output and pass it explicitly:
+
+```bash
+mkdir -p target/ripr/reports target/ripr/review
+ripr check --base <pr-base> --json > target/ripr/reports/check-output.json
+ripr reports gap-ledger --check-output target/ripr/reports/check-output.json --root . --out target/ripr/reports/gap-decision-ledger.json
+ripr review-comments --base <pr-base> --head <pr-head> --root . --gap-ledger target/ripr/reports/gap-decision-ledger.json --out target/ripr/review/comments.json
+```
 
 The Perl column assumes a ripr built with Cargo feature `lang-perl` plus a
 compatible Perl fact packet or exporter. Default builds do not compile the Perl

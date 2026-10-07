@@ -3,6 +3,30 @@
 This log captures repo knowledge that should survive individual PRs and chat
 sessions. It is intentionally short and actionable.
 
+## 2026-10-06: The MCP tool envelope is a wire cost, not a free re-render (#6021)
+
+Serializing the same document twice into one tool response — pretty
+`content[0].text` plus `structuredContent` — made the wire response ~2.4x
+the compact document, so a listing the document guard approved at 65 KB
+died `result_too_large` at the 128 KiB bound after every budget layer had
+passed. Zero-finding fixtures cannot witness this; it needs hundreds of
+items. The envelope is now the calibration owner: compact text always,
+`structuredContent` only while the complete envelope measures under the
+bound, typed failure past that, and `ripr_list_gaps` byte-fills pages to
+`MAX_TOOL_DOCUMENT_BYTES` (half the response bound — worst-case JSON
+escaping doubles the text copy). When changing a wire shape, measure the
+final envelope, not the document.
+## 2026-10-07: Windows spawn and path spellings that tests must not assume (#6855)
+
+Windows `CreateProcess` resolves the executable through the parent's PATH
+and ignores the child's custom `PATH`, so restricting `PATH` to an empty
+directory never produces a missing-binary spawn failure on Windows (probed:
+bare `git` still spawns, exit 0). Force the miss with a deterministically
+absent absolute program instead. Separately, Git for Windows rejects
+verbatim path arguments (`worktree add` fails with "could not create
+leading directories"), so fixture setup must pass a plain or relative path
+even when the fixture root itself is verbatim.
+
 ## 2026-10-04: Operand-position error lexemes are not error observers (#5255)
 
 `assert_eq!((rdr.len(), error_count), (10, 0))` observes a successful length
@@ -18,6 +42,20 @@ must stay `weakly_exposed`, matching `error_path_diagnostic_error`. Existing
 sites (diagnostic operand stripping, guarded owner-result matches, exact-variant
 pins, Python's typed-oracle gate) do not scan identifier lexemes. Do not reopen
 #4748.
+
+## 2026-10-04: cancellation is the token's observed abort, not a phrase (#4860)
+
+Analysis checkpoints render `analysis cancelled: <Kind>` and the text then
+travels through ~120 `Result<_, String>` call sites, where callers wrap it.
+The LSP refresh wrapped it as `workspace analysis failed: ...`, so its
+`starts_with("analysis cancelled:")` check read a real deadline abort as an
+analysis failure. Decide cancellation from
+`AnalysisCancellationToken::observed_abort()`: the recorded kind, set only
+once a checkpoint handed it to the work. A recorded reason that no checkpoint
+saw is not an outcome, because the work failed or finished on its own.
+Inside `CoreError` code (git invocation, diff load) the abort is the typed
+`CoreError::AnalysisCancelled`. `is_cancellation_error(&str)` is test-only
+and asserts rendered wording.
 
 ## 2026-10-04: Initialize-session `ping` is the method name, not `params._meta` (#6022)
 
@@ -119,6 +157,15 @@ selectors, but do not trim the file part or reject interior whitespace. Walk
 slash-split rewrite dropped Windows drive-relative and rooted identities.
 Paths remain the limitation-path rule: they are identities, not prose. Do not
 add a second filesystem authority in a renderer or `lsp/diagnostics.rs`.
+
+## 2026-10-04: `Path::is_file()` is not `ripr.toml` presence (#5404)
+
+`Path::is_file()` follows symlinks. After `load_for_root` started treating a
+dangling `ripr.toml` as present-but-unreadable, workspace status and the two
+Python repair config-profile checks still used `is_file()`, so they reported
+built-in defaults. Use `config_present_at_root` / `config_entry_present`
+(`symlink_metadata`) at every presence site. Keep a dangling-link control per
+site that must not say defaults while `load_for_root` names `ripr.toml`.
 
 ## 2026-10-03: record-count sharding is not a byte bound (#4999)
 

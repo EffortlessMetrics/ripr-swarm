@@ -1,0 +1,51 @@
+{
+  "case_id": "spec0228-field-write-enum-other-field",
+  "subject_id": "authored-spec0228-6b",
+  "diff": "cases/spec0228-field-write-enum-other-field.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 19
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "field_enum_variant_assign",
+  "test_shape": "owner_call_then_assert_eq_other_field_variant",
+  "hard_case": "ripr reads static_unknown; spec example 6 (second control) expects not exposed.",
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "self.state = TaskState::Idle;",
+        "mutated_line": "self.state = TaskState::Idle;",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: state is Idle, but the test reads only mode"
+      },
+      {
+        "replacement": "self.state = TaskState::Running;",
+        "mutated_line": "self.state = TaskState::Running;",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: state stays Running, but the test reads only mode"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "complete_leaves_the_mode_idle asserts mode == Idle, a different field from the written state. Spec cells: RIPR-SPEC-0228 example 6 (second control).",
+  "labeling_observation": {
+    "ripr_commit": "7b3deeb",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "static_unknown"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

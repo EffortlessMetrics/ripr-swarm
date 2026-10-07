@@ -32,11 +32,16 @@ impl McpServer {
         status: WorkspaceStatus,
         analysis_root: Option<PathBuf>,
     ) -> Result<Self, ErrorData> {
+        // The session profile resolves the workspace's own configuration
+        // once at startup (#6825): the same `load_for_root` posture the
+        // refresh attempt runs under, so `ripr_workspace_status` never
+        // discloses a language gate the analysis does not have.
+        let profile = workspace::SessionProfile::resolve(analysis_root.as_deref());
         let mut server = Self {
             tools: typed(protocol::tools_list_result())?,
             resources: typed(protocol::resources_list_result())?,
             resource_templates: typed(protocol::resource_templates_list_result())?,
-            profile: workspace::SessionProfile::built_in(),
+            profile,
             root_identity: status.root.identity.clone(),
             analysis_root,
             status,
@@ -61,14 +66,26 @@ impl McpServer {
 
     async fn status_tool(&self) -> Result<CallToolResponse, ErrorData> {
         let session = self.session.lock().await;
-        let envelope = protocol::status_tool_result(
+        let envelope = match protocol::status_tool_result(
             &self.status,
             &session,
             &self.profile,
             super::MAX_MESSAGE_BYTES,
             super::MAX_RESPONSE_BYTES,
-        )
-        .map_err(|_error| ErrorData::internal_error("serialize workspace status", None))?;
+        ) {
+            Ok(envelope) => envelope,
+            // The envelope builder fails closed when even the compact text
+            // cannot fit the bound (#6021): that is the typed
+            // `result_too_large` state, not an instrument error.
+            Err(detail) => {
+                let failure = workspace::AttemptFailure::new(
+                    workspace::CODE_RESULT_TOO_LARGE,
+                    format!("serialize workspace status: {detail}"),
+                    "read narrower evidence instead of widening the response",
+                );
+                return self.typed_failure(failure, workspace::SESSION_SCHEMA_VERSION);
+            }
+        };
         // Status goes through the same bound as every other tool (#5254
         // item 4): only the writer backstop guarded it before.
         self.bounded_tool_envelope(
@@ -141,10 +158,18 @@ impl McpServer {
         &self,
         arguments: Option<serde_json::Map<String, Value>>,
     ) -> Result<CallToolResponse, ErrorData> {
-        reject_unknown_arguments(&arguments, &["snapshot_id"])?;
+        reject_unknown_arguments(&arguments, &["snapshot_id", "offset", "limit"])?;
         let requested = optional_string_argument(&arguments, "snapshot_id")?;
+        let offset = optional_nonnegative_argument(&arguments, "offset")?;
+        let limit = optional_positive_argument(&arguments, "limit")?;
         let session = self.session.lock().await;
-        match session.list_gaps(requested.as_deref()) {
+        match session.list_gaps(
+            requested.as_deref(),
+            workspace::GapListWindow {
+                offset: offset.unwrap_or(0),
+                limit,
+            },
+        ) {
             Ok(document) => self.bounded_tool_result(
                 document,
                 gaps::GAP_LIST_SCHEMA_VERSION,
@@ -311,18 +336,29 @@ impl McpServer {
         Ok(result.into())
     }
 
-    /// Wrap a document in the tool envelope and fail closed when the final
-    /// serialized response exceeds the advertised bound: the envelope carries
-    /// the document twice (text and structured content), so a document that
-    /// fits the raw cap can still overflow the wire response.
+    /// Wrap a document in the tool envelope. The envelope builder measures
+    /// the final form before it ships (#6021): the compact text always fits
+    /// guard-approved documents, `structuredContent` is dropped past the
+    /// bound instead of failing an approved response, and a document that
+    /// cannot fit even as compact text fails closed with the typed
+    /// `result_too_large` here rather than as an over-cap wire response.
     fn bounded_tool_result(
         &self,
         document: Value,
         failure_version: &'static str,
         serialize_context: &'static str,
     ) -> Result<CallToolResponse, ErrorData> {
-        let envelope = protocol::tool_result(document)
-            .map_err(|_error| ErrorData::internal_error(serialize_context, None))?;
+        let envelope = match protocol::tool_result(document) {
+            Ok(envelope) => envelope,
+            Err(detail) => {
+                let failure = workspace::AttemptFailure::new(
+                    workspace::CODE_RESULT_TOO_LARGE,
+                    format!("{serialize_context}: {detail}"),
+                    "read narrower evidence (one item through ripr_get_gap) instead of widening the response",
+                );
+                return self.typed_failure(failure, failure_version);
+            }
+        };
         self.bounded_tool_envelope(envelope, failure_version, serialize_context)
     }
 
@@ -369,6 +405,42 @@ fn optional_string_argument(
             format!("{name} must be a string"),
             None,
         )),
+    }
+}
+
+/// A paging offset (#6021): a JSON integer `>= 0`. Booleans, floats,
+/// strings and negatives stay invalid params instead of silently coercing.
+fn optional_nonnegative_argument(
+    arguments: &Option<serde_json::Map<String, Value>>,
+    name: &str,
+) -> Result<Option<usize>, ErrorData> {
+    let Some(arguments) = arguments else {
+        return Ok(None);
+    };
+    match arguments.get(name) {
+        None | Some(Value::Null) => Ok(None),
+        Some(value) => {
+            let raw = value.as_u64().ok_or_else(|| {
+                ErrorData::invalid_params(format!("{name} must be a non-negative integer"), None)
+            })?;
+            usize::try_from(raw).map(Some).map_err(|error| {
+                ErrorData::invalid_params(format!("{name} is out of range: {error}"), None)
+            })
+        }
+    }
+}
+
+/// A paging limit (#6021): a JSON integer `>= 1`.
+fn optional_positive_argument(
+    arguments: &Option<serde_json::Map<String, Value>>,
+    name: &str,
+) -> Result<Option<usize>, ErrorData> {
+    match optional_nonnegative_argument(arguments, name)? {
+        Some(0) => Err(ErrorData::invalid_params(
+            format!("{name} must be at least 1"),
+            None,
+        )),
+        other => Ok(other),
     }
 }
 

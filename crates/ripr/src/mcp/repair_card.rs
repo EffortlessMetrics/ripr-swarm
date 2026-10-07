@@ -38,7 +38,7 @@ use crate::app::repair_card_handoff::{
 use crate::config::RiprConfig;
 use crate::domain::{AgentCardRefusalKind, RepairCardSnapshotCurrentness};
 use serde_json::{Value, json};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 pub(crate) const REPAIR_CARD_SCHEMA_VERSION: &str = "ripr-mcp-repair-card-v1";
 
@@ -91,11 +91,34 @@ pub(crate) struct SeamCardBinding {
 }
 
 /// Extract the canonical item id from a `ripr://repair-card/{id}` resource
-/// URI. The grammar matches the gap template exactly: one non-empty path
-/// segment with no further separators.
+/// URI. The canonical id embeds a workspace-relative path (Python, and
+/// since #5268 Rust), so the suffix is read whole: the `ripr://repair-card/`
+/// prefix alone routes the URI, and only an empty suffix fails.
 pub(crate) fn repair_card_resource_id(uri: &str) -> Option<&str> {
     uri.strip_prefix("ripr://repair-card/")
-        .filter(|id| !id.is_empty() && !id.contains('/'))
+        .filter(|id| !id.is_empty())
+}
+
+/// Changed-file scope for the card inventory, in the inventory's own
+/// spelling. The discovery corpus is bare workspace-relative (`discover`
+/// strips the root before pushing), while item files render through the
+/// shared finding-location owner with its `./` prefix (#5996) and
+/// stable-path `%` escaping, so the prefix is normalized away, the escaping
+/// is decoded, and the changed-file intersection matches. Joining the root
+/// would absolutize them and lose every changed seam; an out-of-root item
+/// keeps its absolute fallback spelling and simply matches nothing.
+fn inventory_changed_files(items: &[GapItem]) -> Vec<PathBuf> {
+    items
+        .iter()
+        .map(|item| {
+            crate::analysis::decode_stable_path_text(
+                item.file
+                    .as_str()
+                    .strip_prefix("./")
+                    .unwrap_or(item.file.as_str()),
+            )
+        })
+        .collect()
 }
 
 /// Bind the repair-card producers into one committing snapshot. This runs
@@ -109,6 +132,7 @@ pub(crate) fn repair_card_resource_id(uri: &str) -> Option<&str> {
 /// snapshot identity.
 pub(crate) fn bind_snapshot_card_producers(
     root: &Path,
+    config: &RiprConfig,
     snapshot: &mut Snapshot,
 ) -> Result<(), AttemptFailure> {
     let repository_head = git_output(root, &["rev-parse", "HEAD"])
@@ -123,12 +147,18 @@ pub(crate) fn bind_snapshot_card_producers(
         .to_string();
     let mut bindings = Vec::new();
     if !snapshot.items.is_empty() {
-        let config = RiprConfig::default();
-        let changed_files = snapshot
-            .items
-            .iter()
-            .map(|item| std::path::PathBuf::from(item.file.as_str()))
-            .collect::<Vec<_>>();
+        // The card producers run under the same resolved workspace
+        // configuration as the snapshot's findings (#6825 review): a
+        // configured oracle strength or harness registration must not
+        // classify the card's seams differently from the committed items.
+        // Item files are root-relative on the wire (#5254 item 6) with the
+        // shared owner's `./` prefix (#5996); the inventory corpus is bare
+        // (`discover` strips the root), so the prefix is normalized away
+        // and the changed-file scope matches. Joining the root here would
+        // make them absolute and lose every changed seam. An out-of-root
+        // item keeps its absolute fallback spelling and simply matches
+        // nothing.
+        let changed_files = inventory_changed_files(&snapshot.items);
         let changed_owner_names = snapshot
             .findings
             .iter()
@@ -136,7 +166,7 @@ pub(crate) fn bind_snapshot_card_producers(
             .collect::<Vec<_>>();
         let inventory = inventory_diff_scoped_classified_seams_at_with_config(
             root,
-            &config,
+            config,
             &changed_files,
             &changed_owner_names,
         )
@@ -392,7 +422,7 @@ impl WorkspaceSession {
                 "the card binds the analyzed repository head and commit-time currentness of its snapshot; a HEAD move or edit after ripr_refresh changes what the CLI would bind live, so refresh again before comparing card identities across transports",
                 "the next-action display binds the portable root `.` and is presentation only; the host-local root path is intentionally not projected and the display is never execution authority",
                 "attempt state is re-read from the durable store at card-read time; in-memory session transactions never ride a card and stay reachable through ripr_prepare_repair / ripr_get_repair_attempt",
-                "the seam inventory and the evidence facts both ran with built-in defaults; project-local configuration stays detected-not-loaded",
+                "the card's seam inventory and evidence facts ran with the same resolved workspace configuration as the snapshot's findings (#6825 review); compare cards across transports only at equal config identity",
             ],
             "links": {
                 "snapshot": format!("ripr://snapshot/{snapshot_id}"),
@@ -446,7 +476,7 @@ mod tests {
             seam,
             evidence: TestGripEvidence {
                 seam_id,
-                related_tests: vec![RelatedTestGrip {
+                related_tests: vec![Arc::new(RelatedTestGrip {
                     test_name: "discounted_total_boundary".to_string(),
                     file: PathBuf::from("tests/pricing.rs"),
                     line: 12,
@@ -460,7 +490,7 @@ mod tests {
                     evidence_summary: "asserts the discounted total".to_string(),
                     relation_reason: crate::domain::RelationReason::DirectOwnerCall,
                     relation_confidence: crate::domain::RelationConfidence::High,
-                }],
+                })],
                 reach: stage(crate::domain::StageState::Yes),
                 activate: stage(crate::domain::StageState::Yes),
                 propagate: stage(crate::domain::StageState::Yes),
@@ -502,6 +532,7 @@ mod tests {
             no_scope_provided: false,
             unanalyzed_working_tree: false,
             untracked_working_tree_source_paths: Vec::new(),
+            unlinked_python_tests: None,
             suppression: None,
             partial_scope: None,
         })
@@ -568,15 +599,69 @@ mod tests {
     }
 
     #[test]
+    fn inventory_changed_files_keep_the_relative_wire_spelling() -> Result<(), String> {
+        // The inventory corpus is bare workspace-relative, so changed scope
+        // must be too: joining the root would absolutize the scope and lose
+        // every changed seam. An in-root item normalizes the `./` wire
+        // prefix away; an out-of-root item keeps its absolute fallback
+        // spelling.
+        let root = temp_root()?;
+        let mut inside = super::super::gaps::test_finding()?;
+        inside.probe.location.file = root.join("src/lib.rs");
+        let inside_item = GapItem::from_finding(&inside, &root)?;
+        let mut outside = super::super::gaps::test_finding()?;
+        outside.probe.location.file = std::env::temp_dir().join("ripr-card-scope-elsewhere/lib.rs");
+        let outside_item = GapItem::from_finding(&outside, &root)?;
+
+        let changed = inventory_changed_files(&[inside_item, outside_item]);
+        if changed.first().map(PathBuf::as_path) != Some(Path::new("src/lib.rs")) {
+            return Err(format!("in-root scope must stay relative: {changed:?}"));
+        }
+        if changed.get(1).is_none_or(|path| !path.is_absolute()) {
+            return Err(format!("out-of-root scope must stay absolute: {changed:?}"));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn inventory_changed_files_decode_the_stable_wire_escaping() -> Result<(), String> {
+        // GapItem.file carries stable-path encoding (`%` as `%25`), while
+        // the inventory corpus holds raw workspace-relative spellings: the
+        // scope boundary must decode, or the %-named seam drops out of card
+        // scope (#6874). The wire spelling itself stays encoded.
+        let root = temp_root()?;
+        let mut finding = super::super::gaps::test_finding()?;
+        finding.probe.location.file = root.join("pricing_%FF.rs");
+        let item = GapItem::from_finding(&finding, &root)?;
+        if item.file != "./pricing_%25FF.rs" {
+            return Err(format!("wire spelling must stay encoded: {}", item.file));
+        }
+        let changed = inventory_changed_files(std::slice::from_ref(&item));
+        if changed.first().map(PathBuf::as_path) != Some(Path::new("pricing_%FF.rs")) {
+            return Err(format!(
+                "scope must decode to the corpus spelling: {changed:?}"
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
     fn repair_card_resource_uri_parsing_is_strict() {
         assert_eq!(
             repair_card_resource_id("ripr://repair-card/gap:test:1"),
             Some("gap:test:1")
         );
+        // #5268 review: a producer canonical id embeds a workspace-relative
+        // path, so the suffix is read whole and a nested id must resolve.
+        assert_eq!(
+            repair_card_resource_id(
+                "ripr://repair-card/gap:rust:src/lib.rs:discount:predicate_boundary:predicate:amount==fee"
+            ),
+            Some("gap:rust:src/lib.rs:discount:predicate_boundary:predicate:amount==fee")
+        );
         for other in [
             "ripr://workspace/status",
             "ripr://repair-card/",
-            "ripr://repair-card/a/b",
             "ripr://gap/gap:test:1",
             "https://example.com/repair-card/x",
         ] {

@@ -1,3 +1,4 @@
+use crate::agent::loop_commands::shell_arg;
 use serde::Serialize;
 use serde_json::Value;
 
@@ -906,14 +907,142 @@ fn command_root(proof: &HealthProof) -> String {
     }
 }
 
+/// The `--root` the handoff's agent command carries, decoded and re-quoted
+/// with `shell_arg`. Since #3948 that command names the checkout, quoted when
+/// it holds a space, a shell metacharacter or a control character
+/// (`--root '/work/my repo'`), so the word is found with shell quoting rather
+/// than by splitting on whitespace, which handed back `'/work/my` (#4000).
+/// The proof is a caller-supplied file, so its word is never copied into a
+/// repair command: only literal quoting and `shell_arg`'s own
+/// `"$(printf '\ooo')"` byte escapes decode, and any other expansion
+/// (`$(...)`, `$VAR`, backticks) is refused.
 fn root_from_agent_command(command: &str) -> Option<String> {
-    let mut tokens = command.split_whitespace();
+    let words = raw_shell_words(command)?;
+    let mut tokens = words.iter();
     while let Some(token) = tokens.next() {
-        if token == "--root" {
-            return tokens.next().map(ToOwned::to_owned);
+        if *token == "--root" {
+            return tokens
+                .next()
+                .and_then(|word| decode_shell_word(word))
+                .map(|root| shell_arg(&root));
         }
     }
     None
+}
+
+/// Decode one shell word without running anything. Single quotes are
+/// literal; double quotes allow `\` escapes and exactly the
+/// `$(printf '\ooo...')` form `shell_arg` emits for control characters.
+/// Anything that would expand or execute yields `None`.
+fn decode_shell_word(word: &str) -> Option<String> {
+    const PRINTF_OPEN: &str = "\"$(printf '";
+    let mut bytes = Vec::new();
+    let mut rest = word;
+    while let Some(ch) = rest.chars().next() {
+        match ch {
+            '\'' => {
+                let end = rest[1..].find('\'')?;
+                bytes.extend_from_slice(&rest.as_bytes()[1..=end]);
+                rest = &rest[end + 2..];
+            }
+            '"' if rest.starts_with(PRINTF_OPEN) => {
+                let after = &rest[PRINTF_OPEN.len()..];
+                let end = after.find("')\"")?;
+                let escapes = &after[..end];
+                if escapes.is_empty() || !escapes.len().is_multiple_of(4) {
+                    return None;
+                }
+                for escape in escapes.as_bytes().chunks(4) {
+                    let digits = escape.strip_prefix(b"\\")?;
+                    let text = std::str::from_utf8(digits).ok()?;
+                    bytes.push(u8::from_str_radix(text, 8).ok()?);
+                }
+                rest = &after[end + 3..];
+            }
+            '"' => {
+                let mut chars = rest[1..].char_indices();
+                let mut closed = None;
+                while let Some((index, inner)) = chars.next() {
+                    match inner {
+                        '"' => {
+                            closed = Some(index + 2);
+                            break;
+                        }
+                        '\\' => {
+                            let (_, escaped) = chars.next()?;
+                            if !matches!(escaped, '$' | '`' | '"' | '\\') {
+                                bytes.push(b'\\');
+                            }
+                            let mut buffer = [0; 4];
+                            bytes.extend_from_slice(escaped.encode_utf8(&mut buffer).as_bytes());
+                        }
+                        '$' | '`' => return None,
+                        other => {
+                            let mut buffer = [0; 4];
+                            bytes.extend_from_slice(other.encode_utf8(&mut buffer).as_bytes());
+                        }
+                    }
+                }
+                rest = &rest[closed?..];
+            }
+            '\\' => {
+                let escaped = rest[1..].chars().next()?;
+                let mut buffer = [0; 4];
+                bytes.extend_from_slice(escaped.encode_utf8(&mut buffer).as_bytes());
+                rest = &rest[1 + escaped.len_utf8()..];
+            }
+            '$' | '`' | ';' | '&' | '|' | '<' | '>' | '(' | ')' => return None,
+            other => {
+                let mut buffer = [0; 4];
+                bytes.extend_from_slice(other.encode_utf8(&mut buffer).as_bytes());
+                rest = &rest[other.len_utf8()..];
+            }
+        }
+    }
+    String::from_utf8(bytes).ok()
+}
+
+/// Split a rendered command into its shell words without interpreting them.
+/// A word keeps its quotes; an unbalanced quote or trailing escape yields
+/// `None`.
+fn raw_shell_words(command: &str) -> Option<Vec<&str>> {
+    let mut words = Vec::new();
+    let mut start = None;
+    let mut quote = None;
+    let mut escaped = false;
+    for (index, character) in command.char_indices() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        match (quote, character) {
+            (Some('\''), '\'') | (Some('"'), '"') => quote = None,
+            (Some('"'), '\\') | (None, '\\') => {
+                start.get_or_insert(index);
+                escaped = true;
+            }
+            (Some(_), _) => {}
+            (None, '\'' | '"') => {
+                start.get_or_insert(index);
+                quote = Some(character);
+            }
+            (None, value) if value.is_whitespace() => {
+                if let Some(begin) = start.take() {
+                    words.push(&command[begin..index]);
+                }
+            }
+            (None, _) => {
+                start.get_or_insert(index);
+            }
+        }
+    }
+    if escaped || quote.is_some() {
+        return None;
+    }
+    if let Some(begin) = start {
+        words.push(&command[begin..]);
+    }
+    Some(words)
 }
 
 fn repair_markdown_line(repair: &RepairItem) -> String {
@@ -1209,5 +1338,54 @@ mod tests {
         assert!(markdown.contains("regenerate proof; supply selected seam"));
         assert!(markdown.contains("src/lib.rs:7 - missing receipt"));
         Ok(())
+    }
+
+    /// #4000: since #3948 the handoff's agent command names the checkout
+    /// root, quoted when it holds a space. Splitting it on whitespace handed
+    /// back `'/work/my` and every repair command carried an unbalanced quote.
+    #[test]
+    fn repair_commands_keep_a_quoted_root_whole() {
+        assert_eq!(
+            root_from_agent_command(
+                "ripr agent brief --root '/work/my repo' --seam-id abc --json > target/ripr/workflow/agent-brief.json"
+            )
+            .as_deref(),
+            Some("'/work/my repo'")
+        );
+        assert_eq!(
+            root_from_agent_command("ripr agent start --root repo-root --seam-id s").as_deref(),
+            Some("repo-root")
+        );
+        // Every form `shell_arg` renders round-trips as the same word, including
+        // metacharacters and the `$(printf ...)` escape for control characters.
+        for root in ["/w/a&b", "/w/$HOME", "/w/it's", "/w/a\u{1}b", "/w/a b;c"] {
+            let quoted = crate::agent::loop_commands::shell_arg(root);
+            let command = format!("ripr agent start --root {quoted} --seam-id s");
+            assert_eq!(
+                root_from_agent_command(&command).as_deref(),
+                Some(quoted.as_str()),
+                "{command}"
+            );
+        }
+        assert_eq!(
+            root_from_agent_command("ripr agent start --seam-id s"),
+            None
+        );
+        // The proof is caller-supplied: an expansion is never carried into a
+        // repair command, quoted or not.
+        for hostile in [
+            "ripr agent start --root \"$(touch /tmp/pwn)\" --seam-id s",
+            "ripr agent start --root $(id) --seam-id s",
+            "ripr agent start --root `id` --seam-id s",
+            "ripr agent start --root \"$HOME\" --seam-id s",
+            "ripr agent start --root '/w'\"$(printf 'x')\" --seam-id s",
+        ] {
+            assert_eq!(root_from_agent_command(hostile), None, "{hostile}");
+        }
+        // An unbalanced quote is not a root to repeat.
+        assert_eq!(
+            root_from_agent_command("ripr agent start --root '/work/my"),
+            None
+        );
     }
 }

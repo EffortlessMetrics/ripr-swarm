@@ -1,0 +1,214 @@
+{
+  "schema_version": "work_portfolio_provenance.v1",
+  "repository": "EffortlessMetrics/ripr-swarm",
+  "captured_at": "2026-10-05T12:00:00Z",
+  "capture_method": "authored captured-input corpora for the RIPR-SPEC-0234 work-portfolio compiler; regenerate with fixtures/work_portfolio/author_corpus.py",
+  "corpora": [
+    {
+      "name": "corpus",
+      "files": [
+        {
+          "path": "campaigns.json",
+          "sha256": "113a2ef3279c464e15efbf159a9fa3b0ba0a0f31fda09162716ba22991048e18"
+        },
+        {
+          "path": "cargo_allow.json",
+          "sha256": "ab352a16ad7f981cf909962d89940f870eca9699870e91ef94b1162ed1fb668e"
+        },
+        {
+          "path": "claims.json",
+          "sha256": "9931c647d7e2c62be3fc2f5103a86d79a2715b2f3d319c2b62dc3ac27e1f8f42"
+        },
+        {
+          "path": "issues.json",
+          "sha256": "773536aa67c1f096f663a98527b36a4e47ea27df9178497d5a417d9d2c8e598e"
+        },
+        {
+          "path": "local_state.json",
+          "sha256": "27b6947900ce722e420c306448f1e98d67133ec1e693814c212ddf94ae17aa4c"
+        },
+        {
+          "path": "manifest.json",
+          "sha256": "5f6bbb9f74ad8f181adba522a1e94263ed96f66eefc28f30e660725bf0c6c949"
+        },
+        {
+          "path": "pull_requests.json",
+          "sha256": "8e323e43dd48059e7a8c523615fcccaebcdfd27d3626959f9d9eebdbef4fa90d"
+        },
+        {
+          "path": "surfaces.json",
+          "sha256": "5ca35faced2970b912fdc6b73116024e4b6054f9da34edf78d2287081a1557e2"
+        }
+      ]
+    },
+    {
+      "name": "variants/unix_root",
+      "files": [
+        {
+          "path": "campaigns.json",
+          "sha256": "113a2ef3279c464e15efbf159a9fa3b0ba0a0f31fda09162716ba22991048e18"
+        },
+        {
+          "path": "cargo_allow.json",
+          "sha256": "ab352a16ad7f981cf909962d89940f870eca9699870e91ef94b1162ed1fb668e"
+        },
+        {
+          "path": "claims.json",
+          "sha256": "f1bbf5670d6f03fbb30afe55e22fdef2d548e9b8524a93585177df52398d06bb"
+        },
+        {
+          "path": "issues.json",
+          "sha256": "773536aa67c1f096f663a98527b36a4e47ea27df9178497d5a417d9d2c8e598e"
+        },
+        {
+          "path": "local_state.json",
+          "sha256": "a7b392220da8398ce82d18fc64d8c7099b90eaf8be9626371200efd657b8ee92"
+        },
+        {
+          "path": "manifest.json",
+          "sha256": "b6e30852bcf9589d88e199efcfabd5af47b8a396afec6d367c45e82e73a6edde"
+        },
+        {
+          "path": "pull_requests.json",
+          "sha256": "645321a8fa2b4f6e98054cef23498f2479bddc3d3521c7640423be29a2e71001"
+        },
+        {
+          "path": "surfaces.json",
+          "sha256": "5ca35faced2970b912fdc6b73116024e4b6054f9da34edf78d2287081a1557e2"
+        }
+      ]
+    },
+    {
+      "name": "variants/reordered",
+      "files": [
+        {
+          "path": "campaigns.json",
+          "sha256": "ae14df27e4f16b853f579ee5649b9e9ac0baa731cb93a9f0ad77aa2fdb6c0f8f"
+        },
+        {
+          "path": "cargo_allow.json",
+          "sha256": "1d4fe3170000ff11d06df287969114448c4994a2452d82ac3ca8714bf9d5e3b2"
+        },
+        {
+          "path": "claims.json",
+          "sha256": "23100a7b4b1673e4fd5587686029a1172d7bd5d0fb0e17699edf20219e9eb84a"
+        },
+        {
+          "path": "issues.json",
+          "sha256": "0e9041499a3613c8852af5a81301375b43502b56479f0aadfa58451cc1771ee5"
+        },
+        {
+          "path": "local_state.json",
+          "sha256": "67943a0f90dbdffb268295ea48e930e097135ec6ccd8225185e5699c1a32c5a3"
+        },
+        {
+          "path": "manifest.json",
+          "sha256": "8fd6096397617a8c1577c03767d659f349aa56c9dd2381f0d3ac6b70a31a6655"
+        },
+        {
+          "path": "pull_requests.json",
+          "sha256": "2345e287496ecd5d50931744ffdf80ce043d03b3561411d891b46749b0c60c98"
+        },
+        {
+          "path": "surfaces.json",
+          "sha256": "d3a5edbcc9da9c2269f5ddb447d194b6a22dff1e14ef353657676c32b0627345"
+        }
+      ]
+    },
+    {
+      "name": "variants/missing_github",
+      "files": [
+        {
+          "path": "campaigns.json",
+          "sha256": "113a2ef3279c464e15efbf159a9fa3b0ba0a0f31fda09162716ba22991048e18"
+        },
+        {
+          "path": "cargo_allow.json",
+          "sha256": "ab352a16ad7f981cf909962d89940f870eca9699870e91ef94b1162ed1fb668e"
+        },
+        {
+          "path": "local_state.json",
+          "sha256": "27b6947900ce722e420c306448f1e98d67133ec1e693814c212ddf94ae17aa4c"
+        },
+        {
+          "path": "manifest.json",
+          "sha256": "6b97768d49d3b0ff371801f7e72f4df41976fb8d664ea8abfe6b01df560fbb6a"
+        },
+        {
+          "path": "surfaces.json",
+          "sha256": "5ca35faced2970b912fdc6b73116024e4b6054f9da34edf78d2287081a1557e2"
+        }
+      ]
+    },
+    {
+      "name": "variants/stale_local",
+      "files": [
+        {
+          "path": "campaigns.json",
+          "sha256": "113a2ef3279c464e15efbf159a9fa3b0ba0a0f31fda09162716ba22991048e18"
+        },
+        {
+          "path": "cargo_allow.json",
+          "sha256": "ab352a16ad7f981cf909962d89940f870eca9699870e91ef94b1162ed1fb668e"
+        },
+        {
+          "path": "claims.json",
+          "sha256": "9931c647d7e2c62be3fc2f5103a86d79a2715b2f3d319c2b62dc3ac27e1f8f42"
+        },
+        {
+          "path": "issues.json",
+          "sha256": "773536aa67c1f096f663a98527b36a4e47ea27df9178497d5a417d9d2c8e598e"
+        },
+        {
+          "path": "local_state.json",
+          "sha256": "27b6947900ce722e420c306448f1e98d67133ec1e693814c212ddf94ae17aa4c"
+        },
+        {
+          "path": "manifest.json",
+          "sha256": "a49fe6a71dace3ab9973a3b27f4130db27a0d4dfdec8002da2482cef14afee13"
+        },
+        {
+          "path": "pull_requests.json",
+          "sha256": "8e323e43dd48059e7a8c523615fcccaebcdfd27d3626959f9d9eebdbef4fa90d"
+        },
+        {
+          "path": "surfaces.json",
+          "sha256": "5ca35faced2970b912fdc6b73116024e4b6054f9da34edf78d2287081a1557e2"
+        }
+      ]
+    },
+    {
+      "name": "variants/no_cargo_allow",
+      "files": [
+        {
+          "path": "campaigns.json",
+          "sha256": "113a2ef3279c464e15efbf159a9fa3b0ba0a0f31fda09162716ba22991048e18"
+        },
+        {
+          "path": "claims.json",
+          "sha256": "9931c647d7e2c62be3fc2f5103a86d79a2715b2f3d319c2b62dc3ac27e1f8f42"
+        },
+        {
+          "path": "issues.json",
+          "sha256": "773536aa67c1f096f663a98527b36a4e47ea27df9178497d5a417d9d2c8e598e"
+        },
+        {
+          "path": "local_state.json",
+          "sha256": "27b6947900ce722e420c306448f1e98d67133ec1e693814c212ddf94ae17aa4c"
+        },
+        {
+          "path": "manifest.json",
+          "sha256": "711f3362e866238134ed39086763cc0bfe490fc6feff103a3fab587c71cd7abc"
+        },
+        {
+          "path": "pull_requests.json",
+          "sha256": "8e323e43dd48059e7a8c523615fcccaebcdfd27d3626959f9d9eebdbef4fa90d"
+        },
+        {
+          "path": "surfaces.json",
+          "sha256": "5ca35faced2970b912fdc6b73116024e4b6054f9da34edf78d2287081a1557e2"
+        }
+      ]
+    }
+  ]
+}

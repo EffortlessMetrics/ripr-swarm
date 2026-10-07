@@ -15,6 +15,7 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use serde_json::Value;
 
@@ -30,14 +31,30 @@ const CORPUS_RECEIPT: &str = "metrics/public-proof/corpus-manifest.json";
 /// does not fail required CI; the page lags until someone refreshes it.
 const CANONICAL_SOURCES: [(&str, &str); 3] = [
     ("dx-scoreboard.json", "metrics/dx-scoreboard/baseline.json"),
-    (
-        "verdict-corpus.json",
-        "fixtures/rust-verdict-corpus/expected/report.json",
-    ),
+    ("verdict-corpus.json", VERDICT_CORPUS),
     ("corpus-manifest.json", CORPUS_MANIFEST),
 ];
 
+/// The verdict corpus keeps its expected state as one `expected/rows/<case>.json`
+/// per case, so parallel case PRs add files instead of editing one report. Its
+/// receipt is the report those rows describe (`expected_report`): the summary
+/// derived from the rows, with the rows in file-name order. Case PRs do not
+/// refresh it; the receipt and page are a snapshot that lags the corpus until
+/// a refresh.
+const VERDICT_CORPUS: &str = "fixtures/rust-verdict-corpus";
+
+/// Lane receipts the nightly scoreboard does not ingest. The page reads these
+/// in place when a board would otherwise render as "not measured".
+const CORPUS_FULL_BASELINE: &str = "metrics/dx-scoreboard/corpus-full-baseline.json";
+const CORPUS_FAST_BASELINE: &str = "metrics/dx-scoreboard/corpus-fast-baseline.json";
+const RANKING_BASELINE: &str = "metrics/dx-scoreboard/pilot-ranking-baseline.json";
+const LANE_BASELINE_PATHS: [&str; 3] =
+    [CORPUS_FULL_BASELINE, CORPUS_FAST_BASELINE, RANKING_BASELINE];
+
 const NULL: &Value = &Value::Null;
+
+/// Changed page lines shown when a receipt has drifted from its source.
+const PREVIEW_LINES: usize = 12;
 
 struct Options {
     check: bool,
@@ -94,10 +111,117 @@ fn check_receipts(root: &Path) -> Result<(), String> {
     if drift.is_empty() {
         return Ok(());
     }
+    let preview = match refresh_preview(root) {
+        Ok(lines) if lines.is_empty() => {
+            "refreshing would not change the page text, only the receipts".to_string()
+        }
+        Ok(lines) => format!(
+            "refreshing would change the page like this ({}):\n{}",
+            if lines.len() > PREVIEW_LINES {
+                format!("first {PREVIEW_LINES} changed lines")
+            } else {
+                "all changed lines".to_string()
+            },
+            lines
+                .iter()
+                .take(PREVIEW_LINES)
+                .cloned()
+                .collect::<Vec<_>>()
+                .join("\n")
+        ),
+        // The drift is already the finding; a receipt the page cannot render
+        // from is reported by the render step itself.
+        Err(err) => format!("could not preview the refreshed page: {err}"),
+    };
     Err(format!(
-        "{}\nrun `cargo xtask public-proof --refresh-receipts`, then `cargo xtask public-proof`, and commit the result",
+        "{}\n{preview}\nrun `cargo xtask public-proof --refresh-receipts`, then `cargo xtask public-proof`, and commit the result",
         drift.join("\n")
     ))
+}
+
+/// Changed page lines, `- old` then `+ new`, were the receipts refreshed from
+/// their canonical sources. It renders in a scratch copy and writes nothing in
+/// the repository, so whoever bumps a scoreboard sees which published numbers
+/// move before committing.
+fn refresh_preview(root: &Path) -> Result<Vec<String>, String> {
+    // Unique per call: tests and callers in one process must not share a scratch.
+    static SCRATCH_ID: AtomicUsize = AtomicUsize::new(0);
+    let scratch = std::env::temp_dir().join(format!(
+        "ripr-public-proof-preview-{}-{}",
+        std::process::id(),
+        SCRATCH_ID.fetch_add(1, Ordering::Relaxed)
+    ));
+    let receipts = scratch.join(RECEIPTS);
+    fs::create_dir_all(&receipts)
+        .map_err(|err| format!("failed to create {}: {err}", receipts.display()))?;
+    let result = (|| {
+        let entries = fs::read_dir(root.join(RECEIPTS))
+            .map_err(|err| format!("failed to read {RECEIPTS}: {err}"))?;
+        for entry in entries {
+            let entry = entry.map_err(|err| format!("failed to read {RECEIPTS}: {err}"))?;
+            fs::copy(entry.path(), receipts.join(entry.file_name()))
+                .map_err(|err| format!("failed to copy {}: {err}", entry.path().display()))?;
+        }
+        for (receipt, source) in CANONICAL_SOURCES {
+            fs::write(receipts.join(receipt), canonical_bytes(root, source)?)
+                .map_err(|err| format!("failed to write the {receipt} preview: {err}"))?;
+        }
+        copy_lane_baselines(root, &scratch)?;
+        let refreshed = render(&scratch)?;
+        let committed = fs::read_to_string(root.join(PAGE))
+            .map_err(|err| format!("failed to read {PAGE}: {err}"))?;
+        Ok(changed_lines(&committed, &refreshed))
+    })();
+    let _ = fs::remove_dir_all(&scratch);
+    result
+}
+
+/// An ordered line diff, `- old` and `+ new`, in page order. It is a longest
+/// common subsequence diff, so a moved or duplicated line is reported; blank
+/// lines are not shown.
+fn changed_lines(old: &str, new: &str) -> Vec<String> {
+    let a_all: Vec<&str> = old.lines().collect();
+    let b_all: Vec<&str> = new.lines().collect();
+    // Drop the common head and tail first: a page edit is local, so the
+    // quadratic table below only spans the lines in between.
+    let head = a_all.iter().zip(&b_all).take_while(|(x, y)| x == y).count();
+    let tail = a_all[head..]
+        .iter()
+        .rev()
+        .zip(b_all[head..].iter().rev())
+        .take_while(|(x, y)| x == y)
+        .count();
+    let a = &a_all[head..a_all.len() - tail];
+    let b = &b_all[head..b_all.len() - tail];
+    let mut lcs = vec![vec![0usize; b.len() + 1]; a.len() + 1];
+    for i in (0..a.len()).rev() {
+        for j in (0..b.len()).rev() {
+            lcs[i][j] = if a[i] == b[j] {
+                lcs[i + 1][j + 1] + 1
+            } else {
+                lcs[i + 1][j].max(lcs[i][j + 1])
+            };
+        }
+    }
+    let (mut i, mut j) = (0, 0);
+    let mut out = Vec::new();
+    while i < a.len() || j < b.len() {
+        if i < a.len() && j < b.len() && a[i] == b[j] {
+            i += 1;
+            j += 1;
+        } else if j < b.len() && (i == a.len() || lcs[i][j + 1] > lcs[i + 1][j]) {
+            if !b[j].is_empty() {
+                out.push(format!("+ {}", b[j]));
+            }
+            j += 1;
+        } else {
+            if !a[i].is_empty() {
+                out.push(format!("- {}", a[i]));
+            }
+            i += 1;
+        }
+    }
+    out
 }
 
 /// Fails with the next step when the page no longer matches its receipts.
@@ -116,8 +240,7 @@ fn check_page(root: &Path, rendered: &str) -> Result<(), String> {
 fn receipt_drift(root: &Path) -> Result<Vec<String>, String> {
     let mut drift = Vec::new();
     for (receipt, source) in CANONICAL_SOURCES {
-        let source_path = root.join(source);
-        let canonical = read_bytes(&source_path)?;
+        let canonical = canonical_bytes(root, source)?;
         let copy = read_bytes(&root.join(RECEIPTS).join(receipt))?;
         if canonical != copy {
             drift.push(format!(
@@ -128,16 +251,42 @@ fn receipt_drift(root: &Path) -> Result<Vec<String>, String> {
     Ok(drift)
 }
 
+fn copy_lane_baselines(from: &Path, to: &Path) -> Result<(), String> {
+    for rel in LANE_BASELINE_PATHS {
+        let source = from.join(rel);
+        if !source.exists() {
+            continue;
+        }
+        let target = to.join(rel);
+        if let Some(parent) = target.parent() {
+            fs::create_dir_all(parent)
+                .map_err(|err| format!("failed to create {}: {err}", parent.display()))?;
+        }
+        fs::copy(&source, &target)
+            .map_err(|err| format!("failed to copy {rel} into the preview: {err}"))?;
+    }
+    Ok(())
+}
+
 fn refresh_receipts(root: &Path) -> Result<(), String> {
     for (receipt, source) in CANONICAL_SOURCES {
-        let source_path = root.join(source);
-        let bytes = read_bytes(&source_path)?;
+        let bytes = canonical_bytes(root, source)?;
         let target: PathBuf = root.join(RECEIPTS).join(receipt);
         fs::write(&target, bytes)
             .map_err(|err| format!("failed to write {}: {err}", target.display()))?;
         println!("refreshed {RECEIPTS}/{receipt} from {source}");
     }
     Ok(())
+}
+
+/// The bytes a receipt must equal: the source file itself, or for the verdict
+/// corpus the report its committed rows describe.
+fn canonical_bytes(root: &Path, source: &str) -> Result<Vec<u8>, String> {
+    if source != VERDICT_CORPUS {
+        return read_bytes(&root.join(source));
+    }
+    let report = crate::reports::verdict_corpus_expected_report(&root.join(source))?;
+    crate::reports::render_verdict_corpus_report(&report).map(String::into_bytes)
 }
 
 fn read_bytes(path: &Path) -> Result<Vec<u8>, String> {
@@ -149,6 +298,11 @@ fn read_json(path: &Path) -> Result<Value, String> {
     serde_json::from_slice(&bytes).map_err(|err| format!("{} is not JSON: {err}", path.display()))
 }
 
+struct LaneReceipt {
+    path: String,
+    value: Value,
+}
+
 struct Receipts {
     dx: Value,
     verdicts: Value,
@@ -158,6 +312,8 @@ struct Receipts {
     agent: Value,
     install: Value,
     corpus: Value,
+    corpus_lane: Option<LaneReceipt>,
+    ranking_lane: Option<LaneReceipt>,
 }
 
 fn load(root: &Path) -> Result<Receipts, String> {
@@ -171,7 +327,26 @@ fn load(root: &Path) -> Result<Receipts, String> {
         agent: receipt("agent-as-user.json")?,
         install: receipt("install.json")?,
         corpus: receipt("corpus-manifest.json")?,
+        corpus_lane: load_lane(root, CORPUS_FULL_BASELINE, Some(CORPUS_FAST_BASELINE))?,
+        ranking_lane: load_lane(root, RANKING_BASELINE, None)?,
     })
+}
+
+fn load_lane(
+    root: &Path,
+    preferred: &str,
+    fallback: Option<&str>,
+) -> Result<Option<LaneReceipt>, String> {
+    for path in [Some(preferred), fallback].into_iter().flatten() {
+        let full = root.join(path);
+        if full.exists() {
+            return Ok(Some(LaneReceipt {
+                path: path.to_string(),
+                value: read_json(&full)?,
+            }));
+        }
+    }
+    Ok(None)
 }
 
 // ---------------------------------------------------------------------------
@@ -617,6 +792,97 @@ fn mutation_scored_total(mutation: &Value) -> Result<f64, String> {
     Ok(scored)
 }
 
+/// Boards the nightly scoreboard receipt defines but does not ingest.
+/// An unmeasured row here is omitted unless a lane baseline supplies a number.
+fn foreign_scoreboard_board(board: &str) -> bool {
+    matches!(board, "agent" | "corpus" | "ranking")
+}
+
+fn metric_lacks_number(metric: &Value) -> bool {
+    field(metric, "value").as_f64().is_none() && text(metric, "status") != "failed"
+}
+
+fn lane_measurement<'a>(id: &str, r: &'a Receipts) -> Option<(&'a Value, &'a LaneReceipt)> {
+    for lane in r.corpus_lane.iter().chain(r.ranking_lane.iter()) {
+        if let Some(metric) = items(&lane.value, "metrics")
+            .iter()
+            .find(|metric| text(metric, "id") == id)
+            && (field(metric, "value").as_f64().is_some() || text(metric, "status") == "failed")
+        {
+            return Some((metric, lane));
+        }
+    }
+    None
+}
+
+fn runner_class_differs(reason: &str) -> bool {
+    reason.contains("runner class differs")
+}
+
+fn quoted_after<'a>(text: &'a str, prefix: &str) -> Option<&'a str> {
+    let rest = text.split_once(prefix)?.1;
+    let class = rest.split_once('`')?.0;
+    if class.is_empty() { None } else { Some(class) }
+}
+
+fn comparable_trend(delta: f64, before: f64, unit: &str, baseline_rev: &str) -> String {
+    if delta == 0.0 {
+        format!(
+            "unchanged since {baseline_rev} ({})",
+            fmt_value(before, unit)
+        )
+    } else if unit == "flag" {
+        format!(
+            "changed since {baseline_rev} (was {})",
+            fmt_value(before, unit)
+        )
+    } else {
+        format!(
+            "{} since {baseline_rev} (was {})",
+            fmt_delta(delta, unit),
+            fmt_value(before, unit)
+        )
+    }
+}
+
+fn cross_class_trend(before: Option<f64>, unit: &str, reason: &str) -> String {
+    let class = quoted_after(reason, "baseline `")
+        .map(|class| format!(" `{class}`"))
+        .unwrap_or_default();
+    match before {
+        Some(value) => format!(
+            "earlier receipt on another runner class{class} (was {})",
+            fmt_value(value, unit)
+        ),
+        None => format!("earlier receipt on another runner class{class}"),
+    }
+}
+
+/// Trend for a scoreboard or lane metric. A same-class baseline is compared.
+/// An earlier receipt on another runner class is named, not treated as absent.
+fn scoreboard_trend(metric: &Value, baseline_rev: &str) -> String {
+    let Some(base) = metric.get("baseline") else {
+        return "no earlier measurement".to_string();
+    };
+    let comparable = base.get("comparable").and_then(Value::as_bool) == Some(true);
+    let before = base.get("value").and_then(Value::as_f64);
+    let delta = base.get("delta").and_then(Value::as_f64);
+    let unit = text(metric, "unit");
+    let reason = text(base, "reason");
+    if comparable {
+        return match (before, delta) {
+            (Some(before), Some(delta)) => comparable_trend(delta, before, &unit, baseline_rev),
+            _ => "no earlier measurement".to_string(),
+        };
+    }
+    if runner_class_differs(&reason)
+        && (before.is_some() || field(metric, "value").as_f64().is_some())
+    {
+        return cross_class_trend(before, &unit, &reason);
+    }
+    "no earlier measurement".to_string()
+}
+
 fn bars(r: &Receipts) -> Result<Vec<Bar>, String> {
     let baseline_rev = short(
         &req_str(
@@ -629,42 +895,32 @@ fn bars(r: &Receipts) -> Result<Vec<Bar>, String> {
     let mut out = Vec::new();
     for metric in req_arr(&r.dx, "metrics", "dx-scoreboard")? {
         let id = req_str(metric, "id", "dx-scoreboard metric")?;
-        let unit = text(metric, "unit");
-        let target = req_f64(metric, "target", &id)?;
-        let lower_is_better = text(metric, "direction") != "higher_is_better";
+        let mut unit = text(metric, "unit");
+        let mut target = req_f64(metric, "target", &id)?;
+        let mut lower_is_better = text(metric, "direction") != "higher_is_better";
         let mut value = field(metric, "value").as_f64();
-        let mut trend = "no earlier measurement".to_string();
+        let mut trend = scoreboard_trend(metric, &baseline_rev);
         let mut basis = text(metric, "source");
         let mut is_derived = false;
+        let mut status_src = metric;
         if let Some(derived) = derived(&id, r)? {
             is_derived = true;
             value = derived.value;
             trend = derived.trend;
             basis = derived.basis;
-        } else if let Some(base) = metric.get("baseline")
-            && base.get("comparable").and_then(Value::as_bool) == Some(true)
-            && let (Some(before), Some(delta)) = (
-                base.get("value").and_then(Value::as_f64),
-                base.get("delta").and_then(Value::as_f64),
-            )
-        {
-            trend = if delta == 0.0 {
-                format!(
-                    "unchanged since {baseline_rev} ({})",
-                    fmt_value(before, &unit)
-                )
-            } else if unit == "flag" {
-                format!(
-                    "changed since {baseline_rev} (was {})",
-                    fmt_value(before, &unit)
-                )
-            } else {
-                format!(
-                    "{} since {baseline_rev} (was {})",
-                    fmt_delta(delta, &unit),
-                    fmt_value(before, &unit)
-                )
-            };
+        } else if metric_lacks_number(metric) {
+            if let Some((lane_metric, lane)) = lane_measurement(&id, r) {
+                status_src = lane_metric;
+                unit = text(lane_metric, "unit");
+                target = req_f64(lane_metric, "target", &id)?;
+                lower_is_better = text(lane_metric, "direction") != "higher_is_better";
+                value = field(lane_metric, "value").as_f64();
+                let lane_rev = short(&text(field(&lane.value, "gate"), "baseline_revision"), 7);
+                trend = scoreboard_trend(lane_metric, &lane_rev);
+                basis = lane.path.clone();
+            } else if foreign_scoreboard_board(&text(metric, "board")) {
+                continue;
+            }
         }
         let mut status = match value {
             Some(v) if meets(v, target, lower_is_better) => Status::Meets,
@@ -675,14 +931,14 @@ fn bars(r: &Receipts) -> Result<Vec<Bar>, String> {
         // successful sample: a failed instrument or an incomplete measurement
         // can leave a value that happens to meet the target.
         if !is_derived {
-            match text(metric, "status").as_str() {
+            match text(status_src, "status").as_str() {
                 "failed" => status = Status::Failed,
                 "below_target" if status == Status::Meets => status = Status::Below,
                 _ => {}
             }
         }
         if status == Status::NotMeasured || status == Status::Failed {
-            let reason = unmeasured_reason(metric);
+            let reason = unmeasured_reason(status_src);
             // A derived metric has no producer reason; keep what it was derived from
             // and say why the number is missing.
             basis = if is_derived && status == Status::NotMeasured {
@@ -705,10 +961,10 @@ fn bars(r: &Receipts) -> Result<Vec<Bar>, String> {
         } else if id == "trust.false_verdict_rate" {
             "Wrong verdicts on hand-checked changes from real repositories".to_string()
         } else {
-            text(metric, "title")
+            text(status_src, "title")
         };
         out.push(Bar {
-            board: board_name(&text(metric, "board")).to_string(),
+            board: board_name(&text(status_src, "board")).to_string(),
             id,
             title,
             value,
@@ -793,7 +1049,7 @@ fn header(page: &mut Page, r: &Receipts) -> Result<(), String> {
         }
         seen
     };
-    let rows = vec![
+    let mut rows = vec![
         vec![
             "`metrics/public-proof/dx-scoreboard.json`".to_string(),
             "Speed, memory, CI adoption, pasted-command safety, self-contradictions".to_string(),
@@ -803,12 +1059,36 @@ fn header(page: &mut Page, r: &Receipts) -> Result<(), String> {
                 req_str(&r.dx, "runner_class", "dx-scoreboard")?
             ),
         ],
+        r.corpus_lane
+            .as_ref()
+            .map(|lane| {
+                vec![
+                    format!("`{}`", lane.path),
+                    "Corpus lane, used when the scoreboard receipt did not ingest corpus"
+                        .to_string(),
+                    lane_revision(&lane.value),
+                    runner_detail(&lane.value),
+                ]
+            })
+            .unwrap_or_default(),
+        r.ranking_lane
+            .as_ref()
+            .map(|lane| {
+                vec![
+                    format!("`{}`", lane.path),
+                    "Pilot ranking lane, used when the scoreboard receipt did not ingest ranking"
+                        .to_string(),
+                    lane_revision(&lane.value),
+                    runner_detail(&lane.value),
+                ]
+            })
+            .unwrap_or_default(),
         vec![
             "`metrics/public-proof/verdict-corpus.json`".to_string(),
             "Hand-labeled verdict corpus".to_string(),
             format!(
-                "corpus {}",
-                req_str(&r.verdicts, "corpus_version", "verdict-corpus")?
+                "{} cases",
+                req_f64(&r.verdicts, "cases_total", "verdict-corpus")?
             ),
             req_str(&r.verdicts, "spec", "verdict-corpus")?,
         ],
@@ -858,6 +1138,7 @@ fn header(page: &mut Page, r: &Receipts) -> Result<(), String> {
             "copy of the pinned manifest".to_string(),
         ],
     ];
+    rows.retain(|row| !row.is_empty());
     page.table(&["Receipt", "Measures", "Revision", "Detail"], &rows);
     Ok(())
 }
@@ -878,8 +1159,13 @@ fn scoreboard(page: &mut Page, bars: &[Bar]) {
     };
     page.line("## Scoreboard");
     page.blank();
-    page.line(format!(
-        "{total} bars. ripr meets {met}, is below the bar on {below}, and has not measured {unmeasured}{failed_note}. Bold values miss their bar. A trend compares against the earlier receipt named in the row; rows with no earlier receipt are first measurements."
+    page.line(scoreboard_summary(
+        total,
+        met,
+        below,
+        unmeasured,
+        failed_note,
+        bars,
     ));
     page.blank();
     let rows: Vec<Vec<String>> = bars.iter().map(bar_row).collect();
@@ -1000,16 +1286,30 @@ fn shortfalls(page: &mut Page, r: &Receipts, bars: &[Bar]) -> Result<(), String>
         num(precise - scored)
     ));
 
-    for bar in bars
-        .iter()
-        .filter(|b| b.status == Status::Below && b.board == "Speed and memory")
-    {
+    for bar in bars.iter().filter(|b| {
+        matches!(b.status, Status::Below | Status::Failed) && b.board == "Speed and memory"
+    }) {
         let worst = worst_sample(&r.dx, &bar.id).unwrap_or_else(|| {
             bar.value
                 .map_or_else(|| "not measured".to_string(), |v| fmt_value(v, &bar.unit))
         });
+        // A failed metric with no failed sample (the producer recorded only a
+        // reason) must not name a measured repository as the failed one.
+        let (lead, worst) = if bar.status == Status::Failed {
+            let named = worst.contains("(instrument failed)");
+            let detail = if named {
+                worst
+            } else {
+                bar.basis
+                    .trim_start_matches("instrument failed: ")
+                    .to_string()
+            };
+            ("Instrument failed", detail)
+        } else {
+            ("Worst repository", worst)
+        };
         page.line(format!(
-            "- **{}.** Worst repository: {worst}; the bar is {} {}.",
+            "- **{}.** {lead}: {worst}; the bar is {} {}.",
             bar.title,
             if bar.lower_is_better {
                 "at most"
@@ -1092,21 +1392,45 @@ fn unmeasured_reason(metric: &Value) -> String {
     }
 }
 
-/// The repository with the worst sample for a metric, as `repo (value)`.
+/// The repositories whose instrument failed, then the worst measured sample, as
+/// `repo (value)`. A failed sample has no number, so it is named by status
+/// rather than dropped behind the worst repository that did measure.
 fn worst_sample(dx: &Value, id: &str) -> Option<String> {
     let metric = items(dx, "metrics")
         .iter()
         .find(|m| field(m, "id").as_str() == Some(id))?;
     let unit = text(metric, "unit");
     let lower = text(metric, "direction") != "higher_is_better";
-    items(metric, "samples")
+    let samples = items(metric, "samples");
+    let failed: Vec<String> = samples
         .iter()
+        .filter(|s| text(s, "status") == "failed")
+        .map(|s| {
+            let repo = text(s, "repo");
+            if repo.is_empty() {
+                "a repository".to_string()
+            } else {
+                repo
+            }
+        })
+        .collect();
+    let worst = samples
+        .iter()
+        .filter(|s| text(s, "status") != "failed")
         .filter_map(|s| Some((text(s, "repo"), field(s, "value").as_f64()?)))
         .reduce(|a, b| {
             let worse = if lower { b.1 > a.1 } else { b.1 < a.1 };
             if worse { b } else { a }
         })
-        .map(|(repo, value)| format!("{repo} at {}", fmt_value(value, &unit)))
+        .map(|(repo, value)| format!("{repo} at {}", fmt_value(value, &unit)));
+    match (failed.is_empty(), worst) {
+        (true, worst) => worst,
+        (false, None) => Some(format!("{} (instrument failed)", failed.join(", "))),
+        (false, Some(worst)) => Some(format!(
+            "{} (instrument failed); worst measured is {worst}",
+            failed.join(", ")
+        )),
+    }
 }
 
 fn family_label(key: &str) -> String {
@@ -1249,15 +1573,14 @@ fn verdict_section(page: &mut Page, verdicts: &Value) -> Result<(), String> {
     page.line("## Verdict corpus");
     page.blank();
     page.line(format!(
-        "{} hand-labeled changes (corpus {}, {}). Each has a ground-truth label from real mutants and an ideal verdict; ripr's observed verdict is compared against it. A false actionable verdict is a reported gap on a change whose tests caught every listed mutant. That is the failure that costs a developer's trust, so it is tracked on its own.",
+        "{} hand-labeled changes ({}). Each has a ground-truth label from real mutants and an ideal verdict; ripr's observed verdict is compared against it. A false actionable verdict is a reported gap on a change whose tests caught every listed mutant. That is the failure that costs a developer's trust, so it is tracked on its own.",
         req_f64(verdicts, "cases_total", ctx)?,
-        text(verdicts, "corpus_version"),
         text(verdicts, "spec")
     ));
     page.blank();
     match field(verdicts, "analyzer_version").as_str() {
         Some(version) => page.line(format!("Verdicts were produced by {version}.")),
-        None => page.line("This receipt does not record which ripr build produced the observed verdicts, only the corpus version. The rates below cannot be tied to a specific analyzer revision, and they may not describe the current build."),
+        None => page.line("This receipt does not record which ripr build produced the observed verdicts, only the corpus state. The rates below cannot be tied to a specific analyzer revision, and they may not describe the current build."),
     }
     page.blank();
     let labels = [
@@ -1699,7 +2022,61 @@ fn reproduce(page: &mut Page) {
     page.line("cargo xtask public-proof --check             # fail if this page is stale");
     page.line("```");
     page.blank();
-    page.line("Receipts live in `metrics/public-proof/`. `dx-scoreboard.json`, `verdict-corpus.json` and `corpus-manifest.json` are verbatim copies of `metrics/dx-scoreboard/baseline.json`, `fixtures/rust-verdict-corpus/expected/report.json` and `benchmarks/rust_corpus/manifest.json`; `--check` fails when a source moves ahead of its copy, and `--refresh-receipts` re-copies them. The mutation, first-run, agent and install receipts have no in-repo source to compare against: they are committed copies of harness output from the revisions named in their sections, and `--check` cannot detect a hand edit to them. The mutation spot-check has no command in this repository yet.");
+    page.line("Receipts live in `metrics/public-proof/`. `dx-scoreboard.json`, `verdict-corpus.json` and `corpus-manifest.json` are copies of `metrics/dx-scoreboard/baseline.json`, the report `fixtures/rust-verdict-corpus/expected/rows/` describes (its summary derived from the row files, then the rows in file-name order) and `benchmarks/rust_corpus/manifest.json`; `--check` fails when a source moves ahead of its copy, and `--refresh-receipts` re-copies them. Verdict corpus case PRs do not refresh this page, so its corpus section is a snapshot that can trail the committed rows until the next refresh. Corpus and ranking scoreboard rows are read from `metrics/dx-scoreboard/corpus-full-baseline.json` (falling back to `corpus-fast-baseline.json`) and `metrics/dx-scoreboard/pilot-ranking-baseline.json` when the copied scoreboard receipt did not ingest those boards. The mutation, first-run, agent and install receipts have no in-repo source to compare against: they are committed copies of harness output from the revisions named in their sections, and `--check` cannot detect a hand edit to them. The mutation spot-check has no command in this repository yet.");
+}
+
+fn lane_revision(receipt: &Value) -> String {
+    let rev = text(receipt, "revision");
+    if rev.is_empty() {
+        "revision not recorded".to_string()
+    } else if rev == "unavailable" {
+        "revision unavailable".to_string()
+    } else {
+        short(&rev, 7)
+    }
+}
+
+fn runner_detail(receipt: &Value) -> String {
+    let class = text(receipt, "runner_class");
+    if class.is_empty() {
+        "runner class not recorded".to_string()
+    } else {
+        format!("runner `{class}`")
+    }
+}
+
+fn scoreboard_summary(
+    total: usize,
+    met: usize,
+    below: usize,
+    unmeasured: usize,
+    failed_note: String,
+    bars: &[Bar],
+) -> String {
+    let cross = bars
+        .iter()
+        .any(|bar| bar.trend.contains("another runner class"));
+    let from_lane = bars
+        .iter()
+        .any(|bar| bar.basis.starts_with("metrics/dx-scoreboard/"));
+    let mut line = format!(
+        "{total} bars. ripr meets {met}, is below the bar on {below}, and has not measured {unmeasured}{failed_note}. Bold values miss their bar. A comparable trend shows the baseline revision and prior value it compares."
+    );
+    if cross {
+        line.push_str(" A cross-class trend shows the earlier runner class and, when available, its prior value; it does not compare measurements.");
+    }
+    if bars.iter().any(measured_first_receipt) {
+        line.push_str(" A measured row with no earlier measurement is a first measurement.");
+    }
+    if from_lane {
+        line.push_str(" Corpus and ranking rows come from those lanes' own baselines when the scoreboard receipt did not ingest them.");
+    }
+    line
+}
+
+fn measured_first_receipt(bar: &Bar) -> bool {
+    matches!(bar.status, Status::Meets | Status::Below)
+        && bar.trend.contains("no earlier measurement")
 }
 
 #[cfg(test)]
@@ -1795,13 +2172,7 @@ mod tests {
         fs::create_dir_all(dir.join("metrics/dx-scoreboard")).map_err(|e| e.to_string())?;
         fs::write(dir.join("metrics/dx-scoreboard/baseline.json"), "{}")
             .map_err(|e| e.to_string())?;
-        fs::create_dir_all(dir.join("fixtures/rust-verdict-corpus/expected"))
-            .map_err(|e| e.to_string())?;
-        fs::write(
-            dir.join("fixtures/rust-verdict-corpus/expected/report.json"),
-            "{}",
-        )
-        .map_err(|e| e.to_string())?;
+        write_verdict_corpus(&dir, &[])?;
         let result = receipt_drift(&dir);
         fs::remove_dir_all(&dir).map_err(|e| e.to_string())?;
         assert!(result.is_err_and(|err| err.contains("manifest.json")));
@@ -2059,6 +2430,255 @@ mod tests {
     }
 
     #[test]
+    fn worst_sample_names_a_failed_instrument() -> Result<(), String> {
+        let dx = serde_json::json!({"metrics": [{
+            "id": "speed.cold_s", "unit": "s", "direction": "lower_is_better",
+            "samples": [
+                {"repo": "alpha", "status": "meets_target", "value": 3.0},
+                {"repo": "beta", "status": "failed", "value": null},
+                {"repo": "gamma", "status": "meets_target", "value": 9.0}
+            ]
+        }]});
+        let both = worst_sample(&dx, "speed.cold_s").ok_or("no sample line")?;
+        assert!(both.contains("beta (instrument failed)"), "{both}");
+        assert!(both.contains("worst measured is gamma"), "{both}");
+        let only_failed = serde_json::json!({"metrics": [{
+            "id": "speed.cold_s", "unit": "s", "direction": "lower_is_better",
+            "samples": [{"repo": "beta", "status": "failed", "value": null}]
+        }]});
+        let line = worst_sample(&only_failed, "speed.cold_s").ok_or("no sample line")?;
+        assert_eq!(line, "beta (instrument failed)");
+        Ok(())
+    }
+
+    /// A verdict corpus under `root` holding only what the receipt derives
+    /// from: the header's spec and non-claims, and one row file per row.
+    fn write_verdict_corpus(root: &Path, rows: &[Value]) -> Result<(), String> {
+        write_verdict_corpus_with(root, "RIPR-SPEC-0219", &[], rows)
+    }
+
+    fn write_verdict_corpus_with(
+        root: &Path,
+        spec: &str,
+        non_claims: &[Value],
+        rows: &[Value],
+    ) -> Result<(), String> {
+        let corpus = root.join(VERDICT_CORPUS);
+        let rows_dir = corpus.join("expected/rows");
+        fs::create_dir_all(&rows_dir).map_err(|e| e.to_string())?;
+        let header = serde_json::json!({"spec": spec, "non_claims": non_claims});
+        fs::write(
+            corpus.join("corpus.json"),
+            serde_json::to_vec_pretty(&header).map_err(|e| e.to_string())?,
+        )
+        .map_err(|e| e.to_string())?;
+        let cases_dir = corpus.join("cases");
+        fs::create_dir_all(&cases_dir).map_err(|e| e.to_string())?;
+        for row in rows {
+            let id = text(row, "case_id");
+            fs::write(
+                rows_dir.join(format!("{id}.json")),
+                serde_json::to_vec_pretty(row).map_err(|e| e.to_string())?,
+            )
+            .map_err(|e| e.to_string())?;
+            // The receipt checks rows against the case ids, so each row needs its case.
+            fs::write(
+                cases_dir.join(format!("{id}.json")),
+                serde_json::json!({ "case_id": id }).to_string(),
+            )
+            .map_err(|e| e.to_string())?;
+        }
+        Ok(())
+    }
+
+    /// Writes a canonical source whose bytes reproduce `receipt`: a plain copy,
+    /// or for the verdict corpus the header fields and row files it derives from.
+    fn write_source_from_receipt(root: &Path, source: &str, receipt: &Path) -> Result<(), String> {
+        let target = root.join(source);
+        if source != VERDICT_CORPUS {
+            if let Some(parent) = target.parent() {
+                fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+            }
+            fs::copy(receipt, &target).map_err(|e| e.to_string())?;
+            return Ok(());
+        }
+        let report = read_json(receipt)?;
+        write_verdict_corpus_with(
+            root,
+            &text(&report, "spec"),
+            report["non_claims"].as_array().map_or(&[], Vec::as_slice),
+            report["rows"].as_array().map_or(&[], Vec::as_slice),
+        )
+    }
+
+    #[test]
+    fn verdict_receipt_derives_the_summary_from_rows_in_file_name_order() -> Result<(), String> {
+        let real = workspace_root().join(VERDICT_CORPUS).join("expected/rows");
+        let mut names: Vec<PathBuf> = fs::read_dir(&real)
+            .map_err(|e| e.to_string())?
+            .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+            .collect();
+        names.sort();
+        let rows = names
+            .iter()
+            .take(12)
+            .map(|path| read_json(path))
+            .collect::<Result<Vec<_>, _>>()?;
+        let dir = std::env::temp_dir().join(format!(
+            "ripr-public-proof-verdict-assembly-test-{}",
+            std::process::id()
+        ));
+        // Twelve rows written in reverse: the receipt must still list them in
+        // file-name order, and directory order cannot match that by luck.
+        let reversed: Vec<Value> = rows.iter().rev().cloned().collect();
+        write_verdict_corpus(&dir, &reversed)?;
+        fs::write(
+            dir.join(VERDICT_CORPUS).join("expected/rows/notes.txt"),
+            "ignored",
+        )
+        .map_err(|e| e.to_string())?;
+        let bytes = canonical_bytes(&dir, VERDICT_CORPUS);
+        fs::remove_dir_all(&dir).map_err(|e| e.to_string())?;
+        let report: Value = serde_json::from_slice(&bytes?).map_err(|e| e.to_string())?;
+        let ids = report["rows"]
+            .as_array()
+            .ok_or("rows missing")?
+            .iter()
+            .map(|row| text(row, "case_id"))
+            .collect::<Vec<_>>();
+        let expected_ids: Vec<String> = rows.iter().map(|row| text(row, "case_id")).collect();
+        assert_eq!(ids, expected_ids);
+        assert_eq!(report["cases_total"], 12);
+        assert_eq!(report["spec"], "RIPR-SPEC-0219");
+        let scored: u64 = rows
+            .iter()
+            .filter_map(|row| row["findings_scored"].as_u64())
+            .sum();
+        assert_eq!(report["contradiction_rate"]["denominator"], scored);
+        Ok(())
+    }
+
+    #[test]
+    fn source_drift_previews_the_page_lines_that_would_change() -> Result<(), String> {
+        let real = workspace_root();
+        let dir = std::env::temp_dir().join(format!(
+            "ripr-public-proof-preview-test-{}",
+            std::process::id()
+        ));
+        let receipts = dir.join(RECEIPTS);
+        fs::create_dir_all(&receipts).map_err(|e| e.to_string())?;
+        fs::create_dir_all(dir.join("docs")).map_err(|e| e.to_string())?;
+        for entry in fs::read_dir(real.join(RECEIPTS)).map_err(|e| e.to_string())? {
+            let entry = entry.map_err(|e| e.to_string())?;
+            fs::copy(entry.path(), receipts.join(entry.file_name())).map_err(|e| e.to_string())?;
+        }
+        fs::copy(real.join(PAGE), dir.join(PAGE)).map_err(|e| e.to_string())?;
+        for (receipt, source) in CANONICAL_SOURCES {
+            write_source_from_receipt(&dir, source, &receipts.join(receipt))?;
+        }
+        copy_lane_baselines(&real, &dir)?;
+        // In sync: the check passes before any source moves.
+        check_receipts(&dir)?;
+        // Bump one bar's title in the dx source; a refresh must move that page line.
+        let source = dir.join("metrics/dx-scoreboard/baseline.json");
+        let mut dx = read_json(&source)?;
+        let mut old_title = String::new();
+        if let Some(metric) = dx
+            .get_mut("metrics")
+            .and_then(Value::as_array_mut)
+            .and_then(|metrics| metrics.first_mut())
+        {
+            old_title = text(metric, "title");
+            metric["title"] = Value::from("Renamed by the preview test");
+        }
+        fs::write(&source, serde_json::to_vec(&dx).map_err(|e| e.to_string())?)
+            .map_err(|e| e.to_string())?;
+        let result = check_receipts(&dir);
+        let untouched = fs::read(receipts.join("dx-scoreboard.json")).map_err(|e| e.to_string())?;
+        let original =
+            fs::read(real.join(RECEIPTS).join("dx-scoreboard.json")).map_err(|e| e.to_string())?;
+        fs::remove_dir_all(&dir).map_err(|e| e.to_string())?;
+        let err = result.err().ok_or("drift was not reported")?;
+        assert!(err.contains("refreshing would change the page"), "{err}");
+        assert!(
+            err.contains("+ ") && err.contains("Renamed by the preview test"),
+            "{err}"
+        );
+        assert!(err.contains("- ") && err.contains(&old_title), "{err}");
+        assert!(untouched == original, "the preview must not write receipts");
+        Ok(())
+    }
+
+    #[test]
+    fn changed_lines_reports_moved_and_duplicated_lines() {
+        assert!(changed_lines("a\nb\nc", "a\nb\nc").is_empty());
+        assert_eq!(changed_lines("a\nb", "a\nx\nb"), vec!["+ x"]);
+        assert_eq!(changed_lines("a\nb\na", "a\nb"), vec!["- a"]);
+        assert!(!changed_lines("a\nb", "b\na").is_empty());
+        assert_eq!(
+            changed_lines("a\nold\nz", "a\nnew\nz"),
+            vec!["- old", "+ new"]
+        );
+    }
+
+    #[test]
+    fn failed_speed_instrument_reaches_the_rendered_shortfalls() -> Result<(), String> {
+        let mut receipts = load(&workspace_root())?;
+        let id = bars(&receipts)?
+            .into_iter()
+            .find(|bar| bar.board == "Speed and memory" && bar.id.starts_with("speed."))
+            .map(|bar| bar.id)
+            .ok_or("no speed bar in the receipts")?;
+        if let Some(metrics) = receipts.dx.get_mut("metrics").and_then(Value::as_array_mut) {
+            for metric in metrics {
+                if metric.get("id").and_then(Value::as_str) == Some(id.as_str()) {
+                    metric["status"] = Value::from("failed");
+                    metric["samples"] = serde_json::json!([
+                        {"repo": "beta", "status": "failed", "value": null, "detail": "clone failed"}
+                    ]);
+                }
+            }
+        }
+        let all = bars(&receipts)?;
+        let mut page = Page(String::new());
+        shortfalls(&mut page, &receipts, &all)?;
+        assert!(
+            page.0
+                .contains("Instrument failed: beta (instrument failed)"),
+            "{}",
+            page.0
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn failed_metric_without_failed_sample_uses_its_reason() -> Result<(), String> {
+        let mut receipts = load(&workspace_root())?;
+        let id = bars(&receipts)?
+            .into_iter()
+            .find(|bar| bar.board == "Speed and memory" && bar.id.starts_with("speed."))
+            .map(|bar| bar.id)
+            .ok_or("no speed bar in the receipts")?;
+        if let Some(metrics) = receipts.dx.get_mut("metrics").and_then(Value::as_array_mut) {
+            for metric in metrics {
+                if metric.get("id").and_then(Value::as_str) == Some(id.as_str()) {
+                    metric["status"] = Value::from("failed");
+                    metric["reason"] = Value::from("pilot harness crashed");
+                    metric["samples"] = serde_json::json!([
+                        {"repo": "alpha", "status": "meets_target", "value": 3.0}
+                    ]);
+                }
+            }
+        }
+        let all = bars(&receipts)?;
+        let mut page = Page(String::new());
+        shortfalls(&mut page, &receipts, &all)?;
+        assert!(!page.0.contains("Instrument failed: alpha"), "{}", page.0);
+        assert!(page.0.contains("Instrument failed:"), "{}", page.0);
+        Ok(())
+    }
+
+    #[test]
     fn drifted_receipt_is_reported() -> Result<(), String> {
         let dir = std::env::temp_dir().join(format!("ripr-public-proof-{}", std::process::id()));
         let receipts = dir.join(RECEIPTS);
@@ -2067,12 +2687,11 @@ mod tests {
         fs::write(receipts.join("dx-scoreboard.json"), "{\"a\":1}").map_err(|e| e.to_string())?;
         fs::write(dir.join("metrics/dx-scoreboard/baseline.json"), "{\"a\":2}")
             .map_err(|e| e.to_string())?;
-        fs::write(receipts.join("verdict-corpus.json"), "{}").map_err(|e| e.to_string())?;
-        fs::create_dir_all(dir.join("fixtures/rust-verdict-corpus/expected"))
-            .map_err(|e| e.to_string())?;
+        write_verdict_corpus(&dir, &[])?;
+        // The verdict receipt matches its (empty) corpus, so only the other two drift.
         fs::write(
-            dir.join("fixtures/rust-verdict-corpus/expected/report.json"),
-            "{}",
+            receipts.join("verdict-corpus.json"),
+            canonical_bytes(&dir, VERDICT_CORPUS)?,
         )
         .map_err(|e| e.to_string())?;
         fs::create_dir_all(dir.join("benchmarks/rust_corpus")).map_err(|e| e.to_string())?;
@@ -2088,6 +2707,397 @@ mod tests {
             drift
                 .iter()
                 .any(|line| line.contains("corpus-manifest.json"))
+        );
+        Ok(())
+    }
+
+    fn set_metric(receipts: &mut Receipts, id: &str, edit: impl FnOnce(&mut Value)) {
+        if let Some(metrics) = receipts.dx.get_mut("metrics").and_then(Value::as_array_mut) {
+            for metric in metrics {
+                if metric.get("id").and_then(Value::as_str) == Some(id) {
+                    edit(metric);
+                    return;
+                }
+            }
+        }
+    }
+
+    fn bar_named(receipts: &Receipts, id: &str) -> Result<Bar, String> {
+        bars(receipts)?
+            .into_iter()
+            .find(|bar| bar.id == id)
+            .ok_or_else(|| format!("no bar {id}"))
+    }
+
+    #[test]
+    fn cross_runner_baseline_is_disclosed_not_a_first_measurement() -> Result<(), String> {
+        let receipts = load(&workspace_root())?;
+        let bar = bar_named(&receipts, "speed.cold_pilot_ms")?;
+        assert!(
+            bar.trend.contains("another runner class"),
+            "trend was {}",
+            bar.trend
+        );
+        assert!(
+            bar.trend.contains("local-linux-x86_64-4cpu"),
+            "trend was {}",
+            bar.trend
+        );
+        assert!(bar.trend.contains("237.7 s"), "trend was {}", bar.trend);
+        assert!(
+            !bar.trend.contains("no earlier measurement"),
+            "trend was {}",
+            bar.trend
+        );
+        let all = bars(&receipts)?;
+        let mut page = Page(String::new());
+        scoreboard(&mut page, &all);
+        assert!(
+            page.0
+                .contains("A cross-class trend shows the earlier runner class"),
+            "{}",
+            page.0
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn cross_runner_without_a_prior_value_still_names_the_class() {
+        let current_only = serde_json::json!({
+            "unit": "ms",
+            "value": 77565.7,
+            "baseline": {
+                "comparable": false,
+                "reason": "runner class differs (baseline `local-linux-x86_64-4cpu`, current `hosted`)"
+            }
+        });
+        assert_eq!(
+            scoreboard_trend(&current_only, "abc1234"),
+            "earlier receipt on another runner class `local-linux-x86_64-4cpu`"
+        );
+        let unparsed = serde_json::json!({
+            "unit": "ms",
+            "value": 1.0,
+            "baseline": {
+                "comparable": false,
+                "reason": "runner class differs"
+            }
+        });
+        assert_eq!(
+            scoreboard_trend(&unparsed, "abc1234"),
+            "earlier receipt on another runner class"
+        );
+        let neither = serde_json::json!({
+            "unit": "s",
+            "baseline": {
+                "comparable": false,
+                "reason": "runner class differs (baseline `local-linux-x86_64-4cpu`, current `hosted`)"
+            }
+        });
+        assert_eq!(
+            scoreboard_trend(&neither, "abc1234"),
+            "no earlier measurement"
+        );
+    }
+
+    #[test]
+    fn absent_baseline_stays_a_first_measurement() {
+        let metric = serde_json::json!({
+            "unit": "s",
+            "baseline": {
+                "comparable": false,
+                "reason": "metric absent from baseline"
+            }
+        });
+        assert_eq!(
+            scoreboard_trend(&metric, "abc1234"),
+            "no earlier measurement"
+        );
+        let comparable = serde_json::json!({
+            "unit": "lines",
+            "baseline": {
+                "comparable": true,
+                "value": 1154.0,
+                "delta": -767.0
+            }
+        });
+        assert_eq!(
+            scoreboard_trend(&comparable, "c6ccf9d"),
+            "-767 lines since c6ccf9d (was 1154 lines)"
+        );
+    }
+
+    #[test]
+    fn unowned_boards_use_lane_baselines_or_are_omitted() -> Result<(), String> {
+        let receipts = load(&workspace_root())?;
+        let all = bars(&receipts)?;
+        let corpus = bar_named(&receipts, "corpus.not_analyzed")?;
+        assert!(
+            corpus.status == Status::Meets,
+            "corpus.not_analyzed should meet a zero-unanalyzed bar"
+        );
+        assert_eq!(corpus.value, Some(0.0));
+        assert!(
+            corpus.basis.contains("corpus-") && corpus.basis.ends_with("-baseline.json"),
+            "basis was {}",
+            corpus.basis
+        );
+        let ranking = bar_named(&receipts, "ranking.pilot_precision_top5")?;
+        assert!(ranking.status != Status::NotMeasured);
+        assert!(ranking.value.is_some());
+        assert!(
+            all.iter()
+                .all(|bar| !bar.id.starts_with("agent.") || bar.status != Status::NotMeasured),
+            "unowned agent rows must not list as not measured"
+        );
+        assert!(
+            all.iter()
+                .any(|bar| bar.id == "ci.install_seconds" && bar.status == Status::NotMeasured),
+            "a scoreboard-owned gap must stay visible"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn scoreboard_owned_measurement_outranks_a_lane_baseline() -> Result<(), String> {
+        let mut receipts = load(&workspace_root())?;
+        set_metric(&mut receipts, "corpus.not_analyzed", |metric| {
+            metric["value"] = serde_json::json!(5.0);
+            metric["status"] = Value::from("below_target");
+            metric["reason"] = Value::from("");
+        });
+        let bar = bar_named(&receipts, "corpus.not_analyzed")?;
+        assert_eq!(bar.value, Some(5.0));
+        assert!(bar.status == Status::Below);
+        assert!(
+            !bar.basis.contains("corpus-full-baseline"),
+            "basis was {}",
+            bar.basis
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn missing_lane_baseline_omits_the_unowned_board() -> Result<(), String> {
+        let mut receipts = load(&workspace_root())?;
+        receipts.corpus_lane = None;
+        receipts.ranking_lane = None;
+        let all = bars(&receipts)?;
+        assert!(
+            all.iter()
+                .all(|bar| bar.id != "corpus.not_analyzed" && !bar.id.starts_with("ranking.")),
+            "unowned boards without a lane receipt must be omitted, not listed as not measured"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn corpus_fast_is_used_when_full_is_absent() -> Result<(), String> {
+        let mut receipts = load(&workspace_root())?;
+        let Some(full) = receipts.corpus_lane.take() else {
+            return Err("workspace is missing a corpus lane receipt".to_string());
+        };
+        let fast = items(&full.value, "metrics")
+            .iter()
+            .find(|metric| text(metric, "id") == "corpus.not_analyzed")
+            .cloned()
+            .ok_or("full corpus receipt missing corpus.not_analyzed")?;
+        receipts.corpus_lane = Some(LaneReceipt {
+            path: CORPUS_FAST_BASELINE.to_string(),
+            value: serde_json::json!({"metrics": [fast]}),
+        });
+        let bar = bar_named(&receipts, "corpus.not_analyzed")?;
+        assert_eq!(bar.basis, CORPUS_FAST_BASELINE);
+        assert!(bar.value.is_some());
+        Ok(())
+    }
+
+    #[test]
+    fn lane_revision_uses_the_receipt_revision_not_the_comparison_baseline() {
+        let receipt = serde_json::json!({
+            "revision": "10e56371911a4e6ef8020fbcd7e5f2692fc9b7f1",
+            "gate": {"baseline_revision": "adf4e6303d53a9b0cd5ec7d1c29d71996b02c8db"}
+        });
+        assert_eq!(lane_revision(&receipt), "10e5637");
+        assert_eq!(
+            lane_revision(&serde_json::json!({"revision": "unavailable"})),
+            "revision unavailable"
+        );
+        assert_eq!(
+            lane_revision(&serde_json::json!({})),
+            "revision not recorded"
+        );
+    }
+
+    #[test]
+    fn receipts_table_names_lane_revisions() -> Result<(), String> {
+        let receipts = load(&workspace_root())?;
+        let mut page = Page(String::new());
+        header(&mut page, &receipts)?;
+        assert!(
+            page.0.contains("10e5637"),
+            "corpus lane revision missing: {}",
+            page.0
+        );
+        assert!(
+            page.0.contains("10078ef"),
+            "ranking lane revision missing: {}",
+            page.0
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn failed_lane_instrument_stays_visible() -> Result<(), String> {
+        let mut receipts = load(&workspace_root())?;
+        receipts.corpus_lane = Some(LaneReceipt {
+            path: CORPUS_FULL_BASELINE.to_string(),
+            value: serde_json::json!({
+                "metrics": [{
+                    "id": "corpus.check_ms",
+                    "board": "corpus",
+                    "unit": "ms",
+                    "target": 5000.0,
+                    "direction": "lower_is_better",
+                    "status": "failed",
+                    "value": null,
+                    "reason": "clone failed",
+                    "title": "Diff-scoped check"
+                }]
+            }),
+        });
+        let bar = bar_named(&receipts, "corpus.check_ms")?;
+        assert!(bar.status == Status::Failed);
+        assert!(
+            bar.basis.contains("instrument failed: clone failed"),
+            "basis was {}",
+            bar.basis
+        );
+        Ok(())
+    }
+
+    fn dummy_bar(id: &str, status: Status, trend: &str, value: Option<f64>) -> Bar {
+        Bar {
+            id: id.to_string(),
+            board: "CI adoption".to_string(),
+            title: id.to_string(),
+            value,
+            unit: "s".to_string(),
+            target: 30.0,
+            lower_is_better: true,
+            status,
+            trend: trend.to_string(),
+            basis: String::new(),
+        }
+    }
+
+    #[test]
+    fn scoreboard_header_does_not_claim_cross_class_trends_compare() {
+        let summary = scoreboard_summary(
+            1,
+            0,
+            1,
+            0,
+            String::new(),
+            &[dummy_bar(
+                "speed.cold_pilot_ms",
+                Status::Below,
+                "earlier receipt on another runner class `local` (was 2 s)",
+                Some(1.0),
+            )],
+        );
+        assert!(summary.contains("does not compare measurements"));
+        assert!(!summary.contains("A trend names the earlier receipt it compares against"));
+    }
+
+    #[test]
+    fn scoreboard_header_does_not_call_unmeasured_rows_first_measurements() -> Result<(), String> {
+        let receipts = load(&workspace_root())?;
+        let all = bars(&receipts)?;
+        assert!(
+            all.iter().any(|bar| {
+                bar.id == "ci.install_seconds"
+                    && bar.status == Status::NotMeasured
+                    && bar.trend.contains("no earlier measurement")
+            }),
+            "fixture must keep a scoreboard-owned unmeasured row"
+        );
+        assert!(
+            all.iter().any(|bar| {
+                matches!(bar.status, Status::Meets | Status::Below)
+                    && bar.trend.contains("no earlier measurement")
+            }),
+            "fixture must keep a measured first receipt"
+        );
+        let mut page = Page(String::new());
+        scoreboard(&mut page, &all);
+        assert!(
+            page.0
+                .contains("A measured row with no earlier measurement is a first measurement"),
+            "{}",
+            page.0
+        );
+        assert!(
+            !page
+                .0
+                .contains("Rows with no earlier measurement are first measurements"),
+            "{}",
+            page.0
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn scoreboard_header_omits_first_measurement_when_only_unmeasured_rows_lack_a_prior() {
+        let summary = scoreboard_summary(
+            1,
+            0,
+            0,
+            1,
+            String::new(),
+            &[dummy_bar(
+                "ci.install_seconds",
+                Status::NotMeasured,
+                "no earlier measurement",
+                None,
+            )],
+        );
+        assert!(
+            !summary.contains("first measurement"),
+            "unmeasured rows are gaps, not first measurements: {summary}"
+        );
+    }
+
+    #[test]
+    fn load_lane_prefers_full_and_falls_back_to_fast() -> Result<(), String> {
+        let dir =
+            std::env::temp_dir().join(format!("ripr-public-proof-lane-{}", std::process::id()));
+        fs::create_dir_all(dir.join("metrics/dx-scoreboard")).map_err(|e| e.to_string())?;
+        fs::write(dir.join(CORPUS_FAST_BASELINE), "{\"via\":\"fast\"}")
+            .map_err(|e| e.to_string())?;
+        let fallback = load_lane(&dir, CORPUS_FULL_BASELINE, Some(CORPUS_FAST_BASELINE))?
+            .ok_or("fast fallback was not used")?;
+        assert_eq!(fallback.path, CORPUS_FAST_BASELINE);
+        assert_eq!(fallback.value["via"], "fast");
+        fs::write(dir.join(CORPUS_FULL_BASELINE), "{\"via\":\"full\"}")
+            .map_err(|e| e.to_string())?;
+        let preferred = load_lane(&dir, CORPUS_FULL_BASELINE, Some(CORPUS_FAST_BASELINE))?
+            .ok_or("full receipt was not preferred")?;
+        fs::remove_dir_all(&dir).map_err(|e| e.to_string())?;
+        assert_eq!(preferred.path, CORPUS_FULL_BASELINE);
+        assert_eq!(preferred.value["via"], "full");
+        Ok(())
+    }
+
+    #[test]
+    fn lane_check_time_discloses_its_cross_class_earlier_receipt() -> Result<(), String> {
+        let receipts = load(&workspace_root())?;
+        let bar = bar_named(&receipts, "corpus.check_ms")?;
+        assert!(bar.value.is_some());
+        assert!(
+            bar.trend.contains("another runner class"),
+            "trend was {}",
+            bar.trend
         );
         Ok(())
     }

@@ -105,6 +105,12 @@ pub(crate) const GOVERNED_ENUMS: &[GovernedEnum] = &[
         "AgentCardRefusalKind",
         "crates/ripr/src/domain/repair_card.rs",
     ),
+    governed(
+        "next_action_class",
+        "next_action_class",
+        "NextActionClass",
+        "crates/ripr/src/domain/next_action.rs",
+    ),
 ];
 
 const fn governed(

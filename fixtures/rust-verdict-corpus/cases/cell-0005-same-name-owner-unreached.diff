@@ -1,0 +1,13 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 8840c6e..a3f589a 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -117,7 +117,7 @@ pub mod wholesale {
+ 
+     pub fn price_quote(items: u32) -> Quote {
+         Quote {
+-            total: items * 8,
++            total: 8 * items,
+             items,
+         }
+     }

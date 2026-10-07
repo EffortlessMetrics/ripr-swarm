@@ -1,0 +1,21 @@
+pub mod metric {
+    pub fn round(value: u32) -> u32 {
+        (value + 5) / 10 * 10
+    }
+}
+
+pub mod imperial {
+    pub fn round(value: u32) -> u32 {
+        (value + 6) / 12 * 12
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::imperial::round;
+
+    #[test]
+    fn round_snaps_to_the_unit() {
+        assert_eq!(round(17), 12);
+    }
+}

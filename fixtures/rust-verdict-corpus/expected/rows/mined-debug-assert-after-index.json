@@ -1,0 +1,22 @@
+{
+  "case_id": "mined-debug-assert-after-index",
+  "subject_id": "authored-mined-codec",
+  "origin": "authored",
+  "anchor": "src/lib.rs:11",
+  "behavior_family": "return_value",
+  "test_shape": "production_debug_assert_not_on_edited_value",
+  "hard_case": true,
+  "truth": "not_discriminated",
+  "ideal_verdict": "gap",
+  "observed_verdict": "limited",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "propagation_unknown"
+  ],
+  "outcome": "abstained",
+  "contradictions": [],
+  "findings_scored": 2,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

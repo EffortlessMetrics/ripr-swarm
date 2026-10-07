@@ -1,0 +1,52 @@
+{
+  "case_id": "checkout-record-discarded-result",
+  "subject_id": "authored-checkout",
+  "diff": "cases/checkout-record-discarded-result.diff",
+  "anchor": {
+    "file": "src/store.rs",
+    "line": 28
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "call_deletion",
+  "test_shape": "wildcard_discard_observed_store",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "let _ = store.put(units * 8);",
+        "mutated_line": "let _ = store.put(units * 8);",
+        "outcome": "tests_failed",
+        "failing_test": "store::tests::record_stores_nine_per_unit",
+        "equivalence_review": "not equivalent: 3 units store 24"
+      },
+      {
+        "replacement": "(delete the statement)",
+        "mutated_line": "",
+        "outcome": "tests_failed",
+        "failing_test": "store::tests::record_stores_nine_per_unit",
+        "equivalence_review": "not equivalent: nothing is stored"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "The return value is discarded with let _ =, but the stored value is read back with assert_eq!, so both mutants fail. Spec cells: RIPR-SPEC-0096.",
+  "labeling_observation": {
+    "ripr_commit": "b0c6ef6",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "static_unknown"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

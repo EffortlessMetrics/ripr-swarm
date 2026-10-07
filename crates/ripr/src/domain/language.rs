@@ -332,6 +332,12 @@ pub enum StaticLimitKind {
     /// unresolved method-to-method edge, not a coverage claim. See
     /// RIPR-SPEC-0201 / #4765.
     PythonTransitiveReachUnresolved,
+    /// Every related `assert_eq!` ripr refused was refused for a limit of its
+    /// own reading (an unparsed or unplaced file, an unidentified test, a
+    /// feature `cfg`, a binding that only may rebind the macro), so the
+    /// `reachable_unrevealed` gap is withheld and the class is
+    /// `static_unknown`. See RIPR-SPEC-0240.
+    RustAssertionContextUnresolved,
 }
 
 impl StaticLimitKind {
@@ -370,6 +376,7 @@ impl StaticLimitKind {
             StaticLimitKind::PythonTransitiveReachUnresolved => {
                 "python_transitive_reach_unresolved"
             }
+            StaticLimitKind::RustAssertionContextUnresolved => "rust_assertion_context_unresolved",
         }
     }
 
@@ -466,6 +473,13 @@ impl StaticLimitKind {
                 "A Python test may reach this change through another method on the owner's \
                  class, a bound-method alias, or a protocol entry point that ripr does not \
                  fully trace. This is a named limitation, not a coverage claim."
+            }
+            StaticLimitKind::RustAssertionContextUnresolved => {
+                "A related Rust test has an `assert_eq!`, but ripr could not read whether it runs \
+                 as the standard macro on the path that reaches this change (for example the \
+                 file did not parse, the test carries a feature `cfg`, or a glob import may \
+                 rebind the macro). ripr does not claim a gap; this is a named limitation, not \
+                 a coverage claim."
             }
         }
     }
@@ -681,6 +695,10 @@ mod tests {
             StaticLimitKind::PythonTransitiveReachUnresolved.as_str(),
             "python_transitive_reach_unresolved"
         );
+        assert_eq!(
+            StaticLimitKind::RustAssertionContextUnresolved.as_str(),
+            "rust_assertion_context_unresolved"
+        );
     }
 
     #[test]
@@ -705,6 +723,7 @@ mod tests {
             StaticLimitKind::RustSubprocessBinaryReachUnresolved,
             StaticLimitKind::WrapperErrorBindingUnresolved,
             StaticLimitKind::PythonTransitiveReachUnresolved,
+            StaticLimitKind::RustAssertionContextUnresolved,
         ];
         // Every variant has a non-empty, distinct explanation. Conservative
         // static-language vocabulary is enforced repo-wide by
