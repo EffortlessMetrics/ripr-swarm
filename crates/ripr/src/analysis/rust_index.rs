@@ -308,10 +308,12 @@ fn mark_returns(
         let Some(&(_, inner)) = inside.checked_sub(1).and_then(|last| inners.get(last)) else {
             continue;
         };
-        let closes = source.get(inner.end_byte..outer.end_byte).is_some_and(|suffix| {
-            let rest = suffix.trim_start_matches(|c: char| c == ')' || c.is_whitespace());
-            rest.is_empty() || rest.starts_with('.')
-        });
+        let closes = source
+            .get(inner.end_byte..outer.end_byte)
+            .is_some_and(|suffix| {
+                let rest = suffix.trim_start_matches(|c: char| c == ')' || c.is_whitespace());
+                rest.is_empty() || rest.starts_with('.')
+            });
         if closes && let Some(twin) = twins.get_mut(outer_index) {
             *twin = true;
         }
