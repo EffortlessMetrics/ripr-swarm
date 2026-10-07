@@ -4039,6 +4039,7 @@ fn producer_rejects_same_file_production_helper_as_test_target() -> Result<(), S
             unresolved_property_macros: Vec::new(),
             role_provenance: Default::default(),
             source: "fn discounted_total_helper() {}".into(),
+            item_scopes: None,
         },
     );
     let seam = RepoSeam::new(
