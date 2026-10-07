@@ -11,7 +11,7 @@ WARNING ./src/lib.rs:2
   id: probe:src_lib.rs:predicate:6d1d88e6
 
 Changed
-  before: if input > 10 {
+  before: input > 10
   after:  input >= 10
 
 Probe

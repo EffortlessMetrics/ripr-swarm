@@ -24,3 +24,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — predicate_pairing_compound_assigned_binding (3)
+
+Reason:
+RIPR-SPEC-0122: adopt landed #7010 predicate before-span cut on merge tree (before cut to after's span)
+
+Command:
+`cargo xtask goldens bless predicate_pairing_compound_assigned_binding --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
