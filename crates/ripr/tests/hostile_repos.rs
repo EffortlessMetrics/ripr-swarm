@@ -899,11 +899,23 @@ fn control_bytes_in_names_and_config_never_reach_github_output_stderr_or_command
     }
     fs::remove_file(root.join("ripr.toml")).map_err(|e| format!("remove ripr.toml failed: {e}"))?;
 
-    // A tracked file deleted from the working tree is named in a stderr notice.
+    // A tracked file deleted from the working tree makes the default run read
+    // the working tree, which has no such file to name. It must still not leak.
     fs::remove_file(root.join("src/a\u{1b}[2Jb.rs"))
         .map_err(|e| format!("delete hostile file failed: {e}"))?;
-    let deleted = ripr(&root, &["check", "--base", "main"], &[])?;
-    assert_sane(&deleted, "check with a deleted hostile file")?;
+    let worktree = ripr(&root, &["check", "--base", "main"], &[])?;
+    assert_sane(&worktree, "check with a deleted hostile file")?;
+    if leaks(&worktree.stdout) || leaks(&worktree.stderr) {
+        return Err(format!(
+            "working-tree run leaked after the delete\n{:?}",
+            worktree.stderr
+        ));
+    }
+    // The committed-history run names the deleted tracked file in a stderr
+    // notice; `--committed` pins that source (#5997 made the dirty tree the
+    // default, which no longer reaches the notice).
+    let deleted = ripr(&root, &["check", "--base", "main", "--committed"], &[])?;
+    assert_sane(&deleted, "check --committed with a deleted hostile file")?;
     if leaks(&deleted.stdout) || leaks(&deleted.stderr) {
         return Err(format!("deleted-file notice leaked\n{:?}", deleted.stderr));
     }
