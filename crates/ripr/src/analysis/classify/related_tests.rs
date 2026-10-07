@@ -2140,6 +2140,16 @@ pub(in crate::analysis) fn impl_trait_name(owner_id: &str) -> Option<String> {
     compact_impl_type_name(trait_ty)
 }
 
+/// The trait named by a trait-impl owner's symbol id, generic or not
+/// (`impl From<f64> for Meters::from` → `From`). `None` for inherent impls and
+/// free functions.
+fn owner_trait_name(owner_id: &str) -> Option<String> {
+    let impl_rest = owner_id.split("::impl ").nth(1)?;
+    let impl_body = impl_rest.rsplit_once("::")?.0;
+    let (trait_ty, _) = impl_body.rsplit_once(" for ")?;
+    compact_impl_type_name(trait_ty)
+}
+
 /// The trait a trait-path call to `owner` dispatches through, for
 /// [`method_call_resolves_to_impl`]. Only a method taking `self` is selected
 /// by its first argument: an associated function such as
@@ -2822,6 +2832,23 @@ fn owner_call_relation_reason(
             owner_scope.in_file(&test.file),
         )
     }) || super::owner_pin::parent_chain_shadows_type(test, &impl_type, owner_scope, index)
+    {
+        return RelationReason::WeakTokenSubstring;
+    }
+    // #7053: a trait-impl owner is also shadowed by a same-named `trait`
+    // declared in the test's own module scope: `Render::render(..)` and
+    // `.render()` there name the test-local trait, so the production impl is
+    // never called. A trait the symbol id names (even a generic one) counts.
+    let owner_trait = owner_trait_name(&owner.id.0);
+    if let Some(trait_name) = owner_trait.as_deref()
+        && test_source.is_some_and(|source| {
+            super::owner_pin::test_module_shadows_trait(
+                test,
+                source,
+                trait_name,
+                owner_scope.in_file(&test.file),
+            )
+        })
     {
         return RelationReason::WeakTokenSubstring;
     }
@@ -3747,6 +3774,111 @@ mod tests {
     /// `Window` with a hand-written `Clone`, and `mod tests` declaring its
     /// own same-name `Window`. The test fn spans lines 23-26.
     const SHADOWED_WINDOW_SOURCE: &str = "pub struct Window {\n    start: u32,\n    end: u32,\n}\n\nimpl Clone for Window {\n    fn clone(&self) -> Self {\n        Window {\n            start: self.start,\n            end: self.end,\n        }\n    }\n}\n\n#[cfg(test)]\nmod tests {\n    struct Window {\n        start: u32,\n        end: u32,\n    }\n\n    #[test]\n    fn a_clone_equals_its_original() {\n        let window = Window { start: 3, end: 9 };\n        assert_eq!(window.clone(), window);\n    }\n}\n";
+
+    /// #7053 fixture: production `trait Render` with `f64` and `u8` impls,
+    /// plus a test module that either redeclares `Render` (`shadow`) or only
+    /// imports the production trait. Returns the source and the 1-based line
+    /// span of the test fn.
+    fn render_trait_source(shadow: bool, test_body: &str) -> (String, usize, usize) {
+        let mut source = String::from(
+            "pub trait Render { fn render(&self) -> String; }\nimpl Render for f64 { fn render(&self) -> String { String::new() } }\nimpl Render for u8 { fn render(&self) -> String { format!(\"{self}\") } }\n\n#[cfg(test)]\nmod tests {\n",
+        );
+        if shadow {
+            source.push_str("    trait Render { fn render(&self) -> String; }\n    impl Render for f64 { fn render(&self) -> String { String::new() } }\n");
+        } else {
+            source.push_str("    use super::Render;\n");
+        }
+        source.push_str("    #[test]\n");
+        let start = source.matches('\n').count() + 1;
+        source.push_str(&format!("    fn t() {{ {test_body} }}\n}}\n"));
+        let end = source.matches('\n').count();
+        (source, start, end)
+    }
+
+    fn render_trait_relation(
+        shadow: bool,
+        test_body: &str,
+        owner_segment: &str,
+        two_impls: bool,
+    ) -> RelationReason {
+        let (source, start, end) = render_trait_source(shadow, test_body);
+        let owner = impl_function("src/lib.rs", "render", owner_segment);
+        let mut test = test_with_call("src/lib.rs", "t", test_body, "render");
+        test.start_line = start;
+        test.end_line = end;
+        let mut functions = vec![owner.clone()];
+        if two_impls {
+            functions.push(impl_function("src/lib.rs", "render", "impl Render for u8"));
+        }
+        let mut index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions,
+            tests: vec![test],
+            ..Default::default()
+        });
+        with_source(&mut index, "src/lib.rs", &source);
+        let probe = probe("src/lib.rs", "String::new()");
+        let related = find_related_tests(&probe, Some(&owner), &index, true, None, None);
+        assert_eq!(related.len(), 1, "the same-named call is still related");
+        related[0].1
+    }
+
+    /// #7053: a test module that declares its own `trait Render` makes
+    /// `Render::render(..)` and `.render()` name the test-local trait, so the
+    /// production `impl Render for f64` is not reached, in the ambiguous and
+    /// the unique-name branch, for the path and the receiver form.
+    #[test]
+    fn given_test_module_redeclares_owner_trait_then_name_only_relation() {
+        for body in [
+            r#"assert_eq!(Render::render(&-0.0f64), "");"#,
+            r#"assert_eq!((-0.0f64).render(), "");"#,
+        ] {
+            for two_impls in [true, false] {
+                assert_eq!(
+                    render_trait_relation(true, body, "impl Render for f64", two_impls),
+                    RelationReason::WeakTokenSubstring,
+                    "shadowed trait must not be direct_owner_call: {body} two_impls={two_impls}"
+                );
+            }
+        }
+    }
+
+    /// #7053 control: the same tests with the production trait in scope (no
+    /// redeclaration) keep `direct_owner_call`, so the refusal is the shadow
+    /// and nothing else.
+    #[test]
+    fn given_test_module_imports_owner_trait_then_direct_owner_call() {
+        for body in [
+            r#"assert_eq!(Render::render(&-0.0f64), "");"#,
+            r#"assert_eq!((-0.0f64).render(), "");"#,
+        ] {
+            assert_eq!(
+                render_trait_relation(false, body, "impl Render for f64", true),
+                RelationReason::DirectOwnerCall,
+                "{body}"
+            );
+        }
+    }
+
+    /// #7053: a generic production trait (`impl From<f64> for Meters`) is
+    /// shadowed by a test-local `trait From` just the same.
+    #[test]
+    fn given_test_module_redeclares_generic_owner_trait_then_name_only_relation() {
+        let source = "pub struct Meters(f64);\nimpl Render<f64> for Meters { fn render(&self) -> String { String::new() } }\n\n#[cfg(test)]\nmod tests {\n    trait Render<T> { fn render(&self) -> String; }\n    #[test]\n    fn t() { assert_eq!(Meters(1.0).render(), \"\"); }\n}\n";
+        let owner = impl_function("src/lib.rs", "render", "impl Render<f64> for Meters");
+        let mut test = test_with_call("src/lib.rs", "t", "Meters(1.0).render()", "render");
+        test.start_line = 7;
+        test.end_line = 8;
+        let mut index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions: vec![owner.clone()],
+            tests: vec![test],
+            ..Default::default()
+        });
+        with_source(&mut index, "src/lib.rs", source);
+        let probe = probe("src/lib.rs", "String::new()");
+        let related = find_related_tests(&probe, Some(&owner), &index, true, None, None);
+        assert_eq!(related.len(), 1);
+        assert_eq!(related[0].1, RelationReason::WeakTokenSubstring);
+    }
 
     /// Same-file production `Ledger` with no test-module shadow. The test
     /// fn spans lines 16-19.

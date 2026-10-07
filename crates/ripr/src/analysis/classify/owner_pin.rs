@@ -2353,6 +2353,13 @@ fn declares_type(text: &str, name: &str) -> bool {
     })
 }
 
+/// Whether masked text declares a `trait` named `name`.
+fn declares_trait(masked: &str, name: &str) -> bool {
+    whole_word_offsets(masked, "trait")
+        .into_iter()
+        .any(|offset| starts_with_word(masked[offset + "trait".len()..].trim_start(), name))
+}
+
 /// Whether any indexed file declares a trait named `name`.
 fn workspace_declares_trait(index: &RustIndex, name: &str) -> bool {
     index.files().values().any(|facts| {
@@ -3474,13 +3481,45 @@ pub(in crate::analysis) fn test_module_shadows_type(
     base: &str,
     owner: Option<OwnerScope<'_>>,
 ) -> bool {
+    test_module_shadows_item(test, source, base, owner, ShadowKind::Type)
+}
+
+/// Whether the test's own inline-module scope declares a `trait` named like
+/// the owner's trait (#7053): inside that module `Render::render(..)` and
+/// `.render()` name the test-local trait and its impls, so a call there is
+/// no evidence about the production `impl Render for T`. Same scope rules
+/// as [`test_module_shadows_type`].
+pub(in crate::analysis) fn test_module_shadows_trait(
+    test: &TestSummary,
+    source: &str,
+    trait_name: &str,
+    owner: Option<OwnerScope<'_>>,
+) -> bool {
+    test_module_shadows_item(test, source, trait_name, owner, ShadowKind::Trait)
+}
+
+/// The kind of declaration a test-module shadow check looks for.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ShadowKind {
+    Type,
+    Trait,
+}
+
+fn test_module_shadows_item(
+    test: &TestSummary,
+    source: &str,
+    base: &str,
+    owner: Option<OwnerScope<'_>>,
+    kind: ShadowKind,
+) -> bool {
     let masked = mask_comments_and_strings(source);
     // `r#Window` denotes `Window`: a raw-identifier declaration shadows too.
     let raw = format!("r#{base}");
-    if !declares_type(&masked, base)
-        && !masked.contains(raw.as_str())
-        && !file_aliases_type(source, base)
-    {
+    let declared = match kind {
+        ShadowKind::Type => declares_type(&masked, base) || file_aliases_type(source, base),
+        ShadowKind::Trait => declares_trait(&masked, base),
+    };
+    if !declared && !masked.contains(raw.as_str()) {
         return false;
     }
     let Some(parse) = parse_clean_source_file(source) else {
@@ -3526,7 +3565,7 @@ pub(in crate::analysis) fn test_module_shadows_type(
                     module.item_list().is_some_and(|items| {
                         items
                             .items()
-                            .any(|item| module_item_names_type(&item, base))
+                            .any(|item| module_item_names(&item, base, kind))
                     })
                 })
         });
@@ -3543,7 +3582,7 @@ pub(in crate::analysis) fn test_module_shadows_type(
                 && counts(&module)
                 && items
                     .items()
-                    .any(|item| module_item_names_type(&item, base))
+                    .any(|item| module_item_names(&item, base, kind))
         })
 }
 
@@ -3718,6 +3757,30 @@ fn resolve_owner_fn(root: &SyntaxNode, source: &str, owner: OwnerScope<'_>) -> O
 /// (#6948 review): the parsed item is the macro, not the struct, enum,
 /// union or alias it generates, so a lexical declaration of the name inside
 /// the macro's own text fails closed.
+fn module_item_names(item: &ast::Item, base: &str, kind: ShadowKind) -> bool {
+    if kind == ShadowKind::Type {
+        return module_item_names_type(item, base);
+    }
+    let named = match item {
+        ast::Item::Trait(item) => item.name(),
+        _ => None,
+    };
+    if named.is_some_and(|name| {
+        let text = name.text().to_string();
+        text.strip_prefix("r#").unwrap_or(&text) == base
+    }) {
+        return true;
+    }
+    // A macro can declare the trait; its text decides, as for types.
+    matches!(
+        item,
+        ast::Item::MacroRules(_) | ast::Item::MacroDef(_) | ast::Item::MacroCall(_)
+    ) && declares_trait(
+        &mask_comments_and_strings(&item.syntax().text().to_string()),
+        base,
+    )
+}
+
 fn module_item_names_type(item: &ast::Item, base: &str) -> bool {
     let name = match item {
         ast::Item::Struct(item) => item.name(),
