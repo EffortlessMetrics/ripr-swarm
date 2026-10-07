@@ -234,6 +234,11 @@ pub(crate) fn render_pilot_summary_md(
             display_path(&context.artifacts.repo_exposure_md)
         ));
     }
+    if top.is_empty()
+        && let Some(reason) = unranked_change_reason(context, true)
+    {
+        out.push_str(&format!("- Current change: {reason}\n"));
+    }
     out.push('\n');
 
     let python_top = python_top_repair_card(context.python_first_use);
@@ -543,6 +548,11 @@ pub(crate) fn render_pilot_terminal(
             withheld_count_label(withheld, context.seam_limit)
         ));
     }
+    if top.is_empty()
+        && let Some(reason) = unranked_change_reason(context, false)
+    {
+        out.push_str(&format!("  current change: {reason}\n"));
+    }
     out.push('\n');
 
     let no_repair_target = if let Some(entry) = top.first() {
@@ -817,6 +827,24 @@ fn current_change_label(
             ),
         }
     })
+}
+
+/// With nothing ranked, why the current change's seams are not ranked
+/// either, when it has any or a seam limit may hide them (#5309). The
+/// pilot budget can drop those seams before the empty-ranking text counts
+/// what was withheld, so this reads the counts taken before the cut.
+fn unranked_change_reason(context: PilotSummaryContext<'_>, code: bool) -> Option<String> {
+    let change = context.current_change?;
+    let seams = change.seams()?;
+    if seams.touched == 0 && seams.unanalyzed.is_none() {
+        return None;
+    }
+    let base = change.base().map(str::to_string);
+    Some(CurrentChangeLabel::why_elsewhere(
+        seams,
+        base.as_ref(),
+        code,
+    ))
 }
 
 impl CurrentChangeLabel {

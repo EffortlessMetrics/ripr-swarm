@@ -2281,6 +2281,47 @@ fn pilot_says_why_no_seam_on_the_change_ranks() -> Result<(), String> {
     Ok(())
 }
 
+/// #5309: with nothing ranked, the pilot budget may already have dropped
+/// the change's withheld seams, so the empty-ranking text cannot count them.
+/// The current-change line still says why the change's seams are not ranked.
+#[test]
+fn pilot_explains_the_change_when_nothing_ranks() {
+    let artifacts = pilot_artifacts();
+    let opaque = classified_with(
+        SeamGripClass::Opaque,
+        "src/other.rs",
+        3,
+        Vec::new(),
+        Vec::new(),
+    );
+    let change = changed("src/other.rs", 3).with_seams_counted(&[opaque], None);
+    let context = PilotSummaryContext {
+        current_change: Some(&change),
+        ..pilot_context(&artifacts)
+    };
+    let reason = "Pilot withholds the analyzed seam on a line changed since origin/main: its static evidence is unknown or opaque, so it is a static limitation, not a gap.";
+    // The budget cut every seam: nothing is left to rank or count.
+    let terminal = render_pilot_terminal(&[], context);
+    assert!(
+        terminal.contains(&format!("  current change: {reason}\n")),
+        "{terminal}"
+    );
+    let md = render_pilot_summary_md(&[], context);
+    let md_reason = reason.replace("since origin/main", "since `origin/main`");
+    assert!(
+        md.contains(&format!("- Current change: {md_reason}\n")),
+        "{md}"
+    );
+    // A change with no analyzed seam and no limit adds nothing.
+    let bare = changed("src/other.rs", 3).with_seams_counted(&[], None);
+    let context = PilotSummaryContext {
+        current_change: Some(&bare),
+        ..pilot_context(&artifacts)
+    };
+    assert!(!render_pilot_terminal(&[], context).contains("current change"));
+    assert!(!render_pilot_summary_md(&[], context).contains("Current change"));
+}
+
 #[test]
 fn pilot_renderers_say_whether_the_top_recommendation_is_in_the_current_change()
 -> Result<(), String> {
