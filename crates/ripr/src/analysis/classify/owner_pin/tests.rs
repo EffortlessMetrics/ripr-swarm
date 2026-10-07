@@ -2915,6 +2915,20 @@ fn the_workspace_site_is_the_first_rebinding_in_path_order_else_the_first_site()
         Some((PathBuf::from("src/b.rs"), MacroBindingKind::Definition))
     );
 
+    // Within one file, a may-rebind site ahead of a definition still yields
+    // the definition.
+    let same_file = format!("{macro_use}{definition}");
+    let rebinding_in_same_file = site_of(&[
+        (LIB, WEIGHT_LIB),
+        (TESTS, plain),
+        ("src/a.rs", &same_file),
+        ("src/c.rs", macro_use),
+    ]);
+    assert_eq!(
+        rebinding_in_same_file,
+        Some((PathBuf::from("src/a.rs"), MacroBindingKind::Definition))
+    );
+
     let only_may_rebind = site_of(&[
         (LIB, WEIGHT_LIB),
         (TESTS, plain),
