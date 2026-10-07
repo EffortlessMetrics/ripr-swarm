@@ -115,7 +115,7 @@ rule only for an assertion whose context was admitted.
    The closure `std::thread::scope` runs is itself on an ordinary path: it is
    called once on the test thread and its panic propagates. Names are not
    resolved, so the test's file refuses when it holds an item, alias or
-   binding named `std` or `thread`; a `use` ending in `std` or `thread`
+   binding named `std` or `thread`; an `extern crate thread;`; a `use` ending in `std` or `thread`
    other than exactly `use std::thread;`, or a `self` in a `use` list under
    a `std` or `thread` prefix; a glob `use` other than `use super::*;`;
    `use`, `mod` or `extern` inside macro tokens; `include!`; or an item- or
@@ -123,7 +123,9 @@ rule only for an assertion whose context was admitted.
    `assert_eq!` and the like). A `thread::` path also needs
    `use std::thread;` directly in the test's own module. Residuals: a `std`
    or `thread` module that `use super::*;` brings in from another file, an
-   attribute macro that emits such an import, and a `#[macro_use]` macro from
+   attribute or derive macro that emits such an import, a cfg'd-off
+   `use std::thread;` beside an extern crate renamed `thread`, a `#![no_std]`
+   root aliasing `std` in another file, and a `#[macro_use]` macro from
    another file that reuses a std statement-macro name (`assert_eq!`) to emit
    one. Only a whole `use std::thread;` counts as the import; the same path
    nested in a list (`use crate::fake::{std::thread};`) refuses. Detached threads, bound handles,

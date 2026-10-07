@@ -1350,6 +1350,19 @@ fn std_thread_item(path: &ast::PathExpr, function: &ast::Fn) -> Option<String> {
             }
             continue;
         }
+        // `extern crate thread;` names a dependency through a `NameRef`, not
+        // a `Name`, and a block-level one shadows the module's
+        // `use std::thread;` (#6966 review).
+        if let Some(krate) = ast::ExternCrate::cast(node.clone()) {
+            if krate.rename().is_none()
+                && krate
+                    .name_ref()
+                    .is_some_and(|name| name.text().trim_start_matches("r#") == "thread")
+            {
+                return None;
+            }
+            continue;
+        }
         if let Some(call) = ast::MacroCall::cast(node.clone()) {
             // A macro defined elsewhere, or `include!`, can expand to a `use`
             // whose tokens this file never shows. Expression macros cannot

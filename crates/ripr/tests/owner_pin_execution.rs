@@ -2116,6 +2116,80 @@ fn bool_owner_assert_pin_matched_static_and_runtime_controls() -> Result<(), Str
     Ok(())
 }
 
+/// A block-level `extern crate thread;` shadows the module's
+/// `use std::thread;` (#6966 review). When a dependency is named `thread`,
+/// `thread::spawn` is that crate's, and a fake `spawn` that never runs the
+/// closure lets a wrong owner pass. ripr refuses the credit.
+#[test]
+fn an_extern_crate_named_thread_refuses_spawned_thread_credit() -> Result<(), String> {
+    let production = "pub fn weight(input: u32) -> u32 {\n    3 * input\n}\n";
+    let diff = "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,3 +1,3 @@\n pub fn weight(input: u32) -> u32 {\n-    input * 3\n+    3 * input\n }\n";
+    let tests = "#[cfg(test)]\nmod tests {\n    use super::*;\n    use std::thread;\n    #[test]\n    fn weight_in_worker() {\n        extern crate thread;\n        thread::spawn(|| assert_eq!(weight(4), 12)).join().unwrap();\n    }\n}\n";
+    let scratch = Scratch::create()?;
+    let root = scratch.0.join("ws");
+    let fake = scratch.0.join("fake");
+    for directory in [root.join("src"), fake.join("src")] {
+        std::fs::create_dir_all(directory).map_err(|error| error.to_string())?;
+    }
+    let write =
+        |path: PathBuf, text: &str| std::fs::write(path, text).map_err(|error| error.to_string());
+    write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"thread_extern_control\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\n[workspace]\n\n[dev-dependencies]\nthread = { package = \"fake-thread\", path = \"../fake\" }\n",
+    )?;
+    write(root.join("src/lib.rs"), &format!("{production}{tests}"))?;
+    write(root.join("diff.patch"), diff)?;
+    write(
+        fake.join("Cargo.toml"),
+        "[package]\nname = \"fake-thread\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    )?;
+    write(
+        fake.join("src/lib.rs"),
+        "pub struct Handle;\nimpl Handle {\n    pub fn join(self) -> Result<(), ()> {\n        Ok(())\n    }\n}\npub fn spawn<F: FnOnce()>(_f: F) -> Handle {\n    Handle\n}\n",
+    )?;
+    let report = check_workspace(CheckInput {
+        root: root.clone(),
+        diff_file: Some(root.join("diff.patch")),
+        mode: Mode::Fast,
+        format: OutputFormat::Json,
+        ..CheckInput::default()
+    })?;
+    let finding = report
+        .findings
+        .iter()
+        .find(|finding| finding.probe.family == ProbeFamily::ReturnValue)
+        .ok_or("no return-value finding")?;
+    assert_ne!(finding.class, ExposureClass::Exposed);
+    // Offline: the mutant passes because the fake `spawn` never runs the
+    // closure, so the credit would have been false.
+    write(
+        root.join("src/lib.rs"),
+        &format!("{}{tests}", production.replace("3 * input", "input * 2")),
+    )?;
+    let cargo = PathBuf::from(std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into()));
+    let manifest_path = root.join("Cargo.toml");
+    let target_dir = scratch.0.join("target");
+    let result = run(
+        &cargo,
+        &[
+            "test".as_ref(),
+            "--offline".as_ref(),
+            "--quiet".as_ref(),
+            "--manifest-path".as_ref(),
+            manifest_path.as_os_str(),
+            "--target-dir".as_ref(),
+            target_dir.as_os_str(),
+        ],
+    )?;
+    let stdout = String::from_utf8_lossy(&result.stdout);
+    assert!(
+        result.status.success() && stdout.contains("1 passed; 0 failed;"),
+        "the mutant must survive under the fake crate: {stdout}; {}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    Ok(())
+}
+
 /// #6966: an assertion inside a spawned thread earns exact credit only where
 /// the thread's panic reaches the test thread. Each row runs the same test
 /// against the rewrite and an `input * 2` mutant; `kills` is the runtime
