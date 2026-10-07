@@ -1,0 +1,113 @@
+{
+  "subject_id": "authored-trap-kit",
+  "origin": "authored",
+  "version_label": "authored 2026-10-04 for false-credit traps and negative controls",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "Cargo.toml",
+      "sha256": "5da52ff4280c089a41e4a3158c728a34f9b1da0eda446e0dadfcd9fc8b0c662e"
+    },
+    {
+      "path": "src/billing.rs",
+      "sha256": "de21ca533024513d465820e151e05f994ecd78bb146219d47b71e4f2a95b2771"
+    },
+    {
+      "path": "src/coolers.rs",
+      "sha256": "78c9d6fa5d46eb3c562ecf4cc15065dced6744c265ac33ee873411a8518c0eaa"
+    },
+    {
+      "path": "src/counter.rs",
+      "sha256": "5df6bd0c3022115d2f22d6cf8e2d282a2df4063e5db142d34ede6af041dcc7c1"
+    },
+    {
+      "path": "src/grid.rs",
+      "sha256": "cfae066e753f92ee710212c808b7b44a8be21a755e013f7901b8125e50c5a950"
+    },
+    {
+      "path": "src/grid_checked.rs",
+      "sha256": "17a0d7540598a9775f2612e06856b0bd2ca1f25835ba7c55a8591caec7998fad"
+    },
+    {
+      "path": "src/grid_reached.rs",
+      "sha256": "d2130b465563810332af3c80a6d6abb50b675da10dc0ced87b122f8c6c2168a2"
+    },
+    {
+      "path": "src/heaters.rs",
+      "sha256": "dafa07a74dedd023ac304ea425ddd44674fd9aafc2e4b4c346dc146e7f8c8e99"
+    },
+    {
+      "path": "src/labels.rs",
+      "sha256": "d3f3c0107ab227bd5ac4c2bc9b46872dd866f758ff31e917c3da61073f448fb3"
+    },
+    {
+      "path": "src/levels.rs",
+      "sha256": "3d73a78416ab865c949fb3b1507667edc7723b6a0668257e6f27f32ac53f5ef6"
+    },
+    {
+      "path": "src/lib.rs",
+      "sha256": "0e81b6aad42c08cd8758fc6b05396556235ee5e617574c72c98e484cdfdcf9d9"
+    },
+    {
+      "path": "src/modes.rs",
+      "sha256": "ba5686c5feaf3a7f67ff6cf1668ba27382be004f1054aed7f87517e56b399194"
+    },
+    {
+      "path": "src/modes_checked.rs",
+      "sha256": "11eaadb43793e1ae1db7fb6439137ac006d1e900a5242cca62cac0da875de786"
+    },
+    {
+      "path": "src/nested.rs",
+      "sha256": "a9f4b324136b615451cc3358a3a361c080551ef5a64b3f4520fa101e6b920b57"
+    },
+    {
+      "path": "src/notices.rs",
+      "sha256": "e0f9070ad30be07b49d4431ae821fbb075b130db3be857a2e3528b093929ef81"
+    },
+    {
+      "path": "src/probes.rs",
+      "sha256": "91e0dcad33a30af987d994603983105d11d6b672c393d03709f70ba1eff54937"
+    },
+    {
+      "path": "src/probes_checked.rs",
+      "sha256": "20e2697d433f0def9f62be0b4762d57fcb58fa4691e2bc25960dd3296380b524"
+    },
+    {
+      "path": "src/rates.rs",
+      "sha256": "945abac76fe8db79582e05ab41b0f9624dfd643697ef51492723259a898b0635"
+    },
+    {
+      "path": "src/retries.rs",
+      "sha256": "dc3b0db1602a67f68b6486b04e5319f517675fdbeddc8f8489f49d7fb3367635"
+    },
+    {
+      "path": "src/scaling.rs",
+      "sha256": "168fbe50058c10f51e8fdb9e0fb2f811b975b07c74efdd974bd188c0bc18cd4f"
+    },
+    {
+      "path": "src/shapes.rs",
+      "sha256": "bd3360e96a941d56c5fa3cc8e03755392227092338ed49f1d0dd6fb4cc4530fc"
+    },
+    {
+      "path": "src/sizing.rs",
+      "sha256": "31f26fad7b6c649a5f3c44651134f16ab59c1451d484cf5c7a17f5839130fe37"
+    },
+    {
+      "path": "src/tables.rs",
+      "sha256": "101243ab19bf2db584f871952ef643c21128cf16a3379f74643c39a02b0e34d1"
+    },
+    {
+      "path": "src/totals.rs",
+      "sha256": "bb50e076f72c41c5264346d89d22b19dea8898e846f731a18db680716eb33df5"
+    },
+    {
+      "path": "src/units.rs",
+      "sha256": "49184465a8459eea07393cedf1039b7d8e6870b1b417e0e7cc3c2eec84265183"
+    },
+    {
+      "path": "src/units_checked.rs",
+      "sha256": "aac7972513bc04ccea2b2d960b23d488aa3bc41832607da699192bb2076f1daf"
+    }
+  ]
+}

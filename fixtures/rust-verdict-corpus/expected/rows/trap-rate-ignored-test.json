@@ -1,0 +1,19 @@
+{
+  "case_id": "trap-rate-ignored-test",
+  "subject_id": "authored-trap-kit",
+  "origin": "authored",
+  "anchor": "src/rates.rs:2",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "owner_pinned_only_by_ignored_test",
+  "hard_case": true,
+  "truth": "not_discriminated",
+  "ideal_verdict": "gap",
+  "observed_verdict": "gap",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "reachable_unrevealed"
+  ],
+  "outcome": "ideal",
+  "contradictions": []
+}

@@ -1,0 +1,13 @@
+pub fn lift(base: u32) -> u32 {
+    base * 19
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn lift_runs_in_a_worker() {
+        std::thread::spawn(|| assert_eq!(lift(2), 38)).join().unwrap();
+    }
+}

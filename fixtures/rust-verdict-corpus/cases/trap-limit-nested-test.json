@@ -1,0 +1,58 @@
+{
+  "case_id": "trap-limit-nested-test",
+  "subject_id": "authored-trap-kit",
+  "diff": "cases/trap-limit-nested-test.diff",
+  "anchor": {
+    "file": "src/nested.rs",
+    "line": 2
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "pin_in_nested_test_fn",
+  "hard_case": "The pin is a #[test] fn nested inside another test's body; libtest cannot collect it (the unnameable_test_items lint, allowed here, says so) and the outer test never calls it. Flattened into a plain test, ripr reads it exposed.",
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "base * 6",
+        "mutated_line": "base * 6",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: replaces `5 * base` with `base * 6`, which changes the result, but no executed assertion observes it"
+      },
+      {
+        "replacement": "base + 5",
+        "mutated_line": "base + 5",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: replaces `5 * base` with `base + 5`, which changes the result, but no executed assertion observes it"
+      },
+      {
+        "replacement": "base * 4",
+        "mutated_line": "base * 4",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: replaces `5 * base` with `base * 4`, which changes the result, but no executed assertion observes it"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "limit_suite only defines limit_is_ten, which asserts limit(2) == 10 but never runs. Spec cell: RIPR-SPEC-0108 (pin in a nested test).",
+  "labeling_observation": {
+    "ripr_commit": "6487826",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "reachable_unrevealed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}
