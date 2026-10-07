@@ -1953,6 +1953,14 @@ mod tests {
         ));
         let other = std::env::temp_dir().join("ripr c & d");
         assert!(!editor_command_is_safe(&other, &bound));
+        // The bound spelling placed inside quoted data puts its `&` at top
+        // level, while the swapped text is a safe payload. Only the equality
+        // with the binder's own rendering refuses it.
+        let bound_arg = crate::agent::loop_commands::shell_arg(
+            &crate::agent::loop_commands::bound_root(&root.to_string_lossy()),
+        );
+        let smuggled = format!("ripr agent verify --note 'x --root {bound_arg} y' --root . --json");
+        assert!(!editor_command_is_safe(&root, &smuggled));
         Ok(())
     }
 
@@ -1977,11 +1985,19 @@ mod tests {
         );
         // A root the editor client refuses to copy (an apostrophe needs the
         // `'\''` escape) is withheld rather than shown uncopyable.
-        let apostrophe_root = std::env::temp_dir().join("o'connor");
-        assert_eq!(
-            bind_portable_command(&apostrophe_root, "ripr agent verify --root . --json"),
-            None
-        );
+        let mut uncopyable = vec!["o'connor", "say \"hi\"", "tick`root", "curly\u{2019}root"];
+        // On Windows `\` is a separator and renders as `/`.
+        if cfg!(unix) {
+            uncopyable.push("back\\slash");
+        }
+        for name in uncopyable {
+            let uncopyable_root = std::env::temp_dir().join(name);
+            assert_eq!(
+                bind_portable_command(&uncopyable_root, "ripr agent verify --root . --json"),
+                None,
+                "{name:?}"
+            );
+        }
         // Without a portable root there is nothing to withhold.
         assert_eq!(
             bind_portable_command(&control_root, "ripr agent verify --root ./sub --json"),
