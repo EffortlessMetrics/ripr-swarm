@@ -12249,6 +12249,10 @@ tests = [
   "crates/ripr/src/mcp/server_tests.rs::gap_resource_templates_spell_the_identity_canonical_id",
   "crates/ripr/src/mcp/server.rs::tests",
   "crates/ripr/src/mcp/transport.rs::tests",
+  "crates/ripr/src/mcp/protocol.rs::tests::tool_result_carries_the_document_once_when_the_double_envelope_overflows",
+  "crates/ripr/src/mcp/workspace.rs::tests::oversized_aggregate_listing_pages_instead_of_dying_after_budget_approval",
+  "crates/ripr/src/mcp/workspace.rs::tests::fitting_listing_ships_whole_with_a_closed_page_window",
+  "crates/ripr/src/mcp/server_tests.rs::list_gaps_accepts_offset_and_limit_at_the_dispatch_edge",
   "crates/ripr/tests/mcp_sdk.rs",
   "crates/ripr/tests/mcp_stdio.rs::gap_tools_fail_closed_before_the_first_refresh",
   "crates/ripr/tests/mcp_stdio.rs::post_initialize_ping_with_handshake_meta_returns_an_empty_result",
@@ -12262,7 +12266,8 @@ tests = [
   "crates/ripr/src/output/path.rs::tests::relative_path_text_strips_verbatim_producer_paths_natively_on_windows",
   "crates/ripr/src/output/path.rs::tests::relative_path_text_keeps_verbatim_spellings_natively_on_unix",
   "crates/ripr/src/output/path.rs::tests::relative_path_text_rejects_a_parent_escape",
-  "crates/ripr/src/output/path.rs::tests::relative_path_text_keeps_drive_relative_roots"
+  "crates/ripr/src/output/path.rs::tests::relative_path_text_keeps_drive_relative_roots",
+  "crates/ripr/tests/mcp_workspace_config.rs::list_gaps_pages_over_the_wire_with_offset_and_limit"
 ]
 code = [
   "crates/ripr/src/mcp/workspace.rs",
