@@ -2791,6 +2791,7 @@ mod tests {
         // region at all (`inline` above), still withholds it.
         let mut own_file_inline = under_tests.clone();
         for test in &mut own_file_inline.evidence.related_tests {
+            let test = std::sync::Arc::make_mut(test);
             test.file = std::path::PathBuf::from("src/pricing.rs");
         }
         let region = |file: &str| crate::analysis::new_test_target::NewTestTargetAdmission {

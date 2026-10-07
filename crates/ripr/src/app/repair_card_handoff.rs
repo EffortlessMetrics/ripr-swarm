@@ -814,7 +814,7 @@ mod tests {
                 owner: None,
             }),
         }];
-        entry.evidence.related_tests = vec![RelatedTestGrip {
+        entry.evidence.related_tests = vec![std::sync::Arc::new(RelatedTestGrip {
             test_name: "below_threshold_has_no_discount".to_string(),
             file: std::path::PathBuf::from("src/pricing.rs"),
             line: 120,
@@ -828,7 +828,7 @@ mod tests {
             evidence_summary: "broad assertion".to_string(),
             relation_reason: RelationReason::DirectOwnerCall,
             relation_confidence: RelationConfidence::High,
-        }];
+        })];
         entry.evidence.new_test_target =
             Some(crate::analysis::new_test_target::NewTestTargetAdmission {
                 owner_inline_region: Some(
@@ -873,6 +873,7 @@ mod tests {
         // A test-surface card states no module confinement.
         let mut under_tests = own_file_inline_entry();
         for test in &mut under_tests.evidence.related_tests {
+            let test = std::sync::Arc::make_mut(test);
             test.file = std::path::PathBuf::from("tests/pricing.rs");
             test.test_target = Some(
                 crate::analysis::test_grip_evidence::TestTargetEvidence::fixture(

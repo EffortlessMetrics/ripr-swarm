@@ -280,8 +280,7 @@ pub(crate) fn capture_attempt_baseline(
     } else {
         None
     };
-    let mut baseline =
-        capture_repository_state(root, policy.clone(), CaptureTraceLabel::Baseline)?;
+    let mut baseline = capture_repository_state(root, policy.clone(), CaptureTraceLabel::Baseline)?;
     if let Some(region) = &inline_test_region
         && baseline.worktree_digest(&region.path)
             != Some(inline_test_region::digest_bytes(region.source.as_bytes()).as_str())
