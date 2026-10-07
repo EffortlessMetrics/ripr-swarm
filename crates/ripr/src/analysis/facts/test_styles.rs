@@ -106,9 +106,10 @@ fn normalize_indexed_file_test_styles(
         let (defines_test, compiled_out) = match lexical_lines.as_deref() {
             Some(lines) => {
                 let attributes = lexical_attributes_before(lines, function.start_line);
+                let gates = lexical_gate_attributes_before(lines, function.start_line);
                 (
                     attributes_define_test(attributes.iter().copied()),
-                    attributes_compile_out_in_test_build(attributes.iter().copied()),
+                    attributes_compile_out_in_test_build(gates.iter().map(String::as_str)),
                 )
             }
             None => (
@@ -204,6 +205,52 @@ fn lexical_attributes_before<'source>(
             continue;
         }
         break;
+    }
+
+    attributes.reverse();
+    attributes
+}
+
+/// Same walk as `lexical_attributes_before`, but a multi-line attribute
+/// (`#[cfg(\n    any()\n)]`) is joined into one complete attribute so the
+/// cfg-availability check sees the whole gate (#6293). Only used for the
+/// compile-out decision; an attribute it cannot close fails open to the
+/// pre-existing single-line behavior.
+fn lexical_gate_attributes_before(lines: &[&str], start_line: usize) -> Vec<String> {
+    // Real attributes span a handful of lines; past this bound an unclosed
+    // tail is treated as ordinary code instead of joining unrelated lines.
+    const MAX_JOINED_LINES: usize = 32;
+    let mut index = start_line.saturating_sub(1).min(lines.len());
+    let mut attributes = Vec::new();
+
+    while index > 0 {
+        index -= 1;
+        let trimmed = lines[index].trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        if trimmed.starts_with("#[") {
+            attributes.push(trimmed.to_string());
+            continue;
+        }
+        if !trimmed.ends_with(']') {
+            break;
+        }
+        let earliest = index.saturating_sub(MAX_JOINED_LINES - 1);
+        let Some(head) = (earliest..index)
+            .rev()
+            .find(|&candidate| lines[candidate].trim().starts_with("#["))
+        else {
+            break;
+        };
+        let joined = lines[head..=index].join("\n");
+        match cfg_predicates::split_leading_attribute(&joined) {
+            Some((attribute, remainder)) if remainder.trim().is_empty() => {
+                attributes.push(attribute.to_string());
+                index = head;
+            }
+            _ => break,
+        }
     }
 
     attributes.reverse();

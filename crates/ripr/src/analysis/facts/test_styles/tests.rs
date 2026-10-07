@@ -150,6 +150,31 @@ fn ordinary() { assert!(true); }
 }
 
 #[test]
+fn multiline_false_cfg_on_the_lexical_fallback_is_not_a_test() -> Result<(), String> {
+    // #6293: the lexical fallback saw only single-line `#[` attributes, so a
+    // multi-line `#[cfg(\n any()\n)]` left the dead test in `facts.tests`.
+    let source = "#[cfg(\n    any()\n)]\n#[test]\nfn never_compiled() { assert!(true); }\n\n#[cfg(\n    feature = \"slow\"\n)]\n#[test]\nfn feature_gated() { assert!(true); }\n\n#[test]\nfn ordinary() { assert!(true); }\n";
+    let adapter = LexicalRustSyntaxAdapter;
+    let mut facts = adapter.summarize_file(Path::new("src/lib.rs"), source)?;
+    assert!(
+        facts.used_lexical_fallback,
+        "fixture must exercise the lexical fallback"
+    );
+    normalize_file_test_styles(&mut facts)?;
+    assert_eq!(test_names(&facts), ["feature_gated", "ordinary"]);
+    assert!(
+        facts
+            .functions
+            .iter()
+            .find(|function| function.name == "never_compiled")
+            .is_some_and(|function| function.source_role.is_evidence_role()
+                && function.source_role != FunctionSourceRole::TestAttribute),
+        "never_compiled must be an evidence-only role"
+    );
+    Ok(())
+}
+
+#[test]
 fn parser_facts_recognize_explicit_nonstandard_test_styles() -> Result<(), String> {
     let adapter = RaRustSyntaxAdapter;
     let mut facts = adapter.summarize_file(
