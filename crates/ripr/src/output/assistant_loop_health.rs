@@ -1,3 +1,5 @@
+use crate::agent::command_specs::shell_words;
+use crate::agent::loop_commands::shell_arg;
 use serde::Serialize;
 use serde_json::Value;
 
@@ -906,11 +908,16 @@ fn command_root(proof: &HealthProof) -> String {
     }
 }
 
+/// The `--root` the handoff's agent command carries, re-quoted for the
+/// commands built from it. The agent command quotes a root with spaces
+/// (`--root '/work/my repo'`), so it is split with shell quoting rather than
+/// on whitespace, which handed back `'/work/my` (#4000).
 fn root_from_agent_command(command: &str) -> Option<String> {
-    let mut tokens = command.split_whitespace();
+    let words = shell_words(command)?;
+    let mut tokens = words.iter();
     while let Some(token) = tokens.next() {
         if token == "--root" {
-            return tokens.next().map(ToOwned::to_owned);
+            return tokens.next().map(|root| shell_arg(root));
         }
     }
     None
@@ -1209,5 +1216,32 @@ mod tests {
         assert!(markdown.contains("regenerate proof; supply selected seam"));
         assert!(markdown.contains("src/lib.rs:7 - missing receipt"));
         Ok(())
+    }
+
+    /// #4000: since #3948 the handoff's agent command names the checkout
+    /// root, quoted when it holds a space. Splitting it on whitespace handed
+    /// back `'/work/my` and every repair command carried an unbalanced quote.
+    #[test]
+    fn repair_commands_keep_a_quoted_root_whole() {
+        assert_eq!(
+            root_from_agent_command(
+                "ripr agent brief --root '/work/my repo' --seam-id abc --json > target/ripr/workflow/agent-brief.json"
+            )
+            .as_deref(),
+            Some("'/work/my repo'")
+        );
+        assert_eq!(
+            root_from_agent_command("ripr agent start --root repo-root --seam-id s").as_deref(),
+            Some("repo-root")
+        );
+        assert_eq!(
+            root_from_agent_command("ripr agent start --seam-id s"),
+            None
+        );
+        // An unbalanced quote is not a root to repeat.
+        assert_eq!(
+            root_from_agent_command("ripr agent start --root '/work/my"),
+            None
+        );
     }
 }

@@ -847,7 +847,7 @@ fn command_spec(
     }
 }
 
-fn shell_words(command: &str) -> Option<Vec<String>> {
+pub(crate) fn shell_words(command: &str) -> Option<Vec<String>> {
     let mut words = Vec::new();
     let mut current = String::new();
     let mut quote = None;
