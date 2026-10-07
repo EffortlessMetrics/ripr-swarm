@@ -38,7 +38,8 @@
 use super::super::rust_index::{FunctionSummary, OracleFact, RustIndex, TestSummary};
 use super::reveal::{
     assertion_comparison_operands, contains_as_whole_word, file_imports_foreign_callee_name,
-    file_imports_own_item, file_use_statements, use_statement_first_segment,
+    file_imports_own_item, file_use_statements, use_statement_binds_name,
+    use_statement_first_segment,
 };
 use crate::analysis::extract::{
     fact_body_defines_callee_fn, fact_body_let_shadow_line, mask_comments_and_strings,
@@ -1357,8 +1358,13 @@ fn unsafe_block_value(operand: &str) -> Option<&str> {
     if !operand[close + 1..].trim().is_empty() || masked[open + 1..close].contains(';') {
         return None;
     }
-    let inner = operand[open + 1..close].trim();
-    (!inner.is_empty()).then_some(inner)
+    // Trim by the masked text so a `// SAFETY:` or `/* .. */` comment around
+    // the call is not read as part of it. The call starts with its name and
+    // ends with `)`, neither of which masking touches.
+    let body = &masked[open + 1..close];
+    let start = body.len() - body.trim_start().len();
+    let end = body.trim_end().len();
+    (start < end).then(|| &operand[open + 1 + start..open + 1 + end])
 }
 
 /// The receiver of `Type::constructor(..).name(` when `operand` starts with
@@ -2018,9 +2024,20 @@ pub(super) fn library_may_export_other(index: &RustIndex, owner_root: &Path, nam
             Some(_) => {}
         }
     }
+    // A module name some `use` or `extern crate` also binds may name that
+    // import instead (`pub use fastscore as fs;` beside an unrelated
+    // `mod fs`), so it does not count as a library module.
     let modules: BTreeSet<&str> = library
         .iter()
         .flat_map(|masked| declared_module_names(masked))
+        .filter(|module| {
+            !library.iter().any(|masked| {
+                file_use_statements(masked)
+                    .iter()
+                    .any(|statement| use_statement_binds_name(statement, module))
+                    || binds_extern_crate(masked, module)
+            })
+        })
         .collect();
     index.files().iter().any(|(path, facts)| {
         target_root(path, index, &src_dirs).as_deref() == Some(owner_root)
@@ -2057,6 +2074,25 @@ fn reexports_library_module(statement: &str, modules: &BTreeSet<&str>) -> bool {
         && intermediate
             .iter()
             .all(|segment| *segment == "super" || modules.contains(segment))
+}
+
+/// Whether masked source has `extern crate <name>` or `extern crate .. as
+/// <name>`.
+fn binds_extern_crate(masked: &str, name: &str) -> bool {
+    whole_word_offsets(masked, "extern")
+        .into_iter()
+        .any(|offset| {
+            let rest = masked[offset + "extern".len()..].trim_start();
+            let Some(rest) = rest.strip_prefix("crate") else {
+                return false;
+            };
+            let declaration = rest.split(';').next().unwrap_or_default();
+            let bound = declaration
+                .rsplit_once(" as ")
+                .map_or(declaration, |(_, alias)| alias)
+                .trim();
+            bound == name
+        })
 }
 
 /// Names of `mod <name>` declarations in masked source.

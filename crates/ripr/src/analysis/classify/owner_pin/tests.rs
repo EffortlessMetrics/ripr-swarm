@@ -411,6 +411,17 @@ fn only_plain_pub_use_statements_can_export_to_another_crate() {
             "pub mod a;\npub const SCORE_MAX: i64 = 9;\n",
             false,
         ),
+        // A module name that an import alias also binds.
+        (
+            "alias shadows a nested module",
+            "pub mod a;\nmod unrelated { mod fs {} }\npub use fastscore as fs;\npub use self::fs::score;\n",
+            true,
+        ),
+        (
+            "extern alias shadows a module",
+            "pub mod a;\nmod b { mod fs {} }\nextern crate fastscore as fs;\npub use crate::fs::*;\n",
+            true,
+        ),
     ] {
         let library = index(&[("pricing/src/lib.rs", lib)]);
         assert_eq!(
@@ -437,6 +448,11 @@ fn an_unsafe_block_holding_only_the_owner_call_pins_it() {
         ("unsafe { byte_at(b\"xyz\", 1) }", 1),
         ("unsafe{byte_at(b\"xyz\", 1)}", 1),
         ("unsafe {\n        byte_at(b\"xyz\", 1)\n    }", 1),
+        ("unsafe { byte_at(b\"xyz\", 1) /* SAFETY: 1 < 3 */ }", 1),
+        (
+            "unsafe {\n        // SAFETY: 1 < 3.\n        byte_at(b\"xyz\", 1)\n    }",
+            1,
+        ),
         // A statement in the block means its value is not only the call.
         ("unsafe { let v = byte_at(b\"xyz\", 1); v }", 0),
         ("unsafe { byte_at(b\"xyz\", 1); 121 }", 0),

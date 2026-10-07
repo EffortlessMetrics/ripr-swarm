@@ -112,7 +112,8 @@ rule only for an assertion whose context was admitted.
    chained after it, and the other operand does not mention the owner's
    name (`assert_eq!(f(4), f(2) + f(2))` compares the owner with itself).
    An `unsafe { .. }` block whose only content is that complete call (no
-   statement, nothing chained after the call or the block) is the call:
+   statement, nothing chained after the call or the block; comments around
+   the call are ignored) is the call:
    calling an `unsafe fn` needs the block, and the block's value is the
    call's value.
 2. Call identity, from the parser's item-container fact on the owner
@@ -227,7 +228,10 @@ rule only for an assertion whose context was admitted.
    or through `[workspace.dependencies]` for `workspace = true`, resolves to
    the owner's package directory. A `package =` rename must name the
    owner's package and imports under its key; without one the key must be
-   the package name and imports under the library name. A `git` or
+   the package name and imports under the library name. Target tables are
+   read without their `cfg` predicates, so a name that any other entry
+   (in any table) binds to another package is ambiguous and stays foreign.
+   A `git` or
    `registry` key, a `package.workspace`, a `[patch]` entry for the name or
    any `[replace]` between the test and the root, and a `.cargo/config`
    between either file and the analysis root that mentions the name or sets
@@ -238,8 +242,9 @@ rule only for an assertion whose context was admitted.
    may export another item under the callee's name: a `pub use` in a
    library file that names the callee or globs, unless its path is rooted
    at `crate`, `self` or `super` and passes only through modules the
-   library declares (`use fastscore as fs; pub use self::fs::score;` is
-   refused); a library `const` or `static` of that name; an `include!` in
+   library declares that no `use` or `extern crate` in it also binds
+   (`use fastscore as fs; pub use self::fs::score;` is refused, even beside
+   an unrelated `mod fs`); a library `const` or `static` of that name; an `include!` in
    a library file or an unresolved include anywhere; or a file under the
    package's `src/` whose crate root is not established. The same
    own-crate reading serves every consumer of the same-name import defeat

@@ -187,9 +187,13 @@ fn resolve(
             .map(|workspace| (directory.as_path(), workspace))
     });
     let mut names = Vec::new();
+    // Crate names some entry binds to another package. Target tables are
+    // read without their predicates, so a name bound to the owner on one
+    // target and elsewhere on another is ambiguous and admitted nowhere.
+    let mut elsewhere = Vec::new();
     for table in test_dependency_tables(&test.manifest) {
         for (key, spec) in table {
-            if let Some(name) = import_name(
+            match import_name(
                 key,
                 spec,
                 &test.directory,
@@ -198,10 +202,12 @@ fn resolve(
                 owner_name,
                 &library,
             ) {
-                names.push(name);
+                Some(name) => names.push(name),
+                None => elsewhere.push(normalized(key)),
             }
         }
     }
+    names.retain(|name| !elsewhere.contains(name));
     names.sort();
     names.dedup();
     Some(names)
@@ -521,6 +527,19 @@ mod tests {
                 vec![(
                     "orders/Cargo.toml",
                     orders("[dependencies]\nprice = { path = \"../pricing\" }\n"),
+                )],
+                "orders/tests/t.rs",
+                "pricing/src/lib.rs",
+            ),
+            // One key bound to the owner on one target and to another
+            // package on another.
+            (
+                "conflicting targets".into(),
+                vec![(
+                    "orders/Cargo.toml",
+                    orders(
+                        "[target.'cfg(windows)'.dependencies]\npricing = { path = \"../pricing\" }\n[target.'cfg(unix)'.dependencies]\npricing = { package = \"fake-pricing\", path = \"../fake\" }\n",
+                    ),
                 )],
                 "orders/tests/t.rs",
                 "pricing/src/lib.rs",
