@@ -63,3 +63,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — rust_transitive_reach_same_name_other_type (6)
+
+Reason:
+RIPR-SPEC-0122: a predicate's before is cut to the same span as its after (#6995)
+
+Command:
+`cargo xtask goldens bless rust_transitive_reach_same_name_other_type --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

@@ -1,0 +1,13 @@
+pub fn pile(base: u32) -> u32 {
+    base * 43
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pile_holds_the_entry() {
+        assert_eq!(vec![pile(2)][0], 86);
+    }
+}

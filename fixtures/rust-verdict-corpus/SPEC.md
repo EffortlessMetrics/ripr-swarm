@@ -16,7 +16,12 @@ its specs in its reasoning; one `authored-specNNNN-<k>` crate per acceptance
 example of RIPR-SPEC-0225 to 0228, isolated so no other example's test relates
 to its owner; eleven `authored-grid-*` crates crossing cargo-mutants operator
 classes with five test styles: exact pin, table-driven loop, property-style
-invariant, helper-wrapped assert and no assertion; `authored-mined-wire` and
+invariant, helper-wrapped assert and no assertion; `authored-trap-kit` and
+`authored-trap-reach` for false-credit traps, tests that look like they check
+the change but cannot notice it, paired where useful with a negative control
+that does; `authored-spot` for shapes
+behind `ripr pilot` picks that real cargo-mutants runs refuted, each case
+naming the refuted picks in its reasoning; `authored-mined-wire` and
 `authored-mined-codec` for test shapes mined from real crates, each case naming
 the real-crate shape it mirrors, or its twin, without copying code;
 `authored-spec-confirm` for spec cells that had no runtime-truth case:
