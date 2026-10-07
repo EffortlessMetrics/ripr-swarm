@@ -1,4 +1,4 @@
-﻿//! #5355 / #5453: `ripr agent stub --write` must leave the user's crate compiling.
+//! #5355 / #5453: `ripr agent stub --write` must leave the user's crate compiling.
 //! #6712: scratch crates under `temp_dir()` must create that redirected root first.
 //! Each ready inline stub is written into a fresh copy of one fixture crate,
 //! the file is compiled with rustc as a test crate, and the stub's test must
