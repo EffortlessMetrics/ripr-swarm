@@ -1,5 +1,5 @@
 use super::assistant_loop_health::ASSISTANT_PROOF_COMMAND;
-use crate::agent::loop_commands::shell_arg;
+use crate::agent::loop_commands::{bound_root, bound_root_path, root_path_display, shell_arg};
 use serde::Serialize;
 use serde_json::Value;
 use std::path::{Path, PathBuf};
@@ -688,23 +688,34 @@ fn artifact_specs(input: &ReportPacketIndexInput) -> Vec<ArtifactSpec> {
     ]
 }
 
-/// Point a regeneration template's `--root .` at the root this index was
-/// built for (#4000). The templates' artifact paths are relative to the
-/// directory the index was generated from, like the index's own entry paths,
-/// so the root keeps its typed spelling instead of being made absolute: a
-/// command pasted from that directory analyzes the indexed repository rather
-/// than whatever sits in the current directory.
+/// Point a regeneration template at the root this index was built for
+/// (#4000). With the default `--root .` the template is returned unchanged:
+/// the index, its artifact paths and the command share one directory.
+/// Otherwise the `--root .` placeholder becomes the resolved repository and
+/// every `target/...` artifact path becomes absolute under the directory the
+/// index read. `ripr first-pr` resolves its inputs and `--out-dir` against
+/// `--root`, so a root-relative path would read and write under the indexed
+/// root, not where the index looks.
 fn command_at_root(template: &str, root: &str) -> String {
     if root == "." {
         return template.to_string();
     }
-    let bound = format!(" --root {}", shell_arg(root));
-    match template.split_once(" --root .") {
-        Some((head, tail)) if tail.is_empty() || tail.starts_with(' ') => {
-            format!("{head}{bound}{tail}")
-        }
-        _ => template.to_string(),
-    }
+    let mut previous = "";
+    template
+        .split(' ')
+        .map(|token| {
+            let rewritten = if previous == "--root" && token == "." {
+                shell_arg(&bound_root(root))
+            } else if token.starts_with("target/") {
+                shell_arg(&root_path_display(&bound_root_path(Path::new(token))))
+            } else {
+                token.to_string()
+            };
+            previous = token;
+            rewritten
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 fn artifact_available(spec: &ArtifactSpec) -> bool {
@@ -1757,26 +1768,40 @@ mod tests {
             .iter()
             .filter_map(|missing| missing.next_command.clone())
             .collect::<Vec<_>>();
-        assert!(
-            commands
-                .iter()
-                .any(|command| command.starts_with("ripr pr-review front-panel --root 'my repo' ")),
-            "front panel must regenerate at the indexed root: {commands:?}"
-        );
-        assert!(
-            commands
-                .iter()
-                .any(|command| command.starts_with("ripr assistant-loop proof --root 'my repo' ")),
-            "assistant proof must regenerate at the indexed root: {commands:?}"
-        );
-        assert!(
-            commands.iter().all(|command| !command.contains("--root .")),
-            "no command may fall back to the current directory: {commands:?}"
-        );
+        let repo = format!("--root {}", shell_arg(&bound_root("my repo")));
+        let guidance = shell_arg(&root_path_display(&bound_root_path(Path::new(
+            "target/ripr/review/comments.json",
+        ))));
+        for prefix in ["ripr pr-review front-panel ", "ripr assistant-loop proof "] {
+            let Some(command) = commands.iter().find(|command| command.starts_with(prefix)) else {
+                return Err(format!("no `{prefix}` regeneration command: {commands:?}"));
+            };
+            assert!(
+                command.starts_with(&format!("{prefix}{repo} ")),
+                "must regenerate at the indexed root: {command}"
+            );
+            // The artifact paths stay where the index looked, whatever
+            // `--root` they are resolved against.
+            assert!(
+                command.contains(&format!("--pr-guidance {guidance} ")),
+                "artifact paths must name the indexed directory: {command}"
+            );
+            assert!(
+                !command.contains("--root .") && !command.contains(" target/"),
+                "no relative root or artifact path may remain: {command}"
+            );
+        }
 
-        assert_eq!(
-            command_at_root("ripr agent status --root .", "repo"),
-            "ripr agent status --root repo"
+        // first-pr resolves its inputs and --out-dir against --root.
+        let first_pr = command_at_root(
+            "ripr first-pr --root . --gap-ledger target/ripr/reports/g.json --out-dir target/ripr/reports",
+            "sub",
+        );
+        let out_dir = root_path_display(&bound_root_path(Path::new("target/ripr/reports")));
+        assert!(Path::new(&out_dir).is_absolute(), "{out_dir}");
+        assert!(
+            first_pr.ends_with(&format!("--out-dir {}", shell_arg(&out_dir))),
+            "{first_pr}"
         );
         // The default root leaves the templates byte-identical, and a `--root`
         // that merely starts with `.` is not the template's placeholder.

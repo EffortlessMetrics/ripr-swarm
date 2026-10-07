@@ -1,5 +1,3 @@
-use crate::agent::command_specs::shell_words;
-use crate::agent::loop_commands::shell_arg;
 use serde::Serialize;
 use serde_json::Value;
 
@@ -908,19 +906,65 @@ fn command_root(proof: &HealthProof) -> String {
     }
 }
 
-/// The `--root` the handoff's agent command carries, re-quoted for the
-/// commands built from it. The agent command quotes a root with spaces
-/// (`--root '/work/my repo'`), so it is split with shell quoting rather than
-/// on whitespace, which handed back `'/work/my` (#4000).
+/// The `--root` the handoff's agent command carries, copied as the shell
+/// word it was rendered as. Since #3948 that command names the checkout,
+/// quoted by `shell_arg` when it holds a space or a shell metacharacter
+/// (`--root '/work/my repo'`, `--root '/w/a&b'`), so the word is found with
+/// shell quoting rather than by splitting on whitespace, which handed back
+/// `'/work/my` (#4000). Copying the rendered word keeps every `shell_arg`
+/// form, including its `$(printf ...)` escapes for control characters.
 fn root_from_agent_command(command: &str) -> Option<String> {
-    let words = shell_words(command)?;
+    let words = raw_shell_words(command)?;
     let mut tokens = words.iter();
     while let Some(token) = tokens.next() {
-        if token == "--root" {
-            return tokens.next().map(|root| shell_arg(root));
+        if *token == "--root" {
+            return tokens.next().map(|root| (*root).to_string());
         }
     }
     None
+}
+
+/// Split a rendered command into its shell words without interpreting them.
+/// A word keeps its quotes; an unbalanced quote or trailing escape yields
+/// `None`.
+fn raw_shell_words(command: &str) -> Option<Vec<&str>> {
+    let mut words = Vec::new();
+    let mut start = None;
+    let mut quote = None;
+    let mut escaped = false;
+    for (index, character) in command.char_indices() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        match (quote, character) {
+            (Some('\''), '\'') | (Some('"'), '"') => quote = None,
+            (Some('"'), '\\') | (None, '\\') => {
+                start.get_or_insert(index);
+                escaped = true;
+            }
+            (Some(_), _) => {}
+            (None, '\'' | '"') => {
+                start.get_or_insert(index);
+                quote = Some(character);
+            }
+            (None, value) if value.is_whitespace() => {
+                if let Some(begin) = start.take() {
+                    words.push(&command[begin..index]);
+                }
+            }
+            (None, _) => {
+                start.get_or_insert(index);
+            }
+        }
+    }
+    if escaped || quote.is_some() {
+        return None;
+    }
+    if let Some(begin) = start {
+        words.push(&command[begin..]);
+    }
+    Some(words)
 }
 
 fn repair_markdown_line(repair: &RepairItem) -> String {
@@ -1234,6 +1278,17 @@ mod tests {
             root_from_agent_command("ripr agent start --root repo-root --seam-id s").as_deref(),
             Some("repo-root")
         );
+        // Every form `shell_arg` renders round-trips as the same word, including
+        // metacharacters and the `$(printf ...)` escape for control characters.
+        for root in ["/w/a&b", "/w/$HOME", "/w/it's", "/w/a\u{1}b", "/w/a b;c"] {
+            let quoted = crate::agent::loop_commands::shell_arg(root);
+            let command = format!("ripr agent start --root {quoted} --seam-id s");
+            assert_eq!(
+                root_from_agent_command(&command).as_deref(),
+                Some(quoted.as_str()),
+                "{command}"
+            );
+        }
         assert_eq!(
             root_from_agent_command("ripr agent start --seam-id s"),
             None
