@@ -7,6 +7,7 @@ use crate::analysis::{ClassifiedSeam, RepoSeam};
 use crate::config::{ConfigSeverity, RiprConfig};
 use std::cmp::Ordering;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 pub(crate) const DEFAULT_AGENT_BRIEF_MAX_SEAMS: usize = 3;
 pub(crate) const AGENT_BRIEF_HARD_MAX_SEAMS: usize = 10;
@@ -669,7 +670,8 @@ fn matching_related_test_line<'a>(
             .changed_lines
             .iter()
             .find_map(|(line_file, line)| {
-                (line_file == &test_file && matches_line(test, line)).then_some((test, *line))
+                (line_file == &test_file && matches_line(test, line))
+                    .then_some((test.as_ref(), *line))
             })
     })
 }
@@ -682,10 +684,15 @@ fn matching_related_test_file<'a>(
         return None;
     }
 
-    entry.evidence.related_tests.iter().find(|test| {
-        let test_file = normalized_path(&test.file);
-        working_set.files.iter().any(|file| file == &test_file)
-    })
+    entry
+        .evidence
+        .related_tests
+        .iter()
+        .find(|test| {
+            let test_file = normalized_path(&test.file);
+            working_set.files.iter().any(|file| file == &test_file)
+        })
+        .map(Arc::as_ref)
 }
 
 fn selected<'a>(seam: &'a ClassifiedSeam, why_now: AgentBriefWhyNow) -> AgentBriefSelectedSeam<'a> {
@@ -910,7 +917,7 @@ mod tests {
             class,
             evidence: TestGripEvidence {
                 seam_id,
-                related_tests: vec![RelatedTestGrip {
+                related_tests: vec![Arc::new(RelatedTestGrip {
                     test_name: format!("{owner}_test"),
                     file: PathBuf::from("tests/sample.rs"),
                     line: 5,
@@ -926,7 +933,7 @@ mod tests {
                     evidence_summary: "exact value assertion".to_string(),
                     relation_reason: RelationReason::DirectOwnerCall,
                     relation_confidence: RelationConfidence::High,
-                }],
+                })],
                 reach: stage(StageState::Yes),
                 activate: stage(StageState::Yes),
                 propagate: stage(StageState::Yes),
@@ -1072,9 +1079,9 @@ mod tests {
         line: usize,
         confidence: RelationConfidence,
     ) {
-        entry.evidence.related_tests[0].file = PathBuf::from(file);
-        entry.evidence.related_tests[0].line = line;
-        entry.evidence.related_tests[0].relation_confidence = confidence;
+        Arc::make_mut(&mut entry.evidence.related_tests[0]).file = PathBuf::from(file);
+        Arc::make_mut(&mut entry.evidence.related_tests[0]).line = line;
+        Arc::make_mut(&mut entry.evidence.related_tests[0]).relation_confidence = confidence;
     }
 
     fn selected_ids(selection: &AgentBriefSelection<'_>) -> Vec<String> {

@@ -20,6 +20,7 @@ use serde::de::Error as _;
 use serde::ser::Error as _;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::collections::HashMap;
+use std::sync::Arc;
 
 #[derive(Serialize)]
 struct TableRef<'a> {
@@ -51,7 +52,7 @@ struct EvidenceRef<'a> {
 
 #[derive(Deserialize)]
 struct TableOwned {
-    related_tests: Vec<RelatedTestGrip>,
+    related_tests: Vec<Arc<RelatedTestGrip>>,
     seams: Vec<SeamOwned>,
 }
 
@@ -317,7 +318,7 @@ pub(super) fn deserialize<'de, D: Deserializer<'de>>(
                         table.len()
                     ))
                 })?;
-            related_tests.push(test.clone());
+            related_tests.push(Arc::clone(test));
         }
         classified.push(ClassifiedSeam {
             seam,
@@ -398,7 +399,7 @@ pub(super) mod tests {
         );
         let evidence = TestGripEvidence {
             seam_id: seam.id().clone(),
-            related_tests,
+            related_tests: related_tests.into_iter().map(Arc::new).collect(),
             reach: StageEvidence::new(StageState::Yes, Confidence::High, "reach"),
             activate: StageEvidence::new(StageState::Unknown, Confidence::Medium, "activate"),
             propagate: StageEvidence::new(StageState::Unknown, Confidence::Medium, "propagate"),
@@ -444,6 +445,13 @@ pub(super) mod tests {
             serde_json::to_value(&decoded.seams).map_err(|err| err.to_string())?,
             serde_json::to_value(&seams).map_err(|err| err.to_string())?
         );
+        // A warm load hands every seam the table's one record, so a decoded
+        // cache holds each distinct test once (#5341).
+        let tests = |position: usize| &decoded.seams[position].evidence.related_tests;
+        assert!(Arc::ptr_eq(&tests(0)[0], &tests(1)[1]));
+        assert!(Arc::ptr_eq(&tests(0)[0], &tests(3)[0]));
+        assert!(Arc::ptr_eq(&tests(0)[1], &tests(1)[0]));
+        assert!(!Arc::ptr_eq(&tests(0)[0], &tests(1)[2]));
         Ok(())
     }
 

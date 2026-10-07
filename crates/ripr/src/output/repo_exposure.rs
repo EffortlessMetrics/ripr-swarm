@@ -1463,7 +1463,7 @@ mod tests {
         );
         let evidence = TestGripEvidence {
             seam_id: seam.id().clone(),
-            related_tests: vec![RelatedTestGrip {
+            related_tests: vec![std::sync::Arc::new(RelatedTestGrip {
                 test_name: "below_threshold_has_no_discount".to_string(),
                 file: std::path::PathBuf::from("tests/pricing_tests.rs"),
                 line: 5,
@@ -1480,7 +1480,7 @@ mod tests {
                 relation_reason:
                     crate::analysis::test_grip_evidence::RelationReason::DirectOwnerCall,
                 relation_confidence: crate::analysis::test_grip_evidence::RelationConfidence::High,
-            }],
+            })],
             reach: stage(StageState::Yes),
             activate: stage(StageState::Yes),
             propagate: stage(StageState::Yes),
@@ -2234,9 +2234,9 @@ mod tests {
             7,
             SeamGripClass::WeaklyGripped,
         );
-        classified.evidence.related_tests[0].file =
+        std::sync::Arc::make_mut(&mut classified.evidence.related_tests[0]).file =
             std::path::PathBuf::from(r"crates\faultline-app\tests\integration.rs");
-        classified.evidence.related_tests[0].test_target = Some(
+        std::sync::Arc::make_mut(&mut classified.evidence.related_tests[0]).test_target = Some(
             crate::analysis::test_grip_evidence::TestTargetEvidence::fixture(
                 "below_threshold_has_no_discount",
                 std::path::Path::new(r"crates\faultline-app\tests\integration.rs"),
@@ -2272,7 +2272,7 @@ mod tests {
     #[test]
     fn given_repo_exposure_related_tests_when_helper_owner_call_then_additive_reason_is_emitted() {
         let mut classified = weakly_gripped_classified();
-        classified.evidence.related_tests[0].relation_reason =
+        std::sync::Arc::make_mut(&mut classified.evidence.related_tests[0]).relation_reason =
             crate::analysis::test_grip_evidence::RelationReason::HelperOwnerCall;
 
         let json = render_repo_exposure_json(&[classified.clone()], None, None, None);

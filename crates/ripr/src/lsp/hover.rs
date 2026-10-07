@@ -1352,7 +1352,7 @@ mod seam_hover_tests {
         );
         let evidence = TestGripEvidence {
             seam_id: seam.id().clone(),
-            related_tests: vec![RelatedTestGrip {
+            related_tests: vec![std::sync::Arc::new(RelatedTestGrip {
                 test_name: "below_threshold_has_no_discount".to_string(),
                 file: PathBuf::from("tests/pricing.rs"),
                 line: 12,
@@ -1369,7 +1369,7 @@ mod seam_hover_tests {
                 relation_reason:
                     crate::analysis::test_grip_evidence::RelationReason::DirectOwnerCall,
                 relation_confidence: crate::analysis::test_grip_evidence::RelationConfidence::High,
-            }],
+            })],
             reach: stage(StageState::Yes, "Related tests reach discounted_total"),
             activate: stage(StageState::Yes, "Observed amount = 50, amount = 10000"),
             propagate: stage(StageState::Yes, "Seam flows to return_value"),

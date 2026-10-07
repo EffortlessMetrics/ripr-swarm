@@ -2,6 +2,7 @@ use super::*;
 use crate::analysis::syntax::parse_clean_source_file;
 use crate::analysis::test_grip_evidence::owner_result_binding::ParsedTestFile;
 use crate::analysis::value_resolution::{FileValueScan, ValueEnvFacts};
+use std::collections::HashSet;
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
 
 /// Precomputed per-test facts for repo seam evidence consumers. This
@@ -58,6 +59,13 @@ pub(crate) struct CompactGripContext<'a> {
     /// Per owner id: the unresolved-reach summary, or `None` when the
     /// `no` reach is established. Seams share owners.
     unresolved_reach: Mutex<BTreeMap<String, Option<String>>>,
+    /// One shared record per distinct related-test grip (#5341, #5362).
+    /// Seams relate to the same tests over and over: on ripr-swarm 10,000
+    /// seams hold 1.28M related-test entries but only about 15k distinct
+    /// records, and owning a copy each cost ~850 MB of cold-pilot peak.
+    /// Records are immutable, so sharing one does not couple seams. Kept
+    /// across windows: the dedup is the point.
+    shared_grips: Mutex<HashSet<Arc<RelatedTestGrip>>>,
 }
 
 /// Candidate generation only: the existing `contains` and `same_module`
@@ -203,6 +211,21 @@ impl<'a> CompactGripContext<'a> {
         memo(&self.owner_named_cache).clear();
         memo(&self.same_module_cache).clear();
         memo(&self.parsed_sources).clear();
+    }
+
+    /// The run's shared copy of `grip`: an equal record already handed out,
+    /// or `grip` itself, now shared.
+    pub(in crate::analysis::test_grip_evidence) fn share_grip(
+        &self,
+        grip: RelatedTestGrip,
+    ) -> Arc<RelatedTestGrip> {
+        let mut shared = memo(&self.shared_grips);
+        if let Some(existing) = shared.get(&grip) {
+            return Arc::clone(existing);
+        }
+        let grip = Arc::new(grip);
+        shared.insert(Arc::clone(&grip));
+        grip
     }
 
     /// Number of indexed functions with exactly `name`; 0 for unknown or
@@ -473,6 +496,7 @@ impl<'a> CompactGripContext<'a> {
             transitive_reach: crate::analysis::classify::TransitiveReachIndex::new(index),
             type_mentions: OnceLock::new(),
             unresolved_reach: Mutex::new(BTreeMap::new()),
+            shared_grips: Mutex::new(HashSet::new()),
         })
     }
 

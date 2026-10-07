@@ -353,7 +353,7 @@ fn production_target_evidence_carries_portable_root_and_currentness_authority() 
     let relocated_target = evidence_for_seam(&relocated_seam, &relocated_index)
         .related_tests
         .into_iter()
-        .find_map(|related| related.test_target)
+        .find_map(|related| related.test_target.clone())
         .ok_or_else(|| "relocated fixture must remain accepted".to_string())?;
     if relocated_target.workspace_identity != target.workspace_identity {
         return Err("relocation changed portable workspace identity".to_string());
@@ -2603,6 +2603,55 @@ fn import_only_mentions_owner() {
     Ok(())
 }
 
+#[test]
+fn evidence_for_seams_shares_one_record_per_distinct_related_test() -> Result<(), String> {
+    // #5341: seams relating to the same test under the same reason hold one
+    // shared record, not a copy each. Keyed memoization alone would keep the
+    // values equal; only pointer identity proves the memory is shared.
+    let prod = PathBuf::from("src/pricing.rs");
+    let prod_src = r#"
+pub fn discounted_total(amount: i32, threshold: i32) -> i32 {
+    if amount >= threshold { amount - 10 } else { amount }
+}
+"#;
+    let tests = PathBuf::from("tests/pricing_tests.rs");
+    let tests_src = r#"
+#[test]
+fn equality_boundary_returns_discount() {
+    assert_eq!(discounted_total(100, 100), 90);
+}
+"#;
+    let index = index_from_files(&[(prod, prod_src), (tests, tests_src)])?;
+    let seams = inventory_seams_from_index(&[PathBuf::from("src/pricing.rs")], &index);
+    let batch = evidence_for_seams(&seams, &index);
+    let grips: Vec<&std::sync::Arc<RelatedTestGrip>> = batch
+        .iter()
+        .flat_map(|evidence| evidence.related_tests.iter())
+        .collect();
+    let mut pairs = 0;
+    for (position, left) in grips.iter().enumerate() {
+        for right in &grips[position + 1..] {
+            if left == right {
+                pairs += 1;
+                assert!(
+                    std::sync::Arc::ptr_eq(left, right),
+                    "equal related-test records must share one allocation"
+                );
+            } else {
+                assert!(!std::sync::Arc::ptr_eq(left, right));
+            }
+        }
+    }
+    if pairs == 0 {
+        return Err(format!(
+            "fixture must relate one test to several seams; got {} grips over {} seams",
+            grips.len(),
+            batch.len()
+        ));
+    }
+    Ok(())
+}
+
 fn parallel_evidence_fixture() -> Result<(FixtureIndex, Vec<RepoSeam>), String> {
     let prod = PathBuf::from("src/pricing.rs");
     let prod_src = r#"
@@ -3402,6 +3451,7 @@ fn first_grip_for(
         .related_tests
         .into_iter()
         .next()
+        .map(|test| test.as_ref().clone())
         .ok_or_else(|| "at least one related test".to_string())
 }
 
@@ -14549,7 +14599,7 @@ fn route_must_be_ready(case: &ConstructorFieldCase) -> Result<(), String> {
             case.classified.evidence.activate.state,
             case.classified.evidence.discriminate.state,
             missing,
-            related.cloned().map(|test| (
+            related.map(|test| test.as_ref().clone()).map(|test| (
                 test.test_name,
                 test.relation_reason,
                 test.test_target.is_some(),
