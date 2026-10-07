@@ -963,6 +963,32 @@ fn only_complete_static_imports_are_dropped_from_the_file_scan() -> Result<(), S
     Ok(())
 }
 
+/// Review (#5527): a boundary-shaped call in the test title runs nothing,
+/// so it neither reaches the boundary nor hides the body's miss; and an
+/// argument past `Number.MAX_SAFE_INTEGER` may run as a different value, so
+/// it never establishes a miss.
+#[test]
+fn title_text_and_unsafe_integers_do_not_decide_activation() -> Result<(), String> {
+    let titled = format!(
+        "{IMPORT_DISCOUNT}\ntest('applyDiscount(100)', () => {{\n  expect(applyDiscount(150)).toBe(135);\n}});\n"
+    );
+    let evaluated = evaluate(&DISCOUNT, &titled, true)?;
+    assert_eq!(evaluated.row("applyDiscount(100)")?.1, R::DirectOwnerCall);
+    assert_ne!(
+        evaluated.activation("applyDiscount(100)")?,
+        A::ReachedWithoutDiscriminator
+    );
+    let unsafe_integer = one_test(
+        "unsafe integer",
+        IMPORT_DISCOUNT,
+        "  expect(applyDiscount(9007199254740993)).toBe(1);",
+    );
+    let evaluated = evaluate(&DISCOUNT, &unsafe_integer, true)?;
+    assert_eq!(evaluated.row("unsafe integer")?.1, R::DirectOwnerCall);
+    assert_eq!(evaluated.activation("unsafe integer")?, A::Unresolved);
+    Ok(())
+}
+
 /// Review (#5527): an owner reached again through another function (mutual
 /// recursion) can carry an off-boundary input to the boundary.
 #[test]

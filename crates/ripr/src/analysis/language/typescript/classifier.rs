@@ -726,7 +726,10 @@ fn row_boundary_input_activation(
         .chain(alias_locals.map(|import| import.local.as_str()))
         .filter(|name| !local_identifier_declared_in_test_body(&test.body_text, name));
     for name in reach_names {
-        for arguments in owner_call_arguments(&test.body_text, name, owner_receivers) {
+        // The callback block only: a boundary-shaped call in the test's
+        // title string runs nothing.
+        let callback = test_callback_block(&test.body_text).unwrap_or(&test.body_text);
+        for arguments in owner_call_arguments(callback, name, owner_receivers) {
             let arguments =
                 substitute_constant_arguments(arguments, test, owner, alias_map, workspace_root);
             if fact.call_hits_boundary(&arguments) == Some(true) {
@@ -789,7 +792,11 @@ fn row_boundary_input_activation(
         {
             return unresolved;
         }
-        calls.extend(owner_call_arguments(&test.body_text, name, owner_receivers));
+        calls.extend(owner_call_arguments(
+            test_callback_block(&test.body_text).unwrap_or(&test.body_text),
+            name,
+            owner_receivers,
+        ));
     }
     if calls.is_empty() {
         return unresolved;

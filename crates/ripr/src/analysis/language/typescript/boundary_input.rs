@@ -123,15 +123,27 @@ impl TypeScriptBoundaryFact {
             {
                 return None;
             }
-            integer_literal(arguments.get(index)?)
+            integer_literal(arguments.get(index)?).filter(|value| is_safe_number_integer(*value))
         };
         match self {
-            Self::Input(input) => Some(read(input.index)? == input.value),
+            Self::Input(input) => {
+                if !is_safe_number_integer(input.value) {
+                    return None;
+                }
+                Some(read(input.index)? == input.value)
+            }
             Self::Parameters(parameters) => {
                 Some(read(parameters.index)? == read(parameters.operand_index)?)
             }
         }
     }
+}
+
+/// A JavaScript `number` holds integers exactly only within
+/// `Number.MAX_SAFE_INTEGER`; beyond it two distinct literals can run as one
+/// value, so an exact comparison there establishes nothing.
+fn is_safe_number_integer(value: i64) -> bool {
+    value.unsigned_abs() < (1 << 53)
 }
 
 /// The boundary input for a changed predicate line, read from the owner's
