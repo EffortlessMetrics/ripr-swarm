@@ -292,7 +292,7 @@ pub(crate) fn error_path_twins(shapes: &[ProbeShapeFact], source: &str) -> Vec<b
         }
         let inner_is_err = source
             .get(inner.start_byte..)
-            .is_some_and(|rest| err_call_opening_at_start(rest));
+            .is_some_and(err_call_opening_at_start);
         if wraps_first_argument(prefix, inner_is_err) {
             mark_wrappers(outers, inners, &mut twins);
         }
