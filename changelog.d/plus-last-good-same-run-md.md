@@ -5,6 +5,7 @@
   previous matching pair intact and a newer `.json` cannot sit beside
   another run's `.md`. Unreadable canonical Markdown is a Markdown-only
   failure: JSON is still saved. Skip-rewrite of matching last-good
-  Markdown applies only to a regular file; a symlink or FIFO is dropped
-  and replaced
+  Markdown applies only to a regular file; a non-regular leaf such as a
+  symlink is dropped and replaced rather than skip-rewritten
+
   ([#6698](https://github.com/EffortlessMetrics/ripr-swarm/issues/6698)).

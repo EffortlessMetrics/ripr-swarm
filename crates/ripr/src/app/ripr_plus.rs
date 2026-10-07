@@ -1659,56 +1659,60 @@ mod tests {
         Ok(())
     }
 
-    #[cfg(unix)]
+    /// A leftover last-good Markdown that does not match this JSON is dropped
+    /// even when the leftover file is read-only. Skip-rewrite is matching-only.
     #[test]
-    fn fifo_last_good_markdown_is_replaced_without_blocking() -> Result<(), String> {
-        use std::os::unix::fs::FileTypeExt as _;
+    fn mismatched_read_only_last_good_markdown_is_dropped() -> Result<(), String> {
         let nanos = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_err(|err| format!("clock failed: {err}"))?
             .as_nanos();
-        let repo =
-            std::env::temp_dir().join(format!("ripr-plus-fifo-md-{}-{nanos}", std::process::id()));
+        let repo = std::env::temp_dir().join(format!(
+            "ripr-plus-readonly-mismatch-md-{}-{nanos}",
+            std::process::id()
+        ));
         let reports = repo.join("target/ripr/reports");
         fs::create_dir_all(&reports)
             .map_err(|err| format!("mkdir {}: {err}", reports.display()))?;
-        let json = r#"{"status":"pass","head":"run-a"}"#;
-        let markdown = matching_markdown(json)?;
-        fs::write(repo.join(RIPR_PLUS_JSON), json).map_err(|err| format!("seed json: {err}"))?;
-        fs::write(repo.join(RIPR_PLUS_MD), &markdown).map_err(|err| format!("seed md: {err}"))?;
-        let last_good_md = repo.join(RIPR_PLUS_LAST_GOOD_MD);
-        let fifo_path = last_good_md
-            .to_str()
-            .ok_or_else(|| "non-UTF8 FIFO path".to_string())?;
-        let status = std::process::Command::new("mkfifo")
-            .arg(fifo_path)
-            .status()
-            .map_err(|err| format!("mkfifo: {err}"))?;
-        if !status.success() {
-            let _ = fs::remove_dir_all(&repo);
-            return Err(format!("mkfifo failed: {status}"));
-        }
-        assert!(
-            fs::symlink_metadata(&last_good_md)
-                .map_err(|err| format!("stat fifo: {err}"))?
-                .file_type()
-                .is_fifo(),
-            "control: last-good.md must be a FIFO before keep"
+        let later = r#"{"status":"warn","head":"run-b","unresolved":3}"#;
+        let earlier = r#"{"status":"pass","head":"run-a","unresolved":0}"#;
+        let earlier_md = matching_markdown(earlier)?;
+        assert_ne!(
+            matching_markdown(later)?,
+            earlier_md,
+            "control: the two runs must render different Markdown"
         );
+        fs::write(repo.join(RIPR_PLUS_JSON), later)
+            .map_err(|err| format!("seed later json: {err}"))?;
+        fs::write(repo.join(RIPR_PLUS_MD), &earlier_md)
+            .map_err(|err| format!("seed earlier md: {err}"))?;
+        let last_good_md = repo.join(RIPR_PLUS_LAST_GOOD_MD);
+        fs::write(&last_good_md, "leftover from another run")
+            .map_err(|err| format!("seed leftover md: {err}"))?;
+        let writable = fs::metadata(&last_good_md)
+            .map_err(|err| format!("metadata: {err}"))?
+            .permissions();
+        let mut read_only = writable.clone();
+        read_only.set_readonly(true);
+        fs::set_permissions(&last_good_md, read_only)
+            .map_err(|err| format!("chmod leftover md: {err}"))?;
         let kept = keep_last_good_receipt(&repo);
-        let metadata = fs::symlink_metadata(&last_good_md)
-            .map_err(|err| format!("stat last-good md: {err}"))?;
-        let kept_md = fs::read_to_string(&last_good_md);
         let kept_json = fs::read_to_string(repo.join(RIPR_PLUS_LAST_GOOD_JSON));
+        let leftover_exists = last_good_md.exists();
+        if leftover_exists {
+            let _ = fs::set_permissions(&last_good_md, writable);
+        }
         let _ = fs::remove_dir_all(&repo);
         assert!(kept.contains("is kept at"), "{kept}");
-        assert!(kept.contains("ripr-plus.last-good.md"), "{kept}");
         assert!(
-            metadata.file_type().is_file() && !metadata.file_type().is_fifo(),
-            "a FIFO at last-good.md must be replaced without blocking on a reader"
+            !kept.contains("ripr-plus.last-good.md"),
+            "mismatched leftover Markdown must not be named as kept: {kept}"
         );
-        assert_eq!(kept_json.map_err(|err| err.to_string())?, json);
-        assert_eq!(kept_md.map_err(|err| err.to_string())?, markdown);
+        assert_eq!(kept_json.map_err(|err| err.to_string())?, later);
+        assert!(
+            !leftover_exists,
+            "a read-only leftover from another run must not sit beside last-good.json"
+        );
         Ok(())
     }
 
