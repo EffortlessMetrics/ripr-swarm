@@ -3241,9 +3241,11 @@ mod tests {
 
         let result = load_diff(&dir, None, None, Some(Duration::ZERO));
         let err = result.expect_err("a zero deadline must fail default-base resolution");
+        // #6956: the stalled probe reports its timeout; only a genuinely
+        // unanswered probe keeps the default-base error.
         assert!(
-            err.contains("could not resolve a default base"),
-            "expected fail-closed default-base error, got: {err}"
+            err.contains("git_invocation_timeout"),
+            "a zero deadline is a timeout, not a missing ref, got: {err}"
         );
 
         ignore_remove_dir_all(&dir);

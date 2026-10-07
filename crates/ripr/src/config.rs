@@ -1226,27 +1226,31 @@ impl std::fmt::Display for CandidateConfigError {
 /// default config. The worktree file (already loaded as `worktree`)
 /// contributes nothing — `source_path`/`source_text` are cleared so the
 /// recorded identity cannot claim the worktree file as its source.
+///
+/// The config read honors the run's effective git deadline (#6956), so
+/// `--git-timeout`/`RIPR_GIT_TIMEOUT` (and `0` for no deadline) reach it
+/// like every other git wait, and the timeout repair guidance stays
+/// effective.
 pub(crate) fn config_for_candidate(
     subject: &crate::domain::GitCandidateSubject,
     worktree: &RiprConfig,
+    git_timeout: Option<std::time::Duration>,
 ) -> Result<RiprConfig, CandidateConfigError> {
     use crate::domain::GitCandidateSubjectError;
-    let bytes = crate::analysis::git_candidate_execution::candidate_config_bytes(
-        subject,
-        Some(std::time::Duration::from_secs(30)),
-    )
-    .map_err(|error| match error {
-        GitCandidateSubjectError::ExecutionTimedOut {
-            operation,
-            timeout_ms,
-            spawned,
-        } => CandidateConfigError::Timeout {
-            operation,
-            timeout_ms,
-            spawned,
-        },
-        other => CandidateConfigError::Other(other.to_string()),
-    })?;
+    let bytes =
+        crate::analysis::git_candidate_execution::candidate_config_bytes(subject, git_timeout)
+            .map_err(|error| match error {
+                GitCandidateSubjectError::ExecutionTimedOut {
+                    operation,
+                    timeout_ms,
+                    spawned,
+                } => CandidateConfigError::Timeout {
+                    operation,
+                    timeout_ms,
+                    spawned,
+                },
+                other => CandidateConfigError::Other(other.to_string()),
+            })?;
     let Some(text) = bytes else {
         // Pure default: no worktree fact may enter a subject run
         // (#3279 review B1 — the worktree's enabled-languages list is

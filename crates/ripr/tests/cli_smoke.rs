@@ -3358,8 +3358,10 @@ fn check_json_omitted_base_git_timeout_names_timeout_identity() -> Result<(), St
 
 /// #6956: a stalled candidate-tree config read is a timeout, not a broken
 /// config file: the refusal names `git_invocation_timeout` while stderr
-/// keeps the timeout diagnostic. The config read deadline is 30s, so this
-/// test owns a ~30s hang by construction.
+/// keeps the timeout diagnostic. The read honors the caller's
+/// `--git-timeout`, so a 1s deadline both keeps this test fast and proves
+/// the knob reaches the read (the old fixed 30s read would report
+/// `30000ms` here instead of `1000ms`).
 #[cfg(unix)]
 #[test]
 fn check_json_bound_subject_config_timeout_names_timeout_identity() -> Result<(), String> {
@@ -3384,6 +3386,8 @@ fn check_json_bound_subject_config_timeout_names_timeout_identity() -> Result<()
             tree.as_str(),
             "--candidate-base",
             "HEAD",
+            "--git-timeout",
+            "1",
         ],
         &[("PATH", search_path.as_str())],
     )
@@ -3392,7 +3396,7 @@ fn check_json_bound_subject_config_timeout_names_timeout_identity() -> Result<()
     let value =
         assert_check_json_refusal(&output, "git_invocation_timeout", "analysis/git-timeout")?;
     assert!(
-        elapsed < std::time::Duration::from_mins(2),
+        elapsed < std::time::Duration::from_mins(1),
         "check waited {elapsed:?} on hung git for the candidate config read"
     );
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -3405,6 +3409,11 @@ fn check_json_bound_subject_config_timeout_names_timeout_identity() -> Result<()
     if !message.contains("git_invocation_timeout") {
         return Err(format!(
             "the envelope message must echo the timeout diagnostic: {message}"
+        ));
+    }
+    if !message.contains("1000ms") {
+        return Err(format!(
+            "the timeout must name the caller-supplied 1s deadline, got: {message}"
         ));
     }
     ignore_remove_dir_all(&root);

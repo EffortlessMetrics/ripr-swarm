@@ -156,7 +156,10 @@ probe observes.
   keeps `base_unresolvable`.
 - A candidate-tree config read that exceeds its deadline yields
   `git_invocation_timeout` instead of `config_invalid`, with the same
-  echo parity. Genuine load/parse failures stay `config_invalid`.
+  echo parity. Genuine load/parse failures stay `config_invalid`. The
+  read honors the run's effective git deadline
+  (`--git-timeout`/`RIPR_GIT_TIMEOUT`, default 300s) instead of a fixed
+  30s, so the timeout repair guidance stays effective.
 
 ## Test Mapping (Amendment #6956)
 
