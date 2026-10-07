@@ -1310,6 +1310,29 @@ pub(crate) fn inventory_diff_scoped_classified_seams_at_with_config(
     )
 }
 
+/// Classify every seam in `changed_files` (root-relative) without caller
+/// expansion. Pilot uses it when the repo inventory's seam limit cut the
+/// current change's seams (#6943): the cached inventory stays
+/// diff-independent and the change is classified on its own. The no-impact
+/// fast path is skipped: pilot asks only after the limit fired on a change
+/// with Rust files, where it would decline anyway.
+pub(crate) fn classify_seams_in_files_at_with_config(
+    root: &Path,
+    config: &RiprConfig,
+    changed_files: &[PathBuf],
+) -> Result<Vec<ClassifiedSeam>, String> {
+    inventory_diff_scoped_classified_seams_inner(
+        root,
+        config,
+        changed_files,
+        &[],
+        false,
+        None,
+        None,
+    )
+    .map(|inventory| inventory.classified)
+}
+
 /// A bounded consumer of classified windows. Implementations retain their
 /// result payloads independently from the complete evaluation denominator.
 pub(crate) trait ScopedEvidenceConsumer {

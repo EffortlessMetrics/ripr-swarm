@@ -110,6 +110,42 @@ impl PilotCurrentChange {
         self
     }
 
+    /// The change's Rust files, root-relative, for classifying the change on
+    /// its own when the inventory seam limit cut it (#6943). Empty without a
+    /// change.
+    pub(crate) fn changed_rust_files(&self) -> Vec<PathBuf> {
+        let Self::Changed { lines, .. } = self else {
+            return Vec::new();
+        };
+        lines
+            .keys()
+            .filter(|path| path.ends_with(".rs"))
+            .map(PathBuf::from)
+            .collect()
+    }
+
+    /// Append the seams in `scoped` that sit on a changed line and are not
+    /// already in `classified`, returning how many were added. Seams
+    /// elsewhere in a changed file stay out, so the cut repo-wide population
+    /// the rest of the ranking sees does not tilt toward the changed files.
+    pub(crate) fn add_cut_seams(
+        &self,
+        classified: &mut Vec<ClassifiedSeam>,
+        scoped: Vec<ClassifiedSeam>,
+    ) -> usize {
+        let known: std::collections::HashSet<_> = classified
+            .iter()
+            .map(|entry| entry.seam.id().clone())
+            .collect();
+        let before = classified.len();
+        classified.extend(
+            scoped
+                .into_iter()
+                .filter(|entry| self.touches(entry) && !known.contains(entry.seam.id())),
+        );
+        classified.len() - before
+    }
+
     /// The analyzed seams on changed lines, when there is a change.
     pub(crate) fn seams(&self) -> Option<ChangeSeams> {
         match self {

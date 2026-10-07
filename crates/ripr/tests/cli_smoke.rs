@@ -14754,6 +14754,76 @@ fn pilot_says_it_withholds_the_seam_on_the_current_change() -> Result<(), String
     Ok(())
 }
 
+/// #6943: on a repo past the inventory seam limit, the seams on the current
+/// change used to be cut before pilot loaded the change, so change-first
+/// ranking had nothing to rank. With the limit at one, only the first
+/// function's seam survives the inventory; the changed `is_digit` seam must
+/// still be classified, ranked first and counted as analyzed.
+#[test]
+fn pilot_ranks_the_current_change_past_the_inventory_seam_limit() -> Result<(), String> {
+    let lib = "pub fn discounted(amount: u32) -> u32 {\n    if amount > 100 { amount - 10 } else { amount }\n}\n\npub fn is_digit(byte: u8) -> bool {\n    byte >= b'0' && byte <= b'9'\n}\n";
+    let root = pilot_language_fixture_repo(
+        "pilot-change-past-seam-limit",
+        &[
+            (
+                "Cargo.toml",
+                "[package]\nname = \"two_fns\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+            ),
+            ("src/lib.rs", lib),
+            (
+                "tests/pricing.rs",
+                "use two_fns::discounted;\n\n#[test]\nfn big_orders_get_a_discount() {\n    assert_eq!(discounted(200), 190);\n}\n",
+            ),
+        ],
+        ("src/lib.rs", &lib.replace("byte <= b'9'", "byte < b'9'")),
+    )?;
+    let out_dir = unique_temp_workspace("pilot-change-past-seam-limit-out");
+    let root_arg = root.display().to_string();
+    let out_arg = out_dir.display().to_string();
+    let output = run_ripr_with_env(
+        &["pilot", "--root", &root_arg, "--out", &out_arg],
+        &[("RIPR_REPO_EXPOSURE_SEAM_LIMIT", "1")],
+    );
+    assert_success(&output);
+    let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+    let summary: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(out_dir.join("pilot-summary.json"))
+            .map_err(|err| format!("read pilot summary json: {err}"))?,
+    )
+    .map_err(|err| format!("parse pilot summary json: {err}"))?;
+    let md = std::fs::read_to_string(out_dir.join("pilot-summary.md"))
+        .map_err(|err| format!("read pilot summary md: {err}"))?;
+    // Precondition: the inventory limit fired and kept one seam, which is
+    // not on the change; the changed seams it cut were classified on their
+    // own and count as analyzed.
+    assert!(
+        md.contains("- Seam limit reached: ranked the first "),
+        "{md}"
+    );
+    assert!(!md.contains("ranked the first 1 of "), "{md}");
+    assert_eq!(summary["current_change"]["state"], "changed", "{summary}");
+    assert_eq!(summary["top_actionable_seams"][0]["line"], 6, "{summary}");
+    assert_eq!(
+        summary["current_change"]["top_recommendation_in_change"], true,
+        "{summary}"
+    );
+    assert!(
+        stdout.contains(
+            "current change: part of it (this seam is on a line changed since origin/main)"
+        ),
+        "{stdout}"
+    );
+    // The change was classified, so the limit can no longer hide a seam on
+    // it, and pilot does not say it might.
+    assert!(
+        !stdout.contains("may have seams pilot did not see"),
+        "{stdout}"
+    );
+    ignore_remove_dir_all(&root);
+    ignore_remove_dir_all(&out_dir);
+    Ok(())
+}
+
 #[test]
 fn pilot_ranks_and_labels_seams_in_the_current_change() -> Result<(), String> {
     let lib = "pub fn discounted(amount: u32) -> u32 {\n    if amount > 100 { amount - 10 } else { amount }\n}\n\npub fn is_digit(byte: u8) -> bool {\n    byte >= b'0' && byte <= b'9'\n}\n";

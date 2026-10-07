@@ -150,6 +150,12 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
         .contains(&crate::domain::LanguageId::Rust);
     let extension_ms = pilot_deadline_extension_ms(&options);
     let progress = pilot_progress_sink(options.quiet);
+    // The current change is loaded before the inventory (#6943): when the
+    // repo-exposure seam limit cuts the inventory, the change's own Rust
+    // files are classified inside the same deadline so the seams the
+    // developer just changed can still rank change-first.
+    let current_change = load_pilot_current_change(&input, git_timeout);
+    let change_rust_files = current_change.changed_rust_files();
     let analysis_result = if rust_enabled {
         run_pilot_analysis_with_timeout(
             options.timeout_ms,
@@ -164,21 +170,35 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
                 let root = input.root.clone();
                 let cfg = config.clone();
                 let sink = progress.as_ref().map(Arc::clone);
-                move || run_pilot_inventory(&root, &cfg, sink.as_ref())
+                move || {
+                    let report = run_pilot_inventory(&root, &cfg, sink.as_ref())?;
+                    let change = (report.limit_info.is_some() && !change_rust_files.is_empty())
+                        .then(|| {
+                            analysis::classify_seams_in_files_at_with_config(
+                                &root,
+                                &cfg,
+                                &change_rust_files,
+                            )
+                        });
+                    Ok(PilotInventory { report, change })
+                }
             },
         )?
     } else {
-        PilotAnalysisResult::Complete(analysis::ClassifiedSeamsReport {
-            classified: Vec::new(),
-            limit_info: None,
-            skipped_generated: Vec::new(),
-            naming_only_skips: Vec::new(),
+        PilotAnalysisResult::Complete(PilotInventory {
+            report: analysis::ClassifiedSeamsReport {
+                classified: Vec::new(),
+                limit_info: None,
+                skipped_generated: Vec::new(),
+                naming_only_skips: Vec::new(),
+            },
+            change: None,
         })
     };
     // The timeout hint scales from the budget actually spent, so an
     // extended run does not suggest a smaller --timeout-ms than it used.
     let spent_timeout_ms = options.timeout_ms.saturating_add(extension_ms.unwrap_or(0));
-    let PilotAnalysisResult::Complete(report) = analysis_result else {
+    let PilotAnalysisResult::Complete(PilotInventory { report, change }) = analysis_result else {
         let context = output::pilot::PilotSummaryContext {
             root: &input.root,
             mode: &input.mode,
@@ -216,17 +236,39 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
     // manageable size.  `limit_info` carries whichever cap fired (pilot
     // budget wins when both fire; inventory limit is the outer bound).
     let mut classified = report.classified;
-    let inventory_limit_info = report.limit_info;
+    let mut inventory_limit_info = report.limit_info;
     let generated_skip = output::repo_exposure::GeneratedRustSkip::from_paths(
         report.skipped_generated,
         report.naming_only_skips,
     );
+    // #6943: add the change's seams the inventory limit cut. They count as
+    // analyzed, and once the change's files were classified the limit can
+    // no longer hide a seam on the change, so its caveat is dropped. A
+    // failed supplement never fails pilot: the caveat stays.
+    let change_limit = match change {
+        Some(Ok(scoped)) => {
+            let added = current_change.add_cut_seams(&mut classified, scoped);
+            if let Some(limit) = inventory_limit_info.as_mut() {
+                limit.analyzed = limit.analyzed.saturating_add(added).min(limit.total);
+            }
+            None
+        }
+        Some(Err(error)) => {
+            eprintln!(
+                "{}",
+                terminal_safe(format!(
+                    "ripr pilot: could not classify the current change past the seam limit ({error})"
+                ))
+            );
+            inventory_limit_info.as_ref()
+        }
+        None => inventory_limit_info.as_ref(),
+    };
     // The current change is loaded before the budget cut so an actionable
     // changed seam past the cut is kept and can still rank change-first. A
     // changed seam pilot cannot recommend is not kept: it would displace an
     // actionable seam and leave nothing to recommend.
-    let current_change = load_pilot_current_change(&input, git_timeout)
-        .with_seams_counted(&classified, inventory_limit_info.as_ref());
+    let current_change = current_change.with_seams_counted(&classified, change_limit);
     let pilot_budget_info = analysis::apply_pilot_seam_budget(&mut classified, |entry| {
         current_change.keeps_past_budget(entry)
     })?;
@@ -535,8 +577,15 @@ fn pilot_deadline_extension_ms(options: &PilotOptions) -> Option<u64> {
     (!options.timeout_explicit).then_some(PILOT_RETRY_TIMEOUT_MS)
 }
 
-enum PilotAnalysisResult {
-    Complete(analysis::ClassifiedSeamsReport),
+/// The repo inventory plus, when its seam limit fired on a change with Rust
+/// files, the change's files classified on their own (#6943).
+struct PilotInventory {
+    report: analysis::ClassifiedSeamsReport,
+    change: Option<Result<Vec<analysis::ClassifiedSeam>, String>>,
+}
+
+enum PilotAnalysisResult<T> {
+    Complete(T),
     TimedOut,
 }
 
@@ -545,14 +594,15 @@ enum PilotAnalysisResult {
 /// When `extension_ms` is set and the first deadline passes, `on_extend` runs
 /// once and the same analysis keeps going for `extension_ms` more; work done
 /// before the first deadline is never thrown away.
-fn run_pilot_analysis_with_timeout<F>(
+fn run_pilot_analysis_with_timeout<T, F>(
     timeout_ms: u64,
     extension_ms: Option<u64>,
     on_extend: impl FnOnce(),
     runner: F,
-) -> Result<PilotAnalysisResult, String>
+) -> Result<PilotAnalysisResult<T>, String>
 where
-    F: FnOnce() -> Result<analysis::ClassifiedSeamsReport, String> + Send + 'static,
+    T: Send + 'static,
+    F: FnOnce() -> Result<T, String> + Send + 'static,
 {
     let cancellation_token = crate::analysis::cancellation::AnalysisCancellationToken::new();
     let worker_token = cancellation_token.clone();
@@ -729,7 +779,7 @@ mod tests {
     #[test]
     fn pilot_analysis_timeout_cancels_worker() {
         let (cancelled_tx, cancelled_rx) = mpsc::channel();
-        let result = run_pilot_analysis_with_timeout(
+        let result = run_pilot_analysis_with_timeout::<(), _>(
             1,
             None,
             || {},
@@ -791,7 +841,7 @@ mod tests {
         // passes no extension, so the first deadline cancels the run and
         // the extension callback never fires.
         let extended = std::cell::Cell::new(false);
-        let result = run_pilot_analysis_with_timeout(
+        let result = run_pilot_analysis_with_timeout::<(), _>(
             20,
             None,
             || extended.set(true),

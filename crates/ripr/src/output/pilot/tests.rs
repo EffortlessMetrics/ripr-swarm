@@ -2022,6 +2022,41 @@ fn seam_budget_keeps_only_actionable_changed_seams() {
     assert!(!change.keeps_past_budget(&untouched_actionable));
 }
 
+/// #6943: the change's seams classified past the inventory seam limit join
+/// the ranked population only when they are on a changed line and were not
+/// already classified.
+#[test]
+fn change_seams_cut_by_the_inventory_limit_are_added_once() {
+    let diff = format!(
+        "{}diff --git a/README.md b/README.md\n--- a/README.md\n+++ b/README.md\n@@ -1 +1 @@\n-a\n+b\n",
+        one_line_diff("src/a.rs", 10)
+    );
+    let change =
+        PilotCurrentChange::from_diff_text(Path::new("."), Some("origin/main".to_string()), &diff);
+    assert_eq!(change.changed_rust_files(), [PathBuf::from("src/a.rs")]);
+    assert!(
+        PilotCurrentChange::from_diff_text(Path::new("."), None, "")
+            .changed_rust_files()
+            .is_empty()
+    );
+
+    let kept = classified_with(SeamGripClass::WeaklyGripped, "src/b.rs", 3, vec![], vec![]);
+    let already = classified_with(SeamGripClass::WeaklyGripped, "src/a.rs", 10, vec![], vec![]);
+    let mut classified = vec![kept, already.clone()];
+    let cut_on_change = ClassifiedSeam {
+        seam: seam("src/a.rs", 10, "other >= operand"),
+        ..classified_with(SeamGripClass::Ungripped, "src/a.rs", 10, vec![], vec![])
+    };
+    let cut_off_change = classified_with(SeamGripClass::Ungripped, "src/a.rs", 40, vec![], vec![]);
+    let added = change.add_cut_seams(
+        &mut classified,
+        vec![already, cut_on_change.clone(), cut_off_change],
+    );
+    assert_eq!(added, 1);
+    assert_eq!(classified.len(), 3);
+    assert_eq!(classified[2].seam.id(), cut_on_change.seam.id());
+}
+
 #[test]
 fn pilot_ranking_puts_seams_in_the_current_change_first() {
     // The untouched seam is the better class (weak beats ungripped), so the
