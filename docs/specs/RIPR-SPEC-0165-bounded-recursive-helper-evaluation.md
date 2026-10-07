@@ -52,13 +52,16 @@ recursion unrolls trivially on distinct inputs.
 - A controls fixture (`fixtures/recursive_controls`) with four
   fail-closed variants — a repeated-state cycle, a chain one step
   beyond the bound, a computed nested argument, and a non-unique
-  nested callee — each staying `weakly_exposed` with zero hop
-  provenance.
+  nested callee — each staying at its fail-closed class with zero hop
+  provenance: since #6674 that is `infection_unknown` with `Changed
+  boundary input is unresolved` (RIPR-SPEC-0001), not `weakly_exposed`
+  with a missing-discriminator hint over an unknown operand.
 - Unit tests pinning: the within-bound nested resolution, the repeated
   state refusal, the at-bound resolution and beyond-bound refusal
   (three evaluations accepted, four refused).
 - A removal experiment: disabling the context's entry gate regresses
-  the positive fixture to `weakly_exposed`.
+  the positive fixture to `infection_unknown` (the unresolved boundary
+  input rule; before #6674, `weakly_exposed`).
 
 ## Required guards
 

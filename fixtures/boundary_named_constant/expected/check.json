@@ -11,6 +11,18 @@
   "findings": [
     {
       "id": "probe:src_lib.rs:predicate:566edf6b",
+      "canonical_gap_id": "gap:rust:src/lib.rs:discounted_total:predicate_boundary:predicate:amount==discount_threshold",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:discounted_total:predicate_boundary:predicate:amount==discount_threshold",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "discounted_total",
+        "behavior_kind": "predicate_boundary",
+        "probe_kind": "predicate",
+        "normalized_discriminator": "amount==discount_threshold"
+
+      },
       "classification": "exposed",
       "severity": "info",
       "confidence": 1.00,
@@ -18,7 +30,7 @@
         "id": "probe:src_lib.rs:predicate:566edf6b",
         "family": "predicate",
         "delta": "control",
-        "file": "fixtures/boundary_named_constant/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 12,
         "expression": "amount >= DISCOUNT_THRESHOLD"
        },
@@ -165,6 +177,18 @@
     },
     {
       "id": "probe:src_lib.rs:predicate:a6097ff7",
+      "canonical_gap_id": "gap:rust:src/lib.rs:bulk_rate:predicate_boundary:predicate:items==bulk_items",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:bulk_rate:predicate_boundary:predicate:items==bulk_items",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "bulk_rate",
+        "behavior_kind": "predicate_boundary",
+        "probe_kind": "predicate",
+        "normalized_discriminator": "items==bulk_items"
+
+      },
       "classification": "exposed",
       "severity": "info",
       "confidence": 1.00,
@@ -172,7 +196,7 @@
         "id": "probe:src_lib.rs:predicate:a6097ff7",
         "family": "predicate",
         "delta": "control",
-        "file": "fixtures/boundary_named_constant/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 21,
         "expression": "items >= BULK_ITEMS"
        },
@@ -288,6 +312,18 @@
     },
     {
       "id": "probe:src_lib.rs:predicate:70700926",
+      "canonical_gap_id": "gap:rust:src/lib.rs:shipping:predicate_boundary:predicate:amount==free_shipping",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:shipping:predicate_boundary:predicate:amount==free_shipping",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "shipping",
+        "behavior_kind": "predicate_boundary",
+        "probe_kind": "predicate",
+        "normalized_discriminator": "amount==free_shipping"
+
+      },
       "classification": "infection_unknown",
       "severity": "warning",
       "confidence": 0.66,
@@ -295,7 +331,7 @@
         "id": "probe:src_lib.rs:predicate:70700926",
         "family": "predicate",
         "delta": "control",
-        "file": "fixtures/boundary_named_constant/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 30,
         "expression": "amount >= FREE_SHIPPING"
        },

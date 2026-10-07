@@ -59,8 +59,14 @@ out, so a fix to one verdict cannot show it did not break another.
 
 ## Behavior
 
-`fixtures/rust-verdict-corpus/corpus.json` (`ripr_verdict_corpus.v1`) holds
-subjects and cases.
+`fixtures/rust-verdict-corpus/` (`ripr_verdict_corpus.v1`) holds
+subjects and cases. `corpus.json` carries only the corpus header; each
+subject is `subjects/<subject_id>.json` beside its retained files and each
+case is `cases/<case_id>.json` beside its `cases/<case_id>.diff`. A record
+file must be named after the id it holds, a case's `diff` must be its own,
+and `validate` names any other file in `cases/` or `subjects/`, and records load in file-name order. One file per
+record lets parallel PRs add cases without editing a shared array, and the
+corpus carries no version line that every PR would bump.
 
 A subject has an `origin`. An `upstream` subject (the default) is one
 pinned upstream repository: URL, 40-hex commit, version label, license, an
@@ -147,19 +153,32 @@ Contradictions are internal to ripr's output and need no label:
 `exposed_without_discriminator`, `related_tests_listed_exceed_total`, and
 summary counts that disagree with the findings list.
 
-`cargo xtask verdict-corpus` has four subcommands:
+`cargo xtask verdict-corpus` has seven subcommands:
 
-- `validate` checks the corpus offline: schema, subject digests and
-  unlisted files, diff anchors, truth derived from mutant outcomes, and the
-  label table.
-- `report [--out <dir>]` copies each subject to a run-owned workspace under
-  `target/ripr/verdict-corpus/`, applies the case diff with a strict patch
-  reader that refuses drifted context, runs `ripr check --json`, and writes
-  `report.json` and `report.md`.
-- `check [--out <dir>]` does the same and fails when `report.json` differs
-  from `fixtures/rust-verdict-corpus/expected/report.json` or `report.md`
-differs from `expected/report.md`. It refuses an
-  `--out` that is the expected directory, so it cannot replace its golden.
+- `validate` checks the corpus offline: schema, record file names, subject
+  digests and unlisted files, diff anchors, truth derived from mutant
+  outcomes, and the label table.
+- `report [--cases <id,...>] [--out <dir>]` copies each subject to a
+  run-owned workspace under `target/ripr/verdict-corpus/<language>/`, applies the case
+  diff with a strict patch reader that refuses drifted context, runs
+  `ripr check --json` on the cases in parallel, and writes `report.json` and
+  `report.md`. It refuses an `--out` inside the expected directory.
+- `check [--cases <id,...>] [--out <dir>]` does the same and fails, naming
+  each case, when a row differs from
+  `fixtures/rust-verdict-corpus/expected/rows/<case_id>.json`. A
+  whole-corpus run also fails when the summary differs from
+  `expected/summary.json`, a row file is missing, or `expected/` holds any
+  other file. `--cases` compares only the named rows, for the inner loop
+  while writing a case.
+- `check-all` runs `check` on every `fixtures/<language>-verdict-corpus`
+  directory, found by name, and fails if any drifts or a corpus directory
+  has no `corpus.json`. Reports for languages other than Rust nest under
+  `target/ripr/reports/verdict-corpus/<language>/`.
+- `bless` runs the whole corpus and replaces `expected/` with the summary and
+  one row file per case.
+- `split` moves a one-file `corpus.json`'s subjects and cases into record
+  files and drops its `corpus_version`, skipping records that already exist
+  with the same content and naming any that differ.
 - `relabel [--sample <n> [--seed <s>] | --case <id>...] [--checkouts <dir>]
   [--repeat <k>] [--timeout-secs <t>] [--out <dir>] [--work-dir <dir>]`
   re-derives truth instead of trusting it. For each selected case it copies
@@ -213,6 +232,11 @@ differs from `expected/report.md`. It refuses an
   settings such as `CARGO_PROFILE_*` overflow checks still reach the subject
   build; and a killed run leaves its per-process tree directory behind.
 
+
+The required Rust gate runs `check-all` at Draft -> Ready and on main
+pushes, so every language's corpus gates without a workflow change. Truth labels are stored with each case, so no CI job reruns
+mutants.
+
 The report states false-verdict, false-actionable (over discriminated
 cases), false-exposed and false-silent (over the rest), ideal, abstention,
 and contradiction rates as exact fractions, the verdict rates again per
@@ -233,7 +257,10 @@ the distinct codes seen in that case's run.
 - Each validation rule rejects a tampered corpus.
 - The scoring table, verdict projection, contradiction codes, and rate
   arithmetic are pinned by unit tests.
-- The committed expected report agrees with the corpus labels row by row.
+- The committed expected rows agree with the corpus labels row by row.
+- A record file named after another id is refused; `split` reproduces the
+  one-file corpus exactly; a moved, missing, or stale row and a drifted
+  summary are each named, and a `--cases` run compares only its rows.
 - The validator holds upstream subjects to a pinned URL, commit, and license
   file, and authored subjects to the `authored-` id prefix, no upstream
   provenance, no license file, and this repository's license; the report
@@ -251,7 +278,9 @@ the distinct codes seen in that case's run.
 - A population estimate. Rates describe these cases only.
 - Replacing the judged panels or the shared Rust corpus; this corpus draws
   on the shared corpus pins where they exist.
-- Wiring the check into CI; a regression gate consumes the report later.
+- A diff-selected CI subset. An analyzer change can move any verdict, so
+  selection by touched paths would pick the whole corpus for exactly the
+  PRs that matter; the whole run is cheap enough to stay the CI tier.
 
 ## Acceptance Examples
 
@@ -283,6 +312,36 @@ the distinct codes seen in that case's run.
   passes and the truth is `not_discriminated`. ripr's `exposed` scores
   `false_exposed`, the self-computed expected value RIPR-SPEC-0004 and
   RIPR-SPEC-0035 say must not count as a strong oracle.
+- authored `mined-doctest-only-read-u16` (`u16::from_be_bytes` rewritten
+  as shifts): the only test is the function's doc example, which `cargo test`
+  runs, so both byte-order mutants fail it and the truth is `discriminated`.
+  ripr's `weakly_exposed` scores `false_actionable`. The shape is mined from
+  bytes, where most `try_get_*` methods are pinned only by doc examples. Its
+  twin `mined-doctest-ignored-read-u16-le` fences the example `ignore`, so
+  nothing runs it and the same `weakly_exposed` scores `ideal`.
+- authored `mined-macro-closure-header-length` (`*len as usize + 2`
+  rewritten as `2 + *len as usize`): a `macro_rules!` test whose
+  `assert_eq!` sits in a closure the generated body always calls, mined from
+  httparse's `req!` tests. Both mutants fail it, so ripr's `weakly_exposed`
+  scores `false_actionable`. The corpus's other test-generating macro
+  cases (itoa) are `not_discriminated`.
+- authored `mined-roundtrip-symmetric-mask` (`0x5a` rewritten as `90`): the
+  only test masks twice and checks the payload comes back, which holds for
+  every key, so the truth is `not_discriminated` and ripr's `static_unknown`
+  scores `abstained`.
+- authored `mined-debug-assert-only-oracle` (`b & 0x07` rewritten as
+  `b % 8`): the test asserts only the output length, and the production
+  `debug_assert!` on the index is what fails under both mutants, so the truth
+  is `discriminated` under the debug test profile and does not hold under
+  `--release`. ripr's `static_unknown` scores `abstained`.
+- authored `mined-one-line-struct-literal-field` (`version: 1` rewritten as
+  `version: 0x1` inside `Id { counter: .., version: .. }` on one line): the
+  accessor assert pins the edited field. Before #6751 ripr's
+  field-construction finding asked for a pin of the unedited `counter` and
+  scored `false_actionable`, while its twin
+  `mined-multi-line-struct-literal-field`, the same edit with one field per
+  line, read `exposed` (#6731). Both now read `exposed` and score `ideal`, so
+  the pair guards against the verdict depending on formatting again.
 - bytesize `as_kb` division (`src/lib.rs:258`): ripr reports
   `no_static_path` while naming related tests, recorded as
   `no_static_path_with_related_tests`. semver `op()` at 1.0.23
@@ -318,6 +377,11 @@ Tests live in `xtask/src/reports/verdict_corpus_tests.rs`:
 - `validator_requires_both_truth_directions`
 - `expected_report_rows_agree_with_corpus_labels`
 - `build_report_counts_rates_over_the_right_denominators`
+- `corpus_records_load_in_file_name_order_and_must_match_their_ids`
+- `split_moves_the_one_file_layout_into_records_without_loss`
+- `drift_names_moved_missing_and_stale_rows_and_a_subset_compares_only_its_rows`
+- `validator_rejects_a_case_that_borrows_another_cases_diff`
+- `check_all_finds_every_language_corpus_and_refuses_one_without_a_header`
 - `contradiction_counts_use_one_per_finding_unit`
 - `stored_paths_keep_vendored_rust_out_of_the_workspace`
 - `validator_holds_each_subject_origin_to_its_own_provenance`

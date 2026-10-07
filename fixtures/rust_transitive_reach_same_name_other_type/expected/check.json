@@ -18,7 +18,7 @@
         "id": "probe:src_queue.rs:predicate:95e16c2d",
         "family": "predicate",
         "delta": "control",
-        "file": "fixtures/rust_transitive_reach_same_name_other_type/input/src/queue.rs",
+        "file": "./src/queue.rs",
         "line": 11,
         "expression": "lang.feeds == false"
        },

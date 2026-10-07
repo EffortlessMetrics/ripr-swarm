@@ -1,6 +1,10 @@
 use crate::analysis::facts::OracleFact;
 use crate::domain::{OracleKind, OracleStrength};
 
+use super::arguments::{
+    assertion_oracle_text, complete_block_body, delimited_contents_at, discarded_matcher_scrutinee,
+    parenthesized_contents, starts_discarded_matcher_computation,
+};
 use super::classify::classify_assertion;
 use super::patterns::{
     contains_macro_invocation, contains_named_enum_variant, is_custom_assertion_helper,
@@ -21,13 +25,52 @@ pub(crate) fn extract_assertions(body: &str, start_line: usize) -> Vec<OracleFac
     let guarded = guarded_result_match_scan(body, start_line);
     let mut out = Vec::new();
     let mut lines = body.lines().enumerate().peekable();
+    let mut guard_condition_tail: Option<(usize, String)> = None;
     while let Some((offset, line)) = lines.next() {
         let mut trimmed = line.trim().to_string();
+        if let Some((end, tail)) = &guard_condition_tail {
+            if start_line + offset < *end {
+                continue;
+            }
+            if start_line + offset == *end {
+                trimmed.clone_from(tail);
+            }
+        }
         if guarded.match_start_lines.contains(&(start_line + offset)) {
             continue;
         }
-        if is_assertion_line(&trimmed) {
-            collect_multiline_assertion(&mut trimmed, &mut lines);
+        // Give the existing terminal-failure authority first refusal before
+        // generic name admission can join or misclassify a matcher guard.
+        // #3284: peek without consuming the block, preserving assertions
+        // inside it; only its condition and first body statement participate.
+        if (trimmed.starts_with("if ") || trimmed.starts_with("if("))
+            && let Some((oracle, condition_end_line, tail)) =
+                peeked_err_return_guard_oracle(&trimmed, lines.clone(), start_line + offset)
+        {
+            out.push(oracle);
+            // A guard and another observer may share the closing header row.
+            // Own the condition and failure prefix, not that entire row.
+            trimmed = if start_line + offset == condition_end_line {
+                tail.clone()
+            } else {
+                String::new()
+            };
+            guard_condition_tail = Some((condition_end_line, tail));
+        }
+        if is_assertion_line(&trimmed) || starts_discarded_matcher_computation(&trimmed) {
+            let admitted = is_assertion_line(&trimmed);
+            if !collect_owned_observer_statement(&mut trimmed, &mut lines, admitted) {
+                continue;
+            }
+            trimmed = without_discarded_matcher_computations(&trimmed);
+            if !is_assertion_line(&mask_comments_and_strings(&trimmed)) {
+                continue;
+            }
+            if has_unasserted_matcher(&trimmed) {
+                continue;
+            }
+            let preceding_lines = leading_blank_lines(&trimmed);
+            trimmed = trimmed.trim().to_string();
             let mut classification = classify_assertion(&trimmed);
             // RIPR-SPEC-0106: upgrade exact assertions on unwrap_err-bound
             // variables to ExactErrorVariant so the ErrorVariant seam can credit
@@ -44,26 +87,13 @@ pub(crate) fn extract_assertions(body: &str, start_line: usize) -> Vec<OracleFac
             }
             let observed_tokens = extract_identifier_tokens(&trimmed);
             out.push(OracleFact {
-                line: start_line + offset,
+                line: start_line + offset + preceding_lines,
                 text: trimmed,
                 kind: classification.kind,
                 strength: classification.strength,
                 observed_tokens,
                 ok_value_observed: None,
             });
-        } else if trimmed.starts_with("if ") || trimmed.starts_with("if(") {
-            // #3284: a terminal `if <cond> { return Err(...) }` guard is
-            // the manual expansion of a message-carrying assertion. The
-            // lexical path recognizes it WITHOUT consuming the block:
-            // joining the whole if-body would swallow real assertions
-            // inside it (review finding — a main regression in the first
-            // draft), so only the condition line plus a one-line peek at
-            // the first body statement participates.
-            if let Some(oracle) =
-                peeked_err_return_guard_oracle(&trimmed, lines.peek(), start_line + offset)
-            {
-                out.push(oracle);
-            }
         }
     }
     out.extend(guarded.oracles);
@@ -245,6 +275,11 @@ struct GuardedMatchShape {
     callee: String,
     /// Whether an `Ok(`-headed arm exists (classic form vs pure routing).
     has_ok_arm: bool,
+    /// Total number of arms in the match block, of every head kind.
+    arm_count: usize,
+    /// Ok-arm pattern slices, including a trailing `if <guard>` when the
+    /// arm carries one (#6673: the asserted-Err form refuses a guard).
+    ok_patterns: Vec<String>,
     /// Trimmed Ok-arm bodies, one per Ok arm: the observation surface the
     /// fact's `ok_value_observed` decision reads (#3731).
     ok_bodies: Vec<String>,
@@ -366,6 +401,8 @@ fn parse_guarded_result_match(rest: &str) -> Option<GuardedMatchShape> {
         path: path.to_string(),
         callee,
         has_ok_arm: !ok_arms.is_empty(),
+        arm_count: arms.len(),
+        ok_patterns: ok_arms.iter().map(|(pattern, _)| pattern.clone()).collect(),
         ok_bodies: ok_arms.iter().map(|(_, body)| body.clone()).collect(),
         err_patterns: err_arms
             .iter()
@@ -454,6 +491,18 @@ fn balanced_block(text: &str) -> Option<&str> {
 /// Build the oracle fact for a recognized guarded Result match, or `None`
 /// when no Err arm carries a recognized, terminating discriminator.
 fn guarded_match_oracle_fact(shape: &GuardedMatchShape, line: usize) -> Option<OracleFact> {
+    // RIPR-SPEC-0175 asserted-Err form (#6673): an exhaustive two-arm match
+    // whose Ok arm diverges and whose Err arm is one exact equality or
+    // `matches!` assertion on the arm's own error binding. The test passes
+    // only when the owner returns that exact error.
+    if let Some(pin) = asserted_err_arm_pin(shape) {
+        return Some(guarded_match_fact(
+            shape,
+            line,
+            truncate_chars(&pin, PIN_TEXT_MAX_CHARS),
+            OracleStrength::Strong,
+        ));
+    }
     // Every Err arm must fail loudly on its own text. A guarded accept arm
     // (`Err(e) if <pin> => {}`) is terminal only when it can route: it has
     // a guard, its body is trivial, and every catch-all arm fails loudly.
@@ -590,6 +639,17 @@ fn guarded_match_oracle_fact(shape: &GuardedMatchShape, line: usize) -> Option<O
         // payload text (#3709 fail-closed).
         return None;
     };
+    Some(guarded_match_fact(shape, line, pin_text, strength))
+}
+
+/// The synthesized guarded-match oracle fact for one recognized shape and
+/// its pin text.
+fn guarded_match_fact(
+    shape: &GuardedMatchShape,
+    line: usize,
+    pin_text: String,
+    strength: OracleStrength,
+) -> OracleFact {
     let text = if shape.has_ok_arm {
         format!(
             "match {}(..) {{ Ok(..) => .., Err(..) => {pin_text} }}",
@@ -603,14 +663,135 @@ fn guarded_match_oracle_fact(shape: &GuardedMatchShape, line: usize) -> Option<O
             shape.path
         )
     };
-    Some(OracleFact {
+    OracleFact {
         line,
         observed_tokens: extract_identifier_tokens(&text),
         kind: OracleKind::GuardedResultMatch,
         strength,
         text,
         ok_value_observed: Some(ok_arms_observe_value(&shape.ok_bodies)),
-    })
+    }
+}
+
+/// The exact error pin of the RIPR-SPEC-0175 asserted-Err form (#6673):
+///
+/// ```text
+/// match owner(..) {
+///     Ok(<pattern>) => <diverges>,
+///     Err(<binding>) => assert_eq!(<binding>, Type::Variant),
+/// }
+/// ```
+///
+/// Every condition is required, so the test passes exactly when the
+/// owner's result is `Err(Type::Variant)`:
+/// - the block holds exactly two arms, one `Ok(..)` and one `Err(..)`,
+///   neither guarded — with no catch-all arm, the compiler's
+///   exhaustiveness check makes both patterns irrefutable;
+/// - the Ok arm terminates under the same bounded divergence grammar as a
+///   terminal Err arm ([`arm_terminates`]), so a success result fails;
+/// - the Err arm binds a bare identifier and its whole body is ONE
+///   statement: `assert_eq!(<binding>, <unit variant path>)` in either
+///   operand order (a trailing message is allowed), or
+///   `assert!(matches!(<binding>, <variant pattern>))` with no `|`
+///   alternation and no `if` guard in the pattern.
+///
+/// Anything else — a quiet Ok arm (`Ok(_) => {}`), a catch-all arm, a
+/// guard, an assertion on another value, a second statement, a payload
+/// variant compared by value — returns `None`, and the shape keeps its
+/// existing meaning.
+fn asserted_err_arm_pin(shape: &GuardedMatchShape) -> Option<String> {
+    if shape.arm_count != 2
+        || shape.ok_patterns.len() != 1
+        || shape.ok_bodies.len() != 1
+        || shape.err_patterns.len() != 1
+        || shape.err_bodies.len() != 1
+        || !shape.catch_all_bodies.is_empty()
+    {
+        return None;
+    }
+    if split_pattern_guard(&shape.ok_patterns[0]).1.is_some()
+        || !arm_terminates(&shape.ok_bodies[0])
+    {
+        return None;
+    }
+    let (err_pattern, err_guard) = split_pattern_guard(&shape.err_patterns[0]);
+    if err_guard.is_some() {
+        return None;
+    }
+    let binding = err_arm_binding_identifier(err_pattern)?;
+    let statement = single_arm_statement(&shape.err_bodies[0])?;
+    if let Some(arguments) = macro_arguments(statement, "assert_eq!") {
+        let (left, right) = (arguments.first()?.trim(), arguments.get(1)?.trim());
+        let pin = if left == binding && is_variant_path(right) {
+            right
+        } else if right == binding && is_variant_path(left) {
+            left
+        } else {
+            return None;
+        };
+        return Some(pin.to_string());
+    }
+    let arguments = macro_arguments(statement, "assert!")?;
+    let inner = macro_arguments(arguments.first()?.trim(), "matches!")?;
+    let [scrutinee, pattern] = inner.as_slice() else {
+        return None;
+    };
+    if scrutinee.trim() != binding {
+        return None;
+    }
+    let pattern = compact_whitespace(pattern.trim());
+    let head: String = pattern
+        .chars()
+        .take_while(|character| {
+            character.is_ascii_alphanumeric() || *character == '_' || *character == ':'
+        })
+        .collect();
+    let alternation_or_guard = pattern.contains('|') || split_pattern_guard(&pattern).1.is_some();
+    (is_variant_path(&head) && !alternation_or_guard).then_some(pattern)
+}
+
+/// The single statement of an arm body: an expression body, or a
+/// brace-wrapped block holding exactly one non-empty top-level statement.
+fn single_arm_statement(body: &str) -> Option<&str> {
+    let body = body.trim();
+    let inner = if body.starts_with('{') {
+        let inner = balanced_block(body)?;
+        if body.len() != inner.len() + 2 {
+            return None;
+        }
+        inner
+    } else {
+        body
+    };
+    let statements: Vec<&str> = top_level_statements(inner)
+        .into_iter()
+        .map(str::trim)
+        .filter(|statement| !statement.is_empty())
+        .collect();
+    let [statement] = statements.as_slice() else {
+        return None;
+    };
+    Some(statement)
+}
+
+/// The depth-0 comma-separated arguments of `<name>(..)` when that one
+/// invocation covers the whole statement; `None` otherwise.
+fn macro_arguments<'a>(statement: &'a str, name: &str) -> Option<Vec<&'a str>> {
+    if !invocation_covers_statement(statement, name) {
+        return None;
+    }
+    let open = statement.find('(')?;
+    let inner = statement[open + 1..].trim_end().strip_suffix(')')?;
+    let mut arguments = Vec::new();
+    let mut start = 0usize;
+    while let Some(comma) = top_level_comma(inner, start) {
+        arguments.push(&inner[start..comma]);
+        start = comma + 1;
+    }
+    if !inner[start..].trim().is_empty() {
+        arguments.push(&inner[start..]);
+    }
+    Some(arguments)
 }
 
 /// Whether any Ok arm of a guarded Result match observes the unwrapped
@@ -1753,33 +1934,128 @@ fn truncate_chars(text: &str, max: usize) -> String {
     format!("{}...", &text[..cut])
 }
 
-/// The lexical-path guard oracle: recognize from the condition line plus
-/// a single peeked body line, consuming nothing, so assertions inside the
-/// guard body stay visible to the outer loop (review finding: the first
-/// draft joined the whole block and swallowed them).
-fn peeked_err_return_guard_oracle(
+/// Join a guard through cloned lookahead. Only condition continuation rows
+/// belong to this oracle; the real iterator retains body and sibling rows.
+fn peeked_err_return_guard_oracle<'a, I>(
     line: &str,
-    next: Option<&(usize, &str)>,
+    mut lines: std::iter::Peekable<I>,
+    line_number: usize,
+) -> Option<(OracleFact, usize, String)>
+where
+    I: Iterator<Item = (usize, &'a str)>,
+{
+    let mut statement = line.to_string();
+    collect_terminal_guard(&mut statement, &mut lines);
+    let oracle = terminal_err_return_guard_oracle(&statement, line_number)?;
+    let brace = terminal_guard_body_open(&statement).ok()??;
+    let condition_end_line = line_number + statement[..brace].matches('\n').count();
+    let tail = guard_condition_line_tail(&statement, brace).unwrap_or_default();
+    Some((oracle, condition_end_line, tail))
+}
+
+/// Skip complete condition groups using the existing balanced argument owner.
+/// A brace-delimited macro (or negated block) belongs to the condition; its
+/// later ungrouped brace opens the guard body. Err means a group needs more
+/// source, never that a partial group establishes a body boundary.
+fn terminal_guard_body_open(statement: &str) -> Result<Option<usize>, ()> {
+    let masked = mask_comments_and_strings(statement);
+    let mut cursor = 0;
+    while let Some(offset) = masked[cursor..].find(['(', '[', '{']) {
+        let open = cursor + offset;
+        if masked.as_bytes()[open] == b'{' && !masked[..open].trim_end().ends_with('!') {
+            return Ok(Some(open));
+        }
+        let contents = delimited_contents_at(statement, open).ok_or(())?;
+        cursor = open + contents.len() + 2;
+    }
+    Ok(None)
+}
+
+/// Join this guard's groups, including a body opener on a later row, without
+/// changing the generic assertion joiner. Complete conditions may continue
+/// only through trivia to a body brace. Mask the joined text so raw strings
+/// and multiline comments cannot manufacture the next token.
+fn collect_terminal_guard<'a, I>(statement: &mut String, lines: &mut std::iter::Peekable<I>)
+where
+    I: Iterator<Item = (usize, &'a str)>,
+{
+    loop {
+        let next_requires_body = match terminal_guard_body_open(statement) {
+            Ok(Some(brace)) if delimited_contents_at(statement, brace).is_some() => return,
+            Ok(Some(_)) | Err(()) => false,
+            Ok(None) => true,
+        };
+        let Some((_, next_line)) = lines.peek() else {
+            return;
+        };
+        let candidate = format!("{statement}\n{}", next_line.trim());
+        if next_requires_body {
+            let masked = mask_comments_and_strings(&candidate);
+            let tail = masked[statement.len()..].trim_start();
+            if !tail.is_empty() && !tail.starts_with('{') {
+                return;
+            }
+        }
+        *statement = candidate;
+        let _ = lines.next();
+    }
+}
+
+/// Locate the actual first `return Err(` tokens, preserving source offsets.
+/// Whitespace/comment projection must not turn a `returnErr` call, diagnostic
+/// string or preceding statement into a terminal failure prefix.
+fn first_err_return_argument_open(body: &str) -> Option<usize> {
+    let masked = mask_comments_and_strings(body);
+    let after_return = masked.trim_start().strip_prefix("return")?;
+    if !after_return.starts_with(char::is_whitespace) {
+        return None;
+    }
+    let arguments = after_return.trim_start().strip_prefix("Err")?.trim_start();
+    arguments
+        .starts_with('(')
+        .then_some(masked.len() - arguments.len())
+}
+
+/// The Err constructor must be the entire returned expression. Recovery
+/// chains such as `Err(()).or(Ok(()))` return success and cannot establish an
+/// assertion twin. Trivia may precede the statement or guard terminator.
+fn terminal_err_return_end(body: &str) -> Option<usize> {
+    let open = first_err_return_argument_open(body)?;
+    let arguments = delimited_contents_at(body, open)?;
+    let end = open + arguments.len() + 2;
+    let masked = mask_comments_and_strings(body);
+    matches!(masked[end..].trim_start().chars().next(), Some(';' | '}')).then_some(end)
+}
+
+/// Keep source after the recognized header row's first Err-return expression.
+/// The shared delimiter helper masks trivia and strings, so payload text cannot
+/// move the suffix. Body and post-guard observers retain their actual text.
+fn guard_condition_line_tail(statement: &str, brace: usize) -> Option<String> {
+    let body = statement[brace + 1..].lines().next()?;
+    let end = terminal_err_return_end(body)?;
+    let tail = body.get(end..)?;
+    Some(
+        tail.trim_start_matches(|character: char| {
+            character.is_whitespace() || matches!(character, ';' | '}')
+        })
+        .to_string(),
+    )
+}
+
+/// Shared by lexical guards and traversed inline-trial guard spans. The
+/// actual first body statement must return Err; only the assertion twin's
+/// condition determines kind, strength and observed tokens.
+pub(crate) fn terminal_err_return_guard_oracle(
+    statement: &str,
     line_number: usize,
 ) -> Option<OracleFact> {
-    let brace = line.find('{')?;
-    let head = line[..brace].trim();
+    let brace = terminal_guard_body_open(statement).ok()??;
+    let head = statement[..brace].trim();
     let condition = head.strip_prefix("if")?.trim();
     if condition.is_empty() {
         return None;
     }
-    // Same fail-closed gate as the parser path: the Err return must be
-    // the body's first statement, so a commented-out or string-embedded
-    // `return Err(` never credits.
-    let returns_on_line = line[brace..].replace(' ', "").starts_with("{returnErr(");
-    let returns_on_next = next.is_some_and(|(_, next)| {
-        let compact = next.replace(' ', "");
-        compact.starts_with("returnErr(")
-    });
-    if !returns_on_line && !returns_on_next {
-        return None;
-    }
-    let twin = err_return_guard_assertion(&format!("if {condition} {{ return Err(()) }}"))?;
+    let twin = err_return_guard_assertion(statement)?;
     let classification = classify_assertion(&twin);
     let observed_tokens = extract_identifier_tokens(condition);
     Some(OracleFact {
@@ -1801,10 +2077,12 @@ fn err_return_guard_oracle<'a, I>(
 where
     I: Iterator<Item = (usize, &'a str)>,
 {
-    collect_multiline_assertion(trimmed, lines);
+    collect_terminal_guard(trimmed, lines);
     let equivalent_assertion = err_return_guard_assertion(trimmed)?;
     let classification = classify_assertion(&equivalent_assertion);
-    let observed_tokens = extract_identifier_tokens(trimmed);
+    let brace = terminal_guard_body_open(trimmed).ok()??;
+    let condition = trimmed[..brace].trim().strip_prefix("if")?.trim();
+    let observed_tokens = extract_identifier_tokens(condition);
     Some(OracleFact {
         line,
         text: trimmed.clone(),
@@ -1824,47 +2102,42 @@ where
 /// other condition returns `None` — exactness is never inferred from
 /// messages or names.
 ///
-/// Two fail-closed gates: the Err return must be the guard body's first
-/// statement (`{returnErr(` after whitespace compaction — a commented-out
-/// or string-embedded `return Err(` never credits), and the condition
+/// Fail-closed gates: a whole Err return must be the guard body's first
+/// statement. Macro names establish no divergence authority. Quoted/commented failure text,
+/// preceding statements and recovery expressions never credit. The condition
 /// must not carry a top-level `&&`/`||` (a compound's correct negation is
 /// not a single assert twin, so it stays unrecognized rather than
 /// mis-twinned).
 fn err_return_guard_assertion(line: &str) -> Option<String> {
-    let compact: String = line.chars().filter(|ch| !ch.is_whitespace()).collect();
-    if !compact.starts_with("if") || !compact.contains("{returnErr(") {
-        return None;
-    }
-    let brace = compact.find('{')?;
-    let condition = &compact[2..brace];
+    let brace = terminal_guard_body_open(line).ok()??;
+    let condition = line[..brace].trim().strip_prefix("if")?.trim();
+    let body = &line[brace + 1..];
+    terminal_err_return_end(body)?;
     if condition.is_empty() || has_top_level_boolean_operator(condition) {
         return None;
     }
-    if let Some(inner) = condition
-        .strip_prefix("!(")
-        .and_then(|rest| rest.strip_suffix(')'))
-    {
-        return Some(format!("assert!({inner})"));
-    }
     if let Some(inner) = condition.strip_prefix('!') {
+        let inner = inner.trim();
         if !inner.starts_with('=') {
-            return Some(format!("assert!({inner})"));
+            let inner = parenthesized_contents(inner).unwrap_or(inner);
+            return Some(format!("assert!({inner}\n)"));
         }
         return None;
     }
     // Top-level comparison: split on `==`/`!=` outside any nesting. The
-    // condition has no braces here (they end the condition), so a flat
-    // scan at depth zero suffices. char_indices keeps every slice on a
+    // condition retains its original operand text; mask only for boundary
+    // decisions and include brace groups. char_indices keeps every slice on a
     // char boundary — a multibyte comparison operand (`✓`) must not
     // panic the byte-index arithmetic.
     let mut depth = 0usize;
     let mut split = None;
-    for (index, character) in condition.char_indices() {
-        let top_level_comparison = depth == 0
-            && (condition[index..].starts_with("==") || condition[index..].starts_with("!="));
+    let masked = mask_comments_and_strings(condition);
+    for (index, character) in masked.char_indices() {
+        let top_level_comparison =
+            depth == 0 && (masked[index..].starts_with("==") || masked[index..].starts_with("!="));
         match character {
-            '(' | '[' => depth += 1,
-            ')' | ']' => depth = depth.saturating_sub(1),
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => depth = depth.saturating_sub(1),
             _ if top_level_comparison => {
                 split = Some(index);
                 break;
@@ -1878,25 +2151,26 @@ fn err_return_guard_assertion(line: &str) -> Option<String> {
     } else {
         ("==", &condition[at + 2..])
     };
-    let lhs = &condition[..at];
-    let rhs = rest;
+    let lhs = condition[..at].trim();
+    let rhs = rest.trim();
     if lhs.is_empty() || rhs.is_empty() {
         return None;
     }
     let negated = if operator == "!=" { "==" } else { "!=" };
-    Some(format!("assert!({lhs} {negated} {rhs})"))
+    Some(format!("assert!({lhs} {negated} {rhs}\n)"))
 }
 
-/// Whether a compacted condition carries a top-level `&&`/`||`: its
+/// Whether a condition carries a top-level `&&`/`||`: its
 /// correct negation is not a single `assert!` twin (#3284 fail-closed).
 fn has_top_level_boolean_operator(condition: &str) -> bool {
     let mut depth = 0usize;
-    for (index, character) in condition.char_indices() {
-        let top_level_operator = depth == 0
-            && (condition[index..].starts_with("&&") || condition[index..].starts_with("||"));
+    let masked = mask_comments_and_strings(condition);
+    for (index, character) in masked.char_indices() {
+        let top_level_operator =
+            depth == 0 && (masked[index..].starts_with("&&") || masked[index..].starts_with("||"));
         match character {
-            '(' | '[' => depth += 1,
-            ')' | ']' => depth = depth.saturating_sub(1),
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => depth = depth.saturating_sub(1),
             _ if top_level_operator => return true,
             _ => {}
         }
@@ -1916,6 +2190,35 @@ where
         statement.push_str(next_line.trim());
         let _ = lines.next();
     }
+}
+
+/// An opening block is only a collection hint. Commit cloned lookahead after
+/// establishing that the first complete statement owns a discarded matcher;
+/// unrelated block observers must retain the original row traversal.
+fn collect_owned_observer_statement<'a, I>(
+    statement: &mut String,
+    lines: &mut std::iter::Peekable<I>,
+    admitted_observer: bool,
+) -> bool
+where
+    I: Iterator<Item = (usize, &'a str)> + Clone,
+{
+    let mut candidate = statement.clone();
+    let mut lookahead = lines.clone();
+    collect_multiline_assertion(&mut candidate, &mut lookahead);
+    if !admitted_observer {
+        let masked = mask_comments_and_strings(&candidate);
+        let statements = top_level_statements(&masked);
+        let Some(first) = statements.first() else {
+            return false;
+        };
+        if discarded_matcher_scrutinee(&candidate[..first.len()]).is_none() {
+            return false;
+        }
+    }
+    *statement = candidate;
+    *lines = lookahead;
+    true
 }
 
 fn delimiter_depth(text: &str) -> i32 {
@@ -2070,13 +2373,26 @@ pub(crate) fn extract_line_scanned_oracles(body: &str, start_line: usize) -> Vec
     let mut lines = body.lines().enumerate().peekable();
     while let Some((offset, line)) = lines.next() {
         let mut statement = line.trim().to_string();
-        if !is_line_scanned_oracle(&statement) {
+        if !is_line_scanned_oracle(&statement) && !starts_discarded_matcher_computation(&statement)
+        {
             continue;
         }
-        collect_multiline_assertion(&mut statement, &mut lines);
+        let admitted = is_line_scanned_oracle(&statement);
+        if !collect_owned_observer_statement(&mut statement, &mut lines, admitted) {
+            continue;
+        }
+        statement = without_discarded_matcher_computations(&statement);
+        if !is_line_scanned_oracle(&mask_comments_and_strings(&statement)) {
+            continue;
+        }
+        if has_unasserted_matcher(&statement) {
+            continue;
+        }
+        let preceding_lines = leading_blank_lines(&statement);
+        statement = statement.trim().to_string();
         let classification = classify_assertion(&statement);
         out.push(OracleFact {
-            line: start_line + offset,
+            line: start_line + offset + preceding_lines,
             text: statement.clone(),
             kind: classification.kind,
             strength: classification.strength,
@@ -2087,12 +2403,107 @@ pub(crate) fn extract_line_scanned_oracles(body: &str, start_line: usize) -> Vec
     out
 }
 
+/// Other observers on the same line, or an `expect_` name inside a matcher,
+/// must not admit its discarded pattern as an assertion operand (#5713).
+/// Split only complete top-level statements; wrappers and failure guards stay
+/// intact. A nested scrutinee assertion/unwrap retains its own observer text.
+fn without_discarded_matcher_computations(text: &str) -> String {
+    matcher_free_text_at_depth(text, 0)
+}
+
+const MATCHER_PROJECTION_DEPTH_LIMIT: usize = 16;
+
+fn has_unasserted_matcher(text: &str) -> bool {
+    contains_macro_invocation(&mask_comments_and_strings(text), "matches!")
+        && assertion_oracle_text(text).is_none()
+}
+
+fn matcher_free_text_at_depth(text: &str, depth: usize) -> String {
+    // The lexical fallback also receives parser-rejected deep source. Never
+    // recreate unbounded recursion or return a favorable untouched matcher.
+    if depth >= MATCHER_PROJECTION_DEPTH_LIMIT {
+        return text
+            .chars()
+            .filter(|character| *character == '\n')
+            .collect();
+    }
+    if let Some((body, before, after)) = complete_block_body(text) {
+        let mut output = String::new();
+        output.extend(std::iter::repeat_n('\n', before));
+        output.push_str(&matcher_free_text_at_depth(&body, depth + 1));
+        output.extend(std::iter::repeat_n('\n', after));
+        return output;
+    }
+    let masked = mask_comments_and_strings(text);
+    let mut delimiter_depth = 0usize;
+    let mut start = 0usize;
+    let mut output = String::new();
+    for (index, character) in masked.char_indices() {
+        match character {
+            '(' | '[' | '{' => delimiter_depth += 1,
+            ')' | ']' | '}' => delimiter_depth = delimiter_depth.saturating_sub(1),
+            ';' if delimiter_depth == 0 => {
+                append_matcher_free_statement(&text[start..=index], &mut output, depth);
+                start = index + 1;
+            }
+            _ => {}
+        }
+    }
+    append_matcher_free_statement(&text[start..], &mut output, depth);
+    output
+}
+
+fn leading_blank_lines(text: &str) -> usize {
+    text.chars()
+        .take_while(|character| character.is_whitespace())
+        .filter(|character| *character == '\n')
+        .count()
+}
+
+fn append_matcher_free_statement(statement: &str, output: &mut String, depth: usize) {
+    let Some((scrutinee, preceding_lines)) = discarded_matcher_scrutinee(statement) else {
+        if has_unasserted_matcher(statement) {
+            output.extend(statement.chars().filter(|character| *character == '\n'));
+        } else {
+            output.push_str(statement);
+        }
+        return;
+    };
+    let scrutinee = matcher_free_text_at_depth(&scrutinee, depth + 1);
+    let masked = mask_comments_and_strings(&scrutinee);
+    let asserted = assertion_oracle_text(&scrutinee).is_some();
+    // Unknown compound scrutinees keep no matcher pin. Recognized asserting
+    // wrappers retain their own operand projection and classification.
+    let has_observer = asserted
+        || (!masked.contains("matches!")
+            && (masked.contains(".unwrap(")
+                || masked.contains(".expect(")
+                || (masked.contains('(')
+                    && (is_custom_assertion_helper(&masked)
+                        || is_side_effect_observer_assertion(&masked)
+                        || is_mock_expectation_line(&masked)))));
+    let lines = statement.bytes().filter(|byte| *byte == b'\n').count();
+    let remaining_lines = if has_observer {
+        output.extend(std::iter::repeat_n('\n', preceding_lines));
+        output.push_str(&scrutinee);
+        output.push(';');
+        lines.saturating_sub(
+            preceding_lines + scrutinee.bytes().filter(|byte| *byte == b'\n').count(),
+        )
+    } else {
+        lines
+    };
+    output.extend(std::iter::repeat_n('\n', remaining_lines));
+}
+
 fn is_assertion_line(line: &str) -> bool {
     line.contains("assert!")
         || line.contains("assert_eq!")
         || line.contains("assert_ne!")
         || line.contains("assert_matches!")
-        || line.contains("matches!")
+        // `matches!` alone is a bool computation, not a failure observer.
+        // Asserting wrappers above and terminal Result guards retain their
+        // own admission paths (#5713).
         || is_snapshot_assertion(line)
         || is_custom_assertion_helper(line)
         || is_side_effect_observer_assertion(line)
@@ -3923,8 +4334,137 @@ fn one_pathological_variant_arm() {
 
 #[cfg(test)]
 mod err_guard_parity_tests {
-    use super::extract_assertions;
+    use super::{err_return_guard_assertion, extract_assertions, terminal_err_return_guard_oracle};
     use crate::domain::{OracleKind, OracleStrength};
+
+    #[test]
+    fn terminal_guard_keeps_balanced_argument_groups_and_original_operands() -> Result<(), String> {
+        for (condition, kind, strength) in [
+            (
+                "matches!({ score() }, 2)",
+                OracleKind::ExactValue,
+                OracleStrength::Strong,
+            ),
+            (
+                "matches! { packet, Packet { field: 2 } }",
+                OracleKind::ExactValue,
+                OracleStrength::Strong,
+            ),
+            (
+                "matches![score(r#\"{ raw \" && }\"#), _]",
+                OracleKind::RelationalCheck,
+                OracleStrength::Weak,
+            ),
+            (
+                "matches!(score(\"{ literal space }\"), _)",
+                OracleKind::RelationalCheck,
+                OracleStrength::Weak,
+            ),
+        ] {
+            let assertion = format!("assert!({condition});");
+            let genuine = super::classify_assertion(&assertion);
+            assert_eq!(genuine.kind, kind, "{assertion}");
+            assert_eq!(genuine.strength, strength, "{assertion}");
+            let guard = format!("if !{condition} {{ return Err(()); }}");
+            let twin =
+                err_return_guard_assertion(&guard).ok_or("balanced guard has no assertion twin")?;
+            assert!(twin.contains(condition), "operand text changed: {twin}");
+            let fact = terminal_err_return_guard_oracle(&guard, 6)
+                .ok_or("balanced guard has no oracle")?;
+            assert_eq!(fact.line, 6);
+            assert_eq!(fact.kind, kind, "{guard}");
+            assert_eq!(fact.strength, strength, "{guard}");
+            assert!(
+                fact.text.contains(condition),
+                "operand text changed: {}",
+                fact.text
+            );
+        }
+        let ordinary_call = "if !matches!(value, 2) { returnErr(()); }";
+        assert!(err_return_guard_assertion(ordinary_call).is_none());
+        assert!(terminal_err_return_guard_oracle(ordinary_call, 6).is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn recovered_err_return_is_not_a_failure_oracle() -> Result<(), String> {
+        let recovered_body = |value: i32| -> Result<(), ()> {
+            if !matches!(value, 2) {
+                return Err(()).or(Ok(()));
+            }
+            Ok(())
+        };
+        // Execute the actual Rust recovery operation before asking the source
+        // recognizers: both original and wrong values succeed independently.
+        for value in [2, 3] {
+            if recovered_body(value).is_err() {
+                return Err(format!("recovered Err unexpectedly failed for {value}"));
+            }
+        }
+        for statement in [
+            "if !matches!(value, 2) { return Err(()).or(Ok(())); }",
+            "if !matches!(value, 2) { return Err(()).or(Ok(())) }",
+        ] {
+            assert!(
+                err_return_guard_assertion(statement).is_none(),
+                "{statement}"
+            );
+            assert!(
+                terminal_err_return_guard_oracle(statement, 6).is_none(),
+                "{statement}"
+            );
+            assert!(extract_assertions(statement, 6).is_empty(), "{statement}");
+        }
+        // The new expression boundary still permits a genuine terminal return
+        // with either Rust terminator, including comments before that token.
+        for statement in [
+            "if !matches!(value, 2) { return Err(()) /* failure */; }",
+            "if !matches!(value, 2) { return Err(()) /* failure */ }",
+        ] {
+            let fact = terminal_err_return_guard_oracle(statement, 6)
+                .ok_or("genuine terminal Err rejected")?;
+            assert_eq!(fact.kind, OracleKind::ExactValue, "{statement}");
+            assert_eq!(fact.strength, OracleStrength::Strong, "{statement}");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn quoted_return_text_and_prior_statements_are_not_terminal_failure_prefixes()
+    -> Result<(), String> {
+        let quoted_body = |value: i32| -> Result<(), ()> {
+            if !matches!(value, 2) {
+                let message = "{returnErr(";
+                let _ = message;
+            }
+            Ok(())
+        };
+        // This independent executed-Rust control establishes that the quoted
+        // text cannot distinguish the original and wrong values.
+        for value in [2, 3] {
+            match quoted_body(value) {
+                Ok(()) => {}
+                Err(()) => {
+                    return Err(format!("quoted diagnostic unexpectedly failed for {value}"));
+                }
+            }
+        }
+        for statement in [
+            "if !matches!(value, 2) { let message = \"{returnErr(\"; let _ = message; }",
+            "if !matches!(value, 2) { /* {returnErr( */ }",
+            "if !matches!(value, 2) { let _prior = (); return Err(()); }",
+        ] {
+            assert!(
+                terminal_err_return_guard_oracle(statement, 10).is_none(),
+                "{statement}"
+            );
+            assert!(
+                err_return_guard_assertion(statement).is_none(),
+                "quoted or unsupported body credited: {statement}"
+            );
+        }
+        Ok(())
+    }
 
     #[test]
     fn err_return_guard_is_an_oracle_equal_to_its_assert_twin() {
@@ -3988,21 +4528,46 @@ mod err_guard_parity_tests {
     }
 
     #[test]
+    fn negated_matcher_err_return_guard_is_an_oracle_equal_to_its_assert_twin() {
+        // A negated matcher is structurally equivalent to its assertion
+        // twin. Classify the condition, without importing Err or diagnostics
+        // from the failure body as error-variant evidence.
+        let guard = extract_assertions(
+            "if !matches!(result, Expected::Good(_)) {\n    return Err(anyhow!(\"bad\"));\n}\n",
+            3,
+        );
+        let twin = extract_assertions("assert!(matches!(result, Expected::Good(_)));", 3);
+        assert_eq!(guard.len(), 1, "expected one consumed guard: {guard:?}");
+        assert_eq!(twin.len(), 1, "expected one assertion twin: {twin:?}");
+        let meaning = |facts: &[crate::analysis::facts::OracleFact]| {
+            facts
+                .first()
+                .map(|fact| (fact.kind.clone(), fact.strength.clone()))
+        };
+        assert_eq!(meaning(&guard), meaning(&twin), "matcher twin parity");
+        assert_eq!(
+            meaning(&guard),
+            Some((OracleKind::ExactValue, OracleStrength::Strong)),
+            "the failure body's Err must not change the matcher oracle"
+        );
+    }
+
+    #[test]
     fn guard_conditions_without_structural_equivalence_stay_unrecognized() {
         // No inference from messages or opaque conditions: a guard whose
         // condition cannot be structurally negated into an assertion
         // contributes no oracle fact.
-        let opaque = extract_assertions(
-            "if !matches!(result, Expected::Good(_)) {\n    return Err(anyhow!(\"bad\"));\n}\n",
-            3,
-        );
-        assert!(
-            !opaque
-                .iter()
-                .any(|fact| fact.kind == OracleKind::RelationalCheck
-                    || fact.kind == OracleKind::ExactValue),
-            "opaque guard conditions must not be guessed into oracles: {opaque:?}"
-        );
+        for body in [
+            "if opaque(result) {\n    return Err(anyhow!(\"bad\"));\n}\n",
+            "if opaque(result) {\n    return Err(anyhow!(\"assert_eq!(actual, expected); matches!(result, Expected::Good(_))\"));\n}\n",
+            "if matches!(result, Expected::Good(_)) {\n    return Err(anyhow!(\"bad\"));\n}\n",
+        ] {
+            let opaque = extract_assertions(body, 3);
+            assert!(
+                opaque.is_empty(),
+                "opaque guard conditions must contribute zero facts: {body}: {opaque:?}"
+            );
+        }
     }
 }
 
@@ -4034,5 +4599,95 @@ mod multibyte_guard_tests {
         // multibyte char must advance by that char's width, not one byte.
         assert!(!references_whole_word("return new_заказ;", "заказ"));
         assert!(references_whole_word("return new_заказ + заказ;", "заказ"));
+    }
+}
+
+/// RIPR-SPEC-0175 asserted-Err form (#6673): an exhaustive two-arm Result
+/// match whose Ok arm diverges and whose Err arm exactly pins its binding.
+#[cfg(test)]
+mod asserted_err_arm_tests {
+    use super::guarded_result_match_scan;
+    use crate::analysis::facts::OracleFact;
+    use crate::domain::{OracleKind, OracleStrength};
+
+    fn scan_one(arms: &str) -> Vec<OracleFact> {
+        let body =
+            format!("#[test]\nfn routes() {{\n    match withdraw(10, 20) {{\n{arms}\n    }}\n}}\n");
+        guarded_result_match_scan(&body, 1).oracles
+    }
+
+    #[test]
+    fn diverging_ok_arm_and_assert_eq_err_arm_pin_the_variant() {
+        let oracles = scan_one(
+            "        Ok(left) => panic!(\"overdraw left {left}\"),\n        Err(e) => assert_eq!(e, PayError::Insufficient),",
+        );
+        assert_eq!(oracles.len(), 1, "{oracles:?}");
+        assert_eq!(oracles[0].kind, OracleKind::GuardedResultMatch);
+        assert_eq!(oracles[0].strength, OracleStrength::Strong);
+        assert_eq!(
+            oracles[0].text,
+            "match withdraw(..) { Ok(..) => .., Err(..) => PayError::Insufficient }"
+        );
+    }
+
+    #[test]
+    fn mirrored_operands_braced_bodies_and_matches_form_also_pin() {
+        let mirrored = scan_one(
+            "        Ok(_) => { unreachable!(); }\n        Err(error) => { assert_eq!(PayError::Limit, error, \"wrong error\"); }",
+        );
+        assert_eq!(mirrored.len(), 1, "{mirrored:?}");
+        assert!(mirrored[0].text.ends_with("Err(..) => PayError::Limit }"));
+        let matches_form = scan_one(
+            "        Ok(v) => panic!(\"{v}\"),\n        Err(e) => assert!(matches!(e, PayError::Wrap(_))),",
+        );
+        assert_eq!(matches_form.len(), 1, "{matches_form:?}");
+        assert!(
+            matches_form[0]
+                .text
+                .ends_with("Err(..) => PayError::Wrap(_) }"),
+            "{}",
+            matches_form[0].text
+        );
+    }
+
+    #[test]
+    fn quiet_or_guarded_ok_arms_never_pin() {
+        for arms in [
+            // A quiet Ok arm accepts success: the error is not required.
+            "        Ok(_) => {}\n        Err(e) => assert_eq!(e, PayError::Insufficient),",
+            // An Ok arm that asserts its payload does not diverge.
+            "        Ok(left) => assert_eq!(left, 0),\n        Err(e) => assert_eq!(e, PayError::Insufficient),",
+            // A guarded Ok arm is not the whole success side.
+            "        Ok(left) if left > 0 => panic!(\"left\"),\n        Ok(_) => {}\n        Err(e) => assert_eq!(e, PayError::Insufficient),",
+        ] {
+            assert!(scan_one(arms).is_empty(), "must not pin: {arms}");
+        }
+    }
+
+    #[test]
+    fn catch_all_guards_and_loose_err_bodies_never_pin() {
+        for arms in [
+            // A quiet catch-all swallows whatever it matches.
+            "        Ok(left) => panic!(\"{left}\"),\n        Err(e) => assert_eq!(e, PayError::Insufficient),\n        _ => {}",
+            // A catch-all in place of the Ok arm.
+            "        Err(e) => assert_eq!(e, PayError::Insufficient),\n        _ => {}",
+            // A guarded Err arm.
+            "        Ok(left) => panic!(\"{left}\"),\n        Err(e) if flag => assert_eq!(e, PayError::Insufficient),",
+            // The assertion compares another value.
+            "        Ok(left) => panic!(\"{left}\"),\n        Err(e) => assert_eq!(other, PayError::Insufficient),",
+            // assert_ne! does not pin.
+            "        Ok(left) => panic!(\"{left}\"),\n        Err(e) => assert_ne!(e, PayError::Insufficient),",
+            // A second statement in the Err arm.
+            "        Ok(left) => panic!(\"{left}\"),\n        Err(e) => { log(&e); assert_eq!(e, PayError::Insufficient); }",
+            // matches! alternation and guards are not one exact variant.
+            "        Ok(left) => panic!(\"{left}\"),\n        Err(e) => assert!(matches!(e, PayError::Limit | PayError::Insufficient)),",
+            "        Ok(left) => panic!(\"{left}\"),\n        Err(e) => assert!(matches!(e, PayError::Wrap(n) if n > 1)),",
+            // A wildcard Err binding has nothing to compare.
+            "        Ok(left) => panic!(\"{left}\"),\n        Err(_) => assert_eq!(e, PayError::Insufficient),",
+            // A payload variant compared by value is not a unit-variant pin.
+            "        Ok(left) => panic!(\"{left}\"),\n        Err(e) => assert_eq!(e, PayError::Wrap(1)),",
+        ] {
+            assert!(scan_one(arms).is_empty(), "must not pin: {arms}");
+        }
     }
 }

@@ -1,0 +1,51 @@
+{
+  "case_id": "cell-0197-other-return-path",
+  "subject_id": "authored-spec-confirm",
+  "diff": "cases/cell-0197-other-return-path.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 179
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "error_propagation_question_mark",
+  "test_shape": "error_path_only_assert",
+  "hard_case": "The test calls the owner and asserts its result, but takes the ? exit with a negative input, so the edited Ok(..) arithmetic never runs.",
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "Ok(validate(x)? / 3)",
+        "mutated_line": "Ok(validate(x)? / 3)",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: non-negative inputs divide by 3"
+      },
+      {
+        "replacement": "Ok(validate(x)?)",
+        "mutated_line": "Ok(validate(x)?)",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: non-negative inputs are not halved"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "negative_half_is_refused only exercises the Err exit, so both mutants pass. Spec cells: RIPR-SPEC-0197 identity trap, input leaves through a different return path.",
+  "labeling_observation": {
+    "ripr_commit": "128f794f6",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

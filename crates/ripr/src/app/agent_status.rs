@@ -19,6 +19,11 @@ use crate::app::repair_attempt::{
     load_repair_attempt_manifest_from, quoted_store_flag, repair_attempt_head_reading,
     repair_attempt_state_label, resolve_store, validate_issued_receipt_evidence,
 };
+use crate::domain::{
+    CanonicalNextActionV1, NextActionAttemptView, NextActionClass, NextActionCurrentness,
+    NextActionDiffSource, NextActionInput, NextActionProducer, current_command_platform,
+    select_canonical_next_action,
+};
 use crate::output::agent_receipt::AgentReceiptReading;
 use crate::output::markdown::{COMMAND_SHELL_DISCLOSURE, PowershellForm, powershell_form};
 use serde_json::Value;
@@ -806,6 +811,13 @@ struct StoreFollowUp<'a> {
     flag: &'a str,
 }
 
+/// Inventory-level command selection across attempts. The multi-attempt
+/// ambiguity branch already refuses to choose (see the
+/// `ambiguous_repair_attempts` warning); projecting its decision through the
+/// canonical selector (`choose_attempt` over the inventory) is follow-up
+/// owner work — the single-attempt path behind
+/// [`selected_attempt_status_reading`] already routes through
+/// [`canonical_next_action_for_attempt`].
 fn select_next_command(
     root: &Path,
     root_display: &str,
@@ -957,6 +969,7 @@ fn select_next_command(
 
 /// Where `ripr pilot` writes its summary by default, relative to the root.
 const PILOT_SUMMARY_ARTIFACT: &str = "target/ripr/pilot/pilot-summary.json";
+const PILOT_REPO_EXPOSURE_ARTIFACT: &str = "target/ripr/pilot/repo-exposure.json";
 
 /// The seam-selection route status offers before any seam is known. `ripr
 /// pilot` resolves a relative `--out` against the working directory, not
@@ -1118,6 +1131,64 @@ fn pilot_rust_excluded_message(excluded: &PilotRustExclusion) -> String {
     format!(
         "the last complete `ripr pilot` run ranked no Rust seam because Rust is not enabled in `ripr.toml [languages]` ({files} not analyzed), and running pilot again unchanged ranks nothing again: {}",
         crate::output::pilot::RUST_EXCLUDED_GUIDANCE,
+    )
+}
+
+/// Seams a complete `ripr pilot` run withheld as static limitations when it
+/// ranked none and recorded no repair start (#5497). Running pilot again
+/// unchanged withholds them again, so status must not send the user back.
+/// A missing, unreadable, timed-out, seam-ranking or zero-withheld summary
+/// is not this fact.
+fn pilot_withheld_every_seam(root: &Path) -> Option<u64> {
+    let text = std::fs::read_to_string(root.join(PILOT_SUMMARY_ARTIFACT)).ok()?;
+    let summary = serde_json::from_str::<Value>(&text).ok()?;
+    let complete = summary.pointer("/status").and_then(Value::as_str) == Some("complete");
+    let no_seams = summary
+        .pointer("/top_actionable_seams")
+        .and_then(Value::as_array)
+        .is_some_and(Vec::is_empty);
+    let no_repair_start = summary
+        .pointer("/next/repair_command")
+        .is_some_and(Value::is_null);
+    let withheld = summary
+        .pointer("/withheld_static_limitations_total")
+        .and_then(Value::as_u64)
+        .filter(|withheld| *withheld > 0)?;
+    (complete && no_seams && no_repair_start).then_some(withheld)
+}
+
+/// Whether the pilot run's repo exposure report says a seam limit cut the
+/// classified seams, so seams past the cut were never classified. `None`
+/// when the report is missing or unreadable: status cannot tell.
+fn pilot_seam_limit_applied(root: &Path) -> Option<bool> {
+    let text = std::fs::read_to_string(root.join(PILOT_REPO_EXPOSURE_ARTIFACT)).ok()?;
+    let report = serde_json::from_str::<Value>(&text).ok()?;
+    let run_status = report.pointer("/run_status").and_then(Value::as_str)?;
+    Some(run_status == "seam_limit_applied")
+}
+
+fn pilot_withheld_message(withheld: u64, seam_limit_applied: Option<bool>) -> String {
+    let seams = if withheld == 1 {
+        "1 seam".to_string()
+    } else {
+        format!("{withheld} seams")
+    };
+    let inspect = "Inspect them in `target/ripr/pilot/repo-exposure.md`, where each one names the stage ripr could not resolve";
+    if seam_limit_applied.is_none() {
+        // Fail closed: without the report, status cannot rule out a cut.
+        return format!(
+            "the last complete `ripr pilot` run ranked no seam: it withheld {seams} whose static evidence is unknown or opaque, so they are static limitations, not gaps. `target/ripr/pilot/repo-exposure.json` is missing or unreadable, so status cannot tell whether a seam limit cut the run; rerun pilot, and if it reports a seam limit, raise or remove RIPR_PILOT_SEAM_BUDGET and RIPR_REPO_EXPOSURE_SEAM_LIMIT. {inspect}"
+        );
+    }
+    if seam_limit_applied == Some(true) {
+        // A gap may sit past the cut, so "no repair applies" would claim an
+        // absence the run did not establish; raising the limit is the step.
+        return format!(
+            "the last complete `ripr pilot` run ranked no seam: it withheld at least {seams} whose static evidence is unknown or opaque, so they are static limitations, not gaps. A seam limit cut the seams it analyzed, so seams past the cut may hold gaps: raise or remove RIPR_PILOT_SEAM_BUDGET and RIPR_REPO_EXPOSURE_SEAM_LIMIT, then rerun pilot. {inspect}"
+        );
+    }
+    format!(
+        "the last complete `ripr pilot` run ranked no seam: it withheld {seams} whose static evidence is unknown or opaque, so they are static limitations, not gaps, and running pilot again unchanged withholds them again. {inspect}; no repair attempt applies until a seam ranks"
     )
 }
 
@@ -1331,6 +1402,16 @@ fn legacy_next_command(
                     message: pilot_rust_excluded_message(&excluded),
                 });
             }
+            return None;
+        }
+        // #5497: pilot withheld every seam as a static limitation, so a
+        // rerun ranks nothing again; name the inspection route instead.
+        if let Some(withheld) = pilot_withheld_every_seam(root) {
+            warnings.push(AgentStatusWarning {
+                kind: "pilot_withheld_static_limitations_no_repair_target".to_string(),
+                artifact: PILOT_SUMMARY_ARTIFACT.to_string(),
+                message: pilot_withheld_message(withheld, pilot_seam_limit_applied(root)),
+            });
             return None;
         }
         // #5205 (Codex P1): a Rust-disabled packet carries no seams and no
@@ -1807,6 +1888,7 @@ pub(crate) struct AgentAttemptStatusReport {
     pub(crate) store: AgentAttemptStatusStore,
     pub(crate) attempt: AgentAttemptStatusAttempt,
     pub(crate) next_action: Option<AgentStatusCommand>,
+    pub(crate) canonical_next_action: Option<CanonicalNextActionV1>,
     pub(crate) test_run: Option<AgentReceiptReading>,
     pub(crate) claim_boundary: Vec<String>,
     pub(crate) limitations: Vec<String>,
@@ -1841,6 +1923,10 @@ pub(crate) struct SelectedAttemptStatusReading {
     pub(crate) status_class: &'static str,
     pub(crate) currentness: &'static str,
     pub(crate) next_action: Option<AgentStatusCommand>,
+    /// The canonical decision (#6304) behind `next_action`. `None` only when
+    /// the producer state cannot bind a subject, in which case `next_action`
+    /// is `None` too.
+    pub(crate) canonical_next_action: Option<CanonicalNextActionV1>,
 }
 
 /// One validated manifest's selected-attempt interpretation, shared by CLI
@@ -1880,11 +1966,21 @@ pub(crate) fn selected_attempt_status_reading(
         &manifest_label,
         store_flag,
     );
+    let canonical_next_action = canonical_next_action_for_attempt(
+        manifest,
+        &view,
+        status_class,
+        &command_root,
+        &manifest_label,
+        store_flag,
+    )
+    .ok();
     SelectedAttemptStatusReading {
         currentness: attempt_currentness_label(view.head_current),
         view,
         status_class,
         next_action,
+        canonical_next_action,
     }
 }
 
@@ -1938,6 +2034,7 @@ pub(crate) fn build_agent_attempt_status(
         status_class,
         currentness,
         next_action,
+        canonical_next_action,
     } = selected_attempt_status_reading(
         root,
         root_argument,
@@ -1994,6 +2091,7 @@ pub(crate) fn build_agent_attempt_status(
             unreadable_reason: None,
         },
         next_action,
+        canonical_next_action,
         test_run,
         claim_boundary,
         limitations,
@@ -2037,6 +2135,7 @@ fn corrupt_attempt_status(
             unreadable_reason: Some(reason),
         },
         next_action: None,
+        canonical_next_action: None,
         test_run: None,
         claim_boundary: vec![
             ATTEMPT_STATUS_READ_ONLY_NON_CLAIM.to_string(),
@@ -2100,11 +2199,177 @@ fn attempt_status_class(
     }
 }
 
+/// Project the status producer's canonical action for one validated
+/// attempt. Status owns the lifecycle reading (terminality, edit obligation,
+/// restart recommendation); the selector owns the class decision. Status
+/// never offers a [`CommandSpec`]: its commands are recorded lines, so the
+/// decision is never executable and the typed stop names the real route.
+///
+/// [`CommandSpec`]: crate::domain::CommandSpec
+fn canonical_next_action_for_attempt(
+    manifest: &RepairAttemptManifest,
+    view: &AgentStatusRepairAttempt,
+    status_class: &str,
+    root_display: &str,
+    manifest_label: &str,
+    store_flag: &str,
+) -> Result<CanonicalNextActionV1, String> {
+    let id = manifest.repair_attempt_id.as_str();
+    let seam = manifest.seam_id.as_str();
+    let restart_route = new_repair_attempt_command(root_display, seam, store_flag);
+    let restart_recommended = match status_class {
+        "prepared" | "stale" | "incomparable" | "failed" | "corrupt_or_unavailable" => true,
+        "limited" => matches!(
+            &view.receipt,
+            AgentStatusAttemptReceipt::Issued { reading, .. } if reading.leaves_gap_open()
+        ),
+        "legacy_compatibility_only" => {
+            !matches!(&view.receipt, AgentStatusAttemptReceipt::Issued { .. })
+        }
+        _ => false,
+    };
+    // The subject root is the caller's bound root (#3999), never the
+    // manifest's recorded spelling: the before phase may have stored a
+    // working-directory-relative value ("." in fixtures), while the
+    // recorded restart/after commands bind the absolute root.
+    let root = root_display.to_string();
+    let item = if seam.trim().is_empty() {
+        id.to_string()
+    } else {
+        seam.to_string()
+    };
+    select_canonical_next_action(&NextActionInput {
+        producer: NextActionProducer::RepairAttemptStatus,
+        root,
+        diff_source: NextActionDiffSource::Committed {
+            base: None,
+            head: Some(view.evidence_head.clone()),
+        },
+        item_id: item,
+        check_item: None,
+        card_item: None,
+        item_candidates: Vec::new(),
+        attempts: vec![NextActionAttemptView {
+            id: id.to_string(),
+            // A finished attempt is terminal whether current or
+            // historical (RIPR-SPEC-0242 acceptance): the receipt is
+            // retained evidence, not a claim the gap stays closed at
+            // today's HEAD. The historical qualification travels in the
+            // sibling status fields and prose; terminal DTOs
+            // structurally carry no transition.
+            terminal: matches!(status_class, "finished_current" | "finished_historical"),
+            awaits_edit: status_class == "awaiting_edit",
+            restart_recommended,
+            restart_route: restart_route.clone(),
+            receipt_ref: Some(manifest_label.to_string()),
+        }],
+        // The producer's class already compared the prepared and current
+        // heads; the selector branches on that reading, never re-deriving
+        // lifecycle from raw heads. The observed axis stays unbound on
+        // purpose: the attempt authority adjudicates currentness by
+        // ancestry (repair_attempt_head_reading), while the selector's
+        // divergence gate adjudicates by equality and runs before the
+        // attempt fan-out — binding observed here would flip
+        // ancestry-admitted and historical attempts into a retry the
+        // authority did not order. Currency stays disclosed via the
+        // sibling status fields (`status_class`, `currentness`,
+        // `head_current`, `evidence_head`) adjacent to the embedded
+        // decision — terminal DTOs structurally carry no transition.
+        currentness: NextActionCurrentness {
+            head_expected: Some(manifest.repository_head.clone()),
+            head_observed: None,
+            config_expected: None,
+            config_observed: None,
+        },
+        offered_command: None,
+        route_admitted: true,
+        route_refusal: None,
+        missing_input: None,
+        platform: current_command_platform(),
+        limitation: None,
+        limitation_route: None,
+        detail_route: manifest_label.to_string(),
+        transition_from: status_class.to_string(),
+        transition_to: None,
+        restart_route,
+        check_case: None,
+        doctor_recovery: None,
+        pilot_delegation: None,
+        alternatives: Vec::new(),
+        limitations: manifest.limitations.clone(),
+    })
+}
+
 /// The one exact next or recovery action for a selected attempt. `None`
 /// means the class is terminal (`finished_current`, `finished_historical`)
 /// or status cannot honestly name an action (`limited` with an unknown
 /// HEAD); the claim boundary and limitations say which.
+///
+/// The canonical decision selects the arm; the status class keeps owning the
+/// arm's prose, so rendered bytes are unchanged while the decision has one
+/// authority.
 fn attempt_next_action(
+    manifest: &RepairAttemptManifest,
+    view: &AgentStatusRepairAttempt,
+    status_class: &str,
+    root_display: &str,
+    manifest_label: &str,
+    store_flag: &str,
+) -> Option<AgentStatusCommand> {
+    let canonical = canonical_next_action_for_attempt(
+        manifest,
+        view,
+        status_class,
+        root_display,
+        manifest_label,
+        store_flag,
+    )
+    .ok()?;
+    match canonical.action_class() {
+        NextActionClass::SatisfyPrerequisite => {
+            Some(after_attempt_command(manifest, view, manifest_label))
+        }
+        NextActionClass::RetryCurrentSubject => restart_attempt_command(
+            manifest,
+            view,
+            status_class,
+            root_display,
+            manifest_label,
+            store_flag,
+        ),
+        _ => None,
+    }
+}
+
+/// The recorded after phase for an attempt awaiting its focused test edit.
+fn after_attempt_command(
+    manifest: &RepairAttemptManifest,
+    view: &AgentStatusRepairAttempt,
+    manifest_label: &str,
+) -> AgentStatusCommand {
+    let id = manifest.repair_attempt_id.as_str();
+    let seam = manifest.seam_id.as_str();
+    let reason = match &view.last_after_refusal {
+        Some(refusal) => format!(
+            "the last after phase of repair attempt `{id}` for seam `{seam}` was refused: {}. The attempt still awaits the focused test edit; the command below repeats that after phase and refuses again until the cause the refusal names is resolved",
+            refusal.reason.trim_end_matches('.')
+        ),
+        None => format!(
+            "repair attempt `{id}` for seam `{seam}` is awaiting the focused test edit; once the test is in place, run the after phase its before phase recorded"
+        ),
+    };
+    AgentStatusCommand {
+        step: "repair_attempt_after".to_string(),
+        artifact: manifest_label.to_string(),
+        reason,
+        command: view.command.clone().unwrap_or_default(),
+    }
+}
+
+/// A fresh before phase for an attempt that ended without a usable result.
+/// The reason stays per-class; the canonical retry decision selects this arm.
+/// Classes the retry decision never names fail closed to `None`.
+fn restart_attempt_command(
     manifest: &RepairAttemptManifest,
     view: &AgentStatusRepairAttempt,
     status_class: &str,
@@ -2123,23 +2388,6 @@ fn attempt_next_action(
         })
     };
     match status_class {
-        "awaiting_edit" => {
-            let reason = match &view.last_after_refusal {
-                Some(refusal) => format!(
-                    "the last after phase of repair attempt `{id}` for seam `{seam}` was refused: {}. The attempt still awaits the focused test edit; the command below repeats that after phase and refuses again until the cause the refusal names is resolved",
-                    refusal.reason.trim_end_matches('.')
-                ),
-                None => format!(
-                    "repair attempt `{id}` for seam `{seam}` is awaiting the focused test edit; once the test is in place, run the after phase its before phase recorded"
-                ),
-            };
-            Some(AgentStatusCommand {
-                step: "repair_attempt_after".to_string(),
-                artifact: manifest_label.to_string(),
-                reason,
-                command: view.command.clone().unwrap_or_default(),
-            })
-        }
         "prepared" => restart(format!(
             "repair attempt `{id}` for seam `{seam}` was prepared but never published as awaiting its edit; start a new attempt while the gap is still open"
         )),
@@ -2187,9 +2435,8 @@ fn attempt_next_action(
                 "repair attempt `{id}` for seam `{seam}` finished before attempt-local terminal retention existed and its outcome cannot be reconstructed from the one-slot compatibility receipt; start a new attempt while the gap is still open"
             )),
         },
-        // `finished_current` and `finished_historical` are terminal: the
-        // retained result is the answer, and the claim boundary says what it
-        // does and does not prove.
+        // Terminal, after-continuation, and closed-limited classes never reach
+        // the restart arm through the canonical retry decision; fail closed.
         _ => None,
     }
 }
@@ -2238,6 +2485,9 @@ pub(crate) fn render_agent_attempt_status_json(
             "diverged_recovery": diverged_recovery,
         },
         "next_action": report.next_action.as_ref().map(agent_status_command_json),
+        "canonical_next_action": report.canonical_next_action.as_ref().map(|action| {
+            crate::output::next_action::render_next_action_json_value(action)
+        }),
         "test_run": report.test_run.as_ref().map(test_not_run_json),
         "claim_boundary": report.claim_boundary,
         "limitations": report.limitations,
@@ -4297,6 +4547,118 @@ mod tests {
         Ok(())
     }
 
+    /// #5497: a complete pilot run that withheld every seam as a static
+    /// limitation ranks nothing, so `select_seam` would rerun the same pilot
+    /// forever. Status stops and names the inspection route.
+    #[test]
+    fn agent_status_stops_when_pilot_withheld_every_seam() -> Result<(), String> {
+        let root = unique_agent_status_test_dir("pilot-withheld");
+        let summary = |status: &str, seams: &str, repair: &str, withheld: &str| {
+            format!(
+                r#"{{"status": "{status}", "top_actionable_seams": {seams}, "withheld_static_limitations_total": {withheld}, "next": {{"repair_command": {repair}}}}}"#
+            )
+        };
+        write_file(
+            &root.join(PILOT_SUMMARY_ARTIFACT),
+            &summary("complete", "[]", "null", "138"),
+        )?;
+        write_file(
+            &root.join(PILOT_REPO_EXPOSURE_ARTIFACT),
+            r#"{"run_status": "complete"}"#,
+        )?;
+        let report = build_agent_status_report(&root, Path::new("."));
+        assert!(
+            report.next_command.is_none(),
+            "withheld-only pilot must stop, not loop: {:?}",
+            report.next_command
+        );
+        let warning = report
+            .warnings
+            .iter()
+            .find(|warning| warning.kind == "pilot_withheld_static_limitations_no_repair_target")
+            .ok_or_else(|| format!("expected a withheld warning: {:?}", report.warnings))?;
+        assert_eq!(warning.artifact, PILOT_SUMMARY_ARTIFACT);
+        for expected in [
+            "withheld 138 seams whose static evidence is unknown or opaque",
+            "target/ripr/pilot/repo-exposure.md",
+            "no repair attempt applies until a seam ranks",
+        ] {
+            assert!(warning.message.contains(expected), "{}", warning.message);
+        }
+
+        // A seam limit cut the classified seams: gaps may sit past the cut,
+        // so the warning names raising the limit, not "no repair applies".
+        write_file(
+            &root.join(PILOT_REPO_EXPOSURE_ARTIFACT),
+            r#"{"run_status": "seam_limit_applied"}"#,
+        )?;
+        let report = build_agent_status_report(&root, Path::new("."));
+        assert!(report.next_command.is_none(), "{:?}", report.next_command);
+        let warning = report
+            .warnings
+            .iter()
+            .find(|warning| warning.kind == "pilot_withheld_static_limitations_no_repair_target")
+            .ok_or_else(|| format!("expected a withheld warning: {:?}", report.warnings))?;
+        for expected in [
+            "withheld at least 138 seams",
+            "seams past the cut may hold gaps",
+            "raise or remove RIPR_PILOT_SEAM_BUDGET and RIPR_REPO_EXPOSURE_SEAM_LIMIT",
+        ] {
+            assert!(warning.message.contains(expected), "{}", warning.message);
+        }
+        assert!(
+            !warning.message.contains("no repair attempt applies"),
+            "{}",
+            warning.message
+        );
+        std::fs::remove_file(root.join(PILOT_REPO_EXPOSURE_ARTIFACT))
+            .map_err(|err| format!("remove repo exposure: {err}"))?;
+
+        // Without the repo exposure report status cannot rule out a cut, so
+        // it fails closed: no "no repair applies", and the limit is named.
+        let report = build_agent_status_report(&root, Path::new("."));
+        let warning = report
+            .warnings
+            .iter()
+            .find(|warning| warning.kind == "pilot_withheld_static_limitations_no_repair_target")
+            .ok_or_else(|| format!("expected a withheld warning: {:?}", report.warnings))?;
+        for expected in [
+            "is missing or unreadable, so status cannot tell whether a seam limit cut the run",
+            "raise or remove RIPR_PILOT_SEAM_BUDGET and RIPR_REPO_EXPOSURE_SEAM_LIMIT",
+        ] {
+            assert!(warning.message.contains(expected), "{}", warning.message);
+        }
+        assert!(
+            !warning.message.contains("no repair attempt applies"),
+            "{}",
+            warning.message
+        );
+
+        // Controls: nothing withheld (the old empty ranking), a pre-0.3
+        // summary without the field, a timed-out run, and a ranked seam all
+        // keep their previous routing.
+        for control in [
+            summary("complete", "[]", "null", "0"),
+            r#"{"status": "complete", "top_actionable_seams": [], "next": {"repair_command": null}}"#
+                .to_string(),
+            summary("timed_out", "[]", "null", "null"),
+            // Only the status differs from the stopping summary.
+            summary("partial", "[]", "null", "138"),
+            summary("complete", r#"[{"seam_id": "s"}]"#, "null", "5"),
+        ] {
+            write_file(&root.join(PILOT_SUMMARY_ARTIFACT), &control)?;
+            let report = build_agent_status_report(&root, Path::new("."));
+            assert!(
+                !report.warnings.iter().any(|warning| warning.kind
+                    == "pilot_withheld_static_limitations_no_repair_target"),
+                "control must not raise the withheld warning: {control}"
+            );
+        }
+
+        std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+        Ok(())
+    }
+
     /// #5205/#5248 review: a packet that routes preview files to check AND
     /// excludes Rust keeps both warnings — the route hand-off and the
     /// exclusion's config remedy — instead of dropping the remedy.
@@ -4533,5 +4895,344 @@ mod tests {
             command.ends_with("/repo root/target/ripr/workflow/agent-packet.json'"),
             "redirect must anchor under the resolved root: {command}"
         );
+    }
+
+    fn canonical_test_manifest(state: RepairAttemptState) -> Result<RepairAttemptManifest, String> {
+        Ok(RepairAttemptManifest {
+            schema_version: "0.1".to_string(),
+            kind: "repair".to_string(),
+            repair_attempt_id: RepairAttemptId::parse("repair-attempt-0123456789abcdef01234567")
+                .map_err(|error| error.to_string())?,
+            state,
+            root: ".".to_string(),
+            repository_head: "abc123".to_string(),
+            producer_version: "test".to_string(),
+            seam_id: "seam:demo".to_string(),
+            created_unix_ms: 0,
+            artifacts: Vec::new(),
+            next_command: "ripr agent repair --phase after".to_string(),
+            limitations: Vec::new(),
+            non_claims: Vec::new(),
+            after: None,
+            last_after_refusal: None,
+            terminal_artifacts: Vec::new(),
+            store: None,
+        })
+    }
+
+    fn canonical_test_view() -> AgentStatusRepairAttempt {
+        AgentStatusRepairAttempt {
+            attempt_id: "repair-attempt-0123456789abcdef01234567".to_string(),
+            seam_id: "seam:demo".to_string(),
+            state: "awaiting_edit",
+            head_current: Some(true),
+            disposition: "resumable",
+            manifest: "target/ripr/repair-attempts/repair-attempt-01/attempt.json".to_string(),
+            command: Some("ripr agent repair --phase after".to_string()),
+            evidence_head: "abc123".to_string(),
+            receipt: AgentStatusAttemptReceipt::NotApplicable,
+            last_after_refusal: None,
+            diverged_recovery: None,
+        }
+    }
+
+    fn open_gap_reading() -> AgentReceiptReading {
+        AgentReceiptReading {
+            status: Some("advisory".to_string()),
+            movement: Some("unchanged".to_string()),
+            receipt_state: "unchanged".to_string(),
+            recommended_action: None,
+            analysis_outcome_error: None,
+            verification_status: None,
+            test_changed: None,
+        }
+    }
+
+    /// Every status class routes its arm through the canonical decision:
+    /// the DTO class selects after/restart/none, and the arm prose is
+    /// unchanged. The (class, DTO class, step) rows below are the mapping
+    /// contract.
+    #[test]
+    fn canonical_decision_selects_the_status_arm() -> Result<(), String> {
+        struct Row {
+            status_class: &'static str,
+            manifest_state: RepairAttemptState,
+            receipt: fn() -> AgentStatusAttemptReceipt,
+            dto_class: crate::domain::NextActionClass,
+            step: Option<&'static str>,
+        }
+        let rows = vec![
+            Row {
+                status_class: "awaiting_edit",
+                manifest_state: RepairAttemptState::AwaitingEdit,
+                receipt: || AgentStatusAttemptReceipt::NotApplicable,
+                dto_class: crate::domain::NextActionClass::SatisfyPrerequisite,
+                step: Some("repair_attempt_after"),
+            },
+            Row {
+                status_class: "prepared",
+                manifest_state: RepairAttemptState::Prepared,
+                receipt: || AgentStatusAttemptReceipt::NotApplicable,
+                dto_class: crate::domain::NextActionClass::RetryCurrentSubject,
+                step: Some("repair_attempt_before"),
+            },
+            Row {
+                status_class: "stale",
+                manifest_state: RepairAttemptState::Stale,
+                receipt: || AgentStatusAttemptReceipt::NotApplicable,
+                dto_class: crate::domain::NextActionClass::RetryCurrentSubject,
+                step: Some("repair_attempt_before"),
+            },
+            Row {
+                status_class: "incomparable",
+                manifest_state: RepairAttemptState::Incomparable,
+                receipt: || AgentStatusAttemptReceipt::NotApplicable,
+                dto_class: crate::domain::NextActionClass::RetryCurrentSubject,
+                step: Some("repair_attempt_before"),
+            },
+            Row {
+                status_class: "failed",
+                manifest_state: RepairAttemptState::Failed,
+                receipt: || AgentStatusAttemptReceipt::NotApplicable,
+                dto_class: crate::domain::NextActionClass::RetryCurrentSubject,
+                step: Some("repair_attempt_before"),
+            },
+            Row {
+                status_class: "limited",
+                manifest_state: RepairAttemptState::ReadyToFinish,
+                receipt: || AgentStatusAttemptReceipt::Issued {
+                    path: "receipt.json".to_string(),
+                    reading: open_gap_reading(),
+                },
+                dto_class: crate::domain::NextActionClass::RetryCurrentSubject,
+                step: Some("repair_attempt_before"),
+            },
+            Row {
+                status_class: "limited",
+                manifest_state: RepairAttemptState::AwaitingEdit,
+                receipt: || AgentStatusAttemptReceipt::NotApplicable,
+                dto_class: crate::domain::NextActionClass::InspectDetails,
+                step: None,
+            },
+            Row {
+                status_class: "corrupt_or_unavailable",
+                manifest_state: RepairAttemptState::ReadyToFinish,
+                receipt: || AgentStatusAttemptReceipt::Unreadable,
+                dto_class: crate::domain::NextActionClass::RetryCurrentSubject,
+                step: Some("repair_attempt_before"),
+            },
+            Row {
+                status_class: "legacy_compatibility_only",
+                manifest_state: RepairAttemptState::ReadyToFinish,
+                receipt: || AgentStatusAttemptReceipt::NotIssued,
+                dto_class: crate::domain::NextActionClass::RetryCurrentSubject,
+                step: Some("repair_attempt_before"),
+            },
+            Row {
+                status_class: "legacy_compatibility_only",
+                manifest_state: RepairAttemptState::ReadyToFinish,
+                receipt: || AgentStatusAttemptReceipt::Issued {
+                    path: "receipt.json".to_string(),
+                    reading: open_gap_reading(),
+                },
+                dto_class: crate::domain::NextActionClass::InspectDetails,
+                step: None,
+            },
+            Row {
+                status_class: "finished_current",
+                manifest_state: RepairAttemptState::ReadyToFinish,
+                receipt: || AgentStatusAttemptReceipt::Issued {
+                    path: "receipt.json".to_string(),
+                    reading: open_gap_reading(),
+                },
+                dto_class: crate::domain::NextActionClass::TerminalNoAction,
+                step: None,
+            },
+            Row {
+                status_class: "finished_historical",
+                manifest_state: RepairAttemptState::ReadyToFinish,
+                receipt: || AgentStatusAttemptReceipt::Issued {
+                    path: "receipt.json".to_string(),
+                    reading: open_gap_reading(),
+                },
+                dto_class: crate::domain::NextActionClass::TerminalNoAction,
+                step: None,
+            },
+        ];
+        for row in rows {
+            let manifest = canonical_test_manifest(row.manifest_state)?;
+            let mut view = canonical_test_view();
+            view.receipt = (row.receipt)();
+            let manifest_label = "store/repair-attempt-01/attempt.json";
+            let canonical = canonical_next_action_for_attempt(
+                &manifest,
+                &view,
+                row.status_class,
+                ".",
+                manifest_label,
+                "",
+            )
+            .map_err(|error| format!("{} must project: {error}", row.status_class))?;
+            if canonical.action_class() != row.dto_class {
+                return Err(format!(
+                    "{} decided {}, expected {}",
+                    row.status_class,
+                    canonical.action_class().as_str(),
+                    row.dto_class.as_str()
+                ));
+            }
+            // The canonical decision is never executable: status commands
+            // are recorded lines, not specs.
+            if canonical.is_executable() || canonical.command().is_some() {
+                return Err(format!(
+                    "{} decision must not be executable",
+                    row.status_class
+                ));
+            }
+            let action =
+                attempt_next_action(&manifest, &view, row.status_class, ".", manifest_label, "");
+            match (action.as_ref(), row.step) {
+                (Some(command), Some(step)) if command.step == step => {}
+                (None, None) => {}
+                (got, want) => {
+                    return Err(format!(
+                        "{} armed {:?}, expected step {want:?}",
+                        row.status_class,
+                        got.map(|command| command.step.as_str())
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn canonical_subject_root_uses_the_bound_root_not_the_manifest() -> Result<(), String> {
+        // The fixture manifest records "." (the before phase's spelling);
+        // the subject must name the caller's bound root (#3999), matching
+        // the recorded restart/after commands.
+        let manifest = canonical_test_manifest(RepairAttemptState::ReadyToFinish)?;
+        let view = canonical_test_view();
+        let canonical = canonical_next_action_for_attempt(
+            &manifest,
+            &view,
+            "finished_current",
+            "/repo/checkout",
+            "store/repair-attempt-01/attempt.json",
+            "",
+        )?;
+        if canonical.subject().root.as_str() != "/repo/checkout" {
+            return Err(format!(
+                "subject root must be the bound root, got {:?}",
+                canonical.subject().root
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn canonical_terminal_status_carries_receipt_details() -> Result<(), String> {
+        let manifest = canonical_test_manifest(RepairAttemptState::ReadyToFinish)?;
+        let view = canonical_test_view();
+        let manifest_label = "store/repair-attempt-01/attempt.json";
+        let canonical = canonical_next_action_for_attempt(
+            &manifest,
+            &view,
+            "finished_current",
+            ".",
+            manifest_label,
+            "",
+        )?;
+        match canonical.stop() {
+            Some(crate::domain::NextActionStop::TerminalComplete { receipt_ref })
+                if receipt_ref == manifest_label => {}
+            other => {
+                return Err(format!(
+                    "terminal status stop must name the manifest, got {other:?}"
+                ));
+            }
+        }
+        if canonical.alternatives().is_empty() {
+            return Err("terminal status must carry its details alternative".to_string());
+        }
+        if attempt_next_action(
+            &manifest,
+            &view,
+            "finished_current",
+            ".",
+            manifest_label,
+            "",
+        )
+        .is_some()
+        {
+            return Err("terminal status armed a continue command".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn canonical_status_json_embeds_the_decision() -> Result<(), String> {
+        let manifest = canonical_test_manifest(RepairAttemptState::AwaitingEdit)?;
+        let view = canonical_test_view();
+        let report = AgentAttemptStatusReport {
+            root: ".".to_string(),
+            store: AgentAttemptStatusStore {
+                locator: "target/ripr/repair-attempts".to_string(),
+                location_class: "default_repository",
+                currentness: "present",
+            },
+            attempt: AgentAttemptStatusAttempt {
+                attempt_id: "repair-attempt-0123456789abcdef01234567".to_string(),
+                seam_id: Some("seam:demo".to_string()),
+                manifest: "store/repair-attempt-01/attempt.json".to_string(),
+                state: Some("awaiting_edit"),
+                status_class: "awaiting_edit",
+                head_current: Some(true),
+                currentness: "current",
+                evidence_head: Some("abc123".to_string()),
+                receipt: None,
+                last_after_refusal: None,
+                diverged_recovery: None,
+                unreadable_reason: None,
+            },
+            next_action: attempt_next_action(
+                &manifest,
+                &view,
+                "awaiting_edit",
+                ".",
+                "store/repair-attempt-01/attempt.json",
+                "",
+            ),
+            canonical_next_action: canonical_next_action_for_attempt(
+                &manifest,
+                &view,
+                "awaiting_edit",
+                ".",
+                "store/repair-attempt-01/attempt.json",
+                "",
+            )
+            .ok(),
+            test_run: None,
+            claim_boundary: Vec::new(),
+            limitations: Vec::new(),
+            non_claims: Vec::new(),
+        };
+        let rendered = render_agent_attempt_status_json(&report)?;
+        let value: Value = serde_json::from_str(&rendered)
+            .map_err(|error| format!("parse status JSON: {error}"))?;
+        if value["canonical_next_action"]["action_class"] != "satisfy_prerequisite" {
+            return Err(format!(
+                "status JSON must embed the canonical decision: {rendered}"
+            ));
+        }
+        if value["canonical_next_action"]["stop"]["kind"] != "provide_input" {
+            return Err(format!(
+                "status JSON must embed the canonical stop: {rendered}"
+            ));
+        }
+        if value["next_action"]["step"] != "repair_attempt_after" {
+            return Err(format!("status JSON lost the after arm: {rendered}"));
+        }
+        Ok(())
     }
 }

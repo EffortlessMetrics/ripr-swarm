@@ -73,16 +73,12 @@ fn run_check(fixture: &DiffFixture, extra: &[&str]) -> Result<Output, String> {
         .map_err(|error| format!("run ripr {args:?}: {error}"))
 }
 
-fn assert_fixture_json_findings(
-    fixture: &DiffFixture,
-    parsed: &serde_json::Value,
-) -> Result<(), String> {
-    let expected_file = fixture
-        .0
-        .join("src/lib.rs")
-        .to_string_lossy()
-        .replace('\\', "/")
-        .replace('%', "%25");
+fn assert_fixture_json_findings(parsed: &serde_json::Value) -> Result<(), String> {
+    // #5996: the location renders through the shared workspace-relative
+    // owner, so the file names the fixture's one changed source from the
+    // analyzed root (`./src/lib.rs`) on every surface, including this
+    // absolute-`--root` run.
+    let expected_file = "./src/lib.rs";
     assert_eq!(
         parsed["summary"]["changed_rust_files"], 1,
         "fixture must analyze its one changed Rust file"
@@ -95,7 +91,7 @@ fn assert_fixture_json_findings(
             finding
                 .pointer("/probe/file")
                 .and_then(serde_json::Value::as_str)
-                == Some(expected_file.as_str())
+                == Some(expected_file)
                 && finding
                     .pointer("/probe/expression")
                     .and_then(serde_json::Value::as_str)
@@ -135,7 +131,7 @@ fn check_json_stdout_parses_while_progress_stays_on_stderr() -> Result<(), Strin
     let parsed: serde_json::Value = serde_json::from_slice(&output.stdout)
         .map_err(|error| format!("stdout is not JSON: {error}"))?;
     assert_eq!(parsed["schema_version"], "0.2");
-    assert_fixture_json_findings(&fixture, &parsed)?;
+    assert_fixture_json_findings(&parsed)?;
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = stderr_text(&output);
     assert!(
@@ -183,7 +179,7 @@ fn check_quiet_keeps_json_stdout_byte_identical_and_drops_progress() -> Result<(
     );
     let parsed: serde_json::Value = serde_json::from_slice(&loud.stdout)
         .map_err(|error| format!("stdout is not JSON: {error}"))?;
-    assert_fixture_json_findings(&fixture, &parsed)?;
+    assert_fixture_json_findings(&parsed)?;
     let quiet_err = stderr_text(&quiet);
     assert!(
         !quiet_err.contains("ripr progress:"),
@@ -652,7 +648,7 @@ fn pilot_projects_repo_stages_on_stderr_and_keeps_packet_bytes_unchanged() -> Re
         .map_err(|error| format!("read loud pilot-summary.json: {error}"))?;
     let parsed: serde_json::Value = serde_json::from_slice(&loud_summary)
         .map_err(|error| format!("pilot-summary.json is not JSON: {error}"))?;
-    assert_eq!(parsed["schema_version"], "0.2");
+    assert_eq!(parsed["schema_version"], "0.3");
 
     // Removal experiment (#2608 closure rule): --quiet drops every progress
     // line while the emitted packet stays byte-identical.

@@ -1,0 +1,19 @@
+//! Spec cells the corpus had no runtime-truth case for: custom-harness
+//! `Trial` subjects (RIPR-SPEC-0173), subprocess binary reach (RIPR-SPEC-0166)
+//! and the root `xtask/` source role (RIPR-SPEC-0153).
+
+/// Reached only through a bare-identifier `Trial::test` callback.
+pub fn shipping(weight: u32) -> u32 {
+    weight * 4
+}
+
+/// Reached by a trial whose only oracle is `.unwrap()`.
+pub fn parse_qty(text: &str) -> Result<u32, std::num::ParseIntError> {
+    let n: u32 = text.parse()?;
+    Ok(n * 2)
+}
+
+/// Reached only by a trial that is built but never handed to the harness.
+pub fn handling(items: u32) -> u32 {
+    items * 6
+}

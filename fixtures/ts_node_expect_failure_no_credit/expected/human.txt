@@ -28,8 +28,8 @@ Start here:
     - 4 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
-  ripr explain --root fixtures/ts_node_expect_failure_no_credit/input --diff fixtures/ts_node_expect_failure_no_credit/diff.patch --mode fast probe:src_score.ts:typescript_preview:af44236d
-  ripr context --root fixtures/ts_node_expect_failure_no_credit/input --diff fixtures/ts_node_expect_failure_no_credit/diff.patch --mode fast --at probe:src_score.ts:typescript_preview:af44236d
+  ripr explain --root <cwd>/fixtures/ts_node_expect_failure_no_credit/input --diff <cwd>/fixtures/ts_node_expect_failure_no_credit/diff.patch --mode fast probe:src_score.ts:typescript_preview:af44236d
+  ripr context --root <cwd>/fixtures/ts_node_expect_failure_no_credit/input --diff <cwd>/fixtures/ts_node_expect_failure_no_credit/diff.patch --mode fast --at probe:src_score.ts:typescript_preview:af44236d
 
 More:
   Full evidence: rerun with --format human-full

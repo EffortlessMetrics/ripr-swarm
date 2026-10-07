@@ -1,0 +1,51 @@
+{
+  "case_id": "mined-debug-assert-after-index",
+  "subject_id": "authored-mined-codec",
+  "diff": "cases/mined-debug-assert-after-index.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 11
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value",
+  "test_shape": "production_debug_assert_not_on_edited_value",
+  "hard_case": "Twin of mined-debug-assert-only-oracle: the same function and test, but the edit sits after the debug_assert! and changes only which letter is pushed, which the length-only assert cannot see.",
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "out.push(ALPHABET[(index + 1) % 8]);",
+        "mutated_line": "out.push(ALPHABET[(index + 1) % 8]);",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: every letter shifts by one"
+      },
+      {
+        "replacement": "out.push(ALPHABET[0]);",
+        "mutated_line": "out.push(ALPHABET[0]);",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: every byte encodes as 'a'"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "encode_runs_over_every_byte asserts only the output length, and the debug_assert! checks the index before this line, so both mutants pass.",
+  "labeling_observation": {
+    "ripr_commit": "f46c5e5",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "propagation_unknown"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

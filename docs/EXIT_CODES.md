@@ -57,6 +57,13 @@ document should branch on `exit`, not on free-text `stop_states`.
   lexically, or a changed file whose language adapter is unavailable. The
   parser follows stable Rust, so a changed file using nightly-only syntax it
   cannot parse (guard patterns, never patterns) also makes the run partial.
+  With `--json`, every post-argv-parse `check` failure — the analysis errors
+  above, an unreadable config or suppression policy, a git timeout, or any
+  other failure the command can produce — also writes a machine-readable
+  refusal document to stdout naming the failure; the exit stays `2` and the
+  human prose stays on stderr. Only argv usage errors stay prose-only with
+  empty stdout. [docs/OUTPUT_SCHEMA.md](OUTPUT_SCHEMA.md) documents the
+  refusal shape and its `schema_version`.
 - **User error**: unknown command, missing required argument, or invalid
   config.
 - **Internal error**: a panic occurred (with a `ripr: internal error` message).
@@ -163,24 +170,33 @@ enabled language runtimes stay visible but do not decide that profile's exit.
 
 ## CI integration
 
-The GitHub Actions workflow that `ripr init --ci github` generates preserves
-the exit code:
+The GitHub Actions workflow that `ripr init --ci github` generates runs its
+whole analysis in one step, and the step does not swallow its exit code:
 
-```bash
-check_status=0
-ripr check \
-  --root . \
-  --base "origin/${{ github.base_ref }}" \
-  --format json > target/ripr/pr/check.json || check_status=$?
+```yaml
+      - name: Run RIPR
+        run: ripr reports ci-packet --root .
 ```
 
-The `|| check_status=$?` pattern captures the exit code without failing the
-step, so downstream review-comments and gate steps can consume the
-output even when the analysis failed. Because `check` exits `0` on findings,
-a non-zero `check_status` here means the analysis itself did not complete
-(code `2`; a gate step consumes code `3` as its blocking signal).
+`ripr reports ci-packet` runs the pilot, the pull request diff capture, the
+PR guidance, the comment plan, the SARIF and badge renders, the gate, the
+ledgers, start-here, the report index, and the changed-line annotations,
+each as a log group named after the step it replaced ([docs/CI.md](CI.md)
+keeps the full recipe). Advisory steps log a failure and continue. The diff
+capture and the gate evaluation are required, so a failed diff capture,
+gate evaluation, or blocking-mode producer makes the command exit nonzero
+after the rest of the packet is written: the step fails instead of passing
+on an incomplete analysis, and the later `always()` steps still upload the
+artifacts and the step summary.
 
-A `check` that exits `0` can still be incomplete. `review-comments` carries
-the check's analysis outcome, and `ripr gate evaluate` treats an
-incomplete, partial, or unsupported outcome as a `config_error` in every
-mode and exits `2`, so a gate never passes on a partial denominator.
+The exit code reaches the merge gate through `RIPR_GATE_MODE`, not through
+a check step. The generated job carries
+`continue-on-error: ${{ vars.RIPR_GATE_MODE == '' || vars.RIPR_GATE_MODE == 'visible-only' }}`:
+empty (the default, advisory) or `visible-only` never fails the job;
+`acknowledgeable`, `baseline-check`, or `calibrated-gate` fails the job on
+a nonzero step exit. `ripr check` is advisory here as everywhere: it exits
+`0` whether or not it found gaps. When `RIPR_GATE_MODE` is set, the packet
+evaluates the gate, and `ripr gate evaluate` exits `3` when it blocks and
+`2` on a `config_error`; it treats an incomplete, partial, or unsupported
+analysis outcome as a `config_error` in every mode, so a gate never passes
+on a partial denominator.

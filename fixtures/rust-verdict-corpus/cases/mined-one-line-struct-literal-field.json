@@ -1,0 +1,53 @@
+{
+  "case_id": "mined-one-line-struct-literal-field",
+  "subject_id": "authored-mined-codec",
+  "diff": "cases/mined-one-line-struct-literal-field.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 25
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "field_construction",
+  "test_shape": "one_line_struct_literal_accessor_assert",
+  "hard_case": "The test binds a no-arg constructor's result and pins one field through an accessor (uuid's `let uuid = Uuid::new_v4(); assert_eq!(uuid.get_version(), ..)` shape). The literal is on one line, so the changed line also holds `counter`, and a finding that reasons from the whole line could ask for an assertion pinning `counter: 0x00ab_cdef`, a field the edit did not touch. When labeled, ripr's field-construction finding did exactly that and stayed weak beside an exposed return-value finding; it now credits the accessor assert.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "Id { counter: 0x00ab_cdef, version: 2 }",
+        "mutated_line": "Id { counter: 0x00ab_cdef, version: 2 }",
+        "outcome": "tests_failed",
+        "failing_test": "tests::fresh_ids_carry_version_one",
+        "equivalence_review": "not equivalent: version reads 2"
+      },
+      {
+        "replacement": "Id { counter: 0x00ab_cdef, version: 0 }",
+        "mutated_line": "Id { counter: 0x00ab_cdef, version: 0 }",
+        "outcome": "tests_failed",
+        "failing_test": "tests::fresh_ids_carry_version_one",
+        "equivalence_review": "not equivalent: version reads 0"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "fresh_ids_carry_version_one pins version() == 1, which returns the edited field; both mutants change it.",
+  "labeling_observation": {
+    "ripr_commit": "f46c5e5",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "exposed",
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

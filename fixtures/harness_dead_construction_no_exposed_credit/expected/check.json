@@ -11,6 +11,18 @@
   "findings": [
     {
       "id": "probe:src_lib.rs:call_deletion:289dd551",
+      "canonical_gap_id": "gap:rust:src/lib.rs:parse_limit:call_deletion:call_deletion:raw.parse_.unwrap_or_1",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:parse_limit:call_deletion:call_deletion:raw.parse_.unwrap_or_1",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "parse_limit",
+        "behavior_kind": "call_deletion",
+        "probe_kind": "call_deletion",
+        "normalized_discriminator": "raw.parse_.unwrap_or_1"
+
+      },
       "classification": "no_static_path",
       "severity": "warning",
       "confidence": 0.48,
@@ -18,7 +30,7 @@
         "id": "probe:src_lib.rs:call_deletion:289dd551",
         "family": "call_deletion",
         "delta": "effect",
-        "file": "fixtures/harness_dead_construction_no_exposed_credit/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 3,
         "expression": "raw.parse().unwrap_or(1)"
        },
@@ -60,6 +72,18 @@
     },
     {
       "id": "probe:src_lib.rs:call_deletion:3cb7de3e",
+      "canonical_gap_id": "gap:rust:src/lib.rs:limit_exceeds_default:call_deletion:call_deletion:parse_limit_raw>1",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:limit_exceeds_default:call_deletion:call_deletion:parse_limit_raw>1",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "limit_exceeds_default",
+        "behavior_kind": "call_deletion",
+        "probe_kind": "call_deletion",
+        "normalized_discriminator": "parse_limit_raw>1"
+
+      },
       "classification": "no_static_path",
       "severity": "warning",
       "confidence": 0.48,
@@ -67,7 +91,7 @@
         "id": "probe:src_lib.rs:call_deletion:3cb7de3e",
         "family": "call_deletion",
         "delta": "effect",
-        "file": "fixtures/harness_dead_construction_no_exposed_credit/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 8,
         "expression": "parse_limit(raw) > 1"
        },
@@ -109,6 +133,18 @@
     },
     {
       "id": "probe:src_lib.rs:predicate:f16a58e4",
+      "canonical_gap_id": "gap:rust:src/lib.rs:limit_exceeds_default:predicate_boundary:predicate:parse_limit_raw==1",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:limit_exceeds_default:predicate_boundary:predicate:parse_limit_raw==1",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "limit_exceeds_default",
+        "behavior_kind": "predicate_boundary",
+        "probe_kind": "predicate",
+        "normalized_discriminator": "parse_limit_raw==1"
+
+      },
       "classification": "no_static_path",
       "severity": "warning",
       "confidence": 0.35,
@@ -116,7 +152,7 @@
         "id": "probe:src_lib.rs:predicate:f16a58e4",
         "family": "predicate",
         "delta": "control",
-        "file": "fixtures/harness_dead_construction_no_exposed_credit/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 8,
         "expression": "parse_limit(raw) > 1"
        },

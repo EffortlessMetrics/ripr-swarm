@@ -5,6 +5,11 @@ use crate::output::gap_decision_ledger::{
 use serde_json::Value;
 use std::fs;
 
+/// The fixture is a predicate boundary change whose strong exact oracle
+/// observes the owner method on a bound receiver but never places an input on
+/// the changed boundary. (An error-path change observed only by a normal-value
+/// assertion no longer surfaces that assertion's alignment: it is not relevant
+/// to the changed family, #5572.)
 #[test]
 fn check_output_python_bound_receiver_direct_card_is_agent_packet_eligible() -> Result<(), String> {
     let stamp = std::time::SystemTime::now()
@@ -22,17 +27,17 @@ fn check_output_python_bound_receiver_direct_card_is_agent_packet_eligible() -> 
             .map_err(|error| format!("create test fixture: {error}"))?;
         fs::write(
             root.join("src/pricing.py"),
-            "class Parser:\n    def parse(self, text):\n        if not text:\n            raise KeyError(\"empty\")\n        return int(text)\n",
+            "class Stock:\n    def reserve(self, qty):\n        if qty > 10:\n            return \"backorder\"\n        return \"ok\"\n",
         )
         .map_err(|error| format!("write source fixture: {error}"))?;
         fs::write(
             root.join("tests/test_pricing.py"),
-            "from src.pricing import Parser\n\ndef test_parse_ok():\n    parser = Parser()\n    assert parser.parse(\"42\") == 42\n",
+            "from src.pricing import Stock\n\ndef test_reserve_ok():\n    stock = Stock()\n    assert stock.reserve(3) == \"ok\"\n",
         )
         .map_err(|error| format!("write test fixture: {error}"))?;
         fs::write(
             root.join("diff.patch"),
-            "diff --git a/src/pricing.py b/src/pricing.py\nindex 1111111..2222222 100644\n--- a/src/pricing.py\n+++ b/src/pricing.py\n@@ -1,5 +1,5 @@\n class Parser:\n     def parse(self, text):\n         if not text:\n-            raise ValueError(\"empty\")\n+            raise KeyError(\"empty\")\n         return int(text)\n",
+            "diff --git a/src/pricing.py b/src/pricing.py\nindex 1111111..2222222 100644\n--- a/src/pricing.py\n+++ b/src/pricing.py\n@@ -1,5 +1,5 @@\n class Stock:\n     def reserve(self, qty):\n-        if qty >= 10:\n+        if qty > 10:\n             return \"backorder\"\n         return \"ok\"\n",
         )
         .map_err(|error| format!("write diff fixture: {error}"))?;
         let config =

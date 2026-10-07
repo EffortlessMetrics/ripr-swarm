@@ -129,7 +129,7 @@ pub(in crate::cli) fn doctor(args: &[String]) -> Result<(), String> {
         core_report,
         &mut ok,
     );
-    report_cache_status(&environment.facts.cache);
+    report_cache_status(&root, &environment.facts.cache);
     report_generated_workflow_status(&root);
     report_detected_languages(&environment.facts);
     ok &= add_language_runtime_probes(
@@ -439,9 +439,20 @@ fn print_doctor_start_here_guidance(
             "- Start-here packet: target/ripr/reports/start-here.md (not yet generated; `ripr first-pr` composes it once analysis evidence exists)"
         );
         match &recommendation {
-            Ok(_) => println!(
-                "- Safe next action: run the recommended first command below; it produces the evidence the packet is composed from"
-            ),
+            Ok(_) => {
+                // The missing-root recommendation is a recovery action, not a
+                // runnable command (#5252 item 3): sending the reader to "run"
+                // it would prescribe the failure doctor just diagnosed.
+                if matches!(first, output::doctor::DoctorFirstCommand::MissingRoot) {
+                    println!(
+                        "- Safe next action: fix the selected root first (see below); no check command can run until it exists"
+                    );
+                } else {
+                    println!(
+                        "- Safe next action: run the recommended first command below; it produces the evidence the packet is composed from"
+                    );
+                }
+            }
             Err(error) => println!(
                 "- Safe next action: {error}; restore access or select a lossless root alias, then rerun doctor."
             ),
@@ -1916,7 +1927,7 @@ fn report_known_limitations() {
     );
 }
 
-fn report_cache_status(cache: &output::doctor::DoctorCacheStatus) {
+fn report_cache_status(root: &Path, cache: &output::doctor::DoctorCacheStatus) {
     if cache.relocated_by_env {
         println!(
             "- Cache location: {} (RIPR_CACHE_DIR active)",
@@ -1929,6 +1940,133 @@ fn report_cache_status(cache: &output::doctor::DoctorCacheStatus) {
         "- Cache size: {} (run `ripr cache status` for details)",
         cache.size_display
     );
+    // A missing root already fails `root_directory`; probing would walk up
+    // past it and test an unrelated ancestor.
+    if !cache.relocated_by_env && !root.is_dir() {
+        return;
+    }
+    if let Some(reason) = cache_unwritable_reason(&analysis::seam_cache::cache_base_dir(root)) {
+        // The cache is optional, so this does not fail doctor; it only
+        // explains why every run will recompute instead of reusing facts.
+        println!(
+            "! Cache not writable: {reason}; results stay correct but every run recomputes. \
+Point RIPR_CACHE_DIR at a writable directory."
+        );
+    }
+}
+
+/// Why a cache entry could not be created under `cache_dir`, or `None` when
+/// one could. For every directory a production cache writes entries into,
+/// probes the nearest existing ancestor with a short-lived
+/// exclusive file, so doctor never creates the cache or any layer itself. A
+/// regular file anywhere on one of those paths is reported by name.
+fn cache_unwritable_reason(cache_dir: &Path) -> Option<String> {
+    // Only the entry directories matter: their nearest existing ancestor is
+    // the base itself whenever the base is missing, blocked or still empty,
+    // and a read-only base whose entry directories already exist and accept
+    // writes does not stop caching.
+    let mut probed: Vec<(PathBuf, bool)> = Vec::new();
+    for (target, makes_subdirs) in &analysis::seam_cache::production_entry_dirs(cache_dir) {
+        let probe_dir = match nearest_existing_dir(target) {
+            Ok(Some(dir)) => dir,
+            Ok(None) => continue,
+            Err(reason) => return Some(reason),
+        };
+        // A missing entry directory is created by the producer first, and a
+        // sharded cache creates generation subdirectories in it; an ACL
+        // (Windows) can allow adding files but deny adding directories.
+        let needs_dir = *makes_subdirs || probe_dir != *target;
+        if probed
+            .iter()
+            .any(|(dir, dir_probed)| *dir == probe_dir && (*dir_probed || !needs_dir))
+        {
+            continue;
+        }
+        if let Some(reason) = probe_writable(&probe_dir) {
+            return Some(reason);
+        }
+        if needs_dir && let Some(reason) = probe_creatable_dir(&probe_dir) {
+            return Some(reason);
+        }
+        probed.push((probe_dir, needs_dir));
+    }
+    None
+}
+
+/// Creates and removes a short-lived subdirectory, the operation a producer
+/// needs before it can write under a missing entry directory.
+fn probe_creatable_dir(probe_dir: &Path) -> Option<String> {
+    let probe = probe_dir.join(probe_name("dir"));
+    match std::fs::create_dir(&probe) {
+        Ok(()) => {
+            let _ = std::fs::remove_dir(&probe);
+            None
+        }
+        Err(error) => Some(format!(
+            "cannot create a directory in {}: {error}",
+            probe_dir.display()
+        )),
+    }
+}
+
+fn probe_name(kind: &str) -> String {
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_nanos())
+        .unwrap_or(0);
+    format!(".ripr-doctor-probe-{kind}-{}-{nonce}", std::process::id())
+}
+
+/// The nearest existing directory at or above `path`; an error naming the
+/// component that blocks it (a file, a dangling symlink, an unreadable
+/// entry). Only a missing component walks up to its parent.
+fn nearest_existing_dir(path: &Path) -> Result<Option<PathBuf>, String> {
+    let mut probe_dir = path;
+    loop {
+        match std::fs::metadata(probe_dir) {
+            Ok(metadata) if metadata.is_dir() => return Ok(Some(probe_dir.to_path_buf())),
+            Ok(_) => return Err(format!("{} is not a directory", probe_dir.display())),
+            Err(error)
+                if error.kind() == std::io::ErrorKind::NotFound
+                    && std::fs::symlink_metadata(probe_dir).is_ok() =>
+            {
+                return Err(format!("{} is a dangling symlink", probe_dir.display()));
+            }
+            Err(error)
+                if !matches!(
+                    error.kind(),
+                    std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
+                ) =>
+            {
+                return Err(format!("cannot inspect {}: {error}", probe_dir.display()));
+            }
+            Err(_) => match probe_dir.parent() {
+                Some(parent) if parent.as_os_str().is_empty() => {
+                    probe_dir = Path::new(".");
+                }
+                Some(parent) => probe_dir = parent,
+                None => return Ok(None),
+            },
+        }
+    }
+}
+
+/// Creates and removes one exclusive probe file in `dir`; the error when
+/// that fails.
+fn probe_writable(probe_dir: &Path) -> Option<String> {
+    let probe = probe_dir.join(probe_name("file"));
+    match std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&probe)
+    {
+        Ok(file) => {
+            drop(file);
+            let _ = std::fs::remove_file(&probe);
+            None
+        }
+        Err(error) => Some(format!("cannot write in {}: {error}", probe_dir.display())),
+    }
 }
 
 const GENERATED_WORKFLOW_PATH: &str = ".github/workflows/ripr.yml";
@@ -2306,6 +2444,75 @@ fn report_config_status(
 mod tests {
     use super::super::tests::{args, unique_command_test_dir};
     use super::*;
+
+    #[test]
+    fn cache_unwritable_reason_names_a_blocking_file_and_accepts_a_creatable_path()
+    -> Result<(), String> {
+        let root = unique_command_test_dir("cache-writable");
+        std::fs::create_dir_all(&root).map_err(|error| error.to_string())?;
+        let blocker = root.join("blocker");
+        std::fs::write(&blocker, "file").map_err(|error| error.to_string())?;
+
+        let reason = cache_unwritable_reason(&blocker.join("cache"));
+        assert!(
+            reason
+                .as_deref()
+                .is_some_and(|text| text.contains("is not a directory")),
+            "{reason:?}"
+        );
+        // A missing cache under a writable parent is fine and is not created.
+        let missing = root.join("not-yet").join("cache");
+        assert_eq!(cache_unwritable_reason(&missing), None);
+        assert!(!root.join("not-yet").exists());
+        let probes = std::fs::read_dir(&root)
+            .map_err(|error| error.to_string())?
+            .flatten()
+            .filter(|entry| entry.file_name().to_string_lossy().contains("doctor-probe"))
+            .count();
+        assert_eq!(probes, 0, "probe file must be removed");
+        // An existing layer directory is probed too; a layer path that is a
+        // regular file blocks every entry of that layer even though the
+        // base itself is writable.
+        let base = root.join("cache-base");
+        std::fs::create_dir_all(base.join("repo-seam-facts")).map_err(|error| error.to_string())?;
+        assert_eq!(cache_unwritable_reason(&base), None);
+        assert!(
+            !base.join("repo-file-facts").exists(),
+            "missing layers must not be created"
+        );
+        std::fs::write(base.join("repo-file-facts"), "file").map_err(|error| error.to_string())?;
+        let layer_reason = cache_unwritable_reason(&base);
+        assert!(
+            layer_reason.as_deref().is_some_and(
+                |text| text.contains("repo-file-facts") && text.contains("is not a directory")
+            ),
+            "{layer_reason:?}"
+        );
+        // A regular file at a versioned entry directory blocks that cache
+        // even though its layer directory is writable.
+        std::fs::remove_file(base.join("repo-file-facts")).map_err(|error| error.to_string())?;
+        std::fs::create_dir_all(base.join("repo-file-facts")).map_err(|error| error.to_string())?;
+        std::fs::write(
+            base.join("repo-file-facts")
+                .join(analysis::seam_cache::FILE_FACT_CACHE_SCHEMA_VERSION),
+            "file",
+        )
+        .map_err(|error| error.to_string())?;
+        let version_reason = cache_unwritable_reason(&base);
+        assert!(
+            version_reason.as_deref().is_some_and(|text| text
+                .contains(analysis::seam_cache::FILE_FACT_CACHE_SCHEMA_VERSION)
+                && text.contains("is not a directory")),
+            "{version_reason:?}"
+        );
+        // A relative cache path with no parent component probes the cwd.
+        assert_eq!(
+            cache_unwritable_reason(Path::new("ripr-cache-nonexistent")),
+            None
+        );
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
 
     #[test]
     fn generated_workflow_line_flags_unpinned_and_other_version_installs() {

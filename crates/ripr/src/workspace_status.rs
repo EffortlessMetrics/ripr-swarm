@@ -109,9 +109,13 @@ impl RootErrorCode {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub(crate) struct ConfigurationStatus {
     pub(crate) project_config_state: ProjectConfigState,
+    /// The fingerprint of the exact loaded `ripr.toml` text, present only
+    /// when `project_config_state` is `loaded` (#6825).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) project_config_identity: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
@@ -119,6 +123,9 @@ pub(crate) struct ConfigurationStatus {
 pub(crate) enum ProjectConfigState {
     BuiltInDefaultsOnly,
     DetectedNotLoaded,
+    /// A `ripr.toml` was found and loaded: the analysis path now consumes
+    /// it (#6825). `project_config_identity` carries its text fingerprint.
+    Loaded,
     Unavailable,
 }
 
@@ -169,6 +176,7 @@ impl WorkspaceStatus {
         };
         let configuration = ConfigurationStatus {
             project_config_state: resolved.project_config_state,
+            project_config_identity: resolved.project_config_identity,
         };
 
         let status = Self {
@@ -217,6 +225,10 @@ fn limitations(project_config_state: ProjectConfigState) -> Vec<&'static str> {
 struct ResolvedRoot {
     root: RootStatus,
     project_config_state: ProjectConfigState,
+    /// The fingerprint of the loaded `ripr.toml` text; `Some` only with
+    /// [`ProjectConfigState::Loaded`] (#6825). Never part of the "no config
+    /// file" and "unreadable config" states.
+    project_config_identity: Option<String>,
     /// The validated canonical root path, retained process-locally for
     /// in-process consumers (MCP refresh). Always `None` for an unavailable
     /// root and never part of the serialized status document.
@@ -282,11 +294,25 @@ fn validate_root(root: PathBuf, source: RootSource) -> ResolvedRoot {
     if markers.is_empty() {
         return unavailable_root_with_source(source, RootErrorCode::RepositoryMarkerMissing);
     }
-    let project_config_state = if crate::config::config_present_at_root(&canonical) {
-        ProjectConfigState::DetectedNotLoaded
-    } else {
-        ProjectConfigState::BuiltInDefaultsOnly
-    };
+    // The analysis path consumes the workspace's own configuration, so the
+    // status projects the honest posture (#6825): `loaded` with the text
+    // fingerprint when a config resolves, `detected_not_loaded` when a
+    // config entry is present but cannot be read or parsed (the refresh
+    // attempt fails closed), and built-in defaults when no config entry
+    // exists at all — including feature-gated language auto-enable
+    // refusals, which stay file-state facts here and disclose themselves
+    // at analysis time.
+    let (project_config_state, project_config_identity) =
+        match crate::config::load_for_root(&canonical) {
+            Ok(config) => match crate::config::loaded_config_identity(&config) {
+                Some(identity) => (ProjectConfigState::Loaded, Some(identity)),
+                None => (ProjectConfigState::BuiltInDefaultsOnly, None),
+            },
+            Err(_) if crate::config::config_discovered_for_root(&canonical) => {
+                (ProjectConfigState::DetectedNotLoaded, None)
+            }
+            Err(_) => (ProjectConfigState::BuiltInDefaultsOnly, None),
+        };
     ResolvedRoot {
         root: RootStatus {
             state: RootState::Validated,
@@ -296,6 +322,7 @@ fn validate_root(root: PathBuf, source: RootSource) -> ResolvedRoot {
             error_code: None,
         },
         project_config_state,
+        project_config_identity,
         canonical_root: Some(canonical),
     }
 }
@@ -314,6 +341,7 @@ fn unavailable_root_with_source(source: RootSource, error_code: RootErrorCode) -
             error_code: Some(error_code),
         },
         project_config_state: ProjectConfigState::Unavailable,
+        project_config_identity: None,
         canonical_root: None,
     }
 }
@@ -403,7 +431,7 @@ mod tests {
         std::fs::create_dir_all(&root).map_err(|error| error.to_string())?;
         std::fs::write(root.join("Cargo.toml"), "[workspace]\nmembers = []\n")
             .map_err(|error| error.to_string())?;
-        std::fs::write(root.join("ripr.toml"), "mode = \"draft\"\n")
+        std::fs::write(root.join("ripr.toml"), "[analysis]\nmode = \"draft\"\n")
             .map_err(|error| error.to_string())?;
 
         let status = WorkspaceStatus::resolve_with_root(Some(root.clone())).0;
@@ -417,8 +445,18 @@ mod tests {
         if status.workspace_state != WorkspaceState::Ready {
             return Err("expected a ready workspace status".to_string());
         }
-        if status.configuration.project_config_state != ProjectConfigState::DetectedNotLoaded {
-            return Err("ripr.toml must be detected without being loaded".to_string());
+        if status.configuration.project_config_state != ProjectConfigState::Loaded {
+            return Err("a loadable ripr.toml must project the loaded posture".to_string());
+        }
+        let identity = status
+            .configuration
+            .project_config_identity
+            .clone()
+            .ok_or_else(|| "a loaded config must publish its text fingerprint".to_string())?;
+        if !identity.starts_with("fnv1a64:") {
+            return Err(format!(
+                "project_config_identity must be the text fingerprint: {identity}"
+            ));
         }
         if status.trust.project_config_trust != ProjectConfigTrust::NotEstablished
             || status.trust.effective_access != EffectiveAccess::ReadOnlyStatus
@@ -440,9 +478,10 @@ mod tests {
         std::fs::remove_dir_all(root).map_err(|error| error.to_string())
     }
 
-    /// The `ripr.toml` limitation must follow detection: present only when the
-    /// root has a `ripr.toml`, absent for a root without one and for an
-    /// unavailable root.
+    /// The `ripr.toml` limitation must follow the load posture (#6825):
+    /// absent for a loadable config (`loaded`), present only when a config
+    /// entry exists but cannot be read or parsed (`detected_not_loaded`),
+    /// and absent for a root without one and for an unavailable root.
     #[test]
     fn ripr_toml_limitation_is_reported_only_when_detected() -> Result<(), String> {
         const DETECTED: &str =
@@ -463,15 +502,30 @@ mod tests {
             ));
         }
 
-        std::fs::write(root.join("ripr.toml"), "mode = \"draft\"\n")
+        // A loadable ripr.toml is loaded: no detected-not-loaded limitation.
+        std::fs::write(root.join("ripr.toml"), "[analysis]\nmode = \"draft\"\n")
             .map_err(|error| error.to_string())?;
         let with = WorkspaceStatus::resolve_with_root(Some(root.clone())).0;
-        if with.configuration.project_config_state != ProjectConfigState::DetectedNotLoaded
-            || !with.limitations.contains(&DETECTED)
+        if with.configuration.project_config_state != ProjectConfigState::Loaded
+            || with.limitations.contains(&DETECTED)
         {
             return Err(format!(
-                "a root with ripr.toml must report it detected and not loaded: {:?}",
+                "a loadable ripr.toml must project loaded without the limitation: {:?}",
                 with.limitations
+            ));
+        }
+
+        // A present but unparseable ripr.toml stays detected-not-loaded:
+        // the refresh attempt fails closed with `config_invalid`.
+        std::fs::write(root.join("ripr.toml"), "not valid toml =\n")
+            .map_err(|error| error.to_string())?;
+        let unreadable = WorkspaceStatus::resolve_with_root(Some(root.clone())).0;
+        if unreadable.configuration.project_config_state != ProjectConfigState::DetectedNotLoaded
+            || !unreadable.limitations.contains(&DETECTED)
+        {
+            return Err(format!(
+                "an unparseable ripr.toml must stay detected and not loaded: {:?}",
+                unreadable.limitations
             ));
         }
         std::fs::remove_dir_all(&root).map_err(|error| error.to_string())?;

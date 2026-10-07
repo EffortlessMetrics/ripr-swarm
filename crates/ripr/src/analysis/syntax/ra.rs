@@ -1,11 +1,13 @@
 use crate::domain::{OracleKind, OracleStrength, SymbolId};
+#[cfg(test)]
+use ra_ap_syntax::Edition;
 use ra_ap_syntax::{
-    AstNode, Edition, SourceFile, TextSize,
+    AstNode, SourceFile, TextSize,
     ast::{self, HasAttrs, HasGenericParams, HasName},
 };
 mod property_macros;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -134,7 +136,8 @@ pub(crate) fn parser_oracles_for_function(
 
 /// Module scope of a file's functions, keyed by (fn-token line, name) as
 /// function and test facts record them.
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(into = "ModuleItemScopesWire", from = "ModuleItemScopesWire")]
 pub(crate) struct ModuleItemScopes {
     /// Every fn that is a direct item of the file or of an inline
     /// `mod name { .. }`, mapped to the line span of its innermost inline
@@ -161,18 +164,132 @@ pub(crate) struct ModuleItemScopes {
     pub(crate) bound_names: BTreeMap<(usize, String), std::collections::BTreeSet<String>>,
 }
 
+/// One row per fn, since JSON object keys cannot be `(line, name)` tuples.
+#[derive(serde::Serialize, serde::Deserialize)]
+struct ModuleItemScopesWire {
+    fns: Vec<FnScopeWire>,
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct FnScopeWire {
+    line: usize,
+    name: String,
+    item: FnItemScope,
+    local_use: bool,
+    deferred_code: bool,
+    cfg: bool,
+    direct_calls: Option<BTreeSet<String>>,
+    bound_names: Option<BTreeSet<String>>,
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+enum FnItemScope {
+    /// Nested in another fn, or associated: not a module item.
+    NotItem,
+    TopLevel,
+    Module {
+        start: usize,
+        end: usize,
+    },
+}
+
+impl From<ModuleItemScopes> for ModuleItemScopesWire {
+    fn from(scopes: ModuleItemScopes) -> Self {
+        let mut keys: BTreeSet<(usize, String)> = BTreeSet::new();
+        keys.extend(scopes.item_fns.keys().cloned());
+        keys.extend(scopes.fns_with_local_use.iter().cloned());
+        keys.extend(scopes.fns_with_deferred_code.iter().cloned());
+        keys.extend(scopes.direct_calls.keys().cloned());
+        keys.extend(scopes.fns_with_cfg.iter().cloned());
+        keys.extend(scopes.bound_names.keys().cloned());
+        let fns = keys
+            .into_iter()
+            .map(|key| FnScopeWire {
+                item: match scopes.item_fns.get(&key) {
+                    None => FnItemScope::NotItem,
+                    Some(None) => FnItemScope::TopLevel,
+                    Some(Some((start, end))) => FnItemScope::Module {
+                        start: *start,
+                        end: *end,
+                    },
+                },
+                local_use: scopes.fns_with_local_use.contains(&key),
+                deferred_code: scopes.fns_with_deferred_code.contains(&key),
+                cfg: scopes.fns_with_cfg.contains(&key),
+                direct_calls: scopes.direct_calls.get(&key).cloned(),
+                bound_names: scopes.bound_names.get(&key).cloned(),
+                line: key.0,
+                name: key.1,
+            })
+            .collect();
+        Self { fns }
+    }
+}
+
+impl From<ModuleItemScopesWire> for ModuleItemScopes {
+    fn from(wire: ModuleItemScopesWire) -> Self {
+        let mut scopes = Self::default();
+        for row in wire.fns {
+            let key = (row.line, row.name);
+            match row.item {
+                FnItemScope::NotItem => {}
+                FnItemScope::TopLevel => {
+                    scopes.item_fns.insert(key.clone(), None);
+                }
+                FnItemScope::Module { start, end } => {
+                    scopes.item_fns.insert(key.clone(), Some((start, end)));
+                }
+            }
+            if row.local_use {
+                scopes.fns_with_local_use.insert(key.clone());
+            }
+            if row.deferred_code {
+                scopes.fns_with_deferred_code.insert(key.clone());
+            }
+            if row.cfg {
+                scopes.fns_with_cfg.insert(key.clone());
+            }
+            if let Some(called) = row.direct_calls {
+                scopes.direct_calls.insert(key.clone(), called);
+            }
+            if let Some(bound) = row.bound_names {
+                scopes.bound_names.insert(key, bound);
+            }
+        }
+        scopes
+    }
+}
+
+impl ModuleItemScopes {
+    /// Keep only the call and binding names in `keep`. Same-file helper
+    /// crediting only asks whether a name of one of the file's functions, or
+    /// a name one of them calls, is called or bound, so the producer stores
+    /// this compact form in the file-fact cache.
+    pub(crate) fn retain_names(&mut self, keep: &std::collections::BTreeSet<&str>) {
+        for names in self
+            .direct_calls
+            .values_mut()
+            .chain(self.bound_names.values_mut())
+        {
+            names.retain(|name| keep.contains(name.as_str()));
+        }
+    }
+}
+
 /// The module scopes of `text`'s functions. `None` when the file does not
 /// parse cleanly, so a caller that needs module scope fails closed.
 pub(crate) fn module_item_scopes(text: &str) -> Option<ModuleItemScopes> {
     let parse = parse_clean_source_file(text)?;
-    let line_index = LineIndex::new(text);
+    Some(module_item_scopes_in(&parse.tree(), &LineIndex::new(text)))
+}
+
+/// [`module_item_scopes`] over a tree the caller already parsed cleanly.
+pub(crate) fn module_item_scopes_in(
+    source: &ast::SourceFile,
+    line_index: &LineIndex,
+) -> ModuleItemScopes {
     let mut scopes = ModuleItemScopes::default();
-    for function in parse
-        .tree()
-        .syntax()
-        .descendants()
-        .filter_map(ast::Fn::cast)
-    {
+    for function in source.syntax().descendants().filter_map(ast::Fn::cast) {
         let (Some(name), Some(fn_token)) = (function.name(), function.fn_token()) else {
             continue;
         };
@@ -277,7 +394,7 @@ pub(crate) fn module_item_scopes(text: &str) -> Option<ModuleItemScopes> {
         };
         scopes.item_fns.insert(key, module);
     }
-    Some(scopes)
+    scopes
 }
 
 /// How many times the first `fn` item in `fn_text` binds `name`: every
@@ -370,7 +487,7 @@ pub fn summarize_file_with_parser(path: &Path, text: &str) -> Result<FileFacts, 
     if let Some(reason) = rust_nesting_refusal(text) {
         return Err(reason);
     }
-    let parse = SourceFile::parse(text, Edition::CURRENT);
+    let parse = super::nesting::parse_source_file(text);
     let errors = parse.errors();
     if !errors.is_empty() {
         return Err(format!("parser reported {} syntax errors", errors.len()));
@@ -385,7 +502,6 @@ pub fn summarize_file_with_parser(path: &Path, text: &str) -> Result<FileFacts, 
     let module_declarations = module_declaration_facts(&source, &line_index);
     let mut functions = Vec::new();
     let mut tests = Vec::new();
-    let mut file_calls = Vec::new();
     let mut file_returns = Vec::new();
     let mut file_literals = Vec::new();
     let mut file_probe_shapes = Vec::new();
@@ -445,7 +561,6 @@ pub fn summarize_file_with_parser(path: &Path, text: &str) -> Result<FileFacts, 
         let (nested_fn_names, let_bindings) =
             collect_body_shadow_facts(&function, &|offset| line_index.line(offset), start_line);
 
-        file_calls.extend(calls.clone());
         file_returns.extend(returns.clone());
         file_literals.extend(literals.clone());
         file_probe_shapes.extend(probe_shapes);
@@ -494,8 +609,6 @@ pub fn summarize_file_with_parser(path: &Path, text: &str) -> Result<FileFacts, 
 
     disambiguate_duplicate_symbol_ids(&mut functions);
 
-    file_calls.sort_by(|a, b| a.line.cmp(&b.line).then(a.name.cmp(&b.name)));
-    file_calls.dedup_by(|a, b| a.line == b.line && a.name == b.name && a.text == b.text);
     file_returns.sort_by(|a, b| a.line.cmp(&b.line).then(a.text.cmp(&b.text)));
     file_returns.dedup_by(|a, b| a.line == b.line && a.text == b.text);
     file_literals.sort_by(|a, b| a.line.cmp(&b.line).then(a.value.cmp(&b.value)));
@@ -514,11 +627,20 @@ pub fn summarize_file_with_parser(path: &Path, text: &str) -> Result<FileFacts, 
             && a.text == b.text
     });
 
+    let mut item_scopes = module_item_scopes_in(&source, &line_index);
+    let keep: std::collections::BTreeSet<&str> = functions
+        .iter()
+        .flat_map(|function: &FunctionFact| {
+            std::iter::once(function.name.as_str())
+                .chain(function.calls.iter().map(|call| call.name.as_str()))
+        })
+        .collect();
+    item_scopes.retain_names(&keep);
+
     Ok(FileFacts {
         path: path_buf,
         functions,
         tests,
-        calls: file_calls,
         returns: file_returns,
         literals: file_literals,
         probe_shapes: file_probe_shapes,
@@ -530,6 +652,10 @@ pub fn summarize_file_with_parser(path: &Path, text: &str) -> Result<FileFacts, 
         ),
         role_provenance: SourceRoleProvenance::default(),
         source: shared_source,
+        item_scopes: Some(Box::new(item_scopes)),
+        macro_candidates: Some(Box::new(super::owner_pin::macro_binding_candidates(
+            &source,
+        ))),
     })
 }
 
@@ -1512,6 +1638,7 @@ fn push_probe_shape_with_text(
         start_line: line_index.line(start),
         end_line: line_index.line_for_range_end(end),
         start_byte: u32::from(start) as usize,
+        end_byte: u32::from(end) as usize,
         kind,
         text,
     });
@@ -1596,6 +1723,11 @@ fn has_error_path_text(text: &str) -> bool {
         || text.contains("map_err")
         || text.contains("bail!")
         || text.contains("anyhow!")
+        // #6695: a `return`/tail `x.ok_or(Type::Variant)?` returns that error.
+        // Same fail-closed reader as the seam identity, so `E::Bad` is
+        // recognised without an `Error` suffix (PR #6786 review, Devin).
+        || (text.contains(".ok_or")
+            && crate::analysis::classify::changed_error_variant(text).is_some())
 }
 
 fn has_effect_text(text: &str) -> bool {
@@ -1772,16 +1904,18 @@ fn extract_parser_oracles(
 /// over — a leaf ident like `snapshot_helper` must not classify, while
 /// `assert_snapshot` / `assert_json_snapshot` do.
 pub(crate) fn is_assertion_macro_leaf(name: &str) -> bool {
+    // `matches!` computes a bool. Only an asserting wrapper observes it;
+    // admitting the computation itself credits discarded values (#5713).
     matches!(
         name,
-        "assert" | "assert_eq" | "assert_ne" | "assert_matches" | "matches"
+        "assert" | "assert_eq" | "assert_ne" | "assert_matches"
     ) || name.ends_with("snapshot")
 }
 
 pub(crate) fn is_assertion_macro(macro_name: &str) -> bool {
     matches!(
         macro_name,
-        "assert" | "assert_eq" | "assert_ne" | "assert_matches" | "matches"
+        "assert" | "assert_eq" | "assert_ne" | "assert_matches"
     ) || macro_name.starts_with("insta::assert")
         || macro_name.contains("snapshot")
 }
@@ -2379,7 +2513,6 @@ pub fn wrap(value: u64) -> Result<Option<u64>, ()> {
             path: std::path::PathBuf::from("nonexistent.rs"),
             functions: vec![],
             tests: vec![],
-            calls: vec![],
             returns: vec![],
             literals: vec![],
             probe_shapes: vec![],
@@ -2388,6 +2521,8 @@ pub fn wrap(value: u64) -> Result<Option<u64>, ()> {
             unresolved_property_macros: Vec::new(),
             role_provenance: Default::default(),
             source: String::new().into(),
+            item_scopes: None,
+            macro_candidates: None,
         };
         let nodes = adapter.changed_nodes(
             crate::analysis::facts::FactSlice::from_slice(&facts.functions),

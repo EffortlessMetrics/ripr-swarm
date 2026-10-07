@@ -52,7 +52,13 @@ pub(in crate::analysis) fn build_finding(
         && evidence.observe.summary == ASSERTION_CONTEXT_UNESTABLISHED
         && !context.owner_assertion_shaped
     {
-        Some("Establish that the test is collected and enabled, that the assertion runs on its executed path, and that it resolves to the intended standard macro, then check the changed returned value.".to_string())
+        Some(match &evidence.assertion_refusal {
+            Some(note) if note.calls_owner => format!(
+                "ripr did not credit the {}; the \"not credited\" note says why. If that assertion does run as the standard macro, this is a static limit, not a missing test: confirm with a real mutation run. Otherwise move the check onto a path that always runs.",
+                note.location
+            ),
+            _ => "Establish that the test is collected and enabled, that the assertion runs on its executed path, and that it resolves to the intended standard macro, then check the changed returned value.".to_string(),
+        })
     } else {
         recommended_next_step(context.probe, &class, context.owner_assertion_shaped)
     };
@@ -66,6 +72,14 @@ pub(in crate::analysis) fn build_finding(
             "static limitation: exact oracle established; no assertion repair is indicated"
                 .to_string(),
         );
+    }
+    // RIPR-SPEC-0240: hand the refusal scope to the gap-admission post-pass,
+    // which runs after every producer-named limit and consumes the marker.
+    if class == ExposureClass::ReachableUnrevealed
+        && evidence.observe.summary == ASSERTION_CONTEXT_UNESTABLISHED
+        && evidence.refusals_are_analyzer_limits
+    {
+        evidence_lines.push(crate::analysis::classify::REFUSALS_ARE_ANALYZER_LIMITS.to_string());
     }
     if invalid_propagation_witness {
         evidence_lines
@@ -337,7 +351,11 @@ fn oracle_text_aligns_with_sink(
 /// without such a binding, alignment is not credited and the repair guidance
 /// is retained (RIPR-SPEC-0001; AGENTS.md: align on entity identity, not
 /// token coincidence).
-fn oracle_binds_sink_identity(oracle: &str, test_body: &str, owner_name: Option<&str>) -> bool {
+pub(in crate::analysis) fn oracle_binds_sink_identity(
+    oracle: &str,
+    test_body: &str,
+    owner_name: Option<&str>,
+) -> bool {
     let Some(owner_name) = owner_name else {
         return false;
     };
@@ -592,6 +610,8 @@ mod tests {
             observe: yes.clone(),
             discriminate: yes,
             reach_ruled_out: true,
+            assertion_refusal: None,
+            refusals_are_analyzer_limits: false,
         }
     }
 

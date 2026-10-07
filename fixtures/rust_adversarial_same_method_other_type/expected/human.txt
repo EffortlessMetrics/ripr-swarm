@@ -10,9 +10,10 @@ Analysis outcome: findings below (analysis complete; complete_with_findings).
 Start here:
   State: a test gap to inspect or repair (top_gap)
   Safe next action: inspect or repair the selected non-exposed gap; this is static advisory evidence only.
-  File: fixtures/rust_adversarial_same_method_other_type/input/src/lib.rs:22
+  File: ./src/lib.rs:22
   Static exposure: weak (weakly_exposed, warning, confidence 0.66)
   Why weak: a related test reaches this change but does not observe the exact changed value
+  Canonical gap: gap:rust:src/lib.rs:impl Iterator for WhileSome::size_hint:return_value:return_value:0_some_self.remaining
   Changed behavior: (0, Some(self.remaining))
   Missing discriminator: No strong discriminator was detected
   Related test (1 of 5): tests/size_hints.rs:4 combinations_inexact_size_hints (ripr could not confirm that this assertion observes the changed behavior)
@@ -23,10 +24,10 @@ Start here:
     - 12 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
-  ripr explain --root fixtures/rust_adversarial_same_method_other_type/input --diff fixtures/rust_adversarial_same_method_other_type/diff.patch --mode fast probe:src_lib.rs:return_value:c861ec7a
-  ripr context --root fixtures/rust_adversarial_same_method_other_type/input --diff fixtures/rust_adversarial_same_method_other_type/diff.patch --mode fast --at probe:src_lib.rs:return_value:c861ec7a
+  ripr explain --root <cwd>/fixtures/rust_adversarial_same_method_other_type/input --diff <cwd>/fixtures/rust_adversarial_same_method_other_type/diff.patch --mode fast probe:src_lib.rs:return_value:c861ec7a
+  ripr context --root <cwd>/fixtures/rust_adversarial_same_method_other_type/input --diff <cwd>/fixtures/rust_adversarial_same_method_other_type/diff.patch --mode fast --at probe:src_lib.rs:return_value:c861ec7a
 Write a test for it:
-  ripr agent stub --root fixtures/rust_adversarial_same_method_other_type/input --at src/lib.rs:22
+  ripr agent stub --root <cwd>/fixtures/rust_adversarial_same_method_other_type/input --at src/lib.rs:22
 
 Hidden:
   All 1 omitted finding(s) are base-side evidence, not candidate edit targets.

@@ -434,7 +434,11 @@ pub(crate) fn validate_repo_exposure_artifact(
             "agent verify {label} artifact is missing a sha256 content commitment"
         ));
     }
-    let recomputed = content_sha256_with_placeholder(raw).map_err(|error| error.to_string())?;
+    // The typed parse above already established these bytes as well-formed,
+    // so the commitment check skips its own well-formedness pre-parse
+    // (#5301 item 7).
+    let recomputed =
+        content_sha256_with_placeholder_preparsed(raw).map_err(|error| error.to_string())?;
     if recomputed != identity.content_sha256 {
         return Err(format!(
             "agent verify {label} artifact content commitment mismatch: declared {}, recomputed {}",
@@ -775,6 +779,58 @@ pub(crate) fn current_git_head(root: &Path) -> Result<String, String> {
     Ok(head.to_string())
 }
 
+/// A HEAD read that also detects an A-B-A swap between two reads (#5930).
+/// The `head` is the commit `current_git_head` reports; `reflog_top` is the
+/// newest reflog entries' fingerprint and `reflog_len` is the total HEAD
+/// reflog entry count. Two snapshots are equal only when all three match,
+/// so a swap that returns HEAD to the same commit still shows as movement.
+/// The count is the append-sensitive position: every HEAD update appends
+/// exactly one reflog entry, so a repeated A-B-A cycle advances the count
+/// even when the newest entries read identically at both snapshots (the
+/// window alone collides there because `%ct` is the commit timestamp, not
+/// the update time). An unreadable or missing reflog degrades to an empty
+/// fingerprint with count zero (HEAD-only comparison, the previous
+/// behavior) rather than failing flows in repositories without reflogs;
+/// that residual is documented, not silent.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct HeadIdentity {
+    pub(crate) head: String,
+    pub(crate) reflog_top: String,
+    pub(crate) reflog_len: usize,
+}
+
+pub(crate) fn current_git_head_identity(root: &Path) -> Result<HeadIdentity, String> {
+    let head = current_git_head(root)?;
+    // Lenient by design (see struct docs): only the HEAD read is strict.
+    // One spawn reads the whole HEAD reflog so the count and the window
+    // are one consistent snapshot; the newest three formatted entries keep
+    // single-cycle detection independent of the count.
+    let (reflog_len, reflog_top) =
+        match git_spawn(root, &["log", "-g", "--format=%H %ct %gs", "HEAD"]) {
+            Ok(output) if output.status.success() => {
+                let text = String::from_utf8_lossy(&output.stdout);
+                let entries: Vec<&str> = text
+                    .lines()
+                    .map(str::trim_end)
+                    .filter(|line| !line.is_empty())
+                    .collect();
+                let top = entries
+                    .iter()
+                    .take(3)
+                    .copied()
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                (entries.len(), top)
+            }
+            _ => (0, String::new()),
+        };
+    Ok(HeadIdentity {
+        head,
+        reflog_top,
+        reflog_len,
+    })
+}
+
 /// The object type Git reports for a well-formed revision, or `None` when the
 /// object is absent. Callers must establish repository liveness first: any
 /// non-zero `git cat-file` exit is read as absence, not as an infrastructure
@@ -1071,6 +1127,18 @@ impl<'a> CommitmentScanner<'a> {
 fn governed_commitment_span(raw: &str) -> Result<(usize, usize), ContentCommitmentRejection> {
     serde_json::from_str::<Value>(raw)
         .map_err(|error| ContentCommitmentRejection::MalformedJson(error.to_string()))?;
+    governed_commitment_span_preparsed(raw)
+}
+
+/// Span location over bytes already shown well-formed by a typed parse
+/// (#5301 item 7). `validate_repo_exposure_artifact` parses the same bytes
+/// into `RepoExposureDocument` first, so the well-formedness pre-parse above
+/// is dead work on that path: its `Value` is discarded and its error is
+/// unreachable. Standalone commitment readers without a prior parse keep the
+/// checking entry point.
+fn governed_commitment_span_preparsed(
+    raw: &str,
+) -> Result<(usize, usize), ContentCommitmentRejection> {
     match CommitmentScanner::locate(raw)?.as_slice() {
         [] => Err(ContentCommitmentRejection::Missing),
         [(start, end)] => Ok((*start, *end)),
@@ -1090,7 +1158,24 @@ pub(crate) fn recompute_content_commitment(raw: &str) -> Result<String, String> 
 }
 
 fn content_sha256_with_placeholder(raw: &str) -> Result<String, ContentCommitmentRejection> {
-    let (value_start, value_end) = governed_commitment_span(raw)?;
+    let span = governed_commitment_span(raw)?;
+    content_sha256_for_commitment_span(raw, span)
+}
+
+/// Commitment recomputation over bytes already shown well-formed by a typed
+/// parse (#5301 item 7): skips the discarded full-`Value` well-formedness
+/// parse. All other behavior, including every rejection, is identical.
+fn content_sha256_with_placeholder_preparsed(
+    raw: &str,
+) -> Result<String, ContentCommitmentRejection> {
+    let span = governed_commitment_span_preparsed(raw)?;
+    content_sha256_for_commitment_span(raw, span)
+}
+
+fn content_sha256_for_commitment_span(
+    raw: &str,
+    (value_start, value_end): (usize, usize),
+) -> Result<String, ContentCommitmentRejection> {
     let declared = &raw[value_start..value_end];
     if !declared.starts_with("sha256:")
         || declared.len() != 71
@@ -1262,6 +1347,85 @@ mod tests {
         Ok(root)
     }
 
+    fn commit_file(root: &Path, name: &str, body: &str) -> Result<(), String> {
+        std::fs::write(root.join(name), body)
+            .map_err(|error| format!("write fixture file: {error}"))?;
+        run_git(root, &["add", "--", name])?;
+        run_git(root, &["commit", "--quiet", "-m", name])?;
+        Ok(())
+    }
+
+    #[test]
+    fn head_identity_detects_an_a_b_a_swap_between_reads() -> Result<(), String> {
+        // Issue #5930: a HEAD swap that returns to the same commit inside
+        // an evaluation window is invisible to commit comparison, so the
+        // after-phase `current` check must compare head identities. The
+        // swap is sequenced between the two reads (the deterministic
+        // equivalent of a mid-evaluation interleave): no timing involved.
+        let root = temporary_git_root()?;
+        commit_file(&root, "a.txt", "a")?;
+        let before = current_git_head_identity(&root)?;
+        // A quiet re-read with no movement must stay equal: no false positive.
+        let steady = current_git_head_identity(&root)?;
+        assert_eq!(before, steady);
+        // A -> B -> A: HEAD ends where it started, but the reflog grew.
+        commit_file(&root, "b.txt", "b")?;
+        run_git(&root, &["reset", "--quiet", "--soft", "HEAD~1"])?;
+        let after = current_git_head_identity(&root)?;
+        assert_eq!(
+            before.head, after.head,
+            "the old commit-only check would pass this swap"
+        );
+        assert_ne!(
+            before, after,
+            "head identity must detect the A-B-A swap: {before:?} vs {after:?}"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn head_identity_counts_repeated_a_b_a_cycles_apart() -> Result<(), String> {
+        // #6827 review: the newest-entries window alone collides across a
+        // repeated A-B-A cycle (reset messages and `%ct` commit timestamps
+        // repeat), so the reflog length must discriminate. The first
+        // snapshot is taken after three alternating resets (the window
+        // reads A, B, A); another B-to-A cycle reproduces that window
+        // byte-identically while the count advances.
+        let root = temporary_git_root()?;
+        commit_file(&root, "a.txt", "a")?;
+        let a = current_git_head(&root)?;
+        commit_file(&root, "b.txt", "b")?;
+        let b = current_git_head(&root)?;
+        for target in [&a, &b, &a] {
+            run_git(&root, &["reset", "--quiet", "--soft", target.as_str()])?;
+        }
+        let first = current_git_head_identity(&root)?;
+        for target in [&b, &a] {
+            run_git(&root, &["reset", "--quiet", "--soft", target.as_str()])?;
+        }
+        let second = current_git_head_identity(&root)?;
+        assert_eq!(
+            first.head, second.head,
+            "the window-collision setup must return HEAD to the same commit"
+        );
+        assert_eq!(
+            first.reflog_top, second.reflog_top,
+            "the window must collide here or this test proves nothing about the count"
+        );
+        assert_eq!(
+            second.reflog_len,
+            first.reflog_len + 2,
+            "two more HEAD updates must advance the reflog count by two"
+        );
+        assert_ne!(
+            first, second,
+            "head identity must detect the repeated A-B-A cycle: {first:?} vs {second:?}"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
     #[test]
     fn commitment_scanner_reports_unterminated_string_defense_in_depth() {
         // Unreachable through `content_sha256_with_placeholder`: the
@@ -1424,6 +1588,56 @@ mod tests {
         let raw = r#"{"artifact":{"note":"see \"content_sha256\" in the schema","content_sha256":"sha256:0000000000000000000000000000000000000000000000000000000000000000"}}"#;
         let result = content_sha256_with_placeholder(raw);
         assert!(result.is_ok(), "unexpected rejection: {result:?}");
+    }
+
+    // #5301 item 7: the preparsed commitment path must agree with the
+    // checked path on every well-formed input. Malformed JSON is out of
+    // contract for the preparsed entry point (its caller parses first),
+    // so the battery below is well-formed only; malformed inputs stay
+    // covered by the checked-path tests above.
+    #[test]
+    fn preparsed_commitment_matches_checked_path() {
+        let zeroes = "0".repeat(64);
+        let valid = format!(r#"{{"artifact":{{"content_sha256":"sha256:{zeroes}"}}}}"#);
+        let duplicate = format!(
+            r#"{{"artifact":{{"content_sha256":"sha256:{zeroes}","content_sha256":"sha256:{zeroes}"}}}}"#
+        );
+        let escaped = format!(
+            r#"{{"artifact":{{"note":"see \"content_sha256\" in the schema","content_sha256":"sha256:{zeroes}"}}}}"#
+        );
+        let missing = r#"{"artifact":{}}"#.to_string();
+        let wrong_path = format!(r#"{{"other":{{"content_sha256":"sha256:{zeroes}"}}}}"#);
+        let non_string = r#"{"artifact":{"content_sha256":123}}"#.to_string();
+        let non_hex = format!(
+            r#"{{"artifact":{{"content_sha256":"sha256:{g}"}}}}"#,
+            g = "g".repeat(64)
+        );
+        for raw in [
+            &valid,
+            &duplicate,
+            &escaped,
+            &missing,
+            &wrong_path,
+            &non_string,
+            &non_hex,
+        ] {
+            assert_eq!(
+                content_sha256_with_placeholder(raw),
+                content_sha256_with_placeholder_preparsed(raw),
+                "preparsed path must agree with the checked path on {raw}"
+            );
+        }
+        assert!(
+            content_sha256_with_placeholder_preparsed(&valid).is_ok(),
+            "valid artifact must be accepted through the preparsed path"
+        );
+        assert!(
+            matches!(
+                content_sha256_with_placeholder_preparsed(&duplicate),
+                Err(ContentCommitmentRejection::Duplicate)
+            ),
+            "duplicate commitment must stay a Duplicate rejection on the preparsed path"
+        );
     }
 
     fn comparable_artifact() -> ValidatedArtifact {

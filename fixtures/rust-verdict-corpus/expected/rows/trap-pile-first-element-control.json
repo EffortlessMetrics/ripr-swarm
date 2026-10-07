@@ -1,0 +1,19 @@
+{
+  "case_id": "trap-pile-first-element-control",
+  "subject_id": "authored-trap-reach",
+  "origin": "authored",
+  "anchor": "src/piles.rs:2",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "assert_on_container_element",
+  "hard_case": false,
+  "truth": "discriminated",
+  "ideal_verdict": "credited",
+  "observed_verdict": "gap",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "reachable_unrevealed"
+  ],
+  "outcome": "false_actionable",
+  "contradictions": []
+}

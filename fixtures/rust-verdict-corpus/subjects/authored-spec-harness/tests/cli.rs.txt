@@ -1,0 +1,11 @@
+use assert_cmd::Command;
+
+#[test]
+fn tool_prints_the_doubled_value() {
+    Command::cargo_bin("tool")
+        .unwrap()
+        .arg("6")
+        .assert()
+        .success()
+        .stdout("12\n");
+}
