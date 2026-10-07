@@ -921,11 +921,7 @@ fn trusted_macro_sites_in(
             // A file whose stored candidates rule out every trusted name
             // reports no site, so it is not parsed.
             .filter(|(_, _, candidates)| {
-                candidates.is_none_or(|candidates| {
-                    NON_RETURNING_MACROS
-                        .iter()
-                        .any(|name| candidates.may_bind(name))
-                })
+                candidates.is_none_or(MacroBindingCandidates::may_bind_any_trusted)
             })
             .flat_map_iter(|(path, source, _)| {
                 trusted_macro_binding_sites(

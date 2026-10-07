@@ -335,6 +335,15 @@ impl MacroBindingCandidates {
             Self::Names(names) => names.contains(name) || !TRUSTED_MACRO_NAMES.contains(&name),
         }
     }
+
+    /// Whether the scan may report a site for any trusted name. `Names`
+    /// only ever holds trusted names, so this is its emptiness.
+    pub(crate) fn may_bind_any_trusted(&self) -> bool {
+        match self {
+            Self::Any => true,
+            Self::Names(names) => !names.is_empty(),
+        }
+    }
 }
 
 /// [`MacroBindingCandidates`] of a parser-clean file. It mirrors every site
@@ -397,12 +406,9 @@ pub(crate) fn macro_binding_candidates(source: &ast::SourceFile) -> MacroBinding
                 .split("::")
                 .next()
                 .unwrap_or("")
-                .trim()
-                .to_string();
+                .trim();
             for item in tree.syntax().descendants().filter_map(ast::UseTree::cast) {
-                if item.star_token().is_some()
-                    && !matches!(root.as_str(), "crate" | "self" | "super")
-                {
+                if item.star_token().is_some() && !matches!(root, "crate" | "self" | "super") {
                     return MacroBindingCandidates::Any;
                 }
                 // As the scan reads it: `as _` binds no name.
