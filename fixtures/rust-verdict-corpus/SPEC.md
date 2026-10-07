@@ -40,10 +40,11 @@ checkout (for an authored crate, the whole stored crate).
 `corpus.json` holds only the corpus header. Each subject is
 `subjects/<subject_id>.json` beside its retained files, and each case is
 `cases/<case_id>.json` beside its `cases/<case_id>.diff`. A file must be
-named after the id it holds. The expected state is `expected/summary.json`
-(aggregate rates) and one `expected/rows/<case_id>.json` per case. Adding a
-case therefore adds files; only the summary's counts are lines another PR
-may also change.
+named after the id it holds. The expected state is one
+`expected/rows/<case_id>.json` per case and nothing else. Each row carries
+its own contradiction counts, so the aggregate rates are derived from the
+rows when they are read; no summary file is committed. Adding a case
+therefore adds files and changes no line another case PR changes.
 
 ## When
 
@@ -59,8 +60,8 @@ named cases and compares only their rows. The required Rust gate runs
 Each case scores as ideal, abstained, false actionable, false exposed, or
 false silent against its label; contradictions inside ripr's own output are
 counted; authored rates are reported apart from upstream rates; and every
-row must equal its expected row file, the summary must equal
-`expected/summary.json`, and `expected/` holds nothing else.
+row must equal its expected row file and `expected/` holds nothing else
+(a leftover `expected/summary.json` is reported as stale).
 
 ## Must Not
 
@@ -73,13 +74,17 @@ row must equal its expected row file, the summary must equal
 
 Write `cases/<id>.diff` and `cases/<id>.json`, run
 `cargo xtask verdict-corpus check --cases <id>` while iterating, then
-`cargo xtask verdict-corpus bless` once to add its row and refresh the
-summary. When two case PRs both change `expected/summary.json`, merge main
-and run `bless` again; the rows themselves do not conflict.
+`cargo xtask verdict-corpus bless` once to add its row. A case PR does not
+refresh `docs/PUBLIC_PROOF.md` or `metrics/public-proof/verdict-corpus.json`:
+that page is a snapshot of the corpus, refreshed on its own with
+`cargo xtask public-proof --refresh-receipts` when the nightly Public Proof
+Drift lane reports that it lags.
 
 A branch written against the one-file layout (subjects and cases inside
 `corpus.json`) resolves its merge conflict by keeping its own
 `corpus.json`, running `cargo xtask verdict-corpus split`, and then `bless`.
+A branch that still carries `expected/summary.json` deletes it when it
+merges main and runs `bless` again.
 
 ## Refreshing
 
