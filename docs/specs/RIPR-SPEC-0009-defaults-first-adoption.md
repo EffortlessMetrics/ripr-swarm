@@ -206,9 +206,20 @@ itself, with `--worktree` when the change is uncommitted, since plain `ripr
 check` reads committed history only. When the repo-exposure seam limit cuts
 the inventory, pilot classifies the seams on the change's lines on their own,
 within what is left of its deadline, and adds the ones the cut dropped, so they
-still rank change-first and count as analyzed; the seam-limit caveat about the
-change then no longer applies. If that classification fails or runs out of
-time, pilot says so on stderr, keeps the caveat and still completes. When
+still rank change-first and count as analyzed; the inventory seam-limit caveat
+about the change then no longer applies. A successful supplement also retains
+the producer's existing `changed_file_absent_from_worktree` limitations for
+requested changed files absent from the working tree. The terminal and Markdown
+name each path and its recovery action under "Inspected", even when a present
+changed seam is the top recommendation. `current_change.absent_changed_files`
+in the JSON summary records those portable paths; it is omitted if the
+supplement did not run or failed, and is an empty array only after a successful
+supplement found no absent requested files. Neither an empty classification nor
+an empty absence array establishes that every changed seam was classified.
+Restoring a regular source file at the same HEAD makes the next supplement
+inspect it and replaces the absence list, without stale cache disclosures.
+If that classification fails or runs out of time, pilot says so on stderr,
+keeps the inventory caveat and still completes. When
 pilot added any such seam, its `repo-exposure.json` is written without the
 comparable `artifact` identity, because `ripr check` never classifies those
 seams (#6943). The terminal and Markdown "Inspected" block names the scope:
@@ -429,6 +440,23 @@ then the terminal and Markdown output are unchanged and pilot-summary.json
 lists the other languages under language_routes with state supplementary.
 ```
 
+### Pilot discloses absent changed-file coverage and recovery
+
+```text
+Given a committed changed Rust file omitted by sparse checkout and an inventory
+limit that triggers the current-change supplement,
+when a user runs ripr pilot,
+then the JSON summary names the absent file and terminal and Markdown name
+changed_file_absent_from_worktree, the path, and how to restore coverage.
+The disclosure remains when another present changed seam ranks first.
+
+Given that same HEAD and committed diff after the regular source file is restored,
+when a user runs ripr pilot with either a warm or isolated cold cache,
+then the restored changed predicate ranks, absent_changed_files is empty, and
+the missing-file disclosure clears. The supplement does not alter ordinary
+repo-exposure results stored in the diff-independent classified cache.
+```
+
 ### Pilot says whether its top recommendation is part of the current change
 
 ```text
@@ -532,6 +560,11 @@ baseline failure policy.
 ## Test Mapping
 
 Current tests and reports that support the contract:
+
+- `crates/ripr/tests/pilot_missing_changed_files.rs::pilot_discloses_sparse_missing_changed_file_and_recovers_same_head`
+- `crates/ripr/tests/pilot_missing_changed_files.rs::pilot_discloses_mixed_missing_changed_file_even_with_changed_recommendation`
+- `crates/ripr/src/output/pilot/tests.rs::pilot_current_change_preserves_absent_file_coverage_through_empty_and_mixed_supplements`
+- `crates/ripr/src/output/pilot/tests.rs::pilot_renderers_disclose_absent_changed_files_independently_of_top_recommendation`
 
 - `crates/ripr/src/config.rs::tests::generated_init_config_is_conservative_and_parseable`
 - `crates/ripr/src/config.rs::tests::generated_init_config_matches_checked_in_example`

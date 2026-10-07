@@ -1,6 +1,9 @@
 use super::*;
 use crate::agent::loop_commands::check_repo_exposure_command;
-use crate::analysis::ClassifiedSeam;
+use crate::analysis::{ClassifiedChangeReport, ClassifiedSeam};
+use crate::analysis_outcome::{
+    AnalysisLimitation, AnalysisLimitationKind, AnalysisRecovery, AnalysisRecoveryKind, AnalysisStage,
+};
 use crate::analysis::seams::SeamGripClass;
 use crate::analysis::seams::{ExpectedSink, RepoSeam, RequiredDiscriminator, SeamKind};
 use crate::analysis::test_grip_evidence::{
@@ -2098,12 +2101,16 @@ fn folding_the_classified_change_keeps_the_caveat_only_when_it_can_hold() {
     let folded = rust_change.fold_classified_change(
         &mut classified,
         &mut inventory_limit,
-        Some(Ok(vec![on_change])),
+        Some(Ok(ClassifiedChangeReport {
+            classified: vec![on_change],
+            absent_file_limitations: Vec::new(),
+        })),
     );
     assert_eq!(
         (folded.added, folded.caveat_limit, folded.error),
         (1, None, None)
     );
+    assert_eq!(folded.absent_file_limitations, Some(Vec::new()));
     assert_eq!(classified.len(), 1);
     assert_eq!(
         inventory_limit.as_ref().map(|limit| limit.analyzed),
@@ -2118,13 +2125,16 @@ fn folding_the_classified_change_keeps_the_caveat_only_when_it_can_hold() {
     rust_change.fold_classified_change(
         &mut classified,
         &mut inventory_limit,
-        Some(Ok(vec![classified_with(
-            SeamGripClass::Ungripped,
-            "src/a.rs",
-            10,
-            vec![],
-            vec![],
-        )])),
+        Some(Ok(ClassifiedChangeReport {
+            classified: vec![classified_with(
+                SeamGripClass::Ungripped,
+                "src/a.rs",
+                10,
+                vec![],
+                vec![],
+            )],
+            absent_file_limitations: Vec::new(),
+        })),
     );
     assert_eq!(inventory_limit, None);
 
@@ -2138,6 +2148,7 @@ fn folding_the_classified_change_keeps_the_caveat_only_when_it_can_hold() {
     assert_eq!(folded.added, 0);
     assert_eq!(folded.caveat_limit.map(|limit| limit.analyzed), Some(1));
     assert_eq!(folded.error.as_deref(), Some("late"));
+    assert_eq!(folded.absent_file_limitations, None);
     assert!(classified.is_empty());
 
     // Not run on a Rust change (the limit did not fire): the caveat stays
@@ -2145,6 +2156,7 @@ fn folding_the_classified_change_keeps_the_caveat_only_when_it_can_hold() {
     let (mut classified, mut inventory_limit) = (Vec::new(), limit());
     let folded = rust_change.fold_classified_change(&mut classified, &mut inventory_limit, None);
     assert_eq!(folded.caveat_limit.map(|limit| limit.total), Some(5));
+    assert_eq!(folded.absent_file_limitations, None);
 
     // A change with no Rust file: pilot ranks Rust seams only, so the limit
     // cannot hide a seam on it.
@@ -2152,6 +2164,184 @@ fn folding_the_classified_change_keeps_the_caveat_only_when_it_can_hold() {
     let (mut classified, mut inventory_limit) = (Vec::new(), limit());
     let folded = docs_change.fold_classified_change(&mut classified, &mut inventory_limit, None);
     assert_eq!(folded.caveat_limit, None);
+}
+
+/// Supply a typed producer fact while keeping the output oracle literal.
+fn missing_changed_file_limitation() -> Result<AnalysisLimitation, String> {
+    AnalysisLimitation::new(
+        AnalysisLimitationKind::ChangedFileAbsentFromWorktree,
+        AnalysisStage::LanguageAdapter,
+        AnalysisRecovery::new(
+            AnalysisRecoveryKind::Retry,
+            "Restore src/z_hidden.rs, then re-run the analysis.",
+        )?,
+    )
+    .with_path("src/z_hidden.rs")
+}
+
+#[test]
+fn pilot_current_change_preserves_absent_file_coverage_through_empty_and_mixed_supplements()
+-> Result<(), String> {
+    for mixed in [false, true] {
+        let change = changed("src/y_present.rs", 10);
+        let mut classified = Vec::new();
+        let mut inventory_limit = Some(crate::analysis::SeamLimitInfo {
+            analyzed: 1,
+            total: 5,
+            source: crate::analysis::SeamLimitSource::Default,
+        });
+        let supplement = if mixed {
+            vec![classified_with(
+                SeamGripClass::Ungripped,
+                "src/y_present.rs",
+                10,
+                vec![],
+                vec![],
+            )]
+        } else {
+            Vec::new()
+        };
+        let folded = change.fold_classified_change(
+            &mut classified,
+            &mut inventory_limit,
+            Some(Ok(ClassifiedChangeReport {
+                classified: supplement,
+                absent_file_limitations: vec![missing_changed_file_limitation()?],
+            })),
+        );
+        assert_eq!(folded.added, usize::from(mixed));
+        assert_eq!(folded.caveat_limit, None);
+        assert_eq!(folded.error, None);
+        let change = change.with_absent_file_limitations(folded.absent_file_limitations);
+        assert_eq!(inventory_limit.as_ref().map(|limit| limit.total), Some(5));
+        let limitations = change.absent_file_limitations().ok_or("coverage discarded")?;
+        assert_eq!(limitations.len(), 1);
+        assert_eq!(
+            limitations[0].kind,
+            AnalysisLimitationKind::ChangedFileAbsentFromWorktree
+        );
+        assert_eq!(limitations[0].path.as_deref(), Some("src/z_hidden.rs"));
+
+        // A later successful presence check replaces the earlier missing fact.
+        let recovered = change.fold_classified_change(
+            &mut classified,
+            &mut inventory_limit,
+            Some(Ok(ClassifiedChangeReport {
+                classified: Vec::new(),
+                absent_file_limitations: Vec::new(),
+            })),
+        );
+        let recovered = change.with_absent_file_limitations(recovered.absent_file_limitations);
+        assert_eq!(recovered.absent_file_limitations(), Some([].as_slice()));
+    }
+    Ok(())
+}
+
+#[test]
+fn pilot_renderers_disclose_absent_changed_files_independently_of_top_recommendation()
+-> Result<(), String> {
+    let artifacts = pilot_artifacts();
+    for top_is_changed in [false, true] {
+        let file = if top_is_changed {
+            "src/y_present.rs"
+        } else {
+            "src/elsewhere.rs"
+        };
+        let entries = [classified_with(
+            SeamGripClass::Ungripped,
+            file,
+            10,
+            vec![],
+            vec![],
+        )];
+        let change = changed("src/y_present.rs", 10)
+            .with_absent_file_limitations(Some(vec![missing_changed_file_limitation()?]))
+            .with_seams_counted(&entries, None);
+        let mut context = pilot_context(&artifacts);
+        context.current_change = Some(&change);
+        let report: serde_json::Value =
+            serde_json::from_str(&render_pilot_summary_json(&entries, context))
+                .map_err(|error| error.to_string())?;
+        assert_eq!(
+            report["current_change"]["absent_changed_files"],
+            serde_json::json!(["src/z_hidden.rs"])
+        );
+        assert_eq!(
+            report["current_change"]["top_recommendation_in_change"],
+            top_is_changed
+        );
+        for text in [
+            render_pilot_terminal(&entries, context),
+            render_pilot_summary_md(&entries, context),
+        ] {
+            assert!(
+                text.lines().any(|line| {
+                    line.contains("changed_file_absent_from_worktree")
+                        && line.contains("src/z_hidden.rs")
+                        && line.contains("a changed file is absent from the working tree")
+                        && line.contains("Restore src/z_hidden.rs, then re-run the analysis.")
+                }),
+                "{text}"
+            );
+        }
+
+        for coverage in [None, Some(Vec::new())] {
+            let recorded = coverage.is_some();
+            let recovered = change.clone().with_absent_file_limitations(coverage);
+            context.current_change = Some(&recovered);
+            let report: serde_json::Value =
+                serde_json::from_str(&render_pilot_summary_json(&entries, context))
+                    .map_err(|error| error.to_string())?;
+            if recorded {
+                assert_eq!(
+                    report["current_change"]["absent_changed_files"],
+                    serde_json::json!([])
+                );
+            } else {
+                assert!(
+                    report["current_change"].get("absent_changed_files").is_none(),
+                    "{report:#}"
+                );
+            }
+            for text in [
+                render_pilot_terminal(&entries, context),
+                render_pilot_summary_md(&entries, context),
+            ] {
+                assert!(!text.contains("changed_file_absent_from_worktree"), "{text}");
+            }
+        }
+    }
+    // Arbitrary valid filename bytes stay exact in JSON and inert in human output.
+    let hostile = "src/a`b\n\u{1b}[2J\u{202e}.rs";
+    let change = changed("src/y_present.rs", 10).with_absent_file_limitations(Some(vec![
+        missing_changed_file_limitation()?.with_path(hostile)?,
+    ]));
+    let entries = Vec::new();
+    let mut context = pilot_context(&artifacts);
+    context.current_change = Some(&change);
+    let report: serde_json::Value =
+        serde_json::from_str(&render_pilot_summary_json(&entries, context))
+            .map_err(|error| error.to_string())?;
+    assert_eq!(
+        report["current_change"]["absent_changed_files"],
+        serde_json::json!(["src/a`b\n\u{1b}[2J\u{202e}.rs"])
+    );
+    let terminal = render_pilot_terminal(&entries, context);
+    let markdown = render_pilot_summary_md(&entries, context);
+    assert!(
+        terminal.contains("src/a`b\\n\\u{1b}[2J\\u{202e}.rs"),
+        "{terminal}"
+    );
+    assert!(
+        markdown.contains("``src/a`b \\u{1b}[2J\\u{202e}.rs``"),
+        "{markdown}"
+    );
+    for text in [&terminal, &markdown] {
+        assert!(!text.contains('\u{1b}'), "{text}");
+        assert!(!text.contains('\u{202e}'), "{text}");
+        assert_eq!(text.matches("changed_file_absent_from_worktree").count(), 1);
+    }
+    Ok(())
 }
 
 #[test]

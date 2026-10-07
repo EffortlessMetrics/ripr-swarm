@@ -39,6 +39,7 @@ use super::seams::{
 use super::test_grip_evidence;
 use super::workspace;
 use crate::analysis::cancellation;
+use crate::analysis_outcome::AnalysisLimitation;
 use crate::config::RiprConfig;
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -1310,6 +1311,13 @@ pub(crate) fn inventory_diff_scoped_classified_seams_at_with_config(
     )
 }
 
+/// The current change's classified seams and canonical missing-file coverage.
+#[derive(Debug)]
+pub(crate) struct ClassifiedChangeReport {
+    pub(crate) classified: Vec<ClassifiedSeam>,
+    pub(crate) absent_file_limitations: Vec<AnalysisLimitation>,
+}
+
 /// Classify the seams in `changed_files` (root-relative) for which
 /// `on_change` holds, and only those: the other seams in those files get no
 /// evidence. No owner names are passed, so no caller files join the scope.
@@ -1323,7 +1331,7 @@ pub(crate) fn classify_seams_in_files_at_with_config(
     config: &RiprConfig,
     changed_files: &[PathBuf],
     on_change: &dyn Fn(&RepoSeam) -> bool,
-) -> Result<Vec<ClassifiedSeam>, String> {
+) -> Result<ClassifiedChangeReport, String> {
     let stages = DiffScopeEvidenceStages {
         first: on_change,
         sufficient: &|_| true,
@@ -1337,7 +1345,14 @@ pub(crate) fn classify_seams_in_files_at_with_config(
         Some(&stages),
         None,
     )
-    .map(|inventory| inventory.classified)
+    .and_then(|inventory| {
+        let absent_file_limitations =
+            workspace::limitations_for_absent_changed_files(&inventory.absent_changed_files)?;
+        Ok(ClassifiedChangeReport {
+            classified: inventory.classified,
+            absent_file_limitations,
+        })
+    })
 }
 
 /// The changed Rust files (root-relative) that diff analysis covers but the

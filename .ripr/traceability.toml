@@ -921,6 +921,10 @@ id = "RIPR-SPEC-0009"
 name = "defaults-first adoption"
 spec = "docs/specs/RIPR-SPEC-0009-defaults-first-adoption.md"
 tests = [
+  "crates/ripr/tests/pilot_missing_changed_files.rs::pilot_discloses_sparse_missing_changed_file_and_recovers_same_head",
+  "crates/ripr/tests/pilot_missing_changed_files.rs::pilot_discloses_mixed_missing_changed_file_even_with_changed_recommendation",
+  "crates/ripr/src/output/pilot/tests.rs::pilot_current_change_preserves_absent_file_coverage_through_empty_and_mixed_supplements",
+  "crates/ripr/src/output/pilot/tests.rs::pilot_renderers_disclose_absent_changed_files_independently_of_top_recommendation",
   "crates/ripr/tests/cli_smoke/implicit_git_root.rs::invalid_ancestor_git_markers_preserve_python_and_cache_context",
   "crates/ripr/tests/cli_smoke/implicit_git_root.rs::inherited_git_selectors_cannot_certify_an_inert_ancestor",
   "crates/ripr/tests/cli_smoke/implicit_git_root.rs::gitless_saved_diff_does_not_cross_a_nested_repository_boundary",
@@ -1052,6 +1056,8 @@ fixtures = [
   "fixtures/weak_error_oracle"
 ]
 code = [
+  "crates/ripr/src/analysis/seam_inventory.rs",
+  "crates/ripr/src/cli/commands/pilot.rs",
   "crates/ripr/src/cli/commands/check.rs",
   "crates/ripr/src/cli/commands/cache.rs",
   "crates/ripr/src/git.rs",

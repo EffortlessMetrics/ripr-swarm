@@ -275,7 +275,9 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
     // A snapshot holding seams `ripr check` never classifies is not the same
     // population as its after snapshot, so it is written without identity.
     let change_seams_added = folded.added > 0;
-    let current_change = current_change.with_seams_counted(&classified, folded.caveat_limit);
+    let current_change = current_change
+        .with_absent_file_limitations(folded.absent_file_limitations)
+        .with_seams_counted(&classified, folded.caveat_limit);
     let pilot_budget_info = analysis::apply_pilot_seam_budget(&mut classified, |entry| {
         current_change.keeps_past_budget(entry)
     })?;
@@ -391,7 +393,7 @@ fn classify_change_past_seam_limit(
     inventory_limited: bool,
     remaining_ms: u64,
     announce: bool,
-) -> Option<Result<Vec<analysis::ClassifiedSeam>, String>> {
+) -> Option<Result<analysis::ClassifiedChangeReport, String>> {
     if !inventory_limited {
         return None;
     }
@@ -1151,7 +1153,7 @@ mod tests {
         // The inventory spent the deadline: an error, so the caveat stays.
         assert_eq!(
             classify_change_past_seam_limit(root, &config, &change, true, 0, false)
-                .map(|result| result.map(|classified| classified.len())),
+                .map(|result| result.map(|report| report.classified.len())),
             Some(Err("the inventory used pilot's whole deadline".to_string()))
         );
     }

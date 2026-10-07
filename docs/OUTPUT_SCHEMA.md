@@ -15743,6 +15743,25 @@ recommendation is elsewhere in the repo and name `ripr check --root <root>` for
 the change itself, adding `--worktree` when the diff came from the working tree
 (plain `ripr check` reads committed history only). The partial (timeout) summary carries no `current_change`.
 
+When the repo-exposure inventory limit triggers a successful current-change
+supplement, `current_change.absent_changed_files` is an optional array of
+portable root-relative paths requested by that supplement but absent from the
+working tree. These paths project the producer's existing
+`changed_file_absent_from_worktree` limitations; they are not a missing-seam
+count. The field is omitted if the supplement did not run or failed, and an
+empty array means the successful supplement found no absent requested files.
+An empty array does not assert that every changed seam was classified.
+
+The terminal and Markdown "Inspected" block names each absent path, the
+`changed_file_absent_from_worktree` category, and the producer's recovery
+guidance, even when `top_recommendation_in_change` is true for a present file.
+A successful empty classification retains the same disclosure. Restoring the
+regular source file at the same HEAD lets the next supplement inspect it and
+replace the absence array with an empty array, clearing the stale disclosure.
+This coverage fact is separate from an inventory seam-limit denominator and
+does not alter the diff-independent classified cache. The optional field is
+additive to schema version `0.3` (#6976).
+
 If analysis exceeds the pilot budget, `pilot-summary.json` is still written with
 `status: "partial"` and no ranked seams:
 

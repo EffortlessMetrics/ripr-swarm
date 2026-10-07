@@ -8,8 +8,9 @@ use crate::analysis::ClassifiedSeam;
 use crate::output::agent_seam_packets::{
     suggested_assertion_for_classified_seam, targeted_test_brief_outline_for_classified_seam,
 };
+use crate::output::human::terminal_safe;
 use crate::output::json::escape as json_escape;
-use crate::output::markdown::{PowershellForm, powershell_form};
+use crate::output::markdown::{PowershellForm, code_span, powershell_form};
 use crate::output::path::{display_path, display_path_text};
 use crate::output::pilot::commands::{
     PilotCommands, python_card_first_pr_command, repair_start_command,
@@ -208,6 +209,7 @@ pub(crate) fn render_pilot_summary_md(
     if let Some(scope) = scope_line(context, true) {
         out.push_str(&format!("- Scope: {scope}\n"));
     }
+    push_changed_file_limitations(&mut out, context.current_change, true);
     // #6602: a seam limit cut the classified list before ranking, so every
     // Rust seam count below covers only the seams that were kept, and the
     // actionable count is a lower bound.
@@ -533,6 +535,7 @@ pub(crate) fn render_pilot_terminal(
     if let Some(scope) = scope_line(context, false) {
         out.push_str(&format!("  scope: {scope}\n"));
     }
+    push_changed_file_limitations(&mut out, context.current_change, false);
     // #5497: the terminal is where most users read the empty ranking, so it
     // states the seam limit too; a gap past the cut was never classified.
     if let Some(limit) = context.seam_limit {
@@ -1060,6 +1063,36 @@ impl CurrentChangeLabel {
     }
 }
 
+/// Project the producer's named coverage limitation, even with a changed top pick.
+fn push_changed_file_limitations(
+    out: &mut String,
+    change: Option<&PilotCurrentChange>,
+    markdown: bool,
+) {
+    let Some(limitations) = change.and_then(PilotCurrentChange::absent_file_limitations) else {
+        return;
+    };
+    for limitation in limitations {
+        let path = display_path_text(limitation.path.as_deref().unwrap_or("<unknown path>"));
+        let (prefix, path) = if markdown {
+            ("- Current change limitation", code_span(&path))
+        } else {
+            (
+                "  current change limitation",
+                path.replace('\r', "\\r")
+                    .replace('\n', "\\n")
+                    .replace('\t', "\\t"),
+            )
+        };
+        out.push_str(&terminal_safe(format!(
+            "{prefix}: {}: {path}; {}. {}\n",
+            limitation.kind.as_str(),
+            limitation.kind.plain_label(),
+            limitation.recovery.detail
+        )));
+    }
+}
+
 fn push_current_change_json(
     out: &mut String,
     classified: &[ClassifiedSeam],
@@ -1075,6 +1108,19 @@ fn push_current_change_json(
     json_string_field(out, 4, "state", change.state(), true);
     json_optional_string_field(out, 4, "base", change.base(), true);
     json_optional_string_field(out, 4, "reason", change.unavailable_reason(), true);
+    if let Some(limitations) = change.absent_file_limitations() {
+        out.push_str("    \"absent_changed_files\": [");
+        for (index, limitation) in limitations.iter().enumerate() {
+            if index > 0 {
+                out.push_str(", ");
+            }
+            match limitation.path.as_deref() {
+                Some(path) => out.push_str(&format!("\"{}\"", json_escape(path))),
+                None => out.push_str("null"),
+            }
+        }
+        out.push_str("],\n");
+    }
     if change.is_changed() {
         out.push_str(&format!(
             "    \"actionable_seams_in_change\": {},\n",
