@@ -387,8 +387,6 @@ Tests live in `xtask/src/reports/verdict_corpus_tests.rs`:
 - `split_moves_the_one_file_layout_into_records_without_loss`
 - `drift_names_moved_missing_and_stale_rows_and_a_subset_compares_only_its_rows`
 - `summary_derived_from_blessed_rows_equals_the_run_summary`
-- `verdict_corpus_sources_derive_each_rate_from_the_committed_rows`
-- `verdict_receipt_derives_the_summary_from_rows_in_file_name_order`
 - `validator_rejects_a_case_that_borrows_another_cases_diff`
 - `check_all_finds_every_language_corpus_and_refuses_one_without_a_header`
 - `contradiction_counts_use_one_per_finding_unit`
@@ -398,6 +396,12 @@ Tests live in `xtask/src/reports/verdict_corpus_tests.rs`:
 - `validator_requires_a_replayable_mutated_line_that_changes_the_anchor`
 - `validator_refuses_a_mutated_line_on_a_behavior_change`
 - `validator_refuses_a_test_command_the_replay_cannot_run`
+
+The derived rates' consumers are tested beside them:
+`verdict_corpus_sources_derive_each_rate_from_the_committed_rows` in
+`xtask/src/reports/dx_scoreboard/tests.rs` and
+`verdict_receipt_derives_the_summary_from_rows_in_file_name_order` in
+`xtask/src/public_proof.rs`.
 
 Relabel tests live in `xtask/src/reports/verdict_corpus_relabel_tests.rs`:
 

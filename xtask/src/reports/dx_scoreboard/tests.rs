@@ -2541,5 +2541,24 @@ fn verdict_corpus_sources_derive_each_rate_from_the_committed_rows() -> Result<(
         "{}",
         sample.detail
     );
+
+    // A corpus whose rows no longer parse is a failed instrument, not a gap.
+    let dir = crate::tests::temp_dir("dx-verdict-corpus-bad-row");
+    crate::tests::write(
+        &dir.join("corpus.json"),
+        r#"{"spec": "RIPR-SPEC-0219", "non_claims": []}"#,
+    );
+    crate::tests::write(
+        &dir.join("expected/rows/a-case.json"),
+        r#"{"case_id": "a-case"}"#,
+    );
+    let reference = format!("{}#false_verdict_rate", dir.display());
+    let sample = verdict_corpus_sample(&missing, &reference);
+    assert!(
+        matches!(sample.outcome, SampleOutcome::Failed),
+        "{:?} {}",
+        sample.outcome,
+        sample.detail
+    );
     Ok(())
 }

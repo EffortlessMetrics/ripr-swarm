@@ -2512,14 +2512,15 @@ mod tests {
         names.sort();
         let rows = names
             .iter()
-            .take(2)
+            .take(12)
             .map(|path| read_json(path))
             .collect::<Result<Vec<_>, _>>()?;
         let dir = std::env::temp_dir().join(format!(
             "ripr-public-proof-verdict-assembly-test-{}",
             std::process::id()
         ));
-        // Written in reverse; the receipt still lists them in file-name order.
+        // Twelve rows written in reverse: the receipt must still list them in
+        // file-name order, and directory order cannot match that by luck.
         let reversed: Vec<Value> = rows.iter().rev().cloned().collect();
         write_verdict_corpus(&dir, &reversed)?;
         fs::write(
@@ -2538,7 +2539,7 @@ mod tests {
             .collect::<Vec<_>>();
         let expected_ids: Vec<String> = rows.iter().map(|row| text(row, "case_id")).collect();
         assert_eq!(ids, expected_ids);
-        assert_eq!(report["cases_total"], 2);
+        assert_eq!(report["cases_total"], 12);
         assert_eq!(report["spec"], "RIPR-SPEC-0219");
         let scored: u64 = rows
             .iter()

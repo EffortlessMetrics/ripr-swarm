@@ -5,4 +5,4 @@
   dx scoreboard's trust rates (new `verdict-corpus:` source) and the
   public proof receipt. Corpus case PRs now add only their own case and
   row files and leave `docs/PUBLIC_PROOF.md` to a separate refresh, so
-  parallel case PRs no longer conflict on shared generated lines (#6660).
+  parallel case PRs no longer conflict on shared generated lines (#7033, #6660).

@@ -8,6 +8,8 @@
 # `source` says where the number comes from:
 #   measured          the command measures it on this host
 #   file:<path>       read from a committed receipt in this repository
+#   verdict-corpus:<dir>#<rate>
+#                     derived from a verdict corpus's committed expected rows
 #   ingest:<kind>     supplied by `--ingest <file>` from another harness
 #   pending           no instrument yet; always reported as not_measured
 #

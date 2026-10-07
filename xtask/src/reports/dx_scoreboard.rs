@@ -1514,6 +1514,20 @@ fn file_samples(config: &Config, boards: &[String]) -> Result<Vec<Sample>, Strin
 
 fn verdict_corpus_sample(metric: &MetricDef, reference: &str) -> Sample {
     let (dir, pointer) = reference.split_once('#').unwrap_or((reference, ""));
+    // A missing corpus is not measured; a corpus that exists but whose rows
+    // do not parse is a failed instrument, as an unparsable `file:` receipt is.
+    if !Path::new(dir).join("corpus.json").is_file() {
+        let err = format!("{dir}/corpus.json is missing");
+        return Sample {
+            metric: metric.id.clone(),
+            repo: None,
+            outcome: SampleOutcome::NotMeasured,
+            detail: match &metric.pending_reason {
+                Some(reason) => format!("{err}; {reason}"),
+                None => err,
+            },
+        };
+    }
     let report = super::verdict_corpus::expected_report(Path::new(dir)).and_then(|report| {
         serde_json::to_value(&report).map_err(|err| format!("render {dir} report: {err}"))
     });
@@ -1522,11 +1536,8 @@ fn verdict_corpus_sample(metric: &MetricDef, reference: &str) -> Sample {
         Err(err) => Sample {
             metric: metric.id.clone(),
             repo: None,
-            outcome: SampleOutcome::NotMeasured,
-            detail: match &metric.pending_reason {
-                Some(reason) => format!("{err}; {reason}"),
-                None => err,
-            },
+            outcome: SampleOutcome::Failed,
+            detail: err,
         },
     }
 }
