@@ -43,6 +43,12 @@ pub(crate) fn node_assert_message_payload(
     let Argument::ObjectExpression(object) = arg else {
         return None;
     };
+    if object.properties.len() != 1 {
+        // Another property (`code`, `name`) is checked too, and the guard
+        // models only the message, so it could not show the check telling
+        // a message-only change apart.
+        return None;
+    }
     let expected = safe_error_object_payload_text(arg, source)?;
     let message = object_string_property(object, "message")?;
     let kind = if rejects {

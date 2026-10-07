@@ -96,6 +96,7 @@ test("errors", async () => {
   assert.throws(() => parse(""), TypeError);
   await assert.rejects(charge(-1), { message: "charge must be positive" });
   await assert.rejects(charge(-1), { name: "Error" });
+  await assert.rejects(charge(-1), { name: "Error", message: "charge must be positive" });
   assert.doesNotThrow(() => parse("x"), /^Error: blank$/);
 });
 "#,
@@ -113,6 +114,7 @@ test("errors", async () => {
             OracleKind::BroadError,
             OracleKind::BroadError,
             OracleKind::ExactErrorVariant,
+            OracleKind::BroadError,
             OracleKind::BroadError,
             OracleKind::BroadError,
         ],

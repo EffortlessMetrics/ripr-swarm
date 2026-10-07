@@ -300,8 +300,9 @@ strong:
 - `node:assert` `throws` or `rejects` (not chai `assert`, whose
   signature differs) whose second argument is a regex literal anchored
   with `^` and `$`, with no flags and no unescaped `|` outside a
-  character class, or an all-literal object whose `message` is a string
-  literal.
+  character class, or an object whose only property is a string-literal
+  `message` (another property is checked too, and the guard below models
+  only the message).
 
 Rule 4's message-only guard applies to all of them, reading both sides:
 on a message-only change, a check credits only when it passes on exactly
