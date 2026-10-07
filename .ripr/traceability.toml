@@ -11634,7 +11634,7 @@ tests = [
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::review_holes_in_path_and_let_bound_pins_stay_closed",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_test_crate_binding_of_the_library_name_shadows_the_dependency",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_rename_to_the_owners_name_or_a_type_of_it_defeats_every_path",
-  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::test_crate_bindings_of_the_root_are_read_from_every_file_of_that_crate",
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::test_crate_bindings_of_the_root_are_read_from_that_crate_only",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_macro_that_may_emit_the_owners_name_defeats_every_path",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::an_expected_binding_ripr_cannot_read_is_not_a_distinct_value",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_bound_method_result_pins_like_the_method_call",

@@ -3417,6 +3417,11 @@ fn the_owners_library_name_roots_a_path_from_another_crate() -> Result<(), Strin
     Ok(())
 }
 
+/// Items the let-bound negatives lean on: a `const` named like the
+/// binding, and helpers a statement between the `let` and its assertion
+/// may call.
+const LET_BOUND_PRELUDE: &str = "const total: u32 = 12;\nfn touch(_: &u32) {}\nfn assert_eqx() {}\nfn touch_count() -> u32 {\n    1\n}\n";
+
 #[test]
 fn a_result_bound_once_and_only_asserted_pins_like_the_call() {
     for body in [
@@ -3455,10 +3460,20 @@ fn a_result_bound_once_and_only_asserted_pins_like_the_call() {
         "let total = crate::weight(4) + 0;\n        assert_eq!(total, 12);",
         "let total = std::weight(4);\n        assert_eq!(total, 12);",
         "let total = crate::weight(4);\n        let check = |total: u32| total;\n        assert_eq!(total, 12);",
+        // Another statement sharing the assertion's line comes first.
+        "let total = crate::weight(4);\n        assert_eqx(); assert_eq!(total, 12);",
+        "let total = crate::weight(4);\n        assert_eq!(touch_count(), 1); assert_eq!(total, 12);",
     ] {
-        let lib = unit_tests("const total: u32 = 12;\nfn touch(_: &u32) {}\n", body);
+        let lib = unit_tests(LET_BOUND_PRELUDE, body);
         assert!(path_admitted(&lib, "x * 3", None).is_empty(), "{body}");
     }
+    // Control: the same prelude leaves the plain form pinned, so the cases
+    // above are refused by their own guards.
+    let body = "let total = crate::weight(4);\n        assert_eq!(total, 12);";
+    assert_eq!(
+        path_admitted(&unit_tests(LET_BOUND_PRELUDE, body), "x * 3", None),
+        ["assert_eq!(total, 12);"]
+    );
 }
 
 #[test]
@@ -3862,7 +3877,7 @@ fn an_integration_path_is_closed_to_raw_and_macro_shadows() -> Result<(), String
 }
 
 #[test]
-fn test_crate_bindings_of_the_root_are_read_from_every_file_of_that_crate() {
+fn test_crate_bindings_of_the_root_are_read_from_that_crate_only() {
     let tests_root = Path::new(TESTS);
     for (source, binds) in [
         ("#[test]\nfn t() {}\n", false),
@@ -3879,6 +3894,44 @@ fn test_crate_bindings_of_the_root_are_read_from_every_file_of_that_crate() {
             test_crate_may_bind(tests_root, "demo_lib", &index, &roots),
             binds,
             "{source}"
+        );
+    }
+    // Only the test crate's own files count. A `tests/` child module file
+    // routes to no root, and its binding sits inside `mod helper`, so it can
+    // reach the root only through a `use` or glob in the root, which the
+    // root scan refuses. The same binding in the library's crate never
+    // counts.
+    let helper = "tests/buf_tests/helper.rs";
+    let lib_binding = "mod demo_lib {}\npub fn weight(x: u32) -> u32 {\n    x * 3\n}\n";
+    for (files, binds) in [
+        (
+            vec![
+                (LIB, WEIGHT_LIB),
+                (TESTS, "mod helper;\n"),
+                (helper, "use other_dep::demo_lib;\n"),
+            ],
+            false,
+        ),
+        (
+            vec![
+                (LIB, WEIGHT_LIB),
+                (TESTS, "mod helper;\nuse helper::*;\n"),
+                (helper, "pub use other_dep::demo_lib;\n"),
+            ],
+            true,
+        ),
+        (
+            vec![(LIB, lib_binding), (TESTS, "#[test]\nfn t() {}\n")],
+            false,
+        ),
+    ] {
+        let index = index(&files);
+        let roots = TargetRoots::new(&index);
+        assert_eq!(roots.root(Path::new(helper), &index), None);
+        assert_eq!(
+            test_crate_may_bind(tests_root, "demo_lib", &index, &roots),
+            binds,
+            "{files:?}"
         );
     }
 }

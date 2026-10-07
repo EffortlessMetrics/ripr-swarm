@@ -846,7 +846,7 @@ assertions. This repair shares the existing callback without that larger migrati
   `review_holes_in_path_and_let_bound_pins_stay_closed`,
   `a_test_crate_binding_of_the_library_name_shadows_the_dependency`,
   `a_rename_to_the_owners_name_or_a_type_of_it_defeats_every_path`,
-  `test_crate_bindings_of_the_root_are_read_from_every_file_of_that_crate`,
+  `test_crate_bindings_of_the_root_are_read_from_that_crate_only`,
   `a_path_must_resolve_to_the_owners_own_module`,
   `rev3_review_false_pins_stay_closed`,
   `an_integration_path_is_closed_to_raw_and_macro_shadows`,

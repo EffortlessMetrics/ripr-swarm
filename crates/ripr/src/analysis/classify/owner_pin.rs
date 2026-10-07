@@ -3413,7 +3413,14 @@ fn let_bound_owner_call<'a>(
     let gap = masked[after_semicolon..].len() - masked[after_semicolon..].trim_start().len();
     let next_at = after_semicolon + gap;
     let next_line = test.start_line + masked[..next_at].matches('\n').count();
-    if !masked[next_at..].starts_with("assert_eq") || assertion.line != next_line {
+    // The next statement must be an `assert_eq!` of the binding itself, not
+    // `assert_eqx();` or another assertion sharing the line.
+    let next = &masked[next_at..];
+    let next = &next[..next.find(';').unwrap_or(next.len())];
+    if !next.starts_with("assert_eq!")
+        || !contains_as_whole_word(next, operand)
+        || assertion.line != next_line
+    {
         return None;
     }
     let initializer = binding.trim_start();
