@@ -31,12 +31,15 @@ const CORPUS_RECEIPT: &str = "metrics/public-proof/corpus-manifest.json";
 /// does not fail required CI; the page lags until someone refreshes it.
 const CANONICAL_SOURCES: [(&str, &str); 3] = [
     ("dx-scoreboard.json", "metrics/dx-scoreboard/baseline.json"),
-    (
-        "verdict-corpus.json",
-        "fixtures/rust-verdict-corpus/expected/report.json",
-    ),
+    ("verdict-corpus.json", VERDICT_EXPECTED),
     ("corpus-manifest.json", CORPUS_MANIFEST),
 ];
+
+/// The verdict corpus keeps its expected state as `summary.json` plus one
+/// `rows/<case>.json` per case, so parallel case PRs add files instead of
+/// editing one report. Its receipt is that state assembled into one report:
+/// the summary with a `rows` array in row-file-name order.
+const VERDICT_EXPECTED: &str = "fixtures/rust-verdict-corpus/expected";
 
 /// Lane receipts the nightly scoreboard does not ingest. The page reads these
 /// in place when a board would otherwise render as "not measured".
@@ -158,7 +161,7 @@ fn refresh_preview(root: &Path) -> Result<Vec<String>, String> {
                 .map_err(|err| format!("failed to copy {}: {err}", entry.path().display()))?;
         }
         for (receipt, source) in CANONICAL_SOURCES {
-            fs::write(receipts.join(receipt), read_bytes(&root.join(source))?)
+            fs::write(receipts.join(receipt), canonical_bytes(root, source)?)
                 .map_err(|err| format!("failed to write the {receipt} preview: {err}"))?;
         }
         copy_lane_baselines(root, &scratch)?;
@@ -235,8 +238,7 @@ fn check_page(root: &Path, rendered: &str) -> Result<(), String> {
 fn receipt_drift(root: &Path) -> Result<Vec<String>, String> {
     let mut drift = Vec::new();
     for (receipt, source) in CANONICAL_SOURCES {
-        let source_path = root.join(source);
-        let canonical = read_bytes(&source_path)?;
+        let canonical = canonical_bytes(root, source)?;
         let copy = read_bytes(&root.join(RECEIPTS).join(receipt))?;
         if canonical != copy {
             drift.push(format!(
@@ -266,14 +268,48 @@ fn copy_lane_baselines(from: &Path, to: &Path) -> Result<(), String> {
 
 fn refresh_receipts(root: &Path) -> Result<(), String> {
     for (receipt, source) in CANONICAL_SOURCES {
-        let source_path = root.join(source);
-        let bytes = read_bytes(&source_path)?;
+        let bytes = canonical_bytes(root, source)?;
         let target: PathBuf = root.join(RECEIPTS).join(receipt);
         fs::write(&target, bytes)
             .map_err(|err| format!("failed to write {}: {err}", target.display()))?;
         println!("refreshed {RECEIPTS}/{receipt} from {source}");
     }
     Ok(())
+}
+
+/// The bytes a receipt must equal: the source file itself, or for the verdict
+/// corpus its summary and rows assembled into one report.
+fn canonical_bytes(root: &Path, source: &str) -> Result<Vec<u8>, String> {
+    if source != VERDICT_EXPECTED {
+        return read_bytes(&root.join(source));
+    }
+    let dir = root.join(source);
+    let mut report = read_json(&dir.join("summary.json"))?;
+    let rows_dir = dir.join("rows");
+    let mut paths = Vec::new();
+    for entry in fs::read_dir(&rows_dir)
+        .map_err(|err| format!("failed to read {}: {err}", rows_dir.display()))?
+    {
+        let path = entry
+            .map_err(|err| format!("failed to read {}: {err}", rows_dir.display()))?
+            .path();
+        if path.extension().is_some_and(|ext| ext == "json") {
+            paths.push(path);
+        }
+    }
+    paths.sort();
+    let rows = paths
+        .iter()
+        .map(|path| read_json(path))
+        .collect::<Result<Vec<_>, _>>()?;
+    let object = report
+        .as_object_mut()
+        .ok_or_else(|| format!("{source}/summary.json is not a JSON object"))?;
+    object.insert("rows".to_string(), Value::Array(rows));
+    let mut text = serde_json::to_string_pretty(&report)
+        .map_err(|err| format!("failed to render the {source} receipt: {err}"))?;
+    text.push('\n');
+    Ok(text.into_bytes())
 }
 
 fn read_bytes(path: &Path) -> Result<Vec<u8>, String> {
@@ -1074,8 +1110,8 @@ fn header(page: &mut Page, r: &Receipts) -> Result<(), String> {
             "`metrics/public-proof/verdict-corpus.json`".to_string(),
             "Hand-labeled verdict corpus".to_string(),
             format!(
-                "corpus {}",
-                req_str(&r.verdicts, "corpus_version", "verdict-corpus")?
+                "{} cases",
+                req_f64(&r.verdicts, "cases_total", "verdict-corpus")?
             ),
             req_str(&r.verdicts, "spec", "verdict-corpus")?,
         ],
@@ -1560,15 +1596,14 @@ fn verdict_section(page: &mut Page, verdicts: &Value) -> Result<(), String> {
     page.line("## Verdict corpus");
     page.blank();
     page.line(format!(
-        "{} hand-labeled changes (corpus {}, {}). Each has a ground-truth label from real mutants and an ideal verdict; ripr's observed verdict is compared against it. A false actionable verdict is a reported gap on a change whose tests caught every listed mutant. That is the failure that costs a developer's trust, so it is tracked on its own.",
+        "{} hand-labeled changes ({}). Each has a ground-truth label from real mutants and an ideal verdict; ripr's observed verdict is compared against it. A false actionable verdict is a reported gap on a change whose tests caught every listed mutant. That is the failure that costs a developer's trust, so it is tracked on its own.",
         req_f64(verdicts, "cases_total", ctx)?,
-        text(verdicts, "corpus_version"),
         text(verdicts, "spec")
     ));
     page.blank();
     match field(verdicts, "analyzer_version").as_str() {
         Some(version) => page.line(format!("Verdicts were produced by {version}.")),
-        None => page.line("This receipt does not record which ripr build produced the observed verdicts, only the corpus version. The rates below cannot be tied to a specific analyzer revision, and they may not describe the current build."),
+        None => page.line("This receipt does not record which ripr build produced the observed verdicts, only the corpus state. The rates below cannot be tied to a specific analyzer revision, and they may not describe the current build."),
     }
     page.blank();
     let labels = [
@@ -2010,7 +2045,7 @@ fn reproduce(page: &mut Page) {
     page.line("cargo xtask public-proof --check             # fail if this page is stale");
     page.line("```");
     page.blank();
-    page.line("Receipts live in `metrics/public-proof/`. `dx-scoreboard.json`, `verdict-corpus.json` and `corpus-manifest.json` are verbatim copies of `metrics/dx-scoreboard/baseline.json`, `fixtures/rust-verdict-corpus/expected/report.json` and `benchmarks/rust_corpus/manifest.json`; `--check` fails when a source moves ahead of its copy, and `--refresh-receipts` re-copies them. Corpus and ranking scoreboard rows are read from `metrics/dx-scoreboard/corpus-full-baseline.json` (falling back to `corpus-fast-baseline.json`) and `metrics/dx-scoreboard/pilot-ranking-baseline.json` when the copied scoreboard receipt did not ingest those boards. The mutation, first-run, agent and install receipts have no in-repo source to compare against: they are committed copies of harness output from the revisions named in their sections, and `--check` cannot detect a hand edit to them. The mutation spot-check has no command in this repository yet.");
+    page.line("Receipts live in `metrics/public-proof/`. `dx-scoreboard.json`, `verdict-corpus.json` and `corpus-manifest.json` are copies of `metrics/dx-scoreboard/baseline.json`, `fixtures/rust-verdict-corpus/expected/` (its `summary.json` with the `rows/` files assembled in file-name order) and `benchmarks/rust_corpus/manifest.json`; `--check` fails when a source moves ahead of its copy, and `--refresh-receipts` re-copies them. Corpus and ranking scoreboard rows are read from `metrics/dx-scoreboard/corpus-full-baseline.json` (falling back to `corpus-fast-baseline.json`) and `metrics/dx-scoreboard/pilot-ranking-baseline.json` when the copied scoreboard receipt did not ingest those boards. The mutation, first-run, agent and install receipts have no in-repo source to compare against: they are committed copies of harness output from the revisions named in their sections, and `--check` cannot detect a hand edit to them. The mutation spot-check has no command in this repository yet.");
 }
 
 fn lane_revision(receipt: &Value) -> String {
@@ -2160,13 +2195,9 @@ mod tests {
         fs::create_dir_all(dir.join("metrics/dx-scoreboard")).map_err(|e| e.to_string())?;
         fs::write(dir.join("metrics/dx-scoreboard/baseline.json"), "{}")
             .map_err(|e| e.to_string())?;
-        fs::create_dir_all(dir.join("fixtures/rust-verdict-corpus/expected"))
+        fs::create_dir_all(dir.join(VERDICT_EXPECTED).join("rows")).map_err(|e| e.to_string())?;
+        fs::write(dir.join(VERDICT_EXPECTED).join("summary.json"), "{}")
             .map_err(|e| e.to_string())?;
-        fs::write(
-            dir.join("fixtures/rust-verdict-corpus/expected/report.json"),
-            "{}",
-        )
-        .map_err(|e| e.to_string())?;
         let result = receipt_drift(&dir);
         fs::remove_dir_all(&dir).map_err(|e| e.to_string())?;
         assert!(result.is_err_and(|err| err.contains("manifest.json")));
@@ -2445,6 +2476,68 @@ mod tests {
         Ok(())
     }
 
+    /// Writes a canonical source whose bytes reproduce `receipt`: a plain copy,
+    /// or for the verdict corpus a summary plus one row file per receipt row.
+    fn write_source_from_receipt(root: &Path, source: &str, receipt: &Path) -> Result<(), String> {
+        let target = root.join(source);
+        if source != VERDICT_EXPECTED {
+            if let Some(parent) = target.parent() {
+                fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+            }
+            fs::copy(receipt, &target).map_err(|e| e.to_string())?;
+            return Ok(());
+        }
+        let mut report = read_json(receipt)?;
+        let rows = report
+            .as_object_mut()
+            .and_then(|object| object.remove("rows"))
+            .and_then(|rows| rows.as_array().cloned())
+            .unwrap_or_default();
+        fs::create_dir_all(target.join("rows")).map_err(|e| e.to_string())?;
+        fs::write(
+            target.join("summary.json"),
+            serde_json::to_vec_pretty(&report).map_err(|e| e.to_string())?,
+        )
+        .map_err(|e| e.to_string())?;
+        for (index, row) in rows.iter().enumerate() {
+            fs::write(
+                target.join("rows").join(format!("{index:05}.json")),
+                serde_json::to_vec_pretty(row).map_err(|e| e.to_string())?,
+            )
+            .map_err(|e| e.to_string())?;
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn verdict_receipt_assembles_summary_and_rows_in_file_name_order() -> Result<(), String> {
+        let dir = std::env::temp_dir().join(format!(
+            "ripr-public-proof-verdict-assembly-test-{}",
+            std::process::id()
+        ));
+        let expected = dir.join(VERDICT_EXPECTED);
+        fs::create_dir_all(expected.join("rows")).map_err(|e| e.to_string())?;
+        fs::write(expected.join("summary.json"), "{\"cases_total\": 2}")
+            .map_err(|e| e.to_string())?;
+        fs::write(expected.join("rows/b-case.json"), "{\"id\": \"b-case\"}")
+            .map_err(|e| e.to_string())?;
+        fs::write(expected.join("rows/a-case.json"), "{\"id\": \"a-case\"}")
+            .map_err(|e| e.to_string())?;
+        fs::write(expected.join("rows/notes.txt"), "ignored").map_err(|e| e.to_string())?;
+        let bytes = canonical_bytes(&dir, VERDICT_EXPECTED);
+        fs::remove_dir_all(&dir).map_err(|e| e.to_string())?;
+        let report: Value = serde_json::from_slice(&bytes?).map_err(|e| e.to_string())?;
+        let ids = report["rows"]
+            .as_array()
+            .ok_or("rows missing")?
+            .iter()
+            .map(|row| text(row, "id"))
+            .collect::<Vec<_>>();
+        assert_eq!(ids, ["a-case", "b-case"]);
+        assert_eq!(report["cases_total"], 2);
+        Ok(())
+    }
+
     #[test]
     fn source_drift_previews_the_page_lines_that_would_change() -> Result<(), String> {
         let real = workspace_root();
@@ -2461,11 +2554,7 @@ mod tests {
         }
         fs::copy(real.join(PAGE), dir.join(PAGE)).map_err(|e| e.to_string())?;
         for (receipt, source) in CANONICAL_SOURCES {
-            let target = dir.join(source);
-            if let Some(parent) = target.parent() {
-                fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-            }
-            fs::copy(receipts.join(receipt), &target).map_err(|e| e.to_string())?;
+            write_source_from_receipt(&dir, source, &receipts.join(receipt))?;
         }
         copy_lane_baselines(&real, &dir)?;
         // In sync: the check passes before any source moves.
@@ -2578,14 +2667,14 @@ mod tests {
         fs::write(receipts.join("dx-scoreboard.json"), "{\"a\":1}").map_err(|e| e.to_string())?;
         fs::write(dir.join("metrics/dx-scoreboard/baseline.json"), "{\"a\":2}")
             .map_err(|e| e.to_string())?;
-        fs::write(receipts.join("verdict-corpus.json"), "{}").map_err(|e| e.to_string())?;
-        fs::create_dir_all(dir.join("fixtures/rust-verdict-corpus/expected"))
-            .map_err(|e| e.to_string())?;
         fs::write(
-            dir.join("fixtures/rust-verdict-corpus/expected/report.json"),
-            "{}",
+            receipts.join("verdict-corpus.json"),
+            "{\n  \"rows\": []\n}\n",
         )
         .map_err(|e| e.to_string())?;
+        fs::create_dir_all(dir.join(VERDICT_EXPECTED).join("rows")).map_err(|e| e.to_string())?;
+        fs::write(dir.join(VERDICT_EXPECTED).join("summary.json"), "{}")
+            .map_err(|e| e.to_string())?;
         fs::create_dir_all(dir.join("benchmarks/rust_corpus")).map_err(|e| e.to_string())?;
         fs::write(receipts.join("corpus-manifest.json"), "{\"v\":1}").map_err(|e| e.to_string())?;
         fs::write(dir.join(CORPUS_MANIFEST), "{\"v\":2}").map_err(|e| e.to_string())?;

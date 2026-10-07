@@ -173,6 +173,30 @@ differs from the strength-only pick the finding adds
 `typescript_assertion_selection: other_behavior_assertion_passed_over
 (<test>)`, and `typescript_gap_record_for` emits no repair packet for it.
 
+### Owner-path disposition (TypeScript)
+
+Before a TypeScript miss producer (#5495) can say why a related test does not
+catch a change, each candidate must say what it establishes about the
+changed owner. `TypeScriptRelationKind` stays the relation's provenance; each
+`TypeScriptRelatedCandidate` also carries one internal
+`TypeScriptOwnerPathDisposition`, computed once by the same relation and
+identity gates when the candidate is built (#5523):
+
+1. Established or present: `trusted_owner_path` (a trusted relation calls
+   the owner) and `module_entry_path` (a same-module entry reaches the
+   owner; observation in each test is unresolved).
+2. Unknown: `owner_name_call_unanchored`, `heuristic_only` (proximity or
+   name evidence, no owner-name call), and `unresolved_alias_or_reexport` (an
+   import or `require` specifier the resolver cannot place).
+3. Affirmative mismatch: `rejected_local_shadow`,
+   `rejected_unrelated_import_or_destructure`, `rejected_owner_module_mock`
+   and `rejected_spy_fabrication`. An affirmative mismatch wins over an
+   unresolved binding in the same test.
+
+`candidate_observes_owner_call` is a projection of the disposition, not a
+second gate run. The disposition is not serialized, promotes no relation, and
+changes no rank, confidence, class, stage, actionability or rendered output.
+
 ## Required Evidence
 
 - A unit test that a test whose assertions match nothing is listed as
@@ -244,6 +268,9 @@ differs from the strength-only pick the finding adds
   `old_differs` column, Jest/Vitest, AVA, Node assert and chai forms,
   reordering, the later-line tie-break, unmerged facts, row moves, and
   classifier rows matching the aggregate family result).
+- `crates/ripr/src/analysis/language/typescript/owner_path_tests.rs` — the
+  owner-path disposition controls: each parsed case asserts relation,
+  disposition, parity with the frozen pre-#5523 boolean, and the row oracle.
 - `crates/ripr/src/output/typescript_packet_projection.rs`
   (`moved_assertion_selection_is_never_agent_packet_eligible`) — a moved row
   keeps the finding out of the repair packet.
@@ -268,6 +295,7 @@ differs from the strength-only pick the finding adds
 | `crates/ripr/src/output/gap_decision_ledger.rs` | never delegates `no_family_relevant_assertion` or `other_behavior_assertion_passed_over` |
 | `crates/ripr/src/analysis/language/typescript/assertion_selection.rs` | TypeScript family-relevant assertion selection per related test |
 | `crates/ripr/src/analysis/language/typescript/{related_tests,classifier}.rs` | row projection from the selection; `typescript_assertion_selection` move disclosure |
+| `crates/ripr/src/analysis/language/typescript/{types,related_tests}.rs` | `TypeScriptOwnerPathDisposition` per candidate; `candidate_observes_owner_call` projects it |
 | `crates/ripr/src/output/typescript_packet_projection.rs` | no repair packet for a finding with a moved row |
 | `crates/ripr/src/output/human/{sections,evidence_lines,explain}.rs`, `output/json/report.rs`, `lsp/{hover,diagnostics}.rs`, `mcp/gaps.rs` | projections |
 

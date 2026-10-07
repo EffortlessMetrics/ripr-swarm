@@ -1,0 +1,19 @@
+{
+  "case_id": "spec0227-check-guard-same-test-flip",
+  "subject_id": "authored-spec0227-1",
+  "origin": "authored",
+  "anchor": "src/lib.rs:10",
+  "behavior_family": "predicate_side_flip",
+  "test_shape": "same_test_is_err_and_is_ok_at_edge",
+  "hard_case": true,
+  "truth": "discriminated",
+  "ideal_verdict": "credited",
+  "observed_verdict": "gap",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "weakly_exposed"
+  ],
+  "outcome": "false_actionable",
+  "contradictions": []
+}

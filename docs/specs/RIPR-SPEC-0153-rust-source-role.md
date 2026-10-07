@@ -113,7 +113,16 @@ out-of-line `mod` with an unresolved `#[path]` names (a target spelled in
 its `cfg_attr`, a child of one, or its default resolution when every path
 is inside `cfg_attr`), still seeds; when it produces a finding, the run
 records one `language_scope_unsupported` limitation naming the file and
-that declaration, since ripr composes no module context for it. The production-like opt-in still wins. Evidence-role files remain fully indexed:
+that declaration, since ripr composes no module context for it.
+
+The same walk withholds test credit (#6965). A file holding tests that no
+target reaches is never compiled, so diff analysis drops it before
+indexing: a changed file its own orphan check proved unreached, and an
+unchanged file the walk proves unreached. Target roots honor `autotests`,
+`autobenches` and `autoexamples = false`: only declared targets are roots,
+and a name-only declaration keeps its default paths. An incomplete walk
+keeps the file, and so does the production-like opt-in for a changed
+file, since it still seeds probes. The production-like opt-in still wins. Evidence-role files remain fully indexed:
 functions stay available for owner relations, activation input,
 sink/oracle evidence, and selectors. `TestFact` semantics are untouched
 — source role never registers a helper as an executable test selector.
@@ -270,6 +279,10 @@ is not a measured throughput, peak-RSS, constant-memory, or reduced-coverage cla
   raw-identifier edges seed; an unknown tree (`cfg_if!`) keeps seeding;
   the LSP partition drops the same anchors. Each walk regression pairs a
   reached file with a true orphan so neither direction goes unpinned.
+- Unbuilt tests (#6965): a test in a file no `mod` declares (unchanged,
+  or added by the diff) and a `tests/` file that `autotests = false`
+  leaves undeclared relate to nothing, while the declared file and the
+  name-only `[[test]]` target keep their relation.
 - Unresolved `#[path]` routes (#4435): a file reached only through a
   `cfg_attr` path target, its child, or the `cfg_attr`-only default
   resolution records the limitation naming the declaration, while a

@@ -1,0 +1,19 @@
+{
+  "case_id": "regex-syntax-max-scalar-two-byte",
+  "subject_id": "regex",
+  "origin": "upstream",
+  "anchor": "regex-syntax/src/utf8.rs:448",
+  "behavior_family": "match_arm",
+  "test_shape": "unit_test_assert_eq",
+  "hard_case": false,
+  "truth": "discriminated",
+  "ideal_verdict": "credited",
+  "observed_verdict": "gap",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "weakly_exposed"
+  ],
+  "outcome": "false_actionable",
+  "contradictions": []
+}

@@ -1,0 +1,19 @@
+{
+  "case_id": "cell-0197-kept-default",
+  "subject_id": "authored-spec-confirm",
+  "origin": "authored",
+  "anchor": "src/lib.rs:152",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "trait_default_kept_by_tested_impl",
+  "hard_case": true,
+  "truth": "discriminated",
+  "ideal_verdict": "credited",
+  "observed_verdict": "gap",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "weakly_exposed"
+  ],
+  "outcome": "false_actionable",
+  "contradictions": []
+}

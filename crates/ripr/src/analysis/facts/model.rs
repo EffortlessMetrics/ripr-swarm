@@ -1,3 +1,4 @@
+use crate::analysis::syntax::{MacroBindingCandidates, ModuleItemScopes};
 use crate::domain::{OracleKind, OracleStrength, SymbolId};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
@@ -813,6 +814,17 @@ pub struct FileFacts {
     /// cache and bound by its semantic payload digest. Reference-counted so
     /// child [`SourceText`] spans share this allocation (#5415 step 2).
     pub source: Arc<str>,
+    /// The parser producer's module scopes of this file's functions, in the
+    /// compact form same-file helper crediting reads, so a warm index does
+    /// not reparse every test file (#5363). `None` from the lexical fallback
+    /// and from hand-built facts; crediting then parses `source` itself.
+    pub(crate) item_scopes: Option<Box<ModuleItemScopes>>,
+    /// The trusted macro names some binding site in this file may report,
+    /// whatever the workspace context, so the trusted-macro scans skip
+    /// parsing a file that cannot report a requested name (#5363). `None`
+    /// from the lexical fallback and from hand-built facts; the scans then
+    /// parse `source` as before.
+    pub(crate) macro_candidates: Option<Box<MacroBindingCandidates>>,
 }
 
 impl FileFacts {
@@ -1397,6 +1409,10 @@ pub(crate) struct FileFactsWire {
     pub module_declarations: Vec<ModuleDeclarationFact>,
     pub unresolved_property_macros: Vec<UnresolvedPropertyMacroFact>,
     pub source: String,
+    #[serde(default)]
+    pub(crate) item_scopes: Option<Box<ModuleItemScopes>>,
+    #[serde(default)]
+    pub(crate) macro_candidates: Option<Box<MacroBindingCandidates>>,
 }
 
 impl FunctionFactWire {
@@ -1544,6 +1560,8 @@ impl From<&FileFacts> for FileFactsWire {
             module_declarations: facts.module_declarations.clone(),
             unresolved_property_macros: facts.unresolved_property_macros.clone(),
             source: facts.source.to_string(),
+            item_scopes: facts.item_scopes.clone(),
+            macro_candidates: facts.macro_candidates.clone(),
         }
     }
 }
@@ -1629,6 +1647,8 @@ impl FileFactsWire {
             unresolved_property_macros: self.unresolved_property_macros,
             role_provenance: SourceRoleProvenance::default(),
             source,
+            item_scopes: self.item_scopes,
+            macro_candidates: self.macro_candidates,
         })
     }
 }
@@ -1944,6 +1964,8 @@ mod tests {
             unresolved_property_macros: Vec::new(),
             role_provenance: SourceRoleProvenance::default(),
             source: Arc::clone(&source),
+            item_scopes: None,
+            macro_candidates: None,
         };
         // The wire carries spans, not copied bodies.
         let wire = serde_json::to_value(&facts)?;
@@ -2010,6 +2032,8 @@ mod tests {
             unresolved_property_macros: Vec::new(),
             role_provenance: SourceRoleProvenance::default(),
             source: Arc::clone(&source),
+            item_scopes: None,
+            macro_candidates: None,
         };
         let wire = serde_json::to_value(&facts)?;
         assert!(
@@ -2217,6 +2241,8 @@ fn checks_helper() {
             unresolved_property_macros: Vec::new(),
             role_provenance: SourceRoleProvenance::default(),
             source: Arc::clone(&home),
+            item_scopes: None,
+            macro_candidates: None,
         };
         // Paired children span.
         let wire = serde_json::to_value(&facts)?;

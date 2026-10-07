@@ -1,0 +1,19 @@
+{
+  "case_id": "spec0225-wv-sibling-field-read",
+  "subject_id": "authored-spec0225-9",
+  "origin": "authored",
+  "anchor": "src/lib.rs:11",
+  "behavior_family": "field_construction_sibling_read",
+  "test_shape": "sibling_field_read",
+  "hard_case": false,
+  "truth": "not_discriminated",
+  "ideal_verdict": "gap",
+  "observed_verdict": "gap",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "weakly_exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": []
+}

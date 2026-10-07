@@ -1,0 +1,22 @@
+#[derive(Clone, Copy)]
+pub enum Season {
+    Spring,
+    Autumn,
+}
+
+pub fn pause(season: Season) -> u32 {
+    match season {
+        Season::Spring => 6,
+        Season::Autumn => 60,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn spring_pause() {
+        assert_eq!(pause(Season::Spring), 6);
+    }
+}

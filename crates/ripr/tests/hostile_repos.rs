@@ -295,7 +295,14 @@ fn awkward_file_names_each_produce_a_probe() -> Result<(), String> {
     let root = scratch.path.join("names");
     fs::create_dir_all(root.join("src")).map_err(|e| format!("mkdir failed: {e}"))?;
     fs::write(root.join("Cargo.toml"), MANIFEST).map_err(|e| format!("write failed: {e}"))?;
-    fs::write(root.join("src/lib.rs"), "").map_err(|e| format!("write failed: {e}"))?;
+    // Each file is a declared module, so rustc compiles it and every change
+    // seeds a probe; an undeclared file seeds nothing (#4435).
+    let lib = names
+        .iter()
+        .enumerate()
+        .map(|(i, name)| format!("#[path = {name:?}]\nmod m{i};\n"))
+        .collect::<String>();
+    fs::write(root.join("src/lib.rs"), lib).map_err(|e| format!("write failed: {e}"))?;
     for (i, name) in names.iter().enumerate() {
         fs::write(root.join("src").join(name), body(i, 2))
             .map_err(|e| format!("write {name:?} failed: {e}"))?;

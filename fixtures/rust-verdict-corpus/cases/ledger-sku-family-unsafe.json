@@ -1,0 +1,53 @@
+{
+  "case_id": "ledger-sku-family-unsafe",
+  "subject_id": "authored-ledger",
+  "diff": "cases/ledger-sku-family-unsafe.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 33
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "static_unknown",
+  "test_shape": "unit_test_assert_eq",
+  "hard_case": "unsafe block; ripr probes it as an unsafe boundary (static_unknown) beside a return_value probe",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "unsafe { sku.get_unchecked(1..end) }",
+        "mutated_line": "unsafe { sku.get_unchecked(1..end) }",
+        "outcome": "tests_failed",
+        "failing_test": "tests::sku_family_is_the_text_before_the_first_dash",
+        "equivalence_review": "not equivalent: sku_family(\"BOLT-M8\") returns \"OLT\" instead of \"BOLT\""
+      },
+      {
+        "replacement": "unsafe { sku.get_unchecked(..end.saturating_sub(1)) }",
+        "mutated_line": "unsafe { sku.get_unchecked(..end.saturating_sub(1)) }",
+        "outcome": "tests_failed",
+        "failing_test": "tests::sku_family_is_the_text_before_the_first_dash",
+        "equivalence_review": "not equivalent: sku_family(\"BOLT-M8\") returns \"BOL\" instead of \"BOLT\""
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "sku_family_is_the_text_before_the_first_dash asserts exact strings, so both slice changes fail it. ripr credits the return_value probe as exposed and marks the unsafe boundary static_unknown; credit outranks the limit, so the line is the ideal credit.",
+  "labeling_observation": {
+    "ripr_commit": "62fb7aaa5",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed",
+      "static_unknown"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

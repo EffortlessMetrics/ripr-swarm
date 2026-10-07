@@ -1,0 +1,20 @@
+{
+  "case_id": "tokens-byte-at-unsafe-fn",
+  "subject_id": "authored-tokens",
+  "origin": "authored",
+  "anchor": "src/raw.rs:9",
+  "behavior_family": "static_unknown_unsafe_fn",
+  "test_shape": "unit_test_assert_eq",
+  "hard_case": false,
+  "truth": "discriminated",
+  "ideal_verdict": "credited",
+  "observed_verdict": "credited",
+  "followed_retarget": false,
+  "changed_since_labeling": true,
+  "observed_classifications": [
+    "exposed",
+    "static_unknown"
+  ],
+  "outcome": "ideal",
+  "contradictions": []
+}

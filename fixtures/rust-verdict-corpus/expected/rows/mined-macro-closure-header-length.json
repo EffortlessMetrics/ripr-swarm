@@ -1,0 +1,19 @@
+{
+  "case_id": "mined-macro-closure-header-length",
+  "subject_id": "authored-mined-wire",
+  "origin": "authored",
+  "anchor": "src/lib.rs:39",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "macro_test_closure_body_assert",
+  "hard_case": true,
+  "truth": "discriminated",
+  "ideal_verdict": "credited",
+  "observed_verdict": "gap",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "weakly_exposed"
+  ],
+  "outcome": "false_actionable",
+  "contradictions": []
+}

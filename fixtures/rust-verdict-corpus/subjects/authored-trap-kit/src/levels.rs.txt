@@ -1,0 +1,18 @@
+pub fn parse_level(text: &str) -> u8 {
+    match text {
+        "low" => 1,
+        "high" => 9,
+        _ => panic!("unknown level"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn high_parses() {
+        let outcome = std::panic::catch_unwind(|| parse_level("high"));
+        assert!(outcome.is_ok());
+    }
+}

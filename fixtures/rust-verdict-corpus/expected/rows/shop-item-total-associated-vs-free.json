@@ -1,0 +1,19 @@
+{
+  "case_id": "shop-item-total-associated-vs-free",
+  "subject_id": "authored-shop",
+  "origin": "authored",
+  "anchor": "pricing/src/lib.rs:31",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "free_function_same_name_tested",
+  "hard_case": false,
+  "truth": "not_discriminated",
+  "ideal_verdict": "gap",
+  "observed_verdict": "gap",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "weakly_exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": []
+}

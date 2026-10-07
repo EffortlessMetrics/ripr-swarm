@@ -1,0 +1,19 @@
+{
+  "case_id": "grid-early-exact",
+  "subject_id": "authored-grid-early",
+  "origin": "authored",
+  "anchor": "src/lib.rs:4",
+  "behavior_family": "early_return_guard",
+  "test_shape": "exact_pin_assert",
+  "hard_case": true,
+  "truth": "discriminated",
+  "ideal_verdict": "credited",
+  "observed_verdict": "limited",
+  "followed_retarget": false,
+  "changed_since_labeling": true,
+  "observed_classifications": [
+    "infection_unknown"
+  ],
+  "outcome": "abstained",
+  "contradictions": []
+}

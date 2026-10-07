@@ -236,7 +236,7 @@ fn measure_profile(profile: &SyntheticProfile) -> Result<Value, String> {
     let card_wire = render_pretty_with_newline(&card, "repair card usability measurement")?;
     // The measurement has no checkout to bind, so the closing packet line
     // carries the typed command's portable display.
-    let human_lines = agent_card_prose_lines(&card, &next_command_display);
+    let human_lines = agent_card_prose_lines(&card, &next_command_display, None);
     let human_rendered = format!("{}\n", human_lines.join("\n"));
     let packet_surfaces_seam = {
         let envelope: Value = serde_json::from_str(&packet_json)

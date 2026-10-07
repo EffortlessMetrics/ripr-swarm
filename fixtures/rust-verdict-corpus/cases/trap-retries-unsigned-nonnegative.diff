@@ -1,0 +1,11 @@
+diff --git a/src/retries.rs b/src/retries.rs
+index 6c475f0..c6c3c42 100644
+--- a/src/retries.rs
++++ b/src/retries.rs
+@@ -1,5 +1,5 @@
+ pub fn retries(attempts: u32) -> u32 {
+-    attempts * 2
++    attempts + attempts
+ }
+ 
+ #[cfg(test)]

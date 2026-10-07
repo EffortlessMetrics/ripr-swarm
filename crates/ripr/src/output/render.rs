@@ -5,7 +5,10 @@ use super::{
 use crate::analysis;
 use crate::analysis::resource_cost::trace_latency_phase;
 use crate::app::causal_projection::CausalDeltaArtifact;
-use crate::app::{AnalysisProgressSink, CheckOutput, FindingDrillIn, repo_inventory_with_progress};
+use crate::app::{
+    AnalysisProgressSink, CheckDiffProvenance, CheckOutput, FindingDrillIn,
+    repo_inventory_with_progress,
+};
 use crate::config::RiprConfig;
 use crate::output::repo_exposure::TsFullRepoGuidance;
 use std::collections::BTreeMap;
@@ -275,10 +278,11 @@ pub(crate) fn render_check_with_config_and_navigation_and_progress(
     config: &RiprConfig,
     drill_in: Option<&FindingDrillIn>,
     progress: Option<&dyn AnalysisProgressSink>,
+    provenance: CheckDiffProvenance,
 ) -> Result<String, String> {
     match format {
         OutputFormat::Human => Ok(human::terminal_safe(
-            human::render_bounded_with_config_and_navigation(output, config, drill_in),
+            human::render_bounded_with_config_and_navigation(output, config, drill_in, provenance),
         )),
         OutputFormat::HumanFull => Ok(human::terminal_safe(
             human::render_full_with_config_and_navigation(output, config, drill_in),

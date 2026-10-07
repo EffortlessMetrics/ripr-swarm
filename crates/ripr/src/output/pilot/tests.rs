@@ -421,7 +421,7 @@ fn pilot_summary_md_marks_owner_counts_as_lower_bounds_after_a_seam_limit() {
     let md = render_pilot_summary_md(&entries, context);
 
     assert!(
-        md.contains("- Seam limit reached: ranked the first 3 of 7 seams; Rust seam counts below cover those only\n- Actionable seams: at least 3, showing up to 1\n\n"),
+        md.contains("- Seam limit reached: ranked 3 of 7 seams; Rust seam counts below cover those only\n- Actionable seams: at least 3, showing up to 1\n\n"),
         "{md}"
     );
     assert!(
@@ -676,7 +676,7 @@ fn pilot_summary_with_only_limitations_is_not_a_clean_result() {
     assert!(!md.contains("No gap to test:"), "{md}");
     let terminal = render_pilot_terminal(&entries, limited);
     assert!(
-        terminal.contains("  seam limit: ranked the first 2 of 9 seams\n"),
+        terminal.contains("  seam limit: ranked 2 of 9 seams\n"),
         "{terminal}"
     );
     assert!(
@@ -2027,6 +2027,133 @@ fn seam_budget_keeps_only_actionable_changed_seams() {
     assert!(!change.keeps_past_budget(&untouched_actionable));
 }
 
+/// #6943: the change's seams classified past the inventory seam limit join
+/// the ranked population only when they are on a changed line and were not
+/// already classified.
+#[test]
+fn change_seams_cut_by_the_inventory_limit_are_added_once() {
+    let diff = format!(
+        "{}diff --git a/README.md b/README.md\n--- a/README.md\n+++ b/README.md\n@@ -1 +1 @@\n-a\n+b\n",
+        one_line_diff("src/a.rs", 10)
+    );
+    let change =
+        PilotCurrentChange::from_diff_text(Path::new("."), Some("origin/main".to_string()), &diff);
+    assert_eq!(change.changed_rust_files(), [PathBuf::from("src/a.rs")]);
+    // Stable path text escapes `%`; the inventory needs the on-disk name.
+    assert_eq!(
+        changed("src/100%.rs", 1).changed_rust_files(),
+        [PathBuf::from("src/100%.rs")]
+    );
+    assert!(
+        PilotCurrentChange::from_diff_text(Path::new("."), None, "")
+            .changed_rust_files()
+            .is_empty()
+    );
+
+    let kept = classified_with(SeamGripClass::WeaklyGripped, "src/b.rs", 3, vec![], vec![]);
+    let already = classified_with(SeamGripClass::WeaklyGripped, "src/a.rs", 10, vec![], vec![]);
+    let mut classified = vec![kept, already.clone()];
+    let cut_on_change = ClassifiedSeam {
+        seam: RepoSeam::new(
+            "src/a.rs",
+            "pricing::other_total",
+            SeamKind::PredicateBoundary,
+            105,
+            10,
+            "other >= operand",
+            RequiredDiscriminator::BoundaryValue {
+                description: "other >= operand".to_string(),
+            },
+            ExpectedSink::ReturnValue,
+        ),
+        ..classified_with(SeamGripClass::Ungripped, "src/a.rs", 10, vec![], vec![])
+    };
+    let cut_off_change = classified_with(SeamGripClass::Ungripped, "src/a.rs", 40, vec![], vec![]);
+    let added = change.add_cut_seams(
+        &mut classified,
+        vec![already, cut_on_change.clone(), cut_off_change],
+    );
+    assert_eq!(added, 1);
+    assert_eq!(classified.len(), 3);
+    assert_ne!(classified[1].seam.id(), cut_on_change.seam.id());
+    assert_eq!(classified[2].seam.id(), cut_on_change.seam.id());
+}
+
+/// #6943: folding the change's own classification decides whether the
+/// seam-limit caveat on the change still applies.
+#[test]
+fn folding_the_classified_change_keeps_the_caveat_only_when_it_can_hold() {
+    let limit = || {
+        Some(crate::analysis::SeamLimitInfo {
+            analyzed: 1,
+            total: 5,
+            source: crate::analysis::SeamLimitSource::Default,
+        })
+    };
+    let rust_change = changed("src/a.rs", 10);
+    let on_change = classified_with(SeamGripClass::Ungripped, "src/a.rs", 10, vec![], vec![]);
+
+    // Classified: the cut seam joins, counts as analyzed, and the caveat goes.
+    let (mut classified, mut inventory_limit) = (Vec::new(), limit());
+    let folded = rust_change.fold_classified_change(
+        &mut classified,
+        &mut inventory_limit,
+        Some(Ok(vec![on_change])),
+    );
+    assert_eq!(
+        (folded.added, folded.caveat_limit, folded.error),
+        (1, None, None)
+    );
+    assert_eq!(classified.len(), 1);
+    assert_eq!(
+        inventory_limit.as_ref().map(|limit| limit.analyzed),
+        Some(2)
+    );
+
+    // When every cut seam was on the change, nothing is left unanalyzed.
+    let (mut classified, mut inventory_limit) = (Vec::new(), limit());
+    if let Some(limit) = inventory_limit.as_mut() {
+        limit.total = 2;
+    }
+    rust_change.fold_classified_change(
+        &mut classified,
+        &mut inventory_limit,
+        Some(Ok(vec![classified_with(
+            SeamGripClass::Ungripped,
+            "src/a.rs",
+            10,
+            vec![],
+            vec![],
+        )])),
+    );
+    assert_eq!(inventory_limit, None);
+
+    // Failed: nothing joins and the caveat cites the inventory's limit.
+    let (mut classified, mut inventory_limit) = (Vec::new(), limit());
+    let folded = rust_change.fold_classified_change(
+        &mut classified,
+        &mut inventory_limit,
+        Some(Err("late".to_string())),
+    );
+    assert_eq!(folded.added, 0);
+    assert_eq!(folded.caveat_limit.map(|limit| limit.analyzed), Some(1));
+    assert_eq!(folded.error.as_deref(), Some("late"));
+    assert!(classified.is_empty());
+
+    // Not run on a Rust change (the limit did not fire): the caveat stays
+    // whenever there is a limit to cite.
+    let (mut classified, mut inventory_limit) = (Vec::new(), limit());
+    let folded = rust_change.fold_classified_change(&mut classified, &mut inventory_limit, None);
+    assert_eq!(folded.caveat_limit.map(|limit| limit.total), Some(5));
+
+    // A change with no Rust file: pilot ranks Rust seams only, so the limit
+    // cannot hide a seam on it.
+    let docs_change = changed("README.md", 1);
+    let (mut classified, mut inventory_limit) = (Vec::new(), limit());
+    let folded = docs_change.fold_classified_change(&mut classified, &mut inventory_limit, None);
+    assert_eq!(folded.caveat_limit, None);
+}
+
 #[test]
 fn pilot_ranking_puts_seams_in_the_current_change_first() {
     // The untouched seam is the better class (weak beats ungripped), so the
@@ -2325,6 +2452,160 @@ fn pilot_explains_the_change_when_nothing_ranks() {
     };
     assert!(!render_pilot_terminal(&[], context).contains("current change"));
     assert!(!render_pilot_summary_md(&[], context).contains("Current change"));
+}
+
+/// #6944: a change in files the repo inventory leaves out by design names
+/// them, also when nothing ranks; the wording says whether they are the
+/// whole change.
+#[test]
+fn pilot_names_changed_files_its_ranking_leaves_out() {
+    use crate::analysis::DiffOnlySource;
+    let artifacts = pilot_artifacts();
+    let diff = |files: &[&str]| {
+        files
+            .iter()
+            .map(|file| one_line_diff(file, 3))
+            .collect::<String>()
+    };
+    let render = |change: &PilotCurrentChange| {
+        let context = PilotSummaryContext {
+            current_change: Some(change),
+            ..pilot_context(&artifacts)
+        };
+        (
+            render_pilot_terminal(&[], context),
+            render_pilot_summary_md(&[], context),
+        )
+    };
+
+    let only_build = PilotCurrentChange::from_diff_text(
+        Path::new("."),
+        Some("origin/main".to_string()),
+        &diff(&["build.rs"]),
+    )
+    .with_diff_only_files(vec![(
+        PathBuf::from("build.rs"),
+        DiffOnlySource::BuildScript,
+    )])
+    .with_seams_counted(&[], None);
+    let (terminal, md) = render(&only_build);
+    assert!(
+        terminal.contains("  current change: No seam pilot analyzed is on a line changed since origin/main: every changed Rust line is in build.rs, a Cargo build script, which pilot's repo-wide ranking leaves out.\n"),
+        "{terminal}"
+    );
+    assert!(
+        md.contains("- Current change: No seam pilot analyzed is on a line changed since `origin/main`: every changed Rust line is in `build.rs`, a Cargo build script, which pilot's repo-wide ranking leaves out.\n"),
+        "{md}"
+    );
+
+    let partly = PilotCurrentChange::from_diff_text(
+        Path::new("."),
+        Some("origin/main".to_string()),
+        &diff(&["xtask/src/main.rs", "src/lib.rs"]),
+    )
+    .with_diff_only_files(vec![(
+        PathBuf::from("xtask/src/main.rs"),
+        DiffOnlySource::RepoAutomation,
+    )])
+    .with_seams_counted(&[], None);
+    let (terminal, _) = render(&partly);
+    assert!(
+        terminal.contains("the change includes xtask/src/main.rs, repository automation, which"),
+        "{terminal}"
+    );
+
+    let several = PilotCurrentChange::from_diff_text(
+        Path::new("."),
+        Some("origin/main".to_string()),
+        &diff(&["build.rs", "lib/odd.rs", "src/lib.rs"]),
+    )
+    .with_diff_only_files(vec![
+        (PathBuf::from("build.rs"), DiffOnlySource::BuildScript),
+        (
+            PathBuf::from("lib/odd.rs"),
+            DiffOnlySource::DeclaredOutsideSrc,
+        ),
+    ])
+    .with_seams_counted(&[], None);
+    let (terminal, _) = render(&several);
+    assert!(
+        terminal.contains("the change includes 2 files pilot's repo-wide ranking leaves out, such as build.rs (a Cargo build script)"),
+        "{terminal}"
+    );
+
+    let only_several = PilotCurrentChange::from_diff_text(
+        Path::new("."),
+        Some("origin/main".to_string()),
+        &diff(&["build.rs", "lib/odd.rs"]),
+    )
+    .with_diff_only_files(vec![
+        (PathBuf::from("build.rs"), DiffOnlySource::BuildScript),
+        (
+            PathBuf::from("lib/odd.rs"),
+            DiffOnlySource::DeclaredOutsideSrc,
+        ),
+    ])
+    .with_seams_counted(&[], None);
+    let (terminal, _) = render(&only_several);
+    assert!(
+        terminal.contains("every changed Rust line is in 2 files pilot's repo-wide ranking leaves out, such as build.rs (a Cargo build script)"),
+        "{terminal}"
+    );
+
+    // A reason drawn from analyzed seams on the change still names the
+    // build script it does not cover.
+    let opaque = classified_with(
+        SeamGripClass::Opaque,
+        "src/lib.rs",
+        3,
+        Vec::new(),
+        Vec::new(),
+    );
+    let with_seam = PilotCurrentChange::from_diff_text(
+        Path::new("."),
+        Some("origin/main".to_string()),
+        &diff(&["build.rs", "src/lib.rs"]),
+    )
+    .with_diff_only_files(vec![(
+        PathBuf::from("build.rs"),
+        DiffOnlySource::BuildScript,
+    )])
+    .with_seams_counted(&[opaque], None);
+    let (terminal, _) = render(&with_seam);
+    assert!(
+        terminal.contains("so it is a static limitation, not a gap; the change also includes build.rs, a Cargo build script, which pilot's repo-wide ranking leaves out.\n"),
+        "{terminal}"
+    );
+
+    // #6987: with the seam-limit caveat as well, the diff-only clause comes
+    // first and the caveat still closes the sentence.
+    let opaque = classified_with(
+        SeamGripClass::Opaque,
+        "src/lib.rs",
+        3,
+        Vec::new(),
+        Vec::new(),
+    );
+    let limit = crate::analysis::SeamLimitInfo {
+        analyzed: 3,
+        total: 7,
+        source: crate::analysis::SeamLimitSource::Default,
+    };
+    let limited = PilotCurrentChange::from_diff_text(
+        Path::new("."),
+        Some("origin/main".to_string()),
+        &diff(&["build.rs", "src/lib.rs"]),
+    )
+    .with_diff_only_files(vec![(
+        PathBuf::from("build.rs"),
+        DiffOnlySource::BuildScript,
+    )])
+    .with_seams_counted(&[opaque], Some(&limit));
+    let (terminal, _) = render(&limited);
+    assert!(
+        terminal.contains("not a gap; the change also includes build.rs, a Cargo build script, which pilot's repo-wide ranking leaves out, but the seam limit left 4 of 7 seams unanalyzed, so the change may have seams pilot did not see.\n"),
+        "{terminal}"
+    );
 }
 
 #[test]

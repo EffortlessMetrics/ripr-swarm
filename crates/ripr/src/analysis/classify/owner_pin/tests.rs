@@ -1,6 +1,7 @@
 use super::*;
 use crate::analysis::facts::FunctionItemFact;
 use crate::analysis::rust_index::summarize_file;
+use crate::analysis::syntax::macro_binding_candidates;
 use crate::domain::{DeltaKind, ProbeId, SourceLocation, SymbolId};
 use std::path::Path;
 
@@ -2872,6 +2873,80 @@ fn an_outcome_settling_attribute_is_the_refusal_wherever_it_sits() {
 }
 
 #[test]
+fn the_workspace_site_is_the_first_rebinding_in_path_order_else_the_first_site() {
+    // The workspace scan runs per file on the rayon pool; the reported site
+    // must still be the first rebinding in path order, or failing that the
+    // first may-rebind site, whatever order the files finish in. That site
+    // decides whether the refusal is an analyzer limit (RIPR-SPEC-0240).
+    let plain = "use demo::weight;\n#[test]\nfn weighs() { assert_eq!(weight(4), 12); }\n";
+    let macro_use = "fn a() {}\n#[macro_use]\nextern crate other;\n";
+    let definition = "#[macro_export]\nmacro_rules! assert_eq { ($a:expr, $b:expr) => {}; }\n";
+    let site_of = |files: &[(&str, &str)]| {
+        let index = index(files);
+        let test = index
+            .tests()
+            .iter()
+            .find(|test| test.file == Path::new(TESTS))
+            .cloned();
+        assert!(test.is_some(), "the fixture test must be indexed");
+        let test = test?;
+        let probe = return_probe(owner(&index, "weight"), "x * 3");
+        match OwnerPinSyntax::default().equality_assertion_refusal(
+            &probe,
+            &test,
+            &test.assertions[0],
+            &index,
+        ) {
+            Some(AssertionRefusal::MacroBinding {
+                site: Some((path, site)),
+                ..
+            }) => Some((path, site.kind)),
+            _ => None,
+        }
+    };
+
+    let rebinding_later = site_of(&[
+        (LIB, WEIGHT_LIB),
+        (TESTS, plain),
+        ("src/a.rs", macro_use),
+        ("src/b.rs", definition),
+        ("src/c.rs", macro_use),
+    ]);
+    assert_eq!(
+        rebinding_later,
+        Some((PathBuf::from("src/b.rs"), MacroBindingKind::Definition))
+    );
+
+    // Within one file, a may-rebind site ahead of a definition still yields
+    // the definition.
+    let same_file = format!("{macro_use}{definition}");
+    let rebinding_in_same_file = site_of(&[
+        (LIB, WEIGHT_LIB),
+        (TESTS, plain),
+        ("src/a.rs", &same_file),
+        ("src/c.rs", macro_use),
+    ]);
+    assert_eq!(
+        rebinding_in_same_file,
+        Some((PathBuf::from("src/a.rs"), MacroBindingKind::Definition))
+    );
+
+    let only_may_rebind = site_of(&[
+        (LIB, WEIGHT_LIB),
+        (TESTS, plain),
+        ("src/c.rs", macro_use),
+        ("src/a.rs", macro_use),
+    ]);
+    assert_eq!(
+        only_may_rebind,
+        Some((
+            PathBuf::from("src/a.rs"),
+            MacroBindingKind::MacroUse("extern crate other;".to_string())
+        ))
+    );
+}
+
+#[test]
 fn a_definition_covering_the_test_outranks_a_may_rebind_site_elsewhere() {
     // The test file defines its own `assert_eq!`, a real rebinding that can
     // keep the assertion from checking anything. An unresolved `#[macro_use]`
@@ -2932,4 +3007,172 @@ fn a_definition_covering_the_test_outranks_a_may_rebind_site_elsewhere() {
         ))
     );
     assert!(only_macro_use.is_some_and(|refusal| refusal.is_analyzer_limit()));
+}
+
+#[test]
+fn a_shared_owner_pin_syntax_names_each_tests_own_covering_site() {
+    // Two inline modules rebind `assert_eq!` at different lines. The memo is
+    // keyed by name and file, so one shared OwnerPinSyntax must still pick
+    // the site that covers each test, as a fresh one does.
+    let tests = "use demo::weight;\n\
+mod first {\n    macro_rules! assert_eq { ($a:expr, $b:expr) => {}; }\n    #[test]\n    fn weighs() { assert_eq!(super::weight(4), 12); }\n}\n\
+mod second {\n    use super::weight;\n    macro_rules! assert_eq { ($a:expr, $b:expr) => {}; }\n    #[test]\n    fn weighs_again() { assert_eq!(weight(5), 15); }\n}\n";
+    let index = index(&[(LIB, WEIGHT_LIB), (TESTS, tests)]);
+    let probe = return_probe(owner(&index, "weight"), "x * 3");
+    let shared = OwnerPinSyntax::default();
+    let mut lines = Vec::new();
+    for at in 0..2 {
+        let test = index.tests().at(at);
+        let memoized = shared.equality_assertion_refusal(&probe, test, &test.assertions[0], &index);
+        let fresh = OwnerPinSyntax::default().equality_assertion_refusal(
+            &probe,
+            test,
+            &test.assertions[0],
+            &index,
+        );
+        assert_eq!(memoized, fresh, "test {at}");
+        let line = match &memoized {
+            Some(AssertionRefusal::MacroBinding {
+                site: Some((_, site)),
+                ..
+            }) => Some(site.line),
+            _ => None,
+        };
+        assert!(line.is_some(), "test {at}: {memoized:?}");
+        lines.extend(line);
+    }
+    lines.sort_unstable();
+    assert_eq!(lines, [3, 9]);
+}
+
+/// The stored candidates (#5363) are a skip filter for the trusted-macro
+/// scans, so a name they rule out must have no site under any trusted
+/// subset or workspace context. The maximal context is no workspace
+/// package, no resolved module and no verified drop-in: each widens the
+/// sites the scan reports.
+fn sites_in_widest_context(source: &str, trusted: &[&str]) -> Vec<(String, MacroBindingSite)> {
+    trusted_macro_binding_sites(source, &BTreeSet::new(), trusted, &|_, _| false, &|_| false)
+}
+
+fn stored_candidates(source: &str) -> Result<MacroBindingCandidates, String> {
+    crate::analysis::syntax::ra::summarize_file_with_parser(Path::new("src/lib.rs"), source)?
+        .macro_candidates
+        .map(|candidates| *candidates)
+        .ok_or_else(|| "premise: parser-backed facts carry macro candidates".to_string())
+}
+
+#[test]
+fn stored_macro_candidates_record_each_binding_construct() -> Result<(), String> {
+    let any = None;
+    let names = |names: &[&str]| Some(names.iter().map(|name| name.to_string()).collect());
+    for (source, expected) in [
+        // A trusted call's own name is not a site.
+        ("fn f() { assert_eq!(1, 1); }\n", names(&[])),
+        (
+            "macro_rules! assert_eq { () => {} }\n",
+            names(&["assert_eq"]),
+        ),
+        ("use pretty_assertions::assert_eq;\n", names(&["assert_eq"])),
+        ("use other::thing as panic;\n", names(&["panic"])),
+        (
+            "fn f() { wrap!(assert_eq!(1, 1)); }\n",
+            names(&["assert_eq"]),
+        ),
+        // Recorded although the full-set scan skips the trusted `assert!`:
+        // a scan for `vec` alone reads its arguments.
+        ("fn f() { assert!(vec![1] == vec![1]); }\n", names(&["vec"])),
+        ("use super::*;\nuse crate::a::{self, b};\n", names(&[])),
+        ("macro assert_eq($a:expr) { $a }\n", names(&["assert_eq"])),
+        ("macro_rules! r#panic { () => {} }\n", names(&["panic"])),
+        ("use a::{b::{assert_eq}};\n", names(&["assert_eq"])),
+        ("use a::assert_eq as _;\n", names(&[])),
+        ("use {a::*};\n", any.clone()),
+        ("use ::foo::*;\n", any.clone()),
+        (
+            "#[cfg_attr(test, macro_use)]\nextern crate log;\n",
+            any.clone(),
+        ),
+        ("use std::io::prelude::*;\n", any.clone()),
+        ("#[macro_use]\nextern crate log;\n", any.clone()),
+        ("#![no_implicit_prelude]\n", any.clone()),
+        ("wrap! { #[macro_use] mod m; }\n", any.clone()),
+    ] {
+        let expected = match expected {
+            None => MacroBindingCandidates::Any,
+            Some(names) => MacroBindingCandidates::Names(names),
+        };
+        assert_eq!(stored_candidates(source)?, expected, "{source}");
+    }
+    // The `vec` case is load-bearing: the single-name scan reports it.
+    assert!(
+        !sites_in_widest_context("fn f() { assert!(vec![1] == vec![1]); }\n", &["vec"]).is_empty()
+    );
+    assert!(
+        sites_in_widest_context(
+            "fn f() { assert!(vec![1] == vec![1]); }\n",
+            NON_RETURNING_MACROS
+        )
+        .is_empty()
+    );
+    Ok(())
+}
+
+#[test]
+fn stored_macro_candidates_never_hide_a_site_in_this_crate() -> Result<(), String> {
+    // An independent corpus: this crate's own sources, which use every
+    // construct the scan reads (definitions, drop-in imports, globs,
+    // `macro_rules!` in tests, nested macro calls).
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let mut pending = vec![root];
+    let mut checked = 0;
+    while let Some(dir) = pending.pop() {
+        for entry in std::fs::read_dir(&dir).map_err(|err| err.to_string())? {
+            let path = entry.map_err(|err| err.to_string())?.path();
+            if path.is_dir() {
+                pending.push(path);
+                continue;
+            }
+            if path.extension().and_then(|ext| ext.to_str()) != Some("rs") {
+                continue;
+            }
+            let source = std::fs::read_to_string(&path).map_err(|err| err.to_string())?;
+            // Large files cost minutes in a debug build and add no construct.
+            if source.len() > 24 * 1024 {
+                continue;
+            }
+            // The producer stores exactly this for a parser-clean file.
+            let Some(parse) = parse_clean_source_file(&source) else {
+                continue;
+            };
+            let candidates = macro_binding_candidates(&parse.tree());
+            let ruled_out: Vec<&str> = NON_RETURNING_MACROS
+                .iter()
+                .copied()
+                .filter(|name| !candidates.may_bind(name))
+                .collect();
+            if ruled_out.is_empty() {
+                continue;
+            }
+            checked += 1;
+            assert_eq!(
+                sites_in_widest_context(&source, &ruled_out),
+                Vec::new(),
+                "{}",
+                path.display()
+            );
+            for name in ["assert_eq", "vec"] {
+                if ruled_out.contains(&name) {
+                    assert_eq!(
+                        sites_in_widest_context(&source, &[name]),
+                        Vec::new(),
+                        "{} {name}",
+                        path.display()
+                    );
+                }
+            }
+        }
+    }
+    // Most files rule some name out; a vacuous pass would check none.
+    assert!(checked > 150, "only {checked} files ruled a name out");
+    Ok(())
 }

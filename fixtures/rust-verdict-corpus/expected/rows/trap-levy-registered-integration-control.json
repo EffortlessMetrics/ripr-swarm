@@ -1,0 +1,19 @@
+{
+  "case_id": "trap-levy-registered-integration-control",
+  "subject_id": "authored-trap-reach",
+  "origin": "authored",
+  "anchor": "src/levies.rs:2",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "integration_test_registered_autotests_off",
+  "hard_case": false,
+  "truth": "discriminated",
+  "ideal_verdict": "credited",
+  "observed_verdict": "credited",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": []
+}
