@@ -757,9 +757,19 @@ fn row_boundary_input_activation(
             if import.local != owner.name {
                 call_names.push(import.local.as_str());
             }
-        } else if !is_constant_shaped_operand(&import.local)
-            && !is_test_framework_source(&import.source)
+        } else if is_test_framework_source(&import.source) {
+            continue;
+        } else if !(is_constant_shaped_operand(&import.local)
+            && import_source_matches_owner(import, &test.file, owner, alias_map, workspace_root)
+            && ts_owner_module_constant_value(
+                import.imported.as_deref().unwrap_or(&import.local),
+                owner,
+                workspace_root,
+            )
+            .is_some())
         {
+            // An UPPER_CASE import from any other module may be a function,
+            // getter or object that reaches the owner itself.
             return unresolved;
         }
     }
@@ -804,6 +814,14 @@ fn row_boundary_input_activation(
         }
         let arguments =
             substitute_constant_arguments(arguments, test, owner, alias_map, workspace_root);
+        // A non-literal argument, even one the owner never reads, can be a
+        // call or getter that reaches the owner with its own input.
+        if !arguments
+            .iter()
+            .all(|argument| integer_literal_text(argument.trim().trim_start_matches('-')))
+        {
+            return unresolved;
+        }
         match fact.call_hits_boundary(&arguments) {
             Some(true) => return TypeScriptPredicateActivation::ReachedWithoutDiscriminator,
             Some(false) => {}
@@ -866,14 +884,19 @@ fn test_file_names_owner_only_in_test_bodies(
     let Ok(mut source) = std::fs::read_to_string(root.join(&test.file)) else {
         return false;
     };
-    if source.matches(test.body_text.as_str()).count() != 1 {
-        return false;
-    }
-    for body in sibling_tests
+    let bodies: Vec<&str> = sibling_tests
         .iter()
         .filter(|sibling| sibling.file == test.file && !sibling.body_text.is_empty())
         .map(|sibling| sibling.body_text.as_str())
+        .collect();
+    // Blanking a body that occurs twice would also blank its copy outside
+    // the tests, hiding an owner reference there; refuse instead.
+    if source.matches(test.body_text.as_str()).count() != 1
+        || bodies.iter().any(|body| source.matches(body).count() != 1)
     {
+        return false;
+    }
+    for body in bodies {
         source = source.replace(body, "");
     }
     let mut in_import = false;
@@ -944,7 +967,7 @@ fn closed_test_body_constants(
         {
             return None;
         }
-        if !is_literal_matcher_chain(&after_open[close + 1..]) {
+        if !is_literal_matcher_chain(&after_open[close + 1..], &constants) {
             return None;
         }
     }
@@ -1089,9 +1112,9 @@ fn is_one_owner_call(text: &str, call_names: &[&str], owner_receivers: &[String]
 }
 
 /// `true` when `text` (after `expect(...)`) is a matcher chain of member
-/// names, each optionally called with arguments that contain no call:
+/// names, each optionally called with literal arguments:
 /// `.toBe(90)`, `.not.toBe(1)`, `.resolves.toEqual({ a: 1 })`.
-fn is_literal_matcher_chain(text: &str) -> bool {
+fn is_literal_matcher_chain(text: &str, body_constants: &[String]) -> bool {
     let mut rest = text.trim();
     if rest.is_empty() {
         return false;
@@ -1111,11 +1134,73 @@ fn is_literal_matcher_chain(text: &str) -> bool {
             let Some(close) = balanced_close_offset(after_open) else {
                 return false;
             };
-            if after_open[..close].contains('(') {
+            if !is_literal_argument_text(&after_open[..close], body_constants) {
                 return false;
             }
             rest = after_open[close + 1..].trim_start();
         }
+    }
+    true
+}
+
+/// `true` when matcher-argument `text` holds only literals: numbers,
+/// strings without interpolation, `true`/`false`/`null`/`undefined`,
+/// object keys, and body `const` integers. Any other identifier may be a
+/// getter or binding that reaches the owner, and any call is refused.
+fn is_literal_argument_text(text: &str, body_constants: &[String]) -> bool {
+    if text.contains('(') {
+        return false;
+    }
+    let is_ident = |ch: char| ch.is_ascii_alphanumeric() || ch == '_' || ch == '$';
+    let chars: Vec<char> = text.chars().collect();
+    let mut index = 0;
+    while index < chars.len() {
+        let ch = chars[index];
+        if matches!(ch, '"' | '\'' | '`') {
+            let mut end = index + 1;
+            let mut escaped = false;
+            while end < chars.len() {
+                let inner = chars[end];
+                if escaped {
+                    escaped = false;
+                } else if inner == '\\' {
+                    escaped = true;
+                } else if ch == '`' && inner == '$' && chars.get(end + 1) == Some(&'{') {
+                    return false;
+                } else if inner == ch {
+                    break;
+                }
+                end += 1;
+            }
+            if end >= chars.len() {
+                return false;
+            }
+            index = end + 1;
+            continue;
+        }
+        if ch.is_ascii_digit() {
+            while index < chars.len() && (is_ident(chars[index]) || chars[index] == '.') {
+                index += 1;
+            }
+            continue;
+        }
+        if is_ident(ch) {
+            let start = index;
+            while index < chars.len() && is_ident(chars[index]) {
+                index += 1;
+            }
+            let word: String = chars[start..index].iter().collect();
+            let next = chars[index..].iter().find(|ch| !ch.is_whitespace());
+            let literal_word = matches!(word.as_str(), "true" | "false" | "null" | "undefined");
+            let object_key = next == Some(&':');
+            let body_constant = body_constants.contains(&word);
+            let previous = chars[..start].iter().rev().find(|ch| !ch.is_whitespace());
+            if previous == Some(&'.') || !(literal_word || object_key || body_constant) {
+                return false;
+            }
+            continue;
+        }
+        index += 1;
     }
     true
 }

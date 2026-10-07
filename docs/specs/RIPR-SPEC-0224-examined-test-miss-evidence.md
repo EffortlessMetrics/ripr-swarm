@@ -225,12 +225,21 @@ position rules as the witness (#5527):
      names the owner, its aliases or its namespaces, and it loads no module
      dynamically.
    - The file imports only the owner's names, owner-module namespaces,
-     constant-shaped names and test frameworks.
+     the owner module's own `const` integers and test frameworks. An
+     UPPER_CASE import from any other module refuses, since it may be a
+     function or getter that reaches the owner.
    - The body is closed: every statement is
      `expect(<one owner call or body local>)<literal matcher chain>`, a
-     `const` bound to one owner call, or a `const` integer.
-   - Every owner call passes plain integer inputs off the boundary, and no
+     `const` bound to one owner call, or a `const` integer. Matcher
+     arguments are literals (numbers, plain strings, `true`, `false`,
+     `null`, `undefined`, object keys) or body `const` integers.
+   - Every owner-call argument, read or not, is a plain integer or a
+     resolved constant, every read one is off the boundary, and no
      constant argument is rebound by an enclosing scope.
+
+   Project-level setup files (vitest `setupFiles`, jest
+   `setupFilesAfterEnv`) are outside this rule's view; a hook there that
+   calls the owner is a known limit.
 
    A visible owner call at the boundary is checked first and yields
    `reached_without_discriminator`. This is the only state that may support

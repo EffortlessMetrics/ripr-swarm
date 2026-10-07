@@ -749,6 +749,90 @@ fn open_test_body_or_file_is_unresolved_not_missed() -> Result<(), String> {
     Ok(())
 }
 
+/// Review (#5527): a sibling test's text repeated outside the tests (here
+/// inside a hook) cannot be blanked without also blanking that copy, so the
+/// file scan refuses rather than miss the hook's boundary call.
+#[test]
+fn repeated_sibling_test_text_is_unresolved_not_missed() -> Result<(), String> {
+    let sibling = "test('sibling', () => {\n  applyDiscount(100);\n});";
+    let source = format!(
+        "{IMPORT_DISCOUNT}\nbeforeAll(() => {{\n{sibling}\n}});\n{sibling}\ntest('target', () => {{\n  expect(applyDiscount(150)).toBe(135);\n}});\n"
+    );
+    let evaluated = evaluate(&DISCOUNT, &source, true)?;
+    assert_eq!(evaluated.row("target")?.1, R::DirectOwnerCall);
+    assert_eq!(evaluated.activation("target")?, A::Unresolved);
+    Ok(())
+}
+
+/// Review (#5527): an UPPER_CASE import from a module other than the
+/// owner's may be a function, getter or object that reaches the owner, so
+/// neither a hook call, an unread argument call nor a matcher member read
+/// through it can stand beside a miss.
+#[test]
+fn foreign_constant_shaped_import_is_unresolved_not_missed() -> Result<(), String> {
+    let import = format!("{IMPORT_DISCOUNT}\nimport {{ HELPER, PROBE }} from './helpers';");
+    let cases = [
+        (
+            "hook",
+            format!("{import}\nbeforeEach(() => {{\n  HELPER(100);\n}});"),
+            "  expect(applyDiscount(150)).toBe(135);",
+        ),
+        (
+            "argument call",
+            import.clone(),
+            "  expect(applyDiscount(150, HELPER(100))).toBe(135);",
+        ),
+        (
+            "matcher getter",
+            import.clone(),
+            "  expect(applyDiscount(150)).toBe(PROBE.V);",
+        ),
+    ];
+    for (name, imports, body) in cases {
+        let source = one_test(name, &imports, body);
+        let evaluated = evaluate(&DISCOUNT, &source, true)?;
+        assert_eq!(evaluated.row(name)?.1, R::DirectOwnerCall, "{name}");
+        assert_eq!(evaluated.activation(name)?, A::Unresolved, "{name}");
+    }
+    Ok(())
+}
+
+/// The same body-only shapes reach the closed rule without the foreign
+/// import: an unread non-literal argument or a non-literal matcher argument
+/// still refuses a miss, and a literal one keeps it.
+#[test]
+fn non_literal_call_or_matcher_argument_is_unresolved_not_missed() -> Result<(), String> {
+    let cases = [
+        (
+            "unread object argument",
+            "  expect(applyDiscount(150, { a: 1 })).toBe(135);",
+            A::Unresolved,
+        ),
+        (
+            "matcher identifier",
+            "  expect(applyDiscount(150)).toBe(expected);",
+            A::Unresolved,
+        ),
+        (
+            "matcher template",
+            "  expect(applyDiscount(150)).toBe(`${135}`);",
+            A::Unresolved,
+        ),
+        (
+            "literal matcher object",
+            "  expect(applyDiscount(150)).toEqual({ total: 135, ok: true });",
+            A::MissedBoundary,
+        ),
+    ];
+    for (name, body, expected) in cases {
+        let source = one_test(name, IMPORT_DISCOUNT, body);
+        let evaluated = evaluate(&DISCOUNT, &source, true)?;
+        assert_eq!(evaluated.row(name)?.1, R::DirectOwnerCall, "{name}");
+        assert_eq!(evaluated.activation(name)?, expected, "{name}");
+    }
+    Ok(())
+}
+
 /// Review (#5527): an owner reached again through another function (mutual
 /// recursion) can carry an off-boundary input to the boundary.
 #[test]
