@@ -260,7 +260,8 @@ pub(in crate::analysis) fn summarize_file(path: PathBuf, text: String) -> FileFa
 /// every pair of two adjacent groups, so it is read once per group pair, and
 /// each shape searches the other group by end byte. Comparing every pair
 /// would be quadratic on generated files with many error paths or deep
-/// chains that share a start.
+/// chains that share a start. Spans end on character boundaries, as parser
+/// spans do; a span ending inside a character never pairs.
 pub(crate) fn error_path_twins(shapes: &[ProbeShapeFact], source: &str) -> Vec<bool> {
     let mut twins = vec![false; shapes.len()];
     let mut errors: Vec<(usize, &ProbeShapeFact)> = shapes
