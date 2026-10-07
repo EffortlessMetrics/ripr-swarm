@@ -813,17 +813,37 @@ pub(super) fn nearest_manifest_dir(workspace_root: &Path, file: &Path) -> Option
 /// The package root owning `file`: the nearest ancestor directory that
 /// starts a Cargo source layout (`src/`, `tests/`, `benches/`,
 /// `examples/` — mirroring `workspace::classify::package_root`).
+///
+/// A `tests/`, `benches/` or `examples/` directory only starts a layout when
+/// a manifest sits beside it. Without one it is an ordinary module
+/// directory (`src/tests/` holds `#[cfg(test)] mod tests;`, #6979), so the
+/// search keeps climbing to the real package. If nothing better is found the
+/// first such candidate is kept, so a tree with no manifests at all resolves
+/// as it did before.
 fn package_root_of(file: &Path) -> Option<PathBuf> {
     let mut parent = file.parent()?;
+    let mut manifestless: Option<PathBuf> = None;
     loop {
         let name = parent
             .file_name()
             .map(|name| name.to_string_lossy().to_string())
             .unwrap_or_default();
         if matches!(name.as_str(), "src" | "tests" | "benches" | "examples") {
-            return parent.parent().map(Path::to_path_buf);
+            let owner = parent.parent().map(Path::to_path_buf);
+            let target_dir = name != "src";
+            if !target_dir
+                || owner
+                    .as_ref()
+                    .is_some_and(|dir| dir.join("Cargo.toml").is_file())
+            {
+                return owner;
+            }
+            manifestless = manifestless.or(owner);
         }
-        parent = parent.parent()?;
+        match parent.parent() {
+            Some(next) => parent = next,
+            None => return manifestless,
+        }
     }
 }
 

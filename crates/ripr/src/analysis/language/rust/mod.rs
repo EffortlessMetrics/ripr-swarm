@@ -474,11 +474,11 @@ fn mentioned_module_names(
 /// name nothing mentions, or a target root (`tests/x.rs`) in a package whose
 /// manifest sets `autotests`, `autobenches` or `autoexamples = false`.
 ///
-/// Two cost cuts that change no verdict: `src/bin/x.rs` is never a suspect,
+/// One cost cut that changes no verdict: `src/bin/x.rs` is never a suspect,
 /// because the walk always counts it as a production root and could only
-/// pay for a parse it cannot turn into a verdict. Neither is a file under a `src/tests/` module directory:
-/// the walk takes `src/` for its layout owner, finds no manifest there and
-/// fails closed, so a walk would cost a parse for nothing.
+/// pay for a parse it cannot turn into a verdict. A file under a `src/tests/`
+/// module directory is an ordinary module file: no manifest sits beside that
+/// `tests/`, so the module-name check below decides (#6979).
 fn may_be_unreached(
     root: &Path,
     path: &Path,
@@ -505,6 +505,15 @@ fn may_be_unreached(
     } else {
         None
     };
+    // `src/tests/x.rs` sits under a module directory named `tests`, not a
+    // target directory: with no manifest beside it, it is an ordinary module
+    // file and takes the module-name check below (#6979).
+    let package_dir = package_dir.filter(|dir| {
+        committed_source::read_source_bytes(root, &dir.join("Cargo.toml"))
+            .ok()
+            .flatten()
+            .is_some()
+    });
     if let Some(package_dir) = package_dir {
         return *discovery_off
             .entry(package_dir.to_path_buf())
@@ -2651,8 +2660,10 @@ mod tests {
         )?;
         write(
             &root.join("src/lib.rs"),
-            "pub fn gate_state(flag: bool) -> bool {\n    if flag { true } else { false }\n}\n",
+            "pub fn gate_state(flag: bool) -> bool {\n    if flag { true } else { false }\n}\n\n#[cfg(test)]\nmod tests;\n",
         )?;
+        // Declared, so cargo compiles the changed test file (#6979).
+        write(&root.join("src/tests/mod.rs"), "mod gate_state_tests;\n")?;
         write(
             &root.join("src/tests/gate_state_tests.rs"),
             "#[test]\nfn exact_gate_state() {\n    assert_eq!(gate_state(true), true);\n}\n",
@@ -2662,10 +2673,13 @@ mod tests {
              new file mode 100644\n\
              --- /dev/null\n\
              +++ b/src/lib.rs\n\
-             @@ -0,0 +1,3 @@\n\
+             @@ -0,0 +1,6 @@\n\
              +pub fn gate_state(flag: bool) -> bool {\n\
              +    if flag { true } else { false }\n\
              +}\n\
+             +\n\
+             +#[cfg(test)]\n\
+             +mod tests;\n\
              diff --git a/src/tests/gate_state_tests.rs b/src/tests/gate_state_tests.rs\n\
              new file mode 100644\n\
              --- /dev/null\n\
@@ -6695,6 +6709,46 @@ fn absent_delimiter_boundary_returns_head() {
             write(&root.join("src/lib.rs"), lib)?;
             write(&root.join("src/used.rs"), DISCOUNT_SOURCE)?;
             write(&root.join("src/used_tests.rs"), ORPHAN_TEST_SOURCE)?;
+
+            let result = module_graph_diff(&root, &predicate_change_diff("src/used.rs"))?;
+
+            let related = related_test_names(&root, &result, "src/used.rs");
+            assert_eq!(
+                related.iter().any(|name| name == "discount_applies"),
+                declared,
+                "declared={declared}: {related:?}"
+            );
+            fs::remove_dir_all(root).map_err(|error| format!("remove fixture: {error}"))?;
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn diff_analysis_ignores_an_orphan_under_a_src_tests_module_directory() -> Result<(), String> {
+        // #6979: `src/tests/` is a module directory, not a Cargo test target.
+        // `src/tests/mod.rs` never declares `used_tests`, so rustc never
+        // compiles `src/tests/used_tests.rs`. The layout owner must be the
+        // package (manifest beside `src/`), not `src/` itself, or the walk
+        // finds no manifest there and fails closed. Declaring the file in
+        // `src/tests/mod.rs` (the control) restores the relation.
+        for declared in [false, true] {
+            let root = temp_root(if declared {
+                "module-graph-declared-src-tests-file"
+            } else {
+                "module-graph-orphan-src-tests-file"
+            })?;
+            write(
+                &root.join("Cargo.toml"),
+                "[package]\nname='shop'\nversion='0.1.0'\nedition='2021'\n",
+            )?;
+            write(
+                &root.join("src/lib.rs"),
+                "pub mod used;\n\n#[cfg(test)]\nmod tests;\n",
+            )?;
+            write(&root.join("src/used.rs"), DISCOUNT_SOURCE)?;
+            let tests_mod = if declared { "mod used_tests;\n" } else { "" };
+            write(&root.join("src/tests/mod.rs"), tests_mod)?;
+            write(&root.join("src/tests/used_tests.rs"), ORPHAN_TEST_SOURCE)?;
 
             let result = module_graph_diff(&root, &predicate_change_diff("src/used.rs"))?;
 
