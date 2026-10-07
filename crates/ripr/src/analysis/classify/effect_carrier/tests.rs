@@ -552,6 +552,12 @@ fn escapes_found_in_review_keep_the_part_c_reading() {
         "let app = App { inventory: inv.clone() };",
         "assert_eq!(app.inventory, Inventory::new(5));",
     ));
+    // A macro initializer may capture the receiver inside its string.
+    assert!(run(
+        LEDGER,
+        "let dump = format!(\"{inv:?}\");",
+        "assert_eq!(dump, String::new());",
+    ));
     // A turbofish constructor is a std path, not a fixture helper.
     assert!(!run(
         LEDGER,

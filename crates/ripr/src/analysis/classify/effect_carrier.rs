@@ -793,6 +793,14 @@ impl EffectStateCarrier {
                 // `let inv: Inventory = Default::default()` holds the receiver type.
                 return true;
             }
+            if initializer.iter().enumerate().any(|(at, token)| {
+                matches!(token, Tok::Ident(_)) && punct(&initializer, at + 1, '!')
+            }) {
+                // A macro initializer (`format!("{inv:?}")`) may capture the
+                // receiver inside a string the tokenizer masks (#7046
+                // review).
+                return true;
+            }
             if self.may_carry(&initializer, test_body, depth + 1) {
                 return true;
             }

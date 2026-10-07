@@ -302,8 +302,9 @@ the test is itself non-carrying, for example a value returned by a resolved,
 non-reading method of the self type (`let receipt = inv.ship(..).unwrap();`).
 A binding with no `let`, several `let`s, or an unresolved method call on it
 (`inv.clone()`) is followed to its initializer or treated as a carrier. A
-`let` annotated with the self type, any `let mut` binding, and any
-shared handle (`Rc`, `Arc`, `Weak`) carry.
+`let` annotated with the self type, any `let mut` binding, a macro
+initializer (`format!("{inv:?}")` may capture the receiver), and any shared
+handle (`Rc`, `Arc`, `Weak`) carry.
 A field read on a binding (`receipt.sku`) is decided at the field when the
 field belongs to the self type; any other field (`app.inventory`) may hold
 the receiver, so its binding is resolved as above. A call through a std or
