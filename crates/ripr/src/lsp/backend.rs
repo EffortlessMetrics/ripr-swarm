@@ -6863,7 +6863,7 @@ fn quarantine_withdrawal_log_message(path: &Path, reason: DocumentStalenessReaso
 
 /// The quarantine reading for one pre-read document state (#1747): the
 /// lock-free core behind [`Backend::document_quarantine`]. Publish sites
-/// read the state once via `observed_document_state` and derive both the
+/// read the state once via `with_document_state` and derive both the
 /// decision and the bound version from that one read, so a concurrent
 /// edit cannot slip between them.
 fn quarantine_from_state(state: &DocumentState) -> Option<(PathBuf, DocumentStalenessReason)> {
