@@ -514,17 +514,20 @@ impl WorkspaceSession {
 
         // The tool advertises an outputSchema, so a successful result must
         // carry its structured copy (#6021 review): shrink the byte-fitted
-        // page until the complete double envelope measures under the bound
-        // with margin for the final page fields. Envelope size is monotone
-        // in the page length, so bisect for the largest fitting prefix.
+        // page until the complete double envelope measures under the bound.
+        // The probe carries the exact final-page fields (has_more and
+        // next_offset derived from the selection), so a listing that fits
+        // whole is measured without a next-page route and never truncated
+        // spuriously. Envelope size is monotone in the page length, so
+        // bisect for the largest fitting prefix.
         if !items.is_empty() {
             let structured_fit = |count: usize| -> Result<bool, AttemptFailure> {
                 let probe_page = GapPage {
                     offset: window.offset,
                     limit: window.limit,
                     returned: count,
-                    has_more: true,
-                    next_offset: Some(start + count),
+                    has_more: start + count < selected_items.len(),
+                    next_offset: (start + count < selected_items.len()).then_some(start + count),
                 };
                 let probe = self.gap_list_document(
                     snapshot,
