@@ -2314,8 +2314,9 @@ pub(crate) fn inventory_seams_from_index(
         // One line index per file: span derivation reuses it for every shape
         // instead of rescanning the source per seam.
         let line_starts = build_line_starts(&facts.source);
-        for shape in &facts.probe_shapes {
-            if rust_index::is_error_path_twin(shape, &facts.probe_shapes, &facts.source) {
+        let twins = rust_index::error_path_twins(&facts.probe_shapes, &facts.source);
+        for (shape, twin) in facts.probe_shapes.iter().zip(twins) {
+            if twin {
                 continue;
             }
             let Some(seam) =

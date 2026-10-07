@@ -240,8 +240,9 @@ pub(in crate::analysis) fn summarize_file(path: PathBuf, text: String) -> FileFa
     }
 }
 
-/// True when an ErrorPath shape is a twin of another ErrorPath shape for the
-/// same error behavior, so repository inventory keeps one of them (#6914).
+/// For each shape of one file, whether it is an ErrorPath twin of another
+/// ErrorPath shape for the same error behavior, so repository inventory
+/// keeps one of them (#6914). Indexes match `shapes`.
 ///
 /// The parser keeps both shapes because diff synthesis needs each one: a
 /// change to only the `return` line of a multi-line `return Err(X)` reaches
@@ -252,20 +253,46 @@ pub(in crate::analysis) fn summarize_file(path: PathBuf, text: String) -> FileFa
 /// - the payload call inside an `Err(..)` (`Err(Error::X(off))`).
 ///
 /// The relation reads source bytes between the two spans, never `text`,
-/// which is a trimmed display snippet.
-pub(crate) fn is_error_path_twin(
-    shape: &ProbeShapeFact,
-    shapes: &[ProbeShapeFact],
-    source: &str,
-) -> bool {
-    if shape.kind != ProbeShapeKind::ErrorPath {
-        return false;
+/// which is a trimmed display snippet. One sorted pass per file: both
+/// relations pair a shape with the ErrorPath that starts next inside it,
+/// because the source between them is only `return`, a callee and
+/// parentheses, where no other shape can start. Comparing every pair would
+/// be quadratic on generated files with many error paths.
+pub(crate) fn error_path_twins(shapes: &[ProbeShapeFact], source: &str) -> Vec<bool> {
+    let mut twins = vec![false; shapes.len()];
+    let mut errors: Vec<(usize, &ProbeShapeFact)> = shapes
+        .iter()
+        .enumerate()
+        .filter(|(_, shape)| shape.kind == ProbeShapeKind::ErrorPath)
+        .collect();
+    errors.sort_by_key(|(_, shape)| (shape.start_byte, std::cmp::Reverse(shape.end_byte)));
+    for (position, &(outer_index, outer)) in errors.iter().enumerate() {
+        let later = errors.get(position + 1..).unwrap_or_default();
+        let Some(next_start) = later
+            .iter()
+            .map(|(_, shape)| shape.start_byte)
+            .find(|&start| start > outer.start_byte)
+        else {
+            continue;
+        };
+        let next = later
+            .iter()
+            .skip_while(|(_, shape)| shape.start_byte < next_start)
+            .take_while(|(_, shape)| shape.start_byte == next_start);
+        for &(inner_index, inner) in next {
+            if returns_error_constructor(outer, inner, source) {
+                if let Some(twin) = twins.get_mut(outer_index) {
+                    *twin = true;
+                }
+            }
+            if is_err_payload(inner, outer, source) {
+                if let Some(twin) = twins.get_mut(inner_index) {
+                    *twin = true;
+                }
+            }
+        }
     }
-    shapes.iter().any(|other| {
-        other.kind == ProbeShapeKind::ErrorPath
-            && (returns_error_constructor(shape, other, source)
-                || is_err_payload(shape, other, source))
-    })
+    twins
 }
 
 /// `outer` is `return` (and parentheses) around exactly `inner`.

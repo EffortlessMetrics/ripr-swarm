@@ -6,7 +6,7 @@
 use super::diff::probes_for_file;
 use super::repo::probes_for_repo_file;
 use crate::analysis::diff::{ChangedFile, ChangedLine};
-use crate::analysis::rust_index::RustIndex;
+use crate::analysis::rust_index::{ProbeShapeFact, ProbeShapeKind, RustIndex, error_path_twins};
 use crate::analysis::seam_inventory::inventory_seams_from_index;
 use crate::analysis::seams::{RequiredDiscriminator, SeamKind};
 use crate::analysis::syntax::{RaRustSyntaxAdapter, RustSyntaxAdapter};
@@ -211,4 +211,41 @@ fn inventory_keeps_one_error_seam_per_constructor() -> Result<(), String> {
         "{seams:?}"
     );
     Ok(())
+}
+
+/// A generated file with many error returns must not make the twin check
+/// quadratic: 100k shapes would take billions of pairwise comparisons, the
+/// failure `FileOwnerLookup` already fixed for owner lookup.
+#[test]
+fn twin_check_stays_linearithmic_on_a_generated_file() {
+    let returns = 50_000;
+    let line = "return Err(E);\n";
+    let source = line.repeat(returns);
+    let shapes: Vec<ProbeShapeFact> = (0..returns)
+        .flat_map(|index| {
+            let start = index * line.len();
+            [
+                ProbeShapeFact {
+                    start_line: index + 1,
+                    end_line: index + 1,
+                    start_byte: start,
+                    end_byte: start + "return Err(E)".len(),
+                    kind: ProbeShapeKind::ErrorPath,
+                    text: "return Err(E)".into(),
+                },
+                ProbeShapeFact {
+                    start_line: index + 1,
+                    end_line: index + 1,
+                    start_byte: start + "return ".len(),
+                    end_byte: start + "return Err(E)".len(),
+                    kind: ProbeShapeKind::ErrorPath,
+                    text: "Err(E)".into(),
+                },
+            ]
+        })
+        .collect();
+    let twins = error_path_twins(&shapes, &source);
+    // Every `return` span is the twin; every constructor stays.
+    assert_eq!(twins.iter().filter(|twin| **twin).count(), returns);
+    assert!(twins.iter().step_by(2).all(|twin| *twin));
 }
