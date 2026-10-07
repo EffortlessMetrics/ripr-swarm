@@ -152,7 +152,7 @@ pub(in crate::analysis) fn local_flow_sinks(
             owner.clone(),
         )],
         ProbeFamily::SideEffect | ProbeFamily::CallDeletion => {
-            if probe.expression.contains("Err(") {
+            if constructs_result_error(&probe.expression) {
                 vec![flow_sink(
                     FlowSinkKind::ErrorVariant,
                     result_error_text(&probe.expression),
@@ -328,7 +328,7 @@ fn return_value_sink(
     owner_fn: Option<&FunctionSummary>,
     owner: Option<SymbolId>,
 ) -> FlowSinkFact {
-    if probe.expression.contains("Err(") {
+    if constructs_result_error(&probe.expression) {
         return flow_sink(
             FlowSinkKind::ErrorVariant,
             result_error_text(&probe.expression),
@@ -1031,6 +1031,12 @@ fn plain_block_head(head: &str) -> bool {
             })
 }
 
+/// `Err(..)`, or a qualified or turbofish constructor such as
+/// `Err::<T, E>(E::X)` whose variant reads exactly.
+fn constructs_result_error(text: &str) -> bool {
+    text.contains("Err(") || exact_error_variant(text).is_some()
+}
+
 fn result_error_text(text: &str) -> String {
     if let Some(variant) = exact_error_variant(text) {
         return format!("Result::Err({variant})");
@@ -1125,6 +1131,31 @@ mod tests {
     use crate::analysis::facts::FunctionSourceRole;
     use crate::analysis::rust_index::ReturnFact;
     use std::path::PathBuf;
+
+    /// #7063: a turbofish `Err::<T, E>(..)` constructs the same error as
+    /// `Err(..)`, so its return-value sink is the error variant, not the
+    /// nearest plain return.
+    #[test]
+    fn turbofish_err_return_sinks_to_the_error_variant() {
+        let owner = function(
+            "pub fn refund(amount: i64) -> Result<i64, PayError> {\n    if amount > 10_000 {\n        return Err::<i64, PayError>(PayError::Limit);\n    }\n    Ok(amount)\n}",
+        );
+        for family in [ProbeFamily::ReturnValue, ProbeFamily::SideEffect] {
+            let probe = probe(
+                family.clone(),
+                "return Err::<i64, PayError>(PayError::Limit);",
+                3,
+            );
+            let sinks = local_flow_sinks(&probe, Some(&owner));
+            assert!(
+                sinks
+                    .iter()
+                    .any(|sink| sink.kind == FlowSinkKind::ErrorVariant
+                        && sink.text == "Result::Err(PayError::Limit)"),
+                "{family:?}: {sinks:?}"
+            );
+        }
+    }
 
     #[test]
     fn predicate_flow_uses_nearest_return_after_changed_line() {
