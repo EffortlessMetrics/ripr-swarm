@@ -411,6 +411,27 @@ fn only_plain_pub_use_statements_can_export_to_another_crate() {
             "pub mod a;\npub const SCORE_MAX: i64 = 9;\n",
             false,
         ),
+        // Each path inside a brace group must stay local too.
+        (
+            "grouped alias path",
+            "pub mod a;\nuse fastscore as fs;\npub use self::{fs::score};\n",
+            true,
+        ),
+        (
+            "nested grouped alias path",
+            "pub mod a;\nuse fastscore as fs;\npub use crate::{a::{rebate, fs::score}};\n",
+            true,
+        ),
+        (
+            "grouped local paths",
+            "pub mod a;\npub use self::{a::score, a::rebate};\n",
+            false,
+        ),
+        (
+            "unbalanced group",
+            "pub mod a;\npub use self::{a::score;\n",
+            true,
+        ),
         // A module name that an import alias also binds.
         (
             "alias shadows a nested module",

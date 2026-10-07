@@ -2051,29 +2051,70 @@ pub(super) fn library_may_export_other(index: &RustIndex, owner_root: &Path, nam
 }
 
 /// Whether a `pub use` path stays inside the library: rooted at `crate`,
-/// `self` or `super`, with every segment before the imported item (or brace
-/// list, or glob) a module the library declares.
+/// `self` or `super`, with every segment before an imported item or glob a
+/// module the library declares, including each path inside a brace group
+/// (`pub use self::{fs::score};` reaches through `fs`).
 fn reexports_library_module(statement: &str, modules: &BTreeSet<&str>) -> bool {
     let Some(path) = statement.trim_start().strip_prefix("use") else {
         return false;
     };
-    let prefix_end = path.find(['{', '*']);
-    let prefix = &path[..prefix_end.unwrap_or(path.len())];
-    let mut segments: Vec<&str> = prefix
+    let path = path.trim();
+    let root_end = path.find("::").unwrap_or(path.len());
+    matches!(path[..root_end].trim(), "crate" | "self" | "super")
+        && use_tree_stays_local(path[root_end..].trim_start_matches("::"), modules)
+}
+
+/// Whether every path in a use tree (the text after its `crate`/`self`/
+/// `super` root) passes only through `super` or declared library modules
+/// before its imported item, glob or brace group. An unbalanced group fails
+/// closed.
+fn use_tree_stays_local(tree: &str, modules: &BTreeSet<&str>) -> bool {
+    let tree = tree.trim();
+    let Some(open) = tree.find('{') else {
+        let mut segments: Vec<&str> = tree.split("::").map(str::trim).collect();
+        // The last segment is the imported item, glob or `x as y` binding.
+        segments.pop();
+        return segments
+            .iter()
+            .all(|segment| *segment == "super" || modules.contains(segment));
+    };
+    let Some(close) = tree.rfind('}').filter(|close| *close > open) else {
+        return false;
+    };
+    let prefix_local = tree[..open]
         .split("::")
         .map(str::trim)
         .filter(|segment| !segment.is_empty())
-        .collect();
-    if prefix_end.is_none() {
-        segments.pop();
-    }
-    let Some((root, intermediate)) = segments.split_first() else {
-        return false;
-    };
-    matches!(*root, "crate" | "self" | "super")
-        && intermediate
+        .all(|segment| segment == "super" || modules.contains(segment));
+    prefix_local
+        && top_level_items(&tree[open + 1..close])
             .iter()
-            .all(|segment| *segment == "super" || modules.contains(segment))
+            .all(|item| use_tree_stays_local(item, modules))
+}
+
+/// The comma-separated items of a brace group's body, splitting only at
+/// depth zero.
+fn top_level_items(body: &str) -> Vec<&str> {
+    let mut items = Vec::new();
+    let mut depth = 0usize;
+    let mut start = 0;
+    for (offset, character) in body.char_indices() {
+        match character {
+            '{' => depth += 1,
+            '}' => depth = depth.saturating_sub(1),
+            ',' if depth == 0 => {
+                items.push(&body[start..offset]);
+                start = offset + 1;
+            }
+            _ => {}
+        }
+    }
+    items.push(&body[start..]);
+    items
+        .into_iter()
+        .map(str::trim)
+        .filter(|item| !item.is_empty())
+        .collect()
 }
 
 /// Whether masked source has `extern crate <name>` or `extern crate .. as

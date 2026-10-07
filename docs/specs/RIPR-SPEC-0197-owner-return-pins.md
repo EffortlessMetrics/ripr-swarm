@@ -242,9 +242,11 @@ rule only for an assertion whose context was admitted.
    may export another item under the callee's name: a `pub use` in a
    library file that names the callee or globs, unless its path is rooted
    at `crate`, `self` or `super` and passes only through modules the
-   library declares that no `use` or `extern crate` in it also binds
-   (`use fastscore as fs; pub use self::fs::score;` is refused, even beside
-   an unrelated `mod fs`); a library `const` or `static` of that name; an `include!` in
+   library declares that no `use` or `extern crate` in it also binds,
+   checked for every path inside a brace group
+   (`use fastscore as fs; pub use self::fs::score;` and
+   `pub use self::{fs::score};` are refused, even beside an unrelated
+   `mod fs`); a library `const` or `static` of that name; an `include!` in
    a library file or an unresolved include anywhere; or a file under the
    package's `src/` whose crate root is not established. The same
    own-crate reading serves every consumer of the same-name import defeat
