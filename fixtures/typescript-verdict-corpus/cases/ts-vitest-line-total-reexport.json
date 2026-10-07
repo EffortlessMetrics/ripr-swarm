@@ -20,8 +20,8 @@
         "replacement": "return line.unitCents + line.quantity;",
         "mutated_line": null,
         "outcome": "tests_failed",
-        "failing_test": "test/cart.test.ts > cart > multiplies unit price by quantity, test/cart.test.ts > cart > tells the owner what was charged",
-        "equivalence_review": "not equivalent: three apples at 120 total 123 instead of 360"
+        "failing_test": "test/cart.test.ts > cart > multiplies unit price by quantity",
+        "equivalence_review": "not equivalent: three apples at 120 total 123 instead of 360; test/cart.test.ts > cart > tells the owner what was charged also fails"
       }
     ]
   },
