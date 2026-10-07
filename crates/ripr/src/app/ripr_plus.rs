@@ -225,19 +225,28 @@ fn keep_last_good_receipt(repo: &Path) -> String {
 }
 
 /// After last-good JSON was saved, keep matching Markdown without rewriting it
-/// when the saved file already has those bytes (including a read-only file the
-/// guarded writer would refuse). Otherwise drop leftover Markdown and copy.
+/// when the saved path is already a regular file with those bytes (including a
+/// read-only file the guarded writer would refuse). A symlink or FIFO is not
+/// that file: `fs::read` would follow or block, so those fall through to drop
+/// then copy through the guarded writer.
 fn keep_matching_last_good_markdown(repo: &Path, markdown: &[u8]) -> Result<bool, String> {
-    if fs::read(repo.join(RIPR_PLUS_LAST_GOOD_MD)).is_ok_and(|existing| existing == markdown) {
+    let path = repo.join(RIPR_PLUS_LAST_GOOD_MD);
+    if last_good_markdown_already_matches(&path, markdown) {
         return Ok(true);
     }
     clear_last_good_markdown_file(repo)?;
-    write_parented_file(
-        &repo.join(RIPR_PLUS_LAST_GOOD_MD),
-        RIPR_PLUS_LAST_GOOD_MD,
-        markdown,
-    )
-    .map(|()| true)
+    write_parented_file(&path, RIPR_PLUS_LAST_GOOD_MD, markdown).map(|()| true)
+}
+
+/// Skip-rewrite only for a regular-file leaf. Same `symlink_metadata` /
+/// `is_file` check as `file_write::validate_destination`.
+fn last_good_markdown_already_matches(path: &Path, markdown: &[u8]) -> bool {
+    match fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.file_type().is_file() => {
+            fs::read(path).is_ok_and(|existing| existing == markdown)
+        }
+        _ => false,
+    }
 }
 
 /// Removes a leftover last-good Markdown *file* so a newer JSON cannot sit
@@ -1607,6 +1616,99 @@ mod tests {
             still_read_only?,
             "matching last-good Markdown must not be unlinked and rewritten"
         );
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn matching_symlink_last_good_markdown_is_replaced_with_a_regular_file() -> Result<(), String> {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|err| format!("clock failed: {err}"))?
+            .as_nanos();
+        let repo = std::env::temp_dir().join(format!(
+            "ripr-plus-symlink-md-{}-{nanos}",
+            std::process::id()
+        ));
+        let reports = repo.join("target/ripr/reports");
+        fs::create_dir_all(&reports)
+            .map_err(|err| format!("mkdir {}: {err}", reports.display()))?;
+        let json = r#"{"status":"pass","head":"run-a"}"#;
+        let markdown = matching_markdown(json)?;
+        fs::write(repo.join(RIPR_PLUS_JSON), json).map_err(|err| format!("seed json: {err}"))?;
+        fs::write(repo.join(RIPR_PLUS_MD), &markdown).map_err(|err| format!("seed md: {err}"))?;
+        let target = reports.join("outside.md");
+        fs::write(&target, &markdown).map_err(|err| format!("seed symlink target: {err}"))?;
+        std::os::unix::fs::symlink(&target, repo.join(RIPR_PLUS_LAST_GOOD_MD))
+            .map_err(|err| format!("symlink last-good md: {err}"))?;
+        let kept = keep_last_good_receipt(&repo);
+        let last_good_md = repo.join(RIPR_PLUS_LAST_GOOD_MD);
+        let metadata = fs::symlink_metadata(&last_good_md)
+            .map_err(|err| format!("stat last-good md: {err}"))?;
+        let kept_md = fs::read_to_string(&last_good_md);
+        let kept_json = fs::read_to_string(repo.join(RIPR_PLUS_LAST_GOOD_JSON));
+        let _ = fs::remove_dir_all(&repo);
+        assert!(kept.contains("is kept at"), "{kept}");
+        assert!(kept.contains("ripr-plus.last-good.md"), "{kept}");
+        assert!(
+            metadata.file_type().is_file() && !metadata.file_type().is_symlink(),
+            "a matching symlink must be replaced with a regular last-good Markdown file"
+        );
+        assert_eq!(kept_json.map_err(|err| err.to_string())?, json);
+        assert_eq!(kept_md.map_err(|err| err.to_string())?, markdown);
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn fifo_last_good_markdown_is_replaced_without_blocking() -> Result<(), String> {
+        use std::os::unix::fs::FileTypeExt as _;
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|err| format!("clock failed: {err}"))?
+            .as_nanos();
+        let repo =
+            std::env::temp_dir().join(format!("ripr-plus-fifo-md-{}-{nanos}", std::process::id()));
+        let reports = repo.join("target/ripr/reports");
+        fs::create_dir_all(&reports)
+            .map_err(|err| format!("mkdir {}: {err}", reports.display()))?;
+        let json = r#"{"status":"pass","head":"run-a"}"#;
+        let markdown = matching_markdown(json)?;
+        fs::write(repo.join(RIPR_PLUS_JSON), json).map_err(|err| format!("seed json: {err}"))?;
+        fs::write(repo.join(RIPR_PLUS_MD), &markdown).map_err(|err| format!("seed md: {err}"))?;
+        let last_good_md = repo.join(RIPR_PLUS_LAST_GOOD_MD);
+        let fifo_path = last_good_md
+            .to_str()
+            .ok_or_else(|| "non-UTF8 FIFO path".to_string())?;
+        let status = std::process::Command::new("mkfifo")
+            .arg(fifo_path)
+            .status()
+            .map_err(|err| format!("mkfifo: {err}"))?;
+        if !status.success() {
+            let _ = fs::remove_dir_all(&repo);
+            return Err(format!("mkfifo failed: {status}"));
+        }
+        assert!(
+            fs::symlink_metadata(&last_good_md)
+                .map_err(|err| format!("stat fifo: {err}"))?
+                .file_type()
+                .is_fifo(),
+            "control: last-good.md must be a FIFO before keep"
+        );
+        let kept = keep_last_good_receipt(&repo);
+        let metadata = fs::symlink_metadata(&last_good_md)
+            .map_err(|err| format!("stat last-good md: {err}"))?;
+        let kept_md = fs::read_to_string(&last_good_md);
+        let kept_json = fs::read_to_string(repo.join(RIPR_PLUS_LAST_GOOD_JSON));
+        let _ = fs::remove_dir_all(&repo);
+        assert!(kept.contains("is kept at"), "{kept}");
+        assert!(kept.contains("ripr-plus.last-good.md"), "{kept}");
+        assert!(
+            metadata.file_type().is_file() && !metadata.file_type().is_fifo(),
+            "a FIFO at last-good.md must be replaced without blocking on a reader"
+        );
+        assert_eq!(kept_json.map_err(|err| err.to_string())?, json);
+        assert_eq!(kept_md.map_err(|err| err.to_string())?, markdown);
         Ok(())
     }
 

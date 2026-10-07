@@ -46,7 +46,8 @@ skipped every `indeterminate` receipt kept nothing `ripr plus` itself wrote.
   kept copy with an error.
 - The last-good JSON is saved first. Last-good Markdown is kept only when the
   canonical Markdown is the projection of that JSON and this call saved it;
-  the copy is skipped when the saved file already has those bytes. A leftover
+  the copy is skipped when the saved path is already a regular file with those
+  bytes. A leftover
   Markdown from another run is dropped only after that JSON save, so a failed
   JSON copy leaves a previous matching pair intact and a newer JSON never sits
   beside another run's Markdown. When the canonical Markdown cannot be read,
