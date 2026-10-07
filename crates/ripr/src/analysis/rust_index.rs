@@ -479,7 +479,10 @@ fn converts_error(chain: &str) -> bool {
     let calls_method = |name: &str| {
         chain.match_indices(name).any(|(at, _)| {
             let before = chain.get(..at).unwrap_or_default().trim_end();
-            let after = chain.get(at + name.len()..).unwrap_or_default().trim_start();
+            let after = chain
+                .get(at + name.len()..)
+                .unwrap_or_default()
+                .trim_start();
             before.ends_with('.') && (after.starts_with('(') || after.starts_with("::"))
         })
     };
