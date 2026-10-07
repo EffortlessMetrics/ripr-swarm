@@ -555,7 +555,12 @@ fn analyze_related_assertions(
         || (matches!(
             probe.family,
             ProbeFamily::ErrorPath | ProbeFamily::ReturnValue
-        ) && changed_error_variant(&probe.expression).is_some());
+        ) && (changed_error_variant(&probe.expression).is_some()
+            // A change confined to the payload line of a multiline
+            // `Err::<T, E>(\n E::X,\n)` leaves only `E::X,` in the probe
+            // expression; the enclosing constructor is in the analysis
+            // expression (#7094 review).
+            || error_construction_path.is_some()));
 
     for (test, reason) in related_tests {
         let relation_reason = Some(*reason);
@@ -6481,6 +6486,41 @@ return Err(\"typed pin\".into());
                 may_reach.summary
             );
         }
+
+        // A change confined to the payload line of a multiline turbofish
+        // leaves only `PayError::Limit,` in the probe expression; the guard
+        // reads the enclosing constructor from the analysis expression.
+        let payload_probe = probe(ProbeFamily::ErrorPath, "PayError::Limit,");
+        let (_, payload_beside, _, _) = reveal_evidence_with_expression(
+            &payload_probe,
+            "return Err::<i64, PayError>(\n    PayError::Limit,\n);",
+            &[
+                (&reaching, RelationReason::DirectOwnerCall),
+                (&other_owner, RelationReason::SameTestFile),
+            ],
+            &[],
+            &|_, _| false,
+            &|_, _| false,
+            &ReturnOracleAdmission {
+                owner_return_pin: &|_, _| false,
+                assertion_admitted: &|_, _| true,
+                proximity_may_reach_owner: &|_| false,
+                owner_parameters: &[],
+                expected_reaches_owner: &|_, _| false,
+                effect_state_carried: &|_, _| true,
+            },
+            None,
+        );
+        assert_ne!(
+            payload_beside.state,
+            StageState::Yes,
+            "{}",
+            payload_beside.summary
+        );
+        assert_eq!(
+            payload_beside.summary,
+            PROXIMITY_VARIANT_CONFIRMATION_WITHHELD
+        );
 
         // A return value that names no error variant keeps the #4486
         // same-file credit beside a reaching test.
