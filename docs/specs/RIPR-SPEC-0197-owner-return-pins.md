@@ -139,6 +139,25 @@ rule only for an assertion whose context was admitted.
    nested in a list (`use crate::fake::{std::thread};`) refuses. Detached threads, bound handles,
    and joins whose result is dropped or converted (`.ok()`, `let _ =`) stay
    unknown.
+   Constant-row tables (#5328): the body of an unlabeled `for` loop is on
+   the path when the loop's iterable is a non-empty array of constant rows,
+   so its first iteration runs. The array is written inline (`for r in [..]`,
+   `&[..]`) or bound once by a plain immutable, unattributed `let` in the
+   statement list that holds the loop, whose name (raw `r#` spelling
+   included) has no other token in the test (no shadowing, mutation, alias
+   or second use). No attribute may appear anywhere in the rows, since a
+   `#[cfg]` can remove every element. Every row leaf is a literal, a negated
+   literal, `None`, `Some(..)`, `Ok(..)`, `Err(..)`, a qualified path whose
+   segments are all CamelCase without generic arguments (`Kind::Empty`,
+   `Status::Complete(5)`), or `vec![..]` whose tokens are literals and the
+   punctuation `[ ] ( ) , - &`; parentheses, references, tuples and nested
+   arrays of these are constant. A bare CamelCase name may be a `fn` or
+   `const` and is refused, as are calls, methods, SCREAMING_CASE consts,
+   ranges, indexes and repeat arrays (`[r; n]`), since they may be empty or
+   carry the owner's own output. A `break` or `continue` anywhere in the
+   loop before the assertion refuses it, as for `loop`. This admits the
+   assertion's execution only; every other rule still applies to it, and a
+   loop-bound argument is not a literal input for boundary pairing.
    `?` in a root test remains supported (an error fails an ordinary Result
    test); `?` in a closure is refused because its result could be discarded.
    Exactly
