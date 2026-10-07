@@ -1584,7 +1584,7 @@ fn receiver_derived_bindings(body: &str, receiver: &str, owner_call: &str) -> Ve
     let is_ident = |ch: char| ch.is_ascii_alphanumeric() || ch == '_';
     // `let pattern = init;` and plain `name = value;` statements.
     let bindings: Vec<(&str, &str)> = body
-        .split(|ch| ch == ';' || ch == '{' || ch == '}')
+        .split([';', '{', '}'])
         .filter_map(|statement| {
             let statement = statement.trim();
             let statement = statement.strip_prefix("let ").unwrap_or(statement);
