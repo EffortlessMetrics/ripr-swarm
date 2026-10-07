@@ -195,11 +195,9 @@ fn inventory_keeps_one_error_seam_per_constructor() -> Result<(), String> {
             (3, "Err(Error::Long)"),
             (4, "Err(Error::Bad(s.len()))"),
             (5, "Err::<u8, Error>(Error::Bad(3))"),
-            // Not an `Err(..)` payload: each constructor is its own behavior.
-            (6, "pick(s, Err(Error::A), Err(Error::B))"),
+            // A call wrapping constructors goes; each constructor stays.
             (6, "Err(Error::A)"),
             (6, "Err(Error::B)"),
-            (7, "wrap(Error::Bad(1))"),
             (7, "Error::Bad(1)"),
             // A returned method chain has no constructor shape to keep.
             (8, "return s.parse::<u8>().map_err(Error::from)"),
@@ -386,6 +384,54 @@ fn inventory_drops_a_return_around_a_method_chain_on_a_constructor() -> Result<(
             (4, "Err(Error::Paren)"),
             (6, "Err(Error::Chain)"),
             (9, "return x.map_err(Error::from)"),
+        ],
+        "{seams:?}"
+    );
+    Ok(())
+}
+
+/// #6938: a call that takes an error constructor as an argument is that
+/// constructor's twin, so only the constructor keeps a seam.
+#[test]
+fn inventory_drops_a_call_wrapping_an_error_constructor() -> Result<(), String> {
+    let source = concat!(
+        "pub fn poll(s: &str) -> Poll<Result<u8, Error>> {\n",
+        "    if s == \"a\" { return Poll::Ready(Err(Error::A)); }\n",
+        "    if s == \"b\" { return Ok(Err(Error::B)); }\n",
+        "    if s == \"c\" { return wrap::<u8>(s, Err(Error::C)); }\n",
+        "    if s == \"d\" { return Error::Outer(Error::Inner(1)); }\n",
+        "    if s == \"e\" { return wrap(x.m(s, Err(Error::E))); }\n",
+        "    if s == \"f\" { return wrap(m.f(\")\", Err(Error::F))); }\n",
+        "    if s == \"g\" { return Ok(Err(Err(Error::G))); }\n",
+        "    Poll::Ready(Err(Error::Tail))\n",
+        "}\n",
+    );
+    let index = index_of(source)?;
+    let file = PathBuf::from("src/lib.rs");
+    let seams = inventory_seams_from_index(std::slice::from_ref(&file), &index);
+    let error_seams: Vec<(usize, &str)> = seams
+        .iter()
+        .filter(|seam| seam.kind() == SeamKind::ErrorVariant)
+        .map(|seam| (seam.display_line(), seam.expression()))
+        .collect();
+    assert_eq!(
+        error_seams,
+        vec![
+            (2, "Err(Error::A)"),
+            (3, "Err(Error::B)"),
+            (4, "Err(Error::C)"),
+            // A capitalised callee builds its own error around the inner one.
+            (5, "Error::Outer(Error::Inner(1))"),
+            (5, "Error::Inner(1)"),
+            // The constructor is not a top-level argument of `wrap`.
+            (6, "wrap(x.m(s, Err(Error::E)))"),
+            (6, "Err(Error::E)"),
+            // A string literal may hide a delimiter, so both shapes stay.
+            (7, "wrap(m.f(\")\", Err(Error::F)))"),
+            (7, "Err(Error::F)"),
+            // `Err(..)` is never a wrapper: its payload rule keeps the outer.
+            (8, "Err(Err(Error::G))"),
+            (9, "Err(Error::Tail)"),
         ],
         "{seams:?}"
     );

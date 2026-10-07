@@ -251,7 +251,9 @@ pub(in crate::analysis) fn summarize_file(path: PathBuf, text: String) -> FileFa
 /// constructor and drops:
 /// - the `return` wrapped around it (`return Err(X)`, `return (Err(X))`,
 ///   `return Err(X).context(..)`);
-/// - the payload call inside an `Err(..)` (`Err(Error::X(off))`).
+/// - the payload call inside an `Err(..)` (`Err(Error::X(off))`);
+/// - a call wrapping it as an argument (`Poll::Ready(Err(X))`,
+///   `pick(s, Err(A), Err(B))`, `wrap(Error::X(1))`).
 ///
 /// The relation reads source bytes between the two spans, never `text`,
 /// which is a trimmed display snippet. Both relations pair a shape with an
@@ -288,8 +290,89 @@ pub(crate) fn error_path_twins(shapes: &[ProbeShapeFact], source: &str) -> Vec<b
         if let Some(opening) = err_call_opening(prefix) {
             mark_payloads(outers, inners, opening, source, &mut twins);
         }
+        let inner_is_err = source
+            .get(inner.start_byte..)
+            .is_some_and(|rest| err_call_opening_at_start(rest));
+        if wraps_first_argument(prefix, inner_is_err) {
+            mark_wrappers(outers, inners, &mut twins);
+        }
     }
     twins
+}
+
+/// Marks each call in `outers` that holds an inner shape: the prefix check
+/// already placed the inner group in the call's argument list (#6938).
+fn mark_wrappers(
+    outers: &[(usize, &ProbeShapeFact)],
+    inners: &[(usize, &ProbeShapeFact)],
+    twins: &mut [bool],
+) {
+    for &(outer_index, outer) in outers {
+        let nests = inners
+            .first()
+            .is_some_and(|(_, inner)| inner.end_byte <= outer.end_byte);
+        if nests && let Some(twin) = twins.get_mut(outer_index) {
+            *twin = true;
+        }
+    }
+}
+
+/// `prefix` opens a call whose argument list reaches the inner shape at the
+/// top level: `Poll::Ready(`, `Ok(`, `pick(s, `, `wrap(` (#6938). The inner
+/// error constructor carries the error, so the wrapping call is its twin.
+///
+/// Inside `Err(..)` the payload rule applies instead. A capitalised callee
+/// (`Error::Bad(Error::Inner(1))`) builds its own error around the inner one
+/// and stays, unless the inner shape is an `Err(..)` that the callee only
+/// wraps (`Poll::Ready(Err(X))`). A prefix with a quote or a `/` may hide a
+/// delimiter in a literal or comment, so it keeps both shapes.
+fn wraps_first_argument(prefix: &str, inner_is_err: bool) -> bool {
+    let Some((callee, arguments)) = prefix.split_once('(') else {
+        return false;
+    };
+    let callee = callee.trim();
+    // `f::<T>(..)`: drop the turbofish before reading the path.
+    let path = match callee.find("::<") {
+        Some(turbofish) if callee.ends_with('>') => callee.get(..turbofish).unwrap_or(callee),
+        _ => callee,
+    };
+    // `return (..)` is a parenthesised value, not a call; the return rule
+    // owns it.
+    let is_path = !path.is_empty()
+        && path != "return"
+        && !path.starts_with(|c: char| c.is_ascii_digit())
+        && path
+            .chars()
+            .all(|c| c.is_alphanumeric() || c == '_' || c == ':');
+    let name = path.rsplit("::").next().unwrap_or(path);
+    if !is_path || name == "Err" || (!inner_is_err && name.starts_with(char::is_uppercase)) {
+        return false;
+    }
+    let mut depth = 0_usize;
+    for c in arguments.chars() {
+        match c {
+            '"' | '\'' | '/' => return false,
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => {
+                let Some(outer) = depth.checked_sub(1) else {
+                    return false;
+                };
+                depth = outer;
+            }
+            _ => {}
+        }
+    }
+    let before = arguments.trim_end();
+    depth == 0 && (before.is_empty() || before.ends_with(','))
+}
+
+/// `text` starts with an `Err(` or `Err::<T, E>(` call.
+fn err_call_opening_at_start(text: &str) -> bool {
+    let Some(rest) = text.strip_prefix("Err") else {
+        return false;
+    };
+    let rest = rest.trim_start();
+    rest.starts_with('(') || rest.starts_with("::<")
 }
 
 /// Marks each `return` in `outers` around the inner shape that ends last
