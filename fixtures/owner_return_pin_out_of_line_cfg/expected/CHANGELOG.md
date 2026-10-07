@@ -116,3 +116,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — owner_return_pin_out_of_line_cfg (10)
+
+Reason:
+RIPR-SPEC-0240: a non-limit assertion refusal no longer offers a static-limit reading (#6903)
+
+Command:
+`cargo xtask goldens bless owner_return_pin_out_of_line_cfg --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

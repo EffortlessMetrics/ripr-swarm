@@ -1,5 +1,5 @@
 use super::*;
-use crate::analysis::facts::FunctionItemFact;
+use crate::analysis::facts::{FunctionItemFact, SourceRoleProvenance, SourceRoleProvenanceEdge};
 use crate::analysis::rust_index::summarize_file;
 use crate::analysis::syntax::macro_binding_candidates;
 use crate::domain::{DeltaKind, ProbeId, SourceLocation, SymbolId};
@@ -7,6 +7,8 @@ use std::path::Path;
 
 const LIB: &str = "src/lib.rs";
 const TESTS: &str = "tests/buf_tests.rs";
+const HELPERS: &str = "src/helpers.rs";
+const CHILD: &str = "src/helpers/stack_tests.rs";
 
 /// The bytes 7930d93 shape: a trait default method whose changed tail is
 /// the only `Ok(..)` and whose `?` exits early with an `Err(..)`.
@@ -64,6 +66,45 @@ fn index(files: &[(&str, &str)]) -> RustIndex {
         index.insert_file_only(PathBuf::from(path), facts);
     }
     index
+}
+
+/// [`index`] with composed module provenance: `provenance` sets
+/// `role_provenance` per file, exactly as role composition records it for
+/// the `mod` declarations in `files` (outermost edge first).
+fn index_with_provenance(
+    files: &[(&str, &str)],
+    provenance: &[(&str, SourceRoleProvenance)],
+) -> RustIndex {
+    let mut index = RustIndex::default();
+    index.package_names.insert("demo".to_string());
+    for (path, text) in files {
+        let mut facts = summarize_file(PathBuf::from(path), (*text).to_string());
+        if let Some((_, chain)) = provenance.iter().find(|(file, _)| file == path) {
+            facts.role_provenance = chain.clone();
+        }
+        index.extend_functions(facts.functions.iter().cloned());
+        index.extend_tests(facts.tests.iter().cloned());
+        index.insert_file_only(PathBuf::from(path), facts);
+    }
+    index
+}
+
+/// One composed out-of-line `mod` edge.
+fn module_edge(
+    parent: &str,
+    child: &str,
+    name: &str,
+    line: usize,
+    requires_test: bool,
+) -> SourceRoleProvenanceEdge {
+    SourceRoleProvenanceEdge {
+        kind: SourceRoleProvenanceEdgeKind::Module,
+        parent: PathBuf::from(parent),
+        child: PathBuf::from(child),
+        declaration: format!("mod {name};"),
+        line,
+        requires_test,
+    }
 }
 
 fn return_probe(owner: &FunctionSummary, expression: &str) -> Probe {
@@ -2726,6 +2767,276 @@ fn a_cross_file_test_module_shadow_of_a_nested_owner_still_refuses() {
             "a cross-file shadow names the test-local type: {tests}"
         );
     }
+}
+
+/// #6950: production `Stack`/`depth` in `src/lib.rs` with an out-of-line
+/// `#[cfg(test)] mod helpers;` (`mod` token on line 12).
+const LIB_OUT_OF_LINE: &str = r#"pub struct Stack {
+    items: Vec<u32>,
+}
+
+impl Stack {
+    pub fn depth(&self) -> usize {
+        self.items.len() + 1
+    }
+}
+
+#[cfg(test)]
+mod helpers;
+"#;
+
+/// #6950: the `helpers` test module declares its own methodless `Stack`
+/// (a same-name method would already compete, as in #6905) above its
+/// `mod stack_tests;` (`mod` token on line 5).
+const HELPERS_SHADOW: &str = r#"pub struct Stack {
+    items: Vec<u32>,
+}
+
+mod stack_tests;
+"#;
+
+/// #6950 precision: the same `helpers` module without the shadow
+/// (`mod` token on line 1).
+const HELPERS_PLAIN: &str = "mod stack_tests;\n";
+
+/// #6950 review: the `helpers` module rebinds the receiver with a
+/// root-level `use ... as Stack` (`mod` token on line 3).
+const HELPERS_RENAME: &str = "use crate::other::Gauge as Stack;\n\nmod stack_tests;\n";
+
+/// #6950 review: the same rebinding spelled with a raw identifier
+/// (`r#Stack` denotes `Stack`; `mod` token on line 3).
+const HELPERS_RENAME_RAW: &str = "use crate::other::Gauge as r#Stack;\n\nmod stack_tests;\n";
+
+/// #6950 review precision: the `helpers` module plainly imports the
+/// receiver, which may re-export production (`mod` token on line 3).
+const HELPERS_IMPORT: &str = "use crate::Stack;\n\nmod stack_tests;\n";
+
+/// #6950: the nested child test binds `Stack` (the `helpers` shadow, via
+/// `use super::*;`) and asserts `depth`.
+const CHILD_TEST: &str = r#"use super::*;
+
+#[test]
+fn depth_counts() {
+    let stack = Stack { items: Vec::new() };
+    assert_eq!(stack.depth(), 1);
+}
+"#;
+
+/// #6950: the child file declares nothing, so the single-file prefilter
+/// is blind — the parent chain (`helpers` declares the receiver) must
+/// refuse the pin.
+#[test]
+fn an_out_of_line_parent_module_shadow_of_the_receiver_refuses_the_pin() {
+    let index = index_with_provenance(
+        &[
+            (LIB, LIB_OUT_OF_LINE),
+            (HELPERS, HELPERS_SHADOW),
+            (CHILD, CHILD_TEST),
+        ],
+        &[
+            (
+                HELPERS,
+                SourceRoleProvenance {
+                    edges: vec![module_edge(LIB, HELPERS, "helpers", 12, true)],
+                    earliest_unresolved_reason: None,
+                },
+            ),
+            (
+                CHILD,
+                SourceRoleProvenance {
+                    edges: vec![
+                        module_edge(LIB, HELPERS, "helpers", 12, true),
+                        module_edge(HELPERS, CHILD, "stack_tests", 5, false),
+                    ],
+                    earliest_unresolved_reason: None,
+                },
+            ),
+        ],
+    );
+    let pin = establish(&index, "depth", "self.items.len() + 1");
+    assert!(
+        pin.is_some(),
+        "the pin establishes from the production type"
+    );
+    let Some(pin) = pin else { return };
+    assert!(
+        admitted_texts(&index, &pin).is_empty(),
+        "a parent-chain shadow names the test-local type, not the owner"
+    );
+}
+
+/// #6950 precision: the same nested layout without the parent shadow
+/// keeps its pin. The walk skips `helpers` (no declaration) and the
+/// production root stays exempt as the owner's own scope.
+#[test]
+fn an_out_of_line_test_without_a_parent_shadow_keeps_its_pin() {
+    let index = index_with_provenance(
+        &[
+            (LIB, LIB_OUT_OF_LINE),
+            (HELPERS, HELPERS_PLAIN),
+            (CHILD, CHILD_TEST),
+        ],
+        &[
+            (
+                HELPERS,
+                SourceRoleProvenance {
+                    edges: vec![module_edge(LIB, HELPERS, "helpers", 12, true)],
+                    earliest_unresolved_reason: None,
+                },
+            ),
+            (
+                CHILD,
+                SourceRoleProvenance {
+                    edges: vec![
+                        module_edge(LIB, HELPERS, "helpers", 12, true),
+                        module_edge(HELPERS, CHILD, "stack_tests", 1, false),
+                    ],
+                    earliest_unresolved_reason: None,
+                },
+            ),
+        ],
+    );
+    let pin = establish(&index, "depth", "self.items.len() + 1");
+    assert!(pin.is_some(), "the unshadowed control must establish");
+    let Some(pin) = pin else { return };
+    assert_eq!(admitted_texts(&index, &pin).len(), 1);
+}
+
+/// #6950 review: a root-level `use ... as Stack` in the parent module
+/// rebinds the receiver to a different type, so the nested child test
+/// names that type, not the production one — the pin is refused. The raw
+/// spelling (`as r#Stack`) rebinds the same name.
+#[test]
+fn a_parent_root_rename_of_the_receiver_refuses_the_pin() {
+    for helpers in [HELPERS_RENAME, HELPERS_RENAME_RAW] {
+        let index = index_with_provenance(
+            &[
+                (LIB, LIB_OUT_OF_LINE),
+                (HELPERS, helpers),
+                (CHILD, CHILD_TEST),
+            ],
+            &[
+                (
+                    HELPERS,
+                    SourceRoleProvenance {
+                        edges: vec![module_edge(LIB, HELPERS, "helpers", 12, true)],
+                        earliest_unresolved_reason: None,
+                    },
+                ),
+                (
+                    CHILD,
+                    SourceRoleProvenance {
+                        edges: vec![
+                            module_edge(LIB, HELPERS, "helpers", 12, true),
+                            module_edge(HELPERS, CHILD, "stack_tests", 3, false),
+                        ],
+                        earliest_unresolved_reason: None,
+                    },
+                ),
+            ],
+        );
+        let pin = establish(&index, "depth", "self.items.len() + 1");
+        assert!(
+            pin.is_some(),
+            "the pin establishes from the production type: {helpers}"
+        );
+        let Some(pin) = pin else { return };
+        assert!(
+            admitted_texts(&index, &pin).is_empty(),
+            "a parent-root rename names a different type than the owner: {helpers}"
+        );
+    }
+}
+
+/// #6950 review precision: a plain root-level `use` of the receiver in
+/// the parent module may re-export production, so it is not a shadow —
+/// the nested child keeps its pin.
+#[test]
+fn a_parent_root_plain_import_of_the_receiver_keeps_its_pin() {
+    let index = index_with_provenance(
+        &[
+            (LIB, LIB_OUT_OF_LINE),
+            (HELPERS, HELPERS_IMPORT),
+            (CHILD, CHILD_TEST),
+        ],
+        &[
+            (
+                HELPERS,
+                SourceRoleProvenance {
+                    edges: vec![module_edge(LIB, HELPERS, "helpers", 12, true)],
+                    earliest_unresolved_reason: None,
+                },
+            ),
+            (
+                CHILD,
+                SourceRoleProvenance {
+                    edges: vec![
+                        module_edge(LIB, HELPERS, "helpers", 12, true),
+                        module_edge(HELPERS, CHILD, "stack_tests", 3, false),
+                    ],
+                    earliest_unresolved_reason: None,
+                },
+            ),
+        ],
+    );
+    let pin = establish(&index, "depth", "self.items.len() + 1");
+    assert!(pin.is_some(), "the plain-import control must establish");
+    let Some(pin) = pin else { return };
+    assert_eq!(admitted_texts(&index, &pin).len(), 1);
+}
+
+/// #6950 precision (transposed #6957): the production type and its owner
+/// live at the parent file's root, so that root is the owner's own scope,
+/// not a shadow — the nested child keeps its pin.
+#[test]
+fn an_out_of_line_production_module_at_the_parent_root_keeps_its_pin() {
+    let lib = "mod helpers;\n";
+    let helpers = r#"pub struct Stack {
+    items: Vec<u32>,
+}
+
+impl Stack {
+    pub fn depth(&self) -> usize {
+        self.items.len() + 1
+    }
+}
+
+#[cfg(test)]
+mod stack_tests;
+"#;
+    let index = index_with_provenance(
+        &[(LIB, lib), (HELPERS, helpers), (CHILD, CHILD_TEST)],
+        &[
+            (
+                HELPERS,
+                SourceRoleProvenance {
+                    edges: vec![module_edge(LIB, HELPERS, "helpers", 1, false)],
+                    earliest_unresolved_reason: None,
+                },
+            ),
+            (
+                CHILD,
+                SourceRoleProvenance {
+                    edges: vec![
+                        module_edge(LIB, HELPERS, "helpers", 1, false),
+                        module_edge(HELPERS, CHILD, "stack_tests", 12, true),
+                    ],
+                    earliest_unresolved_reason: None,
+                },
+            ),
+        ],
+    );
+    let owner = index
+        .functions()
+        .iter()
+        .find(|function| function.name == "depth" && function.file == Path::new(HELPERS));
+    assert!(owner.is_some(), "the owner must be indexed from {HELPERS}");
+    let Some(owner) = owner else { return };
+    let pin =
+        OwnerReturnPin::establish(&return_probe(owner, "self.items.len() + 1"), owner, &index);
+    assert!(pin.is_some(), "the nested-owner pin must establish");
+    let Some(pin) = pin else { return };
+    assert_eq!(admitted_texts(&index, &pin).len(), 1);
 }
 
 const GATE_LIB: &str = "pub fn gate(value: u32) -> bool {\n    10 <= value\n}\n\npub fn level(value: u32) -> u32 {\n    10 + value\n}\n";

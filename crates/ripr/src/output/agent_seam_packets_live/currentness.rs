@@ -869,8 +869,12 @@ mod tests {
         assert!(!legacy.refresh_replayable());
     }
 
+    // Only the Unix symlink-parent test constructs this; without the gate the
+    // struct is dead code on other platforms.
+    #[cfg(unix)]
     struct RemoveOnDrop(PathBuf);
 
+    #[cfg(unix)]
     impl Drop for RemoveOnDrop {
         fn drop(&mut self) {
             let _ = std::fs::remove_dir_all(&self.0);

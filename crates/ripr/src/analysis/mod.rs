@@ -59,6 +59,7 @@ pub(crate) use diff::{
 /// consumed by the analysis route and the xtask badge route alike. Neither
 /// route may hardcode a base ref or rebuild the diff argv inline.
 pub use diff::{load_diff_range, resolve_default_base_commit};
+pub(crate) use facts::attributes_define_test;
 pub(crate) use facts::cfg_predicates;
 pub(crate) use facts::validated_file_wide_harness_targets;
 pub(crate) use generated_rust_corpus::{CorpusPayloadSize, analyzable_corpus_payload_size};
@@ -97,6 +98,7 @@ pub(crate) use seam_inventory::{
 };
 pub(crate) use seams::{RepoSeam, RequiredDiscriminator};
 pub(crate) use syntax::fn_signature::{owner_fn_line_span, rust_source_parses_cleanly};
+pub(crate) use syntax::governed_cfg_test_modules;
 pub(crate) use syntax::parse_clean_source_file;
 pub(crate) use workspace::DiffOnlySource;
 pub(crate) use workspace::PathDependencyAdjacency;
