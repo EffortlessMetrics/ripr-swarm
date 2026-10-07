@@ -26,6 +26,8 @@ mod findings_byte_budget;
 #[cfg(feature = "lang-python")]
 #[path = "cli_smoke/implicit_git_root.rs"]
 mod implicit_git_root;
+#[path = "cli_smoke/next_action.rs"]
+mod next_action;
 #[cfg(feature = "lang-python")]
 #[path = "cli_smoke/python_source_admission.rs"]
 mod python_source_admission;
