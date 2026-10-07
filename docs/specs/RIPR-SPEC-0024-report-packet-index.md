@@ -130,6 +130,12 @@ class of artifact. Missing expected artifacts must remain visible as warnings
 or `missing_expected[]` entries with a command to regenerate them when the
 command is known.
 
+A regeneration command that takes `--root` names the root the index was built
+for, in its typed spelling, rather than a fixed `--root .`. Its artifact paths
+are relative to the directory the index ran from, like the entry paths, so a
+command pasted from that directory regenerates the indexed repository's
+artifact instead of analyzing whatever sits in the current directory (#4000).
+
 Repo-local `cargo xtask reports index` also records the Lane 1 evidence chain
 as `lane1_readiness`. That section checks only known artifact paths for
 evidence-health, Lane 1 evidence audit, actionable-gaps, evidence-quality
@@ -501,6 +507,7 @@ Follow-up tests and fixtures should cover:
 - malformed or unreadable artifact;
 - stale or warning artifact;
 - missing optional artifact with regeneration command;
+- regeneration commands naming the indexed root;
 - JSON grouping and Markdown grouping;
 - generated-CI projection that remains advisory.
 - repo-local Lane 1 readiness when the evidence chain is missing;
