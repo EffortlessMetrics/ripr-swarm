@@ -291,15 +291,16 @@ sends readers to `human-full` for full evidence, so that rerun must not lose
 the only runnable next commands. Library renders without CLI navigation omit
 the block.
 
-A predicate probe's `after` is often its parser shape, which is narrower than
-the changed line (`string.len() >= MAX`). In that case the producer cuts
+A canonical-shape probe's `after` is often its parser shape, which is narrower
+than the changed line (`string.len() >= MAX`). In that case the producer cuts
 `before` to the same span of the old line (`string.len() > MAX`), so the
 `Changed` block does not set a whole old line (`if string.len() > MAX {`)
-against one expression (#6995). The cut is made only when the edit falls
-inside the shape. Otherwise, and for every other family (match arms keep the
-whole old arm because their consumers parse it), `before` keeps the whole
-old line. The same `before` reaches the MCP `changed_behavior.before` field
-and the LSP diagnostic witness.
+against one expression (#6995, widened to every canonical-shape family by
+#5312). The cut is made only when the edit falls inside the shape. Match arms
+are exempt: they keep the whole old arm because the tuple_match witnesses
+parse it. Otherwise `before` keeps the whole old line. The same `before`
+reaches the MCP `changed_behavior.before` field and the LSP diagnostic witness;
+`ripr check --format json` never serializes `probe.before`, so it is unchanged.
 
 ### Terminal safety
 
