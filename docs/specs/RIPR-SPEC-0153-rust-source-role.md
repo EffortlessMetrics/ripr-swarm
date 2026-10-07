@@ -266,8 +266,10 @@ is not a measured throughput, peak-RSS, constant-memory, or reduced-coverage cla
 - Never-compiled tests (#6293): a `#[test]` function whose own `cfg` is false
   in a test build (`cfg(any())`, `cfg(not(test))`) is not a test fact, so it
   cannot be named as reaching or observing a change. A `cfg` ripr cannot
-  evaluate (feature, target, custom atoms) keeps the test. Pinned by
-  `fixtures/rust_test_under_false_cfg_not_grip`.
+  evaluate (feature, target, custom atoms) keeps the test. Limits, all failing
+  open (the test stays discovered): `cfg_attr` composition is not evaluated,
+  and the lexical fallback does not see a gate attribute longer than 32
+  lines (#7043). Pinned by `fixtures/rust_test_under_false_cfg_not_grip`.
 - `#3273`'s inline `#[cfg(test)]` controls and `#3286`'s helper-evidence
   regression tests remain green.
 - Module-tree seeding (#4435): an undeclared `src` file and an undeclared
