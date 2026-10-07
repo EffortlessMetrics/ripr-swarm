@@ -11,12 +11,13 @@ use crate::agent::loop_commands::{
     check_repo_exposure_command, display_path, root_path_display, shell_arg,
 };
 use crate::app::repair_attempt::{
-    AfterPhaseHeadAdmission, AttemptTerminalReceipt, DivergedHeadRecovery,
+    AfterPhaseHeadAdmission, AttemptTerminalReceipt, CanonicalAdmission, DivergedHeadRecovery,
     REPAIR_ATTEMPT_DIRECTORY, RepairAttemptId, RepairAttemptInventoryEntry, RepairAttemptManifest,
     RepairAttemptState, RepairAttemptStoreAccess, RepairAttemptStoreCurrentness,
-    RepairAttemptStoreLocationClass, diverged_head_recovery, inventory_repair_attempts_from,
-    load_attempt_terminal_receipt, load_repair_attempt_manifest_from, quoted_store_flag,
-    repair_attempt_head_reading, repair_attempt_state_label, resolve_store,
+    RepairAttemptStoreLocationClass, canonically_admit_terminal_pair, diverged_head_recovery,
+    inventory_repair_attempts_from, load_attempt_terminal_receipt,
+    load_repair_attempt_manifest_from, quoted_store_flag, repair_attempt_head_reading,
+    repair_attempt_state_label, resolve_store, validate_issued_receipt_evidence,
 };
 use crate::output::agent_receipt::AgentReceiptReading;
 use crate::output::markdown::{COMMAND_SHELL_DISCLOSURE, PowershellForm, powershell_form};
@@ -199,10 +200,11 @@ pub(crate) enum AgentStatusAttemptReceipt {
     /// receipt file is there (or the readable file belongs to other work).
     /// Used only when this attempt did not retain a local result.
     Unreadable,
-    /// This attempt declared terminal retention but the local result cannot
-    /// be projected (missing, digest mismatch, path escape, or binding
-    /// mismatch). Status must not fall back to another attempt's
-    /// compatibility receipt.
+    /// This attempt's result cannot be projected: a declared terminal
+    /// retention that is missing, digest-mismatched, escaped, or unbound, or
+    /// a bound legacy compatibility receipt whose verify document is missing
+    /// or fails verdict binding. Status must not fall back to another
+    /// attempt's compatibility receipt.
     Unavailable {
         path: Option<String>,
         reason: String,
@@ -295,9 +297,9 @@ pub(crate) fn build_agent_status_report_from(
     store: Option<&Path>,
 ) -> AgentStatusReport {
     let root_display = display_path(root_argument);
-    // #3999: every next command binds the selected root once, here; the
-    // report's `root` field keeps the invocation spelling.
-    let command_root = bound_root(&root_display);
+    // #3999/#6313: bind command identity from the native root before rendering;
+    // the report's `root` field keeps its existing display presentation.
+    let command_root = bound_root(&root_path_display(root_argument));
     keep_follow_up_templates_reachable(&command_root);
     let artifacts = ARTIFACTS
         .iter()
@@ -476,11 +478,15 @@ fn attempt_receipt(
         AttemptTerminalReceipt::Unavailable { path, reason } => {
             AgentStatusAttemptReceipt::Unavailable { path, reason }
         }
-        AttemptTerminalReceipt::NotRetained => legacy_workflow_attempt_receipt(after, receipt),
+        AttemptTerminalReceipt::NotRetained => {
+            legacy_workflow_attempt_receipt(root, manifest, after, receipt)
+        }
     }
 }
 
 fn legacy_workflow_attempt_receipt(
+    root: &Path,
+    manifest: &RepairAttemptManifest,
     after: &crate::app::repair_attempt::RepairAttemptAfter,
     receipt: &WorkflowReceiptRead,
 ) -> AgentStatusAttemptReceipt {
@@ -492,25 +498,66 @@ fn legacy_workflow_attempt_receipt(
     let bound = |pointer: &str, expected: &str| {
         receipt.pointer(pointer).and_then(Value::as_str) == Some(expected)
     };
-    if bound("/repair_attempt/attempt_id", after.attempt_id.as_str())
+    if !(bound("/repair_attempt/attempt_id", after.attempt_id.as_str())
         && bound("/repair_attempt/after_head", &after.repository_head)
         && bound("/repair_attempt/delta_sha256", &after.delta_sha256)
-        && bound("/repair_attempt/packet_sha256", &after.packet_sha256)
+        && bound("/repair_attempt/packet_sha256", &after.packet_sha256))
     {
-        AgentStatusAttemptReceipt::Issued {
-            path: WORKFLOW_AGENT_RECEIPT_ARTIFACT.to_string(),
-            reading: AgentReceiptReading::from_value(receipt),
+        if let Some(other) = receipt
+            .pointer("/repair_attempt/attempt_id")
+            .and_then(Value::as_str)
+            .filter(|other| *other != after.attempt_id.as_str())
+        {
+            return AgentStatusAttemptReceipt::Superseded {
+                by_attempt_id: other.to_string(),
+            };
         }
-    } else if let Some(other) = receipt
-        .pointer("/repair_attempt/attempt_id")
-        .and_then(Value::as_str)
-        .filter(|other| *other != after.attempt_id.as_str())
-    {
-        AgentStatusAttemptReceipt::Superseded {
-            by_attempt_id: other.to_string(),
+        return AgentStatusAttemptReceipt::NotIssued;
+    }
+    // The one-slot compatibility file carries no digest of its own, so a
+    // 4-field match alone must not issue a reading: the workflow verify
+    // document must exist and the receipt's verdict must bind to it through
+    // the shared evidence authority (#5256). Anything else is unavailable —
+    // status reports `unconfirmed` with the reason instead of `finished`.
+    let verify_bytes = match std::fs::read(root.join(WORKFLOW_AGENT_VERIFY_ARTIFACT)) {
+        Ok(bytes) => bytes,
+        Err(_) => {
+            return AgentStatusAttemptReceipt::Unavailable {
+                path: Some(WORKFLOW_AGENT_RECEIPT_ARTIFACT.to_string()),
+                reason: format!(
+                    "the workflow receipt is bound to this attempt but its verify document at `{WORKFLOW_AGENT_VERIFY_ARTIFACT}` cannot be read, so the verdict is unconfirmed"
+                ),
+            };
         }
-    } else {
-        AgentStatusAttemptReceipt::NotIssued
+    };
+    if let Err(reason) = validate_issued_receipt_evidence(root, manifest, receipt, &verify_bytes) {
+        return AgentStatusAttemptReceipt::Unavailable {
+            path: Some(WORKFLOW_AGENT_RECEIPT_ARTIFACT.to_string()),
+            reason,
+        };
+    }
+    // Canonical admission for a never-promoted projection: the pair's
+    // basis is live by construction (it was just minted from these
+    // snapshots or hand-shaped against them), so the workflow verify
+    // document must be their canonical render. This defeats
+    // never-promoted and jointly rewritten projections at the
+    // compatibility fallback. A missing basis is unconfirmed too: the
+    // validator does not check after-path existence, so a pair naming a
+    // missing snapshot would otherwise read issued. Only an admitted
+    // pair issues here. Retained pairs are NOT re-admitted: their basis
+    // is historical and the live snapshots legitimately advance (#5256).
+    match canonically_admit_terminal_pair(root, &verify_bytes) {
+        CanonicalAdmission::Admitted => {}
+        CanonicalAdmission::Refused { reason } | CanonicalAdmission::Unavailable { reason } => {
+            return AgentStatusAttemptReceipt::Unavailable {
+                path: Some(WORKFLOW_AGENT_RECEIPT_ARTIFACT.to_string()),
+                reason,
+            };
+        }
+    }
+    AgentStatusAttemptReceipt::Issued {
+        path: WORKFLOW_AGENT_RECEIPT_ARTIFACT.to_string(),
+        reading: AgentReceiptReading::from_value(receipt),
     }
 }
 
@@ -910,6 +957,7 @@ fn select_next_command(
 
 /// Where `ripr pilot` writes its summary by default, relative to the root.
 const PILOT_SUMMARY_ARTIFACT: &str = "target/ripr/pilot/pilot-summary.json";
+const PILOT_REPO_EXPOSURE_ARTIFACT: &str = "target/ripr/pilot/repo-exposure.json";
 
 /// The seam-selection route status offers before any seam is known. `ripr
 /// pilot` resolves a relative `--out` against the working directory, not
@@ -1071,6 +1119,64 @@ fn pilot_rust_excluded_message(excluded: &PilotRustExclusion) -> String {
     format!(
         "the last complete `ripr pilot` run ranked no Rust seam because Rust is not enabled in `ripr.toml [languages]` ({files} not analyzed), and running pilot again unchanged ranks nothing again: {}",
         crate::output::pilot::RUST_EXCLUDED_GUIDANCE,
+    )
+}
+
+/// Seams a complete `ripr pilot` run withheld as static limitations when it
+/// ranked none and recorded no repair start (#5497). Running pilot again
+/// unchanged withholds them again, so status must not send the user back.
+/// A missing, unreadable, timed-out, seam-ranking or zero-withheld summary
+/// is not this fact.
+fn pilot_withheld_every_seam(root: &Path) -> Option<u64> {
+    let text = std::fs::read_to_string(root.join(PILOT_SUMMARY_ARTIFACT)).ok()?;
+    let summary = serde_json::from_str::<Value>(&text).ok()?;
+    let complete = summary.pointer("/status").and_then(Value::as_str) == Some("complete");
+    let no_seams = summary
+        .pointer("/top_actionable_seams")
+        .and_then(Value::as_array)
+        .is_some_and(Vec::is_empty);
+    let no_repair_start = summary
+        .pointer("/next/repair_command")
+        .is_some_and(Value::is_null);
+    let withheld = summary
+        .pointer("/withheld_static_limitations_total")
+        .and_then(Value::as_u64)
+        .filter(|withheld| *withheld > 0)?;
+    (complete && no_seams && no_repair_start).then_some(withheld)
+}
+
+/// Whether the pilot run's repo exposure report says a seam limit cut the
+/// classified seams, so seams past the cut were never classified. `None`
+/// when the report is missing or unreadable: status cannot tell.
+fn pilot_seam_limit_applied(root: &Path) -> Option<bool> {
+    let text = std::fs::read_to_string(root.join(PILOT_REPO_EXPOSURE_ARTIFACT)).ok()?;
+    let report = serde_json::from_str::<Value>(&text).ok()?;
+    let run_status = report.pointer("/run_status").and_then(Value::as_str)?;
+    Some(run_status == "seam_limit_applied")
+}
+
+fn pilot_withheld_message(withheld: u64, seam_limit_applied: Option<bool>) -> String {
+    let seams = if withheld == 1 {
+        "1 seam".to_string()
+    } else {
+        format!("{withheld} seams")
+    };
+    let inspect = "Inspect them in `target/ripr/pilot/repo-exposure.md`, where each one names the stage ripr could not resolve";
+    if seam_limit_applied.is_none() {
+        // Fail closed: without the report, status cannot rule out a cut.
+        return format!(
+            "the last complete `ripr pilot` run ranked no seam: it withheld {seams} whose static evidence is unknown or opaque, so they are static limitations, not gaps. `target/ripr/pilot/repo-exposure.json` is missing or unreadable, so status cannot tell whether a seam limit cut the run; rerun pilot, and if it reports a seam limit, raise or remove RIPR_PILOT_SEAM_BUDGET and RIPR_REPO_EXPOSURE_SEAM_LIMIT. {inspect}"
+        );
+    }
+    if seam_limit_applied == Some(true) {
+        // A gap may sit past the cut, so "no repair applies" would claim an
+        // absence the run did not establish; raising the limit is the step.
+        return format!(
+            "the last complete `ripr pilot` run ranked no seam: it withheld at least {seams} whose static evidence is unknown or opaque, so they are static limitations, not gaps. A seam limit cut the seams it analyzed, so seams past the cut may hold gaps: raise or remove RIPR_PILOT_SEAM_BUDGET and RIPR_REPO_EXPOSURE_SEAM_LIMIT, then rerun pilot. {inspect}"
+        );
+    }
+    format!(
+        "the last complete `ripr pilot` run ranked no seam: it withheld {seams} whose static evidence is unknown or opaque, so they are static limitations, not gaps, and running pilot again unchanged withholds them again. {inspect}; no repair attempt applies until a seam ranks"
     )
 }
 
@@ -1284,6 +1390,16 @@ fn legacy_next_command(
                     message: pilot_rust_excluded_message(&excluded),
                 });
             }
+            return None;
+        }
+        // #5497: pilot withheld every seam as a static limitation, so a
+        // rerun ranks nothing again; name the inspection route instead.
+        if let Some(withheld) = pilot_withheld_every_seam(root) {
+            warnings.push(AgentStatusWarning {
+                kind: "pilot_withheld_static_limitations_no_repair_target".to_string(),
+                artifact: PILOT_SUMMARY_ARTIFACT.to_string(),
+                message: pilot_withheld_message(withheld, pilot_seam_limit_applied(root)),
+            });
             return None;
         }
         // #5205 (Codex P1): a Rust-disabled packet carries no seams and no
@@ -2538,7 +2654,7 @@ fn command_for_missing_artifact(
     seam: Option<&AgentStatusSeam>,
     artifact: &AgentStatusArtifact,
 ) -> String {
-    let root = bound_root(&display_path(root_argument));
+    let root = bound_root(&root_path_display(root_argument));
     let seam_id = seam
         .map(|seam| seam.seam_id.as_str())
         .unwrap_or("<seam-id>");
@@ -3234,11 +3350,16 @@ mod tests {
     }
 
     /// A finished attempt that never retained `terminal_artifacts` still reads
-    /// the one-slot compatibility file. An exact match is issued; a receipt
-    /// bound to another attempt stays superseded and is not reconstructed.
+    /// the one-slot compatibility file — but only with valid verify evidence.
+    /// An exact match backed by the workflow verify document is issued; a
+    /// receipt bound to another attempt stays superseded and is not
+    /// reconstructed; a bound receipt whose verdict disagrees with its verify
+    /// document is unavailable.
     #[test]
     fn agent_status_legacy_manifest_does_not_reconstruct_a_superseded_receipt() -> Result<(), String>
     {
+        use crate::app::repair_attempt::RepairAttemptAfter;
+        use crate::edit_cage::{EditCageVerdict, EditCageVerdictStatus};
         let manifest = ready_to_finish_manifest()?;
         let after = manifest
             .after
@@ -3272,19 +3393,86 @@ mod tests {
             "repair-attempt-aaaaaaaaaaaaaaaaaaaaaaaa"
         );
 
-        let matching = serde_json::json!({
-            "repair_attempt": {
-                "attempt_id": after.attempt_id.as_str(),
-                "after_head": after.repository_head,
-                "delta_sha256": after.delta_sha256,
-                "packet_sha256": after.packet_sha256
-            }
+        // The issued half needs a real finished attempt: a synthetic manifest
+        // carries no retained before snapshot to bind the verify document to.
+        // The manifest below is legacy-shaped (no `terminal_artifacts`) with
+        // a compliant after verdict attached in memory.
+        let root = unique_agent_status_test_dir("legacy-issued");
+        std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+        run_git(&root, &["init"])?;
+        run_git(
+            &root,
+            &["config", "user.email", "ripr-test@example.invalid"],
+        )?;
+        run_git(&root, &["config", "user.name", "RIPR Test"])?;
+        write_file(&root.join("README.md"), "# test\n")?;
+        run_git(&root, &["add", "."])?;
+        run_git(&root, &["commit", "--no-gpg-sign", "-m", "initial"])?;
+        prepare_attempt_fixture(&root, "seam:legacy")?;
+        let attempt_id = only_attempt_id(&root, None)?;
+        let stored = load_repair_attempt_manifest_from(&root, None, &attempt_id)?;
+        let mut legacy = stored.clone();
+        legacy.state = RepairAttemptState::ReadyToFinish;
+        legacy.after = Some(RepairAttemptAfter {
+            attempt_id: legacy.repair_attempt_id.clone(),
+            repository_head: stored.repository_head.clone(),
+            delta_sha256: "sha256:fixture-delta".to_string(),
+            packet_sha256: "sha256:fixture-packet".to_string(),
+            current: true,
+            verdict: EditCageVerdict {
+                status: EditCageVerdictStatus::Compliant,
+                changed_paths: vec!["tests/target.rs".to_string()],
+                violations: Vec::new(),
+            },
         });
-        match attempt_receipt(
-            Path::new("."),
-            &manifest,
-            &WorkflowReceiptRead::Parsed(matching),
-        ) {
+        // The issued half needs a genuinely canonical pair: mint the
+        // verify from real before/after snapshots so canonical admission
+        // admits it. A fabricated pair with no evaluable basis reads
+        // unavailable now (missing-basis pairs stay unconfirmed).
+        write_file(&root.join("tests/target.rs"), "// focused test\n")?;
+        run_git(&root, &["add", "."])?;
+        run_git(&root, &["commit", "--no-gpg-sign", "-m", "focused test"])?;
+        let after_path = root.join("target/ripr/workflow/after.json");
+        let after_snapshot = crate::testing::verify_fixture::mint_repo_exposure_snapshot(
+            &root,
+            serde_json::json!([crate::testing::verify_fixture::snapshot_seam(
+                "seam:legacy",
+                "predicate_boundary",
+                "src/lib.rs",
+                1,
+                "weakly_gripped",
+            )]),
+        )?;
+        write_file(&after_path, &after_snapshot)?;
+        let retained_before = root.join(
+            &crate::app::repair_attempt::find_manifest_artifact_by_role(&legacy, "before_snapshot")
+                .ok_or_else(|| "fixture manifest has no before_snapshot".to_string())?
+                .path,
+        );
+        let verify = crate::testing::verify_fixture::mint_canonical_verify(
+            &root,
+            &retained_before,
+            &after_path,
+        )?;
+        let verify_bytes = verify.into_bytes();
+        let digest = {
+            use sha2::Digest;
+            let sum = sha2::Sha256::digest(&verify_bytes);
+            let mut rendered = String::from("sha256:");
+            for byte in sum {
+                rendered.push_str(&format!("{byte:02x}"));
+            }
+            rendered
+        };
+        let receipt_bytes =
+            crate::testing::verify_fixture::mint_bound_receipt(&legacy, "unchanged", &digest)?;
+        write_file(
+            &root.join(WORKFLOW_AGENT_VERIFY_ARTIFACT),
+            std::str::from_utf8(&verify_bytes).map_err(|err| format!("verify not UTF-8: {err}"))?,
+        )?;
+        let matching: Value = serde_json::from_slice(&receipt_bytes)
+            .map_err(|err| format!("parse matching receipt: {err}"))?;
+        match attempt_receipt(&root, &legacy, &WorkflowReceiptRead::Parsed(matching)) {
             AgentStatusAttemptReceipt::Issued { path, .. } => {
                 assert_eq!(path, WORKFLOW_AGENT_RECEIPT_ARTIFACT);
             }
@@ -3294,6 +3482,20 @@ mod tests {
                 ));
             }
         }
+        // A bound receipt whose verdict disagrees with its verify document
+        // is unavailable, never issued.
+        let mut forged: Value = serde_json::from_slice(&receipt_bytes)
+            .map_err(|err| format!("parse forged receipt: {err}"))?;
+        forged["seam"]["change"] = Value::String("improved".to_string());
+        match attempt_receipt(&root, &legacy, &WorkflowReceiptRead::Parsed(forged)) {
+            AgentStatusAttemptReceipt::Unavailable { .. } => {}
+            other => {
+                return Err(format!(
+                    "a legacy receipt with a forged verdict must be unavailable, not {other:?}"
+                ));
+            }
+        }
+        std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
         Ok(())
     }
 
@@ -3361,7 +3563,19 @@ mod tests {
         let before = workflow.join("before-status-honesty.json");
         let packet = workflow.join("packet-status-honesty.json");
         let baseline = workflow.join("baseline-status-honesty.json");
-        write_file(&before, "{}")?;
+        // Evidence-grade before snapshot: legacy receipt reads bind the
+        // verify document to its recomputed content commitment.
+        let before_snapshot = crate::testing::verify_fixture::mint_repo_exposure_snapshot(
+            root,
+            serde_json::json!([crate::testing::verify_fixture::snapshot_seam(
+                seam_id,
+                "predicate_boundary",
+                "src/lib.rs",
+                1,
+                "weakly_gripped",
+            )]),
+        )?;
+        write_file(&before, &before_snapshot)?;
         let packet_text = serde_json::json!({
             "seam_id": seam_id,
             "allowed_edit_surface": ["tests/target.rs"],
@@ -4145,6 +4359,118 @@ mod tests {
                     .iter()
                     .any(|warning| warning.kind == "pilot_rust_excluded_no_repair_target"),
                 "control must not raise the exclusion warning: {control}"
+            );
+        }
+
+        std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+        Ok(())
+    }
+
+    /// #5497: a complete pilot run that withheld every seam as a static
+    /// limitation ranks nothing, so `select_seam` would rerun the same pilot
+    /// forever. Status stops and names the inspection route.
+    #[test]
+    fn agent_status_stops_when_pilot_withheld_every_seam() -> Result<(), String> {
+        let root = unique_agent_status_test_dir("pilot-withheld");
+        let summary = |status: &str, seams: &str, repair: &str, withheld: &str| {
+            format!(
+                r#"{{"status": "{status}", "top_actionable_seams": {seams}, "withheld_static_limitations_total": {withheld}, "next": {{"repair_command": {repair}}}}}"#
+            )
+        };
+        write_file(
+            &root.join(PILOT_SUMMARY_ARTIFACT),
+            &summary("complete", "[]", "null", "138"),
+        )?;
+        write_file(
+            &root.join(PILOT_REPO_EXPOSURE_ARTIFACT),
+            r#"{"run_status": "complete"}"#,
+        )?;
+        let report = build_agent_status_report(&root, Path::new("."));
+        assert!(
+            report.next_command.is_none(),
+            "withheld-only pilot must stop, not loop: {:?}",
+            report.next_command
+        );
+        let warning = report
+            .warnings
+            .iter()
+            .find(|warning| warning.kind == "pilot_withheld_static_limitations_no_repair_target")
+            .ok_or_else(|| format!("expected a withheld warning: {:?}", report.warnings))?;
+        assert_eq!(warning.artifact, PILOT_SUMMARY_ARTIFACT);
+        for expected in [
+            "withheld 138 seams whose static evidence is unknown or opaque",
+            "target/ripr/pilot/repo-exposure.md",
+            "no repair attempt applies until a seam ranks",
+        ] {
+            assert!(warning.message.contains(expected), "{}", warning.message);
+        }
+
+        // A seam limit cut the classified seams: gaps may sit past the cut,
+        // so the warning names raising the limit, not "no repair applies".
+        write_file(
+            &root.join(PILOT_REPO_EXPOSURE_ARTIFACT),
+            r#"{"run_status": "seam_limit_applied"}"#,
+        )?;
+        let report = build_agent_status_report(&root, Path::new("."));
+        assert!(report.next_command.is_none(), "{:?}", report.next_command);
+        let warning = report
+            .warnings
+            .iter()
+            .find(|warning| warning.kind == "pilot_withheld_static_limitations_no_repair_target")
+            .ok_or_else(|| format!("expected a withheld warning: {:?}", report.warnings))?;
+        for expected in [
+            "withheld at least 138 seams",
+            "seams past the cut may hold gaps",
+            "raise or remove RIPR_PILOT_SEAM_BUDGET and RIPR_REPO_EXPOSURE_SEAM_LIMIT",
+        ] {
+            assert!(warning.message.contains(expected), "{}", warning.message);
+        }
+        assert!(
+            !warning.message.contains("no repair attempt applies"),
+            "{}",
+            warning.message
+        );
+        std::fs::remove_file(root.join(PILOT_REPO_EXPOSURE_ARTIFACT))
+            .map_err(|err| format!("remove repo exposure: {err}"))?;
+
+        // Without the repo exposure report status cannot rule out a cut, so
+        // it fails closed: no "no repair applies", and the limit is named.
+        let report = build_agent_status_report(&root, Path::new("."));
+        let warning = report
+            .warnings
+            .iter()
+            .find(|warning| warning.kind == "pilot_withheld_static_limitations_no_repair_target")
+            .ok_or_else(|| format!("expected a withheld warning: {:?}", report.warnings))?;
+        for expected in [
+            "is missing or unreadable, so status cannot tell whether a seam limit cut the run",
+            "raise or remove RIPR_PILOT_SEAM_BUDGET and RIPR_REPO_EXPOSURE_SEAM_LIMIT",
+        ] {
+            assert!(warning.message.contains(expected), "{}", warning.message);
+        }
+        assert!(
+            !warning.message.contains("no repair attempt applies"),
+            "{}",
+            warning.message
+        );
+
+        // Controls: nothing withheld (the old empty ranking), a pre-0.3
+        // summary without the field, a timed-out run, and a ranked seam all
+        // keep their previous routing.
+        for control in [
+            summary("complete", "[]", "null", "0"),
+            r#"{"status": "complete", "top_actionable_seams": [], "next": {"repair_command": null}}"#
+                .to_string(),
+            summary("timed_out", "[]", "null", "null"),
+            // Only the status differs from the stopping summary.
+            summary("partial", "[]", "null", "138"),
+            summary("complete", r#"[{"seam_id": "s"}]"#, "null", "5"),
+        ] {
+            write_file(&root.join(PILOT_SUMMARY_ARTIFACT), &control)?;
+            let report = build_agent_status_report(&root, Path::new("."));
+            assert!(
+                !report.warnings.iter().any(|warning| warning.kind
+                    == "pilot_withheld_static_limitations_no_repair_target"),
+                "control must not raise the withheld warning: {control}"
             );
         }
 

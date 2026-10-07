@@ -1402,14 +1402,15 @@ pub(crate) fn collect_oracle_metadata_evidence_lines(
         .filter(|candidate| {
             candidate_observes_owner_call(candidate, owner, alias_map, workspace_root)
         })
-        .flat_map(|candidate| {
-            candidate
-                .test
-                .assertions
-                .iter()
-                .map(move |assertion| (assertion, &candidate.test.file))
+        // Each test contributes the assertion its related-test row shows
+        // (#5525), so the metadata and the row never describe different
+        // assertions of one test; across tests the last strongest wins, the
+        // same rule the repair packet uses to pick its target row.
+        .filter_map(|candidate| {
+            select_family_relevant_assertion(&candidate.test.assertions, Some(probe_family))
+                .assertion()
+                .map(|assertion| (assertion, &candidate.test.file))
         })
-        .filter(|(assertion, _)| ts_oracle_kind_matches_seam(&assertion.oracle_kind, probe_family))
         .max_by_key(|(assertion, _)| assertion.oracle_strength.rank());
 
     match strongest_assertion_with_file {

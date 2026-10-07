@@ -11,7 +11,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::cli::unknown_argument;
-use crate::output::workflow_escape::{escape_data, escape_property};
+use crate::output::workflow_escape::{
+    escape_data, escape_property, path_is_unplaceable, unplaced_location_prefix,
+};
 
 const DEFAULT_COMMENTS_JSON: &str = "target/ripr/review/comments.json";
 const DEFAULT_ANNOTATIONS_TXT: &str = "target/ripr/review/annotations.txt";
@@ -186,6 +188,16 @@ fn annotation_from_comment(item: &Value) -> Result<String, String> {
     // comments.json placement paths are raw text (never stable-encoded),
     // so the full property encoding applies — unlike the raw-check
     // renderer's stable `file=` input (#4065).
+    if path_is_unplaceable(&path) {
+        // A property cannot carry a control or bidi character: omit the
+        // placement and name the escaped location in the message (#6309).
+        let prefix = unplaced_location_prefix(&path, &line.to_string());
+        return Ok(format!(
+            "::warning title={}::{}",
+            escape_property(&title),
+            escape_data(&format!("{prefix}{message}"))
+        ));
+    }
     Ok(format!(
         "::warning file={},line={},title={}::{}",
         escape_property(&path),
@@ -426,6 +438,31 @@ mod tests {
                 "title=ripr medium focused%3Atest%2Ccase::",
                 "Pin: Result::Err, not Ok(100%25).",
                 " Suggested test: assert_eq!(actual, expected)"
+            )
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn annotation_omits_placement_for_control_character_paths() -> Result<(), String> {
+        // #6309: a property cannot carry ESC/bidi, so the placement is dropped
+        // and the escaped location leads the message.
+        let item = serde_json::json!({
+            "placement": {
+                "path": "src/a\u{1b}[2Jb\u{202e}.rs",
+                "line": 7,
+                "mode": "same_file_changed_line"
+            },
+            "kind": "focused_test",
+            "reason": "Pin the value"
+        });
+        let annotation = annotation_from_comment(&item)?;
+        assert_eq!(
+            annotation,
+            concat!(
+                "::warning title=ripr advisory focused_test::",
+                "Location (file name has control characters, so not placed): ",
+                "src/a\\u{1b}[2Jb\\u{202e}.rs:7. Pin the value"
             )
         );
         Ok(())

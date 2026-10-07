@@ -1,9 +1,11 @@
 use crate::analysis::classify::{
-    OwnerPinSyntax, OwnerReturnPin, ProbeContext, PropagationWitnessV1, ReturnOracleAdmission,
-    activation_evidence_with_value_facts, classify, confidence_score, contains_as_whole_word,
-    current_path_witness, has_same_test_boundary_oracle_pairing, infection_evidence,
-    local_flow_sinks, owner_may_be_reached_unseen, package_prefix,
-    propagation_evidence_with_witness, reach_evidence, reveal_evidence_with_expression,
+    ARM_UNSELECTED_REASON_PREFIX, ASSERTION_CONTEXT_UNESTABLISHED, ArmSelector, OwnerPinSyntax,
+    OwnerReturnPin, ProbeContext, PropagationWitnessV1, ReturnOracleAdmission,
+    TransitiveReachIndex, activation_and_boundary_input, body_contains_owner_call,
+    callee_is_unique, classify, confidence_score, contains_as_whole_word, current_path_witness,
+    has_same_test_boundary_oracle_pairing, infection_evidence_with_boundary_input,
+    local_flow_sinks, oracle_crediting_relations, owner_may_be_reached_unseen, package_prefix,
+    propagation_evidence_with_witness, reach_evidence, reveal_outcome,
     same_test_pairing_missing_summary,
 };
 use crate::analysis::facts::{FunctionSummary, OracleFact, TestSummary};
@@ -34,6 +36,23 @@ pub(in crate::analysis) struct ClassifiedProbeEvidence {
     /// change. An owner with an unresolved caller chain keeps its
     /// shape-based class even when no related test was found.
     pub(in crate::analysis) reach_ruled_out: bool,
+    /// When the reveal is not fully established: where a refused related
+    /// assertion is, why it was refused, and whether its text calls the
+    /// changed owner. Only an owner-calling refusal could have observed
+    /// the change had it been credited, so only that one may be presented
+    /// as a possible static limit.
+    pub(in crate::analysis) assertion_refusal: Option<AssertionRefusalNote>,
+    /// When Observe is `rust_assertion_context_unestablished`: every refused
+    /// related `assert_eq!` was refused for an analyzer limit, so the gap
+    /// rests on what ripr could not read (RIPR-SPEC-0240).
+    pub(in crate::analysis) refusals_are_analyzer_limits: bool,
+}
+
+#[derive(Clone, Debug)]
+pub(in crate::analysis) struct AssertionRefusalNote {
+    pub(in crate::analysis) location: String,
+    pub(in crate::analysis) reason: String,
+    pub(in crate::analysis) calls_owner: bool,
 }
 
 impl ClassifiedProbeEvidence {
@@ -50,7 +69,7 @@ impl ClassifiedProbeEvidence {
         let flow_sinks = local_flow_sinks(context.probe, context.owner_fn);
         let propagation_witness = current_path_witness(context.probe, &flow_sinks)
             .map(PropagationWitnessDiagnostic::from_witness);
-        let activation = activation_evidence_with_value_facts(
+        let gathered = activation_and_boundary_input(
             context.probe,
             context.owner_fn,
             &test_summaries,
@@ -60,7 +79,54 @@ impl ClassifiedProbeEvidence {
             context.workspace_complete,
             context.test_value_facts,
         );
-        let infect = infection_evidence(context.probe, &test_summaries, &activation);
+        let mut activation = gathered.activation;
+        // #3731 review (F11, G1): the changed owner's package scope, computed
+        // once — the cross-package same-name defeats compare each related
+        // test's package against it.
+        let owner_package = context
+            .owner_fn
+            .and_then(|owner| package_prefix(&owner.file));
+        // RIPR-SPEC-0229: an unselected-arm discriminator reads each related
+        // test's owner calls as inputs to the changed owner. A test whose
+        // file imports a foreign same-named function, or whose own package
+        // defines one, may be calling that function instead, so the same
+        // identity defeats reveal applies withhold the named arm here.
+        if let Some(owner) = context.owner_fn
+            && activation
+                .missing_discriminators
+                .iter()
+                .any(|fact| fact.reason.starts_with(ARM_UNSELECTED_REASON_PREFIX))
+            && test_summaries.iter().any(|test| {
+                let imports_foreign = context.index.files().get(&test.file).is_some_and(|facts| {
+                    context.test_file_imports_foreign_callee_name(
+                        &test.file,
+                        &facts.source,
+                        &owner.name,
+                    )
+                });
+                let package_defines = package_prefix(&test.file).is_some_and(|test_package| {
+                    owner_package
+                        .as_deref()
+                        .is_some_and(|owner_package| owner_package != test_package)
+                        && context.index.functions().iter().any(|function| {
+                            function.name == owner.name
+                                && package_prefix(&function.file).as_deref()
+                                    == Some(test_package.as_str())
+                        })
+                });
+                imports_foreign || package_defines
+            })
+        {
+            activation
+                .missing_discriminators
+                .retain(|fact| !fact.reason.starts_with(ARM_UNSELECTED_REASON_PREFIX));
+        }
+        let infect = infection_evidence_with_boundary_input(
+            context.probe,
+            &test_summaries,
+            &activation,
+            gathered.unresolved_boundary.as_deref(),
+        );
         let valid_witness = propagation_witness
             .as_ref()
             .and_then(|diagnostic| match diagnostic {
@@ -69,12 +135,6 @@ impl ClassifiedProbeEvidence {
             });
         let propagate =
             propagation_evidence_with_witness(context.probe, &flow_sinks, valid_witness);
-        // #3731 review (G1): the changed owner's package scope, computed
-        // once — the cross-package same-name defeat below compares each
-        // related test's package against it.
-        let owner_package = context
-            .owner_fn
-            .and_then(|owner| package_prefix(&owner.file));
         // Both defeats below depend only on the test's file (and the probe's
         // constant owner callee), never on the individual test. A
         // high-traffic owner relates to thousands of tests spread over a
@@ -97,75 +157,127 @@ impl ClassifiedProbeEvidence {
         let owner_return_pin = context
             .owner_fn
             .and_then(|owner| OwnerReturnPin::establish(context.probe, owner, context.index));
+        // RIPR-SPEC-0229: which owner-call input selects a changed arm.
+        // A same-named function elsewhere (a trait method on another enum
+        // with the same variant names) makes a direct call ambiguous; a
+        // partial index cannot show the name is unique.
+        let arm_selector = context
+            .owner_fn
+            .filter(|owner| {
+                matches!(context.probe.family, ProbeFamily::MatchArm)
+                    && context.workspace_complete
+                    && callee_is_unique(&owner.name, context.index)
+            })
+            .and_then(|owner| ArmSelector::establish(context.probe, owner))
+            .map(|selector| {
+                selector.in_workspace(
+                    context.index,
+                    context
+                        .related_tests
+                        .iter()
+                        .map(|(test, _)| test.file.as_path()),
+                )
+            });
         let package_defeats_by_file = FileDefeatMemo::default();
+        // Built lazily: only a match arm beside an owner-calling test asks
+        // whether a same-file test may run the owner (#6297).
+        let proximity_reach = TransitiveReachIndex::new(context.index);
+        let owner_reach = std::cell::OnceCell::new();
         let owner_locals = context
             .owner_fn
             .map(owner_local_binding_names)
             .unwrap_or_default();
-        let (observe, discriminate, related_tests, matched_total) = reveal_evidence_with_expression(
+        // #3731 review (F11): the related test's file source is reachable
+        // here, so the caller computes the same-name-import defeat per test
+        // instead of restructuring the reveal inputs.
+        let import_defeats = |test: &TestSummary, callee: &str| {
+            context.index.files().get(&test.file).is_some_and(|facts| {
+                context.test_file_imports_foreign_callee_name(&test.file, &facts.source, callee)
+            })
+        };
+        // #3731 review (G1): the test's OWN package defining a same-named
+        // function defeats the bare-scrutinee binding the same way a foreign
+        // import does — the bare call in that test may bind the local
+        // definition while the changed owner lives in another package.
+        // Index-backed, not a new lexical scan: package scopes come from the
+        // shared `package_prefix` authority and the same-named definition
+        // from the workspace's indexed functions. Both package scopes must
+        // resolve; an unscopable side (single-crate relative paths, absolute
+        // paths) keeps today's behavior.
+        let cross_package_defeats = |test: &TestSummary, callee: &str| {
+            memoized_file_defeat(&package_defeats_by_file, &test.file, callee, || {
+                let Some(test_package) = package_prefix(&test.file) else {
+                    return false;
+                };
+                let Some(owner_package) = owner_package.as_deref() else {
+                    return false;
+                };
+                if test_package == owner_package {
+                    return false;
+                }
+                context.index.functions().iter().any(|function| {
+                    function.name == callee
+                        && package_prefix(&function.file).as_deref() == Some(test_package.as_str())
+                })
+            })
+        };
+        let owner_pin_admits = |test: &TestSummary, assertion: &OracleFact| {
+            owner_return_pin.as_ref().is_some_and(|pin| {
+                pin.admits(
+                    test,
+                    assertion,
+                    context.index,
+                    &|file, name| {
+                        context.index.files().get(file).is_some_and(|facts| {
+                            context.test_file_imports_foreign_callee_name(file, &facts.source, name)
+                        })
+                    },
+                    pin_syntax,
+                )
+            })
+        };
+        let reveal = reveal_outcome(
             context.probe,
             reveal_expression,
             &context.related_tests,
             &owner_locals,
-            // #3731 review (F11): the related test's file source is
-            // reachable here, so the caller computes the same-name-import
-            // defeat per test instead of restructuring the reveal inputs.
-            &|test, callee| {
-                context.index.files().get(&test.file).is_some_and(|facts| {
-                    context.test_file_imports_foreign_callee_name(&test.file, &facts.source, callee)
-                })
-            },
-            // #3731 review (G1): the test's OWN package defining a
-            // same-named function defeats the bare-scrutinee binding the
-            // same way a foreign import does — the bare call in that test
-            // may bind the local definition while the changed owner lives
-            // in another package. Index-backed, not a new lexical scan:
-            // package scopes come from the shared `package_prefix`
-            // authority and the same-named definition from the workspace's
-            // indexed functions. Both package scopes must resolve; an
-            // unscopable side (single-crate relative paths, absolute
-            // paths) keeps today's behavior.
-            &|test, callee| {
-                memoized_file_defeat(&package_defeats_by_file, &test.file, callee, || {
-                    let Some(test_package) = package_prefix(&test.file) else {
-                        return false;
-                    };
-                    let Some(owner_package) = owner_package.as_deref() else {
-                        return false;
-                    };
-                    if test_package == owner_package {
-                        return false;
-                    }
-                    context.index.functions().iter().any(|function| {
-                        function.name == callee
-                            && package_prefix(&function.file).as_deref()
-                                == Some(test_package.as_str())
-                    })
-                })
-            },
+            &import_defeats,
+            &cross_package_defeats,
             &ReturnOracleAdmission {
-                owner_return_pin: &|test, assertion| {
-                    owner_return_pin.as_ref().is_some_and(|pin| {
-                        pin.admits(
-                            test,
-                            assertion,
-                            context.index,
-                            &|file, name| {
-                                context.index.files().get(file).is_some_and(|facts| {
-                                    context.test_file_imports_foreign_callee_name(
-                                        file,
-                                        &facts.source,
-                                        name,
-                                    )
-                                })
-                            },
-                            pin_syntax,
-                        )
+                owner_return_pin: &owner_pin_admits,
+                assertion_admitted: &assertion_admitted,
+                proximity_may_reach_owner: &|test| {
+                    context.owner_fn.is_none_or(|owner| {
+                        owner_reach
+                            .get_or_init(|| proximity_reach.owner_reach(&owner.name))
+                            .test_may_reach(test)
                     })
                 },
-                assertion_admitted: &assertion_admitted,
             },
+            arm_selector.as_ref(),
         );
+        let (observe, discriminate, related_tests, matched_total) = (
+            reveal.observe,
+            reveal.discriminate,
+            reveal.related,
+            reveal.related_total,
+        );
+        // #6692: a clone-field pin (`assert_eq!(recv.clone(), recv)` through
+        // a derived `PartialEq`) observes the constructed field, so the
+        // missing-field fact below no longer stands for this probe. Only an
+        // owner pin that reveal credited clears it, after reveal's own
+        // gates (a name-only relation next to a reach-bearing test, a
+        // foreign same-name import, a cross-package same-name definition);
+        // a token match never does.
+        if matches!(context.probe.family, ProbeFamily::FieldConstruction)
+            && reveal.owner_pin_credited
+        {
+            activation.missing_discriminators.retain(|fact| {
+                fact.flow_sink
+                    .as_ref()
+                    .is_none_or(|sink| sink.kind != FlowSinkKind::StructField)
+            });
+        }
 
         let discriminate =
             tuple_match::discrimination(context, &observe, &discriminate).unwrap_or(discriminate);
@@ -185,6 +297,16 @@ impl ClassifiedProbeEvidence {
                 &test_summaries,
                 &activation,
                 &assertion_admitted,
+                // The same owner-pin decision and binding defeats reveal
+                // applied, so pairing cannot credit a pin reveal refused.
+                &|test, assertion| {
+                    matches!(assertion.kind, OracleKind::RelationalCheck)
+                        && context.owner_fn.is_some_and(|owner| {
+                            !import_defeats(test, &owner.name)
+                                && !cross_package_defeats(test, &owner.name)
+                        })
+                        && owner_pin_admits(test, assertion)
+                },
             ) {
             StageEvidence::new(
                 StageState::Weak,
@@ -239,7 +361,78 @@ impl ClassifiedProbeEvidence {
                 discriminate: discriminate.clone(),
             },
         };
-        let evidence = evidence_summaries([&reach, &infect, &propagate, &observe, &discriminate]);
+        let mut evidence =
+            evidence_summaries([&reach, &infect, &propagate, &observe, &discriminate]);
+        // Disclose a refused related `assert_eq!` whenever the refusal can
+        // matter: the reveal is not fully established. One whose text calls
+        // the changed owner is preferred, since an unrelated refused
+        // assertion (`if flag { assert_eq!(1, 1) }`) could not observe the
+        // change even if it were credited.
+        let owner_name = context.owner_fn.map_or("", |owner| owner.name.as_str());
+        let assertion_refusal = (observe.summary == ASSERTION_CONTEXT_UNESTABLISHED
+            || discriminate.state != StageState::Yes)
+            .then(|| {
+                let mut first = None;
+                for (test, _) in &context.related_tests {
+                    for assertion in &test.assertions {
+                        let Some(refusal) = pin_syntax.equality_assertion_refusal(
+                            context.probe,
+                            test,
+                            assertion,
+                            context.index,
+                        ) else {
+                            continue;
+                        };
+                        let calls_owner = body_contains_owner_call(&assertion.text, owner_name);
+                        let note = AssertionRefusalNote {
+                            location: format!(
+                                "`assert_eq!` in {} at {}:{}",
+                                test.name,
+                                test.file.display(),
+                                assertion.line
+                            ),
+                            reason: refusal.describe(),
+                            calls_owner,
+                        };
+                        if calls_owner {
+                            return Some(note);
+                        }
+                        first.get_or_insert(note);
+                    }
+                }
+                first
+            })
+            .flatten();
+        if let Some(note) = &assertion_refusal {
+            evidence.push(format!(
+                "{ASSERTION_NOT_CREDITED_PREFIX}{}: {}",
+                note.location, note.reason
+            ));
+        }
+        let refusals_are_analyzer_limits = observe.summary == ASSERTION_CONTEXT_UNESTABLISHED && {
+            // Only tests that could have credited an oracle: a refused
+            // assertion in a name-only test cannot stand in for the missing
+            // oracle of a reach-bearing one.
+            let credits = oracle_crediting_relations(&context.related_tests);
+            let mut refusals = context
+                .related_tests
+                .iter()
+                .filter(|(_, reason)| credits(*reason))
+                .flat_map(|(test, _)| {
+                    test.assertions.iter().filter_map(|assertion| {
+                        pin_syntax.equality_assertion_refusal(
+                            context.probe,
+                            test,
+                            assertion,
+                            context.index,
+                        )
+                    })
+                });
+            refusals
+                .next()
+                .is_some_and(|first| first.is_analyzer_limit())
+                && refusals.all(|refusal| refusal.is_analyzer_limit())
+        };
 
         Self {
             ripr,
@@ -255,6 +448,8 @@ impl ClassifiedProbeEvidence {
             observe,
             discriminate,
             reach_ruled_out,
+            assertion_refusal,
+            refusals_are_analyzer_limits,
         }
     }
 
@@ -418,7 +613,7 @@ mod tests {
             file: PathBuf::from(file),
             start_line: 1,
             end_line: 9,
-            body: "match expect_response(&input, \"ready\") { .. }".to_string(),
+            body: "match expect_response(&input, \"ready\") { .. }".into(),
             calls: Vec::new(),
             assertions: vec![guarded_oracle()],
             literals: Vec::new(),
@@ -435,7 +630,7 @@ mod tests {
             file: PathBuf::from(file),
             start_line: 1,
             end_line: 4,
-            body: "fn expect_response() -> Result<u32, ParseError> { Ok(1) }".to_string(),
+            body: "fn expect_response() -> Result<u32, ParseError> { Ok(1) }".into(),
             calls: Vec::new(),
             returns: Vec::new(),
             literals: Vec::new(),
@@ -475,7 +670,7 @@ mod tests {
             file: PathBuf::from("crates/alpha/src/lib.rs"),
             start_line: 1,
             end_line: 20,
-            body: "fn expect_response() -> Result<u32, ParseError> { Ok(1) }".to_string(),
+            body: "fn expect_response() -> Result<u32, ParseError> { Ok(1) }".into(),
             calls: Vec::new(),
             returns: vec![ReturnFact {
                 line: 14,
@@ -627,7 +822,7 @@ mod tests {
             file: PathBuf::from("src/lib.rs"),
             start_line: 1,
             end_line: 20,
-            body: "fn calculate(amount: i32) -> Result<i32, Error> { Ok(amount) }".to_string(),
+            body: "fn calculate(amount: i32) -> Result<i32, Error> { Ok(amount) }".into(),
             calls: Vec::new(),
             returns: vec![ReturnFact {
                 line: 14,
@@ -674,7 +869,7 @@ mod tests {
             file: PathBuf::from("src/lib.rs"),
             start_line: 1,
             end_line: 20,
-            body: "fn calculate(amount: i32) -> Result<i32, Error> { Ok(amount) }".to_string(),
+            body: "fn calculate(amount: i32) -> Result<i32, Error> { Ok(amount) }".into(),
             calls: Vec::new(),
             returns: vec![ReturnFact {
                 line: 14,
@@ -725,7 +920,7 @@ mod tests {
             file: PathBuf::from("src/lib.rs"),
             start_line: 1,
             end_line: 6,
-            body: "fn from_rows(cache: &mut Cache, rows: Vec<u32>) -> Result<Table, String> {\n    let cache = cache;\n    let table = Table { rows };\n    table.validate()?;\n    Ok(table)\n}".to_string(),
+            body: "fn from_rows(cache: &mut Cache, rows: Vec<u32>) -> Result<Table, String> {\n    let cache = cache;\n    let table = Table { rows };\n    table.validate()?;\n    Ok(table)\n}".into(),
             calls: Vec::new(),
             returns: Vec::new(),
             literals: Vec::new(),

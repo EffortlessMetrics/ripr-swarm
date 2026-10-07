@@ -866,7 +866,7 @@ mod tests {
             seam,
             evidence: TestGripEvidence {
                 seam_id,
-                related_tests: vec![RelatedTestGrip {
+                related_tests: vec![std::sync::Arc::new(RelatedTestGrip {
                     test_name: "discounts_large_orders".to_string(),
                     file: PathBuf::from("tests/pricing.rs"),
                     line: 12,
@@ -882,7 +882,7 @@ mod tests {
                     evidence_summary: "asserts returned discount".to_string(),
                     relation_reason: RelationReason::DirectOwnerCall,
                     relation_confidence: RelationConfidence::High,
-                }],
+                })],
                 reach: StageEvidence::new(StageState::Yes, Confidence::High, "direct call"),
                 activate: StageEvidence::new(StageState::Yes, Confidence::High, "value observed"),
                 propagate: StageEvidence::new(
@@ -935,7 +935,7 @@ mod tests {
             seam,
             evidence: TestGripEvidence {
                 seam_id,
-                related_tests: vec![RelatedTestGrip {
+                related_tests: vec![std::sync::Arc::new(RelatedTestGrip {
                     test_name: "discounts_smoke".to_string(),
                     file: PathBuf::from("tests/pricing.rs"),
                     line: 22,
@@ -951,7 +951,7 @@ mod tests {
                     evidence_summary: "helper assertion not classified".to_string(),
                     relation_reason: RelationReason::SameTestFile,
                     relation_confidence: RelationConfidence::Opaque,
-                }],
+                })],
                 reach: StageEvidence::new(StageState::Yes, Confidence::Medium, "same file"),
                 activate: StageEvidence::new(
                     StageState::Unknown,

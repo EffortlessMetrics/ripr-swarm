@@ -1,3 +1,4 @@
+use super::admission::{PythonAdmissionContext, PythonTestFunction, assertion_admission};
 use super::module_constants::{
     PythonModuleConstant, constants_visible_in_function, python_test_rebinding,
 };
@@ -270,6 +271,7 @@ pub(super) fn extract_tests(file: &Path, source: &str) -> Vec<PythonTest> {
 pub(super) struct TestImportContext<'a> {
     pub(super) body: &'a [PythonImport],
     pub(super) definition: &'a [PythonImport],
+    pub(super) admission: &'a PythonAdmissionContext,
 }
 
 /// Follow the default pytest `python_functions` and unittest
@@ -285,6 +287,7 @@ pub(super) fn collect_tests_from_statements(
     out: &mut Vec<PythonTest>,
 ) {
     let imports = import_context.body;
+    let admission = import_context.admission;
     let mut definition_imports = import_context.definition.to_vec();
     let local_classes = LocalTestClasses::of(file, statements, import_context.definition);
     for stmt in statements {
@@ -297,28 +300,45 @@ pub(super) fn collect_tests_from_statements(
                     "pytest"
                 };
                 let name = function.name.to_string();
+                let fixtures = fixture_parameter_names(&function.args, framework);
+                let assertions = collect_assertions_from_statements(&function.body, source);
+                // pytest does not parametrize unittest methods.
+                let parametrize = (framework == "pytest")
+                    .then(|| parametrize_cases(source, &function.decorator_list))
+                    .flatten();
+                let imports = test_imports(file, imports, &function.body);
+                let assertion_admission = assertion_admission(
+                    &PythonTestFunction {
+                        body: &function.body,
+                        decorators: &function.decorator_list,
+                        parameters: &fixtures,
+                        imports: &imports,
+                        class_path: class_context,
+                    },
+                    &assertions,
+                    parametrize.as_ref().map(|cases| cases.argnames()).as_ref(),
+                    admission,
+                );
                 out.push(PythonTest {
                     qualified_name: qualified_test_name(class_context, &name),
                     name,
                     file: file.to_path_buf(),
                     line: line_for_range_start(source, function.range),
                     body_text: text_for_range(source, function.range),
-                    imports: test_imports(file, imports, &function.body),
+                    imports,
                     decorators: decorator_names(&function.decorator_list),
                     activation_controls: super::test_activation::activation_controls(
                         &decorator_names(&function.decorator_list),
                         &definition_imports,
                         super::test_activation::DeclarationSite::Function,
                     ),
-                    fixtures: fixture_parameter_names(&function.args, framework),
+                    fixtures,
                     parametrized: is_parametrized(&function.decorator_list),
-                    // pytest does not parametrize unittest methods.
-                    parametrize: (framework == "pytest")
-                        .then(|| parametrize_cases(source, &function.decorator_list))
-                        .flatten()
+                    parametrize: parametrize
                         .and_then(|cases| cases.excluding_body_bindings(&function.body)),
                     framework,
-                    assertions: collect_assertions_from_statements(&function.body, source),
+                    assertions,
+                    assertion_admission,
                     constant_rebinding: python_test_rebinding(
                         &function.args,
                         &function.body,
@@ -333,28 +353,45 @@ pub(super) fn collect_tests_from_statements(
                     "pytest"
                 };
                 let name = function.name.to_string();
+                let fixtures = fixture_parameter_names(&function.args, framework);
+                let assertions = collect_assertions_from_statements(&function.body, source);
+                // pytest does not parametrize unittest methods.
+                let parametrize = (framework == "pytest")
+                    .then(|| parametrize_cases(source, &function.decorator_list))
+                    .flatten();
+                let imports = test_imports(file, imports, &function.body);
+                let assertion_admission = assertion_admission(
+                    &PythonTestFunction {
+                        body: &function.body,
+                        decorators: &function.decorator_list,
+                        parameters: &fixtures,
+                        imports: &imports,
+                        class_path: class_context,
+                    },
+                    &assertions,
+                    parametrize.as_ref().map(|cases| cases.argnames()).as_ref(),
+                    admission,
+                );
                 out.push(PythonTest {
                     qualified_name: qualified_test_name(class_context, &name),
                     name,
                     file: file.to_path_buf(),
                     line: line_for_range_start(source, function.range),
                     body_text: text_for_range(source, function.range),
-                    imports: test_imports(file, imports, &function.body),
+                    imports,
                     decorators: decorator_names(&function.decorator_list),
                     activation_controls: super::test_activation::activation_controls(
                         &decorator_names(&function.decorator_list),
                         &definition_imports,
                         super::test_activation::DeclarationSite::Function,
                     ),
-                    fixtures: fixture_parameter_names(&function.args, framework),
+                    fixtures,
                     parametrized: is_parametrized(&function.decorator_list),
-                    // pytest does not parametrize unittest methods.
-                    parametrize: (framework == "pytest")
-                        .then(|| parametrize_cases(source, &function.decorator_list))
-                        .flatten()
+                    parametrize: parametrize
                         .and_then(|cases| cases.excluding_body_bindings(&function.body)),
                     framework,
-                    assertions: collect_assertions_from_statements(&function.body, source),
+                    assertions,
+                    assertion_admission,
                     constant_rebinding: python_test_rebinding(
                         &function.args,
                         &function.body,
@@ -380,6 +417,7 @@ pub(super) fn collect_tests_from_statements(
                         TestImportContext {
                             body: imports,
                             definition: &definition_imports,
+                            admission,
                         },
                         out,
                     );
@@ -406,6 +444,7 @@ pub(super) fn collect_tests_from_statements(
                                     .get(mixin.name.as_str())
                                     .map(Vec::as_slice)
                                     .unwrap_or(&definition_imports),
+                                admission,
                             },
                             &mut from_mixin,
                         );

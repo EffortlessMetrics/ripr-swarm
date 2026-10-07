@@ -1,12 +1,13 @@
 use crate::agent::loop_commands::shell_arg;
 use crate::config::{CONFIG_FILE_NAME, detect_python_project};
+use crate::output::path::human_path;
 use serde_json::{Value, json};
 use std::path::Path;
 
 use super::options::FirstPrOptions;
 use super::{
-    command_problem, detect_typescript_project, git_args, missing_base_command, resolve_path,
-    run_git,
+    base_fetch_refspec, command_problem, detect_typescript_project, git_args, missing_base_command,
+    resolve_path, run_git,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -18,6 +19,8 @@ pub(super) struct FirstPrPreflight {
     base: String,
     head: String,
     next_command: Option<String>,
+    recovery_commands: Vec<String>,
+    recovery_guidance: Option<String>,
     checks: Vec<PreflightCheck>,
 }
 
@@ -32,7 +35,7 @@ impl FirstPrPreflight {
     }
 
     pub(super) fn to_json(&self) -> Value {
-        json!({
+        let mut value = json!({
             "status": self.status,
             "mode": self.mode,
             "root": self.root,
@@ -41,7 +44,14 @@ impl FirstPrPreflight {
             "head": self.head,
             "next_command": self.next_command,
             "checks": self.checks.iter().map(PreflightCheck::to_json).collect::<Vec<_>>()
-        })
+        });
+        if !self.recovery_commands.is_empty() {
+            value["recovery_commands"] = json!(self.recovery_commands);
+        }
+        if let Some(guidance) = &self.recovery_guidance {
+            value["recovery_guidance"] = json!(guidance);
+        }
+        value
     }
 }
 
@@ -53,6 +63,8 @@ struct PreflightCheck {
     message: String,
     path: Option<String>,
     next_command: Option<String>,
+    recovery_commands: Vec<String>,
+    recovery_guidance: Option<String>,
 }
 
 impl PreflightCheck {
@@ -64,6 +76,8 @@ impl PreflightCheck {
             message: message.into(),
             path: None,
             next_command: None,
+            recovery_commands: Vec::new(),
+            recovery_guidance: None,
         }
     }
 
@@ -75,6 +89,8 @@ impl PreflightCheck {
             message: message.into(),
             path: None,
             next_command: None,
+            recovery_commands: Vec::new(),
+            recovery_guidance: None,
         }
     }
 
@@ -91,6 +107,8 @@ impl PreflightCheck {
             message: message.into(),
             path: None,
             next_command,
+            recovery_commands: Vec::new(),
+            recovery_guidance: None,
         }
     }
 
@@ -107,6 +125,8 @@ impl PreflightCheck {
             message: message.into(),
             path: None,
             next_command,
+            recovery_commands: Vec::new(),
+            recovery_guidance: None,
         }
     }
 
@@ -115,21 +135,42 @@ impl PreflightCheck {
         self
     }
 
+    fn with_recovery_commands(mut self, commands: Vec<String>) -> Self {
+        self.recovery_commands = commands;
+        self
+    }
+
+    fn with_recovery_guidance(mut self, guidance: impl Into<String>) -> Self {
+        self.recovery_guidance = Some(guidance.into());
+        self
+    }
+
     fn to_json(&self) -> Value {
-        json!({
+        let mut value = json!({
             "id": self.id,
             "label": self.label,
             "status": self.status,
             "message": self.message,
             "path": self.path,
             "next_command": self.next_command
-        })
+        });
+        if !self.recovery_commands.is_empty() {
+            value["recovery_commands"] = json!(self.recovery_commands);
+        }
+        if let Some(guidance) = &self.recovery_guidance {
+            value["recovery_guidance"] = json!(guidance);
+        }
+        value
     }
 }
 
 pub(super) fn first_pr_preflight(root: &Path, options: &FirstPrOptions) -> FirstPrPreflight {
     let mut checks = Vec::new();
-    let resolved_root = root.display().to_string();
+    // #5252 item 4: every renderer-owned preflight spelling renders through
+    // the shared human-path rule (#4378) so one document never mixes the
+    // verbatim `display` form with the slash-spelled `next_command` lines.
+    // `options.root` echoes still carry the caller's own spelling.
+    let resolved_root = human_path(root);
     checks.push(preflight_root_check(root, options));
     let git_available = matches!(checks.last().map(|check| check.status), Some("ok"))
         && preflight_git_repo_check(root, &mut checks);
@@ -143,6 +184,7 @@ pub(super) fn first_pr_preflight(root: &Path, options: &FirstPrOptions) -> First
             "Git base",
             &options.base,
             Some(missing_base_command(options)),
+            missing_base_recovery_commands(options),
         );
         head_ok = preflight_git_ref_check(
             root,
@@ -157,6 +199,7 @@ pub(super) fn first_pr_preflight(root: &Path, options: &FirstPrOptions) -> First
                 shell_arg(&options.base),
                 shell_arg(&options.head)
             )),
+            vec![rerun_command(options)],
         );
     }
     if git_available && base_ok && head_ok {
@@ -175,6 +218,15 @@ pub(super) fn first_pr_preflight(root: &Path, options: &FirstPrOptions) -> First
         },
     ));
     let next_command = checks.iter().find_map(|check| check.next_command.clone());
+    let recovery_commands = checks
+        .iter()
+        .find(|check| check.next_command.is_some())
+        .map(|check| check.recovery_commands.clone())
+        .unwrap_or_default();
+    let recovery_guidance = checks
+        .iter()
+        .find(|check| check.next_command.is_some())
+        .and_then(|check| check.recovery_guidance.clone());
     let status = if checks
         .iter()
         .any(|check| check.status == "needs_attention" || check.status == "no_action")
@@ -191,8 +243,39 @@ pub(super) fn first_pr_preflight(root: &Path, options: &FirstPrOptions) -> First
         base: options.base.clone(),
         head: options.head.clone(),
         next_command,
+        recovery_commands,
+        recovery_guidance,
         checks,
     }
+}
+
+/// Executable display commands are carried separately from recovery prose.
+/// Renderers can pair their shell forms without extracting code from a sentence.
+fn rerun_command(options: &FirstPrOptions) -> String {
+    format!(
+        "ripr first-pr --root {} --base {} --head {}",
+        shell_arg(&options.command_root()),
+        shell_arg(&options.base),
+        shell_arg(&options.head)
+    )
+}
+
+fn missing_base_recovery_commands(options: &FirstPrOptions) -> Vec<String> {
+    let mut commands = Vec::new();
+    if let Some(branch) = options
+        .base
+        .strip_prefix("origin/")
+        .filter(|branch| !branch.trim().is_empty())
+    {
+        let refspec = base_fetch_refspec(branch);
+        commands.push(format!(
+            "git -C {} fetch origin -- {}",
+            shell_arg(&options.command_root()),
+            shell_arg(&refspec)
+        ));
+    }
+    commands.push(rerun_command(options));
+    commands
 }
 
 fn preflight_root_check(root: &Path, options: &FirstPrOptions) -> PreflightCheck {
@@ -202,7 +285,7 @@ fn preflight_root_check(root: &Path, options: &FirstPrOptions) -> PreflightCheck
             "Workspace root",
             format!("Workspace root `{}` exists.", options.root),
         )
-        .with_path(root.display().to_string())
+        .with_path(human_path(root))
     } else {
         PreflightCheck::needs_attention(
             "root",
@@ -213,7 +296,7 @@ fn preflight_root_check(root: &Path, options: &FirstPrOptions) -> PreflightCheck
             ),
             Some("Run from a repository root or pass --root <path>.".to_string()),
         )
-        .with_path(root.display().to_string())
+        .with_path(human_path(root))
     }
 }
 
@@ -262,6 +345,7 @@ fn preflight_git_ref_check(
     label: &'static str,
     rev: &str,
     next_command: Option<String>,
+    recovery_commands: Vec<String>,
 ) -> bool {
     let commit = format!("{rev}^{{commit}}");
     match run_git(
@@ -282,25 +366,50 @@ fn preflight_git_ref_check(
             true
         }
         Ok(output) => {
-            checks.push(PreflightCheck::needs_attention(
-                id,
-                label,
-                command_problem(
-                    &format!("Could not resolve `{rev}` to a commit."),
-                    &output,
-                    "Fetch the missing ref or pass a resolvable --base/--head.",
+            // #5252 item 4: `rev-parse --verify --quiet` emits no detail, so
+            // both refs used to fall back to one shared string and warn
+            // twice, byte-identical, naming neither ref. The fallback keeps
+            // the summary so each warning names its role and rev; the role
+            // parallels the check id at the two call sites.
+            let role = match id {
+                "git_base" => "--base",
+                "git_head" => "--head",
+                unknown => unknown,
+            };
+            let summary = format!("Could not resolve {role} `{rev}` to a commit.");
+            checks.push(
+                PreflightCheck::needs_attention(
+                    id,
+                    label,
+                    command_problem(
+                        &summary,
+                        &output,
+                        &format!(
+                            "{summary} Fetch the missing ref or pass a resolvable --base/--head."
+                        ),
+                    ),
+                    next_command,
+                )
+                .with_recovery_commands(recovery_commands)
+                .with_recovery_guidance(
+                    "Fetch the missing ref or pass a resolvable --base/--head before rerunning.",
                 ),
-                next_command,
-            ));
+            );
             false
         }
         Err(message) => {
-            checks.push(PreflightCheck::needs_attention(
-                id,
-                label,
-                format!("Could not run git ref preflight for `{rev}`: {message}."),
-                next_command,
-            ));
+            checks.push(
+                PreflightCheck::needs_attention(
+                    id,
+                    label,
+                    format!("Could not run git ref preflight for `{rev}`: {message}."),
+                    next_command,
+                )
+                .with_recovery_commands(recovery_commands)
+                .with_recovery_guidance(
+                    "Restore Git availability and resolve --base/--head before rerunning.",
+                ),
+            );
             false
         }
     }
@@ -328,7 +437,8 @@ fn preflight_diff_check(root: &Path, options: &FirstPrOptions, checks: &mut Vec<
                     shell_arg(&options.base),
                     shell_arg(&options.head)
                 )),
-            ));
+            ).with_recovery_commands(vec![rerun_command(options)])
+             .with_recovery_guidance("Choose a head with changes or commit PR work before rerunning."));
         }
         Ok(output) if matches!(output.code, Some(1)) => {
             checks.push(PreflightCheck::ok(
@@ -352,7 +462,8 @@ fn preflight_diff_check(root: &Path, options: &FirstPrOptions, checks: &mut Vec<
                     shell_arg(&options.base),
                     shell_arg(&options.head)
                 )),
-            ));
+            ).with_recovery_commands(vec![rerun_command(options)])
+             .with_recovery_guidance("Check --base and --head and restore the Git objects needed for the diff before rerunning."));
         }
         Err(message) => {
             checks.push(PreflightCheck::needs_attention(
@@ -375,21 +486,21 @@ fn preflight_project_check(root: &Path) -> PreflightCheck {
             "Cargo workspace",
             "Cargo.toml was found at the workspace root.",
         )
-        .with_path(manifest.display().to_string())
+        .with_path(human_path(&manifest))
     } else if detect_python_project(root) {
         PreflightCheck::ok(
             "python_project",
             "Python project",
             "Python project markers were found; first-pr can consume Python preview gap-ledger records.",
         )
-        .with_path(root.display().to_string())
+        .with_path(human_path(root))
     } else if detect_typescript_project(root) {
         PreflightCheck::ok(
             "typescript_project",
             "TypeScript project",
             "TypeScript project markers were found; first-pr can consume TypeScript preview gap-ledger records.",
         )
-        .with_path(root.display().to_string())
+        .with_path(human_path(root))
     } else {
         PreflightCheck::needs_attention(
             "cargo_workspace",
@@ -400,7 +511,7 @@ fn preflight_project_check(root: &Path) -> PreflightCheck {
                     .to_string(),
             ),
         )
-        .with_path(manifest.display().to_string())
+        .with_path(human_path(&manifest))
     }
 }
 
@@ -412,14 +523,14 @@ fn preflight_config_check(root: &Path) -> PreflightCheck {
             "RIPR config",
             format!("{CONFIG_FILE_NAME} was found."),
         )
-        .with_path(config.display().to_string())
+        .with_path(human_path(&config))
     } else {
         PreflightCheck::defaulted(
             "ripr_config",
             "RIPR config",
             format!("No {CONFIG_FILE_NAME} was found; built-in advisory defaults apply."),
         )
-        .with_path(config.display().to_string())
+        .with_path(human_path(&config))
     }
 }
 
@@ -435,7 +546,7 @@ fn preflight_output_check(root: &Path, options: &FirstPrOptions) -> PreflightChe
             ),
             Some("Choose a directory for --out-dir, then rerun first-pr.".to_string()),
         )
-        .with_path(out_dir.display().to_string());
+        .with_path(human_path(&out_dir));
     }
     if out_dir.is_dir() {
         PreflightCheck::ok(
@@ -443,7 +554,7 @@ fn preflight_output_check(root: &Path, options: &FirstPrOptions) -> PreflightChe
             "Output directory",
             format!("Output directory `{}` exists.", options.out_dir),
         )
-        .with_path(out_dir.display().to_string())
+        .with_path(human_path(&out_dir))
     } else {
         PreflightCheck {
             id: "output_dir",
@@ -453,8 +564,10 @@ fn preflight_output_check(root: &Path, options: &FirstPrOptions) -> PreflightChe
                 "Output directory `{}` will be created if needed.",
                 options.out_dir
             ),
-            path: Some(out_dir.display().to_string()),
+            path: Some(human_path(&out_dir)),
             next_command: None,
+            recovery_commands: Vec::new(),
+            recovery_guidance: None,
         }
     }
 }

@@ -11,6 +11,18 @@
   "findings": [
     {
       "id": "probe:src_lib.rs:return_value:63d1fd29",
+      "canonical_gap_id": "gap:rust:src/lib.rs:compute_score:return_value:return_value:base*2",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:compute_score:return_value:return_value:base*2",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "compute_score",
+        "behavior_kind": "return_value",
+        "probe_kind": "return_value",
+        "normalized_discriminator": "base*2"
+
+      },
       "classification": "weakly_exposed",
       "severity": "warning",
       "confidence": 0.92,
@@ -18,7 +30,7 @@
         "id": "probe:src_lib.rs:return_value:63d1fd29",
         "family": "return_value",
         "delta": "value",
-        "file": "fixtures/observation_unverified_return_value/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 2,
         "expression": "base * 2"
        },

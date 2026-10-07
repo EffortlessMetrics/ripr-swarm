@@ -11,6 +11,18 @@
   "findings": [
     {
       "id": "probe:src_lib.rs:predicate:fa1d51d0",
+      "canonical_gap_id": "gap:rust:src/lib.rs:gate:predicate_boundary:predicate:input==10",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:gate:predicate_boundary:predicate:input==10",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "gate",
+        "behavior_kind": "predicate_boundary",
+        "probe_kind": "predicate",
+        "normalized_discriminator": "input==10"
+
+      },
       "classification": "weakly_exposed",
       "severity": "warning",
       "confidence": 0.92,
@@ -18,7 +30,7 @@
         "id": "probe:src_lib.rs:predicate:fa1d51d0",
         "family": "predicate",
         "delta": "control",
-        "file": "fixtures/split_test_boundary_oracle/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 2,
         "expression": "input >= 10"
        },
@@ -137,6 +149,18 @@
     },
     {
       "id": "probe:src_lib.rs:return_value:c71d52af",
+      "canonical_gap_id": "gap:rust:src/lib.rs:gate:return_value:return_value:input>=10",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:gate:return_value:return_value:input>=10",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "gate",
+        "behavior_kind": "return_value",
+        "probe_kind": "return_value",
+        "normalized_discriminator": "input>=10"
+
+      },
       "classification": "exposed",
       "severity": "info",
       "confidence": 1.00,
@@ -144,7 +168,7 @@
         "id": "probe:src_lib.rs:return_value:c71d52af",
         "family": "return_value",
         "delta": "value",
-        "file": "fixtures/split_test_boundary_oracle/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 2,
         "expression": "input >= 10"
        },

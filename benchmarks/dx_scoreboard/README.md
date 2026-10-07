@@ -20,6 +20,7 @@ target, margin, or corpus pin is a reviewed edit to that file.
 | `first_run` | The new-developer journey from install to first useful result | install seconds (source build), time to first useful result, walk seconds per crate, failed steps, steps over budget, friction events, `*_unknown` verdicts (all ingested) |
 | `agent` | Whether an agent using only ripr's help closes a real test gap quickly and without being misled | fix success, mutants caught, ripr commands and tool steps to fix, false weak findings left after the fix, stale re-checks, white-box tests written only for ripr, and how many of the stub calls `check` suggested produced a stub (ingested from the agent-as-user harness); share of `ripr agent stub` tests that compile and fail at their own todo, share of gap locations that get a stub, and `observer_required` refusals (ingested from the stub evaluation, source `agent-stub`) |
 | `corpus` | Whether ripr keeps working on the shared pinned Rust corpus | per repository: whether the diff-scoped `ripr check` reached `analyzed`, and its wall time (ingested from `cargo xtask rust-corpus smoke`) |
+| `ranking` | Whether `ripr pilot` sends people to the right places first | pooled top-5 and top-10 precision, confirmed and refuted counts, top-10 scored share, top-10 distinct-function share and top-10 pick count of pilot's picks against the checked-in mutation answer key (ingested from `cargo xtask pilot-ranking score`; see `benchmarks/pilot_ranking/README.md`) |
 
 The rollup counts metrics that meet their target, fall below it, are not
 measured, have a failed instrument, or regressed. A per-repository view groups
@@ -113,14 +114,37 @@ These native receipts are also accepted as-is:
   reject the file instead of counting as zero.
   `verdict` rows feed the `*_unknown` count, which is `review_on_change`: a
   changed verdict list is printed under "For review" and never fails the gate.
-- `ripr-mutation-spot-check-v1` from the mutation spot-check: the agreement
-  rate of the `claims_discriminator` and `claims_no_discriminator` families,
-  join coverage as `seam_precise` pairings over all mutants, and the
-  precision of `ripr pilot`'s top ten recommendations per repository (a
-  recommendation is confirmed when a mutant on its line, or else in its
-  function's body, was missed). These compare
-  static claims with real mutation outcomes on a sample; they are evidence
-  about ripr's calibration, not a mutation result for the corpus.
+- `ripr-mutation-spot-check-v2` from the mutation spot-check: the agreement
+  rate of the `claims_discriminator` and `claims_no_discriminator` families
+  over `canonical_precise` records (operator mutants joined by `seam_id` or
+  span containment to a predicate or return seam), and join coverage as
+  `canonical_precise` over every runtime record. These compare static claims
+  with real mutation outcomes on a sample; they are evidence about ripr's
+  calibration, not a mutation result for the corpus. A
+  `ripr-mutation-spot-check-v1` receipt is refused: its `seam_precise`
+  operator-text pairings are a different population. For the same reason a
+  baseline row whose samples were not ingested from a v2 receipt is reported
+  as not comparable instead of gating a v2 value against it. The committed
+  baseline has no measured value for these rows yet.
+  These rates pool every repository in the receipt, so each row's evidence
+  ends with its population as one JSON array: every repository's name,
+  checkout revision, cargo-mutants version, `mutant_set_sha256` (a digest of
+  the sorted mutant names, so selection arguments count even when unrecorded),
+  `cargo_mutants_args` and `mutant_timeout_secs` (both `null` for a supplied
+  `mutants.out`, whose run settings the harness cannot see; a shorter timeout
+  turns slow caught mutants into unscoreable timeouts). The gate compares a row only against a
+  baseline over the same population; a swapped repository, a moved revision,
+  a different mutant set, timeout or cargo-mutants run reports "not
+  comparable" with both populations, because the pooled rate can move with
+  no verdict changing. Repository order does not matter. A population with an
+  unrecorded (`null`) cargo-mutants version is never comparable, even to
+  another unrecorded one, because it could hide an instrument change. A
+  receipt repository without a name, revision or mutant-set digest, or with
+  non-string arguments, an empty or non-string version, or a timeout that is
+  not a positive integer, is refused.
+  The receipt also carries the precision of `ripr pilot`'s top ten
+  recommendations per repository (a recommendation is confirmed when a mutant
+  on its line, or else in its function's body, was missed).
 - `ripr-rust-corpus-smoke-v1` from `cargo xtask rust-corpus smoke`: per
   repository, `corpus.not_analyzed` (0 when the run reached `analyzed`, 1 when
   it failed closed, timed out or broke) and `corpus.check_ms` (the time of an
@@ -128,6 +152,24 @@ These native receipts are also accepted as-is:
   could not run (`not_fetched`, `spawn_failed`) is incomplete on every
   metric, so against a baseline that analyzed it the gate reports lost
   completion rather than a pass.
+- `ripr-pilot-ranking-v1` from `cargo xtask pilot-ranking score`: the
+  pooled `ranking` rows, tagged with the corpus version as their repository so
+  a baseline from another corpus version is uncompared. A run that could not fetch or score one of the
+  pinned crates, or scored only a `--repo` subset, marks every row incomplete, so the gate reports lost
+  completion instead of comparing a different population.
+
+### The ranking lane
+
+`.github/workflows/pilot-ranking.yml` runs nightly, on demand, and once when a
+pull request touching pilot ranking, seam grading or the answer key leaves
+draft. It never runs cargo-mutants; the labels are committed:
+
+```bash
+cargo xtask pilot-ranking fetch --allow-network
+cargo xtask pilot-ranking score --ripr target/release/ripr
+cargo xtask dx-scoreboard --boards ranking --ingest target/ripr/reports/pilot-ranking.json \
+  --baseline metrics/dx-scoreboard/pilot-ranking-baseline.json --gate
+```
 
 ### The corpus lane
 
@@ -167,16 +209,44 @@ compared worst.
 Metrics the baseline measured that a run cannot compare, such as ingested
 metrics without a receipt, are listed as not compared. Wall-time and memory
 metrics compare only against a baseline from the
-same runner class (`local-linux-x86_64-4cpu`, `github-hosted-linux-x86_64-4cpu`,
-or `RIPR_DX_RUNNER_CLASS`). Counts and line totals compare across runners.
+same runner class: host, OS, architecture, CPU count and, on Linux, the CPU
+model from `/proc/cpuinfo` (for example
+`github-hosted-linux-x86_64-4cpu-amd-epyc-7763-64-core-processor`), or
+`RIPR_DX_RUNNER_CLASS` when set. Hosted runners with the same CPU count use
+more than one CPU model, and wall time on identical code differed by about
+1.7x between runs, so the model is part of the key. Counts and line totals
+compare across runners.
 
 `metrics/dx-scoreboard/baseline.json` is the committed baseline. To move it,
 commit a newer report after reviewing why the numbers changed. A baseline
 recorded on one runner class leaves speed metrics uncompared on another; the
 report says so instead of passing them.
 
+The scoreboard and fast-corpus baselines are reports from hosted runs on
+`github-hosted-linux-x86_64-4cpu-amd-epyc-7763-64-core-processor`, the model
+most hosted runs drew. Two EPYC 7763 runs of the same ripr code stayed within
+5.2% of each other on every speed and memory sample (margins are 15% for
+memory and 25% for time), and fast-corpus check times moved at most 14 ms. The
+full-corpus job drew a different model on each of three runs (EPYC 9V74, Xeon
+6973P, Xeon Platinum 8370C), so its baseline is the latest of those and its
+check times compare only when that model recurs. A nightly that lands on
+another model still gates counts and completion; its wall-time and memory
+rows read "runner class differs". The nightly passes no `--ingest`, so the
+scoreboard baseline holds no mutation spot-check or first-run values; a local
+run that ingests those reports leaves them uncompared. To re-record, take the
+`dx-scoreboard.json` printed in the lane's log group or uploaded artifact.
+
 The nightly `.github/workflows/dx-scoreboard.yml` runs the full corpus with
 the gate and uploads the report as an artifact.
+
+The `first_run` board is measured by `.github/workflows/first-run-install.yml`,
+which runs nightly and on demand (never on a pull request). It does a cold
+`cargo install ripr --locked` from crates.io, walks the first-run path, and
+ingests the receipt. It gates against
+`metrics/dx-scoreboard/first-run-baseline.json`; until that file exists the
+lane records the report ungated. To start gating, dispatch the workflow on
+`ubuntu-latest`, review the `dx-scoreboard.json` artifact, and commit it as the
+baseline file. Install seconds compare only against a same-runner baseline.
 
 ## Claim boundary
 

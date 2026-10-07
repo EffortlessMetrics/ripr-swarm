@@ -85,7 +85,9 @@ const REGISTERED_COMMAND_PATHS: &[&str] = &[
     "policy readiness",
     "policy suppression-health",
     "policy waiver-aging",
+    "pr-comments existing",
     "pr-comments plan",
+    "pr-comments requests",
     "pr-evidence",
     "pr-ledger record",
     "pr-review front-panel",
@@ -157,7 +159,7 @@ pub(super) fn help_text_for(command: &str) -> Option<&'static str> {
         | "policy readiness"
         | "policy suppression-health"
         | "policy waiver-aging" => POLICY_HELP,
-        "pr-comments plan" => PR_COMMENTS_HELP,
+        "pr-comments plan" | "pr-comments existing" | "pr-comments requests" => PR_COMMENTS_HELP,
         "pr-evidence" => PR_EVIDENCE_HELP,
         "pr-ledger record" => PR_LEDGER_HELP,
         "pr-review front-panel" => PR_REVIEW_HELP,
@@ -393,13 +395,13 @@ mod tests {
     }
     use super::{
         AGENT_BRIEF_HELP, AGENT_CARD_HELP, AGENT_HELP, AGENT_PACKET_HELP, AGENT_RECEIPT_HELP,
-        AGENT_REVIEW_SUMMARY_HELP, AGENT_START_HELP, AGENT_STATUS_HELP, AGENT_VERIFY_HELP,
-        ANNOTATIONS_HELP, ASSISTANT_LOOP_HELP, BASELINE_HELP, CACHE_CLEAR_HELP, CACHE_STATUS_HELP,
-        CALIBRATE_HELP, CHECK_HELP, CONFIG_HELP, CONTEXT_HELP, COVERAGE_GRIP_HELP, DIFF_HELP,
-        DOCTOR_HELP, EVIDENCE_HEALTH_HELP, EXPLAIN_HELP, FEEDBACK_EXPORT_HELP,
-        FEEDBACK_RECORD_HELP, FIRST_ACTION_HELP, FIRST_PR_HELP, GATE_HELP, HELP, HELP_ALL,
-        IMPACTED_EVIDENCE_HELP, INIT_HELP, LSP_HELP, OUTCOME_HELP, PILOT_HELP, PLUS_HELP,
-        POLICY_HELP, PR_COMMENTS_HELP, PR_EVIDENCE_HELP, PR_LEDGER_HELP, PR_REVIEW_HELP,
+        AGENT_REPAIR_HELP, AGENT_REVIEW_SUMMARY_HELP, AGENT_START_HELP, AGENT_STATUS_HELP,
+        AGENT_VERIFY_HELP, ANNOTATIONS_HELP, ASSISTANT_LOOP_HELP, BASELINE_HELP, CACHE_CLEAR_HELP,
+        CACHE_STATUS_HELP, CALIBRATE_HELP, CHECK_HELP, CONFIG_HELP, CONTEXT_HELP,
+        COVERAGE_GRIP_HELP, DIFF_HELP, DOCTOR_HELP, EVIDENCE_HEALTH_HELP, EXPLAIN_HELP,
+        FEEDBACK_EXPORT_HELP, FEEDBACK_RECORD_HELP, FIRST_ACTION_HELP, FIRST_PR_HELP, GATE_HELP,
+        HELP, HELP_ALL, IMPACTED_EVIDENCE_HELP, INIT_HELP, LSP_HELP, OUTCOME_HELP, PILOT_HELP,
+        PLUS_HELP, POLICY_HELP, PR_COMMENTS_HELP, PR_EVIDENCE_HELP, PR_LEDGER_HELP, PR_REVIEW_HELP,
         PR_SUMMARY_HELP, REPORTS_HELP, RERUN_HELP, REVIEW_COMMENTS_HELP, SWARM_HELP,
         SWARM_INGEST_HELP, SWARM_QUEUE_HELP, ZERO_HELP, print_agent_brief_help,
         print_agent_card_help, print_agent_help, print_agent_packet_help, print_agent_receipt_help,
@@ -634,6 +636,16 @@ mod tests {
         // index scope, so a caller can predict the wall-clock difference.
         assert!(CHECK_HELP.contains("Cost class: whole-workspace modes"));
         assert!(CHECK_HELP.contains("order of magnitude longer"));
+    }
+
+    #[test]
+    fn repair_help_names_the_persist_latency_trace_env() {
+        // #6897, same #4946(d) rule as the check surface: every env var a
+        // repair user can set is documented on the same
+        // "Environment variables:" surface.
+        assert!(AGENT_REPAIR_HELP.contains("RIPR_PERSIST_LATENCY_TRACE"));
+        assert!(AGENT_REPAIR_HELP.contains("emits diagnostic persist-phase"));
+        assert!(AGENT_REPAIR_HELP.contains("Presence enables"));
     }
 
     #[test]
@@ -1011,6 +1023,7 @@ mod tests {
     const CLI_COMMANDS_RS: &str = include_str!("commands.rs");
     const CHECK_PARSER_RS: &str = include_str!("commands/check.rs");
     const CI_PACKET_PARSER_RS: &str = include_str!("commands/ci_packet.rs");
+    const PR_COMMENTS_GITHUB_PARSER_RS: &str = include_str!("commands/pr_comments_github.rs");
     const CI_SUMMARY_PARSER_RS: &str = include_str!("commands/ci_summary.rs");
     const REVIEW_COMMENTS_PARSER_RS: &str = include_str!("commands/review_comments.rs");
     const CONTEXT_PARSER_RS: &str = include_str!("commands/context.rs");
@@ -1220,9 +1233,19 @@ mod tests {
             &["parse_policy_waiver_aging_options"],
         ),
         (
+            "pr-comments existing",
+            PR_COMMENTS_GITHUB_PARSER_RS,
+            &["parse_pr_comments_existing_options"],
+        ),
+        (
             "pr-comments plan",
             CLI_COMMANDS_RS,
             &["parse_pr_comments_plan_options"],
+        ),
+        (
+            "pr-comments requests",
+            PR_COMMENTS_GITHUB_PARSER_RS,
+            &["parse_pr_comments_requests_options"],
         ),
         (
             "pr-evidence",
@@ -1262,7 +1285,7 @@ mod tests {
         (
             "reports ci-summary",
             CI_SUMMARY_PARSER_RS,
-            &["parse_ci_summary_options"],
+            &["parse_ci_summary_options_with"],
         ),
         (
             "reports gap-ledger",

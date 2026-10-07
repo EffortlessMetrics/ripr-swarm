@@ -199,6 +199,13 @@ jobs:
         id: workspace_check
         run: cargo check --workspace --all-targets
 
+      # Feature-gated test modules (lang-perl and other previews) compile only
+      # under their features; without this step two green PRs can break main
+      # together (#6854, #6879).
+      - name: All-features ripr target check
+        id: all_features_check
+        run: cargo check -p ripr --all-targets --all-features
+
       - name: Strict workspace Clippy
         id: clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
@@ -239,6 +246,7 @@ jobs:
           path: |
             target/nextest/ci/junit.xml
             target/nextest/ci/run-context.txt
+            target/ripr/reports/discarded-matcher-cli-5713/
             target/nextest/ci/python-symlink-source-admission-cli-${{ github.run_id }}-${{ github.run_attempt }}.txt
             target/ripr/reports/repair-card-usability.json
             target/ripr/reports/repair-card-usability.md
@@ -255,7 +263,7 @@ jobs:
         id: goldens
         run: cargo xtask goldens check
 
-      # Retain these six bounded calibration subjects even on success: the
+      # Retain bounded wildcard and affected matcher/guard calibration subjects:
       # drift report contains counts and first differences, not full stdout.
       # This uses the actual canonical producer outputs; it does not rerun,
       # normalize, bless, or weaken the golden comparison.
@@ -268,6 +276,18 @@ jobs:
             target/ripr/fixtures/wildcard_oracle_*/check.json
             target/ripr/fixtures/wildcard_oracle_*/human.txt
             target/ripr/fixtures/wildcard_oracle_*/human-full.txt
+            target/ripr/fixtures/error_variant_boxed_wrapper_downcast_witness/check.json
+            target/ripr/fixtures/error_variant_boxed_wrapper_downcast_witness/human*.txt
+            target/ripr/fixtures/error_variant_boxed_wrapper_fail_closed/check.json
+            target/ripr/fixtures/error_variant_boxed_wrapper_fail_closed/human*.txt
+            target/ripr/fixtures/error_variant_wrapper_callee_only_pin/check.json
+            target/ripr/fixtures/error_variant_wrapper_callee_only_pin/human*.txt
+            target/ripr/fixtures/error_variant_wrapper_foreign_pin/check.json
+            target/ripr/fixtures/error_variant_wrapper_foreign_pin/human*.txt
+            target/ripr/fixtures/error_variant_wrapper_wrong_receiver_pin/check.json
+            target/ripr/fixtures/error_variant_wrapper_wrong_receiver_pin/human*.txt
+            target/ripr/fixtures/guarded_result_match_owner_observation/check.json
+            target/ripr/fixtures/guarded_result_match_owner_observation/human*.txt
           if-no-files-found: error
           retention-days: 5
 
@@ -358,6 +378,7 @@ jobs:
           PROCESS_POLICY_RESULT: ${{ steps.process_policy.outcome }}
           NETWORK_POLICY_RESULT: ${{ steps.network_policy.outcome }}
           WORKSPACE_CHECK_RESULT: ${{ steps.workspace_check.outcome }}
+          ALL_FEATURES_CHECK_RESULT: ${{ steps.all_features_check.outcome }}
           CLIPPY_RESULT: ${{ steps.clippy.outcome }}
           RUST_TESTS_RESULT: ${{ steps.rust-tests.outcome }}
           GOLDENS_RESULT: ${{ steps.goldens.outcome }}
@@ -379,6 +400,7 @@ jobs:
             printf '| process_policy | %s |\n' "${PROCESS_POLICY_RESULT:-not_reported}"
             printf '| network_policy | %s |\n' "${NETWORK_POLICY_RESULT:-not_reported}"
             printf '| workspace_check | %s |\n' "${WORKSPACE_CHECK_RESULT:-not_reported}"
+            printf '| all_features_check | %s |\n' "${ALL_FEATURES_CHECK_RESULT:-not_reported}"
             printf '| clippy | %s |\n' "${CLIPPY_RESULT:-not_reported}"
             printf '| rust-tests | %s |\n' "${RUST_TESTS_RESULT:-not_reported}"
             printf '| goldens | %s |\n' "${GOLDENS_RESULT:-not_reported}"

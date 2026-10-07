@@ -19,6 +19,20 @@ sites (diagnostic operand stripping, guarded owner-result matches, exact-variant
 pins, Python's typed-oracle gate) do not scan identifier lexemes. Do not reopen
 #4748.
 
+## 2026-10-04: cancellation is the token's observed abort, not a phrase (#4860)
+
+Analysis checkpoints render `analysis cancelled: <Kind>` and the text then
+travels through ~120 `Result<_, String>` call sites, where callers wrap it.
+The LSP refresh wrapped it as `workspace analysis failed: ...`, so its
+`starts_with("analysis cancelled:")` check read a real deadline abort as an
+analysis failure. Decide cancellation from
+`AnalysisCancellationToken::observed_abort()`: the recorded kind, set only
+once a checkpoint handed it to the work. A recorded reason that no checkpoint
+saw is not an outcome, because the work failed or finished on its own.
+Inside `CoreError` code (git invocation, diff load) the abort is the typed
+`CoreError::AnalysisCancelled`. `is_cancellation_error(&str)` is test-only
+and asserts rendered wording.
+
 ## 2026-10-04: Initialize-session `ping` is the method name, not `params._meta` (#6022)
 
 Pinned `rmcp` 3.5.0 answers pre-init `ping` in the handshake loop (any
@@ -119,6 +133,15 @@ selectors, but do not trim the file part or reject interior whitespace. Walk
 slash-split rewrite dropped Windows drive-relative and rooted identities.
 Paths remain the limitation-path rule: they are identities, not prose. Do not
 add a second filesystem authority in a renderer or `lsp/diagnostics.rs`.
+
+## 2026-10-04: `Path::is_file()` is not `ripr.toml` presence (#5404)
+
+`Path::is_file()` follows symlinks. After `load_for_root` started treating a
+dangling `ripr.toml` as present-but-unreadable, workspace status and the two
+Python repair config-profile checks still used `is_file()`, so they reported
+built-in defaults. Use `config_present_at_root` / `config_entry_present`
+(`symlink_metadata`) at every presence site. Keep a dangling-link control per
+site that must not say defaults while `load_for_root` names `ripr.toml`.
 
 ## 2026-10-03: record-count sharding is not a byte bound (#4999)
 
@@ -307,6 +330,26 @@ Do not absorb helper credit (#4574), proximity-only oracles (#4486), or
 bare-name method relation (#4760) into this pairing gate. Pairing reuses
 activation's `==` facts so a same-test oracle that already infected through
 a named constant or helper hop stays `exposed`.
+
+## 2026-10-05: A boundary literal buried in an argument expression is a false `exposed` (#6668)
+
+Same-test pairing reused `owner_argument_values`, which collects every scalar
+token inside the argument text. `assert_eq!(gate(if false { 10 } else { 50 }),
+true)` and `assert_eq!(gate(std::cmp::max(10, 50)), true)` therefore paired as
+boundary inputs even though both calls evaluate to 50; the `10 <= value` →
+`10 < value` mutant still passes. Bool-owner `assert!(gate(..))` pins inherit
+the same matcher. Pairing now admits an argument only when it is the literal
+itself, a named local bound to that literal, or a call infection already
+recorded as `==` the boundary. Do not "fix" this by changing
+`owner_argument_values` / `scalar_values` (those remain the activation
+authority; #5638 / #5359). Activation `==` fallback is refused when the
+compared argument is compound, not when an unrelated extra argument is
+(`gate(LIMIT, make_context())` still pairs) or when the compared argument
+is a path-qualified constant (`bulk_rate(parcels::BULK_ITEMS)`). When a
+compared operand is a local alias rather than a parameter name, activation
+fallback fail-closes to the whole argument list so a buried literal in the
+aliased slot cannot restore pairing. The reverse direction, helper-built
+inputs that read as gaps, is #6615.
 
 ## 2026-09-29: Whole-object equality is not an effect observer of a different collection (#4575)
 
