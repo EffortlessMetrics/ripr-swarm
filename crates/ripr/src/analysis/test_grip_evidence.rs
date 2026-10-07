@@ -14,6 +14,7 @@
 mod owner_result_binding;
 mod reach_limit;
 mod related_tests;
+pub(crate) mod shared_grips;
 mod value_contradiction;
 
 use value_contradiction::{

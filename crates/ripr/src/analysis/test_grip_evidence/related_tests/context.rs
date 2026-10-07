@@ -1,8 +1,8 @@
 use super::*;
 use crate::analysis::syntax::parse_clean_source_file;
 use crate::analysis::test_grip_evidence::owner_result_binding::ParsedTestFile;
+use crate::analysis::test_grip_evidence::shared_grips::SharedGrips;
 use crate::analysis::value_resolution::{FileValueScan, ValueEnvFacts};
-use std::collections::HashSet;
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
 
 /// Precomputed per-test facts for repo seam evidence consumers. This
@@ -62,10 +62,10 @@ pub(crate) struct CompactGripContext<'a> {
     /// One shared record per distinct related-test grip (#5341, #5362).
     /// Seams relate to the same tests over and over: on ripr-swarm 10,000
     /// seams hold 1.28M related-test entries but only about 15k distinct
-    /// records; sharing them cut the cold-pilot peak from 1.42 GB to 689 MB.
-    /// Records are immutable, so sharing one does not couple seams. Kept
-    /// across windows: the dedup is the point.
-    shared_grips: Mutex<HashSet<Arc<RelatedTestGrip>>>,
+    /// records; sharing them cut the cold-pilot peak from 1.42 GB to about 700 MB.
+    /// Records are immutable, so sharing one does not couple seams. Window
+    /// boundaries drop only the records no seam holds any more.
+    shared_grips: Mutex<SharedGrips>,
 }
 
 /// Candidate generation only: the existing `contains` and `same_module`
@@ -74,15 +74,6 @@ pub(crate) struct CompactGripContext<'a> {
 struct NameModuleCandidateIndex {
     name_trigrams: BTreeMap<[u8; 3], Vec<usize>>,
     module_prefixes: BTreeMap<String, Vec<usize>>,
-}
-
-fn same_path_spelling(left: &RelatedTestGrip, right: &RelatedTestGrip) -> bool {
-    left.file.as_os_str() == right.file.as_os_str()
-        && match (&left.test_target, &right.test_target) {
-            (Some(left), Some(right)) => left.file().as_os_str() == right.file().as_os_str(),
-            (None, None) => true,
-            _ => false,
-        }
 }
 
 impl NameModuleCandidateIndex {
@@ -220,6 +211,7 @@ impl<'a> CompactGripContext<'a> {
         memo(&self.owner_named_cache).clear();
         memo(&self.same_module_cache).clear();
         memo(&self.parsed_sources).clear();
+        memo(&self.shared_grips).release_unheld();
     }
 
     /// The run's shared copy of `grip`: an equal record already handed out,
@@ -228,19 +220,7 @@ impl<'a> CompactGripContext<'a> {
         &self,
         grip: RelatedTestGrip,
     ) -> Arc<RelatedTestGrip> {
-        let mut shared = memo(&self.shared_grips);
-        if let Some(existing) = shared.get(&grip) {
-            // `PathBuf` equality compares components, so `tests/./a.rs`
-            // equals `tests/a.rs`. Share only an identical spelling, so the
-            // output keeps each seam's own path bytes.
-            if same_path_spelling(existing, &grip) {
-                return Arc::clone(existing);
-            }
-            return Arc::new(grip);
-        }
-        let grip = Arc::new(grip);
-        shared.insert(Arc::clone(&grip));
-        grip
+        memo(&self.shared_grips).share(grip)
     }
 
     /// Number of indexed functions with exactly `name`; 0 for unknown or
@@ -511,7 +491,7 @@ impl<'a> CompactGripContext<'a> {
             transitive_reach: crate::analysis::classify::TransitiveReachIndex::new(index),
             type_mentions: OnceLock::new(),
             unresolved_reach: Mutex::new(BTreeMap::new()),
-            shared_grips: Mutex::new(HashSet::new()),
+            shared_grips: Mutex::new(SharedGrips::default()),
         })
     }
 

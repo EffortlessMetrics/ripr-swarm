@@ -2682,6 +2682,37 @@ fn shared_grips_keep_each_path_spelling() -> Result<(), String> {
     Ok(())
 }
 
+#[test]
+fn window_boundaries_release_only_unheld_shared_grips() -> Result<(), String> {
+    // A streamed review drops each window's seams it does not keep; the
+    // shared records only those seams held must go with them.
+    let index = index_from_files(&[(PathBuf::from("src/lib.rs"), "pub fn f() {}\n")])?;
+    let context = CompactGripContext::new(&index);
+    let grip = |test_name: &str| RelatedTestGrip {
+        test_name: test_name.to_string(),
+        file: PathBuf::from("tests/f.rs"),
+        line: 3,
+        test_target: None,
+        oracle_kind: OracleKind::ExactValue,
+        oracle_strength: OracleStrength::Strong,
+        evidence_summary: "exact value assertion".to_string(),
+        relation_reason: RelationReason::DirectOwnerCall,
+        relation_confidence: RelationConfidence::High,
+    };
+    let kept = context.share_grip(grip("kept_works"));
+    let discarded = std::sync::Arc::downgrade(&context.share_grip(grip("discarded_works")));
+    context.clear_window_memos();
+    assert!(
+        discarded.upgrade().is_none(),
+        "a record no seam holds must be released at the window boundary"
+    );
+    assert!(
+        std::sync::Arc::ptr_eq(&kept, &context.share_grip(grip("kept_works"))),
+        "a record a kept seam holds must stay shared"
+    );
+    Ok(())
+}
+
 fn parallel_evidence_fixture() -> Result<(FixtureIndex, Vec<RepoSeam>), String> {
     let prod = PathBuf::from("src/pricing.rs");
     let prod_src = r#"
