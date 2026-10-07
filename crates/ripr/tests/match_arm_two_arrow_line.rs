@@ -6,7 +6,9 @@
 //! arm changed. The verdict must then match the uncut behavior: no
 //! "No related test call selects arm" signal.
 
-use ripr::{CheckInput, CheckOutput, Mode, OutputFormat, ProbeFamily, check_workspace};
+use ripr::{
+    CheckInput, CheckOutput, ExposureClass, Mode, OutputFormat, ProbeFamily, check_workspace,
+};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -27,7 +29,9 @@ fn source(arms: &str) -> String {
 }
 
 fn diff(old_arms: &str, new_arms: &str) -> String {
-    let count = 4 + old_arms.lines().count();
+    // Five context lines plus the changed arm lines on each side.
+    let old_count = 5 + old_arms.lines().count();
+    let new_count = 5 + new_arms.lines().count();
     let old = old_arms
         .lines()
         .map(|line| format!("-{line}\n"))
@@ -37,7 +41,7 @@ fn diff(old_arms: &str, new_arms: &str) -> String {
         .map(|line| format!("+{line}\n"))
         .collect::<String>();
     format!(
-        "diff --git a/src/lib.rs b/src/lib.rs\nindex 0000000..1111111 100644\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,{count} +1,{count} @@\n pub fn route(kind: &str) -> u32 {{\n     match kind {{\n{old}{new}         _ => 9,\n     }}\n }}\n"
+        "diff --git a/src/lib.rs b/src/lib.rs\nindex 0000000..1111111 100644\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,{old_count} +1,{new_count} @@\n pub fn route(kind: &str) -> u32 {{\n     match kind {{\n{old}{new}         _ => 9,\n     }}\n }}\n"
     )
 }
 
@@ -93,29 +97,34 @@ impl Drop for TempRepo {
 }
 
 fn changed_arm<'a>(output: &'a CheckOutput, head: &str) -> Result<&'a ripr::Finding, String> {
-    output
-        .findings
-        .iter()
-        .find(|finding| {
-            finding.probe.family == ProbeFamily::MatchArm
-                && finding.probe.expression.starts_with(head)
-        })
-        .ok_or_else(|| {
-            let observed = output
-                .findings
-                .iter()
-                .map(|finding| {
-                    format!(
-                        "{}:{}:{}",
-                        finding.probe.family.as_str(),
-                        finding.probe.location.line,
-                        finding.probe.expression
-                    )
-                })
-                .collect::<Vec<_>>()
-                .join(" | ");
-            format!("missing changed `{head}` arm; observed {observed}")
-        })
+    let mut matches = output.findings.iter().filter(|finding| {
+        finding.probe.family == ProbeFamily::MatchArm && finding.probe.expression.starts_with(head)
+    });
+    let finding = matches.next().ok_or_else(|| {
+        let observed = output
+            .findings
+            .iter()
+            .map(|finding| {
+                format!(
+                    "{}:{}:{}",
+                    finding.probe.family.as_str(),
+                    finding.probe.location.line,
+                    finding.probe.expression
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(" | ");
+        format!("missing changed `{head}` arm; observed {observed}")
+    })?;
+    if matches.next().is_some() {
+        return Err(format!("duplicate changed `{head}` match-arm findings"));
+    }
+    // A malformed hunk would leave the changed lines advisory only. The
+    // analysis outcome is crate-private, so its Debug text is read.
+    if format!("{output:?}").contains("MalformedDiff") {
+        return Err("the fixture diff must parse cleanly".to_string());
+    }
+    Ok(finding)
 }
 
 fn changed_b_arm(old_arms: &str, new_arms: &str) -> Result<ripr::Finding, String> {
@@ -130,6 +139,19 @@ fn names_unselected_arm(finding: &ripr::Finding) -> bool {
             .evidence
             .iter()
             .any(|line| line.contains(UNSELECTED_PREFIX))
+}
+
+/// The verdict the uncut whole line gives: the related test reaches the
+/// owner and holds an oracle on its result, so the arm reads as weakly
+/// exposed with infection `Yes`, not as an unselected arm.
+fn assert_uncut_verdict(finding: &ripr::Finding) {
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{finding:?}");
+    assert_eq!(
+        format!("{:?}", finding.ripr.infect.state),
+        "Yes",
+        "{:?}",
+        finding.ripr.infect
+    );
 }
 
 #[test]
@@ -156,6 +178,7 @@ fn two_arms_on_one_line_keep_the_whole_line_and_name_no_unselected_arm() -> Resu
         "which arm changed is not known on a two-arm line: {:?}",
         finding.evidence
     );
+    assert_uncut_verdict(&finding);
     Ok(())
 }
 
@@ -173,5 +196,6 @@ fn a_nested_match_in_the_body_keeps_the_whole_line_and_names_no_unselected_arm()
         "a nested match's arrows keep the old line whole: {:?}",
         finding.evidence
     );
+    assert_uncut_verdict(&finding);
     Ok(())
 }
