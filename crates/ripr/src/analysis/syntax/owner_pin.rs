@@ -1409,12 +1409,12 @@ fn non_empty_literal_table(rows: &ast::Expr, table: &ast::ForExpr, function: &as
         else {
             return false;
         };
-        let name = unraw(&name.text()).to_string();
+        let name = unraw(name.text()).to_string();
         let mut bindings = function
             .syntax()
             .descendants()
             .filter_map(ast::IdentPat::cast)
-            .filter(|pat| pat.name().is_some_and(|bound| unraw(&bound.text()) == name));
+            .filter(|pat| pat.name().is_some_and(|bound| unraw(bound.text()) == name));
         let (Some(binding), None) = (bindings.next(), bindings.next()) else {
             return false;
         };
@@ -1487,7 +1487,7 @@ fn declares_iter_method(node: &SyntaxNode) -> bool {
         root.descendants()
             .filter_map(ast::Fn::cast)
             .filter_map(|function| function.name())
-            .any(|name| matches!(unraw(&name.text()), "iter" | "into_iter"))
+            .any(|name| matches!(unraw(name.text()), "iter" | "into_iter"))
     })
 }
 
