@@ -560,6 +560,10 @@ ripr check --perl-facts fixtures/evidence-promotion-honesty-corpus/perl-packets/
   > fixtures/evidence-promotion-honesty-corpus/reports/<case>.json
 ```
 
+Run it in a checkout whose diff against `origin/main` is non-empty. On a
+clean checkout the command exits 2 with "analysis outcome NoScope requires
+every count to be zero". This note stands until that defect is fixed.
+
 The packet is the input (the tempting wrong relation or boundary is encoded
 there); the report is the byte-pinned consumer output the gate enforces.
 Packet fingerprints follow the `recompute_packet_fingerprint` recipe in
@@ -790,6 +794,14 @@ the gate has over-corrected or the fixture needs re-blessing
 | Dispatch | `xtask/src/dispatch.rs` |
 | CI routed | `.github/workflows/routed-rust.yml` |
 | CI fast | `.github/workflows/ci.yml` |
+
+## Later Amendment
+
+RIPR-SPEC-0235 (2026-10-04) states the classification rules behind the
+Perl corpus outcomes pinned here. On the same date a note was added under
+the Perl regeneration command: on a clean checkout the command exits 2
+with a NoScope error, so it must run with a non-empty diff against
+`origin/main` until that defect is fixed.
 
 ## Metrics
 

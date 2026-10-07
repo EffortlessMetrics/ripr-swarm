@@ -1906,7 +1906,7 @@ fn check_from_a_subcrate_discloses_workspace_root_and_honors_explicit_root() -> 
     let implicit = run_command(
         bin,
         Some(&subcrate),
-        &["check", "--base", "HEAD", "--format", "json"],
+        &["check", "--base", "HEAD", "--committed", "--format", "json"],
     )
     .map_err(|error| format!("run implicit-root check: {error}"))?;
     assert_success(&implicit);
@@ -1928,7 +1928,14 @@ fn check_from_a_subcrate_discloses_workspace_root_and_honors_explicit_root() -> 
         bin,
         Some(&subcrate),
         &[
-            "check", "--root", &root, "--base", "HEAD", "--format", "json",
+            "check",
+            "--root",
+            &root,
+            "--base",
+            "HEAD",
+            "--committed",
+            "--format",
+            "json",
         ],
     )
     .map_err(|error| format!("run explicit-root check: {error}"))?;
@@ -4885,7 +4892,16 @@ fn first_action_routes_live_unchanged_receipt_to_revise_focused_test()
     assert_success(&verify);
     std::fs::write(artifact_dir.join("agent-verify.json"), &verify.stdout)?;
     let analysis_outcome = run_ripr_in_workspace(&[
-        "check", "--root", ".", "--mode", "draft", "--base", "HEAD", "--format", "json",
+        "check",
+        "--root",
+        ".",
+        "--mode",
+        "draft",
+        "--base",
+        "HEAD",
+        "--committed",
+        "--format",
+        "json",
     ])?;
     assert_success(&analysis_outcome);
     std::fs::write(
@@ -5024,7 +5040,16 @@ fn editor_agent_loop_fixture_outputs_match_expected() -> Result<(), Box<dyn std:
     let verify_artifact_path = "target/ripr/test-agent-verify/agent-verify.json";
     std::fs::write(artifact_dir.join("agent-verify.json"), &verify.stdout)?;
     let analysis_outcome = run_ripr_in_workspace(&[
-        "check", "--root", ".", "--mode", "draft", "--base", "HEAD", "--format", "json",
+        "check",
+        "--root",
+        ".",
+        "--mode",
+        "draft",
+        "--base",
+        "HEAD",
+        "--committed",
+        "--format",
+        "json",
     ])?;
     assert_success(&analysis_outcome);
     std::fs::write(
@@ -19382,10 +19407,12 @@ fn check_with_base_scope_does_not_show_no_scope_disclosure_smoke() {
 
 // RIPR-SPEC-0112 regression guards: --base must disclose uncommitted working-tree changes.
 
-/// RIPR-SPEC-0112: `ripr check --base HEAD --json` with an uncommitted change to a
-/// tracked .rs file must emit `unanalyzed_working_tree: true` in JSON and the human
-/// Note in stdout. The committed diff vs HEAD is empty (no new commits), so findings
-/// are zero — this is the false-clean case the disclosure must prevent.
+/// RIPR-SPEC-0112: `ripr check --base HEAD --committed --json` with an uncommitted
+/// change to a tracked .rs file must emit `unanalyzed_working_tree: true` in JSON and
+/// the human Note in stdout. The committed diff vs HEAD is empty (no new commits), so
+/// findings are zero — this is the false-clean case the disclosure must prevent. Since
+/// the RIPR-SPEC-0116 amendment only `--committed` forces this committed-history read
+/// on a dirty tree.
 #[test]
 fn check_base_head_with_uncommitted_edit_shows_unanalyzed_working_tree_disclosure() {
     let root = unique_temp_workspace("unanalyzed-wt-fires");
@@ -19412,23 +19439,31 @@ fn check_base_head_with_uncommitted_edit_shows_unanalyzed_working_tree_disclosur
         "pub fn add(a: i32, b: i32) -> i32 { a + b + 1 }\n",
     )
     .unwrap();
-    let bin = env!("CARGO_BIN_EXE_ripr");
     let root_str = root.to_string_lossy().into_owned();
     // JSON mode: assert unanalyzed_working_tree == true
-    let output = std::process::Command::new(bin)
-        .args(["check", "--root", &root_str, "--base", "HEAD", "--json"])
-        .output()
-        .unwrap();
+    let output = run_ripr(&[
+        "check",
+        "--root",
+        &root_str,
+        "--base",
+        "HEAD",
+        "--committed",
+        "--json",
+    ]);
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
         stdout.contains("\"unanalyzed_working_tree\": true"),
         "check --base HEAD with uncommitted edit must emit unanalyzed_working_tree: true in JSON; got:\n{stdout}"
     );
     // Human mode: assert the Note is present
-    let output_human = std::process::Command::new(bin)
-        .args(["check", "--root", &root_str, "--base", "HEAD"])
-        .output()
-        .unwrap();
+    let output_human = run_ripr(&[
+        "check",
+        "--root",
+        &root_str,
+        "--base",
+        "HEAD",
+        "--committed",
+    ]);
     let human = String::from_utf8_lossy(&output_human.stdout);
     assert!(
         human.contains("uncommitted source and test changes were not analyzed"),
@@ -19437,8 +19472,8 @@ fn check_base_head_with_uncommitted_edit_shows_unanalyzed_working_tree_disclosur
     // The note must name the remedy that works. Staging does not change a
     // committed-history diff, so "commit or stage" was a false remedy.
     assert!(
-        human.contains("add `--worktree`"),
-        "the disclosure must name --worktree as the remedy; got:\n{human}"
+        human.contains("drop `--committed` (or pass `--worktree`)"),
+        "the disclosure must name the remedies that include the edit; got:\n{human}"
     );
     assert!(
         !human.contains("commit or stage"),
@@ -19498,15 +19533,16 @@ fn check_base_reads_tests_as_committed_and_notes_only_source_changes()
         Ok(serde_json::from_slice(&output.stdout)?)
     };
     let noted = |json: &serde_json::Value| json["unanalyzed_working_tree"] == true;
-    let committed = check(&[])?;
+    let committed = check(&["--committed"])?;
     assert!(!noted(&committed));
     let discriminating_test =
         "#[test]\nfn t() { assert!(committed_tests::ok(10)); assert!(!committed_tests::ok(9)); }\n";
 
-    // Uncommitted test edit: plain check keeps the committed result and notes
-    // the change; --worktree reads the edit and moves.
+    // Uncommitted test edit: a forced committed-history check keeps the
+    // committed result and notes the change; --worktree reads the edit and
+    // moves, and so does the default on this dirty tree (RIPR-SPEC-0116).
     std::fs::write(root.join("tests/ok.rs"), discriminating_test)?;
-    let plain = check(&[])?;
+    let plain = check(&["--committed"])?;
     assert_eq!(plain["summary"], committed["summary"]);
     assert_eq!(plain["findings"], committed["findings"]);
     assert!(noted(&plain));
@@ -19515,32 +19551,44 @@ fn check_base_reads_tests_as_committed_and_notes_only_source_changes()
         worktree["summary"], committed["summary"],
         "fixture must discriminate: the edited test changes a --worktree result"
     );
+    let default = check(&[])?;
+    assert_eq!(default["summary"], worktree["summary"]);
+    assert_eq!(default["head"]["source"], "working_tree");
+    assert!(!noted(&default));
     run_git(&root, &["checkout", "-q", "--", "tests/ok.rs"])?;
 
-    // A new untracked test is not committed content either.
+    // A new untracked test is not committed content either. Untracked files
+    // alone do not make the tree dirty for the default (the working-tree diff
+    // cannot contain them), so the default stays on committed history and
+    // discloses the file like `--committed` (RIPR-SPEC-0116).
     std::fs::write(root.join("tests/new.rs"), discriminating_test)?;
-    let untracked = check(&[])?;
+    let untracked = check(&["--committed"])?;
     assert_eq!(untracked["summary"], committed["summary"]);
     assert!(noted(&untracked));
+    let untracked_default = check(&[])?;
+    assert_eq!(untracked_default["summary"], committed["summary"]);
+    assert_eq!(untracked_default["head"]["source"], "commit");
+    assert!(noted(&untracked_default));
     std::fs::remove_file(root.join("tests/new.rs"))?;
 
     // A README edit changes nothing an adapter reads: no note.
     std::fs::write(root.join("README.md"), "edited\n")?;
-    let readme = check(&[])?;
+    let readme = check(&["--committed"])?;
     assert_eq!(readme["summary"], committed["summary"]);
     assert!(!noted(&readme));
     ignore_remove_dir_all(&root);
     Ok(())
 }
 
-/// RIPR-SPEC-0112 (default base): bare `ripr check` resolves the default base
-/// and diffs committed history exactly like an explicit `--base`, so an
-/// uncommitted tracked edit is excluded there too and must be disclosed. This
-/// is the first-run path: edit a file, run `ripr check`, see nothing.
+/// RIPR-SPEC-0116 amendment (default base, dirty tree): bare `ripr check`
+/// reads the working tree when it holds uncommitted work, so an edit made
+/// and checked before committing is analyzed — exactly as `--worktree` would
+/// analyze it — and the header names the working tree it read. `--committed`
+/// keeps the old committed-history read and its RIPR-SPEC-0112 note. This is
+/// the first-run path: edit a file, run `ripr check`, see the finding.
 #[test]
-fn check_default_base_with_uncommitted_edit_shows_unanalyzed_working_tree_disclosure()
--> Result<(), String> {
-    let root = unique_temp_workspace("unanalyzed-wt-default-base");
+fn check_default_base_with_uncommitted_edit_analyzes_the_working_tree() -> Result<(), String> {
+    let root = unique_temp_workspace("default-dirty-reads-worktree");
     std::fs::create_dir_all(root.join("src")).map_err(|err| format!("create src: {err}"))?;
     run_git(&root, &["init", "-b", "main"])?;
     run_git(&root, &["config", "user.email", "test@test.com"])?;
@@ -19552,7 +19600,7 @@ fn check_default_base_with_uncommitted_edit_shows_unanalyzed_working_tree_disclo
     .map_err(|err| format!("write base lib.rs: {err}"))?;
     std::fs::write(
         root.join("Cargo.toml"),
-        "[package]\nname = \"spec-0112-default-base-fixture\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+        "[package]\nname = \"spec-0116-default-dirty-fixture\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
     )
     .map_err(|err| format!("write Cargo.toml: {err}"))?;
     run_git(&root, &["add", "."])?;
@@ -19563,53 +19611,372 @@ fn check_default_base_with_uncommitted_edit_shows_unanalyzed_working_tree_disclo
     )
     .map_err(|err| format!("write dirty lib.rs: {err}"))?;
     let root_str = root.to_string_lossy().into_owned();
+    let head = common::fixture_git::fixture_git_output(&root, &["rev-parse", "HEAD"])?;
+    let head = head.trim();
+    let parse = |output: &std::process::Output| -> Result<serde_json::Value, String> {
+        assert_success(output);
+        serde_json::from_slice(&output.stdout).map_err(|err| {
+            format!(
+                "parse check JSON: {err}\n{}",
+                String::from_utf8_lossy(&output.stdout)
+            )
+        })
+    };
+    let finding_ids = |report: &serde_json::Value| -> Vec<String> {
+        report["findings"]
+            .as_array()
+            .map(|findings| {
+                findings
+                    .iter()
+                    .filter_map(|finding| finding["id"].as_str().map(str::to_string))
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
 
     // Fixture precondition: the default base resolves to `main` == HEAD, so
     // the committed diff is empty while the edit exists only in the worktree.
-    let worktree = run_ripr(&["check", "--root", &root_str, "--worktree", "--json"]);
-    assert_success(&worktree);
-    let worktree_stdout = String::from_utf8_lossy(&worktree.stdout);
-    let worktree_report: serde_json::Value = serde_json::from_str(&worktree_stdout)
-        .map_err(|err| format!("parse --worktree JSON: {err}\n{worktree_stdout}"))?;
-    let worktree_findings = worktree_report
-        .pointer("/findings")
-        .and_then(serde_json::Value::as_array)
-        .map_or(0, Vec::len);
-    if worktree_findings == 0 {
+    let worktree = parse(&run_ripr(&[
+        "check",
+        "--root",
+        &root_str,
+        "--worktree",
+        "--json",
+    ]))?;
+    if finding_ids(&worktree).is_empty() {
         return Err(format!(
-            "fixture must carry an analyzable uncommitted edit; --worktree found none:\n{worktree_stdout}"
+            "fixture must carry an analyzable uncommitted edit; --worktree found none:\n{worktree}"
         ));
     }
 
-    let json = run_ripr(&["check", "--root", &root_str, "--json"]);
-    assert_success(&json);
-    let json_stdout = String::from_utf8_lossy(&json.stdout);
-    if !json_stdout.contains("\"unanalyzed_working_tree\": true") {
+    let default = parse(&run_ripr(&["check", "--root", &root_str, "--json"]))?;
+    if finding_ids(&default) != finding_ids(&worktree) {
         return Err(format!(
-            "bare check with an uncommitted edit must emit unanalyzed_working_tree: true; got:\n{json_stdout}"
+            "bare check on a dirty tree must analyze the working tree like --worktree; got:\n{default}"
+        ));
+    }
+    if default.get("unanalyzed_working_tree").is_some() {
+        return Err(format!(
+            "a working-tree default run must not claim the edit was excluded:\n{default}"
+        ));
+    }
+    if default["base"] != "main"
+        || default["base_commit"] != head
+        || default["head"]["source"] != "working_tree"
+        || default["head"]["commit"] != head
+    {
+        return Err(format!(
+            "JSON must name the analyzed base and the working-tree head on {head}:\n{default}"
         ));
     }
 
     let human = run_ripr(&["check", "--root", &root_str]);
     assert_success(&human);
     let human_stdout = String::from_utf8_lossy(&human.stdout);
-    if !human_stdout.contains("uncommitted source and test changes were not analyzed")
-        || !human_stdout.contains("add `--worktree`")
-    {
+    let short = &head[..7];
+    let header =
+        format!("base: main {short}\nhead: working tree (uncommitted changes on HEAD {short})\n");
+    if !human_stdout.contains(&header) {
         return Err(format!(
-            "bare check must disclose the excluded edit and name --worktree; got:\n{human_stdout}"
+            "human header must name base and working-tree head ({header:?}); got:\n{human_stdout}"
         ));
     }
-    // The generic no-scope note recommends `--base origin/main`, which would
-    // exclude the same edit; the specific worktree note replaces it.
-    if human_stdout.contains("no analysis scope was provided") {
+    if human_stdout.contains("were not analyzed") {
         return Err(format!(
-            "bare check must not pair the worktree note with the no-scope remedy; got:\n{human_stdout}"
+            "a working-tree default run must not print the unanalyzed note; got:\n{human_stdout}"
+        ));
+    }
+    // Drill-in commands reproduce the same subject.
+    if !human_stdout.contains("ripr explain --root") || !human_stdout.contains(" --worktree ") {
+        return Err(format!(
+            "drill-in commands must carry --worktree for a working-tree default run; got:\n{human_stdout}"
+        ));
+    }
+
+    // Forced committed history: the old read, with its disclosure.
+    let committed = parse(&run_ripr(&[
+        "check",
+        "--root",
+        &root_str,
+        "--committed",
+        "--json",
+    ]))?;
+    if !finding_ids(&committed).is_empty()
+        || committed["unanalyzed_working_tree"] != true
+        || committed["head"]["source"] != "commit"
+    {
+        return Err(format!(
+            "--committed must read committed history and disclose the excluded edit:\n{committed}"
+        ));
+    }
+    let committed_human = run_ripr(&["check", "--root", &root_str, "--committed"]);
+    assert_success(&committed_human);
+    let committed_stdout = String::from_utf8_lossy(&committed_human.stdout);
+    if !committed_stdout.contains(&format!("head: HEAD {short}\n"))
+        || !committed_stdout.contains("uncommitted source and test changes were not analyzed")
+        || committed_stdout.contains("no analysis scope was provided")
+    {
+        return Err(format!(
+            "--committed human output must name HEAD and disclose the excluded edit; got:\n{committed_stdout}"
         ));
     }
 
     ignore_remove_dir_all(&root);
     Ok(())
+}
+
+/// RIPR-SPEC-0116 (B1 of the #5997 review): untracked files never flip the
+/// default to a working-tree read, because the working-tree diff
+/// (`git diff <merge-base>`) covers tracked files only. A working-tree read
+/// still names the untracked routed files it cannot contain, gives the
+/// intent-to-add repair instead of `--worktree` advice, and an empty
+/// working-tree read describes the merge-base-to-working-tree diff rather
+/// than `<base>...HEAD`.
+#[test]
+fn check_untracked_files_keep_committed_default_and_working_tree_reads_name_them()
+-> Result<(), String> {
+    let root = unique_temp_workspace("default-untracked-files");
+    std::fs::create_dir_all(root.join("src")).map_err(|err| format!("create src: {err}"))?;
+    run_git(&root, &["init", "-b", "main"])?;
+    run_git(&root, &["config", "user.email", "test@test.com"])?;
+    run_git(&root, &["config", "user.name", "Test"])?;
+    std::fs::write(
+        root.join("src/lib.rs"),
+        "pub fn over_threshold(amount: i32, threshold: i32) -> bool {\n    amount >= threshold\n}\n",
+    )
+    .map_err(|err| format!("write base lib.rs: {err}"))?;
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"spec-0116-untracked-fixture\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )
+    .map_err(|err| format!("write Cargo.toml: {err}"))?;
+    run_git(&root, &["add", "."])?;
+    run_git(&root, &["commit", "-m", "initial"])?;
+    std::fs::write(
+        root.join("src/new.rs"),
+        "pub fn fresh(value: i32) -> bool {\n    value > 3\n}\n",
+    )
+    .map_err(|err| format!("write untracked new.rs: {err}"))?;
+    let status = common::fixture_git::fixture_git_output(&root, &["status", "--porcelain"])?;
+    if status.trim() != "?? src/new.rs" {
+        return Err(format!(
+            "fixture precondition: only src/new.rs is untracked; got {status:?}"
+        ));
+    }
+    let root_str = root.to_string_lossy().into_owned();
+    let parse = |output: &std::process::Output| -> Result<serde_json::Value, String> {
+        assert_success(output);
+        serde_json::from_slice(&output.stdout).map_err(|err| {
+            format!(
+                "parse check JSON: {err}\n{}",
+                String::from_utf8_lossy(&output.stdout)
+            )
+        })
+    };
+    let human = |args: &[&str]| -> String {
+        let output = run_ripr(args);
+        assert_success(&output);
+        String::from_utf8_lossy(&output.stdout).into_owned()
+    };
+    let worktree_advice = [
+        "add `--worktree`",
+        "pass `--worktree`",
+        "rerun `ripr check --worktree`",
+    ];
+
+    // (a) Untracked-only tree: the default stays on committed history and
+    // carries the #5258 note naming the file.
+    let untracked_only = parse(&run_ripr(&["check", "--root", &root_str, "--json"]))?;
+    if untracked_only["head"]["source"] != "commit"
+        || untracked_only["unanalyzed_working_tree"] != true
+    {
+        return Err(format!(
+            "an untracked-only tree must keep the committed-history default and disclose it:\n{untracked_only}"
+        ));
+    }
+    // #5997 review: the JSON report must name the excluded untracked files,
+    // not just flag that the working tree went unanalyzed.
+    let untracked_only_paths = untracked_only["untracked_working_tree_source_paths"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    if !untracked_only_paths.iter().any(|path| path == "src/new.rs") {
+        return Err(format!(
+            "an untracked-only tree must name the excluded file in JSON:\n{untracked_only}"
+        ));
+    }
+    let untracked_only_human = human(&["check", "--root", &root_str]);
+    if !untracked_only_human
+        .contains("Untracked files (src/new.rs) are invisible to both; stage them first")
+    {
+        return Err(format!(
+            "the untracked-only default must print the #5258 note; got:\n{untracked_only_human}"
+        ));
+    }
+
+    // (c) An empty working-tree read describes the merge-base-to-working-tree
+    // diff, not `main...HEAD`, never offers `--worktree`, and names the
+    // untracked file. A staged edit reverted in the working tree makes the
+    // tree dirty (`MM`) while `git diff <merge-base>` stays empty, so the
+    // default selects the working tree and finds nothing to analyze.
+    let base_lib = "pub fn over_threshold(amount: i32, threshold: i32) -> bool {\n    amount >= threshold\n}\n";
+    std::fs::write(
+        root.join("src/lib.rs"),
+        "pub fn over_threshold(amount: i32, threshold: i32) -> bool {\n    amount > threshold + 1\n}\n",
+    )
+    .map_err(|err| format!("write staged lib.rs: {err}"))?;
+    run_git(&root, &["add", "src/lib.rs"])?;
+    std::fs::write(root.join("src/lib.rs"), base_lib)
+        .map_err(|err| format!("revert lib.rs: {err}"))?;
+    let empty_json = parse(&run_ripr(&["check", "--root", &root_str, "--json"]))?;
+    let why = empty_json["scope_disclosures"][0]["why"]
+        .as_str()
+        .unwrap_or_default();
+    if empty_json["head"]["source"] != "working_tree"
+        || !why.starts_with(
+            "empty working-tree range: the merge base of main and HEAD to the working tree",
+        )
+    {
+        return Err(format!(
+            "an empty default working-tree read must disclose the working-tree range:\n{empty_json}"
+        ));
+    }
+    // #5997 review: an empty working-tree JSON report must name the untracked
+    // files the tracked-only diff cannot contain, or it reads as complete.
+    let empty_paths = empty_json["untracked_working_tree_source_paths"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    if !empty_paths.iter().any(|path| path == "src/new.rs") {
+        return Err(format!(
+            "an empty working-tree read must name the untracked file in JSON:\n{empty_json}"
+        ));
+    }
+    let empty_worktree = human(&["check", "--root", &root_str]);
+    for expected in [
+        "Note: the working tree has no changed tracked files against `main` (diff from the merge base of `main` and HEAD to the working tree), so there was nothing to analyze.",
+        "Safe next action: the working tree has no changed tracked files against `main`",
+        "Untracked files (src/new.rs) are not in the working-tree diff",
+    ] {
+        if !empty_worktree.contains(expected) {
+            return Err(format!(
+                "the empty working-tree read must say {expected:?}; got:\n{empty_worktree}"
+            ));
+        }
+    }
+    if empty_worktree.contains("main...HEAD")
+        || worktree_advice
+            .iter()
+            .any(|advice| empty_worktree.contains(advice))
+    {
+        return Err(format!(
+            "the empty working-tree read must not describe `main...HEAD` or advise `--worktree`; got:\n{empty_worktree}"
+        ));
+    }
+
+    // (b) A tracked edit beside the untracked file flips the default to the
+    // working tree; the output names new.rs and gives no `--worktree` advice.
+    std::fs::write(
+        root.join("src/lib.rs"),
+        "pub fn over_threshold(amount: i32, threshold: i32) -> bool {\n    amount > threshold\n}\n",
+    )
+    .map_err(|err| format!("write dirty lib.rs: {err}"))?;
+    let mixed = parse(&run_ripr(&["check", "--root", &root_str, "--json"]))?;
+    if mixed["head"]["source"] != "working_tree" || mixed.get("unanalyzed_working_tree").is_some() {
+        return Err(format!(
+            "a tracked edit must flip the default to a working-tree read:\n{mixed}"
+        ));
+    }
+    // #5997 review: the working-tree JSON report must name the untracked
+    // files beside the tracked edit; `unanalyzed_working_tree` stays absent.
+    let mixed_paths = mixed["untracked_working_tree_source_paths"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    if !mixed_paths.iter().any(|path| path == "src/new.rs") {
+        return Err(format!(
+            "a working-tree default run must name the untracked file in JSON:\n{mixed}"
+        ));
+    }
+    let mixed_human = human(&["check", "--root", &root_str]);
+    if !mixed_human.contains(
+        "Untracked files (src/new.rs) are not in the working-tree diff, which covers tracked files only",
+    ) || !mixed_human.contains("`git add -N <path>`")
+    {
+        return Err(format!(
+            "a working-tree default run must name the untracked file and the intent-to-add repair; got:\n{mixed_human}"
+        ));
+    }
+    if worktree_advice
+        .iter()
+        .any(|advice| mixed_human.contains(advice))
+        || mixed_human.contains("were not analyzed; this run read each file as committed")
+    {
+        return Err(format!(
+            "a working-tree default run must not advise `--worktree` or print the committed note; got:\n{mixed_human}"
+        ));
+    }
+    let mixed_github = run_ripr(&["check", "--root", &root_str, "--format", "github"]);
+    assert_success(&mixed_github);
+    let mixed_github = String::from_utf8_lossy(&mixed_github.stdout);
+    if !mixed_github.contains("::warning title=ripr untracked files not analyzed::")
+        || !mixed_github.contains("src/new.rs")
+    {
+        return Err(format!(
+            "the GitHub stream must carry the untracked-files warning; got:\n{mixed_github}"
+        ));
+    }
+
+    ignore_remove_dir_all(&root);
+    Ok(())
+}
+
+/// `--committed` names a diff source, so it refuses the inputs that have none
+/// or that already chose one.
+#[test]
+fn check_committed_rejects_conflicting_diff_sources() {
+    for (extra, expected) in [
+        (
+            vec!["--worktree"],
+            "check --committed and --worktree select different diff sources; pass one",
+        ),
+        (
+            vec!["--diff", "change.patch"],
+            "check --committed cannot be combined with --diff",
+        ),
+        (
+            vec!["--format", "repo-exposure-md"],
+            "check --committed selects a diff source; --format repo-exposure-md is repo-scoped and reads no diff",
+        ),
+    ] {
+        let mut args = vec!["check", "--committed"];
+        args.extend(extra.iter().copied());
+        let output = run_ripr(&args);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            !output.status.success() && stderr.contains(expected),
+            "{args:?} must fail with {expected:?}; got status {:?} stderr:\n{stderr}",
+            output.status
+        );
+    }
+    // #5997 review: a `--json` caller gets the structured refusal envelope
+    // on stdout (#6834), with the prose kept on stderr.
+    let json_output = run_ripr(&["check", "--committed", "--worktree", "--json"]);
+    let json_stderr = String::from_utf8_lossy(&json_output.stderr);
+    // A non-envelope stdout parses to Null, which fails the `findings`
+    // assertion below with the raw bytes attached (no `expect`: the
+    // no-panic-family policy).
+    let refusal: serde_json::Value =
+        serde_json::from_slice(&json_output.stdout).unwrap_or(serde_json::Value::Null);
+    assert!(
+        !json_output.status.success()
+            && refusal.get("findings").is_some()
+            && json_stderr.contains("select different diff sources"),
+        "--committed --worktree --json must refuse with an envelope plus prose; got status {:?} stdout:\n{}\nstderr:\n{}",
+        json_output.status,
+        String::from_utf8_lossy(&json_output.stdout),
+        json_stderr
+    );
 }
 
 /// RIPR-SPEC-0112 (default base, clean): a bare `ripr check` on a clean
@@ -19667,6 +20034,16 @@ fn check_default_base_with_clean_worktree_keeps_no_scope_note_only() -> Result<(
             "empty-range Start-here must name `--worktree` for tracked edits; got:\n{stdout}"
         ));
     }
+    // RIPR-SPEC-0116 amendment: a clean tree (an untracked non-source file
+    // does not count) keeps the committed-history read, and the header names
+    // the base and the HEAD commit it ended at.
+    let head = common::fixture_git::fixture_git_output(&root, &["rev-parse", "HEAD"])?;
+    let short = &head.trim()[..7];
+    if !stdout.contains(&format!("base: main {short}\nhead: HEAD {short}\n")) {
+        return Err(format!(
+            "clean-tree header must name base main and HEAD {short}; got:\n{stdout}"
+        ));
+    }
     if !stdout.contains("compared base was `main`") || stdout.contains("--base origin/main") {
         return Err(format!(
             "no-origin repo must name its resolved local main rather than suggest a nonexistent remote ref; got:\n{stdout}"
@@ -19677,6 +20054,8 @@ fn check_default_base_with_clean_worktree_keeps_no_scope_note_only() -> Result<(
     let value: serde_json::Value = serde_json::from_slice(&json.stdout)
         .map_err(|err| format!("parse no-origin check JSON: {err}"))?;
     if value["base"] != "main"
+        || value["head"]["source"] != "commit"
+        || value["head"]["commit"] != head.trim()
         || !value["scope_disclosures"][0]["why"]
             .as_str()
             .is_some_and(|why| why.contains("main...HEAD") && !why.contains("origin/main"))
@@ -20209,8 +20588,16 @@ fn check_with_a_diff_file_does_not_show_unanalyzed_working_tree_disclosure() -> 
     let patch_str = patch.to_string_lossy().into_owned();
 
     // Fixture construction: this checkout does trigger the disclosure on a
-    // committed-history run.
-    let base_run = run_ripr(&["check", "--root", &root_str, "--base", "HEAD", "--json"]);
+    // forced committed-history run.
+    let base_run = run_ripr(&[
+        "check",
+        "--root",
+        &root_str,
+        "--base",
+        "HEAD",
+        "--committed",
+        "--json",
+    ]);
     assert_success(&base_run);
     let base_json = String::from_utf8_lossy(&base_run.stdout).into_owned();
     if !base_json.contains("\"unanalyzed_working_tree\": true") {
@@ -20220,7 +20607,14 @@ fn check_with_a_diff_file_does_not_show_unanalyzed_working_tree_disclosure() -> 
     }
     // Same for the human note, so the negative below cannot pass because the
     // note's wording changed.
-    let base_human_run = run_ripr(&["check", "--root", &root_str, "--base", "HEAD"]);
+    let base_human_run = run_ripr(&[
+        "check",
+        "--root",
+        &root_str,
+        "--base",
+        "HEAD",
+        "--committed",
+    ]);
     assert_success(&base_human_run);
     let base_human = String::from_utf8_lossy(&base_human_run.stdout).into_owned();
     if !base_human.contains("uncommitted source and test changes were not analyzed") {

@@ -2468,9 +2468,9 @@ fn regenerate_check_output_gap_ledger_command(options: &FirstPrOptions) -> Strin
 /// Rewrites the check output (the supplied `--check-output` path when there
 /// is one) before rebuilding the ledger from it. This is the stale-evidence
 /// refresh after a test or source edit, and that edit is usually still
-/// uncommitted: plain `ripr check` reads each file as committed at HEAD, so
-/// the refresh reads the working tree (`--worktree`), or it would select the
-/// gap the edit just closed again (MCP agent walk, 2026-09-29).
+/// uncommitted. The refresh names `--worktree` explicitly rather than relying
+/// on `ripr check`'s dirty-tree default, so a committed-history read can never
+/// select the gap the edit just closed again (MCP agent walk, 2026-09-29).
 fn rerun_check_output_gap_ledger_command(options: &FirstPrOptions) -> String {
     check_output_gap_ledger_command(options, true, true)
 }
