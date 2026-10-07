@@ -1,0 +1,19 @@
+{
+  "case_id": "shop-quote-total-result-field",
+  "subject_id": "authored-shop",
+  "origin": "authored",
+  "anchor": "pricing/src/lib.rs:79",
+  "behavior_family": "field_construction",
+  "test_shape": "owner_result_field_binding_assert_eq",
+  "hard_case": false,
+  "truth": "discriminated",
+  "ideal_verdict": "credited",
+  "observed_verdict": "credited",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": []
+}

@@ -1,0 +1,19 @@
+{
+  "case_id": "grid-arith-exact",
+  "subject_id": "authored-grid-arith",
+  "origin": "authored",
+  "anchor": "src/lib.rs:4",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "exact_pin_assert",
+  "hard_case": false,
+  "truth": "discriminated",
+  "ideal_verdict": "credited",
+  "observed_verdict": "credited",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": []
+}

@@ -1,0 +1,45 @@
+{
+  "case_id": "strsim-sorensen-dice-equal",
+  "subject_id": "strsim",
+  "diff": "cases/strsim-sorensen-dice-equal.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 724
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "predicate",
+  "test_shape": "unit_test_assert_float_tolerance",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.97.0 (2d8144b78 2026-07-07), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "b != a",
+        "mutated_line": "if b != a {",
+        "outcome": "tests_failed",
+        "failing_test": "tests::sorensen_dice_all",
+        "equivalence_review": "not equivalent: different strings return 1.0 and equal strings fall through to the bigram count."
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "sorensen_dice_all asserts 0.0 for \"a\"/\"b\" and similar distinct pairs through assert_delta!, so the negated equality fails it. ripr reports weakly_exposed twice (a gap), a false actionable verdict.",
+  "labeling_observation": {
+    "ripr_commit": "7a6d4b7a5",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

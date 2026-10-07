@@ -1,0 +1,19 @@
+{
+  "case_id": "spec0227-check-guard-split-tests",
+  "subject_id": "authored-spec0227-4",
+  "origin": "authored",
+  "anchor": "src/lib.rs:10",
+  "behavior_family": "predicate_side_flip",
+  "test_shape": "edge_call_and_far_is_err_in_separate_tests",
+  "hard_case": false,
+  "truth": "not_discriminated",
+  "ideal_verdict": "gap",
+  "observed_verdict": "gap",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "weakly_exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": []
+}
