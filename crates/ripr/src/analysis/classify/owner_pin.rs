@@ -52,9 +52,10 @@ use crate::analysis::facts::{
 };
 use crate::analysis::syntax::fn_signature::{LocalTypeEquality, local_type_equality};
 use crate::analysis::syntax::{
-    AssertionContextRefusal, MacroBindingKind, MacroBindingSite, OwnerPinAssertions,
-    attribute_settles_test_outcome, empty_macro_binding_ambiguities, local_empty_macro_names,
-    macro_binding_scan, owner_pin_assertions, parse_clean_source_file, returns_leave_the_function,
+    AssertionContextRefusal, MacroBindingCandidates, MacroBindingKind, MacroBindingSite,
+    OwnerPinAssertions, TRUSTED_MACRO_NAMES, attribute_settles_test_outcome,
+    empty_macro_binding_ambiguities, local_empty_macro_names, macro_binding_scan,
+    owner_pin_assertions, parse_clean_source_file, returns_leave_the_function,
     trusted_macro_binding_sites,
 };
 use crate::domain::{Probe, ProbeFamily};
@@ -806,7 +807,14 @@ fn workspace_macro_binding_site(
                     .is_none_or(|site_root| Some(site_root.as_path()) == test_root)
         };
         let mut first = None;
-        for (_, site) in macro_binding_sites(name, path, &facts.source, index, module_resolved) {
+        for (_, site) in macro_binding_sites(
+            name,
+            path,
+            &facts.source,
+            facts.macro_candidates.as_deref(),
+            index,
+            module_resolved,
+        ) {
             if site.scope.is_some() || !reaches(&site) {
                 continue;
             }
@@ -858,20 +866,33 @@ fn test_macro_binding_site(
     memo.borrow_mut()
         .entry((name.to_string(), test.file.clone()))
         .or_insert_with(|| {
-            macro_binding_sites(name, &test.file, &facts.source, index, module_resolved)
+            macro_binding_sites(
+                name,
+                &test.file,
+                &facts.source,
+                facts.macro_candidates.as_deref(),
+                index,
+                module_resolved,
+            )
         })
         .iter()
         .find(|(_, site)| site_covers(site, test))
         .map(|(_, site)| (test.file.clone(), site.clone()))
 }
 
+/// `candidates` are the file's stored [`MacroBindingCandidates`]: a name
+/// they rule out has no site, so the file is not parsed for it.
 fn macro_binding_sites(
     name: &str,
     path: &Path,
     source: &str,
+    candidates: Option<&MacroBindingCandidates>,
     index: &RustIndex,
     module_resolved: &dyn Fn(&Path, usize, &str) -> bool,
 ) -> Vec<(String, MacroBindingSite)> {
+    if candidates.is_some_and(|candidates| !candidates.may_bind(name)) {
+        return Vec::new();
+    }
     trusted_macro_binding_sites(
         source,
         index.macro_scope_crates(),
@@ -893,10 +914,16 @@ fn trusted_macro_sites_in(
     roots: &TargetRoots,
     module_resolved: &(dyn Fn(&Path, usize, &str) -> bool + Sync),
 ) -> (BTreeSet<String>, ScopedMacroBindings, CrateMacroBindings) {
-    let scan = |files: &[(&PathBuf, &str)]| -> Vec<(PathBuf, String, MacroBindingSite)> {
+    type ScanFile<'a> = (&'a PathBuf, &'a str, Option<&'a MacroBindingCandidates>);
+    let scan = |files: &[ScanFile<'_>]| -> Vec<(PathBuf, String, MacroBindingSite)> {
         files
             .par_iter()
-            .flat_map_iter(|(path, source)| {
+            // A file whose stored candidates rule out every trusted name
+            // reports no site, so it is not parsed.
+            .filter(|(_, _, candidates)| {
+                candidates.is_none_or(MacroBindingCandidates::may_bind_any_trusted)
+            })
+            .flat_map_iter(|(path, source, _)| {
                 trusted_macro_binding_sites(
                     source,
                     index.macro_scope_crates(),
@@ -935,8 +962,11 @@ fn trusted_macro_sites_in(
     let (likely, rest): (Vec<_>, Vec<_>) = index
         .files()
         .iter()
-        .map(|(path, facts)| (path, facts.data().source.as_ref()))
-        .partition(|(_, source)| may_saturate_macro_ambiguity(source));
+        .map(|(path, facts)| {
+            let data = facts.data();
+            (path, data.source.as_ref(), data.macro_candidates.as_deref())
+        })
+        .partition(|(_, source, _)| may_saturate_macro_ambiguity(source));
     absorb(scan(&likely), &mut global);
     if global.len() < NON_RETURNING_MACROS.len() {
         absorb(scan(&rest), &mut global);
@@ -1642,37 +1672,10 @@ fn final_statement(masked: &str, end: usize) -> Option<(usize, usize)> {
 
 /// Macros that cannot return a value from the enclosing function. Any other
 /// macro in the owner body (`bail!`, `ensure!`, a crate's own macro) may
-/// hide a `return`, so the return paths are not established.
-const NON_RETURNING_MACROS: &[&str] = &[
-    "assert",
-    "assert_eq",
-    "assert_ne",
-    "cfg",
-    "column",
-    "concat",
-    "dbg",
-    "debug_assert",
-    "debug_assert_eq",
-    "debug_assert_ne",
-    "eprint",
-    "eprintln",
-    "file",
-    "format",
-    "format_args",
-    "line",
-    "matches",
-    "module_path",
-    "panic",
-    "print",
-    "println",
-    "stringify",
-    "todo",
-    "unimplemented",
-    "unreachable",
-    "vec",
-    "write",
-    "writeln",
-];
+/// hide a `return`, so the return paths are not established. The list is
+/// owned by the syntax scan, which also bounds the names a file's stored
+/// [`crate::analysis::syntax::MacroBindingCandidates`] can report.
+const NON_RETURNING_MACROS: &[&str] = TRUSTED_MACRO_NAMES;
 
 fn has_unbounded_macro(masked: &str) -> bool {
     macro_invocations(masked)

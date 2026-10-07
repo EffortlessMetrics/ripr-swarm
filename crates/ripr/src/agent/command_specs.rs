@@ -2,7 +2,7 @@
 
 use super::loop_commands::{
     agent_brief_command, agent_packet_command, agent_receipt_command, agent_verify_command,
-    bound_root_path, lexically_clean, root_display, shell_arg,
+    bound_root_path, clean_bound_path, root_display, shell_arg,
 };
 use crate::domain::{
     CancellationPolicy, CommandAuthorityBoundary, CommandCostClass, CommandExecutionMode,
@@ -473,7 +473,7 @@ fn portable_root_arg(value: &str, selected_root: &Path) -> Option<String> {
     if !value_path.is_absolute() {
         return Some(value.to_string());
     }
-    (lexically_clean(value_path) == selected_root).then(|| PORTABLE_ROOT.to_string())
+    (clean_bound_path(value_path) == selected_root).then(|| PORTABLE_ROOT.to_string())
 }
 
 /// Apply [`portable_root_arg`] to the value of every `--root` flag in `args`.
@@ -511,7 +511,7 @@ fn relativize_write_against_root(root: &str, target: &str, selected_root: &Path)
     // segments can never prefix-match its own rendered target. `join` keeps
     // an absolute `--root` as-is and nests a relative one under the
     // selected root.
-    let anchor = lexically_clean(&selected_root.join(root));
+    let anchor = clean_bound_path(&selected_root.join(root));
     let relative = Path::new(target).strip_prefix(&anchor).ok()?;
     if relative.as_os_str().is_empty()
         || relative.components().any(|component| {
@@ -1635,6 +1635,44 @@ mod tests {
             || !spec.args.windows(2).any(|pair| pair == ["--root", "."])
         {
             return Err(format!("unexpected backslash-root spec: {spec:?}"));
+        }
+        Ok(())
+    }
+
+    /// #6960: a root spelled through a symlink and then `..` keeps that
+    /// spelling when bound, and the display it produces still recovers its
+    /// typed route: the recovery anchor cleans the same way the producer did.
+    #[cfg(unix)]
+    #[test]
+    fn symlink_parent_root_display_recovers_its_typed_route() -> Result<(), String> {
+        use crate::agent::loop_commands::{bound_root, check_repo_exposure_command};
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|err| err.to_string())?
+            .as_nanos();
+        let base = std::env::temp_dir().join(format!(
+            "ripr-symlink-recovery-{}-{nonce}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(base.join("outside/child")).map_err(|err| err.to_string())?;
+        std::fs::create_dir_all(base.join("outside/repo")).map_err(|err| err.to_string())?;
+        std::fs::create_dir_all(base.join("work")).map_err(|err| err.to_string())?;
+        std::os::unix::fs::symlink(base.join("outside/child"), base.join("work/link"))
+            .map_err(|err| err.to_string())?;
+        let root = base.join("work/link/../repo");
+        let bound = bound_root(&root.to_string_lossy());
+        let display = check_repo_exposure_command(&bound, "instant", "target/ripr/out.json");
+        let spec = super::report_regeneration_command_spec_from_display(&display, &root);
+        std::fs::remove_dir_all(&base).map_err(|err| err.to_string())?;
+        if !bound.ends_with("/work/link/../repo") {
+            return Err(format!("bound root lost the symlink's `..`: {bound}"));
+        }
+        let spec =
+            spec.ok_or_else(|| format!("symlink-parent display did not recover: {display}"))?;
+        if spec.expected_writes != ["target/ripr/out.json"]
+            || !spec.args.windows(2).any(|pair| pair == ["--root", "."])
+        {
+            return Err(format!("unexpected symlink-parent spec: {spec:?}"));
         }
         Ok(())
     }

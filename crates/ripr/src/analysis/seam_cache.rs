@@ -653,7 +653,10 @@ pub(crate) const COUNT_CACHE_SCHEMA_VERSION: &str = "0.2";
 /// `1.32`: parser-backed facts carry the file's compact module item scopes,
 /// so same-file helper crediting stops reparsing test files on warm runs
 /// (#5363). `1.31` facts lack them.
-pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.32";
+/// `1.33`: parser-backed facts carry the trusted macro names a binding
+/// site may report, so the trusted-macro scans skip parsing files that
+/// cannot report a requested name (#5363). `1.32` facts lack them.
+pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.33";
 
 /// Keep the best-effort classified-seam cache from turning a successful live
 /// analysis into an unbounded post-analysis stall on large repos. Larger live
@@ -3957,7 +3960,8 @@ mod tests {
         // facts (#5359).
         // 1.30 -> 1.31: the #6673 asserted-Err guarded-match form.
         // 1.31 -> 1.32: compact module item scopes for helper crediting (#5363).
-        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.32");
+        // 1.32 -> 1.33: stored trusted-macro binding candidates (#5363).
+        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.33");
         // 1.4 -> 1.5: metadata-sourced harness validation (#3634) flips
         // verdicts for workspaces the manifest emulation approximated.
         // 1.5 -> 1.6: the #3636 reachability authority excludes

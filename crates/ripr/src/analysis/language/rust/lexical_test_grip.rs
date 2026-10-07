@@ -441,6 +441,7 @@ mod tests {
             role_provenance: Default::default(),
             source: std::sync::Arc::from(source),
             item_scopes: None,
+            macro_candidates: None,
         }
     }
 

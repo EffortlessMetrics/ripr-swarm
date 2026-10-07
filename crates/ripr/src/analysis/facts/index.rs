@@ -3,7 +3,7 @@
 //! Parser/cache `FileFacts` remains the owned wire DTO. Its facts are moved into
 //! these arenas once; membership is never inferred from a name, span or path.
 use super::model::*;
-use crate::analysis::syntax::ModuleItemScopes;
+use crate::analysis::syntax::{MacroBindingCandidates, ModuleItemScopes};
 use serde::ser::{SerializeMap, SerializeStruct};
 use std::collections::{BTreeMap, BTreeSet};
 use std::marker::PhantomData;
@@ -165,6 +165,7 @@ pub struct FileData {
     pub role_provenance: SourceRoleProvenance,
     pub source: std::sync::Arc<str>,
     pub(crate) item_scopes: Option<Box<ModuleItemScopes>>,
+    pub(crate) macro_candidates: Option<Box<MacroBindingCandidates>>,
 }
 
 /// A borrowed ordered view; it cannot outlive or retain an index generation.
@@ -340,7 +341,7 @@ impl serde::Serialize for FileFactsView<'_> {
             .iter()
             .map(|fact| ProbeShapeFactWire::attached(fact, &self.source))
             .collect();
-        let mut state = serializer.serialize_struct("FileFacts", 11)?;
+        let mut state = serializer.serialize_struct("FileFacts", 12)?;
         state.serialize_field("path", &self.path)?;
         state.serialize_field("functions", &functions)?;
         state.serialize_field("tests", &tests)?;
@@ -355,6 +356,7 @@ impl serde::Serialize for FileFactsView<'_> {
         )?;
         state.serialize_field("source", self.source.as_ref())?;
         state.serialize_field("item_scopes", &self.item_scopes)?;
+        state.serialize_field("macro_candidates", &self.macro_candidates)?;
         state.end()
     }
 }
@@ -493,6 +495,7 @@ impl RustIndex {
             role_provenance,
             source,
             item_scopes,
+            macro_candidates,
         } = facts;
         // Allocate handle storage explicitly: an in-place map collection can retain
         // the much larger FunctionFact source allocation for these small IDs.
@@ -533,6 +536,7 @@ impl RustIndex {
                     role_provenance,
                     source,
                     item_scopes,
+                    macro_candidates,
                 },
                 functions,
                 tests,
@@ -721,6 +725,7 @@ impl RustIndex {
             role_provenance,
             source,
             item_scopes,
+            macro_candidates,
         } = file.data().clone();
         Some(FileFacts {
             path,
@@ -735,6 +740,7 @@ impl RustIndex {
             role_provenance,
             source,
             item_scopes,
+            macro_candidates,
         })
     }
     #[cfg(test)]
