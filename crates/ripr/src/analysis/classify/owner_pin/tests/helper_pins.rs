@@ -212,16 +212,7 @@ fn a_helper_that_rebinds_or_feeds_back_the_owner_is_not_a_pin() -> Result<(), St
 /// helper's assertion on the test, and the same coordinate is admitted.
 #[test]
 fn the_indexed_helper_assertion_is_the_admitted_one() -> Result<(), Box<dyn Error>> {
-    let root = std::env::temp_dir().join(format!(
-        "ripr-owner-pin-helper-{}-{}",
-        std::process::id(),
-        NEXT_ROOT.fetch_add(1, Ordering::Relaxed)
-    ));
-    fs::create_dir_all(root.join("src"))?;
-    fs::write(root.join(LIB), module(HELPER, CALLS))?;
-    let built = build_index(&root, &[PathBuf::from(LIB)]);
-    fs::remove_dir_all(&root)?;
-    let index = built?;
+    let index = indexed(&module(HELPER, CALLS))?;
     let test = index
         .tests()
         .iter()
@@ -246,16 +237,24 @@ fn the_indexed_helper_assertion_is_the_admitted_one() -> Result<(), Box<dyn Erro
 /// `source` as `src/lib.rs`, indexed through the production path, which
 /// credits a check helper's assertion to the tests that call it.
 fn indexed(source: &str) -> Result<RustIndex, String> {
-    let root = std::env::temp_dir().join(format!(
+    let root = TempRoot(std::env::temp_dir().join(format!(
         "ripr-owner-pin-helper-{}-{}",
         std::process::id(),
         NEXT_ROOT.fetch_add(1, Ordering::Relaxed)
-    ));
-    fs::create_dir_all(root.join("src")).map_err(|err| err.to_string())?;
-    fs::write(root.join(LIB), source).map_err(|err| err.to_string())?;
-    let built = build_index(&root, &[PathBuf::from(LIB)]);
-    fs::remove_dir_all(&root).map_err(|err| err.to_string())?;
-    built.map_err(|err| err.to_string())
+    )));
+    fs::create_dir_all(root.0.join("src")).map_err(|err| err.to_string())?;
+    fs::write(root.0.join(LIB), source).map_err(|err| err.to_string())?;
+    build_index(&root.0, &[PathBuf::from(LIB)]).map_err(|err| err.to_string())
+}
+
+/// Removes the scratch workspace on every exit, including a failed write
+/// or a panicking index build.
+struct TempRoot(PathBuf);
+
+impl Drop for TempRoot {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.0);
+    }
 }
 
 /// The loan's facts the boundary pairing reads (#6482): the helper's
