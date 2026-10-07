@@ -1379,6 +1379,57 @@ mod tests {
     }
 
     #[test]
+    fn preview_language_changed_files_filters_by_enabled_language_and_extension() {
+        // Feature-independent discriminator pin (#6832): the disclosure lists
+        // only changed files whose EXTENSION belongs to an ENABLED preview
+        // language; disabled-language files and non-preview files stay out.
+        let working_set = AgentBriefResolvedWorkingSet {
+            source: crate::app::agent_brief::AgentBriefWorkingSetSource::Base,
+            files: vec![
+                PathBuf::from("src/pricing.py"),
+                PathBuf::from("src/lib.ts"),
+                PathBuf::from("src/app.mjs"),
+                PathBuf::from("src/lib.rs"),
+                PathBuf::from("README.md"),
+            ],
+            changed_lines: Vec::new(),
+            changed_owners: Vec::new(),
+            enclosing_owners: Vec::new(),
+            base: Some("HEAD~1".to_string()),
+            diff: None,
+            seam_id: None,
+        };
+
+        let python_only = RiprConfig {
+            languages: crate::config::LanguagesConfig {
+                enabled: vec![LanguageId::Python],
+                ..Default::default()
+            },
+            ..RiprConfig::default()
+        };
+        assert_eq!(
+            preview_language_changed_files(&working_set, &python_only),
+            vec!["src/pricing.py".to_string()]
+        );
+
+        let typescript_only = RiprConfig {
+            languages: crate::config::LanguagesConfig {
+                enabled: vec![LanguageId::TypeScript],
+                ..Default::default()
+            },
+            ..RiprConfig::default()
+        };
+        assert_eq!(
+            preview_language_changed_files(&working_set, &typescript_only),
+            vec!["src/lib.ts".to_string(), "src/app.mjs".to_string()]
+        );
+
+        // Default config enables Rust only: nothing to disclose.
+        assert!(preview_language_changed_files(&working_set, &RiprConfig::default()).is_empty());
+    }
+
+    #[test]
+    #[cfg(feature = "lang-python")]
     fn review_comments_discloses_preview_language_exclusion_on_python_diffs() -> Result<(), String>
     {
         // #6832: the base/head review-comments path is seam-scoped, so a
