@@ -1,4 +1,4 @@
-﻿use super::super::diff::{ChangedFile, ChangedLine};
+use super::super::diff::{ChangedFile, ChangedLine};
 use super::super::rust_index::{
     RustIndex, SyntaxNodeFact, changed_nodes_for_lines, extract_identifier_tokens, find_file_facts,
     find_owner_function,
@@ -216,7 +216,7 @@ pub(crate) fn probes_for_file_with_relations(
         }
     }
 
-    // Post-hoc collision de-dup: if two probes got the same id, append .2, .3, â€¦
+    // Post-hoc collision de-dup: if two probes got the same id, append .2, .3, …
     // to the 2nd+ occurrences (the first keeps its id as-is, i.e. ordinal 1).
     dedup_probe_ids(&mut probes);
 
@@ -272,8 +272,8 @@ fn structural_lines_covered_by_run(lines: &[ChangedLine]) -> Vec<bool> {
 }
 
 /// Retarget a changed simple `let` line to the same-function predicate
-/// uses of its binding (#3294). Fails closed to `None` â€” keeping the
-/// generic static-unknown path â€” unless at least one direct use
+/// uses of its binding (#3294). Fails closed to `None` — keeping the
+/// generic static-unknown path — unless at least one direct use
 /// survives the scope rules at a line the diff itself does not change
 /// (a directly changed predicate already carries its own probe).
 fn retarget_changed_binding_predicates(
@@ -357,7 +357,7 @@ fn parser_span_for_canonical_shape(
 }
 
 /// Scan `probes` in order; for any id that appears more than once, rewrite the
-/// 2nd+ occurrences to append `.2`, `.3`, â€¦ (ordinal-based collision suffix).
+/// 2nd+ occurrences to append `.2`, `.3`, … (ordinal-based collision suffix).
 fn dedup_probe_ids(probes: &mut [SeededProbe]) {
     use std::collections::HashMap;
     let mut seen: HashMap<String, u32> = HashMap::new();
@@ -488,7 +488,7 @@ fn line_in_module_ranges(ranges: &[InlineModuleRange], line: usize) -> bool {
 }
 
 /// Whether `line` (1-based) sits inside an inline `mod` block whose own
-/// attributes â€” or any enclosing inline `mod`'s â€” require a test build
+/// attributes — or any enclosing inline `mod`'s — require a test build
 /// (#3718). Unit-test entry point; production calls precompute ranges
 /// once per file with [`test_module_ranges_for`].
 #[cfg(test)]
@@ -500,7 +500,7 @@ fn line_in_cfg_test_module(source: &str, line: usize) -> bool {
 /// Each open entry binds to its module's own opening brace: a block
 /// already closed on its opening line (`mod tests {}`) contributes no
 /// range, and a same-line nested opener never shifts its parent's
-/// entry â€” only the parent scope (already on the stack) covers the
+/// entry — only the parent scope (already on the stack) covers the
 /// lines beneath.
 fn inline_test_module_ranges(source: &str) -> Vec<InlineModuleRange> {
     let masked = mask_comments_and_strings(source);
@@ -566,7 +566,7 @@ fn brace_delta(line: &str) -> (usize, usize) {
 /// the masked lines; attribute text is read from the original lines so
 /// string-bearing predicates (`feature = "slow"`) keep their literals.
 /// Returns (requires_test, byte index of the module's opening `{` in the
-/// masked line) â€” `None` for out-of-line items and non-module lines.
+/// masked line) — `None` for out-of-line items and non-module lines.
 fn parse_inline_module(
     original_lines: &[&str],
     masked_lines: &[&str],
@@ -684,7 +684,7 @@ fn build_probe(
     // coordinate, which is what the RustIndex (built from the new file),
     // the flow/value classifiers, and any IDE navigation into the new file
     // require (RANK-1 fix, #1222). #3280 keeps this coordinate in the
-    // producer slice â€” a removed-only probe's revision semantics are stated
+    // producer slice — a removed-only probe's revision semantics are stated
     // by its `source_currentness` disposition, and re-coordinating
     // deleted-side evidence is the #3212 projection slice's consumer work.
     let new_line = changed_line.new_side_line;
@@ -1346,15 +1346,15 @@ mod tests {
         );
         // Multibyte text around the edit keeps byte offsets on char boundaries.
         assert_eq!(
-            removed_span_of_shape("if Ã© >= Ã¼ {", "Ã© >= Ã¼", "if Ã© > Ã¼ {").as_deref(),
-            Some("Ã© > Ã¼")
+            removed_span_of_shape("if é >= ü {", "é >= ü", "if é > ü {").as_deref(),
+            Some("é > ü")
         );
-        // A shape that ends its line is anchored by a common suffix inside itâ€¦
+        // A shape that ends its line is anchored by a common suffix inside it…
         assert_eq!(
             removed_span_of_shape("return a >= b", "a >= b", "return a > b").as_deref(),
             Some("a > b")
         );
-        // â€¦and without one the old tail cannot be told apart from the shape.
+        // …and without one the old tail cannot be told apart from the shape.
         assert_eq!(
             removed_span_of_shape("if a != b", "a != b", "if a == b {"),
             None
@@ -1433,11 +1433,11 @@ mod tests {
 
     #[test]
     fn canonical_parser_span_skips_string_decoy_on_the_same_line() -> Result<(), String> {
-        const PREDICATE: &str = "montant_Ã© > discount_threshold";
+        const PREDICATE: &str = "montant_é > discount_threshold";
         let path = PathBuf::from("src/lib.rs");
         let source = concat!(
-            "pub fn price(montant_Ã©: i32, discount_threshold: i32) -> bool {\n",
-            "    let decoy = \"montant_Ã© > discount_threshold\"; if montant_Ã© > discount_threshold { false } else { true }\n",
+            "pub fn price(montant_é: i32, discount_threshold: i32) -> bool {\n",
+            "    let decoy = \"montant_é > discount_threshold\"; if montant_é > discount_threshold { false } else { true }\n",
             "}\n",
         );
         let (decoy, producer) = require_second(source, PREDICATE)?;
@@ -1459,7 +1459,7 @@ mod tests {
             removed_lines: vec![ChangedLine {
                 line: 2,
                 new_side_line: 2,
-                text: "    let decoy = \"montant_Ã© > discount_threshold\"; if montant_Ã© > discount_threshold { true } else { false }".to_string(),
+                text: "    let decoy = \"montant_é > discount_threshold\"; if montant_é > discount_threshold { true } else { false }".to_string(),
             }],
         };
         let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
@@ -1520,9 +1520,9 @@ mod tests {
 
     #[test]
     fn parser_span_is_dropped_when_canonical_text_differs_from_shape() {
-        let shape = predicate_shape(12, "montant_Ã© > discount_threshold");
+        let shape = predicate_shape(12, "montant_é > discount_threshold");
         assert_eq!(
-            parser_span_for_canonical_shape("let _ = montant_Ã© > discount_threshold;", &shape),
+            parser_span_for_canonical_shape("let _ = montant_é > discount_threshold;", &shape),
             None
         );
         assert_eq!(
@@ -1533,7 +1533,7 @@ mod tests {
 
     #[test]
     fn parser_span_is_dropped_for_multiline_shape_text() {
-        let shape = predicate_shape(0, "montant_Ã© >\ndiscount_threshold");
+        let shape = predicate_shape(0, "montant_é >\ndiscount_threshold");
         assert_eq!(parser_span_for_canonical_shape(shape.text, &shape), None);
     }
 
@@ -1820,7 +1820,7 @@ mod tests {
             "a non-test error path should still generate a probe"
         );
 
-        // #1055: the same line owned by a `#[test]` function generates nothing â€”
+        // #1055: the same line owned by a `#[test]` function generates nothing —
         // the test is the instrument, not the surface under test.
         let in_test = probes_for_file(
             Path::new("workspace"),
