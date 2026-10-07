@@ -10527,6 +10527,15 @@ fn doctor_json_reports_no_config_defaults_for_an_unloadable_config() -> Result<(
         report["config_defaults"].is_null(),
         "an unreadable config must not claim verified defaults: {report}"
     );
+    let detected = json_array(&report, "detected_languages")?;
+    let rust = detected
+        .iter()
+        .find(|entry| entry["language"] == "rust")
+        .ok_or_else(|| format!("rust must still be reported as detected: {detected:?}"))?;
+    assert!(
+        rust["enabled"].is_null(),
+        "an unreadable config must leave enablement unknown, not disabled: {rust}"
+    );
     Ok(())
 }
 

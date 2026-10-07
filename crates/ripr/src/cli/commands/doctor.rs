@@ -216,17 +216,20 @@ struct DoctorEnvironment {
 
 impl DoctorEnvironment {
     fn probe(root: &Path, detected: &[LanguageId], config: &Result<RiprConfig, String>) -> Self {
-        let enabled = enabled_languages(config);
+        let loaded = config.as_ref().ok();
         let preview_enablement = preview_languages_to_enable(detected, config);
         Self {
             facts: output::doctor::DoctorEnvironmentFacts {
-                detected_languages: detected_language_entries(detected, &enabled),
+                detected_languages: detected_language_entries(
+                    detected,
+                    loaded.map(|config| config.languages().enabled()),
+                ),
                 unanalyzed_source_languages: unanalyzed_language_entries(root),
                 preview_language_gaps: preview_language_gaps(preview_enablement.as_ref()),
                 config_defaults: config_defaults(config),
                 cache: cache_status(root),
                 test_surfaces: detect_test_surfaces(root, detected),
-                perl_preview: probe_perl_preview(root),
+                perl_preview: probe_perl_preview(root, loaded),
             },
             preview_enablement,
         }
@@ -235,7 +238,7 @@ impl DoctorEnvironment {
 
 fn detected_language_entries(
     detected: &[LanguageId],
-    enabled: &[LanguageId],
+    enabled: Option<&[LanguageId]>,
 ) -> Vec<output::doctor::DoctorDetectedLanguage> {
     detected
         .iter()
@@ -243,7 +246,11 @@ fn detected_language_entries(
             language: id.as_str().to_string(),
             status: language_status(*id),
             adapter_available: id.is_available(),
-            enabled: enabled.contains(id),
+            // JavaScript has no config entry of its own: the `typescript`
+            // entry analyzes it, so enablement is read through the same
+            // mapping the gaps path uses. `None` (no loaded configuration)
+            // stays unknown rather than reading as disabled.
+            enabled: enabled.map(|list| list.contains(&config_entry(*id))),
         })
         .collect()
 }
@@ -1553,18 +1560,20 @@ fn perl_list_display(values: &[&str], empty: &str) -> String {
 
 /// The typed Perl preview state, or `None` when the marker scan found no Perl
 /// project. Computed once per run and read by both surfaces.
-fn probe_perl_preview(root: &Path) -> Option<output::doctor::DoctorPerlPreview> {
+fn probe_perl_preview(
+    root: &Path,
+    config: Option<&RiprConfig>,
+) -> Option<output::doctor::DoctorPerlPreview> {
     if !perl_project_detected(root) {
         return None;
     }
     let pm_count = count_files(root, "pm");
     let pl_count = count_files(root, "pl");
     let t_count = count_files(root, "t");
-    let producer_configured = perl_producer_configured(root);
-    let refused_executable = crate::config::load_for_root(root)
-        .ok()
-        .and_then(|config| config.perl().refused_executable().map(Path::to_path_buf));
-    let exporter = probe_perl_exporter(root);
+    let producer_configured = perl_producer_configured(config);
+    let refused_executable =
+        config.and_then(|config| config.perl().refused_executable().map(Path::to_path_buf));
+    let exporter = probe_perl_exporter(config);
     let adapter_compiled = cfg!(feature = "lang-perl");
     Some(output::doctor::DoctorPerlPreview {
         pm_files: pm_count,
@@ -1626,8 +1635,10 @@ fn perl_runners() -> Vec<&'static str> {
 
 /// Whether `[perl].producer` is configured in the root's ripr config. Returns
 /// the configured producer name, or None if not set / config unreadable.
-fn perl_producer_configured(root: &Path) -> Option<String> {
-    let config = crate::config::load_for_root(root).ok()?;
+/// Takes the already-loaded configuration so the preview agrees with
+/// `config_defaults` instead of racing a second load.
+fn perl_producer_configured(config: Option<&RiprConfig>) -> Option<String> {
+    let config = config?;
     config.perl().producer().map(|s| s.to_string())
 }
 
@@ -1669,16 +1680,13 @@ const PERL_EXPORTER_PROBE_OUTPUT_LIMIT: usize = 64 * 1024;
 /// run under the configured `[perl].timeout_ms` deadline with bounded
 /// capture and a null stdin, so an LSP server that waits on stdin cannot
 /// hang the doctor. Packet validity is still only checked by `ripr check`.
-fn probe_perl_exporter(root: &Path) -> PerlExporterProbe {
-    let config = crate::config::load_for_root(root).ok();
+fn probe_perl_exporter(config: Option<&RiprConfig>) -> PerlExporterProbe {
     let timeout =
-        std::time::Duration::from_millis(config.as_ref().map_or(30_000, |c| c.perl().timeout_ms()));
+        std::time::Duration::from_millis(config.map_or(30_000, |c| c.perl().timeout_ms()));
     // `[perl].executable` from ripr.toml is only probed when the user opts
     // in (see `PerlConfig::executable`); doctor is usually the first command
     // run in a fresh clone and must not execute a repository-chosen program.
-    let explicit = config
-        .as_ref()
-        .and_then(|c| c.perl().executable().map(|p| p.display().to_string()));
+    let explicit = config.and_then(|c| c.perl().executable().map(|p| p.display().to_string()));
     let candidates: Vec<String> = match explicit {
         Some(path) => vec![path],
         None => vec![
@@ -2714,8 +2722,37 @@ mod tests {
             language: language.as_str().to_string(),
             status: language_status(language),
             adapter_available,
-            enabled: true,
+            enabled: Some(true),
         }
+    }
+
+    #[test]
+    fn detected_entries_map_javascript_to_its_typescript_entry() {
+        let entries =
+            detected_language_entries(&[LanguageId::JavaScript], Some(&[LanguageId::TypeScript]));
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].language, "javascript");
+        assert_eq!(
+            entries[0].enabled,
+            Some(true),
+            "the typescript entry analyzes javascript, so it reads as enabled"
+        );
+        let entries =
+            detected_language_entries(&[LanguageId::JavaScript], Some(&[LanguageId::Rust]));
+        assert_eq!(
+            entries[0].enabled,
+            Some(false),
+            "without the typescript entry nothing analyzes javascript"
+        );
+    }
+
+    #[test]
+    fn detected_entries_stay_unknown_without_a_loaded_configuration() {
+        let entries = detected_language_entries(&[LanguageId::Rust, LanguageId::Python], None);
+        assert!(
+            entries.iter().all(|entry| entry.enabled.is_none()),
+            "an unloadable config must not read as disabled: {entries:?}"
+        );
     }
 
     fn unanalyzed_entry(
@@ -2763,7 +2800,7 @@ mod tests {
         );
         // An adapter that was not compiled into this binary says so on the
         // same line; the typed `adapter_available` field is what says it in JSON.
-        let unavailable = detected_language_entries(&[LanguageId::Perl], &[]);
+        let unavailable = detected_language_entries(&[LanguageId::Perl], Some(&[]));
         assert!(!unavailable[0].adapter_available);
         assert!(
             detected_languages_lines(&unavailable, &[])[0].contains("[adapter not compiled]"),

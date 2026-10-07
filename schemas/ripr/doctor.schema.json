@@ -60,7 +60,7 @@
     "config_defaults": { "$ref": "#/$defs/config_defaults" },
     "cache": { "$ref": "#/$defs/cache_status" },
     "test_surfaces": {
-      "description": "The detected test surface per language. `framework` is null when no framework marker was confirmed; doctor never names a framework it did not read. Omitted when no language was detected.",
+      "description": "One or more test-surface entries per detected language. `framework` is null when no framework marker was confirmed; doctor never names a framework it did not read. Perl carries adapter, runner, and first-command status lines as additional entries. Omitted when no language was detected.",
       "type": "array",
       "items": { "$ref": "#/$defs/test_surface" }
     },
@@ -80,6 +80,10 @@
       "enum": ["stable", "preview"]
     },
     "nullable_string": { "type": ["string", "null"] },
+    "nullable_boolean": {
+      "description": "A boolean that is null where the producer could not determine the value.",
+      "type": ["boolean", "null"]
+    },
     "check": {
       "type": "object",
       "additionalProperties": false,
@@ -116,8 +120,9 @@
           "type": "boolean"
         },
         "enabled": {
-          "description": "Whether the effective configuration enables this language.",
-          "type": "boolean"
+          "description": "Whether the effective configuration enables this language; null when the configuration could not be loaded, so enablement is unknown rather than disabled.",
+          "$ref": "#/$defs/nullable_boolean",
+          "type": ["boolean", "null"]
         }
       }
     },

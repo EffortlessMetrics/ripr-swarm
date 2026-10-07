@@ -537,6 +537,8 @@ pub(crate) struct DoctorCheck {
 /// `enabled: false` is the state the human screen's enablement tip exists to
 /// warn about (#5214), and conflating the two would tell a consumer that a
 /// `pyproject.toml` project is analyzed when `ripr check` skips it.
+/// `enabled: null` means the configuration could not be loaded, so enablement
+/// is unknown rather than disabled.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub(crate) struct DoctorDetectedLanguage {
     /// The `LanguageId` wire string for the detected language.
@@ -546,8 +548,9 @@ pub(crate) struct DoctorDetectedLanguage {
     /// Whether the adapter for this language was compiled into this binary. A
     /// detected language whose adapter is absent cannot be enabled at all.
     pub(crate) adapter_available: bool,
-    /// Whether the effective configuration enables this language.
-    pub(crate) enabled: bool,
+    /// Whether the effective configuration enables this language, `None` when
+    /// the configuration could not be loaded.
+    pub(crate) enabled: Option<bool>,
 }
 
 /// Source in a language no ripr adapter reads, counted per language.
@@ -770,7 +773,9 @@ pub(crate) struct DoctorReport {
     /// contract's `required` list instead of passing it (#5214 review).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) cache: Option<DoctorCacheStatus>,
-    /// The detected test surface per language (additive in schema `0.4`).
+    /// One or more test-surface entries per detected language (additive in
+    /// schema `0.4`). Perl carries adapter, runner, and first-command status
+    /// lines as additional entries.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub(crate) test_surfaces: Vec<DoctorTestSurface>,
     /// The Perl preview state, `None` when the marker scan found no Perl
@@ -3218,7 +3223,7 @@ mod tests {
                 language: "python".to_string(),
                 status: LanguageStatus::Preview,
                 adapter_available: true,
-                enabled: false,
+                enabled: Some(false),
             }],
             unanalyzed_source_languages: vec![DoctorUnanalyzedLanguage {
                 language: "Go".to_string(),
