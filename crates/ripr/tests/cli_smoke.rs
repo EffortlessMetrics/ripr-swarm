@@ -4738,17 +4738,19 @@ fn agent_card_identity_is_portable_across_equivalent_checkout_roots()
     Ok(())
 }
 
-/// A statically admitted inline test is not an executable repair surface.
-/// The default card must disclose the same refusal as the Before phase,
-/// while a separate test file remains ready and can publish an attempt.
+/// The card's readiness agrees with the Before phase for every target shape:
+/// a separate test file and one governed inline `#[cfg(test)]` module are
+/// ready and publish an attempt (#5210), while a file with two candidate
+/// inline test modules stays an ambiguous edit target and the card discloses
+/// the same refusal as the Before phase.
 #[test]
 fn agent_card_readiness_agrees_with_repair_target_admission()
 -> Result<(), Box<dyn std::error::Error>> {
-    for inline in [true, false] {
-        let root = unbuilt_repair_fixture(if inline {
-            "agent-card-inline-admission"
-        } else {
-            "agent-card-separate-admission"
+    for (inline, ambiguous) in [(true, false), (true, true), (false, false)] {
+        let root = unbuilt_repair_fixture(match (inline, ambiguous) {
+            (true, false) => "agent-card-inline-admission",
+            (true, true) => "agent-card-ambiguous-inline-admission",
+            _ => "agent-card-separate-admission",
         })?;
         if inline {
             let tests = std::fs::read_to_string(root.join("tests/pricing.rs"))?.replace(
@@ -4757,6 +4759,11 @@ fn agent_card_readiness_agrees_with_repair_target_admission()
             );
             let mut source = std::fs::read_to_string(root.join("src/lib.rs"))?;
             source.push_str(&format!("\n#[cfg(test)]\nmod tests {{\n{tests}\n}}\n"));
+            if ambiguous {
+                source.push_str(
+                    "\n#[cfg(test)]\nmod more_tests {\n    #[test]\n    fn smoke() {\n        assert_eq!(1 + 1, 2);\n    }\n}\n",
+                );
+            }
             std::fs::write(root.join("src/lib.rs"), source)?;
             std::fs::remove_file(root.join("tests/pricing.rs"))?;
             run_git(&root, &["add", "src/lib.rs", "tests/pricing.rs"])?;
@@ -4784,9 +4791,9 @@ fn agent_card_readiness_agrees_with_repair_target_admission()
                 "tests/pricing.rs"
             }
         );
-        assert_eq!(card["readiness"]["repair_ready"], !inline, "{card:#}");
+        assert_eq!(card["readiness"]["repair_ready"], !ambiguous, "{card:#}");
         let before = run_repair_phase(&root, &["--seam-id", BOUNDARY_GAP_SEAM_ID], "before")?;
-        if inline {
+        if ambiguous {
             assert_failure(&before);
             let blocker = card["exact_blocker"]
                 .as_str()
@@ -4821,7 +4828,11 @@ fn agent_card_readiness_agrees_with_repair_target_admission()
             assert_success(&before);
             assert_eq!(
                 card["allowed_files"],
-                serde_json::json!(["tests/pricing.rs"])
+                serde_json::json!([if inline {
+                    "src/lib.rs"
+                } else {
+                    "tests/pricing.rs"
+                }])
             );
             assert_eq!(card["readiness"]["missing_evidence"], serde_json::json!([]));
             let (attempt_id, manifest) = sole_repair_attempt(&root)?;
@@ -7434,14 +7445,25 @@ fn repo_scope_formats_reject_unresolvable_base_and_missing_diff()
     Ok(())
 }
 
-/// F15-12: a seam whose only related test lives inline in another crate has
-/// no test file the repair can edit. The before phase refuses before it
-/// writes any workflow artifact and never prints a completion line first, so
-/// neither the phase nor a later `agent status` reads as a started repair.
+/// F15-12: a seam whose only related tests live inline in a crate file with
+/// two candidate `#[cfg(test)]` modules has no test target the repair can
+/// edit. The before phase refuses before it writes any workflow artifact and
+/// never prints a completion line first, so neither the phase nor a later
+/// `agent status` reads as a started repair. With one governed inline module
+/// the same seam starts an attempt confined to that module (#5210).
 #[test]
 fn agent_repair_before_refuses_a_seam_without_a_test_file_before_writing_anything()
 -> Result<(), Box<dyn std::error::Error>> {
-    let root = unique_temp_workspace("agent-repair-no-test-target");
+    agent_repair_before_inline_only_seam(true)?;
+    agent_repair_before_inline_only_seam(false)
+}
+
+fn agent_repair_before_inline_only_seam(ambiguous: bool) -> Result<(), Box<dyn std::error::Error>> {
+    let root = unique_temp_workspace(if ambiguous {
+        "agent-repair-no-test-target"
+    } else {
+        "agent-repair-inline-test-target"
+    });
     std::fs::create_dir_all(root.join("crates/rates/src"))?;
     std::fs::write(
         root.join("Cargo.toml"),
@@ -7453,7 +7475,14 @@ fn agent_repair_before_refuses_a_seam_without_a_test_file_before_writing_anythin
     )?;
     std::fs::write(
         root.join("crates/rates/src/lib.rs"),
-        "/// Tax in basis points for the given region code.\npub fn tax_bps(region: &str) -> u32 {\n    match region {\n        \"EU\" => 2000,\n        _ => 0,\n    }\n}\n\n/// Orders at or above this many items ship free.\npub fn ships_free(items: u32) -> bool {\n    items >= 10\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    #[test]\n    fn eu_tax() {\n        assert_eq!(tax_bps(\"EU\"), 2000);\n    }\n}\n",
+        format!(
+            "/// Tax in basis points for the given region code.\npub fn tax_bps(region: &str) -> u32 {{\n    match region {{\n        \"EU\" => 2000,\n        _ => 0,\n    }}\n}}\n\n/// Orders at or above this many items ship free.\npub fn ships_free(items: u32) -> bool {{\n    items >= 10\n}}\n\n#[cfg(test)]\nmod tests {{\n    use super::*;\n\n    #[test]\n    fn eu_tax() {{\n        assert_eq!(tax_bps(\"EU\"), 2000);\n    }}\n\n    #[test]\n    fn large_order_ships_free() {{\n        assert!(ships_free(20));\n    }}\n}}\n{}",
+            if ambiguous {
+                "\n#[cfg(test)]\nmod more_tests {\n    #[test]\n    fn smoke() {\n        assert_eq!(1 + 1, 2);\n    }\n}\n"
+            } else {
+                ""
+            }
+        ),
     )?;
     std::fs::write(root.join(".gitignore"), "/target\n")?;
     run_git(&root, &["init", "-q"])?;
@@ -7482,10 +7511,26 @@ fn agent_repair_before_refuses_a_seam_without_a_test_file_before_writing_anythin
         .as_str()
         .ok_or("seam has no id")?
         .to_string();
-    // Fixture construction: the seam's only related test is the inline one.
+    // Fixture construction: the seam's related tests are inline, and a
+    // weak `assert!(ships_free(20))` keeps the route ready (a seam with no
+    // calling test reads `activation_unknown`, which no repair targets).
     assert_eq!(seam["related_tests"][0]["file"], "crates/rates/src/lib.rs");
+    assert_eq!(seam["grip_class"], "weakly_gripped", "{seam:#}");
 
     let before = run_repair_phase(&root, &["--seam-id", &seam_id], "before")?;
+    if !ambiguous {
+        assert_success(&before);
+        let before: serde_json::Value = serde_json::from_slice(&before.stdout)?;
+        assert_eq!(
+            before["packets"][0]["allowed_edit_surface"],
+            serde_json::json!(["crates/rates/src/lib.rs"]),
+            "{before:#}"
+        );
+        let (_attempt_id, manifest) = sole_repair_attempt(&root)?;
+        assert_eq!(manifest["state"], "awaiting_edit");
+        std::fs::remove_dir_all(root)?;
+        return Ok(());
+    }
     assert_failure(&before);
     let stderr = String::from_utf8_lossy(&before.stderr);
     assert!(
@@ -13467,38 +13512,17 @@ fn first_pr_and_gap_ledger_refuse_a_root_that_does_not_exist() -> Result<(), Str
     Ok(())
 }
 
-/// A seam whose only test is an inline `#[cfg(test)]` module gets a focused-test
-/// suggestion but no repair target. The README sends readers to the
-/// `ripr agent repair` command pilot prints, so the terminal must say none is
-/// coming instead of going silent and offering the snapshot choreography as if
-/// it were the repair route.
+/// A seam whose only tests sit in a file with two candidate inline
+/// `#[cfg(test)]` modules gets a focused-test suggestion but no repair target.
+/// The README sends readers to the `ripr agent repair` command pilot prints,
+/// so the terminal must say none is coming instead of going silent and
+/// offering the snapshot choreography as if it were the repair route.
 #[test]
 fn pilot_says_so_when_the_top_seam_has_no_repair_command() -> Result<(), String> {
-    let root = unique_temp_workspace("pilot-no-repair-command");
-    let src = root.join("src");
-    std::fs::create_dir_all(&src).map_err(|e| format!("create src: {e}"))?;
-    std::fs::write(
-        root.join("Cargo.toml"),
-        "[package]\nname = \"demo\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
-    )
-    .map_err(|e| format!("write manifest: {e}"))?;
-    std::fs::write(
-        src.join("lib.rs"),
-        "pub fn price(amount: u32, threshold: u32) -> u32 {\n    if amount >= threshold { amount - 10 } else { amount }\n}\n\n#[cfg(test)]\nmod t {\n    use super::*;\n    #[test]\n    fn below() {\n        assert_eq!(price(1, 100), 1);\n    }\n}\n",
-    )
-    .map_err(|e| format!("write lib: {e}"))?;
-    let out_dir = unique_temp_workspace("pilot-no-repair-command-out");
-    let output = run_ripr(&[
-        "pilot",
-        "--root",
-        &root.display().to_string(),
-        "--out",
-        &out_dir.display().to_string(),
-    ]);
-    assert_success(&output);
-    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-    let _ = std::fs::remove_dir_all(&root);
-    let _ = std::fs::remove_dir_all(&out_dir);
+    let stdout = pilot_inline_only_stdout(
+        "pilot-no-repair-command",
+        "\n#[cfg(test)]\nmod more {\n    #[test]\n    fn smoke() {\n        assert_eq!(1 + 1, 2);\n    }\n}\n",
+    )?;
     assert!(stdout.contains("focused test: add "), "{stdout}");
     assert!(
         stdout.contains("repair this seam: not available for this seam"),
@@ -13513,6 +13537,58 @@ fn pilot_says_so_when_the_top_seam_has_no_repair_command() -> Result<(), String>
         "no repair command may be printed for an ineligible seam:\n{stdout}"
     );
     Ok(())
+}
+
+/// The `cargo new --lib` layout, one governed inline `#[cfg(test)]` module,
+/// gets the repair command, and the next step confines the edit to new test
+/// functions inside that module (#5210).
+#[test]
+fn pilot_prints_a_module_confined_repair_for_one_inline_test_module() -> Result<(), String> {
+    let stdout = pilot_inline_only_stdout("pilot-inline-repair-command", "")?;
+    assert!(stdout.contains("focused test: add "), "{stdout}");
+    assert!(
+        stdout.contains("repair this seam: ripr agent repair --root"),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains(
+            "2. add the focused test named above (new test functions inside `mod t` of src/lib.rs only; production code and existing tests stay unchanged)"
+        ),
+        "{stdout}"
+    );
+    assert!(!stdout.contains("not available for this seam"), "{stdout}");
+    Ok(())
+}
+
+fn pilot_inline_only_stdout(label: &str, extra_source: &str) -> Result<String, String> {
+    let root = unique_temp_workspace(label);
+    let src = root.join("src");
+    std::fs::create_dir_all(&src).map_err(|e| format!("create src: {e}"))?;
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"demo\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    )
+    .map_err(|e| format!("write manifest: {e}"))?;
+    std::fs::write(
+        src.join("lib.rs"),
+        format!(
+            "pub fn price(amount: u32, threshold: u32) -> u32 {{\n    if amount >= threshold {{ amount - 10 }} else {{ amount }}\n}}\n\n#[cfg(test)]\nmod t {{\n    use super::*;\n    #[test]\n    fn below() {{\n        assert_eq!(price(1, 100), 1);\n    }}\n}}\n{extra_source}"
+        ),
+    )
+    .map_err(|e| format!("write lib: {e}"))?;
+    let out_dir = unique_temp_workspace(&format!("{label}-out"));
+    let output = run_ripr(&[
+        "pilot",
+        "--root",
+        &root.display().to_string(),
+        "--out",
+        &out_dir.display().to_string(),
+    ]);
+    assert_success(&output);
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    let _ = std::fs::remove_dir_all(&root);
+    let _ = std::fs::remove_dir_all(&out_dir);
+    Ok(stdout)
 }
 
 #[test]

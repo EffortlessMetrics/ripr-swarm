@@ -2339,6 +2339,8 @@ while `call_effect` remains the fallback for other observable calls.
 - `builder_method`
 - `table_row`
 - `enum_variant`
+- `constant` (a qualified path whose spelling establishes a constant, such as
+  `u64::MAX` or `crate::KIB`; ambiguous all-caps paths stay `enum_variant`)
 - `return_value`
 - `unknown`
 
@@ -3881,6 +3883,7 @@ counts.
       "builder_method": 30,
       "table_row": 50,
       "enum_variant": 12,
+      "constant": 0,
       "return_value": 8,
       "unknown": 0
     },
@@ -17949,7 +17952,7 @@ targeted-rerun receipt shape:
     "recomputation_reasons": ["selected_test_scope_recomputed"],
     "invalidation_status": "not_available",
     "input_fingerprint": {
-      "schema_version": "1.45",
+      "schema_version": "1.46",
       "analyzer_version": "0.11.0+0123456789abcdef0123456789abcdef01234567",
       "workspace_root_hash": "…",
       "files_content_hash": "…",
