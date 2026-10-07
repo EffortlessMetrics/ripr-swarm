@@ -1734,6 +1734,15 @@ fn test_crate_may_bind(
         roots.root(path, index).as_deref() == Some(test_root) && {
             let masked = mask_comments_and_strings(&facts.source);
             declared_module_names(&masked).contains(&root)
+                // A type, trait or alias of the root's name shadows the
+                // extern prelude too, turning `root::name` into an
+                // associated item (#6974 rev-4 review).
+                || declares_type(&masked, root)
+                || ["trait", "type"].iter().any(|keyword| {
+                    whole_word_offsets(&masked, keyword).into_iter().any(|offset| {
+                        starts_with_word(masked[offset + keyword.len()..].trim_start(), root)
+                    })
+                })
                 || file_use_statements(&facts.source).iter().any(|statement| {
                     use_statement_binds_name(statement, root) || statement.contains('*')
                 })

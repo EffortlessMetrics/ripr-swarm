@@ -3787,10 +3787,25 @@ fn an_integration_path_is_closed_to_raw_and_macro_shadows() -> Result<(), String
     let body_macro = admitted(
         "#[test]\nfn weighs() {\n    shadow!(weight);\n    assert_eq!(demo_lib::weight(4), 12);\n}\n",
     );
+    // A type, trait or alias of the library's name shadows the dependency.
+    let shadows = [
+        "#[allow(non_camel_case_types)]\nstruct demo_lib;\nimpl demo_lib {\n    fn weight(_: u32) -> u32 { 12 }\n}\n",
+        "#[allow(non_camel_case_types)]\n#[derive(Debug)]\nenum demo_lib { weight(u32) }\nimpl PartialEq<u32> for demo_lib {\n    fn eq(&self, _: &u32) -> bool { true }\n}\n",
+        "#[allow(non_camel_case_types)]\ntrait demo_lib {\n    fn weight(_: u32) -> u32 { 12 }\n}\n",
+        "#[allow(non_camel_case_types)]\ntype demo_lib = Fake;\nstruct Fake;\nimpl Fake {\n    fn weight(_: u32) -> u32 { 12 }\n}\n",
+    ]
+    .map(|prelude| {
+        admitted(&format!(
+            "{prelude}#[test]\nfn weighs() {{\n    assert_eq!(demo_lib::weight(4), 12);\n}}\n"
+        ))
+    });
     let _ = std::fs::remove_dir_all(&root);
     assert_eq!(let_bound, ["assert_eq!(total, 12);"]);
     assert!(raw_module.is_empty());
     assert!(body_macro.is_empty());
+    for shadow in shadows {
+        assert!(shadow.is_empty(), "{shadow:?}");
+    }
     Ok(())
 }
 

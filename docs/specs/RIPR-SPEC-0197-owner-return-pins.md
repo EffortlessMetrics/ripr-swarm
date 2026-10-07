@@ -159,7 +159,9 @@ rule only for an assertion whose context was admitted.
    unpinned. An expected operand naming a `let` whose initializer mentions
    the owner, directly or through further `let`s, compares the owner with
    itself and is refused, and so is one naming a value ripr cannot trace
-   to a simple `let` (`let (same, _) = (f(4), 0);`).
+   to a simple `let` (`let (same, _) = (f(4), 0);`). Residual, shared with
+   the bare call on main: an item `const` or `static` initialized from a
+   `const fn` owner (`const W: u32 = crate::weight(4);`) is not followed.
 2. Call identity, from the parser's item-container fact on the owner
    (`FunctionFact.item`: free, local, inherent, trait impl, or trait, with
    the `self`-receiver and body flags; the lexical fallback leaves it
@@ -187,8 +189,9 @@ rule only for an assertion whose context was admitted.
        (`krate::name(..)` in an integration test), and module names, when
        the owner's file is the library root. No workspace file may rename
        another item to that name or spell it `r#name`, and the test's crate
-       may not bind it itself (a `mod` or a `use` of the name, or any glob,
-       in a file of the test's crate).
+       may not bind it itself (a `mod`, `struct`, `enum`, `union`, `trait`
+       or `type` of the name, a `use` of the name, or any glob, in a file of
+       the test's crate).
      The owner must sit directly in a module (not a fn body or an `impl`)
      that ripr can place by parsing its file. Any `r#name` of the owner's
      name in the workspace (a raw twin the uniqueness gate's name match
