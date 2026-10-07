@@ -1919,6 +1919,65 @@ fn each_refusal_names_the_gate_that_failed() {
 }
 
 #[test]
+fn a_for_loop_over_a_constant_row_table_runs_its_assertion() {
+    let refusal = |body: &str| {
+        weight_refusal(
+            &format!("use demo::weight;\n#[test]\nfn weighs() {{\n{body}\n}}\n"),
+            &[],
+        )
+    };
+    let conditional = |construct: &'static str| {
+        Some(AssertionRefusal::Syntax(
+            AssertionContextRefusal::ConditionalPath(construct),
+        ))
+    };
+    let pin = "assert_eq!(weight(x), want);";
+    for admitted in [
+        format!("let cases = [(1, 3), (4, 12)];\nfor (x, want) in cases {{ {pin} }}"),
+        format!("let cases: [(u32, u32); 1] = [(4, 12)];\nfor (x, want) in &cases {{ {pin} }}"),
+        format!("for (x, want) in [(4, 12), (-1, -3)] {{ {pin} }}"),
+        format!("for (x, want) in &[(4, Some(12)), (0, None)] {{ {pin} }}"),
+        format!("for (x, want) in [(&[4], vec![12]), (&[], vec![])] {{ {pin} }}"),
+        format!("for (x, want) in [(4, Ok(12)), (0, Err(Kind::Empty))] {{ {pin} }}"),
+        format!("for (x, want) in [(4, 12)] {{ {pin} if x > 9 {{ break; }} }}"),
+    ] {
+        assert_eq!(refusal(&admitted), None, "{admitted}");
+    }
+    let zero = conditional("a `for` loop, which may run zero times");
+    for refused in [
+        // May be empty, or its length is not visible.
+        format!("let cases: [(u32, u32); 0] = [];\nfor (x, want) in cases {{ {pin} }}"),
+        format!("for (x, want) in [(4, 12); 0] {{ {pin} }}"),
+        format!("for (x, want) in rows() {{ {pin} }}"),
+        format!("for x in 0..4 {{ let want = x * 3; {pin} }}"),
+        // A row could hold the owner's own output.
+        format!("for (x, want) in [(4, weight(4))] {{ {pin} }}"),
+        format!("for (x, want) in [(4, EXPECTED)] {{ {pin} }}"),
+        format!("for (x, want) in [(4, Wrap::of(12))] {{ {pin} }}"),
+        format!("for (x, want) in [(4, vec![weight(4)])] {{ {pin} }}"),
+        // The bound rows may change or are not the ones iterated.
+        format!("let mut cases = [(4, 12)];\ncases[0].1 = 0;\nfor (x, want) in cases {{ {pin} }}"),
+        format!(
+            "let cases = [(4, 12)];\nlet cases = [(4, 0)];\nfor (x, want) in cases {{ {pin} }}"
+        ),
+        format!("let cases = [(4, 12)];\nfor (x, want) in cases.iter().skip(1) {{ {pin} }}"),
+        format!("let cases = rows();\nfor (x, want) in cases {{ {pin} }}"),
+        format!("for (x, want) in &mut [(4, 12)] {{ {pin} }}"),
+        format!("'rows: for (x, want) in [(4, 12)] {{ {pin} }}"),
+    ] {
+        assert_eq!(refusal(&refused), zero, "{refused}");
+    }
+    assert_eq!(
+        refusal(&format!(
+            "for (x, want) in [(4, 12), (0, 0)] {{ if x == 0 {{ continue; }} {pin} }}"
+        )),
+        conditional("a `for` loop after a `break` or `continue` that can skip it")
+    );
+    // Only the loop body is admitted; the iterable is not on its path.
+    assert!(refusal("for _ in [assert_eq!(weight(4), 12)] {}").is_some());
+}
+
+#[test]
 fn a_macro_binding_refusal_points_at_its_site() {
     let tests = "use demo::weight;\n#[test]\nfn weighs() { assert_eq!(weight(4), 12); }\n";
     let index = index(&[

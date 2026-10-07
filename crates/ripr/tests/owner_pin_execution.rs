@@ -1240,6 +1240,29 @@ fn equality_execution_uses_statement_prefix_and_closure_invocation() -> Result<(
                 format!("while false {{ {direct} }}"),
                 false,
             ),
+            // A `for` over a non-empty constant-row table runs its body at
+            // least once (#5328); an empty table or an earlier `continue`
+            // can skip the assertion.
+            (
+                "constant_table_for",
+                format!("for _ in [1u8, 2] {{ {direct} }}"),
+                true,
+            ),
+            (
+                "bound_constant_table_for",
+                format!("let rows = [(1u8, Some(2u8)), (3, None)];\nfor _ in &rows {{ {direct} }}"),
+                true,
+            ),
+            (
+                "empty_constant_table_for",
+                format!("let rows: [u8; 0] = [];\nfor _ in rows {{ {direct} }}"),
+                false,
+            ),
+            (
+                "continue_before_assertion_in_table",
+                format!("for skip in [true] {{ if skip {{ continue; }}\n{direct} }}"),
+                false,
+            ),
         ] {
             let scratch = Scratch::create()?;
             let source = format!("{prefix}    #[test]\n    fn checks() {{\n{body}\n    }}\n}}\n");

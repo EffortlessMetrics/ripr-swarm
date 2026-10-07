@@ -11565,6 +11565,7 @@ id = "RIPR-SPEC-0197"
 name = "Owner-return pins through calls that name the owner"
 spec = "docs/specs/RIPR-SPEC-0197-owner-return-pins.md"
 tests = [
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_for_loop_over_a_constant_row_table_runs_its_assertion",
   "crates/ripr/tests/owner_pin_execution.rs::predicate_pairing_cannot_reuse_refused_boundary_equalities",
   "crates/ripr/tests/owner_pin_execution.rs::local_empty_macro_preserves_independent_equality_execution",
   "crates/ripr/tests/owner_pin_execution.rs::empty_macro_arguments_cannot_activate_a_real_far_oracle",
