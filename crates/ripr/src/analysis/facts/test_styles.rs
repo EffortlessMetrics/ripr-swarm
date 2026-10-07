@@ -329,24 +329,28 @@ fn attribute_arguments_are_balanced(head: &str) -> bool {
     depth == 0
 }
 
+/// The attribute paths that make a Rust function an executable test. The
+/// #6965 unbuilt-file drop derives its test-bearing markers from this list,
+/// so a path added here is also walked there.
+pub(crate) const BUILT_IN_TEST_ATTRIBUTE_PATHS: &[&str] = &[
+    "test",
+    "tokio::test",
+    "async_std::test",
+    "rstest",
+    "rstest::rstest",
+    "quickcheck",
+    "quickcheck_macros::quickcheck",
+    "wasm_bindgen_test",
+    "wasm_bindgen_test::wasm_bindgen_test",
+    "test_case",
+    "test_case::test_case",
+    "ntest::test_case",
+    "test_matrix",
+    "test_case::test_matrix",
+];
+
 fn is_test_attribute_path(path: &str) -> bool {
-    matches!(
-        path,
-        "test"
-            | "tokio::test"
-            | "async_std::test"
-            | "rstest"
-            | "rstest::rstest"
-            | "quickcheck"
-            | "quickcheck_macros::quickcheck"
-            | "wasm_bindgen_test"
-            | "wasm_bindgen_test::wasm_bindgen_test"
-            | "test_case"
-            | "test_case::test_case"
-            | "ntest::test_case"
-            | "test_matrix"
-            | "test_case::test_matrix"
-    )
+    BUILT_IN_TEST_ATTRIBUTE_PATHS.contains(&path)
 }
 
 #[cfg(test)]

@@ -788,6 +788,7 @@ mod tests {
     fn foreign_cwd_still_resolves_against_the_selected_root() -> Result<(), String> {
         let root = test_root("foreign-cwd")?;
         let elsewhere = test_root("elsewhere")?;
+        let _cwd = crate::testing::cwd_lock::hold_cwd();
         let previous = std::env::current_dir().map_err(|error| error.to_string())?;
         let result = (|| {
             std::env::set_current_dir(&elsewhere).map_err(|error| error.to_string())?;
