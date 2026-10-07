@@ -3007,3 +3007,39 @@ fn a_definition_covering_the_test_outranks_a_may_rebind_site_elsewhere() {
     );
     assert!(only_macro_use.is_some_and(|refusal| refusal.is_analyzer_limit()));
 }
+
+#[test]
+fn a_shared_owner_pin_syntax_names_each_tests_own_covering_site() {
+    // Two inline modules rebind `assert_eq!` at different lines. The memo is
+    // keyed by name and file, so one shared OwnerPinSyntax must still pick
+    // the site that covers each test, as a fresh one does.
+    let tests = "use demo::weight;\n\
+mod first {\n    macro_rules! assert_eq { ($a:expr, $b:expr) => {}; }\n    #[test]\n    fn weighs() { assert_eq!(super::weight(4), 12); }\n}\n\
+mod second {\n    use super::weight;\n    macro_rules! assert_eq { ($a:expr, $b:expr) => {}; }\n    #[test]\n    fn weighs_again() { assert_eq!(weight(5), 15); }\n}\n";
+    let index = index(&[(LIB, WEIGHT_LIB), (TESTS, tests)]);
+    let probe = return_probe(owner(&index, "weight"), "x * 3");
+    let shared = OwnerPinSyntax::default();
+    let mut lines = Vec::new();
+    for at in 0..2 {
+        let test = index.tests().at(at);
+        let memoized = shared.equality_assertion_refusal(&probe, test, &test.assertions[0], &index);
+        let fresh = OwnerPinSyntax::default().equality_assertion_refusal(
+            &probe,
+            test,
+            &test.assertions[0],
+            &index,
+        );
+        assert_eq!(memoized, fresh, "test {at}");
+        let line = match &memoized {
+            Some(AssertionRefusal::MacroBinding {
+                site: Some((_, site)),
+                ..
+            }) => Some(site.line),
+            _ => None,
+        };
+        assert!(line.is_some(), "test {at}: {memoized:?}");
+        lines.extend(line);
+    }
+    lines.sort_unstable();
+    assert_eq!(lines, [3, 9]);
+}
