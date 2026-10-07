@@ -3,7 +3,7 @@ use super::propagation_witness::{
     PropagationWitnessV1, complete_direct_witness, is_direct_collection_state_write,
     normalize_semantic_text, valid_owner_bound_partial_witness,
 };
-use super::text::{exact_error_variant, question_mark_error_variant};
+use super::text::{exact_error_variant, question_mark_error_variant, spells_result_err};
 use crate::domain::*;
 
 pub(in crate::analysis) fn propagation_evidence(
@@ -1037,7 +1037,7 @@ fn plain_block_head(head: &str) -> bool {
 /// `Err(..)`, or a qualified or turbofish constructor such as
 /// `Err::<T, E>(E::X)` whose variant reads exactly.
 fn constructs_result_error(text: &str) -> bool {
-    text.contains("Err(") || exact_error_variant(text).is_some()
+    spells_result_err(text)
 }
 
 fn result_error_text(text: &str) -> String {
@@ -1155,6 +1155,26 @@ mod tests {
                     .iter()
                     .any(|sink| sink.kind == FlowSinkKind::ErrorVariant
                         && sink.text == "Result::Err(PayError::Limit)"),
+                "{family:?}: {sinks:?}"
+            );
+        }
+
+        // A custom `MyErr::<E>(..)` constructor is not `Result::Err`; the
+        // `Err::<` inside its name must not bind the error identity.
+        let custom = function(
+            "pub fn refund(amount: i64) -> MyErr<PayError> {\n    if amount > 10_000 {\n        return MyErr::<PayError>(PayError::Limit);\n    }\n    MyErr::<PayError>(PayError::None)\n}",
+        );
+        for family in [ProbeFamily::ReturnValue, ProbeFamily::SideEffect] {
+            let probe = probe(
+                family.clone(),
+                "return MyErr::<PayError>(PayError::Limit);",
+                3,
+            );
+            let sinks = local_flow_sinks(&probe, Some(&custom));
+            assert!(
+                sinks
+                    .iter()
+                    .all(|sink| sink.kind != FlowSinkKind::ErrorVariant),
                 "{family:?}: {sinks:?}"
             );
         }

@@ -6537,6 +6537,24 @@ return Err(\"typed pin\".into());
             PROXIMITY_VARIANT_CONFIRMATION_WITHHELD
         );
 
+        // A custom `MyErr::<E>(E::X)` constructor names no `Result::Err`
+        // variant, so the guard does not apply to it.
+        let custom_probe = probe(
+            ProbeFamily::ReturnValue,
+            "return MyErr::<PayError>(PayError::Limit);",
+        );
+        let (_, custom_beside, _) = reveal_evidence(
+            &custom_probe,
+            &[
+                (&reaching, RelationReason::DirectOwnerCall),
+                (&other_owner, RelationReason::SameTestFile),
+            ],
+        );
+        assert_ne!(
+            custom_beside.summary,
+            PROXIMITY_VARIANT_CONFIRMATION_WITHHELD
+        );
+
         // A return value that names no error variant keeps the #4486
         // same-file credit beside a reaching test.
         let ok_probe = probe(ProbeFamily::ReturnValue, "return Ok(amount + 1);");
