@@ -11,6 +11,34 @@ are scoped or reviewed.
 
 ### Changed
 
+- LSP scale-degradation disclosures now say what the run actually did at
+  all three surfaces where they previously overclaimed. An opened document
+  whose changed lines sit outside the analyzed partial-diff partition is
+  reported `not_analyzed` with the budget-raise + sidecar-restart recovery
+  by `ripr.collectWorkspaceStatus`, instead of `clean`/`served` (#5998).
+  `ripr/analysisStatus` stops advertising `retry_command: ripr.refresh`
+  for budget-bound `limited_partial_scope` runs — refresh provably re-runs
+  the identical partition — and carries a `retry_recovery` object naming
+  the budget override and the required sidecar restart; the VS Code status
+  renders that route over its canned refresh tail (#5999). The
+  `seam_diagnostics_not_enabled` component outcome carries the concrete
+  enable route (profile, flag, or language switch — following the
+  effective session/repository source) instead of `recovery: null`
+  (#6001).
+- LSP: TypeScript, JavaScript, and Perl preview findings the producer
+  admitted (`delivery_eligible`) now publish as advisory diagnostics in both
+  diagnostic profiles even while the shared repair-packet validator still
+  fails the packet; packet readiness keeps gating the code-action surface
+  only, and `diagnosticProfile = "full"` delivers what it documents
+  (#6847). `ripr/listActionableItems` canonical ids are now the producer
+  identities `ripr.collectContext` resolves — the probe `finding_id` for
+  findings, `seam_id` for seams — instead of the projection-local
+  `finding:<hash>`/canonical gap ids it previously listed and rejected with
+  `-32602`; the envelope adds `seam_evidence_identity` for the seam
+  continuation. RIPR-SPEC-0126's producer-signal precedence is corrected to
+  match: the preview packet verdict gates the repair-packet surface, not
+  diagnostic delivery (#6848).
+
 - Predicate same-test pairing no longer treats a boundary literal buried
   inside an argument expression as a boundary input. `gate(if false { 10 }
   else { 50 })` and `gate(std::cmp::max(10, 50))` fall back to
@@ -91,6 +119,11 @@ are scoped or reviewed.
 
 ### Fixed
 
+- Windows: `ripr agent card --json` now reports `selected_target.file`
+  with portable `/` separators for both existing and proposed targets,
+  instead of leaking native backslashes. `allowed_files` and
+  `forbidden_files` already used the shared normalized renderer and are
+  unchanged (#5440).
 - Discarded Rust `matches!` computations no longer count as assertion oracles
   in parser, lexical or registered-harness facts. Actual asserting wrappers
   retain pattern credit, including the weak whole-wildcard boundary from
@@ -194,6 +227,17 @@ are scoped or reviewed.
   from the global `-v` claim. The default `More:` line and `cmd:help`
   `json_support: true` already landed with #5398; the exhaustive screen
   was still a discovery dead end (#5266 residual).
+- Calibration: `ripr calibrate cargo-mutants` keeps each cargo-mutants
+  mutant's complete source span and joins it to the seam whose
+  `repo-exposure-json` 0.4 span contains it (`join_method:
+  "span_containment"`). The unique innermost containing seam wins, so a line
+  holding several seams no longer leaves its mutants ambiguous; equal or
+  crossing spans are reported as `ambiguous_span_overlap_matches`; a mutant
+  that no seam span contains is unmatched with `unmatched_reason:
+  "no_containing_seam"` instead of being paired with a seam that only shares
+  its line. Span-less seams and span-less runtime records keep the file/line
+  join. The calibration report is `schema_version` 0.2 (#5336, #5485,
+  #5486).
 - Calibration: `ripr calibrate cargo-mutants` reads real cargo-mutants
   `mutants.out` output. Outcomes nested under `scenario.Mutant` with
   `CaughtMutant`/`MissedMutant`/`Timeout`/`Unviable` summaries now import as
@@ -594,6 +638,14 @@ are scoped or reviewed.
   feature and target activation is not established statically; `self::`
   and `super::` parameter paths still refuse (#5453).
 
+- Calibration: `repo-exposure-json` seams (schema `0.4`) and `repo-seams`
+  seams (schema `0.2`) now carry the parser-owned span coordinates
+  `column`, `end_line`, and `end_column` (1-based character columns, exclusive
+  end) when span geometry is available, matching cargo-mutants span columns
+  for calibration joins. Seam IDs are unchanged; span-less entries omit the
+  fields and consumers must treat them as line-only. `agent verify`
+  requires the current `0.4` envelope, so regenerate snapshots rather than
+  hand-editing versions (#5336).
 - Verdict corpus: 2 atuin cases (90f590b9) that the mutation spot-check
   reported as strongly gripped with every mutant missed. Neither is credited
   in diff mode: `context.rs:40` reads a gap (ideal), and `otel/enabled.rs:62`

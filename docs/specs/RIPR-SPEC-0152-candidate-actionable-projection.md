@@ -27,8 +27,9 @@ Preview producers complete their resolution in this slice: TypeScript,
 JavaScript, and Python probes are seeded from head-side added lines and
 resolve `candidate_current` through the delta rule; the Bun cross-language
 bridge tags changed Rust head-side lines the same way. Perl's fact-packet
-path carries no diff evidence and stays the explicit `unresolved_subject`;
-its projections were already advisory-only on every authority flag.
+path was the explicit `unresolved_subject` in this slice; since #6586 it
+resolves `candidate_current` from an observed changed line (RIPR-SPEC-0151),
+and its gap-ledger projections stay advisory-only on every authority flag.
 
 Routed surfaces:
 
@@ -119,7 +120,8 @@ preview dispositions.
 - No change to classification, stage evidence, confidence, or finding
   identity.
 - No re-coordination of recorded locations (deferred with #3280).
-- No rename-map retention; no Perl producer resolution; no schema-version
+- No rename-map retention; no Perl producer resolution in this slice (added
+  later by #6586); no schema-version
   bump (additive fields only).
 - No consumer-side suppression-policy change.
 

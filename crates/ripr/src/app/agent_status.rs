@@ -969,6 +969,7 @@ fn select_next_command(
 
 /// Where `ripr pilot` writes its summary by default, relative to the root.
 const PILOT_SUMMARY_ARTIFACT: &str = "target/ripr/pilot/pilot-summary.json";
+const PILOT_REPO_EXPOSURE_ARTIFACT: &str = "target/ripr/pilot/repo-exposure.json";
 
 /// The seam-selection route status offers before any seam is known. `ripr
 /// pilot` resolves a relative `--out` against the working directory, not
@@ -1130,6 +1131,64 @@ fn pilot_rust_excluded_message(excluded: &PilotRustExclusion) -> String {
     format!(
         "the last complete `ripr pilot` run ranked no Rust seam because Rust is not enabled in `ripr.toml [languages]` ({files} not analyzed), and running pilot again unchanged ranks nothing again: {}",
         crate::output::pilot::RUST_EXCLUDED_GUIDANCE,
+    )
+}
+
+/// Seams a complete `ripr pilot` run withheld as static limitations when it
+/// ranked none and recorded no repair start (#5497). Running pilot again
+/// unchanged withholds them again, so status must not send the user back.
+/// A missing, unreadable, timed-out, seam-ranking or zero-withheld summary
+/// is not this fact.
+fn pilot_withheld_every_seam(root: &Path) -> Option<u64> {
+    let text = std::fs::read_to_string(root.join(PILOT_SUMMARY_ARTIFACT)).ok()?;
+    let summary = serde_json::from_str::<Value>(&text).ok()?;
+    let complete = summary.pointer("/status").and_then(Value::as_str) == Some("complete");
+    let no_seams = summary
+        .pointer("/top_actionable_seams")
+        .and_then(Value::as_array)
+        .is_some_and(Vec::is_empty);
+    let no_repair_start = summary
+        .pointer("/next/repair_command")
+        .is_some_and(Value::is_null);
+    let withheld = summary
+        .pointer("/withheld_static_limitations_total")
+        .and_then(Value::as_u64)
+        .filter(|withheld| *withheld > 0)?;
+    (complete && no_seams && no_repair_start).then_some(withheld)
+}
+
+/// Whether the pilot run's repo exposure report says a seam limit cut the
+/// classified seams, so seams past the cut were never classified. `None`
+/// when the report is missing or unreadable: status cannot tell.
+fn pilot_seam_limit_applied(root: &Path) -> Option<bool> {
+    let text = std::fs::read_to_string(root.join(PILOT_REPO_EXPOSURE_ARTIFACT)).ok()?;
+    let report = serde_json::from_str::<Value>(&text).ok()?;
+    let run_status = report.pointer("/run_status").and_then(Value::as_str)?;
+    Some(run_status == "seam_limit_applied")
+}
+
+fn pilot_withheld_message(withheld: u64, seam_limit_applied: Option<bool>) -> String {
+    let seams = if withheld == 1 {
+        "1 seam".to_string()
+    } else {
+        format!("{withheld} seams")
+    };
+    let inspect = "Inspect them in `target/ripr/pilot/repo-exposure.md`, where each one names the stage ripr could not resolve";
+    if seam_limit_applied.is_none() {
+        // Fail closed: without the report, status cannot rule out a cut.
+        return format!(
+            "the last complete `ripr pilot` run ranked no seam: it withheld {seams} whose static evidence is unknown or opaque, so they are static limitations, not gaps. `target/ripr/pilot/repo-exposure.json` is missing or unreadable, so status cannot tell whether a seam limit cut the run; rerun pilot, and if it reports a seam limit, raise or remove RIPR_PILOT_SEAM_BUDGET and RIPR_REPO_EXPOSURE_SEAM_LIMIT. {inspect}"
+        );
+    }
+    if seam_limit_applied == Some(true) {
+        // A gap may sit past the cut, so "no repair applies" would claim an
+        // absence the run did not establish; raising the limit is the step.
+        return format!(
+            "the last complete `ripr pilot` run ranked no seam: it withheld at least {seams} whose static evidence is unknown or opaque, so they are static limitations, not gaps. A seam limit cut the seams it analyzed, so seams past the cut may hold gaps: raise or remove RIPR_PILOT_SEAM_BUDGET and RIPR_REPO_EXPOSURE_SEAM_LIMIT, then rerun pilot. {inspect}"
+        );
+    }
+    format!(
+        "the last complete `ripr pilot` run ranked no seam: it withheld {seams} whose static evidence is unknown or opaque, so they are static limitations, not gaps, and running pilot again unchanged withholds them again. {inspect}; no repair attempt applies until a seam ranks"
     )
 }
 
@@ -1343,6 +1402,16 @@ fn legacy_next_command(
                     message: pilot_rust_excluded_message(&excluded),
                 });
             }
+            return None;
+        }
+        // #5497: pilot withheld every seam as a static limitation, so a
+        // rerun ranks nothing again; name the inspection route instead.
+        if let Some(withheld) = pilot_withheld_every_seam(root) {
+            warnings.push(AgentStatusWarning {
+                kind: "pilot_withheld_static_limitations_no_repair_target".to_string(),
+                artifact: PILOT_SUMMARY_ARTIFACT.to_string(),
+                message: pilot_withheld_message(withheld, pilot_seam_limit_applied(root)),
+            });
             return None;
         }
         // #5205 (Codex P1): a Rust-disabled packet carries no seams and no
@@ -4456,6 +4525,118 @@ mod tests {
                     .iter()
                     .any(|warning| warning.kind == "pilot_rust_excluded_no_repair_target"),
                 "control must not raise the exclusion warning: {control}"
+            );
+        }
+
+        std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+        Ok(())
+    }
+
+    /// #5497: a complete pilot run that withheld every seam as a static
+    /// limitation ranks nothing, so `select_seam` would rerun the same pilot
+    /// forever. Status stops and names the inspection route.
+    #[test]
+    fn agent_status_stops_when_pilot_withheld_every_seam() -> Result<(), String> {
+        let root = unique_agent_status_test_dir("pilot-withheld");
+        let summary = |status: &str, seams: &str, repair: &str, withheld: &str| {
+            format!(
+                r#"{{"status": "{status}", "top_actionable_seams": {seams}, "withheld_static_limitations_total": {withheld}, "next": {{"repair_command": {repair}}}}}"#
+            )
+        };
+        write_file(
+            &root.join(PILOT_SUMMARY_ARTIFACT),
+            &summary("complete", "[]", "null", "138"),
+        )?;
+        write_file(
+            &root.join(PILOT_REPO_EXPOSURE_ARTIFACT),
+            r#"{"run_status": "complete"}"#,
+        )?;
+        let report = build_agent_status_report(&root, Path::new("."));
+        assert!(
+            report.next_command.is_none(),
+            "withheld-only pilot must stop, not loop: {:?}",
+            report.next_command
+        );
+        let warning = report
+            .warnings
+            .iter()
+            .find(|warning| warning.kind == "pilot_withheld_static_limitations_no_repair_target")
+            .ok_or_else(|| format!("expected a withheld warning: {:?}", report.warnings))?;
+        assert_eq!(warning.artifact, PILOT_SUMMARY_ARTIFACT);
+        for expected in [
+            "withheld 138 seams whose static evidence is unknown or opaque",
+            "target/ripr/pilot/repo-exposure.md",
+            "no repair attempt applies until a seam ranks",
+        ] {
+            assert!(warning.message.contains(expected), "{}", warning.message);
+        }
+
+        // A seam limit cut the classified seams: gaps may sit past the cut,
+        // so the warning names raising the limit, not "no repair applies".
+        write_file(
+            &root.join(PILOT_REPO_EXPOSURE_ARTIFACT),
+            r#"{"run_status": "seam_limit_applied"}"#,
+        )?;
+        let report = build_agent_status_report(&root, Path::new("."));
+        assert!(report.next_command.is_none(), "{:?}", report.next_command);
+        let warning = report
+            .warnings
+            .iter()
+            .find(|warning| warning.kind == "pilot_withheld_static_limitations_no_repair_target")
+            .ok_or_else(|| format!("expected a withheld warning: {:?}", report.warnings))?;
+        for expected in [
+            "withheld at least 138 seams",
+            "seams past the cut may hold gaps",
+            "raise or remove RIPR_PILOT_SEAM_BUDGET and RIPR_REPO_EXPOSURE_SEAM_LIMIT",
+        ] {
+            assert!(warning.message.contains(expected), "{}", warning.message);
+        }
+        assert!(
+            !warning.message.contains("no repair attempt applies"),
+            "{}",
+            warning.message
+        );
+        std::fs::remove_file(root.join(PILOT_REPO_EXPOSURE_ARTIFACT))
+            .map_err(|err| format!("remove repo exposure: {err}"))?;
+
+        // Without the repo exposure report status cannot rule out a cut, so
+        // it fails closed: no "no repair applies", and the limit is named.
+        let report = build_agent_status_report(&root, Path::new("."));
+        let warning = report
+            .warnings
+            .iter()
+            .find(|warning| warning.kind == "pilot_withheld_static_limitations_no_repair_target")
+            .ok_or_else(|| format!("expected a withheld warning: {:?}", report.warnings))?;
+        for expected in [
+            "is missing or unreadable, so status cannot tell whether a seam limit cut the run",
+            "raise or remove RIPR_PILOT_SEAM_BUDGET and RIPR_REPO_EXPOSURE_SEAM_LIMIT",
+        ] {
+            assert!(warning.message.contains(expected), "{}", warning.message);
+        }
+        assert!(
+            !warning.message.contains("no repair attempt applies"),
+            "{}",
+            warning.message
+        );
+
+        // Controls: nothing withheld (the old empty ranking), a pre-0.3
+        // summary without the field, a timed-out run, and a ranked seam all
+        // keep their previous routing.
+        for control in [
+            summary("complete", "[]", "null", "0"),
+            r#"{"status": "complete", "top_actionable_seams": [], "next": {"repair_command": null}}"#
+                .to_string(),
+            summary("timed_out", "[]", "null", "null"),
+            // Only the status differs from the stopping summary.
+            summary("partial", "[]", "null", "138"),
+            summary("complete", r#"[{"seam_id": "s"}]"#, "null", "5"),
+        ] {
+            write_file(&root.join(PILOT_SUMMARY_ARTIFACT), &control)?;
+            let report = build_agent_status_report(&root, Path::new("."));
+            assert!(
+                !report.warnings.iter().any(|warning| warning.kind
+                    == "pilot_withheld_static_limitations_no_repair_target"),
+                "control must not raise the withheld warning: {control}"
             );
         }
 

@@ -53,12 +53,14 @@ use super::seam_classification::ClassifiedSeam;
 #[cfg(test)]
 use super::seam_classification::SeamGripClassCounts;
 use super::seam_inventory::{SeamLimitSource, repo_exposure_seam_limit};
+use super::test_grip_evidence::RelatedTestGrip;
+use super::test_grip_evidence::shared_grips::SharedGrips;
 use crate::config::{
     PYTHON_PROJECT_MARKERS, PYTHON_SOURCE_DIR_MARKERS, source_dir_contains_detectable_python,
 };
 use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
 
 // The producer's layer names are also the only names cache maintenance may
 // inspect or remove. Defining both the typed names and inventory here makes a
@@ -306,7 +308,19 @@ pub(crate) struct CachedSeamLimitInfo {
 /// `1.39`: landed #6633 changes match-arm confirmation beside an
 /// owner-reaching test; combined classified entries must not replay
 /// predecessor proximity-only confirmation after that semantic change.
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.39";
+/// `1.40`: probe shapes gain the parser-owned end byte (#5336); old fact
+/// entries lack span geometry and must cold-recompute.
+/// `1.41`: asserted-Err guarded matches (#6673), `ok_or(Variant)?` owner
+/// propagation (#6695) and the sibling-variant reveal gate change oracle
+/// facts, error-path witnesses and confirmations.
+/// `1.42`: a boundary whose inputs ripr cannot read (unmapped or computed
+/// operands, computed test or hop arguments, an opaque `CONST ± N`) reads
+/// infection unknown instead of a missing discriminator (#6674, #6693,
+/// #6672, #6671); old entries would replay the weak missing-input class.
+/// `1.43`: inventory keeps one error_variant seam per error constructor;
+/// the `return` around `Err(X)` and the payload call inside `Err(..)` are
+/// twins and drop out (#6914).
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.43";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -384,7 +398,12 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.39";
 /// transition as full `1.34` (#6026).
 /// `0.44`: same combined #5713/#6701 transition as full `1.38`.
 /// `0.45`: same #6633 match-arm confirmation transition as full `1.39`.
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.45";
+/// `0.46`: seams gain optional span geometry (#5336), same semantic
+/// transition as full `1.40`.
+/// `0.47`: same asserted-Err/`ok_or?` transition as full `1.41`.
+/// `0.48`: same unresolved-boundary-input transition as full `1.42`.
+/// `0.49`: same single error_variant transition as full `1.43`.
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.49";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -464,7 +483,12 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.45";
 /// transition as full `1.34` (#6026).
 /// `0.44`: same combined #5713/#6701 transition as full `1.38`.
 /// `0.45`: same #6633 match-arm confirmation transition as full `1.39`.
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.45";
+/// `0.46`: seams gain optional span geometry (#5336), same semantic
+/// transition as full `1.40`.
+/// `0.47`: same asserted-Err/`ok_or?` transition as full `1.41`.
+/// `0.48`: same unresolved-boundary-input transition as full `1.42`.
+/// `0.49`: same single error_variant transition as full `1.43`.
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.49";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -593,8 +617,7 @@ pub(crate) const COUNT_CACHE_SCHEMA_VERSION: &str = "0.2";
 /// `1.18`: parser raw oracle scans exclude opaque property bodies (#5131).
 /// Published `1.17` favorable discarded-oracle facts cannot replay.
 /// `1.20`: unguarded wildcard pattern assertions are weak, not exact strong
-/// oracles (#5397). Predecessor strong wildcard facts must not replay. The
-/// concurrent assertion-admission candidate #5359 uses generation `1.19`.
+/// oracles (#5397). Predecessor strong wildcard facts must not replay.
 /// `1.21`: bodies and shape text are spans into the entry's `source`, not
 /// allocated strings (#5415 step 2). Predecessor payloads carry bare-string
 /// bodies that the span wire rejects, so they must cold-recompute.
@@ -614,7 +637,15 @@ pub(crate) const COUNT_CACHE_SCHEMA_VERSION: &str = "0.2";
 /// `1.28`: combine the #5713/#6701 oracle facts with landed #6820
 /// derived file-call storage. Retained per-function calls are authoritative;
 /// either predecessor family must rebuild this combined file-fact shape.
-pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.28";
+/// `1.29`: probe shapes gain the parser-owned end byte (#5336).
+/// `1.30`: files that only parse as Rust 2021 (`gen` identifiers) are
+/// parser-backed, and literal facts include char and byte literals (#5359).
+/// Earlier lexical-fallback and literal facts must miss.
+/// `1.31`: the guarded-match scan emits the #6673 asserted-Err form
+/// (diverging Ok arm, exact assertion Err arm), and a `return`/tail
+/// `x.ok_or(Type::Variant)?` line now produces an ErrorPath probe shape
+/// (#6695); `1.30` facts lack both.
+pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.31";
 
 /// Keep the best-effort classified-seam cache from turning a successful live
 /// analysis into an unbounded post-analysis stall on large repos. Larger live
@@ -1630,6 +1661,7 @@ impl RepoSeamFactCache {
         }
 
         let mut seams = Vec::with_capacity(manifest.total_seams);
+        let mut shared_grips = SharedGrips::default();
         for (index, shard) in manifest.shards.iter().enumerate() {
             if shard.index != index {
                 return CacheLoad::CorruptIgnored {
@@ -1687,7 +1719,9 @@ impl RepoSeamFactCache {
                     ),
                 };
             }
-            seams.extend(envelope.classified_seams);
+            let mut shard_seams = envelope.classified_seams;
+            share_grips_across_shards(&mut shard_seams, &mut shared_grips);
+            seams.extend(shard_seams);
         }
         if seams.len() != manifest.total_seams {
             return CacheLoad::CorruptIgnored {
@@ -1712,6 +1746,26 @@ impl RepoSeamFactCache {
 
     fn sharded_manifest_path(&self, key: &RepoSeamCacheKey) -> PathBuf {
         self.sharded_entry_dir(key).join("manifest.json")
+    }
+}
+
+/// Each shard decodes its own related-test table, so a test named in two
+/// shards arrives as two records. Hand every seam the inventory's one shared
+/// record instead (#5341). Within a shard, every seam naming a table row
+/// already holds the same record, so each distinct row is looked up once.
+fn share_grips_across_shards(seams: &mut [ClassifiedSeam], shared: &mut SharedGrips) {
+    let mut by_row: HashMap<*const RelatedTestGrip, Arc<RelatedTestGrip>> = HashMap::new();
+    for seam in seams {
+        for grip in &mut seam.evidence.related_tests {
+            // Keyed by address: live rows have distinct addresses, and a row
+            // freed mid-loop has no holder left to look it up again.
+            let canonical = by_row
+                .entry(Arc::as_ptr(grip))
+                .or_insert_with(|| shared.share_arc(grip));
+            if !Arc::ptr_eq(grip, canonical) {
+                *grip = Arc::clone(canonical);
+            }
+        }
     }
 }
 
@@ -3890,7 +3944,11 @@ mod tests {
         // 1.21 -> 1.22: file-level `calls` are derived, not stored
         // (#5415 step 3); legacy payloads carry a dead copy.
         // 1.28: combine #5713/#6701 facts with #6820 derived file calls.
-        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.28");
+        // 1.28 -> 1.29: probe shapes gain the parser-owned end byte (#5336).
+        // 1.29 -> 1.30: Rust 2021 parse fallback and char/byte literal
+        // facts (#5359).
+        // 1.30 -> 1.31: the #6673 asserted-Err guarded-match form.
+        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.31");
         // 1.4 -> 1.5: metadata-sourced harness validation (#3634) flips
         // verdicts for workspaces the manifest emulation approximated.
         // 1.5 -> 1.6: the #3636 reachability authority excludes
@@ -3945,7 +4003,13 @@ mod tests {
         // 1.33 -> 1.34: a statically contradicted exact-value assertion
         // keeps at most weak oracle credit and keeps the gap open (#6026).
         // 1.38: compose #5713 with landed #6701; refuse both predecessors.
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.39");
+        // 1.39 -> 1.40: probe shapes gain the parser-owned end byte (#5336).
+        // 1.41: #6673 asserted-Err pins, #6695 ok_or propagation and the
+        // sibling-variant reveal gate.
+        // 1.41 -> 1.42: unresolved boundary inputs read infection unknown
+        // (#6674, #6693, #6672, #6671).
+        // 1.42 -> 1.43: one error_variant seam per error constructor (#6914).
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.43");
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
         // for the sharded and compact envelopes.
@@ -3977,8 +4041,12 @@ mod tests {
         // 0.39 -> 0.40: same statically-contradicted-exact-value transition
         // as the outer cache (#6026).
         // 0.44: same combined #5713/#6701 transition as full 1.38.
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.45");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.45");
+        // 0.45 -> 0.46: seams gain optional span geometry (#5336).
+        // 0.47: same #6673/#6695 transition as full 1.41.
+        // 0.47 -> 0.48: same unresolved-boundary-input transition as 1.42.
+        // 0.48 -> 0.49: same #6914 transition as full 1.43.
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.49");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.49");
     }
 
     #[test]
@@ -4796,6 +4864,11 @@ mod tests {
                 expected,
                 "{label}"
             );
+            // One shared record per distinct test, across shard files too.
+            let tests = |seam: usize| &loaded[seam].evidence.related_tests;
+            assert!(Arc::ptr_eq(&tests(0)[0], &tests(1)[1]), "{label}: a");
+            assert!(Arc::ptr_eq(&tests(0)[0], &tests(2)[0]), "{label}: a");
+            assert!(Arc::ptr_eq(&tests(0)[1], &tests(1)[0]), "{label}: b");
         }
         Ok(())
     }

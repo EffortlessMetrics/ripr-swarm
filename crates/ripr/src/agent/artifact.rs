@@ -434,7 +434,11 @@ pub(crate) fn validate_repo_exposure_artifact(
             "agent verify {label} artifact is missing a sha256 content commitment"
         ));
     }
-    let recomputed = content_sha256_with_placeholder(raw).map_err(|error| error.to_string())?;
+    // The typed parse above already established these bytes as well-formed,
+    // so the commitment check skips its own well-formedness pre-parse
+    // (#5301 item 7).
+    let recomputed =
+        content_sha256_with_placeholder_preparsed(raw).map_err(|error| error.to_string())?;
     if recomputed != identity.content_sha256 {
         return Err(format!(
             "agent verify {label} artifact content commitment mismatch: declared {}, recomputed {}",
@@ -1123,6 +1127,18 @@ impl<'a> CommitmentScanner<'a> {
 fn governed_commitment_span(raw: &str) -> Result<(usize, usize), ContentCommitmentRejection> {
     serde_json::from_str::<Value>(raw)
         .map_err(|error| ContentCommitmentRejection::MalformedJson(error.to_string()))?;
+    governed_commitment_span_preparsed(raw)
+}
+
+/// Span location over bytes already shown well-formed by a typed parse
+/// (#5301 item 7). `validate_repo_exposure_artifact` parses the same bytes
+/// into `RepoExposureDocument` first, so the well-formedness pre-parse above
+/// is dead work on that path: its `Value` is discarded and its error is
+/// unreachable. Standalone commitment readers without a prior parse keep the
+/// checking entry point.
+fn governed_commitment_span_preparsed(
+    raw: &str,
+) -> Result<(usize, usize), ContentCommitmentRejection> {
     match CommitmentScanner::locate(raw)?.as_slice() {
         [] => Err(ContentCommitmentRejection::Missing),
         [(start, end)] => Ok((*start, *end)),
@@ -1142,7 +1158,24 @@ pub(crate) fn recompute_content_commitment(raw: &str) -> Result<String, String> 
 }
 
 fn content_sha256_with_placeholder(raw: &str) -> Result<String, ContentCommitmentRejection> {
-    let (value_start, value_end) = governed_commitment_span(raw)?;
+    let span = governed_commitment_span(raw)?;
+    content_sha256_for_commitment_span(raw, span)
+}
+
+/// Commitment recomputation over bytes already shown well-formed by a typed
+/// parse (#5301 item 7): skips the discarded full-`Value` well-formedness
+/// parse. All other behavior, including every rejection, is identical.
+fn content_sha256_with_placeholder_preparsed(
+    raw: &str,
+) -> Result<String, ContentCommitmentRejection> {
+    let span = governed_commitment_span_preparsed(raw)?;
+    content_sha256_for_commitment_span(raw, span)
+}
+
+fn content_sha256_for_commitment_span(
+    raw: &str,
+    (value_start, value_end): (usize, usize),
+) -> Result<String, ContentCommitmentRejection> {
     let declared = &raw[value_start..value_end];
     if !declared.starts_with("sha256:")
         || declared.len() != 71
@@ -1555,6 +1588,56 @@ mod tests {
         let raw = r#"{"artifact":{"note":"see \"content_sha256\" in the schema","content_sha256":"sha256:0000000000000000000000000000000000000000000000000000000000000000"}}"#;
         let result = content_sha256_with_placeholder(raw);
         assert!(result.is_ok(), "unexpected rejection: {result:?}");
+    }
+
+    // #5301 item 7: the preparsed commitment path must agree with the
+    // checked path on every well-formed input. Malformed JSON is out of
+    // contract for the preparsed entry point (its caller parses first),
+    // so the battery below is well-formed only; malformed inputs stay
+    // covered by the checked-path tests above.
+    #[test]
+    fn preparsed_commitment_matches_checked_path() {
+        let zeroes = "0".repeat(64);
+        let valid = format!(r#"{{"artifact":{{"content_sha256":"sha256:{zeroes}"}}}}"#);
+        let duplicate = format!(
+            r#"{{"artifact":{{"content_sha256":"sha256:{zeroes}","content_sha256":"sha256:{zeroes}"}}}}"#
+        );
+        let escaped = format!(
+            r#"{{"artifact":{{"note":"see \"content_sha256\" in the schema","content_sha256":"sha256:{zeroes}"}}}}"#
+        );
+        let missing = r#"{"artifact":{}}"#.to_string();
+        let wrong_path = format!(r#"{{"other":{{"content_sha256":"sha256:{zeroes}"}}}}"#);
+        let non_string = r#"{"artifact":{"content_sha256":123}}"#.to_string();
+        let non_hex = format!(
+            r#"{{"artifact":{{"content_sha256":"sha256:{g}"}}}}"#,
+            g = "g".repeat(64)
+        );
+        for raw in [
+            &valid,
+            &duplicate,
+            &escaped,
+            &missing,
+            &wrong_path,
+            &non_string,
+            &non_hex,
+        ] {
+            assert_eq!(
+                content_sha256_with_placeholder(raw),
+                content_sha256_with_placeholder_preparsed(raw),
+                "preparsed path must agree with the checked path on {raw}"
+            );
+        }
+        assert!(
+            content_sha256_with_placeholder_preparsed(&valid).is_ok(),
+            "valid artifact must be accepted through the preparsed path"
+        );
+        assert!(
+            matches!(
+                content_sha256_with_placeholder_preparsed(&duplicate),
+                Err(ContentCommitmentRejection::Duplicate)
+            ),
+            "duplicate commitment must stay a Duplicate rejection on the preparsed path"
+        );
     }
 
     fn comparable_artifact() -> ValidatedArtifact {

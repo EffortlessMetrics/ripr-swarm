@@ -110,6 +110,14 @@ Where N is the total no-path/unknown count
 M is `summary.changed_rust_files` when non-zero, and T is the count of unique
 related tests by file, name, and line across all findings.
 
+When bounded packing dropped related-test rows from any finding, the retained
+unique count is a lower bound and each finding's packed row count counts
+matched related-test rows, not tests. The scope then reads "at least T statically
+linked related test(s) across R matched related-test row(s)", where R is the
+packed row count for a single finding and "at least" the larger of the packed
+row count and T across several findings, so the note never presents a row
+count as a test count.
+
 If `summary.changed_rust_files` is zero, the scope sentence omits the changed
 Rust file count rather than fabricating a file count:
 

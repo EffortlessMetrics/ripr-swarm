@@ -154,7 +154,7 @@ ripr pilot [--root PATH] [--out PATH] [--mode MODE] [--max-seams N] [--timeout-m
 | Flag | Default | Notes |
 | --- | --- | --- |
 | `--root PATH` | current directory | Workspace root to analyze. |
-| `--out PATH` | `target/ripr/pilot` | Directory for `repo-exposure.{json,md}`, `agent-seam-packets.json`, and `pilot-summary.{json,md}`. |
+| `--out PATH` | `target/ripr/pilot` under `--root` | Directory for `repo-exposure.{json,md}`, `agent-seam-packets.json`, and `pilot-summary.{json,md}`. |
 | `--mode MODE` | `ripr.toml` `analysis.mode`, otherwise `draft` | One of `instant`, `draft`, `fast`, `deep`, `ready`. |
 | `--max-seams N` | `5` | Maximum ranked seams shown in the pilot summary. Must be positive. |
 | `--timeout-ms MS` | `30000` | Maximum analysis budget in milliseconds before pilot writes a partial summary. |
@@ -213,6 +213,7 @@ that needs the tuning.
 | `RIPR_TS_MAX_WORKSPACE_READ_BYTES` | `67108864` (64 MiB) | Aggregate TypeScript/JavaScript source-read budget per analysis run. Exhaustion produces the named `workspace_read_budget_exhausted` limitation, folded into the same bounded sampled disclosure as `file_read_capped`. Invalid or zero values use the default bound. |
 | `RIPR_NO_IMPACT_FAST_PATH` | eligible when unset | Set exactly `0` to disable the warm no-impact fast path and force the conservative scoped path. Other values leave the fast path eligible; eligibility still depends on current input and cache identity. |
 | `RIPR_REPO_EXPOSURE_LATENCY_TRACE` | off when unset | When present, emits diagnostic phase/cache trace lines for repo-exposure analysis, plus one end-of-run `ripr_resource_cost_receipt` line carrying the process's own CPU time and peak resident memory. Presence enables tracing even if the value is empty or `0`; it does not change the analysis verdict. Everything goes to stderr, so stdout JSON is unchanged. Linux and Windows observe both figures; any other host, or a failed source read, names an explicit unavailable state and reports no number. |
+| `RIPR_PERSIST_LATENCY_TRACE` | off when unset | When present, emits diagnostic `ripr_persist_latency` wall-clock lines for repair-attempt persist spans: baseline capture (git inventory, worktree identity, index records, stability recheck, serialize, write), per-artifact staging (read, write, digest), the persist total, and after-phase state recapture (`reevaluate_*`). Presence enables tracing even if the value is empty or `0`; it does not change any verdict. Everything goes to stderr, so stdout JSON is unchanged. |
 | `GITHUB_PR_LABELS`, `PR_LABELS` | empty | Labels for `ripr impacted-evidence` and its xtask counterpart. `GITHUB_PR_LABELS` takes precedence when readable (even if empty); `PR_LABELS` is the fallback. Comma, newline, and semicolon separators are accepted. CLI `--label`/`--labels` add to these labels; the combined set is trimmed, lowercased, deduplicated, and sorted. |
 
 Repo seam cache entries that exceed the encoded-byte ceiling, or the
@@ -420,7 +421,7 @@ reads seven keys; everything else is ignored. The schema lives in
 
 | Key | Type | Default | Effect |
 | --- | --- | --- | --- |
-| `baseRef` | string | automatic loader base resolution | Git base ref for editor-triggered diffs. An omitted or empty value requests the loader's default-base resolution rather than a hardcoded branch. The VS Code extension separately defaults `ripr.baseRef` to `"origin/main"` and sends that configured value. |
+| `baseRef` | string | automatic loader base resolution | Git base ref for editor-triggered diffs. An omitted or empty value requests the loader's default-base resolution rather than a hardcoded branch. The VS Code extension defaults `ripr.baseRef` to `""`, so it requests the same resolution unless a user sets a ref. |
 | `checkMode` | string | `ripr.toml` `analysis.mode`, otherwise `"draft"` | One of `instant`, `draft`, `fast`, `deep`, `ready`. Unknown values fall back to the repo config/default. |
 | `includeUnchangedTests` | boolean | `ripr.toml` `analysis.include_unchanged_tests`, otherwise `true` | Mirror of the CLI's `--no-unchanged-tests` (inverted). |
 | `seamDiagnostics` | boolean | `ripr.toml` `lsp.seam_diagnostics`, otherwise `true` | Enables repo seam evidence diagnostics in addition to diff-derived Finding diagnostics. |
@@ -509,7 +510,7 @@ download → `PATH`), see
 | Setting | Type | Default | Effect |
 | --- | --- | --- | --- |
 | `ripr.check.mode` | enum: `instant` \| `draft` \| `fast` \| `deep` \| `ready` | `draft` | Editor-side analysis mode. Forwarded as `initializationOptions.checkMode`. |
-| `ripr.baseRef` | string | `"origin/main"` | Git base ref used by editor diagnostics and the context commands. Forwarded as `initializationOptions.baseRef`. |
+| `ripr.baseRef` | string | `""` | Git base ref used by editor diagnostics and the context commands. Forwarded as `initializationOptions.baseRef`; empty resolves the repository default branch like `ripr check`, and the context commands omit `--base`. |
 | `ripr.includeUnchangedTests` | boolean | `true` | Include unchanged tests as static evidence. Forwarded as `initializationOptions.includeUnchangedTests` and the `workspace/configuration` pull. |
 | `ripr.seamDiagnostics` | boolean | `true` | Enable saved-workspace repository seam diagnostics in addition to diff-derived findings. Forwarded as `initializationOptions.seamDiagnostics` only when set in a VS Code settings layer; otherwise `ripr.toml` `lsp.seam_diagnostics` applies. |
 | `ripr.diagnosticProfile` | enum: `actionable` \| `full` | `actionable` | Select the bounded actionable or audit/debug diagnostic projection. Forwarded as `initializationOptions.diagnosticProfile` only when set in a VS Code settings layer; otherwise `ripr.toml` `lsp.diagnostic_profile` applies. |

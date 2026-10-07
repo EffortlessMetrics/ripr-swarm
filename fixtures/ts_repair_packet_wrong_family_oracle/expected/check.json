@@ -155,11 +155,11 @@
         "observe": {"state":"weak","confidence":"low","summary":"Strongest extracted oracle kind: `unknown` (rank 0)"},
         "discriminate": {"state":"weak","confidence":"low","summary":"TypeScript preview adapter found no strong discriminator; missing proof: `throws TypeError matching 'invalid limit'`."}
        },
-      "evidence_path": ["reach yes: 1 related test(s) found for owner `parseLimit`", "infection unknown: TypeScript preview adapter does not yet model infection.", "propagation unknown: TypeScript preview adapter does not yet model propagation.", "observation weak: Strongest extracted oracle kind: `unknown` (rank 0)", "discriminator weak: TypeScript preview adapter found no strong discriminator; missing proof: `throws TypeError matching 'invalid limit'`.", "local flow reaches error variant: throw new TypeError('invalid limit'); (line 4)", "related test tests/limiter.test.ts:3 parseLimit parses a numeric limit uses strong exact value oracle: expect(...).toBe(...)", "missing discriminator throws TypeError matching 'invalid limit': changed TypeScript thrown or rejected error at line 4 lacks a concrete preview discriminator"],
+      "evidence_path": ["reach yes: 1 related test(s) found for owner `parseLimit`", "infection unknown: TypeScript preview adapter does not yet model infection.", "propagation unknown: TypeScript preview adapter does not yet model propagation.", "observation weak: Strongest extracted oracle kind: `unknown` (rank 0)", "discriminator weak: TypeScript preview adapter found no strong discriminator; missing proof: `throws TypeError matching 'invalid limit'`.", "local flow reaches error variant: throw new TypeError('invalid limit'); (line 4)", "related test tests/limiter.test.ts:3 parseLimit parses a numeric limit uses unknown unknown oracle", "missing discriminator throws TypeError matching 'invalid limit': changed TypeScript thrown or rejected error at line 4 lacks a concrete preview discriminator"],
       "flow_sinks": [
         {"kind":"error_variant","text":"throw new TypeError('invalid limit');","line":4}
       ],
-      "evidence": ["owner: parseLimit", "missing_discriminator: throws TypeError matching 'invalid limit'", "gap_state: advisory", "actionability_category: incomplete_repair_packet", "why_not_actionable: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract", "repair_route: project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available", "missing_actionability_fields: canonical_gap_id, repair_kind, target_test_shape, related_test_or_observer, receipt_command, must_not_change, allowed_edit_surface, raw_evidence_refs", "evidence_needed_to_promote: canonical gap identity, repair kind, target test shape, related observer, verify command, receipt command, raw evidence refs, and edit constraints", "raw_evidence_ref: file=src/limiter.ts;line=4;kind=typescript_preview_probe;source_id=probe:src_limiter.ts:typescript_preview:ab3c5e25;owner=parseLimit", "typescript_package_root: .", "typescript_workspace_root: .", "typescript_framework_hint: jest", "typescript_test_runner: jest", "typescript_runner_hint: npm", "typescript_package_confidence: high", "typescript_verify_command: npx --no-install jest tests/limiter.test.ts"],
+      "evidence": ["owner: parseLimit", "missing_discriminator: throws TypeError matching 'invalid limit'", "gap_state: advisory", "actionability_category: incomplete_repair_packet", "why_not_actionable: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract", "repair_route: project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available", "missing_actionability_fields: canonical_gap_id, repair_kind, target_test_shape, related_test_or_observer, receipt_command, must_not_change, allowed_edit_surface, raw_evidence_refs", "evidence_needed_to_promote: canonical gap identity, repair kind, target test shape, related observer, verify command, receipt command, raw evidence refs, and edit constraints", "raw_evidence_ref: file=src/limiter.ts;line=4;kind=typescript_preview_probe;source_id=probe:src_limiter.ts:typescript_preview:ab3c5e25;owner=parseLimit", "typescript_assertion_selection: no_error_path_relevant_assertion (parseLimit parses a numeric limit)", "typescript_package_root: .", "typescript_workspace_root: .", "typescript_framework_hint: jest", "typescript_test_runner: jest", "typescript_runner_hint: npm", "typescript_package_confidence: high", "typescript_verify_command: npx --no-install jest tests/limiter.test.ts"],
       "missing": ["Related test reaches `parseLimit` but the strongest extracted oracle is `unknown`; upgrade by adding an exact-value (`toBe` / `toEqual` / `toStrictEqual`) assertion or a `toThrow` form with an exact payload (string, object, or class reference).", "TypeScript preview actionability `advisory` / `incomplete_repair_packet`: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract. Repair route: project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available"],
       "assertion_texts": {
       },
@@ -189,9 +189,9 @@
           "name": "parseLimit parses a numeric limit",
           "file": "tests/limiter.test.ts",
           "line": 3,
-          "oracle_strength": "strong",
-          "oracle_kind": "exact_value",
-          "oracle": "expect(...).toBe(...)",
+          "oracle_strength": "unknown",
+          "oracle_kind": "unknown",
+          "oracle": "",
           "relation_reason": "direct_owner_call",
           "relation_confidence": "high"
         }
@@ -209,8 +209,8 @@
           "This card is advisory and is not a repair packet."
         ],
         "missing_discriminator": "throws TypeError matching 'invalid limit'",
-        "oracle_kind": "exact_value",
-        "oracle_strength": "strong",
+        "oracle_kind": "unknown",
+        "oracle_strength": "unknown",
         "owner": "parseLimit",
         "owner_kind": "function",
         "probe_family": "error_path",
@@ -223,7 +223,7 @@
         "repair_route": "project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available",
         "source": "check_typescript_preview",
         "static_limits": [],
-        "suggested_assertion_shape": "Exact-value evidence is present; verify it targets the changed discriminator.",
+        "suggested_assertion_shape": "Add an exact error payload or variant assertion for the changed error path.",
         "verify": {
           "command": "npx --no-install jest tests/limiter.test.ts"
         },
@@ -263,8 +263,8 @@
         "why_not_actionable": "TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract"
       },
       "stop_reasons": [],
-      "oracle_kind": "exact_value",
-      "oracle_strength": "strong",
+      "oracle_kind": "unknown",
+      "oracle_strength": "unknown",
       "recommended_next_step": "TypeScript preview advisory: add or strengthen a focused assertion for missing discriminator `throws TypeError matching 'invalid limit'`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available.",
       "suggested_next_action": "TypeScript preview advisory: add or strengthen a focused assertion for missing discriminator `throws TypeError matching 'invalid limit'`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available.",
       "language": "typescript",

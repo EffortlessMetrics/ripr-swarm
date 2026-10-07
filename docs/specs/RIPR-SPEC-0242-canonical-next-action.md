@@ -1,4 +1,4 @@
-# RIPR-SPEC-0241: Canonical next action
+# RIPR-SPEC-0242: Canonical next action
 
 Status: proposed
 

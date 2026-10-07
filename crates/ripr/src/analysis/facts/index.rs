@@ -119,6 +119,21 @@ pub struct RustIndex {
     test_positions: Vec<usize>,
     membership_revision: u64,
     pub package_names: BTreeSet<String>,
+    /// `package_names` plus the crate names of workspace members that have
+    /// at least one indexed file. Only the trusted-macro binding scan reads
+    /// it: a glob import from such a crate brings in macros whose
+    /// definitions the scan already reads. The same-name import gate keeps
+    /// `package_names`, because a sibling crate's function can still take a
+    /// bare call meant for the owner.
+    pub(crate) macro_owned_crates: BTreeSet<String>,
+    /// Whether a drop-in assertion crate (`pretty_assertions`) imported by a
+    /// file is the registry package. Unset for an index assembled without a
+    /// manifest walk, which verifies nothing.
+    pub(crate) drop_in_manifests: super::drop_in::DropInManifests,
+    /// The crate names under which a test's crate imports a workspace
+    /// member's library, read from member manifests. Unset for an index
+    /// assembled without a manifest walk, which names nothing.
+    pub(crate) member_crates: super::member_crates::MemberCrates,
     pub include_parents: BTreeMap<PathBuf, ResolvedIncludeParent>,
     pub include_limitations: Vec<RustIncludeLimitation>,
     pub non_utf8_sources: BTreeSet<PathBuf>,
@@ -413,6 +428,19 @@ impl serde::Serialize for IndexFiles<'_> {
             map.serialize_entry(path, &file)?;
         }
         map.end()
+    }
+}
+
+impl RustIndex {
+    /// Crate names whose glob imports the trusted-macro scan treats as
+    /// workspace-owned: `macro_owned_crates` when the build computed it,
+    /// else `package_names` (an index assembled without a manifest walk).
+    pub(crate) fn macro_scope_crates(&self) -> &BTreeSet<String> {
+        if self.macro_owned_crates.is_empty() {
+            &self.package_names
+        } else {
+            &self.macro_owned_crates
+        }
     }
 }
 

@@ -18,6 +18,7 @@ use crate::domain::{
     RepairCardSubject, RepairCardTarget, RepairCardTestKind, RepairCardV1,
     current_command_platform, repair_card_route_exposable, select_canonical_next_action,
 };
+use crate::output::path::display_path;
 use crate::repair_card_budget::{RepairCardDetailSource, apply_repair_card_budget};
 use crate::repair_card_digest::repair_card_semantic_digest;
 
@@ -297,7 +298,7 @@ fn project_target(selection: &RepairTargetSelection) -> Option<RepairCardTarget>
     match selection {
         RepairTargetSelection::Existing(target) => Some(RepairCardTarget::Existing {
             symbol_id: target.symbol_id().0.clone(),
-            file: target.file().display().to_string(),
+            file: display_path(target.file()),
             line: target.line(),
             test_kind: match target.test_kind() {
                 crate::analysis::test_grip_evidence::TestKind::InlineUnit => {
@@ -311,7 +312,7 @@ fn project_target(selection: &RepairTargetSelection) -> Option<RepairCardTarget>
             workspace_identity: target.workspace_identity().to_string(),
         }),
         RepairTargetSelection::Proposed(proposal) => Some(RepairCardTarget::Proposed {
-            file: proposal.file.display().to_string(),
+            file: display_path(&proposal.file),
             owner: proposal.owner.clone(),
             proposal_kind: match proposal.kind {
                 crate::analysis::new_test_target::NewTestKind::InlineUnit => {
@@ -789,6 +790,42 @@ mod tests {
         }
         if card.selected_basis.as_deref() != Some("src/lib.rs") {
             return Err("proposed basis did not fall back to the owner".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn selected_target_file_uses_portable_separators() -> Result<(), String> {
+        // Native separators must never leak into the machine-readable card
+        // (#5440). Backslashes survive a Path round-trip on every platform,
+        // so this pins the normalization without needing Windows.
+        let existing = readiness(
+            RepairRouteState::Ready,
+            RepairTargetSelection::Existing(TestTargetEvidence::fixture(
+                "case",
+                Path::new("tests\\pricing.rs"),
+                4,
+            )),
+        );
+        let instruction = instruction(FixInstructionState::FixSiteReady);
+        let card = build_repair_card(&base_input(&instruction, &existing))?;
+        match card.selected_target {
+            Some(RepairCardTarget::Existing { ref file, .. }) if file == "tests/pricing.rs" => {}
+            ref other => return Err(format!("existing target file was not portable: {other:?}")),
+        }
+        let proposed = readiness(
+            RepairRouteState::Ready,
+            RepairTargetSelection::Proposed(NewTestTargetProposal {
+                kind: NewTestKind::Integration,
+                file: PathBuf::from("tests\\new.rs"),
+                owner: "src/lib.rs".to_string(),
+                provenance: NewTestProposalProvenance::ProducerOwned,
+            }),
+        );
+        let card = build_repair_card(&base_input(&instruction, &proposed))?;
+        match card.selected_target {
+            Some(RepairCardTarget::Proposed { ref file, .. }) if file == "tests/new.rs" => {}
+            ref other => return Err(format!("proposed target file was not portable: {other:?}")),
         }
         Ok(())
     }

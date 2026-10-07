@@ -7,7 +7,7 @@ Summary: 1 probe(s), 1 exposed, 0 weakly_exposed, 0 reachable_unrevealed, 0 no_s
 Analysis outcome: findings below (analysis complete; complete_with_findings).
   Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 probe(s), 1 finding(s).
 
-INFO fixtures/evidence-promotion-honesty-corpus/discarded-matcher-subjects/wrapped-guarded-wrong/src/lib.rs:2
+INFO ./src/lib.rs:2
   id: probe:src_lib.rs:return_value:c7c856d1
 
 Changed
@@ -18,6 +18,7 @@ Probe
   family: return_value
   delta:  value
   owner:  src/lib.rs::score
+  canonical gap: gap:rust:src/lib.rs:score:return_value:return_value:value+2
 
 Static exposure
   exposed (info, confidence 1.00)

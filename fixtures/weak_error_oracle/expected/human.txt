@@ -10,9 +10,10 @@ Analysis outcome: findings below (analysis complete; complete_with_findings).
 Start here:
   State: a test gap to inspect or repair (top_gap)
   Safe next action: inspect or repair the selected non-exposed gap; this is static advisory evidence only.
-  File: fixtures/weak_error_oracle/input/src/lib.rs:7
+  File: ./src/lib.rs:7
   Static exposure: weak (weakly_exposed, warning, confidence 0.92)
   Why weak: a related test reaches this change but does not observe the exact changed value
+  Canonical gap: gap:rust:src/lib.rs:authenticate:error_variant:error_path:err_autherror_revokedtoken
   Changed behavior: return Err(AuthError::RevokedToken);
   Missing discriminator (1 of 2): AuthError::RevokedToken
   Related test: tests/errors.rs:4 empty_token_is_rejected (assertion too weak to tell the old behavior from the new)
@@ -23,10 +24,10 @@ Start here:
     - 6 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
-  ripr explain --root fixtures/weak_error_oracle/input --diff fixtures/weak_error_oracle/diff.patch --mode fast probe:src_lib.rs:error_path:99b06ce7
-  ripr context --root fixtures/weak_error_oracle/input --diff fixtures/weak_error_oracle/diff.patch --mode fast --at probe:src_lib.rs:error_path:99b06ce7
+  ripr explain --root <cwd>/fixtures/weak_error_oracle/input --diff <cwd>/fixtures/weak_error_oracle/diff.patch --mode fast probe:src_lib.rs:error_path:99b06ce7
+  ripr context --root <cwd>/fixtures/weak_error_oracle/input --diff <cwd>/fixtures/weak_error_oracle/diff.patch --mode fast --at probe:src_lib.rs:error_path:99b06ce7
 Write a test for it:
-  ripr agent stub --root fixtures/weak_error_oracle/input --at src/lib.rs:7
+  ripr agent stub --root <cwd>/fixtures/weak_error_oracle/input --at src/lib.rs:7
 
 Hidden:
   1 lower-priority finding(s) omitted from default human output.

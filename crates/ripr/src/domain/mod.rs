@@ -31,6 +31,7 @@ pub use causal_delta::{
 };
 pub use classification::ExposureClass;
 pub(crate) use classification::{
+    ASSERTION_CONTEXT_UNESTABLISHED, ASSERTION_NOT_CREDITED_PREFIX,
     ASSERTION_SHAPED_INFECTION_UNKNOWN_NEXT_STEP, ASSERTION_SHAPED_NO_STATIC_PATH_NEXT_STEP,
     ASSERTION_SHAPED_OWNER_REASON, ASSERTION_SHAPED_REACHABLE_UNREVEALED_NEXT_STEP,
     ASSERTION_SHAPED_WEAKLY_EXPOSED_NEXT_STEP, LIMITATION_ANALYZER_ROUTE_PREFIX,
@@ -89,13 +90,13 @@ pub use next_action::{
 pub(crate) use next_action::{
     NextActionAttemptView, NextActionInput, current_command_platform, select_canonical_next_action,
 };
+pub(crate) use probe::{ARM_UNSELECTED_REASON_PREFIX, exact_assertion_fact, input_boundary_fact};
 pub use probe::{
     ActivationEvidence, DeltaKind, Finding, FindingCanonicalGap, FlowSinkFact, FlowSinkKind,
     MissingDiscriminatorFact, ORACLE_ALIGNMENT_VALUES, Probe, ProbeFamily, RelatedTest,
     RelatedTestMiss, SOURCE_CURRENTNESS_VALUES, SourceCurrentness, StopReason, ValueContext,
     ValueFact,
 };
-pub(crate) use probe::{exact_assertion_fact, input_boundary_fact};
 pub use repair_card::{
     AgentCardRefusalKind, CardCurrentnessGoal, DEFAULT_REPAIR_CARD_MAX_DETAIL_ITEMS,
     DEFAULT_REPAIR_CARD_MAX_INLINE_DETAIL_BYTES, DEFAULT_REPAIR_CARD_MAX_SERIALIZED_BYTES,

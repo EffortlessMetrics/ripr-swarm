@@ -7,7 +7,10 @@ use crate::output::perl_preview_card::perl_preview_card;
 use crate::output::preview_actionability::preview_actionability_for;
 use crate::output::python_repair_card::python_repair_card;
 use crate::output::typescript_preview_card::typescript_preview_card;
-use crate::output::workflow_escape::{escape_data, escape_property, escape_property_pre_encoded};
+use crate::output::workflow_escape::{
+    escape_data, escape_property, escape_property_pre_encoded, path_is_unplaceable,
+    unplaced_location_prefix,
+};
 
 /// Render findings as GitHub Actions workflow command annotations.
 ///
@@ -170,14 +173,36 @@ pub(crate) fn render_with_config(output: &CheckOutput, config: &RiprConfig) -> S
             0 => String::new(),
             line => format!(",line={line}"),
         };
+        // `file` arrives via `repository_display_path` (stable text, `%`
+        // pre-encoded); `title` is raw text.
+        let display_path = repository_display_path(&output.root, &finding.probe.location.file);
+        let (placement, message) = if path_is_unplaceable(&display_path) {
+            // A property cannot carry a control or bidi character, so omit
+            // `file=`/`line=` and name the escaped location in the message.
+            (
+                String::new(),
+                format!(
+                    "{}{message}",
+                    unplaced_location_prefix(
+                        // The stable path encodes a literal `%` as `%25`;
+                        // `escape_data` encodes it once more, so show the
+                        // `%` itself. `%XX` markers for non-UTF-8 bytes stay.
+                        &display_path.replace("%25", "%"),
+                        &finding.probe.location.line.to_string()
+                    )
+                ),
+            )
+        } else {
+            (
+                format!(
+                    "file={}{line_property},",
+                    escape_property_pre_encoded(&display_path)
+                ),
+                message,
+            )
+        };
         annotations.push_str(&format!(
-            "::{annotation_level} file={}{line_property},title={}::{}\n",
-            // `file` arrives via `repository_display_path` (stable text, `%`
-            // pre-encoded); `title` is raw text.
-            escape_property_pre_encoded(&repository_display_path(
-                &output.root,
-                &finding.probe.location.file
-            )),
+            "::{annotation_level} {placement}title={}::{}\n",
             escape_property(&title),
             escape_data(&message)
         ));
@@ -770,6 +795,45 @@ mod tests {
         assert!(
             rendered.contains("file=src/a%2Cb%3Ac%25dé.rs,line=13"),
             "file property must escape comma/colon/percent, keep unicode literal: {rendered}"
+        );
+    }
+
+    #[test]
+    fn render_omits_file_placement_for_control_character_paths() {
+        // #6309: GitHub decodes only %25 %0D %0A %3A %2C in property values,
+        // so a path with ESC/bidi cannot be named in `file=`. The annotation
+        // drops placement and names the escaped location in its message.
+        let mut output = output_with_unknown_finding();
+        output.findings[0].probe.location.file = PathBuf::from("src/a\u{1b}[2J\u{202e}b.rs");
+
+        let rendered = render(&output);
+
+        assert!(
+            !rendered.contains("file=") && !rendered.contains("line=13"),
+            "an unplaceable path must not claim a placement: {rendered}"
+        );
+        assert!(
+            rendered.contains("title=ripr static_unknown::Location (file name has control characters, so not placed): src/a\\u{1b}[2J\\u{202e}b.rs:13. "),
+            "the escaped location must lead the message: {rendered}"
+        );
+        assert!(
+            !rendered.contains('\u{1b}') && !rendered.contains('\u{202e}'),
+            "raw control text must not survive: {rendered:?}"
+        );
+    }
+
+    #[test]
+    fn render_unplaced_location_shows_a_literal_percent_once() {
+        // Stable path text encodes `%` as `%25` and `escape_data` encodes it
+        // again; the message must still read as the original name.
+        let mut output = output_with_unknown_finding();
+        output.findings[0].probe.location.file = PathBuf::from("src/100%\u{1b}.rs");
+
+        let rendered = render(&output);
+
+        assert!(
+            rendered.contains("not placed): src/100%25\\u{1b}.rs:13. "),
+            "GitHub decodes %25 to a single %: {rendered}"
         );
     }
 

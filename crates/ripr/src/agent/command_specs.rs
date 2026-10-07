@@ -1095,6 +1095,90 @@ mod tests {
         receipt.validate().map_err(|err| err.to_string())
     }
 
+    /// #3948/#3999 controls 11, 12 and 15: two equivalent checkouts render
+    /// different concrete displays but recover the same typed route and the
+    /// same digest, while a display whose root was swapped for another
+    /// absolute directory loses typed authority.
+    #[test]
+    fn relocated_checkouts_share_identity_and_substituted_roots_fail_closed() -> Result<(), String>
+    {
+        use crate::agent::loop_commands::{agent_verify_command, bound_root, shell_arg};
+        use crate::domain::CommandSpecDigest;
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|err| err.to_string())?
+            .as_nanos();
+        let base = std::env::temp_dir().join(format!(
+            "ripr-relocated-identity-{}-{nonce}",
+            std::process::id()
+        ));
+        let root_a = base.join("checkout a");
+        let root_b = base.join("checkout b's");
+        let render = |root: &Path| -> Result<(String, String), String> {
+            std::fs::create_dir_all(root).map_err(|err| err.to_string())?;
+            let bound = bound_root(&root.to_string_lossy());
+            let display = agent_verify_command(
+                &bound,
+                WORKFLOW_BEFORE_SNAPSHOT_ARTIFACT,
+                WORKFLOW_AFTER_SNAPSHOT_ARTIFACT,
+                Some(WORKFLOW_AGENT_VERIFY_ARTIFACT),
+            );
+            Ok((bound, display))
+        };
+        let outcome = (|| {
+            let (bound_a, display_a) = render(&root_a)?;
+            let (bound_b, display_b) = render(&root_b)?;
+            let spec_a = agent_command_spec_from_display(&display_a, &root_a)
+                .ok_or_else(|| format!("checkout A display did not recover: {display_a}"))?;
+            let spec_b = agent_command_spec_from_display(&display_b, &root_b)
+                .ok_or_else(|| format!("checkout B display did not recover: {display_b}"))?;
+            if spec_a.display == spec_b.display {
+                return Err("relocated checkouts must render their own roots".to_string());
+            }
+            if spec_a.args != spec_b.args
+                || spec_a.cwd != spec_b.cwd
+                || spec_a.expected_writes != spec_b.expected_writes
+            {
+                return Err(format!(
+                    "relocated checkouts recovered different routes: {spec_a:?} vs {spec_b:?}"
+                ));
+            }
+            if !spec_a
+                .args
+                .windows(2)
+                .any(|pair| pair == ["--root", PORTABLE_ROOT])
+            {
+                return Err(format!("concrete root entered argv: {:?}", spec_a.args));
+            }
+            if spec_a.command_spec_sha256()? != spec_b.command_spec_sha256()? {
+                return Err("relocated checkouts must share one command digest".to_string());
+            }
+
+            // Swap only the `--root` value: the redirect still targets A.
+            let root_flag_a = format!("--root {}", shell_arg(&bound_a));
+            let root_flag_b = format!("--root {}", shell_arg(&bound_b));
+            let swapped_root = display_a.replacen(&root_flag_a, &root_flag_b, 1);
+            if swapped_root == display_a {
+                return Err(format!(
+                    "tamper fixture did not change the root: {display_a}"
+                ));
+            }
+            if let Some(spec) = agent_command_spec_from_display(&swapped_root, &root_a) {
+                return Err(format!("substituted --root kept typed authority: {spec:?}"));
+            }
+            // Swap the root everywhere: a coherent display for B is still not
+            // authority when the consumer selected A.
+            if let Some(spec) = agent_command_spec_from_display(&display_b, &root_a) {
+                return Err(format!(
+                    "foreign checkout display gained authority: {spec:?}"
+                ));
+            }
+            Ok(())
+        })();
+        std::fs::remove_dir_all(&base).map_err(|err| err.to_string())?;
+        outcome
+    }
+
     /// #3231: inside single quotes a backslash is literal, so a
     /// single-quoted Windows-like token round-trips byte-for-byte through
     /// the bounded recovery parser — the renderer (`shell_arg`) and the

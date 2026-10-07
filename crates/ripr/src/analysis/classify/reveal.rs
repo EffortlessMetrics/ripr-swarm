@@ -2,6 +2,7 @@ use super::super::rust_index::{
     OracleFact, OracleTextShape, TestSummary, extract_identifier_tokens, has_oracle_text_shape,
 };
 
+use super::arm_selection::ArmSelector;
 use super::propagation_witness::{
     assertion_observes_direct_collection, direct_collection_mutation_receiver,
 };
@@ -38,11 +39,17 @@ fn reveal_evidence(
             assertion_admitted: &|_, _| true,
             proximity_may_reach_owner: &|_| false,
         },
+        None,
     );
     (observe, discriminate, related)
 }
 
-pub(in crate::analysis) fn reveal_evidence_with_expression(
+#[cfg(test)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "reveal's grouped inputs plus the optional RIPR-SPEC-0229 arm selector"
+)]
+fn reveal_evidence_with_expression(
     probe: &Probe,
     analysis_expression: &str,
     related_tests: &[(&TestSummary, RelationReason)],
@@ -50,22 +57,70 @@ pub(in crate::analysis) fn reveal_evidence_with_expression(
     same_name_import_defeats: &dyn Fn(&TestSummary, &str) -> bool,
     cross_package_name_defeats: &dyn Fn(&TestSummary, &str) -> bool,
     return_admission: &ReturnOracleAdmission<'_>,
+    arm_selector: Option<&ArmSelector>,
 ) -> (StageEvidence, StageEvidence, Vec<RelatedTest>, usize) {
+    let outcome = reveal_outcome(
+        probe,
+        analysis_expression,
+        related_tests,
+        owner_local_bindings,
+        same_name_import_defeats,
+        cross_package_name_defeats,
+        return_admission,
+        arm_selector,
+    );
+    (
+        outcome.observe,
+        outcome.discriminate,
+        outcome.related,
+        outcome.related_total,
+    )
+}
+
+/// The reveal stages plus whether the owner pin was credited.
+pub(in crate::analysis) struct RevealOutcome {
+    pub(in crate::analysis) observe: StageEvidence,
+    pub(in crate::analysis) discriminate: StageEvidence,
+    pub(in crate::analysis) related: Vec<RelatedTest>,
+    pub(in crate::analysis) related_total: usize,
+    /// #6692: an assertion credited to this probe pinned the owner's
+    /// return value through `ReturnOracleAdmission::owner_return_pin`
+    /// after every reveal gate (name-only relations next to a
+    /// reach-bearing test, foreign same-name imports, cross-package
+    /// same-name definitions, the exact error variant).
+    pub(in crate::analysis) owner_pin_credited: bool,
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "reveal's grouped inputs plus the optional RIPR-SPEC-0229 arm selector"
+)]
+pub(in crate::analysis) fn reveal_outcome(
+    probe: &Probe,
+    analysis_expression: &str,
+    related_tests: &[(&TestSummary, RelationReason)],
+    owner_local_bindings: &[String],
+    same_name_import_defeats: &dyn Fn(&TestSummary, &str) -> bool,
+    cross_package_name_defeats: &dyn Fn(&TestSummary, &str) -> bool,
+    return_admission: &ReturnOracleAdmission<'_>,
+    arm_selector: Option<&ArmSelector>,
+) -> RevealOutcome {
     if related_tests.is_empty() {
-        return (
-            StageEvidence::new(
+        return RevealOutcome {
+            observe: StageEvidence::new(
                 StageState::No,
                 Confidence::Medium,
                 "No reachable test oracle found",
             ),
-            StageEvidence::new(
+            discriminate: StageEvidence::new(
                 StageState::No,
                 Confidence::Medium,
                 "No assertion can discriminate the changed behavior without a reachable test",
             ),
-            Vec::new(),
-            0,
-        );
+            related: Vec::new(),
+            related_total: 0,
+            owner_pin_credited: false,
+        };
     }
 
     let analysis = analyze_related_assertions(
@@ -76,6 +131,7 @@ pub(in crate::analysis) fn reveal_evidence_with_expression(
         same_name_import_defeats,
         cross_package_name_defeats,
         return_admission,
+        arm_selector,
     );
     let (related, related_tests_total) = finalize_related_tests(analysis.related);
     let observe = build_observe_evidence(analysis.matched_any, analysis.refused_context);
@@ -112,7 +168,13 @@ pub(in crate::analysis) fn reveal_evidence_with_expression(
         )
     };
 
-    (observe, discriminate, related, related_tests_total)
+    RevealOutcome {
+        observe,
+        discriminate,
+        related,
+        related_total: related_tests_total,
+        owner_pin_credited: analysis.owner_pin_credited,
+    }
 }
 
 const PROXIMITY_CONFIRMATION_WITHHELD: &str = "Discriminator unconfirmed: no assertion in a test that calls or otherwise reaches this function names the changed arm; a test that only shares its file or module, and calls nothing that reaches the function, cannot confirm the arm (observation_unverified)";
@@ -126,6 +188,8 @@ struct RevealAssertionAnalysis {
     /// oracle, even when both assertions are in the same related test.
     strongest_observation_confirmed: bool,
     matched_any: bool,
+    /// #6692: some credited assertion pinned the owner's return value.
+    owner_pin_credited: bool,
     refused_context: bool,
     /// True when a test related only by file or module matched an assertion
     /// but could not confirm a match arm, because another related test reaches
@@ -256,6 +320,10 @@ fn match_arm_variant_tokens(expression: &str) -> Vec<String> {
     variants
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "reveal's grouped inputs plus the optional RIPR-SPEC-0229 arm selector"
+)]
 fn analyze_related_assertions(
     probe: &Probe,
     analysis_expression: &str,
@@ -264,6 +332,7 @@ fn analyze_related_assertions(
     same_name_import_defeats: &dyn Fn(&TestSummary, &str) -> bool,
     cross_package_name_defeats: &dyn Fn(&TestSummary, &str) -> bool,
     return_admission: &ReturnOracleAdmission<'_>,
+    arm_selector: Option<&ArmSelector>,
 ) -> RevealAssertionAnalysis {
     let probe_tokens = if is_effect_family(&probe.family) {
         // An effect target rooted at a binding the owner itself introduces
@@ -319,15 +388,27 @@ fn analyze_related_assertions(
     // qualifier token — and a `field_construction` probe whose field is an
     // `Err(...)` construction (`outcome: Err(CalcError::TooLarge)`) has the
     // same shared-qualifier exposure.
-    let error_construction_variant = if matches!(
+    let error_construction_path = if matches!(
         probe.family,
         ProbeFamily::ErrorPath | ProbeFamily::ReturnValue | ProbeFamily::FieldConstruction
     ) {
-        error_path_variant_token(&probe.expression)
-            .or_else(|| error_path_variant_token(analysis_expression))
+        error_path_variant_path(&probe.expression)
+            .or_else(|| error_path_variant_path(analysis_expression))
     } else {
         None
     };
+    let error_construction_variant = error_construction_path
+        .as_deref()
+        .and_then(|path| path.rsplit("::").next())
+        .map(str::to_string);
+    // The enum segment before the variant (`PayError` in
+    // `PayError::Insufficient`): the shared qualifier a sibling-variant pin
+    // names. See `names_only_sibling_variants`.
+    let error_construction_qualifier = error_construction_path
+        .as_deref()
+        .and_then(|path| path.rsplit("::").nth(1))
+        .filter(|qualifier| !qualifier.is_empty())
+        .map(str::to_string);
     // #3700 (final consolidation): a wrapper error seam
     // (`callee(..).map_err(..)`) whose changed expression carries no
     // parseable variant has no statically establishable variant identity —
@@ -351,6 +432,7 @@ fn analyze_related_assertions(
         match_arm_literals: &match_arm_literals,
         match_arm_guarded,
         error_construction_variant: error_construction_variant.as_deref(),
+        error_construction_qualifier: error_construction_qualifier.as_deref(),
         family: &probe.family,
         wrapper_seam,
         // #3709: the owner's bare name is the segment after the symbol's
@@ -360,6 +442,8 @@ fn analyze_related_assertions(
             let name = symbol.0.rsplit("::").next()?;
             (!name.is_empty()).then_some(name)
         }),
+        arm_selector: arm_selector.filter(|_| matches!(probe.family, ProbeFamily::MatchArm)),
+        arm_inputs_readable: false,
     };
     let confirm_required = needs_token_confirmation(&probe.family);
     let mut related = Vec::new();
@@ -367,6 +451,7 @@ fn analyze_related_assertions(
     let mut strongest_kind = OracleKind::Unknown;
     let mut strongest_observation_confirmed = false;
     let mut matched_any = false;
+    let mut owner_pin_credited = false;
     let mut refused_context = false;
     // For families that need token confirmation: start pessimistic and clear
     // once a token_match fires.
@@ -388,15 +473,8 @@ fn analyze_related_assertions(
     // nothing the changed `try_parse` does (#4486). Same-file and same-module
     // tests keep crediting: they commonly exercise a private helper through
     // the module's own entry point, which the relation cannot see.
-    let name_only = |reason: RelationReason| {
-        matches!(
-            reason,
-            RelationReason::WeakTokenSubstring | RelationReason::OwnerNamedTest
-        )
-    };
-    let reach_bearing_related = related_tests
-        .iter()
-        .any(|(_, reason)| !name_only(*reason) && !is_proximity_only(*reason));
+    let name_only = is_name_only_relation;
+    let credits = oracle_crediting_relations(related_tests);
     // A seam callee call runs the seam's callee, not the owner (`reach.rs`
     // keeps it out of owner reach), so it cannot be the reaching test that
     // withholds a same-file match-arm confirmation below.
@@ -409,7 +487,7 @@ fn analyze_related_assertions(
     for (test, reason) in related_tests {
         let relation_reason = Some(*reason);
         let relation_confidence = Some(reason.confidence());
-        let credits_oracle = !(reach_bearing_related && name_only(*reason));
+        let credits_oracle = credits(*reason);
         // #6297: a match arm's variant (`Unit::Fortnight`) names an enum value
         // that every function handling the enum shares, so unlike a
         // return-value token it does not tie an assertion to the owner (the
@@ -464,6 +542,24 @@ fn analyze_related_assertions(
         let cross_package_defeats_owner = match_context
             .owner_callee
             .is_some_and(|callee| cross_package_name_defeats(test, callee));
+        // RIPR-SPEC-0229: an arm selection is read only in a test whose every
+        // mention of the owner is a direct call this module reads. A
+        // `let reason = |x| ..` closure or any other local use of the name
+        // may shadow the owner, so its calls say nothing about the owner.
+        // A `let` bound to an owner call may carry the arm's result to the
+        // expected side, so such a test confirms nothing either. A test that
+        // never names the owner (it reaches it only through a wrapper) passes
+        // no input to read, so its tokens confirm as before selection (#6297).
+        let arm_selector = match_context
+            .arm_selector
+            .filter(|selector| selector.mentioned_by(test));
+        let match_context = RevealMatchContext {
+            arm_selector,
+            arm_inputs_readable: arm_selector.is_some_and(|selector| {
+                selector.observed_inputs(test).is_some() && !selector.binds_owner_result(test)
+            }),
+            ..match_context
+        };
         // Refusing credit must not manufacture the singleton-test fallback
         // for an otherwise unrelated surviving oracle.
         let assertion_count = test.assertions.len();
@@ -473,7 +569,10 @@ fn analyze_related_assertions(
             // value through a call that names the owner. The owner-side and
             // test-side identity gates live in `owner_pin`; the family and
             // oracle-kind gates are checked first so the closure only runs
-            // for return-value exact pins.
+            // for return-value exact pins. #6692: a field of a hand-written
+            // `Clone::clone`'s returned literal is pinned by
+            // `assert_eq!(recv.clone(), recv)` under the same gates
+            // (`OwnerReturnPin::establish_clone_field`).
             //
             // A bare `assert!` pins a bool owner's return value the same way
             // (`assert!(f(x))` is `assert_eq!(f(x), true)`), which also
@@ -488,6 +587,10 @@ fn analyze_related_assertions(
                         | OracleKind::RelationalCheck
                 ),
                 ProbeFamily::Predicate => matches!(assertion.kind, OracleKind::RelationalCheck),
+                ProbeFamily::FieldConstruction => matches!(
+                    assertion.kind,
+                    OracleKind::ExactValue | OracleKind::WholeObjectEquality
+                ),
                 _ => false,
             } && (return_admission.owner_return_pin)(test, assertion);
             let bool_owner_pinned =
@@ -500,6 +603,19 @@ fn analyze_related_assertions(
                 cross_package_defeats_owner,
                 owner_pinned,
             );
+            // #6692: the owner pin is credited only through an assertion
+            // that matched, from a test that may supply the oracle, with the
+            // pin surviving the reveal-side defeats. The missing-field
+            // cleanup in `ClassifiedProbeEvidence::gather` reads this.
+            owner_pin_credited |= matched
+                && credits_oracle
+                && owner_return_pin_holds(
+                    &match_context,
+                    assertion,
+                    owner_pinned,
+                    import_defeats_owner,
+                    cross_package_defeats_owner,
+                );
             if matched && !credits_oracle {
                 related.push(RelatedTest {
                     name: test.name.clone(),
@@ -609,35 +725,70 @@ fn analyze_related_assertions(
         strongest_kind,
         strongest_observation_confirmed,
         matched_any,
+        owner_pin_credited,
         refused_context,
         observation_unverified,
         proximity_confirmation_withheld,
     }
 }
 
-/// Extracts the variant identifier from a changed expression that constructs
-/// an exact error variant.
+/// Extracts the variant path from a changed expression that constructs an
+/// exact error variant.
 ///
-/// For `return Err(CalcError::TooLarge);` → `Some("TooLarge")`.
+/// For `return Err(CalcError::TooLarge);` → `Some("CalcError::TooLarge")`.
+/// For `let d = digit(c).ok_or(CalcError::TooLarge)?;` → the same (#6695).
 /// For `return Err(anyhow!("..."));` → `None` (no qualified variant).
 ///
-/// Used by RIPR-SPEC-0106 (Part B) to restrict `ExactErrorVariant` assertion
-/// matching to the changed expression's specific variant, preventing
-/// sibling-variant over-credit.
-fn error_path_variant_token(expression: &str) -> Option<String> {
-    use super::text::exact_error_variant;
-    let variant_path = exact_error_variant(expression)?;
-    // Last component after the final `::`.
+/// Used by RIPR-SPEC-0106 (Part B) to restrict assertion matching to the
+/// changed expression's specific variant (the final segment), preventing
+/// sibling-variant over-credit. The identity comes from the shared
+/// `changed_error_variant` owner that repo mode reads too.
+fn error_path_variant_path(expression: &str) -> Option<String> {
+    let variant_path = super::text::changed_error_variant(expression)?;
+    // The final component after the last `::` must read as a variant.
     let last = variant_path.rsplit("::").next()?;
-    if last
-        .chars()
+    last.chars()
         .next()
         .is_some_and(|ch| ch.is_ascii_uppercase())
-    {
-        Some(last.to_string())
-    } else {
-        None
+        .then_some(variant_path)
+}
+
+/// Whether an assertion names the changed error's enum only through
+/// SIBLING variants (RIPR-SPEC-0106 Part B, PR #6786 review): it spells at
+/// least one `<qualifier>::<Variant>` path, and no such path ends in the
+/// changed `variant`. `assert!(matches!(e, PayError::Limit))` against a
+/// changed `Err(PayError::Insufficient)` shares the `PayError` token with
+/// the changed line, but that qualifier is common to every variant and pins
+/// a different error; it is not an observation of the changed one.
+/// String and comment contents are masked, so a message naming a path is
+/// not an assertion of it. A text that never spells the qualifier as a
+/// path is not decided here.
+fn names_only_sibling_variants(text: &str, qualifier: &str, variant: &str) -> bool {
+    let masked = crate::analysis::extract::mask_comments_and_strings(text);
+    let bytes = masked.as_bytes();
+    let is_ident = |byte: u8| byte.is_ascii_alphanumeric() || byte == b'_';
+    let mut named_any = false;
+    let mut start = 0;
+    while let Some(found) = masked[start..].find(qualifier) {
+        let at = start + found;
+        start = at + qualifier.len();
+        if at > 0 && is_ident(bytes[at - 1]) {
+            continue;
+        }
+        let Some(rest) = masked[start..].trim_start().strip_prefix("::") else {
+            continue;
+        };
+        let rest = rest.trim_start();
+        let segment_len = rest.bytes().take_while(|byte| is_ident(*byte)).count();
+        if segment_len == 0 {
+            continue;
+        }
+        if &rest[..segment_len] == variant {
+            return false;
+        }
+        named_any = true;
     }
+    named_any
 }
 
 /// Whether an assertion observes an error at all: a typed error oracle, a
@@ -687,6 +838,9 @@ struct RevealMatchContext<'a> {
     /// fails closed until the observed input can be shown to satisfy it.
     match_arm_guarded: bool,
     error_construction_variant: Option<&'a str>,
+    /// The enum segment of the changed error path (`PayError`), when the
+    /// path is qualified. Gates sibling-variant pins of any oracle kind.
+    error_construction_qualifier: Option<&'a str>,
     family: &'a ProbeFamily,
     /// `true` only for #3700 wrapper error seams: the changed expression is a
     /// `map_err` conversion with no parseable variant, so the variant
@@ -698,6 +852,16 @@ struct RevealMatchContext<'a> {
     /// callee observes the owner's returned `Result` — the exact sink for
     /// the value/error families — without any changed-line token overlap.
     owner_callee: Option<&'a str>,
+    /// RIPR-SPEC-0229: the changed arm's pattern and the owner-call input
+    /// position its `match` reads, when established. An assertion whose
+    /// compared operand is a direct owner call passing an input that
+    /// selects this arm confirms observation of the arm; once established,
+    /// selection is the only confirmation (selection outranks tokens).
+    arm_selector: Option<&'a ArmSelector>,
+    /// RIPR-SPEC-0229: whether the current test's every owner mention is a
+    /// direct call the selector reads. A `let reason = |x| ..` closure or
+    /// any other local use of the name may shadow the owner.
+    arm_inputs_readable: bool,
 }
 
 /// The bare-scrutinee convention of the synthesized guarded-Result-match
@@ -743,7 +907,7 @@ fn match_arm_pattern_has_guard(expression: &str) -> bool {
 /// Byte index of the `=` in the first `=>` outside string/character literals
 /// and comments. A fat arrow inside literal content or a comment never
 /// separates a match arm from its body.
-fn find_fat_arrow(text: &str) -> Option<usize> {
+pub(super) fn find_fat_arrow(text: &str) -> Option<usize> {
     let opaque = lex_opaque_ranges(text);
     let bytes = text.as_bytes();
     let mut index = 0usize;
@@ -817,7 +981,7 @@ fn is_rust_word_continue_at(text: &str, index: usize) -> bool {
 /// `text`, covering cooked (`"..."`, `b"..."`) and raw (`r"..."`,
 /// `r#"..."#`, `br...`) spellings. Comments and character literals never
 /// produce spans.
-fn string_span_ranges(text: &str) -> Vec<(usize, usize)> {
+pub(super) fn string_span_ranges(text: &str) -> Vec<(usize, usize)> {
     lex_strings(text)
         .into_iter()
         .map(|(start, end, _)| (start, end))
@@ -927,7 +1091,7 @@ fn block_comment_end(text: &str, start: usize) -> usize {
 /// its span with no value, and an unterminated literal extends to the end
 /// of the text with no value, so downstream structural scans fail closed
 /// instead of reading past it.
-fn lex_strings(text: &str) -> Vec<(usize, usize, Option<String>)> {
+pub(super) fn lex_strings(text: &str) -> Vec<(usize, usize, Option<String>)> {
     let mut literals = Vec::new();
     let mut index = 0usize;
     let bytes = text.as_bytes();
@@ -1135,7 +1299,7 @@ fn char_literal_end(text: &str, start: usize) -> Option<usize> {
 /// the complete expression must be a syntactically bare owner call with one
 /// direct string-literal argument. Qualified paths, methods, wrappers,
 /// conditionals, blocks, variables, and transformed/nested inputs fail closed.
-fn split_top_level_arguments(text: &str) -> Option<Vec<&str>> {
+pub(super) fn split_top_level_arguments(text: &str) -> Option<Vec<&str>> {
     let opaque = lex_opaque_ranges(text);
     let mut arguments = Vec::new();
     let mut start = 0usize;
@@ -1172,7 +1336,7 @@ fn split_top_level_arguments(text: &str) -> Option<Vec<&str>> {
     Some(arguments)
 }
 
-fn matching_parenthesis(text: &str, opening: usize) -> Option<usize> {
+pub(super) fn matching_parenthesis(text: &str, opening: usize) -> Option<usize> {
     let opaque = lex_opaque_ranges(text);
     let mut depth = 0usize;
 
@@ -1361,9 +1525,12 @@ fn assertion_matches_probe_detail_with_literals(
         match_arm_literals,
         match_arm_guarded,
         error_construction_variant,
+        error_construction_qualifier,
         family,
         wrapper_seam,
         owner_callee,
+        arm_selector,
+        arm_inputs_readable,
     } = *context;
     // #4748: use the same operand boundary as extraction, including token and
     // exact-variant matching. A genuine error oracle cannot borrow its changed
@@ -1452,11 +1619,13 @@ fn assertion_matches_probe_detail_with_literals(
     // Same defeats as the guarded-match shortcut above: no foreign
     // same-name import, no same-named function in the test's own package,
     // and the exact variant when the changed expression constructs one.
-    let owner_return_pinned = owner_pinned
-        && !import_defeats_owner
-        && !cross_package_defeats_owner
-        && error_construction_variant
-            .is_none_or(|variant| contains_as_whole_word(&assertion.text, variant));
+    let owner_return_pinned = owner_return_pin_holds(
+        context,
+        assertion,
+        owner_pinned,
+        import_defeats_owner,
+        cross_package_defeats_owner,
+    );
     // For MatchArm probes, restrict the confirmation check to variant-only
     // tokens (post-`::`). The qualifier ("Mode" in "Mode::Frozen") is shared
     // across all arms and therefore cannot confirm this specific arm.
@@ -1465,7 +1634,19 @@ fn assertion_matches_probe_detail_with_literals(
     // (parameter names, the callee name, `Into::into`, a message string) is
     // token coincidence by construction, so observation stays unverified and
     // the seam cannot read `exposed` from lexical heuristics.
-    let has_token_match = if matches!(family, ProbeFamily::MatchArm) {
+    let has_token_match = if let Some(selector) = arm_selector
+        && matches!(family, ProbeFamily::MatchArm)
+    {
+        // RIPR-SPEC-0229 selection outranks tokens: once the arm's
+        // scrutinee is a direct owner input, a variant token or argument
+        // literal anywhere in the assertion confirms nothing; only a
+        // readable owner call whose input selects the arm does. Same owner
+        // ambiguity defeats as the literal rule below.
+        arm_inputs_readable
+            && !import_defeats_owner
+            && !cross_package_defeats_owner
+            && selector.assertion_selects(&assertion.text)
+    } else if matches!(family, ProbeFamily::MatchArm) {
         !match_arm_guarded
             && (match_arm_variants
                 .iter()
@@ -1500,6 +1681,26 @@ fn assertion_matches_probe_detail_with_literals(
     } else {
         token_match || effect_literal_match || producer_owned_result || owner_return_pinned
     };
+    // PR #6786 review: an assertion of any other kind (an `exact_value`
+    // `assert!(matches!(e, PayError::Limit))` inside a match arm) that names
+    // the changed error's enum only through sibling variants shares just
+    // the enum qualifier with the changed line. Same outcome as the
+    // ExactErrorVariant gate below with a non-matching variant: an
+    // ErrorPath probe does not match it at all, and no family confirms
+    // observation through it. Guarded matches keep their own variant gate
+    // (`producer_owned_result`) above.
+    if !matches!(
+        assertion.kind,
+        OracleKind::ExactErrorVariant | OracleKind::GuardedResultMatch
+    ) && let (Some(variant), Some(qualifier)) =
+        (error_construction_variant, error_construction_qualifier)
+        && names_only_sibling_variants(&assertion.text, qualifier, variant)
+    {
+        if matches!(family, ProbeFamily::ErrorPath) {
+            return (false, false);
+        }
+        return (token_match || effect_literal_match, false);
+    }
     // Fail-closed: if error_construction_variant is None (no parseable variant
     // in the probe), fall through to the standard token_match + family_match
     // check below.
@@ -1520,6 +1721,26 @@ fn assertion_matches_probe_detail_with_literals(
         || owner_return_pinned
         || assertion_count == 1;
     (matched, has_token_match)
+}
+
+/// #4478: whether an owner-pinned assertion keeps its pin after the
+/// reveal-side defeats: no foreign same-name import, no same-named
+/// function in the test's own package, and the exact variant when the
+/// changed expression constructs one. The one authority for both the
+/// match decision and the credited owner-pin outcome (#6692).
+fn owner_return_pin_holds(
+    context: &RevealMatchContext,
+    assertion: &OracleFact,
+    owner_pinned: bool,
+    import_defeats_owner: bool,
+    cross_package_defeats_owner: bool,
+) -> bool {
+    owner_pinned
+        && !import_defeats_owner
+        && !cross_package_defeats_owner
+        && context
+            .error_construction_variant
+            .is_none_or(|variant| contains_as_whole_word(&assertion.text, variant))
 }
 
 #[cfg(test)]
@@ -1545,9 +1766,12 @@ fn assertion_matches_probe_detail(
             match_arm_literals,
             match_arm_guarded: false,
             error_construction_variant,
+            error_construction_qualifier: None,
             family,
             wrapper_seam: false,
             owner_callee,
+            arm_selector: None,
+            arm_inputs_readable: false,
         },
         assertion,
         assertion_count,
@@ -1561,7 +1785,7 @@ fn assertion_matches_probe_detail(
 /// its terminating `;` — the callee-independent half of
 /// `use_statements_import_foreign_callee_name`, so one scan of a file serves every
 /// callee and every probe (see `FileUseStatements`).
-fn file_use_statements(source: &str) -> Vec<String> {
+pub(in crate::analysis::classify) fn file_use_statements(source: &str) -> Vec<String> {
     let masked = crate::analysis::extract::mask_comments_and_strings(source);
     all_use_statements(&masked)
         .iter()
@@ -1574,6 +1798,57 @@ fn file_use_statements(source: &str) -> Vec<String> {
                 .to_string()
         })
         .collect()
+}
+
+/// One imported item of a `use` declaration: its full path with
+/// whitespace removed (`a::b::C`, `a::E::*`) and the `as` rename, if any.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct UsePath {
+    pub(super) path: String,
+    pub(super) alias: Option<String>,
+}
+
+/// Every `use` declaration of `source` flattened into one path per item,
+/// with brace lists expanded (`use a::{b, c::*};` -> `a::b`, `a::c::*`).
+pub(super) fn flattened_use_paths(source: &str) -> Vec<UsePath> {
+    let mut out = Vec::new();
+    for statement in file_use_statements(source) {
+        if let Some(rest) = statement.trim_start().strip_prefix("use") {
+            flatten_use_items("", rest, &mut out);
+        }
+    }
+    out
+}
+
+fn flatten_use_items(prefix: &str, items: &str, out: &mut Vec<UsePath>) {
+    for item in split_top_level_commas(items) {
+        let item = item.trim();
+        if item.is_empty() {
+            continue;
+        }
+        match item.find('{') {
+            None => {
+                let words = item.split_whitespace().collect::<Vec<_>>();
+                let (path, alias) = match words.iter().position(|word| *word == "as") {
+                    Some(at) => (
+                        words[..at].concat(),
+                        words.get(at + 1).map(|w| w.to_string()),
+                    ),
+                    None => (words.concat(), None),
+                };
+                out.push(UsePath {
+                    path: format!("{prefix}{path}"),
+                    alias,
+                });
+            }
+            Some(open) => {
+                if let Some(close) = matching_brace_close(item, open) {
+                    let head = item[..open].split_whitespace().collect::<String>();
+                    flatten_use_items(&format!("{prefix}{head}"), &item[open + 1..close], out);
+                }
+            }
+        }
+    }
 }
 
 /// #3731 review (F11, F22): whether the related test's file imports the
@@ -1732,7 +2007,7 @@ fn is_ident_byte(byte: u8) -> bool {
 /// The first path segment of a `use` statement (the keyword is still
 /// present): `use crate::x::y;` -> `crate`, `use a::b::{c};` -> `a`. An
 /// empty segment (a brace-rooted `use {..};`) signals no path prefix.
-fn use_statement_first_segment(statement: &str) -> Option<&str> {
+pub(in crate::analysis::classify) fn use_statement_first_segment(statement: &str) -> Option<&str> {
     let rest = statement.trim_start().strip_prefix("use")?;
     // `use ::name::..` roots the path at the extern crate `name`, the same
     // crate `use name::..` names.
@@ -1748,7 +2023,10 @@ fn use_statement_first_segment(statement: &str) -> Option<&str> {
 /// terminal `::` segment of a brace-less path, or any brace-list item
 /// (nested brace lists recurse). `as` renames bind the alias; `*` and
 /// `self` bind nothing nameable here.
-fn use_statement_binds_name(statement: &str, callee: &str) -> bool {
+pub(in crate::analysis::classify) fn use_statement_binds_name(
+    statement: &str,
+    callee: &str,
+) -> bool {
     let Some(rest) = statement.trim_start().strip_prefix("use") else {
         return false;
     };
@@ -2120,7 +2398,30 @@ fn related_test_rank(test: &RelatedTest) -> u8 {
     }
 }
 
-pub(in crate::analysis) const ASSERTION_CONTEXT_UNESTABLISHED: &str = "No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)";
+/// Which relations may supply a credited oracle: a name-only relation
+/// (`WeakTokenSubstring`, `OwnerNamedTest`) may not while any related test
+/// bears reach. Shared with the RIPR-SPEC-0240 refusal scope, which must judge
+/// exactly the tests that could have credited the refused assertions.
+pub(in crate::analysis) fn oracle_crediting_relations(
+    related_tests: &[(&TestSummary, RelationReason)],
+) -> impl Fn(RelationReason) -> bool + use<> {
+    let reach_bearing_related = related_tests
+        .iter()
+        .any(|(_, reason)| !is_name_only_relation(*reason) && !is_proximity_only(*reason));
+    move |reason| !(reach_bearing_related && is_name_only_relation(reason))
+}
+
+/// A relation made only by the test's name or path (a changed token, the
+/// owner's name), with no captured call, helper chain or assertion affinity.
+fn is_name_only_relation(reason: RelationReason) -> bool {
+    matches!(
+        reason,
+        RelationReason::WeakTokenSubstring | RelationReason::OwnerNamedTest
+    )
+}
+
+pub(in crate::analysis) const ASSERTION_CONTEXT_UNESTABLISHED: &str =
+    crate::domain::ASSERTION_CONTEXT_UNESTABLISHED;
 
 fn build_observe_evidence(matched_any: bool, refused_context: bool) -> StageEvidence {
     if matched_any {
@@ -2800,6 +3101,7 @@ mod tests {
                     assertion_admitted: &|_, _| true,
                     proximity_may_reach_owner: &|_| false,
                 },
+                None,
             )
             .1
         };
@@ -2840,6 +3142,95 @@ mod tests {
         );
         if reveal(&parameter, &parameter_observer).state != StageState::Yes {
             return Err("a receiver that is not an owner local must still confirm".to_string());
+        }
+        Ok(())
+    }
+
+    /// #6773 review: the clone-field missing-field cleanup reads reveal's
+    /// credited owner-pin outcome. A name-only test that holds
+    /// `assert_eq!(w.clone(), w)` next to a reach-bearing test supplies no
+    /// oracle, so the pin is not credited; neither is it through a foreign
+    /// same-name import or a cross-package same-name definition. A
+    /// reach-bearing test holding the same assertion credits it.
+    #[test]
+    fn a_clone_field_owner_pin_is_credited_only_through_reveals_gates() -> Result<(), String> {
+        let mut probe = probe(ProbeFamily::FieldConstruction, "start: self.start,");
+        probe.owner = Some(SymbolId(
+            "src/lib.rs::impl Clone for Window::clone".to_string(),
+        ));
+        let pinned_text = "assert_eq!(w.clone(), w);";
+        let pinned = test_with_assertions(
+            "clone_round_trip",
+            vec![oracle(
+                pinned_text,
+                OracleKind::WholeObjectEquality,
+                OracleStrength::Strong,
+            )],
+        );
+        let reach = test_with_assertions(
+            "builds_a_window",
+            vec![oracle(
+                "assert!(w.is_open());",
+                OracleKind::RelationalCheck,
+                OracleStrength::Weak,
+            )],
+        );
+        let pin = |_: &TestSummary, assertion: &OracleFact| assertion.text == pinned_text;
+        let credited = |related: &[(&TestSummary, RelationReason)],
+                        import: &dyn Fn(&TestSummary, &str) -> bool,
+                        package: &dyn Fn(&TestSummary, &str) -> bool| {
+            reveal_outcome(
+                &probe,
+                &probe.expression,
+                related,
+                &[],
+                import,
+                package,
+                &ReturnOracleAdmission {
+                    owner_return_pin: &pin,
+                    assertion_admitted: &|_, _| true,
+                    proximity_may_reach_owner: &|_| false,
+                },
+                None,
+            )
+            .owner_pin_credited
+        };
+        let never = |_: &TestSummary, _: &str| false;
+        let always = |_: &TestSummary, _: &str| true;
+        if !credited(
+            &[(&pinned, RelationReason::DirectOwnerCall)],
+            &never,
+            &never,
+        ) {
+            return Err("a reach-bearing test's owner pin must be credited".to_string());
+        }
+        for name_only in [
+            RelationReason::WeakTokenSubstring,
+            RelationReason::OwnerNamedTest,
+        ] {
+            if credited(
+                &[
+                    (&pinned, name_only),
+                    (&reach, RelationReason::DirectOwnerCall),
+                ],
+                &never,
+                &never,
+            ) {
+                return Err(format!(
+                    "{name_only:?} test credited the owner pin next to a reach-bearing test"
+                ));
+            }
+        }
+        if credited(
+            &[(&pinned, RelationReason::DirectOwnerCall)],
+            &always,
+            &never,
+        ) || credited(
+            &[(&pinned, RelationReason::DirectOwnerCall)],
+            &never,
+            &always,
+        ) {
+            return Err("a same-name import or package definition must defeat the pin".to_string());
         }
         Ok(())
     }
@@ -3147,6 +3538,7 @@ mod tests {
                 assertion_admitted: &|_, _| true,
                 proximity_may_reach_owner: &|_| false,
             },
+            None,
         );
         assert_eq!(total, 9);
         assert_eq!(related.len(), 8);
@@ -3212,6 +3604,7 @@ mod tests {
                 assertion_admitted: &|_, _| true,
                 proximity_may_reach_owner: &|_| false,
             },
+            None,
         );
         assert_eq!(total, 9, "every examined test is counted");
         assert_eq!(related.len(), 8);
@@ -3480,9 +3873,12 @@ mod tests {
                 match_arm_literals: &pattern_literals,
                 match_arm_guarded: guarded,
                 error_construction_variant: None,
+                error_construction_qualifier: None,
                 family: &family,
                 wrapper_seam: false,
                 owner_callee: Some("route"),
+                arm_selector: None,
+                arm_inputs_readable: false,
             };
             let (_, has_token) = assertion_matches_probe_detail_with_literals(
                 &context,
@@ -4730,6 +5126,7 @@ return Err(\"typed pin\".into());
                 assertion_admitted: &|_, _| true,
                 proximity_may_reach_owner: &|_| false,
             },
+            None,
         );
 
         assert_eq!(
@@ -4780,6 +5177,7 @@ return Err(\"typed pin\".into());
                 assertion_admitted: &|_, _| true,
                 proximity_may_reach_owner: &|_| false,
             },
+            None,
         );
         assert_eq!(
             discriminate.state,
@@ -4801,6 +5199,7 @@ return Err(\"typed pin\".into());
                 assertion_admitted: &|_, _| true,
                 proximity_may_reach_owner: &|_| false,
             },
+            None,
         );
         assert_eq!(
             own_crate.state,
@@ -4841,6 +5240,7 @@ return Err(\"typed pin\".into());
                 assertion_admitted: &|_, _| true,
                 proximity_may_reach_owner: &|_| false,
             },
+            None,
         );
         assert_eq!(
             discriminate.state,
@@ -4883,6 +5283,7 @@ return Err(\"typed pin\".into());
                 assertion_admitted: &|_, _| true,
                 proximity_may_reach_owner: &|_| false,
             },
+            None,
         );
 
         assert_eq!(
@@ -5050,6 +5451,7 @@ return Err(\"typed pin\".into());
                 assertion_admitted: &|_, _| true,
                 proximity_may_reach_owner: &|_| false,
             },
+            None,
         );
         assert_eq!(
             defeated.state,
@@ -5074,6 +5476,7 @@ return Err(\"typed pin\".into());
                 assertion_admitted: &|_, _| true,
                 proximity_may_reach_owner: &|_| false,
             },
+            None,
         );
         assert_eq!(
             confirmed.state,
@@ -5585,6 +5988,7 @@ return Err(\"typed pin\".into());
                 assertion_admitted: &|_, _| true,
                 proximity_may_reach_owner: &|test| test.name == "from_str_fortnight",
             },
+            None,
         );
         assert_eq!(may_reach.state, StageState::Yes, "{}", may_reach.summary);
     }
@@ -5737,6 +6141,128 @@ return Err(\"typed pin\".into());
         );
     }
 
+    /// PR #6786 review blocker: an `exact_value` `assert!(matches!(e,
+    /// Sibling))` (the line-level fact inside a match arm) shares only the
+    /// enum qualifier with a changed `Err(PayError::Insufficient)`. It must
+    /// not confirm the changed error path for any variant-carrying family;
+    /// the exact-variant spelling of the same assertion still does.
+    #[test]
+    fn sibling_variant_exact_value_pin_cannot_confirm_a_changed_error_variant() {
+        let sibling = test_with_assertions(
+            "limit_is_pinned",
+            vec![oracle(
+                "assert!(matches!(e, PayError::Limit))",
+                OracleKind::ExactValue,
+                OracleStrength::Strong,
+            )],
+        );
+        let exact = test_with_assertions(
+            "insufficient_is_pinned",
+            vec![oracle(
+                "assert!(matches!(e, PayError::Insufficient))",
+                OracleKind::ExactValue,
+                OracleStrength::Strong,
+            )],
+        );
+        for family in [
+            ProbeFamily::ErrorPath,
+            ProbeFamily::ReturnValue,
+            ProbeFamily::FieldConstruction,
+        ] {
+            let probe = probe(family.clone(), "return Err(PayError::Insufficient);");
+            let (_observe, discriminate, _related) =
+                reveal_evidence(&probe, &[(&sibling, RelationReason::DirectOwnerCall)]);
+            assert_ne!(
+                discriminate.state,
+                StageState::Yes,
+                "{family:?}: a PayError::Limit pin must not discriminate PayError::Insufficient: {}",
+                discriminate.summary
+            );
+            let (_observe, discriminate, _related) =
+                reveal_evidence(&probe, &[(&exact, RelationReason::DirectOwnerCall)]);
+            assert_eq!(
+                discriminate.state,
+                StageState::Yes,
+                "{family:?}: the exact-variant pin stays the positive control: {}",
+                discriminate.summary
+            );
+        }
+    }
+
+    /// #6695 fallback (`error_path_variant_path` → `question_mark_error_variant`
+    /// through `changed_error_variant`): an `ok_or_else(|| Variant)?` line has
+    /// no `Err(` construction, so without the fallback it carried no variant
+    /// identity and a sibling `ExactErrorVariant` pin confirmed it through
+    /// the shared `CodeError` qualifier.
+    #[test]
+    fn ok_or_question_mark_line_carries_its_variant_into_the_sibling_gate() {
+        const LINE: &str = "let d = digit(c).ok_or_else(|| CodeError::NotDigit)?;";
+        assert_eq!(
+            error_path_variant_path(LINE).as_deref(),
+            Some("CodeError::NotDigit")
+        );
+        assert_eq!(
+            error_path_variant_path("let d = digit(c).ok_or(CodeError::NotDigit)?;").as_deref(),
+            Some("CodeError::NotDigit")
+        );
+        assert_eq!(
+            error_path_variant_path("let d = digit(c).ok_or(CodeError::NotDigit);"),
+            None
+        );
+        let probe = probe(ProbeFamily::ErrorPath, LINE);
+        let sibling = test_with_assertions(
+            "too_long_is_pinned",
+            vec![oracle(
+                "assert_eq!(err, CodeError::TooLong);",
+                OracleKind::ExactErrorVariant,
+                OracleStrength::Strong,
+            )],
+        );
+        let (_observe, discriminate, _related) =
+            reveal_evidence(&probe, &[(&sibling, RelationReason::DirectOwnerCall)]);
+        assert_ne!(
+            discriminate.state,
+            StageState::Yes,
+            "a CodeError::TooLong pin must not discriminate the ok_or NotDigit line: {}",
+            discriminate.summary
+        );
+        let exact = test_with_assertions(
+            "not_digit_is_pinned",
+            vec![oracle(
+                "assert_eq!(err, CodeError::NotDigit);",
+                OracleKind::ExactErrorVariant,
+                OracleStrength::Strong,
+            )],
+        );
+        let (_observe, discriminate, _related) =
+            reveal_evidence(&probe, &[(&exact, RelationReason::DirectOwnerCall)]);
+        assert_eq!(
+            discriminate.state,
+            StageState::Yes,
+            "the exact NotDigit pin stays the positive control: {}",
+            discriminate.summary
+        );
+    }
+
+    #[test]
+    fn names_only_sibling_variants_requires_a_sibling_path_and_no_changed_path() {
+        let check = |text| names_only_sibling_variants(text, "PayError", "Insufficient");
+        assert!(check("assert!(matches!(e, PayError::Limit))"));
+        assert!(check("assert_eq!(e, crate::PayError :: Limit)"));
+        // The changed variant named through the qualifier is never a sibling pin.
+        assert!(!check("assert!(matches!(e, PayError::Insufficient))"));
+        assert!(!check(
+            "assert!(matches!(e, PayError::Limit | PayError::Insufficient))"
+        ));
+        // No qualified path: not decided by this gate.
+        assert!(!check("assert_eq!(withdraw(1, 2).is_err(), true)"));
+        assert!(!check("assert!(matches!(e, Limit))"));
+        // A longer identifier sharing the qualifier's suffix is not the enum.
+        assert!(!check("assert!(matches!(e, OtherPayError::Limit))"));
+        // Message text is masked.
+        assert!(!check("assert!(e.is_err(), \"PayError::Limit expected\")"));
+    }
+
     #[test]
     fn error_path_parser_context_cannot_replace_emitted_probe_variant() {
         let probe = probe(ProbeFamily::ErrorPath, "Err(ParseError::TooLong(len))");
@@ -5761,6 +6287,7 @@ return Err(\"typed pin\".into());
                 assertion_admitted: &|_, _| true,
                 proximity_may_reach_owner: &|_| false,
             },
+            None,
         );
 
         assert_eq!(
@@ -6002,5 +6529,33 @@ return Err(\"typed pin\".into());
             "non-collection effect observers stay on the existing Part C path: got `{}`",
             discriminate.summary
         );
+    }
+
+    /// RIPR-SPEC-0240: a name-only relation stops counting once a
+    /// reach-bearing relation exists, so its refused assertion cannot decide
+    /// whether a gap is withheld; alone, it still counts.
+    #[test]
+    fn name_only_relations_stop_crediting_beside_a_reach_bearing_one() {
+        let direct = test_with_assertions("direct", Vec::new());
+        let named = test_with_assertions("named", Vec::new());
+        let mixed = [
+            (&direct, RelationReason::DirectOwnerCall),
+            (&named, RelationReason::OwnerNamedTest),
+        ];
+        let credits = oracle_crediting_relations(&mixed);
+        assert!(credits(RelationReason::DirectOwnerCall));
+        assert!(!credits(RelationReason::OwnerNamedTest));
+        assert!(!credits(RelationReason::WeakTokenSubstring));
+
+        let name_only = [(&named, RelationReason::OwnerNamedTest)];
+        let credits = oracle_crediting_relations(&name_only);
+        assert!(credits(RelationReason::OwnerNamedTest));
+
+        let proximity_only = [
+            (&direct, RelationReason::SameTestFile),
+            (&named, RelationReason::OwnerNamedTest),
+        ];
+        let credits = oracle_crediting_relations(&proximity_only);
+        assert!(credits(RelationReason::OwnerNamedTest));
     }
 }

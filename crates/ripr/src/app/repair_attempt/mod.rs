@@ -20,7 +20,7 @@ use std::collections::BTreeSet;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 pub(crate) const REPAIR_ATTEMPT_SCHEMA_VERSION: &str = "0.1";
 pub(crate) const REPAIR_ATTEMPT_DIRECTORY: &str = "target/ripr/repair-attempts";
@@ -965,8 +965,12 @@ pub(crate) fn begin_repair_attempt_with_identity(
             "prepared repair attempt identity does not match its root and seam".to_string(),
         );
     }
-    let repository_head = crate::agent::artifact::current_git_head(canonical_root)
+    // Head identity (not just HEAD) pins the publication: the finalize
+    // path re-verifies after staging, and an A-B-A swap inside that window
+    // is undetectable by commit comparison alone (#6822).
+    let repository_identity = crate::agent::artifact::current_git_head_identity(canonical_root)
         .map_err(|error| format!("repair attempt requires a concrete repository HEAD: {error}"))?;
+    let repository_head = repository_identity.head.clone();
     // Pre-publication head gate: compare the caller's verified pin against
     // the repository HEAD this publication would record, before the attempt
     // directory is reserved. On mismatch nothing exists to clean up.
@@ -992,7 +996,7 @@ pub(crate) fn begin_repair_attempt_with_identity(
         AttemptPublication {
             root_argument,
             seam_id,
-            repository_head,
+            repository_identity,
             expected_repository_head,
             created_unix_ms,
             repair_attempt_id,
@@ -1005,7 +1009,9 @@ pub(crate) fn begin_repair_attempt_with_identity(
 struct AttemptPublication<'a> {
     root_argument: &'a Path,
     seam_id: &'a str,
-    repository_head: String,
+    /// The pre-staging pin the finalize path re-verifies: an identity, not
+    /// a commit, so an A-B-A swap inside the staging window refuses (#6822).
+    repository_identity: crate::agent::artifact::HeadIdentity,
     /// The caller's verified head pin, when the publication is trust-bound.
     /// Re-checked immediately before the durable manifest write, so the
     /// finalize path verifies rather than trusting the earlier read.
@@ -1035,25 +1041,36 @@ fn complete_repair_attempt(
                 publication.next_command_suffix.unwrap_or_default()
             );
             // Finalize-path head re-verification: the earlier pre-publication
-            // gate read HEAD before the artifacts were staged; the durable
-            // manifest is the authority, so HEAD is re-read immediately
-            // before it is written and any move in the window aborts with the
-            // typed refusal instead of publishing a mismatched attempt.
-            let final_head = crate::agent::artifact::current_git_head(canonical_root)
-                .map_err(|error| {
-                    format!("repair attempt finalize head verification failed: {error}")
-                })?;
+            // gate pinned the head identity before the artifacts were staged;
+            // the durable manifest is the authority, so the identity is
+            // re-read immediately before it is written and any move in the
+            // window aborts with the typed refusal instead of publishing a
+            // mismatched attempt. Identity comparison (not just HEAD) keeps
+            // an A-B-A swap inside the window from publishing (#6822).
+            let final_identity =
+                crate::agent::artifact::current_git_head_identity(canonical_root).map_err(
+                    |error| {
+                        format!("repair attempt finalize head verification failed: {error}")
+                    },
+                )?;
             if let Some(expected) = publication.expected_repository_head
-                && expected != final_head
+                && expected != final_identity.head
             {
                 return Err(format!(
-                    "python repair-trust binding head moved during attempt publication; the binding pins head `{expected}` but the repository HEAD is now `{final_head}`; re-run the before phase to prepare a fresh binding"
+                    "python repair-trust binding head moved during attempt publication; the binding pins head `{expected}` but the repository HEAD is now `{}`; re-run the before phase to prepare a fresh binding",
+                    final_identity.head
                 ));
             }
-            if final_head != publication.repository_head {
+            if final_identity != publication.repository_identity {
+                let pinned = publication.repository_identity.head.clone();
+                if final_identity.head == pinned {
+                    return Err(format!(
+                        "repository HEAD moved during attempt publication; the attempt pins head `{pinned}` and the repository HEAD returned to the same commit after an intervening move; re-run the before phase to prepare a fresh attempt"
+                    ));
+                }
                 return Err(format!(
-                    "repository HEAD moved during attempt publication; the attempt pins head `{}` but the repository HEAD is now `{final_head}`; re-run the before phase to prepare a fresh attempt",
-                    publication.repository_head
+                    "repository HEAD moved during attempt publication; the attempt pins head `{pinned}` but the repository HEAD is now `{}`; re-run the before phase to prepare a fresh attempt",
+                    final_identity.head
                 ));
             }
             let manifest = RepairAttemptManifest {
@@ -1062,7 +1079,7 @@ fn complete_repair_attempt(
                 repair_attempt_id: publication.repair_attempt_id,
                 state: RepairAttemptState::AwaitingEdit,
                 root: root_path_display(canonical_root),
-                repository_head: publication.repository_head,
+                repository_head: publication.repository_identity.head.clone(),
                 producer_version: env!("CARGO_PKG_VERSION").to_string(),
                 seam_id: publication.seam_id.to_string(),
                 created_unix_ms: publication.created_unix_ms,
@@ -1993,16 +2010,24 @@ pub(crate) fn write_edit_cage_baseline(
     path: &Path,
     policy: &EditCagePolicy,
 ) -> Result<(), String> {
-    let bytes = {
-        let baseline = crate::edit_cage::capture_attempt_baseline(root, policy)?;
-        serde_json::to_vec_pretty(&baseline)
-            .map_err(|error| format!("serialize edit-cage baseline failed: {error}"))?
-    };
+    let capture_started = Instant::now();
+    let baseline = crate::edit_cage::capture_attempt_baseline(root, policy)?;
+    crate::edit_cage::trace_persist_latency("baseline_capture", capture_started.elapsed());
+    let serialize_started = Instant::now();
+    let bytes = serde_json::to_vec_pretty(&baseline)
+        .map_err(|error| format!("serialize edit-cage baseline failed: {error}"))?;
+    crate::edit_cage::trace_persist_latency("baseline_serialize", serialize_started.elapsed());
+    // The pretty bytes stay; the baseline map drops before the file write,
+    // as before: only one copy is resident during the write.
+    drop(baseline);
     if path.exists() {
         std::fs::remove_file(path)
             .map_err(|error| format!("replace {} failed: {error}", path.display()))?;
     }
-    write_bytes_atomic(path, &bytes)
+    let write_started = Instant::now();
+    write_bytes_atomic(path, &bytes)?;
+    crate::edit_cage::trace_persist_latency("baseline_write", write_started.elapsed());
+    Ok(())
 }
 
 /// Resolve the durable before inputs for one after-phase invocation. Attempt ID
@@ -3017,6 +3042,7 @@ fn stage_before_artifacts(
         ".{REPAIR_ATTEMPT_ARTIFACTS_DIRECTORY}.tmp-{}-{nonce}",
         std::process::id()
     ));
+    let stage_started = Instant::now();
     let artifacts = match stage_sources(root, &staging_directory, &destination_directory, sources) {
         Ok(artifacts) => artifacts,
         Err(error) => {
@@ -3031,6 +3057,7 @@ fn stage_before_artifacts(
             destination_directory.display()
         ));
     }
+    crate::edit_cage::trace_persist_latency("attempt_stage_artifacts", stage_started.elapsed());
     Ok(artifacts)
 }
 
@@ -3043,6 +3070,9 @@ fn stage_sources(
     let mut roles = BTreeSet::new();
     let mut names = BTreeSet::new();
     let mut artifacts = Vec::with_capacity(sources.len());
+    // One trace-switch read per staging: the per-source span names
+    // allocate, so they are built only when tracing is on (#6917).
+    let trace_spans = crate::edit_cage::persist_latency_trace_enabled();
 
     for source in sources {
         if source.role.trim().is_empty() || !roles.insert(source.role) {
@@ -3076,10 +3106,24 @@ fn stage_sources(
                 file_name.to_string_lossy()
             ));
         }
+        let read_started = Instant::now();
         let bytes = std::fs::read(&source_path)
             .map_err(|error| format!("read {} failed: {error}", source_path.display()))?;
+        if trace_spans {
+            crate::edit_cage::trace_persist_latency(
+                &format!("attempt_stage_source_read:{}", source.role),
+                read_started.elapsed(),
+            );
+        }
         let staged = staging_directory.join(&file_name);
+        let write_started = Instant::now();
         write_bytes_atomic(&staged, &bytes)?;
+        if trace_spans {
+            crate::edit_cage::trace_persist_latency(
+                &format!("attempt_stage_source_write:{}", source.role),
+                write_started.elapsed(),
+            );
+        }
         let destination = destination_directory.join(&file_name);
         let relative = destination.strip_prefix(root).map_err(|error| {
             format!(
@@ -3088,10 +3132,18 @@ fn stage_sources(
                 root.display()
             )
         })?;
+        let digest_started = Instant::now();
+        let sha256 = sha256_bytes(&bytes);
+        if trace_spans {
+            crate::edit_cage::trace_persist_latency(
+                &format!("attempt_stage_source_digest:{}", source.role),
+                digest_started.elapsed(),
+            );
+        }
         artifacts.push(RepairAttemptArtifact {
             role: source.role.to_string(),
             path: display_path(relative),
-            sha256: sha256_bytes(&bytes),
+            sha256,
             bytes: u64::try_from(bytes.len()).map_err(|error| {
                 format!("repair attempt artifact size does not fit u64: {error}")
             })?,
@@ -4159,7 +4211,7 @@ mod tests {
         // so the occupied manifest path is what actually forces the publish
         // failure.
         let root = test_repo_root("publish")?;
-        let head = crate::agent::artifact::current_git_head(&root)?;
+        let pinned = crate::agent::artifact::current_git_head_identity(&root)?;
         let attempt_id = RepairAttemptId::parse("repair-attempt-0123456789abcdef01234567")?;
         let store = prepared_store(&root)?;
         let attempt_directory = reserve_attempt_directory(&store, &attempt_id)?;
@@ -4177,7 +4229,7 @@ mod tests {
             AttemptPublication {
                 root_argument: &root,
                 seam_id: "seam:sample",
-                repository_head: head,
+                repository_identity: pinned,
                 expected_repository_head: None,
                 created_unix_ms: 1,
                 repair_attempt_id: attempt_id,
@@ -4201,6 +4253,79 @@ mod tests {
                 "failed manifest write left the attempt directory and staged artifacts behind"
                     .to_string(),
             );
+        }
+        Ok(())
+    }
+
+    /// The begin path re-verifies the pinned head identity after staging
+    /// (#6822): a pin that predates an A-B-A swap refuses publication even
+    /// though the commit comparison alone would pass. The stale pin is
+    /// exactly what the pre-staging read passes after a mid-window swap;
+    /// movement cannot be injected mid-staging deterministically, so the
+    /// test drives the real `complete_repair_attempt` (real staging, real
+    /// finalize re-read) with that stale pin.
+    #[test]
+    fn begin_finalize_refuses_a_stale_pin_after_an_a_b_a_swap() -> Result<(), String> {
+        let root = test_repo_root("begin-aba")?;
+        let pinned = crate::agent::artifact::current_git_head_identity(&root)?;
+        let head = pinned.head.clone();
+        // A -> B -> A between the pin read and the finalize re-read.
+        run_git(
+            &root,
+            &[
+                "commit",
+                "--no-gpg-sign",
+                "--allow-empty",
+                "-qm",
+                "interleaved",
+            ],
+        )?;
+        run_git(&root, &["reset", "-q", "--soft", &head])?;
+        if crate::agent::artifact::current_git_head(&root)? != head {
+            return Err("the swap setup must return HEAD to the same commit".to_string());
+        }
+        let attempt_id = RepairAttemptId::parse("repair-attempt-0123456789abcdef01234568")?;
+        let store = prepared_store(&root)?;
+        let attempt_directory = reserve_attempt_directory(&store, &attempt_id)?;
+        let source = root.join("before.json");
+        std::fs::write(&source, b"{}")
+            .map_err(|error| format!("write {} failed: {error}", source.display()))?;
+        let result = complete_repair_attempt(
+            &store,
+            &attempt_directory,
+            AttemptPublication {
+                root_argument: &root,
+                seam_id: "seam:sample",
+                repository_identity: pinned,
+                expected_repository_head: None,
+                created_unix_ms: 1,
+                repair_attempt_id: attempt_id,
+                sources: &[BeforeArtifactSource {
+                    role: "before_snapshot",
+                    path: &source,
+                }],
+                next_command_suffix: None,
+            },
+        );
+        let attempt_remaining = attempt_directory.exists();
+        std::fs::remove_dir_all(&root)
+            .map_err(|error| format!("remove {} failed: {error}", root.display()))?;
+        match result {
+            Err(error) if error.contains("moved during attempt publication") => {}
+            Err(error) => {
+                return Err(format!(
+                    "stale pin refused with unexpected error: {error:?}"
+                ));
+            }
+            Ok(_) => {
+                return Err(
+                    "complete_repair_attempt published over a stale pin after an A-B-A swap"
+                        .to_string(),
+                );
+            }
+        }
+        if attempt_remaining {
+            return Err("a refused publish left its attempt directory behind".to_string());
         }
         Ok(())
     }

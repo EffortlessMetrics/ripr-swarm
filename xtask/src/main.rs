@@ -61,6 +61,7 @@ mod python_judged_panel_report;
 mod repo_readiness;
 mod schema_pattern;
 mod types;
+mod work_portfolio;
 pub(crate) use types::*;
 mod reports;
 mod ripr_swarm;
