@@ -11,6 +11,7 @@ pub(crate) mod causal_projection;
 mod check;
 pub(crate) mod check_artifact;
 mod context;
+pub(crate) mod diff_source;
 mod explain;
 pub(crate) mod impacted_evidence;
 mod navigation;
@@ -317,6 +318,11 @@ pub struct CheckOutput {
     /// lower bound, and the result is never a gate, baseline, badge, or RIPR
     /// Zero input (`gate_eligibility: ineligible`).
     pub partial_scope: Option<crate::analysis::PartialDiffScope>,
+    /// The base and head a live-repository diff analyzed (ref and commits,
+    /// and whether the diff ended at `HEAD` or at the working tree), named in
+    /// every diff-scoped check header. `None` when the input was a diff file,
+    /// stdin, a candidate tree, or a repo-scope run.
+    pub(crate) analyzed_revisions: Option<crate::analysis::AnalyzedRevisions>,
 }
 
 /// Renders a previously computed [`CheckOutput`] in the requested format.

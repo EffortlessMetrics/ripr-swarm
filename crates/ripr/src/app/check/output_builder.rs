@@ -31,5 +31,6 @@ pub(super) fn check_output_from_analysis(
         unlinked_python_tests: None,
         suppression: None,
         partial_scope: analysis.partial_scope,
+        analyzed_revisions: analysis.analyzed_revisions,
     }
 }

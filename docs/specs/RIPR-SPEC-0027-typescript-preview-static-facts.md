@@ -184,34 +184,35 @@ Test discovery:
 
 Assertions / oracles the adapter must recognise:
 
-- `expect(actual).toBe(expected)` and `.toEqual` / `.toStrictEqual` →
+- `expect(actual).toBe(expected)` and `.toEqual` / `.toStrictEqual` â†’
   exact-value oracle
-- bare `expect(...).toThrow()` / `.rejects.toThrow()` → broad
+- bare `expect(...).toThrow()` / `.rejects.toThrow()` â†’ broad
   error-path oracle
 - literal `expect(...).toThrow("...")` / `.rejects.toThrow("...")`
-  and safe `.rejects.toMatchObject({ ... })` payloads → exact
+  and safe `.rejects.toMatchObject({ ... })` payloads â†’ exact
   error-variant oracle
-- `expect(...).resolves.toBe(...)` → async-aware exact-value oracle
+- `expect(...).resolves.toBe(...)` â†’ async-aware exact-value oracle
 - `expect(mockFn).toHaveBeenCalledWith(...)` and `toHaveBeenCalledTimes`
-  → side-effect/call oracle
-- `expect(...).toMatchSnapshot()` and `.toMatchInlineSnapshot()` →
-  snapshot oracle (weak / static-limited)
+  â†’ side-effect/call oracle
+- `expect(...).toMatchSnapshot()` and `.toMatchInlineSnapshot()` â†’
+  snapshot oracle (medium; never `exposed` by itself; static-limited by
+  `typescript_snapshot_discriminator_unresolved`)
 - bare `expect(actual).toBeTruthy()` / `toBeFalsy()` /
-  `toBeDefined()` → smoke oracle
+  `toBeDefined()` â†’ smoke oracle
 - assertion libraries reached through a binding the test file imports from
   `assert`, `node:assert`, `assert/strict`, `node:assert/strict`, or `chai`
   (ESM import, top-level `require(...)`, or `require('chai').expect`; #4547):
-  `assert.strictEqual` / `deepStrictEqual` → exact-value oracle; `equal` /
-  `deepEqual` → exact-value only in strict mode (bound from `assert/strict`,
+  `assert.strictEqual` / `deepStrictEqual` â†’ exact-value oracle; `equal` /
+  `deepEqual` â†’ exact-value only in strict mode (bound from `assert/strict`,
   `node:assert/strict`, or the `strict` export) and relational under legacy
   `node:assert`, whose `==` comparison is loose; chai `assert.equal` (loose
-  `==`) → relational and chai `assert.deepEqual` (strict deep equality) →
+  `==`) â†’ relational and chai `assert.deepEqual` (strict deep equality) â†’
   exact-value; `notStrictEqual` / `notDeepStrictEqual` / `notEqual` /
   `notDeepEqual` / `match`, `node:assert` `doesNotMatch`, and chai `notMatch`
-  / `include` / `notInclude` / `lengthOf` → relational; `ok`, chai `isTrue` /
+  / `include` / `notInclude` / `lengthOf` â†’ relational; `ok`, chai `isTrue` /
   `isFalse` / `isOk` / `isNotOk` / `isNull` / `isUndefined` / `isDefined`,
-  and the bare callable `assert(value)` → smoke; `throws` / `doesNotThrow`
-  and `node:assert` `rejects` / `doesNotReject` → broad error-path oracle. A
+  and the bare callable `assert(value)` â†’ smoke; `throws` / `doesNotThrow`
+  and `node:assert` `rejects` / `doesNotReject` â†’ broad error-path oracle. A
   method the bound API does not have (a chai-only method on `node:assert`, or
   the reverse) is not credited. A named method import (`strictEqual(a, b)`)
   maps the same way as the module it comes from. A binding re-declared in the
@@ -220,10 +221,10 @@ Assertions / oracles the adapter must recognise:
   parameter with that name is not read as an AVA / tape receiver either.
   chai
   `expect(x).to.equal(y)` / `.to.eql(y)` /
-  `.to.deep.equal(y)` → exact-value (relational under `.not`);
-  `.to.be.true` / `.false` / `.ok` / `.null` / `.undefined` → smoke;
-  `.to.throw(...)` → broad error; `.include` / `.contain` / `.match` /
-  `.above` / `.below` / `.lengthOf` → relational. The observed expression is
+  `.to.deep.equal(y)` â†’ exact-value (relational under `.not`);
+  `.to.be.true` / `.false` / `.ok` / `.null` / `.undefined` â†’ smoke;
+  `.to.throw(...)` â†’ broad error; `.include` / `.contain` / `.match` /
+  `.above` / `.below` / `.lengthOf` â†’ relational. The observed expression is
   the first (actual) argument. A same-named local helper and a Jest/Vitest
   `expect` are never read as these libraries, and unrecognised methods or
   chain words are not credited
@@ -370,7 +371,7 @@ boundary without changing the guards (#4104 E):
 - **Local-binding idiom**: a bare-local `observed_expression` whose single
   `const`/`let` initializer IS the owner call (`const result =
   applyDiscount(100); expect(result).toBe(90)`) witnesses through the
-  initializer's arguments — position, arity, standalone-literal, and
+  initializer's arguments â€” position, arity, standalone-literal, and
   anchoring guards unchanged. The declaration must be the binding visible at
   the assertion (the same lexical scope walk as the shadow guard: a
   top-level declaration binds the whole body; a declaration inside a nested
@@ -381,7 +382,7 @@ boundary without changing the guards (#4104 E):
   fail-closed.
 - **Operand shapes the comparison parser previously rejected**: `?.`
   normalizes to member access and `??` reads as the nullish boundary
-  comparison (quote-aware, so literal contents never normalize — and a
+  comparison (quote-aware, so literal contents never normalize â€” and a
   quoted `??` never arms the nullish-input path); a `yield <comparison>`
   tail classifies as a predicate and strips the keyword. For a nullish
   boundary the nullish input (`null`/`undefined`) at the left operand's read
@@ -393,9 +394,9 @@ boundary without changing the guards (#4104 E):
   single immutable integer module-level `const` in the owner's own module
   (the recorded owner span first, then the owner file through the workspace
   root; a same-name declaration at any non-top-level scope is a shadow the
-  changed read may observe, so resolution fails closed — the operand keeps
+  changed read may observe, so resolution fails closed â€” the operand keeps
   its name and the file-level fallback never runs), and an UPPER_CASE
-  argument resolves through the test body or — via the import record — a
+  argument resolves through the test body or â€” via the import record â€” a
   single such declaration in the owner's own module, mirroring the Rust
   `value_resolution::named_constant` strictness. `let`/`var`, computed
   initializers, repeated declarations, off-value constants, and constants
@@ -446,10 +447,11 @@ can show:
 - fixtures cover `*.ts`, `*.tsx`, `*.js`, and `*.jsx`; the modern ESM/CJS
   suffixes (`.mts`, `.cts`, `.mjs`, `.cjs`) are covered by adapter routing and
   module-identity tests, plus end-to-end `analyze_diff` discovery and
-  oracle-credit tests for `.mts` and `.cts` only — not by golden fixtures
+  oracle-credit tests for `.mts` and `.cts` only â€” not by golden fixtures
 - a fixture proving `async` `test`/`it` resolves and rejects classify
   correctly
-- a fixture proving snapshots are tagged as weak / static-limited
+- a fixture proving snapshots are tagged medium and static-limited and
+  never yield `exposed` by themselves
 - generated CI fixtures cover TypeScript preview output visible only
   when `[languages]` declares `typescript`
 - LSP protocol smoke covers a TypeScript seam diagnostic, hover, code
@@ -524,9 +526,9 @@ test('renders header', () => {
 
 Expected static evidence:
 
-- oracle: `snapshot` (weak)
-- finding records snapshot as a weak oracle with the existing snapshot
-  exposure class
+- oracle: `snapshot` (medium)
+- finding stays `weakly_exposed` and names
+  `typescript_snapshot_discriminator_unresolved`
 
 Dynamic dispatch limit:
 
@@ -553,7 +555,7 @@ export function loyaltyPrice(amount: number, years: number) {
   return amount;
 }
 
-// test/pricing.test.ts — never references loyaltyPrice
+// test/pricing.test.ts â€” never references loyaltyPrice
 import { discountedTotal } from "../src/pricing";
 it("no discount below threshold", () => {
   expect(discountedTotal(5000)).toBe(5000);
@@ -593,6 +595,13 @@ contract explicitly changes that boundary. `cargo xtask bun-ub-calibration`
 is an xtask-only operator report over the existing Bun calibration corpus; it
 does not promote TypeScript/JavaScript preview evidence or run TypeScript,
 JavaScript, Bun, mutation, provider, generated-test, or source-edit workflows.
+
+## Later Amendment
+
+RIPR-SPEC-0243 (2026-10-04) states the whole TypeScript oracle, reach and
+verdict chain. It corrects the snapshot strength in place above: the code
+reads `snapshot` / medium, not weak, matching the Rust chain. A snapshot
+still never yields `exposed` by itself, because only a strong oracle does.
 
 ## Metrics
 
