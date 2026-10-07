@@ -9,7 +9,7 @@
   "edit_kind": "behavior_preserving_rewrite",
   "behavior_family": "predicate_boolean",
   "test_shape": "helper_wrapped_assert",
-  "hard_case": "The helper's assert_eq! is refused by owner-pin admission (RIPR-SPEC-0197 rule 1, #6482); the `false == hidden` rewrite also reads propagation_unknown and static_unknown.",
+  "hard_case": "The assert_eq! lives in a local check_* helper and names the helper's parameter; RIPR-SPEC-0197 rule 7 admits it and RIPR-SPEC-0186 pairs it through the helper's call (#6482). The `false == hidden` rewrite's return_value twin still reads propagation_unknown.",
   "truth": {
     "state": "discriminated",
     "method": "runtime_mutant_kill",

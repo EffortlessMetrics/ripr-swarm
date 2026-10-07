@@ -3043,3 +3043,5 @@ mod second {\n    use super::weight;\n    macro_rules! assert_eq { ($a:expr, $b:
     lines.sort_unstable();
     assert_eq!(lines, [3, 9]);
 }
+
+mod helper_pins;

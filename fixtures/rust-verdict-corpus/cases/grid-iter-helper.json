@@ -9,7 +9,7 @@
   "edit_kind": "behavior_preserving_rewrite",
   "behavior_family": "closure_in_iterator_adaptor",
   "test_shape": "helper_wrapped_assert",
-  "hard_case": "The assert_eq! inside a local check_* helper is refused by owner-pin admission (RIPR-SPEC-0197 rule 1: not in the test's own body; #6482).",
+  "hard_case": "The helper's assert_eq! is admitted (RIPR-SPEC-0197 rule 7, #6482), but the boundary operand is the closure's `d`, which ripr cannot map to test inputs (infection_unknown), as in grid-iter-exact.",
   "truth": {
     "state": "discriminated",
     "method": "runtime_mutant_kill",

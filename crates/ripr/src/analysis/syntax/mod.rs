@@ -5,7 +5,7 @@ mod module_tree;
 mod nesting;
 mod owner_pin;
 pub(crate) use owner_pin::{
-    AssertionContextRefusal, MacroBindingKind, MacroBindingSite, OwnerPinAssertions,
+    AssertionContextRefusal, HelperLoan, MacroBindingKind, MacroBindingSite, OwnerPinAssertions,
     attribute_settles_test_outcome, empty_macro_binding_ambiguities, local_empty_macro_names,
     macro_binding_scan, owner_pin_assertions, returns_leave_the_function,
     trusted_macro_binding_sites,

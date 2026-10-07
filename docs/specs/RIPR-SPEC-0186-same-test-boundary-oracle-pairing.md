@@ -17,6 +17,8 @@ Linked issues:
 - #4828
 - #5027 (shared execution admission before pairing)
 - #6668 (argument must be the boundary literal, not merely contain it)
+- #6482 (an assertion borrowed from a test-local check helper pairs through
+  the helper's call)
 
 Linked PRs:
 
@@ -85,7 +87,32 @@ merely contains the literal does not pair, including `gate(if false { 10 } else
 { 50 })`, `gate(std::cmp::max(10, 50))`, and a bool-owner `assert!(gate(..))`
 pin of either shape (#6668). Those cases fall back to `same_test_pairing_missing`.
 
-Helper-call transfer, proximity-only oracle credit, and bare-name method
+An assertion RIPR-SPEC-0197 rule 7 borrows from a test-local check helper
+(#6482) names the helper's parameters, not the test's inputs:
+
+```rust
+fn check_pass(score: u32, want: bool) { assert_eq!(passes(score), want); }
+#[test] fn pass_mark() { check_pass(50, true); check_pass(49, false); }
+```
+
+It pairs when activation's `==` fact sits on the line of one of the test's
+calls to that helper, and every link from that call to the compared value is
+fixed:
+
+- the call is one the admission found on the test's eager path, and it is
+  the only call expression on its line, so the fact describes that call;
+- the helper's parameters are plain identifier patterns its body never
+  rebinds (no `mut`, `ref`, sub-pattern, or same-named `let`, closure
+  parameter or nested item);
+- the helper calls the owner exactly once, and that call is a whole compared
+  operand whose arguments are the helper's parameters passed unchanged
+  (`passes(score)`, not `passes(score + 1)` or `{ let score = 1;
+  passes(score) }`).
+
+The same owner-name defeats as an inline oracle apply. Anything else keeps
+`same_test_pairing_missing`.
+
+Other helper-call transfer, proximity-only oracle credit, and bare-name method
 relation are out of scope.
 
 ## Required Evidence
@@ -94,6 +121,12 @@ relation are out of scope.
   `same_test_pairing_missing` in the discriminate summary.
 - A control where one test does both (`assert_eq!(gate(10), true)`, and
   `fixtures/strong_boundary_oracle`) stays `exposed`.
+- Unit tests cover a borrowed check-helper assertion pairing through its
+  call, with a control that the same assertion without the loan does not,
+  and refusals for a fact on another line, a call outside the admission's
+  eager lone-line calls, unmappable parameters, a second owner call in the
+  helper, a computed, partial or block operand, and another function's call
+  on the line (#6482).
 - Unit tests cover split tests, same-call pairing, same-test split calls,
   same-line split calls, unused-argument literals, shadowed bindings,
   let-bound pairing including short names, buried-literal if-expression and
@@ -107,7 +140,8 @@ relation are out of scope.
 
 ## Non-Goals
 
-- No helper-call assertion credit (#4574, #4715).
+- No helper-call assertion credit beyond rule 7's borrowed assertions
+  (#4574, #4715, #6482).
 - No change to proximity-only oracle credit (#4486).
 - No change to bare-name method relation (#4760).
 - No runtime mutation vocabulary.
@@ -140,6 +174,7 @@ relation are out of scope.
 ## Test Mapping
 
 - `crates/ripr/src/analysis/classify/boundary_pairing.rs`
+- `crates/ripr/src/analysis/classify/owner_pin/tests/helper_pins.rs::the_loan_maps_only_plain_parameters_and_lone_eager_calls`
 - `fixtures/split_test_boundary_oracle`
 - `fixtures/predicate_boundary_oracle_refused`
 - `fixtures/predicate_boundary_oracle_admitted`
@@ -147,7 +182,10 @@ relation are out of scope.
 
 ## Implementation Mapping
 
-- `crates/ripr/src/analysis/classify/boundary_pairing.rs`: pairing authority.
+- `crates/ripr/src/analysis/classify/boundary_pairing.rs`: pairing authority,
+  including `loan_pairs_boundary_call` for borrowed check-helper assertions.
+- `crates/ripr/src/analysis/syntax/owner_pin.rs`: the `HelperLoan` facts
+  (helper, plain parameters, eager lone-line call lines) pairing reads.
 - `crates/ripr/src/analysis/classifier/evidence.rs`: apply the pairing gate
   before `exposed`.
 - `crates/ripr/src/analysis/classify/decision.rs`: missing evidence names the

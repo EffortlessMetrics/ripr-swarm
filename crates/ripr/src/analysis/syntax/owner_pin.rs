@@ -3,13 +3,15 @@
 //! Oracle extraction intentionally retains deferred assertions. This query
 //! admits only uniquely identified assertions on ordinary statement paths,
 //! optionally through one syntactically bound, directly invoked closure.
+//! A test may also borrow the `assert_eq!` of one test-local check helper it
+//! calls eagerly (#6482); see [`local_helper_assertions`].
 
 use super::parse_clean_source_file;
 use super::ra::{LineIndex, slice_macro_call_text, slice_text};
 use crate::analysis::facts::cfg_predicates::attribute_test_build_availability;
 use ra_ap_syntax::{
     AstNode, SyntaxNode, TextSize,
-    ast::{self, HasArgList, HasAttrs, HasName, HasVisibility},
+    ast::{self, HasArgList, HasAttrs, HasGenericArgs, HasGenericParams, HasName, HasVisibility},
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -31,6 +33,34 @@ struct FunctionAssertions {
     refusal: Option<AssertionContextRefusal>,
     assertions: BTreeMap<AssertionKey, Result<(), AssertionContextRefusal>>,
     macros: BTreeSet<String>,
+    /// Assertions of test-local check helpers this test calls on an eager
+    /// path (#6482).
+    helper_assertions: BTreeMap<AssertionKey, BorrowedAssertion>,
+}
+
+/// One assertion a test borrows from a check helper it calls.
+#[derive(Clone, Debug, Default)]
+struct BorrowedAssertion {
+    /// The macros the helper invokes; they must be unambiguous too.
+    macros: BTreeSet<String>,
+    loan: HelperLoan,
+}
+
+/// The check helper a test borrows an `assert_eq!` from (#6482), and the
+/// test's calls that lend it.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct HelperLoan {
+    /// The helper's name.
+    pub(crate) name: String,
+    /// The helper's text from `fn` to its closing brace.
+    pub(crate) helper: String,
+    /// The helper's parameter names, in order, when every parameter is a
+    /// plain identifier pattern (`score: u32`) that the helper's body never
+    /// rebinds; empty otherwise, so no argument can be mapped through it.
+    pub(crate) parameters: Vec<String>,
+    /// Lines of the test's calls to the helper that sit on its eager
+    /// statement path, each the only call expression on its line.
+    pub(crate) call_lines: Vec<usize>,
 }
 
 /// Why one `assert_eq!` invocation is not on an established execution path.
@@ -120,14 +150,40 @@ impl OwnerPinAssertions {
         if let Some(name) = facts.macros.intersection(ambiguous_macros).next() {
             return Some(AssertionContextRefusal::MacroBinding(name.clone()));
         }
-        match facts
-            .assertions
-            .get(&(assertion.0, assertion.1.to_string()))
-        {
+        let key = (assertion.0, assertion.1.to_string());
+        match facts.assertions.get(&key) {
             Some(Ok(())) => None,
             Some(Err(refusal)) => Some(refusal.clone()),
-            None => Some(AssertionContextRefusal::UnidentifiedTest),
+            None => match facts.helper_assertions.get(&key) {
+                Some(borrowed) => borrowed
+                    .macros
+                    .intersection(ambiguous_macros)
+                    .next()
+                    .map(|name| AssertionContextRefusal::MacroBinding(name.clone())),
+                None => Some(AssertionContextRefusal::UnidentifiedTest),
+            },
         }
+    }
+
+    /// The check helper `function` borrows `assertion` from (#6482), or
+    /// `None` when the assertion is the test's own or unknown. Callers ask
+    /// only after [`Self::refusal`] admitted the assertion.
+    pub(crate) fn helper_loan(
+        &self,
+        function: (usize, usize, &str),
+        assertion: (usize, &str),
+    ) -> Option<&HelperLoan> {
+        let facts = self
+            .functions
+            .get(&(function.0, function.1, function.2.to_string()))?;
+        let key = (assertion.0, assertion.1.to_string());
+        if facts.assertions.contains_key(&key) {
+            return None;
+        }
+        facts
+            .helper_assertions
+            .get(&key)
+            .map(|borrowed| &borrowed.loan)
     }
 }
 
@@ -867,6 +923,20 @@ pub(crate) fn owner_pin_assertions(source: &str, trusted: &[&str]) -> OwnerPinAs
             .or_insert(admitted);
     }
     let mut identities = BTreeMap::<FunctionKey, usize>::new();
+    let mut fn_names = BTreeMap::<String, Vec<ast::Fn>>::new();
+    for function in parse
+        .tree()
+        .syntax()
+        .descendants()
+        .filter_map(ast::Fn::cast)
+    {
+        if let Some(name) = function.name() {
+            fn_names
+                .entry(name.text().to_string())
+                .or_default()
+                .push(function);
+        }
+    }
     for function in parse
         .tree()
         .syntax()
@@ -910,12 +980,7 @@ pub(crate) fn owner_pin_assertions(source: &str, trusted: &[&str]) -> OwnerPinAs
         if let Some(refusal) = refusal {
             // Only test functions are queried (`#[test]`, `#[tokio::test]`);
             // a refused helper still counts toward duplicate detection.
-            if function.attrs().any(|attr| {
-                attr.path()
-                    .and_then(|path| path.segment())
-                    .and_then(|segment| segment.name_ref())
-                    .is_some_and(|name| name.text() == "test")
-            }) {
+            if is_test_function(&function) {
                 insert_function(
                     &mut result.functions,
                     key,
@@ -932,7 +997,7 @@ pub(crate) fn owner_pin_assertions(source: &str, trusted: &[&str]) -> OwnerPinAs
             token.text_range().start(),
             function.syntax().text_range().end(),
         );
-        let mut candidates = BTreeMap::<AssertionKey, Vec<ast::MacroCall>>::new();
+        let mut candidates = MacroCandidates::new();
         for call in function
             .syntax()
             .descendants()
@@ -983,20 +1048,19 @@ pub(crate) fn owner_pin_assertions(source: &str, trusted: &[&str]) -> OwnerPinAs
             })
             .map(|expression| expression.syntax().text_range().start())
             .min();
-        let assertions = candidates
-            .into_iter()
-            .map(|(key, calls)| {
-                // OracleFact has line/text, not an offset. No identical spelling
-                // on the same line may borrow another invocation's context.
-                let admitted = if calls.len() == 1 {
-                    eager_path(calls[0].syntax().clone(), &function, false, first_return)
-                        .map_err(AssertionContextRefusal::ConditionalPath)
-                } else {
-                    Err(AssertionContextRefusal::DuplicateSpelling)
-                };
-                (key, admitted)
-            })
-            .collect();
+        let assertions = admitted_assertions(candidates, &function, first_return);
+        let helper_assertions = if is_test_function(&function) {
+            local_helper_assertions(
+                &function,
+                first_return,
+                &fn_names,
+                (source, &lines),
+                trusted,
+                &empty_macros,
+            )
+        } else {
+            BTreeMap::new()
+        };
         insert_function(
             &mut result.functions,
             key,
@@ -1005,6 +1069,7 @@ pub(crate) fn owner_pin_assertions(source: &str, trusted: &[&str]) -> OwnerPinAs
                 refusal: None,
                 assertions,
                 macros,
+                helper_assertions,
             },
         );
     }
@@ -1012,6 +1077,273 @@ pub(crate) fn owner_pin_assertions(source: &str, trusted: &[&str]) -> OwnerPinAs
         .functions
         .retain(|key, _| identities.get(key) == Some(&1));
     result
+}
+
+/// `#[test]`, `#[tokio::test]` and other attributes whose last segment is
+/// `test`: the functions the admission is queried for.
+fn is_test_function(function: &ast::Fn) -> bool {
+    function.attrs().any(|attr| {
+        attr.path()
+            .and_then(|path| path.segment())
+            .and_then(|segment| segment.name_ref())
+            .is_some_and(|name| name.text() == "test")
+    })
+}
+
+type MacroCandidates = BTreeMap<AssertionKey, Vec<ast::MacroCall>>;
+
+/// Each candidate's admission: unique at its coordinate and on an eager
+/// statement path of `function`.
+fn admitted_assertions(
+    candidates: MacroCandidates,
+    function: &ast::Fn,
+    first_return: Option<TextSize>,
+) -> BTreeMap<AssertionKey, Result<(), AssertionContextRefusal>> {
+    candidates
+        .into_iter()
+        .map(|(key, calls)| {
+            // OracleFact has line/text, not an offset. No identical spelling
+            // on the same line may borrow another invocation's context.
+            let admitted = if calls.len() == 1 {
+                eager_path(calls[0].syntax().clone(), function, false, first_return)
+                    .map_err(AssertionContextRefusal::ConditionalPath)
+            } else {
+                Err(AssertionContextRefusal::DuplicateSpelling)
+            };
+            (key, admitted)
+        })
+        .collect()
+}
+
+/// Assertions a test borrows from test-local check helpers (#6482):
+///
+/// ```text
+/// fn check_tip(bill: u64, tip: u64, want: u64) { assert_eq!(with_tip(bill, tip), want); }
+/// #[test]
+/// fn tip_is_added() { check_tip(40, 6, 46); }
+/// ```
+///
+/// The same execution argument as for the test's own assertions, applied
+/// across exactly one call: the test calls the helper as a bare
+/// single-segment function on its own eager statement path, the call can
+/// only name that helper, and the `assert_eq!` sits on the helper's eager
+/// path. Every condition fails closed:
+///
+/// - the name is defined by exactly one `fn` anywhere in the file, and that
+///   `fn` is a direct item of the test's own module (a module item cannot
+///   coexist with a same-named import and wins over a glob);
+/// - the test binds or imports nothing of that name: no pattern, parameter,
+///   nested item or `use` item anywhere in its body;
+/// - the helper is a plain function: no attributes other than
+///   `#[track_caller]`, no generics or `where` clause, not `async`, `const`
+///   or `unsafe`, no `self` parameter, no return type, and no `return` or `?`
+///   in its body, so the assertion cannot be skipped by an early exit;
+/// - the helper passes the test's own escape gate (only trusted macros, no
+///   closure exits or `yield`) and its supported item context.
+///
+/// A call inside a loop, branch, argument, deferred closure or macro
+/// operand is not eager, so it lends nothing.
+fn local_helper_assertions(
+    test: &ast::Fn,
+    first_return: Option<TextSize>,
+    fn_names: &BTreeMap<String, Vec<ast::Fn>>,
+    (source, lines): (&str, &LineIndex),
+    trusted: &[&str],
+    empty_macros: &BTreeMap<String, ast::MacroRules>,
+) -> BTreeMap<AssertionKey, BorrowedAssertion> {
+    let mut borrowed = BTreeMap::new();
+    let Some(module) = test.syntax().parent() else {
+        return borrowed;
+    };
+    // A `use` anywhere in the test may import a same-named function over
+    // the module's helper.
+    if test
+        .syntax()
+        .descendants()
+        .any(|node| ast::Use::can_cast(node.kind()))
+    {
+        return borrowed;
+    }
+    let bound: BTreeSet<String> = test
+        .syntax()
+        .descendants()
+        .filter_map(ast::Name::cast)
+        .map(|name| name.text().to_string())
+        .collect();
+    let mut called = BTreeMap::<String, Vec<usize>>::new();
+    let mut calls_per_line = BTreeMap::<usize, usize>::new();
+    // Method calls and macro invocations count too: a macro's operand is
+    // an unparsed token tree that may hold another call.
+    for node in test.syntax().descendants().filter(|node| {
+        ast::CallExpr::can_cast(node.kind())
+            || ast::MethodCallExpr::can_cast(node.kind())
+            || ast::MacroCall::can_cast(node.kind())
+    }) {
+        *calls_per_line
+            .entry(lines.line(node.text_range().start()))
+            .or_default() += 1;
+    }
+    for call in test.syntax().descendants().filter_map(ast::CallExpr::cast) {
+        let Some(ast::Expr::PathExpr(callee)) = call.expr() else {
+            continue;
+        };
+        let Some(path) = callee.path() else {
+            continue;
+        };
+        let Some(segment) = path.segment() else {
+            continue;
+        };
+        let Some(ast::PathSegmentKind::Name(name)) = segment.kind() else {
+            continue;
+        };
+        if path.qualifier().is_some() || segment.generic_arg_list().is_some() {
+            continue;
+        }
+        let name = name.text().to_string();
+        if !bound.contains(&name)
+            && eager_path(call.syntax().clone(), test, false, first_return).is_ok()
+        {
+            let line = lines.line(call.syntax().text_range().start());
+            let lines_of_name = called.entry(name).or_default();
+            // A line holding another call cannot say which call an
+            // activation fact on it describes.
+            if calls_per_line.get(&line) == Some(&1)
+                && lines.line(call.syntax().text_range().end()) == line
+            {
+                lines_of_name.push(line);
+            }
+        }
+    }
+    for (name, call_lines) in called {
+        let Some([helper]) = fn_names.get(&name).map(Vec::as_slice) else {
+            continue;
+        };
+        if helper.syntax() == test.syntax()
+            || helper.syntax().parent().as_ref() != Some(&module)
+            || !plain_check_helper(helper, trusted, empty_macros)
+        {
+            continue;
+        }
+        let Some(token) = helper.fn_token() else {
+            continue;
+        };
+        let macros: BTreeSet<String> = helper
+            .syntax()
+            .descendants()
+            .filter_map(ast::MacroCall::cast)
+            .filter_map(|call| call.path())
+            .map(|path| path.syntax().text().to_string())
+            .collect();
+        let text = slice_text(
+            source,
+            token.text_range().start(),
+            helper.syntax().text_range().end(),
+        );
+        let mut candidates = MacroCandidates::new();
+        for call in helper
+            .syntax()
+            .descendants()
+            .filter_map(ast::MacroCall::cast)
+        {
+            if call
+                .path()
+                .is_none_or(|path| path.syntax().text() != "assert_eq")
+            {
+                continue;
+            }
+            let range = call.syntax().text_range();
+            candidates
+                .entry((
+                    lines.line(range.start()),
+                    slice_macro_call_text(source, range.start(), range.end()),
+                ))
+                .or_default()
+                .push(call);
+        }
+        let loan = HelperLoan {
+            name: name.clone(),
+            helper: text,
+            parameters: plain_parameter_names(helper),
+            call_lines,
+        };
+        for (key, admitted) in admitted_assertions(candidates, helper, None) {
+            if admitted.is_ok() {
+                borrowed.insert(
+                    key,
+                    BorrowedAssertion {
+                        macros: macros.clone(),
+                        loan: loan.clone(),
+                    },
+                );
+            }
+        }
+    }
+    borrowed
+}
+
+/// `helper`'s parameter names in order, or none when any parameter is not
+/// a plain identifier pattern (`(a, b): (u32, u32)`, `mut x`, `ref x`) or a
+/// name repeats.
+fn plain_parameter_names(helper: &ast::Fn) -> Vec<String> {
+    let Some(params) = helper.param_list() else {
+        return Vec::new();
+    };
+    let mut names = Vec::new();
+    for param in params.params() {
+        let Some(ast::Pat::IdentPat(pattern)) = param.pat() else {
+            return Vec::new();
+        };
+        if pattern.mut_token().is_some() || pattern.ref_token().is_some() || pattern.pat().is_some()
+        {
+            return Vec::new();
+        }
+        let Some(name) = pattern.name() else {
+            return Vec::new();
+        };
+        let name = name.text().to_string();
+        if names.contains(&name) {
+            return Vec::new();
+        }
+        names.push(name);
+    }
+    // A `let`, pattern, closure parameter or nested item of the same name
+    // in the body may rebind a parameter before the assertion reads it.
+    let rebound = helper.body().is_some_and(|body| {
+        body.syntax()
+            .descendants()
+            .filter_map(ast::Name::cast)
+            .any(|name| names.iter().any(|param| name.text() == param.as_str()))
+    });
+    if rebound { Vec::new() } else { names }
+}
+
+/// A helper whose body runs to its end on every call: see
+/// [`local_helper_assertions`].
+fn plain_check_helper(
+    helper: &ast::Fn,
+    trusted: &[&str],
+    empty_macros: &BTreeMap<String, ast::MacroRules>,
+) -> bool {
+    let Some(body) = helper.body() else {
+        return false;
+    };
+    helper
+        .attrs()
+        .all(|attr| attr.simple_name().as_deref() == Some("track_caller"))
+        && helper.generic_param_list().is_none()
+        && helper.where_clause().is_none()
+        && helper.async_token().is_none()
+        && helper.const_token().is_none()
+        && helper.unsafe_token().is_none()
+        && helper.ret_type().is_none()
+        && helper
+            .param_list()
+            .is_some_and(|params| params.self_param().is_none())
+        && !body.syntax().descendants().any(|node| {
+            ast::ReturnExpr::can_cast(node.kind()) || ast::TryExpr::can_cast(node.kind())
+        })
+        && has_escape(body.syntax(), trusted, empty_macros).is_none()
+        && supported_item_context(helper.syntax())
 }
 
 /// Duplicate function identities are ambiguous: the second insert refuses

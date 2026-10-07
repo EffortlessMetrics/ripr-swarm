@@ -3,11 +3,12 @@ use crate::analysis::classify::{
     OwnerReturnPin, ProbeContext, PropagationWitnessV1, ReturnOracleAdmission,
     TransitiveReachIndex, activation_and_boundary_input, body_contains_owner_call,
     callee_is_unique, classify, confidence_score, contains_as_whole_word, current_path_witness,
-    has_same_test_boundary_oracle_pairing, infection_evidence_with_boundary_input,
-    local_flow_sinks, oracle_crediting_relations, owner_may_be_reached_unseen, package_prefix,
-    propagation_evidence_with_witness, reach_evidence, reveal_outcome,
-    same_test_pairing_missing_summary,
+    has_same_test_boundary_oracle_pairing, helper_pins_owner_call,
+    infection_evidence_with_boundary_input, local_flow_sinks, oracle_crediting_relations,
+    owner_may_be_reached_unseen, package_prefix, propagation_evidence_with_witness, reach_evidence,
+    reveal_outcome, same_test_pairing_missing_summary,
 };
+use crate::analysis::extract::mask_comments_and_strings;
 use crate::analysis::facts::{FunctionSummary, OracleFact, TestSummary};
 use crate::domain::*;
 use std::cell::RefCell;
@@ -306,6 +307,25 @@ impl ClassifiedProbeEvidence {
                                 && !cross_package_defeats(test, &owner.name)
                         })
                         && owner_pin_admits(test, assertion)
+                },
+                // #6482: a check helper's borrowed assertion, under the
+                // same name defeats as an inline one and the owner pin's
+                // helper identity gates: the helper binds the owner's name
+                // nowhere and the test never names it.
+                &|test, assertion| {
+                    let owner = context.owner_fn.filter(|owner| {
+                        !import_defeats(test, &owner.name)
+                            && !cross_package_defeats(test, &owner.name)
+                    })?;
+                    pin_syntax
+                        .helper_loan(test, assertion, context.index)
+                        .filter(|loan| {
+                            helper_pins_owner_call(
+                                &loan.helper,
+                                &mask_comments_and_strings(&test.body),
+                                &owner.name,
+                            )
+                        })
                 },
             ) {
             StageEvidence::new(
