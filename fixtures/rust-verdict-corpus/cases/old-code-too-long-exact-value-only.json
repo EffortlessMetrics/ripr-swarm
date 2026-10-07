@@ -18,6 +18,7 @@
     "mutants": [
       {
         "replacement": "return Err(CodeError::NotDigit);",
+        "mutated_line": null,
         "outcome": "tests_passed",
         "failing_test": null,
         "equivalence_review": "not equivalent: a five-digit code reports NotDigit instead of TooLong"

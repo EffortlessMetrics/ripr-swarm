@@ -18,6 +18,7 @@
     "mutants": [
       {
         "replacement": "41",
+        "mutated_line": null,
         "outcome": "tests_passed",
         "failing_test": null,
         "equivalence_review": "not equivalent: the banner is 41 characters wide"

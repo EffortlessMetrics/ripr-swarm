@@ -18,6 +18,7 @@
     "mutants": [
       {
         "replacement": "6",
+        "mutated_line": null,
         "outcome": "tests_passed",
         "failing_test": null,
         "equivalence_review": "not equivalent: meter's Meter ticks 6"

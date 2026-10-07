@@ -18,6 +18,7 @@
     "mutants": [
       {
         "replacement": "let fee = amount / 50;",
+        "mutated_line": null,
         "outcome": "tests_passed",
         "failing_test": null,
         "equivalence_review": "not equivalent: the sent amount carries a two percent fee instead of one"

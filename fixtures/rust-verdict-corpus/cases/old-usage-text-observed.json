@@ -18,6 +18,7 @@
     "mutants": [
       {
         "replacement": "pub const USAGE: &str = \"usage: tally [--format json] FILE\";",
+        "mutated_line": null,
         "outcome": "tests_failed",
         "failing_test": "help::tests::help_mentions_json",
         "equivalence_review": "not equivalent: the usage text no longer contains --json"

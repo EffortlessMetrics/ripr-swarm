@@ -18,6 +18,7 @@
     "mutants": [
       {
         "replacement": "RetryBuilder { attempts: 4, delay_ms: 100 }",
+        "mutated_line": null,
         "outcome": "tests_passed",
         "failing_test": null,
         "equivalence_review": "not equivalent: a default builder retries four times instead of three"
