@@ -385,7 +385,7 @@ impl ClassifiedProbeEvidence {
                 &context.probe.expression,
                 &owner.name,
                 owner.body.as_str(),
-                &test_summaries,
+                &context.related_tests,
             ) {
             StageEvidence::new(StageState::Weak, Confidence::Medium, pin.summary())
         } else {

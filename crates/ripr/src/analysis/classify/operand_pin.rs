@@ -9,7 +9,7 @@
 //! discriminate the change.
 
 use super::super::rust_index::TestSummary;
-use crate::domain::OracleKind;
+use crate::domain::{OracleKind, RelationReason};
 
 /// Token carried in the discriminate summary when [`operand_only_pin`] holds.
 pub(in crate::analysis) const FIELD_PINNED_EQUAL_TO_OPERAND: &str = "field_pinned_equal_to_operand";
@@ -49,12 +49,12 @@ pub(in crate::analysis) fn operand_only_pin(
     expression: &str,
     owner_name: &str,
     owner_body: &str,
-    tests: &[&TestSummary],
+    tests: &[(&TestSummary, RelationReason)],
 ) -> Option<OperandOnlyPin> {
     let (field, left, right) = binary_field_initializer(expression)?;
     let siblings = sibling_initializers(owner_body, expression)?;
     let mut tested = Vec::new();
-    for test in tests {
+    for (test, reason) in tests {
         let pins = exact_field_pins(test);
         let field_pins = pins
             .iter()
@@ -72,20 +72,43 @@ pub(in crate::analysis) fn operand_only_pin(
         if field_pins.is_empty() {
             // A test that runs the owner and asserts without naming the field
             // may still observe it: whole-struct equality, a snapshot, or a
-            // helper (`assert_quote(&q, 1_499)`).
-            let calls_owner = whole_word_count(test.body.as_str(), owner_name) > 0
+            // helper (`assert_quote(&q, 1_499)`), including a helper that
+            // calls the owner for it (`assert_eq!(make_quote(), expected)`).
+            let reaches_owner = matches!(
+                reason,
+                RelationReason::DirectOwnerCall | RelationReason::HelperOwnerCall
+            ) || whole_word_count(test.body.as_str(), owner_name) > 0
                 || test
                     .assertions
                     .iter()
                     .any(|assertion| whole_word_count(&assertion.text, owner_name) > 0);
-            if calls_owner && !test.assertions.is_empty() {
+            if reaches_owner && !test.assertions.is_empty() {
                 return None;
             }
             continue;
         }
+        // A pin under a condition, a loop, a closure or after an early exit
+        // may never run (`if false { assert_eq!(q.subtotal_cents, 9_000) }`),
+        // so a pinning test with any such construct is not read.
+        if has_control_flow(test.body.as_str()) {
+            return None;
+        }
         if field_pins.iter().any(|(receiver, _, _)| {
             !bound_once_from_owner_call(test.body.as_str(), receiver, owner_name)
         }) {
+            return None;
+        }
+        // The same test may also observe the whole result beside its pins
+        // (`assert_eq!(q, expected_quote())`, `assert!(q.is_valid())`), which
+        // can see the operand the pins leave out. A plain read of another
+        // field (`assert_eq!(q.tier, Tier::Gold)`) cannot.
+        let whole_result_check = test.assertions.iter().any(|assertion| {
+            whole_word_count(&assertion.text, owner_name) > 0
+                || field_pins
+                    .iter()
+                    .any(|(receiver, _, _)| uses_more_than_field_reads(&assertion.text, receiver))
+        });
+        if whole_result_check {
             return None;
         }
         tested.push((
@@ -277,6 +300,28 @@ fn whole_word_count(text: &str, word: &str) -> usize {
         .count()
 }
 
+/// Whether `text` uses `receiver` other than as a plain field read
+/// (`q.total_cents`): the whole value, a method call, or a reference.
+fn uses_more_than_field_reads(text: &str, receiver: &str) -> bool {
+    let is_ident = |ch: char| ch.is_ascii_alphanumeric() || ch == '_';
+    text.match_indices(receiver).any(|(at, _)| {
+        if text[..at].chars().next_back().is_some_and(is_ident) {
+            return false;
+        }
+        let rest = &text[at + receiver.len()..];
+        if rest.chars().next().is_some_and(is_ident) {
+            return false;
+        }
+        let Some(after_dot) = rest.strip_prefix('.') else {
+            return true;
+        };
+        let name_len = after_dot
+            .find(|ch: char| !is_ident(ch))
+            .unwrap_or(after_dot.len());
+        name_len == 0 || after_dot[name_len..].trim_start().starts_with(['(', ':'])
+    })
+}
+
 /// `q.total_cents` -> `("q", "total_cents")`.
 fn field_read(text: &str) -> Option<(&str, &str)> {
     let (receiver, field) = text.trim().split_once('.')?;
@@ -302,6 +347,18 @@ fn bound_once_from_owner_call(body: &str, receiver: &str, owner_name: &str) -> b
     };
     let callee = value.trim().split('(').next().unwrap_or_default().trim();
     callee == owner_name || callee.rsplit("::").next() == Some(owner_name)
+}
+
+/// Whether `body` holds a construct that may skip or repeat a statement:
+/// a condition, a match, a loop, a closure, an early exit or `?`. Comments
+/// and strings count too, which only refuses more.
+fn has_control_flow(body: &str) -> bool {
+    [
+        "if", "match", "for", "while", "loop", "return", "break", "continue",
+    ]
+    .iter()
+    .any(|word| whole_word_count(body, word) > 0)
+        || body.contains(['?', '|'])
 }
 
 fn is_identifier(text: &str) -> bool {
@@ -357,7 +414,10 @@ mod tests {
     }
 
     fn pin(tests: &[TestSummary]) -> Option<OperandOnlyPin> {
-        let refs = tests.iter().collect::<Vec<_>>();
+        let refs = tests
+            .iter()
+            .map(|test| (test, RelationReason::DirectOwnerCall))
+            .collect::<Vec<_>>();
         operand_only_pin("total_cents: subtotal + shipping", "quote", OWNER, &refs)
     }
 
@@ -521,7 +581,86 @@ mod tests {
         let unrelated = test_with(&["assert_eq!(discounted(10_000), 9_000);"]);
 
         assert_eq!(pin(&[paired.clone(), whole]), None);
-        assert!(pin(&[paired, unrelated]).is_some());
+        assert!(
+            operand_only_pin(
+                "total_cents: subtotal + shipping",
+                "quote",
+                OWNER,
+                &[
+                    (&paired, RelationReason::DirectOwnerCall),
+                    (&unrelated, RelationReason::SameModule),
+                ],
+            )
+            .is_some()
+        );
+    }
+
+    /// Codex review of #7084: a sibling pin that may not run cannot show
+    /// the field equals the operand.
+    #[test]
+    fn a_conditional_sibling_pin_keeps_the_credit() {
+        let found = pin(&[test_with(&[
+            "let q = quote(1_000, 1);",
+            "assert_eq!(q.total_cents, 1_499);",
+            "if false { assert_eq!(q.subtotal_cents, 1_499); }",
+        ])]);
+
+        assert_eq!(found, None);
+    }
+
+    /// Codex review of #7084: a test related through a helper that calls
+    /// the owner may check the whole result without naming the owner; one
+    /// related only through proximity does not block the rule.
+    #[test]
+    fn a_helper_related_whole_result_check_keeps_the_credit() {
+        let paired = test_with(&[
+            "let q = quote(2_500, 4);",
+            "assert_eq!(q.subtotal_cents, 9_000);",
+            "assert_eq!(q.total_cents, 9_000);",
+        ]);
+        let through_helper = test_with(&["assert_eq!(make_quote(), expected());"]);
+        let check = |reason| {
+            operand_only_pin(
+                "total_cents: subtotal + shipping",
+                "quote",
+                OWNER,
+                &[
+                    (&paired, RelationReason::DirectOwnerCall),
+                    (&through_helper, reason),
+                ],
+            )
+        };
+
+        assert_eq!(check(RelationReason::HelperOwnerCall), None);
+        assert!(check(RelationReason::SameModule).is_some());
+    }
+
+    /// CodeRabbit review of #7084: the pinning test itself may also check
+    /// the whole result, which sees the operand the pins leave out.
+    #[test]
+    fn a_pinning_test_that_also_checks_the_whole_result_keeps_the_credit() {
+        let found = pin(&[test_with(&[
+            "let q = quote(2_500, 4);",
+            "assert_eq!(q.subtotal_cents, 9_000);",
+            "assert_eq!(q.total_cents, 9_000);",
+            "assert_eq!(q, expected_quote());",
+        ])]);
+        let method = pin(&[test_with(&[
+            "let q = quote(2_500, 4);",
+            "assert_eq!(q.subtotal_cents, 9_000);",
+            "assert_eq!(q.total_cents, 9_000);",
+            "assert!(q.is_consistent());",
+        ])]);
+        let other_field = pin(&[test_with(&[
+            "let q = quote(2_500, 4);",
+            "assert_eq!(q.tier, Tier::Gold);",
+            "assert_eq!(q.subtotal_cents, 9_000);",
+            "assert_eq!(q.total_cents, 9_000);",
+        ])]);
+
+        assert_eq!(found, None);
+        assert_eq!(method, None);
+        assert!(other_field.is_some());
     }
 
     #[test]
