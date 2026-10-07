@@ -287,6 +287,7 @@ preview-language findings as review comments, build a gap decision ledger
 from the diff-scoped check output and pass it explicitly:
 
 ```bash
+mkdir -p target/ripr/reports target/ripr/review
 ripr check --base <pr-base> --json > target/ripr/reports/check-output.json
 ripr reports gap-ledger --check-output target/ripr/reports/check-output.json --root . --out target/ripr/reports/gap-decision-ledger.json
 ripr review-comments --base <pr-base> --head <pr-head> --root . --gap-ledger target/ripr/reports/gap-decision-ledger.json --out target/ripr/review/comments.json

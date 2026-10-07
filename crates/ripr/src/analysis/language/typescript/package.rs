@@ -583,17 +583,22 @@ fn detect_framework_signals(pkg_json: &str) -> Vec<TsFramework> {
     // `scripts.test` (e.g. "node test/pricing.test.mjs") contains NEITHER
     // marker, which used to cap such workspaces at unresolved detection even
     // though the suite is real and runnable (#6826). The direct form is only
-    // credited when no other framework signal matched — it is weaker evidence
-    // than a runner dependency or an explicit framework invocation, and never
-    // a reason to report an already-detected framework as ambiguous.
+    // credited when no other framework signal matched and no explicit `bun`
+    // script marker exists — it is weaker evidence than an explicit framework
+    // invocation (an explicit `bun test` must win over a node bootstrap
+    // invocation appearing earlier in a composite script), and never a reason
+    // to report an already-detected framework as ambiguous.
+    let has_bun_script_marker = test_script.contains("bun test") || test_script.starts_with("bun ");
     if test_script.contains("node --test")
         || test_script.contains("node:test")
-        || (signals.is_empty() && node_script_targets_test_file(&test_script))
+        || (signals.is_empty()
+            && !has_bun_script_marker
+            && node_script_targets_test_file(&test_script))
     {
         push_framework_signal(&mut signals, TsFramework::NodeTest);
     }
     // "bun test" pattern (script-only; dep signal already caught bun-types above)
-    if test_script.contains("bun test") || test_script.starts_with("bun ") {
+    if has_bun_script_marker {
         push_framework_signal(&mut signals, TsFramework::Bun);
     }
     signals
@@ -607,8 +612,10 @@ fn detect_framework_signals(pkg_json: &str) -> Vec<TsFramework> {
 /// basename carrying a `.test.`/`.spec.` infix before a JS/TS extension, or a
 /// path through a conventional test directory (`test`, `tests`, `__tests__`) —
 /// for example `node test/pricing.test.mjs` or
-/// `node --experimental-strip-types test/foo.ts` (#6826). A `node` invocation
-/// whose entry argument is not test-shaped (`node server.js`,
+/// `node --experimental-strip-types test/foo.ts` (#6826). Every `node`
+/// invocation in a composite script is inspected (`node scripts/setup.js &&
+/// node test/pricing.test.mjs` resolves), while a node invocation whose entry
+/// argument is not test-shaped (`node server.js`,
 /// `node scripts/generate-fixtures.js`) stays unmatched, so a plain node
 /// script in `scripts.test` is never guessed into a `node:test` framework.
 /// `ts-node`/`tsx` are separate binaries and are not credited; this evidence
@@ -620,13 +627,17 @@ fn node_script_targets_test_file(test_script: &str) -> bool {
             continue;
         }
         // The first positional argument after the binary is node's entry
-        // point; anything else (a non-test entry, or no argument at all) does
-        // not evidence a node:test suite.
+        // point. A non-test entry (or no argument at all) does not evidence a
+        // node:test suite for THIS invocation, but a composite script may
+        // invoke node again, so keep scanning the remaining tokens.
         for arg in tokens.by_ref() {
             if arg.starts_with('-') {
                 continue;
             }
-            return script_token_names_test_file(arg);
+            if script_token_names_test_file(arg) {
+                return true;
+            }
+            break;
         }
     }
     false
@@ -1162,6 +1173,35 @@ mod tests {
         let pkg = r#"{"scripts":{"test":"mocha test/foo.spec.js"}}"#;
         let signals = detect_framework_signals(pkg);
         assert_eq!(signals, vec![TsFramework::Mocha]);
+    }
+
+    #[test]
+    fn detect_framework_explicit_bun_marker_beats_direct_node_bootstrap() {
+        // `node tests/setup.mjs && bun test`: the explicit `bun test` marker
+        // is the workspace's declared runner and must win over the weaker
+        // direct-node form appearing earlier in the composite script, so the
+        // verify command is a bun command, not `node --test` (#7041 review).
+        for script in [
+            "node tests/setup.mjs && bun test",
+            "bun test && node tests/setup.js",
+        ] {
+            let pkg = format!(r#"{{"scripts":{{"test":"{script}"}}}}"#);
+            let signals = detect_framework_signals(&pkg);
+            assert_eq!(
+                signals,
+                vec![TsFramework::Bun],
+                "explicit bun marker must beat the direct node bootstrap in {script:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn detect_framework_node_direct_test_file_after_non_test_invocation() {
+        // A composite script may bootstrap through node before invoking node
+        // on the suite file: every node invocation is inspected, so the second
+        // one still resolves node:test (#7041 review).
+        let pkg = r#"{"scripts":{"test":"node scripts/setup.js && node test/pricing.test.mjs"}}"#;
+        assert_eq!(detect_framework(pkg), Some(TsFramework::NodeTest));
     }
 
     #[test]
