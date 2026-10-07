@@ -1,0 +1,22 @@
+{
+  "case_id": "trap-scale-message-only",
+  "subject_id": "authored-trap-kit",
+  "origin": "authored",
+  "anchor": "src/notices.rs:6",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "owner_only_in_assert_message",
+  "hard_case": true,
+  "truth": "not_discriminated",
+  "ideal_verdict": "gap",
+  "observed_verdict": "gap",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "weakly_exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

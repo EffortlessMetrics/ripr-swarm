@@ -1,0 +1,13 @@
+diff --git a/src/bin/tool.rs b/src/bin/tool.rs
+index 294b005..5ec0ae1 100644
+--- a/src/bin/tool.rs
++++ b/src/bin/tool.rs
+@@ -1,7 +1,7 @@
+ //! A small binary whose behavior is tested only through a subprocess.
+ 
+ fn render(n: u32) -> String {
+-    format!("{}", n * 2)
++    format!("{}", 2 * n)
+ }
+ 
+ fn label(n: u32) -> String {

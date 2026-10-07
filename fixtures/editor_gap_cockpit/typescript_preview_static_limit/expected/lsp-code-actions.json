@@ -22,9 +22,9 @@
             "related_test": "src/pricing.test.ts::applies_discount_from_client"
           },
           "verification_commands": [
-            "ripr agent verify --root . --json"
+            "ripr agent verify --root <root> --json"
           ],
-          "receipt_command": "ripr agent receipt --root . --json",
+          "receipt_command": "ripr agent receipt --root <root> --json",
           "limits_note": "Static limit: mocked_module. Static evidence only; no runtime adequacy claim."
         }
       ]

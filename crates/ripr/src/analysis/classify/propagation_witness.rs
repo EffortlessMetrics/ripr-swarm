@@ -122,19 +122,50 @@ pub(in crate::analysis) fn current_path_witness(
     flow_sinks: &[FlowSinkFact],
 ) -> Option<PropagationWitnessV1> {
     let owner = probe.owner.clone()?;
+    // #6695: a statement-level `.ok_or(Type::Variant)?` returns exactly
+    // `Err(Type::Variant)` from the owner. The flow producer emits that sink
+    // only after confirming the `?` returns from the owner itself, so an
+    // equal sink identity is an established error edge (the closure in
+    // `ok_or_else(|| Type::Variant)` is the argument's own constant thunk,
+    // not an opaque path).
+    // Only when the line has no literal `Err(..)` construction: flow emits the
+    // owner-checked `ok_or?` sink exactly then. A line holding both
+    // (`x.map(|_| Err(E::V)).ok_or(E::V)?`) gets the unchecked
+    // `result_error_text` sink with the same text, which must not borrow the
+    // bypass (PR #6786 review).
+    let question_mark_sink = (matches!(probe.family, ProbeFamily::ErrorPath)
+        && super::text::exact_error_variant(&probe.expression).is_none())
+    .then(|| super::text::question_mark_error_variant(&probe.expression))
+    .flatten()
+    .map(|variant| format!("Result::Err({variant})"));
+    let is_question_mark_sink = |sink: &FlowSinkFact| {
+        sink.kind == FlowSinkKind::ErrorVariant
+            && question_mark_sink.as_deref() == Some(normalize_semantic_text(&sink.text).as_str())
+    };
     let sink = flow_sinks.iter().find(|sink| {
         sink.owner.as_ref() == Some(&owner)
             && sink.kind != FlowSinkKind::Unknown
             && family_accepts_sink(&probe.family, &sink.kind)
-            && source_sink_tokens_overlap(&probe.expression, &sink.text)
-            && !opaque_path_text(&probe.expression)
-            && !opaque_path_text(&sink.text)
+            // A line the strict `ok_or?` reader parses completes only through
+            // the owner-checked sink. When flow refused that sink (a closure,
+            // a converting owner error type), its fallback text sink must not
+            // complete through the generic identity rule (PR #6786 review,
+            // CodeRabbit).
+            && (is_question_mark_sink(sink)
+                || (question_mark_sink.is_none()
+                    && source_sink_tokens_overlap(&probe.expression, &sink.text)
+                    && !opaque_path_text(&probe.expression)
+                    && !opaque_path_text(&sink.text)))
     })?;
 
     let edge_kind = edge_kind_for_sink(&sink.kind)?;
     let source_identity = normalize_semantic_text(&probe.expression);
     let sink_identity = normalize_semantic_text(&sink.text);
-    let edge_status = edge_status_for_kind(&edge_kind, &source_identity, &sink_identity);
+    let edge_status = if is_question_mark_sink(sink) {
+        EdgeStatus::Established
+    } else {
+        edge_status_for_kind(&edge_kind, &source_identity, &sink_identity)
+    };
     let collection_direct = is_direct_collection_state_write(probe, sink);
     let completeness = if collection_direct && edge_status == EdgeStatus::Established {
         PathCompleteness::Complete
@@ -234,7 +265,8 @@ fn direct_return_identity(text: &str) -> Option<String> {
 
 fn canonical_error_identity(text: &str) -> String {
     let normalized_text = normalize_semantic_text(text);
-    let normalized = normalized_text.trim_start_matches("return ");
+    let normalized = without_err_turbofish(normalized_text.trim_start_matches("return "));
+    let normalized = normalized.as_str();
     if normalized.starts_with("Err(") {
         format!("Result::{normalized}")
     } else {
@@ -525,10 +557,21 @@ fn opaque_path_text(text: &str) -> bool {
     let lower = text.to_ascii_lowercase();
     lower.contains("dyn ")
         || lower.contains("box<dyn")
-        || lower.contains("ffi")
+        || names_ffi_boundary(&lower)
         || lower.contains("extern ")
         || has_macro_invocation(&lower)
         || has_closure_syntax(&lower)
+}
+
+/// Whether a (lowercased) text names an FFI boundary: an identifier or path
+/// segment that IS `ffi` or carries it as an underscore-separated word
+/// (`std::ffi::CStr`, `ffi_call`, `sys_ffi`). A plain substring check also
+/// matched ordinary words (`Insufficient`, `efficient`, `traffic`) and
+/// refused their error-variant witnesses (#6673).
+fn names_ffi_boundary(lower: &str) -> bool {
+    lower
+        .split(|character: char| !character.is_ascii_alphanumeric() && character != '_')
+        .any(|identifier| identifier.split('_').any(|word| word == "ffi"))
 }
 
 fn has_macro_invocation(text: &str) -> bool {
@@ -564,9 +607,45 @@ fn source_sink_tokens_overlap(source: &str, sink: &str) -> bool {
             .any(|token| source_tokens.iter().any(|source| source == token))
 }
 
+/// `Err::<T, E>(payload)` and `Result::Err::<T, E>(payload)` spelled as
+/// `Err(payload)`: the turbofish names types, not a different constructor,
+/// so error identities compare equal with the flow sink, which
+/// `exact_error_variant` already reduces to `Result::Err(payload)` (PR #6786
+/// review, Devin). Nested generics are balanced. Any other text is returned
+/// unchanged.
+fn without_err_turbofish(text: &str) -> String {
+    let Some(generics) = text
+        .strip_prefix("Result::")
+        .unwrap_or(text)
+        .strip_prefix("Err::<")
+    else {
+        return text.to_string();
+    };
+    let mut depth = 1i32;
+    for (offset, ch) in generics.char_indices() {
+        match ch {
+            '<' => depth += 1,
+            '>' => {
+                depth -= 1;
+                if depth == 0 {
+                    let rest = &generics[offset + 1..];
+                    return if rest.starts_with('(') {
+                        format!("Err{rest}")
+                    } else {
+                        text.to_string()
+                    };
+                }
+            }
+            _ => {}
+        }
+    }
+    text.to_string()
+}
+
 fn path_identity_text(text: &str) -> String {
     let normalized_text = normalize_semantic_text(text);
-    let normalized = normalized_text.trim_start_matches("return ");
+    let normalized = without_err_turbofish(normalized_text.trim_start_matches("return "));
+    let normalized = normalized.as_str();
     if let Some(payload) = normalized
         .strip_prefix("Err(")
         .and_then(|value| value.strip_suffix(')'))
@@ -807,6 +886,88 @@ mod tests {
     use crate::domain::{DeltaKind, ProbeId, SourceLocation};
     use std::path::PathBuf;
 
+    /// #6673: `Insufficient` contains the letters `ffi`; only an `ffi`
+    /// identifier word names an FFI boundary.
+    #[test]
+    fn ffi_boundary_is_an_identifier_word_not_a_substring() {
+        for text in [
+            "return Err(PayError::Insufficient)",
+            "Result::Err(PayError::Insufficient)",
+            "return efficient_total(traffic)",
+        ] {
+            assert!(!opaque_path_text(text), "{text}");
+        }
+        for text in [
+            "std::ffi::CStr::from_ptr(raw)",
+            "ffi_call(handle)",
+            "sys_ffi::open(path)",
+        ] {
+            assert!(opaque_path_text(text), "{text}");
+        }
+    }
+
+    /// `return Result::Err::<T, E>(E::Bad)` and `return Err::<T, E>(..)`
+    /// reach the same canonical sink as `return Err(E::Bad)` through the
+    /// production flow facts, nested generics included.
+    #[test]
+    fn qualified_and_unqualified_err_turbofish_complete_the_error_witness() -> Result<(), String> {
+        for expression in [
+            "return Result::Err::<u8, E>(E::Bad);",
+            "return Err::<u8, E>(E::Bad);",
+            "return Result::Err::<Vec<Option<u8>>, E>(E::Bad);",
+            "return Err(E::Bad);",
+        ] {
+            let witness = production_witness(&probe(ProbeFamily::ErrorPath, expression), None)
+                .ok_or_else(|| format!("no witness for {expression}"))?;
+            assert_eq!(
+                witness.edges[0].status,
+                EdgeStatus::Established,
+                "{expression}"
+            );
+            assert_eq!(
+                witness.completeness,
+                PathCompleteness::Complete,
+                "{expression}"
+            );
+        }
+        assert_eq!(
+            without_err_turbofish("Result::Err::<Vec<Option<u8>>, E>(E::Bad)"),
+            "Err(E::Bad)"
+        );
+        assert_eq!(
+            without_err_turbofish("Result::Err(E::Bad)"),
+            "Result::Err(E::Bad)"
+        );
+        Ok(())
+    }
+
+    /// The owner-checked `ok_or?` bypass keys on the probe line having no
+    /// literal `Err(..)`; a line with both must use the ordinary edge rule.
+    #[test]
+    fn question_mark_bypass_refuses_a_line_that_also_constructs_err() {
+        let both = probe(
+            ProbeFamily::ErrorPath,
+            "let v = x.map(|_| Err(E::V)).ok_or(E::V)?;",
+        );
+        let sinks = [sink(FlowSinkKind::ErrorVariant, "Result::Err(E::V)", 10)];
+        let witness = current_path_witness(&both, &sinks);
+        assert!(
+            witness
+                .as_ref()
+                .is_none_or(|witness| witness.edges[0].status != EdgeStatus::Established),
+            "{witness:?}"
+        );
+        // Positive control: the plain `ok_or?` line keeps the bypass.
+        let plain = probe(ProbeFamily::ErrorPath, "let v = x.ok_or(E::V)?;");
+        let witness = current_path_witness(&plain, &sinks);
+        assert!(
+            witness
+                .as_ref()
+                .is_some_and(|witness| witness.edges[0].status == EdgeStatus::Established),
+            "{witness:?}"
+        );
+    }
+
     fn probe(family: ProbeFamily, expression: &str) -> Probe {
         Probe {
             id: ProbeId("probe:fixture:1".to_string()),
@@ -841,7 +1002,7 @@ mod tests {
             file: PathBuf::from("src/lib.rs"),
             start_line: 1,
             end_line: 20,
-            body: "fn calculate() { status: amount; }".to_string(),
+            body: "fn calculate() { status: amount; }".into(),
             calls: Vec::new(),
             returns: return_text
                 .map(|text| {

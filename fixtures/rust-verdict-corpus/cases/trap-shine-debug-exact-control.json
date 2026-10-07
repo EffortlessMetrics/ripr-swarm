@@ -1,0 +1,59 @@
+{
+  "case_id": "trap-shine-debug-exact-control",
+  "subject_id": "authored-trap-reach",
+  "diff": "cases/trap-shine-debug-exact-control.diff",
+  "anchor": {
+    "file": "src/shines.rs",
+    "line": 2
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "assert_debug_render_exact",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "base * 48",
+        "mutated_line": "base * 48",
+        "outcome": "tests_failed",
+        "failing_test": "shines::tests::shine_renders_the_value",
+        "equivalence_review": "not equivalent: replaces `47 * base` with `base * 48`, which changes the result"
+      },
+      {
+        "replacement": "base + 47",
+        "mutated_line": "base + 47",
+        "outcome": "tests_failed",
+        "failing_test": "shines::tests::shine_renders_the_value",
+        "equivalence_review": "not equivalent: replaces `47 * base` with `base + 47`, which changes the result"
+      },
+      {
+        "replacement": "base * 46",
+        "mutated_line": "base * 46",
+        "outcome": "tests_failed",
+        "failing_test": "shines::tests::shine_renders_the_value",
+        "equivalence_review": "not equivalent: replaces `47 * base` with `base * 46`, which changes the result"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "Negative control for trap-glow-debug-nonempty: the same Debug rendering compared with the exact text, so shine_renders_the_value pins format!(\"{:?}\", shine(2)) == \"94\" and fails for each mutant.",
+  "labeling_observation": {
+    "ripr_commit": "fce75e1",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "reachable_unrevealed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

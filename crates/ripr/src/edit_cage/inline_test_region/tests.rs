@@ -622,14 +622,135 @@ fn inserting_a_test_before_existing_items_is_admitted() -> Result<(), String> {
     Ok(())
 }
 
+/// A helper alone adds no test: the repair contract is a new test function,
+/// so a helper-only insertion is not a completed repair (Devin 4179587099).
 #[test]
-fn helper_function_inside_the_named_module_is_test_role_evidence() -> Result<(), String> {
+fn helper_only_insertion_is_not_a_completed_repair() -> Result<(), String> {
     let after = LIB.replace(
         "    fn existing() {\n        assert_eq!(price(1), 1);\n    }",
         "    fn existing() {\n        assert_eq!(price(1), 1);\n    }\n\n    fn helper() -> i32 { 1 }",
     );
     let verdict = validate_inline_test_region_edit(LIB, &authority(LIB)?, &after);
+    assert_eq!(verdict.status, InlineTestRegionStatus::NotARepair);
+    assert_eq!(
+        verdict.reason,
+        Some(InlineTestRegionRejectReason::NonTestSubject)
+    );
+    Ok(())
+}
+
+#[test]
+fn helper_beside_a_new_test_function_is_admitted() -> Result<(), String> {
+    let after = LIB.replace(
+        "    fn existing() {\n        assert_eq!(price(1), 1);\n    }",
+        "    fn existing() {\n        assert_eq!(price(1), 1);\n    }\n\n    fn helper() -> i32 { 1 }\n\n    #[test]\n    fn added() {\n        assert_eq!(price(helper()), 1);\n    }",
+    );
+    let verdict = validate_inline_test_region_edit(LIB, &authority(LIB)?, &after);
     assert_eq!(verdict.status, InlineTestRegionStatus::Admitted);
+    Ok(())
+}
+
+/// Test-attribute recognition is the facts normalizer's, so a runtime test
+/// attribute it recognises counts as a new test here too.
+#[test]
+fn runtime_test_attribute_counts_as_a_new_test_function() -> Result<(), String> {
+    let after = LIB.replace(
+        "    fn existing() {\n        assert_eq!(price(1), 1);\n    }",
+        "    fn existing() {\n        assert_eq!(price(1), 1);\n    }\n\n    #[tokio::test]\n    async fn added() {}",
+    );
+    let verdict = validate_inline_test_region_edit(LIB, &authority(LIB)?, &after);
+    assert_eq!(verdict.status, InlineTestRegionStatus::Admitted);
+    Ok(())
+}
+
+/// The same module with a comment detached from every item (a blank line
+/// follows it), so the parser keeps it between items rather than inside one.
+const COMMENTED_LIB: &str = r#"pub fn price(cents: i32) -> i32 {
+    cents
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Boundary coverage notes.
+
+    #[test]
+    fn existing() {
+        assert_eq!(price(1), 1);
+    }
+}
+"#;
+
+fn commented_with_added_test(source: &str) -> String {
+    source.replace(
+        "        assert_eq!(price(1), 1);\n    }\n}",
+        "        assert_eq!(price(1), 1);\n    }\n\n    #[test]\n    fn added() {\n        assert_eq!(price(2), 2);\n    }\n}",
+    )
+}
+
+/// Existing inter-item bytes are part of the region: rewriting a comment
+/// while adding a test is not a pure insertion (Devin 4179587144).
+#[test]
+fn rewriting_an_existing_comment_while_adding_a_test_is_rejected() -> Result<(), String> {
+    let after = commented_with_added_test(COMMENTED_LIB)
+        .replace("// Boundary coverage notes.", "// Rewritten notes.");
+    assert_ne!(after, commented_with_added_test(COMMENTED_LIB));
+    assert_rejected(
+        COMMENTED_LIB,
+        &after,
+        InlineTestRegionRejectReason::NotPureInsertion,
+    )
+}
+
+#[test]
+fn deleting_an_existing_comment_while_adding_a_test_is_rejected() -> Result<(), String> {
+    let after =
+        commented_with_added_test(COMMENTED_LIB).replace("    // Boundary coverage notes.\n\n", "");
+    assert_rejected(
+        COMMENTED_LIB,
+        &after,
+        InlineTestRegionRejectReason::NotPureInsertion,
+    )
+}
+
+#[test]
+fn deleting_a_blank_line_between_existing_items_while_adding_a_test_is_rejected()
+-> Result<(), String> {
+    let after = commented_with_added_test(COMMENTED_LIB).replace(
+        "    use super::*;\n\n    // Boundary",
+        "    use super::*;\n    // Boundary",
+    );
+    assert_rejected(
+        COMMENTED_LIB,
+        &after,
+        InlineTestRegionRejectReason::NotPureInsertion,
+    )
+}
+
+/// Positive control for the byte-preservation law: a new test may bring its
+/// own doc comment, a new detached comment, and blank lines.
+#[test]
+fn new_test_with_comments_and_blank_lines_is_admitted() -> Result<(), String> {
+    let after = COMMENTED_LIB.replace(
+        "        assert_eq!(price(1), 1);\n    }\n}",
+        "        assert_eq!(price(1), 1);\n    }\n\n\n    // New boundary case.\n\n    /// Pins the equality boundary.\n    #[test]\n    fn added() {\n        assert_eq!(price(2), 2);\n    }\n\n}",
+    );
+    let verdict =
+        validate_inline_test_region_edit(COMMENTED_LIB, &authority(COMMENTED_LIB)?, &after);
+    assert_eq!(
+        verdict.status,
+        InlineTestRegionStatus::Admitted,
+        "{verdict:?}"
+    );
+    let plain = commented_with_added_test(COMMENTED_LIB);
+    let verdict =
+        validate_inline_test_region_edit(COMMENTED_LIB, &authority(COMMENTED_LIB)?, &plain);
+    assert_eq!(
+        verdict.status,
+        InlineTestRegionStatus::Admitted,
+        "{verdict:?}"
+    );
     Ok(())
 }
 

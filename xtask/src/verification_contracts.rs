@@ -54,6 +54,14 @@ const VERSION_AUTHORITIES: &[(&str, &[VersionProducer])] = &[
         )],
     ),
     (
+        "doctor",
+        &[producer(
+            "crates/ripr/src/output/doctor.rs",
+            "pub(crate) const SCHEMA_VERSION: &'static str = \"",
+            1,
+        )],
+    ),
+    (
         "executed-control",
         &[producer(
             "crates/ripr/src/domain/executed_control.rs",
@@ -425,6 +433,30 @@ const CONTRACTS: &[VerificationContract] = &[
             "cases",
             "exclusions",
             "observations",
+        ],
+    },
+    VerificationContract {
+        schema_path: "schemas/ripr/doctor.schema.json",
+        schema_pointer: None,
+        fixture_path: "tests/fixtures/verification/ripr/doctor.valid.json",
+        subject: ContractSubject::Document,
+        doc_path: "docs/OUTPUT_SCHEMA.md",
+        doc_markers: &[
+            "schema_version",
+            "tool",
+            "root",
+            "profile",
+            "status",
+            "checks[].status",
+            "runtime_probes[].status",
+            "languages",
+            "detected_languages[]",
+            "unanalyzed_source_languages[]",
+            "preview_language_gaps[]",
+            "config_defaults",
+            "cache",
+            "test_surfaces[]",
+            "perl_preview",
         ],
     },
     VerificationContract {
@@ -2160,10 +2192,27 @@ mod tests {
     {
         let root = repo_root()?;
         let schema = read_json(root.join("schemas/ripr/check.schema.json"))?;
-        let golden = read_json(root.join("fixtures/helper_chain_one_hop/expected/check.json"))?;
+        // A golden whose missing discriminator carries a `null` flow sink.
+        // `helper_chain_one_hop` no longer names one since #6796 made its
+        // computed helper-hop boundary unresolved rather than missing.
+        let golden = read_json(root.join("fixtures/rust_async_fn_owner/expected/check.json"))?;
+        // The first finding that names a missing discriminator.
+        let finding = golden["findings"]
+            .as_array()
+            .ok_or("the golden should carry a findings array")?
+            .iter()
+            .position(|finding| {
+                finding["missing_discriminators"]
+                    .as_array()
+                    .is_some_and(|missing| !missing.is_empty())
+            })
+            .ok_or("the golden should carry a finding with a missing discriminator")?;
+        if !golden["findings"][finding]["missing_discriminators"][0]["flow_sink"].is_null() {
+            return Err("the golden's missing discriminator should carry a null flow sink".into());
+        }
 
         let mut wrong_type = golden.clone();
-        wrong_type["findings"][0]["missing_discriminators"][0]["flow_sink"] =
+        wrong_type["findings"][finding]["missing_discriminators"][0]["flow_sink"] =
             Value::String("error_variant".to_string());
         let violations = document_violations(&wrong_type, &schema, "wrong flow sink type");
         if !violations
@@ -2176,7 +2225,7 @@ mod tests {
         }
 
         let mut absent = golden;
-        absent["findings"][0]["missing_discriminators"][0]
+        absent["findings"][finding]["missing_discriminators"][0]
             .as_object_mut()
             .ok_or("the golden's first missing discriminator should be an object")?
             .remove("flow_sink");
