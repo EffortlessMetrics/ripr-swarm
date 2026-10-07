@@ -3,7 +3,7 @@ id = "ripr.slice.canonical-next-action.v1"
 generation = 1
 
 source_issue = "issue:6304"
-design_reference = "RIPR-SPEC-0234"
+design_reference = "RIPR-SPEC-0241"
 change_class = "spec_or_contract_change"
 
 claim_boundary = """
@@ -49,7 +49,7 @@ forbidden_seams = [
 ]
 
 [[requirement_delta]]
-requirement_id = "RIPR-SPEC-0234"
+requirement_id = "RIPR-SPEC-0241"
 requirement_generation = 1
 
 [implementation_claim]

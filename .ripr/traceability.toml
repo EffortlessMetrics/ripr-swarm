@@ -12779,9 +12779,9 @@ metrics = [
   "unit_test_pass_rate",
 ]
 [[behavior]]
-id = "RIPR-SPEC-0234"
+id = "RIPR-SPEC-0241"
 name = "canonical next action"
-spec = "docs/specs/RIPR-SPEC-0234-canonical-next-action.md"
+spec = "docs/specs/RIPR-SPEC-0241-canonical-next-action.md"
 tests = [
   "crates/ripr/src/domain/next_action.rs::tests::control_1_disagreement_refuses_rather_than_choosing",
   "crates/ripr/src/domain/next_action.rs::tests::control_10_each_gate_owns_its_negative",
@@ -12804,7 +12804,7 @@ code = [
   "crates/ripr/src/repair_card_digest.rs",
 ]
 outputs = [
-  "docs/specs/RIPR-SPEC-0234-canonical-next-action.md",
+  "docs/specs/RIPR-SPEC-0241-canonical-next-action.md",
   "docs/OUTPUT_SCHEMA.md",
   "policy/output_contracts.txt",
 ]
