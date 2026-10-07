@@ -7497,7 +7497,9 @@ Field contract:
   `seams[].evidence_record` is present, the comparison prefers that shared
   evidence spine; otherwise it falls back to legacy repo-exposure seam fields.
 - `evidence_delta[]` — advisory hints such as missing discriminators no longer
-  reported, new observed values, or stronger related oracles. These hints are
+  reported, new observed values, stronger related oracles, or a contradicted
+  related test that remains in the after evidence set (RIPR-SPEC-0233; while
+  one remains, `gap_movement` is `improved`, never `closed`). These hints are
   based on the rendered static artifact and do not claim runtime confirmation.
 - `evidence_source` — `evidence_record`, `legacy_fields`, or a mixed transition
   label when before and after snapshots differ in available evidence source.

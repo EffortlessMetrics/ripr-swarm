@@ -17841,6 +17841,72 @@ fn boundary_asserts_true_value() {
     Ok(())
 }
 
+/// #7007: the issue's exact composition — a consistent happy-path test
+/// keeps its strong oracle while the wrong-valued boundary assert stays in
+/// the evidence set. The contradiction must withhold the wrong test's
+/// call-site credit: its `5_000` argument completes the equality boundary
+/// only in the mutant's favor (`>=` -> `>` makes the assert pass), so
+/// counting it would close the gap the single-test fold already keeps open.
+#[test]
+fn wrongval_assert_beside_consistent_test_keeps_gap_open() -> Result<(), String> {
+    let (evidence, seam, _index) = wrongval_seam_evidence(
+        r#"
+#[test]
+fn happy_path_returns_undiscounted_total() {
+    assert_eq!(discounted_total(1_000, 5_000), 1_000);
+}
+
+#[test]
+fn boundary_asserts_flipped_value() {
+    assert_eq!(discounted_total(5_000, 5_000), 5_000);
+}
+"#,
+    )?;
+    let class = crate::analysis::seam_classification::classify_seam(&seam, &evidence);
+    if class == SeamGripClass::StronglyGripped {
+        return Err(
+            "the wrongval assert beside a consistent test must not close the gap".to_string(),
+        );
+    }
+    // The wrong test's 5_000 call argument must not count toward the seam's
+    // observed activation values: only the consistent test's 1_000 remains.
+    let observed = evidence
+        .observed_values
+        .iter()
+        .map(|fact| fact.value.replace('_', ""))
+        .collect::<Vec<_>>();
+    assert!(
+        !observed.iter().any(|value| value == "5000"),
+        "the contradicted test's 5_000 argument must not be credited as observed: {observed:?}"
+    );
+    assert!(
+        observed.iter().any(|value| value == "1000"),
+        "the consistent test's 1_000 argument keeps its activation credit: {observed:?}"
+    );
+    // The equality boundary the wrong test appeared to cover stays missing.
+    assert!(
+        evidence
+            .missing_discriminators
+            .iter()
+            .any(|fact| fact.value.contains("equality boundary")),
+        "the equality boundary must stay missing: {:?}",
+        evidence.missing_discriminators
+    );
+    let related = evidence
+        .related_tests
+        .iter()
+        .find(|test| test.test_name == "boundary_asserts_flipped_value")
+        .ok_or_else(|| "the wrongval test must stay related to the seam".to_string())?;
+    assert!(
+        related
+            .evidence_summary
+            .contains("contradicts static evaluation"),
+        "the composition must name the contradiction: {}",
+        related.evidence_summary
+    );
+    Ok(())
+}
+
 /// The limitation stays honest in the other direction: when the owner is not
 /// statically evaluable, the wrong-valued assert keeps today's credit and
 /// the gap closes. No fabrication either way.

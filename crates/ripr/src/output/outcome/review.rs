@@ -170,6 +170,22 @@ pub(super) fn review_remaining_weak_or_unknown(report: &TargetedTestOutcomeRepor
             ));
         }
     }
+    // #7007: a contradicted related test keeps the seam's gap open even when
+    // the class itself reached a terminal class, so the contradiction is
+    // surfaced here instead of an empty weak/unknown section.
+    for movement in report
+        .moved
+        .iter()
+        .chain(report.unchanged.iter())
+        .chain(report.regressed.iter())
+    {
+        for contradiction in &movement.after_contradicted_related_tests {
+            items.push(format!(
+                "{} at {}:{} keeps a contradicted discriminator in its evidence set: {}.",
+                movement.seam_kind, movement.file, movement.line, contradiction
+            ));
+        }
+    }
     review_limit_or_default(
         items,
         "No weak or unknown after-snapshot seams were present in the compared artifacts.",

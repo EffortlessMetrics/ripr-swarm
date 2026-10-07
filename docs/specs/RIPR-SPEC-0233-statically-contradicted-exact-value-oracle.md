@@ -21,6 +21,7 @@ Linked plan:
 Linked issues:
 
 - #6026 (a boundary assert whose expected value contradicts static evaluation closes the gap)
+- #7007 (the two-test composition — a wrong-valued assert beside a consistent strong test — still closed the gap and rendered an empty weak/unknown section)
 
 Linked PRs:
 
@@ -42,7 +43,11 @@ Policy impact:
   sharded/compact `0.39` -> `0.40`, stacked above the #5946 weak-grip
   (`1.32`/`0.38`) and #6718 bool-owner pin (`1.33`/`0.39`) transitions this
   PR rebased over — because warm entries would keep serving the
-  contradicted assertion's strong credit.
+  contradicted assertion's strong credit. The #7007 activation transition
+  bumps again — full `1.47` -> `1.48` and sharded/compact `0.53` -> `0.54`
+  (stacked above #5328's constant-row-table `1.47`/`0.53` transition this
+  PR rebased over) — because warm entries would keep serving the
+  contradicted test's observed value and the closed gap.
 - No repo-exposure schema version bump: the evidence-record shape is
   unchanged; only values and evidence summaries move.
 
@@ -81,6 +86,17 @@ The verdict is decided per related-test assertion against the seam owner:
   discrimination evidence, sink-matching propagation), keeps the seam's gap
   open, and states the contradiction — the asserted literal and the folded
   value — in the stage and related-test evidence summaries.
+- The same fold also withholds the contradicted test's call-site credit
+  (#7007): its owner-call argument values do not count toward the seam's
+  activation/observed-values evidence, and its arguments do not satisfy
+  boundary-equality coverage, because completing the equality boundary in
+  the mutant's favor is exactly the inverted signal. Consistent and
+  not-evaluable tests keep their activation credit unchanged.
+- While a contradicted related test remains in an evidence set, the outcome
+  receipt cannot report that evidence set's gap closed, and the receipt's
+  weak/unknown section names the contradiction instead of rendering its
+  empty fallback. Detection keys on the shared disclosure prefix the
+  analysis producer writes into the related-test evidence summary.
 
 ## Rule
 
@@ -95,6 +111,15 @@ is a free function whose body constant-folds at those arguments:
   strong discrimination, and the seam's gap stays open. The evidence
   summary names the contradiction with both values, in the same
   evidence-record channel the receipt already renders.
+- On contradiction the test's call-site values contribute no activation
+  credit: they are excluded from the seam's observed activation values and
+  from boundary-equality coverage. When that leaves no credited activation
+  evidence at all, the activation stage discloses the withholding instead
+  of reading as if nothing ran.
+- While a contradicted related test remains in an after evidence set, the
+  outcome receipt reports the movement as improved rather than closed,
+  carries the contradiction in the moved entry's evidence delta, and lists
+  it under remaining weak or unknown.
 - The per-seam stage evidence records the contradiction in its summary.
 - When the owner is not statically evaluable — a method or nested function,
   a body with calls, `let` bindings, early returns, non-literal operands,
@@ -111,7 +136,18 @@ crate and fails on the pre-fix behavior (the gap closes); the control
 `correct_boundary_literal_still_closes_the_gap` keeps the strong credit and
 the closure for the correct literal `3_500`; and
 `non_evaluable_owner_keeps_the_prior_credit` pins the retained limitation.
-The fold's own contract is pinned by `value_contradiction.rs` unit tests
+`wrongval_assert_beside_consistent_test_keeps_gap_open` builds the issue
+#7007 two-test composition — the wrong-valued assert beside a consistent
+happy-path test — and fails on the pre-#7007 behavior (the sibling strong
+oracle carried the seam to `strongly_gripped`); it pins that the wrong
+test's `5_000` argument is not credited as observed, the equality boundary
+stays missing, and the contradiction stays named. On the receipt side,
+`contradicted_related_test_keeps_gap_open_and_names_the_contradiction`
+(red on the pre-#7007 `closed` movement) pins the non-closure, the named
+moved-entry delta, and the non-empty weak/unknown section, while
+`prose_that_mentions_contradiction_without_the_disclosure_does_not_block_closure`
+pins that only the shared disclosure prefix can hold a gap open. The fold's
+own contract is pinned by `value_contradiction.rs` unit tests
 (wrong-valued and correct equality, inverted `assert_ne!`, qualified paths,
 else-if chains, negative and suffixed literals, and the not-evaluable
 refusals).
@@ -141,12 +177,20 @@ Source: the issue #6026 crate — `discounted_total` with an
    owner folds to `3_500` at that input, so the assert is contradicted — the
    oracle reads at most `weak`/`exact_value`, the seam stays
    `weakly_gripped`, the outcome reports no gap closure, and the evidence
-   summary names `asserts 5_000, owner folds to 3500`.
+   summary names `asserts 5_000, owner folds to 3500`. The same holds in
+   the issue #7007 composition where a consistent happy-path test is also
+   present: the wrong test's `5_000` argument is not credited as an
+   observed activation value, the equality boundary stays missing, and the
+   seam stays `weakly_gripped`.
 2. Test `assert_eq!(discounted_total(5_000, 5_000), 3_500);` added: the fold
    agrees — the oracle stays `strong`, and the gap closes exactly as before.
 3. Owner whose discounted arm calls a helper, same wrong literal as (1):
    not statically evaluable — today's credit and the closure are retained,
    with no manufactured evidence either way.
+4. Even when a consistent test alone covers the boundary so the class
+   reaches `strongly_gripped`, a contradicted test remaining in the
+   evidence set keeps the receipt from reporting `gap closed` and names the
+   contradiction in the weak/unknown section.
 
 ## Test Mapping
 
@@ -156,6 +200,14 @@ Source: the issue #6026 crate — `discounted_total` with an
   `::correct_boundary_literal_still_closes_the_gap`, and
   `::non_evaluable_owner_keeps_the_prior_credit` pin the credit bound
   end-to-end through `evidence_for_seam` and `classify_seam`.
+- #7007 composition:
+  `test_grip_evidence/tests.rs::wrongval_assert_beside_consistent_test_keeps_gap_open`
+  (red on the pre-#7007 behavior) and
+  `output/outcome/mod.rs::contradicted_related_test_keeps_gap_open_and_names_the_contradiction`
+  (red on the pre-#7007 receipt) pin the activation withholding and the
+  receipt contract, with
+  `::prose_that_mentions_contradiction_without_the_disclosure_does_not_block_closure`
+  pinning the disclosure-prefix identity.
 - Not pinned by the existing honesty corpora: the RIPR-SPEC-0108 corpus
   asserts diff-scoped finding classifications and the actionable-gap corpus
   joins hand-authored receipts, while this rule is the repo-scope seam
@@ -172,9 +224,18 @@ Source: the issue #6026 crate — `discounted_total` with an
   `effective_oracle_strength` feeds `best_oracle`, `discriminate_evidence`,
   and `oracles_match_sink`, so a contradicted assertion keeps at most
   `weak` strength, the gap stays open, and the stage and related-test
-  summaries name the contradiction.
+  summaries name the contradiction. `test_has_contradicted_assertion`
+  (#7007) additionally withholds the contradicted test's activation
+  credit: its call-site values and boundary-equality arguments do not count
+  toward `observed_values` or boundary coverage in `activate_evidence`.
+- `crates/ripr/src/output/outcome/`: the receipt bound (#7007) —
+  `contradicted_related_tests` parses the shared disclosure prefix from the
+  after evidence set, a non-empty set downgrades `closed` to `improved`,
+  the moved entry's evidence delta names each contradiction, and the
+  weak/unknown review section lists them instead of its empty fallback.
 - `crates/ripr/src/analysis/seam_cache.rs`: the classified-seam cache
-  generation bumps so warm entries cannot keep serving the strong credit.
+  generation bumps so warm entries cannot keep serving the strong credit
+  (`1.34`, then `1.48` for the #7007 activation transition).
 
 ## Required Evidence
 
@@ -182,6 +243,11 @@ Source: the issue #6026 crate — `discounted_total` with an
   assert-the-mutant's-value test leaves the seam `weakly_gripped`, the
   outcome receipt reports no gap closure, and the evidence summary names the
   contradiction (red on the pre-fix behavior).
+- The issue #7007 two-test composition: the wrong-valued assert beside a
+  consistent strong test leaves the seam `weakly_gripped`, the wrong test's
+  `5_000` argument stays uncredited, the receipt does not report the gap
+  closed, and the weak/unknown section names the contradiction (red on the
+  pre-#7007 behavior).
 - The correct-literal control (`3_500`) still closes the gap with a strong
   oracle and an unchanged `exact value assertion` summary.
 - A not-evaluable owner with the same wrong literal keeps today's credit.

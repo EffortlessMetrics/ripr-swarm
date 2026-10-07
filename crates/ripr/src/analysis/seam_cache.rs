@@ -378,7 +378,12 @@ pub(crate) struct CachedSeamLimitInfo {
 /// indexed and relate to what they call (#5334). Old entries would keep
 /// their owners unreached, and each independent `1.33` lineage lacks the
 /// other's transition.
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.49";
+/// `1.50`: activation credit follows the #6026 contradiction fold (#7007):
+/// a related test whose exact-value assertion statically contradicts the
+/// owner's fold no longer contributes call-site activation values or
+/// boundary-equality coverage. Old classified entries would keep serving the
+/// wrong test's observed value and the closed gap for warm workspaces.
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.50";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -467,7 +472,8 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.49";
 /// `0.53`: same constant-row table transition as full `1.47` (#5328).
 /// `0.54`: same table-row boundary input transition as full `1.48`.
 /// `0.55`: same macro-generated test transition as full `1.49` (#5334).
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.55";
+/// `0.56`: same contradiction-activation transition as full `1.50` (#7007).
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.56";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -558,7 +564,8 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.55";
 /// `0.53`: same constant-row table transition as full `1.47` (#5328).
 /// `0.54`: same table-row boundary input transition as full `1.48`.
 /// `0.55`: same macro-generated test transition as full `1.49` (#5334).
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.55";
+/// `0.56`: same contradiction-activation transition as full `1.50` (#7007).
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.56";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -4174,7 +4181,8 @@ mod tests {
         // 1.46 -> 1.47: constant-row table loops run their assertion (#5328).
         // 1.47 -> 1.48: table-row cells feed boundary pairing (#5328).
         // 1.48 -> 1.49: same-file macro_rules! test generators (#5334).
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.49");
+        // 1.49 -> 1.50: contradiction-activated tests lose activation credit (#7007).
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.50");
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
         // for the sharded and compact envelopes.
@@ -4215,8 +4223,9 @@ mod tests {
         // 0.52 -> 0.53: same constant-row table transition as full 1.47.
         // 0.53 -> 0.54: same table-row boundary input transition as full 1.48.
         // 0.54 -> 0.55: same macro-generated test transition as the outer cache.
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.55");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.55");
+        // 0.55 -> 0.56: same contradiction-activation transition as full 1.50 (#7007).
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.56");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.56");
     }
 
     #[test]
