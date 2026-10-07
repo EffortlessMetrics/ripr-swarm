@@ -148,6 +148,18 @@ rule only for an assertion whose context was admitted.
    the call are ignored) is the call:
    calling an `unsafe fn` needs the block, and the block's value is the
    call's value.
+   A compared operand that is a plain identifier the test binds exactly
+   once, by an immutable `let v [: T] = <call>;`, is that call (#6974) when
+   `v` appears nowhere else in the test but as a whole operand of
+   `assert_eq!` assertions on later lines, and the assertion is the
+   statement right after the `let` (a statement between them could change
+   the value through a shared handle). A `mut` binding, a second binding, a
+   borrow, a method call or argument use of `v`, a use before the `let`,
+   or an initializer with anything around the call leaves the assertion
+   unpinned. An expected operand naming a `let` whose initializer mentions
+   the owner, directly or through further `let`s, compares the owner with
+   itself and is refused, and so is one naming a value ripr cannot trace
+   to a simple `let` (`let (same, _) = (f(4), 0);`).
 2. Call identity, from the parser's item-container fact on the owner
    (`FunctionFact.item`: free, local, inherent, trait impl, or trait, with
    the `self`-receiver and body flags; the lexical fallback leaves it
@@ -158,6 +170,33 @@ rule only for an assertion whose context was admitted.
      test's parameters, a `for`, closure or match-arm pattern, or a macro
      such as `let_assert!` that mentions it), and the test's file must not
      rename an item to it (`use a::b as name`).
+   - A path call `a::b::name(..)` (#6974) names the same free function only
+     when the path resolves to exactly the module that declares the owner.
+     There an explicit `fn name` takes the value name from every glob, and
+     any other item of the name (a `use .. as name`, a re-exported variant,
+     a tuple struct, a macro-emitted item) fails to compile, so imports and
+     types elsewhere cannot capture the path. Every segment is a plain
+     identifier not starting with an upper-case letter (no leading `::`, no
+     generic arguments, no `r#`), and the path is one of:
+     - `self::` or `super::`, followed by any run of `super` and then module
+       names, from a test in the owner's own file, resolved from the
+       test's inline modules without climbing out of the file;
+     - `crate::` and module names, from a test that composes under the
+       owner's crate root, when the owner's file is that root;
+     - an import name of the owner's library from the test's crate manifest
+       (`krate::name(..)` in an integration test), and module names, when
+       the owner's file is the library root. No workspace file may rename
+       another item to that name or spell it `r#name`, and the test's crate
+       may not bind it itself (a `mod` or a `use` of the name, or any glob,
+       in a file of the test's crate).
+     The owner must sit directly in a module (not a fn body or an `impl`)
+     that ripr can place by parsing its file. Any `r#name` of the owner's
+     name in the workspace (a raw twin the uniqueness gate's name match
+     misses) and any macro invocation in the owner's crate whose input names
+     the owner (`twin!(name)` may emit a `fn name`
+     under a cfg that drops the owner; the assertion macros listed as
+     non-returning are exempt) refuse the path. A path to any other module,
+     including one that re-exports the owner, does not pin.
    - A method call `recv.name(..)` names only a function with a `self`
      receiver in an `impl` or `trait` block. `recv` must be a plain local
      binding, and every `let` that binds it must be a simple
@@ -744,8 +783,11 @@ assertions. This repair shares the existing callback without that larger migrati
   are documented residuals.
 - A trait from outside the workspace that is also in scope and also names
   the method is not detected.
-- Qualified calls (`Type::name(..)`, `Trait::name(&mut recv, ..)`) do not
-  pin yet.
+- Type- and trait-qualified calls (`Type::name(..)`,
+  `Trait::name(&mut recv, ..)`) do not pin yet; module paths do (#6974).
+- A path call relies on the name's workspace uniqueness. Items that a
+  procedural or foreign macro generates are invisible to it, as they are
+  to the bare call.
 - A helper function the changed tail calls may itself ignore an argument
   on some inputs; the tail gate reads the tail's own syntax only.
 - Opaque macro expansion can synthesize a binding from fragments without a
@@ -785,7 +827,23 @@ assertions. This repair shares the existing callback without that larger migrati
   `an_early_err_return_needs_to_be_the_only_err_source`,
   `an_early_return_pin_admits_only_the_value_that_return_produces`);
   inline constructor receivers
-  (`an_inline_constructor_types_the_receiver_like_a_binding`); crate-local
+  (`an_inline_constructor_types_the_receiver_like_a_binding`); module-path
+  calls and let-bound results (#6974:
+  `a_path_through_the_owners_own_crate_pins_the_owner`,
+  `a_path_that_may_leave_the_owners_crate_is_not_a_pin`,
+  `a_crate_relative_path_in_another_target_is_not_the_owners_crate`,
+  `the_owners_library_name_roots_a_path_from_another_crate`,
+  `a_result_bound_once_and_only_asserted_pins_like_the_call`,
+  `review_holes_in_path_and_let_bound_pins_stay_closed`,
+  `a_test_crate_binding_of_the_library_name_shadows_the_dependency`,
+  `a_rename_to_the_owners_name_or_a_type_of_it_defeats_every_path`,
+  `test_crate_bindings_of_the_root_are_read_from_every_file_of_that_crate`,
+  `a_path_must_resolve_to_the_owners_own_module`,
+  `rev3_review_false_pins_stay_closed`,
+  `an_integration_path_is_closed_to_raw_and_macro_shadows`,
+  `a_macro_that_may_emit_the_owners_name_defeats_every_path`,
+  `an_expected_binding_ripr_cannot_read_is_not_a_distinct_value`,
+  `a_bound_method_result_pins_like_the_method_call`); crate-local
   bindings in another target
   (`a_crate_local_binding_in_another_target_does_not_reach_the_test`,
   `a_crate_local_site_another_crate_can_compile_stays_workspace_wide`,
