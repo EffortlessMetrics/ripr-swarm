@@ -222,11 +222,6 @@ fn compact_discriminator_token(finding: &Finding) -> &'static str {
     }
 }
 
-/// Collapse a possibly-multi-line value to one bounded display line.
-///
-/// This is the *digest* policy: the digest shows one selected finding and routes
-/// the reader to `--format human-full`, so losing detail here is recoverable.
-/// The full form must not use it — see [`wrapped_fragment`].
 /// A `weakly_exposed` finding whose only reach is proximity and whose
 /// transitive or macro reach witness ripr could not trace (#7071): it names
 /// a limit, so it claims no missing test.
@@ -241,6 +236,11 @@ pub(super) fn untraced_reach_weak_finding(finding: &Finding) -> bool {
         })
 }
 
+/// Collapse a possibly-multi-line value to one bounded display line.
+///
+/// This is the *digest* policy: the digest shows one selected finding and routes
+/// the reader to `--format human-full`, so losing detail here is recoverable.
+/// The full form must not use it — see [`wrapped_fragment`].
 pub(super) fn one_line(value: &str) -> String {
     let collapsed = value.split_whitespace().collect::<Vec<_>>().join(" ");
     if collapsed.chars().count() <= LINE_BUDGET {
