@@ -1,22 +1,22 @@
 # Rust verdict corpus report
 
-Spec: RIPR-SPEC-0219. Corpus version: 2026-10-06.2. Cases: 227.
+Spec: RIPR-SPEC-0219. Corpus version: 2026-10-06.2. Cases: 244.
 
 | Rate | Count | Rate |
 | --- | --- | --- |
-| False verdicts (all cases) | 61/227 | 0.2687 |
-| False actionable (of discriminated) | 53/111 | 0.4775 |
-| False exposed (of not fully discriminated) | 8/116 | 0.0690 |
-| False silent (of not fully discriminated) | 0/116 | 0.0000 |
-| Ideal verdict | 100/227 | 0.4405 |
-| Abstained (limited or silent where acceptable) | 66/227 | 0.2907 |
-| Findings with a contradiction | 2/298 | 0.0067 |
+| False verdicts (all cases) | 70/244 | 0.2869 |
+| False actionable (of discriminated) | 59/119 | 0.4958 |
+| False exposed (of not fully discriminated) | 11/125 | 0.0880 |
+| False silent (of not fully discriminated) | 0/125 | 0.0000 |
+| Ideal verdict | 108/244 | 0.4426 |
+| Abstained (limited or silent where acceptable) | 66/244 | 0.2705 |
+| Findings with a contradiction | 2/315 | 0.0063 |
 
 By subject origin. Authored cases are written to fill cells the upstream cases leave empty, so only the upstream rates describe real-world tests.
 
 | Origin | Cases | False verdicts | False actionable | False exposed | False silent | Ideal | Abstained |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| authored | 193 | 58/193 | 50/91 | 8/102 | 0/102 | 93/193 | 42/193 |
+| authored | 210 | 67/210 | 56/99 | 11/111 | 0/111 | 101/210 | 42/210 |
 | upstream | 34 | 3/34 | 3/20 | 0/14 | 0/14 | 7/34 | 24/34 |
 
 | Case | Origin | Truth | Ideal | Observed | Classes | Outcome | Changed since labeling | Contradictions |
@@ -248,6 +248,23 @@ By subject origin. Authored cases are written to fill cells the upstream cases l
 | `trap-fee-name-only` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | no | none |
 | `trap-total-local-binding` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | no | none |
 | `trap-limit-nested-test` | authored | not_discriminated | gap | gap | reachable_unrevealed | ideal | no | none |
+| `trap-spare-undeclared-test-file` | authored | not_discriminated | gap | credited | exposed | false_exposed | no | none |
+| `trap-fine-declared-test-file-control` | authored | discriminated | credited | credited | exposed | ideal | no | none |
+| `trap-charge-unbuilt-integration-test` | authored | not_discriminated | gap | credited | exposed | false_exposed | no | none |
+| `trap-levy-registered-integration-control` | authored | discriminated | credited | credited | exposed | ideal | no | none |
+| `trap-boost-detached-thread` | authored | not_discriminated | gap | gap | reachable_unrevealed | ideal | no | none |
+| `trap-lift-joined-thread-control` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | no | none |
+| `trap-dampen-times-zero` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | no | none |
+| `trap-cap-min-clamp` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | no | none |
+| `trap-const-fn-self-expected` | authored | not_discriminated | gap | credited | exposed | false_exposed | no | none |
+| `trap-ramp-same-call-both-sides` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | no | none |
+| `trap-stack-container-length` | authored | not_discriminated | gap | gap | reachable_unrevealed | ideal | no | none |
+| `trap-glow-debug-nonempty` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | no | none |
+| `trap-muffle-times-one-control` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | no | none |
+| `trap-ceiling-wide-min-control` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | no | none |
+| `trap-pile-first-element-control` | authored | discriminated | credited | gap | reachable_unrevealed | false_actionable | no | none |
+| `trap-shine-debug-exact-control` | authored | discriminated | credited | gap | reachable_unrevealed | false_actionable | no | none |
+| `trap-hoist-scoped-thread-control` | authored | discriminated | credited | gap | reachable_unrevealed | false_actionable | no | none |
 
 Non-claims:
 

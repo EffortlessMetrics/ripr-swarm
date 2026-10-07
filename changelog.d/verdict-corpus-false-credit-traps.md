@@ -14,3 +14,16 @@
   [#6538](https://github.com/EffortlessMetrics/ripr-swarm/issues/6538),
   [#6541](https://github.com/EffortlessMetrics/ripr-swarm/issues/6541),
   [#6544](https://github.com/EffortlessMetrics/ripr-swarm/issues/6544).
+- Verdict corpus: 17 more false-credit cases in `authored-trap-reach`
+  (same corpus version), where the trap sits outside the assertion: a test
+  file no `mod` declares, an integration test `autotests = false` leaves
+  unbuilt, an assert on a detached thread, a result multiplied by zero or
+  clamped with `.min(1)`, a `const` expected value from the same `const fn`,
+  `assert_eq!(f(x), f(x))`, a container's length, and a non-empty `Debug`
+  rendering. Eight are negative controls, including value-preserving
+  projections and joined or scoped threads. Defects found:
+  [#6965](https://github.com/EffortlessMetrics/ripr-swarm/issues/6965),
+  [#6966](https://github.com/EffortlessMetrics/ripr-swarm/issues/6966),
+  [#6968](https://github.com/EffortlessMetrics/ripr-swarm/issues/6968), and a
+  bound self-computed expected value for
+  [#5830](https://github.com/EffortlessMetrics/ripr-swarm/issues/5830).

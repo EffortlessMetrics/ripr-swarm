@@ -1711,6 +1711,107 @@
           "sha256": "aac7972513bc04ccea2b2d960b23d488aa3bc41832607da699192bb2076f1daf"
         }
       ]
+    },
+    {
+      "subject_id": "authored-trap-reach",
+      "origin": "authored",
+      "version_label": "authored 2026-10-07 for false-credit traps outside the test body: build reach, threads and value projections",
+      "license": "MIT OR Apache-2.0",
+      "shared_corpus": null,
+      "retained_files": [
+        {
+          "path": "Cargo.toml",
+          "sha256": "3b2c3edf0250961524ca406205e2ed73c5e3c279adf272493de4979e1d9ffbb2"
+        },
+        {
+          "path": "src/boosts.rs",
+          "sha256": "74370782caff7bbfc0915d1a7203df45b74b065a726333ee2c66116060f09d0d"
+        },
+        {
+          "path": "src/caps.rs",
+          "sha256": "e904548c5abe75ecc1371df089cd423519d99ea005eb2885558dc5e56a592b6c"
+        },
+        {
+          "path": "src/ceilings.rs",
+          "sha256": "afa1e83b0448246dde4bed97c2b837dfb4e523b0f56068f70f547ec486c83286"
+        },
+        {
+          "path": "src/charges.rs",
+          "sha256": "5ef663a5bb5701fac293b376868d62b654ceea4a4b59621754bd5358bee42a59"
+        },
+        {
+          "path": "src/dampers.rs",
+          "sha256": "607f536005b865b64278b63aa1b9186c5ea12a297ec76cd6337c55f5898bb807"
+        },
+        {
+          "path": "src/fines.rs",
+          "sha256": "11a04dfa3e4d9cd7884321f3446292dd9afd0bf254629284533e04ddf5078615"
+        },
+        {
+          "path": "src/fines_tests.rs",
+          "sha256": "7bd667c96df55aa13db56bc12bac123f1487060b899da237f208b4121bef0461"
+        },
+        {
+          "path": "src/glows.rs",
+          "sha256": "741cc020d986ae1fb149146fe0ab756ff3fc7d020e5f9ef6712c59de581b5da5"
+        },
+        {
+          "path": "src/hoists.rs",
+          "sha256": "c3453154a132b0c59f5fb5a80af72853051f9275cd8fb7abef8cc917525d7575"
+        },
+        {
+          "path": "src/levies.rs",
+          "sha256": "5c7c8d817aa3b4b134871c93d8885d419b71113eba7446cfd1d34bd74ee2c49a"
+        },
+        {
+          "path": "src/lib.rs",
+          "sha256": "909e8978cc759daafb425c2170d6a2eac249c2692205e94965975d873669d62e"
+        },
+        {
+          "path": "src/lifts.rs",
+          "sha256": "098a3523c53d1f68cebd9a956507267dc3f347e3625d050c942133396a0e1a5c"
+        },
+        {
+          "path": "src/mufflers.rs",
+          "sha256": "0e240a997c54cfd96266556e5315662c8ed7bc842991e1cc7778f0dc935430b1"
+        },
+        {
+          "path": "src/piles.rs",
+          "sha256": "f635fb13915230b7ef8f82661082f4d41b7c633913740f52e2e9c89c995485fd"
+        },
+        {
+          "path": "src/quotas.rs",
+          "sha256": "96c79da450d2e9077282519ec8f20d9c1d66525ce693b14f9b02cd7a6c37d08e"
+        },
+        {
+          "path": "src/ramps.rs",
+          "sha256": "ebccacbd68cf793d11fd9f3018d5103075a2284f2c85ebf983381e8669b71299"
+        },
+        {
+          "path": "src/shines.rs",
+          "sha256": "0ed22813f598ef2cfa3663c772b726e16f215384903872578d12ab7f44acc1b1"
+        },
+        {
+          "path": "src/spares.rs",
+          "sha256": "0923da262a24e5cc04c07083c11dd8e97aabdf33b571710c30eeba8f8c1ac897"
+        },
+        {
+          "path": "src/spares_tests.rs",
+          "sha256": "2955eef925f1456a91c32c54921f238adbefe90ce51ff39aa806724ca843faba"
+        },
+        {
+          "path": "src/stacks.rs",
+          "sha256": "8226e9f65e4caba7eb44931d58cd18767f26f8bff423e747a74bf544c47a1212"
+        },
+        {
+          "path": "tests/registered.rs",
+          "sha256": "3164deffe90364054cfb65c71a14d6341b50fc7d4163317680ed999adba2797d"
+        },
+        {
+          "path": "tests/unbuilt.rs",
+          "sha256": "8a1a673d02d84f1c346efbfc810dd49d3e0f30e48efa64488333a052054f41a5"
+        }
+      ]
     }
   ],
   "cases": [
@@ -13616,6 +13717,1000 @@
       "reasoning": "limit_suite only defines limit_is_ten, which asserts limit(2) == 10 but never runs. Spec cell: RIPR-SPEC-0108 (pin in a nested test).",
       "labeling_observation": {
         "ripr_commit": "6487826",
+        "full_checkout_verdict": "gap",
+        "full_checkout_classifications": [
+          "reachable_unrevealed"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "trap-spare-undeclared-test-file",
+      "subject_id": "authored-trap-reach",
+      "diff": "cases/trap-spare-undeclared-test-file.diff",
+      "anchor": {
+        "file": "src/spares.rs",
+        "line": 2
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "return_value_arithmetic",
+      "test_shape": "test_in_undeclared_source_file",
+      "hard_case": "The only test of spare() lives in src/spares_tests.rs, which no `mod` declares, so Cargo never compiles it.",
+      "truth": {
+        "state": "not_discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "cargo test",
+        "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+        "mutants": [
+          {
+            "replacement": "base * 12",
+            "mutated_line": "base * 12",
+            "outcome": "tests_passed",
+            "failing_test": null,
+            "equivalence_review": "not equivalent: replaces `11 * base` with `base * 12`, which changes the result, but no executed assertion observes it"
+          },
+          {
+            "replacement": "base + 11",
+            "mutated_line": "base + 11",
+            "outcome": "tests_passed",
+            "failing_test": null,
+            "equivalence_review": "not equivalent: replaces `11 * base` with `base + 11`, which changes the result, but no executed assertion observes it"
+          },
+          {
+            "replacement": "base * 10",
+            "mutated_line": "base * 10",
+            "outcome": "tests_passed",
+            "failing_test": null,
+            "equivalence_review": "not equivalent: replaces `11 * base` with `base * 10`, which changes the result, but no executed assertion observes it"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "gap",
+        "acceptable_verdicts": [
+          "gap",
+          "limited"
+        ]
+      },
+      "reasoning": "spare_is_twenty_two pins spare(2) == 22 and imports crate::spares::spare, but lib.rs declares no `mod spares_tests`, so the test is not part of any target. Adversarial shape (test outside the module tree); paired with trap-fine-declared-test-file-control.",
+      "labeling_observation": {
+        "ripr_commit": "fce75e1",
+        "full_checkout_verdict": "credited",
+        "full_checkout_classifications": [
+          "exposed"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "trap-fine-declared-test-file-control",
+      "subject_id": "authored-trap-reach",
+      "diff": "cases/trap-fine-declared-test-file-control.diff",
+      "anchor": {
+        "file": "src/fines.rs",
+        "line": 2
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "return_value_arithmetic",
+      "test_shape": "test_in_declared_source_file",
+      "hard_case": null,
+      "truth": {
+        "state": "discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "cargo test",
+        "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+        "mutants": [
+          {
+            "replacement": "base * 38",
+            "mutated_line": "base * 38",
+            "outcome": "tests_failed",
+            "failing_test": "fines_tests::fine_is_seventy_four",
+            "equivalence_review": "not equivalent: replaces `37 * base` with `base * 38`, which changes the result"
+          },
+          {
+            "replacement": "base + 37",
+            "mutated_line": "base + 37",
+            "outcome": "tests_failed",
+            "failing_test": "fines_tests::fine_is_seventy_four",
+            "equivalence_review": "not equivalent: replaces `37 * base` with `base + 37`, which changes the result"
+          },
+          {
+            "replacement": "base * 36",
+            "mutated_line": "base * 36",
+            "outcome": "tests_failed",
+            "failing_test": "fines_tests::fine_is_seventy_four",
+            "equivalence_review": "not equivalent: replaces `37 * base` with `base * 36`, which changes the result"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "credited",
+        "acceptable_verdicts": [
+          "credited",
+          "limited",
+          "silent"
+        ]
+      },
+      "reasoning": "Negative control for trap-spare-undeclared-test-file: the same out-of-line test file shape, declared with `#[cfg(test)] mod fines_tests;` in lib.rs, so fine_is_seventy_four runs and pins fine(2) == 74.",
+      "labeling_observation": {
+        "ripr_commit": "fce75e1",
+        "full_checkout_verdict": "credited",
+        "full_checkout_classifications": [
+          "exposed"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "trap-charge-unbuilt-integration-test",
+      "subject_id": "authored-trap-reach",
+      "diff": "cases/trap-charge-unbuilt-integration-test.diff",
+      "anchor": {
+        "file": "src/charges.rs",
+        "line": 2
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "return_value_arithmetic",
+      "test_shape": "integration_test_not_built_autotests_off",
+      "hard_case": "The only test of charge() is tests/unbuilt.rs, and Cargo.toml sets `autotests = false` without a `[[test]]` entry for it, so Cargo never builds it.",
+      "truth": {
+        "state": "not_discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "cargo test",
+        "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+        "mutants": [
+          {
+            "replacement": "base * 14",
+            "mutated_line": "base * 14",
+            "outcome": "tests_passed",
+            "failing_test": null,
+            "equivalence_review": "not equivalent: replaces `13 * base` with `base * 14`, which changes the result, but no executed assertion observes it"
+          },
+          {
+            "replacement": "base + 13",
+            "mutated_line": "base + 13",
+            "outcome": "tests_passed",
+            "failing_test": null,
+            "equivalence_review": "not equivalent: replaces `13 * base` with `base + 13`, which changes the result, but no executed assertion observes it"
+          },
+          {
+            "replacement": "base * 12",
+            "mutated_line": "base * 12",
+            "outcome": "tests_passed",
+            "failing_test": null,
+            "equivalence_review": "not equivalent: replaces `13 * base` with `base * 12`, which changes the result, but no executed assertion observes it"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "gap",
+        "acceptable_verdicts": [
+          "gap",
+          "limited"
+        ]
+      },
+      "reasoning": "charge_is_twenty_six pins charge(2) == 26 through the public API, but the manifest disables integration-test discovery and registers only tests/registered.rs. Adversarial shape (test target excluded by the manifest); paired with trap-levy-registered-integration-control.",
+      "labeling_observation": {
+        "ripr_commit": "fce75e1",
+        "full_checkout_verdict": "credited",
+        "full_checkout_classifications": [
+          "exposed"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "trap-levy-registered-integration-control",
+      "subject_id": "authored-trap-reach",
+      "diff": "cases/trap-levy-registered-integration-control.diff",
+      "anchor": {
+        "file": "src/levies.rs",
+        "line": 2
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "return_value_arithmetic",
+      "test_shape": "integration_test_registered_autotests_off",
+      "hard_case": null,
+      "truth": {
+        "state": "discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "cargo test",
+        "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+        "mutants": [
+          {
+            "replacement": "base * 16",
+            "mutated_line": "base * 16",
+            "outcome": "tests_failed",
+            "failing_test": "levy_is_thirty",
+            "equivalence_review": "not equivalent: replaces `15 * base` with `base * 16`, which changes the result"
+          },
+          {
+            "replacement": "base + 15",
+            "mutated_line": "base + 15",
+            "outcome": "tests_failed",
+            "failing_test": "levy_is_thirty",
+            "equivalence_review": "not equivalent: replaces `15 * base` with `base + 15`, which changes the result"
+          },
+          {
+            "replacement": "base * 14",
+            "mutated_line": "base * 14",
+            "outcome": "tests_failed",
+            "failing_test": "levy_is_thirty",
+            "equivalence_review": "not equivalent: replaces `15 * base` with `base * 14`, which changes the result"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "credited",
+        "acceptable_verdicts": [
+          "credited",
+          "limited",
+          "silent"
+        ]
+      },
+      "reasoning": "Negative control for trap-charge-unbuilt-integration-test: tests/registered.rs is listed as a `[[test]]` target, so levy_is_thirty runs and pins levy(2) == 30 despite `autotests = false`.",
+      "labeling_observation": {
+        "ripr_commit": "fce75e1",
+        "full_checkout_verdict": "credited",
+        "full_checkout_classifications": [
+          "exposed"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "trap-boost-detached-thread",
+      "subject_id": "authored-trap-reach",
+      "diff": "cases/trap-boost-detached-thread.diff",
+      "anchor": {
+        "file": "src/boosts.rs",
+        "line": 2
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "return_value_arithmetic",
+      "test_shape": "assert_in_detached_thread",
+      "hard_case": "The assert runs on a spawned thread whose JoinHandle is dropped, so its panic never reaches the test harness.",
+      "truth": {
+        "state": "not_discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "cargo test",
+        "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+        "mutants": [
+          {
+            "replacement": "base * 18",
+            "mutated_line": "base * 18",
+            "outcome": "tests_passed",
+            "failing_test": null,
+            "equivalence_review": "not equivalent: replaces `17 * base` with `base * 18`, which changes the result, but no executed assertion observes it"
+          },
+          {
+            "replacement": "base + 17",
+            "mutated_line": "base + 17",
+            "outcome": "tests_passed",
+            "failing_test": null,
+            "equivalence_review": "not equivalent: replaces `17 * base` with `base + 17`, which changes the result, but no executed assertion observes it"
+          },
+          {
+            "replacement": "base * 16",
+            "mutated_line": "base * 16",
+            "outcome": "tests_passed",
+            "failing_test": null,
+            "equivalence_review": "not equivalent: replaces `17 * base` with `base * 16`, which changes the result, but no executed assertion observes it"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "gap",
+        "acceptable_verdicts": [
+          "gap",
+          "limited"
+        ]
+      },
+      "reasoning": "boost_runs_in_a_worker spawns a thread that asserts boost(2) == 34 and returns without joining it; a failing assert panics only that thread and the test still passes. Adversarial shape (assertion outside the test thread); paired with trap-lift-joined-thread-control. ripr's gap here is incidental today: it does not read an assert inside a thread::spawn closure at all, so the scoped-thread and joined-thread controls score false_actionable too (#6966). This case guards the fix: once a joined or scoped spawn earns credit, a detached one must not.",
+      "labeling_observation": {
+        "ripr_commit": "fce75e1",
+        "full_checkout_verdict": "gap",
+        "full_checkout_classifications": [
+          "reachable_unrevealed"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "trap-lift-joined-thread-control",
+      "subject_id": "authored-trap-reach",
+      "diff": "cases/trap-lift-joined-thread-control.diff",
+      "anchor": {
+        "file": "src/lifts.rs",
+        "line": 2
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "return_value_arithmetic",
+      "test_shape": "assert_in_joined_thread",
+      "hard_case": null,
+      "truth": {
+        "state": "discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "cargo test",
+        "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+        "mutants": [
+          {
+            "replacement": "base * 20",
+            "mutated_line": "base * 20",
+            "outcome": "tests_failed",
+            "failing_test": "lifts::tests::lift_runs_in_a_worker",
+            "equivalence_review": "not equivalent: replaces `19 * base` with `base * 20`, which changes the result"
+          },
+          {
+            "replacement": "base + 19",
+            "mutated_line": "base + 19",
+            "outcome": "tests_failed",
+            "failing_test": "lifts::tests::lift_runs_in_a_worker",
+            "equivalence_review": "not equivalent: replaces `19 * base` with `base + 19`, which changes the result"
+          },
+          {
+            "replacement": "base * 18",
+            "mutated_line": "base * 18",
+            "outcome": "tests_failed",
+            "failing_test": "lifts::tests::lift_runs_in_a_worker",
+            "equivalence_review": "not equivalent: replaces `19 * base` with `base * 18`, which changes the result"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "credited",
+        "acceptable_verdicts": [
+          "credited",
+          "limited",
+          "silent"
+        ]
+      },
+      "reasoning": "Negative control for trap-boost-detached-thread: the same spawned assert, joined with `.join().unwrap()`, so the worker's panic fails lift_runs_in_a_worker for each mutant. ripr's weakly_exposed comes from the `.unwrap()`, not the assert (#6966).",
+      "labeling_observation": {
+        "ripr_commit": "fce75e1",
+        "full_checkout_verdict": "gap",
+        "full_checkout_classifications": [
+          "weakly_exposed"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "trap-dampen-times-zero",
+      "subject_id": "authored-trap-reach",
+      "diff": "cases/trap-dampen-times-zero.diff",
+      "anchor": {
+        "file": "src/dampers.rs",
+        "line": 2
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "return_value_arithmetic",
+      "test_shape": "result_projected_through_absorbing_op",
+      "hard_case": "The test multiplies the result by zero before comparing, so every value of dampen(2) gives 0.",
+      "truth": {
+        "state": "not_discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "cargo test",
+        "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+        "mutants": [
+          {
+            "replacement": "base * 22",
+            "mutated_line": "base * 22",
+            "outcome": "tests_passed",
+            "failing_test": null,
+            "equivalence_review": "not equivalent: replaces `21 * base` with `base * 22`, which changes the result, but no executed assertion observes it"
+          },
+          {
+            "replacement": "base + 21",
+            "mutated_line": "base + 21",
+            "outcome": "tests_passed",
+            "failing_test": null,
+            "equivalence_review": "not equivalent: replaces `21 * base` with `base + 21`, which changes the result, but no executed assertion observes it"
+          },
+          {
+            "replacement": "base * 20",
+            "mutated_line": "base * 20",
+            "outcome": "tests_passed",
+            "failing_test": null,
+            "equivalence_review": "not equivalent: replaces `21 * base` with `base * 20`, which changes the result, but no executed assertion observes it"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "gap",
+        "acceptable_verdicts": [
+          "gap",
+          "limited"
+        ]
+      },
+      "reasoning": "dampen_cancels_out asserts dampen(2) * 0 == 0, which holds for any u32 result. Adversarial shape (projection that discards the result). ripr's gap here is incidental today: it grades any owner call wrapped in a projection below an exact pin, even one that keeps the value, so the paired control (trap-muffle-times-one-control) scores false_actionable. This case guards the fix: once faithful projections earn credit, this lossy one must not.",
+      "labeling_observation": {
+        "ripr_commit": "fce75e1",
+        "full_checkout_verdict": "gap",
+        "full_checkout_classifications": [
+          "weakly_exposed"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "trap-cap-min-clamp",
+      "subject_id": "authored-trap-reach",
+      "diff": "cases/trap-cap-min-clamp.diff",
+      "anchor": {
+        "file": "src/caps.rs",
+        "line": 2
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "return_value_arithmetic",
+      "test_shape": "result_projected_through_clamp",
+      "hard_case": "The test clamps the result with .min(1) before comparing, so every value of cap(2) of at least 1 gives 1.",
+      "truth": {
+        "state": "not_discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "cargo test",
+        "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+        "mutants": [
+          {
+            "replacement": "base * 24",
+            "mutated_line": "base * 24",
+            "outcome": "tests_passed",
+            "failing_test": null,
+            "equivalence_review": "not equivalent: replaces `23 * base` with `base * 24`, which changes the result, but no executed assertion observes it"
+          },
+          {
+            "replacement": "base + 23",
+            "mutated_line": "base + 23",
+            "outcome": "tests_passed",
+            "failing_test": null,
+            "equivalence_review": "not equivalent: replaces `23 * base` with `base + 23`, which changes the result, but no executed assertion observes it"
+          },
+          {
+            "replacement": "base * 22",
+            "mutated_line": "base * 22",
+            "outcome": "tests_passed",
+            "failing_test": null,
+            "equivalence_review": "not equivalent: replaces `23 * base` with `base * 22`, which changes the result, but no executed assertion observes it"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "gap",
+        "acceptable_verdicts": [
+          "gap",
+          "limited"
+        ]
+      },
+      "reasoning": "cap_is_at_least_one asserts cap(2).min(1) == 1, which holds for every listed mutant. Adversarial shape (lossy projection of the result). ripr's gap here is incidental today: it grades any owner call wrapped in a projection below an exact pin, even one that keeps the value, so the paired control (trap-ceiling-wide-min-control) scores false_actionable. This case guards the fix: once faithful projections earn credit, this lossy one must not.",
+      "labeling_observation": {
+        "ripr_commit": "fce75e1",
+        "full_checkout_verdict": "gap",
+        "full_checkout_classifications": [
+          "weakly_exposed"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "trap-const-fn-self-expected",
+      "subject_id": "authored-trap-reach",
+      "diff": "cases/trap-const-fn-self-expected.diff",
+      "anchor": {
+        "file": "src/quotas.rs",
+        "line": 2
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "return_value_arithmetic",
+      "test_shape": "self_computed_expected_via_const_fn",
+      "hard_case": "The expected value is a test-module const computed by the same const fn, so the assert compares quota with quota.",
+      "truth": {
+        "state": "not_discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "cargo test",
+        "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+        "mutants": [
+          {
+            "replacement": "base * 28",
+            "mutated_line": "base * 28",
+            "outcome": "tests_passed",
+            "failing_test": null,
+            "equivalence_review": "not equivalent: replaces `27 * base` with `base * 28`, which changes the result, but no executed assertion observes it"
+          },
+          {
+            "replacement": "base + 27",
+            "mutated_line": "base + 27",
+            "outcome": "tests_passed",
+            "failing_test": null,
+            "equivalence_review": "not equivalent: replaces `27 * base` with `base + 27`, which changes the result, but no executed assertion observes it"
+          },
+          {
+            "replacement": "base * 26",
+            "mutated_line": "base * 26",
+            "outcome": "tests_passed",
+            "failing_test": null,
+            "equivalence_review": "not equivalent: replaces `27 * base` with `base * 26`, which changes the result, but no executed assertion observes it"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "gap",
+        "acceptable_verdicts": [
+          "gap",
+          "limited"
+        ]
+      },
+      "reasoning": "quota_matches_the_table asserts quota(2) == EXPECTED, and EXPECTED is `const EXPECTED: u32 = quota(2)`, evaluated by the edited body at compile time. Spec cells: RIPR-SPEC-0004, RIPR-SPEC-0035 (self-computed expected value), const-evaluated variant of trap-tax-reference-helper; a runtime `let expected = quota(2)` binding reads the same, so the const is not what misleads ripr.",
+      "labeling_observation": {
+        "ripr_commit": "fce75e1",
+        "full_checkout_verdict": "credited",
+        "full_checkout_classifications": [
+          "exposed"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "trap-ramp-same-call-both-sides",
+      "subject_id": "authored-trap-reach",
+      "diff": "cases/trap-ramp-same-call-both-sides.diff",
+      "anchor": {
+        "file": "src/ramps.rs",
+        "line": 2
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "return_value_arithmetic",
+      "test_shape": "owner_call_on_both_sides_of_assert_eq",
+      "hard_case": "assert_eq!(ramp(2), ramp(2)) calls the owner on both sides, so the comparison holds for any deterministic body.",
+      "truth": {
+        "state": "not_discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "cargo test",
+        "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+        "mutants": [
+          {
+            "replacement": "base * 30",
+            "mutated_line": "base * 30",
+            "outcome": "tests_passed",
+            "failing_test": null,
+            "equivalence_review": "not equivalent: replaces `29 * base` with `base * 30`, which changes the result, but no executed assertion observes it"
+          },
+          {
+            "replacement": "base + 29",
+            "mutated_line": "base + 29",
+            "outcome": "tests_passed",
+            "failing_test": null,
+            "equivalence_review": "not equivalent: replaces `29 * base` with `base + 29`, which changes the result, but no executed assertion observes it"
+          },
+          {
+            "replacement": "base * 28",
+            "mutated_line": "base * 28",
+            "outcome": "tests_passed",
+            "failing_test": null,
+            "equivalence_review": "not equivalent: replaces `29 * base` with `base * 28`, which changes the result, but no executed assertion observes it"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "gap",
+        "acceptable_verdicts": [
+          "gap",
+          "limited"
+        ]
+      },
+      "reasoning": "ramp_is_deterministic compares ramp(2) with ramp(2). Unlike trap-score-tautology there is no binding: the owner call itself appears on both sides of the assertion. Adversarial shape (tautology through the owner).",
+      "labeling_observation": {
+        "ripr_commit": "fce75e1",
+        "full_checkout_verdict": "gap",
+        "full_checkout_classifications": [
+          "weakly_exposed"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "trap-stack-container-length",
+      "subject_id": "authored-trap-reach",
+      "diff": "cases/trap-stack-container-length.diff",
+      "anchor": {
+        "file": "src/stacks.rs",
+        "line": 2
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "return_value_arithmetic",
+      "test_shape": "assert_on_container_length_not_element",
+      "hard_case": "The test wraps the result in a vec and asserts the vec's length, which is 1 for any value.",
+      "truth": {
+        "state": "not_discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "cargo test",
+        "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+        "mutants": [
+          {
+            "replacement": "base * 32",
+            "mutated_line": "base * 32",
+            "outcome": "tests_passed",
+            "failing_test": null,
+            "equivalence_review": "not equivalent: replaces `31 * base` with `base * 32`, which changes the result, but no executed assertion observes it"
+          },
+          {
+            "replacement": "base + 31",
+            "mutated_line": "base + 31",
+            "outcome": "tests_passed",
+            "failing_test": null,
+            "equivalence_review": "not equivalent: replaces `31 * base` with `base + 31`, which changes the result, but no executed assertion observes it"
+          },
+          {
+            "replacement": "base * 30",
+            "mutated_line": "base * 30",
+            "outcome": "tests_passed",
+            "failing_test": null,
+            "equivalence_review": "not equivalent: replaces `31 * base` with `base * 30`, which changes the result, but no executed assertion observes it"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "gap",
+        "acceptable_verdicts": [
+          "gap",
+          "limited"
+        ]
+      },
+      "reasoning": "stack_holds_one_entry asserts vec![stack(2)].len() == 1; the element is never read. Adversarial shape (assert on a property of the wrapper, not the result). ripr's gap here is incidental today: it grades any owner call wrapped in a projection below an exact pin, even one that keeps the value, so the paired control (trap-pile-first-element-control) scores false_actionable. This case guards the fix: once faithful projections earn credit, this lossy one must not.",
+      "labeling_observation": {
+        "ripr_commit": "fce75e1",
+        "full_checkout_verdict": "gap",
+        "full_checkout_classifications": [
+          "reachable_unrevealed"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "trap-glow-debug-nonempty",
+      "subject_id": "authored-trap-reach",
+      "diff": "cases/trap-glow-debug-nonempty.diff",
+      "anchor": {
+        "file": "src/glows.rs",
+        "line": 2
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "return_value_arithmetic",
+      "test_shape": "assert_debug_render_nonempty",
+      "hard_case": "The test asserts only that the Debug rendering of the result is non-empty, which holds for every u32.",
+      "truth": {
+        "state": "not_discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "cargo test",
+        "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+        "mutants": [
+          {
+            "replacement": "base * 34",
+            "mutated_line": "base * 34",
+            "outcome": "tests_passed",
+            "failing_test": null,
+            "equivalence_review": "not equivalent: replaces `33 * base` with `base * 34`, which changes the result, but no executed assertion observes it"
+          },
+          {
+            "replacement": "base + 33",
+            "mutated_line": "base + 33",
+            "outcome": "tests_passed",
+            "failing_test": null,
+            "equivalence_review": "not equivalent: replaces `33 * base` with `base + 33`, which changes the result, but no executed assertion observes it"
+          },
+          {
+            "replacement": "base * 32",
+            "mutated_line": "base * 32",
+            "outcome": "tests_passed",
+            "failing_test": null,
+            "equivalence_review": "not equivalent: replaces `33 * base` with `base * 32`, which changes the result, but no executed assertion observes it"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "gap",
+        "acceptable_verdicts": [
+          "gap",
+          "limited"
+        ]
+      },
+      "reasoning": "glow_renders asserts !format!(\"{:?}\", glow(2)).is_empty(). Adversarial shape (smoke assertion on a rendering of the result). ripr's gap here is incidental today: it grades any owner call wrapped in a projection below an exact pin, even one that keeps the value, so the paired control (trap-shine-debug-exact-control) scores false_actionable. This case guards the fix: once faithful projections earn credit, this lossy one must not.",
+      "labeling_observation": {
+        "ripr_commit": "fce75e1",
+        "full_checkout_verdict": "gap",
+        "full_checkout_classifications": [
+          "weakly_exposed"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "trap-muffle-times-one-control",
+      "subject_id": "authored-trap-reach",
+      "diff": "cases/trap-muffle-times-one-control.diff",
+      "anchor": {
+        "file": "src/mufflers.rs",
+        "line": 2
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "return_value_arithmetic",
+      "test_shape": "result_projected_through_identity_op",
+      "hard_case": null,
+      "truth": {
+        "state": "discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "cargo test",
+        "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+        "mutants": [
+          {
+            "replacement": "base * 40",
+            "mutated_line": "base * 40",
+            "outcome": "tests_failed",
+            "failing_test": "mufflers::tests::muffle_keeps_the_value",
+            "equivalence_review": "not equivalent: replaces `39 * base` with `base * 40`, which changes the result"
+          },
+          {
+            "replacement": "base + 39",
+            "mutated_line": "base + 39",
+            "outcome": "tests_failed",
+            "failing_test": "mufflers::tests::muffle_keeps_the_value",
+            "equivalence_review": "not equivalent: replaces `39 * base` with `base + 39`, which changes the result"
+          },
+          {
+            "replacement": "base * 38",
+            "mutated_line": "base * 38",
+            "outcome": "tests_failed",
+            "failing_test": "mufflers::tests::muffle_keeps_the_value",
+            "equivalence_review": "not equivalent: replaces `39 * base` with `base * 38`, which changes the result"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "credited",
+        "acceptable_verdicts": [
+          "credited",
+          "limited",
+          "silent"
+        ]
+      },
+      "reasoning": "Negative control for trap-dampen-times-zero: the same projection with `* 1`, which keeps the value, so muffle_keeps_the_value pins muffle(2) * 1 == 78 and fails for each mutant.",
+      "labeling_observation": {
+        "ripr_commit": "fce75e1",
+        "full_checkout_verdict": "gap",
+        "full_checkout_classifications": [
+          "weakly_exposed"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "trap-ceiling-wide-min-control",
+      "subject_id": "authored-trap-reach",
+      "diff": "cases/trap-ceiling-wide-min-control.diff",
+      "anchor": {
+        "file": "src/ceilings.rs",
+        "line": 2
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "return_value_arithmetic",
+      "test_shape": "result_projected_through_wide_clamp",
+      "hard_case": null,
+      "truth": {
+        "state": "discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "cargo test",
+        "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+        "mutants": [
+          {
+            "replacement": "base * 42",
+            "mutated_line": "base * 42",
+            "outcome": "tests_failed",
+            "failing_test": "ceilings::tests::ceiling_stays_under_the_limit",
+            "equivalence_review": "not equivalent: replaces `41 * base` with `base * 42`, which changes the result"
+          },
+          {
+            "replacement": "base + 41",
+            "mutated_line": "base + 41",
+            "outcome": "tests_failed",
+            "failing_test": "ceilings::tests::ceiling_stays_under_the_limit",
+            "equivalence_review": "not equivalent: replaces `41 * base` with `base + 41`, which changes the result"
+          },
+          {
+            "replacement": "base * 40",
+            "mutated_line": "base * 40",
+            "outcome": "tests_failed",
+            "failing_test": "ceilings::tests::ceiling_stays_under_the_limit",
+            "equivalence_review": "not equivalent: replaces `41 * base` with `base * 40`, which changes the result"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "credited",
+        "acceptable_verdicts": [
+          "credited",
+          "limited",
+          "silent"
+        ]
+      },
+      "reasoning": "Negative control for trap-cap-min-clamp: the same projection with .min(100), above every listed value, so ceiling_stays_under_the_limit pins ceiling(2).min(100) == 82 and fails for each mutant.",
+      "labeling_observation": {
+        "ripr_commit": "fce75e1",
+        "full_checkout_verdict": "gap",
+        "full_checkout_classifications": [
+          "weakly_exposed"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "trap-pile-first-element-control",
+      "subject_id": "authored-trap-reach",
+      "diff": "cases/trap-pile-first-element-control.diff",
+      "anchor": {
+        "file": "src/piles.rs",
+        "line": 2
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "return_value_arithmetic",
+      "test_shape": "assert_on_container_element",
+      "hard_case": null,
+      "truth": {
+        "state": "discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "cargo test",
+        "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+        "mutants": [
+          {
+            "replacement": "base * 44",
+            "mutated_line": "base * 44",
+            "outcome": "tests_failed",
+            "failing_test": "piles::tests::pile_holds_the_entry",
+            "equivalence_review": "not equivalent: replaces `43 * base` with `base * 44`, which changes the result"
+          },
+          {
+            "replacement": "base + 43",
+            "mutated_line": "base + 43",
+            "outcome": "tests_failed",
+            "failing_test": "piles::tests::pile_holds_the_entry",
+            "equivalence_review": "not equivalent: replaces `43 * base` with `base + 43`, which changes the result"
+          },
+          {
+            "replacement": "base * 42",
+            "mutated_line": "base * 42",
+            "outcome": "tests_failed",
+            "failing_test": "piles::tests::pile_holds_the_entry",
+            "equivalence_review": "not equivalent: replaces `43 * base` with `base * 42`, which changes the result"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "credited",
+        "acceptable_verdicts": [
+          "credited",
+          "limited",
+          "silent"
+        ]
+      },
+      "reasoning": "Negative control for trap-stack-container-length: the same vec wrapper, asserting its element, so pile_holds_the_entry pins vec![pile(2)][0] == 86 and fails for each mutant.",
+      "labeling_observation": {
+        "ripr_commit": "fce75e1",
+        "full_checkout_verdict": "gap",
+        "full_checkout_classifications": [
+          "reachable_unrevealed"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "trap-shine-debug-exact-control",
+      "subject_id": "authored-trap-reach",
+      "diff": "cases/trap-shine-debug-exact-control.diff",
+      "anchor": {
+        "file": "src/shines.rs",
+        "line": 2
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "return_value_arithmetic",
+      "test_shape": "assert_debug_render_exact",
+      "hard_case": null,
+      "truth": {
+        "state": "discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "cargo test",
+        "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+        "mutants": [
+          {
+            "replacement": "base * 48",
+            "mutated_line": "base * 48",
+            "outcome": "tests_failed",
+            "failing_test": "shines::tests::shine_renders_the_value",
+            "equivalence_review": "not equivalent: replaces `47 * base` with `base * 48`, which changes the result"
+          },
+          {
+            "replacement": "base + 47",
+            "mutated_line": "base + 47",
+            "outcome": "tests_failed",
+            "failing_test": "shines::tests::shine_renders_the_value",
+            "equivalence_review": "not equivalent: replaces `47 * base` with `base + 47`, which changes the result"
+          },
+          {
+            "replacement": "base * 46",
+            "mutated_line": "base * 46",
+            "outcome": "tests_failed",
+            "failing_test": "shines::tests::shine_renders_the_value",
+            "equivalence_review": "not equivalent: replaces `47 * base` with `base * 46`, which changes the result"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "credited",
+        "acceptable_verdicts": [
+          "credited",
+          "limited",
+          "silent"
+        ]
+      },
+      "reasoning": "Negative control for trap-glow-debug-nonempty: the same Debug rendering compared with the exact text, so shine_renders_the_value pins format!(\"{:?}\", shine(2)) == \"94\" and fails for each mutant.",
+      "labeling_observation": {
+        "ripr_commit": "fce75e1",
+        "full_checkout_verdict": "gap",
+        "full_checkout_classifications": [
+          "reachable_unrevealed"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "trap-hoist-scoped-thread-control",
+      "subject_id": "authored-trap-reach",
+      "diff": "cases/trap-hoist-scoped-thread-control.diff",
+      "anchor": {
+        "file": "src/hoists.rs",
+        "line": 2
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "return_value_arithmetic",
+      "test_shape": "assert_in_scoped_thread",
+      "hard_case": null,
+      "truth": {
+        "state": "discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "cargo test",
+        "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+        "mutants": [
+          {
+            "replacement": "base * 50",
+            "mutated_line": "base * 50",
+            "outcome": "tests_failed",
+            "failing_test": "hoists::tests::hoist_runs_in_a_scoped_worker",
+            "equivalence_review": "not equivalent: replaces `49 * base` with `base * 50`, which changes the result"
+          },
+          {
+            "replacement": "base + 49",
+            "mutated_line": "base + 49",
+            "outcome": "tests_failed",
+            "failing_test": "hoists::tests::hoist_runs_in_a_scoped_worker",
+            "equivalence_review": "not equivalent: replaces `49 * base` with `base + 49`, which changes the result"
+          },
+          {
+            "replacement": "base * 48",
+            "mutated_line": "base * 48",
+            "outcome": "tests_failed",
+            "failing_test": "hoists::tests::hoist_runs_in_a_scoped_worker",
+            "equivalence_review": "not equivalent: replaces `49 * base` with `base * 48`, which changes the result"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "credited",
+        "acceptable_verdicts": [
+          "credited",
+          "limited",
+          "silent"
+        ]
+      },
+      "reasoning": "Negative control for trap-boost-detached-thread: the spawned assert runs inside std::thread::scope, which joins every worker and re-raises its panic, so hoist_runs_in_a_scoped_worker fails for each mutant.",
+      "labeling_observation": {
+        "ripr_commit": "fce75e1",
         "full_checkout_verdict": "gap",
         "full_checkout_classifications": [
           "reachable_unrevealed"

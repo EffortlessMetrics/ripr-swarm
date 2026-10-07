@@ -1,0 +1,11 @@
+diff --git a/src/dampers.rs b/src/dampers.rs
+index f442bd8..ddb2312 100644
+--- a/src/dampers.rs
++++ b/src/dampers.rs
+@@ -1,5 +1,5 @@
+ pub fn dampen(base: u32) -> u32 {
+-    base * 21
++    21 * base
+ }
+ 
+ #[cfg(test)]
