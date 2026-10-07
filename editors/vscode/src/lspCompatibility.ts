@@ -176,14 +176,16 @@ public static class RiprProbeJob {
             }
             string exitNonce = Environment.GetEnvironmentVariable("RIPR_PROBE_EXIT_NONCE") ?? "";
             start.EnvironmentVariables.Remove("RIPR_PROBE_EXIT_NONCE");
-            Process process;
+            Process process = null;
             try {
                 process = new Process { StartInfo = start };
                 if (!process.Start()) {
-                    process.Dispose();
                     throw new InvalidOperationException("Probe process did not start.");
                 }
             } catch (Exception startFailure) {
+                if (process != null) {
+                    try { process.Dispose(); } catch {}
+                }
                 // A missing or unstartable target throws here; without a typed
                 // marker the wrapper used to exit 0 silently and the resolver
                 // misread the candidate as LSP-incompatible (#5891).
@@ -285,7 +287,11 @@ export async function probeStandardLspCompatibility(
 
     child.once('error', (error) => fail('spawn_failure', error.message));
     child.stdin?.once('error', (error) => fail('process_failure', `LSP probe stdin failed: ${error.message}`));
-    child.once('exit', (wrapperCode, signal) => {
+    // Classify on 'close', not 'exit': the wrapper's exit-code and
+    // start-failure markers ride stderr, and node can deliver 'exit' before
+    // the last stderr chunks. 'close' fires only after stdio has drained, so
+    // the marker maps below always observe what the wrapper printed (#5891).
+    child.once('close', (wrapperCode, signal) => {
       const code = probeProcessExitCode(child, wrapperCode);
       if (settled) {
         return;

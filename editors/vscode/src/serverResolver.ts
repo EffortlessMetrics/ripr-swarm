@@ -290,7 +290,12 @@ export function probeServerVersion(
       finish({ message: `${detail} could not start.`, detail: error.message });
     });
 
-    child.once('exit', (wrapperCode) => {
+    // Classify on 'close', not 'exit': the win32 wrapper reports the exit
+    // code and start failures on stderr, and node can deliver 'exit' before
+    // the last stderr chunks. 'close' fires only after stdio has drained, so
+    // marker-based classification and the version line always observe the
+    // completed probe output (#5891).
+    child.once('close', (wrapperCode) => {
       const code = probeProcessExitCode(child, wrapperCode);
       // The win32 wrapper reports a target that could not start through its
       // typed marker; name the real cause instead of a bogus exit code (#5891).
