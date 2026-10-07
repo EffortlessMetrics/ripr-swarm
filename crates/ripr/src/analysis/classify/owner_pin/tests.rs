@@ -2036,6 +2036,19 @@ fn a_same_name_type_outside_the_test_module_does_not_shadow() {
     assert_eq!(admitted_texts(&index, &pin).len(), 1);
 }
 
+/// #6905 precision (review): a sibling module sharing the test's line
+/// does not shadow the receiver. Byte-exact ancestry, not line spans,
+/// decides, so the valid production-owner assertion keeps its pin.
+#[test]
+fn a_same_line_sibling_module_does_not_shadow() {
+    let lib = "pub struct Stack {\n    items: Vec<u32>,\n}\n\nimpl Stack {\n    pub fn depth(&self) -> usize {\n        self.items.len() + 1\n    }\n}\n\nmod shadow { struct Stack; } #[test] fn depth_counts() { let stack = Stack { items: Vec::new() }; assert_eq!(stack.depth(), 1); }\n";
+    let index = index(&[(LIB, lib)]);
+    let pin = establish(&index, "depth", "self.items.len() + 1");
+    assert!(pin.is_some(), "the same-line control must establish");
+    let Some(pin) = pin else { return };
+    assert_eq!(admitted_texts(&index, &pin).len(), 1);
+}
+
 const GATE_LIB: &str = "pub fn gate(value: u32) -> bool {\n    10 <= value\n}\n\npub fn level(value: u32) -> u32 {\n    10 + value\n}\n";
 
 fn predicate_probe(owner: &FunctionSummary, expression: &str) -> Probe {

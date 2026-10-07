@@ -2768,10 +2768,43 @@ fn test_module_shadows_type(test: &TestSummary, source: &str, base: &str) -> boo
     };
     // 1-based file lines, matching `TestSummary`.
     let line_of = |offset: u32| source[..offset as usize].matches('\n').count() + 1;
-    parse
-        .tree()
-        .syntax()
+    let root = parse.tree().syntax().clone();
+    // Exact scope first: the test fn's own ancestor modules. Line spans can
+    // coincide for same-line siblings (`mod s { struct W; } #[test] fn t()
+    // {...}`), where byte-exact ancestry refuses nothing, so ancestry
+    // decides whenever the test fn resolves. Macro-shaped tests whose fn
+    // has no matching node keep the line-span fallback below.
+    let test_name = test.name.strip_prefix("r#").unwrap_or(&test.name);
+    let test_fns: Vec<_> = root
         .descendants()
+        .filter_map(ast::Fn::cast)
+        .filter(|func| {
+            func.name().is_some_and(|name| {
+                let text = name.text().to_string();
+                text.strip_prefix("r#").unwrap_or(&text) == test_name
+            }) && {
+                let range = func.syntax().text_range();
+                let start: u32 = range.start().into();
+                let end: u32 = range.end().into();
+                line_of(start) <= test.end_line && test.start_line <= line_of(end)
+            }
+        })
+        .collect();
+    if !test_fns.is_empty() {
+        return test_fns.iter().any(|func| {
+            func.syntax()
+                .ancestors()
+                .filter_map(ast::Module::cast)
+                .any(|module| {
+                    module.item_list().is_some_and(|items| {
+                        items
+                            .items()
+                            .any(|item| module_item_names_type(&item, base))
+                    })
+                })
+        });
+    }
+    root.descendants()
         .filter_map(ast::Module::cast)
         .filter_map(|module| module.item_list().map(|items| (module, items)))
         .any(|(module, items)| {

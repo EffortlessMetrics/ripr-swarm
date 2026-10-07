@@ -11573,6 +11573,11 @@ tests = [
   "crates/ripr/src/analysis/classify/boundary_pairing.rs::line_activation_does_not_pair_through_another_owner_call_on_the_line",
   "crates/ripr/src/analysis/classify/boundary_pairing.rs::comments_and_strings_in_operands_do_not_pair",
   "crates/ripr/src/analysis/classify/boundary_pairing.rs::quoted_owner_text_on_the_line_keeps_the_activation_fallback",
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_test_module_shadow_of_the_receiver_refuses_the_clone_pin",
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_test_module_shadow_of_the_receiver_refuses_a_method_pin",
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_same_name_type_outside_the_test_module_does_not_shadow",
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_same_line_sibling_module_does_not_shadow",
+  "crates/ripr/tests/clone_field_whole_equality.rs::a_test_module_shadow_of_the_receiver_is_not_exposed",
 ]
 fixtures = [
   "fixtures/predicate_boundary_oracle_refused",
@@ -11617,6 +11622,7 @@ fixtures = [
   "fixtures/owner_return_pin_cfg_false_file",
   "fixtures/owner_return_pin_cfg_attr_module",
   "fixtures/owner_return_pin_out_of_line_cfg",
+  "fixtures/owner_return_pin_test_module_shadow",
 ]
 code = [
   "crates/ripr/src/output/observed_values.rs",
