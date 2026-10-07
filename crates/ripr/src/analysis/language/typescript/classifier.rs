@@ -3036,35 +3036,10 @@ pub(crate) fn ts_oracle_kind_matches_seam(
     }
 }
 
-/// Compute the strongest oracle kind and strength that MATCHES the changed
-/// seam's probe family, by iterating assertions at the assertion level across
-/// oracle-eligible candidates (RIPR-SPEC-0104).
-///
-/// This is the family-aware replacement for the former per-test max over
-/// `related: Vec<RelatedTest>` (which collapsed each test to one
-/// `oracle_kind` via `strongest_assertion`). The collapsed kind may be
-/// wrong-family (e.g., a test with both `.toThrow(DiscountError)` and
-/// `.toBeGreaterThan(0)` collapses to `ExactErrorVariant` / Strong — but
-/// `ExactErrorVariant` does NOT match a `ReturnValue` seam).
-///
-/// By filtering at the assertion level before taking the max, a multi-assertion
-/// test can still contribute its family-matching assertion even when its
-/// overall-strongest assertion is wrong-family — the anti-over-correction
-/// invariant (RIPR-SPEC-0104 control 4).
-///
-/// Returns `(rank: u8, kind: OracleKind)` where rank is the
-/// `oracle_strength.rank()` of the best matching assertion, and kind is its
-/// `oracle_kind`. Returns `(0, OracleKind::Unknown)` when there are no
-/// candidates observing an owner call or no family-matching assertion.
-///
-/// Candidates qualify via `candidate_observes_owner_call`: trusted relations
-/// by construction, and gate-denied relations whose test still contains an
-/// owner-name call. Oracle classification is independent of relation credit —
-/// the exposure decision separately consumes `has_oracle_eligible_relation`,
-/// so a heuristic-only relation can never promote here.
 /// RIPR-SPEC-0243 rule 10 under rule 4's message-only guard: a literal
-/// message check that also matches the old message passes on both
-/// versions, so it reads `broad_error` / weak for this change. Returns the
+/// message check that does not pass on exactly one of the old and new
+/// messages cannot tell the versions apart, so it reads `broad_error` /
+/// weak for this change. Returns the
 /// tests with those assertions downgraded, or `None` when none needs it.
 fn tests_with_message_guard(
     tests: &[TypeScriptTest],
@@ -3101,6 +3076,32 @@ fn tests_with_message_guard(
     )
 }
 
+/// Compute the strongest oracle kind and strength that MATCHES the changed
+/// seam's probe family, by iterating assertions at the assertion level across
+/// oracle-eligible candidates (RIPR-SPEC-0104).
+///
+/// This is the family-aware replacement for the former per-test max over
+/// `related: Vec<RelatedTest>` (which collapsed each test to one
+/// `oracle_kind` via `strongest_assertion`). The collapsed kind may be
+/// wrong-family (e.g., a test with both `.toThrow(DiscountError)` and
+/// `.toBeGreaterThan(0)` collapses to `ExactErrorVariant` / Strong — but
+/// `ExactErrorVariant` does NOT match a `ReturnValue` seam).
+///
+/// By filtering at the assertion level before taking the max, a multi-assertion
+/// test can still contribute its family-matching assertion even when its
+/// overall-strongest assertion is wrong-family — the anti-over-correction
+/// invariant (RIPR-SPEC-0104 control 4).
+///
+/// Returns `(rank: u8, kind: OracleKind)` where rank is the
+/// `oracle_strength.rank()` of the best matching assertion, and kind is its
+/// `oracle_kind`. Returns `(0, OracleKind::Unknown)` when there are no
+/// candidates observing an owner call or no family-matching assertion.
+///
+/// Candidates qualify via `candidate_observes_owner_call`: trusted relations
+/// by construction, and gate-denied relations whose test still contains an
+/// owner-name call. Oracle classification is independent of relation credit —
+/// the exposure decision separately consumes `has_oracle_eligible_relation`,
+/// so a heuristic-only relation can never promote here.
 pub(crate) fn strongest_family_matching_oracle(
     probe_family: &ProbeFamily,
     candidates: &[TypeScriptRelatedCandidate<'_>],
@@ -3162,7 +3163,7 @@ pub(crate) fn classify_change(
         file,
         line,
         line_text,
-        None,
+        ReplacedLine::Inserted,
         owners,
         all_tests,
         workspace_root,
@@ -3177,8 +3178,8 @@ pub(crate) fn classify_change(
 /// fail-closed cause (missing / unparseable / `extends` / unreadable
 /// config) instead of telling the user to enable a flag that is already on.
 ///
-/// `old_line_text` is the removed line paired with this one, when the diff
-/// replaced it in place; it feeds the RIPR-SPEC-0243 message-only guard.
+/// `old_line` is what the diff removed where this line was added; it feeds
+/// the RIPR-SPEC-0243 message-only guard.
 #[allow(
     clippy::too_many_arguments,
     reason = "10 structurally-distinct context tokens; bundling forces heap allocation; count is stable"
@@ -3187,7 +3188,7 @@ pub(crate) fn classify_change_with_alias_state(
     file: &Path,
     line: usize,
     line_text: &str,
-    old_line_text: Option<&str>,
+    old_line: ReplacedLine<'_>,
     owners: &[TypeScriptOwner],
     all_tests: &[TypeScriptTest],
     workspace_root: Option<&Path>,
@@ -3201,7 +3202,7 @@ pub(crate) fn classify_change_with_alias_state(
         .filter(|owner| normalized_path(&owner.file) == changed_file)
         .find(|owner| line >= owner.start_line && line <= owner.end_line)?;
     let guarded_tests;
-    let all_tests = match old_line_text.and_then(|old| message_only_change(old, line_text)) {
+    let all_tests = match guarded_message_change(old_line, line_text) {
         Some(change) => {
             guarded_tests = tests_with_message_guard(all_tests, &change);
             guarded_tests.as_deref().unwrap_or(all_tests)

@@ -36,6 +36,66 @@ pub struct ChangedLine {
     pub new_side_line: usize,
 }
 
+impl ChangedFile {
+    /// The removed line an added line replaces, by position inside a
+    /// replaced block.
+    ///
+    /// Every removed line of a hunk records the new-side position where the
+    /// replacement run starts, so only the start of the contiguous added run
+    /// shares its `new_side_line`. A run of `n` added lines replacing exactly
+    /// `n` removed lines pairs them in order; any other shape (pure
+    /// insertion, or an uneven replacement) has no faithful counterpart.
+    pub(crate) fn replaced_line_counterpart(
+        &self,
+        added_new_side_line: usize,
+    ) -> Option<&ChangedLine> {
+        let run_start = self.added_run_start(added_new_side_line);
+        let mut run_len = 0usize;
+        while self
+            .added_lines
+            .iter()
+            .any(|line| line.new_side_line == run_start + run_len)
+        {
+            run_len += 1;
+        }
+        let removed = self.removed_lines_at_run(run_start);
+        if removed.len() != run_len {
+            return None;
+        }
+        removed
+            .get(added_new_side_line.checked_sub(run_start)?)
+            .copied()
+    }
+
+    /// Whether the contiguous added run holding this line replaced any
+    /// removed line, faithfully paired or not.
+    pub(crate) fn replaces_removed_lines(&self, added_new_side_line: usize) -> bool {
+        !self
+            .removed_lines_at_run(self.added_run_start(added_new_side_line))
+            .is_empty()
+    }
+
+    fn added_run_start(&self, added_new_side_line: usize) -> usize {
+        let mut run_start = added_new_side_line;
+        while run_start > 0
+            && self
+                .added_lines
+                .iter()
+                .any(|line| line.new_side_line == run_start - 1)
+        {
+            run_start -= 1;
+        }
+        run_start
+    }
+
+    fn removed_lines_at_run(&self, run_start: usize) -> Vec<&ChangedLine> {
+        self.removed_lines
+            .iter()
+            .filter(|line| line.new_side_line == run_start)
+            .collect()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

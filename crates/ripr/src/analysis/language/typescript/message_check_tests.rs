@@ -339,7 +339,7 @@ fn classify_parse_throw(
         Path::new("src/parse.ts"),
         3,
         new_line,
-        old_line,
+        old_line.map_or(ReplacedLine::Inserted, ReplacedLine::Paired),
         &[owner],
         &tests,
         None,
@@ -425,5 +425,238 @@ test("parse", () => {{
         let finding = classify_parse_throw(old, new, &source(pattern))?;
         assert_eq!(finding.class, class, "{pattern}: {finding:?}");
     }
+    Ok(())
+}
+
+/// Runs the adapter over a real unified diff of `src/parse.ts` with a chai
+/// test that pins `"blank"`, and returns the finding on `line`.
+fn adapter_finding(
+    label: &str,
+    new_source: &str,
+    diff: &str,
+    line: usize,
+) -> Result<Finding, String> {
+    let root = super::tests::ts_unique_tempdir(label)?;
+    let write =
+        |path: &str, contents: &str| super::tests::ts_write_file(&root.join(path), contents);
+    write(
+        "package.json",
+        r#"{"name":"pkg","scripts":{"test":"mocha"},"devDependencies":{"mocha":"^10.0.0","chai":"^4.0.0"}}"#,
+    )?;
+    write("src/parse.ts", new_source)?;
+    write("test/parse.test.ts", CHAI_BLANK)?;
+    let changed_files = crate::analysis::diff::parse_unified_diff(diff);
+    let options = AnalysisOptions {
+        root: root.clone(),
+        base: None,
+        diff_file: None,
+        mode: crate::analysis::AnalysisMode::Draft,
+        include_unchanged_tests: false,
+        resolve_tsconfig_paths: false,
+        perl_facts_path: None,
+        perl_producer_failure: None,
+        git_timeout: None,
+        git_candidate: None,
+        production_like_targets: Default::default(),
+        test_harnesses: Vec::new(),
+        resolved_subject_identity: None,
+        open_rust_index_paths: Default::default(),
+    };
+    let result = TypeScriptAdapter.analyze_diff(&options, &OraclePolicy::default(), &changed_files);
+    let _ = std::fs::remove_dir_all(&root);
+    let result = result?;
+    result
+        .findings
+        .into_iter()
+        .find(|finding| finding.probe.location.line == line)
+        .ok_or_else(|| format!("no finding on line {line}"))
+}
+
+/// The production path pairs each added line with the removed line it
+/// replaced by position in the block. A two-line replacement used to pair
+/// only its first line, so the `"blank"` → `"not blank"` line skipped the
+/// guard and read strong `exposed` from a chai check that passes on both.
+#[test]
+fn adapter_guards_every_line_of_a_replaced_block() -> Result<(), String> {
+    let new_source = "export function parse(s: string): string {\n  if (s === \"\") {\n    // empty input\n    throw new Error(\"not blank\");\n  }\n  return s;\n}\n";
+    let diff = "diff --git a/src/parse.ts b/src/parse.ts\n--- a/src/parse.ts\n+++ b/src/parse.ts\n@@ -1,7 +1,7 @@\n export function parse(s: string): string {\n   if (s === \"\") {\n-    // empty\n-    throw new Error(\"blank\");\n+    // empty input\n+    throw new Error(\"not blank\");\n   }\n   return s;\n }\n";
+    let changed = crate::analysis::diff::parse_unified_diff(diff);
+    assert_eq!(changed.len(), 1, "fixture must parse one file");
+    assert_eq!(
+        changed[0]
+            .replaced_line_counterpart(4)
+            .map(|line| line.text.trim()),
+        Some("throw new Error(\"blank\");"),
+        "fixture: the second added line pairs with the second removed line"
+    );
+    let finding = adapter_finding("message-guard-block", new_source, diff, 4)?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{finding:?}");
+    assert_eq!(
+        finding
+            .related_tests
+            .iter()
+            .map(|test| test.oracle_kind.clone())
+            .collect::<Vec<_>>(),
+        vec![OracleKind::BroadError],
+        "the chai check is related and reads broad under the guard"
+    );
+    Ok(())
+}
+
+/// An uneven replacement leaves the old side of the throw line unknown, so
+/// the guard fails closed instead of pairing it with the wrong line.
+#[test]
+fn adapter_fails_closed_on_an_uneven_replacement() -> Result<(), String> {
+    let new_source = "export function parse(s: string): string {\n  if (s === \"\") {\n    throw new Error(\"not blank\");\n  }\n  return s;\n}\n";
+    let diff = "diff --git a/src/parse.ts b/src/parse.ts\n--- a/src/parse.ts\n+++ b/src/parse.ts\n@@ -1,7 +1,6 @@\n export function parse(s: string): string {\n   if (s === \"\") {\n-    // note\n-    throw new Error(\"blank\");\n+    throw new Error(\"not blank\");\n   }\n   return s;\n }\n";
+    let changed = crate::analysis::diff::parse_unified_diff(diff);
+    assert_eq!(changed.len(), 1, "fixture must parse one file");
+    assert!(changed[0].replaced_line_counterpart(3).is_none());
+    assert!(changed[0].replaces_removed_lines(3));
+    let finding = adapter_finding("message-guard-uneven", new_source, diff, 3)?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{finding:?}");
+    Ok(())
+}
+
+/// The control for both adapter cases: the same block where the message
+/// change is one the chai check tells apart reads `exposed`.
+#[test]
+fn adapter_credits_a_paired_message_change_the_check_tells_apart() -> Result<(), String> {
+    let new_source = "export function parse(s: string): string {\n  if (s === \"\") {\n    // empty input\n    throw new Error(\"blank\");\n  }\n  return s;\n}\n";
+    let diff = "diff --git a/src/parse.ts b/src/parse.ts\n--- a/src/parse.ts\n+++ b/src/parse.ts\n@@ -1,7 +1,7 @@\n export function parse(s: string): string {\n   if (s === \"\") {\n-    // empty\n-    throw new Error(\"empty\");\n+    // empty input\n+    throw new Error(\"blank\");\n   }\n   return s;\n }\n";
+    let finding = adapter_finding("message-guard-control", new_source, diff, 4)?;
+    assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    Ok(())
+}
+
+/// A new throw line with nothing removed keeps the rule 10 credit: the old
+/// version did not throw that message at all.
+#[test]
+fn inserted_and_non_message_changes_keep_the_credit() -> Result<(), String> {
+    let new = "    throw new Error(\"blank\");";
+    let finding = classify_parse_throw(None, new, CHAI_BLANK)?;
+    assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    // The error class changed too, so the change is not message-only.
+    let finding = classify_parse_throw(
+        Some("    throw new TypeError(\"not blank\");"),
+        new,
+        CHAI_BLANK,
+    )?;
+    assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    assert_eq!(
+        guarded_message_change(ReplacedLine::Unpaired, new),
+        Some(MessageOnlyChange {
+            old_message: None,
+            new_message: Some("blank".to_string()),
+        })
+    );
+    assert_eq!(guarded_message_change(ReplacedLine::Inserted, new), None);
+    Ok(())
+}
+
+#[test]
+fn chai_throws_and_throw_terminals_pin_the_message() {
+    let assertions = assertions_in(
+        "test/parse.test.ts",
+        r#"
+import { expect } from "chai";
+import { parse } from "../src/parse";
+
+it("parse", () => {
+  expect(() => parse("")).to.throws("blank");
+  expect(() => parse("")).to.Throw("blank");
+});
+"#,
+    );
+    assert!(
+        assertions
+            .iter()
+            .all(|assertion| assertion.oracle_kind == OracleKind::ExactErrorVariant),
+        "{assertions:?}"
+    );
+    assert_eq!(assertions.len(), 2);
+}
+
+#[test]
+fn regex_flags_escaped_dollars_and_class_pipes() {
+    let assertions = assertions_in(
+        "test/parse.test.ts",
+        r#"
+import { strict } from "node:assert";
+import { test } from "node:test";
+import { parse } from "../src/parse";
+
+test("parse", () => {
+  strict.throws(() => parse(""), /^Error: blank$/i);
+  strict.throws(() => parse(""), /^Error: blank$/m);
+  strict.throws(() => parse(""), /^Error: blank\$/);
+  strict.throws(() => parse(""), /^Error: blank\\$/);
+  strict.throws(() => parse(""), /^Error: blank\\\$/);
+  strict.throws(() => parse(""), /^Error: [|]blank$/);
+});
+"#,
+    );
+    let kinds: Vec<OracleKind> = assertions
+        .iter()
+        .map(|assertion| assertion.oracle_kind.clone())
+        .collect();
+    assert_eq!(
+        kinds,
+        vec![
+            OracleKind::BroadError,
+            OracleKind::BroadError,
+            OracleKind::BroadError,
+            OracleKind::ExactErrorVariant,
+            OracleKind::BroadError,
+            OracleKind::ExactErrorVariant,
+        ],
+        "{assertions:?}"
+    );
+    // The rendered row keeps the test's own callee.
+    assert_eq!(
+        assertion_oracle_text(&assertions[3]),
+        "strict.throws(..., /^Error: blank\\\\$/)"
+    );
+}
+
+/// `node:assert` tests `String(err)`, which always starts with the error's
+/// name, so an anchored literal without that prefix matches neither side.
+#[test]
+fn anchored_regex_without_the_name_prefix_does_not_tell_apart() {
+    let change = messages(Some("empty"), Some("blank"));
+    let regex = payload(TypeScriptErrorPayloadKind::AssertThrowsRegex, "^blank$");
+    assert!(!message_check_tells_change_apart(&regex, &change));
+    let regex = payload(
+        TypeScriptErrorPayloadKind::AssertThrowsRegex,
+        "^TypeError: blank$",
+    );
+    assert!(message_check_tells_change_apart(&regex, &change));
+}
+
+/// RIPR-SPEC-0243 example 35: `rejects` with a `{ message }` object.
+#[test]
+fn node_assert_rejects_message_object_exposes_the_change() -> Result<(), String> {
+    let source = r#"
+import assert from "node:assert";
+import { test } from "node:test";
+import { parse } from "../src/parse";
+
+test("parse", async () => {
+  await assert.rejects(parse(""), { message: "blank" });
+});
+"#;
+    let new = "    return Promise.reject(new Error(\"blank\"));";
+    let finding = classify_parse_throw(
+        Some("    return Promise.reject(new Error(\"empty\"));"),
+        new,
+        source,
+    )?;
+    assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    let finding = classify_parse_throw(
+        Some("    return Promise.reject(new Error(\"blank\" + \"\"));"),
+        "    return Promise.reject(new Error(\"bla\" + \"nk\"));",
+        source,
+    )?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{finding:?}");
     Ok(())
 }

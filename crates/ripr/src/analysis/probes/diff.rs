@@ -902,25 +902,8 @@ fn sorted_code_characters(text: &str) -> Vec<char> {
 /// the first removed line sharing a type name with every added line) would
 /// turn that proof against the edited field.
 fn replaced_line_counterpart(added_new_side_line: usize, changed: &ChangedFile) -> Option<String> {
-    let run_start = added_run_start(added_new_side_line, changed);
-    let mut run_len = 0usize;
-    while changed
-        .added_lines
-        .iter()
-        .any(|line| line.new_side_line == run_start + run_len)
-    {
-        run_len += 1;
-    }
-    let removed = changed
-        .removed_lines
-        .iter()
-        .filter(|line| line.new_side_line == run_start)
-        .collect::<Vec<_>>();
-    if removed.len() != run_len {
-        return None;
-    }
-    removed
-        .get(added_new_side_line.checked_sub(run_start)?)
+    changed
+        .replaced_line_counterpart(added_new_side_line)
         .map(|line| line.text.trim().to_string())
 }
 

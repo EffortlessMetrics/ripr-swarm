@@ -89,11 +89,18 @@ fn anchored_regex_argument(arg: &Argument<'_>, source: &str) -> Option<(String, 
     }
     let text = source_text_for_argument(arg, source)?;
     let body = text.strip_prefix('/')?;
-    let pattern = &body[..body.rfind('/')?];
+    let close = body.rfind('/')?;
+    if !body[close + 1..].is_empty() {
+        // Any flag changes what the pattern pins: `i` folds case, `m` lets
+        // the anchors match at line breaks, `s` widens `.`.
+        return None;
+    }
+    let pattern = &body[..close];
     let inner = pattern.strip_prefix('^')?;
     let inner = inner.strip_suffix('$')?;
-    if inner.ends_with('\\') && !inner.ends_with("\\\\") {
-        // `\$` escapes the final dollar: not an end anchor.
+    if inner.chars().rev().take_while(|&ch| ch == '\\').count() % 2 == 1 {
+        // An odd run of backslashes escapes the final dollar (`\$`, `\\\$`):
+        // not an end anchor.
         return None;
     }
     (!has_top_level_alternation(pattern)).then(|| (text.clone(), pattern.to_string()))
@@ -149,6 +156,41 @@ pub(crate) struct MessageOnlyChange {
     pub(crate) old_message: Option<String>,
     /// The new message, assembled the same way.
     pub(crate) new_message: Option<String>,
+}
+
+/// What the diff says about the old side of an added line.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ReplacedLine<'a> {
+    /// Nothing was removed where this line was added.
+    Inserted,
+    /// The removed line this one replaced, paired by position in an even
+    /// replacement.
+    Paired(&'a str),
+    /// Lines were removed here, but not one-for-one, so the old side of this
+    /// line is unknown.
+    Unpaired,
+}
+
+/// The message-only change the rule 4 guard judges for `new`, if any. An
+/// unpaired replacement of a line that throws a literal message fails
+/// closed: the old message is unknown, so no message check can be shown to
+/// tell the versions apart.
+pub(crate) fn guarded_message_change(
+    old: ReplacedLine<'_>,
+    new: &str,
+) -> Option<MessageOnlyChange> {
+    match old {
+        ReplacedLine::Inserted => None,
+        ReplacedLine::Paired(old) => message_only_change(old, new),
+        ReplacedLine::Unpaired => {
+            let tokens = lex_line(new)?;
+            let range = message_argument_range(&tokens)?;
+            Some(MessageOnlyChange {
+                old_message: None,
+                new_message: joined_literal_message(&tokens[range]),
+            })
+        }
+    }
 }
 
 /// Whether `old` → `new` is a message-only change of a throw or reject line.
@@ -243,9 +285,9 @@ pub(crate) fn message_check_tells_change_apart(
 }
 
 /// The literal text an anchored regex matches when it has no metacharacter
-/// between its anchors other than an escaped punctuation character, with a
+/// between its anchors other than an escaped punctuation character, with its
 /// leading `Identifier: ` (`node:assert` tests `String(err)`, such as
-/// `Error: blank`) removed.
+/// `Error: blank`) removed. `None` when that prefix is missing.
 fn plain_anchored_regex_text(pattern: &str) -> Option<String> {
     let inner = pattern.strip_prefix('^')?.strip_suffix('$')?;
     let mut text = String::new();
@@ -266,11 +308,10 @@ fn plain_anchored_regex_text(pattern: &str) -> Option<String> {
             _ => text.push(ch),
         }
     }
-    let without_prefix = text
-        .split_once(": ")
-        .filter(|(name, _)| is_safe_javascript_identifier(name))
-        .map_or(text.as_str(), |(_, message)| message);
-    Some(without_prefix.to_string())
+    // An Error's `String(err)` always carries the `Name: ` prefix, so a
+    // pattern without one never matches the thrown error at all.
+    let (name, message) = text.split_once(": ")?;
+    is_safe_javascript_identifier(name).then(|| message.to_string())
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

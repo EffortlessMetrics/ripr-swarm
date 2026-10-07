@@ -779,6 +779,12 @@ pub(crate) fn module_assert_assertion_from_expression(
     };
     let oracle_confidence =
         derive_oracle_confidence(&oracle_strength, &expected_value_or_variant, method);
+    // Keep the real callee (`strict.throws`, a bare `throws`) in the
+    // rendered message-check payload.
+    let rendered_call = match &error_payload {
+        Some(payload) => format!("{callee_text}(..., {})", payload.expected),
+        None => format!("{callee_text}(...)"),
+    };
     Some(TypeScriptAssertion {
         matcher: method.to_string(),
         argument_count: call.arguments.len(),
@@ -791,7 +797,7 @@ pub(crate) fn module_assert_assertion_from_expression(
         expected_value_or_variant,
         has_dynamic_matcher_arg,
         oracle_confidence,
-        rendered_call: Some(format!("{callee_text}(...)")),
+        rendered_call: Some(rendered_call),
     })
 }
 
@@ -1318,6 +1324,11 @@ pub(crate) fn assertion_oracle_text(assertion: &TypeScriptAssertion) -> String {
         return mock_payload.oracle_text();
     }
     if let Some(error_payload) = &assertion.error_payload {
+        if error_payload.kind.is_node_assert_message_check()
+            && let Some(rendered_call) = &assertion.rendered_call
+        {
+            return rendered_call.clone();
+        }
         return error_payload.oracle_text();
     }
     if let Some(rendered_call) = &assertion.rendered_call {

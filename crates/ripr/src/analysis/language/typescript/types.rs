@@ -616,4 +616,10 @@ impl TypeScriptErrorPayloadKind {
                 | Self::AssertRejectsObject
         )
     }
+
+    /// Whether this is a `node:assert` `throws`/`rejects` message check,
+    /// whose rendered text keeps the test's own callee.
+    pub(crate) fn is_node_assert_message_check(self) -> bool {
+        self.is_message_check() && self != Self::ChaiThrowLiteral
+    }
 }

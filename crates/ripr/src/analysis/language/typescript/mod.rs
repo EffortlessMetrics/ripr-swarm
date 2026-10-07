@@ -505,16 +505,21 @@ impl TypeScriptAdapter {
                 {
                     continue;
                 }
-                let paired_removed = changed
-                    .removed_lines
-                    .iter()
-                    .find(|removed| removed.new_side_line == added.line)
-                    .map(|removed| removed.text.as_str());
+                // Rule 4's message-only guard needs the old line this one
+                // replaced, by position inside the replaced block. Every
+                // removed line of a block shares the block's first new-side
+                // line, so a plain `new_side_line` match would pair only the
+                // first added line, and sometimes with the wrong removed line.
+                let old_line = match changed.replaced_line_counterpart(added.line) {
+                    Some(removed) => ReplacedLine::Paired(&removed.text),
+                    None if changed.replaces_removed_lines(added.line) => ReplacedLine::Unpaired,
+                    None => ReplacedLine::Inserted,
+                };
                 if let Some(mut finding) = classify_change_with_alias_state(
                     &changed.path,
                     added.line,
                     &added.text,
-                    paired_removed,
+                    old_line,
                     &all_owners,
                     &all_tests,
                     Some(&options.root),
