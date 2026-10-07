@@ -299,7 +299,22 @@ fn mutably_borrowed_before(segment: &str, at: usize) -> bool {
     {
         return false;
     }
-    before_mut.trim_end().as_bytes().last() == Some(&b'&')
+    let mut trimmed = before_mut.trim_end();
+    // A lifetime (`&'a mut`, `&'static mut`) sits between `&` and `mut`;
+    // strip a quote-led name before checking for the receiver `&`. The
+    // name must be non-empty identifier characters so a char literal or
+    // stray quote cannot manufacture a borrow.
+    if let Some(tick) = trimmed.rfind('\'')
+        && let Some(name) = trimmed.get(tick + 1..)
+        && !name.is_empty()
+        && name
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+        && !trimmed[..tick].ends_with('\'')
+    {
+        trimmed = trimmed[..tick].trim_end();
+    }
+    trimmed.as_bytes().last() == Some(&b'&')
 }
 
 fn owner_call_activates_boundary(
@@ -1510,6 +1525,31 @@ mod tests {
     }
 
     #[test]
+    fn lifetime_annotated_borrow_voids_the_binding() {
+        let probe = predicate_probe("input >= 10");
+        let owner = gate_owner();
+        let mut borrowed = test_summary(
+            "borrowed_lifetime",
+            "let mut got = gate(10);\nlet r = &'a mut got;\n*r = true;\nassert_eq!(got, true);",
+            vec![call("gate", "let mut got = gate(10);")],
+            vec![exact("assert_eq!(got, true);")],
+            &["10"],
+        );
+        borrowed.calls[0].line = 1;
+        borrowed.assertions[0].line = 4;
+        borrowed.end_line = 5;
+        assert!(
+            !pairing_with_admitted_oracles(
+                &probe,
+                Some(&owner),
+                &[&borrowed],
+                &ActivationEvidence::default(),
+            ),
+            "a lifetime-annotated mutable borrow must void the binding through the masked path"
+        );
+    }
+
+    #[test]
     fn unmutated_let_mut_binding_still_pairs() {
         let probe = predicate_probe("input >= 10");
         let owner = gate_owner();
@@ -1581,8 +1621,12 @@ mod tests {
             "&mut got",
             "&mut  got",
             "& mut got",
+            "&'a mut got",
+            "&'static mut got",
+            "&'_ mut got",
             "foo(&mut got)",
             "let r = &mut got",
+            "let r: &'a mut bool = &mut got",
         ] {
             assert!(
                 segment_mutates_bound_name(borrow, "got"),
