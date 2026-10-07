@@ -2661,6 +2661,73 @@ fn a_same_line_sibling_module_does_not_shadow() {
     assert_eq!(admitted_texts(&index, &pin).len(), 1);
 }
 
+/// #6957: when the production declaration sits in an enclosing non-root
+/// module, that module is the owner's own scope, not a test-local shadow,
+/// so the nested layout keeps its pin.
+#[test]
+fn a_nested_production_module_does_not_shadow_its_own_owner_pin() {
+    let lib = "mod inner {\n    pub struct Stack {\n        items: Vec<u32>,\n    }\n\n    impl Stack {\n        pub fn depth(&self) -> usize {\n            self.items.len() + 1\n        }\n    }\n\n    #[cfg(test)]\n    mod tests {\n        use super::*;\n\n        #[test]\n        fn depth_counts() {\n            let stack = Stack { items: Vec::new() };\n            assert_eq!(stack.depth(), 1);\n        }\n    }\n}\n";
+    let index = index(&[(LIB, lib)]);
+    let pin = establish(&index, "depth", "self.items.len() + 1");
+    assert!(pin.is_some(), "the nested-owner pin must establish");
+    let Some(pin) = pin else { return };
+    assert_eq!(admitted_texts(&index, &pin).len(), 1);
+}
+
+/// #6957 negative control: a same-name declaration in the test's own `mod
+/// tests` still refuses even when the nested production declaration is
+/// exempt, in plain and `r#` forms.
+#[test]
+fn a_nested_test_module_shadow_alongside_a_nested_production_declaration_refuses() {
+    let shadowed = "mod inner {\n    pub struct Stack {\n        items: Vec<u32>,\n    }\n\n    impl Stack {\n        pub fn depth(&self) -> usize {\n            self.items.len() + 1\n        }\n    }\n\n    #[cfg(test)]\n    mod tests {\n        use super::*;\n\n        struct Stack {\n            items: Vec<u32>,\n        }\n\n        #[test]\n        fn depth_counts() {\n            let stack = Stack { items: Vec::new() };\n            assert_eq!(stack.depth(), 1);\n        }\n    }\n}\n";
+    let raw = shadowed.replace("        struct Stack {", "        struct r#Stack {");
+    assert!(
+        raw.contains("struct r#Stack {"),
+        "fixture: the shadow must take the raw-identifier form"
+    );
+    for source in [shadowed, raw.as_str()] {
+        let index = index(&[(LIB, source)]);
+        let pin = establish(&index, "depth", "self.items.len() + 1");
+        assert!(
+            pin.is_some(),
+            "the pin establishes from the production type: {source}"
+        );
+        let Some(pin) = pin else { return };
+        assert!(
+            admitted_texts(&index, &pin).is_empty(),
+            "a nested test-module shadow names the test-local type: {source}"
+        );
+    }
+}
+
+/// #6957: cross-file owners keep the fail-closed shadow check. The
+/// exemption resolves only in the test file's own parse, so a same-name
+/// declaration in the test file's `mod tests` still refuses a nested
+/// owner's pin, in plain and `r#` forms.
+#[test]
+fn a_cross_file_test_module_shadow_of_a_nested_owner_still_refuses() {
+    let lib = "pub mod inner {\n    pub struct Stack {\n        pub items: Vec<u32>,\n    }\n\n    impl Stack {\n        pub fn depth(&self) -> usize {\n            self.items.len() + 1\n        }\n    }\n}\n";
+    let tests = "use demo::inner::Stack;\n\nmod tests {\n    struct Stack {\n        items: Vec<u32>,\n    }\n\n    #[test]\n    fn depth_counts() {\n        let stack = Stack { items: Vec::new() };\n        assert_eq!(stack.depth(), 1);\n    }\n}\n";
+    let raw = tests.replace("    struct Stack {", "    struct r#Stack {");
+    assert!(
+        raw.contains("struct r#Stack {"),
+        "fixture: the shadow must take the raw-identifier form"
+    );
+    for tests in [tests, raw.as_str()] {
+        let index = index(&[(LIB, lib), (TESTS, tests)]);
+        let pin = establish(&index, "depth", "self.items.len() + 1");
+        assert!(
+            pin.is_some(),
+            "the cross-file control must establish: {tests}"
+        );
+        let Some(pin) = pin else { return };
+        assert!(
+            admitted_texts(&index, &pin).is_empty(),
+            "a cross-file shadow names the test-local type: {tests}"
+        );
+    }
+}
+
 const GATE_LIB: &str = "pub fn gate(value: u32) -> bool {\n    10 <= value\n}\n\npub fn level(value: u32) -> u32 {\n    10 + value\n}\n";
 
 fn predicate_probe(owner: &FunctionSummary, expression: &str) -> Probe {
