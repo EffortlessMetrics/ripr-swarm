@@ -53,7 +53,7 @@ pub(in crate::analysis) use reach::{
 pub(in crate::analysis) use related_tests::{
     DependencyEdgeContext, RelatedTestCandidateIndex, body_contains_owner_call,
     find_related_tests_with_candidate_index, impl_self_type_name,
-    method_call_resolves_to_impl_type, package_prefix,
+    method_call_resolves_to_impl_type, module_stem, package_prefix,
 };
 pub(in crate::analysis) use reveal::reveal_outcome;
 pub(in crate::analysis) use reveal::wrapper_error_seam_expression;

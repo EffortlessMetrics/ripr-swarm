@@ -123,6 +123,11 @@ impl RelatedTestCandidateIndex {
             {
                 push_index(&mut candidates.by_test_stem, stem, test_index);
             }
+            if let Some(stem) = module_stem(&test.file)
+                && cross_host_stem(&test.file).as_ref() != Some(&stem)
+            {
+                push_index(&mut candidates.by_test_stem, stem, test_index);
+            }
         }
         candidates.common_tokens = CommonTestTokens::new(index.tests());
 
@@ -207,8 +212,16 @@ impl RelatedTestCandidateIndex {
             }
         }
 
-        if let Some(probe_stem) = cross_host_stem(&probe.location.file)
-            && !probe_stem.is_empty()
+        // The raw stem and the module stem (`serialize` for `serialize/mod.rs`)
+        // both feed the prefilter, which only narrows and must stay a superset
+        // of what `find_related_tests` matches.
+        for probe_stem in [
+            cross_host_stem(&probe.location.file),
+            module_stem(&probe.location.file),
+        ]
+        .into_iter()
+        .flatten()
+        .filter(|stem| !stem.is_empty())
         {
             for stem in [
                 probe_stem.clone(),
@@ -222,10 +235,13 @@ impl RelatedTestCandidateIndex {
             }
         }
 
-        if !file_name.is_empty()
-            && !extend_substring_bucket(&mut selected, &self.by_path_trigram, file_name.as_bytes())
-        {
-            scan_all = true;
+        let module_name = module_stem(&probe.location.file).unwrap_or_default();
+        for name in [&file_name, &module_name] {
+            if !name.is_empty()
+                && !extend_substring_bucket(&mut selected, &self.by_path_trigram, name.as_bytes())
+            {
+                scan_all = true;
+            }
         }
 
         for token in probe_tokens.iter().filter(|token| token.len() > 2) {
@@ -564,7 +580,11 @@ fn find_related_tests_with_candidates<'a>(
     // whose captured calls name it relates weakly (SeamCalleeCall) even when
     // no name-affinity signal fires.
     let seam_callee = wrapper_seam_callee(probe);
-    let file_name = normalized_file_stem(&probe.location.file);
+    // Module identity, not the bare file stem: `serialize/mod.rs` is module
+    // `serialize`, and a crate root (`lib.rs`, `main.rs`) names no module, so
+    // `tokenizer/mod.rs` tests are not related to a `serialize/mod.rs` change
+    // through the shared stem `mod` (#5395).
+    let file_name = module_stem(&probe.location.file).unwrap_or_default();
     let owner_package_prefix = owner_fn.and_then(|owner| package_prefix(&owner.file));
 
     // #2971 ambiguity rule: a call to `owner_name` can bypass the
@@ -1642,32 +1662,61 @@ fn strip_comments_and_strings(source: &str) -> String {
     out
 }
 
-/// Return whether `test_file` is the canonical companion test file for
-/// `probe_file`.  This intentionally mirrors the stronger test-grip
-/// authority: only the source stem itself and its `_test`/`_tests` variants
-/// count as file identity.  Paths are compared by stem, so host-specific
-/// separators do not affect the result.
+/// Return whether `test_file` is the changed file itself or its canonical
+/// companion test file. Companions compare Rust module identity
+/// ([`module_stem`]): the module's own name and its `_test`/`_tests`
+/// variants. The test-grip relation (`test_grip_evidence/related_tests.rs`)
+/// keys `SameTestFile` on the same module identity.
 fn same_test_file(probe_file: &Path, test_file: &Path) -> bool {
-    // Merge resolution (#3545 x PR-3547): keep the PR's `cross_host_stem`
-    // authority — it normalizes both separator flavors (main's #3545 intent)
-    // AND fails closed on non-UTF-8 paths, where lossy conversion could
-    // collapse distinct names into one stem (#3545 review).  Keep main's
-    // empty-stem guard so degenerate stems never count as file identity.
-    let Some(probe_stem) = cross_host_stem(probe_file) else {
+    // Inline tests in the changed file are its own tests, whatever the file is
+    // called. Under `--root` the probe path carries the root prefix while test
+    // paths are root-relative, so the probe path ending with the test path on
+    // a segment boundary is the same file. Only that direction: a root-relative
+    // probe `src/lib.rs` must not claim a member crate's `crates/a/src/lib.rs`.
+    // Non-UTF-8 paths fail closed (#3545): lossy conversion could fake a match.
+    let (Some(probe_text), Some(test_text)) = (probe_file.to_str(), test_file.to_str()) else {
         return false;
     };
-    if probe_stem.is_empty() {
-        return false;
+    let probe_path = normalize_path(Path::new(probe_text));
+    let test_path = normalize_path(Path::new(test_text));
+    if !test_path.is_empty()
+        && probe_path
+            .strip_suffix(test_path.as_str())
+            .is_some_and(|prefix| prefix.is_empty() || prefix.ends_with('/'))
+    {
+        return true;
     }
-    let Some(test_stem) = cross_host_stem(test_file) else {
+    // Compare module identity (#5395): `mod.rs` takes its directory's name and
+    // a crate root has none, so `serialize/mod.rs` and `tokenizer/mod.rs` (or
+    // two crates' `lib.rs`) no longer pair through a shared bare stem.
+    let (Some(probe_stem), Some(test_stem)) = (module_stem(probe_file), module_stem(test_file))
+    else {
         return false;
     };
-    if test_stem.is_empty() {
-        return false;
-    }
     test_stem == probe_stem
         || test_stem == format!("{probe_stem}_test")
         || test_stem == format!("{probe_stem}_tests")
+}
+
+/// The Rust module a source path names: its file stem, except that `mod.rs`
+/// takes the name of its directory and a crate root (`lib.rs`, `main.rs`)
+/// names no module (#5395). `None` when no module identity exists, including
+/// non-UTF-8 paths, which fail closed like [`cross_host_stem`].
+pub(in crate::analysis) fn module_stem(path: &Path) -> Option<String> {
+    let stem = cross_host_stem(path)?;
+    match stem.as_str() {
+        "" | "lib" | "main" => None,
+        "mod" => {
+            let text = path.to_str()?.replace('\\', "/");
+            let mut parts = text.rsplit('/');
+            let _file = parts.next();
+            parts
+                .next()
+                .filter(|dir| !dir.is_empty() && *dir != "." && *dir != "src")
+                .map(str::to_string)
+        }
+        _ => Some(stem),
+    }
 }
 
 /// Extract the file stem on any host: split on both separator flavors
@@ -4384,6 +4433,75 @@ fn crate_c_score_test() {
                 .iter()
                 .all(|(_, reason)| *reason == RelationReason::SameTestFile)
         );
+    }
+
+    #[test]
+    fn mod_and_crate_root_stems_carry_module_identity_not_bare_stem() {
+        // #5395: `serialize/mod.rs` and `tokenizer/mod.rs` share only the stem
+        // `mod`; two crate roots share only `lib`.
+        let same =
+            |probe: &str, test: &str| super::same_test_file(Path::new(probe), Path::new(test));
+        assert!(!same(
+            "html5ever/src/serialize/mod.rs",
+            "html5ever/src/tokenizer/mod.rs"
+        ));
+        assert!(!same("crates/a/src/lib.rs", "crates/b/src/lib.rs"));
+        assert!(!same("crates/a/src/main.rs", "crates/a/tests/main.rs"));
+        // `mod.rs` is its directory's module, so its companions still pair.
+        assert!(same(
+            "html5ever/src/serialize/mod.rs",
+            "html5ever/tests/serialize.rs"
+        ));
+        assert!(same(
+            "html5ever/src/serialize/mod.rs",
+            "html5ever/src/serialize_tests.rs"
+        ));
+        assert!(same("src/serialize.rs", "tests/serialize/mod.rs"));
+        // Inline tests in the changed file are its own, crate root included.
+        assert!(same("crates/a/src/lib.rs", "crates/a/src/lib.rs"));
+        assert!(same(
+            "html5ever/src/serialize/mod.rs",
+            "html5ever/src/serialize/mod.rs"
+        ));
+        // Under `--root` the probe carries the root prefix; test paths do not.
+        // The suffix must end on a path-segment boundary.
+        assert!(same("fixtures/x/input/src/lib.rs", "src/lib.rs"));
+        assert!(!same("fixtures/x/input/src/lib.rs", "b/src/lib.rs"));
+        assert!(!same("fixtures/x/input/xsrc/lib.rs", "src/lib.rs"));
+        assert!(!same("crates/xa/src/lib.rs", "a/src/lib.rs"));
+        // A root-relative probe never claims a member crate's crate root.
+        assert!(!same("src/lib.rs", "crates/a/src/lib.rs"));
+        assert!(!same("src/main.rs", "crates/x/src/main.rs"));
+    }
+
+    #[test]
+    fn mod_rs_change_does_not_relate_another_modules_inline_tests() {
+        // #5395 (html5ever pin): a change in `serialize/mod.rs` listed the
+        // inline tests of `tokenizer/mod.rs` as `same_test_file`.
+        let owner = function("html5ever/src/serialize/mod.rs", "write_escaped");
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions: vec![owner.clone()],
+            tests: vec![
+                test(
+                    "html5ever/src/tokenizer/mod.rs",
+                    "check_lines",
+                    "assert!(true);",
+                ),
+                test(
+                    "html5ever/src/serialize/mod.rs",
+                    "escapes_text",
+                    "assert!(true);",
+                ),
+            ],
+            ..Default::default()
+        });
+        let probe = probe("html5ever/src/serialize/mod.rs", "marker");
+
+        let related = find_related_tests(&probe, Some(&owner), &index, true, None, None);
+
+        let names: Vec<&str> = related.iter().map(|(test, _)| test.name.as_str()).collect();
+        assert_eq!(names, ["escapes_text"]);
+        assert_eq!(related[0].1, RelationReason::SameTestFile);
     }
 
     #[test]

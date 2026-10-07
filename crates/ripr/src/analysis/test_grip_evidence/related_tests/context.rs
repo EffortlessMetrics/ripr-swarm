@@ -18,6 +18,11 @@ pub(crate) struct CompactGripContext<'a> {
     pub(in crate::analysis::test_grip_evidence) tests_by_assertion_token:
         BTreeMap<String, Vec<usize>>,
     pub(in crate::analysis::test_grip_evidence) tests_by_file_stem: BTreeMap<String, Vec<usize>>,
+    /// Tests in crate-root files (`lib.rs`, `main.rs`), keyed by the
+    /// separator-normalized path. A crate root has no module stem, so its
+    /// inline tests relate only to an owner in that exact file (#5395).
+    pub(in crate::analysis::test_grip_evidence) tests_by_crate_root_file:
+        BTreeMap<String, Vec<usize>>,
     pub(in crate::analysis::test_grip_evidence) tests_by_import_token: BTreeMap<String, Vec<usize>>,
     /// Indexed-function counts by exact name, built once per context (#5201).
     /// Per-seam `OwnerContext` resolution reads this instead of scanning
@@ -238,6 +243,7 @@ impl<'a> CompactGripContext<'a> {
             BTreeMap::new();
         let mut tests_by_assertion_token: BTreeMap<String, Vec<usize>> = BTreeMap::new();
         let mut tests_by_file_stem: BTreeMap<String, Vec<usize>> = BTreeMap::new();
+        let mut tests_by_crate_root_file: BTreeMap<String, Vec<usize>> = BTreeMap::new();
         let mut tests_by_import_token: BTreeMap<String, Vec<usize>> = BTreeMap::new();
         let shared = context_build_phase("shared_index_tables", || SharedIndexTables::build(index));
         checkpoint()?;
@@ -408,9 +414,13 @@ impl<'a> CompactGripContext<'a> {
                         .or_default()
                         .push(test_index);
                 }
-                let stem = normalized_file_stem(&test.file);
-                if !stem.is_empty() {
+                if let Some(stem) = crate::analysis::classify::module_stem(&test.file) {
                     tests_by_file_stem.entry(stem).or_default().push(test_index);
+                } else if let Some(path) = crate_root_file_key(&test.file) {
+                    tests_by_crate_root_file
+                        .entry(path)
+                        .or_default()
+                        .push(test_index);
                 }
                 for token in import_affinity_tokens(&code_lines) {
                     tests_by_import_token
@@ -459,6 +469,7 @@ impl<'a> CompactGripContext<'a> {
             tests_by_target_affinity_owner_call_name,
             tests_by_assertion_token,
             tests_by_file_stem,
+            tests_by_crate_root_file,
             tests_by_import_token,
             function_name_counts,
             name_module_candidates,
@@ -3469,4 +3480,12 @@ mod tests {
             impl_context: Default::default(),
         }
     }
+}
+
+/// Exact-file key for a file with no module stem. Non-UTF-8 paths fail
+/// closed, like `module_stem` (#3545).
+pub(in crate::analysis::test_grip_evidence) fn crate_root_file_key(path: &Path) -> Option<String> {
+    let text = path.to_str()?.replace('\\', "/");
+    let text = text.trim_start_matches("./");
+    (!text.is_empty()).then(|| text.to_string())
 }
