@@ -254,7 +254,10 @@ free-function owner whose name another indexed definition shares is not
 `use` at the top level of the test body binds it, by the twin's full module
 path, to exactly one twin in another inline module of the test's own file
 (`use super::retail::*;` beside `wholesale::price_quote`); a named import beats
-a glob. A path-qualified call
+a glob. The import path resolves against the test's enclosing inline modules:
+`self` and a bare path start at the test's module, each `super` steps out one,
+and `crate` is the file root only in `lib.rs` or `main.rs`. The twin must be
+the only same-name definition whose path ends in the resolved module path. A path-qualified call
 of the name, a braced or renamed import naming it, an import in a nested
 block or at module level, two globs,
 `use super::*`, a path that names no twin or also the owner (a re-export), and
