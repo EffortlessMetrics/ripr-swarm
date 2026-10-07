@@ -10950,6 +10950,7 @@ tests = [
   "crates/ripr/src/analysis/classify/boundary_pairing.rs::tests::aliased_operand_named_constant_activation_still_pairs",
   "crates/ripr/src/analysis/classify/boundary_pairing.rs::tests::typed_literal_argument_pairs",
   "crates/ripr/src/analysis/classify/boundary_pairing.rs::tests::pairing_argument_values_keep_direct_inputs_and_drop_buried_literals",
+  "crates/ripr/src/analysis/classify/boundary_pairing.rs::tests::a_borrowed_assertion_pairs_only_through_its_loan",
   "crates/ripr/src/analysis/classify/boundary_pairing.rs::tests::a_borrowed_helper_assertion_pairs_through_the_boundary_call",
   "crates/ripr/src/analysis/classify/boundary_pairing.rs::tests::a_borrowed_helper_assertion_pairs_only_on_an_exact_mapping",
   "crates/ripr/src/analysis/classify/owner_pin/tests/helper_pins.rs::the_loan_maps_only_plain_parameters_and_lone_eager_calls"
@@ -11595,6 +11596,7 @@ tests = [
   "crates/ripr/src/analysis/classify/owner_pin/tests/helper_pins.rs::only_a_plain_helper_that_runs_to_its_end_lends_its_assertion",
   "crates/ripr/src/analysis/classify/owner_pin/tests/helper_pins.rs::a_helper_that_rebinds_or_feeds_back_the_owner_is_not_a_pin",
   "crates/ripr/src/analysis/classify/owner_pin/tests/helper_pins.rs::the_indexed_helper_assertion_is_the_admitted_one",
+  "crates/ripr/src/analysis/classify/owner_pin/tests/helper_pins.rs::a_helper_scoped_assert_eq_binding_refuses_the_loan",
 ]
 fixtures = [
   "fixtures/predicate_boundary_oracle_refused",

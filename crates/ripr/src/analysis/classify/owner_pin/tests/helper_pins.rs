@@ -315,3 +315,23 @@ fn the_loan_maps_only_plain_parameters_and_lone_eager_calls() -> Result<(), Stri
     );
     Ok(())
 }
+
+/// A `macro_rules! assert_eq` scoped to the helper's own body rebinds the
+/// borrowed invocation, though its scope never overlaps the calling test.
+#[test]
+fn a_helper_scoped_assert_eq_binding_refuses_the_loan() -> Result<(), String> {
+    for shadow in [
+        "macro_rules! assert_eq { ($a:expr, $b:expr) => {} }",
+        "macro_rules! assert_eq { ($a:expr, $b:expr) => { std::assert_eq!(1, 1) }; }",
+    ] {
+        let helper = format!(
+            "    fn check_tip(b: u64, t: u64, want: u64) {{\n        {shadow}\n        assert_eq!(with_tip(b, t), want);\n    }}\n"
+        );
+        assert_eq!(
+            helper_assertion_admitted(&module(&helper, CALLS))?,
+            (false, false),
+            "{shadow}"
+        );
+    }
+    Ok(())
+}

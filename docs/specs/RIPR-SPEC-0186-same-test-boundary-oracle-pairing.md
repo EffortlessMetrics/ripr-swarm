@@ -107,7 +107,15 @@ fixed:
 - the helper calls the owner exactly once, and that call is a whole compared
   operand whose arguments are the helper's parameters passed unchanged
   (`passes(score)`, not `passes(score + 1)` or `{ let score = 1;
-  passes(score) }`).
+  passes(score) }`);
+- the call passes only scalar literals (`check_pass(50, true)`, not
+  `check_pass(n, true)`): activation's facts are pooled across related tests
+  without file identity, so another test's identical call on the same line
+  number must carry the same input.
+
+A borrowed assertion pairs only this way: its operands name the helper's
+parameters, so the direct owner-call and bound-name paths, which read the
+test's own bindings, never see it.
 
 The same owner-name defeats as an inline oracle apply. Anything else keeps
 `same_test_pairing_missing`.
@@ -125,8 +133,10 @@ relation are out of scope.
   call, with a control that the same assertion without the loan does not,
   and refusals for a fact on another line, a call outside the admission's
   eager lone-line calls, unmappable parameters, a second owner call in the
-  helper, a computed, partial or block operand, and another function's call
-  on the line (#6482).
+  helper, a computed, partial or block operand, another function's call
+  on the line, and a helper call passing a local or computed input, which
+  another test's identical same-line call could bind differently in the
+  pooled activation facts (#6482).
 - Unit tests cover split tests, same-call pairing, same-test split calls,
   same-line split calls, unused-argument literals, shadowed bindings,
   let-bound pairing including short names, buried-literal if-expression and

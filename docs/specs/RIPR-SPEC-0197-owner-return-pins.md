@@ -379,7 +379,10 @@ rule only for an assertion whose context was admitted.
      or `?` anywhere in its body. It passes the same escape gate as a test
      (only the trusted standard macros, no `break`, `continue` or `yield`) and
      the same item-context and cfg gates, and the macros it invokes join the
-     workspace macro-binding check of rule 4.
+     workspace macro-binding check of rule 4. A scoped binding (a
+     `macro_rules!` or `use` inside the helper's own body) is checked at the
+     borrowed assertion's line as well as across the test's span, since the
+     helper's scope never overlaps the test's.
    - The assertion sits on the helper's own eager path and is uniquely
      identified by its line and text, as rule 1 requires within a test.
    - The assertion must also reach the test's oracle facts through the
@@ -855,8 +858,10 @@ assertions. This repair shares the existing callback without that larger migrati
   early `return`, return type, assertion in a loop, untrusted macro, cfg
   attribute, `async fn`); `a_helper_that_rebinds_or_feeds_back_the_owner_is_not_a_pin`
   (owner name as a helper parameter, owner called in a call-site argument);
-  and `the_indexed_helper_assertion_is_the_admitted_one` (the index's own
-  helper crediting yields the coordinate the admission accepts). Each
+  `the_indexed_helper_assertion_is_the_admitted_one` (the index's own
+  helper crediting yields the coordinate the admission accepts); and
+  `a_helper_scoped_assert_eq_binding_refuses_the_loan` (an empty or
+  forwarding `macro_rules! assert_eq` inside the helper's body). Each
   negative test carries the positive control, so the six admission tests
   fail with the admission removed, and removing any one gate fails exactly
   its own test. `the_loan_maps_only_plain_parameters_and_lone_eager_calls`

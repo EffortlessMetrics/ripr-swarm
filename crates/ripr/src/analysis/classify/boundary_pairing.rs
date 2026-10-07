@@ -92,13 +92,19 @@ fn test_pairs_boundary_input_with_oracle(
         // Only the asserted operands observe anything: a call or binding
         // named in a message argument (`assert!(gate(50), "{got}")`) is
         // formatted, not checked, so it cannot pair with the boundary.
+        // An assertion credited from a check helper (outside the test's own
+        // lines) names the helper's parameters, which may share a name with
+        // a test local (`let input = 10; check(50, true)`): it pairs only
+        // through the owner-pin-approved loan's exact mapping (#6482).
+        if !(test.start_line..=test.end_line).contains(&assertion.line) {
+            return helper_loan(test, assertion).is_some_and(|loan| {
+                loan_pairs_boundary_call(owner, test, &loan, &assertion.text, activation)
+            });
+        }
         let operands = crate::analysis::extract::assertion_oracle_text(&assertion.text)
             .unwrap_or_else(|| assertion.text.clone());
         assertion_observes_boundary_owner_call(probe, owner, test, assertion, &operands, activation)
             || assertion_observes_bound_name(&operands, &bound_names)
-            || helper_loan(test, assertion).is_some_and(|loan| {
-                loan_pairs_boundary_call(owner, test, &loan, &assertion.text, activation)
-            })
     })
 }
 
@@ -121,7 +127,9 @@ fn test_pairs_boundary_input_with_oracle(
 ///   parameters, passed unchanged (`passes(score + 1)` maps nothing);
 /// - the activation fact sits on the line of an eager call to the helper
 ///   that is the only call expression on its line, so it describes that
-///   call and that call runs.
+///   call and that call runs;
+/// - that call passes only scalar literals, so a pooled fact from another
+///   test's identical call carries the same input.
 fn loan_pairs_boundary_call(
     owner: &FunctionSummary,
     test: &TestSummary,
@@ -178,7 +186,18 @@ fn loan_pairs_boundary_call(
             return false;
         }
         // Activation's facts are pooled across related tests and carry no
-        // file, so the fact must also name this call's text.
+        // file, so the fact must also name this call's text, and that text
+        // must fix its values: with only scalar literal arguments, another
+        // test's same-line, same-text call passes the same input. A local
+        // (`check_pass(n, true)`) may be bound differently in each test.
+        if !call_arguments(&helper_call.text, &loan.name).is_some_and(|arguments| {
+            !arguments.is_empty()
+                && arguments
+                    .iter()
+                    .all(|argument| argument_is_whole_scalar_literal(argument.trim()))
+        }) {
+            return false;
+        }
         activation.observed_values.iter().any(|fact| {
             fact.line == *line
                 && fact.value.contains(" == ")
@@ -1832,6 +1851,60 @@ mod tests {
         )
     }
 
+    /// A borrowed assertion names the helper's parameter `got`; the test's
+    /// own `let got = gate(10);` is another binding. Neither the bound-name
+    /// nor the direct-call path may pair it, only an approved loan (#6482).
+    #[test]
+    fn a_borrowed_assertion_pairs_only_through_its_loan() {
+        let assertion = OracleFact {
+            line: 9,
+            ..exact("assert_eq!(got, true);")
+        };
+        let body = "let got = gate(10);\ncheck(gate(50));";
+        let test = test_summary(
+            "shared_name",
+            body,
+            vec![
+                CallFact {
+                    line: 1,
+                    ..call("gate", "let got = gate(10);")
+                },
+                CallFact {
+                    line: 2,
+                    ..call("check", "check(gate(50));")
+                },
+            ],
+            vec![assertion.clone()],
+            &["10", "50"],
+        );
+        let activation = ActivationEvidence {
+            observed_values: vec![ValueFact {
+                line: 1,
+                text: "let got = gate(10); | input".to_string(),
+                value: "input == 10".to_string(),
+                context: ValueContext::FunctionArgument,
+            }],
+            missing_discriminators: Vec::new(),
+        };
+        let pairs = |test: &TestSummary| {
+            has_same_test_boundary_oracle_pairing(
+                &predicate_probe("input >= 10"),
+                Some(&gate_owner()),
+                &[test],
+                &activation,
+                &|_, _| true,
+                &|_, _| false,
+                &|_, _| None,
+            )
+        };
+        assert!(!pairs(&test));
+        // Control: the same assertion written in the test's own body pairs
+        // through the bound name.
+        let mut inline = test.clone();
+        inline.assertions[0].line = 3;
+        assert!(pairs(&inline), "control");
+    }
+
     #[test]
     fn a_borrowed_helper_assertion_pairs_through_the_boundary_call() {
         let (test, assertion, loan, activation) = loan_case(CHECK, "check(10, true);", 2);
@@ -1920,6 +1993,20 @@ mod tests {
         let mut empty_test = test.clone();
         empty_test.assertions = vec![empty.clone()];
         assert!(!loan_pairs(&empty_test, &empty, &loan, &activation));
+        // A helper call passing a local or computed input: another test's
+        // identical call on the same line may bind it to a different value,
+        // and its pooled fact would then pair this test's far input.
+        for call_text in [
+            "check(n, true);",
+            "check(LIMIT + 1, true);",
+            "check(n(), true);",
+        ] {
+            let (test, assertion, loan, activation) = loan_case(CHECK, call_text, 2);
+            assert!(
+                !loan_pairs(&test, &assertion, &loan, &activation),
+                "{call_text}"
+            );
+        }
         assert!(loan_pairs(&test, &assertion, &loan, &activation), "control");
     }
 

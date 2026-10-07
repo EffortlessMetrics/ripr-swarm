@@ -402,7 +402,7 @@ impl OwnerPinSyntax {
                 .collect()
         });
         let mut ambiguous: BTreeSet<_> = ambiguous.union(empty_ambiguities).cloned().collect();
-        ambiguous.extend(self.scoped_names_for(test));
+        ambiguous.extend(self.scoped_names_for(test, assertion.line));
         ambiguous.extend(self.crate_names_for(test, index));
         let mut by_file = self.by_file.borrow_mut();
         for edge in &facts.role_provenance.edges {
@@ -591,15 +591,23 @@ impl OwnerPinSyntax {
     }
 
     /// Trusted names that a scoped definition or import makes ambiguous for
-    /// `test`. Filled by the workspace scan in `refusal`.
-    fn scoped_names_for(&self, test: &TestSummary) -> Vec<String> {
+    /// `test`, or for the invocation at `assertion_line`: an assertion a
+    /// check helper lends (#6482) sits in the helper's body, whose scoped
+    /// bindings never overlap the test's span. Filled by the workspace scan
+    /// in `refusal`.
+    fn scoped_names_for(&self, test: &TestSummary, assertion_line: usize) -> Vec<String> {
         self.scoped_macro_bindings
             .borrow()
             .as_ref()
             .and_then(|scoped| scoped.get(&test.file))
             .into_iter()
             .flatten()
-            .filter(|(_, site)| site_covers(site, test))
+            .filter(|(_, site)| {
+                site_covers(site, test)
+                    || site
+                        .scope
+                        .is_some_and(|(start, end)| (start..=end).contains(&assertion_line))
+            })
             .map(|(name, _)| name.clone())
             .collect()
     }
