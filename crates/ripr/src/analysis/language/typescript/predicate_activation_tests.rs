@@ -923,6 +923,46 @@ fn describe_wrapper_and_comments_keep_a_closed_miss() -> Result<(), String> {
     Ok(())
 }
 
+/// Review (#5527): an import line is dropped only when it is exactly one
+/// complete static import, so code after its `;`, a `from'...'` with no
+/// semicolon followed by a hook, or a spaced dynamic `import (` refuses.
+/// A multi-line named import still keeps a closed miss.
+#[test]
+fn only_complete_static_imports_are_dropped_from_the_file_scan() -> Result<(), String> {
+    let hook = "beforeEach(() => { applyDiscount(100); });";
+    let cases = [
+        (
+            "code after import",
+            format!("{IMPORT_DISCOUNT} {hook}"),
+            A::Unresolved,
+        ),
+        (
+            "unspaced from",
+            format!("import {{ applyDiscount }} from'../src/pricing'\n{hook}"),
+            A::Unresolved,
+        ),
+        (
+            "spaced dynamic import",
+            format!(
+                "{IMPORT_DISCOUNT}\nimport ('../src/pricing').then((m) => m['apply' + 'Discount'](100));"
+            ),
+            A::Unresolved,
+        ),
+        (
+            "multi-line import",
+            "import {\n  applyDiscount,\n} from '../src/pricing'".to_string(),
+            A::MissedBoundary,
+        ),
+    ];
+    for (name, imports, expected) in cases {
+        let source = one_test(name, &imports, "  expect(applyDiscount(150)).toBe(135);");
+        let evaluated = evaluate(&DISCOUNT, &source, true)?;
+        assert_eq!(evaluated.row(name)?.1, R::DirectOwnerCall, "{name}");
+        assert_eq!(evaluated.activation(name)?, expected, "{name}");
+    }
+    Ok(())
+}
+
 /// Review (#5527): an owner reached again through another function (mutual
 /// recursion) can carry an off-boundary input to the boundary.
 #[test]

@@ -899,25 +899,34 @@ fn test_file_names_owner_only_in_test_bodies(
     for body in bodies {
         source = source.replace(body, "");
     }
-    let mut in_import = false;
+    // Each import statement is gathered whole and must be exactly one named,
+    // default or namespace import with nothing after its terminator; a
+    // side-effect import, `import x = require(...)`, `import (...)`, or code
+    // sharing the statement's lines would otherwise be dropped unseen.
+    let mut import_statement: Option<String> = None;
     let mut outside_lines = Vec::new();
     for line in source.lines() {
-        let trimmed = line.trim_start();
-        let starts_import = trimmed.starts_with("import ") || trimmed.starts_with("import{");
-        if starts_import {
-            let after = trimmed["import".len()..].trim_start();
-            // A side-effect import runs a module this row cannot see, and an
-            // `import x = require(...)` loads one; neither is a named import
-            // the import check above accounted for.
-            if after.starts_with(['\'', '"']) || trimmed.contains("require(") {
-                return false;
-            }
-        }
-        if in_import || starts_import {
-            in_import = !(trimmed.contains(" from ") || trimmed.ends_with(';'));
+        let trimmed = line.trim();
+        let continuing = import_statement.is_some();
+        let starts_import = !continuing
+            && trimmed.strip_prefix("import").is_some_and(|rest| {
+                !rest.starts_with(|ch: char| ch.is_ascii_alphanumeric() || ch == '_' || ch == '$')
+            });
+        if !(continuing || starts_import) {
+            outside_lines.push(line);
             continue;
         }
-        outside_lines.push(line);
+        let mut statement = import_statement.take().unwrap_or_default();
+        statement.push(' ');
+        statement.push_str(trimmed);
+        match closed_import_statement(&statement) {
+            Some(true) => {}
+            Some(false) => return false,
+            None => import_statement = Some(statement),
+        }
+    }
+    if import_statement.is_some() {
+        return false;
     }
     // Whatever remains must be inert: `describe` wrappers, their closers
     // and comments. Any other statement (a hook, a helper, a loader under
@@ -932,6 +941,43 @@ fn test_file_names_owner_only_in_test_bodies(
         && names
             .iter()
             .all(|name| word_occurrences(&outside, name) == 0)
+}
+
+/// Whether `statement` (an `import` statement gathered so far) is one
+/// complete static import: `Some(true)` for `import <clause> from '<path>'`
+/// with only an optional `;` after the specifier, `Some(false)` for any
+/// other shape, and `None` while the specifier has not appeared yet.
+fn closed_import_statement(statement: &str) -> Option<bool> {
+    let rest = statement.trim().strip_prefix("import")?;
+    let Some(open) = rest.find(['\'', '"']) else {
+        // Still gathering a multi-line clause, unless it already holds code.
+        return rest.contains(['(', '=', ';', '`']).then_some(false);
+    };
+    let head = rest[..open].trim_end();
+    let Some(clause) = head.strip_suffix("from") else {
+        return Some(false);
+    };
+    if !clause.ends_with(|ch: char| ch.is_whitespace() || ch == '}') {
+        return Some(false);
+    }
+    let clause = clause.trim();
+    let clause = clause
+        .strip_prefix("type ")
+        .map(str::trim)
+        .unwrap_or(clause);
+    if clause.is_empty()
+        || !clause.chars().all(|ch| {
+            ch.is_ascii_alphanumeric() || matches!(ch, '_' | '$' | '{' | '}' | ',' | '*' | ' ')
+        })
+    {
+        return Some(false);
+    }
+    let quote = rest[open..].chars().next()?;
+    let after_open = &rest[open + 1..];
+    let Some(close) = after_open.find(quote) else {
+        return Some(false);
+    };
+    Some(matches!(after_open[close + 1..].trim(), "" | ";"))
 }
 
 /// `true` for a test-file line, outside every test body and import, that

@@ -225,7 +225,8 @@ position rules as the witness (#5527):
      only inert lines: `describe('name', () => {` openers, their closers and
      comments. A hook, helper, global getter or loader there refuses,
      whatever its spelling. It has no side-effect import (`import './setup'`)
-     and no `import x = require(...)`.
+     and no `import x = require(...)` or `import (...)`; each import must be
+     one complete static import with nothing after its terminator.
    - The file imports only the owner's names, owner-module namespaces,
      the owner module's own `const` integers and test frameworks. An
      UPPER_CASE import from any other module refuses, since it may be a
@@ -244,8 +245,8 @@ position rules as the witness (#5527):
    calls the owner is a known limit.
 
    A visible owner call at the boundary is checked first and yields
-   `reached_without_discriminator`. This is the only state that may support
-   a row-owned `missing_input`.
+   `reached_without_discriminator`. `missed_boundary` is the only state that
+   may support a row-owned `missing_input`.
 5. `unresolved`: anything else (an untrusted or shadowed path, an unparsed or
    underived boundary, a computed, absent or spread input, or an owner
    reference that is not a plain call). Never a missing input.

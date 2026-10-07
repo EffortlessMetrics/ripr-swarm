@@ -12641,6 +12641,7 @@ tests = [
   "crates/ripr/src/analysis/language/typescript/owner_path_tests.rs::owner_path_enclosing_scope_shadow_is_not_yet_a_rejection",
   "crates/ripr/src/analysis/language/typescript/owner_path_tests.rs::owner_path_binding_gate_truth_table",
   "crates/ripr/src/analysis/language/typescript/predicate_activation_tests.rs::exact_boundary_argument_is_witnessed",
+  "crates/ripr/src/analysis/language/typescript/predicate_activation_tests.rs::only_complete_static_imports_are_dropped_from_the_file_scan",
   "crates/ripr/src/analysis/language/typescript/predicate_activation_tests.rs::computed_owner_access_outside_the_body_is_unresolved_not_missed",
   "crates/ripr/src/analysis/language/typescript/predicate_activation_tests.rs::describe_wrapper_and_comments_keep_a_closed_miss",
   "crates/ripr/src/analysis/language/typescript/predicate_activation_tests.rs::side_effect_or_require_import_is_unresolved_not_missed",
