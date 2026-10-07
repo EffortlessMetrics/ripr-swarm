@@ -21,6 +21,7 @@ Linked issues:
   container fact, not parser-derived `CallFact`)
 - #6675 (a binary bitwise `|` tail is unconditional; closures and `||` stay refused)
 - #6692 (a hand-written `Clone` field pinned by `assert_eq!(recv.clone(), recv)` through derived equality)
+- #5328 (a table-driven `for` over literal rows runs its assertion)
 - #6957 (the owner's own enclosing module is not a shadow: nested
   production declarations keep their pin)
 - RIPR-SPEC-0219 verdict corpus: `assert!(owner(..))` on a bool owner read
@@ -99,7 +100,15 @@ rule only for an assertion whose context was admitted.
    The assertion must lie on an ordinary statement/block/initializer path,
    without conditional, async, const, labeled, nested-item, attributed-node
    or prior root-return context. Root returns after the actual assertion execution
-   point do not defeat it. For a bound closure, use the invocation position, not
+   point do not defeat it. A `loop` body, and a `for` body whose iterable is a non-empty
+   literal table, run at least once, so they are ordinary paths unless a
+   `break` or `continue` in the loop precedes the assertion (#5328). The table
+   is an array literal with at least one element (`[a, ..]`, `&[a, ..]`,
+   optionally followed by a bare `.iter()` or `.into_iter()`), or a local name
+   bound exactly once in the test by a plain immutable `let` to such a literal,
+   in a block enclosing the loop and before it. Empty and repeat arrays,
+   ranges, `vec!`, constants, calls and every other iterable may run zero
+   times and stay refused; `while` stays refused. For a bound closure, use the invocation position, not
    its earlier definition; any closure return remains conservatively refused.
    A non-async zero-argument closure is supported
    only when immediately invoked, or when its immutable simple binding has

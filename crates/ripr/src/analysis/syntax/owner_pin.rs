@@ -9,7 +9,7 @@ use super::ra::{LineIndex, slice_macro_call_text, slice_text};
 use crate::analysis::facts::cfg_predicates::attribute_test_build_availability;
 use ra_ap_syntax::{
     AstNode, SyntaxNode, TextSize,
-    ast::{self, HasArgList, HasAttrs, HasName, HasVisibility},
+    ast::{self, HasArgList, HasAttrs, HasGenericArgs, HasLoopBody, HasName, HasVisibility},
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -1356,6 +1356,25 @@ fn eager_path(
             }) {
                 return Err("a `loop` after a `break` or `continue` that can skip it");
             }
+        } else if let Some(table) = ast::ForExpr::cast(parent.clone()) {
+            // A `for` over a non-empty literal table runs its body at least
+            // once, like `loop`. Ranges, iterators and empty tables may run
+            // zero times and stay refused (#5328).
+            if table
+                .loop_body()
+                .is_none_or(|body| body.syntax() != &node)
+                || !table
+                    .iterable()
+                    .is_some_and(|rows| non_empty_literal_table(&rows, &table, function))
+            {
+                return Err(conditional_construct(&parent));
+            }
+            if table.syntax().descendants().any(|node| {
+                (ast::BreakExpr::can_cast(node.kind()) || ast::ContinueExpr::can_cast(node.kind()))
+                    && node.text_range().start() < execution_start
+            }) {
+                return Err("a `for` loop after a `break` or `continue` that can skip it");
+            }
         } else if let Some(binding) = ast::LetStmt::cast(parent.clone()) {
             if binding.let_else().is_some()
                 || binding
@@ -1373,6 +1392,84 @@ fn eager_path(
         }
         node = parent;
     }
+}
+
+/// Whether `rows` is a literal table with at least one row: `[a, ..]`,
+/// `&[a, ..]`, either with a bare `.iter()`/`.into_iter()`, or a local name
+/// bound once in `function` by a plain immutable `let` to such a table in a
+/// block enclosing `table` and before it. Repeat arrays, `vec!`, ranges,
+/// constants and anything else stay unestablished.
+fn non_empty_literal_table(rows: &ast::Expr, table: &ast::ForExpr, function: &ast::Fn) -> bool {
+    let rows = literal_table_operand(rows);
+    if let ast::Expr::PathExpr(path) = &rows {
+        let Some(name) = path
+            .path()
+            .filter(|path| path.qualifier().is_none())
+            .and_then(|path| path.segment())
+            .filter(|segment| segment.generic_arg_list().is_none())
+            .and_then(|segment| segment.name_ref())
+        else {
+            return false;
+        };
+        let mut bindings = function
+            .syntax()
+            .descendants()
+            .filter_map(ast::IdentPat::cast)
+            .filter(|pat| pat.name().is_some_and(|bound| bound.text() == name.text()));
+        let (Some(binding), None) = (bindings.next(), bindings.next()) else {
+            return false;
+        };
+        if binding.mut_token().is_some()
+            || binding.ref_token().is_some()
+            || binding.pat().is_some()
+        {
+            return false;
+        }
+        let Some(statement) = binding.syntax().parent().and_then(ast::LetStmt::cast) else {
+            return false;
+        };
+        let encloses = statement.syntax().parent().is_some_and(|block| {
+            table
+                .syntax()
+                .ancestors()
+                .any(|ancestor| ancestor == block)
+        });
+        return encloses
+            && statement.let_else().is_none()
+            && statement.syntax().text_range().end() <= table.syntax().text_range().start()
+            && statement
+                .initializer()
+                .is_some_and(|initializer| non_empty_array(&literal_table_operand(&initializer)));
+    }
+    non_empty_array(&rows)
+}
+
+/// Strips `&` and a bare `.iter()`/`.into_iter()` around a table operand.
+fn literal_table_operand(expr: &ast::Expr) -> ast::Expr {
+    match expr {
+        ast::Expr::RefExpr(reference) if reference.mut_token().is_none() => reference
+            .expr()
+            .map_or_else(|| expr.clone(), |inner| literal_table_operand(&inner)),
+        ast::Expr::MethodCallExpr(call)
+            if call.generic_arg_list().is_none()
+                && call.arg_list().is_some_and(|args| args.args().next().is_none())
+                && call
+                    .name_ref()
+                    .is_some_and(|name| name.text() == "iter" || name.text() == "into_iter") =>
+        {
+            call.receiver()
+                .map_or_else(|| expr.clone(), |receiver| literal_table_operand(&receiver))
+        }
+        ast::Expr::ParenExpr(paren) => paren
+            .expr()
+            .map_or_else(|| expr.clone(), |inner| literal_table_operand(&inner)),
+        _ => expr.clone(),
+    }
+}
+
+fn non_empty_array(expr: &ast::Expr) -> bool {
+    matches!(expr, ast::Expr::ArrayExpr(array)
+        if array.semicolon_token().is_none() && array.exprs().next().is_some())
 }
 
 /// Reader-facing name for a construct that may skip the code inside it.

@@ -1861,6 +1861,61 @@ fn pretty_assertions_imported_under_its_own_name_is_the_standard_assertion() -> 
 }
 
 #[test]
+fn a_for_loop_over_a_non_empty_literal_table_runs_its_assertion() {
+    // #5328: a table-driven test runs its body once per literal row, so a
+    // non-empty literal table reaches the assertion like `loop` does.
+    let refusal = |body: &str| {
+        weight_refusal(
+            &format!("use demo::weight;\n#[test]\nfn weighs() {{\n{body}\n}}\n"),
+            &[],
+        )
+    };
+    let pin = "assert_eq!(weight(x), want);";
+    for admitted in [
+        format!("for (x, want) in [(4, 12), (1, 3)] {{ {pin} }}"),
+        format!("for (x, want) in &[(4, 12)] {{ let (x, want) = (*x, *want); {pin} }}"),
+        format!("let cases = [(4, 12), (1, 3)];\nfor (x, want) in cases {{ {pin} }}"),
+        format!("let cases: [(u32, u32); 1] = [(4, 12)];\nfor (x, want) in cases.into_iter() {{ {pin} }}"),
+        format!("let cases = [(4, 12)];\nfor &(x, want) in cases.iter() {{ {pin} }}"),
+    ] {
+        assert_eq!(refusal(&admitted), None, "{admitted}");
+    }
+    let skipped = Some(AssertionRefusal::Syntax(
+        AssertionContextRefusal::ConditionalPath("a `for` loop, which may run zero times"),
+    ));
+    for refused in [
+        // Empty, repeated or computed tables may run zero times.
+        format!("let cases: [(u32, u32); 0] = [];\nfor (x, want) in cases {{ {pin} }}"),
+        format!("for (x, want) in [] {{ {pin} }}"),
+        format!("for (x, want) in [(4, 12); 2] {{ {pin} }}"),
+        format!("for (x, want) in std::iter::once((4, 12)) {{ {pin} }}"),
+        format!("for (x, want) in rows() {{ {pin} }}"),
+        format!("for (x, want) in ROWS {{ {pin} }}"),
+        // The table name must be one plain immutable `let` of a literal.
+        format!("let mut cases = [(4, 12)];\ncases = [];\nfor (x, want) in cases {{ {pin} }}"),
+        format!("let cases = [(4, 12)];\nlet cases: [(u32, u32); 0] = [];\nfor (x, want) in cases {{ {pin} }}"),
+        format!("let cases = rows();\nfor (x, want) in cases {{ {pin} }}"),
+        format!("{{ let cases = [(4, 12)]; }}\nfor (x, want) in cases {{ {pin} }}"),
+        format!("for (x, want) in cases {{ {pin} }}\nlet cases = [(4, 12)];"),
+    ] {
+        assert_eq!(refusal(&refused), skipped, "{refused}");
+    }
+    assert_eq!(
+        refusal(&format!("for (x, want) in [(4, 12)] {{ if x > 9 {{ continue; }} {pin} }}")),
+        Some(AssertionRefusal::Syntax(
+            AssertionContextRefusal::ConditionalPath(
+                "a `for` loop after a `break` or `continue` that can skip it"
+            ),
+        ))
+    );
+    // A `break` after the assertion cannot skip the first row's check.
+    assert_eq!(
+        refusal(&format!("for (x, want) in [(4, 12)] {{ {pin} break; }}")),
+        None
+    );
+}
+
+#[test]
 fn each_refusal_names_the_gate_that_failed() {
     let refusal = |body: &str, attrs: &str| {
         weight_refusal(
