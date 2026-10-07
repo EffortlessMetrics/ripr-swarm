@@ -21361,6 +21361,7 @@ fn pr_summary_root_from_foreign_cwd_anchors_artifacts_and_baseline() -> Result<(
         .pointer("/local_reproduction_commands")
         .and_then(serde_json::Value::as_array)
         .ok_or_else(|| format!("summary has no reproduction commands: {summary}"))?;
+    let selected_root_arg = selected_arg.replace(std::path::MAIN_SEPARATOR, "/");
     for prefix in ["ripr check ", "ripr first-pr "] {
         let Some(command) = commands
             .iter()
@@ -21370,7 +21371,7 @@ fn pr_summary_root_from_foreign_cwd_anchors_artifacts_and_baseline() -> Result<(
             return Err(format!("no `{prefix}` reproduction command: {commands:?}"));
         };
         if !command.starts_with(&format!("{prefix}--root "))
-            || !command.contains("selected répo")
+            || !command.contains(&selected_root_arg)
             || command.contains("--root .")
         {
             return Err(format!(
