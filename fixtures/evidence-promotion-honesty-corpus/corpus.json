@@ -4258,7 +4258,8 @@
           "file": "src/lib.rs",
           "line": 34,
           "kind": "exact_value",
-          "strength": "strong"
+          "strength": "strong",
+          "relation_reason": "weak_token_substring"
         },
         {
           "type": "maximum_class",
