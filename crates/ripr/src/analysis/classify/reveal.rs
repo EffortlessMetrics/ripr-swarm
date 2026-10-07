@@ -6470,6 +6470,7 @@ return Err(\"typed pin\".into());
                     proximity_may_reach_owner: &|test| test.name == "a_large_refund_hits_the_limit",
                     owner_parameters: &[],
                     expected_reaches_owner: &|_, _| false,
+                    effect_state_carried: &|_, _| true,
                 },
                 None,
             );
