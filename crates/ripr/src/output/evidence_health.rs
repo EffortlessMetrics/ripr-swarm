@@ -32,6 +32,7 @@ const VALUE_CONTEXT_LABELS: &[&str] = &[
     "builder_method",
     "table_row",
     "enum_variant",
+    "constant",
     "return_value",
     "unknown",
 ];

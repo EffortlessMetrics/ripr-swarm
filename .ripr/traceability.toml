@@ -810,6 +810,18 @@ tests = [
   "crates/ripr/src/output/doctor.rs::tests::render_text_names_checks_without_evidence_and_passes",
   "crates/ripr/src/output/doctor.rs::tests::doctor_timeout_evidence_preserves_fractional_durations",
   "crates/ripr/src/output/doctor.rs::tests::config_check_redacts_source_excerpt_from_malformed_toml",
+  "crates/ripr/tests/cli_smoke.rs::doctor_json_carries_every_environment_fact_the_human_screen_prints",
+  "crates/ripr/tests/cli_smoke.rs::doctor_json_separates_detected_languages_from_enabled_languages",
+  "crates/ripr/tests/cli_smoke.rs::doctor_json_keeps_config_parse_errors_redacted_in_the_typed_fields",
+  "crates/ripr/tests/cli_smoke.rs::doctor_json_reports_no_config_defaults_for_an_unloadable_config",
+  "crates/ripr/tests/doctor_json_schema.rs::doctor_json_conforms_to_the_published_schema",
+  "crates/ripr/tests/doctor_json_schema.rs::published_doctor_schema_rejects_documents_the_schema_forbids",
+  "crates/ripr/tests/doctor_json_schema.rs::the_checker_covers_every_keyword_the_published_schema_uses",
+  "crates/ripr/src/output/doctor.rs::tests::the_dead_sections_array_is_gone_from_the_serialized_report",
+  "crates/ripr/src/output/doctor.rs::tests::typed_environment_fields_serialize_the_human_values",
+  "crates/ripr/src/cli/commands/doctor.rs::tests::registered_doctor_fixture_perl_state_is_reachable_from_the_producer",
+  "crates/ripr/src/cli/commands/doctor.rs::tests::detected_entries_map_javascript_to_its_typescript_entry",
+  "crates/ripr/src/cli/commands/doctor.rs::tests::detected_entries_stay_unknown_without_a_loaded_configuration",
   "crates/ripr/src/output/doctor.rs::tests::doctor_tool_check_names_non_missing_launch_failure",
   "crates/ripr/src/output/doctor.rs::tests::doctor_spawn_failure_retry_policy_covers_transient_kinds",
   "crates/ripr/src/output/doctor.rs::tests::doctor_tool_check_fails_closed_for_guaranteed_missing_tool",
@@ -865,6 +877,7 @@ outputs = [
   "README.md",
   "docs/status/SUPPORT_TIERS.md",
   "docs/OUTPUT_SCHEMA.md",
+  "schemas/ripr/doctor.schema.json",
   "docs/EXIT_CODES.md",
   "docs/CAPABILITY_MATRIX.md",
   "docs/IMPLEMENTATION_CAMPAIGNS.md",
@@ -7077,6 +7090,8 @@ name = "infect/propagate fail-closed (parts A, B, C)"
 spec = "docs/specs/RIPR-SPEC-0096-infect-propagate-fail-closed.md"
 tests = [
   "crates/ripr/src/analysis/classify/infection.rs::tests::wildcard_discard_is_infection_unknown_even_with_related_tests",
+  "crates/ripr/src/analysis/classify/infection.rs::tests::predicate_infection_does_not_compare_char_literals_with_numeric_boundaries",
+  "crates/ripr/src/analysis/classify/infection.rs::tests::predicate_infection_names_the_boundary_when_tests_pass_no_literals",
   "crates/ripr/src/analysis/classify/infection.rs::tests::typed_wildcard_discard_is_infection_unknown",
   "crates/ripr/src/analysis/classify/infection.rs::tests::named_binding_is_not_a_discard_stays_yes",
   "crates/ripr/src/analysis/classify/infection.rs::tests::return_value_read_into_tail_stays_exposed",
@@ -7547,6 +7562,12 @@ tests = [
   "crates/ripr/src/analysis/classify/related_tests.rs::tests::given_unique_impl_method_when_test_module_shadows_type_then_name_only_relation",
   "crates/ripr/src/analysis/classify/related_tests.rs::tests::given_unique_impl_method_when_no_shadow_then_direct_owner_call",
   "crates/ripr/src/analysis/classify/related_tests.rs::tests::given_two_impls_when_test_module_shadows_owner_type_then_name_only_relation",
+  "crates/ripr/src/analysis/classify/related_tests.rs::tests::given_out_of_line_parent_shadow_when_test_calls_owner_method_then_name_only_relation",
+  "crates/ripr/src/analysis/classify/related_tests.rs::tests::given_out_of_line_test_without_parent_shadow_when_test_calls_owner_then_direct",
+  "crates/ripr/src/analysis/classify/related_tests.rs::tests::given_out_of_line_test_when_parent_chain_is_unresolvable_then_name_only_relation",
+  "crates/ripr/src/analysis/classify/related_tests.rs::tests::given_really_ambiguous_parent_when_test_calls_owner_method_then_name_only_relation",
+  "crates/ripr/src/analysis/classify/related_tests.rs::tests::given_parent_root_rename_when_test_calls_owner_method_then_name_only_relation",
+  "crates/ripr/src/analysis/classify/related_tests.rs::tests::given_parent_root_plain_import_when_test_calls_owner_then_direct",
   "crates/ripr/src/analysis/classify/reveal.rs::tests::related_tests_cap_keeps_a_second_test_when_one_test_has_many_oracles",
   "crates/ripr/src/analysis/test_grip_evidence/tests.rs::given_two_impls_when_compact_grip_sees_other_type_call_then_not_direct_owner_call",
   "crates/ripr/src/analysis/test_grip_evidence/tests.rs::given_two_impls_when_compact_grip_sees_owner_type_call_then_direct_owner_call",
@@ -10731,11 +10752,16 @@ tests = [
   "crates/ripr/src/edit_cage/inline_test_region/tests.rs::inner_cfg_not_test_plus_a_function_is_rejected",
   "crates/ripr/src/edit_cage/inline_test_region/tests.rs::configured_generated_pattern_rejects_a_non_conventional_path",
   "crates/ripr/src/edit_cage/inline_test_region/tests.rs::fifo_at_the_captured_path_is_rejected_without_blocking",
+  "crates/ripr/src/edit_cage/inline_test_region/tests.rs::helper_only_insertion_is_not_a_completed_repair",
+  "crates/ripr/src/edit_cage/inline_test_region/tests.rs::helper_beside_a_new_test_function_is_admitted",
+  "crates/ripr/src/edit_cage/inline_test_region/tests.rs::rewriting_an_existing_comment_while_adding_a_test_is_rejected",
+  "crates/ripr/src/edit_cage/inline_test_region/tests.rs::new_test_with_comments_and_blank_lines_is_admitted",
 ]
 fixtures = [
 ]
 code = [
   "crates/ripr/src/edit_cage/inline_test_region/mod.rs",
+  "crates/ripr/src/edit_cage/inline_test_region/attempt.rs",
   "crates/ripr/src/edit_cage/inline_test_region/observe.rs",
   "crates/ripr/src/edit_cage/inline_test_region/validate.rs",
 ]
@@ -11659,6 +11685,11 @@ tests = [
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_nested_production_module_does_not_shadow_its_own_owner_pin",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_nested_test_module_shadow_alongside_a_nested_production_declaration_refuses",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_cross_file_test_module_shadow_of_a_nested_owner_still_refuses",
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::an_out_of_line_parent_module_shadow_of_the_receiver_refuses_the_pin",
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::an_out_of_line_test_without_a_parent_shadow_keeps_its_pin",
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::an_out_of_line_production_module_at_the_parent_root_keeps_its_pin",
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_parent_root_rename_of_the_receiver_refuses_the_pin",
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_parent_root_plain_import_of_the_receiver_keeps_its_pin",
 ]
 fixtures = [
   "fixtures/predicate_boundary_oracle_refused",
@@ -11704,6 +11735,7 @@ fixtures = [
   "fixtures/owner_return_pin_cfg_attr_module",
   "fixtures/owner_return_pin_out_of_line_cfg",
   "fixtures/owner_return_pin_test_module_shadow",
+  "fixtures/owner_return_pin_out_of_line_test_module_shadow",
 ]
 code = [
   "crates/ripr/src/output/observed_values.rs",
@@ -13339,6 +13371,8 @@ tests = [
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_definition_covering_the_test_outranks_a_may_rebind_site_elsewhere",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::the_workspace_site_is_the_first_rebinding_in_path_order_else_the_first_site",
   "crates/ripr/src/analysis/classify/reveal.rs::tests::name_only_relations_stop_crediting_beside_a_reach_bearing_one",
+  "crates/ripr/src/analysis/classifier/evidence.rs::tests::preferred_refusal_note_puts_a_non_limit_owner_call_first",
+  "crates/ripr/src/analysis/classifier/finding.rs::tests::refused_assertion_next_step_offers_a_static_limit_only_for_a_limit_refusal",
   "crates/ripr/tests/owner_pin_execution.rs::owner_pin_matched_static_and_runtime_controls",
   "crates/ripr/tests/owner_pin_execution.rs::macro_use_module_admission_matches_runtime",
 ]

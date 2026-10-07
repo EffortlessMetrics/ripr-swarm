@@ -227,3 +227,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — binding_value_fail_closed (16)
+
+Reason:
+RIPR-SPEC-0096: infection note names the char-vs-numeric literal mismatch (#6902)
+
+Command:
+`cargo xtask goldens bless binding_value_fail_closed --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
