@@ -7,4 +7,5 @@
   `tax`. An `assert_eq!` that computes its expected value through the
   changed function (`assert_eq!(invoice(3, 100), sub + tax(sub))`, where
   `invoice` calls `tax`) is now a weak, unconfirmed oracle
-  ([#5830](https://github.com/EffortlessMetrics/ripr-swarm/issues/5830)).
+  ([#5830](https://github.com/EffortlessMetrics/ripr-swarm/issues/5830),
+  [#6970](https://github.com/EffortlessMetrics/ripr-swarm/pull/6970)).
