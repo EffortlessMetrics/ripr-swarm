@@ -474,6 +474,8 @@ fn inventory_keeps_wrappers_that_add_error_behavior() -> Result<(), String> {
         "    if s == \"q\" { return Box::new(Err(Error::R)); }\n",
         "    if s == \"r\" { return Err(Error::S).recover(); }\n",
         "    if s == \"t\" { return Err(Error::U).context(\"a ) b\").inspect_err(log); }\n",
+        "    if s == \"u\" { return Err(Error::V).context(c) /* ( */ .map_err(|_| B); }\n",
+        "    if s == \"v\" { return Ready(Err(Error::W)); }\n",
         "    wrap(Err(Error::Tail)).map_err(|_| Error::Other)\n",
         "}\n",
     );
@@ -537,9 +539,18 @@ fn inventory_keeps_wrappers_that_add_error_behavior() -> Result<(), String> {
             (18, "Err(Error::S)"),
             // Annotating methods keep the error, even with `)` in a message.
             (19, "Err(Error::U)"),
+            // A comment in the chain fails closed.
+            (
+                20,
+                "return Err(Error::V).context(c) /* ( */ .map_err(|_| B)"
+            ),
+            (20, "Err(Error::V)"),
+            // A bare `Ready` may be the user's own variant.
+            (21, "Ready(Err(Error::W))"),
+            (21, "Err(Error::W)"),
             // The tail chain adds a conversion; only the call goes.
-            (20, "wrap(Err(Error::Tail)).map_err(|_| Error::Other)"),
-            (20, "Err(Error::Tail)"),
+            (22, "wrap(Err(Error::Tail)).map_err(|_| Error::Other)"),
+            (22, "Err(Error::Tail)"),
         ],
         "{seams:?}"
     );

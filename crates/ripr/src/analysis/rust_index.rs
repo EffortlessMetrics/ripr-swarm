@@ -409,10 +409,10 @@ fn wraps_argument(prefix: &str, inner_is_err: bool) -> bool {
 /// A capitalised callee that only carries its argument: `Ok`, `Some`,
 /// `Poll::Ready`, `Box::new` and the like.
 fn pure_wrapper(path: &str) -> bool {
-    const WRAPPERS: [&str; 10] = [
+    // A bare `Ready` may be an imported variant of the user's own enum.
+    const WRAPPERS: [&str; 9] = [
         "Ok",
         "Some",
-        "Ready",
         "Poll::Ready",
         "std::task::Poll::Ready",
         "core::task::Poll::Ready",
@@ -477,7 +477,8 @@ fn mark_returns(
 /// `inspect_err`, `inspect` or `into`. Any other method may replace the
 /// error (`map_err`, `or_else`, `unwrap_or_else`, an extension trait), so
 /// the chain fails closed and the `return` keeps its seam. Arguments are
-/// skipped; a char literal or lifetime at the top level also fails closed.
+/// skipped; a comment, or a char literal or lifetime at the top level, fails
+/// closed.
 fn keeps_error(chain: &str) -> bool {
     const KEEPS: [&str; 9] = [
         "context",
@@ -508,6 +509,9 @@ fn keeps_error(chain: &str) -> bool {
             }
             '(' | '[' | '{' => depth += 1,
             ')' | ']' | '}' => depth = depth.saturating_sub(1),
+            // A comment may hide a delimiter or a method; a lifetime or
+            // char literal may hide a quote.
+            '/' => return false,
             '\'' if depth == 0 => return false,
             '.' if depth == 0 => {
                 let name: String = chain
