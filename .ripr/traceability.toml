@@ -7562,6 +7562,12 @@ tests = [
   "crates/ripr/src/analysis/classify/related_tests.rs::tests::given_unique_impl_method_when_test_module_shadows_type_then_name_only_relation",
   "crates/ripr/src/analysis/classify/related_tests.rs::tests::given_unique_impl_method_when_no_shadow_then_direct_owner_call",
   "crates/ripr/src/analysis/classify/related_tests.rs::tests::given_two_impls_when_test_module_shadows_owner_type_then_name_only_relation",
+  "crates/ripr/src/analysis/classify/related_tests.rs::tests::given_out_of_line_parent_shadow_when_test_calls_owner_method_then_name_only_relation",
+  "crates/ripr/src/analysis/classify/related_tests.rs::tests::given_out_of_line_test_without_parent_shadow_when_test_calls_owner_then_direct",
+  "crates/ripr/src/analysis/classify/related_tests.rs::tests::given_out_of_line_test_when_parent_chain_is_unresolvable_then_name_only_relation",
+  "crates/ripr/src/analysis/classify/related_tests.rs::tests::given_really_ambiguous_parent_when_test_calls_owner_method_then_name_only_relation",
+  "crates/ripr/src/analysis/classify/related_tests.rs::tests::given_parent_root_rename_when_test_calls_owner_method_then_name_only_relation",
+  "crates/ripr/src/analysis/classify/related_tests.rs::tests::given_parent_root_plain_import_when_test_calls_owner_then_direct",
   "crates/ripr/src/analysis/classify/reveal.rs::tests::related_tests_cap_keeps_a_second_test_when_one_test_has_many_oracles",
   "crates/ripr/src/analysis/test_grip_evidence/tests.rs::given_two_impls_when_compact_grip_sees_other_type_call_then_not_direct_owner_call",
   "crates/ripr/src/analysis/test_grip_evidence/tests.rs::given_two_impls_when_compact_grip_sees_owner_type_call_then_direct_owner_call",
@@ -8741,6 +8747,10 @@ tests = [
   "crates/ripr/src/analysis/probes/diff.rs::tests::match_arm_head_edit_cuts_before_to_the_old_head",
   "crates/ripr/src/analysis/probes/diff.rs::tests::match_arm_body_edit_keeps_the_whole_old_arm",
   "crates/ripr/src/analysis/probes/diff.rs::tests::match_arm_head_edit_on_a_two_arrow_line_keeps_the_whole_old_line",
+  "crates/ripr/src/analysis/probes/diff.rs::tests::match_scrutinee_edit_cuts_before_to_the_old_scrutinee",
+  "crates/ripr/tests/match_arm_two_arrow_line.rs::a_one_arm_line_cuts_before_and_names_the_unselected_arm",
+  "crates/ripr/tests/match_arm_two_arrow_line.rs::two_arms_on_one_line_keep_the_whole_line_and_name_no_unselected_arm",
+  "crates/ripr/tests/match_arm_two_arrow_line.rs::a_nested_match_in_the_body_keeps_the_whole_line_and_names_no_unselected_arm",
   "crates/ripr/src/analysis/probes/diff.rs::tests::removed_span_of_shape_cuts_only_when_the_edit_is_inside_the_shape",
 ]
 fixtures = []
@@ -11690,6 +11700,11 @@ tests = [
   "crates/ripr/src/analysis/classify/owner_pin/tests/helper_pins.rs::a_helper_that_rebinds_or_feeds_back_the_owner_is_not_a_pin",
   "crates/ripr/src/analysis/classify/owner_pin/tests/helper_pins.rs::the_indexed_helper_assertion_is_the_admitted_one",
   "crates/ripr/src/analysis/classify/owner_pin/tests/helper_pins.rs::a_helper_scoped_assert_eq_binding_refuses_the_loan",
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::an_out_of_line_parent_module_shadow_of_the_receiver_refuses_the_pin",
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::an_out_of_line_test_without_a_parent_shadow_keeps_its_pin",
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::an_out_of_line_production_module_at_the_parent_root_keeps_its_pin",
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_parent_root_rename_of_the_receiver_refuses_the_pin",
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_parent_root_plain_import_of_the_receiver_keeps_its_pin",
 ]
 fixtures = [
   "fixtures/predicate_boundary_oracle_refused",
@@ -11735,6 +11750,7 @@ fixtures = [
   "fixtures/owner_return_pin_cfg_attr_module",
   "fixtures/owner_return_pin_out_of_line_cfg",
   "fixtures/owner_return_pin_test_module_shadow",
+  "fixtures/owner_return_pin_out_of_line_test_module_shadow",
 ]
 code = [
   "crates/ripr/src/output/observed_values.rs",
