@@ -5,8 +5,8 @@
     "rate": "0.2862"
   },
   "by_observed_verdict": {
-    "credited": 46,
-    "gap": 156,
+    "credited": 48,
+    "gap": 154,
     "limited": 80,
     "silent": 1
   },
@@ -18,16 +18,16 @@
         "rate": "0.2289"
       },
       "by_observed_verdict": {
-        "credited": 41,
-        "gap": 151,
+        "credited": 43,
+        "gap": 149,
         "limited": 56,
         "silent": 1
       },
       "cases_total": 249,
       "false_actionable_rate": {
         "denominator": 124,
-        "numerator": 65,
-        "rate": "0.5242"
+        "numerator": 63,
+        "rate": "0.5081"
       },
       "false_exposed_rate": {
         "denominator": 125,
@@ -41,13 +41,13 @@
       },
       "false_verdict_rate": {
         "denominator": 249,
-        "numerator": 76,
-        "rate": "0.3052"
+        "numerator": 74,
+        "rate": "0.2972"
       },
       "ideal_rate": {
         "denominator": 249,
-        "numerator": 116,
-        "rate": "0.4659"
+        "numerator": 118,
+        "rate": "0.4739"
       }
     },
     "upstream": {
@@ -91,9 +91,9 @@
   },
   "by_outcome": {
     "abstained": 81,
-    "false_actionable": 68,
+    "false_actionable": 66,
     "false_exposed": 11,
-    "ideal": 123
+    "ideal": 125
   },
   "by_truth": {
     "discriminated": 144,
@@ -111,8 +111,8 @@
   },
   "false_actionable_rate": {
     "denominator": 144,
-    "numerator": 68,
-    "rate": "0.4722"
+    "numerator": 66,
+    "rate": "0.4583"
   },
   "false_exposed_rate": {
     "denominator": 139,
@@ -126,13 +126,13 @@
   },
   "false_verdict_rate": {
     "denominator": 283,
-    "numerator": 79,
-    "rate": "0.2792"
+    "numerator": 77,
+    "rate": "0.2721"
   },
   "ideal_rate": {
     "denominator": 283,
-    "numerator": 123,
-    "rate": "0.4346"
+    "numerator": 125,
+    "rate": "0.4417"
   },
   "non_claims": [
     "Rates describe this corpus only; they are not a population estimate for Rust code or for ripr in general.",
@@ -5045,17 +5045,17 @@
       "anchor": "src/hoists.rs:2",
       "behavior_family": "return_value_arithmetic",
       "case_id": "trap-hoist-scoped-thread-control",
-      "changed_since_labeling": false,
+      "changed_since_labeling": true,
       "contradictions": [],
       "followed_retarget": false,
       "hard_case": false,
       "ideal_verdict": "credited",
       "observed_classifications": [
-        "reachable_unrevealed"
+        "exposed"
       ],
-      "observed_verdict": "gap",
+      "observed_verdict": "credited",
       "origin": "authored",
-      "outcome": "false_actionable",
+      "outcome": "ideal",
       "subject_id": "authored-trap-reach",
       "test_shape": "assert_in_scoped_thread",
       "truth": "discriminated"
@@ -5102,17 +5102,17 @@
       "anchor": "src/lifts.rs:2",
       "behavior_family": "return_value_arithmetic",
       "case_id": "trap-lift-joined-thread-control",
-      "changed_since_labeling": false,
+      "changed_since_labeling": true,
       "contradictions": [],
       "followed_retarget": false,
       "hard_case": false,
       "ideal_verdict": "credited",
       "observed_classifications": [
-        "weakly_exposed"
+        "exposed"
       ],
-      "observed_verdict": "gap",
+      "observed_verdict": "credited",
       "origin": "authored",
-      "outcome": "false_actionable",
+      "outcome": "ideal",
       "subject_id": "authored-trap-reach",
       "test_shape": "assert_in_joined_thread",
       "truth": "discriminated"
