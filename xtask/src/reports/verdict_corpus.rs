@@ -2536,7 +2536,7 @@ pub(crate) struct CorpusArgs {
 pub(crate) fn parse_corpus_args(args: &[String]) -> Result<CorpusArgs, String> {
     let mut iter = args.iter().peekable();
     let sub = match iter.peek() {
-        Some(first) if !first.starts_with("--") => iter.next().map(String::clone),
+        Some(first) if !first.starts_with("--") => iter.next().cloned(),
         _ => None,
     }
     .unwrap_or_else(|| "check".to_string());
