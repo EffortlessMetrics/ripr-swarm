@@ -71,17 +71,14 @@ use std::path::{Path, PathBuf};
 /// The owner-side half of the pin, established once per probe.
 pub(in crate::analysis) struct OwnerReturnPin {
     name: String,
-    /// The owner's file, whose crate root a path-qualified call
-    /// (`crate::m::name(..)`, `krate::name(..)`) must reach (#6974).
-    owner_file: PathBuf,
-    /// The owner's first line, which places it among the inline modules of
-    /// its file (#6974).
-    owner_line: usize,
     call: PinCall,
     path: ReturnPathGate,
-    /// Where the owner `fn` starts, for the #6957 exemption: a same-name
-    /// type declaration in the owner's own enclosing module is the
-    /// production declaration, not a test-local shadow.
+    /// Where the owner `fn` starts. It serves the #6957 exemption, where a
+    /// same-name type declaration in the owner's own enclosing module is the
+    /// production declaration, not a test-local shadow. It also places the
+    /// owner among its file's inline modules and crate root, which a
+    /// path-qualified call (`crate::m::name(..)`, `krate::name(..)`) must
+    /// reach (#6974).
     owner_file: PathBuf,
     owner_start_line: usize,
     /// The owner declares `-> bool`, so `assert!(owner(..))` pins its whole
@@ -1185,8 +1182,6 @@ impl OwnerReturnPin {
         }
         Some(Self {
             name: name.to_string(),
-            owner_file: owner.file.clone(),
-            owner_line: owner.start_line,
             call,
             path,
             returns_bool,
@@ -1263,8 +1258,6 @@ impl OwnerReturnPin {
         }
         Some(Self {
             name: owner.name.clone(),
-            owner_file: owner.file.clone(),
-            owner_line: owner.start_line,
             call: PinCall::Method {
                 receivers: vec![receiver],
                 // `Clone` is in the prelude; a workspace `trait Clone` is
@@ -1569,7 +1562,7 @@ impl OwnerReturnPin {
             module.push((*segment).to_string());
         }
         syntax
-            .item_nesting(index, &self.owner_file, &self.name, self.owner_line)
+            .item_nesting(index, &self.owner_file, &self.name, self.owner_start_line)
             .is_some_and(|owner_module| owner_module == module)
             && !syntax.crate_may_hide_name(index, &owner_root, &self.name, roots)
     }
