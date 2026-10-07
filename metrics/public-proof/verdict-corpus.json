@@ -5,8 +5,8 @@
     "rate": "0.2862"
   },
   "by_observed_verdict": {
-    "credited": 43,
-    "gap": 159,
+    "credited": 42,
+    "gap": 160,
     "limited": 80,
     "silent": 1
   },
@@ -18,8 +18,8 @@
         "rate": "0.2289"
       },
       "by_observed_verdict": {
-        "credited": 38,
-        "gap": 154,
+        "credited": 37,
+        "gap": 155,
         "limited": 56,
         "silent": 1
       },
@@ -31,8 +31,8 @@
       },
       "false_exposed_rate": {
         "denominator": 125,
-        "numerator": 8,
-        "rate": "0.0640"
+        "numerator": 7,
+        "rate": "0.0560"
       },
       "false_silent_rate": {
         "denominator": 125,
@@ -41,13 +41,13 @@
       },
       "false_verdict_rate": {
         "denominator": 249,
-        "numerator": 73,
-        "rate": "0.2932"
+        "numerator": 72,
+        "rate": "0.2892"
       },
       "ideal_rate": {
         "denominator": 249,
-        "numerator": 119,
-        "rate": "0.4779"
+        "numerator": 120,
+        "rate": "0.4819"
       }
     },
     "upstream": {
@@ -92,8 +92,8 @@
   "by_outcome": {
     "abstained": 81,
     "false_actionable": 68,
-    "false_exposed": 8,
-    "ideal": 126
+    "false_exposed": 7,
+    "ideal": 127
   },
   "by_truth": {
     "discriminated": 144,
@@ -116,8 +116,8 @@
   },
   "false_exposed_rate": {
     "denominator": 139,
-    "numerator": 8,
-    "rate": "0.0576"
+    "numerator": 7,
+    "rate": "0.0504"
   },
   "false_silent_rate": {
     "denominator": 139,
@@ -126,13 +126,13 @@
   },
   "false_verdict_rate": {
     "denominator": 283,
-    "numerator": 76,
-    "rate": "0.2686"
+    "numerator": 75,
+    "rate": "0.2650"
   },
   "ideal_rate": {
     "denominator": 283,
-    "numerator": 126,
-    "rate": "0.4452"
+    "numerator": 127,
+    "rate": "0.4488"
   },
   "non_claims": [
     "Rates describe this corpus only; they are not a population estimate for Rust code or for ripr in general.",
@@ -2469,17 +2469,17 @@
       "anchor": "src/lib.rs:63",
       "behavior_family": "call_deletion",
       "case_id": "ledger-receive-refresh-low-stock",
-      "changed_since_labeling": false,
+      "changed_since_labeling": true,
       "contradictions": [],
       "followed_retarget": false,
       "hard_case": true,
       "ideal_verdict": "gap",
       "observed_classifications": [
-        "exposed"
+        "weakly_exposed"
       ],
-      "observed_verdict": "credited",
+      "observed_verdict": "gap",
       "origin": "authored",
-      "outcome": "false_exposed",
+      "outcome": "ideal",
       "subject_id": "authored-ledger",
       "test_shape": "no_test_observes_effect",
       "truth": "not_discriminated"

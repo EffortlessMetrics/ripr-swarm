@@ -1,6 +1,6 @@
 use crate::analysis::classify::{
-    ARM_UNSELECTED_REASON_PREFIX, ASSERTION_CONTEXT_UNESTABLISHED, ArmSelector, OwnerPinSyntax,
-    OwnerReturnPin, ProbeContext, PropagationWitnessV1, ReturnOracleAdmission,
+    ARM_UNSELECTED_REASON_PREFIX, ASSERTION_CONTEXT_UNESTABLISHED, ArmSelector, EffectStateCarrier,
+    OwnerPinSyntax, OwnerReturnPin, ProbeContext, PropagationWitnessV1, ReturnOracleAdmission,
     TransitiveReachIndex, activation_and_boundary_input, body_contains_owner_call,
     callee_is_unique, classify, confidence_score, contains_as_whole_word, current_path_witness,
     has_same_test_boundary_oracle_pairing, infection_evidence_with_boundary_input,
@@ -178,6 +178,11 @@ impl ClassifiedProbeEvidence {
                         .map(|(test, _)| test.file.as_path()),
                 )
             });
+        // RIPR-SPEC-0094 Part D: the state a deleted `self.callee(..)` writes,
+        // established once per probe; `None` keeps the Part C reading.
+        let effect_carrier = context
+            .owner_fn
+            .and_then(|owner| EffectStateCarrier::establish(context.probe, owner, context.index));
         let package_defeats_by_file = FileDefeatMemo::default();
         // Built lazily: only a match arm beside an owner-calling test asks
         // whether a same-file test may run the owner (#6297).
@@ -272,6 +277,11 @@ impl ClassifiedProbeEvidence {
                 },
                 owner_parameters: &owner_parameters,
                 expected_reaches_owner: &expected_reaches_owner,
+                effect_state_carried: &|test, assertion| {
+                    effect_carrier
+                        .as_ref()
+                        .is_none_or(|carrier| carrier.admits(test, assertion))
+                },
             },
             arm_selector.as_ref(),
         );

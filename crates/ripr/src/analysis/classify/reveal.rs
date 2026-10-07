@@ -35,6 +35,10 @@ pub(in crate::analysis) struct ReturnOracleAdmission<'a> {
     /// type a call names (`Money` in `Money::new(8)`), when it names one:
     /// such a call reaches the owner only through that type's function.
     pub(in crate::analysis) expected_reaches_owner: &'a dyn Fn(Option<&str>, &str) -> bool,
+    /// RIPR-SPEC-0094 Part D: whether an effect observer can carry the state
+    /// the changed effect writes (`EffectStateCarrier::admits`). Consulted
+    /// only for effect families after `effect_observer_confirms`.
+    pub(in crate::analysis) effect_state_carried: &'a dyn Fn(&TestSummary, &OracleFact) -> bool,
 }
 
 #[cfg(test)]
@@ -55,6 +59,7 @@ fn reveal_evidence(
             proximity_may_reach_owner: &|_| false,
             owner_parameters: &[],
             expected_reaches_owner: &|_, _| false,
+            effect_state_carried: &|_, _| true,
         },
         None,
     );
@@ -714,7 +719,10 @@ fn analyze_related_assertions(
                                     .is_none()
                                     && (has_token_match
                                         || (is_effect_family(&probe.family)
-                                            && effect_observer_confirms(assertion)))))));
+                                            && effect_observer_confirms(assertion)
+                                            && (return_admission.effect_state_carried)(
+                                                test, assertion,
+                                            )))))));
                 proximity_confirmation_withheld |= !confirms_observation;
                 if confirm_required {
                     // Observation is confirmed when the assertion specifically
@@ -3380,6 +3388,7 @@ mod tests {
                     proximity_may_reach_owner: &|_| false,
                     owner_parameters: &[],
                     expected_reaches_owner: &|_, _| false,
+                    effect_state_carried: &|_, _| true,
                 },
                 None,
             )
@@ -3472,6 +3481,7 @@ mod tests {
                     proximity_may_reach_owner: &|_| false,
                     owner_parameters: &[],
                     expected_reaches_owner: &|_, _| false,
+                    effect_state_carried: &|_, _| true,
                 },
                 None,
             )
@@ -3821,6 +3831,7 @@ mod tests {
                 proximity_may_reach_owner: &|_| false,
                 owner_parameters: &[],
                 expected_reaches_owner: &|_, _| false,
+                effect_state_carried: &|_, _| true,
             },
             None,
         );
@@ -3889,6 +3900,7 @@ mod tests {
                 proximity_may_reach_owner: &|_| false,
                 owner_parameters: &[],
                 expected_reaches_owner: &|_, _| false,
+                effect_state_carried: &|_, _| true,
             },
             None,
         );
@@ -5415,6 +5427,7 @@ return Err(\"typed pin\".into());
                 proximity_may_reach_owner: &|_| false,
                 owner_parameters: &[],
                 expected_reaches_owner: &|_, _| false,
+                effect_state_carried: &|_, _| true,
             },
             None,
         );
@@ -5468,6 +5481,7 @@ return Err(\"typed pin\".into());
                 proximity_may_reach_owner: &|_| false,
                 owner_parameters: &[],
                 expected_reaches_owner: &|_, _| false,
+                effect_state_carried: &|_, _| true,
             },
             None,
         );
@@ -5492,6 +5506,7 @@ return Err(\"typed pin\".into());
                 proximity_may_reach_owner: &|_| false,
                 owner_parameters: &[],
                 expected_reaches_owner: &|_, _| false,
+                effect_state_carried: &|_, _| true,
             },
             None,
         );
@@ -5535,6 +5550,7 @@ return Err(\"typed pin\".into());
                 proximity_may_reach_owner: &|_| false,
                 owner_parameters: &[],
                 expected_reaches_owner: &|_, _| false,
+                effect_state_carried: &|_, _| true,
             },
             None,
         );
@@ -5580,6 +5596,7 @@ return Err(\"typed pin\".into());
                 proximity_may_reach_owner: &|_| false,
                 owner_parameters: &[],
                 expected_reaches_owner: &|_, _| false,
+                effect_state_carried: &|_, _| true,
             },
             None,
         );
@@ -5750,6 +5767,7 @@ return Err(\"typed pin\".into());
                 proximity_may_reach_owner: &|_| false,
                 owner_parameters: &[],
                 expected_reaches_owner: &|_, _| false,
+                effect_state_carried: &|_, _| true,
             },
             None,
         );
@@ -5777,6 +5795,7 @@ return Err(\"typed pin\".into());
                 proximity_may_reach_owner: &|_| false,
                 owner_parameters: &[],
                 expected_reaches_owner: &|_, _| false,
+                effect_state_carried: &|_, _| true,
             },
             None,
         );
@@ -6291,6 +6310,7 @@ return Err(\"typed pin\".into());
                 proximity_may_reach_owner: &|test| test.name == "from_str_fortnight",
                 owner_parameters: &[],
                 expected_reaches_owner: &|_, _| false,
+                effect_state_carried: &|_, _| true,
             },
             None,
         );
@@ -6592,6 +6612,7 @@ return Err(\"typed pin\".into());
                 proximity_may_reach_owner: &|_| false,
                 owner_parameters: &[],
                 expected_reaches_owner: &|_, _| false,
+                effect_state_carried: &|_, _| true,
             },
             None,
         );
@@ -6888,6 +6909,7 @@ return Err(\"typed pin\".into());
                 proximity_may_reach_owner: &|_| false,
                 owner_parameters,
                 expected_reaches_owner: reaches,
+                effect_state_carried: &|_, _| true,
             },
             None,
         );
