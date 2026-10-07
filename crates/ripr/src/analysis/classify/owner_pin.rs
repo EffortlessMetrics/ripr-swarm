@@ -228,12 +228,9 @@ impl OwnerPinSyntax {
             ));
         Some(match refusal {
             AssertionRefusal::Syntax(AssertionContextRefusal::MacroBinding(name)) => {
+                let resolved_modules = self.resolved_module_declarations(index);
                 let resolved = |path: &Path, line: usize, declaration: &str| {
-                    self.resolved_module_declarations(index).contains(&(
-                        path.to_path_buf(),
-                        line,
-                        declaration.to_string(),
-                    ))
+                    resolved_modules.contains(&(path.to_path_buf(), line, declaration.to_string()))
                 };
                 let test_root = self.target_roots(index).root(&test.file, index);
                 let workspace =
@@ -765,30 +762,57 @@ fn workspace_macro_binding_site(
     test_root: Option<&Path>,
     index: &RustIndex,
     roots: &TargetRoots,
-    module_resolved: &dyn Fn(&Path, usize, &str) -> bool,
+    module_resolved: &(dyn Fn(&Path, usize, &str) -> bool + Sync),
 ) -> Option<(PathBuf, MacroBindingSite)> {
     if !NON_RETURNING_MACROS.contains(&name) {
         return None;
     }
+    // Every file is parsed for this one name, which was a quarter of a warm
+    // `ripr check` on ripr-swarm when run serially. Each file's own answer
+    // is independent, so files are scanned on the rayon pool and the
+    // earliest file in path order still wins.
+    // Roots memoize in a `RefCell`, so they are resolved before the pool.
+    let files: Vec<_> = index
+        .files()
+        .iter()
+        .map(|(path, facts)| {
+            let root = test_root.and_then(|_| roots.root(path, index));
+            (path, facts, root)
+        })
+        .collect();
+    let per_file: Vec<_> = files
+        .par_iter()
+        .map(|(path, facts, root)| {
+            // The same rule as the decision: a crate-local site in another
+            // recognized root does not reach this test.
+            let reaches = |site: &MacroBindingSite| {
+                !site.crate_local
+                    || test_root.is_none()
+                    || root
+                        .as_ref()
+                        .is_none_or(|site_root| Some(site_root.as_path()) == test_root)
+            };
+            let mut first = None;
+            for (_, site) in macro_binding_sites(name, path, &facts.source, index, module_resolved)
+            {
+                if site.scope.is_some() || !reaches(&site) {
+                    continue;
+                }
+                if rebinds(&site) {
+                    return (Some(site), first);
+                }
+                first.get_or_insert(site);
+            }
+            (None, first)
+        })
+        .collect();
     let mut first = None;
-    for (path, facts) in index.files().iter() {
-        // The same rule as the decision: a crate-local site in another
-        // recognized root does not reach this test.
-        let reaches = |site: &MacroBindingSite| {
-            !site.crate_local
-                || test_root.is_none()
-                || roots
-                    .root(path, index)
-                    .is_none_or(|site_root| Some(site_root.as_path()) == test_root)
-        };
-        for (_, site) in macro_binding_sites(name, path, &facts.source, index, module_resolved) {
-            if site.scope.is_some() || !reaches(&site) {
-                continue;
-            }
-            if rebinds(&site) {
-                return Some((path.clone(), site));
-            }
-            first.get_or_insert_with(|| (path.clone(), site));
+    for ((path, _, _), (rebinding, site)) in files.iter().zip(per_file) {
+        if let Some(site) = rebinding {
+            return Some(((*path).clone(), site));
+        }
+        if first.is_none() {
+            first = site.map(|site| ((*path).clone(), site));
         }
     }
     first

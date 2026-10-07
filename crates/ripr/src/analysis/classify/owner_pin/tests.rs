@@ -2872,6 +2872,65 @@ fn an_outcome_settling_attribute_is_the_refusal_wherever_it_sits() {
 }
 
 #[test]
+fn the_workspace_site_is_the_first_rebinding_in_path_order_else_the_first_site() {
+    // The workspace scan runs per file on the rayon pool; the reported site
+    // must still be the first rebinding in path order, or failing that the
+    // first may-rebind site, whatever order the files finish in.
+    let plain = "use demo::weight;\n#[test]\nfn weighs() { assert_eq!(weight(4), 12); }\n";
+    let macro_use = "fn a() {}\n#[macro_use]\nextern crate other;\n";
+    let definition = "#[macro_export]\nmacro_rules! assert_eq { ($a:expr, $b:expr) => {}; }\n";
+    let site_of = |files: &[(&str, &str)]| {
+        let index = index(files);
+        let test = index
+            .tests()
+            .iter()
+            .find(|test| test.file == Path::new(TESTS))
+            .cloned();
+        assert!(test.is_some(), "the fixture test must be indexed");
+        let test = test?;
+        let probe = return_probe(owner(&index, "weight"), "x * 3");
+        match OwnerPinSyntax::default().equality_assertion_refusal(
+            &probe,
+            &test,
+            &test.assertions[0],
+            &index,
+        ) {
+            Some(AssertionRefusal::MacroBinding {
+                site: Some((path, site)),
+                ..
+            }) => Some((path, site.kind)),
+            _ => None,
+        }
+    };
+
+    let rebinding_later = site_of(&[
+        (LIB, WEIGHT_LIB),
+        (TESTS, plain),
+        ("src/a.rs", macro_use),
+        ("src/b.rs", definition),
+        ("src/c.rs", macro_use),
+    ]);
+    assert_eq!(
+        rebinding_later,
+        Some((PathBuf::from("src/b.rs"), MacroBindingKind::Definition))
+    );
+
+    let only_may_rebind = site_of(&[
+        (LIB, WEIGHT_LIB),
+        (TESTS, plain),
+        ("src/c.rs", macro_use),
+        ("src/a.rs", macro_use),
+    ]);
+    assert_eq!(
+        only_may_rebind,
+        Some((
+            PathBuf::from("src/a.rs"),
+            MacroBindingKind::MacroUse("extern crate other;".to_string())
+        ))
+    );
+}
+
+#[test]
 fn a_definition_covering_the_test_outranks_a_may_rebind_site_elsewhere() {
     // The test file defines its own `assert_eq!`, a real rebinding that can
     // keep the assertion from checking anything. An unresolved `#[macro_use]`
