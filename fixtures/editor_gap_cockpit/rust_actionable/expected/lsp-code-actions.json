@@ -22,9 +22,9 @@
             "related_test": "tests/pricing.rs::discount_threshold_boundary"
           },
           "verification_commands": [
-            "ripr agent verify --root . --json"
+            "ripr agent verify --root <root> --json"
           ],
-          "receipt_command": "ripr agent receipt --root . --json",
+          "receipt_command": "ripr agent receipt --root <root> --json",
           "limits_note": "Static evidence only; no source edits, generated tests, provider calls, or runtime mutation execution."
         }
       ]
@@ -46,7 +46,7 @@
       "arguments": [
         {
           "label": "gap_verify",
-          "command": "ripr agent verify --root . --json",
+          "command": "ripr agent verify --root <root> --json",
           "root": ".",
           "canonical_gap_id": "gap:rust:pricing:threshold-boundary"
         }
@@ -58,7 +58,7 @@
       "arguments": [
         {
           "label": "gap_receipt",
-          "command": "ripr agent receipt --root . --json",
+          "command": "ripr agent receipt --root <root> --json",
           "root": ".",
           "canonical_gap_id": "gap:rust:pricing:threshold-boundary"
         }

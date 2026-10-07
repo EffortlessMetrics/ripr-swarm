@@ -4728,7 +4728,7 @@ fn write_editor_first_run_actions(root: &Path, case: &str, titles: &[&str]) {
                     },
                     "arguments": if *title == "Copy first repair packet" {
                         serde_json::json!([{
-                            "packet": "RIPR first repair packet\nGap identity: gap:test\nSuggested action:\n- Add one focused assertion.\nVerify command:\nripr agent verify --root . --json\nReceipt command:\nripr agent receipt --root . --json\nLimits and non-claims:\n- Static editor evidence only."
+                            "packet": "RIPR first repair packet\nGap identity: gap:test\nSuggested action:\n- Add one focused assertion.\nVerify command:\nripr agent verify --root <root> --json\nReceipt command:\nripr agent receipt --root <root> --json\nLimits and non-claims:\n- Static editor evidence only."
                         }])
                     } else {
                         serde_json::json!([])
@@ -5437,6 +5437,52 @@ fn editor_gap_cockpit_fixture_case_guard_accepts_actionable_contract() -> Result
     super::validate_editor_gap_cockpit_fixture_case(&root, "rust_actionable", &mut violations)?;
 
     assert_eq!(violations, Vec::<String>::new());
+    Ok(())
+}
+
+/// #4001 control 12: a checked-in editor projection must name the selected
+/// workspace; a portable `--root .` command is a violation.
+#[test]
+fn editor_gap_cockpit_fixture_case_guard_rejects_portable_root_commands() -> Result<(), String> {
+    let root = temp_dir("editor-gap-cockpit-portable-root");
+    write_editor_gap_case_expected(
+        &root,
+        "rust_actionable",
+        r#"{
+  "diagnostics": [
+    {
+      "data": {
+        "language": "rust",
+        "language_status": "stable",
+        "canonical_gap_id": "gap:rust:pricing",
+        "receipt_command": "ripr agent receipt --root . --json"
+      }
+    }
+  ]
+}
+"#,
+        r#"{
+  "actions": [
+    {"title": "Inspect gap: copy repair packet", "command": "ripr.copyAgentPacketCommand", "arguments": [{"command": "ripr agent packet"}]},
+    {"title": "Write targeted test: open best related test", "command": "ripr.openRelatedTest", "arguments": [{"uri": "file:///repo/tests/pricing.rs"}]},
+    {"title": "Verify after test: copy verify command", "command": "ripr.copyAgentVerifyCommand", "arguments": [{"command": "ripr agent verify --root <root> --json"}]},
+    {"title": "Review result: copy receipt command", "command": "ripr.copyAgentReceiptCommand", "arguments": [{"command": "ripr agent receipt --root <root> --json"}]},
+    {"title": "Refresh Analysis - Saved Workspace Check", "command": "ripr.refresh"}
+  ]
+}
+"#,
+        "# Hover\n\n## Evidence boundary\n\n## Gap state\n\n- verify: `ripr agent verify --root ./sub --json`\n\n## Limits\n",
+    );
+
+    let mut violations = Vec::new();
+    super::validate_editor_gap_cockpit_fixture_case(&root, "rust_actionable", &mut violations)?;
+
+    // Only the diagnostics file carries `--root .`; `<root>` and `./sub` pass.
+    assert_eq!(violations.len(), 1, "{violations:?}");
+    assert!(
+        violations[0].contains("lsp-diagnostics.json") && violations[0].contains("--root ."),
+        "{violations:?}"
+    );
     Ok(())
 }
 

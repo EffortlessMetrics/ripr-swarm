@@ -3,7 +3,9 @@ use super::action_contract::{
     disabled_reason_emittable, parse_validated_action_data,
 };
 use super::client_features::ClientFeatureProfile;
-use super::gap_artifacts::{ValidatedGapArtifact, command_payload_is_safe, workspace_path_is_safe};
+use super::gap_artifacts::{
+    ValidatedGapArtifact, bind_portable_command, command_payload_is_safe, workspace_path_is_safe,
+};
 use super::state::AnalysisSnapshot;
 use super::uri::file_uri_for_path;
 use super::{
@@ -1870,7 +1872,7 @@ fn safe_commands_at(root: &Path, data: &Value, path: &[&str]) -> Vec<String> {
         .filter_map(Value::as_str)
         .map(str::trim)
         .filter(|command| command_payload_is_safe(root, command))
-        .map(ToOwned::to_owned)
+        .map(|command| bind_portable_command(root, command))
         .collect()
 }
 
@@ -1883,7 +1885,7 @@ fn first_safe_receipt_command(root: &Path, data: &Value) -> Option<String> {
     .iter()
     .filter_map(|path| string_at(data, path))
     .find(|command| command_payload_is_safe(root, command))
-    .map(ToOwned::to_owned)
+    .map(|command| bind_portable_command(root, command))
 }
 
 fn gap_related_test_target(snapshot: &AnalysisSnapshot, data: &Value) -> Option<LSPAny> {

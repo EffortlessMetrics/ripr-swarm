@@ -6955,16 +6955,15 @@ fn workspace_status_top_actionable_packet(snapshot: &AnalysisSnapshot) -> serde_
         .first()
         .and_then(|id| id.canonical_gap_id.as_deref())
         .unwrap_or("");
-    let verify_command = artifact
-        .verify_commands
-        .first()
-        .map(String::as_str)
-        .unwrap_or("");
-    let receipt_command = artifact
-        .receipt_commands
-        .first()
-        .map(String::as_str)
-        .unwrap_or("");
+    // #4001: the status packet names the selected workspace, like the
+    // diagnostic, hover and action projections of the same artifact.
+    let bind = |command: Option<&String>| {
+        command.map_or_else(String::new, |command| {
+            super::gap_artifacts::bind_portable_command(&snapshot.root, command)
+        })
+    };
+    let verify_command = bind(artifact.verify_commands.first());
+    let receipt_command = bind(artifact.receipt_commands.first());
     let file = artifact
         .related_paths
         .first()
@@ -8184,7 +8183,7 @@ fn collect_receipt_status_fields(
                 .map(String::as_str)
                 .unwrap_or("");
             if super::gap_artifacts::command_payload_is_safe(root, cmd) {
-                serde_json::Value::String(cmd.to_string())
+                serde_json::Value::String(super::gap_artifacts::bind_portable_command(root, cmd))
             } else {
                 serde_json::Value::String("not_available".to_string())
             }

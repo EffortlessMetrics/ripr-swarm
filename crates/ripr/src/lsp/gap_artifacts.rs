@@ -1467,6 +1467,52 @@ pub(super) fn command_payload_is_safe(root: &Path, command: &str) -> bool {
     true
 }
 
+/// Bind a portable artifact command to the selected workspace root (#4001).
+///
+/// Gap artifacts record `--root .` routes (their typed `CommandSpec` runs
+/// with the working directory at the repository root). A command copied from
+/// the editor runs from whatever directory the user pastes it into, so the
+/// display names the selected workspace instead: `--root .` becomes the bound
+/// root and a relative redirect target is anchored under it, like every other
+/// editor command (#3948). A command that is not a safe payload, or carries
+/// no `--root .`, is returned unchanged so the validator still sees it as
+/// written.
+pub(super) fn bind_portable_command(root: &Path, command: &str) -> String {
+    let trimmed = command.trim();
+    if !command_payload_is_safe(root, trimmed) {
+        return command.to_string();
+    }
+    let (body, redirect) = match trimmed.rsplit_once(" > ") {
+        Some((body, tail)) => (body, Some(tail)),
+        None => (trimmed, None),
+    };
+    let tokens = body.split(' ').collect::<Vec<_>>();
+    let Some(index) = tokens.windows(2).position(|pair| pair == ["--root", "."]) else {
+        return command.to_string();
+    };
+    let bound = crate::agent::loop_commands::bound_root(&root.to_string_lossy());
+    let bound_arg = crate::agent::loop_commands::shell_arg(&bound);
+    let mut rebound = tokens
+        .iter()
+        .map(|token| (*token).to_string())
+        .collect::<Vec<_>>();
+    rebound[index + 1] = bound_arg;
+    let mut display = rebound.join(" ");
+    if let Some(tail) = redirect {
+        let Some(target) = shell_arg_token(tail) else {
+            return command.to_string();
+        };
+        let anchored = crate::agent::loop_commands::anchored_redirect_target(&bound, target);
+        display.push_str(" > ");
+        display.push_str(&crate::agent::loop_commands::shell_arg(&anchored));
+    }
+    if command_payload_is_safe(root, &display) {
+        display
+    } else {
+        command.to_string()
+    }
+}
+
 /// Split off the one stdout redirect the producers append (#4306 persists
 /// `agent verify` output where the receipt reads it; #3938 anchors that
 /// target at the resolved `--root`). Returns the command body, which the

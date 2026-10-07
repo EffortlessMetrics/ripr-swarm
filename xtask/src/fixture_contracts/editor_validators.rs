@@ -112,7 +112,45 @@ pub(crate) fn validate_editor_gap_cockpit_fixture_case(
         let hover = read_text_lossy(&hover_path)?;
         validate_editor_gap_hover(case, &hover, violations);
     }
+    validate_editor_commands_name_selected_root(&expected, violations)?;
     Ok(())
+}
+
+/// #4001 control 12: an editor projection names the selected workspace in
+/// every copied command (`--root <root>` in checked-in fixtures), never the
+/// portable `--root .`, which would analyze the directory the command is
+/// pasted into.
+fn validate_editor_commands_name_selected_root(
+    expected: &Path,
+    violations: &mut Vec<String>,
+) -> Result<(), String> {
+    for file in [
+        "lsp-diagnostics.json",
+        "lsp-hover.md",
+        "lsp-code-actions.json",
+    ] {
+        let path = expected.join(file);
+        if !path.exists() {
+            continue;
+        }
+        let text = read_text_lossy(&path)?;
+        if contains_portable_root_arg(&text) {
+            violations.push(format!(
+                "{} renders a `--root .` command; editor commands must name the selected workspace (`--root <root>`)",
+                normalize_path(&path)
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn contains_portable_root_arg(text: &str) -> bool {
+    text.match_indices("--root .").any(|(index, needle)| {
+        text[index + needle.len()..]
+            .chars()
+            .next()
+            .is_none_or(|next| matches!(next, ' ' | '"' | '`' | '\\' | '\n'))
+    })
 }
 
 fn validate_editor_gap_case_semantics(
@@ -364,6 +402,7 @@ fn validate_editor_first_run_usability_case(
             }
         }
     }
+    validate_editor_commands_name_selected_root(&expected, violations)?;
     Ok(())
 }
 
