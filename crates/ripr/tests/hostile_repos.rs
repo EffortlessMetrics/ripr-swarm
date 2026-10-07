@@ -744,7 +744,15 @@ fn damaged_git_state_names_the_cause_and_a_repair() -> Result<(), String> {
                 fs::write(root.join(".git/HEAD"), b"ref: refs/heads/nonexistent\n")
                     .map_err(|e| format!("write failed: {e}"))
             },
-            &["git rev-parse HEAD", "Check"],
+            // #7076: a dangling HEAD shows the whole tree as staged
+            // additions, so the dirty default routes here to the working
+            // tree, which fails closed naming HEAD (not the base tip, and
+            // not the committed unknown-revision hint below).
+            &[
+                "HEAD does not resolve to a commit",
+                "point at a missing branch",
+                "check out an existing branch",
+            ],
         ),
         (
             "corrupt object",
@@ -779,6 +787,27 @@ fn damaged_git_state_names_the_cause_and_a_repair() -> Result<(), String> {
         for wrong in ["No git remote is configured", "not inside a Git work tree"] {
             if ran.stderr.contains(wrong) {
                 return Err(format!("{label}: wrong cause `{wrong}`\n{}", ran.stderr));
+            }
+        }
+        // #7076: the forced committed read keeps pinning the committed
+        // unknown-revision hint the default route named before the dirty
+        // default (#5997) routed this fixture to the working tree.
+        if label == "unborn HEAD" {
+            let ran = ripr(&root, &["check", "--base", "main", "--committed"], &[])?;
+            assert_sane(&ran, "unborn HEAD committed")?;
+            if ran.code != Some(2) {
+                return Err(format!(
+                    "unborn HEAD committed: expected a refusal\n{}",
+                    ran.stderr
+                ));
+            }
+            for needle in ["git rev-parse HEAD", "Check"] {
+                if !ran.stderr.contains(needle) {
+                    return Err(format!(
+                        "unborn HEAD committed: missing `{needle}`\n{}",
+                        ran.stderr
+                    ));
+                }
             }
         }
     }
