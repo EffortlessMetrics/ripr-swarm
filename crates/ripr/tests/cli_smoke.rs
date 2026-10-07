@@ -15279,7 +15279,8 @@ fn pilot_names_a_changed_build_script_its_ranking_leaves_out() -> Result<(), Str
 
 /// #6987: with Rust disabled neither `ripr check` nor pilot analyzes Rust,
 /// so pilot must not name a changed build script as one `ripr check`
-/// covers. The same fixture with Rust enabled names it (the test above).
+/// covers. With the gate removed, the unranked-change reason would name it
+/// ("every changed Rust line is in build.rs").
 #[test]
 #[cfg(feature = "lang-python")]
 fn pilot_names_no_build_script_when_rust_is_disabled() -> Result<(), String> {
@@ -15305,6 +15306,10 @@ fn pilot_names_no_build_script_when_rust_is_disabled() -> Result<(), String> {
     // Precondition: the change is loaded, so only the Rust gate can keep
     // the build script unnamed.
     assert_eq!(summary["current_change"]["state"], "changed", "{summary}");
+    assert!(
+        stdout.contains("not enabled in ripr.toml [languages]"),
+        "Rust must be reported as disabled: {stdout}"
+    );
     assert!(!stdout.contains("build.rs"), "{stdout}");
     assert!(!md.contains("build.rs"), "{md}");
     ignore_remove_dir_all(&root);
