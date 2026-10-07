@@ -94,6 +94,7 @@ use crate::agent::loop_commands::{
 use crate::app::repair_attempt::BeforeArtifactSource;
 use std::fs::File;
 use std::path::Path;
+use std::time::Instant;
 
 pub fn run(args: Vec<String>) -> Result<(), CommandError> {
     let outcome = run_command(args);
@@ -211,6 +212,7 @@ fn persist_before_repair_attempt(
     options: &agent::AgentRepairOptions,
     identity: &crate::app::repair_attempt::BeforeRepairAttemptIdentity,
 ) -> Result<(), String> {
+    let persist_started = Instant::now();
     let root = &options.root;
     let seam_id = options
         .seam_id
@@ -311,6 +313,10 @@ fn persist_before_repair_attempt(
         },
         identity,
     )?;
+    // The persist total stops at publication: everything below is success
+    // narration and stdout rendering, and a slow stdout reader must not
+    // inflate the persistence measurement (#6917).
+    crate::edit_cage::trace_persist_latency("persist_before_attempt", persist_started.elapsed());
     // The before-phase success stdout is one document, printed only after the
     // attempt is published, so a refusal above is never preceded by a success
     // document. With `--json` it is the packet envelope carrying the additive

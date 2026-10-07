@@ -46,16 +46,14 @@ Evidence
   - source values (showing 8 of 14; full list in --format json)
 
 Weakness
-  - No detected assertion observes the changed value, error, field, or effect
   - No exact error variant discriminator was detected
-  - No relevant oracle was detected
   - No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)
 
 Next step
   Establish that the test is collected and enabled, that the assertion runs on its executed path, and that it resolves to the intended standard macro, then check the changed returned value.
 Drill in:
-  ripr explain --root fixtures/guarded_result_match_fail_closed/input --diff fixtures/guarded_result_match_fail_closed/diff.patch --mode fast probe:src_lib.rs:error_path:09b3885a
-  ripr context --root fixtures/guarded_result_match_fail_closed/input --diff fixtures/guarded_result_match_fail_closed/diff.patch --mode fast --at probe:src_lib.rs:error_path:09b3885a
+  ripr explain --root <cwd>/fixtures/guarded_result_match_fail_closed/input --diff <cwd>/fixtures/guarded_result_match_fail_closed/diff.patch --mode fast probe:src_lib.rs:error_path:09b3885a
+  ripr context --root <cwd>/fixtures/guarded_result_match_fail_closed/input --diff <cwd>/fixtures/guarded_result_match_fail_closed/diff.patch --mode fast --at probe:src_lib.rs:error_path:09b3885a
 
 WARNING ./src/lib.rs:62
   id: probe:src_lib.rs:return_value:4a5bf6b6
@@ -102,5 +100,5 @@ Weakness
 Next step
   Replace broad assertions with exact equality or a property that constrains the changed returned value.
 Drill in:
-  ripr explain --root fixtures/guarded_result_match_fail_closed/input --diff fixtures/guarded_result_match_fail_closed/diff.patch --mode fast probe:src_lib.rs:return_value:4a5bf6b6
-  ripr context --root fixtures/guarded_result_match_fail_closed/input --diff fixtures/guarded_result_match_fail_closed/diff.patch --mode fast --at probe:src_lib.rs:return_value:4a5bf6b6
+  ripr explain --root <cwd>/fixtures/guarded_result_match_fail_closed/input --diff <cwd>/fixtures/guarded_result_match_fail_closed/diff.patch --mode fast probe:src_lib.rs:return_value:4a5bf6b6
+  ripr context --root <cwd>/fixtures/guarded_result_match_fail_closed/input --diff <cwd>/fixtures/guarded_result_match_fail_closed/diff.patch --mode fast --at probe:src_lib.rs:return_value:4a5bf6b6

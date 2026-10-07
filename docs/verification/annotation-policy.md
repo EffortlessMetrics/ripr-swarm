@@ -70,6 +70,11 @@ Allowed:
 ::warning file=src/lib.rs,line=42::Add one focused discriminator test.
 ```
 
+A file name that holds a control or bidi character cannot be named in a
+`file=` property (GitHub decodes only `%25 %0D %0A %3A %2C`). That annotation
+drops `file=` and `line=` and leads its message with
+`Location (file name has control characters, so not placed): <escaped path>:<line>.`
+
 Not allowed by default:
 
 ```text

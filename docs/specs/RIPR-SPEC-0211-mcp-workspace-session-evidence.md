@@ -145,6 +145,16 @@ official SDK transport:
   example an omission disclosure alone over the ceiling — fails closed
   with `result_too_large` naming `ripr://snapshot/{snapshot_id}` as the
   identity route.
+- Every served file path renders relative to the analyzed workspace
+  root, so a file under the root never appears as an absolute host path
+  and the snapshot identity stays portable across checkouts (#5254
+  item 6). Finding locations (list summaries, gap locations) render
+  through the shared finding-location owner (#5996) with its `./`
+  prefix, matching the check, context, and LSP surfaces; related-test
+  files and fix sites render through the repository-relative renderer,
+  which additionally tolerates producer spelling drift (canonicalized
+  `\\?\` prefixes, mixed separators, Windows case drift). A file the
+  root does not contain keeps its full stable spelling.
 - `ripr_get_gap` and `ripr://gap/{canonical_id}` return one canonical
   item's complete bounded evidence bound to its snapshot identity:
   identity/location, changed behavior (expression, before/after, delta

@@ -117,7 +117,10 @@ fn targeted_test_outcome_movement_json(movement: &TargetedTestOutcomeMovement) -
         "missing_discriminators_reopened": movement.missing_discriminators_reopened,
         "oracle_strength_delta": movement.oracle_strength_delta.as_deref(),
         "related_test_delta": movement.related_test_delta,
-        "no_movement_reason": movement.no_movement_reason.as_deref()
+        "no_movement_reason": movement.no_movement_reason.as_deref(),
+        "after_missing_discriminators": movement.after_missing_discriminators,
+        "after_discriminate_state": movement.after_discriminate_state.as_deref(),
+        "after_open_legs": movement.after_open_legs
     })
 }
 
@@ -168,7 +171,10 @@ fn agent_verify_movement_json(movement: &TargetedTestOutcomeMovement) -> Value {
         "missing_discriminators_reopened": movement.missing_discriminators_reopened,
         "oracle_strength_delta": movement.oracle_strength_delta.as_deref(),
         "related_test_delta": movement.related_test_delta,
-        "no_movement_reason": movement.no_movement_reason.as_deref()
+        "no_movement_reason": movement.no_movement_reason.as_deref(),
+        "after_missing_discriminators": movement.after_missing_discriminators,
+        "after_discriminate_state": movement.after_discriminate_state.as_deref(),
+        "after_open_legs": movement.after_open_legs
     })
 }
 

@@ -291,6 +291,16 @@ sends readers to `human-full` for full evidence, so that rerun must not lose
 the only runnable next commands. Library renders without CLI navigation omit
 the block.
 
+A predicate probe's `after` is often its parser shape, which is narrower than
+the changed line (`string.len() >= MAX`). In that case the producer cuts
+`before` to the same span of the old line (`string.len() > MAX`), so the
+`Changed` block does not set a whole old line (`if string.len() > MAX {`)
+against one expression (#6995). The cut is made only when the edit falls
+inside the shape. Otherwise, and for every other family (match arms keep the
+whole old arm because their consumers parse it), `before` keeps the whole
+old line. The same `before` reaches the MCP `changed_behavior.before` field
+and the LSP diagnostic witness.
+
 ### Terminal safety
 
 Repository text (assertion source, test names, observed values, paths) reaches
@@ -311,8 +321,11 @@ warning is safe by default. The progress sink writes to the stderr handle
 directly and prints fixed stage text only. A printed drill-in command is the exception to "escaped
 text": a control or bidi character in a command argument is spelled as an adjacent
 POSIX `"$(printf '\ooo')"` segment (one octal escape per UTF-8 byte), so the line carries no raw control byte and still names the
-same argument when pasted. PowerShell has no translation for that form, so no
-PowerShell variant is offered for it.
+same argument when pasted. The PowerShell variant rebuilds each such argument
+as one parenthesized string expression (`('' + 'run' + [char]0x1b + ...)`) so
+it also carries no raw control byte. A control argument in program position or
+as a redirect target, and any segment the translation cannot rebuild exactly,
+withholds the PowerShell variant.
 
 ### Repo-scope warnings
 

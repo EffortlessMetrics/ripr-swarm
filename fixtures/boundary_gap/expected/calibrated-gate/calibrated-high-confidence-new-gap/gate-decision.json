@@ -39,13 +39,13 @@
         "threshold": "high_confidence_new_gap"
       },
       "repair_route": {
-        "analysis_outcome_command": "ripr check --root . --base main --mode draft --format json > <cwd>/target/ripr/workflow/analysis-outcome.json",
+        "analysis_outcome_command": "ripr check --root . --base main --mode draft --format json > target/ripr/workflow/analysis-outcome.json",
         "authority_boundary": "static_ripr_evidence_only",
         "canonical_gap_id": "gap:dedf923a13a00573",
         "changed_behavior": "amount >= discount_threshold",
         "changed_owner": "pricing::discounted_total",
         "classification": "weakly_gripped",
-        "inspection_command": "ripr agent brief --root . --seam-id 8f7fa8644fd12280 --json > <cwd>/target/ripr/workflow/agent-brief.json",
+        "inspection_command": "ripr agent brief --root . --seam-id 8f7fa8644fd12280 --json > target/ripr/workflow/agent-brief.json",
         "limitation": null,
         "missing_discriminator": "amount == discount_threshold",
         "receipt_command": "ripr agent receipt --root . --verify-json target/ripr/workflow/agent-verify.json --seam-id 8f7fa8644fd12280 --json --out target/ripr/reports/agent-receipt.json",
@@ -58,7 +58,7 @@
         },
         "seam_id": "8f7fa8644fd12280",
         "test_intent": "Write one focused Rust test for amount == discount_threshold. Place it in tests/pricing.rs near above_threshold_gets_discount. Do not change production code. Preserve existing fixture style. Verify with ripr agent verify.",
-        "verify_command": "ripr agent verify --root . --before target/ripr/workflow/before.repo-exposure.json --after target/ripr/workflow/after.repo-exposure.json --json > <cwd>/target/ripr/workflow/agent-verify.json"
+        "verify_command": "ripr agent verify --root . --before target/ripr/workflow/before.repo-exposure.json --after target/ripr/workflow/after.repo-exposure.json --json > target/ripr/workflow/agent-verify.json"
       },
       "seam_id": "8f7fa8644fd12280",
       "severity": "warning",
@@ -104,7 +104,7 @@
         "content_hash": "sha256:d8de7abb90e1d36bb1e4e3fc6e5341c608e1ec3786ac5e9a4ab5ef97a1ac2531"
       },
       "pr_guidance": {
-        "content_hash": "sha256:4d2e9d996edf994ca4f557534065749477aeb1fd945859612f73bec1338072c5"
+        "content_hash": "sha256:120f08c01081cde77c5a7ea0b778ee9fd226abf4e73c9b88b7fc2c6f30b3be1a"
       },
       "recommendation_calibration": {
         "content_hash": "sha256:09a0a6886c375bed962a9a131e35c43d1bc52bd582f25d32b53b564dc60008d9"

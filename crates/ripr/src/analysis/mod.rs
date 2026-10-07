@@ -87,7 +87,8 @@ pub(crate) use seam_inventory::apply_pilot_seam_budget_inner;
 pub(crate) use seam_inventory::{
     ClassifiedSeamsReport, DEFAULT_REPO_EXPOSURE_SEAM_LIMIT, ScopedClassifiedSeamInventory,
     ScopedEvidenceConsumer, SeamLimitInfo, SeamLimitSource, TargetedTestInventoryError,
-    apply_pilot_seam_budget, inventory_changed_test_classified_seams_at_with_config_node,
+    apply_pilot_seam_budget, classify_seams_in_files_at_with_config, diff_only_rust_files,
+    inventory_changed_test_classified_seams_at_with_config_node,
     inventory_classified_seams_at_with_config, inventory_classified_seams_report_at_with_config,
     inventory_compact_classified_seams_at_with_config,
     inventory_diff_scoped_classified_seams_at_with_config,
@@ -97,6 +98,7 @@ pub(crate) use seam_inventory::{
 pub(crate) use seams::{RepoSeam, RequiredDiscriminator};
 pub(crate) use syntax::fn_signature::{owner_fn_line_span, rust_source_parses_cleanly};
 pub(crate) use syntax::parse_clean_source_file;
+pub(crate) use workspace::DiffOnlySource;
 pub(crate) use workspace::PathDependencyAdjacency;
 pub(crate) use workspace::SourceRoleContext;
 pub(crate) use workspace::apply_module_graph_evidence;
@@ -240,6 +242,7 @@ pub(crate) fn targeted_typescript_findings_for_scope(
         include_unchanged_tests: config.analysis().include_unchanged_tests().unwrap_or(true),
         resolve_tsconfig_paths: config.typescript().resolve_tsconfig_paths(),
         perl_facts_path: None,
+        perl_producer_failure: None,
         git_timeout: None,
         git_candidate: None,
         production_like_targets: Default::default(),
@@ -453,7 +456,7 @@ use crate::config::OraclePolicy;
 use crate::core_error::CoreError;
 use crate::domain::{Finding, Summary};
 use std::collections::{BTreeSet, HashMap};
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 /// Render a path for textual identity without collapsing distinct Unix byte
 /// paths through U+FFFD. Valid paths retain their usual spelling except that
@@ -506,13 +509,62 @@ fn push_stable_path_text(output: &mut String, text: &str) {
     }
 }
 
+/// The inverse of [`stable_path_text`]'s `%` layer: `%XX` with uppercase hex
+/// — the only spelling the encoder emits — decodes to its byte, so `%25`
+/// recovers a literal `%` and `%FF` a non-UTF-8 `0xFF` byte. Anything else
+/// (lowercase hex, a stray `%`, plain text) stays literal, so input the
+/// encoder never emitted cannot manufacture a separator or merge two
+/// distinct names (#6874). This is not URI decoding: the stable scheme is
+/// its own, and only its own spellings decode.
+pub(crate) fn decode_stable_path_text(text: &str) -> PathBuf {
+    let bytes = text.as_bytes();
+    let mut decoded: Vec<u8> = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        let rest = &bytes[index..];
+        if rest[0] == b'%'
+            && rest.len() >= 3
+            && let Some(high) = uppercase_hex_value(rest[1])
+            && let Some(low) = uppercase_hex_value(rest[2])
+        {
+            decoded.push(high * 16 + low);
+            index += 3;
+        } else {
+            decoded.push(rest[0]);
+            index += 1;
+        }
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStringExt;
+        PathBuf::from(std::ffi::OsString::from_vec(decoded))
+    }
+    #[cfg(not(unix))]
+    {
+        // The same-host encoder output is always valid UTF-8 (a lossy
+        // source plus ASCII escapes), so honest input always decodes;
+        // foreign text keeps its literal spelling and matches only itself.
+        String::from_utf8(decoded).map_or_else(|_| PathBuf::from(text), PathBuf::from)
+    }
+}
+
+fn uppercase_hex_value(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
+    }
+}
+
 /// The one renderer for a finding's file location across every surface
 /// (#5996): workspace-relative with the CLI `./` prefix when the location
 /// lives inside the analyzed root, its plain spelling otherwise — never the
 /// Windows verbatim `//?/` drive form, which external consumers cannot join
-/// against a workspace. A relative location passes through with stable
-/// separators, so a producer that already names the workspace (the CLI's
-/// `./src/main.rs`) keeps its exact rendering on every surface.
+/// against a workspace. A remainder containing `..` resolves outside the
+/// root, so it keeps the plain spelling too. A relative location passes
+/// through with stable separators, so a producer that already names the
+/// workspace (the CLI's `./src/main.rs`) keeps its exact rendering on every
+/// surface.
 pub(crate) fn finding_location_text(root: &Path, file: &Path) -> String {
     finding_location_text_with_platform(root, file, cfg!(windows))
 }
@@ -530,7 +582,15 @@ pub(crate) fn finding_location_text_with_platform(
     let relative = file
         .strip_prefix(&root)
         .ok()
-        .filter(|relative| !relative.as_os_str().is_empty());
+        .filter(|relative| !relative.as_os_str().is_empty())
+        // `strip_prefix` is lexical: `/repo/../outside.rs` strips to
+        // `../outside.rs`, which resolves outside the root. Any parent
+        // component escapes, so only a clean remainder strips (#6877).
+        .filter(|relative| {
+            !relative
+                .components()
+                .any(|component| matches!(component, Component::ParentDir))
+        });
     match relative {
         Some(relative) => format!("./{}", stable_path_text(relative)),
         None => stable_path_text(&file),
@@ -582,6 +642,16 @@ pub struct AnalysisOptions {
     /// limitation (no analysis). When `Some`, the adapter reads the packet
     /// and produces Findings + limitations from it.
     pub perl_facts_path: Option<PathBuf>,
+    /// Verbatim failure reason from a *configured, managed* Perl facts
+    /// exporter that was invoked and failed (spawn error, timeout, or
+    /// non-zero exit). Set only by the managed-producer funnel in
+    /// `app::check` (#6828). When `Some`, the Perl adapter fails closed with
+    /// this reason instead of the generic missing-packet reason, so the
+    /// `language_runs` record and the typed outcome limitation name the real
+    /// cause instead of re-advising a configuration the user already made.
+    /// A config that names a producer but has a broken exporter is a
+    /// materially different state from "no packet configured".
+    pub(crate) perl_producer_failure: Option<String>,
     /// Cooperative per-invocation git deadline for the diff-load path
     /// (#2303). `None` keeps every git invocation unbounded — the CLI
     /// behavior, byte-identical to the pre-#2303 path. Only the LSP refresh
@@ -760,6 +830,12 @@ pub enum LanguageRunStatus {
     /// The adapter could not run at all (e.g. required Cargo feature is off,
     /// or the producer binary is missing).
     Invalid,
+    /// A *configured* managed fact producer was invoked and failed (spawn
+    /// error, timeout, or non-zero exit). Distinct from `Unavailable`
+    /// (nothing configured) so the typed limitation and `language_runs`
+    /// reason carry the real exporter failure instead of re-advising a
+    /// configuration the user already made (#6828).
+    Failed,
 }
 
 impl LanguageRunStatus {
@@ -770,6 +846,7 @@ impl LanguageRunStatus {
             Self::Unavailable => "unavailable",
             Self::Partial => "partial",
             Self::Invalid => "invalid",
+            Self::Failed => "failed",
         }
     }
 }
@@ -1013,6 +1090,46 @@ mod tests {
         );
     }
 
+    /// The decoder inverts the encoder's `%` layer on every platform: a
+    /// literal `%` round-trips, while lowercase hex and stray `%` — spellings
+    /// the encoder never emits — stay literal instead of manufacturing bytes
+    /// (#6874).
+    #[test]
+    fn decode_stable_path_text_inverts_the_encoder_percent_layer() {
+        assert_eq!(
+            decode_stable_path_text("pricing_%25FF.rs"),
+            PathBuf::from("pricing_%FF.rs")
+        );
+        assert_eq!(
+            decode_stable_path_text(&stable_path_text(Path::new("100% sure.rs"))),
+            PathBuf::from("100% sure.rs")
+        );
+        // Not URI decoding: only the encoder's own uppercase spellings decode.
+        assert_eq!(decode_stable_path_text("a%2fb"), PathBuf::from("a%2fb"));
+        assert_eq!(
+            decode_stable_path_text("100% sure.rs"),
+            PathBuf::from("100% sure.rs")
+        );
+        assert_eq!(decode_stable_path_text("%"), PathBuf::from("%"));
+    }
+
+    /// Non-UTF-8 bytes round-trip exactly, and the literal-`%` name never
+    /// merges with the invalid-byte name it resembles (#6874).
+    #[cfg(unix)]
+    #[test]
+    fn decode_stable_path_text_keeps_invalid_bytes_distinct() {
+        use std::ffi::OsString;
+        use std::os::unix::ffi::OsStringExt;
+
+        let invalid = PathBuf::from(OsString::from_vec(b"pricing_\xff.rs".to_vec()));
+        assert_eq!(stable_path_text(&invalid), "pricing_%FF.rs");
+        assert_eq!(decode_stable_path_text("pricing_%FF.rs"), invalid);
+        assert_ne!(
+            decode_stable_path_text("pricing_%25FF.rs"),
+            decode_stable_path_text("pricing_%FF.rs")
+        );
+    }
+
     /// #5996: one finding, one location string. The verbatim-root MCP form
     /// and the absolute-root LSP form must both render as the CLI's
     /// workspace-relative shape, and an already-relative CLI location must
@@ -1071,6 +1188,43 @@ mod tests {
                 false
             ),
             r"//?/F:/repo/src/main.rs"
+        );
+    }
+
+    /// A `strip_prefix` remainder containing `..` resolves outside the root,
+    /// so it keeps the plain full spelling instead of serving a
+    /// workspace-joined `./..` escape on the wire (#6877).
+    #[test]
+    fn finding_location_text_rejects_a_parent_escape() {
+        assert_eq!(
+            finding_location_text_with_platform(
+                Path::new("/repo"),
+                Path::new("/repo/../outside.rs"),
+                false
+            ),
+            "/repo/../outside.rs"
+        );
+        assert_eq!(
+            finding_location_text_with_platform(
+                Path::new("/repo"),
+                Path::new("/repo/sub/../../outside.rs"),
+                false
+            ),
+            "/repo/sub/../../outside.rs"
+        );
+        // The guard runs after the verbatim rewrite, so a verbatim drive
+        // path with `..` falls back too. Same spelling on both hosts: where
+        // the drive path does not parse, the strip already fails. Built via
+        // `format!` like the sibling cases: a literal drive-absolute
+        // path trips check-local-context.
+        let drive = "F:";
+        let verbatim_root = PathBuf::from(format!(r"\\?\{drive}\repo"));
+        // Concatenated, not joined: `PathBuf::join("..")` would normalize
+        // the escape away before the renderer sees it.
+        let verbatim_escape = PathBuf::from(format!(r"\\?\{drive}\repo\..\outside.rs"));
+        assert_eq!(
+            finding_location_text_with_platform(&verbatim_root, &verbatim_escape, true),
+            format!("{drive}/repo/../outside.rs")
         );
     }
 
@@ -1237,6 +1391,7 @@ index 0000000..1111111 100644
             include_unchanged_tests: true,
             resolve_tsconfig_paths: false,
             perl_facts_path: None,
+            perl_producer_failure: None,
             git_timeout: None,
             git_candidate: None,
             resolved_subject_identity: None,
@@ -1260,6 +1415,7 @@ index 0000000..1111111 100644
             include_unchanged_tests: true,
             resolve_tsconfig_paths: false,
             perl_facts_path: None,
+            perl_producer_failure: None,
             git_timeout: None,
             git_candidate: None,
             resolved_subject_identity: None,
@@ -1315,6 +1471,7 @@ fn premium_customer_gets_discount() {
             include_unchanged_tests: true,
             resolve_tsconfig_paths: false,
             perl_facts_path: None,
+            perl_producer_failure: None,
             git_timeout: None,
             git_candidate: None,
             resolved_subject_identity: None,
@@ -1531,6 +1688,7 @@ fn test_with_predicate() {
             include_unchanged_tests: true,
             resolve_tsconfig_paths: false,
             perl_facts_path: None,
+            perl_producer_failure: None,
             git_timeout: None,
             git_candidate: None,
             resolved_subject_identity: None,
@@ -1601,6 +1759,7 @@ index 0000000..1111111 100644
             include_unchanged_tests: true,
             resolve_tsconfig_paths: false,
             perl_facts_path: None,
+            perl_producer_failure: None,
             git_timeout: None,
             git_candidate: None,
             resolved_subject_identity: None,
@@ -1621,6 +1780,7 @@ index 0000000..1111111 100644
             include_unchanged_tests: true,
             resolve_tsconfig_paths: false,
             perl_facts_path: None,
+            perl_producer_failure: None,
             git_timeout: None,
             git_candidate: None,
             resolved_subject_identity: None,
@@ -1668,6 +1828,7 @@ mod git_candidate_entry_tests {
             include_unchanged_tests: true,
             resolve_tsconfig_paths: false,
             perl_facts_path: None,
+            perl_producer_failure: None,
             git_timeout: None,
             git_candidate: None,
             resolved_subject_identity: None,

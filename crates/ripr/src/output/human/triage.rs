@@ -1,6 +1,12 @@
-use crate::app::{CheckOutput, FindingDrillIn};
+use crate::agent::loop_commands::shell_arg;
+use crate::app::{CheckDiffProvenance, CheckOutput, FindingDrillIn};
 use crate::config::RiprConfig;
-use crate::domain::{ExposureClass, Finding, LanguageId, ProbeFamily};
+use crate::domain::{
+    CanonicalNextActionV1, ExposureClass, Finding, LanguageId, NextActionAlternative,
+    NextActionCheckCase, NextActionCurrentness, NextActionDiffSource, NextActionInput,
+    NextActionProducer, NextActionStop, ProbeFamily, StaticLimitKind, current_command_platform,
+    select_canonical_next_action,
+};
 use crate::output::path::display_path;
 use crate::output::preview_actionability::preview_actionability_for;
 use crate::output::python_repair_card::python_repair_card;
@@ -30,7 +36,7 @@ pub(crate) enum HumanTriageState {
 }
 
 impl HumanTriageState {
-    fn as_str(self) -> &'static str {
+    pub(crate) fn as_str(self) -> &'static str {
         match self {
             Self::TopGap => "top_gap",
             Self::NoActionableGap => "no_actionable_gap",
@@ -126,6 +132,7 @@ pub(crate) fn render_human_triage(
     output: &CheckOutput,
     config: &RiprConfig,
     drill_in: Option<&FindingDrillIn>,
+    provenance: CheckDiffProvenance,
 ) {
     out.push_str("Start here:\n");
     out.push_str(&format!(
@@ -133,31 +140,34 @@ pub(crate) fn render_human_triage(
         triage.state.plain_label(),
         triage.state.as_str()
     ));
-    match triage.state {
-        HumanTriageState::TopGap => out.push_str(
+    // The canonical decision (#6304) selects the line family; the prose
+    // below is unchanged, so the decision has one authority while rendered
+    // bytes stay put.
+    match check_case_or_fallback(triage, output, drill_in, provenance) {
+        NextActionCheckCase::TopGap => out.push_str(
             "  Safe next action: inspect or repair the selected non-exposed gap; this is static advisory evidence only.\n",
         ),
-        HumanTriageState::NoActionableGap => {
-            if triage.selected.is_none() && !triage.omitted.is_empty() {
-                // #4320: findings exist but the #3281 candidate filter hid
-                // every one — the run is not a policy suppression. Claiming
-                // suppression contradicts the suppression block (which listed
-                // nothing) and misleads the reader about what happened to the
-                // findings. #4320 review: the framing must also keep the
-                // currentness distinction — `unresolved_subject` is the
-                // explicit unknown, not base-side evidence.
-                out.push_str(&no_selection_safe_action_line(&triage.omitted));
-            } else if triage.selected.is_none() && !output.findings.is_empty() {
-                out.push_str(
-                    "  Safe next action: all findings are suppressed by policy; review the suppression block before treating this run as actionable.\n",
-                );
-            } else {
-                out.push_str(
-                    "  Safe next action: no non-exposed diff finding was selected. This is not runtime proof, coverage adequacy, or mutation confirmation.\n",
-                );
-            }
+        NextActionCheckCase::CandidateFilterHidAll => {
+            // #4320: findings exist but the #3281 candidate filter hid
+            // every one — the run is not a policy suppression. Claiming
+            // suppression contradicts the suppression block (which listed
+            // nothing) and misleads the reader about what happened to the
+            // findings. #4320 review: the framing must also keep the
+            // currentness distinction — `unresolved_subject` is the
+            // explicit unknown, not base-side evidence.
+            out.push_str(&no_selection_safe_action_line(&triage.omitted));
         }
-        HumanTriageState::StaticLimited => {
+        NextActionCheckCase::SuppressedByPolicy => {
+            out.push_str(
+                "  Safe next action: all findings are suppressed by policy; review the suppression block before treating this run as actionable.\n",
+            );
+        }
+        NextActionCheckCase::NoDiffFinding => {
+            out.push_str(
+                "  Safe next action: no non-exposed diff finding was selected. This is not runtime proof, coverage adequacy, or mutation confirmation.\n",
+            );
+        }
+        NextActionCheckCase::StaticLimited => {
             let plain_no_path = triage.selected.is_some_and(|finding| {
                 finding.class == ExposureClass::NoStaticPath && finding.static_limit_kind.is_none()
             });
@@ -167,7 +177,7 @@ pub(crate) fn render_human_triage(
                 "  Safe next action: inspect the named static limitation before treating this as repair-ready.\n"
             });
         }
-        HumanTriageState::PreviewLimited => {
+        NextActionCheckCase::PreviewAdvisory => {
             // #2273: the shared repair-packet validator is the only authority
             // on packet completeness, and the line must name the real blocker:
             // a complete packet stays advisory (do not tell the operator to
@@ -215,7 +225,7 @@ pub(crate) fn render_human_triage(
         // #4012: on an established-but-empty range the scope was provided
         // (a default base was resolved and compared) — the honest action is
         // to change something, not to provide a scope.
-        HumanTriageState::MissingScope => {
+        NextActionCheckCase::ScopeMissing => {
             if let Some(base) = output.base.as_deref() {
                 // "tracked" (#5258): `--worktree` diffs tracked edits only,
                 // so the line must not promise it covers untracked files.
@@ -245,7 +255,12 @@ pub(crate) fn render_human_triage(
                 super::push_powershell_variant(out, "  ", &command);
             }
             // #5355: a Rust gap gets the one-step route to a runnable test.
+            // A gap withheld because ripr could not read the related
+            // assertions (RIPR-SPEC-0240) claims no missing test, so it gets
+            // no test-writing route either.
             if finding.class != ExposureClass::Exposed
+                && finding.static_limit_kind
+                    != Some(StaticLimitKind::RustAssertionContextUnresolved)
                 && matches!(
                     finding.probe.family,
                     ProbeFamily::Predicate
@@ -342,6 +357,167 @@ enum NoSelectionMix {
 /// same mix. Base-side evidence (`base_deleted`, `moved_or_renamed`) is
 /// never a candidate edit target; `unresolved_subject` is the explicit
 /// unknown (#3281), counted separately so it is not promoted to base-side.
+/// The coarse check case behind a triage outcome. Pure and infallible: the
+/// canonical projection and the renderer's defensive fallback share it, so
+/// the two can never disagree on the mapping.
+pub(crate) fn check_case_for_triage(
+    triage: &HumanTriage<'_>,
+    output: &CheckOutput,
+) -> NextActionCheckCase {
+    match triage.state {
+        HumanTriageState::TopGap => NextActionCheckCase::TopGap,
+        HumanTriageState::NoActionableGap => {
+            if triage.selected.is_none() && !triage.omitted.is_empty() {
+                NextActionCheckCase::CandidateFilterHidAll
+            } else if triage.selected.is_none() && !output.findings.is_empty() {
+                NextActionCheckCase::SuppressedByPolicy
+            } else {
+                NextActionCheckCase::NoDiffFinding
+            }
+        }
+        HumanTriageState::StaticLimited => NextActionCheckCase::StaticLimited,
+        HumanTriageState::PreviewLimited => NextActionCheckCase::PreviewAdvisory,
+        HumanTriageState::MissingScope => NextActionCheckCase::ScopeMissing,
+    }
+}
+
+/// Project the check producer's canonical action from its triage outcome.
+/// The triage rank already selected the top item, so the adapter binds the
+/// winner (never the rank losers) and carries up to two omitted findings as
+/// bounded subordinate alternatives.
+pub(crate) fn canonical_next_action_for_triage(
+    triage: &HumanTriage<'_>,
+    output: &CheckOutput,
+    drill_in: Option<&FindingDrillIn>,
+    provenance: CheckDiffProvenance,
+) -> Result<CanonicalNextActionV1, String> {
+    let root = output.root.display().to_string();
+    let scope = check_scope_descriptor(triage, output);
+    let item_id = triage
+        .selected
+        .map(|finding| finding.id.clone())
+        .unwrap_or_else(|| scope.clone());
+    let detail_route = match (&triage.selected, drill_in) {
+        (Some(finding), Some(FindingDrillIn::Commands(navigation))) => {
+            navigation.explain_command(&finding.id)
+        }
+        (Some(finding), None) => finding.id.clone(),
+        (None, _) => scope.clone(),
+    };
+    let mut alternatives: Vec<NextActionAlternative> = Vec::new();
+    for omitted in triage.omitted.iter().take(2) {
+        let route = match drill_in {
+            Some(FindingDrillIn::Commands(navigation)) => navigation.explain_command(&omitted.id),
+            None => omitted.id.clone(),
+        };
+        alternatives.push(NextActionAlternative {
+            label: format!("considered finding {}", omitted.id),
+            route,
+        });
+    }
+    let mut limitations = Vec::new();
+    if output.unanalyzed_working_tree {
+        limitations.push("uncommitted working-tree edits were not analyzed".to_string());
+    }
+    if output.partial_scope.is_some() {
+        limitations
+            .push("partial diff scope: findings cover the selected partition only".to_string());
+    }
+    let input = NextActionInput {
+        producer: NextActionProducer::CheckTopResult,
+        root,
+        // The diff-source mode comes from the producer's declared
+        // provenance, never from base presence: a `--worktree` run
+        // resolves a base yet analyzes the live tree, while a supplied
+        // scope has no base yet is fixed replayable content, not the
+        // live tree.
+        diff_source: match provenance {
+            CheckDiffProvenance::Worktree => NextActionDiffSource::WorkingTree { head: None },
+            CheckDiffProvenance::SuppliedScope => NextActionDiffSource::Committed {
+                base: None,
+                head: None,
+            },
+            CheckDiffProvenance::CommittedHistory => NextActionDiffSource::Committed {
+                base: output.base.clone(),
+                head: None,
+            },
+        },
+        item_id,
+        check_item: triage.selected.map(|finding| finding.id.clone()),
+        card_item: None,
+        item_candidates: Vec::new(),
+        attempts: Vec::new(),
+        // Finding currentness is enforced upstream by the triage candidate
+        // filter; the check producer tracks no git-head axis here.
+        currentness: NextActionCurrentness {
+            head_expected: None,
+            head_observed: None,
+            config_expected: None,
+            config_observed: None,
+        },
+        offered_command: None,
+        route_admitted: true,
+        route_refusal: None,
+        missing_input: None,
+        platform: current_command_platform(),
+        limitation: None,
+        limitation_route: None,
+        detail_route,
+        transition_from: triage.state.as_str().to_string(),
+        transition_to: None,
+        restart_route: match drill_in {
+            Some(FindingDrillIn::Commands(navigation)) => navigation.list_command(),
+            None => format!(
+                "ripr check --root {}",
+                shell_arg(&output.root.display().to_string())
+            ),
+        },
+        check_case: Some(check_case_for_triage(triage, output)),
+        doctor_recovery: None,
+        pilot_delegation: None,
+        alternatives,
+        limitations,
+    };
+    select_canonical_next_action(&input)
+}
+
+/// The scope identity bound when triage selected no finding: the compared
+/// base, the working tree, or the explicit lack of scope.
+fn check_scope_descriptor(triage: &HumanTriage<'_>, output: &CheckOutput) -> String {
+    if let Some(base) = output.base.as_deref() {
+        return format!("base:{base}");
+    }
+    if output.unanalyzed_working_tree {
+        return "working_tree".to_string();
+    }
+    if output.no_scope_provided {
+        return "no_scope".to_string();
+    }
+    if triage.selected.is_some() {
+        return "selected".to_string();
+    }
+    "empty_scope".to_string()
+}
+
+/// The line-family decision for the triage renderer: the canonical
+/// projection's case, falling back to the shared mapping when the projection
+/// cannot be built (a producer bug, never a triage state). The fallback
+/// renders the same family the projection would, so the render stays total.
+fn check_case_or_fallback(
+    triage: &HumanTriage<'_>,
+    output: &CheckOutput,
+    drill_in: Option<&FindingDrillIn>,
+    provenance: CheckDiffProvenance,
+) -> NextActionCheckCase {
+    canonical_next_action_for_triage(triage, output, drill_in, provenance)
+        .ok()
+        .and_then(|action| match action.stop() {
+            Some(NextActionStop::CheckTriage { case }) => Some(*case),
+            _ => None,
+        })
+        .unwrap_or_else(|| check_case_for_triage(triage, output))
+}
+
 fn omitted_currentness_counts(omitted: &[&Finding]) -> (usize, usize) {
     let base_side = omitted
         .iter()
@@ -705,4 +881,381 @@ fn is_preview_limited(finding: &Finding) -> bool {
     finding
         .language_status
         .is_some_and(|status| status.as_str() == "preview")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::Mode;
+    use crate::domain::{
+        ActivationEvidence, Confidence, DeltaKind, NextActionClass, Probe, ProbeId, RevealEvidence,
+        RiprEvidence, SourceCurrentness, SourceLocation, StageEvidence, StageState, Summary,
+    };
+    use std::path::PathBuf;
+
+    fn test_finding(id: &str) -> Finding {
+        Finding {
+            id: id.to_string(),
+            canonical_gap: None,
+            probe: Probe {
+                id: ProbeId(id.to_string()),
+                location: SourceLocation::new("src/lib.rs", 1, 1),
+                owner: None,
+                family: ProbeFamily::StaticUnknown,
+                delta: DeltaKind::Unknown,
+                before: None,
+                after: None,
+                expression: "unknown syntax".to_string(),
+                expected_sinks: vec![],
+                required_oracles: vec![],
+            },
+            class: ExposureClass::StaticUnknown,
+            ripr: RiprEvidence {
+                reach: StageEvidence::new(StageState::Unknown, Confidence::Low, "reach"),
+                infect: StageEvidence::new(StageState::Unknown, Confidence::Low, "infect"),
+                propagate: StageEvidence::new(StageState::Unknown, Confidence::Low, "propagate"),
+                reveal: RevealEvidence {
+                    observe: StageEvidence::new(StageState::Unknown, Confidence::Low, "observe"),
+                    discriminate: StageEvidence::new(
+                        StageState::Unknown,
+                        Confidence::Low,
+                        "discriminate",
+                    ),
+                },
+            },
+            confidence: 0.2,
+            evidence: vec![],
+            missing: vec![],
+            flow_sinks: vec![],
+            activation: ActivationEvidence::default(),
+            stop_reasons: vec![],
+            related_tests_matched_total: None,
+            related_tests: vec![],
+            recommended_next_step: None,
+            language: None,
+            language_status: None,
+            owner_kind: None,
+            static_limit_kind: None,
+            changed_sink: None,
+            observed_sink: None,
+            oracle_alignment: None,
+            alignment_reason: None,
+            source_currentness: SourceCurrentness::CandidateCurrent,
+        }
+    }
+
+    fn test_output(findings: Vec<Finding>) -> CheckOutput {
+        CheckOutput {
+            harness_projections: Vec::new(),
+            schema_version: "0.1".to_string(),
+            tool: "ripr".to_string(),
+            mode: Mode::Draft,
+            root: PathBuf::from("repo"),
+            base: Some("HEAD~1".to_string()),
+            summary: Summary::default(),
+            findings,
+            preview_language_advisories: Vec::new(),
+            language_runs: Vec::new(),
+            no_scope_provided: false,
+            unanalyzed_working_tree: false,
+            untracked_working_tree_source_paths: Vec::new(),
+            unlinked_python_tests: None,
+            suppression: None,
+            analysis_outcome: None,
+            partial_scope: None,
+        }
+    }
+
+    #[test]
+    fn check_cases_mirror_the_triage_states() {
+        let top = test_finding("finding:top");
+        let omitted = test_finding("finding:omitted");
+        let output = test_output(vec![top.clone(), omitted.clone()]);
+        let rows = vec![
+            (
+                HumanTriage {
+                    state: HumanTriageState::TopGap,
+                    selected: Some(&top),
+                    omitted: vec![&omitted],
+                },
+                NextActionCheckCase::TopGap,
+            ),
+            (
+                HumanTriage {
+                    state: HumanTriageState::NoActionableGap,
+                    selected: None,
+                    omitted: vec![&omitted],
+                },
+                NextActionCheckCase::CandidateFilterHidAll,
+            ),
+            (
+                HumanTriage {
+                    state: HumanTriageState::NoActionableGap,
+                    selected: None,
+                    omitted: Vec::new(),
+                },
+                NextActionCheckCase::SuppressedByPolicy,
+            ),
+            (
+                HumanTriage {
+                    state: HumanTriageState::NoActionableGap,
+                    selected: Some(&top),
+                    omitted: Vec::new(),
+                },
+                NextActionCheckCase::NoDiffFinding,
+            ),
+            (
+                HumanTriage {
+                    state: HumanTriageState::StaticLimited,
+                    selected: Some(&top),
+                    omitted: Vec::new(),
+                },
+                NextActionCheckCase::StaticLimited,
+            ),
+            (
+                HumanTriage {
+                    state: HumanTriageState::PreviewLimited,
+                    selected: Some(&top),
+                    omitted: Vec::new(),
+                },
+                NextActionCheckCase::PreviewAdvisory,
+            ),
+            (
+                HumanTriage {
+                    state: HumanTriageState::MissingScope,
+                    selected: None,
+                    omitted: Vec::new(),
+                },
+                NextActionCheckCase::ScopeMissing,
+            ),
+        ];
+        for (triage, case) in &rows {
+            assert_eq!(check_case_for_triage(triage, &output), *case);
+        }
+        // Empty findings with no selection is the no-diff case, not a
+        // suppression claim.
+        let empty = test_output(Vec::new());
+        let triage = HumanTriage {
+            state: HumanTriageState::NoActionableGap,
+            selected: None,
+            omitted: Vec::new(),
+        };
+        assert_eq!(
+            check_case_for_triage(&triage, &empty),
+            NextActionCheckCase::NoDiffFinding
+        );
+    }
+
+    #[test]
+    fn check_adapter_binds_the_ranked_winner_with_bounded_alternatives() -> Result<(), String> {
+        let top = test_finding("finding:top");
+        let second = test_finding("finding:second");
+        let third = test_finding("finding:third");
+        let fourth = test_finding("finding:fourth");
+        let output = test_output(vec![top.clone()]);
+        let triage = HumanTriage {
+            state: HumanTriageState::TopGap,
+            selected: Some(&top),
+            omitted: vec![&second, &third, &fourth],
+        };
+        let navigation = crate::app::FindingNavigation::legacy();
+        let drill_in = FindingDrillIn::Commands(navigation);
+        let action = canonical_next_action_for_triage(
+            &triage,
+            &output,
+            Some(&drill_in),
+            CheckDiffProvenance::CommittedHistory,
+        )?;
+        if action.action_class() != NextActionClass::InspectDetails {
+            return Err("top gap must inspect its details".to_string());
+        }
+        if action.subject().item.as_deref() != Some("finding:top") {
+            return Err("adapter bound the wrong finding".to_string());
+        }
+        // Rank losers are bounded subordinate alternatives, never silent.
+        if action.alternatives().len() != 2 {
+            return Err(format!(
+                "expected two bounded alternatives, got {}",
+                action.alternatives().len()
+            ));
+        }
+        if !action.alternatives()[0].route.contains("finding:second") {
+            return Err("omitted alternative lost its identity".to_string());
+        }
+        match action.stop() {
+            Some(NextActionStop::CheckTriage { case }) if *case == NextActionCheckCase::TopGap => {}
+            other => return Err(format!("top gap stop is wrong: {other:?}")),
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn check_adapter_names_scope_without_navigation() -> Result<(), String> {
+        let output = test_output(Vec::new());
+        let triage = HumanTriage {
+            state: HumanTriageState::MissingScope,
+            selected: None,
+            omitted: Vec::new(),
+        };
+        let action = canonical_next_action_for_triage(
+            &triage,
+            &output,
+            None,
+            CheckDiffProvenance::CommittedHistory,
+        )?;
+        if action.action_class() != NextActionClass::SatisfyPrerequisite {
+            return Err("missing scope must satisfy its prerequisite".to_string());
+        }
+        if action.subject().item.as_deref() != Some("base:HEAD~1") {
+            return Err(format!(
+                "scope descriptor is wrong: {:?}",
+                action.subject().item
+            ));
+        }
+        // No navigation: the restart route replays the bound root.
+        match action.stop() {
+            Some(NextActionStop::CheckTriage { case })
+                if *case == NextActionCheckCase::ScopeMissing => {}
+            other => return Err(format!("scope stop is wrong: {other:?}")),
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn check_adapter_binds_limitations_and_scope_modes() -> Result<(), String> {
+        let mut output = test_output(Vec::new());
+        output.base = None;
+        output.unanalyzed_working_tree = true;
+        output.no_scope_provided = true;
+        let triage = HumanTriage {
+            state: HumanTriageState::MissingScope,
+            selected: None,
+            omitted: Vec::new(),
+        };
+        let action = canonical_next_action_for_triage(
+            &triage,
+            &output,
+            None,
+            CheckDiffProvenance::Worktree,
+        )?;
+        if action.subject().item.as_deref() != Some("working_tree") {
+            return Err("working-tree scope mislabeled".to_string());
+        }
+        if action.limitations().is_empty() {
+            return Err("working-tree edits limitation lost".to_string());
+        }
+        match &action.subject().diff_source {
+            NextActionDiffSource::WorkingTree { .. } => {}
+            other => return Err(format!("diff mode flipped: {other:?}")),
+        }
+
+        let mut scoped = test_output(Vec::new());
+        scoped.base = None;
+        scoped.no_scope_provided = true;
+        let action = canonical_next_action_for_triage(
+            &triage,
+            &scoped,
+            None,
+            CheckDiffProvenance::CommittedHistory,
+        )?;
+        if action.subject().item.as_deref() != Some("no_scope") {
+            return Err("missing scope mislabeled".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn check_adapter_binds_diff_source_from_provenance_not_base() -> Result<(), String> {
+        // Base presence identifies neither mode: a `--worktree` run
+        // resolves a base yet analyzes the live tree, while a supplied
+        // scope has no base yet is fixed replayable content.
+        let top = test_finding("finding:top");
+        let triage = HumanTriage {
+            state: HumanTriageState::TopGap,
+            selected: Some(&top),
+            omitted: Vec::new(),
+        };
+        // Worktree with a resolved base stays the live tree.
+        let output = test_output(vec![top.clone()]);
+        let action = canonical_next_action_for_triage(
+            &triage,
+            &output,
+            None,
+            CheckDiffProvenance::Worktree,
+        )?;
+        match &action.subject().diff_source {
+            NextActionDiffSource::WorkingTree { .. } => {}
+            other => return Err(format!("worktree run mislabeled: {other:?}")),
+        }
+        // A supplied scope without a base is fixed content, not the tree.
+        let mut supplied = test_output(vec![top.clone()]);
+        supplied.base = None;
+        let action = canonical_next_action_for_triage(
+            &triage,
+            &supplied,
+            None,
+            CheckDiffProvenance::SuppliedScope,
+        )?;
+        match &action.subject().diff_source {
+            NextActionDiffSource::Committed {
+                base: None,
+                head: None,
+            } => {}
+            other => return Err(format!("supplied scope mislabeled: {other:?}")),
+        }
+        // Committed history carries the compared base.
+        let action = canonical_next_action_for_triage(
+            &triage,
+            &output,
+            None,
+            CheckDiffProvenance::CommittedHistory,
+        )?;
+        match &action.subject().diff_source {
+            NextActionDiffSource::Committed {
+                base: Some(base),
+                head: None,
+            } if base == "HEAD~1" => {}
+            other => return Err(format!("committed run mislabeled: {other:?}")),
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn check_adapter_never_fails_a_triage_state() -> Result<(), String> {
+        // The renderer's defensive fallback exists only for producer bugs:
+        // every triage state projects, so the canonical path decides.
+        let top = test_finding("finding:top");
+        let output = test_output(vec![top.clone()]);
+        for state in [
+            HumanTriageState::TopGap,
+            HumanTriageState::NoActionableGap,
+            HumanTriageState::StaticLimited,
+            HumanTriageState::PreviewLimited,
+            HumanTriageState::MissingScope,
+        ] {
+            let triage = HumanTriage {
+                state,
+                selected: Some(&top),
+                omitted: Vec::new(),
+            };
+            let action = canonical_next_action_for_triage(
+                &triage,
+                &output,
+                None,
+                CheckDiffProvenance::CommittedHistory,
+            )
+            .map_err(|error| format!("{} must project: {error}", state.as_str()))?;
+            let fallback = check_case_for_triage(&triage, &output);
+            match action.stop() {
+                Some(NextActionStop::CheckTriage { case }) if *case == fallback => {}
+                other => {
+                    return Err(format!(
+                        "{} projection disagrees with its case: {other:?}",
+                        state.as_str()
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
 }

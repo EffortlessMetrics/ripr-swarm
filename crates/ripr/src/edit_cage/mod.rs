@@ -11,7 +11,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io::{Read as _, Seek as _, SeekFrom};
 use std::path::{Component, Path, PathBuf};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// Producer-neutral inline test-module region cage (#4783).
 /// Staged until the InlineUnit producer (#4784) and RepairAttempt bind it.
@@ -29,6 +29,60 @@ const MAX_CAPTURE_FILE_BYTES: u64 = 16 * 1024 * 1024;
 const MAX_CAPTURE_TOTAL_FILE_BYTES: u64 = 64 * 1024 * 1024;
 const MAX_CAPTURE_TOTAL_WORK_BYTES: u64 = 384 * 1024 * 1024;
 const IGNORED_FILE_SAMPLE_BYTES: u64 = 4 * 1024;
+
+/// Opt-in stderr trace switch for repair-attempt persist latency (#6897):
+/// before-phase baseline capture and attempt publication, plus the
+/// after-phase state recapture (`reevaluate_*` spans). Presence enables
+/// tracing; the value is never read. Mirrors the
+/// `RIPR_REPO_EXPOSURE_LATENCY_TRACE` contract: unset means nothing is
+/// printed, so default stdout and default stderr are unchanged.
+pub(crate) const PERSIST_LATENCY_TRACE_ENV: &str = "RIPR_PERSIST_LATENCY_TRACE";
+
+/// Whether the persist-latency trace family is enabled for this process.
+pub(crate) fn persist_latency_trace_enabled() -> bool {
+    std::env::var_os(PERSIST_LATENCY_TRACE_ENV).is_some()
+}
+
+/// Emit one wall-clock persist-phase line. The single owner of that line
+/// shape for every persist span, so a new span cannot invent a parallel
+/// spelling. Spans trace completed work only: a span that errors returns
+/// before its line, so every printed line is a measurement, not an attempt.
+pub(crate) fn trace_persist_latency(phase: &str, duration: Duration) {
+    if persist_latency_trace_enabled() {
+        eprintln!("{}", persist_latency_trace_line(phase, duration));
+    }
+}
+
+/// The wall-clock persist-phase line. Crate visible so a consumer's test
+/// can assert the exact wire shape without reading stderr.
+pub(crate) fn persist_latency_trace_line(phase: &str, duration: Duration) -> String {
+    format!(
+        "ripr_persist_latency phase={phase} status=ok duration_ms={}",
+        duration.as_millis()
+    )
+}
+
+/// Which repair-loop operation a repository-state capture serves. The
+/// persist-latency trace prefixes capture spans with the operation, so an
+/// after-phase recapture never reads as baseline work when stderr is
+/// aggregated by phase (#6917).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum CaptureTraceLabel {
+    /// Before-phase baseline recording (`baseline_*` spans).
+    Baseline,
+    /// After-phase state recapture for edit evaluation (`reevaluate_*`
+    /// spans).
+    Reevaluation,
+}
+
+impl CaptureTraceLabel {
+    fn as_str(self) -> &'static str {
+        match self {
+            CaptureTraceLabel::Baseline => "baseline",
+            CaptureTraceLabel::Reevaluation => "reevaluate",
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -204,7 +258,7 @@ pub(crate) fn capture_attempt_baseline(
     policy: &EditCagePolicy,
 ) -> Result<AttemptBaseline, String> {
     let root = canonical_repository_root(root)?;
-    capture_repository_state(root, policy.clone())
+    capture_repository_state(root, policy.clone(), CaptureTraceLabel::Baseline)
 }
 
 pub(crate) fn evaluate_repository_edit_cage(
@@ -238,7 +292,11 @@ pub(crate) fn evaluate_repository_edit_cage_with_head_movement(
     baseline: &AttemptBaseline,
     movement: HeadMovement,
 ) -> Result<(AttemptDelta, EditCageVerdict), String> {
-    let after = capture_repository_state(baseline.root.clone(), baseline.policy.clone())?;
+    let after = capture_repository_state(
+        baseline.root.clone(),
+        baseline.policy.clone(),
+        CaptureTraceLabel::Reevaluation,
+    )?;
     let committed = match movement {
         HeadMovement::RequireBaselineHead => (baseline.head == after.head).then(Vec::new),
         HeadMovement::AdmitDescendantCommits => {
@@ -314,7 +372,13 @@ fn committed_changes(
 fn capture_repository_state(
     root: PathBuf,
     policy: EditCagePolicy,
+    trace_label: CaptureTraceLabel,
 ) -> Result<AttemptBaseline, String> {
+    // One trace-switch read per capture: the span names below allocate,
+    // so they are built only when tracing is on.
+    let trace_spans = persist_latency_trace_enabled();
+    let span_prefix = trace_label.as_str();
+    let inventory_started = Instant::now();
     let head = git_text(&root, &["rev-parse", "--verify", "HEAD"])?;
     let index = git_bytes(&root, &["ls-files", "--stage", "-z"])?;
     let tracked = git_bytes(&root, &["ls-files", "-z"])?;
@@ -323,6 +387,12 @@ fn capture_repository_state(
 
     let (inventory, mut ambiguous) =
         inventory_paths(&tracked, &untracked, &ignored, MAX_CAPTURE_PATHS)?;
+    if trace_spans {
+        trace_persist_latency(
+            &format!("{span_prefix}_git_inventory"),
+            inventory_started.elapsed(),
+        );
+    }
 
     let mut paths = BTreeMap::new();
     let mut remaining_file_bytes = MAX_CAPTURE_TOTAL_FILE_BYTES;
@@ -331,6 +401,7 @@ fn capture_repository_state(
     let mut unknown_ignored_write_guards = Vec::new();
     #[cfg(windows)]
     let mut expected_write_authorities = Vec::new();
+    let identity_started = Instant::now();
     for (path, ignored_path) in inventory {
         // The before-phase serialization lock is an authority artifact, not
         // an agent edit. It is necessarily held while the baseline is
@@ -411,10 +482,24 @@ fn capture_repository_state(
             },
         );
     }
+    if trace_spans {
+        trace_persist_latency(
+            &format!("{span_prefix}_worktree_identity"),
+            identity_started.elapsed(),
+        );
+    }
+    let index_records_started = Instant::now();
     apply_index_records(&mut paths, &mut ambiguous, &index)?;
+    if trace_spans {
+        trace_persist_latency(
+            &format!("{span_prefix}_index_records"),
+            index_records_started.elapsed(),
+        );
+    }
 
     // A capture is usable only when its repository identity stayed stable
     // while paths and content identities were read.
+    let stability_started = Instant::now();
     let stable_head = git_text(&root, &["rev-parse", "--verify", "HEAD"])?;
     let stable_index = git_bytes(&root, &["ls-files", "--stage", "-z"])?;
     let stable_tracked = git_bytes(&root, &["ls-files", "-z"])?;
@@ -449,6 +534,12 @@ fn capture_repository_state(
         || !stable_worktree
     {
         ambiguous = true;
+    }
+    if trace_spans {
+        trace_persist_latency(
+            &format!("{span_prefix}_stability_recheck"),
+            stability_started.elapsed(),
+        );
     }
 
     Ok(AttemptBaseline {
@@ -1731,6 +1822,23 @@ mod tests {
     use crate::testing::fixture_git::fixture_git_ok as git_ok;
     use serde::de::DeserializeOwned;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn persist_latency_trace_line_keeps_the_phase_spelling() {
+        assert_eq!(
+            persist_latency_trace_line("baseline_git_inventory", Duration::from_millis(7)),
+            "ripr_persist_latency phase=baseline_git_inventory status=ok duration_ms=7"
+        );
+    }
+
+    #[test]
+    fn capture_trace_labels_keep_baseline_and_reevaluate_distinct() {
+        // #6917: the after-phase recapture must never aggregate as
+        // baseline work. The CLI journey tests pin the emitted lines;
+        // this pins the label contract itself.
+        assert_eq!(CaptureTraceLabel::Baseline.as_str(), "baseline");
+        assert_eq!(CaptureTraceLabel::Reevaluation.as_str(), "reevaluate");
+    }
 
     struct GitFixture {
         root: PathBuf,

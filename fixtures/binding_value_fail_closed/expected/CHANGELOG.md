@@ -122,6 +122,19 @@ Updated:
 
 Reason:
 RIPR-SPEC-0122: check names the one-step ripr agent stub route for Rust value gaps (#5355)
+RIPR-SPEC-0158: char literal test inputs are literal facts; map_or_else probe moves from infection_unknown to propagation_unknown with no infection yes
+
+Command:
+`cargo xtask goldens bless binding_value_fail_closed --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — binding_value_fail_closed (9)
+
+Reason:
+RIPR-SPEC-0158: char literals no longer count as inputs against an integer boundary, so infection stays unknown
 
 Command:
 `cargo xtask goldens bless binding_value_fail_closed --reason "..."`
@@ -171,6 +184,42 @@ Updated:
 
 Reason:
 RIPR-SPEC-0002: merge of origin/main (#5268 canonical_gap for Rust and sibling updates) onto the #5996 workspace-relative location owner — expected files regenerate through the merged tree
+
+Command:
+`cargo xtask goldens bless binding_value_fail_closed --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — binding_value_fail_closed (13)
+
+Reason:
+RIPR-SPEC-0116: the check drill-in binds --root to the resolved repository (#3948); goldens carry the <cwd>/ placeholder
+
+Command:
+`cargo xtask goldens bless binding_value_fail_closed --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — binding_value_fail_closed (14)
+
+Reason:
+RIPR-SPEC-0001 unresolved boundary input (#6674, #6693): an operand ripr cannot map to related-test inputs reads infection_unknown 'Changed boundary input is unresolved' instead of a missing equality discriminator with 'observed values: unknown'; no exposed finding
+
+Command:
+`cargo xtask goldens bless binding_value_fail_closed --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — binding_value_fail_closed (15)
+
+Reason:
+RIPR-SPEC-0001: the human 'Why unknown' line for infection_unknown says 'reaches a sink' only when propagation is yes (CodeRabbit review on #6796); propagation is not yes here, so the line no longer claims a sink
 
 Command:
 `cargo xtask goldens bless binding_value_fail_closed --reason "..."`

@@ -134,7 +134,7 @@ fn classified_seam(class: SeamGripClass) -> ClassifiedSeam {
     ClassifiedSeam {
         evidence: TestGripEvidence {
             seam_id: seam.id().clone(),
-            related_tests: vec![RelatedTestGrip {
+            related_tests: vec![std::sync::Arc::new(RelatedTestGrip {
                 test_name: "discounted_total_boundary".to_string(),
                 file: PathBuf::from("tests/pricing.rs"),
                 line: 8,
@@ -148,7 +148,7 @@ fn classified_seam(class: SeamGripClass) -> ClassifiedSeam {
                 evidence_summary: "exact return assertion".to_string(),
                 relation_reason: RelationReason::DirectOwnerCall,
                 relation_confidence: RelationConfidence::High,
-            }],
+            })],
             reach: stage(StageState::Yes),
             activate: stage(StageState::Yes),
             propagate: stage(StageState::Yes),

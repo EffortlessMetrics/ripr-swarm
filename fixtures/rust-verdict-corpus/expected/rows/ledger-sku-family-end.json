@@ -1,0 +1,19 @@
+{
+  "case_id": "ledger-sku-family-end",
+  "subject_id": "authored-ledger",
+  "origin": "authored",
+  "anchor": "src/lib.rs:31",
+  "behavior_family": "return_value",
+  "test_shape": "unit_test_assert_eq",
+  "hard_case": false,
+  "truth": "discriminated",
+  "ideal_verdict": "credited",
+  "observed_verdict": "limited",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "infection_unknown"
+  ],
+  "outcome": "abstained",
+  "contradictions": []
+}

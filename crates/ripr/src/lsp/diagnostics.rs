@@ -328,6 +328,11 @@ pub(super) struct FindingDiagnosticProjection<'a> {
     pub position_encoding: &'a PositionEncodingKind,
     pub origins: &'a crate::analysis::diagnostic_origin::RustDiagnosticOrigins,
     pub causal_projection: Option<&'a CausalDeltaArtifact>,
+    /// The session's drill-in route. When present, the witness's
+    /// `explain_command` names the workspace root and the session's diff
+    /// source instead of the domain's portable `--root .` (#3948): a client
+    /// runs it from wherever the editor's terminal happens to be.
+    pub navigation: Option<&'a crate::app::FindingNavigation>,
 }
 
 impl<'a> FindingDiagnosticProjection<'a> {
@@ -341,11 +346,20 @@ impl<'a> FindingDiagnosticProjection<'a> {
             position_encoding,
             origins,
             causal_projection: None,
+            navigation: None,
         }
     }
 
     fn with_causal(mut self, causal_projection: Option<&'a CausalDeltaArtifact>) -> Self {
         self.causal_projection = causal_projection;
+        self
+    }
+
+    pub(super) fn with_navigation(
+        mut self,
+        navigation: Option<&'a crate::app::FindingNavigation>,
+    ) -> Self {
+        self.navigation = navigation;
         self
     }
 }
@@ -394,6 +408,9 @@ pub(super) fn finding_diagnostics_by_uri_with_profile(
             projection.position_encoding,
             projection.origins,
         );
+        if let Some(navigation) = projection.navigation {
+            bind_witness_explain_command(&mut diagnostic, navigation, &primary.id);
+        }
         // Producer authority: reaching this point means the finding passed
         // `finding_is_visible_in_profile`. The delivery budget consumes this
         // explicit ordinary-finding signal after the more specific gap/seam
@@ -441,6 +458,34 @@ pub(super) fn finding_diagnostics_by_uri_with_profile(
         grouped.entry(uri).or_default().push(diagnostic);
     }
     Ok(grouped)
+}
+
+/// Replace the witness's portable `explain_command` with the session's
+/// drill-in route, in both places the diagnostic data carries it, so hover,
+/// code actions and the raw payload agree.
+fn bind_witness_explain_command(
+    diagnostic: &mut Diagnostic,
+    navigation: &crate::app::FindingNavigation,
+    finding_id: &str,
+) {
+    let Some(data) = diagnostic
+        .data
+        .as_mut()
+        .and_then(serde_json::Value::as_object_mut)
+    else {
+        return;
+    };
+    if !data.contains_key("explain_command") {
+        return;
+    }
+    let command = serde_json::Value::String(navigation.explain_command(finding_id));
+    if let Some(witness) = data
+        .get_mut("witness")
+        .and_then(serde_json::Value::as_object_mut)
+    {
+        witness.insert("explain_command".to_string(), command.clone());
+    }
+    data.insert("explain_command".to_string(), command);
 }
 
 pub(super) fn finding_is_visible_in_profile(
@@ -495,6 +540,13 @@ pub(super) fn normalized_diagnostic_payload_digest(
     digest.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
+fn project_bound_root(root: &Path, command: &str) -> String {
+    let bound = crate::agent::loop_commands::shell_arg(&crate::agent::loop_commands::bound_root(
+        &root.display().to_string(),
+    ));
+    command.replace(&format!("--root {bound}"), "--root repo://")
+}
+
 fn normalize_path_values(root: &Path, value: &mut serde_json::Value, key: Option<&str>) {
     match value {
         serde_json::Value::Object(object) => {
@@ -510,6 +562,10 @@ fn normalize_path_values(root: &Path, value: &mut serde_json::Value, key: Option
         serde_json::Value::String(string) => {
             if matches!(key, Some("file" | "gap_ledger")) {
                 *string = display_repo_path(root, Path::new(string)).to_string();
+            } else if key == Some("explain_command") {
+                // The drill-in names the checkout (#3948); equivalent
+                // checkouts must still share one cache identity.
+                *string = project_bound_root(root, string);
             } else if key == Some("uri")
                 && let Ok(uri) = string.parse::<Uri>()
                 && let Some(path) = path_from_file_uri(&uri)
@@ -1065,6 +1121,11 @@ pub(super) fn workspace_diagnostics_with_config_and_open_rust_paths_and_progress
     );
     let is_full_run = run_status == "full";
 
+    // The session analyzed the saved worktree (#3183), so the witness
+    // command replays that diff source against the workspace root, the same
+    // route `ripr.collectContext` ships (#5994).
+    let navigation =
+        crate::app::finding_navigation_with_worktree(&config.check_input(&root), None, false, true);
     let mut grouped = finding_diagnostics_by_uri_with_profile(
         &root,
         &findings,
@@ -1075,7 +1136,8 @@ pub(super) fn workspace_diagnostics_with_config_and_open_rust_paths_and_progress
             &config.position_encoding,
             &origins,
         )
-        .with_causal(causal_projection.as_ref()),
+        .with_causal(causal_projection.as_ref())
+        .with_navigation(Some(&navigation)),
     )?;
 
     let classified_seams = raw_seams

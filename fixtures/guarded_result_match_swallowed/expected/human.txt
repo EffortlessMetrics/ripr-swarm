@@ -12,10 +12,11 @@ Start here:
   Safe next action: inspect or repair the selected non-exposed gap; this is static advisory evidence only.
   File: ./src/lib.rs:9
   Static exposure: unrevealed (reachable_unrevealed, warning, confidence 0.79)
-  Why unrevealed: a related test reaches this change, but no assertion observes the changed behavior
+  Why unrevealed: a related test asserts here, but ripr could not establish that the assertion runs and is the standard `assert_eq!`
+  Not credited: `assert_eq!` in logs_failures_without_discriminating at tests/messages.rs:9: the assertion is inside a `match` arm
   Canonical gap: gap:rust:src/lib.rs:expect_ready:error_variant:error_path:err_parseerror_invaliddata
   Changed behavior: return Err(ParseError::InvalidData)
-  Missing discriminator (1 of 5): ParseError::InvalidData
+  Missing discriminator (1 of 3): ParseError::InvalidData
   Related test (1 of 2): tests/messages.rs:4 logs_failures_without_discriminating (assertion not credited: ripr could not establish that it runs as the standard macro)
   Next step: Establish that the test is collected and enabled, that the assertion runs on its
     executed path, and that it resolves to the intended standard macro, then check the changed
@@ -26,10 +27,10 @@ Start here:
     - 12 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
-  ripr explain --root fixtures/guarded_result_match_swallowed/input --diff fixtures/guarded_result_match_swallowed/diff.patch --mode fast probe:src_lib.rs:error_path:94d13aee
-  ripr context --root fixtures/guarded_result_match_swallowed/input --diff fixtures/guarded_result_match_swallowed/diff.patch --mode fast --at probe:src_lib.rs:error_path:94d13aee
+  ripr explain --root <cwd>/fixtures/guarded_result_match_swallowed/input --diff <cwd>/fixtures/guarded_result_match_swallowed/diff.patch --mode fast probe:src_lib.rs:error_path:94d13aee
+  ripr context --root <cwd>/fixtures/guarded_result_match_swallowed/input --diff <cwd>/fixtures/guarded_result_match_swallowed/diff.patch --mode fast --at probe:src_lib.rs:error_path:94d13aee
 Write a test for it:
-  ripr agent stub --root fixtures/guarded_result_match_swallowed/input --at src/lib.rs:9
+  ripr agent stub --root <cwd>/fixtures/guarded_result_match_swallowed/input --at src/lib.rs:9
 
 Hidden:
   1 lower-priority finding(s) omitted from default human output.

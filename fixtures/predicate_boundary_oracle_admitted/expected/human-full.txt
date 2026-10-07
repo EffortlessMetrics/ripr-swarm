@@ -11,7 +11,7 @@ INFO ./src/lib.rs:2
   id: probe:src_lib.rs:predicate:c80557eb
 
 Changed
-  before: if amount > discount_threshold {
+  before: amount > discount_threshold
   after:  amount >= discount_threshold
 
 Probe
@@ -40,5 +40,5 @@ Evidence
   - source function argument value amount = 101 at line 15
   - source function argument value discount_threshold = 100 at line 15
 Drill in:
-  ripr explain --root fixtures/predicate_boundary_oracle_admitted/input --diff fixtures/predicate_boundary_oracle_admitted/diff.patch --mode fast probe:src_lib.rs:predicate:c80557eb
-  ripr context --root fixtures/predicate_boundary_oracle_admitted/input --diff fixtures/predicate_boundary_oracle_admitted/diff.patch --mode fast --at probe:src_lib.rs:predicate:c80557eb
+  ripr explain --root <cwd>/fixtures/predicate_boundary_oracle_admitted/input --diff <cwd>/fixtures/predicate_boundary_oracle_admitted/diff.patch --mode fast probe:src_lib.rs:predicate:c80557eb
+  ripr context --root <cwd>/fixtures/predicate_boundary_oracle_admitted/input --diff <cwd>/fixtures/predicate_boundary_oracle_admitted/diff.patch --mode fast --at probe:src_lib.rs:predicate:c80557eb

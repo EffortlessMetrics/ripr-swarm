@@ -295,7 +295,14 @@ fn awkward_file_names_each_produce_a_probe() -> Result<(), String> {
     let root = scratch.path.join("names");
     fs::create_dir_all(root.join("src")).map_err(|e| format!("mkdir failed: {e}"))?;
     fs::write(root.join("Cargo.toml"), MANIFEST).map_err(|e| format!("write failed: {e}"))?;
-    fs::write(root.join("src/lib.rs"), "").map_err(|e| format!("write failed: {e}"))?;
+    // Each file is a declared module, so rustc compiles it and every change
+    // seeds a probe; an undeclared file seeds nothing (#4435).
+    let lib = names
+        .iter()
+        .enumerate()
+        .map(|(i, name)| format!("#[path = {name:?}]\nmod m{i};\n"))
+        .collect::<String>();
+    fs::write(root.join("src/lib.rs"), lib).map_err(|e| format!("write failed: {e}"))?;
     for (i, name) in names.iter().enumerate() {
         fs::write(root.join("src").join(name), body(i, 2))
             .map_err(|e| format!("write {name:?} failed: {e}"))?;
@@ -638,6 +645,96 @@ fn unreadable_config_is_a_loud_error_not_a_default() -> Result<(), String> {
     Ok(())
 }
 
+/// Damaged Git state is refused in Git's own words with a repair route, not
+/// as a missing remote or a wrong directory (#6908).
+#[test]
+fn damaged_git_state_names_the_cause_and_a_repair() -> Result<(), String> {
+    type Damage = fn(&Path) -> Result<(), String>;
+    let cases: [(&str, Damage, &[&str]); 4] = [
+        (
+            "bad config",
+            |root| {
+                fs::write(root.join(".git/config"), b"[core\n")
+                    .map_err(|e| format!("write failed: {e}"))
+            },
+            &["bad config line 1", "correct or restore it"],
+        ),
+        (
+            "corrupt packed-refs",
+            |root| {
+                fs::write(root.join(".git/packed-refs"), b"garbage\n")
+                    .map_err(|e| format!("write failed: {e}"))
+            },
+            &["packed-refs", "correct or restore it"],
+        ),
+        (
+            "unborn HEAD",
+            |root| {
+                fs::write(root.join(".git/HEAD"), b"ref: refs/heads/nonexistent\n")
+                    .map_err(|e| format!("write failed: {e}"))
+            },
+            &["git rev-parse HEAD", "Check"],
+        ),
+        (
+            "corrupt object",
+            |root| {
+                // `repo` leaves `feat` checked out as a loose ref.
+                let sha = fs::read_to_string(root.join(".git/refs/heads/feat"))
+                    .map_err(|e| format!("feat ref missing: {e}"))?
+                    .trim()
+                    .to_string();
+                let object = root.join(".git/objects").join(&sha[..2]).join(&sha[2..]);
+                // Loose objects are read-only; replace the file instead.
+                fs::remove_file(&object).map_err(|e| format!("object missing: {e}"))?;
+                fs::write(&object, b"junk").map_err(|e| format!("write failed: {e}"))
+            },
+            &["git fsck"],
+        ),
+    ];
+    let scratch = Scratch::new("damaged-git")?;
+    for (label, damage, expected) in cases {
+        let root = plain(&scratch, &label.replace(' ', "-"))?;
+        damage(&root)?;
+        let ran = ripr(&root, &["check", "--base", "main"], &[])?;
+        assert_sane(&ran, label)?;
+        if ran.code != Some(2) {
+            return Err(format!("{label}: expected a refusal\n{}", ran.stderr));
+        }
+        for needle in expected {
+            if !ran.stderr.contains(needle) {
+                return Err(format!("{label}: missing `{needle}`\n{}", ran.stderr));
+            }
+        }
+        for wrong in ["No git remote is configured", "not inside a Git work tree"] {
+            if ran.stderr.contains(wrong) {
+                return Err(format!("{label}: wrong cause `{wrong}`\n{}", ran.stderr));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Configuration Git inherits from the environment is not repository damage:
+/// the repair names the variable, not `.git/config`.
+#[test]
+fn malformed_git_environment_config_is_not_blamed_on_the_repository() -> Result<(), String> {
+    let scratch = Scratch::new("git-env-config")?;
+    let root = plain(&scratch, "repo")?;
+    let ran = ripr(
+        &root,
+        &["check", "--base", "main"],
+        &[("GIT_CONFIG_COUNT", "xyz")],
+    )?;
+    assert_sane(&ran, "malformed GIT_CONFIG_COUNT")?;
+    if ran.code != Some(2) || !ran.stderr.contains("GIT_CONFIG_*") {
+        return Err(format!("expected the environment remedy\n{}", ran.stderr));
+    }
+    if ran.stderr.contains("`.git/config`") {
+        return Err(format!("blamed the repository\n{}", ran.stderr));
+    }
+    Ok(())
+}
+
 /// A clone of a feature branch has `origin/HEAD` tracking that branch, so the
 /// default base is the checked-out commit and the range is empty by
 /// construction. The run must say so and name `--base`, not read as clean.
@@ -854,6 +951,65 @@ fn control_bytes_in_names_and_config_never_reach_github_output_stderr_or_command
         })?;
     if envelope["error"]["seam_id"] != "x\u{202e}y" {
         return Err(format!("seam id did not round-trip\n{envelope}"));
+    }
+
+    // The repair before-phase announces the root on stderr before it
+    // validates the seam, and the unknown-seam refusal repeats it in a
+    // drill-in command; neither may carry raw control or bidi bytes.
+    let root_abs = root
+        .to_str()
+        .ok_or_else(|| "scratch root is not UTF-8".to_string())?;
+    let repair = ripr(
+        &scratch.path,
+        &[
+            "agent",
+            "repair",
+            "--json",
+            "--root",
+            root_abs,
+            "--seam-id",
+            "67fc764ba37d77bd",
+            "--phase",
+            "before",
+        ],
+        &[],
+    )?;
+    // The seam id is deliberately unknown: the announcement is printed first,
+    // then the command refuses with a typed code (2 or 3), never success or a
+    // panic exit.
+    if !matches!(repair.code, Some(2 | 3))
+        || repair.stderr.contains("panicked")
+        || leaks(&repair.stdout)
+        || leaks(&repair.stderr)
+    {
+        return Err(format!(
+            "repair before did not refuse cleanly (code {:?}) or leaked\n{:?}",
+            repair.code, repair.stderr
+        ));
+    }
+    if !repair
+        .stderr
+        .contains("ripr: agent repair --phase before for seam `67fc764ba37d77bd` at ")
+        || !repair.stderr.contains("\\u{1b}]0;PWN\\u{07}\\u{202e}x")
+    {
+        return Err(format!(
+            "expected the escaped root in the before-phase announcement\n{}",
+            repair.stderr
+        ));
+    }
+    // The refusal's drill-in command carries the hostile root as portable
+    // printf segments, never raw bytes.
+    if !repair.stderr.contains("Run `ripr pilot --root '")
+        || !repair.stderr.contains("\"$(printf '\\033')\"")
+        || !repair.stderr.contains("\"$(printf '\\342\\200\\256')\"")
+        || !repair.stderr.contains("']0;PWN'")
+        || !repair.stderr.contains("\"$(printf '\\007')\"")
+        || !repair.stderr.contains("'x'")
+    {
+        return Err(format!(
+            "expected the refusal's drill-in command to quote the hostile root\n{}",
+            repair.stderr
+        ));
     }
 
     // A bad ref echoed back by the failure path.

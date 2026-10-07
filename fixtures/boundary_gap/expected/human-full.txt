@@ -11,7 +11,7 @@ WARNING ./src/lib.rs:2
   id: probe:src_lib.rs:predicate:c80557eb
 
 Changed
-  before: if amount > discount_threshold {
+  before: amount > discount_threshold
   after:  amount >= discount_threshold
 
 Probe
@@ -45,5 +45,5 @@ Weakness
 Next step
   Add boundary tests for below, equal, and above the changed threshold with exact assertions.
 Drill in:
-  ripr explain --root fixtures/boundary_gap/input --diff fixtures/boundary_gap/diff.patch --mode fast probe:src_lib.rs:predicate:c80557eb
-  ripr context --root fixtures/boundary_gap/input --diff fixtures/boundary_gap/diff.patch --mode fast --at probe:src_lib.rs:predicate:c80557eb
+  ripr explain --root <cwd>/fixtures/boundary_gap/input --diff <cwd>/fixtures/boundary_gap/diff.patch --mode fast probe:src_lib.rs:predicate:c80557eb
+  ripr context --root <cwd>/fixtures/boundary_gap/input --diff <cwd>/fixtures/boundary_gap/diff.patch --mode fast --at probe:src_lib.rs:predicate:c80557eb

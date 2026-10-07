@@ -1,0 +1,51 @@
+{
+  "case_id": "semver-digits-ten",
+  "subject_id": "semver-280ebcb",
+  "diff": "cases/semver-digits-ten.diff",
+  "anchor": {
+    "file": "src/display.rs",
+    "line": 157
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "integration_test_public_api",
+  "hard_case": null,
+  "truth": {
+    "state": "partially_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.97.0 (2d8144b78 2026-07-07), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "10 >= val",
+        "mutated_line": "if 10 >= val {",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: digits(10) returns 1, so format!(\"{:>8}\", Version::new(10, 0, 0)) pads one column too many; no test formats a padded version with a component equal to 10."
+      },
+      {
+        "replacement": "10 == val",
+        "mutated_line": "if 10 == val {",
+        "outcome": "tests_failed",
+        "failing_test": "test_version::test_align",
+        "equivalence_review": "not equivalent: digits recurses until the value divides down to exactly 10, so components such as 1, 2 and 3 recurse forever and overflow the stack; observed failing tests: test_version::test_align (stack overflow aborts the test binary)"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "test_align pads 1.2.3-rc1, which catches the runaway == mutant but never formats a component equal to 10, so the <= boundary goes unseen. ripr reports no_static_path with zero related tests (limited), an acceptable abstention; a gap naming the 10 boundary would be ideal.",
+  "labeling_observation": {
+    "ripr_commit": "7a6d4b7a5",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "no_static_path"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

@@ -1,10 +1,11 @@
 use crate::analysis::classify::{
-    ARM_UNSELECTED_REASON_PREFIX, ArmSelector, OwnerPinSyntax, OwnerReturnPin, ProbeContext,
-    PropagationWitnessV1, ReturnOracleAdmission, TransitiveReachIndex,
-    activation_evidence_with_value_facts, callee_is_unique, classify, confidence_score,
-    contains_as_whole_word, current_path_witness, has_same_test_boundary_oracle_pairing,
-    infection_evidence, local_flow_sinks, owner_may_be_reached_unseen, package_prefix,
-    propagation_evidence_with_witness, reach_evidence, reveal_evidence_with_expression,
+    ARM_UNSELECTED_REASON_PREFIX, ASSERTION_CONTEXT_UNESTABLISHED, ArmSelector, OwnerPinSyntax,
+    OwnerReturnPin, ProbeContext, PropagationWitnessV1, ReturnOracleAdmission,
+    TransitiveReachIndex, activation_and_boundary_input, body_contains_owner_call,
+    callee_is_unique, classify, confidence_score, contains_as_whole_word, current_path_witness,
+    has_same_test_boundary_oracle_pairing, infection_evidence_with_boundary_input,
+    local_flow_sinks, oracle_crediting_relations, owner_may_be_reached_unseen, package_prefix,
+    propagation_evidence_with_witness, reach_evidence, reveal_outcome,
     same_test_pairing_missing_summary,
 };
 use crate::analysis::facts::{FunctionSummary, OracleFact, TestSummary};
@@ -35,6 +36,23 @@ pub(in crate::analysis) struct ClassifiedProbeEvidence {
     /// change. An owner with an unresolved caller chain keeps its
     /// shape-based class even when no related test was found.
     pub(in crate::analysis) reach_ruled_out: bool,
+    /// When the reveal is not fully established: where a refused related
+    /// assertion is, why it was refused, and whether its text calls the
+    /// changed owner. Only an owner-calling refusal could have observed
+    /// the change had it been credited, so only that one may be presented
+    /// as a possible static limit.
+    pub(in crate::analysis) assertion_refusal: Option<AssertionRefusalNote>,
+    /// When Observe is `rust_assertion_context_unestablished`: every refused
+    /// related `assert_eq!` was refused for an analyzer limit, so the gap
+    /// rests on what ripr could not read (RIPR-SPEC-0240).
+    pub(in crate::analysis) refusals_are_analyzer_limits: bool,
+}
+
+#[derive(Clone, Debug)]
+pub(in crate::analysis) struct AssertionRefusalNote {
+    pub(in crate::analysis) location: String,
+    pub(in crate::analysis) reason: String,
+    pub(in crate::analysis) calls_owner: bool,
 }
 
 impl ClassifiedProbeEvidence {
@@ -51,7 +69,7 @@ impl ClassifiedProbeEvidence {
         let flow_sinks = local_flow_sinks(context.probe, context.owner_fn);
         let propagation_witness = current_path_witness(context.probe, &flow_sinks)
             .map(PropagationWitnessDiagnostic::from_witness);
-        let mut activation = activation_evidence_with_value_facts(
+        let gathered = activation_and_boundary_input(
             context.probe,
             context.owner_fn,
             &test_summaries,
@@ -61,6 +79,7 @@ impl ClassifiedProbeEvidence {
             context.workspace_complete,
             context.test_value_facts,
         );
+        let mut activation = gathered.activation;
         // #3731 review (F11, G1): the changed owner's package scope, computed
         // once — the cross-package same-name defeats compare each related
         // test's package against it.
@@ -102,7 +121,12 @@ impl ClassifiedProbeEvidence {
                 .missing_discriminators
                 .retain(|fact| !fact.reason.starts_with(ARM_UNSELECTED_REASON_PREFIX));
         }
-        let infect = infection_evidence(context.probe, &test_summaries, &activation);
+        let infect = infection_evidence_with_boundary_input(
+            context.probe,
+            &test_summaries,
+            &activation,
+            gathered.unresolved_boundary.as_deref(),
+        );
         let valid_witness = propagation_witness
             .as_ref()
             .and_then(|diagnostic| match diagnostic {
@@ -212,7 +236,7 @@ impl ClassifiedProbeEvidence {
                 )
             })
         };
-        let (observe, discriminate, related_tests, matched_total) = reveal_evidence_with_expression(
+        let reveal = reveal_outcome(
             context.probe,
             reveal_expression,
             &context.related_tests,
@@ -232,6 +256,28 @@ impl ClassifiedProbeEvidence {
             },
             arm_selector.as_ref(),
         );
+        let (observe, discriminate, related_tests, matched_total) = (
+            reveal.observe,
+            reveal.discriminate,
+            reveal.related,
+            reveal.related_total,
+        );
+        // #6692: a clone-field pin (`assert_eq!(recv.clone(), recv)` through
+        // a derived `PartialEq`) observes the constructed field, so the
+        // missing-field fact below no longer stands for this probe. Only an
+        // owner pin that reveal credited clears it, after reveal's own
+        // gates (a name-only relation next to a reach-bearing test, a
+        // foreign same-name import, a cross-package same-name definition);
+        // a token match never does.
+        if matches!(context.probe.family, ProbeFamily::FieldConstruction)
+            && reveal.owner_pin_credited
+        {
+            activation.missing_discriminators.retain(|fact| {
+                fact.flow_sink
+                    .as_ref()
+                    .is_none_or(|sink| sink.kind != FlowSinkKind::StructField)
+            });
+        }
 
         let discriminate =
             tuple_match::discrimination(context, &observe, &discriminate).unwrap_or(discriminate);
@@ -315,7 +361,78 @@ impl ClassifiedProbeEvidence {
                 discriminate: discriminate.clone(),
             },
         };
-        let evidence = evidence_summaries([&reach, &infect, &propagate, &observe, &discriminate]);
+        let mut evidence =
+            evidence_summaries([&reach, &infect, &propagate, &observe, &discriminate]);
+        // Disclose a refused related `assert_eq!` whenever the refusal can
+        // matter: the reveal is not fully established. One whose text calls
+        // the changed owner is preferred, since an unrelated refused
+        // assertion (`if flag { assert_eq!(1, 1) }`) could not observe the
+        // change even if it were credited.
+        let owner_name = context.owner_fn.map_or("", |owner| owner.name.as_str());
+        let assertion_refusal = (observe.summary == ASSERTION_CONTEXT_UNESTABLISHED
+            || discriminate.state != StageState::Yes)
+            .then(|| {
+                let mut first = None;
+                for (test, _) in &context.related_tests {
+                    for assertion in &test.assertions {
+                        let Some(refusal) = pin_syntax.equality_assertion_refusal(
+                            context.probe,
+                            test,
+                            assertion,
+                            context.index,
+                        ) else {
+                            continue;
+                        };
+                        let calls_owner = body_contains_owner_call(&assertion.text, owner_name);
+                        let note = AssertionRefusalNote {
+                            location: format!(
+                                "`assert_eq!` in {} at {}:{}",
+                                test.name,
+                                test.file.display(),
+                                assertion.line
+                            ),
+                            reason: refusal.describe(),
+                            calls_owner,
+                        };
+                        if calls_owner {
+                            return Some(note);
+                        }
+                        first.get_or_insert(note);
+                    }
+                }
+                first
+            })
+            .flatten();
+        if let Some(note) = &assertion_refusal {
+            evidence.push(format!(
+                "{ASSERTION_NOT_CREDITED_PREFIX}{}: {}",
+                note.location, note.reason
+            ));
+        }
+        let refusals_are_analyzer_limits = observe.summary == ASSERTION_CONTEXT_UNESTABLISHED && {
+            // Only tests that could have credited an oracle: a refused
+            // assertion in a name-only test cannot stand in for the missing
+            // oracle of a reach-bearing one.
+            let credits = oracle_crediting_relations(&context.related_tests);
+            let mut refusals = context
+                .related_tests
+                .iter()
+                .filter(|(_, reason)| credits(*reason))
+                .flat_map(|(test, _)| {
+                    test.assertions.iter().filter_map(|assertion| {
+                        pin_syntax.equality_assertion_refusal(
+                            context.probe,
+                            test,
+                            assertion,
+                            context.index,
+                        )
+                    })
+                });
+            refusals
+                .next()
+                .is_some_and(|first| first.is_analyzer_limit())
+                && refusals.all(|refusal| refusal.is_analyzer_limit())
+        };
 
         Self {
             ripr,
@@ -331,6 +448,8 @@ impl ClassifiedProbeEvidence {
             observe,
             discriminate,
             reach_ruled_out,
+            assertion_refusal,
+            refusals_are_analyzer_limits,
         }
     }
 
