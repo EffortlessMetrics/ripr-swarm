@@ -2159,11 +2159,11 @@ fn canonical_next_action_for_attempt(
         }
         _ => false,
     };
-    let root = if manifest.root.trim().is_empty() {
-        root_display.to_string()
-    } else {
-        manifest.root.clone()
-    };
+    // The subject root is the caller's bound root (#3999), never the
+    // manifest's recorded spelling: the before phase may have stored a
+    // working-directory-relative value ("." in fixtures), while the
+    // recorded restart/after commands bind the absolute root.
+    let root = root_display.to_string();
     let item = if seam.trim().is_empty() {
         id.to_string()
     } else {
@@ -4906,6 +4906,30 @@ mod tests {
                     ));
                 }
             }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn canonical_subject_root_uses_the_bound_root_not_the_manifest() -> Result<(), String> {
+        // The fixture manifest records "." (the before phase's spelling);
+        // the subject must name the caller's bound root (#3999), matching
+        // the recorded restart/after commands.
+        let manifest = canonical_test_manifest(RepairAttemptState::ReadyToFinish)?;
+        let view = canonical_test_view();
+        let canonical = canonical_next_action_for_attempt(
+            &manifest,
+            &view,
+            "finished_current",
+            "/repo/checkout",
+            "store/repair-attempt-01/attempt.json",
+            "",
+        )?;
+        if canonical.subject().root.as_str() != "/repo/checkout" {
+            return Err(format!(
+                "subject root must be the bound root, got {:?}",
+                canonical.subject().root
+            ));
         }
         Ok(())
     }
