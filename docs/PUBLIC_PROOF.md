@@ -37,7 +37,7 @@ The page is generated. A unit test that CI requires fails when the page no longe
 | Trust | Commands that exit 0 when pointed at a missing repository | 0 commands | <= 0 commands | meets the bar | -2 commands since c6ccf9d (was 2 commands) |
 | Trust | Hostile-repository journeys (odd file names, symlink loops, shallow clones, submodules) where ripr neither finds nor refuses cleanly | 0 journeys | <= 0 journeys | meets the bar | no earlier measurement |
 | Trust | Findings or seams whose own evidence contradicts itself | 0 findings | <= 0 findings | meets the bar | -1 finding since c6ccf9d (was 1 finding) |
-| Trust | Wrong verdicts on hand-checked changes from real repositories | **8.8%** | <= 5.0% | below the bar | first receipt (verdict corpus, upstream cases only; all 283 cases: 25.8%) |
+| Trust | Wrong verdicts on hand-checked changes from real repositories | **8.8%** | <= 5.0% | below the bar | first receipt (verdict corpus, upstream cases only; all 283 cases: 21.2%) |
 | Trust | Hand-checked edits the crate's tests fully catch that ripr still flags as a gap | **62.3%** | <= 5.0% | below the bar | no earlier measurement |
 | Trust | Hand-checked edits where ripr gives no specific verdict | **28.6%** | <= 20.0% | below the bar | no earlier measurement |
 | Trust | Hand-checked edits the crate's tests miss that ripr reports as fine (counterweight to abstaining less) | 0.0% | <= 0.0% | meets the bar | no earlier measurement |
@@ -80,8 +80,8 @@ Not measured, and why:
 
 Each line below is computed from the receipts above. Detail sections follow.
 
-- **Wrong gaps.** On changes from real repositories ripr reported a gap on 3 of 20 whose tests caught every listed mutant (15.0%): `regex-syntax-max-scalar-two-byte`, `semver-op-greater-eq`, `strsim-sorensen-dice-equal`. On the authored cases, which were written to fill empty corpus cells, it did so on 62 of 124 (50.0%).
-- **Mostly unsure.** On real-repository changes it abstained on 24 of 34 cases (70.6%); on the authored cases, 57 of 249 (22.9%). Abstaining is the safe failure, but each abstention is a change ripr gave the developer no help on.
+- **Wrong gaps.** On changes from real repositories ripr reported a gap on 3 of 20 whose tests caught every listed mutant (15.0%): `regex-syntax-max-scalar-two-byte`, `semver-op-greater-eq`, `strsim-sorensen-dice-equal`. On the authored cases, which were written to fill empty corpus cells, it did so on 50 of 124 (40.3%).
+- **Mostly unsure.** On real-repository changes it abstained on 24 of 34 cases (70.6%); on the authored cases, 66 of 249 (26.5%). Abstaining is the safe failure, but each abstention is a change ripr gave the developer no help on.
 - **Real mutants disagree with "no test would notice".** Of 23 mutants on seams ripr called ungripped, real mutation testing caught 22 that ripr said nothing would catch; ripr agreed on 1. The 12 recorded examples are all in: semver.
 - **Thin ground truth.** Only 37 of 1745 mutants (2.1%) enter an agreement rate. 174 join a ripr seam precisely, and 137 of those still do not enter a rate.
 - **Cold `ripr pilot` to first useful result.** Worst repository: ripr-swarm at 77.6 s; the bar is at most 30.0 s.
@@ -146,12 +146,12 @@ Only the upstream cases come from real repositories. The authored cases were wri
 
 | Rate | All cases | Upstream (real repositories) | Authored |
 | --- | --- | --- | --- |
-| False verdicts (all cases) | 73/283 (25.8%) | 3/34 (8.8%) | 70/249 (28.1%) |
-| False actionable (of discriminated) | 65/144 (45.1%) | 3/20 (15.0%) | 62/124 (50.0%) |
-| False exposed (of not fully discriminated) | 8/139 (5.8%) | 0/14 (0.0%) | 8/125 (6.4%) |
+| False verdicts (all cases) | 60/283 (21.2%) | 3/34 (8.8%) | 57/249 (22.9%) |
+| False actionable (of discriminated) | 53/144 (36.8%) | 3/20 (15.0%) | 50/124 (40.3%) |
+| False exposed (of not fully discriminated) | 7/139 (5.0%) | 0/14 (0.0%) | 7/125 (5.6%) |
 | False silent (of not fully discriminated) | 0/139 (0.0%) | 0/14 (0.0%) | 0/125 (0.0%) |
-| Ideal verdict | 129/283 (45.6%) | 7/34 (20.6%) | 122/249 (49.0%) |
-| Abstained (limited or silent where acceptable) | 81/283 (28.6%) | 24/34 (70.6%) | 57/249 (22.9%) |
+| Ideal verdict | 133/283 (47.0%) | 7/34 (20.6%) | 126/249 (50.6%) |
+| Abstained (limited or silent where acceptable) | 90/283 (31.8%) | 24/34 (70.6%) | 66/249 (26.5%) |
 | Findings with a contradiction | 2/363 (0.5%) | not split by origin | not split by origin |
 
 | Case | Origin | Truth | Ideal | Observed | Static classes | Outcome | Contradictions |
@@ -201,7 +201,7 @@ Only the upstream cases come from real repositories. The authored cases were wri
 | `checkout-rate-same-method-other-type` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | none |
 | `checkout-record-discarded-result` | authored | discriminated | credited | limited | static_unknown | abstained | none |
 | `checkout-refund-matches-variant` | authored | discriminated | credited | gap | exposed, weakly_exposed | false_actionable | none |
-| `checkout-region-literal-match-helper` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | none |
+| `checkout-region-literal-match-helper` | authored | discriminated | credited | limited | weakly_exposed | abstained | none |
 | `checkout-review-split-boundary-tests` | authored | not_discriminated | gap | gap | exposed, weakly_exposed | ideal | none |
 | `checkout-tax-self-computed-expected` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | none |
 | `checkout-withdraw-guarded-match-pin` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | none |
@@ -217,7 +217,7 @@ Only the upstream cases come from real repositories. The authored cases were wri
 | `grid-arith-helper` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | none |
 | `grid-arith-none` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | none |
 | `grid-arith-property` | authored | partially_discriminated | gap | gap | weakly_exposed | ideal | none |
-| `grid-arith-table` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | none |
+| `grid-arith-table` | authored | discriminated | credited | credited | exposed | ideal | none |
 | `grid-bool-exact` | authored | discriminated | credited | limited | infection_unknown, propagation_unknown | abstained | none |
 | `grid-bool-helper` | authored | discriminated | credited | gap | propagation_unknown, weakly_exposed | false_actionable | none |
 | `grid-bool-none` | authored | not_discriminated | gap | limited | infection_unknown, propagation_unknown | abstained | none |
@@ -227,7 +227,7 @@ Only the upstream cases come from real repositories. The authored cases were wri
 | `grid-boundary-helper` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | none |
 | `grid-boundary-none` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | none |
 | `grid-boundary-property` | authored | partially_discriminated | gap | gap | exposed, weakly_exposed | ideal | none |
-| `grid-boundary-table` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | none |
+| `grid-boundary-table` | authored | discriminated | credited | gap | exposed, weakly_exposed | false_actionable | none |
 | `grid-delete-exact` | authored | discriminated | credited | limited | static_unknown | abstained | none |
 | `grid-delete-helper` | authored | discriminated | credited | limited | static_unknown | abstained | none |
 | `grid-delete-none` | authored | partially_discriminated | gap | limited | static_unknown | abstained | none |
@@ -263,8 +263,8 @@ Only the upstream cases come from real repositories. The authored cases were wri
 | `grid-returns-helper` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | none |
 | `grid-returns-none` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | none |
 | `grid-returns-property` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | none |
-| `grid-returns-table` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | none |
-| `grid-try-exact` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | none |
+| `grid-returns-table` | authored | discriminated | credited | credited | exposed | ideal | none |
+| `grid-try-exact` | authored | discriminated | credited | credited | exposed | ideal | none |
 | `grid-try-helper` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | none |
 | `grid-try-none` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | none |
 | `grid-try-property` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | none |
@@ -277,7 +277,7 @@ Only the upstream cases come from real repositories. The authored cases were wri
 | `itoa-two-digit-tail` | upstream | not_discriminated | gap | limited | no_static_path | abstained | none |
 | `ledger-insufficient-available` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | none |
 | `ledger-receipt-remaining` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | none |
-| `ledger-receive-refresh-low-stock` | authored | not_discriminated | gap | credited | exposed | false_exposed | none |
+| `ledger-receive-refresh-low-stock` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | none |
 | `ledger-ship-exact-stock` | authored | not_discriminated | gap | limited | infection_unknown | abstained | none |
 | `ledger-ship-log-push` | authored | discriminated | credited | gap | exposed, weakly_exposed | false_actionable | none |
 | `ledger-shipped-total` | authored | partially_discriminated | gap | limited | static_unknown | abstained | none |
@@ -287,7 +287,7 @@ Only the upstream cases come from real repositories. The authored cases were wri
 | `ledger-stock-insert` | authored | discriminated | credited | gap | exposed, weakly_exposed | false_actionable | none |
 | `mined-allowlist-listed-row-ftp` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | none |
 | `mined-allowlisted-row-gopher` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | none |
-| `mined-blanket-trait-negative-zero` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | none |
+| `mined-blanket-trait-negative-zero` | authored | discriminated | credited | limited | weakly_exposed | abstained | none |
 | `mined-bool-property-read-u32` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | none |
 | `mined-debug-assert-after-index` | authored | not_discriminated | gap | limited | propagation_unknown | abstained | none |
 | `mined-debug-assert-only-oracle` | authored | discriminated | credited | limited | static_unknown | abstained | none |
@@ -301,7 +301,7 @@ Only the upstream cases come from real repositories. The authored cases were wri
 | `mined-roundtrip-symmetric-mask` | authored | not_discriminated | gap | limited | static_unknown | abstained | none |
 | `pricing-flat-shipping-fee` | authored | not_discriminated | gap | limited | static_unknown | abstained | none |
 | `pricing-free-shipping-boundary` | authored | partially_discriminated | gap | gap | exposed, weakly_exposed | ideal | none |
-| `pricing-gold-discount-rate` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | none |
+| `pricing-gold-discount-rate` | authored | discriminated | credited | limited | weakly_exposed | abstained | none |
 | `pricing-gold-threshold` | authored | discriminated | credited | credited | exposed | ideal | none |
 | `pricing-quote-total-field` | authored | partially_discriminated | gap | credited | exposed | false_exposed | none |
 | `pricing-tier-label-gold` | authored | discriminated | credited | credited | exposed | ideal | none |
@@ -328,7 +328,7 @@ Only the upstream cases come from real repositories. The authored cases were wri
 | `serde-format-u8-tens` | upstream | discriminated | credited | limited | infection_unknown | abstained | none |
 | `shop-cap-literal-only-expected` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | none |
 | `shop-cart-add-other-collection-observed` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | none |
-| `shop-discount-path-dependent-test` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | none |
+| `shop-discount-path-dependent-test` | authored | discriminated | credited | limited | weakly_exposed | abstained | none |
 | `shop-gate-let-bound-input` | authored | discriminated | credited | credited | exposed | ideal | none |
 | `shop-item-cents-trait-method` | authored | discriminated | credited | credited | exposed | ideal | none |
 | `shop-item-total-associated-vs-free` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | none |
@@ -368,7 +368,7 @@ Only the upstream cases come from real repositories. The authored cases were wri
 | `spec0227-check-variant-is-err` | authored | partially_discriminated | gap | gap | weakly_exposed | ideal | none |
 | `spec0227-check-variant-should-panic` | authored | partially_discriminated | gap | gap | weakly_exposed | ideal | none |
 | `spec0227-total-question-mark-earlier-err` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | none |
-| `spec0227-total-question-mark-is-err` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | none |
+| `spec0227-total-question-mark-is-err` | authored | discriminated | credited | credited | exposed | ideal | none |
 | `spec0227-total-question-mark-ok-input` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | none |
 | `spec0228-deref-mut-param-write` | authored | discriminated | credited | limited | static_unknown | abstained | none |
 | `spec0228-field-collection-push` | authored | discriminated | credited | credited | exposed | ideal | none |
@@ -387,18 +387,18 @@ Only the upstream cases come from real repositories. The authored cases were wri
 | `spot-window-clone-field-whole-equality` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | none |
 | `strsim-jaro-winkler-threshold-shift` | upstream | partially_discriminated | gap | limited | infection_unknown | abstained | none |
 | `strsim-sorensen-dice-equal` | upstream | discriminated | credited | gap | weakly_exposed | false_actionable | none |
-| `tokens-add-fee-integration-api` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | none |
+| `tokens-add-fee-integration-api` | authored | discriminated | credited | limited | weakly_exposed | abstained | none |
 | `tokens-base-six-hop-chain` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | none |
 | `tokens-byte-at-unsafe-fn` | authored | discriminated | credited | credited | exposed, static_unknown | ideal | none |
 | `tokens-ext-start-map-or-binding` | authored | partially_discriminated | gap | limited | infection_unknown | abstained | none |
 | `tokens-fits-binding-predicate` | authored | discriminated | credited | limited | infection_unknown | abstained | none |
-| `tokens-inner-bonus-test-macro-call` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | none |
-| `tokens-inner-rate-macro-reach` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | none |
+| `tokens-inner-bonus-test-macro-call` | authored | discriminated | credited | limited | weakly_exposed | abstained | none |
+| `tokens-inner-rate-macro-reach` | authored | discriminated | credited | limited | weakly_exposed | abstained | none |
 | `tokens-long-flag-strip-prefix` | authored | discriminated | credited | credited | exposed, infection_unknown | ideal | none |
 | `tokens-normalize-helper-chain` | authored | partially_discriminated | gap | limited | propagation_unknown | abstained | none |
-| `tokens-recursive-label-arm` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | none |
+| `tokens-recursive-label-arm` | authored | discriminated | credited | limited | weakly_exposed | abstained | none |
 | `tokens-scanner-state-arm` | authored | discriminated | credited | credited | exposed | ideal | none |
-| `tokens-word-start-helper` | authored | partially_discriminated | gap | gap | weakly_exposed | ideal | none |
+| `tokens-word-start-helper` | authored | partially_discriminated | gap | limited | weakly_exposed | abstained | none |
 | `trap-area-sibling-not-called` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | none |
 | `trap-bonus-stale-clone` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | none |
 | `trap-boost-detached-thread` | authored | not_discriminated | gap | gap | reachable_unrevealed | ideal | none |
