@@ -221,9 +221,11 @@ position rules as the witness (#5527):
      recursion, mutual recursion or self alias re-enters it.
    - The test reaches the owner through a direct, import-alias or namespace
      call, and its assertion admission is `recognized`.
-   - Outside every test body (with its imports dropped), the test file never
-     names the owner, its aliases or its namespaces, and it loads no module
-     dynamically.
+   - Outside every test body (with its imports dropped), the test file holds
+     only inert lines: `describe('name', () => {` openers, their closers and
+     comments. A hook, helper, global getter or loader there refuses,
+     whatever its spelling. It has no side-effect import (`import './setup'`)
+     and no `import x = require(...)`.
    - The file imports only the owner's names, owner-module namespaces,
      the owner module's own `const` integers and test frameworks. An
      UPPER_CASE import from any other module refuses, since it may be a

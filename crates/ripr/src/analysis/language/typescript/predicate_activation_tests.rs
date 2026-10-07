@@ -833,6 +833,96 @@ fn non_literal_call_or_matcher_argument_is_unresolved_not_missed() -> Result<(),
     Ok(())
 }
 
+/// Review (#5527): a side-effect import runs a module the row cannot see,
+/// and an unterminated one must not swallow the semicolon-free helper after
+/// it; an `import x = require(...)` loads a module the same way.
+#[test]
+fn side_effect_or_require_import_is_unresolved_not_missed() -> Result<(), String> {
+    let cases = [
+        (
+            "side effect without semicolon",
+            format!(
+                "{IMPORT_DISCOUNT}\nimport './setup'\nconst discounted = (n: number) => applyDiscount(n)\n"
+            ),
+        ),
+        (
+            "side effect",
+            format!("{IMPORT_DISCOUNT}\nimport \"./setup\";\n"),
+        ),
+        (
+            "import require",
+            format!("{IMPORT_DISCOUNT}\nimport fs = require('fs');\n"),
+        ),
+    ];
+    for (name, imports) in cases {
+        let source = one_test(name, &imports, "  expect(applyDiscount(150)).toBe(135);");
+        let evaluated = evaluate(&DISCOUNT, &source, true)?;
+        assert_eq!(evaluated.row(name)?.1, R::DirectOwnerCall, "{name}");
+        assert_eq!(evaluated.activation(name)?, A::Unresolved, "{name}");
+    }
+    Ok(())
+}
+
+/// Review (#5527): code outside the test bodies can load the owner module
+/// and call the owner by a computed key without spelling its name or a
+/// loader the scan knows, so any non-inert statement there refuses. Inside
+/// the body, `_` is no integer and a ternary branch is no object key.
+#[test]
+fn computed_owner_access_outside_the_body_is_unresolved_not_missed() -> Result<(), String> {
+    let observed = "  expect(applyDiscount(150)).toBe(135);";
+    let getter = |name: &str| {
+        format!(
+            "{IMPORT_DISCOUNT}\nObject.defineProperty(globalThis, '{name}', {{ get: () => require ('../src/pricing')['apply' + 'Discount'](100) }});\n"
+        )
+    };
+    let cases = [
+        (
+            "spaced require",
+            format!(
+                "{IMPORT_DISCOUNT}\nbeforeEach(() => {{\n  const m = require ('../src/pricing');\n  m['apply' + 'Discount'](100);\n}});\n"
+            ),
+            observed.to_string(),
+        ),
+        (
+            "framework loader",
+            format!(
+                "{IMPORT_DISCOUNT}\nimport {{ vi }} from 'vitest';\nbeforeEach(async () => {{\n  const m: any = await vi.importActual('../src/pricing');\n  m['apply' + 'Discount'](100);\n}});\n"
+            ),
+            observed.to_string(),
+        ),
+        (
+            "underscore global argument",
+            getter("_"),
+            "  expect(applyDiscount(150, _)).toBe(135);".to_string(),
+        ),
+        (
+            "ternary branch matcher",
+            getter("Q"),
+            "  expect(applyDiscount(150)).toBe(true ? Q : 135);".to_string(),
+        ),
+    ];
+    for (name, imports, body) in cases {
+        let source = one_test(name, &imports, &body);
+        let evaluated = evaluate(&DISCOUNT, &source, true)?;
+        assert_eq!(evaluated.row(name)?.1, R::DirectOwnerCall, "{name}");
+        assert_eq!(evaluated.activation(name)?, A::Unresolved, "{name}");
+    }
+    Ok(())
+}
+
+/// The inert-residue rule still admits a miss inside a `describe` wrapper
+/// with comments around it.
+#[test]
+fn describe_wrapper_and_comments_keep_a_closed_miss() -> Result<(), String> {
+    let source = format!(
+        "{IMPORT_DISCOUNT}\n// pricing tests\n/* off-boundary only */\ndescribe('pricing', () => {{\n  test('wrapped', () => {{\n    expect(applyDiscount(150)).toBe(135);\n  }});\n}});\n"
+    );
+    let evaluated = evaluate(&DISCOUNT, &source, true)?;
+    assert_eq!(evaluated.row("pricing wrapped")?.1, R::DirectOwnerCall);
+    assert_eq!(evaluated.activation("pricing wrapped")?, A::MissedBoundary);
+    Ok(())
+}
+
 /// Review (#5527): an owner reached again through another function (mutual
 /// recursion) can carry an off-boundary input to the boundary.
 #[test]

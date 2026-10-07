@@ -900,23 +900,69 @@ fn test_file_names_owner_only_in_test_bodies(
         source = source.replace(body, "");
     }
     let mut in_import = false;
-    let outside: String = source
-        .lines()
-        .filter(|line| {
-            let trimmed = line.trim_start();
-            if in_import || trimmed.starts_with("import ") || trimmed.starts_with("import{") {
-                in_import = !(trimmed.contains(" from ") || trimmed.ends_with(';'));
+    let mut outside_lines = Vec::new();
+    for line in source.lines() {
+        let trimmed = line.trim_start();
+        let starts_import = trimmed.starts_with("import ") || trimmed.starts_with("import{");
+        if starts_import {
+            let after = trimmed["import".len()..].trim_start();
+            // A side-effect import runs a module this row cannot see, and an
+            // `import x = require(...)` loads one; neither is a named import
+            // the import check above accounted for.
+            if after.starts_with(['\'', '"']) || trimmed.contains("require(") {
                 return false;
             }
-            true
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
+        }
+        if in_import || starts_import {
+            in_import = !(trimmed.contains(" from ") || trimmed.ends_with(';'));
+            continue;
+        }
+        outside_lines.push(line);
+    }
+    // Whatever remains must be inert: `describe` wrappers, their closers
+    // and comments. Any other statement (a hook, a helper, a loader under
+    // any spelling, a global getter) may feed the owner an input by a path
+    // no name scan can see, so it refuses.
+    if !outside_lines.iter().all(|line| is_inert_outside_line(line)) {
+        return false;
+    }
+    let outside = outside_lines.join("\n");
     !outside.contains("require(")
         && !outside.contains("import(")
         && names
             .iter()
             .all(|name| word_occurrences(&outside, name) == 0)
+}
+
+/// `true` for a test-file line, outside every test body and import, that
+/// cannot run code: blank, a `;`, a `describe('name', () => {` opener, a
+/// `})`/`});` closer, or a comment line.
+fn is_inert_outside_line(line: &str) -> bool {
+    let trimmed = line.trim();
+    if trimmed.is_empty() || trimmed == ";" || matches!(trimmed, "})" | "});" | "}" | "};") {
+        return true;
+    }
+    if trimmed.starts_with("//") {
+        return true;
+    }
+    if trimmed.starts_with("/*") || trimmed.starts_with('*') {
+        // A comment line; text after a closing `*/` would be code.
+        return match trimmed.find("*/") {
+            Some(end) => end + 2 == trimmed.len(),
+            None => true,
+        };
+    }
+    let Some(rest) = trimmed.strip_prefix("describe(") else {
+        return false;
+    };
+    let Some(quote) = rest.chars().next().filter(|ch| matches!(ch, '\'' | '"')) else {
+        return false;
+    };
+    let Some(name_end) = rest[1..].find(quote) else {
+        return false;
+    };
+    let tail = rest[1 + name_end + 1..].trim();
+    matches!(tail, ", () => {" | ", function () {" | ", function() {")
 }
 
 /// The test body's `const` integer constant names when the body is closed:
@@ -1087,7 +1133,8 @@ fn is_bare_identifier(text: &str) -> bool {
 
 /// A plain decimal integer literal token (`100`, `1_000`).
 fn integer_literal_text(text: &str) -> bool {
-    !text.is_empty() && text.chars().all(|ch| ch.is_ascii_digit() || ch == '_')
+    text.starts_with(|ch: char| ch.is_ascii_digit())
+        && text.chars().all(|ch| ch.is_ascii_digit() || ch == '_')
 }
 
 /// `true` when `text` is exactly one owner call: a call name or an
@@ -1192,9 +1239,10 @@ fn is_literal_argument_text(text: &str, body_constants: &[String]) -> bool {
             let word: String = chars[start..index].iter().collect();
             let next = chars[index..].iter().find(|ch| !ch.is_whitespace());
             let literal_word = matches!(word.as_str(), "true" | "false" | "null" | "undefined");
-            let object_key = next == Some(&':');
-            let body_constant = body_constants.contains(&word);
             let previous = chars[..start].iter().rev().find(|ch| !ch.is_whitespace());
+            // A key sits right after `{` or `,`; `c ? Q : d` is a read of `Q`.
+            let object_key = next == Some(&':') && matches!(previous, Some('{') | Some(','));
+            let body_constant = body_constants.contains(&word);
             if previous == Some(&'.') || !(literal_word || object_key || body_constant) {
                 return false;
             }
