@@ -3933,6 +3933,63 @@ fn a_whole_value_field_pin_needs_derived_equality_and_the_returned_literal() {
     assert!(whole_value_pin(CONFIG_LIB, "build", tests).1.is_some());
 }
 
+/// #7066 review: the owner's file must name the workspace `Config` (a
+/// `use external::Config;` makes the literal another crate's type), a
+/// once-used binding must come before the assertion that reads it, and a
+/// pointer, `'static` or cast type is not a computed value item.
+#[test]
+fn whole_value_review_holes_stay_closed() {
+    let literal = r#"Config { retries: 4, name: "x".into(), count: Count(3) }"#;
+    let tests =
+        format!("use demo::*;\n#[test]\nfn pins() {{\n    assert_eq!(build(3), {literal});\n}}\n");
+    let foreign_import = CONFIG_LIB.replace(
+        "pub fn build(n: u32) -> Config {\n    Config {\n        retries: n + 1,\n        name: \"x\".into(),\n        count: Count(n),\n    }\n}\n",
+        "pub mod remote {\n    use external::{Config, Count};\n\n    pub fn build(n: u32) -> Config {\n    Config {\n        retries: n + 1,\n        name: \"x\".into(),\n        count: Count(n),\n    }\n}\n}\n",
+    );
+    assert_ne!(foreign_import, CONFIG_LIB, "fixture must move the owner");
+    assert!(
+        whole_value_pin(&foreign_import, "build", &tests)
+            .1
+            .is_none()
+    );
+    // Fixture control: the same module importing the workspace type pins.
+    let workspace_import = foreign_import.replace(
+        "use external::{Config, Count};",
+        "use crate::{Config, Count};",
+    );
+    assert!(
+        whole_value_pin(&workspace_import, "build", &tests)
+            .1
+            .is_some()
+    );
+
+    // A binding after the assertion is not the value the assertion reads.
+    assert!(!whole_value_admits(
+        CONFIG_LIB,
+        "build",
+        &format!("assert_eq!(current, {literal});\nlet current = build(3);")
+    ));
+    assert!(whole_value_admits(
+        CONFIG_LIB,
+        "build",
+        &format!("let current = build(3);\nassert_eq!(current, {literal});")
+    ));
+
+    // `*const Count`, `&'static Count` and a cast name the type, not a
+    // CamelCase value item; an import rename still does.
+    let typed = format!(
+        "{CONFIG_LIB}pub fn addr(p: *const Count) -> usize {{\n    p as usize\n}}\n\npub static ZERO: &'static Count = &Count(0);\n\npub fn widen(n: u8) -> u32 {{\n    n as Count\n}}\n"
+    );
+    assert!(whole_value_admits(
+        &typed,
+        "build",
+        &format!("assert_eq!(build(3), {literal});")
+    ));
+    let renamed = format!("{CONFIG_LIB}use crate::build as Count;\n");
+    let index = index(&[(LIB, &renamed)]);
+    assert!(camel_case_value_items(&index).contains("Count"));
+}
+
 /// #6974: the assertions a `weight` pin admits when `lib` (the crate root,
 /// holding the owner and a `#[cfg(test)] mod tests`) and `tests` (an
 /// integration test) are the workspace.

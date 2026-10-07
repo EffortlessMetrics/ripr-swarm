@@ -1318,6 +1318,12 @@ impl OwnerReturnPin {
         if !declared_matches || !field_compares_with_derived_equality(&type_name, field, index) {
             return None;
         }
+        // The owner's file must name the workspace declaration: a `use
+        // other::Config;` there makes the literal another crate's type.
+        let owner_source = &index.files().get(&owner.file)?.source;
+        if declaring_file_rebinds(owner_source, &type_name, true, index) {
+            return None;
+        }
         let field_is_string = derived_equality(&type_name, index).is_some_and(|(facts, _)| {
             facts.fields.iter().any(|candidate| {
                 candidate.name.as_deref() == Some(field) && candidate.ty == "String"
@@ -1855,7 +1861,11 @@ fn bound_owner_call<'a>(
         return None;
     }
     let masked = mask_comments_and_strings(&test.body);
-    if whole_word_offsets(&masked, name).len() != 2 || bound_by_macro(&masked, name) {
+    let uses = whole_word_offsets(&masked, name);
+    let [first_use, _] = uses[..] else {
+        return None;
+    };
+    if bound_by_macro(&masked, name) {
         return None;
     }
     let mut bindings = whole_word_offsets(&masked, "let")
@@ -1868,7 +1878,13 @@ fn bound_owner_call<'a>(
             if before.matches('{').count() != before.matches('}').count() + 1 {
                 return None;
             }
-            let rest = masked[start + 3..].trim_start().strip_prefix(name)?;
+            // The binding is the name's first occurrence, so the
+            // assertion's use comes after it, not before a shadowing `let`.
+            let named = masked[start + 3..].trim_start();
+            if masked.len() - named.len() != first_use {
+                return None;
+            }
+            let rest = named.strip_prefix(name)?;
             if rest.starts_with(|ch: char| ch.is_ascii_alphanumeric() || ch == '_') {
                 return None;
             }
@@ -2711,6 +2727,18 @@ fn camel_case_value_items(index: &RustIndex) -> BTreeSet<String> {
         let masked = mask_comments_and_strings(&facts.source);
         for keyword in ["const", "static", "fn", "as"] {
             for start in whole_word_offsets(&masked, keyword) {
+                // `*const T`, `&'static T` and a cast's `as T` name a type,
+                // not a value item; only an import's `as` renames.
+                let before = masked[..start].trim_end();
+                let names_type = match keyword {
+                    "const" => before.ends_with('*'),
+                    "static" => before.ends_with('\''),
+                    "as" => !in_import_item(&masked, start),
+                    _ => false,
+                };
+                if names_type {
+                    continue;
+                }
                 let rest = masked[start + keyword.len()..].trim_start();
                 let rest = rest.strip_prefix("mut ").map_or(rest, str::trim_start);
                 let name: String = rest
@@ -2726,6 +2754,33 @@ fn camel_case_value_items(index: &RustIndex) -> BTreeSet<String> {
         }
     }
     names
+}
+
+/// Whether the `as` at `offset` of `masked` sits in a `use` or `extern
+/// crate` item: the item's keyword follows the previous `;` (or the file
+/// start), and only path tokens (`a::{b, c::*}`, earlier renames) lie
+/// between it and the `as`. A cast's operand has other tokens (`(`, `.`,
+/// `=`) or no import keyword at all.
+fn in_import_item(masked: &str, offset: usize) -> bool {
+    let statement_start = masked[..offset].rfind(';').map_or(0, |index| index + 1);
+    let statement = &masked[statement_start..offset];
+    let Some(keyword_end) = ["use", "crate"]
+        .iter()
+        .filter_map(|keyword| {
+            whole_word_offsets(statement, keyword)
+                .last()
+                .map(|start| start + keyword.len())
+        })
+        .max()
+    else {
+        return false;
+    };
+    // Raw (`r#async`) and non-ASCII identifiers are path tokens too.
+    statement[keyword_end..].chars().all(|ch| {
+        ch.is_alphanumeric()
+            || ch.is_whitespace()
+            || matches!(ch, '_' | '#' | ':' | '{' | '}' | ',' | '*')
+    })
 }
 
 /// A path that names a variant or a struct: its last segment is CamelCase
