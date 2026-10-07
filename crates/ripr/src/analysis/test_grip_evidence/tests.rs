@@ -2675,10 +2675,15 @@ fn shared_grips_keep_each_path_spelling() -> Result<(), String> {
     let plain = context.share_grip(grip("tests/f.rs"));
     let dotted = context.share_grip(grip("tests/./f.rs"));
     let again = context.share_grip(grip("tests/f.rs"));
+    let dotted_again = context.share_grip(grip("tests/./f.rs"));
     assert_eq!(*plain, *dotted, "fixture spellings must compare equal");
     assert!(!std::sync::Arc::ptr_eq(&plain, &dotted));
     assert_eq!(dotted.file.as_os_str(), "tests/./f.rs");
     assert!(std::sync::Arc::ptr_eq(&plain, &again));
+    assert!(
+        std::sync::Arc::ptr_eq(&dotted, &dotted_again),
+        "a second spelling must be shared too"
+    );
     Ok(())
 }
 

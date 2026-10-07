@@ -6,47 +6,63 @@
 //! production and the sharded cache loader both intern through this type.
 
 use super::RelatedTestGrip;
-use std::collections::HashSet;
+use std::collections::HashMap;
 use std::sync::Arc;
 
 #[derive(Debug, Default)]
 pub(crate) struct SharedGrips {
-    records: HashSet<Arc<RelatedTestGrip>>,
+    /// Keyed by the first spelling seen; the value holds records that are
+    /// equal but spelled differently (`tests/./a.rs`), normally none.
+    records: HashMap<Arc<RelatedTestGrip>, Vec<Arc<RelatedTestGrip>>>,
 }
 
 impl SharedGrips {
     /// The shared copy of `grip`: an equal record already handed out, or
     /// `grip` itself, now shared.
     pub(crate) fn share(&mut self, grip: RelatedTestGrip) -> Arc<RelatedTestGrip> {
-        match self.records.get(&grip) {
-            Some(existing) if same_path_spelling(existing, &grip) => Arc::clone(existing),
-            Some(_) => Arc::new(grip),
-            None => {
-                let grip = Arc::new(grip);
-                self.records.insert(Arc::clone(&grip));
-                grip
-            }
+        if let Some(existing) = self.find(&grip) {
+            return existing;
         }
+        let grip = Arc::new(grip);
+        self.remember(&grip);
+        grip
     }
 
     /// Like [`Self::share`] for a record that is already shared elsewhere,
     /// such as one decoded from a cache shard.
     pub(crate) fn share_arc(&mut self, grip: &Arc<RelatedTestGrip>) -> Arc<RelatedTestGrip> {
-        match self.records.get(grip.as_ref()) {
-            Some(existing) if same_path_spelling(existing, grip) => Arc::clone(existing),
-            Some(_) => Arc::clone(grip),
-            None => {
-                self.records.insert(Arc::clone(grip));
-                Arc::clone(grip)
-            }
+        if let Some(existing) = self.find(grip) {
+            return existing;
         }
+        self.remember(grip);
+        Arc::clone(grip)
     }
 
     /// Forget records no seam holds any more, so a streamed review does not
     /// keep the tests of windows its consumer already discarded. Records a
     /// retained seam still holds stay shared.
     pub(crate) fn release_unheld(&mut self) {
-        self.records.retain(|grip| Arc::strong_count(grip) > 1);
+        self.records.retain(|first, others| {
+            others.retain(|grip| Arc::strong_count(grip) > 1);
+            Arc::strong_count(first) > 1 || !others.is_empty()
+        });
+    }
+
+    fn find(&self, grip: &RelatedTestGrip) -> Option<Arc<RelatedTestGrip>> {
+        let (first, others) = self.records.get_key_value(grip)?;
+        std::iter::once(first)
+            .chain(others)
+            .find(|shared| same_path_spelling(shared, grip))
+            .cloned()
+    }
+
+    fn remember(&mut self, grip: &Arc<RelatedTestGrip>) {
+        match self.records.get_mut(grip.as_ref()) {
+            Some(others) => others.push(Arc::clone(grip)),
+            None => {
+                self.records.insert(Arc::clone(grip), Vec::new());
+            }
+        }
     }
 }
 
