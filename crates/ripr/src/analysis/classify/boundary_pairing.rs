@@ -356,13 +356,31 @@ fn argument_list_activates_boundary(
     let left_index = parameter_index(&parameters, &left);
     let right_index = parameter_index(&parameters, &right);
     if let (Some(left_index), Some(right_index)) = (left_index, right_index) {
-        return values_overlap(
-            arg_values.get(left_index).map(Vec::as_slice).unwrap_or(&[]),
-            arg_values
-                .get(right_index)
-                .map(Vec::as_slice)
-                .unwrap_or(&[]),
-        );
+        let left_values = arg_values.get(left_index).map(Vec::as_slice).unwrap_or(&[]);
+        let right_values = arg_values
+            .get(right_index)
+            .map(Vec::as_slice)
+            .unwrap_or(&[]);
+        // Two constant-row table columns (#5328) meet only within one row:
+        // `[(100, 99), (99, 100)]` holds 100 in each column but never runs
+        // the call with both.
+        let table_column = |index: usize| {
+            arguments.get(index).is_some_and(|argument| {
+                crate::analysis::syntax::constant_table_column(&test.body, argument.trim())
+                    .is_some()
+            })
+        };
+        if left_values.len() > 1
+            && right_values.len() > 1
+            && (table_column(left_index) || table_column(right_index))
+        {
+            return left_values.len() == right_values.len()
+                && left_values
+                    .iter()
+                    .zip(right_values)
+                    .any(|(left, right)| left == right);
+        }
+        return values_overlap(left_values, right_values);
     }
     if let Some(left_index) = left_index {
         let right_literals = extract_literals(&right);

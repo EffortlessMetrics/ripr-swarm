@@ -1576,7 +1576,8 @@ pub(crate) fn constant_table_column(fn_text: &str, name: &str) -> Option<Vec<Str
     // `{ assert_eq!(gate(cents), 99); break; }` runs the first row alone,
     // and `if let Some(want) = want { assert_eq!(gate(cents), want) }` skips
     // the `None` rows. Tokens, so control flow inside a macro counts too; a
-    // `|` may open a closure that never runs.
+    // `|` may open a closure that never runs, and `&&` or `||` may skip the
+    // call on its right.
     let body = table.loop_body()?;
     if body
         .syntax()
@@ -1585,7 +1586,17 @@ pub(crate) fn constant_table_column(fn_text: &str, name: &str) -> Option<Vec<Str
         .any(|token| {
             matches!(
                 token.text(),
-                "break" | "continue" | "return" | "if" | "match" | "while" | "loop" | "for" | "|"
+                "break"
+                    | "continue"
+                    | "return"
+                    | "if"
+                    | "match"
+                    | "while"
+                    | "loop"
+                    | "for"
+                    | "|"
+                    | "||"
+                    | "&&"
             )
         })
     {

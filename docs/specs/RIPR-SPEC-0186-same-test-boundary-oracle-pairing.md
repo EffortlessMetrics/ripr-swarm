@@ -103,10 +103,11 @@ tuple of that arity, and every cell of the column must be one whole numeric or
 boolean literal (a string, char, constructor or call yields nothing);
 otherwise the column yields nothing. A `break`, `continue` or `return`
 anywhere in the loop body voids the column, since a row after it may never
-reach the call; so does an `if`, `match`, `while`, `loop`, nested `for` or
-`|` (a closure) anywhere in the body, since it can run the call for some rows
-alone (`if let Some(want) = want { .. }`), and so does any macro argument that names the column beside
-`|`, `let`, `for`, `fn` or `=>`, since the parser cannot see a rebinding there.
+reach the call; so does an `if`, `match`, `while`, `loop`, nested `for`,
+`|` (a closure), `&&` or `||` anywhere in the body, since it can run the call
+for some rows alone (`if let Some(want) = want { .. }`), and so does any macro
+argument that names the column beside `|`, `let`, `for`, `fn` or `=>`, since
+the parser cannot see a rebinding there.
 Cells of one row stay together: a call with two table-bound arguments is one
 input row per table row, so `[(100, 99, ..), (99, 100, ..)]` never feeds
 `amount == threshold`. A literal or `let`-bound argument holds for every row

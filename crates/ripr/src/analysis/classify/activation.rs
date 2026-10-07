@@ -4823,6 +4823,8 @@ assert_eq!(input.amount, 100);"#
             // A row-dependent branch skips the assertion for some rows.
             "fn table() {\n    for (cents, want) in [(4_999, None), (5_000, Some(true))] {\n        if let Some(want) = want {\n            assert_eq!(score(cents, 7), want);\n        }\n    }\n}",
             "fn table() {\n    for (cents, want) in [(4_999, false), (5_000, true)] {\n        match cents {\n            5_000 => assert_eq!(score(cents, 7), want),\n            _ => {}\n        }\n    }\n}",
+            // A short-circuit skips the call for some rows.
+            "fn table() {\n    for cents in [4_999, 5_000] {\n        let _ = cents != 5_000 && score(cents, 7);\n    }\n}",
             // A closure inside the macro rebinds the name the parser cannot see.
             "fn table() {\n    for (cents, want) in [(4_999, false), (5_000, true)] {\n        assert_eq!([1].map(|cents| score(cents, 7)), [want]);\n    }\n}",
         ] {

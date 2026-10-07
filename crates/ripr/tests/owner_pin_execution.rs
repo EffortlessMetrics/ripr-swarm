@@ -2592,6 +2592,13 @@ fn constant_row_table_pairs_each_row_with_its_boundary_input() -> Result<(), Str
             format!("for (amount, threshold, want) in [(100, 99, 90), (99, 100, 99)] {{\n{pinned}\n}}"),
             false,
         ),
+        // An unasserted call meets the boundary, and the asserted table
+        // never does: the columns must not meet as unordered sets.
+        (
+            "unasserted_boundary_call_beside_a_table",
+            format!("let _ = discounted_total(100, 100);\nfor (amount, threshold, want) in [(100, 99, 90), (99, 100, 99)] {{\n{pinned}\n}}"),
+            false,
+        ),
     ] {
         let scratch = Scratch::create()?;
         let source = format!("{prefix}    #[test]\n    fn checks() {{\n{body}\n    }}\n}}\n");
