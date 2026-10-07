@@ -59,8 +59,12 @@ const MAX_BINDING_DEPTH: usize = 3;
 const READ_ONLY_METHODS: &[&str] = &[
     "as_ref",
     "as_slice",
+    "abs",
+    "as_bytes",
     "as_str",
     "binary_search",
+    "checked_add",
+    "checked_sub",
     "clone",
     "cloned",
     "cmp",
@@ -79,12 +83,21 @@ const READ_ONLY_METHODS: &[&str] = &[
     "keys",
     "last",
     "len",
+    "map",
+    "max",
+    "min",
     "partial_cmp",
     "range",
+    "saturating_add",
+    "saturating_sub",
     "starts_with",
     "to_owned",
     "to_string",
     "to_vec",
+    "trim",
+    "unwrap_or",
+    "unwrap_or_default",
+    "unwrap_or_else",
     "values",
 ];
 
@@ -107,6 +120,36 @@ const WRITE_ONLY_METHODS: &[&str] = &[
 /// Shared-ownership handles whose value may alias the object's state.
 const SHARED_HANDLES: &[&str] = &["Arc", "Rc", "Weak"];
 
+/// Collection methods that change only the collection they are called on.
+const COLLECTION_MUTATORS: &[&str] = &[
+    "append",
+    "clear",
+    "dedup",
+    "drain",
+    "entry",
+    "extend",
+    "insert",
+    "pop",
+    "pop_back",
+    "pop_front",
+    "push",
+    "push_back",
+    "push_front",
+    "push_str",
+    "remove",
+    "reserve",
+    "resize",
+    "retain",
+    "reverse",
+    "shrink_to_fit",
+    "sort",
+    "sort_by",
+    "sort_by_key",
+    "sort_unstable",
+    "swap_remove",
+    "truncate",
+];
+
 /// std modules whose functions reach state outside the object.
 const STD_EFFECT_MODULES: &[&str] = &["env", "fs", "io", "net", "process", "sync", "thread"];
 
@@ -119,6 +162,8 @@ const OPAQUE_STATE_MARKERS: &[&str] = &[
     "AtomicU64",
     "AtomicUsize",
     "Cell",
+    "borrow",
+    "get_mut",
     "Mutex",
     "RefCell",
     "RwLock",
@@ -256,9 +301,9 @@ struct FieldUse {
 /// `scan_field_use` over a function's body. An inline format capture of the
 /// receiver (`format!("{self:?}")`) sits in a masked string, so it is read
 /// from the raw text and counts as a bare `self` (#7046 review).
-fn function_field_use(function: &FunctionSummary, self_ty: &str) -> Option<FieldUse> {
+fn function_field_use(function: &FunctionSummary) -> Option<FieldUse> {
     let (_, body) = split_signature(function)?;
-    let mut uses = scan_field_use(&body, self_ty);
+    let mut uses = scan_field_use(&body);
     if inline_format_captures(&function.body)
         .iter()
         .any(|capture| capture == "self")
@@ -284,7 +329,7 @@ fn assignment_at(tokens: &[Tok], index: usize) -> bool {
     }
 }
 
-fn scan_field_use(body: &[Tok], self_ty: &str) -> FieldUse {
+fn scan_field_use(body: &[Tok]) -> FieldUse {
     let mut uses = FieldUse::default();
     for (index, token) in body.iter().enumerate() {
         let Tok::Ident(name) = token else { continue };
@@ -306,12 +351,13 @@ fn scan_field_use(body: &[Tok], self_ty: &str) -> FieldUse {
             && punct(body, index - 1, ':')
             && punct(body, index + 1, '(')
             && name.starts_with(|c: char| c.is_lowercase() || c == '_')
-            && !path_root(body, index)
-                .is_some_and(|root| root == "Self" || root == self_ty || STD_ROOTS.contains(&root))
+            && !path_root(body, index).is_some_and(|root| STD_ROOTS.contains(&root))
         {
             // A path-qualified function (`Audit::record(..)`,
             // `crate::audit::record(..)`) can reach global state like a free
-            // call; only the self type and std roots stay bounded.
+            // call. An associated function of the self type
+            // (`Self::record()`) is not traversed, so it counts too (#7046
+            // review); only std roots stay bounded.
             uses.opaque = true;
         }
         if index > 0
@@ -394,6 +440,12 @@ fn scan_self_access(body: &[Tok], index: usize, uses: &mut FieldUse) {
         && punct(body, cursor + 2, '(')
     {
         let read_only = READ_ONLY_METHODS.contains(&method);
+        if !read_only && !COLLECTION_MUTATORS.contains(&method) {
+            // A field method outside the known in-object operations
+            // (`self.file.write_all(..)`, `self.sink.publish(..)`) may
+            // publish state outside the receiver (#7046 review).
+            uses.opaque = true;
+        }
         let statement = statement_start(body, index)
             && matching_close(body, cursor + 2).is_some_and(|close| punct(body, close + 1, ';'));
         // A discarded call reads the field unless it only stores into it
@@ -411,7 +463,6 @@ fn scan_self_access(body: &[Tok], index: usize, uses: &mut FieldUse) {
 
 /// Methods of the owner's self type, by name.
 struct SelfTypeMethods<'a> {
-    self_ty: &'a str,
     by_name: BTreeMap<&'a str, Vec<&'a FunctionSummary>>,
     /// Names also defined as a method on another type, in a trait, or in an
     /// unparsed file: a call by that name may not reach this type.
@@ -438,11 +489,7 @@ impl<'a> SelfTypeMethods<'a> {
                 contested.insert(function.name.as_str());
             }
         }
-        Self {
-            self_ty,
-            by_name,
-            contested,
-        }
+        Self { by_name, contested }
     }
 
     /// The one definition a `self.name(..)` call reaches, when established.
@@ -465,6 +512,10 @@ pub(in crate::analysis) struct EffectStateCarrier {
     reader_methods: BTreeSet<String>,
     /// Self-type methods, uncontested by name, that read no written field.
     non_reader_methods: BTreeSet<String>,
+    /// Fields any self-type method touches through `self.<field>`. A field
+    /// read on a test binding outside this set (`app.inventory`) may hold
+    /// the receiver itself.
+    self_fields: BTreeSet<String>,
     /// Every name defined as a method anywhere in the workspace.
     any_method: BTreeSet<String>,
     /// Reader methods other than the owner that take `&mut self`: a test
@@ -510,7 +561,7 @@ impl EffectStateCarrier {
         // The owner itself may read the written state after the call and
         // move it into a field a whole-object equality does compare
         // (`if self.low_stock.contains(..) { self.log.push(..) }`).
-        let owner_uses = function_field_use(owner, &self_ty)?;
+        let owner_uses = function_field_use(owner)?;
         if owner_uses.whole_self
             || owner_uses
                 .reads
@@ -523,6 +574,13 @@ impl EffectStateCarrier {
         {
             return None;
         }
+        let self_fields = methods
+            .by_name
+            .values()
+            .flatten()
+            .filter_map(|definition| function_field_use(definition))
+            .flat_map(|uses| uses.reads.into_iter().chain(uses.writes))
+            .collect();
         let non_reader_methods = methods
             .by_name
             .keys()
@@ -562,6 +620,7 @@ impl EffectStateCarrier {
             written_fields,
             reader_methods,
             non_reader_methods,
+            self_fields,
             any_method,
             mutating_readers,
         })
@@ -595,15 +654,23 @@ impl EffectStateCarrier {
         // A `&mut binding` argument hands the receiver to code this scan
         // does not follow (`restock(&mut inv)` calling `inv.reorder()`),
         // unless the call is a resolved non-reader of the self type.
+        // A `&mut` borrow anywhere (`let r = &mut inv;`, `vec![&mut inv]`)
+        // or a reassigned binding (`inv = restocked(inv);`) hands the
+        // receiver on the same way (#7046 review).
         let lends_mut = test_body.iter().enumerate().any(|(index, token)| {
             *token == Tok::Punct('&')
                 && ident(test_body, index + 1) == Some("mut")
                 && ident(test_body, index + 2).is_some()
-                && index > 0
-                && (punct(test_body, index - 1, '(') || punct(test_body, index - 1, ','))
                 && !self.lent_to_non_reader(test_body, index)
         });
+        let reassigns = test_body.iter().enumerate().any(|(index, token)| {
+            matches!(token, Tok::Ident(name) if !KEYWORDS.contains(&name.as_str()))
+                && statement_start(test_body, index)
+                && punct(test_body, index + 1, '=')
+                && !punct(test_body, index + 2, '=')
+        });
         lends_mut
+            || reassigns
             || test_body.iter().enumerate().any(|(index, token)| {
                 matches!(token, Tok::Ident(name) if self.mutating_readers.contains(name))
                     && index > 0
@@ -666,9 +733,15 @@ impl EffectStateCarrier {
             if punct(tokens, index + 1, '(')
                 && !KEYWORDS.contains(&name)
                 && name.starts_with(|c: char| c.is_lowercase() || c == '_')
-                && path_root(tokens, index).is_none_or(|root| {
-                    root.starts_with(char::is_lowercase) && !STD_ROOTS.contains(&root)
-                })
+                && match path_root(tokens, index) {
+                    Some(root) => {
+                        root.starts_with(char::is_lowercase) && !STD_ROOTS.contains(&root)
+                    }
+                    // A turbofish path (`Vec::<Event>::new()`) has no
+                    // resolvable root but is path-qualified, not a free call
+                    // (#7046 review).
+                    None => !(index >= 2 && punct(tokens, index - 1, ':')),
+                }
             {
                 // A free or module-path function result is not provably
                 // non-carrying: a fixture helper such as `setup()` returns
@@ -698,10 +771,13 @@ impl EffectStateCarrier {
                 continue;
             }
             if punct(tokens, index + 1, '.')
-                && ident(tokens, index + 2).is_some()
+                && ident(tokens, index + 2).is_some_and(|field| self.self_fields.contains(field))
                 && !punct(tokens, index + 3, '(')
             {
-                // A field read on the binding: decided at the field token.
+                // A field of the self type read on the binding: decided at
+                // the field token. Any other field (`app.inventory`) may hold
+                // the receiver, so the binding itself is resolved below
+                // (#7046 review).
                 continue;
             }
             if depth >= MAX_BINDING_DEPTH {
@@ -789,7 +865,7 @@ fn transitive_writes(
         if depth > MAX_DEPTH {
             return None;
         }
-        let uses = function_field_use(function, methods.self_ty)?;
+        let uses = function_field_use(function)?;
         if uses.whole_self || uses.opaque {
             return None;
         }
@@ -807,7 +883,7 @@ fn reader_methods(methods: &SelfTypeMethods<'_>, written: &BTreeSet<String>) -> 
     let mut direct = BTreeMap::new();
     for (name, definitions) in &methods.by_name {
         for definition in definitions {
-            let uses = function_field_use(definition, methods.self_ty);
+            let uses = function_field_use(definition);
             direct
                 .entry((*name).to_string())
                 .or_insert_with(Vec::new)

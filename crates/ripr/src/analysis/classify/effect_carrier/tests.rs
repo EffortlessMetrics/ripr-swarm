@@ -422,10 +422,24 @@ fn path_calls_and_ref_mut_patterns_keep_the_part_c_reading() {
             "`{added}` must keep the Part C reading"
         );
     }
-    // `Self`, the self type and std roots stay bounded.
+    // An associated function of the self type is not traversed and may
+    // publish state outside the receiver; a field method outside the known
+    // in-object operations may too (#7046 review).
     for added in [
         "let _ = Self::threshold_floor();",
         "let _ = Inventory::threshold_floor();",
+        "self.journal.write_all(sku.as_bytes()).ok();",
+        "self.sink.publish(sku);",
+    ] {
+        let source = variant(remove, &format!("{remove}\n            {added}"));
+        let idx = index(&[(LIB, &source)]);
+        assert!(
+            establish(&idx, "self.refresh_low_stock(sku)").is_none(),
+            "`{added}` must keep the Part C reading"
+        );
+    }
+    // std roots stay bounded.
+    for added in [
         "let _ = std::cmp::max(1, 2);",
         "let _ = u32::from(1u8);",
         "let _ = String::from(sku);",
@@ -532,10 +546,33 @@ fn escapes_found_in_review_keep_the_part_c_reading() {
         history
     ));
 
+    // A binding's field outside the self type may hold the receiver.
+    assert!(run(
+        LEDGER,
+        "let app = App { inventory: inv.clone() };",
+        "assert_eq!(app.inventory, Inventory::new(5));",
+    ));
+    // A turbofish constructor is a std path, not a fixture helper.
+    assert!(!run(
+        LEDGER,
+        "",
+        "assert_eq!(inv.history(), Vec::<Event>::new());",
+    ));
+
     // A shared handle may alias the object's state.
     assert!(run(
         LEDGER,
-        "let sink = Rc::new(inv.clone());",
-        "assert_eq!(sink, Rc::new(Inventory::new(5)));",
+        "let sink = Rc::new(Sink::default());",
+        "assert_eq!(*sink, Sink::default());",
     ));
+    // Lending the receiver without an argument position, or rebinding it.
+    assert!(run(LEDGER, "let r = &mut inv;\n    restock(r);", history));
+    assert!(run(LEDGER, "inv = restocked(inv);", history));
+    // A pure by-value std method on a local does not make the callee opaque.
+    let pure = variant(
+        "self.low_stock.remove(sku);",
+        "self.low_stock.remove(sku);\n            let _len = sku.trim().len();",
+    );
+    let idx = index(&[(LIB, &pure)]);
+    assert!(establish(&idx, "self.refresh_low_stock(sku);").is_some());
 }
