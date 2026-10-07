@@ -3872,7 +3872,11 @@ fn binding_type(
             .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
     {
         // `= Unit`: only a unit struct's own name is a value of that type.
-        if !unit_struct_value(initializer, &test.file, index) {
+        // `named_or_slice` refuses a lower-case name anyway; checking first
+        // skips the workspace scan for every local-variable receiver.
+        if !initializer.starts_with(|character: char| character.is_ascii_uppercase())
+            || !unit_struct_value(initializer, &test.file, index)
+        {
             return None;
         }
         return named_or_slice(
