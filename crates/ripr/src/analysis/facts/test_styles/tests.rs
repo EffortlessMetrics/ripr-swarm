@@ -1137,6 +1137,13 @@ fn one_walk_cfg_test_table_answers_like_each_prefix_walk() -> Result<(), Box<dyn
     // must mark them rather than guess.
     let table = cfg_test_module_lines(shapes[1]);
     assert_eq!(table[1], None, "premise: line 2 sits inside the attribute");
+    // Every other line starts a walk step, so the table answers it without
+    // the per-function prefix walk this table replaces.
+    let table = cfg_test_module_lines(shapes[0]);
+    assert!(
+        table.iter().all(Option::is_some),
+        "single-line steps must all be answered from the one walk: {table:?}"
+    );
 
     // An independent corpus: this crate's own small files with test modules.
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
