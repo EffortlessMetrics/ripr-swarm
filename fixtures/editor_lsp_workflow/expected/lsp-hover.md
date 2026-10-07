@@ -16,7 +16,6 @@ Kind: `predicate_boundary`
 ## Missing discriminator
 
 - `discount_threshold (equality boundary)`
-- `input that hits the boundary: amount >= discount_threshold`
 
 ## Related tests
 
@@ -27,7 +26,7 @@ Kind: `predicate_boundary`
 
 - File: `tests/pricing.rs`
 - Suggested name: `discounted_total_boundary_discriminator`
-- Assertion shape: `assert_eq!(discounted_total(/* boundary input where amount >= discount_threshold */), /* expected */)`
+- Assertion guidance: `assert_eq!(discounted_total(/* boundary input where amount >= discount_threshold */), /* expected */)`
 
 ## Handoff, verify, and receipt commands
 

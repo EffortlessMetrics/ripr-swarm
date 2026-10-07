@@ -7685,20 +7685,41 @@ fn boundary_gap_lsp_code_actions_match_fixture_expectation() -> Result<(), Strin
 
 /// #4001: these goldens were hand-kept and still showed `--root .` after
 /// production bound the workspace root; only their headings were checked.
+/// The backticked value of each bullet under `heading` in a Markdown page,
+/// in order, up to the next heading.
+fn hover_section_code<'a>(page: &'a str, heading: &str) -> Vec<&'a str> {
+    page.lines()
+        .skip_while(|line| *line != heading)
+        .skip(1)
+        .take_while(|line| !line.starts_with('#'))
+        .filter(|line| line.starts_with("- "))
+        .filter_map(|line| {
+            let open = line.find('`')?;
+            let close = line.rfind('`')?;
+            (close > open).then(|| &line[open + 1..close])
+        })
+        .collect()
+}
+
 #[test]
 fn editor_lsp_workflow_lsp_goldens_match_production() -> Result<(), String> {
     let (diagnostics, actions) = lsp_fixture_outputs("editor_lsp_workflow")?;
-    // The hand-written hover golden lists the same handoff, verify and
-    // receipt commands; each must be the one production emits.
+    // The hover golden is a hand-written workflow page, not hover.rs output.
+    // Every value it repeats from production is pinned: the handoff commands
+    // (exactly, in order), the missing discriminators and the suggested test
+    // shape from the targeted-test brief.
     let hover_path = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../fixtures/editor_lsp_workflow/expected/lsp-hover.md");
     let hover = std::fs::read_to_string(&hover_path)
         .map_err(|err| format!("failed to read {}: {err}", hover_path.display()))?;
-    let commands = actions["actions"]
+    let arguments = actions["actions"]
         .as_array()
         .into_iter()
         .flatten()
         .flat_map(|action| action["arguments"].as_array().into_iter().flatten())
+        .collect::<Vec<_>>();
+    let commands = arguments
+        .iter()
         .filter_map(|argument| argument["command"].as_str())
         .collect::<Vec<_>>();
     if commands.len() != 6 {
@@ -7706,13 +7727,51 @@ fn editor_lsp_workflow_lsp_goldens_match_production() -> Result<(), String> {
             "expected six agent-loop commands, got {commands:?}"
         ));
     }
-    for command in commands {
-        if !hover.contains(&format!("`{command}`")) {
-            return Err(format!(
-                "{} does not show production command `{command}`",
-                hover_path.display()
-            ));
-        }
+    let shown_commands = hover_section_code(&hover, "## Handoff, verify, and receipt commands");
+    if shown_commands != commands {
+        return Err(format!(
+            "{} handoff commands {shown_commands:?} differ from production {commands:?}",
+            hover_path.display()
+        ));
+    }
+    let brief = arguments
+        .iter()
+        .find_map(|argument| argument["brief"].as_str())
+        .ok_or("production code actions carry no targeted-test brief")?;
+    let brief_value = |label: &str| {
+        brief
+            .lines()
+            .filter_map(|line| line.strip_prefix(label))
+            .map(|value| {
+                value
+                    .split(" (observed")
+                    .next()
+                    .unwrap_or(value)
+                    .to_string()
+            })
+            .collect::<Vec<_>>()
+    };
+    let discriminators = brief_value("- Missing discriminator: ");
+    if discriminators.is_empty()
+        || hover_section_code(&hover, "## Missing discriminator") != discriminators
+    {
+        return Err(format!(
+            "{} missing discriminators differ from production {discriminators:?}",
+            hover_path.display()
+        ));
+    }
+    let shape = hover_section_code(&hover, "## Suggested test shape");
+    let expected_shape = [
+        brief_value("- Suggested file: "),
+        brief_value("- Suggested name: "),
+        brief_value("- Assertion guidance: "),
+    ]
+    .concat();
+    if expected_shape.len() != 3 || shape != expected_shape {
+        return Err(format!(
+            "{} suggested test shape {shape:?} differs from production {expected_shape:?}",
+            hover_path.display()
+        ));
     }
     assert_named_json_fixture("editor_lsp_workflow", "lsp-diagnostics.json", diagnostics)?;
     assert_named_json_fixture("editor_lsp_workflow", "lsp-code-actions.json", actions)
