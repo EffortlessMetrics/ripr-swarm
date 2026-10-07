@@ -1054,6 +1054,8 @@ fn expected_computed_through_owner(
             .any(|(ty, called)| called != owner && reaches_owner(ty.as_deref(), called))
     };
     match (text_calls(left, owner), text_calls(right, owner)) {
+        // Both sides run the owner, so equality holds whatever it returns.
+        (true, true) => true,
         (true, false) => reaches(right),
         (false, true) => reaches(left),
         _ => false,
@@ -6978,6 +6980,12 @@ return Err(\"typed pin\".into());
             "assert_eq!(invoice(3, 100), 324, \"tax(sub)\");",
             "tax",
             &reaches
+        ));
+        // Both sides run the owner: the equality holds whatever it returns.
+        assert!(expected_computed_through_owner(
+            "assert_eq!(tax(250), tax(250));",
+            "tax",
+            &|_: Option<&str>, _: &str| false
         ));
         // Inequality is never strong in the first place.
         assert!(!expected_computed_through_owner(

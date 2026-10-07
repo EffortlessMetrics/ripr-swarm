@@ -1922,6 +1922,19 @@ pub(crate) fn function_parameters(function: &FunctionSummary) -> Vec<String> {
         .lines()
         .next()
         .unwrap_or(function.body.as_str());
+    parameters_in_signature(signature)
+}
+
+/// Parameter names of `function` read from its whole signature, so a
+/// parameter list formatted across several lines is still seen. The
+/// signature ends at the body's first `{` (#6970 review).
+pub(crate) fn signature_parameters(function: &FunctionSummary) -> Vec<String> {
+    let body = function.body.as_str();
+    let signature = body.find('{').map_or(body, |open| &body[..open]);
+    parameters_in_signature(signature)
+}
+
+fn parameters_in_signature(signature: &str) -> Vec<String> {
     let Some(arguments) = delimited_contents_after(signature, '(') else {
         return Vec::new();
     };

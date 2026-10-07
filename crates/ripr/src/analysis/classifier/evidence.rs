@@ -3,10 +3,10 @@ use crate::analysis::classify::{
     OwnerReturnPin, ProbeContext, PropagationWitnessV1, ReturnOracleAdmission,
     TransitiveReachIndex, activation_and_boundary_input, body_contains_owner_call,
     callee_is_unique, classify, confidence_score, contains_as_whole_word, current_path_witness,
-    function_parameters, has_same_test_boundary_oracle_pairing,
-    infection_evidence_with_boundary_input, local_flow_sinks, oracle_crediting_relations,
-    owner_may_be_reached_unseen, package_prefix, propagation_evidence_with_witness, reach_evidence,
-    reveal_outcome, same_test_pairing_missing_summary,
+    has_same_test_boundary_oracle_pairing, infection_evidence_with_boundary_input,
+    local_flow_sinks, oracle_crediting_relations, owner_may_be_reached_unseen, package_prefix,
+    propagation_evidence_with_witness, reach_evidence, reveal_outcome,
+    same_test_pairing_missing_summary, signature_parameters,
 };
 use crate::analysis::facts::{FunctionSummary, OracleFact, TestSummary};
 use crate::domain::*;
@@ -574,7 +574,7 @@ fn owner_local_binding_names(owner: &FunctionSummary) -> Vec<String> {
 
 /// Names the owner's signature binds as parameters, without `mut` or `ref`.
 fn owner_parameter_names(owner: &FunctionSummary) -> Vec<String> {
-    let mut names = function_parameters(owner)
+    let mut names = signature_parameters(owner)
         .into_iter()
         .map(|name| {
             name.trim_start_matches("ref ")
@@ -657,7 +657,10 @@ fn call_names_function(
         callee_type.is_some()
             && crate::analysis::classify::impl_self_type_name(&caller.id.0) == callee_type
     };
-    call_name_prefixes(&call.text, &call.name).any(|prefix| {
+    // Call facts keep the raw source line; a name inside a comment or
+    // string on that line is not a call (#6970 review).
+    let text = crate::analysis::extract::mask_comments_and_strings(&call.text);
+    call_name_prefixes(&text, &call.name).any(|prefix| {
         if let Some(receiver) = prefix.strip_suffix('.') {
             return receiver_is_self(receiver) && same_impl();
         }
@@ -1177,6 +1180,41 @@ mod tests {
             ["pathed", "reference"],
             "a free owner is reached by a bare or crate-path call, never by a \
              method call or a type-qualified call of the same name"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn caller_walk_ignores_owner_names_in_comments_and_strings_on_the_call_line()
+    -> Result<(), String> {
+        let source = "pub struct Stack { items: Vec<u32> }\n\
+            impl Stack { pub fn len(&self) -> usize { self.items.len() } }\n\
+            pub fn count_items(values: &[u32]) -> usize { values.len() } // Stack::len()\n\
+            pub fn labelled(values: &[u32]) -> (usize, &'static str) { (values.len(), \"Stack::len()\") }\n\
+            pub fn typed(stack: &Stack) -> usize { Stack::len(stack) }\n";
+        assert_eq!(
+            caller_names_for(source, "Stack::len")?,
+            ["typed"],
+            "a `Stack::len()` inside a comment or string on the line of an \
+             unrelated `values.len()` call does not reach the owner"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn owner_parameters_are_read_from_a_multiline_signature() -> Result<(), String> {
+        use crate::analysis::rust_index::{RaRustSyntaxAdapter, RustSyntaxAdapter};
+        let source = "pub fn tax(\n    subtotal: i64,\n    mut rate: i64,\n) -> i64 {\n    rate += 0;\n    subtotal * rate / 100\n}\n";
+        let facts = RaRustSyntaxAdapter.summarize_file(&PathBuf::from("src/lib.rs"), source)?;
+        let owner = facts
+            .functions
+            .iter()
+            .find(|function| function.name == "tax")
+            .ok_or("tax indexed")?;
+        assert_eq!(
+            super::owner_parameter_names(owner),
+            ["rate", "subtotal"],
+            "parameters on lines after `fn tax(` are owner-scoped tokens"
         );
         Ok(())
     }
