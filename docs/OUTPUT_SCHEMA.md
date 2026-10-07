@@ -15639,11 +15639,15 @@ from the committed diff against the base, not from uncommitted edits.
 `top_recommendation_in_change` is also `null` when no seam is ranked.
 `withheld_seams_in_change` counts the analyzed seams on changed lines that
 pilot withholds as static limitations (`opaque` or an `*_unknown` class),
-counted before the pilot seam budget drops them. When
+counted before the pilot seam budget drops them, so it can exceed
+`withheld_static_limitations_total`, which counts the seams left after the
+budget; a changed seam the budget dropped is not in `repo-exposure.json` until
+`RIPR_PILOT_SEAM_BUDGET` is raised. When
 `top_recommendation_in_change` is `false`, the terminal and Markdown say why no
 seam on the change ranks (pilot withholds them, they are already gripped,
 intentional or suppressed, the seam limit left seams unanalyzed, or no seam
-pilot analyzed is on a changed line), say the
+pilot analyzed is on a changed line; a reason drawn from analyzed seams adds the seam-limit
+caveat when the inventory limit left seams unanalyzed), say the
 recommendation is elsewhere in the repo and name `ripr check --root <root>` for
 the change itself, adding `--worktree` when the diff came from the working tree
 (plain `ripr check` reads committed history only). The partial (timeout) summary carries no `current_change`.

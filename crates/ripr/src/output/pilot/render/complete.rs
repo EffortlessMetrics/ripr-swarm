@@ -828,51 +828,77 @@ impl CurrentChangeLabel {
         }
     }
 
+    /// Where a count of seams sits: "a line changed since X" for one,
+    /// "lines changed since X" for several.
+    fn changed_lines(base: Option<&String>, code: bool, count: usize) -> String {
+        if count == 1 {
+            return Self::changed_line(base, code);
+        }
+        match base {
+            Some(base) if code => format!("lines changed since `{base}`"),
+            Some(base) => format!("lines changed since {base}"),
+            None => "lines your current change touches".to_string(),
+        }
+    }
+
     /// Why no seam on the change ranks (#5309). A change whose seams pilot
     /// withholds, or whose seams a seam limit left unanalyzed, must not read
     /// as a change with no seams.
-    fn why_elsewhere(seams: ChangeSeams, changed_line: &str) -> String {
+    fn why_elsewhere(seams: ChangeSeams, base: Option<&String>, code: bool) -> String {
         let ChangeSeams {
             touched,
             withheld,
             unanalyzed,
         } = seams;
-        let on_change = |count: usize| match count {
-            1 => format!("the seam on {changed_line}"),
-            _ => format!("the {count} seams on {changed_line}"),
-        };
-        if withheld > 0 {
-            let which = if withheld == touched {
-                on_change(touched)
-            } else {
-                format!("{withheld} of {}", on_change(touched))
+        let lines = |count| Self::changed_lines(base, code, count);
+        // Seams past the inventory limit were never classified, so a reason
+        // drawn from the analyzed seams alone must say it may not be all.
+        let unseen = unanalyzed.map(|(analyzed, total)| {
+            format!(
+                "the seam limit left {} of {total} seams unanalyzed, so the change may have seams pilot did not see",
+                total.saturating_sub(analyzed)
+            )
+        });
+        let gripped = touched.saturating_sub(withheld);
+        let mut reason = if withheld > 0 {
+            let which = match (withheld, touched) {
+                (1, 1) => format!("the analyzed seam on {}", lines(1)),
+                (w, t) if w == t => format!("the {t} analyzed seams on {}", lines(t)),
+                (w, t) => format!("{w} of the {t} analyzed seams on {}", lines(t)),
             };
             let what = if withheld == 1 {
                 "its static evidence is unknown or opaque, so it is a static limitation, not a gap"
             } else {
                 "their static evidence is unknown or opaque, so they are static limitations, not gaps"
             };
-            return format!("Pilot withholds {which}: {what}.");
-        }
-        if touched > 0 {
-            let (have, are) = if touched == 1 {
-                ("has", "it is")
-            } else {
-                ("have", "they are")
+            let rest = match gripped {
+                0 => String::new(),
+                1 => "; the other is already gripped, intentional or suppressed".to_string(),
+                _ => "; the others are already gripped, intentional or suppressed".to_string(),
             };
-            let mut subject = on_change(touched);
-            subject.replace_range(..1, "T");
-            return format!(
-                "{subject} {have} no gap to rank: {are} already gripped, intentional or suppressed."
-            );
+            format!("Pilot withholds {which}: {what}{rest}")
+        } else if touched > 0 {
+            match touched {
+                1 => format!(
+                    "The analyzed seam on {} has no gap to rank: it is already gripped, intentional or suppressed",
+                    lines(1)
+                ),
+                t => format!(
+                    "The {t} analyzed seams on {} have no gap to rank: they are already gripped, intentional or suppressed",
+                    lines(t)
+                ),
+            }
+        } else if unseen.is_some() {
+            format!("No analyzed seam is on {}", lines(1))
+        } else {
+            return format!("No seam pilot analyzed is on {}.", lines(1));
+        };
+        if let Some(unseen) = unseen {
+            reason.push_str(", but ");
+            reason.push_str(&unseen);
         }
-        match unanalyzed {
-            Some((analyzed, total)) => format!(
-                "No analyzed seam is on {changed_line}, but the seam limit left {} of {total} seams unanalyzed, so the change may have seams pilot did not see.",
-                total.saturating_sub(analyzed)
-            ),
-            None => format!("No seam pilot analyzed is on {changed_line}."),
-        }
+        reason.push('.');
+        reason
     }
 
     fn terminal(&self) -> String {
@@ -883,7 +909,7 @@ impl CurrentChangeLabel {
             ),
             Self::Elsewhere { base, check, seams } => format!(
                 "not part of it. {} This recommendation is elsewhere in the repo. For the change itself, run: {check}",
-                Self::why_elsewhere(*seams, &Self::changed_line(base.as_ref(), false))
+                Self::why_elsewhere(*seams, base.as_ref(), false)
             ),
         }
     }
@@ -896,7 +922,7 @@ impl CurrentChangeLabel {
             ),
             Self::Elsewhere { base, check, seams } => format!(
                 "not part of it. {} This recommendation is elsewhere in the repo. For the change itself, run `{check}`.",
-                Self::why_elsewhere(*seams, &Self::changed_line(base.as_ref(), true))
+                Self::why_elsewhere(*seams, base.as_ref(), true)
             ),
         }
     }

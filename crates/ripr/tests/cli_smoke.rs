@@ -14670,6 +14670,67 @@ fn pilot_honors_ripr_git_timeout_for_the_current_change() -> Result<(), String> 
 /// recommendation must not read as the next step for that change when it is
 /// a repo-wide seam elsewhere. Drives the real binary through the default
 /// base resolution and both diff routes (uncommitted and committed).
+/// #5309: a change whose only seam pilot withholds must not read as a
+/// change with no seams. With the pilot seam budget at one, the withheld
+/// changed seam is cut from the ranked artifacts, so this also proves the
+/// change's seams are counted before the cut.
+#[test]
+fn pilot_says_it_withholds_the_seam_on_the_current_change() -> Result<(), String> {
+    let lib = "pub fn checkout(total: u32) -> u32 {\n    tier(total) * 10\n}\n\nfn tier(total: u32) -> u32 {\n    if total > 100 { 2 } else { 1 }\n}\n";
+    let root = pilot_language_fixture_repo(
+        "pilot-withheld-current-change",
+        &[
+            (
+                "Cargo.toml",
+                "[package]\nname = \"shop\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+            ),
+            ("src/lib.rs", lib),
+            (
+                "tests/checkout.rs",
+                "#[test]\nfn checkout_large_order() {\n    assert_eq!(shop::checkout(150), 20);\n}\n",
+            ),
+        ],
+        ("src/lib.rs", &lib.replace("total > 100", "total >= 100")),
+    )?;
+    let out_dir = unique_temp_workspace("pilot-withheld-current-change-out");
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_ripr"))
+        .args(["pilot", "--root"])
+        .arg(&root)
+        .arg("--out")
+        .arg(&out_dir)
+        .env("RIPR_PILOT_SEAM_BUDGET", "1")
+        .output()
+        .map_err(|err| format!("run ripr pilot: {err}"))?;
+    assert_success(&output);
+    let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+    let summary: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(out_dir.join("pilot-summary.json"))
+            .map_err(|err| format!("read pilot summary json: {err}"))?,
+    )
+    .map_err(|err| format!("parse pilot summary json: {err}"))?;
+    // Precondition: the budget cut the withheld seam from the ranked
+    // artifacts, so only a count taken before the cut can see it.
+    assert_eq!(summary["withheld_static_limitations_total"], 0, "{summary}");
+    assert_eq!(summary["current_change"]["state"], "changed", "{summary}");
+    assert_eq!(
+        summary["current_change"]["withheld_seams_in_change"], 1,
+        "{summary}"
+    );
+    assert_eq!(
+        summary["current_change"]["top_recommendation_in_change"], false,
+        "{summary}"
+    );
+    assert!(
+        stdout.contains(
+            "current change: not part of it. Pilot withholds the analyzed seam on a line changed since origin/main: its static evidence is unknown or opaque"
+        ),
+        "{stdout}"
+    );
+    ignore_remove_dir_all(&root);
+    ignore_remove_dir_all(&out_dir);
+    Ok(())
+}
+
 #[test]
 fn pilot_ranks_and_labels_seams_in_the_current_change() -> Result<(), String> {
     let lib = "pub fn discounted(amount: u32) -> u32 {\n    if amount > 100 { amount - 10 } else { amount }\n}\n\npub fn is_digit(byte: u8) -> bool {\n    byte >= b'0' && byte <= b'9'\n}\n";

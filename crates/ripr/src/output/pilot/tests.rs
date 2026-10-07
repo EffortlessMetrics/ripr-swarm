@@ -2166,6 +2166,11 @@ fn pilot_says_why_no_seam_on_the_change_ranks() -> Result<(), String> {
         total: 10_000,
         source: crate::analysis::SeamLimitSource::Default,
     };
+    let full = crate::analysis::SeamLimitInfo {
+        analyzed: 3,
+        total: 3,
+        source: crate::analysis::SeamLimitSource::Default,
+    };
     let render = |inventory: &[ClassifiedSeam],
                   limit: Option<&crate::analysis::SeamLimitInfo>|
      -> Result<(String, String, serde_json::Value), String> {
@@ -2186,33 +2191,72 @@ fn pilot_says_why_no_seam_on_the_change_ranks() -> Result<(), String> {
         ))
     };
     let elsewhere = "This recommendation is elsewhere in the repo. For the change itself, run";
+    let opaque = || on_change(SeamGripClass::Opaque);
+    let unknown = || on_change(SeamGripClass::ActivationUnknown);
+    let gripped = || on_change(SeamGripClass::StronglyGripped);
+    let unseen = "the seam limit left 8000 of 10000 seams unanalyzed, so the change may have seams pilot did not see";
     for (inventory, limit, reason, withheld) in [
         (
-            vec![ranked.clone(), on_change(SeamGripClass::Opaque)],
+            vec![ranked.clone(), opaque()],
             None,
-            "Pilot withholds the seam on a line changed since origin/main: its static evidence is unknown or opaque, so it is a static limitation, not a gap.",
+            "Pilot withholds the analyzed seam on a line changed since origin/main: its static evidence is unknown or opaque, so it is a static limitation, not a gap.".to_string(),
             1,
         ),
         (
-            vec![
-                ranked.clone(),
-                on_change(SeamGripClass::ActivationUnknown),
-                on_change(SeamGripClass::StronglyGripped),
-            ],
+            vec![ranked.clone(), opaque(), unknown()],
             None,
-            "Pilot withholds 1 of the 2 seams on a line changed since origin/main: its static evidence is unknown or opaque, so it is a static limitation, not a gap.",
+            "Pilot withholds the 2 analyzed seams on lines changed since origin/main: their static evidence is unknown or opaque, so they are static limitations, not gaps.".to_string(),
+            2,
+        ),
+        (
+            vec![ranked.clone(), unknown(), gripped()],
+            None,
+            "Pilot withholds 1 of the 2 analyzed seams on lines changed since origin/main: its static evidence is unknown or opaque, so it is a static limitation, not a gap; the other is already gripped, intentional or suppressed.".to_string(),
             1,
         ),
         (
-            vec![ranked.clone(), on_change(SeamGripClass::StronglyGripped)],
+            vec![ranked.clone(), opaque(), unknown(), gripped(), gripped()],
             None,
-            "The seam on a line changed since origin/main has no gap to rank: it is already gripped, intentional or suppressed.",
+            "Pilot withholds 2 of the 4 analyzed seams on lines changed since origin/main: their static evidence is unknown or opaque, so they are static limitations, not gaps; the others are already gripped, intentional or suppressed.".to_string(),
+            2,
+        ),
+        (
+            vec![ranked.clone(), gripped()],
+            None,
+            "The analyzed seam on a line changed since origin/main has no gap to rank: it is already gripped, intentional or suppressed.".to_string(),
+            0,
+        ),
+        (
+            vec![ranked.clone(), gripped(), gripped()],
+            None,
+            "The 2 analyzed seams on lines changed since origin/main have no gap to rank: they are already gripped, intentional or suppressed.".to_string(),
+            0,
+        ),
+        // Past the inventory limit, a reason drawn from analyzed seams says
+        // it may not be all of them.
+        (
+            vec![ranked.clone(), opaque()],
+            Some(&limit),
+            format!("Pilot withholds the analyzed seam on a line changed since origin/main: its static evidence is unknown or opaque, so it is a static limitation, not a gap, but {unseen}."),
+            1,
+        ),
+        (
+            vec![ranked.clone(), gripped()],
+            Some(&limit),
+            format!("The analyzed seam on a line changed since origin/main has no gap to rank: it is already gripped, intentional or suppressed, but {unseen}."),
             0,
         ),
         (
             vec![ranked.clone()],
             Some(&limit),
-            "No analyzed seam is on a line changed since origin/main, but the seam limit left 8000 of 10000 seams unanalyzed, so the change may have seams pilot did not see.",
+            format!("No analyzed seam is on a line changed since origin/main, but {unseen}."),
+            0,
+        ),
+        // A limit that analyzed every seam is no limit.
+        (
+            vec![ranked.clone()],
+            Some(&full),
+            "No seam pilot analyzed is on a line changed since origin/main.".to_string(),
             0,
         ),
     ] {
@@ -2223,7 +2267,7 @@ fn pilot_says_why_no_seam_on_the_change_ranks() -> Result<(), String> {
             )),
             "{terminal}"
         );
-        let md_reason = reason.replace("origin/main", "`origin/main`");
+        let md_reason = reason.replace("since origin/main", "since `origin/main`");
         assert!(
             md.contains(&format!(
                 "- Current change: not part of it. {md_reason} {elsewhere}"
