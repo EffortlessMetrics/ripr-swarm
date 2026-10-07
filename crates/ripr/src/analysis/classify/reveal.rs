@@ -8,7 +8,7 @@ use super::propagation_witness::{
 };
 use super::reach::{invokes_opaque_macro, is_proximity_only};
 use super::rust_string_literals;
-use super::text::exact_error_variant;
+use super::text::changed_error_variant;
 use crate::analysis::classifier::oracle_binds_sink_identity;
 use crate::domain::*;
 
@@ -555,7 +555,7 @@ fn analyze_related_assertions(
         || (matches!(
             probe.family,
             ProbeFamily::ErrorPath | ProbeFamily::ReturnValue
-        ) && exact_error_variant(&probe.expression).is_some());
+        ) && changed_error_variant(&probe.expression).is_some());
 
     for (test, reason) in related_tests {
         let relation_reason = Some(*reason);
@@ -6421,6 +6421,10 @@ return Err(\"typed pin\".into());
                 ProbeFamily::ReturnValue,
                 "return Err::<i64, PayError>(PayError::Limit);",
             ),
+            (
+                ProbeFamily::ErrorPath,
+                "let v = amount.checked_mul(2).ok_or(PayError::Limit)?;",
+            ),
         ] {
             let probe = probe(family, expression);
             let (_, beside, _) = reveal_evidence(
@@ -6448,7 +6452,55 @@ return Err(\"typed pin\".into());
                 "{expression}: {}",
                 alone.summary
             );
+
+            // A same-file test that may run the owner keeps confirming.
+            let (_, may_reach, _, _) = reveal_evidence_with_expression(
+                &probe,
+                &probe.expression,
+                &[
+                    (&reaching, RelationReason::DirectOwnerCall),
+                    (&other_owner, RelationReason::SameTestFile),
+                ],
+                &[],
+                &|_, _| false,
+                &|_, _| false,
+                &ReturnOracleAdmission {
+                    owner_return_pin: &|_, _| false,
+                    assertion_admitted: &|_, _| true,
+                    proximity_may_reach_owner: &|test| test.name == "a_large_refund_hits_the_limit",
+                    owner_parameters: &[],
+                    expected_reaches_owner: &|_, _| false,
+                },
+                None,
+            );
+            assert_eq!(
+                may_reach.state,
+                StageState::Yes,
+                "{expression}: {}",
+                may_reach.summary
+            );
         }
+
+        // A return value that names no error variant keeps the #4486
+        // same-file credit beside a reaching test.
+        let ok_probe = probe(ProbeFamily::ReturnValue, "return Ok(amount + 1);");
+        let same_file_ok = test_with_assertions(
+            "refund_adds_one",
+            vec![oracle(
+                "assert_eq!(refund(1), Ok(amount + 1));",
+                OracleKind::ExactValue,
+                OracleStrength::Strong,
+            )],
+        );
+        let (_, ok_beside, _) = reveal_evidence(
+            &ok_probe,
+            &[
+                (&reaching, RelationReason::DirectOwnerCall),
+                (&same_file_ok, RelationReason::SameTestFile),
+            ],
+        );
+        assert_ne!(ok_beside.summary, PROXIMITY_VARIANT_CONFIRMATION_WITHHELD);
+        assert_eq!(ok_beside.state, StageState::Yes, "{}", ok_beside.summary);
     }
 
     /// MatchArm: assertion containing the specific VARIANT token confirms the arm.
