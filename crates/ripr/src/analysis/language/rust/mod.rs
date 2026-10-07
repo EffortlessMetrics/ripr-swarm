@@ -275,9 +275,9 @@ fn selection_with_open_files(selected: &[PathBuf], open: &BTreeSet<PathBuf>) -> 
 /// reaches (#6965). rustc never compiles such a file, so its tests never
 /// run. A changed file is dropped when its own #4435 orphan check already
 /// proved it unreached; an unchanged one when the walk below does. A file
-/// that spells neither `test` nor the last segment of a configured harness
-/// marker cannot register one (`#[test]`, `#[tokio::test]`, `#[rstest]`,
-/// `proptest!`, a registered `#[myco::spec]`) and is kept.
+/// that spells neither `test` nor the last segment of a built-in test
+/// attribute or configured harness marker cannot register one (`#[test]`,
+/// `#[quickcheck]`, `proptest!`, a registered `#[myco::spec]`) and is kept.
 ///
 /// The module-tree walk parses every module of a package, so it runs only
 /// for suspects: test files whose module name no loaded file of their
@@ -296,13 +296,16 @@ fn drop_unreached_test_files(
     test_harnesses: &[crate::config::TestHarnessRegistration],
     loaded_files: Vec<(PathBuf, Vec<u8>)>,
 ) -> Vec<(PathBuf, Vec<u8>)> {
-    // A registered attribute such as `myco::spec` need not spell `test`
-    // (#6984 review), so its marker's last segment also marks a test file.
+    // `#[quickcheck]` or a registered `myco::spec` need not spell `test`
+    // (#6984 review), so every test-producing attribute's last segment also
+    // marks a test file.
     let mut needles = vec![b"test".as_slice()];
     needles.extend(
-        test_harnesses
+        crate::analysis::facts::BUILT_IN_TEST_ATTRIBUTE_PATHS
             .iter()
-            .filter_map(|harness| harness.marker.rsplit("::").next())
+            .copied()
+            .chain(test_harnesses.iter().map(|harness| harness.marker.as_str()))
+            .filter_map(|marker| marker.rsplit("::").next())
             .filter(|segment| !segment.is_empty())
             .map(str::as_bytes),
     );
@@ -6756,6 +6759,32 @@ fn absent_delimiter_boundary_returns_head() {
                 loaded.clone(),
             );
             assert_eq!(kept.len(), usize::from(opted_in), "opted_in={opted_in}");
+        }
+    }
+
+    #[test]
+    fn an_unreached_file_of_quickcheck_tests_drops() {
+        // #6984 review: `#[quickcheck]` is a built-in test attribute that
+        // never spells `test`. A file without any test attribute stays.
+        let file = PathBuf::from("src/props.rs");
+        let mut context = crate::analysis::workspace::SourceRoleContext::empty();
+        context.module_graph_orphans.insert(file.clone());
+        for (source, kept) in [
+            (
+                &b"#[quickcheck]\nfn holds(x: u32) -> bool { x == x }\n"[..],
+                0,
+            ),
+            (&b"#[inline]\nfn holds(x: u32) -> bool { x == x }\n"[..], 1),
+        ] {
+            let loaded = vec![(file.clone(), source.to_vec())];
+            let remaining = super::drop_unreached_test_files(
+                Path::new("."),
+                &context,
+                std::slice::from_ref(&file),
+                &[],
+                loaded,
+            );
+            assert_eq!(remaining.len(), kept);
         }
     }
 
