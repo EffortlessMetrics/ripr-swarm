@@ -185,7 +185,11 @@ fn run_subject(fixture: &Fixture, cache: &Path, args: &[&str]) -> Result<Run, St
             return Err(format!("{primary}; process cleanup also failed: {cleanup}"));
         }
         (Ok(status), Err(cleanup)) => {
-            return Err(format!("subject status {status}; cleanup failed: {cleanup}"));
+            let stdout = read_bounded(&stdout_path);
+            let stderr = read_bounded(&stderr_path);
+            return Err(format!(
+                "subject status {status}; cleanup failed: {cleanup}\nstdout: {stdout:?}\nstderr: {stderr:?}"
+            ));
         }
     };
     let stdout = read_bounded(&stdout_path)?;
