@@ -1,3 +1,4 @@
+use crate::analysis::syntax::ModuleItemScopes;
 use crate::domain::{OracleKind, OracleStrength, SymbolId};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
@@ -231,7 +232,17 @@ fn append_metadata_fingerprint(output: &mut String, path: &Path) {
 /// and the cache kept admitting a target that now resolves outside the root
 /// (#5478). The link target covers a symlink retargeted to another symlink
 /// where no file identity is available (Windows); ctime cannot be set by a
-/// user and changes when a freed inode number is reused.
+/// user and changes when a freed inode number is reused, or when the file is
+/// rewritten in place in a later timestamp tick (kernels before Linux 6.13
+/// advance ctime per jiffy, so a rewrite within the same tick still matches).
+///
+/// Windows limit (#6755): std exposes no stable change time or file id there,
+/// so a file rewritten in place with the same length and a restored mtime
+/// keeps its fingerprint until the next index build. Accepted: it needs a
+/// deliberate mtime forgery between indexing and admission, the file stays
+/// inside the root, and re-hashing on every check would put file reads back
+/// on the admission hot path. Revisit when `MetadataExt::change_time`
+/// stabilizes.
 fn append_entry_fingerprint(output: &mut String, path: &Path) {
     match std::fs::symlink_metadata(path) {
         Ok(metadata) => {
@@ -803,6 +814,11 @@ pub struct FileFacts {
     /// cache and bound by its semantic payload digest. Reference-counted so
     /// child [`SourceText`] spans share this allocation (#5415 step 2).
     pub source: Arc<str>,
+    /// The parser producer's module scopes of this file's functions, in the
+    /// compact form same-file helper crediting reads, so a warm index does
+    /// not reparse every test file (#5363). `None` from the lexical fallback
+    /// and from hand-built facts; crediting then parses `source` itself.
+    pub(crate) item_scopes: Option<Box<ModuleItemScopes>>,
 }
 
 impl FileFacts {
@@ -1311,6 +1327,11 @@ pub struct ProbeShapeFact {
     /// by the parser-backed summarizer; the lexical fallback emits no
     /// probe shapes at all, so this stays accurate.
     pub start_byte: usize,
+    /// Byte offset one past the shape's parser-owned end within the source
+    /// file. Unlike `text` (trimmed, `;`-stripped display snippet), this is
+    /// the verbatim syntax range end, so span consumers must derive geometry
+    /// from these bytes, never from `text.len()`.
+    pub end_byte: usize,
     pub kind: ProbeShapeKind,
     pub text: SourceText,
 }
@@ -1365,6 +1386,7 @@ pub(crate) struct ProbeShapeFactWire {
     pub start_line: usize,
     pub end_line: usize,
     pub start_byte: usize,
+    pub end_byte: usize,
     pub kind: ProbeShapeKind,
     pub text: WireText,
 }
@@ -1381,6 +1403,8 @@ pub(crate) struct FileFactsWire {
     pub module_declarations: Vec<ModuleDeclarationFact>,
     pub unresolved_property_macros: Vec<UnresolvedPropertyMacroFact>,
     pub source: String,
+    #[serde(default)]
+    pub(crate) item_scopes: Option<Box<ModuleItemScopes>>,
 }
 
 impl FunctionFactWire {
@@ -1481,6 +1505,7 @@ impl ProbeShapeFactWire {
             start_line: fact.start_line,
             end_line: fact.end_line,
             start_byte: fact.start_byte,
+            end_byte: fact.end_byte,
             kind: fact.kind,
             text: WireText::attached(&fact.text, parent),
         }
@@ -1493,6 +1518,7 @@ impl ProbeShapeFactWire {
             start_line: fact.start_line,
             end_line: fact.end_line,
             start_byte: fact.start_byte,
+            end_byte: fact.end_byte,
             kind: fact.kind,
             text: WireText::Inline {
                 text: fact.text.as_str().to_string(),
@@ -1526,6 +1552,7 @@ impl From<&FileFacts> for FileFactsWire {
             module_declarations: facts.module_declarations.clone(),
             unresolved_property_macros: facts.unresolved_property_macros.clone(),
             source: facts.source.to_string(),
+            item_scopes: facts.item_scopes.clone(),
         }
     }
 }
@@ -1577,6 +1604,7 @@ impl ProbeShapeFactWire {
             start_line: self.start_line,
             end_line: self.end_line,
             start_byte: self.start_byte,
+            end_byte: self.end_byte,
             kind: self.kind,
             text: link_wire_text(self.text, source, "probe shape text")?,
         })
@@ -1610,6 +1638,7 @@ impl FileFactsWire {
             unresolved_property_macros: self.unresolved_property_macros,
             role_provenance: SourceRoleProvenance::default(),
             source,
+            item_scopes: self.item_scopes,
         })
     }
 }
@@ -1799,12 +1828,14 @@ mod tests {
             start_line: 10,
             end_line: 12,
             start_byte: 256,
+            end_byte: 261,
             kind: ProbeShapeKind::Predicate,
             text: "x > 0".into(),
         };
         assert_eq!(shape.start_line, 10);
         assert_eq!(shape.end_line, 12);
         assert_eq!(shape.start_byte, 256);
+        assert_eq!(shape.end_byte, 261);
         assert_eq!(shape.kind, ProbeShapeKind::Predicate);
         assert_eq!(shape.text, "x > 0");
     }
@@ -1914,6 +1945,7 @@ mod tests {
                 start_line: 2,
                 end_line: 2,
                 start_byte: 27,
+                end_byte: 40,
                 kind: ProbeShapeKind::Predicate,
                 text: SourceText::shared_or_owned(&source, 27, "assert!(true)"),
             }],
@@ -1922,6 +1954,7 @@ mod tests {
             unresolved_property_macros: Vec::new(),
             role_provenance: SourceRoleProvenance::default(),
             source: Arc::clone(&source),
+            item_scopes: None,
         };
         // The wire carries spans, not copied bodies.
         let wire = serde_json::to_value(&facts)?;
@@ -1937,6 +1970,7 @@ mod tests {
         let decoded: FileFacts = serde_json::from_value(wire)?;
         assert_eq!(decoded.functions[0].body.as_str(), "fn a() {}");
         assert_eq!(decoded.probe_shapes[0].text.as_str(), "assert!(true)");
+        assert_eq!(decoded.probe_shapes[0].end_byte, 40);
         for child in [
             decoded.functions[0].body.shared_source(),
             decoded.probe_shapes[0].text.shared_source(),
@@ -1987,6 +2021,7 @@ mod tests {
             unresolved_property_macros: Vec::new(),
             role_provenance: SourceRoleProvenance::default(),
             source: Arc::clone(&source),
+            item_scopes: None,
         };
         let wire = serde_json::to_value(&facts)?;
         assert!(
@@ -2194,6 +2229,7 @@ fn checks_helper() {
             unresolved_property_macros: Vec::new(),
             role_provenance: SourceRoleProvenance::default(),
             source: Arc::clone(&home),
+            item_scopes: None,
         };
         // Paired children span.
         let wire = serde_json::to_value(&facts)?;
@@ -2270,9 +2306,9 @@ fn checks_helper() {
     #[test]
     fn probe_shape_fact_retains_no_per_shape_kind_allocation() {
         // #5415 step 1 pin: kind is one discriminant byte, not a String
-        // plus heap. The struct must be strictly smaller than the old
-        // String-kind layout (56 vs 72 bytes on 64-bit). Text stays owned;
-        // that is step 2.
+        // plus heap. The struct must stay strictly smaller than the old
+        // String-kind layout (72 bytes on 64-bit), even with the #5336
+        // `end_byte` word added after that pin was written.
         assert_eq!(size_of::<ProbeShapeKind>(), 1);
         assert!(size_of::<ProbeShapeFact>() < size_of::<usize>() * 3 + size_of::<String>() * 2);
     }
@@ -2474,11 +2510,127 @@ fn checks_helper() {
         Ok(())
     }
 
+    /// A file symlink for the swap fixtures below.
+    #[cfg(any(unix, windows))]
+    fn link_file(target: &Path, link: &Path) -> std::io::Result<()> {
+        #[cfg(unix)]
+        let result = std::os::unix::fs::symlink(target, link);
+        #[cfg(windows)]
+        let result = std::os::windows::fs::symlink_file(target, link);
+        result
+    }
+
+    /// `link_file` for a fixture's first link: `Ok(false)` when this host may
+    /// not create symlinks. Unprivileged Windows hosts report
+    /// ERROR_PRIVILEGE_NOT_HELD (os error 1314) rather than PermissionDenied.
+    #[cfg(any(unix, windows))]
+    fn try_link_file(target: &Path, link: &Path) -> std::io::Result<bool> {
+        match link_file(target, link) {
+            Ok(()) => Ok(true),
+            Err(error)
+                if cfg!(windows)
+                    && (error.kind() == std::io::ErrorKind::PermissionDenied
+                        || error.raw_os_error() == Some(1314)) =>
+            {
+                eprintln!("skipping symlink swap fixture: symlinks not permitted ({error})");
+                Ok(false)
+            }
+            Err(error) => Err(error),
+        }
+    }
+
+    /// #6755: rewrite the test file in place with different bytes of the same
+    /// length and restore its mtime. On Unix the entry's ctime moves (a user
+    /// cannot set it), so the cached "current" answer is dropped. Windows has
+    /// no stable change time in std; there this rewrite is a documented limit.
+    #[cfg(unix)]
+    #[test]
+    fn in_place_rewrite_with_same_size_and_mtime_invalidates_cached_currentness()
+    -> Result<(), Box<dyn std::error::Error>> {
+        struct FixtureCleanup(PathBuf);
+        impl Drop for FixtureCleanup {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.0);
+            }
+        }
+
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "ripr-authority-in-place-rewrite-{}-{stamp}",
+            std::process::id()
+        ));
+        let _cleanup = FixtureCleanup(root.clone());
+        std::fs::create_dir_all(root.join("pkg/src"))?;
+        std::fs::create_dir_all(root.join("pkg/tests"))?;
+        std::fs::write(root.join("pkg/Cargo.toml"), "[package]\nname = \"pkg\"\n")?;
+        let test_source = "#[test]\nfn source_test() { assert_eq!(1, 1); }\n";
+        let rewritten = "#[test]\nfn source_test() { assert_eq!(2, 2); }\n";
+        assert_eq!(test_source.len(), rewritten.len());
+        let sources = [
+            (
+                PathBuf::from("pkg/src/lib.rs"),
+                "pub fn source() -> i32 { 1 }\n",
+            ),
+            (PathBuf::from("pkg/tests/lib.rs"), test_source),
+        ];
+        for (path, source) in &sources {
+            std::fs::write(root.join(path), source)?;
+        }
+        let files = sources
+            .iter()
+            .map(|(path, source)| {
+                (
+                    path.clone(),
+                    FileFacts {
+                        path: path.clone(),
+                        source: (*source).into(),
+                        ..FileFacts::default()
+                    },
+                )
+            })
+            .collect();
+        let authority = WorkspaceRootAuthority::from_index(&root, &files);
+        let test = Path::new("pkg/tests/lib.rs");
+        let source = Path::new("pkg/src/lib.rs");
+        assert!(authority.validates_target(test, source, test_source));
+
+        use std::os::unix::fs::MetadataExt;
+        let file = root.join(test);
+        let before = std::fs::metadata(&file)?;
+        let modified = before.modified()?;
+        let ctime = |metadata: &std::fs::Metadata| (metadata.ctime(), metadata.ctime_nsec());
+        // Kernels before Linux 6.13 advance ctime once per jiffy (1-10 ms) and
+        // HFS+ once per second, so a rewrite in the same tick keeps it; repeat
+        // until the tick has moved, for up to three seconds.
+        let mut after = before.clone();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+        while std::time::Instant::now() < deadline {
+            std::fs::write(&file, rewritten)?;
+            std::fs::File::options()
+                .write(true)
+                .open(&file)?
+                .set_modified(modified)?;
+            after = std::fs::metadata(&file)?;
+            if ctime(&after) != ctime(&before) {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        assert_ne!(ctime(&after), ctime(&before), "fixture must move ctime");
+        assert_eq!(after.modified()?, modified, "fixture must keep the mtime");
+        assert_eq!(after.len(), test_source.len() as u64);
+
+        assert!(!authority.validates_target(test, source, test_source));
+        Ok(())
+    }
+
     /// #5478: swap the test file for a symlink to identical bytes outside the
     /// root, with the same size and mtime, after the cache saw it current.
     /// Under load the original write and the copy land in one mtime tick; the
     /// test pins that case by copying the mtime instead of racing for it.
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     #[test]
     fn symlink_swap_with_same_size_and_mtime_invalidates_cached_currentness()
     -> Result<(), Box<dyn std::error::Error>> {
@@ -2545,7 +2697,9 @@ fn checks_helper() {
             .open(&escaped)?
             .set_modified(modified)?;
         std::fs::remove_file(&original)?;
-        std::os::unix::fs::symlink(&escaped, &original)?;
+        if !try_link_file(&escaped, &original)? {
+            return Ok(());
+        }
         let followed = std::fs::metadata(&original)?;
         assert_eq!(
             followed.modified()?,
@@ -2561,7 +2715,7 @@ fn checks_helper() {
     /// #5478 review: a test file that is already a symlink inside the root,
     /// retargeted to an outside copy with the same size and mtime. Its
     /// `link` flag never changes, so the link target and identity must.
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     #[test]
     fn symlink_retarget_with_same_size_and_mtime_invalidates_cached_currentness()
     -> Result<(), Box<dyn std::error::Error>> {
@@ -2598,7 +2752,9 @@ fn checks_helper() {
         let inside = root.join("pkg/tests/real.rs");
         std::fs::write(&inside, test_source)?;
         let link = root.join(&sources[1].0);
-        std::os::unix::fs::symlink("real.rs", &link)?;
+        if !try_link_file(Path::new("real.rs"), &link)? {
+            return Ok(());
+        }
         let files = sources
             .iter()
             .map(|(path, source)| {
@@ -2625,7 +2781,7 @@ fn checks_helper() {
             .open(&escaped)?
             .set_modified(modified)?;
         std::fs::remove_file(&link)?;
-        std::os::unix::fs::symlink(&escaped, &link)?;
+        link_file(&escaped, &link)?;
         let followed = std::fs::metadata(&link)?;
         assert_eq!(
             followed.modified()?,
@@ -2642,7 +2798,7 @@ fn checks_helper() {
     /// at an in-root file. Moving that file outside (same inode, size, mtime)
     /// and retargeting the intermediate link changes neither the test file's
     /// entry nor the followed file, only where the chain resolves.
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     #[test]
     fn chained_symlink_retarget_invalidates_cached_currentness()
     -> Result<(), Box<dyn std::error::Error>> {
@@ -2679,8 +2835,10 @@ fn checks_helper() {
         let real = root.join("pkg/src/real.rs");
         std::fs::write(&real, test_source)?;
         let intermediate = root.join("pkg/src/intermediate.rs");
-        std::os::unix::fs::symlink(&real, &intermediate)?;
-        std::os::unix::fs::symlink(&intermediate, root.join(&sources[1].0))?;
+        if !try_link_file(&real, &intermediate)? {
+            return Ok(());
+        }
+        link_file(&intermediate, &root.join(&sources[1].0))?;
         let files = sources
             .iter()
             .map(|(path, source)| {
@@ -2702,9 +2860,10 @@ fn checks_helper() {
         let moved = outside.join("real.rs");
         std::fs::rename(&real, &moved)?;
         std::fs::remove_file(&intermediate)?;
-        std::os::unix::fs::symlink(&moved, &intermediate)?;
+        link_file(&moved, &intermediate)?;
+        // Compare canonical forms: Windows canonicalizes to a `\\?\` path.
         assert!(
-            std::fs::canonicalize(root.join(test))?.starts_with(&outside),
+            std::fs::canonicalize(root.join(test))?.starts_with(std::fs::canonicalize(&outside)?),
             "fixture must resolve outside the root"
         );
 

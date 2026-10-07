@@ -19,7 +19,7 @@ on:
     types: [opened, ready_for_review]
     paths:
       - "metrics/dx-scoreboard/baseline.json"
-      - "fixtures/rust-verdict-corpus/expected/report.json"
+      - "fixtures/rust-verdict-corpus/expected/**"
       - "benchmarks/rust_corpus/manifest.json"
       - "metrics/public-proof/**"
       - "docs/PUBLIC_PROOF.md"

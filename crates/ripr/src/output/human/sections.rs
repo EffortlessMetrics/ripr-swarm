@@ -55,6 +55,18 @@ pub(crate) fn render_finding_digest_with_config(
     if let Some(hint) = classification_hint(&finding.class, &finding.ripr) {
         out.push_str(&format!("  Why {}: {hint}\n", finding.class.plain_label()));
     }
+    // The refusal names a file and a blocker; a cut would drop the blocker,
+    // so it wraps like the next step instead of truncating.
+    if let Some(refusal) = evidence_value(finding, crate::domain::ASSERTION_NOT_CREDITED_PREFIX) {
+        const NOT_CREDITED_PREFIX: &str = "  Not credited: ";
+        let collapsed = refusal.split_whitespace().collect::<Vec<_>>().join(" ");
+        if NOT_CREDITED_PREFIX.chars().count() + collapsed.chars().count() <= LINE_BUDGET {
+            out.push_str(&format!("{NOT_CREDITED_PREFIX}{collapsed}\n"));
+        } else {
+            out.push_str(&wrap_human_prose(&collapsed, NOT_CREDITED_PREFIX, "    "));
+            out.push('\n');
+        }
+    }
     if let Some(gap) = &finding.canonical_gap {
         out.push_str(&format!("  Canonical gap: {}\n", gap.id));
     }
@@ -1068,7 +1080,12 @@ fn classification_hint(class: &ExposureClass, ripr: &RiprEvidence) -> Option<Str
             }
         }
         ExposureClass::ReachableUnrevealed => {
-            if reveal.observe.state == StageState::No {
+            if reveal.observe.summary == crate::domain::ASSERTION_CONTEXT_UNESTABLISHED {
+                Some(
+                    "a related test asserts here, but ripr could not establish that the assertion runs and is the standard `assert_eq!`"
+                        .to_string(),
+                )
+            } else if reveal.observe.state == StageState::No {
                 Some(
                     "a related test reaches this change, but no assertion observes the changed behavior"
                         .to_string(),
@@ -1084,10 +1101,14 @@ fn classification_hint(class: &ExposureClass, ripr: &RiprEvidence) -> Option<Str
                 Some("no static path from a related test to this change was found".to_string())
             }
         }
-        ExposureClass::InfectionUnknown => Some(
-            "the change reaches a sink but infection could not be determined statically"
-                .to_string(),
-        ),
+        // "reaches a sink" is a propagation claim: only a `yes` propagation
+        // stage supports it (CodeRabbit review on #6796).
+        ExposureClass::InfectionUnknown => Some(if ripr.propagate.state == StageState::Yes {
+            "the change reaches a sink but infection could not be determined statically".to_string()
+        } else {
+            "infection could not be determined statically, and no sink the change reaches was established"
+                .to_string()
+        }),
         ExposureClass::PropagationUnknown => Some(
             "the path from the changed behavior to an observable sink is not statically clear"
                 .to_string(),
@@ -1194,6 +1215,26 @@ mod classification_hint_tests {
                 .is_some_and(|hint| !hint.contains("no related test")),
             "a reaching test must never be described as absent: {partial:?}"
         );
+    }
+
+    #[test]
+    fn infection_unknown_hint_claims_a_sink_only_when_propagation_is_yes() {
+        let mut evidence = ripr(StageState::Yes, StageState::Yes);
+        evidence.propagate = StageEvidence::new(StageState::Yes, Confidence::Medium, "x");
+        let reached = classification_hint(&ExposureClass::InfectionUnknown, &evidence);
+        assert_eq!(
+            reached.as_deref(),
+            Some("the change reaches a sink but infection could not be determined statically")
+        );
+        for state in [StageState::Unknown, StageState::Weak, StageState::No] {
+            evidence.propagate = StageEvidence::new(state.clone(), Confidence::Low, "x");
+            let hint = classification_hint(&ExposureClass::InfectionUnknown, &evidence);
+            assert!(
+                hint.as_deref()
+                    .is_some_and(|hint| !hint.contains("reaches a sink")),
+                "{state:?}: {hint:?}"
+            );
+        }
     }
 
     #[test]

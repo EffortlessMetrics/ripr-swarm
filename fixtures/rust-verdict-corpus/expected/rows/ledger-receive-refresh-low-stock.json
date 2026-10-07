@@ -1,0 +1,19 @@
+{
+  "case_id": "ledger-receive-refresh-low-stock",
+  "subject_id": "authored-ledger",
+  "origin": "authored",
+  "anchor": "src/lib.rs:63",
+  "behavior_family": "call_deletion",
+  "test_shape": "no_test_observes_effect",
+  "hard_case": true,
+  "truth": "not_discriminated",
+  "ideal_verdict": "gap",
+  "observed_verdict": "credited",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "exposed"
+  ],
+  "outcome": "false_exposed",
+  "contradictions": []
+}

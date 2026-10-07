@@ -297,6 +297,10 @@ pub(crate) const UNTRUSTED_REPOSITORY_CONFIG: [&str; 2] = ["-c", "core.fsmonitor
 
 fn git_command(root: &Path, args: &[&str]) -> Command {
     let mut command = Command::new("git");
+    // Several callers read Git's stderr for a known cause (dubious ownership,
+    // no merge base, a damaged repository). A translated Git would word those
+    // differently and silently lose the match, so messages stay in English.
+    command.env("LC_ALL", "C");
     command
         .current_dir(root)
         .args(UNTRUSTED_REPOSITORY_CONFIG)

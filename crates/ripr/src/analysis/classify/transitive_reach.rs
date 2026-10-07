@@ -44,6 +44,10 @@ pub(in crate::analysis) struct TransitiveWitness {
     /// Number of *other* distinct tests (beyond this named one) that also
     /// witnessed a candidate path. Used only to note the count, not enumerate.
     pub other_test_count: usize,
+    /// The derive name when the test's file applies `#[derive(Name)]` and
+    /// `entry_symbol` is the `#[proc_macro_derive(Name)]` function that
+    /// expands it, rather than a function the test calls (#6924).
+    pub via_derive: Option<String>,
 }
 
 /// A concrete pointer to a macro-blocked Rust reach candidate.
@@ -150,6 +154,14 @@ struct ReachGraph<'a> {
     /// would find them. Built in one pass over every source, instead of one
     /// pass per owner and invoked macro name.
     macro_definitions: HashMap<&'a str, Vec<Option<&'a str>>>,
+    /// Derive name to the `#[proc_macro_derive(Name)]` production functions
+    /// that expand it, each the function the attribute annotates in its own
+    /// file. Empty in a workspace without a proc-macro crate, which then never
+    /// scans a test file for derives.
+    derive_entries: HashMap<String, Vec<&'a FunctionSummary>>,
+    /// Per test file: the derive names its attributes apply, filled on first
+    /// use.
+    file_derives: Mutex<HashMap<&'a Path, std::sync::Arc<Vec<String>>>>,
 }
 
 struct MacroInvocations<'a> {
@@ -197,6 +209,33 @@ impl<'a> ReachGraph<'a> {
         }
         let masked_test_bodies = all_tests.iter().map(|_| OnceLock::new()).collect();
         let receiver_checks = all_tests.iter().map(|_| Mutex::default()).collect();
+        let mut derive_entries: HashMap<String, Vec<&'a FunctionSummary>> = HashMap::new();
+        for file in index.files().values() {
+            let source = &file.data().source;
+            if !source.contains("proc_macro_derive") {
+                continue;
+            }
+            for (derive, function, line) in proc_macro_derive_entries(source) {
+                // The annotated item is the first same-named function at or
+                // after the attribute; a nested one sits later inside it.
+                if let Some(annotated) = file
+                    .functions
+                    .iter()
+                    .filter(|f| {
+                        f.name == function
+                            && f.start_line >= line
+                            && !f.source_role.is_evidence_role()
+                    })
+                    .min_by_key(|f| f.start_line)
+                {
+                    derive_entries.entry(derive).or_default().push(annotated);
+                }
+            }
+        }
+        for functions in derive_entries.values_mut() {
+            functions.sort_unstable_by(|a, b| (&a.name, &a.file).cmp(&(&b.name, &b.file)));
+            functions.dedup_by(|a, b| a.id == b.id);
+        }
         Self {
             all_tests,
             masked_test_bodies,
@@ -206,7 +245,64 @@ impl<'a> ReachGraph<'a> {
             macro_bodies,
             macro_invocations: OnceLock::new(),
             macro_definitions,
+            derive_entries,
+            file_derives: Mutex::default(),
         }
+    }
+
+    /// Derive names applied in `file`, scanned once per file. Only called
+    /// when the workspace defines a proc-macro derive.
+    fn derives_in_file(&self, index: &'a RustIndex, file: &'a Path) -> std::sync::Arc<Vec<String>> {
+        let lock = || {
+            self.file_derives
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+        };
+        if let Some(known) = lock().get(file) {
+            return known.clone();
+        }
+        let names = index
+            .files()
+            .get(file)
+            .map(|facts| derive_names(&facts.data().source))
+            .unwrap_or_default();
+        let names = std::sync::Arc::new(names);
+        lock().insert(file, names.clone());
+        names
+    }
+
+    /// The first proc-macro derive applied in `file` whose expanding function
+    /// reaches the owner: that annotated function itself calls the owner or a
+    /// reaching name. Checking its own calls, not its name, keeps a same-named
+    /// function elsewhere from lending it reach; the one hop also keeps a
+    /// derive one call above the walk's depth bound in range, since the derive
+    /// function is a thin entry.
+    fn derive_entry(
+        &self,
+        index: &'a RustIndex,
+        file: &'a Path,
+        reaching: &HashSet<&str>,
+        owner_name: &str,
+    ) -> Option<(String, &'a str)> {
+        if self.derive_entries.is_empty() {
+            return None;
+        }
+        let derives = self.derives_in_file(index, file);
+        let mut best: Option<(String, &'a str)> = None;
+        for derive in derives.iter() {
+            for &function in self.derive_entries.get(derive).into_iter().flatten() {
+                let reaches = calls_of(function).iter().any(|call| {
+                    !is_macro_call(&call.name)
+                        && !is_own_declaration(call, function)
+                        && (call.name == owner_name || reaching.contains(call.name.as_str()))
+                });
+                let candidate = (derive.clone(), function.name.as_str());
+                if reaches && best.as_ref().is_none_or(|current| candidate < *current) {
+                    best = Some(candidate);
+                }
+            }
+        }
+        best
     }
 
     /// Macro invocations in every test and production function body. Every
@@ -481,7 +577,9 @@ impl<'a> TransitiveReachIndex<'a> {
         // type's same-named method cannot win on file order alone (#5481),
         // and the named witness stays stable across index iteration order
         // (goldens depend on this determinism).
-        let mut witnesses: Vec<(bool, PathBuf, usize, String, String)> = Vec::new();
+        // Rank 0 is a corroborated call entry, 1 an uncorroborated one and 2 a
+        // derive entry, which no call fact backs, so any call witness wins.
+        let mut witnesses: Vec<(u8, PathBuf, usize, String, String, Option<String>)> = Vec::new();
         // The receiver types depend only on the entry and this owner, so
         // they are resolved once per entry rather than once per test.
         let mut receiver_types: HashMap<&str, Option<Vec<String>>> = HashMap::new();
@@ -516,11 +614,25 @@ impl<'a> TransitiveReachIndex<'a> {
             }
             if let Some((uncorroborated, symbol)) = entry {
                 witnesses.push((
-                    uncorroborated,
+                    u8::from(uncorroborated),
                     test.file.clone(),
                     test.start_line,
                     test.name.clone(),
                     symbol.to_string(),
+                    None,
+                ));
+            } else if let Some((derive, function)) =
+                graph.derive_entry(self.index, &test.file, &reaching, owner_name)
+            {
+                // `#[derive(Name)]` runs the proc-macro function when the
+                // test target compiles; no call fact records that (#6924).
+                witnesses.push((
+                    2,
+                    test.file.clone(),
+                    test.start_line,
+                    test.name.clone(),
+                    function.to_string(),
+                    Some(derive),
                 ));
             }
         }
@@ -530,13 +642,15 @@ impl<'a> TransitiveReachIndex<'a> {
         }
         witnesses.sort();
         let other_test_count = witnesses.len() - 1;
-        let (_, test_file, test_line, test_name, entry_symbol) = witnesses.into_iter().next()?;
+        let (_, test_file, test_line, test_name, entry_symbol, via_derive) =
+            witnesses.into_iter().next()?;
         Some(TransitiveWitness {
             test_name,
             test_file,
             test_line,
             entry_symbol,
             other_test_count,
+            via_derive,
         })
     }
 }
@@ -771,13 +885,20 @@ pub(in crate::analysis) fn transitive_reach_witness_pointer(witness: &Transitive
         1 => " (and 1 other test)".to_string(),
         n => format!(" (and {n} other tests)"),
     };
+    let entry = match &witness.via_derive {
+        Some(derive) => format!(
+            "is in a file that applies `#[derive({derive})]`, expanded by `{}`",
+            witness.entry_symbol
+        ),
+        None => format!("calls `{}`", witness.entry_symbol),
+    };
     format!(
-        "{}`{}` ({}) calls `{}`, an entry point that may lead here{}. \
+        "{}`{}` ({}) {}, an entry point that may lead here{}. \
          Inspect it to judge whether this change is observed.",
         crate::domain::TRANSITIVE_REACH_WITNESS_PREFIX,
         witness.test_name,
         location,
-        witness.entry_symbol,
+        entry,
         others
     )
 }
@@ -792,13 +913,22 @@ pub(in crate::analysis) fn transitive_reach_limitation_detail_lines(
         witness.test_line
     );
     [
-        format!(
-            "{}test `{}` ({}) -> entry `{}`",
-            crate::domain::LIMITATION_LAST_ESTABLISHED_EDGE_PREFIX,
-            witness.test_name,
-            location,
-            witness.entry_symbol
-        ),
+        match &witness.via_derive {
+            Some(derive) => format!(
+                "{}test `{}` ({}) in a file applying `#[derive({derive})]` -> entry `{}`",
+                crate::domain::LIMITATION_LAST_ESTABLISHED_EDGE_PREFIX,
+                witness.test_name,
+                location,
+                witness.entry_symbol
+            ),
+            None => format!(
+                "{}test `{}` ({}) -> entry `{}`",
+                crate::domain::LIMITATION_LAST_ESTABLISHED_EDGE_PREFIX,
+                witness.test_name,
+                location,
+                witness.entry_symbol
+            ),
+        },
         format!(
             "{}entry `{}` -> owner `{}` through a transitive Rust helper path",
             crate::domain::LIMITATION_FIRST_UNRESOLVED_EDGE_PREFIX,
@@ -914,6 +1044,93 @@ pub(in crate::analysis) fn macro_reach_limitation_detail_lines(
             crate::domain::LIMITATION_NON_CLAIM_PREFIX
         ),
     ]
+}
+
+/// `(derive name, function name, attribute line)` for every
+/// `#[proc_macro_derive(Name ..)]` attribute in `source` and the `fn` item it
+/// annotates; the 1-based line tells the annotated function from a same-named
+/// nested one.
+fn proc_macro_derive_entries(source: &str) -> Vec<(String, String, usize)> {
+    let masked = crate::analysis::extract::mask_comments_and_strings(source);
+    let mut entries = Vec::new();
+    for range in crate::analysis::extract::attribute_ranges(&masked) {
+        let Some(args) = attribute_call_args(&masked[range.clone()], "proc_macro_derive") else {
+            continue;
+        };
+        let Some(derive) = args.split(',').next().and_then(last_path_segment) else {
+            continue;
+        };
+        if let Some(function) = next_fn_name(&masked[range.end..]) {
+            let line = masked[..range.start].matches('\n').count() + 1;
+            entries.push((derive, function, line));
+        }
+    }
+    entries
+}
+
+/// Derive names that `#[derive(..)]` attributes in `source` apply.
+/// `#[cfg_attr(.., derive(..))]` is conditional and is not read.
+fn derive_names(source: &str) -> Vec<String> {
+    let masked = crate::analysis::extract::mask_comments_and_strings(source);
+    let mut names: Vec<String> = crate::analysis::extract::attribute_ranges(&masked)
+        .into_iter()
+        .filter_map(|range| attribute_call_args(&masked[range], "derive"))
+        .flat_map(|args| {
+            args.split(',')
+                .filter_map(last_path_segment)
+                .collect::<Vec<_>>()
+        })
+        .collect();
+    names.sort_unstable();
+    names.dedup();
+    names
+}
+
+/// The argument text of `#[name(args)]` or `#![name(args)]`, or None when the
+/// attribute is another one.
+fn attribute_call_args<'s>(attribute: &'s str, name: &str) -> Option<&'s str> {
+    let inner = attribute
+        .trim_start_matches('#')
+        .trim_start()
+        .trim_start_matches('!')
+        .trim_start()
+        .strip_prefix('[')?
+        .trim_start();
+    let rest = inner.strip_prefix(name)?.trim_start();
+    let args = rest.strip_prefix('(')?;
+    let close = args.rfind(')')?;
+    Some(&args[..close])
+}
+
+/// The last `::` segment of a path, when it is a plain identifier.
+fn last_path_segment(path: &str) -> Option<String> {
+    let segment = path.rsplit("::").next()?.trim();
+    (!segment.is_empty() && segment.bytes().all(is_ascii_ident_byte)).then(|| segment.to_string())
+}
+
+/// The name of the first `fn` item in `text`, skipping further attributes,
+/// visibility and qualifiers.
+fn next_fn_name(text: &str) -> Option<String> {
+    let bytes = text.as_bytes();
+    let mut i = 0;
+    while i + 2 <= bytes.len() {
+        let boundary = i == 0 || !is_ascii_ident_byte(bytes[i - 1]);
+        // Compare bytes: `text[i..]` would panic inside a multi-byte
+        // identifier character such as `naïve`.
+        if boundary
+            && bytes[i..].starts_with(b"fn")
+            && bytes.get(i + 2).is_some_and(|b| b.is_ascii_whitespace())
+        {
+            let start = skip_ascii_whitespace(text, i + 2);
+            let end = ascii_ident_end(text, start);
+            return (end > start).then(|| text[start..end].to_string());
+        }
+        if bytes[i] == b'{' || bytes[i] == b';' {
+            return None;
+        }
+        i += 1;
+    }
+    None
 }
 
 /// Collect all tests from the index, deduplicating by (name, file).
@@ -1467,6 +1684,7 @@ mod tests {
                 unresolved_property_macros: Vec::new(),
                 role_provenance: Default::default(),
                 source: source.into(),
+                item_scopes: None,
             },
         );
         RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
@@ -1825,6 +2043,7 @@ mod tests {
             test_line: 12,
             entry_symbol: "outer".to_string(),
             other_test_count: 0,
+            via_derive: None,
         };
         let pointer = transitive_reach_witness_pointer(&witness);
         assert!(pointer.contains("test_uses_outer"));
@@ -1846,6 +2065,7 @@ mod tests {
             test_line: 3,
             entry_symbol: "outer".to_string(),
             other_test_count: 0,
+            via_derive: None,
         };
         let pointer = transitive_reach_witness_pointer(&witness);
         assert!(pointer.contains("tests/sub/it.rs:3"));
@@ -1861,6 +2081,7 @@ mod tests {
             test_line: 1,
             entry_symbol: "outer".to_string(),
             other_test_count: 2,
+            via_derive: None,
         };
         assert!(transitive_reach_witness_pointer(&witness).contains("and 2 other tests"));
     }
@@ -1873,6 +2094,7 @@ mod tests {
             test_line: 12,
             entry_symbol: "outer".to_string(),
             other_test_count: 0,
+            via_derive: None,
         };
 
         let detail = transitive_reach_limitation_detail_lines(&witness, "inner");
@@ -2562,5 +2784,257 @@ mod tests {
         assert!(!RUST_TRANSITIVE_REACH_MESSAGE.contains("reaches the change"));
         assert!(!RUST_TRANSITIVE_REACH_MESSAGE.contains("covers"));
         assert!(!RUST_TRANSITIVE_REACH_MESSAGE.contains("tested"));
+    }
+
+    /// A proc-macro crate `derive/src/lib.rs` whose `derive_error` expands
+    /// `#[derive(Error)]` and calls `expand`, which calls the owner `fmt_impl`;
+    /// a test file `tests/it.rs` with `test_source` whose test calls nothing
+    /// that reaches the owner.
+    fn derive_index(test_source: &str) -> RustIndex {
+        derive_index_with(test_source, Vec::new(), Vec::new())
+    }
+
+    fn derive_index_with(
+        test_source: &str,
+        extra_tests: Vec<TestFact>,
+        other_functions: Vec<FunctionSummary>,
+    ) -> RustIndex {
+        let proc_macro_source = "#[proc_macro_derive(Error, attributes(error))]\n\
+                                 pub fn derive_error(input: TokenStream) -> TokenStream {\n\
+                                     expand(input)\n\
+                                 }\n"
+        .to_string();
+        let mut derive_error = make_fn("derive_error", vec!["expand"]);
+        derive_error.file = PathBuf::from("derive/src/lib.rs");
+        // Rust call facts also record the function's own declaration line.
+        derive_error.calls.insert(
+            0,
+            CallFact {
+                line: 2,
+                name: "derive_error".to_string(),
+                text: "pub fn derive_error(input: TokenStream) -> TokenStream {".to_string(),
+            },
+        );
+        let mut expand = make_fn("expand", vec!["fmt_impl"]);
+        expand.file = PathBuf::from("derive/src/lib.rs");
+        let test = make_test_at(
+            "test_display",
+            "tests/it.rs",
+            3,
+            vec!["assert", "to_string"],
+        );
+        let file = |path: &str, functions: Vec<FunctionSummary>, source: String| {
+            (
+                PathBuf::from(path),
+                FileFacts {
+                    path: PathBuf::from(path),
+                    functions,
+                    tests: Vec::new(),
+                    returns: Vec::new(),
+                    literals: Vec::new(),
+                    probe_shapes: Vec::new(),
+                    used_lexical_fallback: false,
+                    module_declarations: Vec::new(),
+                    unresolved_property_macros: Vec::new(),
+                    role_provenance: Default::default(),
+                    source: source.into(),
+                    item_scopes: None,
+                },
+            )
+        };
+        let files: BTreeMap<PathBuf, FileFacts> = [
+            file(
+                "derive/src/lib.rs",
+                vec![derive_error, expand],
+                proc_macro_source,
+            ),
+            file("tests/it.rs", Vec::new(), test_source.to_string()),
+            file("src/other.rs", other_functions, String::new()),
+        ]
+        .into_iter()
+        .collect();
+        RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            files,
+            tests: std::iter::once(test).chain(extra_tests).collect(),
+            functions: Vec::new(),
+            workspace_authority: None,
+            ..Default::default()
+        })
+    }
+
+    // #6924: a test whose file applies `#[derive(Error)]` runs the proc-macro
+    // function that expands it, so the witness names the derive and its
+    // expanding function rather than reporting no test path.
+    #[test]
+    fn derive_applied_in_test_file_witnesses_its_proc_macro_function() {
+        let index = derive_index(
+            "use thiserror::Error;\n#[test]\nfn test_display() {\n    \
+             #[derive(Error, Debug)]\n    #[error(\"x\")]\n    struct E;\n}\n",
+        );
+
+        let witness = find_transitive_witness("fmt_impl", &index);
+
+        assert_eq!(
+            witness
+                .as_ref()
+                .map(|w| (w.entry_symbol.as_str(), w.via_derive.as_deref())),
+            Some(("derive_error", Some("Error")))
+        );
+        let pointer = witness
+            .as_ref()
+            .map(transitive_reach_witness_pointer)
+            .unwrap_or_default();
+        assert!(pointer.contains("applies `#[derive(Error)]`, expanded by `derive_error`"));
+        assert!(pointer.contains("may lead here"));
+    }
+
+    // Any call witness outranks a derive witness, even from a test whose file
+    // sorts later: a call fact backs it, while a derive is file-wide.
+    #[test]
+    fn a_call_witness_outranks_a_derive_witness() {
+        let index = derive_index_with(
+            "#[derive(Error)]\nstruct E;\n",
+            vec![make_test_at("test_expand", "tests/z.rs", 1, vec!["expand"])],
+            Vec::new(),
+        );
+
+        let witness = find_transitive_witness("fmt_impl", &index);
+
+        assert_eq!(
+            witness.map(|w| (
+                w.test_name,
+                w.entry_symbol,
+                w.via_derive,
+                w.other_test_count
+            )),
+            Some(("test_expand".to_string(), "expand".to_string(), None, 1))
+        );
+    }
+
+    // Negative: a same-named function in another file that reaches the owner
+    // does not lend reach to the annotated derive function, which does not,
+    // either by name or through the annotated function's own declaration
+    // fact.
+    #[test]
+    fn a_same_named_function_elsewhere_does_not_lend_the_derive_reach() {
+        let mut other = make_fn("derive_error", vec!["other_owner"]);
+        other.file = PathBuf::from("src/other.rs");
+        let index = derive_index_with("#[derive(Error)]\nstruct E;\n", Vec::new(), vec![other]);
+
+        assert!(find_transitive_witness("other_owner", &index).is_none());
+    }
+
+    // Path-qualified derives name the last segment, the macro's own name.
+    #[test]
+    fn path_qualified_derive_is_matched_by_its_last_segment() {
+        let index = derive_index("#[derive(Debug, thiserror::Error)]\nstruct E;\n");
+
+        let witness = find_transitive_witness("fmt_impl", &index);
+
+        assert_eq!(
+            witness.and_then(|w| w.via_derive),
+            Some("Error".to_string())
+        );
+    }
+
+    // Negative: a file that derives only other names, or applies the derive
+    // under `cfg_attr`, or names it in a comment or string, gets no witness.
+    #[test]
+    fn unapplied_or_conditional_derive_gives_no_witness() {
+        for source in [
+            "#[derive(Debug, Clone)]\nstruct E;\n",
+            "#[cfg_attr(feature = \"std\", derive(Error))]\nstruct E;\n",
+            "// #[derive(Error)]\nconst S: &str = \"#[derive(Error)]\";\n",
+        ] {
+            assert!(
+                find_transitive_witness("fmt_impl", &derive_index(source)).is_none(),
+                "{source}"
+            );
+        }
+    }
+
+    // Negative: the derive's function must reach the owner; an unrelated
+    // owner gets no witness even though the file applies the derive.
+    #[test]
+    fn derive_whose_function_does_not_reach_the_owner_gives_no_witness() {
+        let index = derive_index("#[derive(Error)]\nstruct E;\n");
+
+        assert!(find_transitive_witness("unrelated_owner", &index).is_none());
+    }
+
+    // A non-ASCII identifier between the attribute and its `fn` is skipped
+    // byte-wise instead of slicing inside the character.
+    #[test]
+    fn proc_macro_derive_entries_skip_a_non_ascii_identifier() {
+        let source = "#[proc_macro_derive(Error)]\n#[cfg_attr(any(), naïve)]\n\
+                      pub fn derive_error(input: TokenStream) -> TokenStream { input }\n";
+
+        assert_eq!(
+            proc_macro_derive_entries(source),
+            vec![("Error".to_string(), "derive_error".to_string(), 1)]
+        );
+    }
+
+    // End to end through the real syntax adapter: the proc-macro crate's
+    // facts, including each function's own declaration fact, and a test file
+    // that applies the derive inside its body.
+    #[test]
+    fn derive_witness_through_the_real_syntax_adapter() -> Result<(), String> {
+        use crate::analysis::rust_index::{RaRustSyntaxAdapter, RustSyntaxAdapter};
+        let files = [
+            (
+                PathBuf::from("derive/src/lib.rs"),
+                "use proc_macro::TokenStream;\n\
+                 #[proc_macro_derive(Error, attributes(error))]\n\
+                 pub fn derive_error(input: TokenStream) -> TokenStream {\n    expand(input)\n}\n\
+                 fn expand(input: TokenStream) -> TokenStream {\n    fmt_impl(input)\n}\n\
+                 fn fmt_impl(input: TokenStream) -> TokenStream {\n    input\n}\n",
+            ),
+            (
+                PathBuf::from("tests/display.rs"),
+                "use thiserror::Error;\n\
+                 #[test]\nfn display() {\n    #[derive(Error, Debug)]\n    #[error(\"x\")]\n    struct E;\n    \
+                 assert_eq!(E.to_string(), \"x\");\n}\n",
+            ),
+        ];
+        let adapter = RaRustSyntaxAdapter;
+        let mut index = RustIndex::default();
+        for (path, source) in &files {
+            let facts = adapter.summarize_file(path, source)?;
+            let functions = facts.functions.clone();
+            index.insert_file_only(path.clone(), facts);
+            index.extend_functions(functions);
+        }
+
+        let witness = find_transitive_witness("fmt_impl", &index);
+
+        assert_eq!(
+            witness.map(|w| (w.test_name, w.entry_symbol, w.via_derive)),
+            Some((
+                "display".to_string(),
+                "derive_error".to_string(),
+                Some("Error".to_string())
+            ))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn proc_macro_derive_entries_pair_each_derive_with_its_function() {
+        let source = "#[proc_macro_derive(Error, attributes(backtrace, error))]\n\
+                      #[allow(missing_docs)]\n\
+                      pub fn derive_error(input: TokenStream) -> TokenStream { x }\n\
+                      #[proc_macro_derive(Other)]\n\
+                      fn derive_other(input: TokenStream) -> TokenStream { y }\n\
+                      #[proc_macro_attribute]\n\
+                      pub fn not_a_derive(a: TokenStream, b: TokenStream) -> TokenStream { z }\n";
+
+        assert_eq!(
+            proc_macro_derive_entries(source),
+            vec![
+                ("Error".to_string(), "derive_error".to_string(), 1),
+                ("Other".to_string(), "derive_other".to_string(), 4),
+            ]
+        );
     }
 }

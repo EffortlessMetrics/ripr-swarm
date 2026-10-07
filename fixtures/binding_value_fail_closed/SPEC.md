@@ -18,9 +18,9 @@ cargo xtask fixtures binding_value_fail_closed
 ## Then
 
 No exact boundary observation occurs even though every function has an
-exact-input test call. The `map_or` variants retarget and keep the
-honest missing-discriminator weakness (`observed end values: unknown`)
-because the evaluator refuses their chains (non-identity closure,
+exact-input test call. The `map_or` variants retarget and read
+`infection_unknown` with `Changed boundary input is unresolved` naming
+`end` (RIPR-SPEC-0001, #6674) because the evaluator refuses their chains (non-identity closure,
 dynamic needle); the `map_or_else` shape does not retarget at all —
 its `||` routes through the pre-existing parser predicate shape — and
 equally produces no exact value. No `infection yes` boundary fact

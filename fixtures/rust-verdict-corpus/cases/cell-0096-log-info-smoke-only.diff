@@ -1,0 +1,13 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 8840c6e..f330295 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -17,7 +17,7 @@ pub fn bonus(points: u32) -> u32 {
+ 
+ /// Logs through the `log` facade; its only test is a smoke call.
+ pub fn report(amount: u32) {
+-    log::info!("amount is {}", amount * 9);
++    log::info!("amount is {}", 9 * amount);
+ }
+ 
+ /// Logs through the `log` facade; its test captures and checks the record.

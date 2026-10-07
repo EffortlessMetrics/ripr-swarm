@@ -24,10 +24,10 @@ Start here:
     - 8 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
-  ripr explain --root fixtures/match_arm_diagnostic_literal_no_promotion/input --diff fixtures/match_arm_diagnostic_literal_no_promotion/diff.patch --mode fast probe:src_lib.rs:match_arm:e063ad32
-  ripr context --root fixtures/match_arm_diagnostic_literal_no_promotion/input --diff fixtures/match_arm_diagnostic_literal_no_promotion/diff.patch --mode fast --at probe:src_lib.rs:match_arm:e063ad32
+  ripr explain --root <cwd>/fixtures/match_arm_diagnostic_literal_no_promotion/input --diff <cwd>/fixtures/match_arm_diagnostic_literal_no_promotion/diff.patch --mode fast probe:src_lib.rs:match_arm:e063ad32
+  ripr context --root <cwd>/fixtures/match_arm_diagnostic_literal_no_promotion/input --diff <cwd>/fixtures/match_arm_diagnostic_literal_no_promotion/diff.patch --mode fast --at probe:src_lib.rs:match_arm:e063ad32
 Write a test for it:
-  ripr agent stub --root fixtures/match_arm_diagnostic_literal_no_promotion/input --at src/lib.rs:3
+  ripr agent stub --root <cwd>/fixtures/match_arm_diagnostic_literal_no_promotion/input --at src/lib.rs:3
 
 More:
   Full evidence: rerun with --format human-full

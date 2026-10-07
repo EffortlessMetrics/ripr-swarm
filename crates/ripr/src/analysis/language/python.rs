@@ -24,6 +24,8 @@ use super::super::{
 };
 use super::read_limit_disclosure::bounded_read_limit_limitations;
 use super::{LanguageAdapter, LanguageDiffResult, LanguageId, LanguageRepoResult, route};
+mod admission;
+mod assertion_selection;
 mod bounded_read;
 use crate::analysis::workspace::{
     changed_source_files_absent_from_worktree, limitations_for_absent_changed_files,
@@ -284,6 +286,9 @@ struct PythonTest {
     parametrize: Option<parametrize::PythonParametrizeCases>,
     framework: &'static str,
     assertions: Vec<PythonAssertion>,
+    /// Whether RIPR can say this test has no assertion, or only that it
+    /// recognized none (#5571).
+    assertion_admission: admission::PythonAssertionAdmission,
     /// How the test and its module can rebind names and attributes; guards
     /// module-constant boundary resolution (`boundary.rs`, #4227).
     constant_rebinding: module_constants::PythonTestRebinding,
@@ -361,7 +366,32 @@ fn python_weak_missing_summary(
     probe_family: &ProbeFamily,
     strongest_kind: &OracleKind,
 ) -> String {
-    let shape = match probe_family {
+    format!(
+        "Related Python test reaches `{}` but the strongest extracted oracle is `{}`; add or strengthen a focused assertion for {}.",
+        owner.name,
+        strongest_kind.as_str(),
+        python_family_assertion_target(probe_family)
+    )
+}
+
+/// The missing summary when related tests assert, but every assertion
+/// observes another behavior family than the change (#5572).
+fn python_no_family_relevant_missing_summary(
+    owner: &PythonOwner,
+    probe_family: &ProbeFamily,
+    other_kind: &OracleKind,
+) -> String {
+    format!(
+        "Related Python test reaches `{}`, but its assertions observe a different behavior (strongest: `{}`) and none observes the changed {}; add or strengthen a focused assertion for {}.",
+        owner.name,
+        other_kind.as_str(),
+        probe_family.as_str().replace('_', " "),
+        python_family_assertion_target(probe_family)
+    )
+}
+
+fn python_family_assertion_target(probe_family: &ProbeFamily) -> &'static str {
+    match probe_family {
         ProbeFamily::Predicate => "the changed boundary",
         ProbeFamily::ReturnValue => "the returned value",
         ProbeFamily::ErrorPath => "the exact exception type/message",
@@ -369,12 +399,7 @@ fn python_weak_missing_summary(
         ProbeFamily::SideEffect | ProbeFamily::CallDeletion => "the changed output/log/call effect",
         ProbeFamily::MatchArm => "the changed match arm",
         ProbeFamily::StaticUnknown => "the changed behavior",
-    };
-    format!(
-        "Related Python test reaches `{}` but the strongest extracted oracle is `{}`; add or strengthen a focused assertion for {shape}.",
-        owner.name,
-        strongest_kind.as_str()
-    )
+    }
 }
 
 fn python_recommended_next_step(
@@ -919,6 +944,9 @@ impl PythonAdapter {
         })
     }
 }
+
+#[cfg(test)]
+mod assertion_selection_tests;
 
 #[cfg(test)]
 mod new_declaration_tests;

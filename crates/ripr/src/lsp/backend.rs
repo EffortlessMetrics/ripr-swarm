@@ -4269,8 +4269,10 @@ fn bounded_failure_message(message: &str) -> String {
 /// The attempt's token, not the error text, says whether the work stopped
 /// because a checkpoint handed it an abort. A wrapped cancellation is still a
 /// cancellation; an ordinary failure that reads like one is still a failure.
-/// The observed abort is sticky: a later unrelated failure in the same attempt
-/// is named by the abort that already stopped the work.
+/// The observed abort is sticky for a sequential walk, whose later failure
+/// cannot happen once the abort stopped it. A parallel batch that propagates
+/// a sibling's ordinary failure instead names the attempt as that failure
+/// (#6721).
 fn analysis_error_was_cancellation(
     cancellation: &crate::analysis::cancellation::AnalysisCancellationToken,
 ) -> bool {
@@ -11050,8 +11052,12 @@ mod list_actionable_items_tests {
         let command = packet["witness"]["explain_command"]
             .as_str()
             .ok_or_else(|| format!("packet must embed a witness command: {packet}"))?;
+        // `/workspace` binds through the shared root rule (#3948); on Windows
+        // it is not absolute and gains the current drive.
+        let root = loop_commands::shell_arg(&loop_commands::bound_root("/workspace"));
         assert_eq!(
-            command, "ripr explain --root /workspace --worktree probe:pricing:88:predicate",
+            command,
+            format!("ripr explain --root {root} --worktree probe:pricing:88:predicate"),
             "the packet's own command must replay the session's worktree diff source"
         );
         // The packet location renders through the shared finding-location

@@ -269,7 +269,7 @@ impl SeamSpec {
             seam,
             evidence: TestGripEvidence {
                 seam_id,
-                related_tests: self.related,
+                related_tests: self.related.into_iter().map(std::sync::Arc::new).collect(),
                 reach: stage(self.reach),
                 activate: stage(self.activate),
                 propagate: stage(self.propagate),

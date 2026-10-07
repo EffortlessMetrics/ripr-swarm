@@ -1,0 +1,19 @@
+{
+  "case_id": "strsim-sorensen-dice-equal",
+  "subject_id": "strsim",
+  "origin": "upstream",
+  "anchor": "src/lib.rs:724",
+  "behavior_family": "predicate",
+  "test_shape": "unit_test_assert_float_tolerance",
+  "hard_case": false,
+  "truth": "discriminated",
+  "ideal_verdict": "credited",
+  "observed_verdict": "gap",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "weakly_exposed"
+  ],
+  "outcome": "false_actionable",
+  "contradictions": []
+}

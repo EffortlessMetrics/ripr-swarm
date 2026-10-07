@@ -92,11 +92,14 @@ impl Drop for TempRootGuard {
 
 /// The operator-facing text for a cleanup that could not be performed.
 fn cleanup_failure_report(path: &Path, error: &std::io::Error) -> String {
-    format!(
+    // The temp root normally comes from the OS temp dir, but `TMPDIR` is
+    // environment text and this writes to the handle directly, past the
+    // library's stderr guard.
+    crate::terminal_text::terminal_safe(format!(
         "ripr: candidate materialization root could not be removed: {} ({error}); \
          remove it manually to reclaim the space",
         path.display()
-    )
+    ))
 }
 
 /// Remove one materialization root, retrying once.
@@ -463,8 +466,19 @@ pub(crate) fn candidate_config_bytes(
         &["show", &format!("{treeish}:ripr.toml")],
         deadline,
     )
-    .map_err(|error| SubjectError::ExecutionFailed {
-        detail: format!("reading candidate ripr.toml failed: {error}"),
+    .map_err(|error| match error {
+        crate::core_error::CoreError::GitInvocationTimeout {
+            operation,
+            timeout_ms,
+            spawned,
+        } => SubjectError::ExecutionTimedOut {
+            operation,
+            timeout_ms,
+            spawned,
+        },
+        other => SubjectError::ExecutionFailed {
+            detail: format!("reading candidate ripr.toml failed: {other}"),
+        },
     })?;
     if !output.status.success() {
         // A tree without a ripr.toml uses the default config.
@@ -933,6 +947,17 @@ mod tests {
         let _ = std::fs::remove_file(&not_a_directory);
         let _ = std::fs::remove_dir_all(&base);
         Ok(())
+    }
+
+    #[test]
+    fn cleanup_failure_report_escapes_control_and_bidi_characters() {
+        let error = std::io::Error::other("denied");
+        let report = cleanup_failure_report(Path::new("a\u{1b}b\u{202e}c"), &error);
+        assert!(report.contains("a\\u{1b}b\\u{202e}c"), "{report}");
+        assert!(
+            !report.contains('\u{1b}') && !report.contains('\u{202e}'),
+            "{report}"
+        );
     }
 
     /// The guard's whole reason to exist on the failure path is that it says

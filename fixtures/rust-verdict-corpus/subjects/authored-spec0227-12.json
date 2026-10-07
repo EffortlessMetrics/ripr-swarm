@@ -1,0 +1,17 @@
+{
+  "subject_id": "authored-spec0227-12",
+  "origin": "authored",
+  "version_label": "authored 2026-10-04 for RIPR-SPEC-0227 acceptance examples",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "Cargo.toml",
+      "sha256": "a4dbcb913818b0ddf27c649be1718bccc3c18e3730210e88e15b9935b2d45266"
+    },
+    {
+      "path": "src/lib.rs",
+      "sha256": "1ee7508b66b3fe9a960010b6aa69506685a173d623277ccd0ef306a9e5716889"
+    }
+  ]
+}

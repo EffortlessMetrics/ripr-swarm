@@ -96,8 +96,18 @@ const VERIFY_COMMAND: &str = "ripr agent verify --root . --before target/ripr/pi
 /// from the shared constants so the family cannot drift from the `next`
 /// block.
 pub(crate) fn workflow_snapshot_verify_command() -> String {
-    format!(
-        "ripr agent verify --root . --before {WORKFLOW_BEFORE_SNAPSHOT_ARTIFACT} --after {WORKFLOW_AFTER_SNAPSHOT_ARTIFACT} --json"
+    workflow_snapshot_verify_command_for(crate::agent::command_specs::PORTABLE_ROOT)
+}
+
+/// [`workflow_snapshot_verify_command`] naming `root`, rendered by the same
+/// builder as the packet's `next.verify`, so a standalone packet's embedded
+/// verify replays against the repository it was produced for (#3948).
+pub(crate) fn workflow_snapshot_verify_command_for(root: &str) -> String {
+    crate::agent::loop_commands::agent_verify_command(
+        root,
+        WORKFLOW_BEFORE_SNAPSHOT_ARTIFACT,
+        WORKFLOW_AFTER_SNAPSHOT_ARTIFACT,
+        None,
     )
 }
 
@@ -366,6 +376,25 @@ pub(crate) fn evidence_record_with_verify_command(
     canonical_gap: Option<&CanonicalGapIdentity>,
     verify_command: Option<&str>,
 ) -> EvidenceRecord {
+    evidence_record_with_bound_verify_command(
+        entry,
+        canonical_gap,
+        verify_command,
+        std::path::Path::new(crate::agent::command_specs::PORTABLE_ROOT),
+    )
+}
+
+/// [`evidence_record_with_verify_command`] for a verify display bound to a
+/// selected root (#3948, #3999). The display names the concrete root so it
+/// replays from any directory; typed recovery binds that same root, so the
+/// parsed `command_specs.verify` keeps the portable argv and a display whose
+/// root was substituted afterwards still fails closed.
+pub(crate) fn evidence_record_with_bound_verify_command(
+    entry: &ClassifiedSeam,
+    canonical_gap: Option<&CanonicalGapIdentity>,
+    verify_command: Option<&str>,
+    verify_root: &std::path::Path,
+) -> EvidenceRecord {
     let missing_records = missing_discriminator_records_for(entry);
     let recommended_test = recommended_test_for(entry);
     let actionability = actionability_for(entry, &missing_records);
@@ -386,6 +415,7 @@ pub(crate) fn evidence_record_with_verify_command(
         &actionability,
         &static_limitations,
         &raw_findings,
+        verify_root,
     );
 
     EvidenceRecord {
@@ -628,6 +658,7 @@ fn canonical_item_for(
     actionability: &EvidenceRecordActionability,
     static_limitations: &[EvidenceRecordStaticLimitation],
     raw_findings: &[EvidenceRecordRawFinding],
+    verify_root: &std::path::Path,
 ) -> EvidenceRecordCanonicalItem {
     let evidence_state = evidence_state_for(entry, actionability);
     let gap_state = evidence_state.as_str();
@@ -681,13 +712,12 @@ fn canonical_item_for(
         verify_command_spec: recommendation
             .verify_command
             .as_deref()
-            // The canonical verify display is the portable `--root .` shape,
-            // so recovery needs no concrete selected root.
+            // The verify display is the portable `--root .` shape or one
+            // bound to `verify_root`; recovery binds the same root, so either
+            // yields the portable argv.
             .and_then(|display| {
-                crate::agent::command_specs::agent_command_spec_from_display(
-                    display,
-                    std::path::Path::new(crate::agent::command_specs::PORTABLE_ROOT),
-                )
+                crate::agent::command_specs::agent_command_spec_from_display(display, verify_root)
+                    .or_else(|| bound_snapshot_verify_spec(display, verify_root))
             }),
         receipt_command_spec: evidence_state.is_actionable().then(|| {
             crate::agent::command_specs::agent_receipt_command_spec(
@@ -699,6 +729,26 @@ fn canonical_item_for(
         }),
         confidence: alignment_confidence_for(gap_state, static_limitations),
     }
+}
+
+/// Typed spec for the producer's own bound snapshot verify display (#3948).
+/// A root carrying shell punctuation (`&`, `$`, ...) renders quoted and
+/// pastes correctly, but display recovery refuses those characters in any
+/// word. The producer knows its inputs, so it rebuilds the display from them
+/// and grants the trusted spec only on a byte-for-byte match; any other or
+/// substituted display still recovers nothing.
+fn bound_snapshot_verify_spec(
+    display: &str,
+    verify_root: &std::path::Path,
+) -> Option<crate::domain::CommandSpec> {
+    let root = crate::agent::loop_commands::bound_root(&verify_root.to_string_lossy());
+    let spec = crate::agent::command_specs::agent_verify_command_spec(
+        &root,
+        WORKFLOW_BEFORE_SNAPSHOT_ARTIFACT,
+        WORKFLOW_AFTER_SNAPSHOT_ARTIFACT,
+        None,
+    );
+    (spec.display == display && spec.validate().is_ok()).then_some(spec)
 }
 
 fn alignment_related_test_for_recommended_target(
@@ -975,7 +1025,7 @@ fn recommendation_for(
     };
     let nearest_test_to_imitate =
         nearest_strong_test_to_imitate(entry.seam.kind(), &entry.evidence)
-            .or_else(|| entry.evidence.related_tests.first())
+            .or_else(|| entry.evidence.related_tests.first().map(AsRef::as_ref))
             .map(|test| related_test_record(test, entry.seam.kind()));
 
     EvidenceRecordRecommendation {
@@ -1865,7 +1915,7 @@ mod tests {
         ClassifiedSeam {
             evidence: TestGripEvidence {
                 seam_id: seam.id().clone(),
-                related_tests: vec![RelatedTestGrip {
+                related_tests: vec![std::sync::Arc::new(RelatedTestGrip {
                     test_name: "below_threshold_has_no_discount".to_string(),
                     file: PathBuf::from("tests/pricing_tests.rs"),
                     line: 12,
@@ -1879,7 +1929,7 @@ mod tests {
                     evidence_summary: "broad assertion".to_string(),
                     relation_reason: RelationReason::DirectOwnerCall,
                     relation_confidence: RelationConfidence::High,
-                }],
+                })],
                 reach: stage(StageState::Yes, "owner is reached"),
                 activate: stage(activate_state, "activation evidence unavailable"),
                 propagate: stage(StageState::Yes, "return value flow"),
@@ -1943,7 +1993,7 @@ mod tests {
         ClassifiedSeam {
             evidence: TestGripEvidence {
                 seam_id: seam.id().clone(),
-                related_tests,
+                related_tests: related_tests.into_iter().map(std::sync::Arc::new).collect(),
                 reach: stage(
                     StageState::Yes,
                     "binding seam is visible through external tests",
@@ -2008,7 +2058,7 @@ mod tests {
         ClassifiedSeam {
             evidence: TestGripEvidence {
                 seam_id: seam.id().clone(),
-                related_tests: vec![RelatedTestGrip {
+                related_tests: vec![std::sync::Arc::new(RelatedTestGrip {
                     test_name: "target_token_affinity_is_not_owner_call".to_string(),
                     file: PathBuf::from("tests/target_affinity.rs"),
                     line: 9,
@@ -2022,7 +2072,7 @@ mod tests {
                     evidence_summary: "assertion mentions call target token".to_string(),
                     relation_reason: RelationReason::AssertionTargetAffinity,
                     relation_confidence: RelationConfidence::Medium,
-                }],
+                })],
                 reach: stage(StageState::Yes, "owner is reached"),
                 activate: stage(
                     StageState::Unknown,
@@ -2123,12 +2173,11 @@ mod tests {
     #[test]
     fn evidence_record_accepts_same_file_inline_unit_test_target() {
         let mut entry = sample_classified(StageState::Yes, SeamGripClass::WeaklyGripped);
-        entry.evidence.related_tests[0].file = PathBuf::from("src/pricing.rs");
-        entry.evidence.related_tests[0].test_target = Some(test_target_fixture(
-            "below_threshold_has_no_discount",
-            "src/pricing.rs",
-            12,
-        ));
+        std::sync::Arc::make_mut(&mut entry.evidence.related_tests[0]).file =
+            PathBuf::from("src/pricing.rs");
+        std::sync::Arc::make_mut(&mut entry.evidence.related_tests[0]).test_target = Some(
+            test_target_fixture("below_threshold_has_no_discount", "src/pricing.rs", 12),
+        );
 
         let record = evidence_record_for(&entry, None);
         let json = evidence_record_json_value(&record);
@@ -2154,8 +2203,9 @@ mod tests {
     #[test]
     fn evidence_record_fails_closed_for_production_helper_test_target() {
         let mut entry = sample_classified(StageState::Yes, SeamGripClass::WeaklyGripped);
-        entry.evidence.related_tests[0].file = PathBuf::from("src/pricing_helper.rs");
-        entry.evidence.related_tests[0].test_target = None;
+        std::sync::Arc::make_mut(&mut entry.evidence.related_tests[0]).file =
+            PathBuf::from("src/pricing_helper.rs");
+        std::sync::Arc::make_mut(&mut entry.evidence.related_tests[0]).test_target = None;
 
         let record = evidence_record_for(&entry, None);
         let json = evidence_record_json_value(&record);
@@ -2207,7 +2257,7 @@ mod tests {
         // A related test without a producer-owned target is still a target
         // provenance limitation, not an owner that no test reaches.
         let mut related = sample_classified(StageState::Yes, SeamGripClass::WeaklyGripped);
-        related.evidence.related_tests[0].test_target = None;
+        std::sync::Arc::make_mut(&mut related.evidence.related_tests[0]).test_target = None;
         let json = evidence_record_json_value(&evidence_record_for(&related, None));
         assert_eq!(
             json["static_limitations"][0]["category"],
@@ -2338,7 +2388,7 @@ mod tests {
             reason: "exact family evidence".to_string(),
             flow_sink: None,
         }];
-        entry.evidence.related_tests[0].test_target = None;
+        std::sync::Arc::make_mut(&mut entry.evidence.related_tests[0]).test_target = None;
         entry.class = classify_seam(&entry.seam, &entry.evidence);
         let missing_target = repair_route_readiness(&entry);
         assert_eq!(missing_target.state, RepairRouteState::StaticLimitation);
@@ -2362,18 +2412,20 @@ mod tests {
             }),
             "{reasons:?}"
         );
-        entry.evidence.related_tests[0].test_target = Some(test_target_fixture(
-            "below_threshold_has_no_discount",
-            "tests/pricing_tests.rs",
-            12,
-        ));
-
-        for kind in [SeamKind::SideEffect, SeamKind::CallPresence] {
-            entry.evidence.related_tests[0].test_target = Some(test_target_fixture(
+        std::sync::Arc::make_mut(&mut entry.evidence.related_tests[0]).test_target =
+            Some(test_target_fixture(
                 "below_threshold_has_no_discount",
                 "tests/pricing_tests.rs",
                 12,
             ));
+
+        for kind in [SeamKind::SideEffect, SeamKind::CallPresence] {
+            std::sync::Arc::make_mut(&mut entry.evidence.related_tests[0]).test_target =
+                Some(test_target_fixture(
+                    "below_threshold_has_no_discount",
+                    "tests/pricing_tests.rs",
+                    12,
+                ));
             entry.seam = RepoSeam::new(
                 "src/pricing.rs",
                 "pricing::discounted_total",
@@ -2394,9 +2446,12 @@ mod tests {
             );
             entry.evidence.seam_id = entry.seam.id().clone();
             entry.evidence.missing_discriminators.clear();
-            entry.evidence.related_tests[0].oracle_kind = OracleKind::MockExpectation;
-            entry.evidence.related_tests[0].oracle_strength = OracleStrength::Strong;
-            entry.evidence.related_tests[0].relation_reason = RelationReason::DirectOwnerCall;
+            std::sync::Arc::make_mut(&mut entry.evidence.related_tests[0]).oracle_kind =
+                OracleKind::MockExpectation;
+            std::sync::Arc::make_mut(&mut entry.evidence.related_tests[0]).oracle_strength =
+                OracleStrength::Strong;
+            std::sync::Arc::make_mut(&mut entry.evidence.related_tests[0]).relation_reason =
+                RelationReason::DirectOwnerCall;
             entry.evidence.observe = stage(StageState::Weak, "missing effect observation");
             entry.evidence.discriminate = stage(StageState::Weak, "missing effect discriminator");
             entry.class = classify_seam(&entry.seam, &entry.evidence);
@@ -2407,13 +2462,15 @@ mod tests {
                 "unexpected effect readiness: {readiness:?}"
             );
 
-            entry.evidence.related_tests[0].relation_reason = RelationReason::HelperOwnerCall;
+            std::sync::Arc::make_mut(&mut entry.evidence.related_tests[0]).relation_reason =
+                RelationReason::HelperOwnerCall;
             entry.class = classify_seam(&entry.seam, &entry.evidence);
             assert_eq!(
                 repair_route_readiness(&entry).state,
                 RepairRouteState::StaticLimitation
             );
-            entry.evidence.related_tests[0].relation_reason = RelationReason::DirectOwnerCall;
+            std::sync::Arc::make_mut(&mut entry.evidence.related_tests[0]).relation_reason =
+                RelationReason::DirectOwnerCall;
 
             entry.evidence.observe = stage(StageState::Yes, "strong effect observation");
             entry.evidence.discriminate = stage(StageState::Yes, "strong effect discriminator");
@@ -2424,7 +2481,7 @@ mod tests {
                 RepairRouteState::AlreadyGripped
             );
 
-            entry.evidence.related_tests[0].test_target = None;
+            std::sync::Arc::make_mut(&mut entry.evidence.related_tests[0]).test_target = None;
             entry.class = classify_seam(&entry.seam, &entry.evidence);
             assert_eq!(
                 repair_route_readiness(&entry).state,
@@ -2665,10 +2722,13 @@ mod tests {
             .evidence
             .related_tests
             .first()
-            .cloned()
+            .map(|test| test.as_ref().clone())
             .ok_or("fixture must have a related test")?;
         observer.file = std::path::PathBuf::from("tests/pricing.test.ts");
-        ineligible.evidence.related_tests.push(observer);
+        ineligible
+            .evidence
+            .related_tests
+            .push(std::sync::Arc::new(observer));
 
         for (entry, want) in [(eligible, true), (ineligible, false)] {
             if repair_packet_eligibility(&entry).eligible() != want {
@@ -2721,6 +2781,7 @@ mod tests {
         let under_tests = sample_classified(StageState::Yes, SeamGripClass::WeaklyGripped);
         let mut inline = under_tests.clone();
         for test in &mut inline.evidence.related_tests {
+            let test = std::sync::Arc::make_mut(test);
             test.file = std::path::PathBuf::from("src/lib.rs");
         }
 
@@ -2911,6 +2972,50 @@ mod tests {
             return Err(format!(
                 "workflow family must not name pilot paths: {args:?}"
             ));
+        }
+        Ok(())
+    }
+
+    /// #3948: a standalone root with shell punctuation renders a quoted,
+    /// pasteable verify display that display recovery refuses; the producer's
+    /// own display still carries its typed spec with the portable argv, and a
+    /// display naming another root does not.
+    #[test]
+    fn bound_verify_keeps_its_typed_spec_for_punctuated_roots() -> Result<(), String> {
+        let entry = sample_classified(StageState::Yes, SeamGripClass::WeaklyGripped);
+        for root in ["/tmp/design & tests", "/tmp/cost$center/repo"] {
+            let display = workflow_snapshot_verify_command_for(root);
+            let json = evidence_record_json_value(&evidence_record_with_bound_verify_command(
+                &entry,
+                None,
+                Some(&display),
+                std::path::Path::new(root),
+            ));
+            let spec = &json["canonical_item"]["command_specs"]["verify"];
+            if spec["human_display"] != display.as_str() {
+                return Err(format!("{root}: verify spec lost its display: {spec}"));
+            }
+            let args: Vec<&str> = spec["args"]
+                .as_array()
+                .ok_or_else(|| format!("{root}: verify spec has no args: {spec}"))?
+                .iter()
+                .filter_map(Value::as_str)
+                .collect();
+            if !args.windows(2).any(|pair| pair == ["--root", "."]) {
+                return Err(format!("{root}: concrete root entered argv: {args:?}"));
+            }
+
+            let elsewhere = evidence_record_json_value(&evidence_record_with_bound_verify_command(
+                &entry,
+                None,
+                Some(&display),
+                std::path::Path::new("/tmp/other checkout"),
+            ));
+            if elsewhere["canonical_item"]["command_specs"]["verify"] != Value::Null {
+                return Err(format!(
+                    "{root}: a display bound to another root gained a typed spec"
+                ));
+            }
         }
         Ok(())
     }
@@ -3368,8 +3473,10 @@ mod tests {
             StageState::Unknown,
             "No direct owner call observed for value-insensitive seam `return false`",
         );
-        entry.evidence.related_tests[0].relation_reason = RelationReason::SameTestFile;
-        entry.evidence.related_tests[0].relation_confidence = RelationConfidence::Medium;
+        std::sync::Arc::make_mut(&mut entry.evidence.related_tests[0]).relation_reason =
+            RelationReason::SameTestFile;
+        std::sync::Arc::make_mut(&mut entry.evidence.related_tests[0]).relation_confidence =
+            RelationConfidence::Medium;
         entry.evidence.observed_values.clear();
         entry.evidence.missing_discriminators.clear();
 
@@ -3415,8 +3522,10 @@ mod tests {
             StageState::Unknown,
             "No direct owner call observed for value-insensitive seam `description.clone()`",
         );
-        entry.evidence.related_tests[0].relation_reason = RelationReason::SameTestFile;
-        entry.evidence.related_tests[0].relation_confidence = RelationConfidence::Medium;
+        std::sync::Arc::make_mut(&mut entry.evidence.related_tests[0]).relation_reason =
+            RelationReason::SameTestFile;
+        std::sync::Arc::make_mut(&mut entry.evidence.related_tests[0]).relation_confidence =
+            RelationConfidence::Medium;
         entry.evidence.observed_values.clear();
         entry.evidence.missing_discriminators.clear();
 
@@ -3461,8 +3570,10 @@ mod tests {
             StageState::Unknown,
             "No direct owner call observed for value-insensitive seam `description.value`",
         );
-        entry.evidence.related_tests[0].relation_reason = RelationReason::SameTestFile;
-        entry.evidence.related_tests[0].relation_confidence = RelationConfidence::Medium;
+        std::sync::Arc::make_mut(&mut entry.evidence.related_tests[0]).relation_reason =
+            RelationReason::SameTestFile;
+        std::sync::Arc::make_mut(&mut entry.evidence.related_tests[0]).relation_confidence =
+            RelationConfidence::Medium;
         entry.evidence.observed_values.clear();
         entry.evidence.missing_discriminators.clear();
 
@@ -3491,23 +3602,28 @@ mod tests {
             StageState::Unknown,
             "No direct owner call observed for value-insensitive seam `return false`",
         );
-        entry.evidence.related_tests[0].relation_reason = RelationReason::SameTestFile;
-        entry.evidence.related_tests[0].relation_confidence = RelationConfidence::Medium;
-        entry.evidence.related_tests.push(RelatedTestGrip {
-            test_name: "pricing_module_smoke".to_string(),
-            file: PathBuf::from("tests/pricing/integration.rs"),
-            line: 44,
-            test_target: Some(test_target_fixture(
-                "pricing_module_smoke",
-                "tests/pricing/integration.rs",
-                44,
-            )),
-            oracle_kind: OracleKind::BroadError,
-            oracle_strength: OracleStrength::Weak,
-            evidence_summary: "module proximity".to_string(),
-            relation_reason: RelationReason::SameModule,
-            relation_confidence: RelationConfidence::Medium,
-        });
+        std::sync::Arc::make_mut(&mut entry.evidence.related_tests[0]).relation_reason =
+            RelationReason::SameTestFile;
+        std::sync::Arc::make_mut(&mut entry.evidence.related_tests[0]).relation_confidence =
+            RelationConfidence::Medium;
+        entry
+            .evidence
+            .related_tests
+            .push(std::sync::Arc::new(RelatedTestGrip {
+                test_name: "pricing_module_smoke".to_string(),
+                file: PathBuf::from("tests/pricing/integration.rs"),
+                line: 44,
+                test_target: Some(test_target_fixture(
+                    "pricing_module_smoke",
+                    "tests/pricing/integration.rs",
+                    44,
+                )),
+                oracle_kind: OracleKind::BroadError,
+                oracle_strength: OracleStrength::Weak,
+                evidence_summary: "module proximity".to_string(),
+                relation_reason: RelationReason::SameModule,
+                relation_confidence: RelationConfidence::Medium,
+            }));
         entry.evidence.observed_values.clear();
         entry.evidence.missing_discriminators.clear();
 
@@ -3548,8 +3664,10 @@ mod tests {
             StageState::Unknown,
             "No direct owner call observed for value-insensitive seam `return Some(parameter.clone())`",
         );
-        entry.evidence.related_tests[0].relation_reason = RelationReason::AssertionTargetAffinity;
-        entry.evidence.related_tests[0].relation_confidence = RelationConfidence::Medium;
+        std::sync::Arc::make_mut(&mut entry.evidence.related_tests[0]).relation_reason =
+            RelationReason::AssertionTargetAffinity;
+        std::sync::Arc::make_mut(&mut entry.evidence.related_tests[0]).relation_confidence =
+            RelationConfidence::Medium;
         entry.evidence.observed_values.clear();
         entry.evidence.missing_discriminators.clear();
 
@@ -3582,8 +3700,10 @@ mod tests {
             StageState::Unknown,
             "No direct owner call observed for value-insensitive seam `return false`",
         );
-        entry.evidence.related_tests[0].relation_reason = RelationReason::AssertionTargetAffinity;
-        entry.evidence.related_tests[0].relation_confidence = RelationConfidence::Medium;
+        std::sync::Arc::make_mut(&mut entry.evidence.related_tests[0]).relation_reason =
+            RelationReason::AssertionTargetAffinity;
+        std::sync::Arc::make_mut(&mut entry.evidence.related_tests[0]).relation_confidence =
+            RelationConfidence::Medium;
         entry.evidence.observed_values.clear();
         entry.evidence.missing_discriminators.clear();
 
@@ -3639,8 +3759,10 @@ mod tests {
             StageState::Unknown,
             "No direct owner call observed for value-insensitive seam `return false`",
         );
-        entry.evidence.related_tests[0].relation_reason = RelationReason::FixtureOwnerAffinity;
-        entry.evidence.related_tests[0].relation_confidence = RelationConfidence::Low;
+        std::sync::Arc::make_mut(&mut entry.evidence.related_tests[0]).relation_reason =
+            RelationReason::FixtureOwnerAffinity;
+        std::sync::Arc::make_mut(&mut entry.evidence.related_tests[0]).relation_confidence =
+            RelationConfidence::Low;
         entry.evidence.observed_values.clear();
         entry.evidence.missing_discriminators.clear();
 
@@ -3665,8 +3787,10 @@ mod tests {
             StageState::Unknown,
             "No direct owner call observed for value-insensitive seam `return false`",
         );
-        entry.evidence.related_tests[0].relation_reason = RelationReason::DirectOwnerCall;
-        entry.evidence.related_tests[0].relation_confidence = RelationConfidence::High;
+        std::sync::Arc::make_mut(&mut entry.evidence.related_tests[0]).relation_reason =
+            RelationReason::DirectOwnerCall;
+        std::sync::Arc::make_mut(&mut entry.evidence.related_tests[0]).relation_confidence =
+            RelationConfidence::High;
         entry.evidence.observed_values.clear();
         entry.evidence.missing_discriminators.clear();
 

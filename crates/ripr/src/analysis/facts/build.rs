@@ -5,7 +5,7 @@ mod incremental_edit_tests;
 
 use super::super::syntax::{LexicalRustSyntaxAdapter, RaRustSyntaxAdapter, RustSyntaxAdapter};
 use super::model::{RustIndex, WorkspaceRootAuthority};
-use crate::analysis::cancellation;
+use crate::analysis::cancellation::{self, WorkerError};
 use crate::analysis::seam_cache::{
     CacheLoad, FileFactCacheStats, KnownFilePaths, RepoFileFactCache, RepoFileFactCacheKey,
 };
@@ -115,6 +115,9 @@ fn build_index_with_file_fact_cache(
     ));
     cancellation::checkpoint()?;
     index.package_names = manifest_package_names(root);
+    index.macro_owned_crates = macro_owned_crates(root, &index);
+    index.drop_in_manifests = super::drop_in::DropInManifests::new(root);
+    index.member_crates = super::member_crates::MemberCrates::new(root);
     cancellation::checkpoint()?;
     Ok(CachedRustIndex {
         index,
@@ -226,27 +229,33 @@ fn insert_cached_file_batches(
         parsed.resize_with(batch.len(), || None);
         if !parse_positions.is_empty() {
             cancellation::checkpoint()?;
-            let results: Vec<(usize, Result<super::FileFacts, String>)> = parse_positions
+            let results: Vec<(usize, Result<super::FileFacts, WorkerError>)> = parse_positions
                 .par_iter()
                 .map(|&position| {
                     let result = cancellation::with_optional_token(token.as_ref(), || {
-                        cancellation::checkpoint()?;
+                        cancellation::checkpoint_typed()?;
                         let (file, bytes) = &batch[position];
-                        let facts = summarize_loaded_file(file, bytes, adapter, fallback)?;
-                        cancellation::checkpoint()?;
+                        let facts = summarize_loaded_file(file, bytes, adapter, fallback)
+                            .map_err(WorkerError::Failed)?;
+                        cancellation::checkpoint_typed()?;
                         Ok(facts)
                     });
                     (position, result)
                 })
                 .collect();
             // Do not replace an observed failure with a deadline noticed
-            // only after joining.
-            if let Some(error) = results.iter().find_map(|(_, result)| result.as_ref().err()) {
-                return Err(error.clone());
+            // only after joining, nor with a sibling's abort (#6721).
+            if let Some(error) = cancellation::select_batch_error(
+                token.as_ref(),
+                results
+                    .iter()
+                    .filter_map(|(_, result)| result.as_ref().err()),
+            ) {
+                return Err(error);
             }
             cancellation::checkpoint()?;
             for (position, result) in results {
-                parsed[position] = Some(result?);
+                parsed[position] = Some(result.map_err(WorkerError::into_message)?);
             }
         }
         #[cfg(test)]
@@ -347,23 +356,30 @@ fn build_index_with_adapters(
         // Read + parse run on rayon workers; every file is independent.
         // `collect` on an indexed parallel iterator preserves input order,
         // so `results[i]` corresponds to `batch[i]`.
-        let results: Vec<Result<(PathBuf, super::FileFacts, bool), String>> = batch
+        let results: Vec<Result<(PathBuf, super::FileFacts, bool), WorkerError>> = batch
             .par_iter()
             .map(|file| {
                 cancellation::with_optional_token(token.as_ref(), || {
-                    cancellation::checkpoint()?;
+                    cancellation::checkpoint_typed()?;
                     let full = root.join(file);
-                    let bytes = std::fs::read(&full)
-                        .map_err(|err| format!("failed to read {}: {err}", full.display()))?;
-                    cancellation::checkpoint()?;
-                    let summary = summarize_loaded_file(file, &bytes, adapter, fallback)?;
-                    cancellation::checkpoint()?;
+                    let bytes = std::fs::read(&full).map_err(|err| {
+                        WorkerError::Failed(format!("failed to read {}: {err}", full.display()))
+                    })?;
+                    cancellation::checkpoint_typed()?;
+                    let summary = summarize_loaded_file(file, &bytes, adapter, fallback)
+                        .map_err(WorkerError::Failed)?;
+                    cancellation::checkpoint_typed()?;
                     Ok((file.clone(), summary, rust_source_text(&bytes).not_utf8))
                 })
             })
             .collect();
-        if let Some(error) = results.iter().find_map(|result| result.as_ref().err()) {
-            return Err(error.clone());
+        // The first ordinary failure in input order wins over a sibling's
+        // abort (#6721); with none, the first abort in input order.
+        if let Some(error) = cancellation::select_batch_error(
+            token.as_ref(),
+            results.iter().filter_map(|result| result.as_ref().err()),
+        ) {
+            return Err(error);
         }
         cancellation::checkpoint()?;
         // Insert sequentially in original input order: `RustIndex.tests`
@@ -372,7 +388,7 @@ fn build_index_with_adapters(
         // in input order wins and the per-iteration checkpoint ordering
         // (error first, then checkpoint) is unchanged.
         for result in results {
-            let (file, summary, not_utf8) = result?;
+            let (file, summary, not_utf8) = result.map_err(WorkerError::into_message)?;
             if not_utf8 {
                 index.non_utf8_sources.insert(file.clone());
             }
@@ -393,16 +409,18 @@ fn build_index_with_adapters(
     ));
     cancellation::checkpoint()?;
     index.package_names = manifest_package_names(root);
+    index.macro_owned_crates = macro_owned_crates(root, &index);
+    index.drop_in_manifests = super::drop_in::DropInManifests::new(root);
+    index.member_crates = super::member_crates::MemberCrates::new(root);
     cancellation::checkpoint()?;
     Ok(index)
 }
 
 /// The crate names of the analyzed root manifest: the `[package] name`
 /// plus the `[lib] name` target when the manifest declares one. Root
-/// manifest only: member manifests are not resolved here, so multi-crate
-/// workspaces leave member-crate names unlisted and the same-name-import
-/// gate treats member imports as foreign (fail-closed under-credit; see
-/// `RustIndex.package_names`). Each name is stored in BOTH spellings —
+/// manifest only: a member crate's import of another member's owner is
+/// admitted per test and owner by `MemberCrates`, which reads the member
+/// manifests (RIPR-SPEC-0197 rule 5). Each name is stored in BOTH spellings —
 /// raw and crate-identifier form (#3731 review F23: hyphens normalize to
 /// underscores in crate identifiers, so a package named `foo-bar` is
 /// imported as `foo_bar`, and integration tests import the `[lib]`
@@ -437,6 +455,68 @@ fn manifest_package_names(root: &Path) -> std::collections::BTreeSet<String> {
         .and_then(toml::Value::as_str)
     {
         insert(name);
+    }
+    names
+}
+
+/// `index.package_names` plus every `[workspace] members` crate (literal
+/// paths and trailing `/*` globs, minus `exclude`) that has an indexed file.
+/// A member whose files are not indexed stays foreign: its macro
+/// definitions were not scanned.
+fn macro_owned_crates(root: &Path, index: &RustIndex) -> std::collections::BTreeSet<String> {
+    let mut names = index.package_names.clone();
+    let Ok(text) = std::fs::read_to_string(root.join("Cargo.toml")) else {
+        return names;
+    };
+    let Ok(value) = text.parse::<toml::Table>() else {
+        return names;
+    };
+    let Some(workspace) = value.get("workspace").and_then(toml::Value::as_table) else {
+        return names;
+    };
+    let patterns = |key: &str| {
+        workspace
+            .get(key)
+            .and_then(toml::Value::as_array)
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(toml::Value::as_str)
+                    .map(|item| item.trim_end_matches('/').to_string())
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default()
+    };
+    let excluded = patterns("exclude");
+    let mut members = Vec::new();
+    for pattern in patterns("members") {
+        if let Some(parent) = pattern.strip_suffix("/*") {
+            let Ok(entries) = std::fs::read_dir(root.join(parent)) else {
+                continue;
+            };
+            for entry in entries.flatten() {
+                if let Some(name) = entry.file_name().to_str() {
+                    members.push(format!("{parent}/{name}"));
+                }
+            }
+        } else if !pattern.contains(['*', '?', '[']) {
+            members.push(pattern);
+        }
+    }
+    for member in members {
+        if excluded.contains(&member) {
+            continue;
+        }
+        let directory = Path::new(&member);
+        if !index.files().iter().any(|(path, _)| {
+            let path = path.strip_prefix(root).unwrap_or(path);
+            path.strip_prefix("./")
+                .unwrap_or(path)
+                .starts_with(directory)
+        }) {
+            continue;
+        }
+        names.extend(manifest_package_names(&root.join(directory)));
     }
     names
 }
@@ -546,6 +626,46 @@ mod tests {
             root.join("Cargo.toml"),
             "[package]\nname='test'\nversion='0.1.0'\nedition='2024'\n",
         )?;
+        Ok(())
+    }
+
+    #[test]
+    fn macro_owned_crates_add_indexed_workspace_members_only() -> Result<(), Box<dyn Error>> {
+        let root = temp_dir("macro_owned_crates")?;
+        fs::write(
+            root.join("Cargo.toml"),
+            "[workspace]\nmembers = ['regex-syntax', 'crates/*']\nexclude = ['crates/skip']\n",
+        )?;
+        for (dir, manifest) in [
+            ("regex-syntax", "[package]\nname = 'regex-syntax'\n"),
+            (
+                "crates/cli",
+                "[package]\nname = 'grep-cli'\n[lib]\nname = 'grep_cli_lib'\n",
+            ),
+            ("crates/unindexed", "[package]\nname = 'unindexed'\n"),
+            ("crates/skip", "[package]\nname = 'skip'\n"),
+        ] {
+            fs::create_dir_all(root.join(dir).join("src"))?;
+            fs::write(root.join(dir).join("Cargo.toml"), manifest)?;
+            fs::write(root.join(dir).join("src/lib.rs"), "pub fn f() {}\n")?;
+        }
+        let files = vec![
+            PathBuf::from("regex-syntax/src/lib.rs"),
+            PathBuf::from("crates/cli/src/lib.rs"),
+            PathBuf::from("crates/skip/src/lib.rs"),
+        ];
+        let index = build_index(&root, &files)?;
+        // The root is a virtual manifest: no package names of its own.
+        assert!(index.package_names.is_empty());
+        let owned = index.macro_scope_crates();
+        for name in ["regex_syntax", "regex-syntax", "grep_cli", "grep_cli_lib"] {
+            assert!(owned.contains(name), "{name}: {owned:?}");
+        }
+        // Not indexed, or excluded: its macros were not scanned.
+        for name in ["unindexed", "skip"] {
+            assert!(!owned.contains(name), "{name}: {owned:?}");
+        }
+        fs::remove_dir_all(&root)?;
         Ok(())
     }
 

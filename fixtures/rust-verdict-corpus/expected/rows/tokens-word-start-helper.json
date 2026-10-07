@@ -1,0 +1,19 @@
+{
+  "case_id": "tokens-word-start-helper",
+  "subject_id": "authored-tokens",
+  "origin": "authored",
+  "anchor": "src/scan.rs:38",
+  "behavior_family": "predicate",
+  "test_shape": "helper_reached_with_literal_args",
+  "hard_case": false,
+  "truth": "partially_discriminated",
+  "ideal_verdict": "gap",
+  "observed_verdict": "gap",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "weakly_exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": []
+}
