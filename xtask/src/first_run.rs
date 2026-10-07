@@ -173,6 +173,46 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
     Ok(options)
 }
 
+/// Timed `--install-published` cargo-install invocation.
+///
+/// `CARGO_HOME` is `<out>/cargo-home`. This helper names that path; it does
+/// not create or empty it. `run()` calls `prepare_out_dir` first, so the
+/// directory does not exist when cargo starts and cargo creates a new home.
+/// `RUSTUP_HOME` and `PATH` are omitted so the toolchain still resolves from
+/// the caller.
+struct PublishedInstallSpec {
+    cwd: PathBuf,
+    args: Vec<String>,
+    envs: Vec<(String, String)>,
+    install_root: PathBuf,
+}
+
+impl PublishedInstallSpec {
+    fn env_pairs(&self) -> Vec<(&str, &str)> {
+        self.envs
+            .iter()
+            .map(|(key, value)| (key.as_str(), value.as_str()))
+            .collect()
+    }
+}
+
+fn published_install_spec(out: &Path) -> PublishedInstallSpec {
+    let install_root = out.join("install-root");
+    let cargo_home = out.join("cargo-home").display().to_string();
+    PublishedInstallSpec {
+        cwd: std::env::temp_dir(),
+        args: vec![
+            "install".into(),
+            "ripr".into(),
+            "--locked".into(),
+            "--root".into(),
+            install_root.display().to_string(),
+        ],
+        envs: vec![("CARGO_HOME".into(), cargo_home)],
+        install_root,
+    }
+}
+
 pub(crate) fn run(args: &[String]) -> Result<(), String> {
     let options = parse_options(args)?;
     let out = absolute(&options.out)?;
@@ -180,25 +220,13 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
 
     let mut setup_steps = Vec::new();
     let ripr = if options.install_published {
-        let root = out.join("install-root");
         // Outside the repository so its rust-toolchain and cargo config do not
         // decide how the published crate builds. A fresh CARGO_HOME keeps the
         // crates `cargo xtask` already downloaded for xtask out of the timing,
         // so the sample is a cold install.
-        let cargo_home = out.join("cargo-home").display().to_string();
-        let step = timed_with_envs(
-            &std::env::temp_dir(),
-            "install_published",
-            "cargo",
-            &[
-                "install".into(),
-                "ripr".into(),
-                "--locked".into(),
-                "--root".into(),
-                root.display().to_string(),
-            ],
-            &[("CARGO_HOME", cargo_home.as_str())],
-        )?;
+        let spec = published_install_spec(&out);
+        let envs = spec.env_pairs();
+        let step = timed_with_envs(&spec.cwd, "install_published", "cargo", &spec.args, &envs)?;
         let failed = step.exit != Some(0);
         if failed {
             // The reports keep a count; the cause lives in the full stderr.
@@ -209,7 +237,11 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
         if failed {
             return finish(&options, &out, "unavailable", setup_steps, Vec::new());
         }
-        root.join("bin").join("ripr").display().to_string()
+        spec.install_root
+            .join("bin")
+            .join("ripr")
+            .display()
+            .to_string()
     } else {
         resolve_ripr(&options.ripr)?
     };
@@ -1157,5 +1189,60 @@ mod tests {
             .unwrap_or_default();
         assert!(err.contains("usage: cargo xtask first-run"), "{err}");
         assert!(parse_options(&["--ripr".to_string()]).is_err());
+    }
+
+    #[test]
+    fn the_published_install_child_gets_an_isolated_cargo_home_under_out() -> Result<(), String> {
+        let out = std::env::temp_dir().join(format!("first-run-cargo-home-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&out);
+        prepare_out_dir(&out)?;
+
+        let spec = published_install_spec(&out);
+        let envs = spec.env_pairs();
+        let cargo_home = envs
+            .iter()
+            .find(|(key, _)| *key == "CARGO_HOME")
+            .map(|(_, value)| PathBuf::from(*value))
+            .ok_or_else(|| "install child has no CARGO_HOME override".to_string())?;
+
+        assert_eq!(cargo_home, out.join("cargo-home"));
+        assert!(
+            cargo_home.starts_with(&out),
+            "CARGO_HOME must sit under --out, not the caller home: {}",
+            cargo_home.display()
+        );
+        if let Some(caller) = std::env::var_os("CARGO_HOME") {
+            assert_ne!(
+                PathBuf::from(caller),
+                cargo_home,
+                "install child must not inherit the caller's CARGO_HOME"
+            );
+        }
+        // The helper names the path; emptiness comes from prepare_out_dir
+        // having just replaced --out, so cargo-home does not exist yet.
+        assert!(
+            !cargo_home.exists(),
+            "CARGO_HOME must start absent after prepare_out_dir so cargo creates a fresh home"
+        );
+        assert!(
+            envs.iter()
+                .all(|(key, _)| *key != "RUSTUP_HOME" && *key != "PATH"),
+            "RUSTUP_HOME and PATH must stay inherited so the toolchain resolves: {envs:?}"
+        );
+        assert_eq!(spec.cwd, std::env::temp_dir());
+        assert_eq!(
+            spec.args,
+            vec![
+                "install".into(),
+                "ripr".into(),
+                "--locked".into(),
+                "--root".into(),
+                out.join("install-root").display().to_string(),
+            ]
+        );
+        assert_eq!(spec.install_root, out.join("install-root"));
+
+        let _ = fs::remove_dir_all(&out);
+        Ok(())
     }
 }
