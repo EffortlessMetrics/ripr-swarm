@@ -288,9 +288,9 @@ fn twin_check_reads_every_shape_in_a_start_group() {
     assert_eq!(error_path_twins(&shapes, source), vec![true, true, false]);
 
     // The `return` is matched against the inner shape that ends last: the
-    // shorter `Err(X)` leaves `.m()` behind, the longer span leaves nothing.
-    let source = "return Err(X).m()";
-    let shapes = [error_shape(0, 17), error_shape(7, 13), error_shape(7, 17)];
+    // shorter `Err(X)` leaves `(y)` behind, the longer span leaves nothing.
+    let source = "return Err(X)(y)";
+    let shapes = [error_shape(0, 16), error_shape(7, 13), error_shape(7, 16)];
     assert_eq!(error_path_twins(&shapes, source), vec![true, false, false]);
 }
 
@@ -328,7 +328,10 @@ fn twin_check_stays_fast_on_deep_chains_that_share_a_start() {
     assert!(elapsed < std::time::Duration::from_secs(10), "{elapsed:?}");
 
     // The same shape with `return (` in front exercises the other relation.
-    let source = format!("return (E{chain}){chain}");
+    // The returns grow by ` + 1`, so only the shortest is the inner chain's
+    // twin.
+    let sums = " + 1".repeat(depth);
+    let source = format!("return (E{chain}){sums}");
     let inner_start = "return (".len();
     let inner_end = inner_start + 1;
     let return_end = inner_end + chain.len() + 1;
@@ -347,4 +350,44 @@ fn twin_check_stays_fast_on_deep_chains_that_share_a_start() {
     assert_eq!(twins.iter().filter(|twin| **twin).count(), 1);
     assert_eq!(twins.first(), Some(&true));
     assert!(elapsed < std::time::Duration::from_secs(10), "{elapsed:?}");
+}
+
+/// #6935: a `return` around a method chain on an error constructor is the
+/// constructor's twin, so only `Err(..)` keeps a seam. A returned chain with
+/// no constructor inside keeps its own.
+#[test]
+fn inventory_drops_a_return_around_a_method_chain_on_a_constructor() -> Result<(), String> {
+    let source = concat!(
+        "pub fn load(p: &str) -> anyhow::Result<u8> {\n",
+        "    if p.is_empty() { return Err(Error::Empty).context(\"empty\"); }\n",
+        "    if p == \"x\" { return Err(Error::Bad).into(); }\n",
+        "    if p == \"y\" { return (Err(Error::Paren)).into(); }\n",
+        "    if p == \"z\" {\n",
+        "        return Err(Error::Chain)\n",
+        "            .context(\"z\");\n",
+        "    }\n",
+        "    if p == \"w\" { return x.map_err(Error::from); }\n",
+        "    Ok(1)\n",
+        "}\n",
+    );
+    let index = index_of(source)?;
+    let file = PathBuf::from("src/lib.rs");
+    let seams = inventory_seams_from_index(std::slice::from_ref(&file), &index);
+    let error_seams: Vec<(usize, &str)> = seams
+        .iter()
+        .filter(|seam| seam.kind() == SeamKind::ErrorVariant)
+        .map(|seam| (seam.display_line(), seam.expression()))
+        .collect();
+    assert_eq!(
+        error_seams,
+        vec![
+            (2, "Err(Error::Empty)"),
+            (3, "Err(Error::Bad)"),
+            (4, "Err(Error::Paren)"),
+            (6, "Err(Error::Chain)"),
+            (9, "return x.map_err(Error::from)"),
+        ],
+        "{seams:?}"
+    );
+    Ok(())
 }

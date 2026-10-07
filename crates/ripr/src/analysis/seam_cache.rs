@@ -320,7 +320,9 @@ pub(crate) struct CachedSeamLimitInfo {
 /// `1.43`: inventory keeps one error_variant seam per error constructor;
 /// the `return` around `Err(X)` and the payload call inside `Err(..)` are
 /// twins and drop out (#6914).
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.43";
+/// `1.44`: a `return` around a method chain on an error constructor
+/// (`return Err(X).context(..)`) is that constructor's twin too (#6935).
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.44";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -403,7 +405,8 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.43";
 /// `0.47`: same asserted-Err/`ok_or?` transition as full `1.41`.
 /// `0.48`: same unresolved-boundary-input transition as full `1.42`.
 /// `0.49`: same single error_variant transition as full `1.43`.
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.49";
+/// `0.50`: same returned-chain twin transition as full `1.44`.
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.50";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -488,7 +491,8 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.49";
 /// `0.47`: same asserted-Err/`ok_or?` transition as full `1.41`.
 /// `0.48`: same unresolved-boundary-input transition as full `1.42`.
 /// `0.49`: same single error_variant transition as full `1.43`.
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.49";
+/// `0.50`: same returned-chain twin transition as full `1.44`.
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.50";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -4009,7 +4013,8 @@ mod tests {
         // 1.41 -> 1.42: unresolved boundary inputs read infection unknown
         // (#6674, #6693, #6672, #6671).
         // 1.42 -> 1.43: one error_variant seam per error constructor (#6914).
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.43");
+        // 1.43 -> 1.44: a returned chain on a constructor is its twin (#6935).
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.44");
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
         // for the sharded and compact envelopes.
@@ -4045,8 +4050,8 @@ mod tests {
         // 0.47: same #6673/#6695 transition as full 1.41.
         // 0.47 -> 0.48: same unresolved-boundary-input transition as 1.42.
         // 0.48 -> 0.49: same #6914 transition as full 1.43.
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.49");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.49");
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.50");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.50");
     }
 
     #[test]

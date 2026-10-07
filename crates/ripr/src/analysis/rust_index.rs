@@ -249,7 +249,8 @@ pub(in crate::analysis) fn summarize_file(path: PathBuf, text: String) -> FileFa
 /// the error path through the `return` span, and a change to only the
 /// constructor line through the `Err(X)` span. Inventory keeps the
 /// constructor and drops:
-/// - the `return` wrapped around it (`return Err(X)`, `return (Err(X))`);
+/// - the `return` wrapped around it (`return Err(X)`, `return (Err(X))`,
+///   `return Err(X).context(..)`);
 /// - the payload call inside an `Err(..)` (`Err(Error::X(off))`).
 ///
 /// The relation reads source bytes between the two spans, never `text`,
@@ -291,10 +292,11 @@ pub(crate) fn error_path_twins(shapes: &[ProbeShapeFact], source: &str) -> Vec<b
     twins
 }
 
-/// Marks each `return` in `outers` whose suffix after some inner shape is
-/// only closing parentheses. Only the inner shape that ends last inside the
-/// `return` needs checking: an earlier end leaves a longer suffix that holds
-/// the same bytes.
+/// Marks each `return` in `outers` around the inner shape that ends last
+/// inside it, when only closing parentheses follow that shape, or a method
+/// chain on it (`return Err(X).context(..)`, #6935). The constructor is then
+/// the innermost receiver, so its own seam carries the error. A
+/// `return x.map_err(..)` has no inner constructor and keeps its seam.
 fn mark_returns(
     outers: &[(usize, &ProbeShapeFact)],
     inners: &[(usize, &ProbeShapeFact)],
@@ -306,9 +308,10 @@ fn mark_returns(
         let Some(&(_, inner)) = inside.checked_sub(1).and_then(|last| inners.get(last)) else {
             continue;
         };
-        let closes = source
-            .get(inner.end_byte..outer.end_byte)
-            .is_some_and(|suffix| suffix.chars().all(|c| c == ')' || c.is_whitespace()));
+        let closes = source.get(inner.end_byte..outer.end_byte).is_some_and(|suffix| {
+            let rest = suffix.trim_start_matches(|c: char| c == ')' || c.is_whitespace());
+            rest.is_empty() || rest.starts_with('.')
+        });
         if closes && let Some(twin) = twins.get_mut(outer_index) {
             *twin = true;
         }
