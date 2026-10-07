@@ -480,13 +480,14 @@ rule only for an assertion whose context was admitted.
    of `f` in a related test (a pin with a custom message, another assertion
    macro, a value read out of the result, a second receiver pinning another
    value) keeps the credit. So does a related test that reaches the owner (it
-   names the owner, or is related by a direct or helper owner call) and asserts
-   without naming `f` (whole-struct equality, a snapshot, a helper), and a
+   names the owner, or is related by a direct or helper owner call) without
+   naming `f` (whole-struct equality, a snapshot, a helper that asserts), and a
    pinning test with a condition, match, loop, closure, early exit or `?`,
-   where a pin may not run. A pinning test that also checks the receiver as
-   a whole (`assert_eq!(q, expected)`, a method call on it) or names the
-   owner in another assertion keeps it as well; plain reads of other fields
-   do not. Anything else ripr cannot read (a nested expression, a repeated
+   where a pin may not run. A pinning test must hold only the receiver
+   bindings and assertions that read receivers through plain fields: a
+   whole-result check (`assert_eq!(q, expected)`, a method call, a helper
+   such as `check_quote(&q)`), a second owner result, an attribute such as
+   `#[cfg(..)]`, or the owner named in an assertion keeps the credit. Anything else ripr cannot read (a nested expression, a repeated
    initializer text) keeps it too.
 
 ### Bool-owner pins

@@ -82,7 +82,9 @@ pub(in crate::analysis) fn operand_only_pin(
                     .assertions
                     .iter()
                     .any(|assertion| whole_word_count(&assertion.text, owner_name) > 0);
-            if reaches_owner && !test.assertions.is_empty() {
+            // With no assertion of its own it may still hand the result to a
+            // helper that asserts (`check_quote(quote(2_500, 4))`).
+            if reaches_owner {
                 return None;
             }
             continue;
@@ -99,15 +101,16 @@ pub(in crate::analysis) fn operand_only_pin(
             return None;
         }
         // The same test may also observe the whole result beside its pins
-        // (`assert_eq!(q, expected_quote())`, `assert!(q.is_valid())`), which
-        // can see the operand the pins leave out. A plain read of another
-        // field (`assert_eq!(q.tier, Tier::Gold)`) cannot.
-        let whole_result_check = test.assertions.iter().any(|assertion| {
-            whole_word_count(&assertion.text, owner_name) > 0
-                || field_pins
-                    .iter()
-                    .any(|(receiver, _, _)| uses_more_than_field_reads(&assertion.text, receiver))
-        });
+        // (`assert_eq!(q, expected_quote())`, `check_quote(&q)`, a second
+        // `let r = quote(..)`), or gate a pin (`#[cfg(any())]`), so every
+        // statement must be a receiver binding or an assertion that reads
+        // receivers only through plain fields (`assert_eq!(q.tier, Tier::Gold)`).
+        let receivers = field_pins
+            .iter()
+            .map(|(receiver, _, _)| receiver.as_str())
+            .collect::<Vec<_>>();
+        let whole_result_check =
+            !only_bindings_and_field_reads(test.body.as_str(), &receivers, owner_name);
         if whole_result_check {
             return None;
         }
@@ -300,6 +303,40 @@ fn whole_word_count(text: &str, word: &str) -> usize {
         .count()
 }
 
+/// Whether every statement of `body` is `let <receiver> = ..` for one of
+/// `receivers`, or an assertion macro that names no `owner_name` and uses each
+/// receiver only as a plain field read. Line comments are dropped; anything
+/// else (a helper call, another binding, an attribute) returns `false`.
+fn only_bindings_and_field_reads(body: &str, receivers: &[&str], owner_name: &str) -> bool {
+    let text = body
+        .lines()
+        .map(|line| line.split_once("//").map_or(line, |(code, _)| code))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let inner = match text.find('{') {
+        Some(open) if text[..open].contains("fn ") => text[open + 1..]
+            .trim_end()
+            .strip_suffix('}')
+            .unwrap_or(&text[open + 1..]),
+        _ => text.as_str(),
+    };
+    inner
+        .split(';')
+        .map(str::trim)
+        .filter(|statement| !statement.is_empty())
+        .all(|statement| {
+            if let Some(rest) = statement.strip_prefix("let ") {
+                let name = rest.split(['=', ':']).next().unwrap_or_default().trim();
+                return receivers.contains(&name);
+            }
+            statement.starts_with("assert")
+                && whole_word_count(statement, owner_name) == 0
+                && !receivers
+                    .iter()
+                    .any(|receiver| uses_more_than_field_reads(statement, receiver))
+        })
+}
+
 /// Whether `text` uses `receiver` other than as a plain field read
 /// (`q.total_cents`): the whole value, a method call, or a reference.
 fn uses_more_than_field_reads(text: &str, receiver: &str) -> bool {
@@ -350,8 +387,9 @@ fn bound_once_from_owner_call(body: &str, receiver: &str, owner_name: &str) -> b
 }
 
 /// Whether `body` holds a construct that may skip or repeat a statement:
-/// a condition, a match, a loop, a closure, an early exit or `?`. Comments
-/// and strings count too, which only refuses more.
+/// a condition, a match, a loop, a closure, an early exit, `?` or a
+/// short-circuit `&&`/`||`. Comments and strings count too, which only
+/// refuses more.
 fn has_control_flow(body: &str) -> bool {
     [
         "if", "match", "for", "while", "loop", "return", "break", "continue",
@@ -359,6 +397,7 @@ fn has_control_flow(body: &str) -> bool {
     .iter()
     .any(|word| whole_word_count(body, word) > 0)
         || body.contains(['?', '|'])
+        || body.contains("&&")
 }
 
 fn is_identifier(text: &str) -> bool {
@@ -599,13 +638,38 @@ mod tests {
     /// the field equals the operand.
     #[test]
     fn a_conditional_sibling_pin_keeps_the_credit() {
-        let found = pin(&[test_with(&[
+        let mut gated = test_with(&[
             "let q = quote(1_000, 1);",
             "assert_eq!(q.total_cents, 1_499);",
             "if false { assert_eq!(q.subtotal_cents, 1_499); }",
-        ])]);
+        ]);
+        let mut cfg_gated = test_with(&[
+            "let q = quote(1_000, 1);",
+            "assert_eq!(q.total_cents, 1_499);",
+            "#[cfg(any())] assert_eq!(q.subtotal_cents, 1_499);",
+        ]);
+        let mut short_circuit = test_with(&[
+            "let q = quote(1_000, 1);",
+            "assert_eq!(q.total_cents, 1_499);",
+            "let _ = false && { assert_eq!(q.subtotal_cents, 1_499); true };",
+        ]);
+        // The parser records the gated pin as an assertion; `test_with`
+        // only collects lines that start with `assert`.
+        for test in [&mut gated, &mut cfg_gated, &mut short_circuit] {
+            let mut fact = test.assertions[0].clone();
+            fact.text = "assert_eq!(q.subtotal_cents, 1_499);".to_string();
+            test.assertions.push(fact);
+        }
+        let ungated = test_with(&[
+            "let q = quote(1_000, 1);",
+            "assert_eq!(q.total_cents, 1_499);",
+            "assert_eq!(q.subtotal_cents, 1_499);",
+        ]);
 
-        assert_eq!(found, None);
+        assert!(pin(&[ungated]).is_some());
+        assert_eq!(pin(&[gated]), None);
+        assert_eq!(pin(&[cfg_gated]), None);
+        assert_eq!(pin(&[short_circuit]), None);
     }
 
     /// Codex review of #7084: a test related through a helper that calls
@@ -631,8 +695,20 @@ mod tests {
             )
         };
 
+        let hands_to_helper = test_with(&["check_quote(quote(2_500, 4));"]);
+        let without_assertions = operand_only_pin(
+            "total_cents: subtotal + shipping",
+            "quote",
+            OWNER,
+            &[
+                (&paired, RelationReason::DirectOwnerCall),
+                (&hands_to_helper, RelationReason::DirectOwnerCall),
+            ],
+        );
+
         assert_eq!(check(RelationReason::HelperOwnerCall), None);
         assert!(check(RelationReason::SameModule).is_some());
+        assert_eq!(without_assertions, None);
     }
 
     /// CodeRabbit review of #7084: the pinning test itself may also check
@@ -658,9 +734,33 @@ mod tests {
             "assert_eq!(q.total_cents, 9_000);",
         ])]);
 
+        let helper = pin(&[test_with(&[
+            "let q = quote(2_500, 4);",
+            "assert_eq!(q.subtotal_cents, 9_000);",
+            "assert_eq!(q.total_cents, 9_000);",
+            "check_quote(&q);",
+        ])]);
+        let second_result = pin(&[test_with(&[
+            "let q = quote(2_500, 4);",
+            "let r = quote(1_000, 1);",
+            "assert_eq!(q.subtotal_cents, 9_000);",
+            "assert_eq!(q.total_cents, 9_000);",
+            "assert_eq!(r, expected_r());",
+        ])]);
+        let in_fn = pin(&[test_with(&[
+            "fn quote_test() {",
+            "    let q = quote(2_500, 4); // gold",
+            "    assert_eq!(q.subtotal_cents, 9_000);",
+            "    assert_eq!(q.total_cents, 9_000);",
+            "}",
+        ])]);
+
         assert_eq!(found, None);
         assert_eq!(method, None);
+        assert_eq!(helper, None);
+        assert_eq!(second_result, None);
         assert!(other_field.is_some());
+        assert!(in_fn.is_some());
     }
 
     #[test]
