@@ -207,7 +207,7 @@ fn loan_pairs_boundary_call(
                 && matches!(fact.context, ValueContext::FunctionArgument)
                 && !fact.text.is_empty()
                 && fact.text.contains(&helper_call.text)
-                && fact_matches_fed_literals(&fact.value, &fed)
+                && fact_matches_fed_literals(test, &fact.value, &fed)
         })
     })
 }
@@ -215,14 +215,34 @@ fn loan_pairs_boundary_call(
 /// Whether an activation value (`input == 10`, or a conjunction such as
 /// `y == 0 && x == 0`) consists only of `parameter == literal` terms, each
 /// naming an owner parameter and the very literal this call feeds it.
-fn fact_matches_fed_literals(value: &str, fed: &[(String, String)]) -> bool {
+fn fact_matches_fed_literals(test: &TestSummary, value: &str, fed: &[(String, String)]) -> bool {
     !value.contains("||")
         && value.split(" && ").all(|term| {
             term.split_once(" == ").is_some_and(|(parameter, literal)| {
-                fed.iter()
-                    .any(|(name, fed)| name == parameter.trim() && fed == literal.trim())
+                fed.iter().any(|(name, fed)| {
+                    name == parameter.trim() && same_scalar_literal(test, fed, literal.trim())
+                })
             })
         })
+}
+
+/// Two whole scalar literals that spell one value (`10u32` and `10`), read
+/// the way the direct path reads an owner argument. Anything that is not a
+/// whole literal on both sides must match exactly.
+fn same_scalar_literal(test: &TestSummary, fed: &str, literal: &str) -> bool {
+    if fed == literal {
+        return true;
+    }
+    if !argument_is_whole_scalar_literal(fed) || !argument_is_whole_scalar_literal(literal) {
+        return false;
+    }
+    match (
+        owner_argument_values(test, fed).as_slice(),
+        owner_argument_values(test, literal).as_slice(),
+    ) {
+        ([fed], [literal]) => fed == literal,
+        _ => false,
+    }
 }
 
 /// The helper call's arguments when each is a whole scalar literal and no
@@ -2089,17 +2109,37 @@ mod tests {
             loan_case(CHECK, "check(50, true);", 2);
         swapped.observed_values[0].value = "input == 10".to_string();
         assert!(!loan_pairs(&fifty, &fifty_assertion, &fifty_loan, &swapped));
+        // A typed literal feeds the same value the direct path reads:
+        // `check(10u32, true)` pairs with `input == 10`, and `check(11u32,
+        // true)` does not.
+        let (typed, typed_assertion, typed_loan, typed_activation) =
+            loan_case(CHECK, "check(10u32, true);", 2);
+        assert!(loan_pairs(
+            &typed,
+            &typed_assertion,
+            &typed_loan,
+            &typed_activation
+        ));
+        let (eleven, eleven_assertion, eleven_loan, eleven_activation) =
+            loan_case(CHECK, "check(11u32, true);", 2);
+        assert!(!loan_pairs(
+            &eleven,
+            &eleven_assertion,
+            &eleven_loan,
+            &eleven_activation
+        ));
+        assert!(!same_scalar_literal(&test, "10", "ten"));
         // A conjunction pairs only when every term is a literal the call
         // feeds (`gate(x, y)` reached with `check(0, 0)`).
         let fed = [
             ("x".to_string(), "0".to_string()),
             ("y".to_string(), "0".to_string()),
         ];
-        assert!(fact_matches_fed_literals("y == 0 && x == 0", &fed));
-        assert!(!fact_matches_fed_literals("y == 0 && x == 1", &fed));
-        assert!(!fact_matches_fed_literals("y == 0 || x == 0", &fed));
-        assert!(!fact_matches_fed_literals("y == 0 && x > 0", &fed));
-        assert!(!fact_matches_fed_literals("y == 0 && z == 0", &fed));
+        assert!(fact_matches_fed_literals(&test, "y == 0 && x == 0", &fed));
+        assert!(!fact_matches_fed_literals(&test, "y == 0 && x == 1", &fed));
+        assert!(!fact_matches_fed_literals(&test, "y == 0 || x == 0", &fed));
+        assert!(!fact_matches_fed_literals(&test, "y == 0 && x > 0", &fed));
+        assert!(!fact_matches_fed_literals(&test, "y == 0 && z == 0", &fed));
         // The fact must name the owner parameter that literal reaches.
         let mut renamed = activation.clone();
         renamed.observed_values[0].value = "other == 10".to_string();
