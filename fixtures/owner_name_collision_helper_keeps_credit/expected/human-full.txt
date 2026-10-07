@@ -1,0 +1,40 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: fixtures/owner_name_collision_helper_keeps_credit/input
+
+Summary: 1 probe(s), 1 exposed, 0 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 1 of 1 finding(s) unsuppressed
+
+Analysis outcome: findings below (analysis complete; complete_with_findings).
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 probe(s), 1 finding(s).
+
+INFO ./src/lib.rs:11
+  id: probe:src_lib.rs:return_value:5d09647e
+
+Changed
+  before: self.items.len()
+  after:  self.items.len() + 1
+
+Probe
+  family: return_value
+  delta:  value
+  owner:  src/lib.rs::impl Stack::len
+  canonical gap: gap:rust:src/lib.rs:impl Stack::len:return_value:return_value:self.items.len+1
+
+Static exposure
+  exposed (info, confidence 1.00)
+
+Evidence
+  - reach yes: Related tests appear to reach len: len_counts_items
+  - infection yes: Reachable tests can plausibly activate this changed behavior
+  - propagation yes: Complete propagation witness reaches returned value: self.items.len() + 1
+  - observation yes: A related test observes a value or effect near the changed behavior
+  - discriminator yes: Strong oracle found: exact value or pattern assertion
+  - local flow reaches returned value: self.items.len() + 1 (line 11)
+  - related test src/lib.rs:24 len_counts_items uses strong exact value oracle: assert_eq!(stack.len(), count_items(&[1, 2, 3, 4]));
+  - source assertion argument value 1 at line 26
+  - source assertion argument value 2 at line 26
+  - source assertion argument value 3 at line 26
+  - source assertion argument value 4 at line 26
+Drill in:
+  ripr explain --root <cwd>/fixtures/owner_name_collision_helper_keeps_credit/input --diff <cwd>/fixtures/owner_name_collision_helper_keeps_credit/diff.patch --mode fast probe:src_lib.rs:return_value:5d09647e
+  ripr context --root <cwd>/fixtures/owner_name_collision_helper_keeps_credit/input --diff <cwd>/fixtures/owner_name_collision_helper_keeps_credit/diff.patch --mode fast --at probe:src_lib.rs:return_value:5d09647e

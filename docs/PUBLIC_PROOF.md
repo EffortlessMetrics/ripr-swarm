@@ -37,7 +37,7 @@ The page is generated. A unit test that CI requires fails when the page no longe
 | Trust | Commands that exit 0 when pointed at a missing repository | 0 commands | <= 0 commands | meets the bar | -2 commands since c6ccf9d (was 2 commands) |
 | Trust | Hostile-repository journeys (odd file names, symlink loops, shallow clones, submodules) where ripr neither finds nor refuses cleanly | 0 journeys | <= 0 journeys | meets the bar | no earlier measurement |
 | Trust | Findings or seams whose own evidence contradicts itself | 0 findings | <= 0 findings | meets the bar | -1 finding since c6ccf9d (was 1 finding) |
-| Trust | Wrong verdicts on hand-checked changes from real repositories | **8.8%** | <= 5.0% | below the bar | first receipt (verdict corpus, upstream cases only; all 283 cases: 27.9%) |
+| Trust | Wrong verdicts on hand-checked changes from real repositories | **8.8%** | <= 5.0% | below the bar | first receipt (verdict corpus, upstream cases only; all 283 cases: 26.9%) |
 | Trust | Hand-checked edits the crate's tests fully catch that ripr still flags as a gap | **62.3%** | <= 5.0% | below the bar | no earlier measurement |
 | Trust | Hand-checked edits where ripr gives no specific verdict | **28.6%** | <= 20.0% | below the bar | no earlier measurement |
 | Trust | Hand-checked edits the crate's tests miss that ripr reports as fine (counterweight to abstaining less) | 0.0% | <= 0.0% | meets the bar | no earlier measurement |
@@ -146,11 +146,11 @@ Only the upstream cases come from real repositories. The authored cases were wri
 
 | Rate | All cases | Upstream (real repositories) | Authored |
 | --- | --- | --- | --- |
-| False verdicts (all cases) | 79/283 (27.9%) | 3/34 (8.8%) | 76/249 (30.5%) |
+| False verdicts (all cases) | 76/283 (26.9%) | 3/34 (8.8%) | 73/249 (29.3%) |
 | False actionable (of discriminated) | 68/144 (47.2%) | 3/20 (15.0%) | 65/124 (52.4%) |
-| False exposed (of not fully discriminated) | 11/139 (7.9%) | 0/14 (0.0%) | 11/125 (8.8%) |
+| False exposed (of not fully discriminated) | 8/139 (5.8%) | 0/14 (0.0%) | 8/125 (6.4%) |
 | False silent (of not fully discriminated) | 0/139 (0.0%) | 0/14 (0.0%) | 0/125 (0.0%) |
-| Ideal verdict | 123/283 (43.5%) | 7/34 (20.6%) | 116/249 (46.6%) |
+| Ideal verdict | 126/283 (44.5%) | 7/34 (20.6%) | 119/249 (47.8%) |
 | Abstained (limited or silent where acceptable) | 81/283 (28.6%) | 24/34 (70.6%) | 57/249 (22.9%) |
 | Findings with a contradiction | 2/363 (0.5%) | not split by origin | not split by origin |
 
@@ -203,7 +203,7 @@ Only the upstream cases come from real repositories. The authored cases were wri
 | `checkout-refund-matches-variant` | authored | discriminated | credited | gap | exposed, weakly_exposed | false_actionable | none |
 | `checkout-region-literal-match-helper` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | none |
 | `checkout-review-split-boundary-tests` | authored | not_discriminated | gap | gap | exposed, weakly_exposed | ideal | none |
-| `checkout-tax-self-computed-expected` | authored | not_discriminated | gap | credited | exposed | false_exposed | none |
+| `checkout-tax-self-computed-expected` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | none |
 | `checkout-withdraw-guarded-match-pin` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | none |
 | `checkout-withdraw-sibling-variant` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | none |
 | `config-bool-false-arm` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | none |
@@ -283,7 +283,7 @@ Only the upstream cases come from real repositories. The authored cases were wri
 | `ledger-shipped-total` | authored | partially_discriminated | gap | limited | static_unknown | abstained | none |
 | `ledger-sku-family-end` | authored | discriminated | credited | limited | infection_unknown | abstained | none |
 | `ledger-sku-family-unsafe` | authored | discriminated | credited | credited | exposed, static_unknown | ideal | none |
-| `ledger-sku-variant-unsafe` | authored | partially_discriminated | gap | credited | exposed, static_unknown | false_exposed | none |
+| `ledger-sku-variant-unsafe` | authored | partially_discriminated | gap | gap | static_unknown, weakly_exposed | ideal | none |
 | `ledger-stock-insert` | authored | discriminated | credited | gap | exposed, weakly_exposed | false_actionable | none |
 | `mined-allowlist-listed-row-ftp` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | none |
 | `mined-allowlisted-row-gopher` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | none |
@@ -436,7 +436,7 @@ Only the upstream cases come from real repositories. The authored cases were wri
 | `trap-stack-container-length` | authored | not_discriminated | gap | gap | reachable_unrevealed | ideal | none |
 | `trap-steps-early-return` | authored | not_discriminated | gap | gap | reachable_unrevealed | ideal | none |
 | `trap-tally-reached-assert-control` | authored | discriminated | credited | gap | reachable_unrevealed | false_actionable | none |
-| `trap-tax-reference-helper` | authored | not_discriminated | gap | credited | exposed | false_exposed | none |
+| `trap-tax-reference-helper` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | none |
 | `trap-total-local-binding` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | none |
 | `trap-widen-asserts-input` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | none |
 

@@ -90,6 +90,91 @@ fn exact_classifier_rejects_prefix_lookalikes_and_ambiguous_attributes() {
 }
 
 #[test]
+fn compile_out_helper_is_true_only_for_provably_false_cfgs() {
+    assert!(attributes_compile_out_in_test_build(["#[cfg(any())]"]));
+    assert!(attributes_compile_out_in_test_build([
+        "#[test]",
+        "#[cfg(not(test))]"
+    ]));
+    // Unknown atoms and true cfgs never drop a test.
+    assert!(!attributes_compile_out_in_test_build([
+        "#[cfg(feature = \"x\")]"
+    ]));
+    assert!(!attributes_compile_out_in_test_build(["#[cfg(test)]"]));
+    assert!(!attributes_compile_out_in_test_build(["#[test]"]));
+}
+
+#[test]
+fn test_under_a_cfg_that_is_false_in_a_test_build_is_not_a_test() -> Result<(), String> {
+    // #6293: `#[cfg(any())]` and `#[cfg(not(test))]` remove the item from a
+    // test build, so the test never runs and cannot be credited. A cfg ripr
+    // cannot evaluate (a feature atom) keeps the test, as before.
+    let source = r#"
+#[cfg(any())]
+#[test]
+fn never_compiled() { assert!(true); }
+
+#[cfg(not(test))]
+#[test]
+fn prod_only() { assert!(true); }
+
+#[cfg(feature = "slow")]
+#[test]
+fn feature_gated() { assert!(true); }
+
+#[test]
+fn ordinary() { assert!(true); }
+"#;
+    for adapter in [
+        &RaRustSyntaxAdapter as &dyn RustSyntaxAdapter,
+        &LexicalRustSyntaxAdapter as &dyn RustSyntaxAdapter,
+    ] {
+        let mut facts = adapter.summarize_file(Path::new("src/lib.rs"), source)?;
+        normalize_file_test_styles(&mut facts)?;
+        assert_eq!(test_names(&facts), ["feature_gated", "ordinary"]);
+        // A dead test body is evidence-only: not a test, and never a
+        // production probe subject.
+        for dead in ["never_compiled", "prod_only"] {
+            assert!(
+                facts
+                    .functions
+                    .iter()
+                    .find(|function| function.name == dead)
+                    .is_some_and(|function| function.source_role.is_evidence_role()
+                        && function.source_role != FunctionSourceRole::TestAttribute),
+                "{dead} must be an evidence-only role"
+            );
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn multiline_false_cfg_on_the_lexical_fallback_is_not_a_test() -> Result<(), String> {
+    // #6293: the lexical fallback saw only single-line `#[` attributes, so a
+    // multi-line `#[cfg(\n any()\n)]` left the dead test in `facts.tests`.
+    let source = "#[cfg(\n    any()\n)]\n#[test]\nfn never_compiled() { assert!(true); }\n\n#[cfg(\n    feature = \"slow\"\n)]\n#[test]\nfn feature_gated() { assert!(true); }\n\n#[test]\nfn ordinary() { assert!(true); }\n";
+    let adapter = LexicalRustSyntaxAdapter;
+    let mut facts = adapter.summarize_file(Path::new("src/lib.rs"), source)?;
+    assert!(
+        facts.used_lexical_fallback,
+        "fixture must exercise the lexical fallback"
+    );
+    normalize_file_test_styles(&mut facts)?;
+    assert_eq!(test_names(&facts), ["feature_gated", "ordinary"]);
+    assert!(
+        facts
+            .functions
+            .iter()
+            .find(|function| function.name == "never_compiled")
+            .is_some_and(|function| function.source_role.is_evidence_role()
+                && function.source_role != FunctionSourceRole::TestAttribute),
+        "never_compiled must be an evidence-only role"
+    );
+    Ok(())
+}
+
+#[test]
 fn parser_facts_recognize_explicit_nonstandard_test_styles() -> Result<(), String> {
     let adapter = RaRustSyntaxAdapter;
     let mut facts = adapter.summarize_file(

@@ -5,8 +5,8 @@
     "rate": "0.2862"
   },
   "by_observed_verdict": {
-    "credited": 46,
-    "gap": 156,
+    "credited": 43,
+    "gap": 159,
     "limited": 80,
     "silent": 1
   },
@@ -18,8 +18,8 @@
         "rate": "0.2289"
       },
       "by_observed_verdict": {
-        "credited": 41,
-        "gap": 151,
+        "credited": 38,
+        "gap": 154,
         "limited": 56,
         "silent": 1
       },
@@ -31,8 +31,8 @@
       },
       "false_exposed_rate": {
         "denominator": 125,
-        "numerator": 11,
-        "rate": "0.0880"
+        "numerator": 8,
+        "rate": "0.0640"
       },
       "false_silent_rate": {
         "denominator": 125,
@@ -41,13 +41,13 @@
       },
       "false_verdict_rate": {
         "denominator": 249,
-        "numerator": 76,
-        "rate": "0.3052"
+        "numerator": 73,
+        "rate": "0.2932"
       },
       "ideal_rate": {
         "denominator": 249,
-        "numerator": 116,
-        "rate": "0.4659"
+        "numerator": 119,
+        "rate": "0.4779"
       }
     },
     "upstream": {
@@ -92,8 +92,8 @@
   "by_outcome": {
     "abstained": 81,
     "false_actionable": 68,
-    "false_exposed": 11,
-    "ideal": 123
+    "false_exposed": 8,
+    "ideal": 126
   },
   "by_truth": {
     "discriminated": 144,
@@ -116,8 +116,8 @@
   },
   "false_exposed_rate": {
     "denominator": 139,
-    "numerator": 11,
-    "rate": "0.0791"
+    "numerator": 8,
+    "rate": "0.0576"
   },
   "false_silent_rate": {
     "denominator": 139,
@@ -126,13 +126,13 @@
   },
   "false_verdict_rate": {
     "denominator": 283,
-    "numerator": 79,
-    "rate": "0.2792"
+    "numerator": 76,
+    "rate": "0.2686"
   },
   "ideal_rate": {
     "denominator": 283,
-    "numerator": 123,
-    "rate": "0.4346"
+    "numerator": 126,
+    "rate": "0.4452"
   },
   "non_claims": [
     "Rates describe this corpus only; they are not a population estimate for Rust code or for ripr in general.",
@@ -1050,17 +1050,17 @@
       "anchor": "src/invoice.rs:8",
       "behavior_family": "return_value_arithmetic",
       "case_id": "checkout-tax-self-computed-expected",
-      "changed_since_labeling": false,
+      "changed_since_labeling": true,
       "contradictions": [],
       "followed_retarget": false,
       "hard_case": false,
       "ideal_verdict": "gap",
       "observed_classifications": [
-        "exposed"
+        "weakly_exposed"
       ],
-      "observed_verdict": "credited",
+      "observed_verdict": "gap",
       "origin": "authored",
-      "outcome": "false_exposed",
+      "outcome": "ideal",
       "subject_id": "authored-checkout",
       "test_shape": "self_computed_expected_value",
       "truth": "not_discriminated"
@@ -2585,18 +2585,18 @@
       "anchor": "src/lib.rs:40",
       "behavior_family": "static_unknown",
       "case_id": "ledger-sku-variant-unsafe",
-      "changed_since_labeling": false,
+      "changed_since_labeling": true,
       "contradictions": [],
       "followed_retarget": false,
       "hard_case": true,
       "ideal_verdict": "gap",
       "observed_classifications": [
-        "exposed",
-        "static_unknown"
+        "static_unknown",
+        "weakly_exposed"
       ],
-      "observed_verdict": "credited",
+      "observed_verdict": "gap",
       "origin": "authored",
-      "outcome": "false_exposed",
+      "outcome": "ideal",
       "subject_id": "authored-ledger",
       "test_shape": "unit_test_assert_not_empty",
       "truth": "partially_discriminated"
@@ -5501,17 +5501,17 @@
       "anchor": "src/billing.rs:2",
       "behavior_family": "return_value_arithmetic",
       "case_id": "trap-tax-reference-helper",
-      "changed_since_labeling": false,
+      "changed_since_labeling": true,
       "contradictions": [],
       "followed_retarget": false,
       "hard_case": true,
       "ideal_verdict": "gap",
       "observed_classifications": [
-        "exposed"
+        "weakly_exposed"
       ],
-      "observed_verdict": "credited",
+      "observed_verdict": "gap",
       "origin": "authored",
-      "outcome": "false_exposed",
+      "outcome": "ideal",
       "subject_id": "authored-trap-kit",
       "test_shape": "self_computed_expected_via_test_helper",
       "truth": "not_discriminated"

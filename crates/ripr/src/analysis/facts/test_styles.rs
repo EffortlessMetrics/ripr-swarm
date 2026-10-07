@@ -104,19 +104,32 @@ fn normalize_indexed_file_test_styles(
         cancellation::checkpoint()?;
         let function = &mut functions[id];
         let existing = existing_tests.remove(&(function.start_line, function.name.clone()));
-        let has_test_attribute = match lexical_lines.as_deref() {
+        let (defines_test, compiled_out) = match lexical_lines.as_deref() {
             Some(lines) => {
-                attributes_define_test(lexical_attributes_before(lines, function.start_line))
+                let attributes = lexical_attributes_before(lines, function.start_line);
+                let gates = lexical_gate_attributes_before(lines, function.start_line);
+                (
+                    attributes_define_test(attributes.iter().copied()),
+                    attributes_compile_out_in_test_build(gates.iter().map(String::as_str)),
+                )
             }
-            None => attributes_define_test(function.attrs.iter().map(String::as_str)),
+            None => (
+                attributes_define_test(function.attrs.iter().map(String::as_str)),
+                attributes_compile_out_in_test_build(function.attrs.iter().map(String::as_str)),
+            ),
         };
-        let preserve_cfg_test_role = !has_test_attribute
-            && function.source_role.is_evidence_role()
-            && inside_cfg_test_module_at(
-                cfg_test_lines.get_or_init(|| cfg_test_module_lines(&facts.source)),
-                &facts.source,
-                function.start_line,
-            );
+        let has_test_attribute = defines_test && !compiled_out;
+        // A test under a cfg that is false in a test build never runs and
+        // never compiles (#6293): evidence-only, so it is neither an
+        // executable test nor a production probe subject.
+        let preserve_cfg_test_role = (defines_test && compiled_out)
+            || (!has_test_attribute
+                && function.source_role.is_evidence_role()
+                && inside_cfg_test_module_at(
+                    cfg_test_lines.get_or_init(|| cfg_test_module_lines(&facts.source)),
+                    &facts.source,
+                    function.start_line,
+                ));
         let promotion_claimed_expansion =
             function.source_role == FunctionSourceRole::ParameterizedExpansion;
         function.source_role = if has_test_attribute {
@@ -168,6 +181,18 @@ fn attributes_define_test<'attribute>(
     })
 }
 
+/// A `#[test]` under a `cfg` that is false in a test build (`cfg(any())`,
+/// `cfg(not(test))`) never runs, so it cannot discriminate anything (#6293).
+/// Only a provably false gate counts; feature, target and custom atoms stay
+/// unknown and keep the test, as before.
+fn attributes_compile_out_in_test_build<'attribute>(
+    attributes: impl IntoIterator<Item = &'attribute str>,
+) -> bool {
+    attributes.into_iter().any(|attribute| {
+        cfg_predicates::attribute_test_build_availability(attribute) == Some(false)
+    })
+}
+
 fn lexical_attributes_before<'source>(
     lines: &[&'source str],
     start_line: usize,
@@ -185,6 +210,52 @@ fn lexical_attributes_before<'source>(
             continue;
         }
         break;
+    }
+
+    attributes.reverse();
+    attributes
+}
+
+/// Same walk as `lexical_attributes_before`, but a multi-line attribute
+/// (`#[cfg(\n    any()\n)]`) is joined into one complete attribute so the
+/// cfg-availability check sees the whole gate (#6293). Only used for the
+/// compile-out decision; an attribute it cannot close fails open to the
+/// pre-existing single-line behavior.
+fn lexical_gate_attributes_before(lines: &[&str], start_line: usize) -> Vec<String> {
+    // Real attributes span a handful of lines; past this bound an unclosed
+    // tail is treated as ordinary code instead of joining unrelated lines.
+    const MAX_JOINED_LINES: usize = 32;
+    let mut index = start_line.saturating_sub(1).min(lines.len());
+    let mut attributes = Vec::new();
+
+    while index > 0 {
+        index -= 1;
+        let trimmed = lines[index].trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        if trimmed.starts_with("#[") {
+            attributes.push(trimmed.to_string());
+            continue;
+        }
+        if !trimmed.ends_with(']') {
+            break;
+        }
+        let earliest = index.saturating_sub(MAX_JOINED_LINES - 1);
+        let Some(head) = (earliest..index)
+            .rev()
+            .find(|&candidate| lines[candidate].trim().starts_with("#["))
+        else {
+            break;
+        };
+        let joined = lines[head..=index].join("\n");
+        match cfg_predicates::split_leading_attribute(&joined) {
+            Some((attribute, remainder)) if remainder.trim().is_empty() => {
+                attributes.push(attribute.to_string());
+                index = head;
+            }
+            _ => break,
+        }
     }
 
     attributes.reverse();

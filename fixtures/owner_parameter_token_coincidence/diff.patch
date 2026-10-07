@@ -1,0 +1,9 @@
+diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -4,4 +4,4 @@ pub fn subtotal(items: i64, price: i64) -> i64 {
+ 
+ pub fn tax(subtotal: i64) -> i64 {
+-    subtotal * 9 / 100
++    subtotal * 8 / 100
+ }

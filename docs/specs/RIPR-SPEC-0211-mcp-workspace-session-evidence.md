@@ -14,8 +14,10 @@ Linked issues:
   SDK's Invalid Request answer on the same connection instead of
   terminating the server process)
 - #6022 (post-initialize `ping` with handshake `params._meta` returns an
-  empty result; pre-initialize ping+_meta and discovery-lifecycle ping
+  empty result; pre-init ping+_meta and discovery-lifecycle ping
   rejection stay with #5267 / ADR 0022)
+- #6021 (the tool envelope must not fail a budget-approved listing on the
+  wire: one calibrated envelope, paging on `ripr_list_gaps`)
 - #3087 (parent standard MCP server epic)
 - #3088 (transport/discovery/read-only boundary slice; this slice keeps its
   SDK-owned dispatch and bounded framing)
@@ -118,6 +120,31 @@ official SDK transport:
   adapter never re-runs ranking, never truncates silently, and infers no
   business risk. Overflow is disclosed with reasons and the
   `ripr_get_gap` continuation route.
+- The tool envelope carries the document once at full fidelity (#6021):
+  `content[0].text` is the compact JSON serialization of the structured
+  document (no pretty-print inflation), and `structuredContent` repeats
+  the same document only while the complete double-carry envelope still
+  measures under the 128-KiB response bound; past that point the response
+  ships the compact text without `structuredContent` rather than failing a
+  response the document guard already approved. A tool response is never
+  sent over the cap: when even the compact-text envelope cannot fit, the
+  call fails closed with `result_too_large` naming both sizes.
+- `ripr_list_gaps` accepts `offset` (default 0) and `limit` (minimum 1)
+  over the selected items in snapshot order. When the whole selection
+  would exceed the wire-calibrated tool-document ceiling (half the
+  response bound, the worst-case escaping budget), the default call
+  returns the first wire-fitting page and discloses the window through
+  `page` (`offset` echoing the request, `limit` when the caller set it,
+  `returned`, `has_more`, `next_offset`); walking `next_offset` covers the
+  selection exactly once. Pages are sized so the complete double-carry
+  envelope measures under the response bound: a paged success always
+  carries `structuredContent`, as the tool's advertised `outputSchema`
+  requires. The generated `next_page` route pins the snapshot identity, so
+  a refresh between pages fails closed with `stale_snapshot` instead of
+  mixing snapshots. Only a listing that cannot fit even one page — for
+  example an omission disclosure alone over the ceiling — fails closed
+  with `result_too_large` naming `ripr://snapshot/{snapshot_id}` as the
+  identity route.
 - Every served file path renders relative to the analyzed workspace
   root, so a file under the root never appears as an absolute host path
   and the snapshot identity stays portable across checkouts (#5254
@@ -149,7 +176,10 @@ official SDK transport:
   successful refresh fail closed with `no_snapshot`; reads during an
   attempt report `analysis_in_flight`; unknown item ids fail closed with
   `item_not_found`; a document that cannot fit the 128-KiB response bound
-  fails closed with `result_too_large`. Reserved vocabulary
+  fails closed with `result_too_large` — for tool responses the envelope
+  is measured in its final form before it is sent (#6021), so an approval
+  from the document-level guard can no longer be overturned by the wire.
+  Reserved vocabulary
   (`config_invalid`, `workspace_ambiguous`, `static_limitation`,
   `cancelled`, `superseded`) is named on the wire for the slices that own
   those states.
@@ -164,14 +194,20 @@ official SDK transport:
 - `cargo test -p ripr --lib mcp::workspace` — session state machine,
   snapshot identity portability, stale/no-snapshot/in-flight fail-closed
   reads, complete-zero vs incomplete-zero distinctness, last-known-good
-  retention across a failed refresh, bounded failure detail.
+  retention across a failed refresh, bounded failure detail, and the #6021
+  paging contract: an oversized aggregate listing degrades to byte-fitted
+  disclosed pages (walking `next_offset` covers the selection exactly
+  once), while a fitting listing still ships whole with a closed window.
 - `cargo test -p ripr --lib mcp::gaps` — canonical identity projection
   (producer gap id preferred, finding id fallback), the readiness block this
   slice pinned (the readiness evaluation itself is owned with
   RIPR-SPEC-0214), strict resource-URI parsing.
 - `cargo test -p ripr --lib mcp` — descriptor contracts, positive
   LLM-facing tool descriptions, resource-template discovery, dispatch-edge
-  argument rejection.
+  argument rejection, and the #6021 envelope calibration: the tool
+  envelope carries the document once (compact text always,
+  `structuredContent` only while the complete envelope fits) and fails
+  closed past the bound.
 - `crates/ripr/tests/mcp_sdk.rs` — the pinned official SDK client
   discovers the slice-B tools (four at that slice; the surface is seven
   tools and four templates after RIPR-SPEC-0214), the static resource, and
@@ -256,6 +292,12 @@ official SDK transport:
 - `crates/ripr/src/mcp/gaps.rs::tests` — canonical item projection and the
   readiness block this slice pinned (the readiness evaluation itself is
   owned with RIPR-SPEC-0214).
+- `crates/ripr/src/mcp/protocol.rs::tests::tool_result_carries_the_document_once_when_the_double_envelope_overflows`
+  + `crates/ripr/src/mcp/server_tests.rs::list_gaps_accepts_offset_and_limit_at_the_dispatch_edge`
+  — the #6021 envelope calibration and paging dispatch contract.
+- `crates/ripr/tests/mcp_workspace_config.rs::list_gaps_pages_over_the_wire_with_offset_and_limit`
+  — the #6021 wire contract: `offset`/`limit` accepted, the window
+  disclosed, an over-selection offset an empty final page.
 - `crates/ripr/src/mcp/protocol.rs::tests` + `server_tests.rs` —
   descriptor and dispatch contracts.
 - `crates/ripr/tests/mcp_sdk.rs`, `crates/ripr/tests/mcp_stdio.rs` —
