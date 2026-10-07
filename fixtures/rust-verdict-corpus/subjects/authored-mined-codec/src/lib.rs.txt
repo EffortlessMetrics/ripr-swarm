@@ -1,0 +1,120 @@
+//! Small codec helpers.
+
+pub const ALPHABET: &[u8; 8] = b"abcdefgh";
+
+/// Maps each 3-bit group of `input` to a letter.
+pub fn encode3(input: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(input.len());
+    for &b in input {
+        let index = (b & 0x07) as usize;
+        debug_assert!(index < ALPHABET.len());
+        out.push(ALPHABET[index % ALPHABET.len()]);
+    }
+    out
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Id {
+    counter: u32,
+    version: u8,
+}
+
+impl Id {
+    /// A fresh id: a fixed counter seed tagged with version 1.
+    pub fn new_v1() -> Id {
+        Id { counter: 0x00ab_cdef, version: 1 }
+    }
+
+    /// A fresh id: a fixed counter seed tagged with version 2.
+    pub fn new_v2() -> Id {
+        Id {
+            counter: 0x00ab_cdef,
+            version: 2,
+        }
+    }
+
+    pub fn counter(&self) -> u32 {
+        self.counter
+    }
+
+    pub fn version(&self) -> u8 {
+        self.version
+    }
+}
+
+pub trait Render {
+    fn render(&self) -> String;
+}
+
+pub trait ToText {
+    fn to_text(&self) -> String;
+}
+
+impl<T: Render> ToText for T {
+    fn to_text(&self) -> String {
+        self.render()
+    }
+}
+
+impl Render for f64 {
+    fn render(&self) -> String {
+        if *self == 0.0 && self.is_sign_negative() {
+            return "-0.0".to_string();
+        }
+        format!("{self:?}")
+    }
+}
+
+/// Parses a decimal port, with the scheme's default when absent.
+pub fn default_port(scheme: &str) -> Option<u16> {
+    match scheme {
+        "http" => Some(80),
+        "https" => Some(443),
+        "ftp" => Some(21),
+        "gopher" => Some(70),
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn encode_runs_over_every_byte() {
+        let out = encode3(&[0, 1, 2, 3, 4, 5, 6, 7, 8, 255]);
+        assert_eq!(out.len(), 10);
+    }
+
+    #[test]
+    fn fresh_ids_carry_version_one() {
+        let id = Id::new_v1();
+        assert_eq!(id.version(), 1);
+    }
+
+    #[test]
+    fn fresh_ids_carry_version_two() {
+        let id = Id::new_v2();
+        assert_eq!(id.version(), 2);
+    }
+
+    #[test]
+    fn negative_zero_keeps_its_sign() {
+        assert_eq!((-0.0f64).to_text(), "-0.0");
+        assert_eq!(1.5f64.to_text(), "1.5");
+    }
+
+    /// Rows known to disagree with the reference table; the harness skips them.
+    const EXPECTED_FAILURES: &[&str] = &["gopher"];
+
+    #[test]
+    fn default_ports_match_the_reference_table() {
+        let table = [("http", Some(80)), ("https", Some(443)), ("ftp", Some(21)), ("gopher", Some(71)), ("file", None)];
+        for (scheme, expected) in table {
+            if EXPECTED_FAILURES.contains(&scheme) {
+                continue;
+            }
+            assert_eq!(default_port(scheme), expected, "{scheme}");
+        }
+    }
+}

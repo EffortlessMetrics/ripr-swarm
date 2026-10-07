@@ -10,9 +10,10 @@ Analysis outcome: findings below (analysis complete; complete_with_findings).
 Start here:
   State: a test gap to inspect or repair (top_gap)
   Safe next action: inspect or repair the selected non-exposed gap; this is static advisory evidence only.
-  File: fixtures/owner_return_pin_identity_traps/input/src/lib.rs:21
+  File: ./src/lib.rs:21
   Static exposure: weak (weakly_exposed, warning, confidence 0.92)
   Why weak: a related test reaches this change but does not observe the exact changed value
+  Canonical gap: gap:rust:src/lib.rs:next_word:return_value:return_value:self.base*3
   Changed behavior: self.base() * 3
   Missing discriminator: No strong discriminator was detected
   Related test: tests/trap_tests.rs:9 fixed_reader_overrides_next_word (ripr could not confirm that this assertion observes the changed behavior)
@@ -23,9 +24,10 @@ Start here:
     - 6 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
-  ripr explain --root fixtures/owner_return_pin_identity_traps/input --diff fixtures/owner_return_pin_identity_traps/diff.patch --mode fast probe:src_lib.rs:return_value:22c1d265
-  ripr context --root fixtures/owner_return_pin_identity_traps/input --diff fixtures/owner_return_pin_identity_traps/diff.patch --mode fast --at probe:src_lib.rs:return_value:22c1d265
-No test stub here: the owner is a trait default method or nested function, sits in an impl local to a block or whose self type is not a plain path, sits behind a cfg a plain `cargo test` build may not enable, or takes a typed `self` receiver
+  ripr explain --root <cwd>/fixtures/owner_return_pin_identity_traps/input --diff <cwd>/fixtures/owner_return_pin_identity_traps/diff.patch --mode fast probe:src_lib.rs:return_value:22c1d265
+  ripr context --root <cwd>/fixtures/owner_return_pin_identity_traps/input --diff <cwd>/fixtures/owner_return_pin_identity_traps/diff.patch --mode fast --at probe:src_lib.rs:return_value:22c1d265
+Write a test for it:
+  ripr agent stub --root <cwd>/fixtures/owner_return_pin_identity_traps/input --at src/lib.rs:21
 
 Hidden:
   3 lower-priority finding(s) omitted; 2 base-side evidence, not candidate edit targets.

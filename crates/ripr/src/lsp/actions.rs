@@ -3,7 +3,9 @@ use super::action_contract::{
     disabled_reason_emittable, parse_validated_action_data,
 };
 use super::client_features::ClientFeatureProfile;
-use super::gap_artifacts::{ValidatedGapArtifact, command_payload_is_safe, workspace_path_is_safe};
+use super::gap_artifacts::{
+    ValidatedGapArtifact, bind_portable_command, editor_command_is_safe, workspace_path_is_safe,
+};
 use super::state::AnalysisSnapshot;
 use super::uri::file_uri_for_path;
 use super::{
@@ -31,6 +33,7 @@ use crate::output::evidence_record::{
 };
 use serde_json::Value;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use tower_lsp_server::ls_types::{
     CodeAction, CodeActionDisabled, CodeActionKind, CodeActionOrCommand, CodeActionParams,
     CodeActionResponse, Command, Diagnostic, LSPAny,
@@ -1868,8 +1871,8 @@ fn safe_commands_at(root: &Path, data: &Value, path: &[&str]) -> Vec<String> {
         .flat_map(|items| items.iter())
         .filter_map(Value::as_str)
         .map(str::trim)
-        .filter(|command| command_payload_is_safe(root, command))
-        .map(ToOwned::to_owned)
+        .filter(|command| editor_command_is_safe(root, command))
+        .filter_map(|command| bind_portable_command(root, command))
         .collect()
 }
 
@@ -1881,8 +1884,8 @@ fn first_safe_receipt_command(root: &Path, data: &Value) -> Option<String> {
     ]
     .iter()
     .filter_map(|path| string_at(data, path))
-    .find(|command| command_payload_is_safe(root, command))
-    .map(ToOwned::to_owned)
+    .filter(|command| editor_command_is_safe(root, command))
+    .find_map(|command| bind_portable_command(root, command))
 }
 
 fn gap_related_test_target(snapshot: &AnalysisSnapshot, data: &Value) -> Option<LSPAny> {
@@ -2337,6 +2340,7 @@ fn best_related_test_for_editor(seam: &ClassifiedSeam) -> Option<&RelatedTestGri
                 .iter()
                 .min_by_key(|test| relation_confidence_rank(test.relation_confidence))
         })
+        .map(Arc::as_ref)
 }
 
 fn relation_confidence_rank(confidence: RelationConfidence) -> u8 {
@@ -2381,6 +2385,24 @@ mod tests {
     use tower_lsp_server::ls_types::{
         CodeActionContext, DiagnosticSeverity, Position, Range, TextDocumentIdentifier, Uri,
     };
+
+    #[test]
+    fn receipt_command_falls_back_past_a_route_it_cannot_bind() {
+        // #4001: a safe receipt route the binder withholds (a `\` escape next
+        // to `--root .`) does not hide a later bindable candidate.
+        let root = std::env::temp_dir().join("ripr-receipt-fallback");
+        let data = serde_json::json!({
+            "receipt_command": "ripr receipt write --note it\\s --root . --json",
+            "commands": { "receipt": "ripr agent receipt --root . --json" },
+        });
+        let bound = crate::agent::loop_commands::shell_arg(
+            &crate::agent::loop_commands::bound_root(&root.to_string_lossy()),
+        );
+        assert_eq!(
+            first_safe_receipt_command(&root, &data),
+            Some(format!("ripr agent receipt --root {bound} --json"))
+        );
+    }
 
     #[test]
     fn path_matches_diagnostic_language_covers_modern_ts_js_extensions() {

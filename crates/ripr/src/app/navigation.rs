@@ -1,7 +1,20 @@
 use super::test_stub::{StubRoute, StubRouteDecision};
 use super::{CheckInput, Mode};
-use crate::agent::loop_commands::shell_arg;
+use crate::agent::loop_commands::{bound_root, bound_root_path, root_path_display, shell_arg};
 use std::path::Path;
+
+/// What tree content a check run analyzed (#6304): the live working tree
+/// (`--worktree`), a fixed supplied scope (`--diff`, `--candidate-tree`),
+/// or committed history (an explicit or resolved base). The canonical triage
+/// adapter binds the DTO diff-source from this, never by deriving it from
+/// `output.base`: both committed and worktree runs resolve a base, while a
+/// supplied scope has none — base presence identifies neither mode.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum CheckDiffProvenance {
+    Worktree,
+    SuppliedScope,
+    CommittedHistory,
+}
 
 /// Copy-pasteable sibling commands for a selected finding.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -111,10 +124,21 @@ pub(crate) fn finding_navigation_with_worktree(
         list_prefix: format!("ripr check {list_args}"),
         stub_prefix: format!(
             "ripr agent stub --root {}",
-            shell_arg(&input.root.display().to_string())
+            shell_arg(&bound_root(&input.root.display().to_string()))
         ),
         stub_route: None,
     }
+}
+
+/// A `--diff`, `--from` or `--perl-facts` input resolves against the process
+/// working directory, independently of `--root`, so a drill-in pasted from another
+/// directory would read a different file (or none). The stdin sentinel `-`
+/// stays as typed.
+fn bound_input_file(path: &Path) -> String {
+    if path == Path::new("-") {
+        return "-".to_string();
+    }
+    root_path_display(&bound_root_path(path))
 }
 
 fn navigation_args(
@@ -123,20 +147,23 @@ fn navigation_args(
     mode_explicit: bool,
     worktree: bool,
 ) -> String {
+    // The drill-in is pasted after the listing, often from another directory,
+    // so it names the repository the check resolved, not the typed relative
+    // spelling (#3948).
     let mut args = vec![format!(
         "--root {}",
-        shell_arg(&input.root.display().to_string())
+        shell_arg(&bound_root(&input.root.display().to_string()))
     )];
 
     if let Some(artifact_path) = artifact_path {
         args.push(format!(
             "--from {}",
-            shell_arg(&artifact_path.display().to_string())
+            shell_arg(&bound_input_file(artifact_path))
         ));
     } else if let Some(diff_file) = input.diff_file.as_deref() {
         args.push(format!(
             "--diff {}",
-            shell_arg(&diff_file.display().to_string())
+            shell_arg(&bound_input_file(diff_file))
         ));
     } else {
         if let Some(base) = input.base.as_deref() {
@@ -156,7 +183,7 @@ fn navigation_args(
     if let Some(perl_facts_path) = input.perl_facts_path.as_deref() {
         args.push(format!(
             "--perl-facts {}",
-            shell_arg(&perl_facts_path.display().to_string())
+            shell_arg(&bound_input_file(perl_facts_path))
         ));
     }
     if let Some(suppression_policy) = input.suppression_policy.as_deref() {
@@ -174,6 +201,17 @@ mod tests {
     use super::*;
     use std::path::PathBuf;
 
+    /// The `--root` value a drill-in prints for a typed root: the resolved
+    /// repository, quoted for the shell.
+    fn bound(root: &str) -> String {
+        shell_arg(&bound_root(root))
+    }
+
+    /// The `--diff` / `--from` value a drill-in prints for a typed file.
+    fn bound_file(path: &str) -> String {
+        shell_arg(&bound_input_file(Path::new(path)))
+    }
+
     #[test]
     fn finding_navigation_preserves_diff_and_quotes_dynamic_values() {
         let input = CheckInput {
@@ -183,13 +221,17 @@ mod tests {
         };
         let navigation = finding_navigation(&input, None, false);
 
+        let root = bound("repo root");
+        let diff = bound_file("change set.diff");
         assert_eq!(
             navigation.explain_command("probe:src/lib.rs:error_path:abc123"),
-            "ripr explain --root 'repo root' --diff 'change set.diff' probe:src/lib.rs:error_path:abc123"
+            format!("ripr explain --root {root} --diff {diff} probe:src/lib.rs:error_path:abc123")
         );
         assert_eq!(
             navigation.context_command("probe:src/lib.rs:error_path:abc123"),
-            "ripr context --root 'repo root' --diff 'change set.diff' --at probe:src/lib.rs:error_path:abc123"
+            format!(
+                "ripr context --root {root} --diff {diff} --at probe:src/lib.rs:error_path:abc123"
+            )
         );
     }
 
@@ -205,7 +247,11 @@ mod tests {
 
         assert_eq!(
             navigation.explain_command("probe:id"),
-            "ripr explain --root repo --from 'saved artifact.json' --mode ready probe:id"
+            format!(
+                "ripr explain --root {} --from {} --mode ready probe:id",
+                bound("repo"),
+                bound_file("saved artifact.json")
+            )
         );
     }
 
@@ -220,28 +266,44 @@ mod tests {
         let navigation = finding_navigation_with_worktree(&input, None, false, true);
         assert_eq!(
             navigation.explain_command("src/calc.py:5"),
-            "ripr explain --root . --base HEAD --worktree src/calc.py:5"
+            format!(
+                "ripr explain --root {} --base HEAD --worktree src/calc.py:5",
+                bound(".")
+            )
         );
         assert_eq!(
             navigation.context_command("src/calc.py:5"),
-            "ripr context --root . --base HEAD --worktree --at src/calc.py:5"
+            format!(
+                "ripr context --root {} --base HEAD --worktree --at src/calc.py:5",
+                bound(".")
+            )
         );
         // A selector miss lists ids from the same worktree scope.
         assert_eq!(
             navigation.list_command(),
-            "ripr check --root . --base HEAD --worktree --json"
+            format!(
+                "ripr check --root {} --base HEAD --worktree --json",
+                bound(".")
+            )
         );
         // An artifact already records the worktree diff; `--from` wins.
         let from_artifact =
             finding_navigation_with_worktree(&input, Some(Path::new("wt.json")), false, true);
         assert_eq!(
             from_artifact.explain_command("probe:id"),
-            "ripr explain --root . --from wt.json probe:id"
+            format!(
+                "ripr explain --root {} --from {} probe:id",
+                bound("."),
+                bound_file("wt.json")
+            )
         );
         // `ripr check` has no `--from`: the listing re-runs the worktree scope.
         assert_eq!(
             from_artifact.list_command(),
-            "ripr check --root . --base HEAD --worktree --json"
+            format!(
+                "ripr check --root {} --base HEAD --worktree --json",
+                bound(".")
+            )
         );
     }
 
@@ -257,7 +319,85 @@ mod tests {
 
         assert_eq!(
             navigation.explain_command("probe:id"),
-            "ripr explain --root . --base origin/main --mode draft probe:id"
+            format!(
+                "ripr explain --root {} --base origin/main --mode draft probe:id",
+                bound(".")
+            )
+        );
+    }
+
+    /// #3948: a relative typed root must not be repeated as typed. Pasted from
+    /// another directory it would name whatever sits at that relative path
+    /// there, so every drill-in (explain, context, list, stub) carries the
+    /// resolved repository.
+    #[test]
+    fn finding_navigation_binds_a_relative_root_for_every_drill_in() {
+        let input = CheckInput {
+            root: PathBuf::from("nested/repo"),
+            base: Some("HEAD".to_string()),
+            ..CheckInput::default()
+        };
+        let navigation = finding_navigation(&input, None, false);
+        let resolved = bound_root("nested/repo");
+        assert!(
+            Path::new(&resolved).is_absolute(),
+            "bound root must be absolute: {resolved}"
+        );
+        let root_arg = format!("--root {}", shell_arg(&resolved));
+        for command in [
+            navigation.explain_command("probe:id"),
+            navigation.context_command("probe:id"),
+            navigation.list_command(),
+            navigation.stub_command("src/lib.rs", 5),
+        ] {
+            assert!(
+                command.contains(&root_arg),
+                "drill-in must carry the resolved root: {command}"
+            );
+            assert!(
+                !command.contains("--root nested/repo"),
+                "drill-in repeated the typed relative root: {command}"
+            );
+        }
+    }
+
+    /// #3948 (Devin on #6759): `--diff`, `--from` and `--perl-facts` resolve
+    /// against the process directory, not `--root`, so the drill-in names
+    /// them absolute; the stdin sentinel stays `-`.
+    #[test]
+    fn finding_navigation_binds_relative_input_files_and_keeps_the_stdin_sentinel() {
+        let input = CheckInput {
+            root: PathBuf::from("repo"),
+            diff_file: Some(PathBuf::from("changes.patch")),
+            perl_facts_path: Some(PathBuf::from("facts.json")),
+            ..CheckInput::default()
+        };
+        let command = finding_navigation(&input, None, false).explain_command("probe:id");
+        let facts = bound_input_file(Path::new("facts.json"));
+        assert!(
+            Path::new(&facts).is_absolute()
+                && command.contains(&format!("--perl-facts {}", shell_arg(&facts))),
+            "relative --perl-facts must be bound: {command}"
+        );
+        let diff = bound_input_file(Path::new("changes.patch"));
+        assert!(
+            Path::new(&diff).is_absolute()
+                && command.contains(&format!("--diff {}", shell_arg(&diff))),
+            "relative --diff must be bound: {command}"
+        );
+        assert!(
+            !command.contains("--diff changes.patch"),
+            "drill-in repeated the typed relative --diff: {command}"
+        );
+
+        let stdin = CheckInput {
+            diff_file: Some(PathBuf::from("-")),
+            ..CheckInput::default()
+        };
+        let command = finding_navigation(&stdin, None, false).explain_command("probe:id");
+        assert!(
+            command.contains("--diff -"),
+            "stdin sentinel must stay `-`: {command}"
         );
     }
 }

@@ -231,8 +231,11 @@ read-only and without execution authority (ADR 0022):
   producer test grip, not an admitted seam target.
 - No custom LSP request expansion; MCP and LSP remain peers over shared
   producers.
-- No provider-specific configuration; project-local `ripr.toml` stays
-  detected-not-loaded.
+- No provider-specific configuration. The analysis configuration posture
+  follows #6825 (the workspace's own `ripr.toml` is honored; provider
+  configuration stays unloaded); the repair-transaction tools read the
+  committed snapshot and durable store and load no configuration of
+  their own.
 - No support-tier promotion.
 
 ## Acceptance Examples

@@ -17,7 +17,7 @@
 
 use crate::cli::command_catalog::{CommandCatalogEntry, CommandClass, catalog};
 use crate::cli::command_metadata::{
-    CommandCost, CommandMetadata, CommandOperation, WORKFLOW_TAGS, metadata, metadata_for,
+    CommandCost, CommandMetadata, CommandOperation, WORKFLOW_TAGS, metadata_for,
 };
 
 /// One typed workflow row. Every fact is static data; nothing here inspects a
@@ -676,7 +676,12 @@ const WORKFLOWS: &[WorkflowCatalogEntry] = &[
 pub(crate) fn workflow_catalog() -> &'static [WorkflowCatalogEntry] {
     #[cfg(debug_assertions)]
     {
-        let violations = workflow_catalog_violations(catalog(), metadata(), WORKFLOWS);
+        // Named in full: an import used only here warns in release builds.
+        let violations = workflow_catalog_violations(
+            catalog(),
+            crate::cli::command_metadata::metadata(),
+            WORKFLOWS,
+        );
         debug_assert!(
             violations.is_empty(),
             "workflow catalog integrity failed: {violations:?}"

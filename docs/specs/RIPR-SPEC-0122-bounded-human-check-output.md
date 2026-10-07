@@ -320,6 +320,23 @@ sends readers to `human-full` for full evidence, so that rerun must not lose
 the only runnable next commands. Library renders without CLI navigation omit
 the block.
 
+A predicate probe's `after` is often its parser shape, which is narrower than
+the changed line (`string.len() >= MAX`). In that case the producer cuts
+`before` to the same span of the old line (`string.len() > MAX`), so the
+`Changed` block does not set a whole old line (`if string.len() > MAX {`)
+against one expression (#6995). The cut is made only when the edit falls
+inside the shape. A match arm whose head changed (`x if x <= 10 =>` from
+`x if x < 10 => panic!(..)`) is cut the same way to its old head (#7020). An
+arm whose body changed keeps the whole old arm, because the edit falls
+outside the head shape and the arm consumers parse the old body. An old line
+with a second `=>` (two arms on one line, or a nested match in the body) is
+never cut: arm selection cannot tell which arm changed there and keeps that
+arm's selection unknown. A changed `match` scrutinee is cut the same way
+(`match kind` rather than `match kind {`). In every
+other case, and for other families, `before` keeps the whole old line. The
+same `before` reaches the MCP `changed_behavior.before` field and the LSP
+diagnostic witness.
+
 ### Terminal safety
 
 Repository text (assertion source, test names, observed values, paths) reaches
@@ -331,6 +348,20 @@ A repository therefore cannot clear the screen, retitle the window, overwrite a
 line with a bare carriage return, or reorder displayed text. The escape changes
 no classification, count or selection. Machine formats keep the raw value and
 escape it with their own encoders.
+
+The same escape covers the other terminal-bound text: the GitHub workflow
+annotation encoders (`--format github`), the command-failure line on stderr
+(`CommandError` display), and every library `eprintln!`, which a
+crate-level shadow (`stderr_guard`) routes through the same escape so a new
+warning is safe by default. The progress sink writes to the stderr handle
+directly and prints fixed stage text only. A printed drill-in command is the exception to "escaped
+text": a control or bidi character in a command argument is spelled as an adjacent
+POSIX `"$(printf '\ooo')"` segment (one octal escape per UTF-8 byte), so the line carries no raw control byte and still names the
+same argument when pasted. The PowerShell variant rebuilds each such argument
+as one parenthesized string expression (`('' + 'run' + [char]0x1b + ...)`) so
+it also carries no raw control byte. A control argument in program position or
+as a redirect target, and any segment the translation cannot rebuild exactly,
+withholds the PowerShell variant.
 
 ### Repo-scope warnings
 
@@ -398,6 +429,7 @@ suggested write cannot fail on the same missing base.
 - `crates/ripr/src/output/human.rs::tests::bounded_human_output_caps_many_findings_and_reports_omitted_count`
 - `crates/ripr/src/output/human.rs::tests::terminal_safe_escapes_controls_and_bidi_but_keeps_lines_and_tabs`
 - `crates/ripr/tests/hostile_repos.rs::terminal_control_bytes_in_repo_text_never_reach_the_terminal`
+- `crates/ripr/tests/hostile_repos.rs::control_bytes_in_names_and_config_never_reach_github_output_stderr_or_commands`
 - `crates/ripr/src/output/human.rs::tests::bounded_human_output_does_not_select_exposed_over_non_exposed_repair`
 - `crates/ripr/src/output/human.rs::tests::bounded_human_output_reports_missing_scope_as_start_here_state`
 - `crates/ripr/src/output/human.rs::tests::start_here_prefers_a_python_finding_with_a_repair_card`

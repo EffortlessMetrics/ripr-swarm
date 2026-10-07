@@ -1,0 +1,15 @@
+pub const fn quota(base: u32) -> u32 {
+    base * 27
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const EXPECTED: u32 = quota(2);
+
+    #[test]
+    fn quota_matches_the_table() {
+        assert_eq!(quota(2), EXPECTED);
+    }
+}

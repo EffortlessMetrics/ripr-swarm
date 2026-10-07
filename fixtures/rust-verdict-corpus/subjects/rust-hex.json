@@ -1,0 +1,42 @@
+{
+  "subject_id": "rust-hex",
+  "upstream": "https://github.com/KokaKiwi/rust-hex",
+  "commit": "e25a8701f7f6b5ec4acedffcb4a45cfb69cc34eb",
+  "version_label": "master@e25a870",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "Cargo.toml",
+      "sha256": "b624273085f6748a027867ae62cf1d1f9b6b4c310f58881827a10cc570b6d251"
+    },
+    {
+      "path": "LICENSE-APACHE",
+      "sha256": "c6596eb7be8581c18be736c846fb9173b69eccf6ef94c5135893ec56bd92ba08"
+    },
+    {
+      "path": "LICENSE-MIT",
+      "sha256": "f7bdb3426d045cd50efd4953026e3eb5a83d0199f458a075602611b9344da5b9"
+    },
+    {
+      "path": "src/error.rs",
+      "sha256": "5667836d5c2c2b23f51920f9843e095ae5e4c0b7358ea3ecf062a148687e6bd6"
+    },
+    {
+      "path": "src/lib.rs",
+      "sha256": "e4c4d022b4661860431aa835e1058b2773c9dceda067fc0b79a10a0c7a2fe7c7"
+    },
+    {
+      "path": "src/serde.rs",
+      "sha256": "f0f732567c8ed1af5493ba9aa8fc6674e62b1438b0f3d46e6d1afcd502a037a2"
+    },
+    {
+      "path": "tests/serde.rs",
+      "sha256": "4db6ea16629d2f04c93f39eeed1fa43880ec863802681bcef609065021c68900"
+    },
+    {
+      "path": "tests/version-number.rs",
+      "sha256": "73301b7bfe500eada5ede66f0dce89bd3e354af50a8e7a123b02931cd5eb8e16"
+    }
+  ]
+}

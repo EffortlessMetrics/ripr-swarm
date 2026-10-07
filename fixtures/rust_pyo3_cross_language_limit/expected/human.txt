@@ -10,7 +10,7 @@ Analysis outcome: findings below (analysis complete; complete_with_findings).
 Start here:
   State: limited by static analysis (static_limited)
   Safe next action: inspect the named static limitation before treating this as repair-ready.
-  File: fixtures/rust_pyo3_cross_language_limit/input/src/lib.rs:5
+  File: ./src/lib.rs:5
   Static exposure: no path (no_static_path, warning, confidence 0.48)
   Why no path: no related test was found that reaches this change
   Changed behavior: amount >= 100
@@ -24,10 +24,10 @@ Start here:
     - 4 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
-  ripr explain --root fixtures/rust_pyo3_cross_language_limit/input --diff fixtures/rust_pyo3_cross_language_limit/diff.patch --mode fast probe:src_lib.rs:predicate:f89fd108
-  ripr context --root fixtures/rust_pyo3_cross_language_limit/input --diff fixtures/rust_pyo3_cross_language_limit/diff.patch --mode fast --at probe:src_lib.rs:predicate:f89fd108
+  ripr explain --root <cwd>/fixtures/rust_pyo3_cross_language_limit/input --diff <cwd>/fixtures/rust_pyo3_cross_language_limit/diff.patch --mode fast probe:src_lib.rs:predicate:f89fd108
+  ripr context --root <cwd>/fixtures/rust_pyo3_cross_language_limit/input --diff <cwd>/fixtures/rust_pyo3_cross_language_limit/diff.patch --mode fast --at probe:src_lib.rs:predicate:f89fd108
 Write a test for it:
-  ripr agent stub --root fixtures/rust_pyo3_cross_language_limit/input --at src/lib.rs:5 --kind predicate
+  ripr agent stub --root <cwd>/fixtures/rust_pyo3_cross_language_limit/input --at src/lib.rs:5
 
 Hidden:
   1 lower-priority finding(s) omitted from default human output.
@@ -41,3 +41,6 @@ Note: ripr found no static test path for any of the 2 changed expression(s) in t
   test(s). This is not a coverage assessment. A test may already exercise these changes through
   macros, helper-call chains, or integration tests that ripr's static model does not yet trace; if
   none does, add or check tests in the bindings' other language that observe the changed behavior.
+  This repo also has 1 Python test file(s) (for example tests/test_fee.py); ripr does not link
+  Python tests to Rust changes, so a change they alone cover reads as no static path. Check those
+  tests with your Python test runner, or add a Rust test that observes the behavior.

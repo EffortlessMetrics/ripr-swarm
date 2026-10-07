@@ -1,0 +1,37 @@
+{
+  "subject_id": "authored-tokens",
+  "origin": "authored",
+  "version_label": "authored 2026-10-04 for spec-defined cells",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "Cargo.toml",
+      "sha256": "2e6f4d02c2cf82d6b4be7edb515ea9b1682098b21451021e41f367d16258104e"
+    },
+    {
+      "path": "src/flow.rs",
+      "sha256": "bf09250720639949b15abbd36b64ec1e59910aa8b5df74d377d75fb394807105"
+    },
+    {
+      "path": "src/lib.rs",
+      "sha256": "f4d4c1a4e69d94823f8524ab02d7ca59ff799df70a2e24feab8d3b9d0bd75f19"
+    },
+    {
+      "path": "src/raw.rs",
+      "sha256": "3b53a9349a7a5d0bb6de3287674b670c9c53a0d5916f9479051dd1ffe626a81a"
+    },
+    {
+      "path": "src/reach.rs",
+      "sha256": "95dd8738edc60d5909c3df4a8d86a238033e988cfed917f3f208aa58f3d6b819"
+    },
+    {
+      "path": "src/scan.rs",
+      "sha256": "71e23a3d163549ea302fb01aefe29b4a51d35f012d64d899e63cd9580c646545"
+    },
+    {
+      "path": "tests/public.rs",
+      "sha256": "e65e0945a7f296ed8dbde4c6858bf25add8d7edbb063158d2ff37c3f5ea96ec9"
+    }
+  ]
+}

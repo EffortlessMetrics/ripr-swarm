@@ -10,23 +10,24 @@ Analysis outcome: findings below (analysis complete; complete_with_findings).
 Start here:
   State: a test gap to inspect or repair (top_gap)
   Safe next action: inspect or repair the selected non-exposed gap; this is static advisory evidence only.
-  File: fixtures/match_arm_comment_literal_no_promotion/input/src/lib.rs:3
-  Static exposure: weak (weakly_exposed, warning, confidence 0.92)
+  File: ./src/lib.rs:3
+  Static exposure: weak (weakly_exposed, warning, confidence 0.84)
   Why weak: a related test reaches this change but does not observe the exact changed value
+  Canonical gap: gap:rust:src/lib.rs:route:match_arm:match_arm:lit73656e736f72/*lit666f63757365642d74657374*/
   Changed behavior: "sensor" /* "focused-test" */ =>
-  Missing discriminator: No strong discriminator was detected
-  Related test: tests/route.rs:4 only_the_unchanged_sibling_is_observed (ripr could not confirm that this assertion observes the changed behavior)
+  Missing discriminator (1 of 2): "sensor"
+  Related test: tests/route.rs:4 only_the_unchanged_sibling_is_observed (no test input selects arm `"sensor" =>`)
   Next step: Strengthen the related assertion so it discriminates the changed behavior.
-  Evidence: reach yes · infection yes · propagation yes · observation yes · discriminator weak
+  Evidence: reach yes · infection weak · propagation yes · observation yes · discriminator weak
     - reach yes: Related tests appear to reach route: only_the_unchanged_sibling_is_observed
-    - infection yes: Reachable tests can plausibly activate this changed behavior
+    - infection weak: No related test call selects arm `"sensor" =>`; observed `kind` values: `"focused-test"`
     - 7 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
-  ripr explain --root fixtures/match_arm_comment_literal_no_promotion/input --diff fixtures/match_arm_comment_literal_no_promotion/diff.patch --mode fast probe:src_lib.rs:match_arm:b5edb276
-  ripr context --root fixtures/match_arm_comment_literal_no_promotion/input --diff fixtures/match_arm_comment_literal_no_promotion/diff.patch --mode fast --at probe:src_lib.rs:match_arm:b5edb276
+  ripr explain --root <cwd>/fixtures/match_arm_comment_literal_no_promotion/input --diff <cwd>/fixtures/match_arm_comment_literal_no_promotion/diff.patch --mode fast probe:src_lib.rs:match_arm:b5edb276
+  ripr context --root <cwd>/fixtures/match_arm_comment_literal_no_promotion/input --diff <cwd>/fixtures/match_arm_comment_literal_no_promotion/diff.patch --mode fast --at probe:src_lib.rs:match_arm:b5edb276
 Write a test for it:
-  ripr agent stub --root fixtures/match_arm_comment_literal_no_promotion/input --at src/lib.rs:3 --kind match_arm
+  ripr agent stub --root <cwd>/fixtures/match_arm_comment_literal_no_promotion/input --at src/lib.rs:3
 
 More:
   Full evidence: rerun with --format human-full

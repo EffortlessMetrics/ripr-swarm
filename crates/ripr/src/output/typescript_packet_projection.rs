@@ -1094,6 +1094,15 @@ pub(crate) fn typescript_gap_record_for(finding: &Finding) -> Option<GapRecord> 
         return None;
     }
 
+    // A related row whose family-relevant assertion has a different strength
+    // than the strongest assertion in its test (#5525, RIPR-SPEC-0224) is
+    // not the row the delegation rules were established on: the target row
+    // and verify command below are chosen by row strength. Fail closed so no
+    // card becomes agent-packet eligible because of family selection.
+    if has_moved_assertion_selection(finding) {
+        return None;
+    }
+
     // G-C: non-dynamic oracle: `typescript_oracle_expected` must be present.
     let oracle_expected = evidence_value(finding, "typescript_oracle_expected: ")?;
     if oracle_expected.is_empty() {
@@ -1344,6 +1353,15 @@ fn has_named_typescript_limitation(finding: &Finding) -> bool {
         .any(|line| line.starts_with("typescript_limitation: "))
 }
 
+/// The classifier's `typescript_assertion_selection:` disclosure: some row's
+/// family-relevant assertion moved away from the strength-only pick.
+fn has_moved_assertion_selection(finding: &Finding) -> bool {
+    finding
+        .evidence
+        .iter()
+        .any(|line| line.starts_with("typescript_assertion_selection: "))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1502,6 +1520,31 @@ mod tests {
             .and_then(|route| route.assertion_shape)
             .ok_or_else(|| "complete packet must carry an assertion shape".to_string())?;
         assert_eq!(shape, "expect(applyDiscount(100, 100)).toBe(expected)");
+        Ok(())
+    }
+
+    /// RIPR-SPEC-0224 (#5525): a finding whose related row moved under
+    /// family-relevant assertion selection is never delegated, for either
+    /// disclosed move; the same complete finding without the disclosure is.
+    #[test]
+    fn moved_assertion_selection_is_never_agent_packet_eligible() -> Result<(), String> {
+        let baseline = typescript_gap_record_for(&complete_finding())
+            .ok_or_else(|| "complete finding must produce a GapRecord".to_string())?;
+        if validate_agent_gap_record_packet(&baseline).is_err() {
+            return Err("control: the undisclosed finding must stay eligible".to_string());
+        }
+        for disclosure in [
+            "typescript_assertion_selection: other_behavior_assertion_passed_over (t)",
+            "typescript_assertion_selection: no_predicate_relevant_assertion (t)",
+        ] {
+            let mut finding = complete_finding();
+            finding.evidence.push(disclosure.to_string());
+            if typescript_gap_record_for(&finding).is_some() {
+                return Err(format!(
+                    "`{disclosure}` must keep the finding non-delegatable"
+                ));
+            }
+        }
         Ok(())
     }
 

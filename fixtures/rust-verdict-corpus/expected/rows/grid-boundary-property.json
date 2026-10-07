@@ -1,0 +1,23 @@
+{
+  "case_id": "grid-boundary-property",
+  "subject_id": "authored-grid-boundary",
+  "origin": "authored",
+  "anchor": "src/lib.rs:12",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "property_invariant_loop",
+  "hard_case": false,
+  "truth": "partially_discriminated",
+  "ideal_verdict": "gap",
+  "observed_verdict": "gap",
+  "followed_retarget": false,
+  "changed_since_labeling": true,
+  "observed_classifications": [
+    "exposed",
+    "weakly_exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": [],
+  "findings_scored": 2,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}
