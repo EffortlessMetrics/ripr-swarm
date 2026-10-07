@@ -3,6 +3,41 @@
 This log captures repo knowledge that should survive individual PRs and chat
 sessions. It is intentionally short and actionable.
 
+## 2026-10-07: PowerShell string pipelines add BOMs and mojibake; verify bytes (#7091)
+
+Round-tripping a file through `Get-Content`/`Set-Content` or `>` redirection
+re-encodes it: one merge repair gained a UTF-8 BOM plus Latin-1-decoded
+em-dashes in `process_allowlist.txt` (failing `check-process-policy`), a BOM
+in a test file, and a BOM plus a dropped sentence in a corpus SPEC.md, across
+three lanes (#6306, #5745, #6577). Worse, PowerShell string pipelines are
+BOM-blind on read, so grepping the diff for damage finds nothing. Resolve
+merges with byte-exact tools, never a shell string round-trip, and verify
+with byte reads (`[IO.File]::ReadAllBytes`, `git cat-file` through `cmd`,
+or a script that opens files in binary) before pushing.
+
+## 2026-10-07: Diff-routed gates let a broken main hide; prove behavior changes fully (#7114)
+
+#5997's dirty-tree default flipped a `hostile_repos` assertion (the 0112
+deleted-file notice fires only on committed-history reads), but its gate ran
+a diff-routed subset that never executed that binary, so main broke silently
+at `9cc79a167`. Only full-suite gates (#6638's, then #6715's) caught the
+single FAIL. A green diff-routed gate on a behavior change proves the
+touched paths, not the suite. Behavior changes that alter CLI defaults,
+output contracts, or shared validators need full-suite evidence (or an
+explicit routing justification) before merge.
+
+## 2026-10-07: Split corpus records must match the writer's null/empty conventions (#6577)
+
+`split_moves_the_one_file_layout_into_records_without_loss` compares untyped
+`serde_json::Value`s, where a missing key differs from `null` and from `[]`.
+Hand-migrated records that omit `mutated_line` fail against split output that
+writes explicit nulls (main-side convention: always present); conversely a
+`Vec` field the writer always serializes fails against records that omit it
+when empty (fixed with `skip_serializing_if`, matching the branch's own
+100/175 omission). Migrate through the real `split` writer where possible;
+when grafting by hand, copy the writer's exact key presence, not the
+sparse-tolerant reader's.
+
 ## 2026-10-07: Call-path scans must treat non-ASCII as identifier text (#7062)
 
 `called_paths` walked bytes with an ASCII identifier set. `módulo` became
