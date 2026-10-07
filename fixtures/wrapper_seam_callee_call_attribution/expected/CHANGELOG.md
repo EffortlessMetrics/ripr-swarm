@@ -254,3 +254,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — wrapper_seam_callee_call_attribution (20)
+
+Reason:
+RIPR-SPEC-0106: callee-only reach state Yes->Weak/Low agrees with its own not-invoked summary (#7003); hint no longer claims a reaching test; class/confidence/summary unchanged
+
+Command:
+`cargo xtask goldens bless wrapper_seam_callee_call_attribution --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
