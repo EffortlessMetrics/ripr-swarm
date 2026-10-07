@@ -568,16 +568,26 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
     }
     if committed_explicitly_provided {
         if worktree_explicitly_provided {
-            return Err(
+            return Err(refuse_check(
+                &envelope_input,
+                effective_format,
                 "check --committed and --worktree select different diff sources; pass one"
                     .to_string(),
-            );
+            ));
         }
         if input.diff_file.is_some() {
-            return Err("check --committed cannot be combined with --diff".to_string());
+            return Err(refuse_check(
+                &envelope_input,
+                effective_format,
+                "check --committed cannot be combined with --diff".to_string(),
+            ));
         }
         if candidate_tree.is_some() {
-            return Err("check --committed cannot be combined with --candidate-tree".to_string());
+            return Err(refuse_check(
+                &envelope_input,
+                effective_format,
+                "check --committed cannot be combined with --candidate-tree".to_string(),
+            ));
         }
     }
     // #1441: --suppression-policy applies to the findings-based check
@@ -892,15 +902,21 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
     }
     if committed_explicitly_provided {
         if gap_ledger.is_some() {
-            return Err(
+            return Err(refuse_check(
+                &envelope_input,
+                effective_format,
                 "check --committed selects a diff source; --gap-ledger renders a supplied ledger and reads no diff"
                     .to_string(),
-            );
+            ));
         }
         if format.is_repo_scope() || matches!(format, OutputFormat::RepoExposureJson) {
-            return Err(format!(
-                "check --committed selects a diff source; --format {} is repo-scoped and reads no diff",
-                format.primary_cli_name()
+            return Err(refuse_check(
+                &envelope_input,
+                effective_format,
+                format!(
+                    "check --committed selects a diff source; --format {} is repo-scoped and reads no diff",
+                    format.primary_cli_name()
+                ),
             ));
         }
     }

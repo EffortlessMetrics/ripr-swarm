@@ -19386,6 +19386,21 @@ fn check_committed_rejects_conflicting_diff_sources() {
             output.status
         );
     }
+    // #5997 review: a `--json` caller gets the structured refusal envelope
+    // on stdout (#6834), with the prose kept on stderr.
+    let json_output = run_ripr(&["check", "--committed", "--worktree", "--json"]);
+    let json_stderr = String::from_utf8_lossy(&json_output.stderr);
+    let refusal: serde_json::Value = serde_json::from_slice(&json_output.stdout)
+        .expect("a --committed conflict with --json must print a refusal envelope on stdout");
+    assert!(
+        !json_output.status.success()
+            && refusal.get("findings").is_some()
+            && json_stderr.contains("select different diff sources"),
+        "--committed --worktree --json must refuse with an envelope plus prose; got status {:?} stdout:\n{}\nstderr:\n{}",
+        json_output.status,
+        String::from_utf8_lossy(&json_output.stdout),
+        json_stderr
+    );
 }
 
 /// RIPR-SPEC-0112 (default base, clean): a bare `ripr check` on a clean
