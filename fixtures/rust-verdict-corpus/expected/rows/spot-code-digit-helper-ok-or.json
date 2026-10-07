@@ -1,0 +1,20 @@
+{
+  "case_id": "spot-code-digit-helper-ok-or",
+  "subject_id": "authored-spot",
+  "origin": "authored",
+  "anchor": "src/parse.rs:19",
+  "behavior_family": "error_variant",
+  "test_shape": "pure_helper_call_with_ok_or_exact_result",
+  "hard_case": true,
+  "truth": "discriminated",
+  "ideal_verdict": "credited",
+  "observed_verdict": "credited",
+  "followed_retarget": false,
+  "changed_since_labeling": true,
+  "observed_classifications": [
+    "exposed",
+    "infection_unknown"
+  ],
+  "outcome": "ideal",
+  "contradictions": []
+}

@@ -1,0 +1,51 @@
+{
+  "case_id": "tokens-normalize-helper-chain",
+  "subject_id": "authored-tokens",
+  "diff": "cases/tokens-normalize-helper-chain.diff",
+  "anchor": {
+    "file": "src/reach.rs",
+    "line": 4
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value",
+  "test_shape": "helper_chain_two_hops",
+  "hard_case": null,
+  "truth": {
+    "state": "partially_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "x",
+        "mutated_line": "x",
+        "outcome": "tests_failed",
+        "failing_test": "reach::tests::score_doubles_the_stepped_magnitude",
+        "equivalence_review": "not equivalent: score(-3) becomes -4"
+      },
+      {
+        "replacement": "-x",
+        "mutated_line": "-x",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: positive inputs are negated, but the only test passes -3"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "score(-3) catches dropping the abs but not negating it, since -(-3) equals |-3|. Spec cells: RIPR-SPEC-0114.",
+  "labeling_observation": {
+    "ripr_commit": "b0c6ef6",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "propagation_unknown"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

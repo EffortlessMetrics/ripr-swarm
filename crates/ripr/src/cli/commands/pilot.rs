@@ -14,7 +14,7 @@ use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::mpsc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 const DEFAULT_PILOT_TIMEOUT_MS: u64 = 30_000;
 
@@ -30,10 +30,12 @@ const PILOT_RETRY_TIMEOUT_MS: u64 = 240_000;
 /// repo-exposure-json` would, the snapshot carries the same producer-owned
 /// `artifact` identity, so it can be the `--before` of `ripr agent verify`
 /// that the first-PR workflow and the evidence records name (#3906). When the
-/// pilot seam budget truncated the population, the snapshot is written
-/// without that identity: a stamped partial snapshot would pass verify's
-/// comparability check against a full after snapshot and compare two
-/// different populations. Verify then refuses it rather than misreporting.
+/// pilot seam budget truncated the population, or pilot added the current
+/// change's seams past the inventory seam limit (#6943), the snapshot is
+/// written without that identity: a stamped snapshot of another population
+/// would pass verify's comparability check against a `ripr check` after
+/// snapshot and compare two different populations. Verify then refuses it
+/// rather than misreporting.
 fn write_pilot_repo_exposure_json(
     path: &Path,
     input: &CheckInput,
@@ -41,13 +43,13 @@ fn write_pilot_repo_exposure_json(
     classified: &[analysis::ClassifiedSeam],
     limit_info: Option<&analysis::SeamLimitInfo>,
     generated_skip: Option<&output::repo_exposure::GeneratedRustSkip>,
-    pilot_budget_truncated: bool,
+    population_differs_from_check: bool,
 ) -> Result<(), String> {
     let ts_guidance = output::render::detect_ts_full_repo_guidance_pub(&input.root, classified);
     let python_guidance =
         output::render::detect_python_repo_exposure_guidance_pub(&input.root, classified);
     let write_failed = |err: String| format!("write {} failed: {err}", path.display());
-    if pilot_budget_truncated {
+    if population_differs_from_check {
         return write_pilot_file(
             path,
             output::repo_exposure::render_repo_exposure_json_with_generated_skip(
@@ -150,6 +152,7 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
         .contains(&crate::domain::LanguageId::Rust);
     let extension_ms = pilot_deadline_extension_ms(&options);
     let progress = pilot_progress_sink(options.quiet);
+    let analysis_started = Instant::now();
     let analysis_result = if rust_enabled {
         run_pilot_analysis_with_timeout(
             options.timeout_ms,
@@ -216,7 +219,7 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
     // manageable size.  `limit_info` carries whichever cap fired (pilot
     // budget wins when both fire; inventory limit is the outer bound).
     let mut classified = report.classified;
-    let inventory_limit_info = report.limit_info;
+    let mut inventory_limit_info = report.limit_info;
     let generated_skip = output::repo_exposure::GeneratedRustSkip::from_paths(
         report.skipped_generated,
         report.naming_only_skips,
@@ -225,8 +228,37 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
     // changed seam past the cut is kept and can still rank change-first. A
     // changed seam pilot cannot recommend is not kept: it would displace an
     // actionable seam and leave nothing to recommend.
-    let current_change = load_pilot_current_change(&input, git_timeout)
-        .with_seams_counted(&classified, inventory_limit_info.as_ref());
+    let current_change = load_pilot_current_change(&input, git_timeout);
+    // #6943: the inventory seam limit cuts before the change is known, so on
+    // a large repo it can drop the very seams the developer changed. Classify
+    // the change's own files in what is left of pilot's deadline and add its
+    // cut seams; they count as analyzed. A failed or late classification
+    // never fails pilot: the seam-limit caveat on the change stays.
+    let change_classification = classify_change_past_seam_limit(
+        &input.root,
+        &config,
+        &current_change,
+        inventory_limit_info.is_some(),
+        spent_timeout_ms.saturating_sub(elapsed_ms(analysis_started)),
+        !options.quiet,
+    );
+    let folded = current_change.fold_classified_change(
+        &mut classified,
+        &mut inventory_limit_info,
+        change_classification,
+    );
+    if let Some(error) = &folded.error {
+        eprintln!(
+            "{}",
+            terminal_safe(format!(
+                "ripr pilot: could not classify the current change past the seam limit ({error})"
+            ))
+        );
+    }
+    // A snapshot holding seams `ripr check` never classifies is not the same
+    // population as its after snapshot, so it is written without identity.
+    let change_seams_added = folded.added > 0;
+    let current_change = current_change.with_seams_counted(&classified, folded.caveat_limit);
     let pilot_budget_info = analysis::apply_pilot_seam_budget(&mut classified, |entry| {
         current_change.keeps_past_budget(entry)
     })?;
@@ -286,7 +318,7 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
         &classified,
         limit_info.as_ref(),
         generated_skip.as_ref(),
-        pilot_budget_truncated,
+        pilot_budget_truncated || change_seams_added,
     )?;
     write_pilot_file(
         &artifacts.repo_exposure_md,
@@ -328,6 +360,60 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
         sink.commit_success();
     }
     Ok(())
+}
+
+/// Classify the current change's Rust files on their own when the
+/// inventory seam limit fired (#6943), under the `remaining_ms` left of
+/// pilot's deadline. `None` when the limit did not fire or the change has no
+/// Rust file; an error (including running out of time) when the change could
+/// not be classified, which pilot reports without failing.
+fn classify_change_past_seam_limit(
+    root: &Path,
+    config: &RiprConfig,
+    change: &output::pilot::PilotCurrentChange,
+    inventory_limited: bool,
+    remaining_ms: u64,
+    announce: bool,
+) -> Option<Result<Vec<analysis::ClassifiedSeam>, String>> {
+    if !inventory_limited {
+        return None;
+    }
+    let files = change.changed_rust_files();
+    if files.is_empty() {
+        return None;
+    }
+    if remaining_ms == 0 {
+        return Some(Err("the inventory used pilot's whole deadline".to_string()));
+    }
+    if announce {
+        eprintln!(
+            "ripr: pilot hit the seam limit; classifying the current change's {} Rust file(s) on their own...",
+            files.len()
+        );
+    }
+    let (root, config, change) = (root.to_path_buf(), config.clone(), change.clone());
+    Some(
+        match run_pilot_analysis_with_timeout(
+            remaining_ms,
+            None,
+            || {},
+            move || {
+                analysis::classify_seams_in_files_at_with_config(&root, &config, &files, &|seam| {
+                    change.touches_seam(seam)
+                })
+            },
+        ) {
+            Ok(PilotAnalysisResult::Complete(classified)) => Ok(classified),
+            Ok(PilotAnalysisResult::TimedOut) => {
+                Err("it did not finish within pilot's deadline".to_string())
+            }
+            Err(error) => Err(error),
+        },
+    )
+}
+
+fn elapsed_ms(started: Instant) -> u64 {
+    u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX)
 }
 
 /// Build the stderr progress sink for one pilot analysis attempt (#5019).
@@ -535,8 +621,8 @@ fn pilot_deadline_extension_ms(options: &PilotOptions) -> Option<u64> {
     (!options.timeout_explicit).then_some(PILOT_RETRY_TIMEOUT_MS)
 }
 
-enum PilotAnalysisResult {
-    Complete(analysis::ClassifiedSeamsReport),
+enum PilotAnalysisResult<T> {
+    Complete(T),
     TimedOut,
 }
 
@@ -545,14 +631,15 @@ enum PilotAnalysisResult {
 /// When `extension_ms` is set and the first deadline passes, `on_extend` runs
 /// once and the same analysis keeps going for `extension_ms` more; work done
 /// before the first deadline is never thrown away.
-fn run_pilot_analysis_with_timeout<F>(
+fn run_pilot_analysis_with_timeout<T, F>(
     timeout_ms: u64,
     extension_ms: Option<u64>,
     on_extend: impl FnOnce(),
     runner: F,
-) -> Result<PilotAnalysisResult, String>
+) -> Result<PilotAnalysisResult<T>, String>
 where
-    F: FnOnce() -> Result<analysis::ClassifiedSeamsReport, String> + Send + 'static,
+    T: Send + 'static,
+    F: FnOnce() -> Result<T, String> + Send + 'static,
 {
     let cancellation_token = crate::analysis::cancellation::AnalysisCancellationToken::new();
     let worker_token = cancellation_token.clone();
@@ -729,7 +816,7 @@ mod tests {
     #[test]
     fn pilot_analysis_timeout_cancels_worker() {
         let (cancelled_tx, cancelled_rx) = mpsc::channel();
-        let result = run_pilot_analysis_with_timeout(
+        let result = run_pilot_analysis_with_timeout::<(), _>(
             1,
             None,
             || {},
@@ -791,7 +878,7 @@ mod tests {
         // passes no extension, so the first deadline cancels the run and
         // the extension callback never fires.
         let extended = std::cell::Cell::new(false);
-        let result = run_pilot_analysis_with_timeout(
+        let result = run_pilot_analysis_with_timeout::<(), _>(
             20,
             None,
             || extended.set(true),
@@ -983,5 +1070,35 @@ mod tests {
             "a file occupying --out is not a not-writable tree: {error}"
         );
         Ok(())
+    }
+
+    #[test]
+    fn change_classification_past_the_limit_runs_only_when_it_can_matter() {
+        let change = output::pilot::PilotCurrentChange::from_diff_text(
+            Path::new("."),
+            None,
+            "diff --git a/src/a.rs b/src/a.rs\n--- a/src/a.rs\n+++ b/src/a.rs\n@@ -1 +1 @@\n-a\n+b\n",
+        );
+        let config = RiprConfig::default();
+        let root = Path::new("/nonexistent/ripr-pilot-root");
+        // No limit fired: the inventory already holds every seam.
+        assert!(
+            classify_change_past_seam_limit(root, &config, &change, false, 1_000, false).is_none()
+        );
+        // No Rust file in the change: nothing to classify.
+        let docs = output::pilot::PilotCurrentChange::from_diff_text(
+            Path::new("."),
+            None,
+            "diff --git a/README.md b/README.md\n--- a/README.md\n+++ b/README.md\n@@ -1 +1 @@\n-a\n+b\n",
+        );
+        assert!(
+            classify_change_past_seam_limit(root, &config, &docs, true, 1_000, false).is_none()
+        );
+        // The inventory spent the deadline: an error, so the caveat stays.
+        assert_eq!(
+            classify_change_past_seam_limit(root, &config, &change, true, 0, false)
+                .map(|result| result.map(|classified| classified.len())),
+            Some(Err("the inventory used pilot's whole deadline".to_string()))
+        );
     }
 }

@@ -13113,7 +13113,7 @@ fn pilot_snapshot_truncated_by_the_seam_budget_is_not_a_verify_baseline()
     let full_total = count(&full);
     assert!(
         summary.contains(&format!(
-            "- Seam limit reached: ranked the first 1 of {full_total} seams;"
+            "- Seam limit reached: ranked 1 of {full_total} seams;"
         )),
         "{summary}"
     );
@@ -13136,7 +13136,7 @@ fn pilot_snapshot_truncated_by_the_seam_budget_is_not_a_verify_baseline()
     let summary = std::fs::read_to_string(root.join("target/ripr/pilot/pilot-summary.md"))?;
     assert!(
         summary.contains(&format!(
-            "- Seam limit reached: ranked the first 1 of {full_total} seams;"
+            "- Seam limit reached: ranked 1 of {full_total} seams;"
         )),
         "{summary}"
     );
@@ -15144,6 +15144,82 @@ fn pilot_says_it_withholds_the_seam_on_the_current_change() -> Result<(), String
         stdout.contains(
             "current change: not part of it. Pilot withholds the analyzed seam on a line changed since origin/main: its static evidence is unknown or opaque"
         ),
+        "{stdout}"
+    );
+    ignore_remove_dir_all(&root);
+    ignore_remove_dir_all(&out_dir);
+    Ok(())
+}
+
+/// #6943: on a repo past the inventory seam limit, the seams on the current
+/// change used to be cut before pilot loaded the change, so change-first
+/// ranking had nothing to rank. With the limit at one, only the first
+/// function's seam survives the inventory; the changed `is_digit` seam must
+/// still be classified, ranked first and counted as analyzed.
+#[test]
+fn pilot_ranks_the_current_change_past_the_inventory_seam_limit() -> Result<(), String> {
+    let lib = "pub fn discounted(amount: u32) -> u32 {\n    if amount > 100 { amount - 10 } else { amount }\n}\n\npub fn is_digit(byte: u8) -> bool {\n    byte >= b'0' && byte <= b'9'\n}\n\npub fn is_large(amount: u32) -> bool {\n    amount > 1000\n}\n";
+    let root = pilot_language_fixture_repo(
+        "pilot-change-past-seam-limit",
+        &[
+            (
+                "Cargo.toml",
+                "[package]\nname = \"two_fns\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+            ),
+            ("src/lib.rs", lib),
+            (
+                "tests/pricing.rs",
+                "use two_fns::discounted;\n\n#[test]\nfn big_orders_get_a_discount() {\n    assert_eq!(discounted(200), 190);\n}\n",
+            ),
+        ],
+        ("src/lib.rs", &lib.replace("byte <= b'9'", "byte < b'9'")),
+    )?;
+    let out_dir = unique_temp_workspace("pilot-change-past-seam-limit-out");
+    let root_arg = root.display().to_string();
+    let out_arg = out_dir.display().to_string();
+    let output = run_ripr_with_env(
+        &["pilot", "--root", &root_arg, "--out", &out_arg],
+        &[("RIPR_REPO_EXPOSURE_SEAM_LIMIT", "1")],
+    );
+    assert_success(&output);
+    let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+    let summary: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(out_dir.join("pilot-summary.json"))
+            .map_err(|err| format!("read pilot summary json: {err}"))?,
+    )
+    .map_err(|err| format!("parse pilot summary json: {err}"))?;
+    let md = std::fs::read_to_string(out_dir.join("pilot-summary.md"))
+        .map_err(|err| format!("read pilot summary md: {err}"))?;
+    // Precondition: the inventory limit fired and kept one seam, which is
+    // not on the change; the changed seams it cut were classified on their
+    // own and count as analyzed.
+    assert!(md.contains("- Seam limit reached: ranked "), "{md}");
+    assert!(!md.contains("ranked 1 of "), "{md}");
+    assert!(md.contains("ranked 4 of 6 seams"), "{md}");
+    // `ripr check` never classifies the added seams, so the snapshot is not
+    // its population and carries no comparable identity.
+    let snapshot: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(out_dir.join("repo-exposure.json"))
+            .map_err(|err| format!("read repo exposure json: {err}"))?,
+    )
+    .map_err(|err| format!("parse repo exposure json: {err}"))?;
+    assert!(snapshot.get("artifact").is_none(), "{snapshot}");
+    assert_eq!(summary["current_change"]["state"], "changed", "{summary}");
+    assert_eq!(summary["top_actionable_seams"][0]["line"], 6, "{summary}");
+    assert_eq!(
+        summary["current_change"]["top_recommendation_in_change"], true,
+        "{summary}"
+    );
+    assert!(
+        stdout.contains(
+            "current change: part of it (this seam is on a line changed since origin/main)"
+        ),
+        "{stdout}"
+    );
+    // The change was classified, so the limit can no longer hide a seam on
+    // it, and pilot does not say it might.
+    assert!(
+        !stdout.contains("may have seams pilot did not see"),
         "{stdout}"
     );
     ignore_remove_dir_all(&root);
@@ -21751,6 +21827,30 @@ fn pr_summary_root_from_foreign_cwd_anchors_artifacts_and_baseline() -> Result<(
         return Err(format!(
             "summary read foreign artifacts or baseline: {summary}"
         ));
+    }
+    // #4000: pasted from this foreign directory, the summary's own
+    // reproduction commands must name the selected repository, not `.`.
+    let commands = summary
+        .pointer("/local_reproduction_commands")
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| format!("summary has no reproduction commands: {summary}"))?;
+    let selected_root_arg = selected_arg.replace(std::path::MAIN_SEPARATOR, "/");
+    for prefix in ["ripr check ", "ripr first-pr "] {
+        let Some(command) = commands
+            .iter()
+            .filter_map(serde_json::Value::as_str)
+            .find(|command| command.starts_with(prefix))
+        else {
+            return Err(format!("no `{prefix}` reproduction command: {commands:?}"));
+        };
+        if !command.starts_with(&format!("{prefix}--root "))
+            || !command.contains(&selected_root_arg)
+            || command.contains("--root .")
+        {
+            return Err(format!(
+                "reproduction command does not name the selected repository: {command}"
+            ));
+        }
     }
     let relative_root = Path::new("..").join("selected répo");
     let relative_root_arg = relative_root

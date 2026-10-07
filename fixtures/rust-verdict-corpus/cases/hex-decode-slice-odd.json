@@ -1,0 +1,45 @@
+{
+  "case_id": "hex-decode-slice-odd",
+  "subject_id": "rust-hex",
+  "diff": "cases/hex-decode-slice-odd.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 324
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "predicate",
+  "test_shape": "unit_test_assert_eq_error",
+  "hard_case": "straight-line assert_eq! in a #[cfg(test)] module; ripr still reports rust_assertion_context_unestablished",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "data.len() % 2 == 2",
+        "mutated_line": "if data.len() % 2 == 2 {",
+        "outcome": "tests_failed",
+        "failing_test": "test::test_decode_to_slice",
+        "equivalence_review": "not equivalent: odd input is never rejected as OddLength"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "test_decode_to_slice asserts decode_to_slice(b\"6\", ..) is OddLength. ripr reports reachable_unrevealed with an unestablished assertion context, a false actionable verdict.",
+  "labeling_observation": {
+    "ripr_commit": "a7a089e",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "reachable_unrevealed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

@@ -1,0 +1,34 @@
+{
+  "subject_id": "itoa",
+  "upstream": "https://github.com/dtolnay/itoa",
+  "commit": "1577ed901354d0d7448ac162328f9dbf5183124c",
+  "version_label": "master@1577ed9",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "Cargo.toml",
+      "sha256": "44ca1ae5d9b48743305b57f3367051289512037e7836b8b3693b68d48dec0483"
+    },
+    {
+      "path": "LICENSE-APACHE",
+      "sha256": "62c7a1e35f56406896d7aa7ca52d0cc0d272ac022b5d2796e7d6905db8a3636a"
+    },
+    {
+      "path": "LICENSE-MIT",
+      "sha256": "23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3"
+    },
+    {
+      "path": "src/lib.rs",
+      "sha256": "e962338e1886873aa7c3399ec89aa5378ccbfed712b9690f043628079390a34f"
+    },
+    {
+      "path": "src/u128_ext.rs",
+      "sha256": "498cc94f13805e551248fd82f47cc318f51d953a5002a9f8698858cd12fbae3c"
+    },
+    {
+      "path": "tests/test.rs",
+      "sha256": "b22f8a8ed89edcbb4140b74f5edd7f2adf3cb0e363990dd6010cd6ebe0dc36b7"
+    }
+  ]
+}

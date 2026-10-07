@@ -213,7 +213,7 @@ pub(crate) fn render_pilot_summary_md(
     // actionable count is a lower bound.
     if let Some(limit) = context.seam_limit {
         out.push_str(&format!(
-            "- Seam limit reached: ranked the first {} of {} seams; Rust seam counts below cover those only\n",
+            "- Seam limit reached: ranked {} of {} seams; Rust seam counts below cover those only\n",
             limit.analyzed, limit.total
         ));
         out.push_str(&format!(
@@ -537,7 +537,7 @@ pub(crate) fn render_pilot_terminal(
     // states the seam limit too; a gap past the cut was never classified.
     if let Some(limit) = context.seam_limit {
         out.push_str(&format!(
-            "  seam limit: ranked the first {} of {} seams\n",
+            "  seam limit: ranked {} of {} seams\n",
             limit.analyzed, limit.total
         ));
     }
