@@ -8321,8 +8321,10 @@ Field contract:
   optional `llm_guidance.analysis_outcome_command` writes
   `target/ripr/workflow/analysis-outcome.json` beside it before the card's
   receipt command runs, carrying the producing review's selected `--base`.
-  It does not rely on default branch discovery. These are Bash-style redirects,
-  anchored at `--root`;
+  It does not rely on default branch discovery. These are Bash-style redirects
+  that stay relative to the card's portable `--root`, so a reader pasting the
+  card from their own checkout writes where it analyzes, not to a path on the
+  machine that rendered it (#4000);
   before and after snapshots must already have been taken around the edit.
   Markdown carries the same outcome, verify and receipt chain. The outcome
   describes static completeness, not executed project tests. Limitation cards
@@ -15591,7 +15593,9 @@ is populated:
 
 Pilot ranks Rust repo seams only. When the workspace also contains TypeScript,
 JavaScript, Python or Perl files, `language_routes` names each language and the
-command that analyzes it (#3906). With no Rust seams the state is `required`:
+command that analyzes it (#3906). The command names the absolute repository
+pilot analyzed, so it works when pasted from another directory (#4000). With no
+Rust seams the state is `required`:
 
 ```json
 {
@@ -15603,7 +15607,7 @@ command that analyzes it (#3906). With no Rust seams the state is `required`:
       "language_status": "preview",
       "enabled": false,
       "route": "check_diff_first",
-      "command": "ripr check --root .",
+      "command": "ripr check --root /work/repo",
       "guidance_category": "typescript_diff_first",
       "guidance": "TypeScript is analyzed diff-first; run 'ripr check --base origin/main' or '--diff <file>' to evaluate changed TypeScript behavior. Full-repo TypeScript exposure is not yet modeled (named limitation)."
     },
