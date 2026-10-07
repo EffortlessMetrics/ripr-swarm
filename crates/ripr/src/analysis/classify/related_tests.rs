@@ -2344,6 +2344,8 @@ fn text_resolves_method_to_type(
             } else if at > 0 && bytes[at - 1] == b'.' {
                 if let Some(recv) = ident_ending_at(text, at - 1) {
                     if recv == impl_type
+                        // `1.5f64.m()` reads only the fragment after the `.`
+                        // (`5f64`), which still carries the literal's suffix.
                         || suffixed_numeric_literal_type(recv) == Some(impl_type)
                         || let_binding_mentions_type(body_for_lets, recv, impl_type)
                     {
