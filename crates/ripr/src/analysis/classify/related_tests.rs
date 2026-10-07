@@ -3039,7 +3039,10 @@ fn test_imports_same_name_twin(
         return false;
     };
     // `crate` names the file root only in a crate root file.
-    if module.starts_with("crate::") && !(file.ends_with("lib.rs") || file.ends_with("main.rs")) {
+    let crate_root = ["lib.rs", "main.rs"]
+        .iter()
+        .any(|root| file == *root || file.ends_with(&format!("/{root}")));
+    if module.starts_with("crate::") && !crate_root {
         return false;
     }
     if !(test_file == file || test_file.ends_with(&format!("/{file}")))
@@ -3283,6 +3286,17 @@ mod tests {
         ));
         // `crate` is the file root only in a crate root file.
         let crate_glob = "fn t() {\n use crate::retail::*;\n price_quote(3);\n}";
+        assert!(!test_imports_same_name_twin(
+            crate_glob,
+            Path::new("src/calib.rs"),
+            &tests,
+            "src/calib.rs::wholesale::price_quote",
+            "price_quote",
+            &[
+                "src/calib.rs::retail::price_quote",
+                "src/calib.rs::wholesale::price_quote"
+            ],
+        ));
         assert!(!test_imports_same_name_twin(
             crate_glob,
             Path::new("src/pricing.rs"),
