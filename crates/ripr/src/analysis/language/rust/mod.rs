@@ -281,6 +281,11 @@ fn selection_with_open_files(selected: &[PathBuf], open: &BTreeSet<PathBuf>) -> 
 /// for suspects: test files whose module name no loaded file declares or
 /// spells as a path, and target roots in a package that turns Cargo's
 /// target discovery off. Anything else keeps its tests without a walk.
+///
+/// The drop inherits the walk's unmodeled cases (module_graph.rs header): a
+/// package outside the analyzed root that reaches in through `#[path]` or a
+/// `[[test]] path`, and `mod Foo;` resolving to `foo.rs` on a
+/// case-insensitive file system. Either can cost a compiled test its credit.
 fn drop_unreached_test_files(
     root: &Path,
     source_role_context: &workspace::SourceRoleContext,
@@ -374,6 +379,12 @@ fn mentioned_module_names(loaded_files: &[(PathBuf, Vec<u8>)]) -> BTreeSet<Strin
 /// Whether `path` could be a file no target reaches: a module file whose
 /// name nothing mentions, or a target root (`tests/x.rs`) in a package whose
 /// manifest switches target discovery off.
+///
+/// `src/bin/x.rs` is never a suspect: the walk always counts it as a
+/// production root, so walking it could only pay for a parse it cannot
+/// turn into a verdict. Neither is a file under a `src/tests/` module directory:
+/// the walk takes `src/` for its layout owner, finds no manifest there and
+/// fails closed, so a walk would cost a parse for nothing.
 fn may_be_unreached(
     root: &Path,
     path: &Path,
@@ -411,6 +422,9 @@ fn may_be_unreached(
                     },
                 )
             });
+    }
+    if parent_name == Some("bin") && grandparent_name == Some("src") {
+        return false;
     }
     let module_name = match file_name {
         "lib.rs" | "main.rs" | "build.rs" => return false,

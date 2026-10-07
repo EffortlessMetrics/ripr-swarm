@@ -1239,7 +1239,9 @@ mod tests {
         // #6965: `ripr check` from the workspace directory passes an empty
         // root. The listing must still read it, with entries spelled
         // relative to it, or no orphan verdict can ever be proved.
-        // `cargo test` runs in the package directory.
+        // `cargo test` runs in the package directory; the lock keeps a
+        // test that changes it from racing this read.
+        let _cwd = crate::testing::cwd_lock::hold_cwd();
         let listing = list_workspace(Path::new(""))
             .ok_or_else(|| "the current directory must be listed".to_string())?;
         assert!(
