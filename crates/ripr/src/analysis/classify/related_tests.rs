@@ -2952,6 +2952,11 @@ fn test_imports_same_name_twin(
         if start <= body_open || body[..start].chars().next_back().is_some_and(is_ident) {
             continue;
         }
+        // An attributed import (`#[cfg(any())] use ..`) may be compiled
+        // out, so the name may still bind the owner: undecided.
+        if body[..start].trim_end().ends_with(']') {
+            return false;
+        }
         let Some(path) = body[start + 4..].split(';').next() else {
             continue;
         };
@@ -3156,6 +3161,10 @@ mod tests {
         ));
         assert!(!twin(
             "fn t() {\n use super::retail::Quote;\n price_quote(3);\n}",
+            owner
+        ));
+        assert!(!twin(
+            "fn t() {\n #[cfg(any())]\n use super::retail::*;\n price_quote(3);\n}",
             owner
         ));
         // A path-qualified or method call of the name keeps the relation.

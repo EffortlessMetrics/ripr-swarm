@@ -258,7 +258,7 @@ a glob. The import path resolves against the test's enclosing inline modules:
 `self` and a bare path start at the test's module, each `super` steps out one,
 and `crate` is the file root only in `lib.rs` or `main.rs`. The twin must be
 the only same-name definition whose path ends in the resolved module path. A path-qualified call
-of the name, a braced or renamed import naming it, an import in a nested
+of the name, a braced or renamed import naming it, an attributed (`#[cfg(..)]`) import, an import in a nested
 block or at module level, two globs,
 `use super::*`, a path that names no twin or also the owner (a re-export), and
 any same-name definition in another file (a file-backed module, another crate)
