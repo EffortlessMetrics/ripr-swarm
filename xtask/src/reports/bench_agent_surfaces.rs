@@ -1952,11 +1952,14 @@ fn m2_op_from_response(op: &'static str, outcome: RpcOutcome) -> M2Op {
 
 /// The committed snapshot outcome a refresh response already carries, read
 /// from `structuredContent` or the text copy (the egress-bound envelope
-/// drops `structuredContent`, keeping text). Only a committed snapshot with
-/// a typed `outcome_kind` produces an outcome: an attempt that never
-/// committed records its refusal through the typed-failure chains instead.
-/// Recorded per op so a zero-subject analysis is disclosed, never silently
-/// averaged in as a valid latency sample (#5952).
+/// drops `structuredContent`, keeping text). Only a `completed` attempt's
+/// snapshot is this op's own outcome: a failed attempt never replaces
+/// `last_good` (mcp/server.rs), so its document can still carry the
+/// PREVIOUS snapshot with `isError: false`, and attributing it here would
+/// feed stale data to the zero-subject classification. An attempt that
+/// never committed records its refusal through the typed-failure chains
+/// instead. Recorded per op so a zero-subject analysis is disclosed, never
+/// silently averaged in as a valid latency sample (#5952).
 fn snapshot_outcome(response: &Value) -> Option<Value> {
     let document = response
         .pointer("/result/structuredContent")
@@ -1967,6 +1970,9 @@ fn snapshot_outcome(response: &Value) -> Option<Value> {
                 .and_then(Value::as_str)?;
             serde_json::from_str(text).ok()
         })?;
+    if document.pointer("/attempt/state").and_then(Value::as_str) != Some("completed") {
+        return None;
+    }
     let snapshot = document.get("snapshot")?;
     let outcome_kind = snapshot.get("outcome_kind").and_then(Value::as_str)?;
     Some(json!({
@@ -3792,11 +3798,15 @@ mod tests {
     }
 
     fn refresh_response(snapshot: Value) -> RpcOutcome {
+        refresh_response_with_state("completed", snapshot)
+    }
+
+    fn refresh_response_with_state(state: &str, snapshot: Value) -> RpcOutcome {
         RpcOutcome {
             response: json!({
                 "result": {
                     "structuredContent": {
-                        "attempt": { "state": "completed", "failure": null },
+                        "attempt": { "state": state, "failure": null },
                         "snapshot": snapshot,
                     },
                     "isError": false,
@@ -3960,7 +3970,7 @@ mod tests {
                 response: json!({
                     "result": { "content": [{
                         "type": "text",
-                        "text": "{\"snapshot\": {\"outcome_kind\": \"no_scope\", \"finding_count\": 0, \"total_items\": 0}}",
+                        "text": "{\"attempt\": {\"state\": \"completed\"}, \"snapshot\": {\"outcome_kind\": \"no_scope\", \"finding_count\": 0, \"total_items\": 0}}",
                     }] }
                 }),
                 response_bytes: 40,
@@ -3976,6 +3986,45 @@ mod tests {
             mark_zero_subject_refresh(text_only, true).status,
             "invalid_zero_findings"
         );
+        Ok(())
+    }
+
+    /// A failed attempt never replaces `last_good` (mcp/server.rs), so its
+    /// refresh response can carry the PREVIOUS snapshot with `isError:
+    /// false`. That stale outcome must not be attributed to the failed op
+    /// and must not drive the zero-subject classification.
+    #[test]
+    fn failed_attempt_refresh_does_not_inherit_the_stale_snapshot_outcome() -> Result<(), String> {
+        let stale = m2_op_from_response(
+            "ripr_refresh",
+            refresh_response_with_state(
+                "failed",
+                json!({
+                    "snapshot_id": "snapshot:stale",
+                    "outcome_kind": "no_scope",
+                    "finding_count": 0,
+                    "total_items": 0,
+                }),
+            ),
+        );
+        assert!(
+            stale.outcome.is_none(),
+            "the retained last_good snapshot is not a failed attempt's outcome"
+        );
+        assert_eq!(
+            mark_zero_subject_refresh(rename_op(stale, "ripr_refresh_warm"), true).status,
+            "pass",
+            "the zero-subject gate must not consume a stale outcome"
+        );
+        // A completed attempt with the same snapshot body is still attributed.
+        let completed = m2_op_from_response(
+            "ripr_refresh",
+            refresh_response_with_state(
+                "completed",
+                json!({ "outcome_kind": "no_scope", "finding_count": 0 }),
+            ),
+        );
+        assert!(completed.outcome.is_some());
         Ok(())
     }
 
