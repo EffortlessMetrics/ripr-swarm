@@ -14,8 +14,7 @@ use crate::cli::parse::{
 };
 use crate::cli::suggest::unknown_argument;
 use crate::config::{
-    CheckInputExplicit, RiprConfig, apply_to_check_input, config_discovered_for_root,
-    load_for_root,
+    CheckInputExplicit, RiprConfig, apply_to_check_input, config_discovered_for_root, load_for_root,
 };
 use crate::core_error::CoreError;
 use crate::git::WorkTreeRootProbe;
