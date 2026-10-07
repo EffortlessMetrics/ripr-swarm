@@ -36,11 +36,15 @@ impl OperandOnlyPin {
 }
 
 /// Whether the changed field initializer `expression` (`total_cents:
-/// subtotal + shipping`) is pinned only by tests that pin a sibling field,
-/// bound in the same struct literal of `owner_body` to one operand, to the
-/// same expected value. At least one related test must pin the field, and
-/// the receiver must be bound from a call to `owner_name`. Anything ripr
-/// cannot read returns `None`, which leaves the finding as it was.
+/// subtotal + shipping`) is pinned only where it equals one operand: some
+/// sibling field of the same struct literal in `owner_body` is bound to that
+/// operand, and every exact pin on the field in every related test sits
+/// beside a pin of that sibling, on the same receiver, to the same literal.
+/// Each receiver must be bound once, straight from a call to `owner_name`.
+/// At least one related test must pin the field. Any mention of the field
+/// that is not such a pin (a custom message, another assertion macro, a
+/// binding read out of the result) returns `None`, as does anything else
+/// ripr cannot read, which leaves the finding as it was.
 pub(in crate::analysis) fn operand_only_pin(
     expression: &str,
     owner_name: &str,
@@ -49,45 +53,64 @@ pub(in crate::analysis) fn operand_only_pin(
 ) -> Option<OperandOnlyPin> {
     let (field, left, right) = binary_field_initializer(expression)?;
     let siblings = sibling_initializers(owner_body, expression)?;
-    let mut pinning_tests = 0usize;
-    let mut paired: Option<OperandOnlyPin> = None;
+    let mut tested = Vec::new();
     for test in tests {
         let pins = exact_field_pins(test);
         let field_pins = pins
             .iter()
-            .filter(|(_, pinned_field, _)| *pinned_field == field)
+            .filter(|(_, pinned_field, _)| pinned_field == field)
             .collect::<Vec<_>>();
+        let unread_mention = test.assertions.iter().any(|assertion| {
+            whole_word_count(&assertion.text, field) > 0
+                && !(assertion.kind == OracleKind::ExactValue
+                    && exact_field_pins_of(&assertion.text)
+                        .is_some_and(|(_, pinned_field, _)| pinned_field == field))
+        });
+        if unread_mention || whole_word_count(test.body.as_str(), field) != field_pins.len() {
+            return None;
+        }
         if field_pins.is_empty() {
             continue;
         }
-        pinning_tests += 1;
-        let pair = field_pins.iter().find_map(|(receiver, _, value)| {
-            if !bound_from_owner_call(test.body.as_str(), receiver, owner_name) {
-                return None;
-            }
-            siblings.iter().find_map(|(sibling, operand)| {
-                let unseen = if *operand == left {
-                    right
-                } else if *operand == right {
-                    left
-                } else {
-                    return None;
-                };
-                pins.iter()
-                    .any(|(other_receiver, other_field, other_value)| {
-                        other_receiver == receiver && other_field == sibling && other_value == value
-                    })
-                    .then(|| OperandOnlyPin {
-                        field: field.to_string(),
-                        sibling: sibling.to_string(),
-                        unseen_operand: unseen.to_string(),
-                    })
-            })
-        });
-        let pair = pair?;
-        paired.get_or_insert(pair);
+        if field_pins.iter().any(|(receiver, _, _)| {
+            !bound_once_from_owner_call(test.body.as_str(), receiver, owner_name)
+        }) {
+            return None;
+        }
+        tested.push((
+            pins.clone(),
+            field_pins.into_iter().cloned().collect::<Vec<_>>(),
+        ));
     }
-    (pinning_tests > 0).then_some(paired).flatten()
+    if tested.is_empty() {
+        return None;
+    }
+    siblings.iter().find_map(|(sibling, operand)| {
+        let unseen = if *operand == left {
+            right
+        } else if *operand == right {
+            left
+        } else {
+            return None;
+        };
+        tested
+            .iter()
+            .all(|(pins, field_pins)| {
+                field_pins.iter().all(|(receiver, _, value)| {
+                    pins.iter()
+                        .any(|(other_receiver, other_field, other_value)| {
+                            other_receiver == receiver
+                                && other_field == sibling
+                                && other_value == value
+                        })
+                })
+            })
+            .then(|| OperandOnlyPin {
+                field: field.to_string(),
+                sibling: sibling.to_string(),
+                unseen_operand: unseen.to_string(),
+            })
+    })
 }
 
 /// `name: left <op> right` with plain identifier operands and one binary
@@ -185,41 +208,62 @@ fn top_level_items(text: &str) -> Vec<&str> {
 }
 
 /// `(receiver, field, expected)` for each exact `assert_eq!(receiver.field,
-/// expected)` in `test`, either argument order, with numeric digit
-/// separators removed from the expected side.
+/// expected)` in `test`, either argument order.
 fn exact_field_pins(test: &TestSummary) -> Vec<(String, String, String)> {
     test.assertions
         .iter()
         .filter(|assertion| assertion.kind == OracleKind::ExactValue)
-        .filter_map(|assertion| {
-            let text = assertion.text.trim();
-            let inner = text
-                .strip_prefix("assert_eq!(")?
-                .trim_end_matches(';')
-                .strip_suffix(')')?;
-            let items = top_level_items(inner);
-            let [first, second] = items.as_slice() else {
-                return None;
-            };
-            let (receiver, field, expected) = field_read(first)
-                .map(|(receiver, field)| (receiver, field, *second))
-                .or_else(|| {
-                    field_read(second).map(|(receiver, field)| (receiver, field, *first))
-                })?;
-            if field_read(expected).is_some() {
-                return None;
-            }
-            let expected = if expected
-                .bytes()
-                .all(|byte| byte.is_ascii_digit() || byte == b'_')
-            {
-                expected.replace('_', "")
-            } else {
-                expected.to_string()
-            };
-            Some((receiver.to_string(), field.to_string(), expected))
-        })
+        .filter_map(|assertion| exact_field_pins_of(&assertion.text))
         .collect()
+}
+
+/// One `assert_eq!(receiver.field, expected)` with exactly two arguments
+/// and a literal expected side: an integer (digit separators removed), a
+/// string, a char or a bool. A non-literal expected side (`it.next()`,
+/// `expected`) may differ between two pins with the same text.
+fn exact_field_pins_of(text: &str) -> Option<(String, String, String)> {
+    let inner = text
+        .trim()
+        .strip_prefix("assert_eq!(")?
+        .trim_end_matches(';')
+        .strip_suffix(')')?;
+    let items = top_level_items(inner);
+    let [first, second] = items.as_slice() else {
+        return None;
+    };
+    let (receiver, field, expected) = field_read(first)
+        .map(|(receiver, field)| (receiver, field, *second))
+        .or_else(|| field_read(second).map(|(receiver, field)| (receiver, field, *first)))?;
+    let expected = literal_value(expected)?;
+    Some((receiver.to_string(), field.to_string(), expected))
+}
+
+fn literal_value(text: &str) -> Option<String> {
+    let text = text.trim();
+    let digits = text.strip_prefix('-').unwrap_or(text);
+    if !digits.is_empty()
+        && digits
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || byte == b'_')
+    {
+        return Some(text.replace('_', ""));
+    }
+    let quoted = text.len() >= 2
+        && ((text.starts_with('"') && text.ends_with('"'))
+            || (text.starts_with('\'') && text.ends_with('\'')));
+    (quoted || text == "true" || text == "false").then(|| text.to_string())
+}
+
+/// Occurrences of `word` in `text` not joined to an identifier character on
+/// either side.
+fn whole_word_count(text: &str, word: &str) -> usize {
+    let is_ident = |ch: char| ch.is_ascii_alphanumeric() || ch == '_';
+    text.match_indices(word)
+        .filter(|(at, _)| {
+            !text[..*at].chars().next_back().is_some_and(is_ident)
+                && !text[at + word.len()..].chars().next().is_some_and(is_ident)
+        })
+        .count()
 }
 
 /// `q.total_cents` -> `("q", "total_cents")`.
@@ -228,21 +272,25 @@ fn field_read(text: &str) -> Option<(&str, &str)> {
     (is_identifier(receiver) && is_identifier(field)).then_some((receiver, field))
 }
 
-/// Whether `body` binds `receiver` straight from a call to `owner_name`:
-/// `let q = quote(..)` or `let q = crate::quote(..)`.
-fn bound_from_owner_call(body: &str, receiver: &str, owner_name: &str) -> bool {
-    body.lines().any(|line| {
-        let Some(rest) = line.trim().strip_prefix("let ") else {
-            return false;
-        };
-        let Some((name, value)) = rest.split_once('=') else {
-            return false;
-        };
-        let name = name.trim();
-        let name = name.split(':').next().unwrap_or(name).trim();
-        let callee = value.trim().split('(').next().unwrap_or_default().trim();
-        name == receiver && (callee == owner_name || callee.rsplit("::").next() == Some(owner_name))
-    })
+/// Whether `body` binds `receiver` exactly once, straight from a call to
+/// `owner_name`: `let q = quote(..)` or `let q = crate::quote(..)`. A second
+/// `let q` may shadow the owner's value (`let q = q.with_coupon(..)`).
+fn bound_once_from_owner_call(body: &str, receiver: &str, owner_name: &str) -> bool {
+    let bindings = body
+        .lines()
+        .filter_map(|line| {
+            let rest = line.trim().strip_prefix("let ")?;
+            let (name, value) = rest.split_once('=')?;
+            let name = name.trim();
+            let name = name.split(':').next().unwrap_or(name).trim();
+            (name == receiver).then_some(value)
+        })
+        .collect::<Vec<_>>();
+    let [value] = bindings.as_slice() else {
+        return false;
+    };
+    let callee = value.trim().split('(').next().unwrap_or_default().trim();
+    callee == owner_name || callee.rsplit("::").next() == Some(owner_name)
 }
 
 fn is_identifier(text: &str) -> bool {
@@ -365,6 +413,86 @@ mod tests {
             "let q = quote(2_500, 4);",
             "assert_eq!(q.subtotal_cents, 9_000);",
         ])]);
+
+        assert_eq!(found, None);
+    }
+
+    /// Review of #7077: a second receiver in the same test that pins the
+    /// field to a different value discriminates the dropped operand.
+    #[test]
+    fn a_second_receiver_pinning_the_field_keeps_the_credit() {
+        let found = pin(&[test_with(&[
+            "let q = quote(2_500, 4);",
+            "assert_eq!(q.subtotal_cents, 9_000);",
+            "assert_eq!(q.total_cents, 9_000);",
+            "let r = quote(1_000, 1);",
+            "assert_eq!(r.total_cents, 1_499);",
+        ])]);
+
+        assert_eq!(found, None);
+    }
+
+    /// Review of #7077: a pin ripr cannot parse (a custom message) still
+    /// mentions the field, so the rule fails closed.
+    #[test]
+    fn an_unread_pin_on_the_field_keeps_the_credit() {
+        let paired = test_with(&[
+            "let q = quote(2_500, 4);",
+            "assert_eq!(q.subtotal_cents, 9_000);",
+            "assert_eq!(q.total_cents, 9_000);",
+        ]);
+        let with_message = test_with(&[
+            "let q = quote(1_000, 1);",
+            "assert_eq!(q.total_cents, 1_499, \"shipping added\");",
+        ]);
+        let read_out = test_with(&[
+            "let total = quote(1_000, 1).total_cents;",
+            "assert_eq!(total, 1_499);",
+        ]);
+
+        assert_eq!(pin(&[paired.clone(), with_message]), None);
+        assert_eq!(pin(&[paired, read_out]), None);
+    }
+
+    #[test]
+    fn a_shadowed_receiver_is_not_read() {
+        let found = pin(&[test_with(&[
+            "let q = quote(2_500, 4);",
+            "let q = q.with_coupon(5);",
+            "assert_eq!(q.subtotal_cents, 9_000);",
+            "assert_eq!(q.total_cents, 9_000);",
+        ])]);
+
+        assert_eq!(found, None);
+    }
+
+    #[test]
+    fn a_non_literal_expected_side_is_not_read() {
+        let found = pin(&[test_with(&[
+            "let q = quote(2_500, 4);",
+            "assert_eq!(q.subtotal_cents, expected);",
+            "assert_eq!(q.total_cents, expected);",
+        ])]);
+
+        assert_eq!(found, None);
+    }
+
+    /// One test sees the total equal the subtotal and another sees it equal
+    /// the shipping: each dropped operand is caught by one of them.
+    #[test]
+    fn tests_pairing_different_operands_keep_the_credit() {
+        let found = pin(&[
+            test_with(&[
+                "let q = quote(2_500, 4);",
+                "assert_eq!(q.subtotal_cents, 9_000);",
+                "assert_eq!(q.total_cents, 9_000);",
+            ]),
+            test_with(&[
+                "let q = quote(0, 4);",
+                "assert_eq!(499, q.shipping_cents);",
+                "assert_eq!(499, q.total_cents);",
+            ]),
+        ]);
 
         assert_eq!(found, None);
     }

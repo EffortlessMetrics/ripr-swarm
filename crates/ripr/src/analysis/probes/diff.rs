@@ -1359,12 +1359,13 @@ mod tests {
     }
 
     /// #7074 control: when no other shape on the line holds the edit, the
-    /// return value is kept so the line still has a probe.
+    /// return value is kept so the line still has a probe, even though the
+    /// edit (`warn()` to `log()`) lies outside it.
     #[test]
     fn unchanged_return_value_stays_when_no_other_shape_holds_the_edit() {
         let probes = shapes_probes(
-            "let _ = log(); return Ok(Level::Warn);",
             "log(); return Ok(Level::Warn);",
+            "warn(); return Ok(Level::Warn);",
             &[(ProbeShapeKind::ReturnValue, "Ok(Level::Warn)")],
         );
 
@@ -1374,6 +1375,30 @@ mod tests {
                 .any(|probe| probe.family == ProbeFamily::ReturnValue),
             "{probes:?}"
         );
+    }
+
+    /// #7074 control: a return value that contains the shape holding the
+    /// edit changed with it, so it stays.
+    #[test]
+    fn a_return_value_containing_the_edit_stays() {
+        let probes = shapes_probes(
+            "Ok(if a >= b { 1 } else { 2 })",
+            "Ok(if a > b { 1 } else { 2 })",
+            &[
+                (ProbeShapeKind::Predicate, "a >= b"),
+                (
+                    ProbeShapeKind::ReturnValue,
+                    "Ok(if a >= b { 1 } else { 2 })",
+                ),
+            ],
+        );
+
+        let families = probes
+            .iter()
+            .map(|probe| probe.family.clone())
+            .collect::<Vec<_>>();
+        assert!(families.contains(&ProbeFamily::Predicate), "{probes:?}");
+        assert!(families.contains(&ProbeFamily::ReturnValue), "{probes:?}");
     }
 
     #[test]

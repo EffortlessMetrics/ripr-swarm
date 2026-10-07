@@ -392,21 +392,27 @@ rule only for an assertion whose context was admitted.
    read `exposed`; no other family or oracle gains credit (the
    #6579 whole-object effect-observer gap is unchanged).
 7. Pins equal to an operand (#7077). An exact pin on a constructed field
-   does not discriminate a change to its initializer when the field equals
-   one of its operands for the pinned input. The changed initializer is
+   cannot notice the field replaced by one of its operands when, for the
+   pinned input, the field equals that operand. The changed initializer is
    `f: a <op> b` with two distinct plain identifier operands and one binary
    operator. A sibling initializer of the same struct literal is `g: a` (or
-   the shorthand `a`). A related test binds `q` straight from a call to the
-   owner (`let q = quote(..)`) and holds both `assert_eq!(q.f, v)` and
-   `assert_eq!(q.g, v)` with the same expected text `v` (digit separators
-   ignored). For that input `f` equals `a`, so the mutant `f: a` passes
-   whatever the operator is. When every related test that pins `q.f`
-   exactly is paired this way, the field-construction finding's
-   discriminate stage reads weak with the code
+   the shorthand `a`). A related test binds `q` once, straight from a call
+   to the owner (`let q = quote(..)`; a second `let q` may shadow it and
+   refuses), and holds both `assert_eq!(q.f, v)` and `assert_eq!(q.g, v)`
+   with the same literal `v` (an integer with digit separators ignored, a
+   string, a char or a bool; a name or call may differ between the two
+   pins and refuses). For that input `f` equals `a`, so the mutant `f: a`
+   passes whatever the operator is. When every exact pin on `f` in every
+   related test is paired this way with the same sibling, the
+   field-construction finding's discriminate stage reads weak with the code
    `field_pinned_equal_to_operand`, which names the operand the tests never
-   vary. One pinning test without such a pair keeps the credit. Anything
-   ripr cannot read (a nested expression, a receiver bound some other way,
-   a repeated initializer text) leaves the finding as it was.
+   vary, and that summary is the finding's missing evidence. Other mutants
+   of the initializer (`a * b` to `a + b` with `b == 1`) may still be
+   caught; the downgrade claims only the dropped operand. Any other mention
+   of `f` in a related test (a pin with a custom message, another assertion
+   macro, a value read out of the result, a second receiver pinning another
+   value) keeps the credit, and so does anything else ripr cannot read (a
+   nested expression, a repeated initializer text).
 
 ### Bool-owner pins
 
