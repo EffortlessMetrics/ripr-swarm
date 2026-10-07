@@ -1141,7 +1141,8 @@ fn route_from_gap_records(records: &[(usize, GapRecord)]) -> TargetedRerunRoute 
 /// FIX (round-1 review): producers reuse command ids across argument sets
 /// (every receipt spec id is `ripr:agent:receipt`), so distinct typed
 /// invocations must not collapse. Dedupe by the full semantic identity —
-/// the sha256 digest over the serialized spec — keeping the first
+/// the sha256 digest over the serialized spec with its display emptied
+/// (#3999), so specs differing only in display merge — keeping the first
 /// occurrence. A spec whose digest cannot be computed has no stable
 /// identity and stays legacy-string-only (fail closed).
 fn stable_unique_specs(specs: impl IntoIterator<Item = CommandSpec>) -> Vec<CommandSpec> {

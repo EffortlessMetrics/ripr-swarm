@@ -369,3 +369,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — unwrap_err_variant_single_line (32)
+
+Reason:
+RIPR-SPEC-0001: a builder-line group read through a function call (validate("aaaaaaaaaaaa")) computes its argument, so the single-line test no longer yields spurious builder_method values; classification and infection stay unchanged (Devin review on #6796)
+
+Command:
+`cargo xtask goldens bless unwrap_err_variant_single_line --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

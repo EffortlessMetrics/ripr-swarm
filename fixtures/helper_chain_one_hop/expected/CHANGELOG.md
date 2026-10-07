@@ -179,3 +179,27 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — helper_chain_one_hop (13)
+
+Reason:
+RIPR-SPEC-0001 unresolved boundary input (#6674, #6693): an operand ripr cannot map to related-test inputs reads infection_unknown 'Changed boundary input is unresolved' instead of a missing equality discriminator with 'observed values: unknown'; no exposed finding
+
+Command:
+`cargo xtask goldens bless helper_chain_one_hop --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — helper_chain_one_hop (14)
+
+Reason:
+RIPR-SPEC-0001: the human 'Why unknown' line for infection_unknown says 'reaches a sink' only when propagation is yes (CodeRabbit review on #6796); propagation is not yes here, so the line no longer claims a sink
+
+Command:
+`cargo xtask goldens bless helper_chain_one_hop --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

@@ -1,10 +1,10 @@
 use crate::analysis::classify::{
     ARM_UNSELECTED_REASON_PREFIX, ASSERTION_CONTEXT_UNESTABLISHED, ArmSelector, OwnerPinSyntax,
     OwnerReturnPin, ProbeContext, PropagationWitnessV1, ReturnOracleAdmission,
-    TransitiveReachIndex, activation_evidence_with_value_facts, body_contains_owner_call,
+    TransitiveReachIndex, activation_and_boundary_input, body_contains_owner_call,
     callee_is_unique, classify, confidence_score, contains_as_whole_word, current_path_witness,
-    has_same_test_boundary_oracle_pairing, infection_evidence, local_flow_sinks,
-    oracle_crediting_relations, owner_may_be_reached_unseen, package_prefix,
+    has_same_test_boundary_oracle_pairing, infection_evidence_with_boundary_input,
+    local_flow_sinks, oracle_crediting_relations, owner_may_be_reached_unseen, package_prefix,
     propagation_evidence_with_witness, reach_evidence, reveal_outcome,
     same_test_pairing_missing_summary,
 };
@@ -69,7 +69,7 @@ impl ClassifiedProbeEvidence {
         let flow_sinks = local_flow_sinks(context.probe, context.owner_fn);
         let propagation_witness = current_path_witness(context.probe, &flow_sinks)
             .map(PropagationWitnessDiagnostic::from_witness);
-        let mut activation = activation_evidence_with_value_facts(
+        let gathered = activation_and_boundary_input(
             context.probe,
             context.owner_fn,
             &test_summaries,
@@ -79,6 +79,7 @@ impl ClassifiedProbeEvidence {
             context.workspace_complete,
             context.test_value_facts,
         );
+        let mut activation = gathered.activation;
         // #3731 review (F11, G1): the changed owner's package scope, computed
         // once — the cross-package same-name defeats compare each related
         // test's package against it.
@@ -120,7 +121,12 @@ impl ClassifiedProbeEvidence {
                 .missing_discriminators
                 .retain(|fact| !fact.reason.starts_with(ARM_UNSELECTED_REASON_PREFIX));
         }
-        let infect = infection_evidence(context.probe, &test_summaries, &activation);
+        let infect = infection_evidence_with_boundary_input(
+            context.probe,
+            &test_summaries,
+            &activation,
+            gathered.unresolved_boundary.as_deref(),
+        );
         let valid_witness = propagation_witness
             .as_ref()
             .and_then(|diagnostic| match diagnostic {

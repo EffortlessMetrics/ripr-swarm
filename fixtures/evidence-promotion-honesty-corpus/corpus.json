@@ -2120,7 +2120,8 @@
         { "type": "must_not_emit_repair_packet" },
         { "type": "must_not_have_receipt_command" },
         { "type": "must_not_promote" },
-        { "type": "expected_oracle", "kind": "broad_error", "strength": "weak" },
+        { "type": "expected_oracle", "kind": "unknown", "strength": "unknown" },
+        { "type": "expected_related_test", "name": "empty user throws", "file": "tests/parser.test.ts", "line": 3, "kind": "unknown", "strength": "unknown" },
         { "type": "expected_class", "class": "weakly_exposed" },
         { "type": "maximum_class", "class": "weakly_exposed" }
       ]

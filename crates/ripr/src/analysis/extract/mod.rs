@@ -7,7 +7,7 @@ mod returns;
 mod shadow;
 mod text;
 
-pub(crate) use calls::extract_call_facts;
+pub(crate) use calls::{attribute_ranges, extract_call_facts};
 pub(crate) use literals::{extract_literal_facts, extract_literals};
 pub(crate) use mask::{mask_comments_and_strings, mask_with_char_literals};
 #[cfg(test)]

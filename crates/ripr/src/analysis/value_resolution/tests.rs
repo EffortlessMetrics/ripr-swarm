@@ -1053,3 +1053,45 @@ fn case_value_not_credited_when_the_test_body_does_not_parse() {
         Vec::<String>::new()
     );
 }
+
+#[test]
+fn constant_offset_operands_name_the_constant_and_signed_offset() {
+    // #6671: `CURRENT - 2` offsets CURRENT by -2; it is never the literal 2.
+    assert_eq!(
+        constant_offset_operand("CURRENT - 2"),
+        Some(("CURRENT", -2))
+    );
+    assert_eq!(
+        constant_offset_operand("LIMIT+1_000"),
+        Some(("LIMIT", 1000))
+    );
+    assert_eq!(constant_offset_operand("Self::MAX - 1"), Some(("MAX", -1)));
+    assert_eq!(constant_offset_operand("CURRENT"), None);
+    assert_eq!(constant_offset_operand("current - 2"), None);
+    assert_eq!(constant_offset_operand("CURRENT - OTHER"), None);
+    assert_eq!(constant_offset_operand("CURRENT - 2u32"), None);
+    assert_eq!(constant_offset_operand("CURRENT - 2 - 1"), None);
+    assert_eq!(constant_offset_operand("2 + CURRENT"), None);
+}
+
+#[test]
+fn offset_integer_values_add_only_to_plain_decimal_constants() {
+    // #6671 review: the offset applies to a plain decimal value only. A
+    // suffixed or non-decimal initializer is never a `NamedConstant::Value`
+    // and is refused here too, so no boundary is parsed from a guess.
+    assert_eq!(offset_integer_value("7", -2).as_deref(), Some("5"));
+    assert_eq!(offset_integer_value("1_000", 1).as_deref(), Some("1001"));
+    assert_eq!(offset_integer_value("-3", -2).as_deref(), Some("-5"));
+    assert_eq!(offset_integer_value("10u32", -2), None);
+    assert_eq!(offset_integer_value("0x10", -2), None);
+    assert_eq!(offset_integer_value("0b10", 1), None);
+    assert_eq!(offset_integer_value(&i128::MAX.to_string(), 1), None);
+    assert!(matches!(
+        named_constant("const LIMIT: u32 = 0x10;\n", "LIMIT"),
+        NamedConstant::Opaque
+    ));
+    assert!(matches!(
+        named_constant("const LIMIT: u32 = 10u32;\n", "LIMIT"),
+        NamedConstant::Opaque
+    ));
+}
