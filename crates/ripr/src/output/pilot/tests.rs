@@ -2146,6 +2146,97 @@ fn pilot_current_change_matches_the_seam_span_and_new_side_lines() {
     assert_eq!(absolute.state(), "changed");
 }
 
+/// #5309: a change whose seams pilot withholds, whose seams are already
+/// gripped, or whose seams a seam limit left unanalyzed must not read as a
+/// change with no seams. The counts come from the classified inventory
+/// before the pilot budget cut drops the seams pilot cannot recommend.
+#[test]
+fn pilot_says_why_no_seam_on_the_change_ranks() -> Result<(), String> {
+    let artifacts = pilot_artifacts();
+    let ranked = classified_with(
+        SeamGripClass::WeaklyGripped,
+        "src/pricing.rs",
+        88,
+        vec![missing()],
+        vec![related_test()],
+    );
+    let on_change = |class| classified_with(class, "src/other.rs", 3, Vec::new(), Vec::new());
+    let limit = crate::analysis::SeamLimitInfo {
+        analyzed: 2000,
+        total: 10_000,
+        source: crate::analysis::SeamLimitSource::Default,
+    };
+    let render = |inventory: &[ClassifiedSeam],
+                  limit: Option<&crate::analysis::SeamLimitInfo>|
+     -> Result<(String, String, serde_json::Value), String> {
+        let change = changed("src/other.rs", 3).with_seams_counted(inventory, limit);
+        let context = PilotSummaryContext {
+            current_change: Some(&change),
+            ..pilot_context(&artifacts)
+        };
+        // The pilot budget has already cut the seams pilot cannot rank.
+        let entries = [ranked.clone()];
+        let json = render_pilot_summary_json(&entries, context);
+        let parsed: serde_json::Value = serde_json::from_str(&json)
+            .map_err(|err| format!("pilot summary JSON must parse: {err}\n{json}"))?;
+        Ok((
+            render_pilot_terminal(&entries, context),
+            render_pilot_summary_md(&entries, context),
+            parsed["current_change"].clone(),
+        ))
+    };
+    let elsewhere = "This recommendation is elsewhere in the repo. For the change itself, run";
+    for (inventory, limit, reason, withheld) in [
+        (
+            vec![ranked.clone(), on_change(SeamGripClass::Opaque)],
+            None,
+            "Pilot withholds the seam on a line changed since origin/main: its static evidence is unknown or opaque, so it is a static limitation, not a gap.",
+            1,
+        ),
+        (
+            vec![
+                ranked.clone(),
+                on_change(SeamGripClass::ActivationUnknown),
+                on_change(SeamGripClass::StronglyGripped),
+            ],
+            None,
+            "Pilot withholds 1 of the 2 seams on a line changed since origin/main: its static evidence is unknown or opaque, so it is a static limitation, not a gap.",
+            1,
+        ),
+        (
+            vec![ranked.clone(), on_change(SeamGripClass::StronglyGripped)],
+            None,
+            "The seam on a line changed since origin/main has no gap to rank: it is already gripped, intentional or suppressed.",
+            0,
+        ),
+        (
+            vec![ranked.clone()],
+            Some(&limit),
+            "No analyzed seam is on a line changed since origin/main, but the seam limit left 8000 of 10000 seams unanalyzed, so the change may have seams pilot did not see.",
+            0,
+        ),
+    ] {
+        let (terminal, md, json) = render(&inventory, limit)?;
+        assert!(
+            terminal.contains(&format!(
+                "current change: not part of it. {reason} {elsewhere}"
+            )),
+            "{terminal}"
+        );
+        let md_reason = reason.replace("origin/main", "`origin/main`");
+        assert!(
+            md.contains(&format!(
+                "- Current change: not part of it. {md_reason} {elsewhere}"
+            )),
+            "{md}"
+        );
+        assert_eq!(json["withheld_seams_in_change"], withheld, "{json}");
+        assert_eq!(json["actionable_seams_in_change"], 0, "{json}");
+        assert_eq!(json["top_recommendation_in_change"], false, "{json}");
+    }
+    Ok(())
+}
+
 #[test]
 fn pilot_renderers_say_whether_the_top_recommendation_is_in_the_current_change()
 -> Result<(), String> {
@@ -2196,6 +2287,7 @@ fn pilot_renderers_say_whether_the_top_recommendation_is_in_the_current_change()
             "base": "origin/main",
             "reason": null,
             "actionable_seams_in_change": 1,
+            "withheld_seams_in_change": 0,
             "top_recommendation_in_change": true
         })
     );
@@ -2209,19 +2301,20 @@ fn pilot_renderers_say_whether_the_top_recommendation_is_in_the_current_change()
     );
     assert!(
         terminal.contains(&format!(
-            "  current change: not part of it. This recommendation is elsewhere in the repo: no seam pilot ranks is on a line changed since origin/main. For the change itself, run: ripr check --root {bound}\n"
+            "  current change: not part of it. No seam pilot analyzed is on a line changed since origin/main. This recommendation is elsewhere in the repo. For the change itself, run: ripr check --root {bound}\n"
         )),
         "{terminal}"
     );
     assert!(
         md.contains(&format!(
-            "- Current change: not part of it. This recommendation is elsewhere in the repo: no seam pilot ranks is on a line changed since `origin/main`. For the change itself, run `ripr check --root {bound}`."
+            "- Current change: not part of it. No seam pilot analyzed is on a line changed since `origin/main`. This recommendation is elsewhere in the repo. For the change itself, run `ripr check --root {bound}`."
         )),
         "{md}"
     );
     assert!(!md.contains("(in your current change)"), "{md}");
     assert_eq!(json["state"], "changed");
     assert_eq!(json["actionable_seams_in_change"], 0);
+    assert_eq!(json["withheld_seams_in_change"], 0);
     assert_eq!(json["top_recommendation_in_change"], false);
 
     // An uncommitted change is invisible to plain `ripr check`, which reads
@@ -2309,6 +2402,7 @@ fn pilot_renderers_say_whether_the_top_recommendation_is_in_the_current_change()
                 "base": base,
                 "reason": reason,
                 "actionable_seams_in_change": null,
+                "withheld_seams_in_change": null,
                 "top_recommendation_in_change": null
             })
         );

@@ -14698,13 +14698,14 @@ fn pilot_ranks_and_labels_seams_in_the_current_change() -> Result<(), String> {
     assert_eq!(summary["current_change"]["state"], "changed");
     assert_eq!(summary["current_change"]["base"], "origin/main");
     assert_eq!(summary["current_change"]["actionable_seams_in_change"], 0);
+    assert_eq!(summary["current_change"]["withheld_seams_in_change"], 0);
     assert_eq!(
         summary["current_change"]["top_recommendation_in_change"],
         false
     );
     assert!(
         stdout.contains(
-            "current change: not part of it. This recommendation is elsewhere in the repo"
+            "current change: not part of it. No seam pilot analyzed is on a line changed since origin/main. This recommendation is elsewhere in the repo"
         ),
         "{stdout}"
     );

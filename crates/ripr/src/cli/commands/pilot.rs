@@ -225,7 +225,8 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
     // changed seam past the cut is kept and can still rank change-first. A
     // changed seam pilot cannot recommend is not kept: it would displace an
     // actionable seam and leave nothing to recommend.
-    let current_change = load_pilot_current_change(&input, git_timeout);
+    let current_change = load_pilot_current_change(&input, git_timeout)
+        .with_seams_counted(&classified, inventory_limit_info.as_ref());
     let pilot_budget_info = analysis::apply_pilot_seam_budget(&mut classified, |entry| {
         current_change.keeps_past_budget(entry)
     })?;

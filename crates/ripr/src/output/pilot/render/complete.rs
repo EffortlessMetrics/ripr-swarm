@@ -19,8 +19,8 @@ use crate::output::pilot::ranking::{
     withheld_static_limitations,
 };
 use crate::output::pilot::{
-    PILOT_SUMMARY_SCHEMA_VERSION, PilotCurrentChange, PilotLanguageRoute, PilotLanguageRoutes,
-    PilotPythonFirstUse, PilotSummaryContext, RUST_EXCLUDED_GUIDANCE,
+    ChangeSeams, PILOT_SUMMARY_SCHEMA_VERSION, PilotCurrentChange, PilotLanguageRoute,
+    PilotLanguageRoutes, PilotPythonFirstUse, PilotSummaryContext, RUST_EXCLUDED_GUIDANCE,
 };
 use crate::output::python_repair_card::PythonRepairCard;
 
@@ -786,8 +786,14 @@ fn scope_line(context: PilotSummaryContext<'_>, code: bool) -> Option<String> {
 /// `None` when there is no current change or it could not be
 /// loaded: pilot's ranking is then repo-wide, as it always was.
 enum CurrentChangeLabel {
-    PartOfChange { base: Option<String> },
-    Elsewhere { base: Option<String>, check: String },
+    PartOfChange {
+        base: Option<String>,
+    },
+    Elsewhere {
+        base: Option<String>,
+        check: String,
+        seams: ChangeSeams,
+    },
 }
 
 fn current_change_label(
@@ -803,6 +809,7 @@ fn current_change_label(
     } else {
         CurrentChangeLabel::Elsewhere {
             base,
+            seams: change.seams().unwrap_or_default(),
             check: format!(
                 "ripr check --root {}{}",
                 shell_path(&crate::agent::loop_commands::bound_root_path(context.root)),
@@ -821,15 +828,62 @@ impl CurrentChangeLabel {
         }
     }
 
+    /// Why no seam on the change ranks (#5309). A change whose seams pilot
+    /// withholds, or whose seams a seam limit left unanalyzed, must not read
+    /// as a change with no seams.
+    fn why_elsewhere(seams: ChangeSeams, changed_line: &str) -> String {
+        let ChangeSeams {
+            touched,
+            withheld,
+            unanalyzed,
+        } = seams;
+        let on_change = |count: usize| match count {
+            1 => format!("the seam on {changed_line}"),
+            _ => format!("the {count} seams on {changed_line}"),
+        };
+        if withheld > 0 {
+            let which = if withheld == touched {
+                on_change(touched)
+            } else {
+                format!("{withheld} of {}", on_change(touched))
+            };
+            let what = if withheld == 1 {
+                "its static evidence is unknown or opaque, so it is a static limitation, not a gap"
+            } else {
+                "their static evidence is unknown or opaque, so they are static limitations, not gaps"
+            };
+            return format!("Pilot withholds {which}: {what}.");
+        }
+        if touched > 0 {
+            let (have, are) = if touched == 1 {
+                ("has", "it is")
+            } else {
+                ("have", "they are")
+            };
+            let mut subject = on_change(touched);
+            subject.replace_range(..1, "T");
+            return format!(
+                "{subject} {have} no gap to rank: {are} already gripped, intentional or suppressed."
+            );
+        }
+        match unanalyzed {
+            Some((analyzed, total)) => format!(
+                "No analyzed seam is on {changed_line}, but the seam limit left {} of {total} seams unanalyzed, so the change may have seams pilot did not see.",
+                total.saturating_sub(analyzed)
+            ),
+            None => format!("No seam pilot analyzed is on {changed_line}."),
+        }
+    }
+
     fn terminal(&self) -> String {
         match self {
             Self::PartOfChange { base } => format!(
                 "part of it (this seam is on {})",
                 Self::changed_line(base.as_ref(), false)
             ),
-            Self::Elsewhere { base, check } => format!(
-                "not part of it. This recommendation is elsewhere in the repo: no seam pilot ranks is on {}. For the change itself, run: {check}",
-                Self::changed_line(base.as_ref(), false)
+            Self::Elsewhere { base, check, seams } => format!(
+                "not part of it. {} This recommendation is elsewhere in the repo. For the change itself, run: {check}",
+                Self::why_elsewhere(*seams, &Self::changed_line(base.as_ref(), false))
             ),
         }
     }
@@ -840,9 +894,9 @@ impl CurrentChangeLabel {
                 "part of it (this seam is on {})",
                 Self::changed_line(base.as_ref(), true)
             ),
-            Self::Elsewhere { base, check } => format!(
-                "not part of it. This recommendation is elsewhere in the repo: no seam pilot ranks is on {}. For the change itself, run `{check}`.",
-                Self::changed_line(base.as_ref(), true)
+            Self::Elsewhere { base, check, seams } => format!(
+                "not part of it. {} This recommendation is elsewhere in the repo. For the change itself, run `{check}`.",
+                Self::why_elsewhere(*seams, &Self::changed_line(base.as_ref(), true))
             ),
         }
     }
@@ -868,8 +922,13 @@ fn push_current_change_json(
             "    \"actionable_seams_in_change\": {},\n",
             actionable_in_change(classified, change)
         ));
+        out.push_str(&format!(
+            "    \"withheld_seams_in_change\": {},\n",
+            change.seams().unwrap_or_default().withheld
+        ));
     } else {
         out.push_str("    \"actionable_seams_in_change\": null,\n");
+        out.push_str("    \"withheld_seams_in_change\": null,\n");
     }
     match top.filter(|_| change.is_changed()) {
         Some(entry) => out.push_str(&format!(

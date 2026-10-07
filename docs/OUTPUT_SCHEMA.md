@@ -15516,6 +15516,7 @@ target/ripr/pilot/pilot-summary.md
     "base": "origin/main",
     "reason": null,
     "actionable_seams_in_change": 1,
+    "withheld_seams_in_change": 0,
     "top_recommendation_in_change": true
   },
   "next": {
@@ -15633,9 +15634,16 @@ carries a matching scope line: `change-first (Rust seams on lines changed since
 The change-first scope and the change counts cover Rust seam ranking only. A
 Python preview repair card shown as the top recommendation is still selected
 from the committed diff against the base, not from uncommitted edits.
-`actionable_seams_in_change` and `top_recommendation_in_change` are `null`
-unless `state` is `changed`; `top_recommendation_in_change` is also `null` when
-no seam is ranked. When it is `false`, the terminal and Markdown say the
+`actionable_seams_in_change`, `withheld_seams_in_change` and
+`top_recommendation_in_change` are `null` unless `state` is `changed`;
+`top_recommendation_in_change` is also `null` when no seam is ranked.
+`withheld_seams_in_change` counts the analyzed seams on changed lines that
+pilot withholds as static limitations (`opaque` or an `*_unknown` class),
+counted before the pilot seam budget drops them. When
+`top_recommendation_in_change` is `false`, the terminal and Markdown say why no
+seam on the change ranks (pilot withholds them, they are already gripped,
+intentional or suppressed, the seam limit left seams unanalyzed, or no seam
+pilot analyzed is on a changed line), say the
 recommendation is elsewhere in the repo and name `ripr check --root <root>` for
 the change itself, adding `--worktree` when the diff came from the working tree
 (plain `ripr check` reads committed history only). The partial (timeout) summary carries no `current_change`.
