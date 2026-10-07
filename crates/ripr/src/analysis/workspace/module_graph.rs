@@ -33,9 +33,11 @@
 //! a `#[path]` module; a package outside the workspace root whose target
 //! path points into it; and case-insensitive path matching. Each would need
 //! a file-level edge no Rust source in the workspace spells.
-//! Roots are over-collected on purpose (every autodiscovered and declared
-//! target, whatever `autobins`/`autotests` say): an extra root can only
-//! reach more files, which keeps a verdict of "unreached" conservative.
+//! Roots are over-collected on purpose (every declared target, and every
+//! autodiscovered one except the tests, benches and examples a manifest's
+//! `autotests`/`autobenches`/`autoexamples = false` turns off, #6965): an
+//! extra root can only reach more files, which keeps a verdict of
+//! "unreached" conservative.
 //!
 //! The pass runs only over the files the caller names (the changed files
 //! for the diff loop, the finding anchors for the LSP partition), so both
@@ -405,14 +407,22 @@ fn list_workspace(workspace_root: &Path) -> Option<WorkspaceListing> {
     let mut pending = vec![lexical(&normalize(workspace_root))];
     let mut visited_entries = 0usize;
     while let Some(dir) = pending.pop() {
-        for entry in std::fs::read_dir(&dir).ok()? {
+        // A workspace root given as the current directory normalizes to the
+        // empty path, which `read_dir` refuses; entries are still joined
+        // onto `dir` so listed paths keep the spelling the walks use.
+        let read_from = if dir.as_os_str().is_empty() {
+            Path::new(".")
+        } else {
+            dir.as_path()
+        };
+        for entry in std::fs::read_dir(read_from).ok()? {
             crate::analysis::cancellation::checkpoint().ok()?;
             visited_entries += 1;
             if visited_entries > MAX_ESCAPING_SCAN_ENTRIES {
                 return None;
             }
             let entry = entry.ok()?;
-            let path = entry.path();
+            let path = dir.join(entry.file_name());
             let file_type = entry.file_type().ok()?;
             if file_type.is_symlink() {
                 // A dangling link aliases nothing.
@@ -667,12 +677,51 @@ fn evidence_roots(
     roots.extend(declared.benches);
     roots.extend(declared.build_script);
     collect_explicit_paths(manifest.get("example"), package_dir, &mut roots);
-    for dir in ["tests", "benches", "examples"] {
-        roots.extend(autodiscovered(&package_dir.join(dir)));
+    // `autotests = false` (and its bench and example twins) turns Cargo's
+    // discovery off: only declared targets build, and a declaration without
+    // `path` still defaults to `<dir>/<name>.rs` or `<dir>/<name>/main.rs`
+    // (#6965).
+    let package = manifest.get("package");
+    for (dir, auto_key, section) in [
+        ("tests", "autotests", "test"),
+        ("benches", "autobenches", "bench"),
+        ("examples", "autoexamples", "example"),
+    ] {
+        let dir = package_dir.join(dir);
+        let discovers = package
+            .and_then(|package| package.get(auto_key))
+            .and_then(toml::Value::as_bool)
+            != Some(false);
+        if discovers {
+            roots.extend(autodiscovered(&dir));
+        } else {
+            roots.extend(named_default_roots(manifest.get(section), &dir));
+        }
     }
     roots
         .into_iter()
         .map(|root| lexical(&normalize(&root)))
+        .collect()
+}
+
+/// The default paths of declared targets that name no `path`:
+/// `<dir>/<name>.rs` and `<dir>/<name>/main.rs`.
+fn named_default_roots(target_entries: Option<&toml::Value>, dir: &Path) -> Vec<PathBuf> {
+    let Some(entries) = target_entries.and_then(toml::Value::as_array) else {
+        return Vec::new();
+    };
+    entries
+        .iter()
+        .filter(|entry| entry.get("path").is_none())
+        .filter_map(|entry| entry.get("name").and_then(toml::Value::as_str))
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .flat_map(|name| {
+            [
+                dir.join(format!("{name}.rs")),
+                dir.join(name).join("main.rs"),
+            ]
+        })
         .collect()
 }
 
@@ -1183,6 +1232,30 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn workspace_listing_reads_a_root_given_as_the_current_directory() -> Result<(), String> {
+        // #6965: `ripr check` from the workspace directory passes an empty
+        // root. The listing must still read it, with entries spelled
+        // relative to it, or no orphan verdict can ever be proved.
+        // `cargo test` runs in the package directory.
+        let listing = list_workspace(Path::new(""))
+            .ok_or_else(|| "the current directory must be listed".to_string())?;
+        assert!(
+            listing
+                .rust_files
+                .iter()
+                .any(|file| file == Path::new("src/lib.rs")),
+            "entries keep the root-relative spelling"
+        );
+        assert!(
+            listing
+                .manifest_dirs
+                .iter()
+                .any(|dir| dir.as_os_str().is_empty())
+        );
+        Ok(())
     }
 
     fn fixture(name: &str, files: &[(&str, &str)]) -> Result<PathBuf, String> {

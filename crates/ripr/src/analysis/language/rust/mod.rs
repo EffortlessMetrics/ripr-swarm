@@ -271,6 +271,155 @@ fn selection_with_open_files(selected: &[PathBuf], open: &BTreeSet<PathBuf>) -> 
     selected.len() + open.iter().filter(|file| !selected.contains(file)).count()
 }
 
+/// Drops the unchanged files that hold tests and that no Cargo target's
+/// module tree reaches (#6965). rustc never compiles such a file, so its
+/// tests never run. Changed files keep their own orphan handling (#4435);
+/// a file that never spells `test` cannot register one (`#[test]`,
+/// `#[tokio::test]`, `#[rstest]`, `proptest!`).
+///
+/// The module-tree walk parses every module of a package, so it runs only
+/// for suspects: test files whose module name no loaded file declares or
+/// spells as a path, and target roots in a package that turns Cargo's
+/// target discovery off. Anything else keeps its tests without a walk.
+fn drop_unreached_test_files(
+    root: &Path,
+    source_role_context: &workspace::SourceRoleContext,
+    changed_rust_paths: &[PathBuf],
+    loaded_files: Vec<(PathBuf, Vec<u8>)>,
+) -> Vec<(PathBuf, Vec<u8>)> {
+    let changed = changed_rust_paths
+        .iter()
+        .map(|path| workspace::normalize_path(path))
+        .collect::<BTreeSet<_>>();
+    let mut mentioned = None;
+    let mut discovery_off = BTreeMap::new();
+    let suspects = loaded_files
+        .iter()
+        .filter(|(path, bytes)| {
+            !changed.contains(&workspace::normalize_path(path)) && contains_bytes(bytes, b"test")
+        })
+        .filter(|(path, _)| {
+            let mentioned = mentioned.get_or_insert_with(|| mentioned_module_names(&loaded_files));
+            may_be_unreached(root, path, mentioned, &mut discovery_off)
+        })
+        .map(|(path, _)| path.as_path())
+        .collect::<Vec<_>>();
+    if suspects.is_empty() {
+        return loaded_files;
+    }
+    let mut probe = source_role_context.clone();
+    probe.module_graph_orphans.clear();
+    workspace::apply_module_graph_evidence(root, &mut probe, suspects);
+    if probe.module_graph_orphans.is_empty() {
+        return loaded_files;
+    }
+    let orphans = probe
+        .module_graph_orphans
+        .iter()
+        .map(|path| workspace::normalize_path(path))
+        .collect::<BTreeSet<_>>();
+    loaded_files
+        .into_iter()
+        .filter(|(path, _)| !orphans.contains(&workspace::normalize_path(path)))
+        .collect()
+}
+
+fn contains_bytes(haystack: &[u8], needle: &[u8]) -> bool {
+    haystack
+        .windows(needle.len())
+        .any(|window| window == needle)
+}
+
+/// Every name the loaded files declare with `mod <name>` and every file
+/// stem they spell before `.rs` in a string (`#[path]`, `include!`). A
+/// textual over-approximation: it only decides which files skip the walk.
+fn mentioned_module_names(loaded_files: &[(PathBuf, Vec<u8>)]) -> BTreeSet<String> {
+    let is_ident = |byte: u8| byte.is_ascii_alphanumeric() || byte == b'_';
+    let mut names = BTreeSet::new();
+    for (_, bytes) in loaded_files {
+        for (at, _) in bytes.windows(3).enumerate().filter(|(_, w)| *w == b"mod") {
+            if at > 0 && is_ident(bytes[at - 1]) {
+                continue;
+            }
+            let rest = &bytes[at + 3..];
+            let skipped = rest
+                .iter()
+                .take_while(|byte| byte.is_ascii_whitespace())
+                .count();
+            if skipped == 0 {
+                continue;
+            }
+            let ident = &rest[skipped..];
+            let ident = ident.strip_prefix(b"r#").unwrap_or(ident);
+            let name = ident
+                .iter()
+                .take_while(|byte| is_ident(**byte))
+                .copied()
+                .collect::<Vec<_>>();
+            if !name.is_empty() {
+                names.insert(String::from_utf8_lossy(&name).into_owned());
+            }
+        }
+        for (at, _) in bytes.windows(4).enumerate().filter(|(_, w)| *w == b".rs\"") {
+            let start = bytes[..at]
+                .iter()
+                .rposition(|byte| matches!(byte, b'/' | b'\\' | b'"'))
+                .map_or(0, |position| position + 1);
+            names.insert(String::from_utf8_lossy(&bytes[start..at]).into_owned());
+        }
+    }
+    names
+}
+
+/// Whether `path` could be a file no target reaches: a module file whose
+/// name nothing mentions, or a target root (`tests/x.rs`) in a package whose
+/// manifest switches target discovery off.
+fn may_be_unreached(
+    root: &Path,
+    path: &Path,
+    mentioned: &BTreeSet<String>,
+    discovery_off: &mut BTreeMap<PathBuf, bool>,
+) -> bool {
+    let Some(file_name) = path.file_name().and_then(|name| name.to_str()) else {
+        return false;
+    };
+    let parent = path.parent().unwrap_or_else(|| Path::new(""));
+    let parent_name = parent.file_name().and_then(|name| name.to_str());
+    let grandparent_name = parent
+        .parent()
+        .and_then(Path::file_name)
+        .and_then(|name| name.to_str());
+    let is_target_dir = |name: Option<&str>| matches!(name, Some("tests" | "benches" | "examples"));
+    // A target root: `tests/x.rs`, or `tests/x/main.rs` (and the bench and
+    // example twins).
+    let package_dir = if is_target_dir(parent_name) {
+        Some(parent.parent().unwrap_or(Path::new("")))
+    } else if file_name == "main.rs" && is_target_dir(grandparent_name) {
+        parent.parent().and_then(Path::parent)
+    } else {
+        None
+    };
+    if let Some(package_dir) = package_dir {
+        return *discovery_off
+            .entry(package_dir.to_path_buf())
+            .or_insert_with(|| {
+                std::fs::read_to_string(root.join(package_dir).join("Cargo.toml")).is_ok_and(
+                    |manifest| {
+                        ["autotests", "autobenches", "autoexamples"]
+                            .iter()
+                            .any(|key| manifest.contains(key))
+                    },
+                )
+            });
+    }
+    let module_name = match file_name {
+        "lib.rs" | "main.rs" | "build.rs" => return false,
+        "mod.rs" => parent_name.unwrap_or_default(),
+        _ => file_name.trim_end_matches(".rs"),
+    };
+    !mentioned.contains(module_name)
+}
+
 /// Fail closed when a repo-scoped working set exceeds the guard (#2109).
 /// The repair route names only effective continuations: a diff-based run
 /// (`--base`/`--diff`) or raising the limit. A "narrower mode" is NOT
@@ -1574,6 +1723,16 @@ impl RustAdapter {
             })
             .filter_map(Result::transpose)
             .collect::<Result<Vec<_>, String>>()?;
+        // #6965: an unchanged file holding tests that no Cargo target's
+        // module tree reaches is never compiled, so its tests are not
+        // evidence. Only a complete walk proves a file unreached (#4435);
+        // anything less keeps the file.
+        let loaded_files = drop_unreached_test_files(
+            &options.root,
+            &source_role_context,
+            &changed_rust_paths,
+            loaded_files,
+        );
         let cached = rust_index::build_analysis_index_from_loaded_files(
             &options.root,
             &loaded_files,
@@ -6343,6 +6502,103 @@ fn absent_delimiter_boundary_returns_head() {
             "an undeclared src file must not seed: {files:?}"
         );
         assert_eq!(orphan_limitation_paths(&result), vec!["src/unused.rs"]);
+        fs::remove_dir_all(root).map_err(|error| format!("remove fixture: {error}"))?;
+        Ok(())
+    }
+
+    /// The related test names of the finding anchored in `file`.
+    fn related_test_names(
+        root: &Path,
+        result: &crate::analysis::language::LanguageDiffResult,
+        file: &str,
+    ) -> Vec<String> {
+        result
+            .findings
+            .iter()
+            .filter(|finding| {
+                let path = &finding.probe.location.file;
+                path.strip_prefix(root).unwrap_or(path).to_string_lossy() == file
+            })
+            .flat_map(|finding| finding.related_tests.iter().map(|test| test.name.clone()))
+            .collect()
+    }
+
+    const ORPHAN_TEST_SOURCE: &str = "use crate::used::discount;\n\n#[test]\nfn discount_applies() {\n    assert_eq!(discount(150), 140);\n}\n";
+
+    #[test]
+    fn diff_analysis_ignores_tests_in_a_file_no_module_declares() -> Result<(), String> {
+        // #6965: `src/used_tests.rs` pins the changed function, but no `mod`
+        // names it, so rustc never compiles it and its test never runs.
+        // Declaring the same file (the control) restores the relation.
+        for declared in [false, true] {
+            let root = temp_root(if declared {
+                "module-graph-declared-test-file"
+            } else {
+                "module-graph-orphan-test-file"
+            })?;
+            write(
+                &root.join("Cargo.toml"),
+                "[package]\nname='shop'\nversion='0.1.0'\nedition='2021'\n",
+            )?;
+            let lib = if declared {
+                "pub mod used;\n\n#[cfg(test)]\nmod used_tests;\n"
+            } else {
+                "pub mod used;\n"
+            };
+            write(&root.join("src/lib.rs"), lib)?;
+            write(&root.join("src/used.rs"), DISCOUNT_SOURCE)?;
+            write(&root.join("src/used_tests.rs"), ORPHAN_TEST_SOURCE)?;
+
+            let result = module_graph_diff(&root, &predicate_change_diff("src/used.rs"))?;
+
+            let related = related_test_names(&root, &result, "src/used.rs");
+            assert_eq!(
+                related.iter().any(|name| name == "discount_applies"),
+                declared,
+                "declared={declared}: {related:?}"
+            );
+            fs::remove_dir_all(root).map_err(|error| format!("remove fixture: {error}"))?;
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn diff_analysis_ignores_integration_tests_autotests_false_leaves_unbuilt() -> Result<(), String>
+    {
+        // #6965: with `autotests = false` Cargo builds only declared test
+        // targets. `tests/unbuilt.rs` is never built; `tests/registered.rs`
+        // is declared by name alone and keeps its default path.
+        let root = temp_root("module-graph-autotests-off")?;
+        write(
+            &root.join("Cargo.toml"),
+            "[package]\nname='shop'\nversion='0.1.0'\nedition='2021'\nautotests=false\n\n[[test]]\nname='registered'\n",
+        )?;
+        write(&root.join("src/lib.rs"), "pub mod used;\n")?;
+        write(&root.join("src/used.rs"), DISCOUNT_SOURCE)?;
+        write(
+            &root.join("tests/unbuilt.rs"),
+            "use shop::used::discount;\n\n#[test]\nfn discount_applies_unbuilt() {\n    assert_eq!(discount(150), 140);\n}\n",
+        )?;
+        write(
+            &root.join("tests/registered.rs"),
+            "use shop::used::discount;\n\n#[test]\nfn discount_applies_registered() {\n    assert_eq!(discount(150), 140);\n}\n",
+        )?;
+
+        let result = module_graph_diff(&root, &predicate_change_diff("src/used.rs"))?;
+
+        let related = related_test_names(&root, &result, "src/used.rs");
+        assert!(
+            related
+                .iter()
+                .any(|name| name == "discount_applies_registered"),
+            "the declared test target must relate: {related:?}"
+        );
+        assert!(
+            !related
+                .iter()
+                .any(|name| name == "discount_applies_unbuilt"),
+            "a test autotests=false leaves unbuilt must not relate: {related:?}"
+        );
         fs::remove_dir_all(root).map_err(|error| format!("remove fixture: {error}"))?;
         Ok(())
     }
