@@ -330,6 +330,10 @@ fn drop_unreached_test_files(
 }
 
 fn contains_bytes(haystack: &[u8], needle: &[u8]) -> bool {
+    // `windows(0)` panics; every haystack contains the empty needle.
+    if needle.is_empty() {
+        return true;
+    }
     haystack
         .windows(needle.len())
         .any(|window| window == needle)
@@ -378,11 +382,11 @@ fn mentioned_module_names(loaded_files: &[(PathBuf, Vec<u8>)]) -> BTreeSet<Strin
 
 /// Whether `path` could be a file no target reaches: a module file whose
 /// name nothing mentions, or a target root (`tests/x.rs`) in a package whose
-/// manifest switches target discovery off.
+/// manifest sets `autotests`, `autobenches` or `autoexamples = false`.
 ///
-/// `src/bin/x.rs` is never a suspect: the walk always counts it as a
-/// production root, so walking it could only pay for a parse it cannot
-/// turn into a verdict. Neither is a file under a `src/tests/` module directory:
+/// Two cost cuts that change no verdict: `src/bin/x.rs` is never a suspect,
+/// because the walk always counts it as a production root and could only
+/// pay for a parse it cannot turn into a verdict. Neither is a file under a `src/tests/` module directory:
 /// the walk takes `src/` for its layout owner, finds no manifest there and
 /// fails closed, so a walk would cost a parse for nothing.
 fn may_be_unreached(
@@ -414,13 +418,27 @@ fn may_be_unreached(
         return *discovery_off
             .entry(package_dir.to_path_buf())
             .or_insert_with(|| {
-                std::fs::read_to_string(root.join(package_dir).join("Cargo.toml")).is_ok_and(
-                    |manifest| {
+                // The same reading `evidence_roots` applies: only an explicit
+                // `auto* = false` turns discovery off. An unreadable or
+                // unparsable manifest leaves the walk nothing to prove.
+                // Read through the committed-source overlay, as the walk does,
+                // so a committed-history diff sees the committed manifest.
+                committed_source::read_source_bytes(root, &package_dir.join("Cargo.toml"))
+                    .ok()
+                    .flatten()
+                    .and_then(|bytes| String::from_utf8(bytes).ok())
+                    .and_then(|text| toml::from_str::<toml::Value>(&text).ok())
+                    .is_some_and(|manifest| {
+                        let package = manifest.get("package");
                         ["autotests", "autobenches", "autoexamples"]
                             .iter()
-                            .any(|key| manifest.contains(key))
-                    },
-                )
+                            .any(|key| {
+                                package
+                                    .and_then(|package| package.get(*key))
+                                    .and_then(toml::Value::as_bool)
+                                    == Some(false)
+                            })
+                    })
             });
     }
     if parent_name == Some("bin") && grandparent_name == Some("src") {
