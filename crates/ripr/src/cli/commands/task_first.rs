@@ -1,0 +1,721 @@
+//! Task-first repair façade (#6305): `ripr repair`, `ripr continue`, and
+//! `ripr status`.
+//!
+//! This is the CLI adapter layer only. Selection decisions live in
+//! `crate::app::task_first`, the before/after/status execution in the shared
+//! agent-route services, and rendering in the shared status/card/next-action
+//! renderers. This module owns argument parsing, outcome dispatch, and the
+//! three help bodies. `ripr agent repair` and `ripr agent status` stay
+//! available as the advanced spellings of the same services.
+
+use std::path::PathBuf;
+
+use crate::app::task_first::{
+    ContinueSelection, RepairStartDecision, RepairSubject, resolve_repair_start,
+    resolve_repair_subject, select_continue_attempt,
+};
+use crate::cli::CommandError;
+use crate::cli::agent::{
+    AgentCardOptions, AgentRepairOptions, AgentRepairPhase, AgentStatusOptions,
+};
+use crate::cli::commands_context::ensure_command_root;
+use crate::cli::parse::expect_value;
+use crate::cli::suggest::unknown_argument;
+
+pub(in crate::cli) const REPAIR_HELP: &str = r#"Start a repair attempt for one gap, or select the gap to repair.
+
+Usage: ripr repair [<item>] [--root PATH]
+
+Options:
+  --root PATH      Workspace root. Defaults to current directory.
+
+Without an item, repair starts only when exactly one repair-eligible seam
+is visible under the selected root. Several eligible seams print a bounded
+selection list with a retry command instead of selecting one implicitly;
+no eligible seam prints the honest setup or limitation action. With an
+item — a seam ID, or a canonical gap ID naming exactly one seam — repair
+starts the before phase for that exact subject.
+
+A successful start prints the before-phase summary and the compact repair
+card for the seam. Repair never edits source files and never runs project
+verification; make the focused test edit, then run `ripr continue`.
+
+This is the ordinary route into the repair transaction. The advanced
+spelling `ripr agent repair --seam-id ID --phase before` runs the same
+before phase with explicit phase vocabulary."#;
+
+pub(in crate::cli) const CONTINUE_HELP: &str = r#"Continue the current repair attempt through its after phase.
+
+Usage: ripr continue [--attempt ID] [--root PATH]
+
+Options:
+  --attempt ID     Select one repair attempt by ID.
+  --root PATH      Workspace root. Defaults to current directory.
+
+Without an ID, continue runs only when exactly one current attempt is
+eligible under the selected root. Several current attempts print a bounded
+selection list with a retry command instead of selecting one implicitly;
+no current attempt reports that honestly. An explicitly selected attempt
+that already ended reports its already-complete status with receipt and
+details instead of running again.
+
+Continue runs the accepted after path: currentness admission, the edit
+cage, verification composition, and the receipt. A stale head, drifted
+analysis input, or refused verification ends in the canonical typed
+refusal with its restart or recovery route.
+
+This is the ordinary route through the repair transaction. The advanced
+spelling `ripr agent repair --attempt ID --phase after` runs the same
+after phase with explicit phase vocabulary."#;
+
+pub(in crate::cli) const STATUS_HELP: &str = r#"Report the current repair state and the one next action.
+
+Usage: ripr status [--attempt ID] [--root PATH] [--json]
+
+Options:
+  --attempt ID     Select exactly one repair attempt by ID and report its
+                   typed state, currentness posture, and one exact next or
+                   recovery action. Without it, status lists every attempt in
+                   the store and selects a next command only when that choice
+                   is unambiguous.
+  --root PATH      Workspace root. Defaults to current directory.
+  --json           Emit the machine-readable status report. Human Markdown is the default.
+
+Status projects the repair-attempt state with its canonical next action.
+Human and JSON forms derive from one semantic state. The command is
+read-only: it never finishes, restarts, rewrites, or deletes an attempt.
+
+This is the ordinary route to repair state. The advanced spelling
+`ripr agent status` reports the same state with explicit agent vocabulary."#;
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct RepairFacadeOptions {
+    pub(super) root: PathBuf,
+    pub(super) item: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct ContinueFacadeOptions {
+    pub(super) root: PathBuf,
+    pub(super) attempt_id: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct StatusFacadeOptions {
+    pub(super) root: PathBuf,
+    pub(super) attempt_id: Option<String>,
+    pub(super) json: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) enum RepairFacadeCommand {
+    Help,
+    Repair(RepairFacadeOptions),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) enum ContinueFacadeCommand {
+    Help,
+    Continue(ContinueFacadeOptions),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) enum StatusFacadeCommand {
+    Help,
+    Status(StatusFacadeOptions),
+}
+
+pub(super) fn parse_repair_args(args: &[String]) -> Result<RepairFacadeCommand, String> {
+    if args.iter().any(|arg| arg == "--help" || arg == "-h") {
+        return Ok(RepairFacadeCommand::Help);
+    }
+    let mut root = PathBuf::from(".");
+    let mut item: Option<String> = None;
+    let mut index = 0usize;
+    while index < args.len() {
+        match args[index].as_str() {
+            "--root" => {
+                index += 1;
+                root = PathBuf::from(expect_value(args, index, "--root")?);
+            }
+            other if other.starts_with('-') => {
+                return Err(unknown_argument("repair", other));
+            }
+            other => {
+                if other.trim().is_empty() {
+                    return Err("repair requires a non-empty item".to_string());
+                }
+                if item.is_some() {
+                    return Err(format!(
+                        "repair accepts one item at most; already selected `{}`",
+                        item.as_deref().unwrap_or_default()
+                    ));
+                }
+                item = Some(other.to_string());
+            }
+        }
+        index += 1;
+    }
+    Ok(RepairFacadeCommand::Repair(RepairFacadeOptions {
+        root,
+        item,
+    }))
+}
+
+pub(super) fn parse_continue_args(args: &[String]) -> Result<ContinueFacadeCommand, String> {
+    if args.iter().any(|arg| arg == "--help" || arg == "-h") {
+        return Ok(ContinueFacadeCommand::Help);
+    }
+    let mut root = PathBuf::from(".");
+    let mut attempt_id: Option<String> = None;
+    let mut index = 0usize;
+    while index < args.len() {
+        match args[index].as_str() {
+            "--root" => {
+                index += 1;
+                root = PathBuf::from(expect_value(args, index, "--root")?);
+            }
+            "--attempt" => {
+                index += 1;
+                let value = expect_value(args, index, "--attempt")?;
+                if value.trim().is_empty() {
+                    return Err("continue --attempt requires a non-empty ID".to_string());
+                }
+                attempt_id = Some(value.to_string());
+            }
+            other => return Err(unknown_argument("continue", other)),
+        }
+        index += 1;
+    }
+    Ok(ContinueFacadeCommand::Continue(ContinueFacadeOptions {
+        root,
+        attempt_id,
+    }))
+}
+
+pub(super) fn parse_status_args(args: &[String]) -> Result<StatusFacadeCommand, String> {
+    if args.iter().any(|arg| arg == "--help" || arg == "-h") {
+        return Ok(StatusFacadeCommand::Help);
+    }
+    let mut root = PathBuf::from(".");
+    let mut attempt_id: Option<String> = None;
+    let mut json = false;
+    let mut index = 0usize;
+    while index < args.len() {
+        match args[index].as_str() {
+            "--root" => {
+                index += 1;
+                root = PathBuf::from(expect_value(args, index, "--root")?);
+            }
+            "--attempt" => {
+                index += 1;
+                let value = expect_value(args, index, "--attempt")?;
+                if value.trim().is_empty() {
+                    return Err("status --attempt requires a non-empty ID".to_string());
+                }
+                attempt_id = Some(value.to_string());
+            }
+            "--json" => json = true,
+            other => return Err(unknown_argument("status", other)),
+        }
+        index += 1;
+    }
+    Ok(StatusFacadeCommand::Status(StatusFacadeOptions {
+        root,
+        attempt_id,
+        json,
+    }))
+}
+
+pub(in crate::cli) fn repair(args: &[String]) -> Result<(), CommandError> {
+    match parse_repair_args(args).map_err(CommandError::from)? {
+        RepairFacadeCommand::Help => {
+            println!("{REPAIR_HELP}");
+            Ok(())
+        }
+        RepairFacadeCommand::Repair(options) => run_facade_repair(options),
+    }
+}
+
+pub(in crate::cli) fn continue_repair(args: &[String]) -> Result<(), CommandError> {
+    match parse_continue_args(args).map_err(CommandError::from)? {
+        ContinueFacadeCommand::Help => {
+            println!("{CONTINUE_HELP}");
+            Ok(())
+        }
+        ContinueFacadeCommand::Continue(options) => run_facade_continue(options),
+    }
+}
+
+pub(in crate::cli) fn status(args: &[String]) -> Result<(), CommandError> {
+    match parse_status_args(args).map_err(CommandError::from)? {
+        StatusFacadeCommand::Help => {
+            println!("{STATUS_HELP}");
+            Ok(())
+        }
+        StatusFacadeCommand::Status(options) => run_facade_status(options),
+    }
+}
+
+fn run_facade_repair(options: RepairFacadeOptions) -> Result<(), CommandError> {
+    ensure_command_root(&options.root, "repair")?;
+    let seam_id = match options.item.as_deref() {
+        Some(item) => {
+            match resolve_repair_subject(&options.root, item).map_err(CommandError::from)? {
+                RepairSubject::Seam(seam_id) => seam_id,
+                RepairSubject::Decision(message) => return Err(CommandError::Decision(message)),
+            }
+        }
+        None => match resolve_repair_start(&options.root).map_err(CommandError::from)? {
+            RepairStartDecision::Start { seam_id } => seam_id,
+            RepairStartDecision::NoEligible {
+                total_seams,
+                reasons,
+            } => {
+                // A deliberate named outcome, not a failure: the honest
+                // setup/limitation message on stderr, stdout empty.
+                return Err(CommandError::Decision(no_eligible_seam_message(
+                    &options.root,
+                    total_seams,
+                    &reasons,
+                )));
+            }
+            RepairStartDecision::Action(action) => {
+                // A deliberate named outcome, not a failure: the canonical
+                // block on stderr, stdout empty, decision exit code.
+                eprint!(
+                    "{}",
+                    crate::output::next_action::render_next_action_human_at_root(
+                        &action,
+                        &options.root
+                    )
+                );
+                if action.action_class() == crate::domain::NextActionClass::ChooseItem {
+                    print_retry_line(&format!(
+                        "ripr repair <seam-id> --root {}",
+                        crate::agent::loop_commands::shell_arg(
+                            &crate::agent::loop_commands::bound_root(
+                                &options.root.to_string_lossy()
+                            )
+                        )
+                    ));
+                }
+                return Err(CommandError::Decision(
+                    "repair selected no seam; rerun with an explicit item".to_string(),
+                ));
+            }
+        },
+    };
+    crate::cli::drive_before_phase(facade_before_options(&options.root, &seam_id))?;
+    // The compact handoff renders after the start through the same card
+    // service the advanced route serves.
+    super::agent_card::run_agent_card(AgentCardOptions {
+        root: options.root,
+        seam_id,
+        json: false,
+    })
+}
+
+fn facade_before_options(root: &std::path::Path, seam_id: &str) -> AgentRepairOptions {
+    AgentRepairOptions {
+        root: root.to_path_buf(),
+        seam_id: Some(seam_id.to_string()),
+        attempt_id: None,
+        phase: AgentRepairPhase::Before,
+        python_repair_trust: None,
+        edit_authorization: crate::app::python_repair_binding::EditAuthorization {
+            authorized: false,
+            authority: None,
+        },
+        verify_authorization: crate::app::python_repair_verification::VerifyAuthorization {
+            authorized: false,
+            authority: None,
+        },
+        verify_rollback: false,
+        store: None,
+        json: false,
+    }
+}
+
+fn run_facade_continue(options: ContinueFacadeOptions) -> Result<(), CommandError> {
+    ensure_command_root(&options.root, "continue")?;
+    match select_continue_attempt(&options.root, options.attempt_id.as_deref())
+        .map_err(CommandError::from)?
+    {
+        ContinueSelection::Proceed { attempt_id } => super::agent::run_agent_repair_with_identity(
+            AgentRepairOptions {
+                root: options.root,
+                seam_id: None,
+                attempt_id: Some(attempt_id.as_str().to_string()),
+                phase: AgentRepairPhase::After,
+                python_repair_trust: None,
+                edit_authorization: crate::app::python_repair_binding::EditAuthorization {
+                    authorized: false,
+                    authority: None,
+                },
+                verify_authorization: crate::app::python_repair_verification::VerifyAuthorization {
+                    authorized: false,
+                    authority: None,
+                },
+                verify_rollback: false,
+                store: None,
+                json: false,
+            },
+            None,
+        ),
+        ContinueSelection::AlreadyComplete { report } => {
+            print!(
+                "{}",
+                crate::app::agent_status::render_agent_attempt_status_markdown(&report)
+            );
+            eprintln!(
+                "ripr: repair attempt `{}` is already complete ({}); no new attempt was created",
+                report.attempt.attempt_id, report.attempt.status_class
+            );
+            Ok(())
+        }
+        ContinueSelection::NoneAvailable { prepared, terminal } => {
+            let root = crate::agent::loop_commands::shell_arg(
+                &crate::agent::loop_commands::bound_root(&options.root.to_string_lossy()),
+            );
+            Err(CommandError::Decision(format!(
+                "no current attempt to continue under {root}: {}. Next: `ripr status --root {root}`; start with `ripr repair --root {root}`",
+                none_available_detail(prepared, terminal)
+            )))
+        }
+        ContinueSelection::Ambiguous { candidates } => {
+            let root = crate::agent::loop_commands::shell_arg(
+                &crate::agent::loop_commands::bound_root(&options.root.to_string_lossy()),
+            );
+            const MAX_LISTED: usize = 8;
+            let mut rendered = format!(
+                "ripr: {} current attempts under {root}; select one explicitly:\n",
+                candidates.len()
+            );
+            for id in candidates.iter().take(MAX_LISTED) {
+                rendered.push_str(&format!("  {id}\n"));
+            }
+            if candidates.len() > MAX_LISTED {
+                rendered.push_str(&format!("  (and {} more)\n", candidates.len() - MAX_LISTED));
+            }
+            eprint!("{rendered}");
+            print_retry_line(&format!(
+                "ripr continue --attempt <attempt-id> --root {root}"
+            ));
+            Err(CommandError::Decision(
+                "continue selected no attempt; rerun with --attempt".to_string(),
+            ))
+        }
+    }
+}
+
+fn no_eligible_seam_message(
+    root: &std::path::Path,
+    total_seams: usize,
+    reasons: &[String],
+) -> String {
+    let root = crate::agent::loop_commands::shell_arg(&crate::agent::loop_commands::bound_root(
+        &root.to_string_lossy(),
+    ));
+    if total_seams == 0 {
+        return format!(
+            "no seams visible under {root}; analyze the workspace before starting a repair. Next: `ripr pilot --root {root}`"
+        );
+    }
+    let noun = if total_seams == 1 { "seam" } else { "seams" };
+    let mut message = format!("{total_seams} visible {noun} under {root}, none repair-eligible");
+    if !reasons.is_empty() {
+        message.push_str(&format!(" ({})", reasons.join("; ")));
+    }
+    message.push_str(&format!(". Next: `ripr pilot --root {root}`"));
+    message
+}
+
+fn none_available_detail(prepared: usize, terminal: usize) -> String {
+    match (prepared, terminal) {
+        (0, 0) => "no attempts recorded".to_string(),
+        (prepared, 0) => format!("{prepared} prepared, none awaiting"),
+        (0, terminal) => format!("{terminal} terminal, none awaiting"),
+        (prepared, terminal) => {
+            format!("{prepared} prepared and {terminal} terminal, none awaiting")
+        }
+    }
+}
+
+fn run_facade_status(options: StatusFacadeOptions) -> Result<(), CommandError> {
+    super::agent::run_agent_status(AgentStatusOptions {
+        out_dir: None,
+        root: options.root,
+        json: options.json,
+        store: None,
+        attempt_id: options.attempt_id,
+    })
+    .map_err(CommandError::from)
+}
+
+/// Print one retry template with its PowerShell pair when the translator
+/// renders one. The template keeps a placeholder, never a filled
+/// candidate: filling one would be the implicit selection the façade
+/// refuses to make.
+fn print_retry_line(retry: &str) {
+    eprintln!("retry: {retry}");
+    if let Some(form) = crate::output::markdown::powershell_text_variant(retry) {
+        eprintln!("retry (PowerShell): {form}");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::Path;
+
+    fn args(words: &[&str]) -> Vec<String> {
+        words.iter().map(|word| word.to_string()).collect()
+    }
+
+    #[test]
+    fn repair_parse_defaults_to_cwd_without_item() -> Result<(), String> {
+        match parse_repair_args(&args(&[]))? {
+            RepairFacadeCommand::Repair(options) => {
+                if options.root != Path::new(".") || options.item.is_some() {
+                    return Err(format!("unexpected repair defaults: {options:?}"));
+                }
+                Ok(())
+            }
+            RepairFacadeCommand::Help => Err("empty args must not print help".to_string()),
+        }
+    }
+
+    #[test]
+    fn repair_parse_accepts_item_and_root_in_any_order() -> Result<(), String> {
+        for argv in [
+            args(&["seam-1", "--root", "proj"]),
+            args(&["--root", "proj", "seam-1"]),
+        ] {
+            match parse_repair_args(&argv)? {
+                RepairFacadeCommand::Repair(options) => {
+                    if options.root != Path::new("proj")
+                        || options.item.as_deref() != Some("seam-1")
+                    {
+                        return Err(format!("bad repair parse: {options:?}"));
+                    }
+                }
+                RepairFacadeCommand::Help => {
+                    return Err("an item must not print help".to_string());
+                }
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn repair_parse_fails_closed() -> Result<(), String> {
+        for argv in [
+            args(&["one", "two"]),
+            args(&[""]),
+            args(&["   "]),
+            args(&["--phase", "before"]),
+            args(&["--root"]),
+            args(&["--attempt", "id"]),
+        ] {
+            if parse_repair_args(&argv).is_ok() {
+                return Err(format!("repair accepted {argv:?}"));
+            }
+        }
+        for argv in [args(&["--help"]), args(&["-h"])] {
+            if parse_repair_args(&argv)? != RepairFacadeCommand::Help {
+                return Err(format!("{argv:?} must print help"));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn continue_parse_handles_identity_and_help() -> Result<(), String> {
+        match parse_continue_args(&args(&["--attempt", "id-1", "--root", "proj"]))? {
+            ContinueFacadeCommand::Continue(options) => {
+                if options.root != Path::new("proj")
+                    || options.attempt_id.as_deref() != Some("id-1")
+                {
+                    return Err(format!("bad continue parse: {options:?}"));
+                }
+            }
+            ContinueFacadeCommand::Help => return Err("flags must not print help".to_string()),
+        }
+        match parse_continue_args(&args(&[]))? {
+            ContinueFacadeCommand::Continue(options) => {
+                if options.root != Path::new(".") || options.attempt_id.is_some() {
+                    return Err(format!("unexpected continue defaults: {options:?}"));
+                }
+            }
+            ContinueFacadeCommand::Help => {
+                return Err("empty args must not print help".to_string());
+            }
+        }
+        for argv in [args(&["--help"]), args(&["-h"])] {
+            if parse_continue_args(&argv)? != ContinueFacadeCommand::Help {
+                return Err(format!("{argv:?} must print help"));
+            }
+        }
+        for argv in [
+            args(&["positional"]),
+            args(&["--attempt"]),
+            args(&["--attempt", "  "]),
+            args(&["--json"]),
+        ] {
+            if parse_continue_args(&argv).is_ok() {
+                return Err(format!("continue accepted {argv:?}"));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn status_parse_handles_identity_json_and_help() -> Result<(), String> {
+        match parse_status_args(&args(&["--attempt", "id-1", "--json"]))? {
+            StatusFacadeCommand::Status(options) => {
+                if !options.json || options.attempt_id.as_deref() != Some("id-1") {
+                    return Err(format!("bad status parse: {options:?}"));
+                }
+            }
+            StatusFacadeCommand::Help => return Err("flags must not print help".to_string()),
+        }
+        for argv in [args(&["--help"]), args(&["-h"])] {
+            if parse_status_args(&argv)? != StatusFacadeCommand::Help {
+                return Err(format!("{argv:?} must print help"));
+            }
+        }
+        for argv in [
+            args(&["positional"]),
+            args(&["--attempt"]),
+            args(&["--store", "x"]),
+        ] {
+            if parse_status_args(&argv).is_ok() {
+                return Err(format!("status accepted {argv:?}"));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn facade_help_bodies_document_their_exact_surface() -> Result<(), String> {
+        for (body, usage, flags) in [
+            (
+                REPAIR_HELP,
+                "Usage: ripr repair [<item>] [--root PATH]",
+                &["--root"][..],
+            ),
+            (
+                CONTINUE_HELP,
+                "Usage: ripr continue [--attempt ID] [--root PATH]",
+                &["--attempt", "--root"][..],
+            ),
+            (
+                STATUS_HELP,
+                "Usage: ripr status [--attempt ID] [--root PATH] [--json]",
+                &["--attempt", "--root", "--json"][..],
+            ),
+        ] {
+            if !body.contains(usage) {
+                return Err(format!("help body lost its usage line: {usage}"));
+            }
+            for flag in flags {
+                if !body.contains(flag) {
+                    return Err(format!("help body lost {flag}"));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Control 12 (catalog half): the façade rows are ordinary public and
+    /// canonical; the agent spellings stay supported as advanced routes.
+    #[test]
+    fn facade_rows_are_the_ordinary_public_repair_route() -> Result<(), String> {
+        use crate::cli::command_catalog::{
+            CommandClass, CommandRelation, DiscoveryPosture, catalog,
+        };
+        for path in ["repair", "continue", "status"] {
+            let Some(entry) = catalog().iter().find(|entry| entry.path == path) else {
+                return Err(format!("catalog lost {path:?}"));
+            };
+            if entry.class != CommandClass::Public
+                || entry.discovery != DiscoveryPosture::OrdinaryPublic
+                || entry.relation != CommandRelation::Canonical
+            {
+                return Err(format!(
+                    "{path:?} must be public/ordinary/canonical, got {:?}/{:?}/{:?}",
+                    entry.class, entry.discovery, entry.relation
+                ));
+            }
+        }
+        for path in ["agent repair", "agent status"] {
+            let Some(entry) = catalog().iter().find(|entry| entry.path == path) else {
+                return Err(format!("catalog lost {path:?}"));
+            };
+            if entry.class != CommandClass::Advanced
+                || entry.discovery != DiscoveryPosture::Advanced
+                || entry.relation != CommandRelation::Canonical
+            {
+                return Err(format!(
+                    "{path:?} must stay supported as an advanced route, got {:?}/{:?}/{:?}",
+                    entry.class, entry.discovery, entry.relation
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// Control 12 (routing half): no ordinary-public row may recommend an
+    /// internal phase command as the ordinary next step. The `agent` family
+    /// index is exempt: it is the advanced surface's own table of contents,
+    /// so its internal routes are coherent.
+    #[test]
+    fn ordinary_rows_never_route_to_the_advanced_repair_spellings() -> Result<(), String> {
+        use crate::cli::command_catalog::{DiscoveryPosture, catalog};
+        use crate::cli::command_metadata::metadata;
+        for row in metadata() {
+            let Some(entry) = catalog().iter().find(|entry| entry.id == row.id) else {
+                continue;
+            };
+            if entry.discovery != DiscoveryPosture::OrdinaryPublic || entry.path == "agent" {
+                continue;
+            }
+            let mut routed = vec![row.example];
+            routed.extend(row.next_routes.iter().copied());
+            for route in routed {
+                if route.contains("agent repair") || route.contains("agent status") {
+                    return Err(format!(
+                        "ordinary row {} routes to the advanced spelling: {route:?}",
+                        row.id
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Control 12 (workflow half): the repair workflow starts at the façade
+    /// and keeps the agent spellings as advanced alternatives.
+    #[test]
+    fn repair_workflow_starts_at_the_facade() -> Result<(), String> {
+        use crate::cli::workflow_catalog::workflow_catalog;
+        let Some(row) = workflow_catalog().iter().find(|row| row.id == "repair-gap") else {
+            return Err("workflow catalog lost repair-gap".to_string());
+        };
+        if row.first_command != "cmd:repair" {
+            return Err(format!(
+                "repair-gap must start at cmd:repair, got {:?}",
+                row.first_command
+            ));
+        }
+        for expected in ["cmd:agent.repair", "cmd:agent.status"] {
+            if !row.advanced_alternatives.contains(&expected) {
+                return Err(format!(
+                    "repair-gap lost the advanced alternative {expected}"
+                ));
+            }
+        }
+        Ok(())
+    }
+}

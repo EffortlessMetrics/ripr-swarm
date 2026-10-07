@@ -1554,6 +1554,7 @@ fn format_command_role(role: CommandRole) -> &'static str {
         CommandRole::Regeneration => "regeneration",
         CommandRole::Inspection => "inspection",
         CommandRole::TargetedRerun => "targeted_rerun",
+        CommandRole::RepairStart => "repair_start",
     }
 }
 

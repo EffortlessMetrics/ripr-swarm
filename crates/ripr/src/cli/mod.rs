@@ -137,23 +137,31 @@ fn run_command(mut args: Vec<String>) -> Result<(), CommandError> {
     // first side-effecting step (workflow execution and attempt publication),
     // so a lock loser fails closed without producing any workflow artifacts.
     let before_attempt = before_repair_attempt(&args)?;
-    let _before_lock = before_attempt
-        .as_ref()
-        .map(|options| lock_before_repair_attempt(&options.root))
-        .transpose()?;
     if let Some(options) = before_attempt {
-        let seam_id = options.seam_id.as_deref().ok_or_else(|| {
-            "before-phase repair attempt is missing its seam identity".to_string()
-        })?;
-        let identity = crate::app::repair_attempt::BeforeRepairAttemptIdentity::prepare(
-            &options.root,
-            seam_id,
-        )?;
-        commands::run_before_repair_with_identity(options.clone(), &identity)?;
-        persist_before_repair_attempt(&options, &identity)?;
+        drive_before_phase(options)?;
     } else {
         execute::execute(parse::parse_args(args)?)?;
     }
+    Ok(())
+}
+
+/// Drive one before phase through the locked publication path: serialize
+/// against concurrent before phases, prepare the attempt identity, run the
+/// shared workflow, and persist the attempt. Shared by the advanced
+/// `agent repair --phase before` spelling and the task-first `ripr repair`
+/// façade (#6305), so both produce the same attempt from the same subject.
+pub(in crate::cli) fn drive_before_phase(
+    options: agent::AgentRepairOptions,
+) -> Result<(), CommandError> {
+    let _before_lock = lock_before_repair_attempt(&options.root)?;
+    let seam_id = options
+        .seam_id
+        .as_deref()
+        .ok_or_else(|| "before-phase repair attempt is missing its seam identity".to_string())?;
+    let identity =
+        crate::app::repair_attempt::BeforeRepairAttemptIdentity::prepare(&options.root, seam_id)?;
+    commands::run_before_repair_with_identity(options.clone(), &identity)?;
+    persist_before_repair_attempt(&options, &identity)?;
     Ok(())
 }
 
