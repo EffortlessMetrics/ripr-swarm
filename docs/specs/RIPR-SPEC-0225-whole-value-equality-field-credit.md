@@ -39,7 +39,8 @@ Policy impact:
 
 - Register this spec in `policy/doc-artifacts.toml` and
   `.ripr/traceability.toml`.
-- No schema version bump.
+- No output schema version bump. The seam cache schema moves (1.46) because
+  cached verdicts change.
 
 ## Problem
 
@@ -187,11 +188,13 @@ rejected alternative. Any can be reversed later without touching the rest.
    - a `let` binding of the owner call counts only when the test names the
      binding exactly twice (the `let` and the compared operand), which also
      refuses examples 12, 13 and 15;
-   - an expected field value may be a literal, a CamelCase variant or struct
-     constructor of such values, or a string literal's `.to_string()`,
+   - an expected field value may be a literal (negated too), a tuple or
+     array of admissible values, a CamelCase variant or struct constructor of
+     such values, or a string literal's `.to_string()`,
      `.to_owned()`, `String::from(..)` or (for a `String` field) `.into()`;
      constants are refused, since a `const` may be computed by a workspace
-     `const fn`.
+     `const fn`; generic types and `.into()` inside nested constructors are
+     refused too.
    A field read inside the braces of an expected literal no longer clears the
    `FieldValue` missing discriminator (example 12, which had read `exposed`).
    The parser-backed `whole_object_equality` classifier change is not part of

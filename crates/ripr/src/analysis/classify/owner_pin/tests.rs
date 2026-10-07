@@ -3336,10 +3336,10 @@ fn whole_value_admits(lib: &str, owner_name: &str, body: &str) -> bool {
     pin.is_some_and(|pin| !admitted_texts(&index, &pin).is_empty())
 }
 
-/// RIPR-SPEC-0225 acceptance examples 1, 3, 4 and 16b: a whole-value
-/// literal that names the changed field with an independent value pins it,
-/// directly, through `Ok(..)`, through a once-used `let` of the owner call,
-/// and through nested workspace literals.
+/// RIPR-SPEC-0225 acceptance examples 1, 3 and 4: a whole-value literal
+/// that names the changed field with an independent value pins it,
+/// directly, through `Ok(..)` and through a once-used `let` of the owner
+/// call. (Examples 9, 11, 14 and 16 are verdict-corpus rows.)
 #[test]
 fn a_whole_value_literal_naming_the_field_pins_it() {
     let literal = r#"Config { retries: 4, name: "x".into(), count: Count(3) }"#;
@@ -3379,6 +3379,7 @@ fn a_whole_value_literal_without_an_independent_field_value_does_not_pin() {
 assert_eq!(c, Config { retries: c.retries, name: "x".into(), count: Count(3) });"#
             .to_string(),
         format!("let mut c = build(3);\nc.retries = 4;\nassert_eq!(c, {literal});"),
+        format!("let mut c = build(3);\nassert_eq!(c, {literal});"),
         format!("let c = build(3);\nlet r = c.retries;\nassert_eq!(c, {literal});\nlet _ = r;"),
         format!("let c = build(3);\nlet c = build(4);\nassert_eq!(c, {literal});"),
         format!("assert_eq!(build(3), Some({literal}));"),
@@ -3405,11 +3406,24 @@ assert_eq!(c, Config { retries: c.retries, name: "x".into(), count: Count(3) });
         "parse",
         &format!("assert_eq!(parse(\"3\"), {literal});")
     ));
+    // Review: a CamelCase constant or fn is computed, and a `let` in an inner
+    // block leaves the operand naming an outer item.
+    let camel_const = CONFIG_LIB.to_string()
+        + "pub struct Limits;\nimpl Limits {\n    #[allow(non_upper_case_globals)]\n    pub const Max: u32 = 4;\n}\n";
+    assert!(!whole_value_admits(
+        &camel_const,
+        "build",
+        r#"assert_eq!(build(3), Config { retries: Limits::Max, name: "x".into(), count: Count(3) });"#
+    ));
+    assert!(!whole_value_admits(
+        CONFIG_LIB,
+        "build",
+        &format!("{{ let c = build(3); }}\nassert_eq!(c, {literal});")
+    ));
 }
 
-/// RIPR-SPEC-0225 owner-side gates, acceptance examples 2, 11 and 14:
-/// a manual `PartialEq` on the type, a field type without by-value
-/// equality, an attribute on the field, a second exit, a conditional field
+/// RIPR-SPEC-0225 owner-side gates, acceptance example 2: a manual
+/// `PartialEq` on the type, a field type from outside the workspace, an attribute on the field, a second exit, a conditional field
 /// value, a mismatched declared return type, or a tail that is not the
 /// literal leaves the pin unestablished.
 #[test]
@@ -3439,6 +3453,10 @@ fn a_whole_value_field_pin_needs_derived_equality_and_the_returned_literal() {
             "        count: Count(n),\n    }\n}\n\npub fn parse",
             "        count: Count(n),\n    };\n    c\n}\n\npub fn parse",
         );
+    let qualified_tail = CONFIG_LIB.replace(
+        "pub fn build(n: u32) -> Config {\n    Config {",
+        "pub fn build(n: u32) -> Config {\n    crate::Config {",
+    );
     let boxed_return = CONFIG_LIB.replace(
         "pub fn build(n: u32) -> Config {",
         "pub fn build(n: u32) -> Box<Config> {",
@@ -3449,6 +3467,7 @@ fn a_whole_value_field_pin_needs_derived_equality_and_the_returned_literal() {
         attributed_field,
         early_return,
         bound_first,
+        qualified_tail,
         boxed_return,
     ] {
         let tests = "use demo::*;\n#[test]\nfn pins() {\n    assert_eq!(build(3), Config { retries: 4, name: \"x\".into(), count: Count(3) });\n}\n";

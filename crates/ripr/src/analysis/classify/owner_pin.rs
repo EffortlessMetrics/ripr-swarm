@@ -1052,6 +1052,9 @@ struct WholeValueField {
     /// The field is declared `String`, so `"x".into()` converts through the
     /// standard library, not a workspace `From` impl.
     field_is_string: bool,
+    /// CamelCase names the workspace gives a `const`, `static` or `fn`: an
+    /// expected value naming one may be computed, not a constructor.
+    computed_names: BTreeSet<String>,
 }
 
 impl OwnerReturnPin {
@@ -1064,8 +1067,13 @@ impl OwnerReturnPin {
         index: &RustIndex,
     ) -> Option<Self> {
         if matches!(probe.family, ProbeFamily::FieldConstruction) {
-            return Self::establish_clone_field(probe, owner, index)
-                .or_else(|| Self::establish_whole_value_field(probe, owner, index));
+            // A `clone` owner is #6692's alone: which `Clone` impl a call
+            // runs is that path's question, not one this one asks.
+            return if owner.name == "clone" {
+                Self::establish_clone_field(probe, owner, index)
+            } else {
+                Self::establish_whole_value_field(probe, owner, index)
+            };
         }
         if !owner.item.has_body {
             return None;
@@ -1254,6 +1262,7 @@ impl OwnerReturnPin {
                 field: field.to_string(),
                 wrapper: tail.wrapper,
                 field_is_string,
+                computed_names: camel_case_value_items(index),
             }),
             returns_bool: false,
             owner_file: owner.file.clone(),
@@ -1585,6 +1594,13 @@ fn bound_owner_call<'a>(
     let mut bindings = whole_word_offsets(&masked, "let")
         .into_iter()
         .filter_map(|start| {
+            // Only the test block's own statements: a `let` in an inner
+            // block goes out of scope, and the operand may then name an
+            // outer item.
+            let before = &masked[..start];
+            if before.matches('{').count() != before.matches('}').count() + 1 {
+                return None;
+            }
             let rest = masked[start + 3..].trim_start().strip_prefix(name)?;
             if rest.starts_with(|ch: char| ch.is_ascii_alphanumeric() || ch == '_') {
                 return None;
@@ -2077,9 +2093,12 @@ fn whole_value_tail(
         return None;
     }
     let path = literal.path()?;
-    if path
-        .segments()
-        .any(|segment| segment.generic_arg_list().is_some())
+    // `Self::Variant { .. }` or `module::Type { .. }` names something other
+    // than the type the equality gates read.
+    if path.qualifier().is_some()
+        || path
+            .segments()
+            .any(|segment| segment.generic_arg_list().is_some())
     {
         return None;
     }
@@ -2185,6 +2204,10 @@ impl WholeValueField {
             && pinned
                 .expr()
                 .is_some_and(|value| independent_value(&value, self.field_is_string))
+            && !literal.syntax().descendants().any(|node| {
+                ast::NameRef::cast(node)
+                    .is_some_and(|name| self.computed_names.contains(&*name.text()))
+            })
     }
 }
 
@@ -2268,6 +2291,32 @@ fn independent_value(value: &ast::Expr, string_field: bool) -> bool {
         }
         _ => false,
     }
+}
+
+/// CamelCase names of `const`, `static` and `fn` items anywhere in the
+/// workspace. Naming lints only warn on them, so [`constructor_path`]'s
+/// case test alone cannot tell `Limits::Max` (a constant) from `Mode::Fast`.
+fn camel_case_value_items(index: &RustIndex) -> BTreeSet<String> {
+    let mut names = BTreeSet::new();
+    for facts in index.files().values() {
+        let masked = mask_comments_and_strings(&facts.source);
+        for keyword in ["const", "static", "fn"] {
+            for start in whole_word_offsets(&masked, keyword) {
+                let rest = masked[start + keyword.len()..].trim_start();
+                let rest = rest.strip_prefix("mut ").map_or(rest, str::trim_start);
+                let name: String = rest
+                    .chars()
+                    .take_while(|ch| ch.is_ascii_alphanumeric() || *ch == '_')
+                    .collect();
+                if name.starts_with(|ch: char| ch.is_ascii_uppercase())
+                    && name.chars().any(|ch| ch.is_ascii_lowercase())
+                {
+                    names.insert(name);
+                }
+            }
+        }
+    }
+    names
 }
 
 /// A path that names a variant or a struct: its last segment is CamelCase

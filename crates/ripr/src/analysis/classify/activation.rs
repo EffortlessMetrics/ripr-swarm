@@ -1490,7 +1490,8 @@ fn constructed_field_name(expression: &str) -> Option<&str> {
 /// A read inside a struct literal's braces (`assert_eq!(c, Config { retries:
 /// c.retries, .. })`) copies the owner's value into the expected side, so
 /// the comparison cannot fail on it: it observes nothing (RIPR-SPEC-0225
-/// acceptance example 12).
+/// acceptance example 12). Any unclosed `{` before the read refuses it, a
+/// block or closure body too: that fails closed to a gap.
 fn reads_owner_result_field(body: &str, assertion: &str, read: &str, owner: &str) -> bool {
     let is_ident = |ch: char| ch.is_ascii_alphanumeric() || ch == '_';
     let owner_call = format!("{owner}(");
