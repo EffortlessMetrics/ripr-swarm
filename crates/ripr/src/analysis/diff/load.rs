@@ -1138,7 +1138,23 @@ fn uncommitted_changes_probe(
     match result {
         Ok(out) if out.status.success() => {
             if porcelain_z_has_uncommitted_source_work(&out.stdout) {
-                WorkingTreeProbe::Dirty
+                // An unborn or dangling HEAD reports every staged file as a new
+                // addition, which is not uncommitted work on top of a history.
+                // Keep it on the committed-history path so the diff loader
+                // refuses in ripr's voice instead of completing a worktree run
+                // against nothing. Only a `rev-parse` that ran and answered
+                // "no" proves this; a probe that could not run stays dirty.
+                let head_unresolved = crate::git::run_git_output_with_deadline(
+                    root,
+                    &["rev-parse", "--verify", "--quiet", "HEAD"],
+                    git_timeout.or(Some(WORKING_TREE_PROBE_DEADLINE)),
+                )
+                .is_ok_and(|head| !head.status.success());
+                if head_unresolved {
+                    WorkingTreeProbe::Clean
+                } else {
+                    WorkingTreeProbe::Dirty
+                }
             } else {
                 WorkingTreeProbe::Clean
             }
