@@ -1121,8 +1121,9 @@ fn usize_value(value: Option<&Value>) -> Option<usize> {
 ///
 /// Those tests cannot name `crate::acquire_test_cwd_read_guard` when the
 /// same file is compiled as `ripr::agent::loop_commands`. The ripr parent
-/// supplies a no-op; xtask must hold the real lock so `--root .` redirect
-/// render and expectation cannot race with `with_temp_cwd` (#7034).
+/// supplies `testing::cwd_lock::hold_cwd()`; xtask must hold this lock so
+/// `--root .` redirect render and expectation cannot race with
+/// `with_temp_cwd` (#7034).
 #[cfg(test)]
 fn loop_commands_cwd_read_guard() -> impl Drop {
     crate::acquire_test_cwd_read_guard()

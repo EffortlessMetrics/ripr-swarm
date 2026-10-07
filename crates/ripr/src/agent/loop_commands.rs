@@ -588,8 +588,9 @@ mod tests {
     ///
     /// `--root .` builders and `anchored_expectation` both call
     /// `std::env::current_dir()`. When this file is compiled into xtask,
-    /// other tests take the cwd write guard and `set_current_dir`; the
-    /// parent hook is that read guard. When compiled as ripr, it is a no-op.
+    /// the parent supplies `acquire_test_cwd_read_guard()`. When compiled
+    /// as ripr, it supplies `testing::cwd_lock::hold_cwd()` so these tests
+    /// cannot race `set_current_dir` writers in the same process.
     fn hold_cwd_read_guard() -> impl Drop {
         super::super::loop_commands_cwd_read_guard()
     }

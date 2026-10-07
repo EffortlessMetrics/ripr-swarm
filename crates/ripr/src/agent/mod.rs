@@ -7,17 +7,13 @@ pub(crate) mod provenance;
 pub(crate) const PYTHON_REPAIR_AUTHORIZATION_SUFFIX: &str =
     " --edit-authorized --edit-authority <operator-or-agent-identity>";
 
-/// No-op cwd lock for `loop_commands` tests compiled as part of `ripr`.
+/// Cwd lock for `loop_commands` tests compiled as part of `ripr`.
 ///
 /// The same file is also `#[path]`-included into xtask, where the parent
-/// supplies `acquire_test_cwd_read_guard()`. Ripr unit tests do not share a
-/// process with cwd writers, so holding a lock here would not change
-/// behavior (#7034).
+/// supplies `acquire_test_cwd_read_guard()`. Ripr unit tests share one
+/// process with `set_current_dir` writers (`testing::cwd_lock`, #6965),
+/// so this hook must hold that lock rather than a no-op (#7034).
 #[cfg(test)]
 pub(crate) fn loop_commands_cwd_read_guard() -> impl Drop {
-    struct Noop;
-    impl Drop for Noop {
-        fn drop(&mut self) {}
-    }
-    Noop
+    crate::testing::cwd_lock::hold_cwd()
 }
