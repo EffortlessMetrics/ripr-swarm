@@ -7,7 +7,7 @@ Summary: 1 probe(s), 0 exposed, 0 weakly_exposed, 0 reachable_unrevealed, 1 no_s
 Analysis outcome: findings below (analysis complete; complete_with_findings).
   Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 probe(s), 1 finding(s).
 
-WARNING fixtures/property_macro_noop_named_test/input/src/lib.rs:2
+WARNING ./src/lib.rs:2
   id: probe:src_lib.rs:predicate:c80557eb
 
 Changed
@@ -51,8 +51,8 @@ Limitation detail
 Next step
   Inspect the property macro's definition and collected tests, then run its existing test suite; this limitation does not establish a missing test.
 Drill in:
-  ripr explain --root fixtures/property_macro_noop_named_test/input --diff fixtures/property_macro_noop_named_test/diff.patch --mode fast probe:src_lib.rs:predicate:c80557eb
-  ripr context --root fixtures/property_macro_noop_named_test/input --diff fixtures/property_macro_noop_named_test/diff.patch --mode fast --at probe:src_lib.rs:predicate:c80557eb
+  ripr explain --root <cwd>/fixtures/property_macro_noop_named_test/input --diff <cwd>/fixtures/property_macro_noop_named_test/diff.patch --mode fast probe:src_lib.rs:predicate:c80557eb
+  ripr context --root <cwd>/fixtures/property_macro_noop_named_test/input --diff <cwd>/fixtures/property_macro_noop_named_test/diff.patch --mode fast --at probe:src_lib.rs:predicate:c80557eb
 
 
 Note: ripr found no static test path for any of the 1 changed expression(s) in this diff. Scope

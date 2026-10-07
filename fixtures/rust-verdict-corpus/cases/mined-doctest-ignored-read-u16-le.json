@@ -1,0 +1,51 @@
+{
+  "case_id": "mined-doctest-ignored-read-u16-le",
+  "subject_id": "authored-mined-wire",
+  "diff": "cases/mined-doctest-ignored-read-u16-le.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 21
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value",
+  "test_shape": "doctest_marked_ignore",
+  "hard_case": "The doc example names the right value but is fenced `ignore`, so `cargo test` never runs it. Negative twin of mined-doctest-only-read-u16: crediting doc examples must follow whether rustdoc runs them.",
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "u16::from_be_bytes([bytes[0], bytes[1]])",
+        "mutated_line": "u16::from_be_bytes([bytes[0], bytes[1]])",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: [0x34, 0x12] reads as 0x3412"
+      },
+      {
+        "replacement": "u16::from_le_bytes([bytes[1], bytes[0]])",
+        "mutated_line": "u16::from_le_bytes([bytes[1], bytes[0]])",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: [0x34, 0x12] reads as 0x3412"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "The only example is marked ignore and no test calls read_u16_le, so neither byte-order mutant fails anything.",
+  "labeling_observation": {
+    "ripr_commit": "da6a44d",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

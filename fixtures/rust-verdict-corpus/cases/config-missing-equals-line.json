@@ -1,0 +1,52 @@
+{
+  "case_id": "config-missing-equals-line",
+  "subject_id": "authored-config",
+  "diff": "cases/config-missing-equals-line.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 50
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "error_path",
+  "test_shape": "integration_test_assert_eq_error",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "return Err(ConfigError::MissingEquals { line: idx });",
+        "mutated_line": "return Err(ConfigError::MissingEquals { line: idx });",
+        "outcome": "tests_failed",
+        "failing_test": "missing_equals_reports_its_line",
+        "equivalence_review": "not equivalent: a missing '=' on line 2 reports line 1"
+      },
+      {
+        "replacement": "return Err(ConfigError::EmptyKey { line: line_no });",
+        "mutated_line": "return Err(ConfigError::EmptyKey { line: line_no });",
+        "outcome": "tests_failed",
+        "failing_test": "missing_equals_reports_its_line",
+        "equivalence_review": "not equivalent: a missing '=' on line 2 reports EmptyKey instead of MissingEquals"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "missing_equals_reports_its_line compares the whole Err value with assert_eq, so the wrong line or wrong variant fails it. ripr reports weakly_exposed on the error_path, field_construction and return_value probes, a false actionable gap.",
+  "labeling_observation": {
+    "ripr_commit": "62fb7aaa5",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

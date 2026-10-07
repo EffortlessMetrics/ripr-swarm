@@ -1,0 +1,51 @@
+{
+  "case_id": "mined-allowlisted-row-gopher",
+  "subject_id": "authored-mined-codec",
+  "diff": "cases/mined-allowlisted-row-gopher.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 74
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "match_arm",
+  "test_shape": "table_harness_expected_failures_allowlist",
+  "hard_case": "The table test has a gopher row, but the row is on the EXPECTED_FAILURES allowlist and the loop skips it, so the row looks like a pin and is not one. rust-url's WPT harness keeps such a list (expected_failures.txt). A fix that credits table-loop rows must not credit this one.",
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "        \"gopher\" => Some(71),",
+        "mutated_line": "\"gopher\" => Some(71),",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: gopher's default port changes to 71, which matches the table's own gopher row, so only the skip hides it"
+      },
+      {
+        "replacement": "        \"gopher\" => Some(0),",
+        "mutated_line": "\"gopher\" => Some(0),",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: gopher has no default port"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "default_ports_match_the_reference_table skips every scheme in EXPECTED_FAILURES, and gopher is listed, so neither mutant is checked.",
+  "labeling_observation": {
+    "ripr_commit": "f46c5e5",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

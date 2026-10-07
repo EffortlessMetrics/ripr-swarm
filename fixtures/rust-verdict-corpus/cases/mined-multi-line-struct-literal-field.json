@@ -1,0 +1,52 @@
+{
+  "case_id": "mined-multi-line-struct-literal-field",
+  "subject_id": "authored-mined-codec",
+  "diff": "cases/mined-multi-line-struct-literal-field.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 32
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "field_construction",
+  "test_shape": "multi_line_struct_literal_accessor_assert",
+  "hard_case": "Twin of mined-one-line-struct-literal-field with the literal spread over lines, so the changed line holds only `version`. Same constructor shape and same accessor assert; only the formatting differs.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "            version: 3,",
+        "mutated_line": "version: 3,",
+        "outcome": "tests_failed",
+        "failing_test": "tests::fresh_ids_carry_version_two",
+        "equivalence_review": "not equivalent: version reads 3"
+      },
+      {
+        "replacement": "            version: 0,",
+        "mutated_line": "version: 0,",
+        "outcome": "tests_failed",
+        "failing_test": "tests::fresh_ids_carry_version_two",
+        "equivalence_review": "not equivalent: version reads 0"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "fresh_ids_carry_version_two pins version() == 2, which returns the edited field; both mutants change it.",
+  "labeling_observation": {
+    "ripr_commit": "f46c5e5",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

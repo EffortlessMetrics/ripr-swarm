@@ -1,0 +1,19 @@
+{
+  "case_id": "mined-allowlisted-row-gopher",
+  "subject_id": "authored-mined-codec",
+  "origin": "authored",
+  "anchor": "src/lib.rs:74",
+  "behavior_family": "match_arm",
+  "test_shape": "table_harness_expected_failures_allowlist",
+  "hard_case": true,
+  "truth": "not_discriminated",
+  "ideal_verdict": "gap",
+  "observed_verdict": "gap",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "weakly_exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": []
+}

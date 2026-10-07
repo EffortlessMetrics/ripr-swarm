@@ -10,7 +10,8 @@
   as the only oracle and its twin, a field set in a one-line struct literal
   and its multi-line twin, a trait impl reached only through a blanket impl,
   and a table loop with an expected-failures allowlist (a skipped row and an
-  asserted row). Six of the nine discriminated cases score
-  `false_actionable` today (corpus 2026-10-05.1, 217 cases). Authored false
-  actionable moves from 56/86 to 62/95 and the overall rate from 0.623 to
-  0.626; upstream rates are unchanged (#6644).
+  asserted row). Five of the nine discriminated cases score
+  `false_actionable` today (218 cases). Authored false actionable moves from
+  48/86 to 53/95 and the overall rate from 53/106 to 58/115; upstream rates are
+  unchanged. Doctest names (`src/lib.rs - item (line N)`) now pass the
+  one-test-name rule for `failing_test` (#6644).

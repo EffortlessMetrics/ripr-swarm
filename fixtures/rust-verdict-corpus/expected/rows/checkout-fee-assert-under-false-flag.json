@@ -1,0 +1,19 @@
+{
+  "case_id": "checkout-fee-assert-under-false-flag",
+  "subject_id": "authored-checkout",
+  "origin": "authored",
+  "anchor": "src/fees.rs:8",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "assert_under_false_condition",
+  "hard_case": false,
+  "truth": "not_discriminated",
+  "ideal_verdict": "gap",
+  "observed_verdict": "gap",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "weakly_exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": []
+}

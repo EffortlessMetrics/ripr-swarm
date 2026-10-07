@@ -1,4 +1,5 @@
 use super::HOVER_TEXT;
+use super::position::line_span_range;
 use super::state::{AnalysisSnapshot, format_duration};
 use super::uri::{CappedArtifactRead, read_artifact_capped};
 use crate::agent::loop_commands;
@@ -39,7 +40,7 @@ pub(super) fn diagnostic_hover_response(diagnostic: &Diagnostic) -> Hover {
             kind: MarkupKind::Markdown,
             value: diagnostic_hover_markdown(diagnostic),
         }),
-        range: Some(diagnostic.range),
+        range: Some(hover_range(diagnostic.range)),
     }
 }
 
@@ -49,7 +50,7 @@ pub(super) fn finding_hover_response(finding: &Finding, diagnostic: &Diagnostic)
             kind: MarkupKind::Markdown,
             value: finding_hover_markdown(diagnostic, finding),
         }),
-        range: Some(diagnostic.range),
+        range: Some(hover_range(diagnostic.range)),
     }
 }
 
@@ -137,7 +138,7 @@ pub(super) fn classified_seam_hover_response(
             kind: MarkupKind::Markdown,
             value: classified_seam_hover_markdown(seam, snapshot),
         }),
-        range: Some(diagnostic.range),
+        range: Some(hover_range(diagnostic.range)),
     }
 }
 
@@ -167,9 +168,36 @@ pub(super) fn diagnostic_at_position<'a>(
     diagnostics: &'a [Diagnostic],
     position: &Position,
 ) -> Option<&'a Diagnostic> {
-    diagnostics
+    // Prefer a column-precise diagnostic over a line-level one.
+    let mut covering = diagnostics
         .iter()
-        .find(|diagnostic| position_in_range(position, &diagnostic.range))
+        .filter(|diagnostic| position_in_range(position, &diagnostic.range));
+    let first = covering.next()?;
+    if !is_line_level_range(&first.range) {
+        return Some(first);
+    }
+    covering
+        .find(|diagnostic| !is_line_level_range(&diagnostic.range))
+        .or(Some(first))
+}
+
+/// A line-level range carries no column evidence: it is either zero-width
+/// (a coarse origin published verbatim) or the projected full-line span
+/// that coarse origins, seams and gaps use (`line_span_range`). Hover must
+/// not let one shadow a column-precise diagnostic the cursor is on.
+pub(super) fn is_line_level_range(range: &Range) -> bool {
+    range.start == range.end || *range == line_span_range(range.start.line)
+}
+
+/// The range a hover highlights. A zero-width diagnostic is hoverable across
+/// its whole line, so its hover highlights that line rather than an empty
+/// span the cursor is never inside.
+fn hover_range(range: Range) -> Range {
+    if range.start == range.end {
+        line_span_range(range.start.line)
+    } else {
+        range
+    }
 }
 
 /// True if `diagnostic`'s range covers `position`. Useful for callers
@@ -463,7 +491,17 @@ fn finding_hover_markdown(diagnostic: &Diagnostic, finding: &Finding) -> String 
         lines.push("## Canonical Gap".to_string());
         lines.push(format!("ID: `{}`", gap.id));
     }
-    if let Some(witness) = DiagnosticWitness::from_finding(finding) {
+    if let Some(mut witness) = DiagnosticWitness::from_finding(finding) {
+        // The diagnostic carries the session-bound drill-in (#3948); the
+        // hover shows the same command rather than the portable domain one.
+        if let Some(command) = diagnostic
+            .data
+            .as_ref()
+            .and_then(|data| data.get("explain_command"))
+            .and_then(Value::as_str)
+        {
+            witness.explain_command = command.to_string();
+        }
         push_diagnostic_witness(&mut lines, &witness);
         let summary = crate::domain::FixInstructionSummary::from_witness(&witness);
         lines.push(format!(
@@ -773,6 +811,16 @@ fn number_or_string_label(value: &NumberOrString) -> String {
 }
 
 fn position_in_range(position: &Position, range: &Range) -> bool {
+    // A zero-width range is a coarse line-level origin: the producer refused
+    // column precision (`OriginKind::CoarseZeroWidth`: stale currentness, no
+    // parser span, lexical fallback) or the input was missing.
+    // Editors render it on that line, so the whole line must reach its hover;
+    // a half-open check would make it unhoverable at every position. The
+    // projected full-line span (`line_span_range`, 0..120) is the same
+    // line-level claim, so columns past its fixed width also reach it.
+    if is_line_level_range(range) {
+        return position.line == range.start.line;
+    }
     position_is_after_or_equal(position, &range.start) && position_is_before(position, &range.end)
 }
 

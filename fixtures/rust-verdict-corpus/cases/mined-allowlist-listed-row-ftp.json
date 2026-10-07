@@ -1,0 +1,52 @@
+{
+  "case_id": "mined-allowlist-listed-row-ftp",
+  "subject_id": "authored-mined-codec",
+  "diff": "cases/mined-allowlist-listed-row-ftp.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 73
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "match_arm",
+  "test_shape": "table_harness_row_not_allowlisted",
+  "hard_case": "Twin of mined-allowlisted-row-gopher: the same table loop, but ftp is not on the allowlist, so its row is asserted. In a mining run, rust-url's ftp default-port edit failed both its unit test and its WPT harness.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "        \"ftp\" => Some(22),",
+        "mutated_line": "\"ftp\" => Some(22),",
+        "outcome": "tests_failed",
+        "failing_test": "tests::default_ports_match_the_reference_table",
+        "equivalence_review": "not equivalent: ftp's default port changes"
+      },
+      {
+        "replacement": "        \"ftp\" => Some(0),",
+        "mutated_line": "\"ftp\" => Some(0),",
+        "outcome": "tests_failed",
+        "failing_test": "tests::default_ports_match_the_reference_table",
+        "equivalence_review": "not equivalent: ftp's default port changes"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "default_ports_match_the_reference_table asserts the ftp row, so both mutants fail it.",
+  "labeling_observation": {
+    "ripr_commit": "f46c5e5",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

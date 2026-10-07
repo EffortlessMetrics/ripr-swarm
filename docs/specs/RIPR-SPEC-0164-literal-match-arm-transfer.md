@@ -57,13 +57,17 @@ related test row pins the exact label per arm.
 - A controls fixture (`fixtures/match_arm_controls`) with four
   fail-closed variants — a computed arm value (`pick(kind)`), a guard
   arm, a bare-identifier pattern, and a char scrutinee — each staying
-  `weakly_exposed` with zero hop provenance.
+  at its fail-closed class with zero hop provenance: since #6674 that
+  is `infection_unknown` with `Changed boundary input is unresolved`
+  naming `final_label` (RIPR-SPEC-0001), not `weakly_exposed` with a
+  missing-discriminator hint over an unknown operand.
 - Unit tests in `match_transfer.rs` pinning per-arm resolution,
   wildcard/duplicate source order, no-match-without-wildcard stop, and
   the fail-closed family.
 - A removal experiment: disabling the match branch in
   `helper_return_value` regresses the positive fixture to
-  `weakly_exposed`.
+  `infection_unknown` (the unresolved boundary input rule; before #6674,
+  `weakly_exposed`).
 
 ## Required guards
 

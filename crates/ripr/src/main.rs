@@ -41,9 +41,14 @@ fn install_panic_hook() {
         if is_closed_stdout_panic(message) {
             std::process::exit(2);
         }
+        // A panic message can quote repository text (a path, a parsed value),
+        // so it gets the same terminal escape as every other stderr line.
         eprintln!(
             "{}",
-            format_panic_report(message, info.location().map(|loc| (loc.file(), loc.line())),)
+            terminal_safe_report(format_panic_report(
+                message,
+                info.location().map(|loc| (loc.file(), loc.line())),
+            ))
         );
         let backtrace = std::backtrace::Backtrace::capture();
         if matches!(
@@ -67,6 +72,12 @@ fn is_closed_stdout_panic(message: &str) -> bool {
         && CLOSED_PIPE_MARKERS
             .iter()
             .any(|marker| message.contains(marker))
+}
+
+/// `CommandError`'s `Display` is the library's terminal escape; routing the
+/// report through it avoids a second public export for the same policy.
+fn terminal_safe_report(report: String) -> String {
+    CommandError::from(report).to_string()
 }
 
 fn format_panic_report(message: &str, location: Option<(&str, u32)>) -> String {
@@ -119,6 +130,13 @@ mod tests {
         if std::env::var_os("RIPR_PANIC_HOOK_CHILD").is_some() {
             super::run_startup(|| {
                 let trigger = std::env::var("RIPR_PANIC_HOOK_CHILD").unwrap_or_default();
+                // Repository text in a panic message, formatted with Display
+                // (not Debug) so the raw characters reach the hook.
+                assert!(
+                    trigger != "hostile",
+                    "{}",
+                    "hostile\u{1b}[2Jmessage\u{202e}rtl"
+                );
                 assert_eq!(trigger, "trigger", "panic hook regression");
                 Ok(())
             });
@@ -152,6 +170,36 @@ mod tests {
                     "panic-hook child omitted the formatted report; stderr: {stderr}"
                 ));
             }
+        }
+
+        let output = std::process::Command::new(&executable)
+            .args([
+                "--exact",
+                "tests::panic_boundary_reports_and_exits_with_code_two",
+                "--nocapture",
+            ])
+            .env("RIPR_PANIC_HOOK_CHILD", "hostile")
+            .env("RUST_BACKTRACE", "0")
+            .output()
+            .map_err(|err| format!("failed to run hostile panic-hook child: {err}"))?;
+        if output.status.code() != Some(2) {
+            return Err(format!(
+                "hostile panic-hook child exited with {:?}",
+                output.status.code()
+            ));
+        }
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        if stderr.contains('\u{1b}') || stderr.contains('\u{202e}') {
+            return Err(format!("panic hook printed raw control text: {stderr:?}"));
+        }
+        if !stderr.contains("hostile\\u{1b}[2Jmessage\\u{202e}rtl") {
+            return Err(format!("panic hook omitted the escaped message: {stderr}"));
+        }
+
+        let hostile = super::format_panic_report("a\u{1b}[2Jb\u{202e}c", None);
+        let safe = super::terminal_safe_report(hostile);
+        if safe.contains('\u{1b}') || safe.contains('\u{202e}') || !safe.contains("a\\u{1b}[2Jb") {
+            return Err(format!("panic report kept raw control text: {safe:?}"));
         }
 
         let report = super::format_panic_report("panic hook regression", Some(("src/main.rs", 42)));

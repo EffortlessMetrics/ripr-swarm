@@ -1,0 +1,19 @@
+{
+  "case_id": "spec0225-wv-wrapper-manual-eq",
+  "subject_id": "authored-spec0225-14",
+  "origin": "authored",
+  "anchor": "src/lib.rs:22",
+  "behavior_family": "field_construction_manual_eq",
+  "test_shape": "wrapper_enum_manual_partialeq_always_true",
+  "hard_case": false,
+  "truth": "not_discriminated",
+  "ideal_verdict": "gap",
+  "observed_verdict": "gap",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "weakly_exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": []
+}

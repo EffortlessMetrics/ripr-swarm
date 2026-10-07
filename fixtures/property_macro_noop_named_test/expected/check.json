@@ -18,7 +18,7 @@
         "id": "probe:src_lib.rs:predicate:c80557eb",
         "family": "predicate",
         "delta": "control",
-        "file": "fixtures/property_macro_noop_named_test/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 2,
         "expression": "amount >= discount_threshold"
        },

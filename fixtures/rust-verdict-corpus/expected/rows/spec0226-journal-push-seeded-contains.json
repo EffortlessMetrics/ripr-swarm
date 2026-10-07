@@ -1,0 +1,19 @@
+{
+  "case_id": "spec0226-journal-push-seeded-contains",
+  "subject_id": "authored-spec0226-2c",
+  "origin": "authored",
+  "anchor": "src/lib.rs:10",
+  "behavior_family": "side_effect_push",
+  "test_shape": "seeded_receiver_contains_assert",
+  "hard_case": true,
+  "truth": "not_discriminated",
+  "ideal_verdict": "gap",
+  "observed_verdict": "gap",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "weakly_exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": []
+}
