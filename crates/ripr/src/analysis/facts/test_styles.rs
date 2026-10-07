@@ -239,14 +239,14 @@ fn inside_cfg_test_module_at(
 /// `index` reaches past it.
 fn cfg_test_module_walk(lines: &[&str], mut at_line: impl FnMut(usize, bool)) -> bool {
     let mut scopes: Vec<bool> = Vec::new();
+    // How many open scopes are `cfg(test)` modules, so asking "inside one?"
+    // at every step costs O(1) instead of a scan of the scope stack.
+    let mut cfg_test_scopes = 0usize;
     let mut pending_cfg_test = false;
     let mut index = 0usize;
 
     while index < lines.len() {
-        at_line(
-            index,
-            scopes.iter().any(|is_cfg_test_module| *is_cfg_test_module),
-        );
+        at_line(index, cfg_test_scopes != 0);
         let remainder_storage;
         let line: &str = if lines[index].trim_start().starts_with("#[") {
             match join_leading_attribute(&lines[index..]) {
@@ -286,11 +286,15 @@ fn cfg_test_module_walk(lines: &[&str], mut at_line: impl FnMut(usize, bool)) ->
         for character in line.chars() {
             match character {
                 '{' => {
-                    scopes.push(declares_cfg_test_module && !module_opened);
+                    let is_cfg_test_module = declares_cfg_test_module && !module_opened;
+                    cfg_test_scopes += usize::from(is_cfg_test_module);
+                    scopes.push(is_cfg_test_module);
                     module_opened = true;
                 }
                 '}' => {
-                    scopes.pop();
+                    if scopes.pop() == Some(true) {
+                        cfg_test_scopes -= 1;
+                    }
                 }
                 _ => {}
             }
@@ -301,7 +305,7 @@ fn cfg_test_module_walk(lines: &[&str], mut at_line: impl FnMut(usize, bool)) ->
         index += 1;
     }
 
-    scopes.iter().any(|is_cfg_test_module| *is_cfg_test_module)
+    cfg_test_scopes != 0
 }
 
 /// Joins continuation lines until the leading attribute's closing bracket so

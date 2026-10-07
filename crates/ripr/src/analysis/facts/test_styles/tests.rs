@@ -1144,6 +1144,29 @@ fn one_walk_cfg_test_table_answers_like_each_prefix_walk() -> Result<(), Box<dyn
         table.iter().all(Option::is_some),
         "single-line steps must all be answered from the one walk: {table:?}"
     );
+    // Expected answers written out by hand, independent of the shared walk:
+    // inside `mod tests` after its opening line, outside after its `}`.
+    assert_eq!(
+        table,
+        vec![
+            Some(false),
+            Some(false),
+            Some(true),
+            Some(true),
+            Some(false),
+            Some(false),
+        ]
+    );
+    // A deep non-test nest after the test module stays outside it.
+    let deep = format!(
+        "#[cfg(test)]\nmod tests {{\n    fn helper() {{}}\n}}\nfn generated() {{\n{}{}}}\n",
+        "{\n".repeat(200),
+        "}\n".repeat(200)
+    );
+    let table = cfg_test_module_lines(&deep);
+    assert_eq!(table[2], Some(true));
+    assert!(table[4..].iter().all(|entry| *entry == Some(false)));
+    assert_table_matches_prefix_walks(&deep, "deep nest");
 
     // An independent corpus: this crate's own small files with test modules.
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
