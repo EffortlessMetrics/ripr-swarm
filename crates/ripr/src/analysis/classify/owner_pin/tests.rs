@@ -1112,6 +1112,30 @@ fn a_receiver_name_bound_or_typed_elsewhere_is_not_established() {
     assert!(admitted_texts(&index, &pin).is_empty());
 }
 
+/// #7067: a single-file `use ... as Counter` rebinds the receiver to a
+/// different type, so the pin is refused. The raw spelling
+/// (`as r#Counter`) rebinds the same name.
+#[test]
+fn a_single_file_rename_of_the_receiver_refuses_the_pin_in_both_spellings() {
+    for prelude in [
+        "use other::Tally as Counter;\n",
+        "use other::Tally as r#Counter;\n",
+    ] {
+        assert_eq!(
+            counter_admitted("tally", prelude, "let c = Counter::new();"),
+            0,
+            "{prelude}"
+        );
+    }
+}
+
+/// #7067 precision: a plain single-file `use` of the receiver may
+/// re-export production, so it is not a shadow — the pin stays admitted.
+#[test]
+fn a_single_file_plain_import_of_the_receiver_keeps_its_pin() {
+    assert_eq!(counter_admitted("tally", "", "let c = Counter::new();"), 1);
+}
+
 #[test]
 fn owner_pin_requires_an_executed_assertion_context() {
     for body in [
