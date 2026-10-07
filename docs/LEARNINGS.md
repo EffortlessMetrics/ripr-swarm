@@ -387,7 +387,12 @@ boundary `let` does not void the fresh binding. Compound assignment voids
 even when the shift preserves the value (`got += 1`): without value
 analysis the rule cannot tell a preserving shift from a destroying one
 (`*= 0`), so it fail-closes. Do not "fix" this with dataflow; alias and
-field/index mutation stay unmodeled by design.
+field/index mutation stay unmodeled by design. The statement scanner is
+line-oriented, so it joins an unterminated tail with the next line to
+catch the same mutation split across a newline (`got` / `= true;`); a
+split broken by a blank or comment-only line, or one that never puts the
+name and its operator on adjacent lines, still keeps the stale pairing —
+a residual shared with #7042, not an invitation to parse.
 
 ## 2026-09-29: Whole-object equality is not an effect observer of a different collection (#4575)
 

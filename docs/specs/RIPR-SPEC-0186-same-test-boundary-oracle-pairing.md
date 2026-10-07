@@ -90,8 +90,11 @@ A `let`-bound boundary name stays paired only while the binding still holds
 the call's result. A post-`let` reassignment (`got = true`), compound
 assignment (`got += 1`), or `&mut` borrow (`&mut got`) voids the binding
 fail-closed, so a later exact assertion on the name does not pair (#7004).
-`let mut` alone does not void, and a mutation before the boundary `let`
-does not void the fresh binding. Re-`let` shadowing is unchanged.
+The same statement split across a newline (`got` on one line, `= true;` on
+the next) is the same reassignment and voids too. `let mut` alone does not
+void, and a mutation before the boundary `let` does not void the fresh
+binding. Re-`let` shadowing is unchanged, including a re-`let` whose `=`
+lands on the next line.
 
 Helper-call transfer, proximity-only oracle credit, and bare-name method
 relation are out of scope.
@@ -109,7 +112,8 @@ relation are out of scope.
   bound to the boundary, named-constant pairing through infection `==`,
   named-constant pairing when an unrelated extra argument is compound,
   post-`let` reassignment, compound assignment, and `&mut` borrows (each
-  voiding the binding), and the unmutated `let mut` control that still pairs.
+  voiding the binding, including a statement split across the newline),
+  and the unmutated `let mut` control that still pairs.
 - Golden drift is reviewed row by row: every downgrade names the missing
   same-test pairing, and no finding gains a class.
 - An honesty-corpus case independently prohibits `exposed` on the split
@@ -148,10 +152,12 @@ relation are out of scope.
   `assert_eq!(gate(if false { 10 } else { 50 }, 10), true)`, pairing does
   not treat the aliased input as a boundary just because `threshold` is 10.
 - Given `let mut got = gate(10); got = true; assert_eq!(got, true)`, or
-  `got += 1` / `&mut got` in place of the reassignment, when the predicate
-  is classified, then it does not pair: the binding no longer holds the
-  boundary call's result. Given `let mut got = gate(10);` with no later
-  mutation, then `assert_eq!(got, true)` still pairs.
+  `got += 1` / `&mut got` in place of the reassignment, or the same
+  reassignment split across the newline (`got` on one line, `= true;` on
+  the next), when the predicate is classified, then it does not pair: the
+  binding no longer holds the boundary call's result. Given
+  `let mut got = gate(10);` with no later mutation, then
+  `assert_eq!(got, true)` still pairs.
 
 ## Test Mapping
 
@@ -162,6 +168,7 @@ relation are out of scope.
 - `fixtures/predicate_pairing_reassigned_binding`
 - `fixtures/predicate_pairing_compound_assigned_binding`
 - `fixtures/predicate_pairing_mutably_borrowed_binding`
+- `fixtures/predicate_pairing_line_split_assigned_binding`
 - `crates/ripr/tests/owner_pin_execution.rs::predicate_pairing_cannot_reuse_refused_boundary_equalities`
 
 ## Implementation Mapping

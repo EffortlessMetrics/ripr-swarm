@@ -1,0 +1,4 @@
+[package]
+name = "predicate_pairing_line_split_assigned_binding"
+version = "0.1.0"
+edition = "2024"

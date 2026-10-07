@@ -4389,6 +4389,47 @@
           "class": "weakly_exposed"
         }
       ]
+    },
+    {
+      "id": "rust_predicate_pairing_line_split_assigned_binding",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/predicate_pairing_line_split_assigned_binding",
+      "vector": "boundary_binding_reassigned_before_assertion_line_split",
+      "probe_family": "predicate",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "expected_oracle",
+          "kind": "exact_value",
+          "strength": "strong"
+        },
+        {
+          "type": "expected_related_test",
+          "name": "line_split",
+          "file": "tests/line_split.rs",
+          "line": 4,
+          "kind": "exact_value",
+          "strength": "strong"
+        },
+        {
+          "type": "maximum_class",
+          "class": "weakly_exposed"
+        }
+      ]
     }
   ]
 }

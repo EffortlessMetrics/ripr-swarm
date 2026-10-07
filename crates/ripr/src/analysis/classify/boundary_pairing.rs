@@ -177,7 +177,29 @@ fn boundary_bound_locals(
     // (`got = ...`, `got += ...`, `&mut got`) voids the binding fail-closed:
     // the assertion no longer observes the boundary call's result (#7004).
     let mut last: Vec<(String, bool)> = Vec::new();
+    // Masked tail (text after the final `;`) of the previous line. A
+    // statement can split across a newline (`got\n= true;`, `let r = &mut
+    // got;`), leaving the name on one line and its operator on the next;
+    // the joined statement must still void (#7004).
+    let mut continuation: Option<String> = None;
     for (offset, line) in test.body.lines().enumerate() {
+        let masked = crate::analysis::extract::mask_comments_and_strings(line);
+        let segments: Vec<&str> = masked.split(';').collect();
+        // Scan the joined continuation before this line's bindings so a
+        // re-`let` later on this line still wins, exactly as it would with
+        // the whole statement on one line.
+        if let Some(tail) = continuation.as_deref() {
+            let joined = format!(
+                "{} {}",
+                tail.trim(),
+                segments.first().copied().unwrap_or("").trim()
+            );
+            for (tracked, live) in last.iter_mut() {
+                if *live && continuation_mutates_bound_name(&joined, tracked) {
+                    *live = false;
+                }
+            }
+        }
         let bound = let_binding_name(line);
         if let Some(name) = bound.as_deref() {
             let line_number = test.start_line + offset;
@@ -197,8 +219,6 @@ fn boundary_bound_locals(
         // binding. `let_binding_name` only matches a line-start `let`, so
         // the defining `let name = ...` occurrence always sits in the first
         // `;` segment; later segments on the same line still void it.
-        let masked = crate::analysis::extract::mask_comments_and_strings(line);
-        let segments: Vec<&str> = masked.split(';').collect();
         for (tracked, live) in last.iter_mut() {
             if !*live {
                 continue;
@@ -212,6 +232,12 @@ fn boundary_bound_locals(
                 *live = false;
             }
         }
+        // Only an unterminated tail joins with the next line; a complete
+        // statement (or a blank/comment-only line) ends the continuation.
+        continuation = segments
+            .last()
+            .map(|segment| segment.trim().to_string())
+            .filter(|tail| !tail.is_empty());
     }
     last.into_iter()
         .filter_map(|(name, is_boundary)| is_boundary.then_some(name))
@@ -241,6 +267,18 @@ fn let_binding_name(line: &str) -> Option<String> {
     let (before_eq, _) = after.split_once('=')?;
     let before_eq = before_eq.trim();
     (before_eq.is_empty() || before_eq.starts_with(':')).then_some(name)
+}
+
+/// True when a statement continued across a newline mutates `name`: the
+/// previous line's masked tail joined with the next line's first segment
+/// reads as one statement (`got\n= true;`, `let r = &mut\ngot;`, #7004).
+/// A joined `let name = ...` definition rebinds rather than mutates, so it
+/// does not void — the same rule as a defining segment on a single line.
+fn continuation_mutates_bound_name(joined: &str, name: &str) -> bool {
+    if let_binding_name(joined).as_deref() == Some(name) {
+        return false;
+    }
+    segment_mutates_bound_name(joined, name)
 }
 
 /// True when the masked `;` segment reassigns or mutably borrows `name`
@@ -1550,6 +1588,119 @@ mod tests {
     }
 
     #[test]
+    fn line_split_reassignment_voids_the_binding() {
+        let probe = predicate_probe("input >= 10");
+        let owner = gate_owner();
+        let mut split = test_summary(
+            "line_split_rebound",
+            "let mut got = gate(10);\ngot\n= true;\nassert_eq!(got, true);",
+            vec![call("gate", "let mut got = gate(10);")],
+            vec![exact("assert_eq!(got, true);")],
+            &["10"],
+        );
+        split.calls[0].line = 1;
+        split.assertions[0].line = 4;
+        split.end_line = 5;
+        assert!(
+            !pairing_with_admitted_oracles(
+                &probe,
+                Some(&owner),
+                &[&split],
+                &ActivationEvidence::default(),
+            ),
+            "a reassignment split across the newline must void the binding too"
+        );
+    }
+
+    #[test]
+    fn line_split_compound_and_borrow_void_the_binding() {
+        let probe = predicate_probe("input >= 10");
+        let owner = gate_owner();
+        let mut compounded = test_summary(
+            "line_split_compounded",
+            "let mut got = gate(10);\ngot\n+= true;\nassert_eq!(got, true);",
+            vec![call("gate", "let mut got = gate(10);")],
+            vec![exact("assert_eq!(got, true);")],
+            &["10"],
+        );
+        compounded.calls[0].line = 1;
+        compounded.assertions[0].line = 4;
+        compounded.end_line = 5;
+        assert!(
+            !pairing_with_admitted_oracles(
+                &probe,
+                Some(&owner),
+                &[&compounded],
+                &ActivationEvidence::default(),
+            ),
+            "a compound assignment split across the newline must void the binding too"
+        );
+        let mut borrowed = test_summary(
+            "line_split_borrowed",
+            "let mut got = gate(10);\nlet r = &mut\ngot;\n*r = true;\nassert_eq!(got, true);",
+            vec![call("gate", "let mut got = gate(10);")],
+            vec![exact("assert_eq!(got, true);")],
+            &["10"],
+        );
+        borrowed.calls[0].line = 1;
+        borrowed.assertions[0].line = 4;
+        borrowed.end_line = 5;
+        assert!(
+            !pairing_with_admitted_oracles(
+                &probe,
+                Some(&owner),
+                &[&borrowed],
+                &ActivationEvidence::default(),
+            ),
+            "a mutable borrow split across the newline must void the binding too"
+        );
+    }
+
+    #[test]
+    fn line_split_non_mutation_continuations_still_pair() {
+        let probe = predicate_probe("input >= 10");
+        let owner = gate_owner();
+        let mut split_assertion = test_summary(
+            "split_assertion_operands",
+            "let got = gate(10);\nassert_eq!(got,\ntrue);",
+            vec![call("gate", "let got = gate(10);")],
+            vec![exact("assert_eq!(got,\ntrue);")],
+            &["10"],
+        );
+        split_assertion.calls[0].line = 1;
+        split_assertion.assertions[0].line = 2;
+        split_assertion.end_line = 4;
+        assert!(
+            pairing_with_admitted_oracles(
+                &probe,
+                Some(&owner),
+                &[&split_assertion],
+                &ActivationEvidence::default(),
+            ),
+            "assertion operands split across the newline are not a mutation; pairing holds"
+        );
+        let mut split_relet = test_summary(
+            "split_relet",
+            "let got = gate(10);\nlet got\n= gate(20);\nassert_eq!(got, true);",
+            vec![call("gate", "let got = gate(10);")],
+            vec![exact("assert_eq!(got, true);")],
+            &["10"],
+        );
+        split_relet.calls[0].line = 1;
+        split_relet.assertions[0].line = 4;
+        split_relet.end_line = 5;
+        assert!(
+            pairing_with_admitted_oracles(
+                &probe,
+                Some(&owner),
+                &[&split_relet],
+                &ActivationEvidence::default(),
+            ),
+            "a re-let whose `=` lands on the next line rebinds; it must not void"
+        );
+    }
+
+    #[test]
     fn unmutated_let_mut_binding_still_pairs() {
         let probe = predicate_probe("input >= 10");
         let owner = gate_owner();
@@ -1655,6 +1806,50 @@ mod tests {
         assert!(!segment_mutates_bound_name("mygot = true", "got"));
         assert!(!segment_mutates_bound_name("", "got"));
         assert!(!segment_mutates_bound_name("got = true", ""));
+    }
+
+    #[test]
+    fn continuation_detector_reads_statements_split_across_lines() {
+        for mutation in [
+            ("got", "= true"),
+            ("got", "=true"),
+            ("got", "+= 1"),
+            ("got", "<<= 1"),
+            ("let r = &mut", "got"),
+            ("let r = &'a mut", "got"),
+            ("foo(); got", "= true"),
+        ] {
+            let joined = format!("{} {}", mutation.0, mutation.1);
+            assert!(
+                continuation_mutates_bound_name(&joined, "got"),
+                "`{}` joined across the newline must void got",
+                joined
+            );
+        }
+        for innocent in [
+            ("assert_eq!(got", ", true)"),
+            ("assert!(got", "== true)"),
+            ("match x { 1 =>", "got,"),
+            ("let other = Config { got", ": true },"),
+            ("let other", "= got"),
+        ] {
+            let joined = format!("{} {}", innocent.0, innocent.1);
+            assert!(
+                !continuation_mutates_bound_name(&joined, "got"),
+                "`{}` joined across the newline must not void got",
+                joined
+            );
+        }
+        // A joined re-`let` definition rebinds; it does not void.
+        assert!(!continuation_mutates_bound_name(
+            "let got = gate(20)",
+            "got"
+        ));
+        assert!(!continuation_mutates_bound_name(
+            "let got: bool = gate(20)",
+            "got"
+        ));
+        assert!(!continuation_mutates_bound_name("got = true", "other"));
     }
 
     #[test]
