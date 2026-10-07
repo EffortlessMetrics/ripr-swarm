@@ -2115,3 +2115,251 @@ fn bool_owner_assert_pin_matched_static_and_runtime_controls() -> Result<(), Str
     }
     Ok(())
 }
+
+/// #6966: an assertion inside a spawned thread earns exact credit only where
+/// the thread's panic reaches the test thread. Each row runs the same test
+/// against the rewrite and an `input * 2` mutant; `kills` is the runtime
+/// truth, and a refused row that still kills is a conservative refusal.
+#[test]
+fn spawned_thread_assertion_matched_static_and_runtime_controls() -> Result<(), String> {
+    let production = "pub fn weight(input: u32) -> u32 {\n    3 * input\n}\n";
+    let diff = "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,3 +1,3 @@\n pub fn weight(input: u32) -> u32 {\n-    input * 3\n+    3 * input\n }\n";
+    let assertion = "assert_eq!(weight(4), 12)";
+    let fake_thread = "mod thread {\n        pub struct Handle;\n        impl Handle {\n            pub fn join(self) -> Result<(), ()> {\n                Ok(())\n            }\n        }\n        pub fn spawn<F: FnOnce()>(_f: F) -> Handle {\n            Handle\n        }\n    }\n";
+    let fake_module = "pub mod thread {\n    pub struct Handle;\n    impl Handle {\n        pub fn join(self) -> Result<(), ()> {\n            Ok(())\n        }\n    }\n    pub fn spawn<F: FnOnce()>(_f: F) -> Handle {\n        Handle\n    }\n}\npub mod std {\n    pub use super::thread;\n}\n#[allow(unused_macros)]\nmacro_rules! setup {\n    () => {\n        use crate::fake::*;\n    };\n}\n";
+    for (case, prelude, items, body, exposed, kills) in [
+        (
+            "joined_unwrap",
+            "",
+            "",
+            format!("std::thread::spawn(|| {assertion}).join().unwrap();"),
+            true,
+            true,
+        ),
+        (
+            "joined_expect_move",
+            "",
+            "",
+            format!("::std::thread::spawn(move || {{ {assertion}; }}).join().expect(\"worker\");"),
+            true,
+            true,
+        ),
+        (
+            "imported_module",
+            "",
+            "use std::thread;",
+            format!("thread::spawn(|| {assertion}).join().unwrap();"),
+            true,
+            true,
+        ),
+        (
+            "scoped_statement",
+            "",
+            "",
+            format!(
+                "std::thread::scope(|s| {{\n            s.spawn(|| {assertion});\n        }});"
+            ),
+            true,
+            true,
+        ),
+        (
+            "scoped_joined",
+            "",
+            "",
+            format!(
+                "std::thread::scope(|s| {{\n            s.spawn(|| {assertion}).join().unwrap();\n        }});"
+            ),
+            true,
+            true,
+        ),
+        (
+            "scope_body",
+            "",
+            "",
+            format!("std::thread::scope(|_| {assertion});"),
+            true,
+            true,
+        ),
+        (
+            "self_in_unrelated_use_list",
+            "",
+            "use std::fmt::{self, Write as _};\n    fn _render() -> fmt::Result {\n        let mut text = String::new();\n        write!(text, \"x\")\n    }",
+            format!("std::thread::spawn(|| {assertion}).join().unwrap();"),
+            true,
+            true,
+        ),
+        (
+            "item_macro_import",
+            "#[macro_use]\nmod fake;\n",
+            "setup!();",
+            format!("std::thread::spawn(|| {assertion}).join().unwrap();"),
+            false,
+            false,
+        ),
+        (
+            "detached",
+            "",
+            "",
+            format!("std::thread::spawn(|| {assertion});"),
+            false,
+            false,
+        ),
+        (
+            "join_ok",
+            "",
+            "",
+            format!("std::thread::spawn(|| {assertion}).join().ok();"),
+            false,
+            false,
+        ),
+        (
+            "join_discarded",
+            "",
+            "",
+            format!("let _ = std::thread::spawn(|| {assertion}).join();"),
+            false,
+            false,
+        ),
+        (
+            "scoped_join_discarded",
+            "",
+            "",
+            format!(
+                "std::thread::scope(|s| {{\n            let _ = s.spawn(|| {assertion}).join();\n        }});"
+            ),
+            false,
+            false,
+        ),
+        (
+            "local_thread_module",
+            "use std::thread;\n",
+            fake_thread,
+            format!("thread::spawn(|| {assertion}).join().unwrap();"),
+            false,
+            false,
+        ),
+        (
+            "unimported_thread_path",
+            "",
+            fake_thread,
+            format!("thread::spawn(|| {assertion}).join().unwrap();"),
+            false,
+            false,
+        ),
+        (
+            "imported_other_thread",
+            "mod fake;\n",
+            "use crate::fake::thread;",
+            format!("thread::spawn(|| {assertion}).join().unwrap();"),
+            false,
+            false,
+        ),
+        (
+            "imported_other_std",
+            "mod fake;\n",
+            "use crate::fake::std;",
+            format!("std::thread::spawn(|| {assertion}).join().unwrap();"),
+            false,
+            false,
+        ),
+        (
+            "glob_other_std",
+            "mod fake;\n",
+            "use crate::fake::*;",
+            format!("std::thread::spawn(|| {assertion}).join().unwrap();"),
+            false,
+            false,
+        ),
+        (
+            "import_in_other_module",
+            "use std::thread;\n",
+            "",
+            format!("thread::spawn(|| {assertion}).join().unwrap();"),
+            false,
+            true,
+        ),
+        (
+            "scope_parameter_pattern",
+            "",
+            "",
+            format!(
+                "std::thread::scope(|ref s| {{\n            s.spawn(|| {assertion});\n        }});"
+            ),
+            false,
+            true,
+        ),
+        (
+            "bound_handle",
+            "",
+            "",
+            format!(
+                "let handle = std::thread::spawn(|| {assertion});\n        handle.join().unwrap();"
+            ),
+            false,
+            true,
+        ),
+    ] {
+        let tests = format!(
+            "#[cfg(test)]\nmod tests {{\n    use super::*;\n    {items}\n    #[test]\n    fn weight_in_worker() {{\n        {body}\n    }}\n}}\n"
+        );
+        let workspace = Scratch::create()?;
+        std::fs::create_dir(workspace.0.join("src")).map_err(|error| error.to_string())?;
+        std::fs::write(
+            workspace.0.join("Cargo.toml"),
+            "[package]\nname = \"thread_pin_control\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+        )
+        .map_err(|error| error.to_string())?;
+        // The prelude goes after the changed function so the diff lines hold.
+        std::fs::write(
+            workspace.0.join("src/lib.rs"),
+            format!("{production}{prelude}\n{tests}"),
+        )
+        .map_err(|error| error.to_string())?;
+        // `fake.rs` exports a `thread` (and a `std::thread`) whose `spawn`
+        // never runs the closure; ripr reads it as a separate file.
+        let modules: &[(&str, &str)] = if prelude.contains("mod fake;") {
+            &[("fake.rs", fake_module)]
+        } else {
+            &[]
+        };
+        for (relative, module) in modules {
+            std::fs::write(workspace.0.join("src").join(relative), module)
+                .map_err(|error| error.to_string())?;
+        }
+        std::fs::write(workspace.0.join("diff.patch"), diff).map_err(|error| error.to_string())?;
+        let report = check_workspace(CheckInput {
+            root: workspace.0.clone(),
+            diff_file: Some(workspace.0.join("diff.patch")),
+            mode: Mode::Fast,
+            format: OutputFormat::Json,
+            ..CheckInput::default()
+        })?;
+        let finding = report
+            .findings
+            .iter()
+            .find(|finding| finding.probe.family == ProbeFamily::ReturnValue)
+            .ok_or(format!("{case}: no return-value finding"))?;
+        assert_eq!(
+            finding.class == ExposureClass::Exposed,
+            exposed,
+            "{case}: {:?}",
+            finding.class
+        );
+        for (label, tail, should_fail) in [
+            ("rewrite", "3 * input", false),
+            ("mutant", "input * 2", kills),
+        ] {
+            source_runtime_control_with(
+                &format!(
+                    "{}{prelude}\n{tests}",
+                    production.replace("3 * input", tail)
+                ),
+                modules,
+                &format!("thread pin {case} {label}"),
+                1,
+                should_fail,
+            )?;
+        }
+    }
+    Ok(())
+}

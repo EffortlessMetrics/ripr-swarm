@@ -9,7 +9,7 @@ use super::ra::{LineIndex, slice_macro_call_text, slice_text};
 use crate::analysis::facts::cfg_predicates::attribute_test_build_availability;
 use ra_ap_syntax::{
     AstNode, SyntaxNode, TextSize,
-    ast::{self, HasArgList, HasAttrs, HasName, HasVisibility},
+    ast::{self, HasArgList, HasAttrs, HasGenericArgs, HasName, HasVisibility},
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -1169,13 +1169,26 @@ fn eager_path(
             return Ok(());
         }
         if let Some(closure) = ast::ClosureExpr::cast(parent.clone()) {
+            // `thread::scope` calls its closure once on this thread and
+            // re-raises its panic, so it adds no closure of its own to count.
+            if let Some(call) = scope_invocation(&closure, function) {
+                return eager_path(
+                    call.syntax().clone(),
+                    function,
+                    through_closure,
+                    first_return,
+                );
+            }
             if through_closure {
                 return Err("a nested closure");
             }
-            let Some(call) = closure_invocation(&closure, function, first_return) else {
+            if let Some(call) = closure_invocation(&closure, function, first_return) {
+                return eager_path(call.syntax().clone(), function, true, first_return);
+            }
+            let Some(spawn) = spawned_thread_reaching_test(&closure, function) else {
                 return Err("a closure ripr cannot see invoked exactly once");
             };
-            return eager_path(call.syntax().clone(), function, true, first_return);
+            return eager_path(spawn, function, true, first_return);
         }
         if let Some(block) = ast::BlockExpr::cast(parent.clone()) {
             if block.async_token().is_some() {
@@ -1243,24 +1256,28 @@ fn conditional_construct(node: &SyntaxNode) -> &'static str {
     }
 }
 
-fn closure_invocation(
-    closure: &ast::ClosureExpr,
-    function: &ast::Fn,
-    first_return: Option<TextSize>,
-) -> Option<ast::CallExpr> {
-    if closure.async_token().is_some()
-        || closure.const_token().is_some()
-        || closure.gen_token().is_some()
-        || closure
-            .param_list()
-            .is_none_or(|params| params.params().next().is_some())
-        || closure
+/// A closure that takes no arguments and is not `async`, `const`, `gen` or
+/// attributed, so calling it runs its body once.
+fn plain_closure(closure: &ast::ClosureExpr) -> bool {
+    closure_parameters(closure) == Some(0)
+}
+
+/// The parameter count of a closure that is not `async`, `const`, `gen` or
+/// attributed; `None` for any of those.
+fn closure_parameters(closure: &ast::ClosureExpr) -> Option<usize> {
+    (closure.async_token().is_none()
+        && closure.const_token().is_none()
+        && closure.gen_token().is_none()
+        && !closure
             .syntax()
             .children()
-            .any(|node| ast::Attr::can_cast(node.kind()))
-    {
-        return None;
-    }
+            .any(|node| ast::Attr::can_cast(node.kind())))
+    .then(|| closure.param_list().map(|params| params.params().count()))
+    .flatten()
+}
+
+/// The closure expression with any wrapping parentheses.
+fn unparenthesized(closure: &ast::ClosureExpr) -> SyntaxNode {
     let mut expression = closure.syntax().clone();
     while let Some(parent) = expression
         .parent()
@@ -1268,6 +1285,292 @@ fn closure_invocation(
     {
         expression = parent;
     }
+    expression
+}
+
+/// The item a `std::thread::<item>` path names, when nothing in this file
+/// can make the path mean something else. Names are not resolved here, so
+/// the file refuses when it holds any of:
+/// - an item, alias or binding named `std` or `thread`;
+/// - a `use` whose last segment is `std` or `thread`, other than exactly
+///   `use std::thread;`;
+/// - a glob `use` other than `use super::*;` (a glob-imported `std` module
+///   beats the extern prelude);
+/// - `use`, `mod` or `extern` inside a macro's tokens, `include!`, or an
+///   item- or statement-position macro other than a std statement macro,
+///   any of which may expand to the above;
+/// - a `use` list holding `self` under a `std` or `thread` prefix.
+///
+/// `thread::<item>` also needs `use std::thread;` directly in the test
+/// function's own module. A `std` or `thread` module that `use super::*;`
+/// brings in from another file is not seen (RIPR-SPEC-0197).
+fn std_thread_item(path: &ast::PathExpr, function: &ast::Fn) -> Option<String> {
+    let text: String = path
+        .syntax()
+        .text()
+        .to_string()
+        .chars()
+        .filter(|character| !character.is_whitespace())
+        .collect();
+    let text = text.strip_prefix("::").unwrap_or(&text);
+    let (item, needs_import) = match text.strip_prefix("std::thread::") {
+        Some(item) => (item, false),
+        None => (text.strip_prefix("thread::")?, true),
+    };
+    if !item
+        .chars()
+        .all(|character| character.is_alphanumeric() || character == '_')
+    {
+        return None;
+    }
+    let file = function.syntax().ancestors().last()?;
+    let module = function.syntax().parent()?;
+    let mut imported = false;
+    for element in file.descendants_with_tokens() {
+        let node = match element {
+            ra_ap_syntax::NodeOrToken::Token(token) => {
+                if matches!(
+                    token.kind(),
+                    ra_ap_syntax::SyntaxKind::USE_KW
+                        | ra_ap_syntax::SyntaxKind::MOD_KW
+                        | ra_ap_syntax::SyntaxKind::EXTERN_KW
+                ) && token
+                    .parent_ancestors()
+                    .any(|node| ast::TokenTree::can_cast(node.kind()))
+                {
+                    return None;
+                }
+                continue;
+            }
+            ra_ap_syntax::NodeOrToken::Node(node) => node,
+        };
+        if let Some(name) = ast::Name::cast(node.clone()) {
+            if matches!(name.text().trim_start_matches("r#"), "std" | "thread") {
+                return None;
+            }
+            continue;
+        }
+        if let Some(call) = ast::MacroCall::cast(node.clone()) {
+            // A macro defined elsewhere, or `include!`, can expand to a `use`
+            // whose tokens this file never shows. Expression macros cannot
+            // bring an item into scope.
+            let name = call
+                .path()
+                .map(|path| path.syntax().text().to_string())
+                .unwrap_or_default();
+            let statement = call.syntax().parent().is_none_or(|parent| {
+                !ast::MacroExpr::can_cast(parent.kind())
+                    || parent.parent().is_none_or(|grandparent| {
+                        ast::ExprStmt::can_cast(grandparent.kind())
+                            || ast::StmtList::can_cast(grandparent.kind())
+                    })
+            });
+            if name == "include" || statement && !STATEMENT_MACROS.contains(&name.as_str()) {
+                return None;
+            }
+            continue;
+        }
+        let Some(tree) = ast::UseTree::cast(node) else {
+            continue;
+        };
+        let path_text = tree.path().map(|path| {
+            path.syntax()
+                .text()
+                .to_string()
+                .chars()
+                .filter(|character| !character.is_whitespace())
+                .collect::<String>()
+        });
+        if tree.star_token().is_some() {
+            if path_text.as_deref() != Some("super") {
+                return None;
+            }
+            continue;
+        }
+        if tree.use_tree_list().is_some() {
+            continue;
+        }
+        let path_text = path_text?;
+        let path_text = path_text.trim_start_matches("::");
+        let last = path_text.rsplit("::").next().unwrap_or(path_text);
+        let last = last.trim_start_matches("r#");
+        if path_text == "std::thread" && tree.rename().is_none() {
+            imported |= tree
+                .syntax()
+                .parent()
+                .filter(|parent| ast::Use::can_cast(parent.kind()))
+                .and_then(|parent| parent.parent())
+                .is_some_and(|container| container == module);
+        } else if matches!(last, "std" | "thread")
+            || last == "self"
+                && tree
+                    .syntax()
+                    .parent()
+                    .and_then(|list| list.parent())
+                    .and_then(ast::UseTree::cast)
+                    .and_then(|parent| parent.path())
+                    .and_then(|path| path.segment())
+                    .is_none_or(|segment| {
+                        segment.syntax().text().to_string().trim_start_matches("r#") == "std"
+                            || segment.syntax().text().to_string().trim_start_matches("r#")
+                                == "thread"
+                    })
+        {
+            return None;
+        }
+    }
+    (imported || !needs_import).then(|| item.to_string())
+}
+
+/// Standard macros that may stand as a statement without bringing an item
+/// into scope.
+const STATEMENT_MACROS: &[&str] = &[
+    "assert",
+    "assert_eq",
+    "assert_ne",
+    "debug_assert",
+    "debug_assert_eq",
+    "debug_assert_ne",
+    "dbg",
+    "eprint",
+    "eprintln",
+    "panic",
+    "print",
+    "println",
+    "todo",
+    "unimplemented",
+    "unreachable",
+    "write",
+    "writeln",
+];
+
+/// The `std::thread::scope(..)` call that runs `closure`, its only argument.
+fn scope_invocation(closure: &ast::ClosureExpr, function: &ast::Fn) -> Option<ast::CallExpr> {
+    if closure_parameters(closure) != Some(1) {
+        return None;
+    }
+    let expression = unparenthesized(closure);
+    let args = expression.parent().and_then(ast::ArgList::cast)?;
+    let call = args.syntax().parent().and_then(ast::CallExpr::cast)?;
+    let ast::Expr::PathExpr(path) = call.expr()? else {
+        return None;
+    };
+    (args.args().count() == 1 && std_thread_item(&path, function).as_deref() == Some("scope"))
+        .then_some(call)
+}
+
+/// Where a spawned thread's panic reaches the test thread, for a plain
+/// closure that is the only argument of a spawn:
+/// - `std::thread::spawn(..).join().unwrap()` (or `.expect(..)`);
+/// - `s.spawn(..)` as a statement directly in the closure of a
+///   `std::thread::scope(|s| ..)`, which re-raises an unjoined thread's
+///   panic, or with the same `.join().unwrap()` chain.
+///
+/// Returns the expression from which the test thread continues. A detached
+/// thread, a handle kept in a binding, and `.join()` whose result is dropped
+/// or matched lose the panic and stay refused.
+fn spawned_thread_reaching_test(
+    closure: &ast::ClosureExpr,
+    function: &ast::Fn,
+) -> Option<SyntaxNode> {
+    if !plain_closure(closure) {
+        return None;
+    }
+    let expression = unparenthesized(closure);
+    let args = expression.parent().and_then(ast::ArgList::cast)?;
+    if args.args().count() != 1 {
+        return None;
+    }
+    let owner = args.syntax().parent()?;
+    if let Some(call) = ast::CallExpr::cast(owner.clone()) {
+        let ast::Expr::PathExpr(path) = call.expr()? else {
+            return None;
+        };
+        if std_thread_item(&path, function).as_deref() != Some("spawn") {
+            return None;
+        }
+        return joined_and_unwrapped(call.syntax());
+    }
+    let spawn = ast::MethodCallExpr::cast(owner)?;
+    if spawn.name_ref()?.text() != "spawn" || spawn.generic_arg_list().is_some() {
+        return None;
+    }
+    let ast::Expr::PathExpr(receiver) = spawn.receiver()? else {
+        return None;
+    };
+    let receiver = receiver.path()?;
+    if receiver.qualifier().is_some() || receiver.segment()?.generic_arg_list().is_some() {
+        return None;
+    }
+    let name = receiver.segment()?.name_ref()?.text().to_string();
+    // The receiver must be the parameter of the nearest enclosing closure,
+    // and that closure the one `thread::scope` runs. No other binding in it
+    // may reuse the name.
+    let scope = spawn
+        .syntax()
+        .ancestors()
+        .skip(1)
+        .find_map(ast::ClosureExpr::cast)?;
+    scope_invocation(&scope, function)?;
+    let ast::Pat::IdentPat(parameter) = scope.param_list()?.params().next()?.pat()? else {
+        return None;
+    };
+    if parameter.ref_token().is_some()
+        || parameter.mut_token().is_some()
+        || parameter.at_token().is_some()
+        || parameter.name()?.text() != name
+        || name.starts_with("r#")
+        || scope
+            .body()?
+            .syntax()
+            .descendants()
+            .filter_map(ast::Name::cast)
+            .any(|binding| binding.text().trim_start_matches("r#") == name)
+    {
+        return None;
+    }
+    if spawn
+        .syntax()
+        .parent()
+        .is_some_and(|parent| ast::ExprStmt::can_cast(parent.kind()))
+    {
+        return Some(spawn.syntax().clone());
+    }
+    joined_and_unwrapped(spawn.syntax())
+}
+
+/// `<spawned>.join().unwrap()` or `<spawned>.join().expect(..)`: the outer
+/// call, which panics on the test thread when the spawned thread panicked.
+fn joined_and_unwrapped(spawned: &SyntaxNode) -> Option<SyntaxNode> {
+    let method = |node: &SyntaxNode, receiver: &SyntaxNode, names: &[&str], arguments: usize| {
+        ast::MethodCallExpr::cast(node.clone()).filter(|call| {
+            call.receiver()
+                .is_some_and(|expr| expr.syntax() == receiver)
+                && call.generic_arg_list().is_none()
+                && call
+                    .name_ref()
+                    .is_some_and(|name| names.iter().any(|wanted| name.text() == *wanted))
+                && call
+                    .arg_list()
+                    .is_some_and(|args| args.args().count() == arguments)
+        })
+    };
+    let join = method(&spawned.parent()?, spawned, &["join"], 0)?;
+    let parent = join.syntax().parent()?;
+    method(&parent, join.syntax(), &["unwrap"], 0)
+        .or_else(|| method(&parent, join.syntax(), &["expect"], 1))
+        .map(|call| call.syntax().clone())
+}
+
+fn closure_invocation(
+    closure: &ast::ClosureExpr,
+    function: &ast::Fn,
+    first_return: Option<TextSize>,
+) -> Option<ast::CallExpr> {
+    if !plain_closure(closure) {
+        return None;
+    }
+    let expression = unparenthesized(closure);
     if let Some(call) = expression.parent().and_then(ast::CallExpr::cast) {
         return (call.expr().is_some_and(|expr| expr.syntax() == &expression)
             && no_arguments(&call))
