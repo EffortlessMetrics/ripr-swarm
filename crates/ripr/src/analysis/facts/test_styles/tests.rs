@@ -1125,7 +1125,7 @@ fn one_walk_cfg_test_table_answers_like_each_prefix_walk() -> Result<(), Box<dyn
     let shapes = [
         "#[cfg(test)]\nmod tests {\n    fn helper() {}\n}\nfn production() {}\n",
         "#[cfg(\n    test\n)]\nmod tests {\n    #[cfg(\n        feature = \"x\"\n    )]\n    fn helper() {}\n}\n",
-        "#[cfg(test)] #[allow(dead_code)] mod tests {\n    mod inner {\n        fn helper() {}\n    }\n}\nmod later { fn f() {} }\n",
+        "#[cfg(test)] #[doc = \"x\"] mod tests {\n    mod inner {\n        fn helper() {}\n    }\n}\nmod later { fn f() {} }\n",
         // An unclosed attribute must not swallow the rest of the file.
         "#[cfg(test\nmod tests {\n    fn helper() {}\n}\n",
         "",
