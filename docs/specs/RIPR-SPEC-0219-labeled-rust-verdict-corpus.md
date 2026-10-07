@@ -312,6 +312,36 @@ the distinct codes seen in that case's run.
   passes and the truth is `not_discriminated`. ripr's `exposed` scores
   `false_exposed`, the self-computed expected value RIPR-SPEC-0004 and
   RIPR-SPEC-0035 say must not count as a strong oracle.
+- authored `mined-doctest-only-read-u16` (`u16::from_be_bytes` rewritten
+  as shifts): the only test is the function's doc example, which `cargo test`
+  runs, so both byte-order mutants fail it and the truth is `discriminated`.
+  ripr's `weakly_exposed` scores `false_actionable`. The shape is mined from
+  bytes, where most `try_get_*` methods are pinned only by doc examples. Its
+  twin `mined-doctest-ignored-read-u16-le` fences the example `ignore`, so
+  nothing runs it and the same `weakly_exposed` scores `ideal`.
+- authored `mined-macro-closure-header-length` (`*len as usize + 2`
+  rewritten as `2 + *len as usize`): a `macro_rules!` test whose
+  `assert_eq!` sits in a closure the generated body always calls, mined from
+  httparse's `req!` tests. Both mutants fail it, so ripr's `weakly_exposed`
+  scores `false_actionable`. The corpus's other test-generating macro
+  cases (itoa) are `not_discriminated`.
+- authored `mined-roundtrip-symmetric-mask` (`0x5a` rewritten as `90`): the
+  only test masks twice and checks the payload comes back, which holds for
+  every key, so the truth is `not_discriminated` and ripr's `static_unknown`
+  scores `abstained`.
+- authored `mined-debug-assert-only-oracle` (`b & 0x07` rewritten as
+  `b % 8`): the test asserts only the output length, and the production
+  `debug_assert!` on the index is what fails under both mutants, so the truth
+  is `discriminated` under the debug test profile and does not hold under
+  `--release`. ripr's `static_unknown` scores `abstained`.
+- authored `mined-one-line-struct-literal-field` (`version: 1` rewritten as
+  `version: 0x1` inside `Id { counter: .., version: .. }` on one line): the
+  accessor assert pins the edited field. Before #6751 ripr's
+  field-construction finding asked for a pin of the unedited `counter` and
+  scored `false_actionable`, while its twin
+  `mined-multi-line-struct-literal-field`, the same edit with one field per
+  line, read `exposed` (#6731). Both now read `exposed` and score `ideal`, so
+  the pair guards against the verdict depending on formatting again.
 - bytesize `as_kb` division (`src/lib.rs:258`): ripr reports
   `no_static_path` while naming related tests, recorded as
   `no_static_path_with_related_tests`. semver `op()` at 1.0.23

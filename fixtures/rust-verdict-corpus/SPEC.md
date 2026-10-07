@@ -16,8 +16,10 @@ its specs in its reasoning; one `authored-specNNNN-<k>` crate per acceptance
 example of RIPR-SPEC-0225 to 0228, isolated so no other example's test relates
 to its owner; eleven `authored-grid-*` crates crossing cargo-mutants operator
 classes with five test styles: exact pin, table-driven loop, property-style
-invariant, helper-wrapped assert and no assertion), and one-line edits under
-`cases/`. Each case is labeled
+invariant, helper-wrapped assert and no assertion; `authored-mined-wire` and
+`authored-mined-codec` for test shapes mined from real crates, each case naming
+the real-crate shape it mirrors, or its twin, without copying code), and
+one-line edits under `cases/`. Each case is labeled
 with what the crate's own test suite discriminates, established by running
 the listed mutants of the edited expression against the full pinned
 checkout (for an authored crate, the whole stored crate).
