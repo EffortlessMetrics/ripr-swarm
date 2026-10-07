@@ -1011,7 +1011,8 @@ fn review_recommendation_json(
     // top-ranked related test, else no oracle observed (`unknown` / `none`).
     // This projects the same oracle facts agent briefs and seam packets carry;
     // the review card does not compute an oracle of its own.
-    let representative_oracle = nearest.or_else(|| entry.evidence.related_tests.first());
+    let representative_oracle =
+        nearest.or_else(|| entry.evidence.related_tests.first().map(AsRef::as_ref));
     let oracle_kind = representative_oracle
         .map(|test| test.oracle_kind.as_str())
         .unwrap_or_else(|| crate::domain::OracleKind::Unknown.as_str());
@@ -1758,7 +1759,7 @@ mod tests {
             class: SeamGripClass::WeaklyGripped,
             evidence: TestGripEvidence {
                 seam_id,
-                related_tests: vec![RelatedTestGrip {
+                related_tests: vec![std::sync::Arc::new(RelatedTestGrip {
                     test_name: "above_threshold_gets_discount".to_string(),
                     file: PathBuf::from("tests/pricing.rs"),
                     line: 12,
@@ -1774,7 +1775,7 @@ mod tests {
                     evidence_summary: "exact returned value assertion".to_string(),
                     relation_reason: RelationReason::DirectOwnerCall,
                     relation_confidence: RelationConfidence::High,
-                }],
+                })],
                 reach: stage(StageState::Yes),
                 activate: stage(StageState::Yes),
                 propagate: stage(StageState::Yes),
@@ -1849,7 +1850,7 @@ mod tests {
             class: SeamGripClass::WeaklyGripped,
             evidence: TestGripEvidence {
                 seam_id,
-                related_tests: vec![RelatedTestGrip {
+                related_tests: vec![std::sync::Arc::new(RelatedTestGrip {
                     test_name: "blob copies resizable buffers".to_string(),
                     file: PathBuf::from("test/js/web/fetch/blob.test.ts"),
                     line: 41,
@@ -1860,7 +1861,7 @@ mod tests {
                         .to_string(),
                     relation_reason: RelationReason::DirectOwnerCall,
                     relation_confidence: RelationConfidence::High,
-                }],
+                })],
                 reach: stage(StageState::Yes),
                 activate: stage(StageState::Yes),
                 propagate: stage(StageState::Weak),
@@ -1892,7 +1893,7 @@ mod tests {
             class: SeamGripClass::WeaklyGripped,
             evidence: TestGripEvidence {
                 seam_id,
-                related_tests: vec![RelatedTestGrip {
+                related_tests: vec![std::sync::Arc::new(RelatedTestGrip {
                     test_name: "markdown snapshots resizable ArrayBuffer input".to_string(),
                     file: PathBuf::from("test/js/bun/md/md-edge-cases.test.ts"),
                     line: 42,
@@ -1903,7 +1904,7 @@ mod tests {
                         .to_string(),
                     relation_reason: RelationReason::DirectOwnerCall,
                     relation_confidence: RelationConfidence::High,
-                }],
+                })],
                 reach: stage(StageState::Yes),
                 activate: stage(StageState::Yes),
                 propagate: stage(StageState::Weak),
@@ -2461,9 +2462,12 @@ mod tests {
         );
         let eligible = classified(88);
         let mut ineligible = classified(88);
-        let mut observer = ineligible.evidence.related_tests[0].clone();
+        let mut observer = ineligible.evidence.related_tests[0].as_ref().clone();
         observer.file = PathBuf::from("tests/pricing.test.ts");
-        ineligible.evidence.related_tests.push(observer);
+        ineligible
+            .evidence
+            .related_tests
+            .push(std::sync::Arc::new(observer));
 
         for (entry, want_repair) in [(eligible, true), (ineligible, false)] {
             let seam_id = entry.seam.id().as_str().to_string();
@@ -4726,6 +4730,7 @@ mod tests {
         // Downgrade the sole related test below Strong so no strong match
         // exists; it remains the top-ranked related test.
         for test in &mut seam.evidence.related_tests {
+            let test = std::sync::Arc::make_mut(test);
             test.oracle_strength = crate::domain::OracleStrength::Weak;
         }
         let expected_canonical_gap_id = canonical_gap_identity(&seam)

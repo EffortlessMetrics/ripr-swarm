@@ -3684,7 +3684,7 @@ mod tests {
         );
         let evidence = TestGripEvidence {
             seam_id: seam.id().clone(),
-            related_tests: vec![RelatedTestGrip {
+            related_tests: vec![std::sync::Arc::new(RelatedTestGrip {
                 test_name: "rejects_boundary".to_string(),
                 file: PathBuf::from("tests/pricing.rs"),
                 line: 4,
@@ -3698,7 +3698,7 @@ mod tests {
                 evidence_summary: "broad error assertion".to_string(),
                 relation_reason: RelationReason::DirectOwnerCall,
                 relation_confidence: RelationConfidence::High,
-            }],
+            })],
             reach: stage("owner is reached"),
             activate: stage("exact error variant flows"),
             propagate: stage("error channel flow"),

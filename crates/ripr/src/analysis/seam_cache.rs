@@ -53,12 +53,14 @@ use super::seam_classification::ClassifiedSeam;
 #[cfg(test)]
 use super::seam_classification::SeamGripClassCounts;
 use super::seam_inventory::{SeamLimitSource, repo_exposure_seam_limit};
+use super::test_grip_evidence::RelatedTestGrip;
+use super::test_grip_evidence::shared_grips::SharedGrips;
 use crate::config::{
     PYTHON_PROJECT_MARKERS, PYTHON_SOURCE_DIR_MARKERS, source_dir_contains_detectable_python,
 };
 use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
 
 // The producer's layer names are also the only names cache maintenance may
 // inspect or remove. Defining both the typed names and inventory here makes a
@@ -1659,6 +1661,7 @@ impl RepoSeamFactCache {
         }
 
         let mut seams = Vec::with_capacity(manifest.total_seams);
+        let mut shared_grips = SharedGrips::default();
         for (index, shard) in manifest.shards.iter().enumerate() {
             if shard.index != index {
                 return CacheLoad::CorruptIgnored {
@@ -1716,7 +1719,9 @@ impl RepoSeamFactCache {
                     ),
                 };
             }
-            seams.extend(envelope.classified_seams);
+            let mut shard_seams = envelope.classified_seams;
+            share_grips_across_shards(&mut shard_seams, &mut shared_grips);
+            seams.extend(shard_seams);
         }
         if seams.len() != manifest.total_seams {
             return CacheLoad::CorruptIgnored {
@@ -1741,6 +1746,26 @@ impl RepoSeamFactCache {
 
     fn sharded_manifest_path(&self, key: &RepoSeamCacheKey) -> PathBuf {
         self.sharded_entry_dir(key).join("manifest.json")
+    }
+}
+
+/// Each shard decodes its own related-test table, so a test named in two
+/// shards arrives as two records. Hand every seam the inventory's one shared
+/// record instead (#5341). Within a shard, every seam naming a table row
+/// already holds the same record, so each distinct row is looked up once.
+fn share_grips_across_shards(seams: &mut [ClassifiedSeam], shared: &mut SharedGrips) {
+    let mut by_row: HashMap<*const RelatedTestGrip, Arc<RelatedTestGrip>> = HashMap::new();
+    for seam in seams {
+        for grip in &mut seam.evidence.related_tests {
+            // Keyed by address: live rows have distinct addresses, and a row
+            // freed mid-loop has no holder left to look it up again.
+            let canonical = by_row
+                .entry(Arc::as_ptr(grip))
+                .or_insert_with(|| shared.share_arc(grip));
+            if !Arc::ptr_eq(grip, canonical) {
+                *grip = Arc::clone(canonical);
+            }
+        }
     }
 }
 
@@ -4839,6 +4864,11 @@ mod tests {
                 expected,
                 "{label}"
             );
+            // One shared record per distinct test, across shard files too.
+            let tests = |seam: usize| &loaded[seam].evidence.related_tests;
+            assert!(Arc::ptr_eq(&tests(0)[0], &tests(1)[1]), "{label}: a");
+            assert!(Arc::ptr_eq(&tests(0)[0], &tests(2)[0]), "{label}: a");
+            assert!(Arc::ptr_eq(&tests(0)[1], &tests(1)[0]), "{label}: b");
         }
         Ok(())
     }

@@ -181,7 +181,7 @@ fn classified_with(
     ClassifiedSeam {
         evidence: TestGripEvidence {
             seam_id: seam.id().clone(),
-            related_tests,
+            related_tests: related_tests.into_iter().map(std::sync::Arc::new).collect(),
             reach: stage(StageState::Yes),
             activate: stage(StageState::Yes),
             propagate: stage(StageState::Yes),
@@ -1268,7 +1268,7 @@ fn why_line_uses_static_discriminator_summary_when_no_missing_discriminator() {
     let entry = ClassifiedSeam {
         evidence: TestGripEvidence {
             seam_id: seam.id().clone(),
-            related_tests: vec![related_test()],
+            related_tests: vec![std::sync::Arc::new(related_test())],
             reach: stage(StageState::Yes),
             activate: stage(StageState::Yes),
             propagate: stage(StageState::Yes),

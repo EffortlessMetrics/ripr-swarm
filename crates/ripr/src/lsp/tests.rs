@@ -5144,17 +5144,19 @@ fn route_ready_seam_with_external_language_related_test() -> crate::analysis::Cl
     };
 
     let mut seam = sample_classified_seam();
-    seam.evidence.related_tests.push(RelatedTestGrip {
-        test_name: "discounted total at threshold".to_string(),
-        file: PathBuf::from("tests/pricing.test.ts"),
-        line: 4,
-        test_target: None,
-        oracle_kind: OracleKind::ExactValue,
-        oracle_strength: OracleStrength::Strong,
-        evidence_summary: "exact value assertion".to_string(),
-        relation_reason: RelationReason::DirectOwnerCall,
-        relation_confidence: RelationConfidence::High,
-    });
+    seam.evidence
+        .related_tests
+        .push(std::sync::Arc::new(RelatedTestGrip {
+            test_name: "discounted total at threshold".to_string(),
+            file: PathBuf::from("tests/pricing.test.ts"),
+            line: 4,
+            test_target: None,
+            oracle_kind: OracleKind::ExactValue,
+            oracle_strength: OracleStrength::Strong,
+            evidence_summary: "exact value assertion".to_string(),
+            relation_reason: RelationReason::DirectOwnerCall,
+            relation_confidence: RelationConfidence::High,
+        }));
     seam
 }
 
@@ -5167,6 +5169,7 @@ fn eligible_seam_with_inline_test_module_target() -> crate::analysis::Classified
 
     let mut seam = sample_classified_seam();
     for related in &mut seam.evidence.related_tests {
+        let related = std::sync::Arc::make_mut(related);
         related.file = PathBuf::from("src/pricing.rs");
         related.line = 120;
         related.test_target = Some(TestTargetEvidence::fixture(
@@ -6630,8 +6633,10 @@ fn seam_code_actions_cross_language_unresolved_yields_disabled_preview_limitatio
         ExpectedSink::ReturnValue,
     );
     seam.evidence.seam_id = seam.seam.id().clone();
-    seam.evidence.related_tests[0].file = PathBuf::from("test/js/web/fetch/blob.test.ts");
-    seam.evidence.related_tests[0].test_name = "blob copies shared buffers".to_string();
+    std::sync::Arc::make_mut(&mut seam.evidence.related_tests[0]).file =
+        PathBuf::from("test/js/web/fetch/blob.test.ts");
+    std::sync::Arc::make_mut(&mut seam.evidence.related_tests[0]).test_name =
+        "blob copies shared buffers".to_string();
     let diagnostic = diagnostic_for_classified_seam(Path::new("/workspace"), &seam)
         .ok_or_else(|| "expected seam diagnostic".to_string())?;
     let uri = test_uri("file:///workspace/src/jsc/Blob.rs")?;
@@ -7115,8 +7120,10 @@ fn seam_code_actions_fail_closed_for_cross_language_target_unresolved() -> Resul
         ExpectedSink::ReturnValue,
     );
     seam.evidence.seam_id = seam.seam.id().clone();
-    seam.evidence.related_tests[0].file = PathBuf::from("test/js/web/fetch/blob.test.ts");
-    seam.evidence.related_tests[0].test_name = "blob copies shared buffers".to_string();
+    std::sync::Arc::make_mut(&mut seam.evidence.related_tests[0]).file =
+        PathBuf::from("test/js/web/fetch/blob.test.ts");
+    std::sync::Arc::make_mut(&mut seam.evidence.related_tests[0]).test_name =
+        "blob copies shared buffers".to_string();
     let diagnostic = diagnostic_for_classified_seam(Path::new("/workspace"), &seam)
         .ok_or_else(|| "expected seam diagnostic".to_string())?;
     let uri = test_uri("file:///workspace/src/jsc/Blob.rs")?;
@@ -7378,7 +7385,7 @@ fn seam_code_actions_open_strong_related_test_before_first_related_test() -> Res
 
     let mut seam = sample_classified_seam();
     seam.evidence.related_tests = vec![
-        RelatedTestGrip {
+        std::sync::Arc::new(RelatedTestGrip {
             test_name: "nearby_smoke_reaches_owner".to_string(),
             file: PathBuf::from("tests/smoke.rs"),
             line: 7,
@@ -7388,8 +7395,8 @@ fn seam_code_actions_open_strong_related_test_before_first_related_test() -> Res
             evidence_summary: "smoke-only assertion".to_string(),
             relation_reason: RelationReason::DirectOwnerCall,
             relation_confidence: RelationConfidence::High,
-        },
-        RelatedTestGrip {
+        }),
+        std::sync::Arc::new(RelatedTestGrip {
             test_name: "below_threshold_has_no_discount".to_string(),
             file: PathBuf::from("tests/pricing.rs"),
             line: 12,
@@ -7399,7 +7406,7 @@ fn seam_code_actions_open_strong_related_test_before_first_related_test() -> Res
             evidence_summary: "exact value assertion".to_string(),
             relation_reason: RelationReason::DirectOwnerCall,
             relation_confidence: RelationConfidence::Medium,
-        },
+        }),
     ];
     let diagnostic = diagnostic_for_classified_seam(Path::new("/workspace"), &seam)
         .ok_or_else(|| "expected seam diagnostic".to_string())?;
@@ -7442,7 +7449,7 @@ fn seam_code_actions_open_highest_confidence_related_test_when_no_strong_test_ex
 
     let mut seam = sample_classified_seam();
     seam.evidence.related_tests = vec![
-        RelatedTestGrip {
+        std::sync::Arc::new(RelatedTestGrip {
             test_name: "opaque_fixture_hint".to_string(),
             file: PathBuf::from("tests/opaque.rs"),
             line: 3,
@@ -7452,8 +7459,8 @@ fn seam_code_actions_open_highest_confidence_related_test_when_no_strong_test_ex
             evidence_summary: "opaque relation".to_string(),
             relation_reason: RelationReason::FixtureOwnerAffinity,
             relation_confidence: RelationConfidence::Opaque,
-        },
-        RelatedTestGrip {
+        }),
+        std::sync::Arc::new(RelatedTestGrip {
             test_name: "low_confidence_smoke".to_string(),
             file: PathBuf::from("tests/low.rs"),
             line: 5,
@@ -7463,8 +7470,8 @@ fn seam_code_actions_open_highest_confidence_related_test_when_no_strong_test_ex
             evidence_summary: "smoke-only assertion".to_string(),
             relation_reason: RelationReason::FixtureOwnerAffinity,
             relation_confidence: RelationConfidence::Low,
-        },
-        RelatedTestGrip {
+        }),
+        std::sync::Arc::new(RelatedTestGrip {
             test_name: "medium_confidence_property".to_string(),
             file: PathBuf::from("tests/medium.rs"),
             line: 9,
@@ -7474,8 +7481,8 @@ fn seam_code_actions_open_highest_confidence_related_test_when_no_strong_test_ex
             evidence_summary: "medium oracle".to_string(),
             relation_reason: RelationReason::SameModule,
             relation_confidence: RelationConfidence::Medium,
-        },
-        RelatedTestGrip {
+        }),
+        std::sync::Arc::new(RelatedTestGrip {
             test_name: "high_confidence_weak_assertion".to_string(),
             file: PathBuf::from("tests/high.rs"),
             line: 11,
@@ -7485,7 +7492,7 @@ fn seam_code_actions_open_highest_confidence_related_test_when_no_strong_test_ex
             evidence_summary: "weak oracle".to_string(),
             relation_reason: RelationReason::DirectOwnerCall,
             relation_confidence: RelationConfidence::High,
-        },
+        }),
     ];
     let diagnostic = diagnostic_for_classified_seam(Path::new("/workspace"), &seam)
         .ok_or_else(|| "expected seam diagnostic".to_string())?;
@@ -7606,7 +7613,7 @@ fn seam_code_actions_keep_navigation_when_related_test_is_unresolved() -> Result
     };
 
     let mut seam = sample_side_effect_seam_without_related_tests();
-    seam.evidence.related_tests = vec![RelatedTestGrip {
+    seam.evidence.related_tests = vec![std::sync::Arc::new(RelatedTestGrip {
         test_name: "publish_event_emits_bus_message".to_string(),
         file: PathBuf::from("tests/service.rs"),
         line: 21,
@@ -7616,7 +7623,7 @@ fn seam_code_actions_keep_navigation_when_related_test_is_unresolved() -> Result
         evidence_summary: "related smoke test reaches event publishing".to_string(),
         relation_reason: RelationReason::DirectOwnerCall,
         relation_confidence: RelationConfidence::High,
-    }];
+    })];
     let diagnostic = diagnostic_for_classified_seam(Path::new("/workspace"), &seam)
         .ok_or_else(|| "expected seam diagnostic".to_string())?;
     let uri = test_uri("file:///workspace/src/service.rs")?;
@@ -13603,7 +13610,7 @@ fn sample_classified_seam() -> crate::analysis::ClassifiedSeam {
         seam,
         evidence: TestGripEvidence {
             seam_id,
-            related_tests: vec![RelatedTestGrip {
+            related_tests: vec![std::sync::Arc::new(RelatedTestGrip {
                 test_name: "below_threshold_has_no_discount".to_string(),
                 file: PathBuf::from("tests/pricing.rs"),
                 line: 12,
@@ -13617,7 +13624,7 @@ fn sample_classified_seam() -> crate::analysis::ClassifiedSeam {
                 evidence_summary: "exact value assertion".to_string(),
                 relation_reason: RelationReason::DirectOwnerCall,
                 relation_confidence: RelationConfidence::High,
-            }],
+            })],
             reach: StageEvidence::new(
                 StageState::Yes,
                 Confidence::High,
