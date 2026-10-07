@@ -527,6 +527,47 @@ Consumers must not treat a limited `diff_scope_oversized` artifact as a clean
 or complete analysis. The zero summary and empty `findings` array mean analysis
 did not run far enough to classify probes, not that the diff has no findings.
 
+Every other post-argv-parse `ripr check --json` failure also writes a document
+to stdout before reporting the error on stderr (#6834): the same envelope as
+the scope guards above — same `schema_version` (`"0.2"`), same keys, same
+zeroed `summary`, same empty `findings`, same
+`downstream_consumable: false` — with the typed failure identity selecting
+`analysis_scope.run_status` / `basis` / `limitation` and
+`run_limitations[0].category` / `run_status` / `basis`, plus the matching
+`repair_route`. The identity vocabulary is closed:
+
+| Identity | Repair route | Meaning |
+|---|---|---|
+| `base_unresolvable` | `analysis/base-resolution` | The requested base revision does not resolve to a commit. |
+| `repository_root_unusable` | `analysis/repository-root` | The root is not a directory, is not inside a Git work tree, or is a repository Git cannot read. |
+| `config_invalid` | `analysis/config-load` | `ripr.toml` (or the candidate tree's config) failed to load or parse. |
+| `suppression_policy_invalid` | `analysis/suppression-policy` | An explicit `--suppression-policy` file is missing or malformed. |
+| `git_invocation_timeout` | `analysis/git-timeout` | A git invocation exceeded its cooperative deadline and was terminated. |
+| `analysis_failed` | `analysis/failure` | Honest fallback for any other failure: the run produced no findings, with no claim about which stage stopped. |
+
+The scope-guard identities (`diff_scope_oversized`, `repo_scope_oversized`)
+keep their existing documents byte for byte; they are not members of this
+vocabulary.
+
+Whether the analysis ran is implicit per identity, not a separate field.
+`suppression_policy_invalid` is the one identity where classification ran to
+completion — the policy applies to findings after they are built — while
+`base_unresolvable`, `repository_root_unusable`, `config_invalid`, and
+`git_invocation_timeout` mean the run produced no findings (input loading or
+the git call itself failed first). `analysis_failed` makes no stage claim
+either way; consumers must treat it as "no findings produced".
+
+`root` and `base` echo the caller-supplied invocation context, and
+`run_limitations[0].message` echoes the human diagnostic verbatim — exactly
+what the same run prints on stderr — except for `config_invalid`, whose
+message is the redacted config summary (path and parse location, no TOML
+source excerpt) per RIPR-SPEC-0007. No other caller-unsupplied value enters
+the document.
+
+Argv usage errors (an unknown flag, a missing value, two disagreeing output
+selections) stay prose-only: exit `2`, empty stdout, the cause on stderr.
+There is no successfully parsed invocation to echo, so no envelope exists.
+
 ```json
 {
   "finding_alignment": {
