@@ -2847,9 +2847,11 @@ Policy reports are advisory unless `--mode fail-on-new-warning` is used.
 }
 ```
 
-`witness.explain_command` names the resolved repository root and diff, not
-the spelling typed on the command line, so it analyzes the same repository when
-pasted from another directory (#3948).
+`witness.explain_command` names the resolved repository root, not the spelling
+typed on the command line, so it analyzes the same repository when pasted from
+another directory (#3948). The scope follows the input: a diff or `--from`
+artifact file is printed as a resolved path, stdin stays `--diff -`, and a
+`--base` or `--worktree` scope is repeated as given.
 
 The context packet is intentionally smaller than check output. It is optimized
 for coding agents and editor commands. `witness` is additive and is omitted
