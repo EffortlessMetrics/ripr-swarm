@@ -42,6 +42,10 @@ const ERROR_SHAPING_METHODS: &[&str] = &[
     "map_or_else",
 ];
 
+/// The assertion macros the test-side matcher reads by name. Any other
+/// macro in a test body, or an import naming one of these, refuses.
+const ASSERTION_MACROS: &[&str] = &["assert", "assert_eq", "assert_ne", "matches"];
+
 pub(super) fn discrimination(
     context: &ProbeContext<'_>,
     observe: &StageEvidence,
@@ -175,7 +179,8 @@ fn canonical_try_statement(line: &str) -> Option<String> {
         return None;
     }
     if let ast::Stmt::LetStmt(binding) = statement {
-        if binding.let_else().is_some() {
+        // The rebuilt form below drops attributes, so refuse them.
+        if binding.let_else().is_some() || binding.attrs().next().is_some() {
             return None;
         }
         let pattern = canonical_tokens(binding.pat()?.syntax(), None);
@@ -216,6 +221,20 @@ fn turbofish_type(
     Some((canonical_tokens(argument.syntax(), None), list))
 }
 
+/// A postfix or atomic operand: `(x)?` and `x?` parse the same.
+fn binds_as_tightly_as_try(expression: ast::Expr) -> bool {
+    matches!(
+        unwrap_parens(expression),
+        ast::Expr::CallExpr(_)
+            | ast::Expr::MethodCallExpr(_)
+            | ast::Expr::PathExpr(_)
+            | ast::Expr::FieldExpr(_)
+            | ast::Expr::IndexExpr(_)
+            | ast::Expr::Literal(_)
+            | ast::Expr::AwaitExpr(_)
+    )
+}
+
 fn unwrap_parens(mut expression: ast::Expr) -> ast::Expr {
     while let ast::Expr::ParenExpr(paren) = &expression {
         let Some(inner) = paren.expr() else {
@@ -241,9 +260,11 @@ fn canonical_tokens(node: &SyntaxNode, skip: Option<&ast::GenericArgList>) -> St
         if skip.is_some_and(|list| parent.ancestors().any(|node| node == *list.syntax())) {
             continue;
         }
-        // Only parentheses that wrap the whole `?` operand are a
-        // respelling; elsewhere they can change the callee or precedence
-        // (`(cfg.parse)(s)` is not `cfg.parse(s)`).
+        // Only parentheses that wrap the whole `?` operand, around an
+        // operand that already binds as tightly as `?`, are a respelling;
+        // elsewhere they can change the callee or precedence
+        // (`(cfg.parse)(s)` is not `cfg.parse(s)`, `(a + b)?` is not
+        // `a + b?`).
         if matches!(token.text(), "(" | ")")
             && ast::ParenExpr::can_cast(parent.kind())
             && parent
@@ -251,6 +272,8 @@ fn canonical_tokens(node: &SyntaxNode, skip: Option<&ast::GenericArgList>) -> St
                 .skip(1)
                 .find(|node| !ast::ParenExpr::can_cast(node.kind()))
                 .is_some_and(|node| ast::TryExpr::can_cast(node.kind()))
+            && ast::ParenExpr::cast(parent.clone())
+                .is_some_and(|paren| binds_as_tightly_as_try(ast::Expr::ParenExpr(paren)))
         {
             continue;
         }
@@ -280,13 +303,15 @@ fn test_file_macros_and_inner_cfg_are_plain(root: &SyntaxNode) -> bool {
             return false;
         }
         if let Some(tree) = ast::UseTree::cast(node.clone()) {
+            let is_assertion_name = |name: &str| ASSERTION_MACROS.contains(&name);
             let names_macro = tree
                 .path()
                 .and_then(|path| path.segment())
-                .is_some_and(|segment| {
-                    let name = segment.syntax().text().to_string();
-                    name == "assert" || name == "matches"
-                });
+                .is_some_and(|segment| is_assertion_name(&segment.syntax().text().to_string()))
+                || tree
+                    .rename()
+                    .and_then(|rename| rename.name())
+                    .is_some_and(|name| is_assertion_name(name.text()));
             let foreign_glob = tree.star_token().is_some()
                 && !tree.path().is_some_and(|path| {
                     matches!(
@@ -440,10 +465,7 @@ fn asserts_owner_err_inner(function: &ast::Fn, owner: &str) -> Option<bool> {
         // before the assertion runs.
         if let Some(call) = ast::MacroCall::cast(node.clone())
             && !call.path().is_some_and(|path| {
-                matches!(
-                    path.syntax().text().to_string().as_str(),
-                    "assert" | "assert_eq" | "assert_ne" | "matches"
-                )
+                ASSERTION_MACROS.contains(&path.syntax().text().to_string().as_str())
             })
         {
             return None;
@@ -553,7 +575,10 @@ fn condition_observes_err(condition: &ast::Expr, owner: &str) -> bool {
     }
 }
 
-/// `owner(args)` by its bare name, with no argument that calls the owner.
+/// `owner(args)` by its bare name, with no argument that calls the owner
+/// or could skip the assertion. The arguments sit inside the assertion's
+/// token tree, which the test-body scan does not see, so they get the same
+/// refusals here: no macro, `return`, closure or block.
 fn is_direct_owner_call(expression: &ast::Expr, owner: &str) -> bool {
     let ast::Expr::CallExpr(call) = expression else {
         return false;
@@ -562,11 +587,14 @@ fn is_direct_owner_call(expression: &ast::Expr, owner: &str) -> bool {
         .is_some_and(|callee| callee.syntax().text() == owner)
         && call.arg_list().is_some_and(|list| {
             list.args().all(|argument| {
-                !argument
-                    .syntax()
-                    .descendants()
-                    .filter_map(ast::PathExpr::cast)
-                    .any(|path| path.syntax().text() == owner)
+                argument.syntax().descendants().all(|node| {
+                    !ast::MacroCall::can_cast(node.kind())
+                        && !ast::ReturnExpr::can_cast(node.kind())
+                        && !ast::ClosureExpr::can_cast(node.kind())
+                        && !ast::BlockExpr::can_cast(node.kind())
+                        && ast::PathExpr::cast(node)
+                            .is_none_or(|path| path.syntax().text() != owner)
+                })
             })
         })
 }
@@ -779,13 +807,21 @@ mod tests {
                 "Ok pattern",
                 "#[test]\nfn t() {\n    assert!(matches!(port(\"x\"), Ok(_)));\n}\n",
             ),
+            (
+                "macro inside the asserted call",
+                "#[test]\nfn t() {\n    assert!(port({ skip!(); \"x\" }).is_err());\n}\n",
+            ),
+            (
+                "return inside the matches scrutinee",
+                "#[test]\nfn t() {\n    assert!(matches!(port(if true { return } else { \"x\" }), Err(_)));\n}\n",
+            ),
         ] {
             assert!(!test_observes(source, "t", "port"), "{label}");
         }
     }
 
     #[test]
-    fn a_respelled_operand_compares_equal_and_a_changed_one_does_not() {
+    fn a_respelled_statement_compares_equal_and_a_changed_one_does_not() {
         let same = canonical_try_statement("let port = text.trim().parse::<u16>()?;");
         assert_eq!(
             same.as_deref(),
@@ -822,6 +858,16 @@ mod tests {
             None
         );
         assert_eq!(canonical_try_statement("let d = a(c)? + b(c)?;"), None);
+        // Parentheses around a looser operand carry precedence.
+        assert_ne!(
+            canonical_try_statement("let d = (a + b)?;"),
+            canonical_try_statement("let d = a + b?;")
+        );
+        // An attribute on the `let` is not a respelling.
+        assert_eq!(
+            canonical_try_statement("#[cfg(feature = \"x\")] let p: u16 = s.parse()?;"),
+            None
+        );
     }
 
     #[test]
@@ -834,6 +880,8 @@ mod tests {
             "mod tests {\n    #![cfg(any())]\n    #[test]\n    fn t() { assert!(port(\"x\").is_err()); }\n}\n",
             "#![cfg(any())]\n#[test]\nfn t() { assert!(port(\"x\").is_err()); }\n",
             "use helpers::assert;\n#[test]\nfn t() { assert!(port(\"x\").is_err()); }\n",
+            "use helpers::noop as assert;\n#[test]\nfn t() { assert!(port(\"x\").is_err()); }\n",
+            "use helpers::assert_eq;\n#[test]\nfn t() { assert!(port(\"x\").is_err()); }\n",
             "use helpers::*;\n#[test]\nfn t() { assert!(port(\"x\").is_err()); }\n",
             "#[macro_use]\nmod helpers;\n#[test]\nfn t() { assert!(port(\"x\").is_err()); }\n",
         ] {

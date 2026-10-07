@@ -221,11 +221,14 @@ rejected alternative. Any can be reversed later without touching the rest.
    same `?` call is covered, and the claim is that a test would notice if
    that `?` were swallowed. "The same `?`" means the old and new statement
    read equal after ignoring whitespace, dropping parentheses that wrap the
-   whole `?` operand, and reading a single turbofish on the `?` call of an
+   whole `?` operand when that operand is already a call, method call,
+   path, field, index, literal or `.await` (`(a + b)?` is not `a + b?`),
+   and reading a single turbofish on the `?` call of an
    unannotated `let` as that type's annotation (`let p = s.parse::<u16>()?`
    and `let p: u16 = s.parse()?` agree). Every other token counts, so a
    changed callee, generic argument, annotation or enclosing call does not
-   agree (`parse_lenient(s)?` to `parse_strict(s)?`, `parse::<u16>` to
+   agree, and neither does an attribute on the `let`
+   (`parse_lenient(s)?` to `parse_strict(s)?`, `parse::<u16>` to
    `parse::<u8>`, `push_u16(s.parse()?)` to `push_u8(..)`), since a side
    oracle cannot see which error or which failing inputs come back
    (rule 1). A removed line, a `?` with no same-statement removed
@@ -243,10 +246,11 @@ rejected alternative. Any can be reversed later without touching the rest.
    name (`is_err()`, `!is_ok()`, `matches!(.., Err(_))`, or a bare
    `unwrap_err()` / `expect_err()`), in a test file with no `macro_rules!`,
    no inherited parent context and no inner attribute other than
-   `#![cfg(test)]`, no `#[macro_use]`, no `use` naming `assert` or
-   `matches` and no glob import other than `super::*`, `self::*` or
-   `crate::*`; no other macro call in the test body (a skip macro can
-   return early) and no attribute on the assertion statement. The
+   `#![cfg(test)]`, no `#[macro_use]`, no `use` or `use .. as` naming
+   `assert`, `assert_eq`, `assert_ne` or `matches` and no glob import other than `super::*`, `self::*` or
+   `crate::*`; no other macro call in the test body or in the owner call's
+   arguments, no `return`, closure or block in those arguments (a skip
+   macro can return early), and no attribute on the assertion statement. The
    premise that the test passes on the current code is assumed, as it is for
    every ripr reading, not checked. Any other shape keeps the
    RIPR-SPEC-0107 reading. Rejected: evaluate `c` on the test input (a
