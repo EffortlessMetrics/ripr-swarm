@@ -1117,6 +1117,17 @@ fn usize_value(value: Option<&Value>) -> Option<usize> {
         .and_then(|value| usize::try_from(value).ok())
 }
 
+/// Cwd read guard for `loop_commands` tests included here via `#[path]`.
+///
+/// Those tests cannot name `crate::acquire_test_cwd_read_guard` when the
+/// same file is compiled as `ripr::agent::loop_commands`. The ripr parent
+/// supplies a no-op; xtask must hold the real lock so `--root .` redirect
+/// render and expectation cannot race with `with_temp_cwd` (#7034).
+#[cfg(test)]
+fn loop_commands_cwd_read_guard() -> impl Drop {
+    crate::acquire_test_cwd_read_guard()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1407,6 +1418,10 @@ mod tests {
 
     #[test]
     fn operator_cockpit_matches_editor_agent_loop_fixture() -> Result<(), String> {
+        // Hold across report render and `<cwd>/` projection: both read
+        // `current_dir()`, and other `editor_` tests switch CWD under the
+        // write guard (#7034).
+        let _cwd_guard = crate::acquire_test_cwd_read_guard();
         let root = temp_report_dir("editor-agent-loop")?;
         let dir = root.join("target/ripr/reports");
         fs::create_dir_all(&dir)

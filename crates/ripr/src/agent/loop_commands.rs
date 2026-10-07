@@ -584,12 +584,23 @@ fn append_redirect(root: &str, command: String, out_path: Option<&str>) -> Strin
 mod tests {
     use super::*;
 
+    /// Hold a stable process CWD across one render-and-compare (#7034).
+    ///
+    /// `--root .` builders and `anchored_expectation` both call
+    /// `std::env::current_dir()`. When this file is compiled into xtask,
+    /// other tests take the cwd write guard and `set_current_dir`; the
+    /// parent hook is that read guard. When compiled as ripr, it is a no-op.
+    fn hold_cwd_read_guard() -> impl Drop {
+        super::super::loop_commands_cwd_read_guard()
+    }
+
     /// #4000: a portable command's analyzed root and redirect target must
     /// name one repository. A relative root keeps a relative target under
     /// that root; the bound builders keep anchoring at the renderer's
     /// resolved root, and an absolute root anchors either way.
     #[test]
     fn portable_redirect_stays_under_the_typed_root() -> Result<(), String> {
+        let _cwd_guard = hold_cwd_read_guard();
         let artifact = WORKFLOW_AGENT_BRIEF_ARTIFACT;
         for (root, expected) in [
             (".", artifact.to_string()),
@@ -647,6 +658,7 @@ mod tests {
 
     #[test]
     fn analysis_outcome_preserves_selected_base_and_default_compatibility() -> Result<(), String> {
+        let _cwd_guard = hold_cwd_read_guard();
         let out = "target/ripr/workflow/analysis-outcome.json";
         let selected = check_analysis_outcome_command_with_base(
             ".",
@@ -680,6 +692,7 @@ mod tests {
 
     #[test]
     fn anchored_redirect_target_roots_relative_outputs_at_root() {
+        let _cwd_guard = hold_cwd_read_guard();
         let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
         let base = display_path(&cwd);
         assert_eq!(
@@ -827,6 +840,7 @@ mod tests {
 
     #[test]
     fn bound_roots_render_absolute_and_relative_roots_stay_portable() {
+        let _cwd_guard = hold_cwd_read_guard();
         let bound = bound_root("repo root/./nested/..");
         let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
         assert_eq!(bound, display_path(&cwd.join("repo root")));
@@ -853,6 +867,7 @@ mod tests {
 
     #[test]
     fn workflow_commands_match_existing_status_templates() {
+        let _cwd_guard = hold_cwd_read_guard();
         assert_eq!(
             agent_start_command(".", "seam-a", "target/ripr/workflow"),
             "ripr agent start --root . --seam-id seam-a --out target/ripr/workflow"
@@ -948,6 +963,7 @@ mod tests {
 
     #[test]
     fn editor_commands_match_existing_lsp_templates() {
+        let _cwd_guard = hold_cwd_read_guard();
         assert_eq!(
             agent_packet_command(".", "seam-a", EDITOR_AGENT_PACKET_ARTIFACT),
             format!(
@@ -978,6 +994,7 @@ mod tests {
 
     #[test]
     fn command_args_quote_spaces_without_touching_plain_tokens() {
+        let _cwd_guard = hold_cwd_read_guard();
         assert_eq!(shell_arg("repo root"), "'repo root'");
         assert_eq!(shell_arg("target/ripr/workflow"), "target/ripr/workflow");
         assert_eq!(
