@@ -299,19 +299,32 @@ strong:
   of the message, as Jest matches `toThrow("...")`.
 - `node:assert` `throws` or `rejects` (not chai `assert`, whose
   signature differs) whose second argument is a regex literal anchored
-  with `^` and `$`, with no unescaped `|` outside a character class, or
-  an all-literal object whose `message` is a string literal.
+  with `^` and `$`, with no flags and no unescaped `|` outside a
+  character class, or an all-literal object whose `message` is a string
+  literal.
 
-Rule 4's message-only guard applies to all of them: on a message-only
-change, a chai string must not be a substring of the old message (as
-rule 4 assembles it), an object `message` must not equal it, and an
-anchored regex credits only when ripr can match it as a plain literal
-(no metacharacters between the anchors other than escapes) whose text,
-after removing a leading `Identifier: ` prefix (`node:assert` tests the
-regex against `String(err)`, such as `Error: blank`), differs from the
-old message; otherwise each reads `broad_error` / weak. A
-class argument, an unanchored regex, an identifier and a template literal
-stay `broad_error` / weak, as do `doesNotThrow` and `doesNotReject`.
+Rule 4's message-only guard applies to all of them, reading both sides:
+on a message-only change, a check credits only when it passes on exactly
+one of the old and new messages (as rule 4 assembles them), because a
+check that passes on both, or on neither, gives the same result on both
+versions. A test still pinned to the old message therefore credits: it
+fails on the new one. A chai string passes when it is a substring of the
+message and an object `message` when it equals it. An anchored regex is
+judged only when ripr can match it as a plain literal (no metacharacters
+between the anchors other than escaped punctuation), and passes when
+that text equals `String(err)`: `Name: message` for a built-in error
+constructor (`Error`, `TypeError`, `RangeError`, `SyntaxError`,
+`ReferenceError`, `EvalError`, `URIError`), the bare message for a
+thrown primitive. Any other constructor's `name` is not on the line, so
+the regex is not judged. A message with an escape other than a quote,
+backslash, `\n` or `\t` is unknown. Whatever is not judged, and any
+check that does not pass on exactly one side, reads `broad_error` /
+weak. The old side of a changed line is the removed line it replaced by
+position in an even replacement block; when a block replaces a
+different number of lines, the old message is unknown and the guard
+reads `broad_error` / weak. A class argument, an unanchored or flagged
+regex, an identifier and a template literal stay `broad_error` / weak,
+as do `doesNotThrow` and `doesNotReject`.
 
 ### Aggregation
 
@@ -527,6 +540,14 @@ rejected alternative. Any can be reversed later without touching the rest.
     weak, which leaves those cases scored false actionable (#6654).
     Rejected: credit any `throws` argument, because a bare or unanchored
     regex can admit both messages.
+13. **Rule 10's guard reads both sides (#7108).** Adopted: credit a
+    check that passes on exactly one of the old and new messages,
+    because the corpus row `mocha-spec14-chai-throw-string` pins the old
+    message and catches every mutant of its line. Rejected: the
+    one-sided wording ("must not match the old message"), which scores
+    that row false actionable and credits a check that matches neither
+    message. Rule 4's Jest guard keeps its wording until it is
+    implemented.
 
 ## Required Evidence
 
@@ -739,6 +760,10 @@ to `amount - 20`, and `tests/lib.test.ts` has
   and the `tests/` modules beside it: `mock_form_tests.rs`,
   `scope_receiver_tests.rs`, `reexport_chain_tests.rs`.
 - Existing: fixture `fixtures/typescript_tape_equal_oracle`.
+- Existing (rule 10 and its guard; examples 14, 34, 35):
+  `crates/ripr/src/analysis/language/typescript/message_check_tests.rs`,
+  including the adapter-level `adapter_guards_every_line_of_a_replaced_block`
+  and `adapter_fails_closed_on_an_uneven_replacement`.
 - Planned: one unit test per changed example (5, 6, 7, 8, 13, 14, 16, 18,
   19, 22, 23, 24, 31, 32, 33, 34, 35), and a verdict corpus holding all
   35 examples, each with
