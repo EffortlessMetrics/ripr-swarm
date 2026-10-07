@@ -13,7 +13,10 @@ use crate::cli::parse::{
     disclose_attached_terminal_stdin_read, expect_value, parse_format, parse_mode,
 };
 use crate::cli::suggest::unknown_argument;
-use crate::config::{CheckInputExplicit, RiprConfig, apply_to_check_input, load_for_root};
+use crate::config::{
+    CheckInputExplicit, RiprConfig, apply_to_check_input, config_discovered_for_root,
+    load_for_root,
+};
 use crate::core_error::CoreError;
 use crate::git::WorkTreeRootProbe;
 use crate::output;
@@ -300,6 +303,21 @@ fn select_output_format(
     *format = chosen;
     *selection = Some(spelling);
     Ok(())
+}
+
+/// Typed refusal for a [`load_for_root`] failure (#6834).
+///
+/// A present-but-unloadable config entry is `config_invalid`. No config
+/// entry anywhere means automatic language detection refused (e.g. Python
+/// markers in a Rust-only binary), not a broken file: the untyped fallback
+/// makes no claim, while `config_invalid` would misdirect to
+/// `analysis/config-load` (#6952 review).
+fn config_load_refusal(root: &Path, err: String) -> CoreError {
+    if config_discovered_for_root(root) {
+        CoreError::config_invalid(err)
+    } else {
+        CoreError::from(err)
+    }
 }
 
 /// Refusal exit for a post-argv-parse `check` failure (#6834).
@@ -609,7 +627,7 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
             refuse_check(
                 &envelope_input,
                 effective_format,
-                CoreError::config_invalid(err),
+                config_load_refusal(&input.root, err),
             )
         })?
     };
@@ -1414,6 +1432,31 @@ mod tests {
             {
                 return Err(format!("{argv:?} must name both selections, got {error}"));
             }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn config_load_refusal_without_any_config_entry_falls_back() -> Result<(), String> {
+        // #6952 review: no ripr.toml anywhere means automatic language
+        // detection refused, not a broken file. The refusal must not
+        // claim `config_invalid`.
+        let dir = unique_command_test_dir("config-load-refusal");
+        std::fs::create_dir_all(&dir).map_err(|err| err.to_string())?;
+        if config_discovered_for_root(&dir) {
+            return Err(format!(
+                "precondition: {} must have no config entry in scope",
+                dir.display()
+            ));
+        }
+        let refusal = config_load_refusal(&dir, "synthetic detection error".to_string());
+        if refusal.check_refusal().identity != crate::core_error::ANALYSIS_FAILED_IDENTITY {
+            return Err("undiscovered config must fall back to analysis_failed".to_string());
+        }
+        std::fs::write(dir.join("ripr.toml"), "[\n").map_err(|err| err.to_string())?;
+        let refusal = config_load_refusal(&dir, "synthetic parse error".to_string());
+        if refusal.check_refusal().identity != "config_invalid" {
+            return Err("a present-but-broken entry must stay config_invalid".to_string());
         }
         Ok(())
     }

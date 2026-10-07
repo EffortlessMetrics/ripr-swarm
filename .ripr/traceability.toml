@@ -13213,3 +13213,32 @@ metrics = [
   "golden_fixture_pass_rate",
   "verdict_corpus_false_actionable_rate",
 ]
+
+[[behavior]]
+id = "RIPR-SPEC-0241"
+name = "check --json refusal envelope"
+spec = "docs/specs/RIPR-SPEC-0241-check-json-refusal-envelope.md"
+tests = [
+  "crates/ripr/tests/cli_smoke.rs::check_json_unresolvable_base_emits_refusal_envelope",
+  "crates/ripr/tests/cli_smoke.rs::check_json_unusable_root_emits_repository_root_unusable",
+  "crates/ripr/tests/cli_smoke.rs::check_json_malformed_config_emits_redacted_refusal",
+  "crates/ripr/tests/cli_smoke.rs::check_json_malformed_suppression_policy_emits_refusal",
+  "crates/ripr/tests/cli_smoke.rs::check_json_unmigrated_analysis_failure_emits_analysis_failed",
+  "crates/ripr/tests/cli_smoke.rs::check_json_timeout_and_bad_base_have_distinct_identities",
+  "crates/ripr/tests/cli_smoke.rs::check_json_success_carries_no_refusal_shape",
+  "crates/ripr/tests/cli_smoke.rs::check_json_argv_usage_errors_stay_prose_only",
+]
+fixtures = []
+code = [
+  "crates/ripr/src/cli/commands/check.rs",
+  "crates/ripr/src/core_error.rs",
+  "crates/ripr/src/output/limited_check.rs",
+  "crates/ripr/src/analysis/diff/load.rs",
+  "crates/ripr/src/app.rs",
+  "crates/ripr/src/app/check.rs",
+  "crates/ripr/src/app/progress.rs",
+]
+outputs = []
+metrics = [
+  "unit_test_pass_rate",
+]

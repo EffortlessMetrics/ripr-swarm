@@ -3014,6 +3014,32 @@ fn check_json_unresolvable_base_emits_refusal_envelope() -> Result<(), String> {
     Ok(())
 }
 
+/// #6834 (owner ruling): argv usage errors stay prose-only. There is no
+/// successfully parsed invocation to echo, so no envelope exists: exit 2,
+/// empty stdout, the cause on stderr.
+#[test]
+fn check_json_argv_usage_errors_stay_prose_only() -> Result<(), String> {
+    let output = run_ripr(&["check", "--json", "--bogus-flag-6834"]);
+    if output.status.code() != Some(2) {
+        return Err(format!(
+            "expected exit 2, got {:?}\nstderr:\n{}",
+            output.status.code(),
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+    if !output.stdout.is_empty() {
+        return Err(format!(
+            "argv usage errors must not emit an envelope, got {} stdout bytes",
+            output.stdout.len()
+        ));
+    }
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if !stderr.contains("--bogus-flag-6834") {
+        return Err(format!("stderr must name the flag, got: {stderr}"));
+    }
+    Ok(())
+}
+
 /// #6834: a `--root` Git cannot work with — a missing directory or a
 /// directory outside any work tree — names `repository_root_unusable`.
 #[test]
