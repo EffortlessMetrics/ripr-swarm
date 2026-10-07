@@ -15,7 +15,8 @@ pub(crate) use path_dependencies::{
     PathDependencyAdjacency, PathDependencyGraphStatus, reverse_dependent_scope_expansion,
 };
 pub(crate) use source_role::{
-    SourceRole, SourceRoleContext, classify_with, is_test_surface_path, seeds_diff_probes,
+    DiffOnlySource, SourceRole, SourceRoleContext, classify_with, diff_only_source,
+    is_test_surface_path, seeds_diff_probes,
 };
 
 pub(crate) use classify::{normalize_path, package_root};

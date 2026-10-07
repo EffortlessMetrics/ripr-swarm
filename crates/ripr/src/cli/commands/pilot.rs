@@ -229,6 +229,14 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
     // changed seam pilot cannot recommend is not kept: it would displace an
     // actionable seam and leave nothing to recommend.
     let current_change = load_pilot_current_change(&input, git_timeout);
+    // #6944: name the changed files `ripr check` analyzes but the repo
+    // inventory leaves out (build scripts, `xtask/`, roots outside `src`),
+    // so a change there is not read as a change with no seams. A failed
+    // corpus walk only loses that note.
+    let diff_only =
+        analysis::diff_only_rust_files(&input.root, &config, &current_change.changed_rust_files())
+            .unwrap_or_default();
+    let current_change = current_change.with_diff_only_files(diff_only);
     // #6943: the inventory seam limit cuts before the change is known, so on
     // a large repo it can drop the very seams the developer changed. Classify
     // the change's own files in what is left of pilot's deadline and add its

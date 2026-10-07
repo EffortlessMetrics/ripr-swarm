@@ -1340,6 +1340,29 @@ pub(crate) fn classify_seams_in_files_at_with_config(
     .map(|inventory| inventory.classified)
 }
 
+/// The changed Rust files (root-relative) that diff analysis covers but the
+/// repo seam inventory leaves out by design (#6944): Cargo build scripts,
+/// repository automation, and crate roots declared outside `src`. Roles come
+/// from the same context the inventory uses to pick its production files.
+pub(crate) fn diff_only_rust_files(
+    root: &Path,
+    config: &RiprConfig,
+    changed_files: &[PathBuf],
+) -> Result<Vec<(PathBuf, workspace::DiffOnlySource)>, String> {
+    if changed_files.is_empty() {
+        return Ok(Vec::new());
+    }
+    let corpus = scan_corpus_fingerprint(root, config)?;
+    let context =
+        production_role_context(root, config, corpus.analyzable.iter().map(PathBuf::as_path));
+    Ok(changed_files
+        .iter()
+        .filter_map(|path| {
+            workspace::diff_only_source(path, &context).map(|source| (path.clone(), source))
+        })
+        .collect())
+}
+
 /// A bounded consumer of classified windows. Implementations retain their
 /// result payloads independently from the complete evaluation denominator.
 pub(crate) trait ScopedEvidenceConsumer {

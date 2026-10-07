@@ -328,20 +328,52 @@ pub(crate) fn seeds_diff_probes(path: &Path, context: &SourceRoleContext) -> boo
         SourceRole::ProductionLikeTestInfrastructure => true,
         _ if context.module_graph_orphans.contains(&normalize(path)) => false,
         role if role.seeds_production_findings() => true,
-        role @ SourceRole::FixtureOrReceiptEvidence => {
-            let normalized = normalize(path);
-            let in_non_source_directory = normalized.components().any(|component| {
-                component
-                    .as_os_str()
-                    .to_str()
-                    .is_some_and(|name| NON_SOURCE_DIRECTORIES.contains(&name))
-            });
-            is_repo_automation_subject(path, role)
-                || (!in_non_source_directory
-                    && (context.build_scripts.contains(&normalized)
-                        || context.declared_production_sources.contains(&normalized)))
-        }
-        _ => false,
+        _ => diff_only_source(path, context).is_some(),
+    }
+}
+
+/// The evidence-role shapes [`seeds_diff_probes`] seeds when changed but
+/// repo mode keeps out of the seam inventory. Pilot names the shape when a
+/// change lands in one, so a change `ripr check` analyzes is not read as a
+/// change with no seams (#6944).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum DiffOnlySource {
+    /// A `build.rs` (or `package.build` script) a manifest builds.
+    BuildScript,
+    /// Repository automation under the root `xtask/`.
+    RepoAutomation,
+    /// A crate root a manifest declares outside `src`, or a file below it.
+    DeclaredOutsideSrc,
+}
+
+/// Which diff-only shape `path` is, if any: `None` for production files
+/// (they are in the inventory), test evidence, data, and files no module
+/// tree reaches.
+pub(crate) fn diff_only_source(path: &Path, context: &SourceRoleContext) -> Option<DiffOnlySource> {
+    let role = classify_with(path, context);
+    let normalized = normalize(path);
+    if role != SourceRole::FixtureOrReceiptEvidence
+        || context.module_graph_orphans.contains(&normalized)
+    {
+        return None;
+    }
+    if is_repo_automation_subject(path, role) {
+        return Some(DiffOnlySource::RepoAutomation);
+    }
+    let in_non_source_directory = normalized.components().any(|component| {
+        component
+            .as_os_str()
+            .to_str()
+            .is_some_and(|name| NON_SOURCE_DIRECTORIES.contains(&name))
+    });
+    if in_non_source_directory {
+        None
+    } else if context.build_scripts.contains(&normalized) {
+        Some(DiffOnlySource::BuildScript)
+    } else if context.declared_production_sources.contains(&normalized) {
+        Some(DiffOnlySource::DeclaredOutsideSrc)
+    } else {
+        None
     }
 }
 
@@ -706,6 +738,30 @@ mod tests {
             !super::seeds_diff_probes(Path::new("build.rs"), &SourceRoleContext::empty()),
             "a build.rs no manifest declares must not seed"
         );
+        // #6944: the seeded files outside the inventory name their shape;
+        // production files (in the inventory) and unseeded files name none.
+        for (path, shape) in [
+            ("build.rs", Some(super::DiffOnlySource::BuildScript)),
+            (
+                "crates/ripr/build.rs",
+                Some(super::DiffOnlySource::BuildScript),
+            ),
+            ("tools/codegen.rs", Some(super::DiffOnlySource::BuildScript)),
+            (
+                "xtask/src/windows_advisory.rs",
+                Some(super::DiffOnlySource::RepoAutomation),
+            ),
+            ("crates/ripr/src/lib.rs", None),
+            ("crates/other/build.rs", None),
+            ("fixtures/entropy/input/build.rs", None),
+            ("tests/cli.rs", None),
+        ] {
+            assert_eq!(
+                super::diff_only_source(Path::new(path), &context),
+                shape,
+                "{path}"
+            );
+        }
         // Repo mode keeps loose files out of the production set; only the
         // changed-file surfaces widen.
         assert_eq!(
@@ -761,6 +817,14 @@ mod tests {
         assert!(
             !super::seeds_diff_probes(Path::new("lib/odd.rs"), &SourceRoleContext::empty()),
             "without the manifest declaration a loose file stays non-production"
+        );
+        assert_eq!(
+            super::diff_only_source(Path::new("lib/odd.rs"), &context),
+            Some(super::DiffOnlySource::DeclaredOutsideSrc)
+        );
+        assert_eq!(
+            super::diff_only_source(Path::new("lib/fixtures/sample.rs"), &context),
+            None
         );
         // Repo mode is unchanged: the seam inventory still keys on layout.
         assert_eq!(
