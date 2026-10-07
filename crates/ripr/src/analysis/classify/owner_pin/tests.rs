@@ -3516,6 +3516,18 @@ fn a_cfg_gated_owner_is_not_reached_by_a_path() {
         assert!(lib.contains("#[cfg(not(test))]\npub fn weight"), "{lib}");
         assert!(path_admitted(&lib, "x * 3", None).is_empty(), "{body}");
     }
+    // An inner `#![cfg]` in the owner's body gates the whole fn, so a
+    // `#[cfg(test)]` re-export may take its name.
+    let body_gated = "mod h {\n    pub fn helper(_: u32) -> u32 {\n        12\n    }\n    #[allow(non_upper_case_globals)]\n    pub static wt: fn(u32) -> u32 = helper;\n}\n#[cfg(test)]\npub use h::wt as weight;\npub fn weight(x: u32) -> u32 { #![cfg(not(test))] let y = x;\n    y * 3\n}\n#[cfg(test)]\nmod tests {\n    #[test]\n    fn weighs() {\n        assert_eq!(crate::weight(4), 12);\n    }\n}\n";
+    assert!(path_admitted(body_gated, "y * 3", None).is_empty());
+    // Control: without the cfg (and so without room for the twin) it pins.
+    let ungated = body_gated
+        .replace("#[cfg(test)]\npub use h::wt as weight;\n", "")
+        .replace("#![cfg(not(test))] ", "");
+    assert_eq!(
+        path_admitted(&ungated, "y * 3", None),
+        ["assert_eq!(crate::weight(4), 12);"]
+    );
     // An enclosing inline module's cfg gates it too.
     let lib = unit_tests("", "assert_eq!(crate::b::weight(4), 12);").replace(
         "pub fn weight(x: u32) -> u32 {\n    x * 3\n}",

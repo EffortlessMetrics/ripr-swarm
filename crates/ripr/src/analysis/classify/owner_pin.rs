@@ -1791,7 +1791,12 @@ fn item_nesting(source: &str, name: &str, line: usize) -> Option<ItemNesting> {
         return None;
     }
     let mut modules = Vec::new();
-    let mut cfg_gated = has_cfg_attr(&function);
+    // An inner `#![cfg]` in the body gates the whole fn too.
+    let mut cfg_gated = has_cfg_attr(&function)
+        || function
+            .body()
+            .and_then(|body| body.stmt_list())
+            .is_some_and(|statements| has_cfg_attr(&statements));
     for ancestor in function.syntax().ancestors().skip(1) {
         if let Some(module) = ast::Module::cast(ancestor.clone()) {
             cfg_gated |= has_cfg_attr(&module)

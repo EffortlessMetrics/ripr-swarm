@@ -197,7 +197,8 @@ rule only for an assertion whose context was admitted.
        the test's crate).
      The owner must sit directly in a module (not a fn body or an `impl`)
      that ripr can place by parsing its file. Neither the owner nor any
-     enclosing inline module may carry a `cfg` or `cfg_attr` attribute: a
+     enclosing inline module may carry a `cfg` or `cfg_attr` attribute,
+     outer or inner (`#![cfg(..)]` in the fn body or module): a
      complementary cfg may compile a same-named `static`, `const`, `use` or
      module in its place, so the path no longer has to reach the owner. Any `r#name` of the owner's
      name in the workspace (a raw twin the uniqueness gate's name match
