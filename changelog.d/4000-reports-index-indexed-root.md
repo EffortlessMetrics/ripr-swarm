@@ -1,7 +1,8 @@
 <!-- section: Fixed -->
-- `ripr reports index --root <dir>` recorded the root but printed
-  `--root .` in every regeneration command, so a pasted command analyzed
-  the current directory instead of the indexed repository. For a
-  non-default root the commands now name the resolved repository and give
-  their artifact paths as absolute paths under the directory the index
-  read; the default `--root .` output is unchanged (#4000).
+- `ripr reports index` regeneration commands now follow the index's inputs.
+  `--root <dir>` was recorded but every command printed `--root .`, so a
+  pasted command analyzed the current directory, and explicit
+  `--reports-dir`/`--review-dir`/... values were ignored in favor of the
+  default `target/ripr/...` paths. Commands now name the input directories;
+  for a non-default root they name the resolved repository with absolute
+  artifact paths. The default packet's output is unchanged (#4000).

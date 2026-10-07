@@ -130,13 +130,15 @@ class of artifact. Missing expected artifacts must remain visible as warnings
 or `missing_expected[]` entries with a command to regenerate them when the
 command is known.
 
-With the default `--root .`, regeneration commands are portable and run from
-the directory the index read. For any other `--root`, a regeneration command
-names the resolved repository and gives every `target/...` artifact path as an
-absolute path under the directory the index read. Commands such as
-`ripr first-pr` resolve their inputs and `--out-dir` against `--root`, so a
-relative artifact path would land under the indexed root instead of where the
-index looks (#4000).
+Each `target/...` path in a regeneration command names the matching input
+directory (`--reports-dir`, `--review-dir`, `--workflow-dir`, ...), so an
+explicit directory appears in the command instead of the default one. With
+the default `--root .` and relative directories the commands stay portable and
+run from the directory the index read. For any other `--root`, a regeneration
+command names the resolved repository and gives every artifact path as an
+absolute path. Commands such as `ripr first-pr` resolve their inputs and
+`--out-dir` against `--root`, so a relative artifact path would land under the
+indexed root instead of where the index looks (#4000).
 
 Repo-local `cargo xtask reports index` also records the Lane 1 evidence chain
 as `lane1_readiness`. That section checks only known artifact paths for
