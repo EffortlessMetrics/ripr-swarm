@@ -772,9 +772,14 @@ where
 /// parent (`src/`, `tests/`, ...) when there is one, else the nearest
 /// ancestor manifest inside the workspace. Files outside every source
 /// layout (a build script beside its manifest, a declared `[lib] path =
-/// "lib/foo.rs"` root) take the second route.
+/// "lib/foo.rs"` root) take the second route. A layout parent above the
+/// workspace root (a root at `~/src/shop` has `src` among its own
+/// ancestors) is not the owner either: like the manifest search, the
+/// layout search never leaves the analyzed workspace.
 pub(super) fn owning_package_dir(workspace_root: &Path, anchored: &Path) -> Option<PathBuf> {
-    package_root_of(anchored).or_else(|| nearest_manifest_dir(workspace_root, anchored))
+    package_root_of(anchored)
+        .filter(|dir| dir.starts_with(workspace_root))
+        .or_else(|| nearest_manifest_dir(workspace_root, anchored))
 }
 
 /// Normalize absolute declared-target paths back to workspace-relative
@@ -994,6 +999,29 @@ mod extraction {
         );
         // A file with no Cargo source-layout ancestor has no package root.
         assert_eq!(package_root_of(Path::new("/ws/loose.rs")), None);
+    }
+
+    #[test]
+    fn owning_package_dir_stays_inside_a_root_under_a_src_directory() -> Result<(), String> {
+        // #6944 review: a root at `<tmp>/src/shop` must not resolve
+        // `build.rs` to `<tmp>` through the `src` above the root.
+        let temp = unique_workspace("owning-package-src-ancestor");
+        let root = temp.join("src").join("shop");
+        let nested = root.join("crates").join("a");
+        std::fs::create_dir_all(nested.join("src")).map_err(|err| err.to_string())?;
+        std::fs::write(root.join("Cargo.toml"), "[package]\nname = 'shop'\n")
+            .map_err(|err| err.to_string())?;
+        std::fs::write(nested.join("Cargo.toml"), "[package]\nname = 'a'\n")
+            .map_err(|err| err.to_string())?;
+        let at_root = owning_package_dir(&root, &root.join("build.rs"));
+        let nested_script = owning_package_dir(&root, &nested.join("build.rs"));
+        // The layout route still wins inside the root.
+        let nested_lib = owning_package_dir(&root, &nested.join("src").join("lib.rs"));
+        let _ = std::fs::remove_dir_all(&temp);
+        assert_eq!(at_root, Some(root));
+        assert_eq!(nested_script, Some(nested.clone()));
+        assert_eq!(nested_lib, Some(nested));
+        Ok(())
     }
 }
 

@@ -1,0 +1,13 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 1111111..2222222 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -14,7 +14,7 @@ impl Window {
+ impl Clone for Window {
+     fn clone(&self) -> Self {
+         Window {
+-            start: self.end,
++            start: self.start,
+             end: self.end,
+         }
+     }

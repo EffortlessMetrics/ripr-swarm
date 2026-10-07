@@ -1,0 +1,13 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 97eae71..c6c9867 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -22,7 +22,7 @@ pub struct Id {
+ impl Id {
+     /// A fresh id: a fixed counter seed tagged with version 1.
+     pub fn new_v1() -> Id {
+-        Id { counter: 0x00ab_cdef, version: 1 }
++        Id { counter: 0x00ab_cdef, version: 0x1 }
+     }
+ 
+     /// A fresh id: a fixed counter seed tagged with version 2.

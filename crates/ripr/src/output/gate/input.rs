@@ -311,13 +311,17 @@ pub(super) fn read_mutation_calibration_impl(
             );
         }
     }
-    if !value
-        .get("ambiguous_file_line_matches")
-        .and_then(Value::as_array)
-        .map(|items| items.is_empty())
-        .unwrap_or(true)
-    {
+    let has_records = |key: &str| {
+        value
+            .get(key)
+            .and_then(Value::as_array)
+            .is_some_and(|items| !items.is_empty())
+    };
+    if has_records("ambiguous_file_line_matches") {
         warnings.push(format!("mutation_calibration {} contains ambiguous file/line matches; those records do not raise gate confidence", display_path(path)));
+    }
+    if has_records("ambiguous_span_overlap_matches") {
+        warnings.push(format!("mutation_calibration {} contains ambiguous span overlaps; those records do not raise gate confidence", display_path(path)));
     }
     index
 }

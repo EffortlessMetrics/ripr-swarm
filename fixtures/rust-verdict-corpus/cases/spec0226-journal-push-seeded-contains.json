@@ -1,0 +1,51 @@
+{
+  "case_id": "spec0226-journal-push-seeded-contains",
+  "subject_id": "authored-spec0226-2c",
+  "diff": "cases/spec0226-journal-push-seeded-contains.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 10
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "side_effect_push",
+  "test_shape": "seeded_receiver_contains_assert",
+  "hard_case": "Both findings read weakly_exposed on the relational oracle, consistent with the truth. RIPR-SPEC-0226 rule 4 also wants the call_deletion text to say the deletion is not established by the side-effect oracle; ripr gives only the generic relational-oracle text.",
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "self.entries.push(amount + 1);",
+        "mutated_line": "self.entries.push(amount + 1);",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: the journal records 6"
+      },
+      {
+        "replacement": "let _ = amount;",
+        "mutated_line": "let _ = amount;",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: nothing is recorded"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "note_keeps_a_seeded_entry pushes 5 before note(5) and asserts only contains(&5), so the seeded entry satisfies the assertion whatever note pushes, and when it pushes nothing. Spec cells: RIPR-SPEC-0226 example 2 (control).",
+  "labeling_observation": {
+    "ripr_commit": "7b3deeb",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

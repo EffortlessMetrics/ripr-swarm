@@ -1875,6 +1875,7 @@ weakly_gripped = "note"
             no_scope_provided: false,
             unanalyzed_working_tree: false,
             untracked_working_tree_source_paths: Vec::new(),
+            unlinked_python_tests: None,
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
@@ -1996,7 +1997,7 @@ weakly_gripped = "note"
         );
         let evidence = TestGripEvidence {
             seam_id: seam.id().clone(),
-            related_tests: vec![RelatedTestGrip {
+            related_tests: vec![std::sync::Arc::new(RelatedTestGrip {
                 test_name: "below_threshold_has_no_discount".to_string(),
                 file: PathBuf::from("tests/pricing.rs"),
                 line: 12,
@@ -2012,7 +2013,7 @@ weakly_gripped = "note"
                 evidence_summary: "exact value assertion".to_string(),
                 relation_reason: RelationReason::DirectOwnerCall,
                 relation_confidence: RelationConfidence::High,
-            }],
+            })],
             reach: stage(StageState::Yes, "related test calls owner"),
             activate: stage(StageState::Yes, "amount value observed"),
             propagate: stage(StageState::Yes, "return value sink reached"),

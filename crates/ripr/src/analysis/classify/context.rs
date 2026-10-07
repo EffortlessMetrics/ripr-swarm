@@ -104,12 +104,49 @@ impl<'a> ProbeContext<'a> {
         source: &str,
         callee: &str,
     ) -> bool {
-        let names = &self.index.package_names;
+        let names = self.own_crate_names(file, callee);
         match self.file_use_statements {
-            Some(memo) => memo.imports_foreign_callee_name(file, source, callee, names),
+            Some(memo) => memo.imports_foreign_callee_name(file, source, callee, &names),
             None => FileUseStatements::default()
-                .imports_foreign_callee_name(file, source, callee, names),
+                .imports_foreign_callee_name(file, source, callee, &names),
         }
+    }
+
+    /// Crate names whose imports bind the owner for a test in `file`: the
+    /// root manifest's `package_names`, plus the names under which the
+    /// test's crate imports the owner's workspace-member library, read from
+    /// the manifests (`MemberCrates`; RIPR-SPEC-0197 rule 5).
+    fn own_crate_names(
+        &self,
+        file: &std::path::Path,
+        callee: &str,
+    ) -> std::borrow::Cow<'_, std::collections::BTreeSet<String>> {
+        // The owner's crate root from module composition, so a `src/` module
+        // of a binary target is never taken for the library.
+        let owner_root = self.owner_fn.and_then(|owner| {
+            super::owner_pin::target_root(&owner.file, self.index, &Default::default())
+        });
+        let Some(owner_root) = owner_root else {
+            return std::borrow::Cow::Borrowed(&self.index.package_names);
+        };
+        let member = self.index.member_crates.import_names(file, &owner_root);
+        // A `pub use` of a foreign item under the callee's name means the
+        // import may bind that item instead of the owner.
+        if member
+            .iter()
+            .all(|name| self.index.package_names.contains(name))
+            || self
+                .index
+                .member_crates
+                .may_export_foreign(&owner_root, callee, || {
+                    super::owner_pin::library_may_export_other(self.index, &owner_root, callee)
+                })
+        {
+            return std::borrow::Cow::Borrowed(&self.index.package_names);
+        }
+        let mut names = self.index.package_names.clone();
+        names.extend(member);
+        std::borrow::Cow::Owned(names)
     }
 
     /// Borrow just the `TestSummary` references for callers that don't need

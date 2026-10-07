@@ -1,0 +1,51 @@
+{
+  "case_id": "accounts-last-byte-unchecked",
+  "subject_id": "authored-accounts",
+  "diff": "cases/accounts-last-byte-unchecked.diff",
+  "anchor": {
+    "file": "src/bytes.rs",
+    "line": 20
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "static_unknown_unsafe_block",
+  "test_shape": "smoke_call_discards_result",
+  "hard_case": null,
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "0",
+        "mutated_line": "0",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: the last byte reads as 0"
+      },
+      {
+        "replacement": "*bytes.get_unchecked(0)",
+        "mutated_line": "*bytes.get_unchecked(0)",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: the first byte is returned"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "last_byte_accepts_any_slice discards the result with let _ =, so nothing observes the byte read inside the unsafe block. Spec cells: RIPR-SPEC-0168 unsafe block; smoke-only test.",
+  "labeling_observation": {
+    "ripr_commit": "b0c6ef6",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "static_unknown"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

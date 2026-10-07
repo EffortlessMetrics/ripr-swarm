@@ -16,6 +16,8 @@ Linked issues:
 
 - #4828
 - #5027 (shared execution admission before pairing)
+- #6668 (argument must be the boundary literal, not merely contain it)
+- #7004 (post-`let` mutation voids a bound boundary name)
 
 Linked PRs:
 
@@ -77,6 +79,20 @@ constant or helper hop stays paired. A same-test mix that calls the boundary
 without asserting and asserts a far call (`let _ = gate(10); assert_eq!(gate(100),
 true)`) does not pair.
 
+An owner-call argument is a boundary input only when it is the literal itself
+(including a type suffix such as `10u32`), a named local bound to that literal,
+or a form infection already recorded as `==` the boundary. An expression that
+merely contains the literal does not pair, including `gate(if false { 10 } else
+{ 50 })`, `gate(std::cmp::max(10, 50))`, and a bool-owner `assert!(gate(..))`
+pin of either shape (#6668). Those cases fall back to `same_test_pairing_missing`.
+
+A `let`-bound boundary name stays paired only while the binding still holds
+the call's result. A post-`let` reassignment (`got = true`), compound
+assignment (`got += 1`), or `&mut` borrow (`&mut got`) voids the binding
+fail-closed, so a later exact assertion on the name does not pair (#7004).
+`let mut` alone does not void, and a mutation before the boundary `let`
+does not void the fresh binding. Re-`let` shadowing is unchanged.
+
 Helper-call transfer, proximity-only oracle credit, and bare-name method
 relation are out of scope.
 
@@ -87,12 +103,18 @@ relation are out of scope.
 - A control where one test does both (`assert_eq!(gate(10), true)`, and
   `fixtures/strong_boundary_oracle`) stays `exposed`.
 - Unit tests cover split tests, same-call pairing, same-test split calls,
-  same-line split calls, unused-argument literals, shadowed bindings, and
-  let-bound pairing including short names.
+  same-line split calls, unused-argument literals, shadowed bindings,
+  let-bound pairing including short names, buried-literal if-expression and
+  `std::cmp::max` arguments (including `assert!`), typed literals, locals
+  bound to the boundary, named-constant pairing through infection `==`,
+  named-constant pairing when an unrelated extra argument is compound,
+  post-`let` reassignment, compound assignment, and `&mut` borrows (each
+  voiding the binding), and the unmutated `let mut` control that still pairs.
 - Golden drift is reviewed row by row: every downgrade names the missing
   same-test pairing, and no finding gains a class.
 - An honesty-corpus case independently prohibits `exposed` on the split
-  reproduction.
+  reproduction, and one case per post-`let` mutation variant
+  (reassignment, compound assignment, mutable borrow) does the same.
 
 ## Non-Goals
 
@@ -112,6 +134,24 @@ relation are out of scope.
   fixture remains `exposed`.
 - Given `let _ = gate(10); assert_eq!(gate(100), true)` in one test, when the
   predicate is classified, then it does not pair.
+- Given `assert_eq!(gate(if false { 10 } else { 50 }), true)` or
+  `assert_eq!(gate(std::cmp::max(10, 50)), true)`, when the predicate is
+  classified, then it does not pair: the evaluated argument is 50.
+- Given `let threshold = 10; assert_eq!(gate(threshold), true)`, or
+  `assert_eq!(gate(10u32), true)`, or `assert_eq!(gate(LIMIT), true)` with an
+  infection `==` fact, when the predicate is classified, then it pairs.
+  `assert_eq!(gate(LIMIT, make_context()), true)` with that same `==` fact
+  also pairs: the extra compound argument is not the compared parameter.
+  `assert_eq!(bulk_rate(parcels::BULK_ITEMS), 90)` with `items == BULK_ITEMS`
+  also pairs: a path-qualified constant is still the named boundary.
+  Given `let amount = raw; amount >= threshold` and
+  `assert_eq!(gate(if false { 10 } else { 50 }, 10), true)`, pairing does
+  not treat the aliased input as a boundary just because `threshold` is 10.
+- Given `let mut got = gate(10); got = true; assert_eq!(got, true)`, or
+  `got += 1` / `&mut got` in place of the reassignment, when the predicate
+  is classified, then it does not pair: the binding no longer holds the
+  boundary call's result. Given `let mut got = gate(10);` with no later
+  mutation, then `assert_eq!(got, true)` still pairs.
 
 ## Test Mapping
 
@@ -119,6 +159,9 @@ relation are out of scope.
 - `fixtures/split_test_boundary_oracle`
 - `fixtures/predicate_boundary_oracle_refused`
 - `fixtures/predicate_boundary_oracle_admitted`
+- `fixtures/predicate_pairing_reassigned_binding`
+- `fixtures/predicate_pairing_compound_assigned_binding`
+- `fixtures/predicate_pairing_mutably_borrowed_binding`
 - `crates/ripr/tests/owner_pin_execution.rs::predicate_pairing_cannot_reuse_refused_boundary_equalities`
 
 ## Implementation Mapping

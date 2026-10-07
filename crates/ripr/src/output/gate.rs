@@ -37,6 +37,18 @@ pub(crate) const GATE_STATUS_CONFIG_ERROR: &str = "config_error";
 /// maps this token to process exit 3 (`docs/EXIT_CODES.md`); `help --json`
 /// uses the same bytes as the `gate_evaluate` serde key.
 pub(crate) const GATE_STATUS_BLOCKED: &str = "blocked";
+/// The closed top-level `status` set a gate decision may carry
+/// (`schemas/ripr/gate-decision.schema.json`, in schema order), mirrored
+/// from the `top_level_status` producer. Consumers validating an unknown
+/// producer document reject anything outside this set instead of treating
+/// an out-of-contract status as a completed evaluation (#6770 review).
+pub(crate) const GATE_DECISION_KNOWN_STATUSES: [&str; 5] = [
+    "pass",
+    "advisory",
+    "acknowledged",
+    "blocked",
+    "config_error",
+];
 const SCHEMA_VERSION: &str = "0.1";
 const DEFAULT_THRESHOLD: &str = "high_confidence_new_gap";
 const DEFAULT_ACKNOWLEDGEMENT_LABEL: &str = "ripr-waive";
@@ -1558,6 +1570,36 @@ pub(crate) fn discloses_incomplete_analysis_outcome(value: &Value) -> bool {
         .pointer("/analysis_outcome/analysis_complete")
         .and_then(Value::as_bool)
         == Some(false)
+}
+
+/// Whether a gap-ledger document discloses a blocked producer run: the
+/// producer's own `status: "blocked"` verdict carrying failure warnings.
+/// `build_gap_decision_ledger_report` sets `blocked` whenever the record set
+/// is empty, which also covers a genuinely empty zero-gap ledger — those
+/// carry no warnings and stay a complete zero denominator. A blocked ledger
+/// WITH warnings is a failed producer, never a denominator (#6095 review).
+pub(crate) fn discloses_blocked_producer_outcome(value: &Value) -> bool {
+    value.pointer("/status").and_then(Value::as_str) == Some("blocked")
+        && value
+            .pointer("/warnings")
+            .and_then(Value::as_array)
+            .is_some_and(|warnings| !warnings.is_empty())
+}
+
+/// The producer-owned warnings of a blocked ledger. Consumers surface these
+/// verbatim instead of inventing a verdict from a failed producer.
+pub(crate) fn blocked_producer_warnings(value: &Value) -> Vec<String> {
+    value
+        .pointer("/warnings")
+        .and_then(Value::as_array)
+        .map(|warnings| {
+            warnings
+                .iter()
+                .filter_map(Value::as_str)
+                .map(ToOwned::to_owned)
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 /// Return the producer-owned typed outcome kind for an incomplete envelope.

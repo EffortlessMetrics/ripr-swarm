@@ -76,6 +76,11 @@ pub enum StopReason {
     /// owner. ripr does not expand the macro; classification stays
     /// `no_static_path`. See RIPR-SPEC-0117.
     MacroReachUnresolved,
+    /// ripr could not establish the evidence a gap claim needs (today, that
+    /// the refused related assertions do not run), so the finding is an
+    /// unknown rather than a gap. A `static_limit_kind` names the missing
+    /// link. See RIPR-SPEC-0240.
+    GapEvidenceUnresolved,
 }
 
 impl StopReason {
@@ -94,6 +99,7 @@ impl StopReason {
             StopReason::StaticProbeUnknown => "static_probe_unknown",
             StopReason::TransitiveReachUnresolved => "transitive_reach_unresolved",
             StopReason::MacroReachUnresolved => "macro_reach_unresolved",
+            StopReason::GapEvidenceUnresolved => "gap_evidence_unresolved",
         }
     }
 
@@ -147,6 +153,10 @@ impl StopReason {
             }
             StopReason::MacroReachUnresolved => {
                 "a candidate test path stops at a same-repo macro ripr does not expand"
+            }
+            StopReason::GapEvidenceUnresolved => {
+                "ripr could not establish the evidence a gap needs for this change, so it does \
+                 not claim one"
             }
         }
     }
@@ -286,18 +296,27 @@ pub struct MissingDiscriminatorFact {
     pub flow_sink: Option<FlowSinkFact>,
 }
 
-/// The missing discriminator that names an input boundary a test never
-/// reaches. Only predicate probes produce one, and its value is always
-/// `left == right` (`classify::activation::missing_boundary_discriminator`);
-/// error-variant and field facts name an assertion that is missing instead.
+/// Opens the reason of a match-arm missing discriminator that names an arm
+/// no related test's input selects (RIPR-SPEC-0229). Shared so the analyzer
+/// that writes it and the miss renderer that reads it agree.
+pub(crate) const ARM_UNSELECTED_REASON_PREFIX: &str = "No related test call selects arm";
+
+/// The missing discriminator that names an input no test supplies: for a
+/// predicate probe the boundary `left == right` it never reaches
+/// (`classify::activation::missing_boundary_discriminator`), for a match-arm
+/// probe the arm no test input selects. Error-variant and field facts name
+/// an assertion that is missing instead.
 pub(crate) fn input_boundary_fact<'a>(
     facts: &'a [MissingDiscriminatorFact],
     family: &ProbeFamily,
 ) -> Option<&'a MissingDiscriminatorFact> {
-    if *family != ProbeFamily::Predicate {
-        return None;
+    match family {
+        ProbeFamily::Predicate => facts.iter().find(|fact| fact.value.contains(" == ")),
+        ProbeFamily::MatchArm => facts
+            .iter()
+            .find(|fact| fact.reason.starts_with(ARM_UNSELECTED_REASON_PREFIX)),
+        _ => None,
     }
-    facts.iter().find(|fact| fact.value.contains(" == "))
 }
 
 /// The missing discriminator that names an exact assertion no test makes
@@ -537,8 +556,8 @@ impl SourceCurrentness {
     /// Delta-only resolution for producers that seed probes from head-side
     /// lines and never produce removed-only probes (#3281). A probe whose
     /// expression is candidate-side code (`after` present) is
-    /// `CandidateCurrent`; a producer with no delta evidence at all (the
-    /// Perl fact-packet path) stays the explicit unknown. Removed-only
+    /// `CandidateCurrent`; a producer with no delta evidence at all stays
+    /// the explicit unknown. Removed-only
     /// probes need the diff-level resolver in
     /// `analysis::probes` (movement evidence), not this helper.
     pub fn from_probe_delta(before: Option<&str>, after: Option<&str>) -> Self {
@@ -615,8 +634,9 @@ impl Finding {
     /// agent action derived from a finding must flow through this
     /// predicate. A finding qualifies only when its producer proved the
     /// source is candidate-current; `base_deleted` and `moved_or_renamed`
-    /// are base-side evidence, and `unresolved_subject` (the Perl
-    /// fact-packet path today, and pre-#3280 artifacts) is not established
+    /// are base-side evidence, and `unresolved_subject` (a Perl change the
+    /// diff does not add a line to or whose source is not on disk, and
+    /// pre-#3280 artifacts) is not established
     /// current. Classifications, severity, and repair readiness never
     /// upgrade a non-current finding.
     pub fn is_candidate_actionable(&self) -> bool {
@@ -645,6 +665,7 @@ mod tests {
             StopReason::StaticProbeUnknown,
             StopReason::TransitiveReachUnresolved,
             StopReason::MacroReachUnresolved,
+            StopReason::GapEvidenceUnresolved,
         ] {
             let gloss = reason.describe();
             assert!(!gloss.contains("  "), "{}: {gloss}", reason.as_str());
