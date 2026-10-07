@@ -143,7 +143,9 @@ rule only for an assertion whose context was admitted.
      rename another item to it, or declare a `type` alias of it. A type
      declaration of the name in the test's own module scope shadows the
      production type for that test (#6905), so it refuses the pin rather
-     than crediting the production method.
+     than crediting the production method. A macro definition or invocation
+     in that scope whose text declares the name may emit the type, so it
+     shadows the same way (#6948 review).
    - The receiver type must dispatch to the owner: the inherent `impl`'s
      self type, the trait impl's self type, or, for a trait default method,
      a type with an `impl .. Trait for <type>` in the workspace. A trait
