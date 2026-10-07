@@ -1296,10 +1296,12 @@ impl OwnerReturnPin {
         // #6957: the exemption resolves the owner's enclosing module in the
         // test file's own parse, so only a same-file owner supplies one; a
         // cross-file owner keeps the fail-closed shadow check.
-        let owner_scope = (test.file == self.owner_file).then_some(OwnerScope {
-            name: self.name.as_str(),
-            start_line: self.owner_start_line,
-        });
+        let owner_scope = OwnerScope::same_file(
+            self.name.as_str(),
+            self.owner_start_line,
+            &self.owner_file,
+            &test.file,
+        );
         let masked_body = mask_comments_and_strings(&test.body);
         match (&self.call, call) {
             (PinCall::Bare, CallShape::Bare) => {
@@ -3422,9 +3424,23 @@ fn named_or_slice(
 /// test-local shadow. Only the test file's own parse resolves it, so a
 /// cross-file owner supplies no scope and keeps the fail-closed check.
 #[derive(Clone, Copy)]
-struct OwnerScope<'a> {
+pub(in crate::analysis) struct OwnerScope<'a> {
     name: &'a str,
     start_line: usize,
+}
+
+impl<'a> OwnerScope<'a> {
+    /// A scope for a same-file owner, or `None` when the owner lives in
+    /// another file and keeps the fail-closed shadow check. Related-test
+    /// reach reuses the #6957 exemption through this constructor (#6951).
+    pub(in crate::analysis) fn same_file(
+        name: &'a str,
+        start_line: usize,
+        owner_file: &Path,
+        test_file: &Path,
+    ) -> Option<Self> {
+        (test_file == owner_file).then_some(Self { name, start_line })
+    }
 }
 
 /// Whether the test's own inline-module scope declares the receiver type
@@ -3442,7 +3458,11 @@ struct OwnerScope<'a> {
 /// naming the type in an inner scope would disambiguate, but this stays
 /// lexical and fails closed. A file that textually declares the name
 /// nowhere needs no parse; one that fails to parse fails closed.
-fn test_module_shadows_type(
+///
+/// Shared with related-test classification (#6951): a shadowed receiver
+/// type also refuses `direct_owner_call` reach credit, for the same
+/// entity-identity reason.
+pub(in crate::analysis) fn test_module_shadows_type(
     test: &TestSummary,
     source: &str,
     base: &str,

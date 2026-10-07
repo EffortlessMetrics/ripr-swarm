@@ -66,7 +66,7 @@ const STATUS_TOOL_DESCRIPTION: &str = "Report the RIPR workspace and session sta
 
 const REFRESH_TOOL_DESCRIPTION: &str = "Run one bounded static analysis of the workspace diff through RIPR's shared check authority (the same analysis `ripr check` and the language server run) and commit the completed snapshot into this server's session. The call blocks until the attempt reaches a terminal state and reports the attempt state: completed (a snapshot identity is returned, bound to the typed AnalysisOutcome), failed (a typed failure code, bounded detail, and recovery; the last-known-good snapshot is kept), in_flight (a concurrent attempt is running; poll ripr_workspace_status), or workspace_unavailable (the root was not usable; restart the server with `--root <repository>`). An attempt runs to a terminal state; cancelling the MCP request never rolls an attempt back or manufactures a snapshot. A cancelled attempt still commits as a completed snapshot when it finishes and only transport teardown abandons one before it commits, while a superseded attempt is never committed. Bounded analysis: the workspace's own ripr.toml is honored through the same resolution the CLI uses (a loaded config, built-in defaults with marker-based language auto-enable when none resolves, draft mode); a configuration that cannot be read or resolved fails the attempt closed with config_invalid. This tool never edits source, executes verification or mutation commands, or prepares a repair. Recovery vocabulary: analysis_failed (retry; run `ripr check --format json` for the full diagnostic), unsupported_profile (narrow the diff), config_invalid (resolve the workspace configuration error the failure names), plus reserved codes (workspace_ambiguous, static_limitation, cancelled, superseded) owned by later slices.";
 
-const LIST_GAPS_TOOL_DESCRIPTION: &str = "Return the deterministic bounded working set of canonical items for the current completed snapshot (or for an explicitly named snapshot_id, which must match the current one or the call fails closed with stale_snapshot and the current identity). The response contains total, eligible, selected, and omitted counts; selected and complete serialized bytes; every omitted identity with its reason; the snapshot/profile/budget identity and selection basis; and one small summary per selected item (canonical_id, exposure class, language, file, line). Selection is the shared CLI/LSP budget authority over the snapshot's canonical items; MCP does not re-rank, never truncates silently, and infers no business risk. Overflow is disclosed with reasons and the omitted identities, and the continuation route is ripr_get_gap. Before the first successful ripr_refresh this tool fails closed with no_snapshot; while an attempt runs it reports analysis_in_flight; a document that cannot fit the response bound fails with result_too_large. Summaries carry no evidence detail; read one item with ripr_get_gap.";
+const LIST_GAPS_TOOL_DESCRIPTION: &str = "Return the deterministic bounded working set of canonical items for the current completed snapshot (or for an explicitly named snapshot_id, which must match the current one or the call fails closed with stale_snapshot and the current identity). The response contains total, eligible, selected, and omitted counts; selected and complete serialized bytes; every omitted identity with its reason; the snapshot/profile/budget identity and selection basis; and one small summary per selected item (canonical_id, exposure class, language, file, line). Selection is the shared CLI/LSP budget authority over the snapshot's canonical items; MCP does not re-rank, never truncates silently, and infers no business risk. Overflow is disclosed with reasons and the omitted identities. offset and limit page over the selected items in snapshot order; when the whole selection cannot fit one wire response, the call returns the first wire-fitting page and discloses the window through page.has_more and page.next_offset, so walk next_offset to read the rest — the continuation routes are the next page and ripr_get_gap. Before the first successful ripr_refresh this tool fails closed with no_snapshot; while an attempt runs it reports analysis_in_flight; only a document that cannot fit even one page fails with result_too_large. Summaries carry no evidence detail; read one item with ripr_get_gap.";
 
 const GET_GAP_TOOL_DESCRIPTION: &str = "Return one canonical item's complete bounded evidence from the current completed snapshot (optional snapshot_id must match the current snapshot or the call fails closed with stale_snapshot). The document binds the item to its snapshot identity and contains: identity and location; the changed behavior (expression, before/after, delta kind, probe family); causal attribution (canonical gap owner, behavior kind, probe kind, normalized discriminator); discriminator availability and the producer's observed/missing evidence; related tests with oracle kind and strength; readiness, whose repair_packet_ready now reports the committed producer repair-readiness facts (candidate actionability, an established discriminator, and a strong directly-related test fix site on a test surface) with the typed first-failing-gate reason when not ready — this evidence never authorizes an edit by itself; a repair boundary of none_declared until ripr_prepare_repair binds a transaction; and links to the snapshot resource and — once a session transaction exists for this item — the repair-attempt resource. Unknown ids fail closed with item_not_found; a document over the response bound fails with result_too_large. Before the first successful ripr_refresh this tool fails closed with no_snapshot; while an attempt runs it reports analysis_in_flight. Equivalent evidence reads: the tool ripr_get_gap and the resource ripr://gap/{canonical_id} return the same document.";
 
@@ -240,35 +240,87 @@ pub(super) fn status_tool_result(
         max_message_bytes,
         max_response_bytes,
     );
-    let text = serde_json::to_string_pretty(&document)
-        .map_err(|error| format!("render workspace status: {error}"))?;
-    let mut content = vec![json!({
-        "type": "text",
-        "text": text
-    })];
-    if let Some(recovery) = unavailable_recovery(status) {
+    let mut envelope = tool_result(document)?;
+    if let Some(recovery) = unavailable_recovery(status)
+        && let Some(content) = envelope.get_mut("content").and_then(Value::as_array_mut)
+    {
         content.push(json!({
             "type": "text",
             "text": recovery
         }));
     }
-    Ok(json!({
-        "content": content,
-        "structuredContent": document,
-        "isError": false
-    }))
+    Ok(envelope)
 }
 
-/// A successful tool result envelope: pretty text for hosts, the document
-/// as structured content, and the standard non-error flag.
+/// A successful tool result envelope. The document is carried once at full
+/// fidelity (#6021): `content[0].text` is the compact JSON serialization —
+/// hosts parse it as JSON — and `structuredContent` repeats the same
+/// document only while the complete double-carry envelope still measures
+/// under the response bound. The former pretty-printed text copy escaped
+/// inside the outer JSON inflated the wire response to ~2.4x the document,
+/// so a budget-approved listing could fail `result_too_large` after the
+/// document guard had passed. When even the compact-text envelope cannot
+/// fit, this fails closed with both sizes so the caller answers with the
+/// typed `result_too_large` failure instead of an over-cap response.
 pub(super) fn tool_result(document: Value) -> Result<Value, String> {
-    let text = serde_json::to_string_pretty(&document)
+    let text = serde_json::to_string(&document)
         .map_err(|error| format!("render tool document: {error}"))?;
-    Ok(json!({
+    let structured = json!({
         "content": [{ "type": "text", "text": text }],
         "structuredContent": document,
         "isError": false,
-    }))
+    });
+    if envelope_bytes(&structured)? <= super::MAX_RESPONSE_BYTES {
+        return Ok(structured);
+    }
+    let text_only = json!({
+        "content": [{ "type": "text", "text": text }],
+        "isError": false,
+    });
+    let bytes = envelope_bytes(&text_only)?;
+    if bytes > super::MAX_RESPONSE_BYTES {
+        return Err(format!(
+            "tool document cannot fit the response envelope: compact text renders {bytes} bytes against the {}-byte bound",
+            super::MAX_RESPONSE_BYTES
+        ));
+    }
+    Ok(text_only)
+}
+
+fn envelope_bytes(envelope: &Value) -> Result<usize, String> {
+    struct LengthWriter(usize);
+
+    impl std::io::Write for LengthWriter {
+        fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
+            self.0 += buffer.len();
+            Ok(buffer.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    let mut writer = LengthWriter(0);
+    serde_json::to_writer(&mut writer, envelope)
+        .map_err(|error| format!("measure tool envelope: {error}"))?;
+    Ok(writer.0)
+}
+
+/// Whether the complete double-carry envelope for `document` measures over
+/// the response bound — the point where `tool_result` would ship the
+/// text-only fallback without `structuredContent`. Paging callers shrink
+/// their page until this is `false`, so a tool that advertises an
+/// `outputSchema` always returns a structured result (#6021 review).
+pub(super) fn structured_envelope_overflows(document: &Value) -> Result<bool, String> {
+    let text = serde_json::to_string(document)
+        .map_err(|error| format!("render tool document: {error}"))?;
+    let structured = json!({
+        "content": [{ "type": "text", "text": text }],
+        "structuredContent": document,
+        "isError": false,
+    });
+    Ok(envelope_bytes(&structured)? > super::MAX_RESPONSE_BYTES)
 }
 
 /// A typed tool failure envelope: standard `isError` semantics with the
@@ -387,7 +439,17 @@ fn list_gaps_tool_descriptor() -> Value {
         "inputSchema": {
             "type": "object",
             "properties": {
-                "snapshot_id": { "type": "string" }
+                "snapshot_id": { "type": "string" },
+                "offset": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": "Start index within the selected items, in snapshot order. Default 0."
+                },
+                "limit": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "description": "Maximum selected-item summaries to return in this page."
+                }
             },
             "additionalProperties": false
         },
@@ -972,6 +1034,25 @@ fn gap_list_output_schema() -> Value {
                         }
                     },
                     "items": { "type": "array" },
+                    "page": {
+                        "type": "object",
+                        "properties": {
+                            "offset": { "type": "integer", "minimum": 0 },
+                            "limit": {
+                                "type": ["integer", "null"],
+                                "minimum": 1,
+                                "description": "The caller-set page cap; null when the page byte-filled."
+                            },
+                            "returned": { "type": "integer", "minimum": 0 },
+                            "has_more": { "type": "boolean" },
+                            "next_offset": {
+                                "type": ["integer", "null"],
+                                "minimum": 0
+                            }
+                        },
+                        "required": ["offset", "limit", "returned", "has_more", "next_offset"],
+                        "additionalProperties": false
+                    },
                     "omitted_items": { "type": "array" },
                     "continuation": { "type": "object" },
                     "claim_boundary": { "type": "string" },
@@ -996,6 +1077,7 @@ fn gap_list_output_schema() -> Value {
                     "overflowed",
                     "overflow_reasons",
                     "items",
+                    "page",
                     "omitted_items",
                     "continuation",
                     "claim_boundary",
@@ -1174,6 +1256,122 @@ mod tests {
             .pointer(pointer)
             .and_then(Value::as_str)
             .ok_or_else(|| format!("{pointer} missing or not a string"))
+    }
+
+    /// #6021: the tool envelope used to serialize the document twice — a
+    /// pretty-printed text copy plus `structuredContent` — so a listing the
+    /// document guard approved at ~96 KB died on the wire at ~236 KB with
+    /// `result_too_large` after every budget layer had passed. The envelope
+    /// must carry the document once at full fidelity: compact text always,
+    /// `structuredContent` only while the complete envelope still measures
+    /// under the response bound, and a typed failure when even the compact
+    /// text cannot fit.
+    #[test]
+    fn tool_result_carries_the_document_once_when_the_double_envelope_overflows()
+    -> Result<(), String> {
+        let rows = |count: usize| {
+            json!({
+                "schema_version": "ripr-mcp-gap-list-v1",
+                "rows": (0..count)
+                    .map(|index| {
+                        json!({
+                            "canonical_id": format!(
+                                "gap:rust:src/module{index}.rs:owner:predicate_boundary:predicate:total{index}==10000"
+                            ),
+                            "class": "weakly_exposed",
+                            "language": "rust",
+                            "file": format!("src/module{index}.rs"),
+                            "line": index + 1,
+                        })
+                    })
+                    .collect::<Vec<_>>(),
+            })
+        };
+
+        // Small documents keep the structured copy hosts consume.
+        let small = tool_result(rows(4)).map_err(|error| error.to_string())?;
+        let small_bytes = serde_json::to_vec(&small).map_err(|error| error.to_string())?;
+        if small_bytes.len() > super::super::MAX_RESPONSE_BYTES {
+            return Err(format!(
+                "small envelope overflowed: {} bytes",
+                small_bytes.len()
+            ));
+        }
+        if small.get("structuredContent").is_none() {
+            return Err("a small envelope must keep structuredContent".to_string());
+        }
+        let small_text = small
+            .pointer("/content/0/text")
+            .and_then(Value::as_str)
+            .ok_or_else(|| "small envelope lost its text copy".to_string())?;
+        if small_text.contains('\n') {
+            return Err(
+                "the text copy must be the compact serialization, not pretty print".to_string(),
+            );
+        }
+        let reparsed: Value = serde_json::from_str(small_text)
+            .map_err(|error| format!("text copy is not JSON: {error}"))?;
+        if reparsed.get("schema_version") != Some(&json!("ripr-mcp-gap-list-v1")) {
+            return Err(format!("text copy drifted from the document: {reparsed}"));
+        }
+
+        // A document the old document guard approved (~70 KB compact) but
+        // whose doubled envelope (~164 KB) terminated the response: it must
+        // now ship, with the compact text and no structured copy. It sits
+        // past the paging ceiling, so this exercises the envelope alone.
+        let approved = rows(480);
+        let approved_bytes = serde_json::to_string(&approved).map_err(|error| error.to_string())?;
+        if approved_bytes.len() <= super::super::MAX_TOOL_DOCUMENT_BYTES
+            || approved_bytes.len() >= super::super::MAX_RESPONSE_BYTES
+        {
+            return Err(format!(
+                "fixture drifted: the approved document must sit between the paging ceiling and the raw cap, got {} bytes",
+                approved_bytes.len()
+            ));
+        }
+        let shipped = tool_result(approved).map_err(|error| {
+            format!("a guard-approved document must not die in the envelope: {error}")
+        })?;
+        let shipped_bytes = serde_json::to_vec(&shipped).map_err(|error| error.to_string())?;
+        if shipped_bytes.len() > super::super::MAX_RESPONSE_BYTES {
+            return Err(format!(
+                "the shipped envelope must fit the wire bound, got {} bytes",
+                shipped_bytes.len()
+            ));
+        }
+        if shipped.get("structuredContent").is_some() {
+            return Err(
+                "the doubled envelope would overflow: structuredContent must be dropped, not shipped"
+                    .to_string(),
+            );
+        }
+        let shipped_text = shipped
+            .pointer("/content/0/text")
+            .and_then(Value::as_str)
+            .ok_or_else(|| "shipped envelope lost its text copy".to_string())?;
+        let reparsed: Value = serde_json::from_str(shipped_text)
+            .map_err(|error| format!("shipped text is not JSON: {error}"))?;
+        if reparsed.pointer("/rows/0/canonical_id").is_none() {
+            return Err("shipped text lost the document payload".to_string());
+        }
+
+        // A document that cannot fit even as compact text fails closed
+        // here, before any transport teardown.
+        let oversized = rows(4000);
+        let oversized_bytes =
+            serde_json::to_string(&oversized).map_err(|error| error.to_string())?;
+        if oversized_bytes.len() <= super::super::MAX_RESPONSE_BYTES {
+            return Err(format!(
+                "fixture drifted: the oversized document must exceed the raw cap, got {} bytes",
+                oversized_bytes.len()
+            ));
+        }
+        match tool_result(oversized) {
+            Err(_) => Ok(()),
+            Ok(envelope) => Err(format!(
+                "an over-cap document must fail closed in the envelope builder, got {envelope}"
+            )),
+        }
     }
 
     #[test]

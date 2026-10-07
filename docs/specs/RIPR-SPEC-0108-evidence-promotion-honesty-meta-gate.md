@@ -82,7 +82,8 @@ denominator or establish representative-project accuracy. Golden assertions
 pin a nonzero finding count and oracle fields so empty findings cannot pass
 even when report-level scope or limitations are retained.
 The typed `expected_related_test` assertion also pins the test's file, line,
-name and oracle fields on every selected finding. Deleting that JSON evidence
+name and oracle fields on every selected finding, with an optional
+`relation_reason` pin for reach-identity cases. Deleting that JSON evidence
 cannot pass by retaining top-level oracle fields and human prose.
 
 Oracle projection validation also accepts the renderer's anchored related-test
@@ -157,7 +158,7 @@ contains ` uses ` does not hide an otherwise valid oracle projection.
       `allowed_edit_surface`, and `forbidden_files`
     - `must_not_have_contradictory_packet_messaging`
     - `expected_oracle` with `kind` and `strength`
-    - `expected_related_test` with `name`, `file`, positive `line`, `kind` and `strength`
+    - `expected_related_test` with `name`, `file`, positive `line`, `kind` and `strength`, plus optional `relation_reason` (pins the related-test relation, e.g. `weak_token_substring` for a test-module-shadowed receiver, #6951)
     - `expected_class` with `class`
     - `maximum_class` with `class`
     - `expected_completeness` with `completeness`
