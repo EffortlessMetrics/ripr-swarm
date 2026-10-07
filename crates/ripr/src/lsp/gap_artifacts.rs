@@ -1511,11 +1511,18 @@ pub(super) fn bind_portable_command(root: &Path, command: &str) -> Option<String
     else {
         return Some(command.to_string());
     };
+    // A root the editor cannot copy is withheld. These are the characters the
+    // VS Code client refuses in a selected root (`selectedCommandRoots`): `'`
+    // and `\` need escapes that read differently across shells, and the rest
+    // end or alter a quoted span.
     let bound = crate::agent::loop_commands::bound_root(&root.to_string_lossy());
-    if bound
-        .chars()
-        .any(crate::agent::loop_commands::needs_terminal_escape)
-    {
+    if bound.chars().any(|ch| {
+        crate::agent::loop_commands::needs_terminal_escape(ch)
+            || matches!(
+                ch,
+                '\'' | '"' | '\\' | '`' | '\n' | '\r' | '\0' | '\u{2018}'..='\u{201f}'
+            )
+    }) {
         return None;
     }
     let bound_arg = crate::agent::loop_commands::shell_arg(&bound);
@@ -1966,6 +1973,13 @@ mod tests {
                 &root,
                 "ripr receipt write --verify-command 'ripr check --note it'\\''s --root . --json' --root . --json",
             ),
+            None
+        );
+        // A root the editor client refuses to copy (an apostrophe needs the
+        // `'\''` escape) is withheld rather than shown uncopyable.
+        let apostrophe_root = std::env::temp_dir().join("o'connor");
+        assert_eq!(
+            bind_portable_command(&apostrophe_root, "ripr agent verify --root . --json"),
             None
         );
         // Without a portable root there is nothing to withhold.
