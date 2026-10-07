@@ -8,7 +8,7 @@ use super::repo::probes_for_repo_file;
 use crate::analysis::diff::{ChangedFile, ChangedLine};
 use crate::analysis::rust_index::RustIndex;
 use crate::analysis::seam_inventory::inventory_seams_from_index;
-use crate::analysis::seams::SeamKind;
+use crate::analysis::seams::{RequiredDiscriminator, SeamKind};
 use crate::analysis::syntax::{RaRustSyntaxAdapter, RustSyntaxAdapter};
 use crate::domain::{Probe, ProbeFamily};
 use std::collections::BTreeMap;
@@ -60,27 +60,59 @@ fn diff_probes_at(line: usize) -> Result<Vec<Probe>, String> {
     Ok(probes_for_file(Path::new("."), &changed, &index()?))
 }
 
-fn families(probes: &[Probe]) -> Vec<ProbeFamily> {
-    probes.iter().map(|probe| probe.family.clone()).collect()
+fn summary(probes: &[Probe]) -> Vec<(ProbeFamily, usize, &str)> {
+    probes
+        .iter()
+        .map(|probe| {
+            (
+                probe.family.clone(),
+                probe.location.line,
+                probe.expression.as_str(),
+            )
+        })
+        .collect()
 }
 
 #[test]
 fn added_return_line_of_multiline_return_keeps_error_path() -> Result<(), String> {
+    // Adding `return` turns a discarded error into a returned one.
     let probes = diff_probes_at(4)?;
-    let found = families(&probes);
-    assert!(
-        found.contains(&ProbeFamily::ErrorPath),
-        "adding `return` turns a discarded error into a returned one: {probes:?}"
+    assert_eq!(
+        summary(&probes),
+        vec![
+            (
+                ProbeFamily::ErrorPath,
+                4,
+                "return\n            Result::<(), Error>::Err(Error::InvalidFormat)"
+            ),
+            (
+                ProbeFamily::ReturnValue,
+                4,
+                "return\n            Result::<(), Error>::Err(Error::InvalidFormat)"
+            ),
+        ],
+        "{probes:?}"
     );
-    assert!(found.contains(&ProbeFamily::ReturnValue), "{probes:?}");
     Ok(())
 }
 
 #[test]
 fn changed_constructor_line_of_multiline_return_keeps_error_path() -> Result<(), String> {
     let probes = diff_probes_at(5)?;
-    assert!(
-        families(&probes).contains(&ProbeFamily::ErrorPath),
+    assert_eq!(
+        summary(&probes),
+        vec![
+            (
+                ProbeFamily::CallDeletion,
+                5,
+                "Result::<(), Error>::Err(Error::InvalidFormat)"
+            ),
+            (
+                ProbeFamily::ErrorPath,
+                5,
+                "Result::<(), Error>::Err(Error::InvalidFormat)"
+            ),
+        ],
         "{probes:?}"
     );
     Ok(())
@@ -100,16 +132,30 @@ fn multiline_return_err_is_one_repository_error_path() -> Result<(), String> {
         "{probes:?}"
     );
     let seams = inventory_seams_from_index(&[PathBuf::from("src/lib.rs")], &index()?);
-    let error_seams: Vec<(usize, usize, &str)> = seams
+    let error_seams: Vec<(usize, usize, &str, &RequiredDiscriminator)> = seams
         .iter()
         .filter(|seam| seam.kind() == SeamKind::ErrorVariant)
-        .map(|seam| (seam.display_line(), seam.byte_offset(), seam.expression()))
+        .map(|seam| {
+            (
+                seam.display_line(),
+                seam.byte_offset(),
+                seam.expression(),
+                seam.required_discriminator(),
+            )
+        })
         .collect();
     // Lines 1-4 are 33 + 48 + 14 + 15 bytes, then 12 spaces of indent.
     assert_eq!(SOURCE.find("Result::<(), Error>::Err"), Some(122));
     assert_eq!(
         error_seams,
-        vec![(5, 122, "Result::<(), Error>::Err(Error::InvalidFormat)")],
+        vec![(
+            5,
+            122,
+            "Result::<(), Error>::Err(Error::InvalidFormat)",
+            &RequiredDiscriminator::ErrorVariant {
+                variant: "Error::InvalidFormat".to_string(),
+            },
+        )],
         "{seams:?}"
     );
     Ok(())
@@ -131,6 +177,7 @@ fn inventory_keeps_one_error_seam_per_constructor() -> Result<(), String> {
         "            Error::Bad(4),\n",
         "        );\n",
         "    }\n",
+        "    if s == \"p\" { return Err((Error::Bad(5))); }\n",
         "    Ok(1)\n",
         "}\n",
     );
@@ -158,6 +205,8 @@ fn inventory_keeps_one_error_seam_per_constructor() -> Result<(), String> {
             (8, "return s.parse::<u8>().map_err(Error::from)"),
             // rustfmt's vertical `Err(\n payload,\n)` keeps only `Err(..)`.
             (10, "Err(\n            Error::Bad(4),\n        )"),
+            // Extra parentheses around the payload do not hide it.
+            (14, "Err((Error::Bad(5)))"),
         ],
         "{seams:?}"
     );

@@ -283,10 +283,17 @@ fn is_err_payload(inner: &ProbeShapeFact, outer: &ProbeShapeFact, source: &str) 
     let Some((prefix, suffix)) = surrounding_source(outer, inner, source) else {
         return false;
     };
-    let Some(callee) = prefix.trim_end().strip_suffix('(') else {
+    // `Err((payload))`: count the opening parens so the suffix must close
+    // exactly that many.
+    let mut callee = prefix.trim_end();
+    let mut opening = 0_usize;
+    while let Some(before) = callee.strip_suffix('(') {
+        callee = before.trim_end();
+        opening += 1;
+    }
+    if opening == 0 {
         return false;
-    };
-    let callee = callee.trim_end();
+    }
     // `Err::<T, E>(..)`: drop the turbofish before reading the name.
     let callee = match callee.rfind("::<") {
         Some(turbofish) if callee.ends_with('>') => callee.get(..turbofish).unwrap_or(callee),
@@ -297,9 +304,9 @@ fn is_err_payload(inner: &ProbeShapeFact, outer: &ProbeShapeFact, source: &str) 
         .next()
         .is_some_and(|name| name == "Err");
     // rustfmt's vertical layout leaves `Err(\n    payload,\n)`.
-    let closing = suffix.trim();
-    let closing = closing.strip_prefix(',').map_or(closing, str::trim_start);
-    named_err && closing == ")"
+    let closing: String = suffix.chars().filter(|c| !c.is_whitespace()).collect();
+    let closing = closing.strip_prefix(',').unwrap_or(&closing);
+    named_err && closing.len() == opening && closing.chars().all(|c| c == ')')
 }
 
 /// Source text of `outer` before and after `inner`, when `inner` is a
