@@ -249,3 +249,93 @@ fn twin_check_stays_linearithmic_on_a_generated_file() {
     assert_eq!(twins.iter().filter(|twin| **twin).count(), returns);
     assert!(twins.iter().step_by(2).all(|twin| *twin));
 }
+
+/// An ErrorPath shape over `start..end` of a one-line source.
+fn error_shape(start: usize, end: usize) -> ProbeShapeFact {
+    ProbeShapeFact {
+        start_line: 1,
+        end_line: 1,
+        start_byte: start,
+        end_byte: end,
+        kind: ProbeShapeKind::ErrorPath,
+        text: String::new().into(),
+    }
+}
+
+/// Every shape in a start group is checked, not only the first, and an
+/// `Err(..)` that closes too early does not stop the search for one that
+/// closes the payload exactly (#6954).
+#[test]
+fn twin_check_reads_every_shape_in_a_start_group() {
+    // Two spans of `Err((X))` at one start: the first ends one closer short.
+    let source = "return Err((X))";
+    let shapes = [
+        error_shape(0, 15),  // return Err((X))
+        error_shape(7, 14),  // Err((X)  -- closes one of two parens
+        error_shape(7, 15),  // Err((X))
+        error_shape(12, 13), // X
+        error_shape(12, 13), // X, the same span again
+    ];
+    assert_eq!(
+        error_path_twins(&shapes, source),
+        // The `return` goes; both constructor spans stay; both payload spans go.
+        vec![true, false, false, true, true]
+    );
+
+    // Two `return` spans around one constructor are both twins.
+    let source = "return Err(X)";
+    let shapes = [error_shape(0, 13), error_shape(0, 13), error_shape(7, 13)];
+    assert_eq!(error_path_twins(&shapes, source), vec![true, true, false]);
+}
+
+/// Deep chains that share a start byte must not make the twin check
+/// quadratic. Before #6954, 100k shapes at one start took about a minute,
+/// and two 20k chains side by side ran past ten minutes; a linear pass takes
+/// milliseconds. The bound is coarse so a slow runner cannot trip it.
+#[test]
+fn twin_check_stays_fast_on_deep_chains_that_share_a_start() {
+    let depth = 20_000;
+    let link = ".m()";
+    let chain = link.repeat(depth);
+    // `Err(E.m()…)` closed, then chained again: an outer chain at byte 0
+    // whose payload chain starts at byte 4.
+    let source = format!("Err(E{chain}){chain}");
+    let payload_end = "Err(E".len();
+    let outer_end = payload_end + chain.len() + 1;
+    let shapes: Vec<ProbeShapeFact> = (0..depth)
+        .flat_map(|step| {
+            [
+                error_shape(0, outer_end + step * link.len()),
+                error_shape(4, payload_end + (step + 1) * link.len()),
+            ]
+        })
+        .collect();
+    let started = std::time::Instant::now();
+    let twins = error_path_twins(&shapes, &source);
+    let elapsed = started.elapsed();
+    // Only the full payload chain is closed by `Err(..)`'s own paren.
+    assert_eq!(twins.iter().filter(|twin| **twin).count(), 1);
+    assert_eq!(twins.get(2 * depth - 1), Some(&true));
+    assert!(elapsed < std::time::Duration::from_secs(10), "{elapsed:?}");
+
+    // The same shape with `return (` in front exercises the other relation.
+    let source = format!("return (E{chain}){chain}");
+    let inner_start = "return (".len();
+    let inner_end = inner_start + 1;
+    let return_end = inner_end + chain.len() + 1;
+    let shapes: Vec<ProbeShapeFact> = (0..depth)
+        .flat_map(|step| {
+            [
+                error_shape(0, return_end + step * link.len()),
+                error_shape(inner_start, inner_end + (step + 1) * link.len()),
+            ]
+        })
+        .collect();
+    let started = std::time::Instant::now();
+    let twins = error_path_twins(&shapes, &source);
+    let elapsed = started.elapsed();
+    // Only the shortest `return` wraps the whole chain with closers alone.
+    assert_eq!(twins.iter().filter(|twin| **twin).count(), 1);
+    assert_eq!(twins.first(), Some(&true));
+    assert!(elapsed < std::time::Duration::from_secs(10), "{elapsed:?}");
+}

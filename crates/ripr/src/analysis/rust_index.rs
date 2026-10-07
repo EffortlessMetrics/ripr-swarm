@@ -253,11 +253,14 @@ pub(in crate::analysis) fn summarize_file(path: PathBuf, text: String) -> FileFa
 /// - the payload call inside an `Err(..)` (`Err(Error::X(off))`).
 ///
 /// The relation reads source bytes between the two spans, never `text`,
-/// which is a trimmed display snippet. One sorted pass per file: both
-/// relations pair a shape with the ErrorPath that starts next inside it,
-/// because the source between them is only `return`, a callee and
-/// parentheses, where no other shape can start. Comparing every pair would
-/// be quadratic on generated files with many error paths.
+/// which is a trimmed display snippet. Both relations pair a shape with an
+/// ErrorPath from the next start group inside it, because the source
+/// between them is only `return`, a callee and parentheses, where no other
+/// shape can start. The text before the inner shape is then the same for
+/// every pair of two adjacent groups, so it is read once per group pair, and
+/// each shape searches the other group by end byte. Comparing every pair
+/// would be quadratic on generated files with many error paths or deep
+/// chains that share a start.
 pub(crate) fn error_path_twins(shapes: &[ProbeShapeFact], source: &str) -> Vec<bool> {
     let mut twins = vec![false; shapes.len()];
     let mut errors: Vec<(usize, &ProbeShapeFact)> = shapes
@@ -265,61 +268,96 @@ pub(crate) fn error_path_twins(shapes: &[ProbeShapeFact], source: &str) -> Vec<b
         .enumerate()
         .filter(|(_, shape)| shape.kind == ProbeShapeKind::ErrorPath)
         .collect();
-    errors.sort_by_key(|(_, shape)| (shape.start_byte, std::cmp::Reverse(shape.end_byte)));
-    for (position, &(outer_index, outer)) in errors.iter().enumerate() {
-        let later = errors.get(position + 1..).unwrap_or_default();
-        let Some(next_start) = later
-            .iter()
-            .map(|(_, shape)| shape.start_byte)
-            .find(|&start| start > outer.start_byte)
-        else {
+    errors.sort_by_key(|(_, shape)| (shape.start_byte, shape.end_byte));
+    let groups: Vec<_> = errors
+        .chunk_by(|(_, a), (_, b)| a.start_byte == b.start_byte)
+        .collect();
+    for pair in groups.windows(2) {
+        let [outers, inners] = pair else { continue };
+        let (Some((_, outer)), Some((_, inner))) = (outers.first(), inners.first()) else {
             continue;
         };
-        let next = later
-            .iter()
-            .skip_while(|(_, shape)| shape.start_byte < next_start)
-            .take_while(|(_, shape)| shape.start_byte == next_start);
-        for &(inner_index, inner) in next {
-            if returns_error_constructor(outer, inner, source)
-                && let Some(twin) = twins.get_mut(outer_index)
-            {
-                *twin = true;
-            }
-            if is_err_payload(inner, outer, source)
-                && let Some(twin) = twins.get_mut(inner_index)
-            {
-                *twin = true;
-            }
+        let Some(prefix) = source.get(outer.start_byte..inner.start_byte) else {
+            continue;
+        };
+        if is_return_prefix(prefix) {
+            mark_returns(outers, inners, source, &mut twins);
+        }
+        if let Some(opening) = err_call_opening(prefix) {
+            mark_payloads(outers, inners, opening, source, &mut twins);
         }
     }
     twins
 }
 
-/// `outer` is `return` (and parentheses) around exactly `inner`.
-fn returns_error_constructor(outer: &ProbeShapeFact, inner: &ProbeShapeFact, source: &str) -> bool {
-    let Some((prefix, suffix)) = surrounding_source(outer, inner, source) else {
-        return false;
-    };
-    let prefix = prefix.trim_end_matches(|c: char| c == '(' || c.is_whitespace());
-    let suffix_is_closing = suffix.chars().all(|c| c == ')' || c.is_whitespace());
-    prefix == "return" && suffix_is_closing
+/// Marks each `return` in `outers` whose suffix after some inner shape is
+/// only closing parentheses. Only the inner shape that ends last inside the
+/// `return` needs checking: an earlier end leaves a longer suffix that holds
+/// the same bytes.
+fn mark_returns(
+    outers: &[(usize, &ProbeShapeFact)],
+    inners: &[(usize, &ProbeShapeFact)],
+    source: &str,
+    twins: &mut [bool],
+) {
+    for &(outer_index, outer) in outers {
+        let inside = inners.partition_point(|(_, inner)| inner.end_byte <= outer.end_byte);
+        let Some(&(_, inner)) = inside.checked_sub(1).and_then(|last| inners.get(last)) else {
+            continue;
+        };
+        let closes = source
+            .get(inner.end_byte..outer.end_byte)
+            .is_some_and(|suffix| suffix.chars().all(|c| c == ')' || c.is_whitespace()));
+        if closes && let Some(twin) = twins.get_mut(outer_index) {
+            *twin = true;
+        }
+    }
 }
 
-/// `inner` is the whole argument of an `Err(..)` constructor `outer`.
-fn is_err_payload(inner: &ProbeShapeFact, outer: &ProbeShapeFact, source: &str) -> bool {
-    let Some((prefix, suffix)) = surrounding_source(outer, inner, source) else {
-        return false;
-    };
-    // `Err((payload))`: count the opening parens so the suffix must close
-    // exactly that many.
+/// Marks each payload in `inners` that some `Err(..)` in `outers` closes
+/// right after it. Outers are tried from the nearest end outward and the
+/// walk stops once the suffix holds anything but the expected closers,
+/// because a later end only adds bytes.
+fn mark_payloads(
+    outers: &[(usize, &ProbeShapeFact)],
+    inners: &[(usize, &ProbeShapeFact)],
+    opening: usize,
+    source: &str,
+    twins: &mut [bool],
+) {
+    for &(inner_index, inner) in inners {
+        let first = outers.partition_point(|(_, outer)| outer.end_byte < inner.end_byte);
+        for (_, outer) in outers.get(first..).unwrap_or_default() {
+            let Some(suffix) = source.get(inner.end_byte..outer.end_byte) else {
+                break;
+            };
+            match err_call_closing(suffix, opening) {
+                Closing::Exact => {
+                    if let Some(twin) = twins.get_mut(inner_index) {
+                        *twin = true;
+                    }
+                    break;
+                }
+                Closing::Short => {}
+                Closing::Past => break,
+            }
+        }
+    }
+}
+
+/// `return` (and parentheses) is all that precedes the inner shape.
+fn is_return_prefix(prefix: &str) -> bool {
+    prefix.trim_end_matches(|c: char| c == '(' || c.is_whitespace()) == "return"
+}
+
+/// The number of opening parentheses after an `Err` callee that is all that
+/// precedes the inner shape, as in `Err(` or `Err::<T, E>((`.
+fn err_call_opening(prefix: &str) -> Option<usize> {
     let mut callee = prefix.trim_end();
     let mut opening = 0_usize;
     while let Some(before) = callee.strip_suffix('(') {
         callee = before.trim_end();
         opening += 1;
-    }
-    if opening == 0 {
-        return false;
     }
     // `Err::<T, E>(..)`: drop the turbofish before reading the name.
     let callee = match callee.rfind("::<") {
@@ -330,29 +368,35 @@ fn is_err_payload(inner: &ProbeShapeFact, outer: &ProbeShapeFact, source: &str) 
         .rsplit(|c: char| !(c.is_alphanumeric() || c == '_'))
         .next()
         .is_some_and(|name| name == "Err");
-    // rustfmt's vertical layout leaves `Err(\n    payload,\n)`.
-    let closing: String = suffix.chars().filter(|c| !c.is_whitespace()).collect();
-    let closing = closing.strip_prefix(',').unwrap_or(&closing);
-    named_err && closing.len() == opening && closing.chars().all(|c| c == ')')
+    (opening > 0 && named_err).then_some(opening)
 }
 
-/// Source text of `outer` before and after `inner`, when `inner` is a
-/// strictly smaller span inside `outer`.
-fn surrounding_source<'a>(
-    outer: &ProbeShapeFact,
-    inner: &ProbeShapeFact,
-    source: &'a str,
-) -> Option<(&'a str, &'a str)> {
-    let nested = outer.start_byte <= inner.start_byte
-        && inner.end_byte <= outer.end_byte
-        && (outer.start_byte, outer.end_byte) != (inner.start_byte, inner.end_byte);
-    if !nested {
-        return None;
+enum Closing {
+    /// The suffix closes exactly the `Err(` parentheses.
+    Exact,
+    /// Only closers so far, but too few of them.
+    Short,
+    /// Something else, or too many closers.
+    Past,
+}
+
+/// Whether `suffix` closes `opening` parentheses, ignoring whitespace and
+/// one leading comma (rustfmt's vertical layout leaves `Err(\n    payload,\n)`).
+fn err_call_closing(suffix: &str, opening: usize) -> Closing {
+    let mut closers = suffix.chars().filter(|c| !c.is_whitespace()).peekable();
+    closers.next_if_eq(&',');
+    let mut count = 0_usize;
+    for c in closers {
+        if c != ')' || count == opening {
+            return Closing::Past;
+        }
+        count += 1;
     }
-    Some((
-        source.get(outer.start_byte..inner.start_byte)?,
-        source.get(inner.end_byte..outer.end_byte)?,
-    ))
+    if count == opening {
+        Closing::Exact
+    } else {
+        Closing::Short
+    }
 }
 
 pub fn find_owner_function<'a>(
