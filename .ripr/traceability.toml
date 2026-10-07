@@ -1187,6 +1187,8 @@ tests = [
   "crates/ripr/src/app/agent_brief.rs::tests::agent_brief_selector_routes_changed_assertion_near_related_test_to_seam",
   "crates/ripr/src/app/agent_brief.rs::tests::agent_brief_selector_ranks_assertion_near_related_test_before_file_only_related_test",
   "crates/ripr/src/app/agent_brief.rs::tests::agent_brief_selector_caps_file_scope_deterministically",
+  "crates/ripr/src/app/agent_brief.rs::tests::agent_brief_selector_omits_static_limitation_seams_as_repair_targets",
+  "crates/ripr/src/app/agent_brief.rs::tests::agent_brief_selector_warns_when_explicit_seam_is_static_limitation",
   "crates/ripr/src/app/agent_brief.rs::tests::agent_brief_selector_uses_related_test_confidence_before_path",
   "crates/ripr/src/analysis/mod.rs::tests::owner_symbols_for_lines_names_containing_function",
   "crates/ripr/src/cli/commands.rs::tests::agent_brief_diff_lines_are_normalized_to_requested_root",
