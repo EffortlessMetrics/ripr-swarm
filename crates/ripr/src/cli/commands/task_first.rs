@@ -56,8 +56,10 @@ Without an ID, continue runs only when exactly one current attempt is
 eligible under the selected root. Several current attempts print a bounded
 selection list with a retry command instead of selecting one implicitly;
 no current attempt reports that honestly. An explicitly selected attempt
-that already ended reports its already-complete status with receipt and
-details instead of running again.
+that ended with a receipt reports its already-complete status instead of
+running again; one that ended without a receipt (stale, failed, or
+incomparable) reports its state and refuses with exit 3 instead of
+claiming completion.
 
 Continue runs the accepted after path: currentness admission, the edit
 cage, verification composition, and the receipt. A stale head, drifted
@@ -391,10 +393,13 @@ fn run_facade_continue(options: ContinueFacadeOptions) -> Result<(), CommandErro
             Ok(())
         }
         ContinueSelection::EndedUnsuccessfully { report } => {
-            // The facts still print like status; the outcome refuses.
+            // The facts print like status but on stderr: this arm is a
+            // typed refusal, and `cmd:continue` declares
+            // `EXIT_TYPED_REFUSAL_EMPTY_STDOUT`, so stdout stays empty
+            // while stderr carries both the state and the refusal.
             // A stale, failed, or incomparable attempt ended without a
             // receipt, so exit 3 and no completion claim.
-            print!(
+            eprint!(
                 "{}",
                 crate::app::agent_status::render_agent_attempt_status_markdown(&report)
             );

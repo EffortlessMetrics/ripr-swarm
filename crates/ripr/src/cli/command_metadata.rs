@@ -1731,7 +1731,7 @@ const METADATA: &[CommandMetadata] = &[
         example: "ripr continue [--attempt ID] --root .",
         next_routes: &["status", "receipt write"],
         stop_states: &[
-            "an ended attempt reports already-complete instead of running again",
+            "a receipt-ready attempt reports already-complete; one that ended without a receipt refuses with exit 3",
             "several current attempts print a bounded selection instead of continuing",
         ],
         exit: EXIT_TYPED_REFUSAL_EMPTY_STDOUT,

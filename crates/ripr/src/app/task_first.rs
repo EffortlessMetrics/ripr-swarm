@@ -428,6 +428,18 @@ pub(crate) fn select_continue_attempt(
 mod tests {
     use super::*;
 
+    /// Owns a temp test root so a mid-test failure cleans up instead of
+    /// leaking the directory; mirrors the facade `Fixture` guard.
+    struct TempRootGuard {
+        root: std::path::PathBuf,
+    }
+
+    impl Drop for TempRootGuard {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.root);
+        }
+    }
+
     fn facts<'a>(
         eligible_ids: &'a [String],
         total_seams: usize,
@@ -554,6 +566,7 @@ mod tests {
         let root = root
             .canonicalize()
             .map_err(|error| format!("canonicalize {} failed: {error}", root.display()))?;
+        let _guard = TempRootGuard { root: root.clone() };
         run_git(&root, &["init"])?;
         run_git(
             &root,
@@ -616,8 +629,6 @@ mod tests {
                 return Err("implicit continue must select the lone unbound attempt".to_string());
             }
         }
-        std::fs::remove_dir_all(&root)
-            .map_err(|error| format!("remove {} failed: {error}", root.display()))?;
         Ok(())
     }
 }

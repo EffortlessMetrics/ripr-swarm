@@ -691,8 +691,8 @@ fn continue_on_a_terminal_attempt_is_already_complete() -> Result<(), String> {
             stderr_text(&repeated)
         );
         assert!(
-            stdout_text(&repeated).contains("Receipt:"),
-            "must carry the receipt details:\n{}",
+            stdout_text(&repeated).contains("Receipt: issued"),
+            "a completed attempt must carry its issued receipt:\n{}",
             stdout_text(&repeated)
         );
     }
@@ -1215,11 +1215,26 @@ fn continue_on_unsuccessful_terminal_attempts_refuses_without_completion() -> Re
             !stderr.contains("already complete"),
             "a {state} attempt is never already complete:\n{stderr}"
         );
+        // The refusal carries the status-shaped facts on stderr while
+        // stdout stays empty per `EXIT_TYPED_REFUSAL_EMPTY_STDOUT`. The
+        // flipped fixture keeps its terminal evidence by design, so the
+        // test pins the status markers, not receipt absence: the
+        // selector keys on state.
         assert!(
-            stdout_text(&repeated).contains(&attempt_id),
-            "the facts still print like status:\n{}",
+            stdout_text(&repeated).is_empty(),
+            "a refused continue must keep stdout empty:\n{}",
             stdout_text(&repeated)
         );
+        for needle in [
+            "# RIPR Repair Attempt Status",
+            "Status: ",
+            attempt_id.as_str(),
+        ] {
+            assert!(
+                stderr.contains(needle),
+                "a {state} refusal must carry the status facts ({needle:?}):\n{stderr}"
+            );
+        }
         assert_eq!(
             manifest_bytes(root, &attempt_id)?,
             sealed,
