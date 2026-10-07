@@ -3463,6 +3463,9 @@ fn a_result_bound_once_and_only_asserted_pins_like_the_call() {
         // Another statement sharing the assertion's line comes first.
         "let total = crate::weight(4);\n        assert_eqx(); assert_eq!(total, 12);",
         "let total = crate::weight(4);\n        assert_eq!(touch_count(), 1); assert_eq!(total, 12);",
+        // Two assertions of the binding on one line: the use count and the
+        // only-statement-on-its-line rule each refuse it.
+        "let total = crate::weight(4);\n        assert_eq!(total, 12); touch_count(); assert_eq!(total, 12);",
     ] {
         let lib = unit_tests(LET_BOUND_PRELUDE, body);
         assert!(path_admitted(&lib, "x * 3", None).is_empty(), "{body}");

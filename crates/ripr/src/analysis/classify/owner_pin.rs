@@ -3414,11 +3414,18 @@ fn let_bound_owner_call<'a>(
     let next_at = after_semicolon + gap;
     let next_line = test.start_line + masked[..next_at].matches('\n').count();
     // The next statement must be an `assert_eq!` of the binding itself, not
-    // `assert_eqx();` or another assertion sharing the line.
-    let next = &masked[next_at..];
-    let next = &next[..next.find(';').unwrap_or(next.len())];
+    // `assert_eqx();`, and it must be the only statement on its lines.
+    // Assertions carry a line but no column, so a second statement sharing
+    // the line (`assert_eq!(v, f()); touch(); assert_eq!(v, 12);`) could
+    // otherwise pass as the next one.
+    let rest = &masked[next_at..];
+    let end = rest.find(';')?;
+    let next = &rest[..end];
+    let after = &rest[end + 1..];
+    let tail_of_line = &after[..after.find('\n').unwrap_or(after.len())];
     if !next.starts_with("assert_eq!")
         || !contains_as_whole_word(next, operand)
+        || !tail_of_line.trim().is_empty()
         || assertion.line != next_line
     {
         return None;
