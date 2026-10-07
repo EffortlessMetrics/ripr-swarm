@@ -1,0 +1,51 @@
+{
+  "case_id": "spec0227-check-ok-value-is-ok",
+  "subject_id": "authored-spec0227-8",
+  "diff": "cases/spec0227-check-ok-value-is-ok.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 13
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "ok_value",
+  "test_shape": "is_ok_only",
+  "hard_case": null,
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "Ok(len + 1)",
+        "mutated_line": "Ok(len + 1)",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: check_ok(3) returns Ok(4)"
+      },
+      {
+        "replacement": "Ok(0)",
+        "mutated_line": "Ok(0)",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: check_ok(3) returns Ok(0)"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "short_input_is_ok asserts only is_ok(), so no wrong Ok value is noticed. Spec cells: RIPR-SPEC-0227 example 8, RIPR-SPEC-0001.",
+  "labeling_observation": {
+    "ripr_commit": "7b3deeb",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

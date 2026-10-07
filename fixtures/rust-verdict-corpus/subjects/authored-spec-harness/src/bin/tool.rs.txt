@@ -1,0 +1,18 @@
+//! A small binary whose behavior is tested only through a subprocess.
+
+fn render(n: u32) -> String {
+    format!("{}", n * 2)
+}
+
+fn label(n: u32) -> String {
+    format!("n={}", n + 1)
+}
+
+fn main() {
+    let n: u32 = std::env::args()
+        .nth(1)
+        .and_then(|arg| arg.parse().ok())
+        .unwrap_or(0);
+    eprintln!("{}", label(n));
+    println!("{}", render(n));
+}

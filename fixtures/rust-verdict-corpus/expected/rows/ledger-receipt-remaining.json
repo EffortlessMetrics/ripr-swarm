@@ -1,0 +1,22 @@
+{
+  "case_id": "ledger-receipt-remaining",
+  "subject_id": "authored-ledger",
+  "origin": "authored",
+  "anchor": "src/lib.rs:85",
+  "behavior_family": "field_construction",
+  "test_shape": "unit_test_assert_eq_whole_struct",
+  "hard_case": false,
+  "truth": "discriminated",
+  "ideal_verdict": "credited",
+  "observed_verdict": "gap",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "weakly_exposed"
+  ],
+  "outcome": "false_actionable",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

@@ -1,0 +1,22 @@
+{
+  "case_id": "trap-ramp-same-call-both-sides",
+  "subject_id": "authored-trap-reach",
+  "origin": "authored",
+  "anchor": "src/ramps.rs:2",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "owner_call_on_both_sides_of_assert_eq",
+  "hard_case": true,
+  "truth": "not_discriminated",
+  "ideal_verdict": "gap",
+  "observed_verdict": "gap",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "weakly_exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

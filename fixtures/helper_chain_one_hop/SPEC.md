@@ -20,7 +20,9 @@ The helper-owned probe relates both tests through the resolved chain
 (`HelperOwnerCall`): reach yes, both exact oracles connected, and the
 transferred rows carry the bound input values (`" x"` / `"hello"`)
 into the observed values. The changed `map_or` closure is not an
-evaluated family, so infection stays weak — the honest outcome.
+evaluated family, so its `c == ' '` operand stays unresolved and
+infection reads unknown (`Changed boundary input is unresolved`,
+RIPR-SPEC-0001, #6674) — the honest outcome.
 
 ## Must Not
 

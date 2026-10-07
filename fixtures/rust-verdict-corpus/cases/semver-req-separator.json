@@ -1,0 +1,52 @@
+{
+  "case_id": "semver-req-separator",
+  "subject_id": "semver-280ebcb",
+  "diff": "cases/semver-req-separator.diff",
+  "anchor": {
+    "file": "src/display.rs",
+    "line": 39
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "integration_test_custom_assert_helper",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.97.0 (2d8144b78 2026-07-07), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "0 > i",
+        "mutated_line": "if 0 > i {",
+        "outcome": "tests_failed",
+        "failing_test": "test_multiple",
+        "equivalence_review": "not equivalent: the ', ' separator is never written between comparators."
+      },
+      {
+        "replacement": "0 <= i",
+        "mutated_line": "if 0 <= i {",
+        "outcome": "tests_failed",
+        "failing_test": "test_basic",
+        "equivalence_review": "not equivalent: a leading ', ' is written before the first comparator; observed failing tests: test_basic, test_cargo3202, test_exact (+3 more)"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "test_multiple's assert_to_string pins \">0.0.9, <=2.5.3\", and single-comparator to_string assertions in test_basic and others catch a leading separator, so both mutants fail. Diff-mode ripr reports no_static_path twice with zero related tests (limited), an acceptable abstention instead of the repo-mode gap; crediting would be ideal.",
+  "labeling_observation": {
+    "ripr_commit": "7a6d4b7a5",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "no_static_path"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

@@ -1,0 +1,53 @@
+{
+  "case_id": "grid-flow-field-opaque",
+  "subject_id": "authored-grid-flow",
+  "diff": "cases/grid-flow-field-opaque.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 16
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "field_assignment_activation_opaque",
+  "hard_case": "ripr reads the boundary of `CURRENT - 2 > manifest.version` as the literal 2 and collects the lookup() arguments 4 and 5 as test literals, so it reports a missing boundary input (weakly_exposed) instead of RIPR-SPEC-0001's field_assignment_value_unresolved stop. Read as 5, the boundary could match the literal inside lookup(5) and credit an opaque assignment. A return_value probe on the line reads exposed (#6671).",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "CURRENT - 2 >= manifest.version",
+        "mutated_line": "CURRENT - 2 >= manifest.version",
+        "outcome": "tests_failed",
+        "failing_test": "old_manifests_need_upgrade",
+        "equivalence_review": "not equivalent: old_manifests_need_upgrade fails on it"
+      },
+      {
+        "replacement": "CURRENT - 2 < manifest.version",
+        "mutated_line": "CURRENT - 2 < manifest.version",
+        "outcome": "tests_failed",
+        "failing_test": "old_manifests_need_upgrade",
+        "equivalence_review": "not equivalent: old_manifests_need_upgrade fails on it"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "Field-assignment activation through an opaque right-hand side: the test sets `manifest.version = lookup(4)` and `lookup(5)`. RIPR-SPEC-0001 forbids crediting opaque assignments and asks for `field_assignment_value_unresolved`; at runtime both mutants fail the exact pins. 2 of 2 listed mutants fail cargo test. Spec cells: RIPR-SPEC-0001.",
+  "labeling_observation": {
+    "ripr_commit": "fddf363",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "exposed",
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

@@ -40,7 +40,7 @@ fn boundary(packet: &PerlFactPacket, kind: BoundaryKind) -> Result<DynamicBounda
         kind,
         file_id: change.file_id.clone(),
         owner_id: Some(change.owner_id.clone()),
-        range: change.range.clone(),
+        range: change.range,
         confidence: Confidence::High,
         provenance_refs: Vec::new(),
     })
@@ -131,8 +131,10 @@ fn perl_static_limit_missing_runner_keeps_observation() -> Result<(), String> {
         no_scope_provided: false,
         unanalyzed_working_tree: false,
         untracked_working_tree_source_paths: Vec::new(),
+        unlinked_python_tests: None,
         suppression: None,
         partial_scope: None,
+        analyzed_revisions: None,
     };
     let json: serde_json::Value = serde_json::from_str(&crate::output::json::render(&output))
         .map_err(|error| format!("parse rendered Perl finding: {error}"))?;
@@ -273,7 +275,7 @@ fn perl_static_limit_missing_runner_respects_scope() -> Result<(), String> {
     let mut test_boundary = boundary(&packet, BoundaryKind::MissingTestRunner)?;
     test_boundary.owner_id = None;
     test_boundary.file_id = test.file_id.clone();
-    test_boundary.range = test.range.clone();
+    test_boundary.range = test.range;
     let mut related = packet;
     related.dynamic_boundaries.push(test_boundary);
     let projected = projection(&related)?;

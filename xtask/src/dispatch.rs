@@ -42,6 +42,7 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
         XtaskCommand::MergeQueue(args) => super::reports::merge_queue(&args),
         XtaskCommand::PerlMigrationRefresh(args) => super::reports::perl_migration_refresh(&args),
         XtaskCommand::FirstRun(args) => super::first_run::run(&args),
+        XtaskCommand::PublicProof(args) => super::public_proof::run(&args),
         XtaskCommand::ModuleHealth(args) => super::reports::module_health(&args),
         XtaskCommand::WindowsAdvisorySummary(args) => super::windows_advisory::run(&args),
         XtaskCommand::WindowsAdvisoryIsolatedSummary(args) => {
@@ -67,6 +68,9 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
         }
         XtaskCommand::IssueLifecycleIntakeScorecard(args) => {
             super::issue_lifecycle_intake::issue_lifecycle_intake_scorecard(&args)
+        }
+        XtaskCommand::IssueLifecycleContractPlanScorecard(args) => {
+            super::issue_lifecycle_contract_plan::issue_lifecycle_contract_plan_scorecard(&args)
         }
         XtaskCommand::RustJudgedPanel(args) => super::rust_judged_panel::run(&args),
         XtaskCommand::CheckRustJudgedPanel => super::check_rust_judged_panel(),
@@ -99,6 +103,7 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
             super::reports::seam_inventory_scaling_benchmark(&args)
         }
         XtaskCommand::MutationSpotCheck(args) => super::reports::mutation_spot_check(&args),
+        XtaskCommand::PilotRanking(args) => super::reports::pilot_ranking(&args),
         XtaskCommand::DxScoreboard(args) => super::reports::dx_scoreboard(&args),
         XtaskCommand::ScaleCliffBenchmark(args) => super::reports::scale_cliff_benchmark(&args),
         XtaskCommand::RustCorpus(args) => super::reports::rust_corpus(&args),
@@ -242,6 +247,9 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
             super::run("cargo", &["publish", "-p", "ripr", "--dry-run"]).map(|_| ())
         }
         XtaskCommand::IssueIntake(args) => super::reports::issue_intake(&args),
+        XtaskCommand::WorkPortfolio(args) => super::work_portfolio::work_portfolio_command(&args),
+        XtaskCommand::WorkCandidates(args) => super::work_portfolio::work_candidates_command(&args),
+        XtaskCommand::WorkExplain(args) => super::work_portfolio::work_explain_command(&args),
         XtaskCommand::Help(args) => print_help_route(&args),
         XtaskCommand::Unknown(command) if matches!(command.as_str(), "--help" | "-h") => {
             front_door::print()

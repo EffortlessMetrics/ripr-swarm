@@ -4,16 +4,19 @@ mod formatter;
 mod report;
 
 pub use context_packet::render_context_packet;
-pub(crate) use context_packet::{
-    render_context_packet_dto, render_context_packet_with_explain_command,
-};
+pub(crate) use context_packet::render_context_packet_with_explain_command;
+// Test-only since #5994: production surfaces render through
+// `render_context_packet_with_explain_command`; the raw-DTO render is the
+// parity oracle for the LSP packet tests.
+#[cfg(test)]
+pub(crate) use context_packet::render_context_packet_dto;
 pub use report::render;
 pub(crate) use report::{
     CHECK_FINDINGS_BYTES_ENV, FINDINGS_BOUND_RUN_STATUS, check_findings_byte_budget,
     render_with_config,
 };
 
-pub(crate) use formatter::{array_field, escape, field, float_field, number_field};
+pub(crate) use formatter::{array_field, escape, escape_into, field, float_field, number_field};
 
 /// Renders a serializable JSON value with the repository's pretty-printing
 /// convention and a consistent contextual error message.
@@ -54,7 +57,7 @@ mod tests {
         Summary, SymbolId, ValueContext, ValueFact,
     };
     use proptest::prelude::*;
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
 
     #[test]
     fn typed_incomplete_outcome_matches_human_and_json_projection() -> Result<(), String> {
@@ -181,7 +184,7 @@ mod tests {
     #[test]
     fn context_packet_includes_effective_stop_reasons_for_unknowns() {
         let finding = unknown_finding();
-        let packet = render_context_packet(&finding, 5);
+        let packet = render_context_packet(&finding, 5, Path::new("."));
 
         assert!(packet.contains("\"stop_reasons\": [\"static_probe_unknown\"]"));
     }
@@ -287,6 +290,7 @@ mod tests {
                 "RIPR_PARTIAL_DIFF_LINE_BUDGET=2001 exceeds the effective analysis-cost limit (2000); clamped to 2000".to_string(),
             ],
             selected_files: vec!["src/a.rs".to_string()],
+            unselected_files: vec!["src/b.rs".to_string()],
             selected_changed_lines: 60,
             uninspected_files_lower_bound: 2,
             uninspected_changed_lines_lower_bound: 120,
@@ -677,9 +681,11 @@ mod tests {
             no_scope_provided: false,
             unanalyzed_working_tree: false,
             untracked_working_tree_source_paths: Vec::new(),
+            unlinked_python_tests: None,
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         };
 
         let rendered = render(&output);
@@ -804,9 +810,11 @@ mod tests {
             no_scope_provided: false,
             unanalyzed_working_tree: false,
             untracked_working_tree_source_paths: Vec::new(),
+            unlinked_python_tests: None,
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         };
 
         let rendered = render(&output);
@@ -977,9 +985,11 @@ mod tests {
             no_scope_provided: false,
             unanalyzed_working_tree: false,
             untracked_working_tree_source_paths: Vec::new(),
+            unlinked_python_tests: None,
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         };
 
         let rendered = render(&output);
@@ -1784,9 +1794,11 @@ mod tests {
             no_scope_provided: false,
             unanalyzed_working_tree: false,
             untracked_working_tree_source_paths: Vec::new(),
+            unlinked_python_tests: None,
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         }
     }
 
@@ -1920,9 +1932,11 @@ mod tests {
             no_scope_provided: false,
             unanalyzed_working_tree: false,
             untracked_working_tree_source_paths: Vec::new(),
+            unlinked_python_tests: None,
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         };
 
         let rendered = render(&output);
@@ -2033,9 +2047,11 @@ mod tests {
             no_scope_provided: false,
             unanalyzed_working_tree: false,
             untracked_working_tree_source_paths: Vec::new(),
+            unlinked_python_tests: None,
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         }
     }
 
@@ -2059,9 +2075,11 @@ mod tests {
             no_scope_provided: true,
             unanalyzed_working_tree: false,
             untracked_working_tree_source_paths: Vec::new(),
+            unlinked_python_tests: None,
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         };
 
         let rendered = render(&output);
@@ -2120,9 +2138,11 @@ mod tests {
             no_scope_provided: false,
             unanalyzed_working_tree: false,
             untracked_working_tree_source_paths: Vec::new(),
+            unlinked_python_tests: None,
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         };
 
         let rendered = render(&output);
@@ -2158,9 +2178,11 @@ mod tests {
             no_scope_provided: true,
             unanalyzed_working_tree: false,
             untracked_working_tree_source_paths: Vec::new(),
+            unlinked_python_tests: None,
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         };
 
         let rendered = render(&output);

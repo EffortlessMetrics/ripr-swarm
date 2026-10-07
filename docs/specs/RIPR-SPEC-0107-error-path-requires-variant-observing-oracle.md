@@ -8,7 +8,7 @@ Created: 2026-06-14
 
 Linked issues:
 
-- (none — self-identified honesty bug)
+- (none â€” self-identified honesty bug)
 
 Linked PRs:
 
@@ -45,7 +45,7 @@ as `exposed` (confidence 1.0) when only a sibling `ExactValue` oracle existed:
 assert_eq!(validate_or_default("hello"), Ok("valid"));
 ```
 
-This oracle covers the happy-path return value — it cannot observe whether the
+This oracle covers the happy-path return value â€” it cannot observe whether the
 error variant is `TooLong` or `TooShort`. Yet `ripr check` emitted:
 
 ```
@@ -123,11 +123,11 @@ broad `is_err()` oracle does not.
 
 `is_effect_family` returns `false` for `ErrorPath`. This is correct and
 unchanged. A mock/expectation/snapshot must NOT clear `observation_unverified`
-for an error-variant seam — only a genuine variant-pinning oracle may confirm it.
+for an error-variant seam â€” only a genuine variant-pinning oracle may confirm it.
 
 ## Controls
 
-### Control A — REPRO (fake-clean removed)
+### Control A â€” REPRO (fake-clean removed)
 
 Error-path probe for `return Err(ParseError::TooLong)` with only a sibling
 `ExactValue` oracle (`assert_eq!(validate_or_default("hello"), Ok("valid"))`)
@@ -142,7 +142,7 @@ Covered by:
 - Unit test `error_path_broad_oracle_only_downgrades_discriminate_to_weak`
 - Unit test `error_path_sibling_exact_value_oracle_downgrades_discriminate_to_weak`
 
-### Control B — MUST-NOT-OVER-CORRECT (genuine variant oracle stays exposed)
+### Control B â€” MUST-NOT-OVER-CORRECT (genuine variant oracle stays exposed)
 
 Error-path probe for `return Err(ParseError::TooLong(len))` with a real
 variant-pinning oracle:
@@ -155,8 +155,8 @@ assert!(matches!(err, ParseError::TooLong(_)));
 ```
 
 These assertions contain the variant token `TooLong`, so the RIPR-SPEC-0106
-Part B path in `assertion_matches_probe_detail` returns `(true, true)` →
-`has_token_match=true` → `observation_unverified=false` → seam stays `exposed`.
+Part B path in `assertion_matches_probe_detail` returns `(true, true)` â†’
+`has_token_match=true` â†’ `observation_unverified=false` â†’ seam stays `exposed`.
 The RIPR-SPEC-0106 / RIPR-SPEC-0094 variant-credit path is preserved.
 
 Covered by:
@@ -166,7 +166,7 @@ Covered by:
 - Existing fixture `weak_error_oracle_assert_matches` (unchanged: stays `exposed`)
 - Existing fixture `unwrap_err_variant_positive` (unchanged: stays `exposed`)
 
-### Control C — IS-EFFECT-FAMILY guard
+### Control C â€” IS-EFFECT-FAMILY guard
 
 `is_effect_family(&ProbeFamily::ErrorPath)` must return false. A mock or
 snapshot must NOT clear `observation_unverified` for an error-variant seam.
@@ -176,54 +176,54 @@ Covered by:
 
 ## Required Evidence
 
-### Fixture — REPRO (error_path_sibling_oracle_fake_clean)
+### Fixture â€” REPRO (error_path_sibling_oracle_fake_clean)
 
 - Changed seam: `return Err(ParseError::TooLong)`
 - Test: only a sibling `ExactValue` oracle on the happy-path return
   (`assert_eq!(validate_or_default("hello"), Ok("valid"))`)
-- Expected: `error_path` probe → `weakly_exposed`, `discriminate=weak`,
+- Expected: `error_path` probe â†’ `weakly_exposed`, `discriminate=weak`,
   summary contains `observation_unverified`
 - Verified with: `cargo xtask fixtures error_path_sibling_oracle_fake_clean`
 
-### Non-regression — POSITIVE (existing: strong_error_oracle)
+### Non-regression â€” POSITIVE (existing: strong_error_oracle)
 
 - Changed seam: `return Err(AuthError::RevokedToken)`
 - Test: `assert!(matches!(authenticate(""), Err(AuthError::RevokedToken)))`
   (ExactErrorVariant, variant token `RevokedToken` in assertion text)
-- Expected: `error_path` probe → `exposed` (unchanged from pre-spec)
+- Expected: `error_path` probe â†’ `exposed` (unchanged from pre-spec)
 - Verified with: `cargo xtask fixtures strong_error_oracle`
 
-### Non-regression — POSITIVE (existing: weak_error_oracle_assert_matches)
+### Non-regression â€” POSITIVE (existing: weak_error_oracle_assert_matches)
 
 - Changed seam: `return Err(AuthError::RevokedToken)`
 - Test: `assert_matches!(authenticate(""), Err(AuthError::RevokedToken))`
   (ExactErrorVariant, variant token matches)
-- Expected: `error_path` probe → `exposed` (unchanged from pre-spec)
+- Expected: `error_path` probe â†’ `exposed` (unchanged from pre-spec)
 
-### Non-regression — POSITIVE (existing: unwrap_err_variant_positive)
+### Non-regression â€” POSITIVE (existing: unwrap_err_variant_positive)
 
 - Changed seam: `return Err(CalcError::Negative)`
 - Test: `let err = compute(-1).unwrap_err(); assert_eq!(err, CalcError::Negative);`
   (ExactErrorVariant via RIPR-SPEC-0106 upgrade, variant token `Negative` matches)
-- Expected: `error_path` probe → `exposed` (unchanged from pre-spec)
+- Expected: `error_path` probe â†’ `exposed` (unchanged from pre-spec)
 
-### Re-blessed — DRIFT (existing: weak_error_oracle)
+### Re-blessed â€” DRIFT (existing: weak_error_oracle)
 
 - Changed seam: `return Err(AuthError::RevokedToken)`
 - Test: `assert!(authenticate("").is_err())` (BroadError, no variant token)
-- Expected: `error_path` probe → `weakly_exposed` (classification unchanged)
+- Expected: `error_path` probe â†’ `weakly_exposed` (classification unchanged)
 - Drift: discriminate summary changes to `observation_unverified` (correct)
 
-### Re-blessed — DRIFT (existing: unwrap_err_generic_is_err)
+### Re-blessed â€” DRIFT (existing: unwrap_err_generic_is_err)
 
 - Changed seam: `return Err(CalcError::Negative)`
 - Test: `assert!(err.to_string().contains("error"))` (RelationalCheck, no variant token)
-- Expected: `error_path` probe → `weakly_exposed` (classification unchanged)
+- Expected: `error_path` probe â†’ `weakly_exposed` (classification unchanged)
 - Drift: discriminate summary changes to `observation_unverified` (correct)
 
 ## Acceptance Examples
 
-### Before (incorrect — exposed with self-contradiction)
+### Before (incorrect â€” exposed with self-contradiction)
 
 ```
 Static exposure
@@ -240,7 +240,7 @@ Missing
 The finding says `exposed` (discriminated) but simultaneously lists
 `Missing discriminator value: ParseError::TooLong`. Self-contradiction.
 
-### After (correct — weakly_exposed, no self-contradiction)
+### After (correct â€” weakly_exposed, no self-contradiction)
 
 ```
 Static exposure
@@ -274,13 +274,13 @@ so `has_token_match=true` clears `observation_unverified`.
 
 | Test | Spec control |
 |---|---|
-| `error_path_broad_oracle_only_downgrades_discriminate_to_weak` | Control A — broad is_err() repro |
-| `error_path_sibling_exact_value_oracle_downgrades_discriminate_to_weak` | Control A — sibling ExactValue repro |
-| `error_path_exact_variant_oracle_keeps_discriminate_yes` | Control B — variant-pinning must not over-correct |
-| `error_path_matches_variant_oracle_keeps_discriminate_yes` | Control B — matches! variant stays exposed |
-| `error_path_is_not_effect_family` | Control C — mock cannot clear error seam |
-| `given_broad_is_err_assertion_when_error_variant_changes_then_oracle_is_weak` | Integration — classifier confirms observation_unverified (updated) |
-| Fixture `error_path_sibling_oracle_fake_clean` | End-to-end repro — binary output confirmed |
+| `error_path_broad_oracle_only_downgrades_discriminate_to_weak` | Control A â€” broad is_err() repro |
+| `error_path_sibling_exact_value_oracle_downgrades_discriminate_to_weak` | Control A â€” sibling ExactValue repro |
+| `error_path_exact_variant_oracle_keeps_discriminate_yes` | Control B â€” variant-pinning must not over-correct |
+| `error_path_matches_variant_oracle_keeps_discriminate_yes` | Control B â€” matches! variant stays exposed |
+| `error_path_is_not_effect_family` | Control C â€” mock cannot clear error seam |
+| `given_broad_is_err_assertion_when_error_variant_changes_then_oracle_is_weak` | Integration â€” classifier confirms observation_unverified (updated) |
+| Fixture `error_path_sibling_oracle_fake_clean` | End-to-end repro â€” binary output confirmed |
 
 ## Non-Goals
 
@@ -291,8 +291,9 @@ so `has_token_match=true` clears `observation_unverified`.
   error-path seam).
 - Does NOT bump crate version, publish, or touch release workflows.
 - Does NOT affect Python/TypeScript adapters (different code paths).
+  Python's error-path gate is RIPR-SPEC-0238 rule 6.
 - Static-language clean: output uses `exposed`, `weakly_exposed`,
-  `observation_unverified` only — all allowed vocabulary.
+  `observation_unverified` only â€” all allowed vocabulary.
 
 ## Golden Drift (re-blessed fixtures)
 
@@ -301,33 +302,33 @@ to change in two existing fixtures. Both kept `weakly_exposed` classification.
 
 ### `weak_error_oracle`
 
-- Test oracle: `assert!(authenticate("").is_err())` — broad `is_err()`,
+- Test oracle: `assert!(authenticate("").is_err())` â€” broad `is_err()`,
   `BroadError/Weak`. No variant token (`AuthError`, `RevokedToken`) appears in
   the assertion text.
 - Before: discriminate summary "Only broad error oracle found; is_err() does not
   discriminate exact error variants" (oracle-strength path)
 - After: discriminate summary "Discriminator unconfirmed: no assertion text
   references this probe's changed expression (observation_unverified)"
-- Classification: `weakly_exposed` → `weakly_exposed` (unchanged)
+- Classification: `weakly_exposed` â†’ `weakly_exposed` (unchanged)
 - Re-bless rationale: the oracle-strength message was technically correct but
-  missed the root reason — the assertion also provides no token confirming this
+  missed the root reason â€” the assertion also provides no token confirming this
   specific seam. `observation_unverified` is the more honest diagnosis.
 
 ### `unwrap_err_generic_is_err`
 
-- Test oracle: `assert!(err.to_string().contains("error"))` — generic string
+- Test oracle: `assert!(err.to_string().contains("error"))` â€” generic string
   check, `RelationalCheck/Weak`. No variant token (`CalcError`, `Negative`)
   appears in the assertion text.
 - Before: discriminate summary "Only relational oracle found; it may not
   discriminate the changed value exactly" (oracle-strength path)
 - After: discriminate summary "Discriminator unconfirmed: no assertion text
   references this probe's changed expression (observation_unverified)"
-- Classification: `weakly_exposed` → `weakly_exposed` (unchanged)
-- Re-bless rationale: same — the assertion fires via single-assertion escape
+- Classification: `weakly_exposed` â†’ `weakly_exposed` (unchanged)
+- Re-bless rationale: same â€” the assertion fires via single-assertion escape
   hatch (assertion count == 1) without any variant token confirming this seam.
   `observation_unverified` is the more accurate diagnosis (RIPR-SPEC-0107).
 
-No fixture changed from `exposed` → `weakly_exposed`. No existing `exposed`
+No fixture changed from `exposed` â†’ `weakly_exposed`. No existing `exposed`
 seam was wrongfully downgraded.
 
 ## Acceptance Criteria
@@ -349,10 +350,10 @@ seam was wrongfully downgraded.
 | Behavior | Code location |
 |---|---|
 | Add ErrorPath to needs_token_confirmation | `crates/ripr/src/analysis/classify/reveal.rs` |
-| Control A — repro unit tests | `crates/ripr/src/analysis/classify/reveal.rs::tests` |
-| Control B — must-not-over-correct unit tests | `crates/ripr/src/analysis/classify/reveal.rs::tests` |
-| Control C — is_effect_family unit test | `crates/ripr/src/analysis/classify/reveal.rs::tests` |
-| Control A — repro fixture | `fixtures/error_path_sibling_oracle_fake_clean/` |
+| Control A â€” repro unit tests | `crates/ripr/src/analysis/classify/reveal.rs::tests` |
+| Control B â€” must-not-over-correct unit tests | `crates/ripr/src/analysis/classify/reveal.rs::tests` |
+| Control C â€” is_effect_family unit test | `crates/ripr/src/analysis/classify/reveal.rs::tests` |
+| Control A â€” repro fixture | `fixtures/error_path_sibling_oracle_fake_clean/` |
 | Update classifier.rs integration test | `crates/ripr/src/analysis/classifier.rs::tests` |
 | Spec registration | `policy/doc-artifacts.toml`, `docs/specs/README.md` |
 | Traceability | `.ripr/traceability.toml` |
@@ -363,8 +364,15 @@ RIPR-SPEC-0227 decision 3 (2026-10-04) adds one narrow exception for an added
 or removed `?`: a result-side oracle (RIPR-SPEC-0227) confirms the
 `error_path` probe only when the test input provably reaches the `?` call's
 `Err`, the original and changed code provably return different sides on that
-input, and the path conditions of RIPR-SPEC-0227 rule 3b hold. Every other
+input, and the path conditions of RIPR-SPEC-0227 rule 3b hold. RIPR-SPEC-0227
+decision 4 (2026-10-07) extends it to a changed line that keeps the same `?`
+operand when that `?` is the owner's only source of `Err`
+(`crates/ripr/src/analysis/classifier/evidence/side_flip.rs`). Every other
 `error_path` probe still needs a variant-observing oracle.
+
+RIPR-SPEC-0238 (2026-10-04) states the Python error-path gate as rule 6:
+`exposed` needs one `exact_error_variant` assertion that itself credits a
+sink-alignment branch. This spec's Rust rules do not apply to Python.
 
 ## Metrics
 

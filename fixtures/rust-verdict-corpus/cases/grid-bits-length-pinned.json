@@ -1,0 +1,59 @@
+{
+  "case_id": "grid-bits-length-pinned",
+  "subject_id": "authored-grid-bits",
+  "diff": "cases/grid-bits-length-pinned.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 15
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "input_length_boundary_pinned",
+  "hard_case": "`count` is a local counter, not a parameter, so ripr has no input row to map it to (observed count values: unknown) and asks for a `count == 16` input that the 16- and 17-byte inputs already supply (#6674).",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "if 16 <= count {",
+        "mutated_line": "if 16 <= count {",
+        "outcome": "tests_failed",
+        "failing_test": "chunk_sizes_parse_up_to_sixteen_digits",
+        "equivalence_review": "not equivalent: chunk_sizes_parse_up_to_sixteen_digits fails on it"
+      },
+      {
+        "replacement": "if 16 == count {",
+        "mutated_line": "if 16 == count {",
+        "outcome": "tests_failed",
+        "failing_test": "chunk_sizes_parse_up_to_sixteen_digits",
+        "equivalence_review": "not equivalent: chunk_sizes_parse_up_to_sixteen_digits fails on it"
+      },
+      {
+        "replacement": "if 16 > count {",
+        "mutated_line": "if 16 > count {",
+        "outcome": "tests_failed",
+        "failing_test": "chunk_sizes_parse_up_to_sixteen_digits",
+        "equivalence_review": "not equivalent: chunk_sizes_parse_up_to_sixteen_digits fails on it"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "Boundary on a counter that grows once per input byte (chunk-size parsing): the boundary value 16 is never a literal in the test; it is the length of `[b'f'; 16]` and `[b'f'; 17]`. One test pins both sides exactly. All three mutants fail. 3 of 3 listed mutants fail cargo test. Spec cells: RIPR-SPEC-0001, RIPR-SPEC-0186.",
+  "labeling_observation": {
+    "ripr_commit": "fddf363",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}
