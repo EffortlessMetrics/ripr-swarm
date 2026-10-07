@@ -321,6 +321,24 @@ fn unbounded_effects_keep_the_part_c_reading() {
         ),
         // A transitive self call that does not resolve.
         variant("if self.on_hand(sku)", "if self.level(sku)"),
+        // The owner reads the written field after the call and moves it
+        // into the log, so `inv.history()` can observe the deletion (#7046
+        // review).
+        variant(
+            "        self.refresh_low_stock(sku);\n    }",
+            "        self.refresh_low_stock(sku);\n        if self.low_stock.contains(sku) {\n            self.log.push(Event::Shipped { sku: sku.to_string(), qty: 0 });\n        }\n    }",
+        ),
+        // The owner calls a reader of the written field after the call.
+        variant(
+            "        self.refresh_low_stock(sku);\n    }",
+            "        self.refresh_low_stock(sku);\n        if self.is_low(sku) {\n            self.log.push(Event::Shipped { sku: sku.to_string(), qty: 0 });\n        }\n    }",
+        ),
+        // A by-value `mut self` receiver is not the borrowed receiver the
+        // gate names.
+        variant(
+            "fn refresh_low_stock(&mut self, sku: &str)",
+            "fn refresh_low_stock(mut self, sku: &str)",
+        ),
         // A trait also names the callee: the call may not reach the impl.
         variant(
             "impl Inventory {",
@@ -447,5 +465,77 @@ fn primitive_and_std_path_calls_do_not_count_as_fixture_helpers() {
     assert!(carrier.admits(
         test,
         &whole_object("assert_eq!(receipt, fixtures::receipt());")
+    ));
+}
+
+#[test]
+fn escapes_found_in_review_keep_the_part_c_reading() {
+    // #7046 review: effects that leave the object, and readers or test
+    // actions the first scan missed.
+    let variant = |from: &str, to: &str| {
+        assert!(LEDGER.contains(from), "fixture must contain `{from}`");
+        LEDGER.replace(from, to)
+    };
+    let remove = "self.low_stock.remove(sku);";
+    for added in [
+        // A std path into I/O or the environment leaves the object.
+        "std::fs::write(\"inv.log\", sku).ok();",
+        "std::env::set_var(\"LOW\", sku);",
+        // A mutating call on a parameter may write through a shared handle.
+        "sku.make_ascii_uppercase();",
+    ] {
+        let source = variant(remove, &format!("{remove}\n            {added}"));
+        let idx = index(&[(LIB, &source)]);
+        assert!(
+            establish(&idx, "self.refresh_low_stock(sku);").is_none(),
+            "`{added}` must keep the Part C reading"
+        );
+    }
+
+    let reader_lib = |method: &str| {
+        variant(
+            "    pub fn on_hand(&self, sku: &str) -> u32 {",
+            &format!("{method}\n\n    pub fn on_hand(&self, sku: &str) -> u32 {{"),
+        )
+    };
+    let run = |lib: &str, body: &str, assertion: &str| {
+        let tests = format!(
+            "use demo::*;\n\n#[test]\nfn after_receive() {{\n    let mut inv = Inventory::new(5);\n    inv.receive(\"A\", 2);\n    {body}\n    {assertion}\n}}\n"
+        );
+        let idx = index(&[(LIB, lib), ("tests/ledger.rs", &tests)]);
+        let carrier = establish(&idx, "self.refresh_low_stock(sku);");
+        assert!(
+            carrier.is_some(),
+            "the ledger shape must establish a carrier"
+        );
+        carrier.is_some_and(|carrier| carrier.admits(the_test(&idx), &whole_object(assertion)))
+    };
+    let history = r#"assert_eq!(inv.history(), &[]);"#;
+
+    // A reader that formats the whole receiver inline reads every field.
+    let describe =
+        reader_lib("    pub fn describe(&self) -> String {\n        format!(\"{self:?}\")\n    }");
+    assert!(run(&describe, "", r#"assert_eq!(inv.describe(), "x");"#));
+
+    // A discarded call that is not a plain store reads the field.
+    let drain = reader_lib(
+        "    pub fn drain_low(&mut self) {\n        self.low_stock.clone_into(&mut self.seen);\n    }",
+    );
+    assert!(run(&drain, "inv.drain_low();", history));
+
+    // A test helper given `&mut inv` may call a mutating reader.
+    assert!(run(LEDGER, "restock(&mut inv);", history));
+    // A resolved non-reader of the self type does not.
+    assert!(!run(
+        LEDGER,
+        "Inventory::ship(&mut inv, \"A\", 1).ok();",
+        history
+    ));
+
+    // A shared handle may alias the object's state.
+    assert!(run(
+        LEDGER,
+        "let sink = Rc::new(inv.clone());",
+        "assert_eq!(sink, Rc::new(Inventory::new(5)));",
     ));
 }

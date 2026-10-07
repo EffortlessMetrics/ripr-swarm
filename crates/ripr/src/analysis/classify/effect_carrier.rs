@@ -23,7 +23,11 @@
 //!    or path-qualified function call outside `Self`, the self type and std
 //!    roots, no macro outside a pure list, no `ref mut` pattern, no interior
 //!    mutability (`borrow_mut`, `lock`, atomics, `Cell`), no `unsafe`, and
-//!    every transitive `self.method(..)` resolves the same way.
+//!    every transitive `self.method(..)` resolves the same way. A std path
+//!    into I/O, the environment, processes or threads, and a mutating call
+//!    on a parameter or local, also leave the object.
+//! 4. The owner itself, apart from the changed call, reads no written field,
+//!    uses no bare `self` and calls no other reading self method.
 //!
 //! When any gate fails the probe keeps the Part C reading (any whole-object
 //! equality confirms). That is the conservative direction here: refusing the
@@ -83,6 +87,28 @@ const READ_ONLY_METHODS: &[&str] = &[
     "to_vec",
     "values",
 ];
+
+/// Methods that, called as a discarded statement, only store into the field.
+const WRITE_ONLY_METHODS: &[&str] = &[
+    "clear",
+    "extend",
+    "insert",
+    "pop",
+    "pop_back",
+    "pop_front",
+    "push",
+    "push_back",
+    "push_front",
+    "push_str",
+    "remove",
+    "truncate",
+];
+
+/// Shared-ownership handles whose value may alias the object's state.
+const SHARED_HANDLES: &[&str] = &["Arc", "Rc", "Weak"];
+
+/// std modules whose functions reach state outside the object.
+const STD_EFFECT_MODULES: &[&str] = &["env", "fs", "io", "net", "process", "sync", "thread"];
 
 /// Identifiers that mark state a `self.<field>` scan cannot see.
 const OPAQUE_STATE_MARKERS: &[&str] = &[
@@ -227,6 +253,21 @@ struct FieldUse {
     opaque: bool,
 }
 
+/// `scan_field_use` over a function's body. An inline format capture of the
+/// receiver (`format!("{self:?}")`) sits in a masked string, so it is read
+/// from the raw text and counts as a bare `self` (#7046 review).
+fn function_field_use(function: &FunctionSummary, self_ty: &str) -> Option<FieldUse> {
+    let (_, body) = split_signature(function)?;
+    let mut uses = scan_field_use(&body, self_ty);
+    if inline_format_captures(&function.body)
+        .iter()
+        .any(|capture| capture == "self")
+    {
+        uses.whole_self = true;
+    }
+    Some(uses)
+}
+
 fn statement_start(tokens: &[Tok], index: usize) -> bool {
     index == 0 || matches!(tokens.get(index - 1), Some(Tok::Punct(';' | '{' | '}')))
 }
@@ -273,8 +314,28 @@ fn scan_field_use(body: &[Tok], self_ty: &str) -> FieldUse {
             // call; only the self type and std roots stay bounded.
             uses.opaque = true;
         }
+        if index > 0
+            && punct(body, index - 1, ':')
+            && path_segments(body, index)
+                .iter()
+                .any(|segment| STD_EFFECT_MODULES.contains(segment))
+        {
+            // A std path into I/O, the environment, processes or threads
+            // (`std::fs::write(..)`) leaves the object (#7046 review).
+            uses.opaque = true;
+        }
         if previous_is_path || KEYWORDS.contains(&name.as_str()) {
             continue;
+        }
+        if punct(body, index + 1, '.')
+            && let Some(method) = ident(body, index + 2)
+            && punct(body, index + 3, '(')
+            && !READ_ONLY_METHODS.contains(&method)
+        {
+            // A mutating call on a parameter or local (`sink.record(..)`,
+            // `w.write_all(..)`) can write through a shared handle the
+            // `self.<field>` scan does not attribute (#7046 review).
+            uses.opaque = true;
         }
         if punct(body, index + 1, '!') {
             if !PURE_MACROS.contains(&name.as_str()) {
@@ -335,7 +396,9 @@ fn scan_self_access(body: &[Tok], index: usize, uses: &mut FieldUse) {
         let read_only = READ_ONLY_METHODS.contains(&method);
         let statement = statement_start(body, index)
             && matching_close(body, cursor + 2).is_some_and(|close| punct(body, close + 1, ';'));
-        if read_only || !statement {
+        // A discarded call reads the field unless it only stores into it
+        // (`self.low_stock.clone_into(&mut self.log)` reads `low_stock`).
+        if read_only || !statement || !WRITE_ONLY_METHODS.contains(&method) {
             uses.reads.insert(field.clone());
         }
         if !read_only {
@@ -444,6 +507,22 @@ impl EffectStateCarrier {
             return None;
         }
         let reader_methods = reader_methods(&methods, &written_fields);
+        // The owner itself may read the written state after the call and
+        // move it into a field a whole-object equality does compare
+        // (`if self.low_stock.contains(..) { self.log.push(..) }`).
+        let owner_uses = function_field_use(owner, &self_ty)?;
+        if owner_uses.whole_self
+            || owner_uses
+                .reads
+                .iter()
+                .any(|field| written_fields.contains(field))
+            || owner_uses
+                .self_calls
+                .iter()
+                .any(|call| *call != callee_name && reader_methods.contains(call))
+        {
+            return None;
+        }
         let non_reader_methods = methods
             .by_name
             .keys()
@@ -513,12 +592,47 @@ impl EffectStateCarrier {
     /// `Inventory::reorder(&mut inv)`). The owner may be reached indirectly,
     /// so call order is not established and any such call admits.
     fn calls_mutating_reader(&self, test_body: &[Tok]) -> bool {
-        test_body.iter().enumerate().any(|(index, token)| {
-            matches!(token, Tok::Ident(name) if self.mutating_readers.contains(name))
+        // A `&mut binding` argument hands the receiver to code this scan
+        // does not follow (`restock(&mut inv)` calling `inv.reorder()`),
+        // unless the call is a resolved non-reader of the self type.
+        let lends_mut = test_body.iter().enumerate().any(|(index, token)| {
+            *token == Tok::Punct('&')
+                && ident(test_body, index + 1) == Some("mut")
+                && ident(test_body, index + 2).is_some()
                 && index > 0
-                && (punct(test_body, index - 1, '.') || punct(test_body, index - 1, ':'))
-                && punct(test_body, index + 1, '(')
-        })
+                && (punct(test_body, index - 1, '(') || punct(test_body, index - 1, ','))
+                && !self.lent_to_non_reader(test_body, index)
+        });
+        lends_mut
+            || test_body.iter().enumerate().any(|(index, token)| {
+                matches!(token, Tok::Ident(name) if self.mutating_readers.contains(name))
+                    && index > 0
+                    && (punct(test_body, index - 1, '.') || punct(test_body, index - 1, ':'))
+                    && punct(test_body, index + 1, '(')
+            })
+    }
+
+    /// Whether the call whose argument list holds `index` is a resolved
+    /// non-reader of the self type (`Inventory::ship(&mut inv, ..)`).
+    fn lent_to_non_reader(&self, tokens: &[Tok], index: usize) -> bool {
+        let mut depth = 0usize;
+        let mut cursor = index;
+        while cursor > 0 {
+            cursor -= 1;
+            match tokens.get(cursor) {
+                Some(Tok::Punct(')')) => depth += 1,
+                Some(Tok::Punct('(')) if depth == 0 => {
+                    return cursor > 0
+                        && ident(tokens, cursor - 1)
+                            .is_some_and(|name| self.non_reader_methods.contains(name))
+                        && path_root(tokens, cursor - 1)
+                            .is_some_and(|root| root == self.self_ty || root == "Self");
+                }
+                Some(Tok::Punct('(')) => depth -= 1,
+                _ => {}
+            }
+        }
+        false
     }
 
     fn may_carry(&self, tokens: &[Tok], test_body: &[Tok], depth: usize) -> bool {
@@ -542,6 +656,11 @@ impl EffectStateCarrier {
                 continue;
             }
             if name == self.self_ty || name == "Self" || name == "self" {
+                return true;
+            }
+            if SHARED_HANDLES.contains(&name) {
+                // A shared handle (`Rc::new(Sink::default())`) may alias
+                // state the object also holds (#7046 review).
                 return true;
             }
             if punct(tokens, index + 1, '(')
@@ -636,14 +755,16 @@ fn takes_mut_self(signature: &[Tok]) -> bool {
     })
 }
 
-/// `&mut self` (or `mut self`) receiver, no `&mut` parameter, no `->`.
+/// `&mut self` receiver, no `&mut` parameter, no `->`. A by-value
+/// `mut self` receiver is refused: the gate names a borrowed receiver only.
 fn mut_self_without_return(signature: &[Tok]) -> bool {
     let mut mut_self = false;
     for (index, token) in signature.iter().enumerate() {
         if *token == Tok::Ident("mut".to_string()) {
-            if ident(signature, index + 1) == Some("self") {
+            let borrowed = index > 0 && punct(signature, index - 1, '&');
+            if ident(signature, index + 1) == Some("self") && borrowed {
                 mut_self = true;
-            } else if index > 0 && punct(signature, index - 1, '&') {
+            } else if borrowed {
                 return false;
             }
         }
@@ -668,8 +789,7 @@ fn transitive_writes(
         if depth > MAX_DEPTH {
             return None;
         }
-        let (_, body) = split_signature(function)?;
-        let uses = scan_field_use(&body, methods.self_ty);
+        let uses = function_field_use(function, methods.self_ty)?;
         if uses.whole_self || uses.opaque {
             return None;
         }
@@ -687,8 +807,7 @@ fn reader_methods(methods: &SelfTypeMethods<'_>, written: &BTreeSet<String>) -> 
     let mut direct = BTreeMap::new();
     for (name, definitions) in &methods.by_name {
         for definition in definitions {
-            let uses =
-                split_signature(definition).map(|(_, body)| scan_field_use(&body, methods.self_ty));
+            let uses = function_field_use(definition, methods.self_ty);
             direct
                 .entry((*name).to_string())
                 .or_insert_with(Vec::new)
@@ -793,6 +912,20 @@ const STD_ROOTS: &[&str] = &[
     "std", "core", "alloc", "u8", "u16", "u32", "u64", "u128", "i8", "i16", "i32", "i64", "i128",
     "usize", "isize", "f32", "f64", "bool", "char", "str", "String",
 ];
+
+/// The segments before `name` in the `a::b::name` path ending at `index`.
+fn path_segments(tokens: &[Tok], index: usize) -> Vec<&str> {
+    let mut segments = Vec::new();
+    let mut cursor = index;
+    while cursor >= 3 && punct(tokens, cursor - 1, ':') && punct(tokens, cursor - 2, ':') {
+        let Some(segment) = ident(tokens, cursor - 3) else {
+            break;
+        };
+        segments.push(segment);
+        cursor -= 3;
+    }
+    segments
+}
 
 /// The leftmost segment of the `a::b::name` path ending at `index`, or `None`
 /// when `name` is not path-qualified.

@@ -6063,6 +6063,58 @@ return Err(\"typed pin\".into());
         );
     }
 
+    /// RIPR-SPEC-0094 Part D (#7046 review): when the effect carrier refuses
+    /// a whole-object equality, the effect-observer branch withholds the
+    /// confirmation; a token match still confirms on its own.
+    #[test]
+    fn a_refused_effect_carrier_withholds_only_the_whole_object_observer() {
+        let probe = probe(ProbeFamily::CallDeletion, "persist_audit(record)");
+        let reveal = |kind: OracleKind, text: &str, carried: bool| {
+            let test = test_with_assertions(
+                "store_matches_expected",
+                vec![oracle(text, kind, OracleStrength::Strong)],
+            );
+            let carried = move |_: &TestSummary, _: &OracleFact| carried;
+            reveal_evidence_with_expression(
+                &probe,
+                &probe.expression,
+                &[(&test, RelationReason::DirectOwnerCall)],
+                &[],
+                &|_, _| false,
+                &|_, _| false,
+                &ReturnOracleAdmission {
+                    owner_return_pin: &|_, _| false,
+                    assertion_admitted: &|_, _| true,
+                    proximity_may_reach_owner: &|_| false,
+                    owner_parameters: &[],
+                    expected_reaches_owner: &|_, _| false,
+                    effect_state_carried: &carried,
+                },
+                None,
+            )
+            .1
+            .summary
+        };
+        let whole = "assert_eq!(store, expected);";
+        assert!(
+            !reveal(OracleKind::WholeObjectEquality, whole, true)
+                .contains("observation_unverified")
+        );
+        assert!(
+            reveal(OracleKind::WholeObjectEquality, whole, false)
+                .contains("observation_unverified")
+        );
+        // A token match confirms without the effect-observer branch.
+        assert!(
+            !reveal(
+                OracleKind::WholeObjectEquality,
+                "assert_eq!(persist_audit(record), expected);",
+                false,
+            )
+            .contains("observation_unverified")
+        );
+    }
+
     /// A VALUE family (ReturnValue) must NOT treat a mock/whole-object as an
     /// observation confirmation — only a token_match confirms value families.
     /// This guards against the effect-family relaxation leaking into value
