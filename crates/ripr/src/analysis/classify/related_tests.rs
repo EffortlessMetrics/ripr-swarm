@@ -5,7 +5,7 @@ use crate::analysis::extract::{
     ShadowAuthority, fact_body_defines_callee_fn, fact_body_let_shadow_line,
     mask_comments_and_strings, test_body_defines_callee_fn, test_body_let_shadow_line,
 };
-use crate::analysis::facts::FunctionImplContext;
+use crate::analysis::facts::{FunctionContainer, FunctionImplContext};
 use crate::analysis::seam_cache::PathDependencySection;
 use crate::analysis::workspace::{PathDependencyAdjacency, PathDependencyGraphStatus};
 use crate::domain::{Probe, RelationConfidence, RelationReason};
@@ -2506,7 +2506,22 @@ fn owner_call_relation_reason(
         return RelationReason::DirectOwnerCall;
     };
     let Some(impl_type) = impl_self_type_name(&owner.id.0) else {
-        return RelationReason::DirectOwnerCall;
+        // #7006: method-call syntax can never resolve to a free function,
+        // so a receiver-qualified-only `other.owner(..)` match is the
+        // right string on the wrong receiver. Credit `direct_owner_call`
+        // only when some observed site spells a free-function call — bare
+        // `owner(` or path-qualified `path::owner(`; otherwise the
+        // name-only match demotes to `weak_token_substring`. The demotion
+        // applies ONLY to an established free function: trait-declaration
+        // methods share this branch (their ids carry no `::impl` segment)
+        // and impl-block methods never reach it (#3047).
+        if !is_established_free_function(owner) {
+            return RelationReason::DirectOwnerCall;
+        }
+        if free_function_call_spells_free_call(test, owner_name) {
+            return RelationReason::DirectOwnerCall;
+        }
+        return RelationReason::WeakTokenSubstring;
     };
     if indexed_same_name_count <= 1 {
         return RelationReason::DirectOwnerCall;
@@ -2516,6 +2531,99 @@ fn owner_call_relation_reason(
     } else {
         RelationReason::WeakTokenSubstring
     }
+}
+
+/// Whether `owner` is established as a module-level free function: the
+/// parser-backed container fact says `Free` and the parameter list has no
+/// `self` receiver. The `Unknown` container (lexical fallback, stale
+/// cache) fails closed — an unestablished owner keeps the credit — and so
+/// does every method container, including trait declarations, which share
+/// the `None` self-type branch with free functions (#7006).
+fn is_established_free_function(owner: &FunctionSummary) -> bool {
+    matches!(owner.item.container, FunctionContainer::Free) && !owner.item.has_self_param
+}
+
+/// Whether `test` invokes free-function `owner_name` through at least one
+/// call site that can resolve to a free function: a bare `owner(` spelling
+/// or a path-qualified `path::owner(` spelling, turbofish included. A
+/// receiver-qualified `expr.owner(` site is method-call syntax and can
+/// never resolve to a free function (#7006).
+///
+/// Both `calls_owner` authorities are consulted: the captured `calls`
+/// facts (whose `text` keeps the original source line) and the raw-body
+/// fallback. Either source showing one non-receiver site keeps the
+/// credit — only "receiver-qualified everywhere observed" demotes, so a
+/// bare spelling one authority misses cannot over-demote.
+fn free_function_call_spells_free_call(test: &TestSummary, owner_name: &str) -> bool {
+    if owner_name.is_empty() {
+        return true;
+    }
+    if test.calls.iter().any(|call| {
+        call.name == owner_name && text_has_non_receiver_call_site(&call.text, owner_name)
+    }) {
+        return true;
+    }
+    text_has_non_receiver_call_site(&test.body, owner_name)
+}
+
+/// Whether `text` spells at least one call site of `name` that is not
+/// receiver-qualified: the name at an identifier boundary, opening an
+/// argument list or turbofish, preceded by anything but a receiver dot.
+/// Comments and string contents are masked first so a mentioned spelling
+/// can neither keep nor cost the credit.
+fn text_has_non_receiver_call_site(text: &str, name: &str) -> bool {
+    if name.is_empty() {
+        return true;
+    }
+    let masked = mask_comments_and_strings(text);
+    let bytes = masked.as_bytes();
+    let mut search = 0usize;
+    while let Some(relative) = masked[search..].find(name) {
+        let at = search + relative;
+        let after = at + name.len();
+        // Step by the first char's width so a non-ASCII name never leaves
+        // `search` inside a multibyte char.
+        search = at + name.chars().next().map_or(1, char::len_utf8);
+        if !ident_boundary(bytes, at, after) || !call_suffix_follows(&masked, after) {
+            continue;
+        }
+        if !receiver_dot_before(bytes, at) {
+            return true;
+        }
+    }
+    false
+}
+
+/// Whether the name occurrence ending at `after` opens a call: an argument
+/// list `(` or a turbofish `::<>`, either after optional whitespace. A
+/// bare turbofish `parse::<u8>(..)` is still a direct free-function call.
+/// The whitespace rule mirrors [`body_contains_owner_call`] exactly
+/// (Unicode `trim_start`), so every site that authority admits is
+/// classified here too.
+fn call_suffix_follows(text: &str, after: usize) -> bool {
+    let rest = text[after..].trim_start();
+    if rest.starts_with('(') {
+        return true;
+    }
+    rest.strip_prefix("::")
+        .is_some_and(|turbo| turbo.trim_start().starts_with('<'))
+}
+
+/// Whether the `.` directly before the name occurrence at `at` is a
+/// receiver dot. Only a single adjacent `.` selects a method on its
+/// receiver; the second `.` of a range (`0..bound(x)`) leaves a bare call
+/// computing the bound, and any other preceding byte (path `::`, open
+/// bracket, operator, or start) spells a free-function call.
+fn receiver_dot_before(bytes: &[u8], at: usize) -> bool {
+    let Some(dot) = at.checked_sub(1) else {
+        return false;
+    };
+    if bytes.get(dot).copied() != Some(b'.') {
+        return false;
+    }
+    dot.checked_sub(1)
+        .and_then(|i| bytes.get(i).copied())
+        .is_none_or(|before| before != b'.')
 }
 
 /// True when `body` mentions `owner_name` immediately followed by `(`.
@@ -2535,8 +2643,10 @@ fn owner_call_relation_reason(
 /// competing impls of one method name (`size_hint` on WhileSome vs
 /// Combinations) stay `calls_owner` here and are demoted from
 /// `direct_owner_call` by [`owner_call_relation_reason`] when the receiver
-/// is not resolved to this impl (#4760). Full `CallFact` receiver fields
-/// remain #3727.
+/// is not resolved to this impl (#4760). A receiver-qualified-only match
+/// against a free-function owner demotes the same way (#7006): method-call
+/// syntax can never resolve to a free function. Full `CallFact` receiver
+/// fields remain #3727.
 pub(in crate::analysis) fn body_contains_owner_call(body: &str, owner_name: &str) -> bool {
     if owner_name.is_empty() {
         return false;
@@ -2566,7 +2676,7 @@ pub(in crate::analysis) fn body_contains_owner_call(body: &str, owner_name: &str
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::analysis::facts::{FileFacts, FunctionSourceRole};
+    use crate::analysis::facts::{FileFacts, FunctionContainer, FunctionSourceRole};
     use crate::analysis::rust_index::{CallFact, OracleFact, extract_identifier_tokens};
     use crate::domain::{
         DeltaKind, OracleKind, OracleStrength, ProbeFamily, ProbeId, SourceLocation, SymbolId,
@@ -2940,7 +3050,10 @@ mod tests {
     /// relation on every method owner in the corpus.
     #[test]
     fn given_method_owner_when_test_calls_through_receiver_then_direct_owner_call() {
-        let owner = function("src/lib.rs", "apply");
+        // #7006: the owner here is genuinely a method owner (`Ledger::apply`,
+        // as the contract above states) — a free-function `apply` with only
+        // `ledger.apply(5)` to match now demotes to `weak_token_substring`.
+        let owner = impl_function("src/lib.rs", "apply", "impl Ledger");
         let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
             functions: vec![owner.clone()],
             tests: vec![TestSummary {
@@ -2970,6 +3083,31 @@ mod tests {
     fn impl_function(file: &str, name: &str, impl_segment: &str) -> FunctionSummary {
         let mut owner = function(file, name);
         owner.id = SymbolId(format!("{file}::{impl_segment}::{name}"));
+        owner
+    }
+
+    /// A parser-backed module-level free function: the only owner kind the
+    /// #7006 demotion applies to. (Named apart from the #4558
+    /// `free_function`, which establishes only the type-path authority.)
+    fn established_free_function(file: &str, name: &str) -> FunctionSummary {
+        let mut owner = function(file, name);
+        owner.item.container = FunctionContainer::Free;
+        owner.item.has_body = true;
+        owner.impl_context = FunctionImplContext::Free;
+        owner
+    }
+
+    /// A parser-backed trait-declaration method. Its id carries no `::impl`
+    /// segment — the free-function-like shape is deliberate: only the
+    /// container fact distinguishes it from a free function, and the #7006
+    /// demotion must not fire for it.
+    fn trait_function(file: &str, name: &str, trait_name: &str) -> FunctionSummary {
+        let mut owner = function(file, name);
+        owner.item.container = FunctionContainer::Trait {
+            trait_name: trait_name.to_string(),
+        };
+        owner.item.has_self_param = true;
+        owner.item.has_body = true;
         owner
     }
 
@@ -3111,6 +3249,237 @@ mod tests {
             ..Default::default()
         });
         let probe = probe("src/lib.rs", "self.persist(amount * 9)");
+
+        let related = find_related_tests(&probe, Some(&owner), &index, true, None, None);
+
+        assert_eq!(related.len(), 1);
+        assert_eq!(related[0].1, RelationReason::DirectOwnerCall);
+    }
+
+    /// #7006: a free function can never be invoked through method-call
+    /// syntax, so a test that only calls `config.parse(..)` is name-only
+    /// against the free-function owner `parse` — never `direct_owner_call`.
+    #[test]
+    fn given_free_function_owner_when_test_only_calls_receiver_qualified_then_name_only_relation() {
+        let owner = established_free_function("src/lib.rs", "parse");
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions: vec![owner.clone()],
+            tests: vec![test_with_call(
+                "tests/config_parse.rs",
+                "config_strict_parse_reports_length",
+                "let config = Config { strict: true };\nlet input = \"hey\";\nassert_eq!(config.parse(input).1, Some(3));",
+                "parse",
+            )],
+            ..Default::default()
+        });
+        let probe = probe("src/lib.rs", "(0, Some(input.len()))");
+
+        let related = find_related_tests(&probe, Some(&owner), &index, true, None, None);
+
+        assert_eq!(related.len(), 1, "the same-named call is still related");
+        assert_eq!(related[0].0.name, "config_strict_parse_reports_length");
+        assert_eq!(
+            related[0].1,
+            RelationReason::WeakTokenSubstring,
+            "a receiver-qualified-only call site cannot invoke a free function"
+        );
+    }
+
+    /// #7006: the body-text fallback admits the same receiver-qualified
+    /// spelling when no `calls` fact captured it; the demotion applies on
+    /// that authority too.
+    #[test]
+    fn given_free_function_owner_when_body_only_calls_receiver_qualified_then_name_only_relation() {
+        let owner = established_free_function("src/lib.rs", "parse");
+        let mut test = test_with_call(
+            "tests/config_parse.rs",
+            "config_strict_parse_reports_length",
+            "let config = Config { strict: true };\nassert_eq!(config.parse(\"hey\").1, Some(3));",
+            "parse",
+        );
+        test.calls = Vec::new();
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions: vec![owner.clone()],
+            tests: vec![test],
+            ..Default::default()
+        });
+        let probe = probe("src/lib.rs", "(0, Some(input.len()))");
+
+        let related = find_related_tests(&probe, Some(&owner), &index, true, None, None);
+
+        assert_eq!(related.len(), 1, "the body-text match is still related");
+        assert_eq!(
+            related[0].1,
+            RelationReason::WeakTokenSubstring,
+            "a body-only receiver-qualified match cannot invoke a free function"
+        );
+    }
+
+    /// #7006 control: a bare `parse(` call keeps `direct_owner_call` — only
+    /// receiver-qualified-only sites demote.
+    #[test]
+    fn given_free_function_owner_when_test_calls_bare_then_direct_owner_call() {
+        let owner = established_free_function("src/lib.rs", "parse");
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions: vec![owner.clone()],
+            tests: vec![test_with_call(
+                "tests/config_parse.rs",
+                "free_parse_reports_length",
+                "let input = \"hey\";\nassert_eq!(parse(input).1, Some(3));",
+                "parse",
+            )],
+            ..Default::default()
+        });
+        let probe = probe("src/lib.rs", "(0, Some(input.len()))");
+
+        let related = find_related_tests(&probe, Some(&owner), &index, true, None, None);
+
+        assert_eq!(related.len(), 1);
+        assert_eq!(related[0].1, RelationReason::DirectOwnerCall);
+    }
+
+    /// #7006 control: a path-qualified `m::parse(` call keeps
+    /// `direct_owner_call` — path qualification still spells the free
+    /// function.
+    #[test]
+    fn given_free_function_owner_when_test_calls_path_qualified_then_direct_owner_call() {
+        let owner = established_free_function("src/lib.rs", "parse");
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions: vec![owner.clone()],
+            tests: vec![test_with_call(
+                "tests/config_parse.rs",
+                "qualified_parse_reports_length",
+                "let input = \"hey\";\nassert_eq!(m::parse(input).1, Some(3));",
+                "parse",
+            )],
+            ..Default::default()
+        });
+        let probe = probe("src/lib.rs", "(0, Some(input.len()))");
+
+        let related = find_related_tests(&probe, Some(&owner), &index, true, None, None);
+
+        assert_eq!(related.len(), 1);
+        assert_eq!(related[0].1, RelationReason::DirectOwnerCall);
+    }
+
+    /// #7006 control: method owners never enter the free-function branch —
+    /// the same receiver-qualified body that demotes against a free
+    /// function keeps `direct_owner_call` against `impl Config::parse`.
+    #[test]
+    fn given_method_owner_when_test_only_calls_receiver_qualified_then_direct_owner_call() {
+        let owner = impl_function("src/lib.rs", "parse", "impl Config");
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions: vec![owner.clone()],
+            tests: vec![test_with_call(
+                "tests/config_parse.rs",
+                "config_strict_parse_reports_length",
+                "let config = Config { strict: true };\nlet input = \"hey\";\nassert_eq!(config.parse(input).1, Some(3));",
+                "parse",
+            )],
+            ..Default::default()
+        });
+        let probe = probe("src/lib.rs", "(0, Some(input.len()))");
+
+        let related = find_related_tests(&probe, Some(&owner), &index, true, None, None);
+
+        assert_eq!(related.len(), 1);
+        assert_eq!(related[0].1, RelationReason::DirectOwnerCall);
+    }
+
+    /// #7006 control: a trait-declaration method shares the `None`
+    /// self-type branch with free functions (its id carries no `::impl`
+    /// segment), but it is a method owner — `a.try_get_int(3)` keeps
+    /// `direct_owner_call`. Guards the `owner_return_pin_trait_method`
+    /// golden.
+    #[test]
+    fn given_trait_owner_when_test_only_calls_receiver_qualified_then_direct_owner_call() {
+        let owner = trait_function("src/lib.rs", "try_get_int", "Buf");
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions: vec![owner.clone()],
+            tests: vec![test_with_call(
+                "tests/buf_tests.rs",
+                "try_get_int_sign_extends",
+                "let mut a = &bytes[..];\nassert_eq!(a.try_get_int(3), Ok(-1));",
+                "try_get_int",
+            )],
+            ..Default::default()
+        });
+        let probe = probe(
+            "src/lib.rs",
+            "Ok(sign_extend(self.try_get_uint(nbytes)?, nbytes))",
+        );
+
+        let related = find_related_tests(&probe, Some(&owner), &index, true, None, None);
+
+        assert_eq!(related.len(), 1);
+        assert_eq!(related[0].1, RelationReason::DirectOwnerCall);
+    }
+
+    /// #7006 control: an unestablished (`Unknown` container) owner fails
+    /// closed — the lexical fallback cannot tell a free function from a
+    /// trait declaration, so the credit stays `direct_owner_call`.
+    #[test]
+    fn given_unknown_container_owner_when_test_only_calls_receiver_qualified_then_direct_owner_call()
+     {
+        let owner = function("src/lib.rs", "parse");
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions: vec![owner.clone()],
+            tests: vec![test_with_call(
+                "tests/config_parse.rs",
+                "config_strict_parse_reports_length",
+                "let config = Config { strict: true };\nlet input = \"hey\";\nassert_eq!(config.parse(input).1, Some(3));",
+                "parse",
+            )],
+            ..Default::default()
+        });
+        let probe = probe("src/lib.rs", "(0, Some(input.len()))");
+
+        let related = find_related_tests(&probe, Some(&owner), &index, true, None, None);
+
+        assert_eq!(related.len(), 1);
+        assert_eq!(related[0].1, RelationReason::DirectOwnerCall);
+    }
+
+    /// #7006 control: a bare turbofish `parse::<u8>(` call is still a
+    /// direct free-function call — the `::` opens type arguments, not a
+    /// receiver.
+    #[test]
+    fn given_free_function_owner_when_test_calls_turbofish_then_direct_owner_call() {
+        let owner = established_free_function("src/lib.rs", "parse");
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions: vec![owner.clone()],
+            tests: vec![test_with_call(
+                "tests/config_parse.rs",
+                "turbofish_parse_reports_value",
+                "assert_eq!(parse::<u8>(\"7\"), 7);",
+                "parse",
+            )],
+            ..Default::default()
+        });
+        let probe = probe("src/lib.rs", "input.parse::<u8>()");
+
+        let related = find_related_tests(&probe, Some(&owner), &index, true, None, None);
+
+        assert_eq!(related.len(), 1);
+        assert_eq!(related[0].1, RelationReason::DirectOwnerCall);
+    }
+
+    /// #7006 control: `0..count_all(items)` computes the range bound with a
+    /// bare call — the second `.` of `..` is not a receiver dot.
+    #[test]
+    fn given_free_function_owner_when_call_computes_range_bound_then_direct_owner_call() {
+        let owner = established_free_function("src/lib.rs", "count_all");
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions: vec![owner.clone()],
+            tests: vec![test_with_call(
+                "tests/count_all.rs",
+                "range_over_counted_items",
+                "let total: usize = (0..count_all(items)).sum();",
+                "count_all",
+            )],
+            ..Default::default()
+        });
+        let probe = probe("src/lib.rs", "items.iter().count()");
 
         let related = find_related_tests(&probe, Some(&owner), &index, true, None, None);
 
