@@ -1065,15 +1065,20 @@ fn is_one_test_title(name: &str) -> bool {
     !name.is_empty() && name == name.trim() && !name.contains('\n')
 }
 
-/// Whether a corpus directory holds Rust cases: `rust-verdict-corpus`, or a
-/// directory not named `<language>-verdict-corpus` at all, so a corpus copied
-/// anywhere else keeps the strictest (Rust) rules.
+/// Whether a corpus directory keeps the Rust label rules: every directory
+/// except `<language>-verdict-corpus` for a listed non-Rust language, so a
+/// corpus copied anywhere else keeps the strictest rules.
 fn is_rust_corpus(dir: &Path) -> bool {
     dir.file_name()
         .and_then(|name| name.to_str())
         .and_then(|name| name.strip_suffix(CORPUS_SUFFIX))
-        .is_none_or(|language| language == "rust")
+        .is_none_or(|language| !NON_RUST_LANGUAGES.contains(&language))
 }
+
+/// Corpus languages whose labels record the command they ran instead of a
+/// replayable cargo command. Any other directory name keeps the Rust rules,
+/// so a misspelled or new language fails closed until it is listed here.
+const NON_RUST_LANGUAGES: [&str; 3] = ["typescript", "python", "perl"];
 
 /// The corpus as one JSON value: the `corpus.json` header with `subjects`
 /// and `cases` gathered from their per-record files in file-name order.
@@ -2286,7 +2291,7 @@ fn write_report(out: &Path, report: &Report, language: &str) -> Result<(), Strin
 
 /// Refuse an `--out` that is, or sits inside, the expected directory, in any
 /// spelling: only `bless` writes there.
-fn refuse_expected_out(out: &Path, expected_dir: &Path) -> Result<(), String> {
+fn refuse_expected_out(out: &Path, expected_dir: &Path, language: &str) -> Result<(), String> {
     // Canonicalize the deepest existing ancestor and re-append the rest, so
     // the guard creates nothing before it decides.
     let resolve = |p: &Path| {
@@ -2308,8 +2313,9 @@ fn refuse_expected_out(out: &Path, expected_dir: &Path) -> Result<(), String> {
     };
     if resolve(out)?.starts_with(resolve(expected_dir)?) {
         return Err(format!(
-            "verdict-corpus: --out {} is inside the expected directory; run `cargo xtask verdict-corpus bless` to re-bless deliberately when a verdict change is intended",
-            normalize_path(out)
+            "verdict-corpus: --out {} is inside the expected directory; run `cargo xtask verdict-corpus bless{}` to re-bless deliberately when a verdict change is intended",
+            normalize_path(out),
+            language_flag(language)
         ));
     }
     Ok(())
@@ -2447,7 +2453,7 @@ fn score_corpus(
         Some(out) => out,
         None => default_out(dir)?,
     };
-    refuse_expected_out(&out, &expected_dir)?;
+    refuse_expected_out(&out, &expected_dir, &corpus_language(dir)?)?;
     let report = run_corpus(dir, &corpus, &work_root(dir)?)?;
     write_report(&out, &report, &corpus_language(dir)?)?;
     println!(
@@ -2515,33 +2521,52 @@ pub(crate) fn language_corpus_dir_in(fixtures: &Path, language: &str) -> Result<
     Ok(dir)
 }
 
-pub(crate) fn verdict_corpus(args: &[String]) -> Result<(), String> {
-    if args.first().map(String::as_str) == Some("relabel") {
-        return super::verdict_corpus_relabel::relabel(&args[1..]);
+/// The parsed arguments of a `verdict-corpus` command other than `relabel`.
+#[derive(Debug, PartialEq)]
+pub(crate) struct CorpusArgs {
+    pub(crate) sub: String,
+    pub(crate) language: Option<String>,
+    pub(crate) out: Option<PathBuf>,
+    pub(crate) cases: Option<Vec<String>>,
+}
+
+/// Parse `verdict-corpus` arguments without touching the filesystem. With no
+/// subcommand, or when the first argument is an option, the subcommand is
+/// `check`.
+pub(crate) fn parse_corpus_args(args: &[String]) -> Result<CorpusArgs, String> {
+    let mut iter = args.iter().peekable();
+    let sub = match iter.peek() {
+        Some(first) if !first.starts_with("--") => iter.next().map(String::clone),
+        _ => None,
     }
-    let mut iter = args.iter();
-    let sub = iter.next().map(String::as_str).unwrap_or("check");
-    let mut out = None;
-    let mut cases: Option<Vec<String>> = None;
-    let mut dir_buf = PathBuf::from(CORPUS_DIR);
-    let mut language_given = false;
+    .unwrap_or_else(|| "check".to_string());
+    let mut parsed = CorpusArgs {
+        sub,
+        language: None,
+        out: None,
+        cases: None,
+    };
     while let Some(arg) = iter.next() {
         match arg.as_str() {
             "--language" => {
                 let language = iter
                     .next()
                     .ok_or("--language needs a corpus language, such as typescript")?;
-                dir_buf = language_corpus_dir(language)?;
-                language_given = true;
+                if parsed.language.is_some() {
+                    return Err(
+                        "verdict-corpus: --language is given twice; name one corpus".to_string()
+                    );
+                }
+                parsed.language = Some(language.clone());
             }
             "--out" => {
-                out = Some(PathBuf::from(iter.next().ok_or("--out needs a directory")?));
+                parsed.out = Some(PathBuf::from(iter.next().ok_or("--out needs a directory")?));
             }
             "--cases" => {
                 let list = iter
                     .next()
                     .ok_or("--cases needs comma-separated case ids")?;
-                cases = Some(
+                parsed.cases = Some(
                     list.split(',')
                         .map(str::trim)
                         .filter(|id| !id.is_empty())
@@ -2552,15 +2577,34 @@ pub(crate) fn verdict_corpus(args: &[String]) -> Result<(), String> {
             other => return Err(format!("verdict-corpus: unknown argument `{other}`")),
         }
     }
+    let sub = parsed.sub.as_str();
+    if sub == "check-all" && parsed.language.is_some() {
+        return Err("verdict-corpus check-all checks every corpus; drop --language".to_string());
+    }
     let takes_options = matches!(sub, "report" | "check");
-    if !takes_options && (out.is_some() || cases.is_some()) {
+    if !takes_options && (parsed.out.is_some() || parsed.cases.is_some()) {
         return Err(format!(
             "verdict-corpus {sub} takes only --language; `--out` and `--cases` apply to report and check"
         ));
     }
-    if sub == "check-all" && language_given {
-        return Err("verdict-corpus check-all checks every corpus; drop --language".to_string());
+    Ok(parsed)
+}
+
+pub(crate) fn verdict_corpus(args: &[String]) -> Result<(), String> {
+    if args.first().map(String::as_str) == Some("relabel") {
+        return super::verdict_corpus_relabel::relabel(&args[1..]);
     }
+    let CorpusArgs {
+        sub,
+        language,
+        out,
+        cases,
+    } = parse_corpus_args(args)?;
+    let sub = sub.as_str();
+    let dir_buf = match &language {
+        Some(language) => language_corpus_dir(language)?,
+        None => PathBuf::from(CORPUS_DIR),
+    };
     let dir = dir_buf.as_path();
     let expected_dir = dir.join("expected");
     match sub {

@@ -27,7 +27,11 @@ under this repository's license, grouped by test runner:
   (`node:assert` strict and legacy, `assert.throws` and `assert.rejects`,
   subtests, `t.assert`).
 
-Every RIPR-SPEC-0243 acceptance example (1 to 32) has at least one case.
+RIPR-SPEC-0243 acceptance examples 1 to 32 each have at least one case;
+example 34 is `nodetest-currency-throws-regex` and example 35 is
+`nodetest-charge-rejects-message`. Example 33 (two test files, one mocked)
+has no case yet (#7099). Case ids containing `spec0234` were named before the
+TypeScript rules were renumbered; they refer to today's RIPR-SPEC-0243.
 Where the spec says "(today X)", the case keeps today's verdict in its
 labeling observation; where the mutant run contradicts it, the case scores
 it as false and its reasoning names the spec example.

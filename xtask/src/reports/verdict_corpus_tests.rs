@@ -1443,6 +1443,8 @@ fn only_a_rust_corpus_holds_labels_to_cargo_commands_and_rust_test_names() -> Re
     for (name, rust) in [
         ("rust-verdict-corpus", true),
         ("copied-corpus", true),
+        ("Rust-verdict-corpus", true),
+        ("go-verdict-corpus", true),
         ("typescript-verdict-corpus", false),
     ] {
         assert_eq!(
@@ -1489,5 +1491,66 @@ fn only_a_rust_corpus_holds_labels_to_cargo_commands_and_rust_test_names() -> Re
         rust.iter().any(|v| v.contains("is not one test name")),
         "{rust:#?}"
     );
+    Ok(())
+}
+
+fn args(list: &[&str]) -> Vec<String> {
+    list.iter().map(|arg| arg.to_string()).collect()
+}
+
+#[test]
+fn language_option_parses_in_any_position_and_refuses_misuse() -> Result<(), String> {
+    for given in [
+        args(&["--language", "typescript"]),
+        args(&["check", "--language", "typescript"]),
+    ] {
+        let parsed = parse_corpus_args(&given)?;
+        assert_eq!(parsed.sub, "check", "{given:?}");
+        assert_eq!(parsed.language.as_deref(), Some("typescript"), "{given:?}");
+    }
+    assert_eq!(parse_corpus_args(&[])?.sub, "check");
+    for (given, refusal) in [
+        (
+            args(&["check-all", "--language", "typescript"]),
+            "drop --language",
+        ),
+        (
+            args(&["check", "--language", "typescript", "--language", "rust"]),
+            "given twice",
+        ),
+        (
+            args(&["bless", "--language", "typescript", "--out", "x"]),
+            "takes only --language",
+        ),
+        (args(&["check", "--language"]), "needs a corpus language"),
+    ] {
+        let err = parse_corpus_args(&given)
+            .err()
+            .ok_or(format!("{given:?} was accepted"))?;
+        assert!(err.contains(refusal), "{given:?}: {err}");
+    }
+    Ok(())
+}
+
+#[test]
+fn a_report_and_its_rebless_hint_name_the_corpus_language() -> Result<(), String> {
+    let corpus = load_corpus(&typescript_corpus_dir())?;
+    let checks: Vec<(String, Value)> = corpus
+        .cases
+        .iter()
+        .map(|case| (case.case_id.clone(), json!({"findings": []})))
+        .collect();
+    let report = build_report(&corpus, &checks, &BTreeMap::new())?;
+    assert!(
+        render_report_markdown(&report, "typescript")
+            .starts_with("# TypeScript verdict corpus report\n"),
+        "typescript title"
+    );
+    assert!(
+        render_report_markdown(&report, "rust").starts_with("# Rust verdict corpus report\n"),
+        "rust title"
+    );
+    assert_eq!(language_flag("typescript"), " --language typescript");
+    assert_eq!(language_flag("rust"), "");
     Ok(())
 }

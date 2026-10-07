@@ -1074,7 +1074,7 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
             "fixtures/<language>-verdict-corpus/expected/rows/<case>.json",
             false,
             false,
-            "Runs the whole corpus and replaces the reviewed expected state: one row file per case, removing rows of deleted cases. The aggregate rates are derived from the rows, not committed. Use it only when a verdict change is intended, and state why each moved row changed in the PR.",
+            "Runs the whole corpus (Rust unless --language names another) and replaces the reviewed expected state: one row file per case, removing rows of deleted cases. The aggregate rates are derived from the rows, not committed. Use it only when a verdict change is intended, and state why each moved row changed in the PR.",
         ),
         command_entry(
             "verdict-corpus split [--language <language>]",
@@ -1082,7 +1082,7 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
             "fixtures/<language>-verdict-corpus/{corpus.json,subjects/<id>.json,cases/<id>.json}",
             false,
             false,
-            "Moves a pre-split corpus.json's subjects and cases arrays into per-record files and drops corpus_version, so a branch written against the one-file layout resolves its conflict by keeping its own corpus.json and running this. Existing records with other content are kept and named.",
+            "Moves a pre-split corpus.json's (Rust unless --language names another) subjects and cases arrays into per-record files and drops corpus_version, so a branch written against the one-file layout resolves its conflict by keeping its own corpus.json and running this. Existing records with other content are kept and named.",
         ),
         command_entry(
             "verdict-corpus relabel [--sample <n> [--seed <s>] | --case <id>...] [--checkouts <dir>] [--repeat <k>] [--timeout-secs <t>] [--out <dir>] [--work-dir <dir>]",

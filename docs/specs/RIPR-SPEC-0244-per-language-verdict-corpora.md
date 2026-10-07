@@ -24,7 +24,7 @@ Linked issues:
 
 Linked PRs:
 
-- None yet
+- #6686
 
 Support-tier impact:
 
@@ -77,8 +77,9 @@ cannot be a directory component, or that names no directory holding a
 Two RIPR-SPEC-0219 label rules exist so `verdict-corpus relabel` can replay
 a Rust case: the test command must be a `cargo` command, and a failing test
 must be one Rust test name. `relabel` replays the Rust corpus only, so those
-two rules apply only to a corpus in `rust-verdict-corpus` (or in a directory
-not named `<language>-verdict-corpus`, which keeps the Rust rules). Another
+two rules are lifted only for a listed non-Rust language (`typescript`,
+`python`, `perl`); every other directory, including `rust-verdict-corpus`, a
+misspelled language and a corpus copied elsewhere, keeps the Rust rules. Another
 language records the command it ran, and each failing test is one test title:
 one non-empty trimmed line, which may hold spaces and commas, as jest and
 `node:test` titles do. Every other rule, `mutated_line` included, applies to
@@ -110,7 +111,9 @@ labeling toolchain and test command each case names.
 ## Required Evidence
 
 - `--language` maps a language to its own corpus directory and refuses a
-  name that is not a directory component or that names no corpus.
+  name that is not a directory component or that names no corpus; it parses
+  before or after the subcommand, is refused twice and on `check-all`.
+- A report's title and its re-bless hint name the corpus language.
 - Only a Rust corpus holds labels to cargo test commands and Rust test
   names; a non-Rust corpus accepts a recorded command and a test title with
   spaces and commas, and still refuses a multi-line, padded or empty title.
@@ -133,14 +136,18 @@ labeling toolchain and test command each case names.
   `target/ripr/reports/verdict-corpus/typescript/report.{json,md}` under a
   `TypeScript verdict corpus report` title, and on drift names
   `cargo xtask verdict-corpus bless --language typescript`.
-- `--language cobol` fails before any case runs, naming the missing
-  `fixtures/cobol-verdict-corpus/corpus.json`.
+- `--language cobol` fails before any case runs: `fixtures/cobol-verdict-corpus`
+  has no corpus.json.
+- `check-all --language typescript` is refused; `check-all` checks every
+  corpus.
 
 ## Test Mapping
 
 Tests live in `xtask/src/reports/verdict_corpus_tests.rs`:
 
 - `language_names_its_own_corpus_directory_and_nothing_else`
+- `language_option_parses_in_any_position_and_refuses_misuse`
+- `a_report_and_its_rebless_hint_name_the_corpus_language`
 - `only_a_rust_corpus_holds_labels_to_cargo_commands_and_rust_test_names`
 - `committed_typescript_corpus_is_valid_and_its_rows_agree_with_its_labels`
 
