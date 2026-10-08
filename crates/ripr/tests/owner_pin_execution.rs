@@ -2225,6 +2225,122 @@ fn unit_struct_receiver_matched_static_and_runtime_controls() -> Result<(), Stri
     Ok(())
 }
 
+/// #7098 review: `Iterator::is_partitioned` is still unstable on the
+/// supported 1.95 toolchain, so even a receiver that implements `Iterator`
+/// runs the custom default. The mutant proves dispatch: it fails only if
+/// the call reaches the changed default, and the static verdict credits it.
+#[test]
+fn unstable_is_partitioned_custom_default_matched_controls() -> Result<(), String> {
+    let production = "pub trait Counter {\n    fn step(&self) -> u32;\n\n    fn is_partitioned(&self) -> u32 {\n        4 * self.step()\n    }\n}\n\npub struct Unit;\n\nimpl Counter for Unit {\n    fn step(&self) -> u32 {\n        2\n    }\n}\n\nimpl Iterator for Unit {\n    type Item = u32;\n\n    fn next(&mut self) -> Option<u32> {\n        None\n    }\n}\n";
+    let diff = "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -3,5 +3,5 @@ pub trait Counter {\n \n     fn is_partitioned(&self) -> u32 {\n-        self.step() * 4\n+        4 * self.step()\n     }\n }\n";
+    let tests = "#[cfg(test)]\nmod tests {\n    use super::*;\n\n    #[test]\n    fn advances() {\n        assert_eq!(Unit.is_partitioned(), 8);\n    }\n}\n";
+    let workspace = Scratch::create()?;
+    std::fs::create_dir(workspace.0.join("src")).map_err(|error| error.to_string())?;
+    std::fs::write(
+        workspace.0.join("Cargo.toml"),
+        "[package]\nname = \"partitioned_control\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )
+    .map_err(|error| error.to_string())?;
+    std::fs::write(
+        workspace.0.join("src/lib.rs"),
+        format!("{production}\n{tests}"),
+    )
+    .map_err(|error| error.to_string())?;
+    std::fs::write(workspace.0.join("diff.patch"), diff).map_err(|error| error.to_string())?;
+    let report = check_workspace(CheckInput {
+        root: workspace.0.clone(),
+        diff_file: Some(workspace.0.join("diff.patch")),
+        mode: Mode::Fast,
+        format: OutputFormat::Json,
+        ..CheckInput::default()
+    })?;
+    let finding = report
+        .findings
+        .iter()
+        .find(|finding| {
+            finding.probe.family == ProbeFamily::ReturnValue && finding.probe.location.line == 5
+        })
+        .ok_or("no return_value finding on the changed tail")?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::Exposed,
+        "the custom default is the only callee: {:?}",
+        finding.class
+    );
+    for (label, tail, should_fail) in [
+        ("rewrite", "4 * self.step()", false),
+        ("mutant", "4 + self.step()", true),
+    ] {
+        source_runtime_control(
+            &format!("{}\n{tests}", production.replace("4 * self.step()", tail)),
+            &format!("partitioned default {label}"),
+            1,
+            should_fail,
+        )?;
+    }
+    Ok(())
+}
+
+/// #7098 review: rustc accepts `#[r#path = ..]`, and the shadow module it
+/// names can define a rival `Unit` the test imports explicitly. The mutant
+/// stays green (the call never reaches the production default), so the
+/// static verdict must refuse the pin.
+#[test]
+fn raw_path_shadow_module_keeps_the_mutant_green() -> Result<(), String> {
+    let production = "pub trait Counter {\n    fn step(&self) -> u32;\n\n    fn advance(&self) -> u32 {\n        4 * self.step()\n    }\n}\n\npub struct Unit;\n\nimpl Counter for Unit {\n    fn step(&self) -> u32 {\n        2\n    }\n}\n\n#[r#path = \"shadow.in\"]\nmod shadow;\n";
+    let shadow = "pub struct Unit;\n\nimpl Unit {\n    pub fn advance(&self) -> u32 {\n        8\n    }\n}\n";
+    let diff = "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -3,5 +3,5 @@ pub trait Counter {\n \n     fn advance(&self) -> u32 {\n-        self.step() * 4\n+        4 * self.step()\n     }\n }\n";
+    let tests = "#[cfg(test)]\nmod tests {\n    use super::*;\n    use crate::shadow::Unit;\n\n    #[test]\n    fn advances() {\n        assert_eq!(Unit.advance(), 8);\n    }\n}\n";
+    let workspace = Scratch::create()?;
+    std::fs::create_dir(workspace.0.join("src")).map_err(|error| error.to_string())?;
+    std::fs::write(
+        workspace.0.join("Cargo.toml"),
+        "[package]\nname = \"raw_path_control\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )
+    .map_err(|error| error.to_string())?;
+    std::fs::write(
+        workspace.0.join("src/lib.rs"),
+        format!("{production}\n{tests}"),
+    )
+    .map_err(|error| error.to_string())?;
+    std::fs::write(workspace.0.join("src/shadow.in"), shadow).map_err(|error| error.to_string())?;
+    std::fs::write(workspace.0.join("diff.patch"), diff).map_err(|error| error.to_string())?;
+    let report = check_workspace(CheckInput {
+        root: workspace.0.clone(),
+        diff_file: Some(workspace.0.join("diff.patch")),
+        mode: Mode::Fast,
+        format: OutputFormat::Json,
+        ..CheckInput::default()
+    })?;
+    let finding = report
+        .findings
+        .iter()
+        .find(|finding| {
+            finding.probe.family == ProbeFamily::ReturnValue && finding.probe.location.line == 5
+        })
+        .ok_or("no return_value finding on the changed tail")?;
+    assert_ne!(
+        finding.class,
+        ExposureClass::Exposed,
+        "the raw-path shadow refuses the pin"
+    );
+    // Rewrite and mutant both stay green: the test calls the shadow's
+    // inherent method either way, which is exactly why the pin refuses.
+    for (label, tail) in [
+        ("rewrite", "4 * self.step()"),
+        ("mutant", "4 + self.step()"),
+    ] {
+        source_runtime_control_with(
+            &format!("{}\n{tests}", production.replace("4 * self.step()", tail)),
+            &[("shadow.in", shadow)],
+            &format!("raw-path shadow {label}"),
+            1,
+            false,
+        )?;
+    }
+    Ok(())
+}
+
 /// #7083 review: a lower-case `pub use std::u32::MAX;` re-export puts
 /// `u32::MAX` under the unit struct's name, so `MAX.count_ones()` runs the
 /// inherent `u32::count_ones` and a wrong default passes. The import refuses

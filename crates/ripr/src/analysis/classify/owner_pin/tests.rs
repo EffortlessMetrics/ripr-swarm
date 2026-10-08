@@ -256,17 +256,7 @@ fn edition_2024_into_future_is_a_by_value_prelude_method() {
 /// iterator type runs `Iterator::ne` before a `&self` trait default `ne`.
 #[test]
 fn iterator_by_value_comparisons_are_prelude_methods() {
-    for name in [
-        "cmp",
-        "eq",
-        "ge",
-        "gt",
-        "is_partitioned",
-        "le",
-        "lt",
-        "ne",
-        "partial_cmp",
-    ] {
+    for name in ["cmp", "eq", "ge", "gt", "le", "lt", "ne", "partial_cmp"] {
         let lib = kept_default_with_tests(&format!("        assert_eq!(Unit.{name}(), 8);"))
             .replace("fn advance(&self)", &format!("fn {name}(&self)"));
         let index = index(&[(LIB, &lib)]);
@@ -278,6 +268,24 @@ fn iterator_by_value_comparisons_are_prelude_methods() {
         let Some(pin) = pin else { continue };
         assert!(admitted_texts(&index, &pin).is_empty(), "`{name}` admitted");
     }
+}
+
+/// #7098 review: `Iterator::is_partitioned` is still unstable on the
+/// supported 1.95 toolchain, so a custom default of that name is the only
+/// possible callee and its test is a genuine discriminator: the pin
+/// admits it.
+#[test]
+fn unstable_is_partitioned_custom_default_is_admitted() {
+    let lib = kept_default_with_tests("        assert_eq!(Unit.is_partitioned(), 8);")
+        .replace("fn advance(&self)", "fn is_partitioned(&self)");
+    let index = index(&[(LIB, &lib)]);
+    let pin = establish(&index, "is_partitioned", "4 * self.step()");
+    assert!(pin.is_some(), "the kept default must establish a pin");
+    let Some(pin) = pin else { return };
+    assert_eq!(
+        admitted_texts(&index, &pin),
+        vec!["assert_eq!(Unit.is_partitioned(), 8);".to_string()]
+    );
 }
 
 #[test]
@@ -328,6 +336,10 @@ fn unit_struct_value_admits_only_spellings_nothing_else_can_bind() {
         "#[path = \"other.rs\"]\nmod other;\n",
         "# [ path = \"other.rs\"]\nmod other;\n",
         "#\n[path = \"other.rs\"]\nmod other;\n",
+        // #7098 review: rustc accepts the raw-identifier spelling too
+        // (`r#` directly before the ident; verified by compile probe).
+        "#[r#path = \"shadow.in\"]\nmod shadow;\n",
+        "#[r#path   =   \"shadow.in\"]\nmod shadow;\n",
         // A foreign glob in any file can reach the test through `crate::*`.
         "pub use std::u32::*;\n",
         // #7083 round 4: an outside module renamed or re-exported into the

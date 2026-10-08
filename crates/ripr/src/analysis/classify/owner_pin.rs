@@ -3939,7 +3939,8 @@ fn binding_type(
 ///   through declared workspace modules, so no glob brings in an outside
 ///   item (directly or through a renamed or re-exported outside module);
 /// - the name is not a prelude value, and no workspace file uses `include!`
-///   or `#[path]`, which splice in text the scan never reads.
+///   or `#[path]` (either spelling, including raw `#[r#path]`), which
+///   splice in text the scan never reads.
 ///
 /// Items a derive or attribute proc macro emits stay invisible, as for
 /// every other pin rule.
@@ -3960,10 +3961,15 @@ fn unit_struct_value(name: &str, test_file: &Path, index: &RustIndex) -> bool {
         }
         // `include!` and `#[path]` splice in text the index may never
         // read, so no spelling scan covers them. The cheap filter matches
-        // the bare words: `# [ path` may carry whitespace.
+        // the bare words: `# [ path` may carry whitespace, and rustc
+        // accepts the raw-identifier spelling `#[r#path = ..]` too
+        // (#7098 review).
         if masked.contains("include") || masked.contains("path") {
             let compact = without_rust_whitespace(&masked);
-            if compact.contains("include!") || compact.contains("#[path") {
+            if compact.contains("include!")
+                || compact.contains("#[path")
+                || compact.contains("#[r#path")
+            {
                 return false;
             }
         }
@@ -4928,7 +4934,10 @@ const BY_VALUE_PRELUDE_METHODS: &[&str] = &[
     "into_iter",
     // Edition 2024 prelude: `IntoFuture` for every `Future` (#7083).
     "into_future",
-    "is_partitioned",
+    // `Iterator::is_partitioned` is still unstable on the supported 1.95
+    // toolchain, so the name can only spell a custom default: listing it
+    // here would refuse a genuine discriminator (#7098 review). Do not
+    // re-add until the std method stabilizes.
     "is_sorted",
     "is_sorted_by",
     "is_sorted_by_key",

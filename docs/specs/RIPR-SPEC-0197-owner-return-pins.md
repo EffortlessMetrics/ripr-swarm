@@ -255,7 +255,8 @@ rule only for an assertion whose context was admitted.
      workspace `use` or `extern crate` also binds (so neither a foreign glob
      nor `use std::u32 as nums;` with `use crate::nums::*` qualifies, even
      beside an unrelated `mod nums`), no workspace file may use
-     `include!` or `#[path]`, and the name may not be a prelude value
+     `include!` or `#[path]` (either spelling, including raw `#[r#path]`),
+     and the name may not be a prelude value
      (`None`, `Some`, `Ok`, `Err`). Review found that imports
      (`use self::Kind::Unit`, a lower-case `pub use std::u32::MAX`
      re-export), raw identifiers, macro input, `include!`, Unicode
@@ -924,7 +925,8 @@ assertions. This repair shares the existing callback without that larger migrati
   (`unit_struct_receiver_is_typed_by_its_own_name`,
   `unit_struct_value_admits_only_spellings_nothing_else_can_bind`,
   `edition_2024_into_future_is_a_by_value_prelude_method`,
-  `iterator_by_value_comparisons_are_prelude_methods`);
+  `iterator_by_value_comparisons_are_prelude_methods`,
+  `unstable_is_partitioned_custom_default_is_admitted`);
   macro-bound, aliased and parameter receivers;
   lexical fallback; the item-container fact.
 - Unit execution and macro context controls: `owner_pin_requires_an_executed_assertion_context`,
@@ -974,6 +976,12 @@ assertions. This repair shares the existing callback without that larger migrati
   `aliased_outside_module_beside_a_same_named_module_is_not_credited` globs
   `use std::u32 as nums;` beside an unrelated `mod nums`; in both the mutant
   passes and the finding reads `weakly_exposed`.
+  `unstable_is_partitioned_custom_default_matched_controls` (#7098 review)
+  credits a custom `is_partitioned` default through a receiver that also
+  implements `Iterator` — the std method is still unstable on 1.95, so the
+  mutant fails; `raw_path_shadow_module_keeps_the_mutant_green` (#7098
+  review) loads a rival `Unit` from a `#[r#path]`-named non-`.rs` module,
+  and the mutant passes while the finding refuses.
 - Bool-owner unit tests: `a_bare_assert_pins_a_bool_owner_to_true_or_false`,
   `a_bare_assert_pins_nothing_on_a_non_bool_owner`,
   `a_bare_assert_keeps_the_owner_binding_defeats`; pairing unit test
