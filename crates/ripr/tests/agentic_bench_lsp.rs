@@ -2,11 +2,14 @@
 //!
 //! Drives the real `ripr lsp --stdio` binary over JSON-RPC with
 //! `Content-Length` framing through the agent-protocol wire contract:
-//! `initialize` (with the `riprAgent` experimental block),
-//! `ripr/listActionableItems`, the `workspace/executeCommand` collect
-//! surface, `ripr.refresh`, `shutdown`, and `exit`. The script lives in
+//! `initialize` (with the `riprAgent` experimental block), the pre-refresh
+//! `ripr/listActionableItems` rejection shape, the
+//! `workspace/executeCommand` collect surface, `ripr.refresh`, `shutdown`,
+//! and `exit`. The script lives in
 //! `benchmarks/agentic/lsp-protocol/script.json`; every step lands in a
-//! bounded receipt under `target/ripr/reports/` (git-ignored).
+//! bounded receipt under `target/ripr/reports/` (git-ignored). The
+//! post-refresh `actionable_items` success envelope is covered by the
+//! `lsp_lifecycle.rs` wire journey (#7146), not by this bench.
 //!
 //! Oracle: pre-init `-32002`, duplicate `initialize` `-32600`, bad
 //! collect arguments `-32602` naming the accepted shape, reserved agent
