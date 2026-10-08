@@ -1089,11 +1089,20 @@ fn expected_computed_through_owner(
     owner: &str,
     reaches_owner: &dyn Fn(Option<&str>, &str) -> bool,
 ) -> bool {
-    if !text.contains("assert_eq!") {
-        return false;
-    }
-    let Some([left, right]) = assertion_comparison_operands(text) else {
-        return false;
+    // RIPR-SPEC-0197: `assert!(a == b)` and its Err-return guard twin
+    // compare the same operands an `assert_eq!` would.
+    let equality;
+    let [left, right] = if text.contains("assert_eq!") {
+        let Some(operands) = assertion_comparison_operands(text) else {
+            return false;
+        };
+        operands
+    } else {
+        equality = super::owner_pin::equality_condition_operands(text);
+        let Some([left, right]) = &equality else {
+            return false;
+        };
+        [left.as_str(), right.as_str()]
     };
     let reaches = |operand: &str| {
         called_paths(operand)
@@ -7365,6 +7374,27 @@ return Err(\"typed pin\".into());
             "tax",
             &reaches
         ));
+        // RIPR-SPEC-0197: `assert!(a == b)` and an Err-return guard twin
+        // compare the same operands an `assert_eq!` would.
+        for text in [
+            "assert!(sub + tax(sub) == invoice(3, 100));",
+            "if invoice(3, 100) != sub + tax(sub) { return Err(..) }",
+        ] {
+            assert!(
+                expected_computed_through_owner(text, "tax", &reaches),
+                "{text}"
+            );
+        }
+        for text in [
+            "assert!(tax(300) == 24);",
+            "if tax(300) != 24 { return Err(..) }",
+            "assert!(tax(300) >= invoice(3, 100));",
+        ] {
+            assert!(
+                !expected_computed_through_owner(text, "tax", &reaches),
+                "{text}"
+            );
+        }
         assert_eq!(constructed_field_name("storage,"), Some("storage"));
         assert_eq!(
             constructed_field_name("total_cents: shipping + subtotal,"),

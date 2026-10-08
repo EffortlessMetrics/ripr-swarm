@@ -506,6 +506,29 @@ not pair either. An owner call or binding spelled only inside a comment or
 string literal is not a call or a reference. These rules hold for
 `assert_eq!` as well.
 
+### Lone-equality pins
+
+`assert!(owner(..) == v)` fails exactly when `assert_eq!(owner(..), v)`
+does, and a terminal Err-return guard `if owner(..) != v { return Err(..) }`
+in a test returning `Result` is its assertion twin `assert!(owner(..) == v)`
+(RIPR-SPEC-0154). The pin reads the two operands of such an equality as it
+reads `assert_eq!` operands when:
+
+1. The assertion is one plain, unqualified `assert!`, or a terminal
+   Err-return guard whose twin RIPR-SPEC-0154 establishes.
+2. The condition holds exactly one top-level `==`: outside parentheses,
+   brackets, braces, comments and strings. A top-level `!=`, `<`, `>`,
+   `<=`, `>=`, `&&`, `||`, `=`, closure pipe or second `==` refuses, as
+   does a negated condition (`!(a == b)`, and a guard `if !a == b`, which
+   is `(!a) == b`). An `==` guard's twin is an inequality and pins nothing.
+3. Every other rule above holds unchanged: one side is the owner call shape
+   and the expected side does not name the owner, the self-computed
+   expected check (RIPR-SPEC-0035) reads the same operands, execution and
+   macro admission (the parser keys each terminal Err-return guard by its
+   `if` line and whitespace-free condition, with the same eager-path
+   gates), `#[should_panic]`, the test's line range and the return-path
+   gate.
+
 ## Required Evidence
 
 - The bytes 7930d93 replay moves both `return_value` findings

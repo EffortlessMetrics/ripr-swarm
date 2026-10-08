@@ -4495,6 +4495,36 @@
           "class": "weakly_exposed"
         }
       ]
+    },
+    {
+      "id": "rust_owner_pin_err_return_guard",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/owner_return_pin_err_guard",
+      "vector": "owner_return_pin_err_return_guard_equality_twin",
+      "probe_family": "return_value",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_promote" },
+        { "type": "expected_class", "class": "exposed" },
+        { "type": "maximum_class", "class": "exposed" }
+      ]
+    },
+    {
+      "id": "rust_owner_pin_err_return_guard_not_equality",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/owner_return_pin_err_guard_not_equality",
+      "vector": "owner_return_pin_not_a_lone_equality",
+      "probe_family": "return_value",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "weakly_exposed" },
+        { "type": "maximum_class", "class": "weakly_exposed" }
+      ]
     }
   ]
 }

@@ -1089,7 +1089,7 @@ pub(crate) fn owner_pin_assertions(source: &str, trusted: &[&str]) -> OwnerPinAs
             token.text_range().start(),
             function.syntax().text_range().end(),
         );
-        let mut candidates = BTreeMap::<AssertionKey, Vec<ast::MacroCall>>::new();
+        let mut candidates = BTreeMap::<AssertionKey, Vec<SyntaxNode>>::new();
         for call in function
             .syntax()
             .descendants()
@@ -1110,7 +1110,33 @@ pub(crate) fn owner_pin_assertions(source: &str, trusted: &[&str]) -> OwnerPinAs
                 lines.line(range.start()),
                 slice_macro_call_text(source, range.start(), range.end()),
             );
-            candidates.entry(assertion).or_default().push(call);
+            candidates
+                .entry(assertion)
+                .or_default()
+                .push(call.syntax().clone());
+        }
+        // RIPR-SPEC-0197: a terminal Err-return guard is the assertion twin
+        // of its negated condition (RIPR-SPEC-0154), keyed by its `if` line
+        // and condition as [`err_return_guard_key`] spells it.
+        for guard in function
+            .syntax()
+            .descendants()
+            .filter_map(ast::IfExpr::cast)
+        {
+            let Some(condition) = terminal_err_return_guard_condition(&guard) else {
+                continue;
+            };
+            let Some(if_token) = guard.if_token() else {
+                continue;
+            };
+            let key = (
+                lines.line(if_token.text_range().start()),
+                err_return_guard_key(&condition.syntax().text().to_string()),
+            );
+            candidates
+                .entry(key)
+                .or_default()
+                .push(guard.syntax().clone());
         }
         let macros = function
             .syntax()
@@ -1146,7 +1172,7 @@ pub(crate) fn owner_pin_assertions(source: &str, trusted: &[&str]) -> OwnerPinAs
                 // OracleFact has line/text, not an offset. No identical spelling
                 // on the same line may borrow another invocation's context.
                 let admitted = if calls.len() == 1 {
-                    eager_path(calls[0].syntax().clone(), &function, false, first_return)
+                    eager_path(calls[0].clone(), &function, false, first_return)
                         .map_err(AssertionContextRefusal::ConditionalPath)
                 } else {
                     Err(AssertionContextRefusal::DuplicateSpelling)
@@ -1169,6 +1195,40 @@ pub(crate) fn owner_pin_assertions(source: &str, trusted: &[&str]) -> OwnerPinAs
         .functions
         .retain(|key, _| identities.get(key) == Some(&1));
     result
+}
+
+/// The assertion key of a terminal Err-return guard: its condition with
+/// whitespace removed, so the parsed guard and the scanned oracle text
+/// (which may join continuation lines) name the same guard.
+pub(crate) fn err_return_guard_key(condition: &str) -> String {
+    let compact: String = condition.split_whitespace().collect();
+    format!("if {compact}")
+}
+
+/// The condition of `if <condition> { return Err(..); .. }` with no `else`:
+/// the first statement of the body returns an `Err(..)` call. Whether the
+/// condition has an assertion twin is the oracle scan's decision.
+fn terminal_err_return_guard_condition(guard: &ast::IfExpr) -> Option<ast::Expr> {
+    if guard.else_branch().is_some() {
+        return None;
+    }
+    let condition = guard.condition()?;
+    let body = guard.then_branch()?.stmt_list()?;
+    let first = match body.statements().next() {
+        Some(ast::Stmt::ExprStmt(statement)) => statement.expr()?,
+        Some(_) => return None,
+        None => body.tail_expr()?,
+    };
+    let ast::Expr::ReturnExpr(returned) = first else {
+        return None;
+    };
+    let ast::Expr::CallExpr(call) = returned.expr()? else {
+        return None;
+    };
+    let ast::Expr::PathExpr(callee) = call.expr()? else {
+        return None;
+    };
+    (callee.syntax().text() == "Err").then_some(condition)
 }
 
 /// Duplicate function identities are ambiguous: the second insert refuses
