@@ -23506,6 +23506,60 @@ fn framed_lsp_gap_ledger_degradation_is_typed_logged_and_recovers() -> Result<()
             found.sort();
             found
         };
+        // The seeded boundary edit lands on `src/lib.rs` line 2 (1-based),
+        // so its diff finding diagnostic starts at 0-based LSP line 1.
+        // Finding codes are the verbatim `ExposureClass` labels while seam
+        // and gap diagnostics carry `ripr-`-prefixed codes. Matching code
+        // and range pins the seeded finding itself: message text alone also
+        // matches the pre-existing seam diagnostic the clean baseline
+        // already publishes for this file (#7170 review).
+        const SEEDED_LINE: u64 = 1;
+        let finding_codes: std::collections::BTreeSet<String> = [
+            crate::domain::ExposureClass::Exposed,
+            crate::domain::ExposureClass::WeaklyExposed,
+            crate::domain::ExposureClass::ReachableUnrevealed,
+            crate::domain::ExposureClass::NoStaticPath,
+            crate::domain::ExposureClass::InfectionUnknown,
+            crate::domain::ExposureClass::PropagationUnknown,
+            crate::domain::ExposureClass::StaticUnknown,
+        ]
+        .into_iter()
+        .map(|class| super::diagnostic_catalog::finding_code(&class))
+        .collect();
+        let seeded_findings = |messages: &[serde_json::Value]| -> Vec<(String, u64, String)> {
+            let mut found = Vec::new();
+            for message in messages {
+                if message.get("method").and_then(serde_json::Value::as_str)
+                    != Some("textDocument/publishDiagnostics")
+                {
+                    continue;
+                }
+                if !message["params"]["uri"]
+                    .as_str()
+                    .is_some_and(|uri| uri.ends_with("src/lib.rs"))
+                {
+                    continue;
+                }
+                if let Some(diagnostics) = message["params"]["diagnostics"].as_array() {
+                    for diagnostic in diagnostics {
+                        let code = diagnostic
+                            .get("code")
+                            .and_then(serde_json::Value::as_str)
+                            .unwrap_or_default();
+                        let line = diagnostic["range"]["start"]["line"].as_u64();
+                        let text = diagnostic
+                            .get("message")
+                            .and_then(serde_json::Value::as_str)
+                            .unwrap_or_default();
+                        if finding_codes.contains(code) && line == Some(SEEDED_LINE) {
+                            found.push((code.to_string(), SEEDED_LINE, text.to_string()));
+                        }
+                    }
+                }
+            }
+            found.sort();
+            found
+        };
 
         // Plant a malformed gap decision ledger at the production default
         // path: the ledger exists but cannot be parsed, so the gap_ledger
@@ -23605,6 +23659,12 @@ fn framed_lsp_gap_ledger_degradation_is_typed_logged_and_recovers() -> Result<()
                     .to_string(),
             );
         }
+        let degraded_seeded = seeded_findings(&degraded);
+        if degraded_seeded.is_empty() {
+            return Err(format!(
+                "the degraded refresh must still publish the seeded finding diagnostic (finding code at line {SEEDED_LINE}), got: {degraded_lib:?}"
+            ));
+        }
 
         // Refresh 3 (identical degradation): no repeated warning spam; the
         // typed status still discloses the degradation.
@@ -23670,6 +23730,21 @@ fn framed_lsp_gap_ledger_degradation_is_typed_logged_and_recovers() -> Result<()
         if !suppressed.is_empty() {
             return Err(format!(
                 "the degraded refresh suppressed diff finding diagnostics: {suppressed:?}"
+            ));
+        }
+        let recovered_seeded = seeded_findings(&recovered);
+        if recovered_seeded.is_empty() {
+            return Err(format!(
+                "the repaired refresh must publish the seeded finding diagnostic (finding code at line {SEEDED_LINE}), got: {recovered_lib:?}"
+            ));
+        }
+        let seeded_suppressed: Vec<_> = recovered_seeded
+            .iter()
+            .filter(|seeded| !degraded_seeded.contains(seeded))
+            .collect();
+        if !seeded_suppressed.is_empty() {
+            return Err(format!(
+                "the degraded refresh suppressed seeded finding diagnostics: {seeded_suppressed:?}"
             ));
         }
 
