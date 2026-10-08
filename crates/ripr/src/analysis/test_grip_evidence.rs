@@ -17,6 +17,7 @@ mod related_tests;
 pub(crate) mod shared_grips;
 mod value_contradiction;
 
+pub(crate) use value_contradiction::CONTRADICTION_DISCLOSURE;
 use value_contradiction::{
     ExactValueVerdict, contradiction_summary, exact_value_assertion_verdict,
 };
@@ -70,6 +71,15 @@ pub(crate) struct TestGripEvidence {
     pub(crate) discriminate: StageEvidence,
     pub(crate) observed_values: Vec<ValueFact>,
     pub(crate) missing_discriminators: Vec<MissingDiscriminatorFact>,
+    /// #7007: how many related tests carry a statically contradicted
+    /// exact-value assertion, counted by the producer over the FULL related
+    /// set. This is the completeness authority for the contradiction gate:
+    /// the evidence record's `related_tests` array is a capped projection
+    /// and each entry names only its best oracle, so absence of a disclosure
+    /// there cannot establish absence from the evidence set. No serde
+    /// default: a stored entry predating this field must miss (the cache
+    /// generation bump) rather than deserialize as a silent zero.
+    pub(crate) statically_contradicted_related_tests: usize,
     /// Producer-owned Integration or InlineUnit proposal, or the typed
     /// blocker that kept the target `Missing`. Compact evidence leaves this
     /// empty so the compact classified-seam cache does not need a generation
@@ -354,6 +364,12 @@ fn evidence_for_seam_with_context(
         })
         .collect();
     let new_test_target = new_test_target_admission(seam, context);
+    // Counted over the full related set, not the rendered record projection:
+    // this count is the contradiction gate's completeness authority (#7007).
+    let statically_contradicted_related_tests = related
+        .iter()
+        .filter(|test| test_has_contradicted_assertion(test, owner_fn))
+        .count();
 
     TestGripEvidence {
         seam_id: seam.id().clone(),
@@ -365,6 +381,7 @@ fn evidence_for_seam_with_context(
         discriminate,
         observed_values,
         missing_discriminators,
+        statically_contradicted_related_tests,
         new_test_target,
     }
 }
@@ -406,6 +423,10 @@ pub(crate) fn compact_evidence_for_seam(
     let propagate = propagate_evidence(seam, &related, owner_fn);
     let observe = observe_evidence(&related);
     let discriminate = discriminate_evidence(seam, &related, owner_fn);
+    let statically_contradicted_related_tests = related
+        .iter()
+        .filter(|test| test_has_contradicted_assertion(test, owner_fn))
+        .count();
 
     TestGripEvidence {
         seam_id: seam.id().clone(),
@@ -417,6 +438,7 @@ pub(crate) fn compact_evidence_for_seam(
         discriminate,
         observed_values: Vec::new(),
         missing_discriminators,
+        statically_contradicted_related_tests,
         new_test_target: None,
     }
 }
@@ -457,12 +479,25 @@ fn activate_evidence(
     let index = context.index;
     let owner_name = owner_fn.map(|f| f.name.as_str()).unwrap_or("");
     let mut observed: Vec<ValueFact> = Vec::new();
+    // #7007: a related test whose equality assertion statically contradicts
+    // the owner's folded behavior fails at baseline and pins the mutant's
+    // value, so its call-site values and boundary-coverage arguments
+    // describe the inverted repair attempt, not the seam's activation
+    // contract. Its activation credit is withheld here the way #6026
+    // already withholds its oracle credit; a consistent or not-evaluable
+    // test keeps today's credit, so the fold can only withhold.
+    let activation_credited: Vec<&CompactTest<'_>> = related
+        .iter()
+        .copied()
+        .filter(|indexed| !test_has_contradicted_assertion(indexed.test, owner_fn))
+        .collect();
+    let withheld_activation_tests = related.len() - activation_credited.len();
     let observed_argument_selection = owner_fn
         .filter(|owner| !owner.name.is_empty())
         .map(|owner| observed_argument_selection(seam, owner));
 
     if let (Some(selection), Some(owner_fn)) = (&observed_argument_selection, owner_fn) {
-        for indexed in related {
+        for indexed in activation_credited.iter() {
             observed.extend(observed_value_facts_for_test(
                 seam, indexed, index, owner_fn, selection,
             ));
@@ -494,14 +529,14 @@ fn activate_evidence(
                 .iter()
                 .any(|fact| comparable_value(&fact.value) == comparable_value(value))
         }) || (constant.lookup.is_declared_once()
-            && related
+            && activation_credited
                 .iter()
                 .any(|indexed| test_passes_boundary_constant(indexed, owner_fn, index, constant)))
     });
     let boundary_equality_observed = boundary_constant_observed
         || owner_fn.is_some_and(|owner_fn| {
             seam.kind() == SeamKind::PredicateBoundary
-                && related.iter().any(|indexed| {
+                && activation_credited.iter().any(|indexed| {
                     boundary_equality_overlap_score(seam, indexed, index, owner_fn) > 0
                 })
         });
@@ -543,7 +578,7 @@ fn activate_evidence(
     let direct_value_insensitive_owner_call = !owner_name.is_empty()
         && !requires_concrete_activation_values(seam)
         && owner_fn.is_some_and(|owner_fn| {
-            related
+            activation_credited
                 .iter()
                 .any(|indexed| has_direct_owner_call(indexed, owner_fn))
         });
@@ -553,7 +588,7 @@ fn activate_evidence(
         && !requires_concrete_activation_values(seam)
         && owner_fn.is_some_and(|owner_fn| {
             let free_owner = owner_fn.impl_context == FunctionImplContext::Free;
-            related.iter().any(|indexed| {
+            activation_credited.iter().any(|indexed| {
                 if free_owner {
                     indexed
                         .free_spelling_helper_owner_call_names
@@ -664,6 +699,17 @@ fn activate_evidence(
             )
         } else if boundary_activation_operands_unresolved && !related.is_empty() {
             boundary_activation_operands_unresolved_summary(seam, owner_fn)
+        } else if withheld_activation_tests > 0 {
+            // Every credited activation path is empty while at least one
+            // related test was withheld, so the stage discloses the
+            // withholding instead of reading as if nothing ran (#7007).
+            format!(
+                "Activation credit withheld from {withheld_activation_tests} related test(s) for seam `{}`: their equality assertion statically contradicts the owner's folded behavior",
+                seam.expression()
+                    .lines()
+                    .next()
+                    .unwrap_or(seam.expression())
+            )
         } else if requires_concrete_activation_values(seam) {
             format!(
                 "No concrete activation values observed for seam `{}`",
@@ -1363,6 +1409,19 @@ fn compact_activate_evidence(
     }
 
     let owner_name = owner_fn.map(|f| f.name.as_str()).unwrap_or("");
+    // Same contradiction gate as the full path (#7007 review): a related
+    // test whose equality assertion statically contradicts the owner's fold
+    // contributes no activation credit here either, so the compact evidence
+    // cannot disagree with the full evidence on whose call counts.
+    // Same contradiction gate as the full path (#7007 review): a related
+    // test whose equality assertion statically contradicts the owner's fold
+    // contributes no activation credit here either, so the compact evidence
+    // cannot disagree with the full evidence on whose call counts.
+    let activation_credited: Vec<&CompactTest<'_>> = related
+        .iter()
+        .copied()
+        .filter(|indexed| !test_has_contradicted_assertion(indexed.test, owner_fn))
+        .collect();
     let target_affinity_tokens =
         (!requires_concrete_activation_values(seam)).then(|| assertion_target_tokens(seam));
     // A free owner is called only by a bare or module-qualified spelling:
@@ -1372,7 +1431,7 @@ fn compact_activate_evidence(
     // `Type::name(..)` cannot activate the free `name` (#6713 review).
     let free_owner = owner_fn.is_some_and(|owner| owner.impl_context == FunctionImplContext::Free);
     let direct_owner_call = !owner_name.is_empty()
-        && related.iter().any(|indexed| {
+        && activation_credited.iter().any(|indexed| {
             if free_owner {
                 (indexed.call_names.contains(owner_name)
                     && test_calls_free_function(indexed.test, owner_name))
@@ -1950,6 +2009,24 @@ fn effective_oracle_strength(
         ),
         _ => (oracle.strength.clone(), None),
     }
+}
+
+/// Whether any of `test`'s equality assertions statically contradicts the
+/// owner's folded behavior (#6026). Such a test fails at baseline and its
+/// call-site values pin the mutant's value, so its activation credit is
+/// withheld beside its oracle credit (#7007). Fail-closed toward prior
+/// credit: without a resolved owner nothing is contradicted.
+fn test_has_contradicted_assertion(test: &TestSummary, owner_fn: Option<&FunctionSummary>) -> bool {
+    let Some(owner_fn) = owner_fn else {
+        return false;
+    };
+    let shadowed = value_contradiction::bare_owner_call_is_shadowed(test, &owner_fn.name);
+    test.assertions.iter().any(|oracle| {
+        matches!(
+            exact_value_assertion_verdict(Some(owner_fn), &oracle.text, shadowed),
+            ExactValueVerdict::Contradicted { .. }
+        )
+    })
 }
 
 /// Returns true when `oracle` is a discriminating match for `seam`.

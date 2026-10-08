@@ -64,6 +64,8 @@ pub(in crate::analysis) struct RelatedTestCandidateIndex {
     /// Run-scoped activation memo, keyed by slots of the same index.
     test_value_facts: super::TestValueFacts,
     owner_pin_syntax: super::OwnerPinSyntax,
+    /// Run-scoped #5830 caller-walk memo, keyed by owner slot (#7024).
+    owner_caller_names: super::super::classifier::OwnerCallerNames,
 }
 
 impl RelatedTestCandidateIndex {
@@ -153,6 +155,14 @@ impl RelatedTestCandidateIndex {
     /// classified against this index.
     pub(in crate::analysis) fn test_value_facts(&self) -> &super::TestValueFacts {
         &self.test_value_facts
+    }
+
+    /// The run-scoped #5830 caller-walk memo shared by every probe
+    /// classified against this index (#7024).
+    pub(in crate::analysis) fn owner_caller_names(
+        &self,
+    ) -> &super::super::classifier::OwnerCallerNames {
+        &self.owner_caller_names
     }
 
     fn candidate_indices(
@@ -961,7 +971,8 @@ fn find_related_tests_with_candidates<'a>(
             // is bound to this impl (#4760). A receiver whose type the
             // test's own module shadows is name-only even when unique,
             // whether the shadow is inline (#6951) or in an out-of-line
-            // parent module (#6950).
+            // parent module (#6950). A single-file rename of the type
+            // refuses the same way (#7067).
             let test_source = index
                 .files()
                 .get(&test.file)
@@ -2857,16 +2868,22 @@ fn owner_call_relation_reason(
     // owner's own scope is not a shadow (#6957), so a same-file owner
     // supplies its scope while a cross-file owner keeps the fail-closed
     // single-file check; an out-of-line parent module declaring the type
-    // refuses the same way (#6950).
+    // refuses the same way (#6950). A single-file `use ... as <type>`
+    // rebinds the receiver too (#7067), in either spelling, exactly as it
+    // refuses the owner pin.
     let owner_scope =
         super::owner_pin::OwnerScope::new(owner.name.as_str(), owner.start_line, &owner.file);
+    // `r#Window` denotes `Window`: a raw-identifier alias rebinds the name
+    // too, mirroring the pin-side single-file check.
+    let raw_impl_type = format!("r#{impl_type}");
     if test_source.is_some_and(|source| {
         super::owner_pin::test_module_shadows_type(
             test,
             source,
             &impl_type,
             owner_scope.in_file(&test.file),
-        )
+        ) || super::owner_pin::file_renames_to(source, &impl_type)
+            || super::owner_pin::file_renames_to(source, raw_impl_type.as_str())
     }) || super::owner_pin::parent_chain_shadows_type(test, &impl_type, owner_scope, index)
     {
         return RelationReason::WeakTokenSubstring;
@@ -4903,6 +4920,63 @@ mod tests {
             },
         );
         assert_eq!(reason, RelationReason::DirectOwnerCall);
+    }
+
+    /// #7067: the single-file ledger shape with one prepended file-level
+    /// `use` line, and the test's relation reason. The two prepended lines
+    /// shift the `changes_balance` test fn to lines 18-21.
+    fn single_file_use_relation(prelude: &str) -> RelationReason {
+        let owner = impl_function("src/lib.rs", "apply", "impl Ledger");
+        let mut ledger_test = test_with_call(
+            "src/lib.rs",
+            "changes_balance",
+            "let mut ledger = Ledger { balance: 0 };\nledger.apply(5);",
+            "apply",
+        );
+        ledger_test.start_line = 18;
+        ledger_test.end_line = 21;
+        let mut index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions: vec![owner.clone()],
+            tests: vec![ledger_test],
+            ..Default::default()
+        });
+        let source = format!("{prelude}\n\n{UNSHADOWED_LEDGER_SOURCE}");
+        with_source(&mut index, "src/lib.rs", &source);
+        let probe = probe("src/lib.rs", "self.persist(amount * 9)");
+        let related = find_related_tests(&probe, Some(&owner), &index, true, None, None);
+        assert_eq!(
+            related.len(),
+            1,
+            "the same-named call is still related: {prelude}"
+        );
+        related[0].1
+    }
+
+    /// #7067: a single-file `use ... as Ledger` rebinds the receiver to a
+    /// different type, so the call is name-only, not `direct_owner_call`.
+    /// The raw spelling (`as r#Ledger`) rebinds the same name.
+    #[test]
+    fn given_single_file_rename_when_test_calls_owner_method_then_name_only_relation() {
+        for prelude in [
+            "use other::Tally as Ledger;",
+            "use other::Tally as r#Ledger;",
+        ] {
+            assert_eq!(
+                single_file_use_relation(prelude),
+                RelationReason::WeakTokenSubstring,
+                "a single-file rename names a different type than the owner: {prelude}"
+            );
+        }
+    }
+
+    /// #7067 precision: a plain single-file `use` of the receiver may
+    /// re-export production, so the test keeps `direct_owner_call`.
+    #[test]
+    fn given_single_file_plain_import_when_test_calls_owner_then_direct() {
+        assert_eq!(
+            single_file_use_relation("use demo::Ledger;"),
+            RelationReason::DirectOwnerCall
+        );
     }
 
     /// #6950 fail-closed: a parent chain ripr cannot resolve refuses
