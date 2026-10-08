@@ -2132,6 +2132,40 @@ pub(crate) fn validated_corpus(dir: &Path) -> Result<(Corpus, SpecExampleCoverag
     }
 }
 
+/// Whether `check-all` gates a corpus on spec-example coverage. Scoring is
+/// universal — every discovered corpus compares its rows — but coverage is
+/// declared per corpus: a language without a ledger scores rows only, loudly,
+/// until it opts in. A present-but-invalid ledger still fails.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum CorpusCoverage {
+    Gated,
+    Ungated,
+}
+
+fn corpus_coverage_mode(dir: &Path) -> CorpusCoverage {
+    if dir.join(coverage::LEDGER_FILE).is_file() {
+        CorpusCoverage::Gated
+    } else {
+        CorpusCoverage::Ungated
+    }
+}
+
+/// `validated_corpus` without the coverage half, for a corpus that declares
+/// no ledger. Structural validation still applies; only the spec-example
+/// gate is skipped.
+fn validated_corpus_without_coverage(dir: &Path) -> Result<Corpus, String> {
+    let corpus = load_corpus(dir)?;
+    let violations = validate(&corpus, dir);
+    if violations.is_empty() {
+        Ok(corpus)
+    } else {
+        Err(format!(
+            "verdict corpus is invalid:\n- {}",
+            violations.join("\n- ")
+        ))
+    }
+}
+
 /// Keep only the named cases. Validation still covers the whole corpus.
 pub(crate) fn select_cases(corpus: &mut Corpus, ids: &[String]) -> Result<(), String> {
     // An empty selection would score zero cases and pass.
@@ -2415,13 +2449,29 @@ fn score_corpus(
     cases: Option<&[String]>,
     out: Option<PathBuf>,
 ) -> Result<(), String> {
+    let (corpus, coverage) = validated_corpus(dir)?;
+    score_loaded_corpus(dir, corpus, Some(coverage), check, cases, out)
+}
+
+/// Score a corpus with no ledger: rows gate, coverage does not.
+fn score_corpus_without_coverage(dir: &Path) -> Result<(), String> {
+    let corpus = validated_corpus_without_coverage(dir)?;
+    score_loaded_corpus(dir, corpus, None, true, None, None)
+}
+
+fn score_loaded_corpus(
+    dir: &Path,
+    mut corpus: Corpus,
+    coverage: Option<SpecExampleCoverage>,
+    check: bool,
+    cases: Option<&[String]>,
+    out: Option<PathBuf>,
+) -> Result<(), String> {
     let expected_dir = dir.join("expected");
-    let (mut corpus, coverage) = validated_corpus(dir)?;
     // The floor gate needs no ripr runs, so fail fast before scoring.
-    let floor_note = if check {
-        coverage::floor_gate(&coverage)?
-    } else {
-        None
+    let floor_note = match (&coverage, check) {
+        (Some(coverage), true) => coverage::floor_gate(coverage)?,
+        _ => None,
     };
     if let Some(ids) = cases {
         select_cases(&mut corpus, ids)?;
@@ -2432,7 +2482,7 @@ fn score_corpus(
     };
     refuse_expected_out(&out, &expected_dir)?;
     let mut report = run_corpus(dir, &corpus, &work_root(dir)?)?;
-    report.spec_example_coverage = Some(coverage);
+    report.spec_example_coverage = coverage;
     write_report(&out, &report)?;
     println!(
         "verdict-corpus: {} cases; false verdicts {} ({}/{}), contradictions {} ({}/{}); wrote {}",
@@ -2552,10 +2602,21 @@ pub(crate) fn verdict_corpus(args: &[String]) -> Result<(), String> {
         }
         "report" | "check" => score_corpus(dir, sub == "check", cases.as_deref(), out),
         "check-all" => {
-            // Every language's corpus gates the same way, found by name so a
-            // new corpus is checked without a workflow change.
+            // Every language's corpus scores its rows, found by name so a
+            // new corpus is checked without a workflow change. Coverage is
+            // declared per corpus: a language without a ledger scores rows
+            // only, loudly, until it opts in.
             let checked = check_each(corpus_dirs(Path::new(FIXTURES_DIR))?, |dir| {
-                score_corpus(dir, true, None, None)
+                if corpus_coverage_mode(dir) == CorpusCoverage::Gated {
+                    score_corpus(dir, true, None, None)
+                } else {
+                    println!(
+                        "verdict-corpus: {} has no {}; scoring rows without the spec-example coverage gate",
+                        normalize_path(dir),
+                        coverage::LEDGER_FILE
+                    );
+                    score_corpus_without_coverage(dir)
+                }
             })?;
             println!("verdict-corpus: {checked} corpora checked");
             Ok(())
