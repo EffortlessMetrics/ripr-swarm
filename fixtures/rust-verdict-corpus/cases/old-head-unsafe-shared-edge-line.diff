@@ -1,0 +1,12 @@
+diff --git a/src/raw.rs b/src/raw.rs
+--- a/src/raw.rs
++++ b/src/raw.rs
+@@ -3,7 +3,7 @@
+ /// The first byte plus one, for a non-empty slice.
+ pub fn head(bytes: &[u8]) -> u32 {
+     assert!(!bytes.is_empty());
+-    let first = unsafe { *bytes.get_unchecked(0) };
++    let first = unsafe { *bytes.get_unchecked(1 - 1) };
+     u32::from(first) + 1
+ }
+ 

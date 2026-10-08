@@ -8,7 +8,10 @@ use super::{
 };
 
 /// Validate that `after` is a pure insertion of test-role items into the
-/// exact region named by `authority`, relative to `before`.
+/// exact region named by `authority`, relative to `before`: every byte of the
+/// before body survives in order, and the inserted spans hold only new test
+/// functions (with optional helper `fn` and `use` companions), comments, and
+/// whitespace.
 pub(crate) fn validate_inline_test_region_edit(
     before: &str,
     authority: &InlineTestRegionAuthority,
@@ -98,8 +101,8 @@ pub(crate) fn validate_inline_test_region_edit(
             None,
         );
     }
-    let before_items = match observe::named_module_items(before, &authority.portable.module_path) {
-        Ok(items) => items,
+    let before_body = match observe::named_module_body(before, &authority.portable.module_path) {
+        Ok(body) => body,
         Err(error) => {
             return InlineTestRegionVerdict::rejected(
                 error
@@ -109,8 +112,8 @@ pub(crate) fn validate_inline_test_region_edit(
             );
         }
     };
-    let after_items = match observe::named_module_items(after, &authority.portable.module_path) {
-        Ok(items) => items,
+    let after_body = match observe::named_module_body(after, &authority.portable.module_path) {
+        Ok(body) => body,
         Err(error) => {
             return InlineTestRegionVerdict::rejected(
                 error
@@ -121,7 +124,7 @@ pub(crate) fn validate_inline_test_region_edit(
         }
     };
 
-    match classify_item_delta(&before_items, &after_items) {
+    match classify_body_delta(&before_body, &after_body) {
         ItemDelta::Admitted => InlineTestRegionVerdict::admitted(),
         ItemDelta::NotARepair => {
             InlineTestRegionVerdict::not_a_repair(InlineTestRegionRejectReason::NonTestSubject)
@@ -138,40 +141,168 @@ enum ItemDelta {
     Rejected(InlineTestRegionRejectReason),
 }
 
-fn classify_item_delta(
-    before_items: &[observe::ObservedItem],
-    after_items: &[observe::ObservedItem],
+/// Align the after body with the before body. Every before element must
+/// survive in order, byte for byte: whitespace may only grow (its bytes stay
+/// a subsequence), and comments and items must reappear unchanged. Anything
+/// else in the after body is an insertion, and only whitespace, comments,
+/// `fn` items, and `use` items may be inserted. At least one inserted `fn`
+/// must carry a recognised test attribute; helpers and `use` companions are
+/// admitted only beside one.
+fn classify_body_delta(
+    before: &[observe::BodyElement],
+    after: &[observe::BodyElement],
 ) -> ItemDelta {
-    // Existing items must appear in order. New `fn` items (and optional `use`
-    // companions) may be inserted at more than one site inside the body.
-    let mut before_index = 0usize;
-    let mut added_fn = false;
-    for item in after_items {
-        if before_items
-            .get(before_index)
-            .is_some_and(|existing| existing.text == item.text)
-        {
-            before_index += 1;
+    let mut cursor = BeforeCursor::new(before);
+    let mut trivia_lost = false;
+    let mut inserted_refusal = None;
+    let mut added_test = false;
+    for element in after {
+        if element.kind == observe::BodyElementKind::Whitespace {
+            cursor.consume_whitespace(&element.text);
             continue;
         }
-        match item.kind {
-            observe::ObservedItemKind::Fn => added_fn = true,
-            observe::ObservedItemKind::Use => {}
-            observe::ObservedItemKind::NestedModule => {
-                return ItemDelta::Rejected(InlineTestRegionRejectReason::UnsupportedModuleKind);
+        if cursor.pending_whitespace() && cursor.peek_after_whitespace() == Some(element) {
+            // The before whitespace ahead of this element did not survive.
+            trivia_lost = true;
+            cursor.skip_whitespace();
+        }
+        if !cursor.pending_whitespace() && cursor.peek() == Some(element) {
+            cursor.advance();
+            continue;
+        }
+        let refusal = match element.kind {
+            observe::BodyElementKind::Item(observe::ObservedItemKind::TestFn) => {
+                added_test = true;
+                None
             }
-            observe::ObservedItemKind::Other => {
-                return ItemDelta::Rejected(InlineTestRegionRejectReason::NonTestSubject);
+            observe::BodyElementKind::Item(
+                observe::ObservedItemKind::Fn | observe::ObservedItemKind::Use,
+            )
+            | observe::BodyElementKind::Comment => None,
+            observe::BodyElementKind::Item(observe::ObservedItemKind::NestedModule) => {
+                Some(InlineTestRegionRejectReason::UnsupportedModuleKind)
             }
+            observe::BodyElementKind::Item(observe::ObservedItemKind::Other) => {
+                Some(InlineTestRegionRejectReason::NonTestSubject)
+            }
+            observe::BodyElementKind::Other | observe::BodyElementKind::Whitespace => {
+                Some(InlineTestRegionRejectReason::NotPureInsertion)
+            }
+        };
+        if inserted_refusal.is_none() {
+            inserted_refusal = refusal;
         }
     }
-    if before_index != before_items.len() {
-        return ItemDelta::Rejected(InlineTestRegionRejectReason::ExistingAuthorityRewritten);
+    if cursor.pending_whitespace() {
+        trivia_lost = true;
+        cursor.skip_whitespace();
     }
-    if added_fn {
+    if let Some(reason) = inserted_refusal {
+        return ItemDelta::Rejected(reason);
+    }
+    // The first before element that never reappeared names the refusal: an
+    // existing item is rewritten authority; a comment or other trivia is
+    // existing body text that was not preserved.
+    match cursor
+        .remaining()
+        .iter()
+        .find(|element| element.kind != observe::BodyElementKind::Whitespace)
+        .map(|element| element.kind)
+    {
+        Some(observe::BodyElementKind::Item(_)) => {
+            return ItemDelta::Rejected(InlineTestRegionRejectReason::ExistingAuthorityRewritten);
+        }
+        Some(_) => return ItemDelta::Rejected(InlineTestRegionRejectReason::NotPureInsertion),
+        None if !cursor.remaining().is_empty() => trivia_lost = true,
+        None => {}
+    }
+    if trivia_lost {
+        return ItemDelta::Rejected(InlineTestRegionRejectReason::NotPureInsertion);
+    }
+    if added_test {
         ItemDelta::Admitted
     } else {
         ItemDelta::NotARepair
+    }
+}
+
+/// Position in the before body: the next unmatched element, and for a
+/// whitespace element the bytes not yet found in the after body.
+struct BeforeCursor<'a> {
+    elements: &'a [observe::BodyElement],
+    next: usize,
+    whitespace_left: &'a str,
+}
+
+impl<'a> BeforeCursor<'a> {
+    fn new(elements: &'a [observe::BodyElement]) -> Self {
+        let mut cursor = Self {
+            elements,
+            next: 0,
+            whitespace_left: "",
+        };
+        cursor.load();
+        cursor
+    }
+
+    fn load(&mut self) {
+        self.whitespace_left = match self.elements.get(self.next) {
+            Some(element) if element.kind == observe::BodyElementKind::Whitespace => {
+                element.text.as_str()
+            }
+            _ => "",
+        };
+    }
+
+    fn advance(&mut self) {
+        self.next += 1;
+        self.load();
+    }
+
+    fn pending_whitespace(&self) -> bool {
+        !self.whitespace_left.is_empty()
+    }
+
+    fn skip_whitespace(&mut self) {
+        if self.pending_whitespace() {
+            self.advance();
+        }
+    }
+
+    fn peek(&self) -> Option<&'a observe::BodyElement> {
+        self.elements.get(self.next)
+    }
+
+    fn peek_after_whitespace(&self) -> Option<&'a observe::BodyElement> {
+        self.elements.get(self.next + 1)
+    }
+
+    /// Greedily find the remaining before whitespace bytes, in order, inside
+    /// one after whitespace token; unmatched after bytes are inserted.
+    fn consume_whitespace(&mut self, after: &str) {
+        if !self.pending_whitespace() {
+            return;
+        }
+        let current: &'a str = self.whitespace_left;
+        let mut left = current.char_indices().peekable();
+        for character in after.chars() {
+            if left
+                .peek()
+                .is_some_and(|(_, expected)| *expected == character)
+            {
+                left.next();
+            }
+        }
+        match left.peek() {
+            Some((offset, _)) => {
+                self.whitespace_left = current.get(*offset..).unwrap_or("");
+            }
+            None => self.advance(),
+        }
+    }
+
+    fn remaining(&self) -> &'a [observe::BodyElement] {
+        self.elements.get(self.next..).unwrap_or(&[])
     }
 }
 

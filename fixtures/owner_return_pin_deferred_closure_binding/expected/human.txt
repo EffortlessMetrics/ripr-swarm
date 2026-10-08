@@ -10,25 +10,28 @@ Analysis outcome: findings below (analysis complete; complete_with_findings).
 Start here:
   State: a test gap to inspect or repair (top_gap)
   Safe next action: inspect or repair the selected non-exposed gap; this is static advisory evidence only.
-  File: fixtures/owner_return_pin_deferred_closure_binding/input/src/lib.rs:2
+  File: ./src/lib.rs:2
   Static exposure: unrevealed (reachable_unrevealed, warning, confidence 0.79)
-  Why unrevealed: a related test reaches this change, but no assertion observes the changed behavior
+  Why unrevealed: a related test asserts here, but ripr could not establish that the assertion runs and is the standard `assert_eq!`
+  Not credited: `assert_eq!` in checks_weight at tests/weight_tests.rs:6: the assertion is inside a closure ripr cannot see invoked exactly once
+  Canonical gap: gap:rust:src/lib.rs:weight:return_value:return_value:input*3
   Changed behavior: input * 3
-  Missing discriminator (1 of 4): No detected assertion observes the changed value, error, field, or effect
+  Missing discriminator (1 of 2): No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)
   Related test: tests/weight_tests.rs:5 checks_weight (assertion not credited: ripr could not establish that it runs as the standard macro)
-  Next step: Establish that the test is collected and enabled, that the assertion runs on its
-    executed path, and that it resolves to the intended standard macro, then check the changed
-    returned value.
+  Next step: ripr did not credit the `assert_eq!` in checks_weight at tests/weight_tests.rs:6; the
+    "not credited" note says why. That shape can keep the assertion from checking the change, so
+    this is not a static limit: make the check run on every default test run, as the standard
+    `assert_eq!`, in a test expected to pass.
   Evidence: reach yes · infection yes · propagation yes · observation no · discriminator no
     - reach yes: Related tests appear to reach weight: checks_weight
     - infection yes: Reachable tests can plausibly activate this changed behavior
     - 7 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
-  ripr explain --root fixtures/owner_return_pin_deferred_closure_binding/input --diff fixtures/owner_return_pin_deferred_closure_binding/diff.patch --mode fast probe:src_lib.rs:return_value:6ea804bb
-  ripr context --root fixtures/owner_return_pin_deferred_closure_binding/input --diff fixtures/owner_return_pin_deferred_closure_binding/diff.patch --mode fast --at probe:src_lib.rs:return_value:6ea804bb
+  ripr explain --root <cwd>/fixtures/owner_return_pin_deferred_closure_binding/input --diff <cwd>/fixtures/owner_return_pin_deferred_closure_binding/diff.patch --mode fast probe:src_lib.rs:return_value:6ea804bb
+  ripr context --root <cwd>/fixtures/owner_return_pin_deferred_closure_binding/input --diff <cwd>/fixtures/owner_return_pin_deferred_closure_binding/diff.patch --mode fast --at probe:src_lib.rs:return_value:6ea804bb
 Write a test for it:
-  ripr agent stub --root fixtures/owner_return_pin_deferred_closure_binding/input --at src/lib.rs:2
+  ripr agent stub --root <cwd>/fixtures/owner_return_pin_deferred_closure_binding/input --at src/lib.rs:2 --kind return_value
 
 More:
   Full evidence: rerun with --format human-full

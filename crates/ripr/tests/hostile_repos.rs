@@ -24,7 +24,7 @@ use std::time::{Duration, Instant};
 #[path = "common/mod.rs"]
 mod common;
 
-use common::fixture_git::fixture_git_ok;
+use common::fixture_git::{fixture_git_ok, fixture_git_output};
 
 static NEXT_BASE: AtomicU64 = AtomicU64::new(0);
 
@@ -295,7 +295,14 @@ fn awkward_file_names_each_produce_a_probe() -> Result<(), String> {
     let root = scratch.path.join("names");
     fs::create_dir_all(root.join("src")).map_err(|e| format!("mkdir failed: {e}"))?;
     fs::write(root.join("Cargo.toml"), MANIFEST).map_err(|e| format!("write failed: {e}"))?;
-    fs::write(root.join("src/lib.rs"), "").map_err(|e| format!("write failed: {e}"))?;
+    // Each file is a declared module, so rustc compiles it and every change
+    // seeds a probe; an undeclared file seeds nothing (#4435).
+    let lib = names
+        .iter()
+        .enumerate()
+        .map(|(i, name)| format!("#[path = {name:?}]\nmod m{i};\n"))
+        .collect::<String>();
+    fs::write(root.join("src/lib.rs"), lib).map_err(|e| format!("write failed: {e}"))?;
     for (i, name) in names.iter().enumerate() {
         fs::write(root.join("src").join(name), body(i, 2))
             .map_err(|e| format!("write {name:?} failed: {e}"))?;
@@ -609,6 +616,9 @@ fn user_git_configuration_does_not_change_the_result() -> Result<(), String> {
         ("core.autocrlf", "true"),
         ("core.pager", "/bin/false"),
         ("log.showSignature", "true"),
+        // #5325: a dangling orderfile must not abort the run; the diff
+        // invocation pins `diff.orderFile=/dev/null`.
+        ("diff.orderFile", "/nonexistent-ripr-orderfile"),
     ];
     for (key, value) in settings {
         let ran = ripr(
@@ -622,6 +632,74 @@ fn user_git_configuration_does_not_change_the_result() -> Result<(), String> {
         )?;
         assert_found_change(&ran, &format!("git config {key}={value}"))?;
     }
+    // #5325, live half: an orderfile that exists must also leave the
+    // result alone on the standard single-file fixture; the reorder half
+    // below covers multi-file patch reordering.
+    let order_path = scratch.path.join("orderfile");
+    fs::write(&order_path, "tests/t.rs\nsrc/lib.rs\n")
+        .map_err(|e| format!("write orderfile failed: {e}"))?;
+    let order_value = order_path
+        .to_str()
+        .ok_or_else(|| format!("orderfile path is not UTF-8: {}", order_path.display()))?
+        .to_owned();
+    let ran = ripr(
+        &root,
+        &["check"],
+        &[
+            ("GIT_CONFIG_COUNT", "1"),
+            ("GIT_CONFIG_KEY_0", "diff.orderFile"),
+            ("GIT_CONFIG_VALUE_0", order_value.as_str()),
+        ],
+    )?;
+    assert_found_change(&ran, "git config diff.orderFile=<live>")?;
+    // #5325, reorder half: with two changed files and a live orderfile,
+    // ripr's output must be byte-identical with and without the ambient
+    // setting. Setup asserts git really reorders the stimulus diff, so the
+    // comparison cannot pass vacuously.
+    let root2 = scratch.path.join("r2");
+    repo(&root2, |r| {
+        change_lib(r)?;
+        fs::write(
+            r.join("tests/t.rs"),
+            "use hx::total;\n#[test]\nfn t() { assert_eq!(total(1), 2); }\n",
+        )
+        .map_err(|e| format!("write failed: {e}"))
+    })?;
+    let order_env = [
+        ("GIT_CONFIG_COUNT", "1"),
+        ("GIT_CONFIG_KEY_0", "diff.orderFile"),
+        ("GIT_CONFIG_VALUE_0", order_value.as_str()),
+    ];
+    // The stimulus probes go through the hardened helper with `-c`,
+    // which sets the same config the env form would; the `ripr` calls
+    // below keep the env form because they simulate ambient user config.
+    let diff_args = ["diff", "--name-only", "main", "--"];
+    let default_order = fixture_git_output(&root2, &diff_args)?;
+    let order_arg = format!("diff.orderFile={order_value}");
+    let reordered_args = [
+        "-c",
+        order_arg.as_str(),
+        "diff",
+        "--name-only",
+        "main",
+        "--",
+    ];
+    let reordered = fixture_git_output(&root2, &reordered_args)?;
+    if default_order == reordered {
+        return Err(format!(
+            "orderfile did not reorder the stimulus diff:\n{default_order}"
+        ));
+    }
+    let plain_run = ripr(&root2, &["check"], &[])?;
+    assert_sane(&plain_run, "two-file baseline")?;
+    let ordered_run = ripr(&root2, &["check"], &order_env)?;
+    assert_sane(&ordered_run, "two-file live orderfile")?;
+    if plain_run.code != ordered_run.code || plain_run.stdout != ordered_run.stdout {
+        return Err(format!(
+            "live orderfile changed the result: {:?} vs {:?}\n--- baseline ---\n{}\n--- ordered ---\n{}",
+            plain_run.code, ordered_run.code, plain_run.stdout, ordered_run.stdout
+        ));
+    }
     Ok(())
 }
 
@@ -634,6 +712,96 @@ fn unreadable_config_is_a_loud_error_not_a_default() -> Result<(), String> {
     assert_sane(&ran, "non-utf8 ripr.toml")?;
     if ran.code != Some(2) || !ran.stderr.contains("ripr.toml") {
         return Err(format!("expected config refusal\n{}", ran.stderr));
+    }
+    Ok(())
+}
+
+/// Damaged Git state is refused in Git's own words with a repair route, not
+/// as a missing remote or a wrong directory (#6908).
+#[test]
+fn damaged_git_state_names_the_cause_and_a_repair() -> Result<(), String> {
+    type Damage = fn(&Path) -> Result<(), String>;
+    let cases: [(&str, Damage, &[&str]); 4] = [
+        (
+            "bad config",
+            |root| {
+                fs::write(root.join(".git/config"), b"[core\n")
+                    .map_err(|e| format!("write failed: {e}"))
+            },
+            &["bad config line 1", "correct or restore it"],
+        ),
+        (
+            "corrupt packed-refs",
+            |root| {
+                fs::write(root.join(".git/packed-refs"), b"garbage\n")
+                    .map_err(|e| format!("write failed: {e}"))
+            },
+            &["packed-refs", "correct or restore it"],
+        ),
+        (
+            "unborn HEAD",
+            |root| {
+                fs::write(root.join(".git/HEAD"), b"ref: refs/heads/nonexistent\n")
+                    .map_err(|e| format!("write failed: {e}"))
+            },
+            &["git rev-parse HEAD", "Check"],
+        ),
+        (
+            "corrupt object",
+            |root| {
+                // `repo` leaves `feat` checked out as a loose ref.
+                let sha = fs::read_to_string(root.join(".git/refs/heads/feat"))
+                    .map_err(|e| format!("feat ref missing: {e}"))?
+                    .trim()
+                    .to_string();
+                let object = root.join(".git/objects").join(&sha[..2]).join(&sha[2..]);
+                // Loose objects are read-only; replace the file instead.
+                fs::remove_file(&object).map_err(|e| format!("object missing: {e}"))?;
+                fs::write(&object, b"junk").map_err(|e| format!("write failed: {e}"))
+            },
+            &["git fsck"],
+        ),
+    ];
+    let scratch = Scratch::new("damaged-git")?;
+    for (label, damage, expected) in cases {
+        let root = plain(&scratch, &label.replace(' ', "-"))?;
+        damage(&root)?;
+        let ran = ripr(&root, &["check", "--base", "main"], &[])?;
+        assert_sane(&ran, label)?;
+        if ran.code != Some(2) {
+            return Err(format!("{label}: expected a refusal\n{}", ran.stderr));
+        }
+        for needle in expected {
+            if !ran.stderr.contains(needle) {
+                return Err(format!("{label}: missing `{needle}`\n{}", ran.stderr));
+            }
+        }
+        for wrong in ["No git remote is configured", "not inside a Git work tree"] {
+            if ran.stderr.contains(wrong) {
+                return Err(format!("{label}: wrong cause `{wrong}`\n{}", ran.stderr));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Configuration Git inherits from the environment is not repository damage:
+/// the repair names the variable, not `.git/config`.
+#[test]
+fn malformed_git_environment_config_is_not_blamed_on_the_repository() -> Result<(), String> {
+    let scratch = Scratch::new("git-env-config")?;
+    let root = plain(&scratch, "repo")?;
+    let ran = ripr(
+        &root,
+        &["check", "--base", "main"],
+        &[("GIT_CONFIG_COUNT", "xyz")],
+    )?;
+    assert_sane(&ran, "malformed GIT_CONFIG_COUNT")?;
+    if ran.code != Some(2) || !ran.stderr.contains("GIT_CONFIG_*") {
+        return Err(format!("expected the environment remedy\n{}", ran.stderr));
+    }
+    if ran.stderr.contains("`.git/config`") {
+        return Err(format!("blamed the repository\n{}", ran.stderr));
     }
     Ok(())
 }
@@ -745,4 +913,248 @@ fn terminal_control_bytes_in_repo_text_never_reach_the_terminal() -> Result<(), 
         ));
     }
     Ok(())
+}
+
+/// #6309: the terminal-bound surfaces beyond the human report. A directory
+/// name, a changed file name and a `ripr.toml` value carry ESC/OSC/bidi bytes;
+/// the GitHub annotation output, the stderr error and warning lines and the
+/// printed drill-in commands must show them escaped, and the drill-in command
+/// must still name the same directory when a shell decodes it.
+#[cfg(unix)]
+#[test]
+fn control_bytes_in_names_and_config_never_reach_github_output_stderr_or_commands()
+-> Result<(), String> {
+    let leaks = |text: &str| {
+        text.chars()
+            .any(|c| matches!(c, '\u{1b}' | '\u{7}' | '\r' | '\u{202e}'))
+    };
+    let scratch = Scratch::new("termsurf")?;
+    let name = "r\u{1b}]0;PWN\u{7}\u{202e}x";
+    let root = scratch.path.join(name);
+    let edit = |root: &Path| -> Result<(), String> {
+        change_lib(root)?;
+        fs::write(root.join("src/a\u{1b}[2Jb.rs"), "pub fn n() {}\n")
+            .map_err(|e| format!("write hostile file name failed: {e}"))?;
+        // Unanalyzed script and non-source disclosures name changed paths.
+        fs::write(root.join("s\u{1b}]0;pwn\u{7}.sh"), "echo hi\n")
+            .map_err(|e| format!("write hostile script name failed: {e}"))?;
+        fs::write(root.join("q\u{1b}[2J."), "x\n")
+            .map_err(|e| format!("write hostile extensionless name failed: {e}"))
+    };
+    repo(&root, edit)?;
+
+    // GitHub annotations carry the changed file name in a property.
+    let github = ripr(
+        &root,
+        &["check", "--base", "main", "--format", "github"],
+        &[],
+    )?;
+    assert_sane(&github, "check github")?;
+    if leaks(&github.stdout) || leaks(&github.stderr) {
+        return Err(format!("github output leaked\n{:?}", github.stdout));
+    }
+
+    // A repository config value is quoted in the parse error on stderr.
+    fs::write(root.join("ripr.toml"), "mode = \"x\u{1b}[2J\u{202e}\"\n")
+        .map_err(|e| format!("write ripr.toml failed: {e}"))?;
+    let bad_config = ripr(&root, &["check", "--base", "main"], &[])?;
+    assert_sane(&bad_config, "check with bad ripr.toml")?;
+    if leaks(&bad_config.stdout) || leaks(&bad_config.stderr) {
+        return Err(format!("config error leaked\n{:?}", bad_config.stderr));
+    }
+    if !bad_config.stderr.contains("\\u{1b}[2J") {
+        return Err(format!(
+            "expected the escaped config text on stderr\n{}",
+            bad_config.stderr
+        ));
+    }
+    fs::remove_file(root.join("ripr.toml")).map_err(|e| format!("remove ripr.toml failed: {e}"))?;
+
+    // A tracked file deleted from the working tree makes the default run read
+    // the working tree, which has no such file to name. It must still not leak.
+    fs::remove_file(root.join("src/a\u{1b}[2Jb.rs"))
+        .map_err(|e| format!("delete hostile file failed: {e}"))?;
+    let worktree = ripr(&root, &["check", "--base", "main"], &[])?;
+    assert_sane(&worktree, "check with a deleted hostile file")?;
+    if leaks(&worktree.stdout) || leaks(&worktree.stderr) {
+        return Err(format!(
+            "working-tree run leaked after the delete\n{:?}",
+            worktree.stderr
+        ));
+    }
+    // The committed-history run names the deleted tracked file in a stderr
+    // notice; `--committed` pins that source (#5997 made the dirty tree the
+    // default, which no longer reaches the notice).
+    let deleted = ripr(&root, &["check", "--base", "main", "--committed"], &[])?;
+    assert_sane(&deleted, "check --committed with a deleted hostile file")?;
+    if leaks(&deleted.stdout) || leaks(&deleted.stderr) {
+        return Err(format!("deleted-file notice leaked\n{:?}", deleted.stderr));
+    }
+    if !deleted.stderr.contains("\\u{1b}[2Jb.rs") {
+        return Err(format!(
+            "expected the escaped file name on stderr\n{}",
+            deleted.stderr
+        ));
+    }
+    fs::write(root.join("src/a\u{1b}[2Jb.rs"), "pub fn n() {}\n")
+        .map_err(|e| format!("restore hostile file failed: {e}"))?;
+
+    // The typed refusal envelope on stderr is JSON: a bidi character in the
+    // seam id must stay a parseable JSON escape, not become `\u{202e}`.
+    let refusal = ripr(
+        &root,
+        &[
+            "agent",
+            "card",
+            "--root",
+            ".",
+            "--seam-id",
+            "x\u{202e}y",
+            "--json",
+        ],
+        &[],
+    )?;
+    // A typed refusal exits 3 (decision), which `assert_sane` does not allow.
+    if refusal.code != Some(3) || refusal.stderr.contains("panicked") {
+        return Err(format!("unexpected refusal run\n{:?}", refusal.stderr));
+    }
+    if leaks(&refusal.stderr) {
+        return Err(format!("refusal leaked\n{:?}", refusal.stderr));
+    }
+    let envelope_end = refusal
+        .stderr
+        .find("\n}\n")
+        .ok_or_else(|| format!("no JSON envelope on stderr\n{}", refusal.stderr))?;
+    let envelope: serde_json::Value = serde_json::from_str(&refusal.stderr[..envelope_end + 2])
+        .map_err(|e| {
+            format!(
+                "refusal envelope is not valid JSON: {e}\n{}",
+                refusal.stderr
+            )
+        })?;
+    if envelope["error"]["seam_id"] != "x\u{202e}y" {
+        return Err(format!("seam id did not round-trip\n{envelope}"));
+    }
+
+    // The repair before-phase announces the root on stderr before it
+    // validates the seam, and the unknown-seam refusal repeats it in a
+    // drill-in command; neither may carry raw control or bidi bytes.
+    let root_abs = root
+        .to_str()
+        .ok_or_else(|| "scratch root is not UTF-8".to_string())?;
+    let repair = ripr(
+        &scratch.path,
+        &[
+            "agent",
+            "repair",
+            "--json",
+            "--root",
+            root_abs,
+            "--seam-id",
+            "67fc764ba37d77bd",
+            "--phase",
+            "before",
+        ],
+        &[],
+    )?;
+    // The seam id is deliberately unknown: the announcement is printed first,
+    // then the command refuses with a typed code (2 or 3), never success or a
+    // panic exit.
+    if !matches!(repair.code, Some(2 | 3))
+        || repair.stderr.contains("panicked")
+        || leaks(&repair.stdout)
+        || leaks(&repair.stderr)
+    {
+        return Err(format!(
+            "repair before did not refuse cleanly (code {:?}) or leaked\n{:?}",
+            repair.code, repair.stderr
+        ));
+    }
+    if !repair
+        .stderr
+        .contains("ripr: agent repair --phase before for seam `67fc764ba37d77bd` at ")
+        || !repair.stderr.contains("\\u{1b}]0;PWN\\u{07}\\u{202e}x")
+    {
+        return Err(format!(
+            "expected the escaped root in the before-phase announcement\n{}",
+            repair.stderr
+        ));
+    }
+    // The refusal's drill-in command carries the hostile root as portable
+    // printf segments, never raw bytes.
+    if !repair.stderr.contains("Run `ripr pilot --root '")
+        || !repair.stderr.contains("\"$(printf '\\033')\"")
+        || !repair.stderr.contains("\"$(printf '\\342\\200\\256')\"")
+        || !repair.stderr.contains("']0;PWN'")
+        || !repair.stderr.contains("\"$(printf '\\007')\"")
+        || !repair.stderr.contains("'x'")
+    {
+        return Err(format!(
+            "expected the refusal's drill-in command to quote the hostile root\n{}",
+            repair.stderr
+        ));
+    }
+
+    // A bad ref echoed back by the failure path.
+    let bad_ref = ripr(&root, &["check", "--base", "nope\u{1b}[2Jx"], &[])?;
+    assert_sane(&bad_ref, "check with hostile ref")?;
+    if leaks(&bad_ref.stdout) || leaks(&bad_ref.stderr) {
+        return Err(format!("ref error leaked\n{:?}", bad_ref.stderr));
+    }
+
+    // The printed drill-in command names the hostile root. It must carry the
+    // directory as bash escapes, with no raw control byte.
+    let root_arg = root
+        .to_str()
+        .ok_or_else(|| "scratch root is not UTF-8".to_string())?;
+    let report = ripr(
+        &scratch.path,
+        &["check", "--root", root_arg, "--base", "main"],
+        &[],
+    )?;
+    assert_sane(&report, "check --root hostile directory")?;
+    if leaks(&report.stdout) || leaks(&report.stderr) {
+        return Err(format!("report leaked\n{:?}", report.stdout));
+    }
+    let command = report
+        .stdout
+        .lines()
+        .map(str::trim)
+        .find(|line| line.starts_with("ripr explain "))
+        .ok_or_else(|| format!("no explain command in\n{}", report.stdout))?;
+    if !command.contains("$(printf '\\033')") {
+        return Err(format!("drill-in command is not shell-escaped: {command}"));
+    }
+    // Run the printed command through bash: it must resolve the same root.
+    // `ripr` is linked into a scratch bin directory so the line runs as printed.
+    let bin_dir = scratch.path.join("bin");
+    fs::create_dir_all(&bin_dir).map_err(|e| format!("mkdir bin failed: {e}"))?;
+    std::os::unix::fs::symlink(ripr_bin(), bin_dir.join("ripr"))
+        .map_err(|e| format!("link ripr failed: {e}"))?;
+    let path = format!(
+        "{}:{}",
+        bin_dir.display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+    let ran = ripr_shell(&scratch.path, command, &path)?;
+    if ran.contains("could not") || !ran.contains("probe:") {
+        return Err(format!(
+            "pasted drill-in command did not resolve the root\n{ran}"
+        ));
+    }
+    Ok(())
+}
+
+/// Run one shell command line with `ripr` on PATH, returning its stdout.
+#[cfg(unix)]
+fn ripr_shell(dir: &Path, line: &str, path: &str) -> Result<String, String> {
+    let output = Command::new("bash")
+        .arg("-c")
+        .arg(line)
+        .current_dir(dir)
+        .env("PATH", path)
+        .stdin(Stdio::null())
+        .output()
+        .map_err(|e| format!("spawn bash failed: {e}"))?;
+    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }

@@ -11,6 +11,18 @@
   "findings": [
     {
       "id": "probe:src_lib.rs:predicate:dda2cb0b",
+      "canonical_gap_id": "gap:rust:src/lib.rs:classify:predicate_boundary:predicate:count==ceiling",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:classify:predicate_boundary:predicate:count==ceiling",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "classify",
+        "behavior_kind": "predicate_boundary",
+        "probe_kind": "predicate",
+        "normalized_discriminator": "count==ceiling"
+
+      },
       "classification": "no_static_path",
       "severity": "warning",
       "confidence": 0.48,
@@ -18,7 +30,7 @@
         "id": "probe:src_lib.rs:predicate:dda2cb0b",
         "family": "predicate",
         "delta": "control",
-        "file": "fixtures/binding_predicate_two_uses/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 3,
         "expression": "if count > ceiling {"
        },
@@ -60,6 +72,18 @@
     },
     {
       "id": "probe:src_lib.rs:predicate:423794f2",
+      "canonical_gap_id": "gap:rust:src/lib.rs:classify:predicate_boundary:predicate:else_if_ceiling==50",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:classify:predicate_boundary:predicate:else_if_ceiling==50",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "classify",
+        "behavior_kind": "predicate_boundary",
+        "probe_kind": "predicate",
+        "normalized_discriminator": "else_if_ceiling==50"
+
+      },
       "classification": "no_static_path",
       "severity": "warning",
       "confidence": 0.48,
@@ -67,7 +91,7 @@
         "id": "probe:src_lib.rs:predicate:423794f2",
         "family": "predicate",
         "delta": "control",
-        "file": "fixtures/binding_predicate_two_uses/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 5,
         "expression": "} else if ceiling != 50 {"
        },

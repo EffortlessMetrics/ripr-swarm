@@ -1,0 +1,22 @@
+{
+  "case_id": "spec0231-oracle-err-at-variant-binding",
+  "subject_id": "authored-spec0231-22",
+  "origin": "authored",
+  "anchor": "src/lib.rs:9",
+  "behavior_family": "error_return",
+  "test_shape": "matches_err_at_variant",
+  "hard_case": false,
+  "truth": "discriminated",
+  "ideal_verdict": "credited",
+  "observed_verdict": "credited",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": [],
+  "findings_scored": 2,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

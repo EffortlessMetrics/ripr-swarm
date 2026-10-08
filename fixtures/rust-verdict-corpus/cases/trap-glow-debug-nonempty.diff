@@ -1,0 +1,11 @@
+diff --git a/src/glows.rs b/src/glows.rs
+index 3de8eed..37916cb 100644
+--- a/src/glows.rs
++++ b/src/glows.rs
+@@ -1,5 +1,5 @@
+ pub fn glow(base: u32) -> u32 {
+-    base * 33
++    33 * base
+ }
+ 
+ #[cfg(test)]

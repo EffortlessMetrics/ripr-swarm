@@ -266,6 +266,67 @@ async fn list_gaps_before_any_refresh_is_a_typed_no_snapshot_failure() -> Result
 }
 
 #[tokio::test]
+async fn list_gaps_accepts_offset_and_limit_at_the_dispatch_edge() -> Result<(), String> {
+    // #6021: paging arguments are part of the input contract. A pre-refresh
+    // server answers past dispatch with typed `no_snapshot` — proving the
+    // arguments were accepted — while malformed values stay invalid params.
+    let server = McpServer::new(WorkspaceStatus::resolve_with_root(None).0, None)
+        .map_err(|error| error.to_string())?;
+    for arguments in [
+        serde_json::json!({}),
+        serde_json::json!({"offset": 0}),
+        serde_json::json!({"offset": 3, "limit": 10}),
+        serde_json::json!({"snapshot_id": "snapshot:sha256:x", "offset": 0, "limit": 1}),
+    ] {
+        let arguments = serde_json::from_value(arguments).map_err(|error| error.to_string())?;
+        let response = server
+            .list_gaps_tool(arguments)
+            .await
+            .map_err(|error| format!("dispatch must accept paging arguments: {error:?}"))?;
+        let result = match response {
+            rmcp::model::CallToolResponse::Complete(result) => result,
+            other => {
+                return Err(format!(
+                    "accepted paging arguments must reach the typed failure, got {other:?}"
+                ));
+            }
+        };
+        let value = serde_json::to_value(result).map_err(|error| error.to_string())?;
+        if value
+            .pointer("/structuredContent/failure/code")
+            .and_then(serde_json::Value::as_str)
+            != Some(workspace::CODE_NO_SNAPSHOT)
+        {
+            return Err(format!("paging call lost no_snapshot: {value}"));
+        }
+    }
+    for arguments in [
+        serde_json::json!({"offset": -1}),
+        serde_json::json!({"offset": 1.5}),
+        serde_json::json!({"offset": "3"}),
+        serde_json::json!({"limit": 0}),
+        serde_json::json!({"limit": true}),
+        serde_json::json!({"verbose": true}),
+    ] {
+        let arguments = serde_json::from_value(arguments).map_err(|error| error.to_string())?;
+        match server.list_gaps_tool(arguments).await {
+            Err(error) if error.code == rmcp::model::ErrorCode::INVALID_PARAMS => {}
+            Ok(response) => {
+                return Err(format!(
+                    "list_gaps must reject malformed paging arguments with invalid params: {response:?}"
+                ));
+            }
+            Err(error) => {
+                return Err(format!(
+                    "list_gaps must reject malformed paging arguments with invalid params, got {error:?}"
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+#[tokio::test]
 async fn get_gap_rejects_bad_arguments_at_the_dispatch_edge() -> Result<(), String> {
     let server = McpServer::new(WorkspaceStatus::resolve_with_root(None).0, None)
         .map_err(|error| error.to_string())?;

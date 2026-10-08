@@ -17,7 +17,7 @@
 
 use crate::cli::command_catalog::{CommandCatalogEntry, CommandClass, catalog};
 use crate::cli::command_metadata::{
-    CommandCost, CommandMetadata, CommandOperation, WORKFLOW_TAGS, metadata, metadata_for,
+    CommandCost, CommandMetadata, CommandOperation, WORKFLOW_TAGS, metadata_for,
 };
 
 /// One typed workflow row. Every fact is static data; nothing here inspects a
@@ -217,7 +217,7 @@ const WORKFLOWS: &[WorkflowCatalogEntry] = &[
             WorkflowResultFamily {
                 from: "cmd:pilot",
                 family: "seam selected for repair",
-                next: WorkflowNext::Command("cmd:agent.repair"),
+                next: WorkflowNext::Command("cmd:repair"),
             },
             WorkflowResultFamily {
                 from: "cmd:check",
@@ -246,7 +246,7 @@ const WORKFLOWS: &[WorkflowCatalogEntry] = &[
         stop_conditions: &[
             "explicit refusal when no diff can be resolved",
             "context collection reaches its --max-related-tests bound",
-            "agent repair refuses a probe: finding ID; re-select a seam ID from the pilot packet",
+            "repair refuses a probe: finding ID; re-select a seam ID from the pilot packet",
         ],
         advanced_alternatives: &[],
         limitations: "guidance only: these commands analyze static evidence; ripr never compiles, runs tests, or edits source from this workflow.",
@@ -350,19 +350,29 @@ const WORKFLOWS: &[WorkflowCatalogEntry] = &[
         purpose: "Run the bounded before/edit/after repair transaction for one named seam.",
         applicability: "One selected seam has an authorized edit and verify route.",
         prerequisites: &[
-            "--seam-id or --attempt identity",
-            "the authorized verify route for the after phase (--verify-authorized)",
+            "a repair subject or attempt identity",
+            "an authorized verify route for the attempt: advanced `ripr agent repair --attempt ID --phase verify --verify-authorized --verify-authority ID`; the after phase runs through `ripr continue`",
             "the edit itself stays with the user or agent outside ripr",
         ],
-        first_command: "cmd:agent.repair",
-        steps: &[step(
-            "cmd:agent.repair",
-            "the ordinary public route: before snapshot, edit, after snapshot, verify composition, receipt, status",
-            CommandCost::Analysis,
-            CommandOperation::WritesArtifacts,
-            true,
-            &["target/ripr/workflow/"],
-        )],
+        first_command: "cmd:repair",
+        steps: &[
+            step(
+                "cmd:repair",
+                "the ordinary public route: start the repair transaction for one subject",
+                CommandCost::Analysis,
+                CommandOperation::WritesArtifacts,
+                true,
+                &["target/ripr/workflow/"],
+            ),
+            step(
+                "cmd:continue",
+                "finish the transaction after the edit: after snapshot, verify composition, receipt",
+                CommandCost::Analysis,
+                CommandOperation::WritesArtifacts,
+                true,
+                &["target/ripr/workflow/"],
+            ),
+        ],
         optional_steps: &[
             step(
                 "cmd:rerun",
@@ -373,7 +383,7 @@ const WORKFLOWS: &[WorkflowCatalogEntry] = &[
                 &["--out PATH targeted-rerun report JSON"],
             ),
             step(
-                "cmd:agent.status",
+                "cmd:status",
                 "read the local repair-loop state for one workspace",
                 CommandCost::Small,
                 CommandOperation::ReadOnly,
@@ -383,24 +393,22 @@ const WORKFLOWS: &[WorkflowCatalogEntry] = &[
         ],
         result_families: &[
             WorkflowResultFamily {
-                from: "cmd:agent.repair",
+                from: "cmd:repair",
                 family: "before phase published",
-                next: WorkflowNext::Terminal(
-                    "stop: perform the authorized edit, then run the after phase",
-                ),
+                next: WorkflowNext::Command("cmd:continue"),
             },
             WorkflowResultFamily {
-                from: "cmd:agent.repair",
+                from: "cmd:continue",
                 family: "after phase recorded",
                 next: WorkflowNext::Terminal(
                     "stop: read the attempt status and the issued receipt",
                 ),
             },
             WorkflowResultFamily {
-                from: "cmd:agent.repair",
+                from: "cmd:continue",
                 family: "verify refused",
                 next: WorkflowNext::Limitation(
-                    "the refusal without --verify-authorized and a matching authority is recorded on the attempt",
+                    "a refusal from `ripr continue` is recorded on the attempt; verification authorization belongs to the advanced verify route",
                 ),
             },
             WorkflowResultFamily {
@@ -419,7 +427,7 @@ const WORKFLOWS: &[WorkflowCatalogEntry] = &[
         recovery: &[
             WorkflowRecoveryRoute {
                 when: "the verify phase refuses",
-                route: "cmd:agent.status",
+                route: "cmd:status",
             },
             WorkflowRecoveryRoute {
                 when: "static movement needs re-evaluation after an edit",
@@ -427,10 +435,12 @@ const WORKFLOWS: &[WorkflowCatalogEntry] = &[
             },
         ],
         stop_conditions: &[
-            "--phase verify refuses without --verify-authorized and a matching authority",
-            "a refused after phase is recorded on the attempt instead of repeating the command",
+            "`ripr agent repair --attempt ID --phase verify` refuses without `--verify-authorized` and `--verify-authority ID`",
+            "a refusal from `ripr continue` is recorded on the attempt instead of repeating the command",
         ],
         advanced_alternatives: &[
+            "cmd:agent.repair",
+            "cmd:agent.status",
             "cmd:agent.start",
             "cmd:agent.brief",
             "cmd:agent.packet",
@@ -676,7 +686,12 @@ const WORKFLOWS: &[WorkflowCatalogEntry] = &[
 pub(crate) fn workflow_catalog() -> &'static [WorkflowCatalogEntry] {
     #[cfg(debug_assertions)]
     {
-        let violations = workflow_catalog_violations(catalog(), metadata(), WORKFLOWS);
+        // Named in full: an import used only here warns in release builds.
+        let violations = workflow_catalog_violations(
+            catalog(),
+            crate::cli::command_metadata::metadata(),
+            WORKFLOWS,
+        );
         debug_assert!(
             violations.is_empty(),
             "workflow catalog integrity failed: {violations:?}"
@@ -804,16 +819,17 @@ pub(crate) fn workflow_catalog_violations(
         workflow_role_violations(entries, command_rows, row, &mut violations);
         workflow_graph_violations(row, &mut violations);
 
-        // Repair workflow law (required control 6): the ordinary public route
-        // is agent repair and the low-level commands stay advanced/control.
+        // Repair workflow law (required control 6, retargeted by #6305):
+        // the ordinary public route is the task-first repair façade and
+        // the low-level commands stay advanced/control.
         if row.command_tag == "repair-loop"
             && row
                 .steps
                 .first()
-                .is_some_and(|step| step.command != "cmd:agent.repair")
+                .is_some_and(|step| step.command != "cmd:repair")
         {
             violations.push(format!(
-                "workflow {label:?} must use cmd:agent.repair as its ordinary public route"
+                "workflow {label:?} must use cmd:repair as its ordinary public route"
             ));
         }
     }
@@ -1521,9 +1537,9 @@ mod tests {
         let Some(first) = row.steps.first() else {
             return Err("repair-gap has no required steps".to_string());
         };
-        if first.command != "cmd:agent.repair" {
+        if first.command != "cmd:repair" {
             return Err(format!(
-                "repair-gap must start at cmd:agent.repair, got {:?}",
+                "repair-gap must start at cmd:repair, got {:?}",
                 first.command
             ));
         }
@@ -1736,7 +1752,7 @@ mod tests {
     }
 
     #[test]
-    fn repair_workflow_must_start_at_agent_repair() -> Result<(), String> {
+    fn repair_workflow_must_start_at_task_first_repair() -> Result<(), String> {
         let rows = with_mutated_row("repair-gap", |row| {
             let mut steps = row.steps.to_vec();
             if steps.is_empty() {
@@ -1746,10 +1762,7 @@ mod tests {
             row.first_command = "cmd:rerun";
             row.steps = leaked_steps(steps);
         })?;
-        expect_single_violation(
-            &rows,
-            "must use cmd:agent.repair as its ordinary public route",
-        )
+        expect_single_violation(&rows, "must use cmd:repair as its ordinary public route")
     }
 
     #[test]

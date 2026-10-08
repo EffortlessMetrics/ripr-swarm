@@ -49,6 +49,21 @@ fn is_supported_perl_fact_exporter(name: &str) -> bool {
     )
 }
 
+/// Stable reason marker for a *configured* managed Perl facts producer that
+/// was invoked and failed (#6828). The adapter returns this marked reason so
+/// the pipeline's `perl_run_status_for_err` can map it to
+/// [`LanguageRunStatus::Failed`], whose typed limitation is `producer_failure`
+/// with `inspect_failure` recovery — not the generic missing-packet advice.
+pub(crate) const PERL_PRODUCER_FAILURE_REASON_PREFIX: &str = "producer failure: ";
+
+/// Mark a threaded `AnalysisOptions::perl_producer_failure` reason so the
+/// pipeline can type it (see [`PERL_PRODUCER_FAILURE_REASON_PREFIX`]). The
+/// exporter error text after the marker is carried verbatim ("exited with
+/// status …", "timed out after …ms", "failed to spawn …").
+fn producer_failure_reason(reason: &str) -> String {
+    format!("{PERL_PRODUCER_FAILURE_REASON_PREFIX}{reason}")
+}
+
 /// Validate that an ID is a stable, host-free token
 /// (RIPR-SPEC-0064: no host paths, usernames, temp paths, env vars, or
 /// wall-clock timestamps may participate in IDs or fingerprints).
@@ -190,8 +205,15 @@ impl LanguageAdapter for PerlAdapter {
         &self,
         options: &AnalysisOptions,
         _oracle_policy: &OraclePolicy,
-        _changed_files: &[ChangedFile],
+        changed_files: &[ChangedFile],
     ) -> Result<LanguageDiffResult, String> {
+        // #6828: a *configured* managed producer was invoked and failed. Fail
+        // closed with the real exporter failure (marked so the pipeline types
+        // it as `Failed`) instead of the generic missing-packet advice the
+        // user already followed by configuring `[perl].producer`.
+        if let Some(reason) = &options.perl_producer_failure {
+            return Err(producer_failure_reason(reason));
+        }
         // Read the packet from the configured path. When absent, return empty
         // (the pipeline's non-abort contract records this as `unavailable`).
         let Some(ref facts_path) = options.perl_facts_path else {
@@ -207,7 +229,9 @@ impl LanguageAdapter for PerlAdapter {
         let packet = self.consume_fact_packet(&packet_text, options)?;
 
         // C2: convert the packet into Findings.
-        let findings = packet_to_findings(&packet);
+        let findings = packet_to_findings_with_currentness(&packet, |file, change| {
+            perl_change_currentness(&options.root, changed_files, file, change)
+        });
         let changed_files = packet
             .changes
             .iter()
@@ -253,6 +277,10 @@ impl LanguageAdapter for PerlAdapter {
         options: &AnalysisOptions,
         _oracle_policy: &OraclePolicy,
     ) -> Result<LanguageRepoResult, String> {
+        // #6828: same producer-failure fail-closed path as `analyze_diff`.
+        if let Some(reason) = &options.perl_producer_failure {
+            return Err(producer_failure_reason(reason));
+        }
         let Some(ref facts_path) = options.perl_facts_path else {
             return Err(missing_fact_packet_reason());
         };
@@ -322,9 +350,10 @@ impl LanguageAdapter for PerlAdapter {
 ///   -OR-test-file boundary scope, separates blocking disposition from typed
 ///   taxonomy, and never derives a category from source text or messages.
 /// - A canonical repair gap is attached **only** when a concrete
-///   discriminator is present (`changed_text_digest` prefixed
-///   `discriminator:`). Generic enum labels yield an informational Finding
-///   with `canonical_gap: None`.
+///   discriminator is present: the documented `missing_discriminator`
+///   change field (SPEC-0064, #6829) or, for compatibility, a
+///   `changed_text_digest` prefixed `discriminator:`. Generic enum labels
+///   yield an informational Finding with `canonical_gap: None`.
 /// - Advisory relation kinds (`FileProximity`, `PackageReference`,
 ///   `TestNameMatch`, `FixtureSetup`, `Unknown`) never promote a change past
 ///   `ReachableUnrevealed`; `HelperCall` is deferred for alpha. This is the
@@ -371,6 +400,70 @@ fn perl_oracle_strength_to_domain(strength: OracleStrength) -> crate::domain::Or
 }
 
 fn packet_to_findings(packet: &PerlFactPacket) -> Vec<crate::domain::Finding> {
+    packet_to_findings_with_currentness(packet, |_, _| {
+        crate::domain::SourceCurrentness::UnresolvedSubject
+    })
+}
+
+/// #6586: a Perl change is candidate-current only when the consumer observed
+/// it: the file is on disk under the analysis root after resolving symlinks
+/// (so ingestion verified its digest against the packet) and the diff adds a
+/// line inside the change's range whose text matches the source at that line.
+/// Anything else, including fixture-only packets, stale diffs and changes the
+/// diff does not touch, stays the explicit unknown.
+fn perl_change_currentness(
+    root: &std::path::Path,
+    changed_files: &[ChangedFile],
+    file: &FileFact,
+    change: &ChangeFact,
+) -> crate::domain::SourceCurrentness {
+    use crate::domain::SourceCurrentness;
+    // Resolve symlinks before trusting the on-disk source: a packet path whose
+    // directory is a symlink out of the root is not a source ripr observed
+    // under the analysis root.
+    let (Ok(canonical_root), Ok(source)) =
+        (root.canonicalize(), root.join(&file.path).canonicalize())
+    else {
+        return SourceCurrentness::UnresolvedSubject;
+    };
+    if !source.starts_with(&canonical_root) || !source.is_file() {
+        return SourceCurrentness::UnresolvedSubject;
+    }
+    // The diff's added line must also exist in the digest-verified source at
+    // that coordinate with the same text, so a stale or foreign diff cannot
+    // promote a finding to a candidate edit target.
+    let Ok(text) = std::fs::read_to_string(&source) else {
+        return SourceCurrentness::UnresolvedSubject;
+    };
+    let source_lines = text.lines().collect::<Vec<_>>();
+    let source_line = |line: usize| {
+        let text = source_lines.get(line.checked_sub(1)?)?;
+        Some(if line == 1 {
+            text.trim_start_matches('\u{feff}')
+        } else {
+            text
+        })
+    };
+    let lines = change.range.start_line..=change.range.end_line.max(change.range.start_line);
+    let added_in_range = changed_files
+        .iter()
+        .filter(|changed| changed.path == std::path::Path::new(&file.path))
+        .flat_map(|changed| &changed.added_lines)
+        .any(|added| {
+            lines.contains(&added.line)
+                && source_line(added.line) == Some(added.text.trim_end_matches('\r'))
+        });
+    if added_in_range {
+        SourceCurrentness::CandidateCurrent
+    } else {
+        SourceCurrentness::UnresolvedSubject
+    }
+}
+
+fn packet_to_findings_with_currentness(
+    packet: &PerlFactPacket,
+    currentness: impl Fn(&FileFact, &ChangeFact) -> crate::domain::SourceCurrentness,
+) -> Vec<crate::domain::Finding> {
     use crate::domain::{
         ActivationEvidence, Confidence as RiprConfidence, DeltaKind, ExposureClass,
         FindingCanonicalGap, LanguageId as DomainLanguageId, LanguageStatus,
@@ -507,13 +600,12 @@ fn packet_to_findings(packet: &PerlFactPacket) -> Vec<crate::domain::Finding> {
         }
 
         // Concrete discriminator gate (H1). A canonical repair gap requires a
-        // concrete, packet-provided discriminator (`discriminator:` prefix on
-        // `changed_text_digest`). Generic enum labels are not actionable gaps.
-        let concrete_discriminator = change
-            .changed_text_digest
-            .as_str()
-            .strip_prefix("discriminator:")
-            .map(str::to_string);
+        // concrete, packet-provided discriminator. SPEC-0064 documents the
+        // `missing_discriminator` change field as the canonical channel
+        // (#6829); the `discriminator:` prefix on `changed_text_digest`
+        // remains accepted for compatibility with packets written before the
+        // field was specified. Generic enum labels are not actionable gaps.
+        let concrete_discriminator = concrete_change_discriminator(change);
         let has_concrete_discriminator = concrete_discriminator.is_some();
 
         // Use the selected eligible oracle's assertion shape (the one actually
@@ -688,11 +780,22 @@ fn packet_to_findings(packet: &PerlFactPacket) -> Vec<crate::domain::Finding> {
                 propagate: unknown,
                 reveal: RevealEvidence {
                     observe: reach,
-                    discriminate: StageEvidence::new(
-                        StageState::Weak,
-                        RiprConfidence::Medium,
-                        "Missing discriminator from packet",
-                    ),
+                    // #6584: an exposed finding was credited by a sink-aligned
+                    // strong exact oracle, which is the discriminator; saying
+                    // it is missing contradicts the class.
+                    discriminate: if is_already_observed {
+                        StageEvidence::new(
+                            StageState::Yes,
+                            RiprConfidence::Medium,
+                            "Sink-aligned strong exact oracle from packet",
+                        )
+                    } else {
+                        StageEvidence::new(
+                            StageState::Weak,
+                            RiprConfidence::Medium,
+                            "Missing discriminator from packet",
+                        )
+                    },
                 },
             },
             confidence: 0.5,
@@ -743,10 +846,9 @@ fn packet_to_findings(packet: &PerlFactPacket) -> Vec<crate::domain::Finding> {
             observed_sink: None,
             oracle_alignment: None,
             alignment_reason: None,
-            // Source currentness is resolved by the producer that observed the diff
-            // evidence; this constructor has none, so the disposition stays the
-            // explicit unknown (#3280).
-            source_currentness: crate::domain::SourceCurrentness::UnresolvedSubject,
+            // #6586: resolved by the caller from the observed diff; without one
+            // the disposition stays the explicit unknown (#3280).
+            source_currentness: currentness(file, change),
         });
     }
 
@@ -1191,9 +1293,15 @@ impl PerlFactPacket {
             if !on_disk.is_file() {
                 continue;
             }
-            let Ok(digest) = hex_sha256_file(&on_disk) else {
-                continue;
-            };
+            // A source that exists but cannot be read rejects the packet:
+            // currentness treats an on-disk source as digest-verified (#6586),
+            // so an unverified digest must not pass silently.
+            let digest = hex_sha256_file(&on_disk).map_err(|error| {
+                format!(
+                    "ingestion: cannot read file `{}` (`{}`) to verify its digest: {error}",
+                    file.file_id, file.path
+                )
+            })?;
             let recomputed_digest = format!("sha256:{digest}");
             if file.digest != recomputed_digest {
                 return Err(format!(
@@ -2038,23 +2146,20 @@ impl PerlFactPacket {
         let behavior_kind = change.behavior_hint.as_str().to_string();
         // Campaign 31 PR 12 (#1405): use a concrete missing discriminator,
         // NOT the generic `default_missing_discriminator()` enum label.
-        // The concrete discriminator must come from the change fact (which
-        // the perl-lsp producer emits in PR 7, e.g. "$amount == $threshold").
-        // If the change fact doesn't carry a concrete discriminator, fall
-        // back to the generic label + emit a note that the gap record is
-        // not strongly actionable (the relation gate + the generic
+        // #6829: the concrete discriminator comes from the documented
+        // `missing_discriminator` change field, with the compatibility
+        // `discriminator:` prefix on `changed_text_digest` as the fallback
+        // channel (both via `concrete_change_discriminator`, the single
+        // authority shared with the H1 gate). If the change fact carries
+        // neither, fall back to the generic label + emit a note that the gap
+        // record is not strongly actionable (the relation gate + the generic
         // discriminator together ensure conservative behavior).
-        let missing_discriminator = change
-            .changed_text_digest
-            .as_str()
-            .strip_prefix("discriminator:")
-            .map(str::to_string)
-            .unwrap_or_else(|| {
-                change
-                    .behavior_hint
-                    .default_missing_discriminator()
-                    .to_string()
-            });
+        let missing_discriminator = concrete_change_discriminator(change).unwrap_or_else(|| {
+            change
+                .behavior_hint
+                .default_missing_discriminator()
+                .to_string()
+        });
         let id = canonical_perl_gap_id([
             owner.id.as_str(),
             behavior_kind.as_str(),
@@ -2515,8 +2620,11 @@ struct ChangeFact {
     #[serde(default)]
     changed_observable: Option<String>,
     /// The concrete discriminator derived from the change (e.g.
-    /// `"$amount == $threshold"`). Used to build a real canonical gap instead
-    /// of a generic enum label. `#[serde(default)]` for backward compat.
+    /// `"$amount == $threshold"`). The documented (SPEC-0064, #6829)
+    /// canonical-gap discriminator channel: when present, it forms the
+    /// canonical gap (via `concrete_change_discriminator`) exactly as the
+    /// compatibility `discriminator:`-prefixed `changed_text_digest` does.
+    /// `#[serde(default)]` for backward compat.
     #[serde(default)]
     missing_discriminator: Option<String>,
     provenance_refs: Vec<String>,
@@ -3378,6 +3486,39 @@ struct RangeFact {
     end_column: usize,
 }
 
+/// The concrete, packet-provided discriminator for a change fact, or `None`
+/// when the packet supplies none (RIPR-SPEC-0064, #6829).
+///
+/// Two channels carry it; both form the identical canonical gap:
+///
+/// 1. the documented `missing_discriminator` change field (canonical), and
+/// 2. the `discriminator:`-prefixed `changed_text_digest`, accepted for
+///    compatibility with packets written before the field was specified.
+///
+/// A present-but-blank field does not open the gate (fail closed); the
+/// channels are checked in order so the field wins when both are present.
+/// Single authority: the H1 gate in `packet_to_findings_with_currentness`
+/// and `canonical_gap_identity_for_change_with_assertion_shape` both read
+/// this helper so the gap gate and the gap identity can never disagree
+/// about whether a concrete discriminator exists.
+fn concrete_change_discriminator(change: &ChangeFact) -> Option<String> {
+    let from_field = change
+        .missing_discriminator
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+    from_field.or_else(|| {
+        change
+            .changed_text_digest
+            .as_str()
+            .strip_prefix("discriminator:")
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+    })
+}
+
 /// Canonical Perl gap ID using FNV-1a 64-bit.
 ///
 /// This uses the **same FNV-1a constants** as the Rust seam ID
@@ -3440,3 +3581,7 @@ fn stable_repo_path_arg(path: String, field: &str) -> Result<String, String> {
 
 #[cfg(test)]
 mod tests;
+/// Packet-backed findings the output, LSP and MCP projection tests share
+/// (#5510).
+#[cfg(test)]
+pub(crate) use tests::{perl_direct_and_advisory_finding, perl_miss_matrix_findings};

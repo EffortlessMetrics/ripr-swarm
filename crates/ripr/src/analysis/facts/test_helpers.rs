@@ -52,9 +52,10 @@
 //! the lexical fallback) contributes nothing, so a test only ever gains
 //! evidence the helper body really contains.
 
-use super::{FunctionFact, FunctionSourceRole, RustIndex, TestFact};
+use super::{FunctionFact, FunctionSourceRole, OracleFact, RustIndex, TestFact};
 use crate::analysis::syntax::{ModuleItemScopes, module_item_scopes, parser_oracles_for_function};
 use rayon::prelude::*;
+use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
@@ -62,19 +63,59 @@ pub(super) fn credit_same_file_assertion_helpers(index: &mut RustIndex) {
     // Only files that hold a test can credit a helper, so only those are
     // parsed, and the parses run on the rayon pool: every indexed file was
     // parsed serially here before, which dominated warm diff-scoped checks.
-    let test_files: BTreeSet<&PathBuf> = index.tests().iter().map(|test| &test.file).collect();
+    // A file is parsed only when one of its tests calls a candidate helper
+    // that the parse-free conditions below already admit.
+    let mut names_by_file: BTreeMap<&PathBuf, BTreeMap<&str, Vec<&FunctionFact>>> = BTreeMap::new();
+    let mut test_files: BTreeSet<&PathBuf> = BTreeSet::new();
+    for test in index.tests().iter() {
+        if test_files.contains(&test.file) {
+            continue;
+        }
+        let Some(facts) = index.files().get(&test.file) else {
+            continue;
+        };
+        let names = names_by_file.entry(&test.file).or_insert_with(|| {
+            let mut names: BTreeMap<&str, Vec<&FunctionFact>> = BTreeMap::new();
+            for function in facts.functions.iter() {
+                names
+                    .entry(function.name.as_str())
+                    .or_default()
+                    .push(function);
+            }
+            names
+        });
+        let candidate = test.calls.iter().any(|call| {
+            matches!(
+                names.get(call.name.as_str()).map(Vec::as_slice),
+                Some([helper]) if helper.source_role == FunctionSourceRole::CfgTestModule
+                    && !test_shadows(test, &call.name)
+                    && !spans_overlap(helper, test)
+            )
+        });
+        if candidate {
+            test_files.insert(&test.file);
+        }
+    }
     let files = index
         .files()
         .iter()
         .filter(|(file, facts)| !facts.used_lexical_fallback && test_files.contains(file))
         .collect::<Vec<_>>();
+    // The parser producer stores each file's scopes in its facts, so a warm
+    // index reads them from the file-fact cache; hand-built facts parse here.
     let parsed = files
         .par_iter()
-        .filter_map(|(file, facts)| Some((*file, *facts, module_item_scopes(&facts.source)?)))
+        .filter_map(|(file, facts)| {
+            let scopes = match &facts.item_scopes {
+                Some(scopes) => Cow::Borrowed(scopes.as_ref()),
+                None => Cow::Owned(module_item_scopes(&facts.source)?),
+            };
+            Some((*file, *facts, scopes))
+        })
         .collect::<Vec<_>>();
     let mut helpers_by_file: BTreeMap<PathBuf, BTreeMap<String, Vec<&FunctionFact>>> =
         BTreeMap::new();
-    let mut scopes_by_file: BTreeMap<PathBuf, ModuleItemScopes> = BTreeMap::new();
+    let mut scopes_by_file: BTreeMap<PathBuf, Cow<'_, ModuleItemScopes>> = BTreeMap::new();
     for (file, facts, scopes) in parsed {
         scopes_by_file.insert(file.clone(), scopes);
         let names = helpers_by_file.entry(file.clone()).or_default();
@@ -87,6 +128,8 @@ pub(super) fn credit_same_file_assertion_helpers(index: &mut RustIndex) {
     }
 
     let mut widened: BTreeMap<(PathBuf, usize, String), TestFact> = BTreeMap::new();
+    let mut helper_oracles: BTreeMap<(PathBuf, usize, String), Option<Vec<OracleFact>>> =
+        BTreeMap::new();
     for test in index.tests().iter() {
         let (Some(functions_by_name), Some(scopes)) = (
             helpers_by_file.get(&test.file),
@@ -129,7 +172,11 @@ pub(super) fn credit_same_file_assertion_helpers(index: &mut RustIndex) {
             }
             // Parser-backed oracles only, as for ordinary tests: a
             // commented-out `assert_eq!` must not count.
-            let Some(assertions) = parser_oracles_for_function(&helper.body, helper.start_line)
+            // One helper serves many tests, so its body is parsed once.
+            let Some(assertions) = helper_oracles
+                .entry((test.file.clone(), helper.start_line, helper.name.clone()))
+                .or_insert_with(|| parser_oracles_for_function(&helper.body, helper.start_line))
+                .clone()
             else {
                 continue;
             };

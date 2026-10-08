@@ -1,0 +1,22 @@
+#[derive(Debug, PartialEq)]
+pub enum E {
+    Bad,
+    Big,
+}
+
+pub fn check(x: u32) -> Result<u32, E> {
+    if x > 10 {
+        return Err(E::Bad);
+    }
+    Ok(x)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn check_twenty_is_bad() {
+        assert!(matches!(check(20), Err(e @ E::Bad)));
+    }
+}

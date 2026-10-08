@@ -1,0 +1,18 @@
+pub fn score(x: u32) -> u32 {
+    x * 2
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn is_present() -> bool {
+        true
+    }
+
+    #[test]
+    fn score_prints_one_digit() {
+        let _ = score(2);
+        assert!(is_present());
+    }
+}

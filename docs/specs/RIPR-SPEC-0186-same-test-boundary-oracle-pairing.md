@@ -17,6 +17,7 @@ Linked issues:
 - #4828
 - #5027 (shared execution admission before pairing)
 - #6668 (argument must be the boundary literal, not merely contain it)
+- #7004 (post-`let` mutation voids a bound boundary name)
 
 Linked PRs:
 
@@ -85,6 +86,35 @@ merely contains the literal does not pair, including `gate(if false { 10 } else
 { 50 })`, `gate(std::cmp::max(10, 50))`, and a bool-owner `assert!(gate(..))`
 pin of either shape (#6668). Those cases fall back to `same_test_pairing_missing`.
 
+A `let`-bound boundary name stays paired only while the binding still holds
+the call's result. A post-`let` reassignment (`got = true`), compound
+assignment (`got += 1`), or `&mut` borrow (`&mut got`) voids the binding
+fail-closed, so a later exact assertion on the name does not pair (#7004).
+`let mut` alone does not void, and a mutation before the boundary `let`
+does not void the fresh binding. Re-`let` shadowing is unchanged.
+
+A name bound by the pattern of a `for` over a constant-row table (RIPR-SPEC-0197,
+#5328) is also a boundary input, one value per row: `for (amount, want) in
+[(99, 99), (100, 90)] { assert_eq!(gate(amount), want); }` pairs when some row
+holds the boundary. The name's only binding in the test must be a plain
+identifier that is the whole pattern of an unlabeled `for` or one field of a
+flat tuple pattern whose fields are identifiers or `_`, every row must be a
+tuple of that arity, and every cell of the column must be one whole numeric or
+boolean literal (a string, char, constructor or call yields nothing);
+otherwise the column yields nothing. A `break`, `continue` or `return`
+anywhere in the loop body voids the column, since a row after it may never
+reach the call; so does an `if`, `match`, `while`, `loop`, nested `for`,
+`|` (a closure), `&&` or `||` anywhere in the body, since it can run the call
+for some rows alone (`if let Some(want) = want { .. }`), and so does any macro
+argument that names the column beside `|`, `let`, `for`, `fn` or `=>`, since
+the parser cannot see a rebinding there.
+Cells of one row stay together: a call with two table-bound arguments is one
+input row per table row, so `[(100, 99, ..), (99, 100, ..)]` never feeds
+`amount == threshold`. A literal or `let`-bound argument holds for every row
+and joins each one. An rstest `#[case]` column still contributes only its
+first value to the call's input row: it drops the cases it cannot read, so its
+slots do not line up with another column's.
+
 Helper-call transfer, proximity-only oracle credit, and bare-name method
 relation are out of scope.
 
@@ -99,11 +129,14 @@ relation are out of scope.
   let-bound pairing including short names, buried-literal if-expression and
   `std::cmp::max` arguments (including `assert!`), typed literals, locals
   bound to the boundary, named-constant pairing through infection `==`,
-  and named-constant pairing when an unrelated extra argument is compound.
+  named-constant pairing when an unrelated extra argument is compound,
+  post-`let` reassignment, compound assignment, and `&mut` borrows (each
+  voiding the binding), and the unmutated `let mut` control that still pairs.
 - Golden drift is reviewed row by row: every downgrade names the missing
   same-test pairing, and no finding gains a class.
 - An honesty-corpus case independently prohibits `exposed` on the split
-  reproduction.
+  reproduction, and one case per post-`let` mutation variant
+  (reassignment, compound assignment, mutable borrow) does the same.
 
 ## Non-Goals
 
@@ -136,6 +169,11 @@ relation are out of scope.
   Given `let amount = raw; amount >= threshold` and
   `assert_eq!(gate(if false { 10 } else { 50 }, 10), true)`, pairing does
   not treat the aliased input as a boundary just because `threshold` is 10.
+- Given `let mut got = gate(10); got = true; assert_eq!(got, true)`, or
+  `got += 1` / `&mut got` in place of the reassignment, when the predicate
+  is classified, then it does not pair: the binding no longer holds the
+  boundary call's result. Given `let mut got = gate(10);` with no later
+  mutation, then `assert_eq!(got, true)` still pairs.
 
 ## Test Mapping
 
@@ -143,6 +181,9 @@ relation are out of scope.
 - `fixtures/split_test_boundary_oracle`
 - `fixtures/predicate_boundary_oracle_refused`
 - `fixtures/predicate_boundary_oracle_admitted`
+- `fixtures/predicate_pairing_reassigned_binding`
+- `fixtures/predicate_pairing_compound_assigned_binding`
+- `fixtures/predicate_pairing_mutably_borrowed_binding`
 - `crates/ripr/tests/owner_pin_execution.rs::predicate_pairing_cannot_reuse_refused_boundary_equalities`
 
 ## Implementation Mapping

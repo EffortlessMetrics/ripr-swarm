@@ -1,0 +1,54 @@
+{
+  "case_id": "spec0225-wv-let-mut-overwrite",
+  "subject_id": "authored-spec0225-13",
+  "diff": "cases/spec0225-wv-let-mut-overwrite.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 11
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "field_construction_overwrite",
+  "test_shape": "let_mut_field_overwritten_before_assert",
+  "hard_case": null,
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "retries: n + 2,",
+        "mutated_line": "retries: n + 2,",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: build(3) yields retries 5 instead of 4"
+      },
+      {
+        "replacement": "retries: n,",
+        "mutated_line": "retries: n,",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: build(3) yields retries 3 instead of 4"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "The test overwrites c.retries with 4 before the comparison, erasing the owner value. Spec cells: RIPR-SPEC-0225 example 13.",
+  "labeling_observation": {
+    "ripr_commit": "7b3deeb",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0225#13"
+  ]
+}

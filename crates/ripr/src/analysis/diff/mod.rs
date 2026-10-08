@@ -6,10 +6,13 @@ mod parse;
 mod path;
 pub mod records;
 
+pub(crate) use load::{
+    AnalyzedRevisions, resolve_analyzed_revisions, working_tree_has_uncommitted_changes,
+};
 pub use load::{
     load_diff, load_diff_range, load_pr_evidence_diff_range, load_worktree_diff,
-    resolve_base_commit, resolve_default_base_commit, resolve_effective_base,
-    working_tree_has_tracked_changes,
+    probe_working_tree_tracked_changes_within, resolve_base_commit, resolve_default_base_commit,
+    resolve_effective_base, working_tree_has_tracked_changes,
 };
 pub(crate) use load::{
     load_diff_range_with_deadline_core, load_diff_with_effective_base_core,

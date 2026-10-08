@@ -1,9 +1,10 @@
-use crate::analysis::facts::{FileFacts, FunctionFact, FunctionSourceRole, TestFact};
+use crate::analysis::facts::{FileFacts, FunctionFact, FunctionSourceRole, SourceText, TestFact};
 use crate::analysis::rust_index::{
     extract_assertions, extract_call_facts, extract_literal_facts, extract_return_facts,
 };
 use crate::domain::SymbolId;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use super::{LexicalRustSyntaxAdapter, RustSyntaxAdapter, SyntaxNodeFact, TextRange};
 
@@ -25,7 +26,7 @@ impl RustSyntaxAdapter for LexicalRustSyntaxAdapter {
 }
 
 pub(crate) fn summarize_file_lexically(path: PathBuf, text: String) -> FileFacts {
-    let source = text.clone();
+    let source: Arc<str> = Arc::from(text.as_str());
     let opaque = crate::analysis::extract::property_macros::opaque_property_macros(&text);
     let mut unresolved_property_macros = Vec::new();
     let mut previous_offset = 0;
@@ -61,7 +62,6 @@ pub(crate) fn summarize_file_lexically(path: PathBuf, text: String) -> FileFacts
     let lines: Vec<&str> = text.lines().collect();
     let mut functions = Vec::new();
     let mut tests = Vec::new();
-    let mut file_calls = Vec::new();
     let mut file_returns = Vec::new();
     let mut file_literals = Vec::new();
     let mut pending_test = false;
@@ -102,7 +102,10 @@ pub(crate) fn summarize_file_lexically(path: PathBuf, text: String) -> FileFacts
             let calls = extract_call_facts(&body, start_line);
             let returns = extract_return_facts(&body, start_line);
             let literals = extract_literal_facts(&body, start_line);
-            file_calls.extend(calls.clone());
+            // Lexical bodies rejoin line slices with `\n`, so they are not
+            // verbatim substrings (line endings); both facts share one
+            // owned copy instead of the file allocation.
+            let linked_body = SourceText::owned(body.as_str());
             file_returns.extend(returns.clone());
             file_literals.extend(literals.clone());
             let function = FunctionFact {
@@ -117,7 +120,7 @@ pub(crate) fn summarize_file_lexically(path: PathBuf, text: String) -> FileFacts
                 file: path.clone(),
                 start_line,
                 end_line,
-                body: body.clone(),
+                body: linked_body.clone(),
                 calls: calls.clone(),
                 returns: returns.clone(),
                 literals: literals.clone(),
@@ -154,7 +157,7 @@ pub(crate) fn summarize_file_lexically(path: PathBuf, text: String) -> FileFacts
                     file: path.clone(),
                     start_line,
                     end_line,
-                    body: body.clone(),
+                    body: linked_body.clone(),
                     calls,
                     assertions: property_safe_lexical_assertions(&body, start_line),
                     literals,
@@ -177,8 +180,6 @@ pub(crate) fn summarize_file_lexically(path: PathBuf, text: String) -> FileFacts
         i += 1;
     }
 
-    file_calls.sort_by(|a, b| a.line.cmp(&b.line).then(a.name.cmp(&b.name)));
-    file_calls.dedup_by(|a, b| a.line == b.line && a.name == b.name && a.text == b.text);
     file_returns.sort_by(|a, b| a.line.cmp(&b.line).then(a.text.cmp(&b.text)));
     file_returns.dedup_by(|a, b| a.line == b.line && a.text == b.text);
     file_literals.sort_by(|a, b| a.line.cmp(&b.line).then(a.value.cmp(&b.value)));
@@ -188,7 +189,6 @@ pub(crate) fn summarize_file_lexically(path: PathBuf, text: String) -> FileFacts
         path,
         functions,
         tests,
-        calls: file_calls,
         returns: file_returns,
         literals: file_literals,
         // probe_shapes is intentionally empty: shape extraction is parser-only.
@@ -206,6 +206,8 @@ pub(crate) fn summarize_file_lexically(path: PathBuf, text: String) -> FileFacts
         unresolved_property_macros,
         role_provenance: super::super::facts::SourceRoleProvenance::default(),
         source,
+        item_scopes: None,
+        macro_candidates: None,
     }
 }
 
@@ -267,7 +269,7 @@ fn owner_changed_nodes(
                 },
                 start_line: function.start_line,
                 end_line: function.end_line,
-                text: function.body.clone(),
+                text: function.body.to_string(),
                 owner: Some(function.id.clone()),
             });
         }
@@ -385,7 +387,7 @@ fn checks_value() {
                 .any(|function| function.name == "load_value")
         );
         assert!(facts.tests.iter().any(|test| test.name == "checks_value"));
-        assert!(facts.calls.iter().any(|call| call.name == "helper"));
+        assert!(facts.file_calls().iter().any(|call| call.name == "helper"));
         assert!(
             facts
                 .returns
@@ -491,5 +493,22 @@ fn checks_value() {
             Some("src/lib.rs::checks_value")
         );
         Ok(())
+    }
+
+    #[test]
+    fn lexical_bodies_keep_normalized_text_without_sharing() {
+        // #5415 step 2: lexical bodies rejoin line slices with `\n`, so a
+        // CRLF file's body is not a verbatim substring. It stays owned
+        // with byte-identical content rather than sharing a wrong span.
+        let facts = summarize_file_lexically(
+            PathBuf::from("src/lib.rs"),
+            "fn alpha() -> i32 {\r\n    7\r\n}\r\n".to_string(),
+        );
+        assert_eq!(facts.functions.len(), 1);
+        assert_eq!(
+            facts.functions[0].body.as_str(),
+            "fn alpha() -> i32 {\n    7\n}\n"
+        );
+        assert_eq!(facts.functions[0].body.shared_source(), None);
     }
 }

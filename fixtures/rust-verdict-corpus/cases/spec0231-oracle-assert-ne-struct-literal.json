@@ -1,0 +1,55 @@
+{
+  "case_id": "spec0231-oracle-assert-ne-struct-literal",
+  "subject_id": "authored-spec0231-14",
+  "diff": "cases/spec0231-oracle-assert-ne-struct-literal.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 7
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "struct_literal_return",
+  "test_shape": "assert_ne_struct_literal",
+  "hard_case": "Measured defect: ripr reports whole_object_equality / strong; the spec adopts whole_object_equality / weak (rule 1). The return_value finding reads exposed although truth is partial, and the field_construction finding reads weakly_exposed.",
+  "truth": {
+    "state": "partially_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "Config { retries: n * 3 }",
+        "mutated_line": "Config { retries: n * 3 }",
+        "outcome": "tests_failed",
+        "failing_test": "tests::build_is_not_nine_retries",
+        "equivalence_review": "not equivalent: build(3) becomes Config { retries: 9 }, the excluded value"
+      },
+      {
+        "replacement": "Config { retries: n * 4 }",
+        "mutated_line": "Config { retries: n * 4 }",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: build(3) becomes 12, which assert_ne! still accepts"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "assert_ne! only excludes retries == 9, so only the mutant hitting 9 fails. Spec cells: RIPR-SPEC-0231 example 14, RIPR-SPEC-0225.",
+  "labeling_observation": {
+    "ripr_commit": "96c1a18e9",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "exposed",
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0231#14"
+  ]
+}

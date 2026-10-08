@@ -1,5 +1,8 @@
 use std::path::{Component, Path, PathBuf};
 
+/// How a builder renders its shell-redirect target from `(root, out_path)`.
+type RedirectTarget = fn(&str, &str) -> String;
+
 pub(crate) const AGENT_LOOP_COMMAND_TEMPLATE_VERSION: &str = "0.1";
 
 pub(crate) const WORKFLOW_BEFORE_SNAPSHOT_ARTIFACT: &str =
@@ -82,10 +85,10 @@ pub(crate) fn root_path_display(path: &Path) -> String {
 /// anchoring and typed recovery (`agent::command_specs`).
 pub(crate) fn bound_root_path(root_path: &Path) -> PathBuf {
     if root_path.is_absolute() {
-        lexically_clean(root_path)
+        clean_bound_path(root_path)
     } else {
         let base = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-        lexically_clean(&base.join(root_path))
+        clean_bound_path(&base.join(root_path))
     }
 }
 
@@ -107,20 +110,21 @@ pub(crate) fn root_display(root: &str) -> String {
 }
 
 /// Render a shell-redirect target rooted at the bound `--root` (issues
-/// #3872, #3999): the target is absolute with stable separators, so a pasted
-/// funnel command reproduces the validated write location from any working
-/// directory under both shells and both .NET/provider resolution rules. An
-/// already absolute target passes through (normalized); a relative target
+/// #3872, #3999). The root and already-absolute output keep native Unix spelling
+/// and stable Windows separators; relative remainders use stable separators.
+/// A pasted funnel command reproduces the validated write location from any
+/// working directory under both shells and both .NET/provider resolution rules. An
+/// already absolute target passes through (lexically cleaned); a relative target
 /// joins [`bound_root`].
 pub(crate) fn anchored_redirect_target(root: &str, out_path: &str) -> String {
     let out = Path::new(out_path);
     if out.is_absolute() {
-        return display_path(&lexically_clean(out));
+        return root_path_display(&clean_bound_path(out));
     }
     // The root keeps its native characters (#4287); only the root-relative
     // remainder is rendered with stable separators.
     let root = bound_root_path(Path::new(root));
-    let target = lexically_clean(&root.join(out));
+    let target = clean_bound_path(&root.join(out));
     match target.strip_prefix(&root) {
         Ok(rest) if rest.as_os_str().is_empty() => root_path_display(&root),
         Ok(rest) => format!(
@@ -130,6 +134,69 @@ pub(crate) fn anchored_redirect_target(root: &str, out_path: &str) -> String {
         ),
         Err(_) => display_path(&target),
     }
+}
+
+/// Render a shell-redirect target for a portable command (#4000): one whose
+/// relative `--root` deliberately means the reader's own checkout, such as a
+/// review card published into a pull request. A relative root keeps the
+/// target relative to that same root, so the command analyzes and writes
+/// one repository wherever it is pasted. [`anchored_redirect_target`] would
+/// instead resolve the target against the renderer's working directory (often
+/// a CI runner), splitting analysis and write across two machines. An
+/// absolute root or target is anchored exactly as there.
+pub(crate) fn portable_redirect_target(root: &str, out_path: &str) -> String {
+    let root_path = Path::new(root);
+    if root_path.is_absolute() || Path::new(out_path).is_absolute() {
+        return anchored_redirect_target(root, out_path);
+    }
+    root_path_display(&lexically_clean(&root_path.join(out_path)))
+}
+
+/// [`lexically_clean`] for a path a generated command will hand to the
+/// operating system (#6960): the bound root and its redirect targets. On Unix
+/// the kernel follows a symlink before it applies the next `..`, so
+/// `link/../repo` names the sibling of the link's target, not of the link.
+/// A `..` that follows an existing symlink is therefore kept, and every later
+/// `..` with it, so the printed path resolves to the directory the producer
+/// read. Only an existing path is inspected; a component that does not exist
+/// yet (a redirect target) cannot be a symlink and cleans lexically. Windows
+/// resolves `..` lexically before the filesystem sees the path, so there this
+/// is exactly [`lexically_clean`].
+pub(crate) fn clean_bound_path(path: &Path) -> PathBuf {
+    let mut cleaned = PathBuf::new();
+    let is_absolute = path.is_absolute();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => match cleaned.components().next_back() {
+                Some(Component::Normal(_)) if !is_symlink(&cleaned) => {
+                    cleaned.pop();
+                }
+                Some(Component::Normal(_) | Component::ParentDir) => {
+                    cleaned.push(component.as_os_str());
+                }
+                _ if !is_absolute => cleaned.push(component.as_os_str()),
+                _ => {}
+            },
+            Component::Normal(_) | Component::RootDir | Component::Prefix(_) => {
+                cleaned.push(component.as_os_str());
+            }
+        }
+    }
+    if cleaned.as_os_str().is_empty() {
+        PathBuf::from(".")
+    } else {
+        cleaned
+    }
+}
+
+/// Whether `path` is an existing symlink the kernel would follow before a
+/// later `..` (Unix only; see [`clean_bound_path`]).
+fn is_symlink(path: &Path) -> bool {
+    cfg!(unix)
+        && std::fs::symlink_metadata(path)
+            .map(|metadata| metadata.file_type().is_symlink())
+            .unwrap_or(false)
 }
 
 /// Drop `.` segments and resolve `..` lexically (no filesystem I/O: the
@@ -203,6 +270,27 @@ pub(crate) fn check_analysis_outcome_command_with_base(
     mode: &str,
     out_path: &str,
 ) -> String {
+    analysis_outcome_command(root, base, mode, out_path, anchored_redirect_target)
+}
+
+/// [`check_analysis_outcome_command_with_base`] for a portable root; see
+/// [`portable_redirect_target`].
+pub(crate) fn portable_check_analysis_outcome_command_with_base(
+    root: &str,
+    base: Option<&str>,
+    mode: &str,
+    out_path: &str,
+) -> String {
+    analysis_outcome_command(root, base, mode, out_path, portable_redirect_target)
+}
+
+fn analysis_outcome_command(
+    root: &str,
+    base: Option<&str>,
+    mode: &str,
+    out_path: &str,
+    redirect_target: RedirectTarget,
+) -> String {
     let base_arg = base
         .map(|base| format!(" --base {}", shell_arg(base)))
         .unwrap_or_default();
@@ -211,7 +299,7 @@ pub(crate) fn check_analysis_outcome_command_with_base(
         shell_arg(&root_display(root)),
         base_arg,
         shell_arg(mode),
-        shell_arg(&anchored_redirect_target(root, out_path))
+        shell_arg(&redirect_target(root, out_path))
     )
 }
 
@@ -225,11 +313,26 @@ pub(crate) fn agent_packet_command(root: &str, seam_id: &str, out_path: &str) ->
 }
 
 pub(crate) fn agent_brief_command(root: &str, seam_id: &str, out_path: &str) -> String {
+    brief_command(root, seam_id, out_path, anchored_redirect_target)
+}
+
+/// [`agent_brief_command`] for a portable root; see
+/// [`portable_redirect_target`].
+pub(crate) fn portable_agent_brief_command(root: &str, seam_id: &str, out_path: &str) -> String {
+    brief_command(root, seam_id, out_path, portable_redirect_target)
+}
+
+fn brief_command(
+    root: &str,
+    seam_id: &str,
+    out_path: &str,
+    redirect_target: RedirectTarget,
+) -> String {
     format!(
         "ripr agent brief --root {} --seam-id {} --json > {}",
         shell_arg(&root_display(root)),
         shell_arg(seam_id),
-        shell_arg(&anchored_redirect_target(root, out_path))
+        shell_arg(&redirect_target(root, out_path))
     )
 }
 
@@ -239,13 +342,35 @@ pub(crate) fn agent_verify_command(
     after_path: &str,
     out_path: Option<&str>,
 ) -> String {
-    let command = format!(
+    let command = verify_command_head(root, before_path, after_path);
+    append_redirect(root, command, out_path)
+}
+
+/// [`agent_verify_command`] for a portable root; see
+/// [`portable_redirect_target`].
+pub(crate) fn portable_agent_verify_command(
+    root: &str,
+    before_path: &str,
+    after_path: &str,
+    out_path: Option<&str>,
+) -> String {
+    let command = verify_command_head(root, before_path, after_path);
+    match out_path {
+        Some(path) => format!(
+            "{command} > {}",
+            shell_arg(&portable_redirect_target(root, path))
+        ),
+        None => command,
+    }
+}
+
+fn verify_command_head(root: &str, before_path: &str, after_path: &str) -> String {
+    format!(
         "ripr agent verify --root {} --before {} --after {} --json",
         shell_arg(&root_display(root)),
         shell_arg(before_path),
         shell_arg(after_path)
-    );
-    append_redirect(root, command, out_path)
+    )
 }
 
 pub(crate) fn agent_receipt_command(
@@ -342,7 +467,7 @@ pub(crate) fn display_path(path: &Path) -> String {
 }
 
 pub(crate) fn workflow_artifact_path(out_dir: &Path, file_name: &str) -> String {
-    let out_dir = display_path(out_dir);
+    let out_dir = root_path_display(out_dir);
     if out_dir == "." {
         file_name.to_string()
     } else {
@@ -382,7 +507,67 @@ pub(crate) fn shell_arg(value: &str) -> String {
     {
         return value.to_string();
     }
+    if value.chars().any(needs_terminal_escape) {
+        return ansi_c_quote(value);
+    }
     format!("'{}'", value.replace('\'', r"'\''"))
+}
+
+/// Which characters must not reach a terminal raw: every control character
+/// except `\n` and `\t`, plus the bidi formatting characters. One owner for the
+/// policy; `output::human::terminal_safe` escapes the same set in reports. It
+/// lives here, dependency-free, because `xtask` includes this file by path.
+pub(crate) fn needs_terminal_escape(ch: char) -> bool {
+    match ch {
+        '\n' | '\t' => false,
+        c if c.is_control() => true,
+        // Arabic letter mark, LRM/RLM, embeddings/overrides (LRE..RLO), and
+        // isolates (LRI..PDI): they reorder text without any visible glyph.
+        '\u{61c}' | '\u{200e}' | '\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}' => {
+            true
+        }
+        _ => false,
+    }
+}
+
+/// Control and bidi characters cannot be printed raw in a report, and the
+/// report escape would change them inside `'...'` so the pasted command named a
+/// different argument. Each such character becomes an adjacent
+/// `"$(printf '\ooo')"` segment, one octal escape per UTF-8 byte; everything
+/// else stays in `'...'` runs. Unlike `$'...'` this is POSIX, so `sh`, dash, bash
+/// and zsh all rebuild the exact bytes. `output::markdown::powershell_command`
+/// lifts each such argument and rebuilds it as a `[char]` expression.
+fn ansi_c_quote(value: &str) -> String {
+    let mut out = String::with_capacity(value.len() + 8);
+    let mut in_run = false;
+    for ch in value.chars() {
+        if needs_terminal_escape(ch) {
+            if in_run {
+                out.push('\'');
+                in_run = false;
+            }
+            out.push_str("\"$(printf '");
+            let mut buf = [0u8; 4];
+            for byte in ch.encode_utf8(&mut buf).bytes() {
+                out.push_str(&format!("\\{byte:03o}"));
+            }
+            out.push_str("')\"");
+            continue;
+        }
+        if !in_run {
+            out.push('\'');
+            in_run = true;
+        }
+        if ch == '\'' {
+            out.push_str(r"'\''");
+        } else {
+            out.push(ch);
+        }
+    }
+    if in_run {
+        out.push('\'');
+    }
+    out
 }
 
 fn append_redirect(root: &str, command: String, out_path: Option<&str>) -> String {
@@ -399,8 +584,82 @@ fn append_redirect(root: &str, command: String, out_path: Option<&str>) -> Strin
 mod tests {
     use super::*;
 
+    /// Hold a stable process CWD across one render-and-compare (#7034).
+    ///
+    /// `--root .` builders and `anchored_expectation` both call
+    /// `std::env::current_dir()`. When this file is compiled into xtask,
+    /// the parent supplies `acquire_test_cwd_read_guard()`. When compiled
+    /// as ripr, it supplies `testing::cwd_lock::hold_cwd()` so these tests
+    /// cannot race `set_current_dir` writers in the same process.
+    fn hold_cwd_read_guard() -> impl Drop {
+        super::super::loop_commands_cwd_read_guard()
+    }
+
+    /// #4000: a portable command's analyzed root and redirect target must
+    /// name one repository. A relative root keeps a relative target under
+    /// that root; the bound builders keep anchoring at the renderer's
+    /// resolved root, and an absolute root anchors either way.
+    #[test]
+    fn portable_redirect_stays_under_the_typed_root() -> Result<(), String> {
+        let _cwd_guard = hold_cwd_read_guard();
+        let artifact = WORKFLOW_AGENT_BRIEF_ARTIFACT;
+        for (root, expected) in [
+            (".", artifact.to_string()),
+            ("my repo", format!("my repo/{artifact}")),
+            ("./sub/../my repo", format!("my repo/{artifact}")),
+            // A leading `..` stays: the redirect resolves from the same
+            // directory as `--root ../repo`, one level up.
+            ("../repo", format!("../repo/{artifact}")),
+        ] {
+            let target = portable_redirect_target(root, artifact);
+            if target != expected {
+                return Err(format!("portable target for {root:?}: {target}"));
+            }
+            let command = portable_agent_brief_command(root, "seam", artifact);
+            if !command.ends_with(&format!("> {}", shell_arg(&expected))) {
+                return Err(format!("portable brief split root and write: {command}"));
+            }
+        }
+        let bound = agent_brief_command(".", "seam", artifact);
+        if !bound.ends_with(&format!(
+            "> {}",
+            shell_arg(&anchored_redirect_target(".", artifact))
+        )) || !Path::new(&anchored_redirect_target(".", artifact)).is_absolute()
+        {
+            return Err(format!("bound brief must stay anchored: {bound}"));
+        }
+        let absolute = bound_root("my repo");
+        if portable_redirect_target(&absolute, artifact)
+            != anchored_redirect_target(&absolute, artifact)
+        {
+            return Err("an absolute root must anchor the same way".to_string());
+        }
+        let verify = portable_agent_verify_command(
+            ".",
+            WORKFLOW_BEFORE_SNAPSHOT_ARTIFACT,
+            WORKFLOW_AFTER_SNAPSHOT_ARTIFACT,
+            Some(WORKFLOW_AGENT_VERIFY_ARTIFACT),
+        );
+        let outcome = portable_check_analysis_outcome_command_with_base(
+            ".",
+            Some("main"),
+            "draft",
+            WORKFLOW_ANALYSIS_OUTCOME_ARTIFACT,
+        );
+        for (command, target) in [
+            (verify, WORKFLOW_AGENT_VERIFY_ARTIFACT),
+            (outcome, WORKFLOW_ANALYSIS_OUTCOME_ARTIFACT),
+        ] {
+            if !command.ends_with(&format!("> {target}")) {
+                return Err(format!("portable command left the root: {command}"));
+            }
+        }
+        Ok(())
+    }
+
     #[test]
     fn analysis_outcome_preserves_selected_base_and_default_compatibility() -> Result<(), String> {
+        let _cwd_guard = hold_cwd_read_guard();
         let out = "target/ripr/workflow/analysis-outcome.json";
         let selected = check_analysis_outcome_command_with_base(
             ".",
@@ -434,6 +693,7 @@ mod tests {
 
     #[test]
     fn anchored_redirect_target_roots_relative_outputs_at_root() {
+        let _cwd_guard = hold_cwd_read_guard();
         let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
         let base = display_path(&cwd);
         assert_eq!(
@@ -469,6 +729,62 @@ mod tests {
             Path::new(&anchored_redirect_target(".", "target/out.json")).is_absolute(),
             "anchored target must be absolute"
         );
+    }
+
+    /// #6960: the kernel follows a symlink before it applies the next `..`.
+    /// A bound root and its redirect anchor keep a `..` that follows an
+    /// existing symlink, so the printed path resolves to the directory the
+    /// producer read. Lexical cleaning would name a different checkout.
+    #[cfg(unix)]
+    #[test]
+    fn bound_root_keeps_a_parent_segment_after_a_symlink() -> Result<(), String> {
+        let dir = RoundTripDir::new("symlink-root")?;
+        let base = &dir.path;
+        for dir in ["outside/child", "outside/repo", "work/repo"] {
+            std::fs::create_dir_all(base.join(dir)).map_err(|err| err.to_string())?;
+        }
+        std::os::unix::fs::symlink(base.join("outside/child"), base.join("work/link"))
+            .map_err(|err| err.to_string())?;
+        let through_link = base.join("work/link/../repo");
+        let canonical = |path: &Path| std::fs::canonicalize(path).map_err(|err| err.to_string());
+        // Fixture: the two spellings really name different checkouts.
+        assert_eq!(
+            canonical(&through_link)?,
+            canonical(&base.join("outside/repo"))?
+        );
+        assert_eq!(lexically_clean(&through_link), base.join("work/repo"));
+
+        let bound = bound_root_path(&through_link);
+        let chained = bound_root_path(&base.join("work/link/../../outside/repo"));
+        let plain = bound_root_path(&base.join("work/repo/../repo/./"));
+        let redirect = anchored_redirect_target(&through_link.to_string_lossy(), "target/out.json");
+        let bound_canonical = canonical(&bound)?;
+        let chained_canonical = canonical(&chained)?;
+
+        assert_eq!(
+            bound, through_link,
+            "the symlink's `..` must survive binding"
+        );
+        assert_eq!(
+            bound_canonical.file_name(),
+            Some(std::ffi::OsStr::new("repo"))
+        );
+        assert!(
+            bound_canonical.ends_with("outside/repo"),
+            "bound root must resolve to the analyzed checkout: {bound_canonical:?}"
+        );
+        assert_eq!(chained, base.join("work/link/../../outside/repo"));
+        assert!(chained_canonical.ends_with("outside/repo"));
+        assert_eq!(
+            plain,
+            base.join("work/repo"),
+            "a real directory still cleans"
+        );
+        assert_eq!(
+            redirect,
+            format!("{}/target/out.json", through_link.to_string_lossy())
+        );
+        Ok(())
     }
 
     /// #3999: a bound root renders as one absolute `--root` that agrees with
@@ -525,6 +841,7 @@ mod tests {
 
     #[test]
     fn bound_roots_render_absolute_and_relative_roots_stay_portable() {
+        let _cwd_guard = hold_cwd_read_guard();
         let bound = bound_root("repo root/./nested/..");
         let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
         assert_eq!(bound, display_path(&cwd.join("repo root")));
@@ -551,6 +868,7 @@ mod tests {
 
     #[test]
     fn workflow_commands_match_existing_status_templates() {
+        let _cwd_guard = hold_cwd_read_guard();
         assert_eq!(
             agent_start_command(".", "seam-a", "target/ripr/workflow"),
             "ripr agent start --root . --seam-id seam-a --out target/ripr/workflow"
@@ -646,6 +964,7 @@ mod tests {
 
     #[test]
     fn editor_commands_match_existing_lsp_templates() {
+        let _cwd_guard = hold_cwd_read_guard();
         assert_eq!(
             agent_packet_command(".", "seam-a", EDITOR_AGENT_PACKET_ARTIFACT),
             format!(
@@ -676,6 +995,7 @@ mod tests {
 
     #[test]
     fn command_args_quote_spaces_without_touching_plain_tokens() {
+        let _cwd_guard = hold_cwd_read_guard();
         assert_eq!(shell_arg("repo root"), "'repo root'");
         assert_eq!(shell_arg("target/ripr/workflow"), "target/ripr/workflow");
         assert_eq!(
@@ -761,7 +1081,52 @@ mod tests {
             ("ampersand", "a && b"),
             ("tilde", "~/notes"),
             ("leading dash", "--not-a-flag"),
+            ("escape sequence", "a\u{1b}[2Jb'c\\d"),
+            ("bell and carriage return", "x\u{7}y\rz"),
+            ("bidi override", "dir\u{202e}gnissim"),
         ]
+    }
+
+    #[test]
+    fn shell_arg_spells_control_and_bidi_characters_as_escapes() {
+        let quoted = shell_arg("a\u{1b}[2Jb'c\\d\u{202e}");
+        assert_eq!(
+            quoted,
+            r#"'a'"$(printf '\033')"'[2Jb'\''c\d'"$(printf '\342\200\256')""#
+        );
+        assert!(!quoted.chars().any(needs_terminal_escape), "{quoted:?}");
+        // Plain hostile text without control characters keeps `'...'` quoting.
+        assert_eq!(shell_arg("it's"), r"'it'\''s'");
+    }
+
+    /// The control-character form must be POSIX, not bash-only: a pasted line
+    /// runs under `/bin/sh` (dash on Debian) as often as under bash.
+    #[cfg(unix)]
+    #[test]
+    fn shell_arg_control_characters_round_trip_through_posix_sh() -> Result<(), String> {
+        let sh = std::path::Path::new("/bin/sh");
+        if !sh.exists() {
+            return Ok(());
+        }
+        for (label, value) in hostile_values() {
+            let script = format!(
+                "set -- {}\nprintf '%s\\n' \"$#\"\nprintf '%s' \"$1\"\n",
+                shell_arg(value)
+            );
+            let output = std::process::Command::new(sh)
+                .arg("-c")
+                .arg(&script)
+                .output()
+                .map_err(|err| format!("{label}: failed to run sh: {err}"))?;
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let expected = format!("1\n{value}");
+            if !output.status.success() || stdout != expected {
+                return Err(format!(
+                    "{label}: sh gave {stdout:?} for script {script:?}, expected {expected:?}"
+                ));
+            }
+        }
+        Ok(())
     }
 
     #[test]

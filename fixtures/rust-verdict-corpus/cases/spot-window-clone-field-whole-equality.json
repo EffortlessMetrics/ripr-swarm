@@ -1,0 +1,59 @@
+{
+  "case_id": "spot-window-clone-field-whole-equality",
+  "subject_id": "authored-spot",
+  "diff": "cases/spot-window-clone-field-whole-equality.diff",
+  "anchor": {
+    "file": "src/copy.rs",
+    "line": 18
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "field_construction",
+  "test_shape": "manual_clone_whole_value_equality",
+  "hard_case": "The only oracle compares the clone with its original as whole values; it never names the private start field, so ripr reports no field-value assertion for the constructed field.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "start: self.end,",
+        "mutated_line": "start: self.end,",
+        "outcome": "tests_failed",
+        "failing_test": "copy::tests::a_clone_equals_its_original",
+        "equivalence_review": "not equivalent: a pinned value changes"
+      },
+      {
+        "replacement": "start: Default::default(),",
+        "mutated_line": "start: Default::default(),",
+        "outcome": "tests_failed",
+        "failing_test": "copy::tests::a_clone_equals_its_original",
+        "equivalence_review": "not equivalent: a pinned value changes"
+      },
+      {
+        "replacement": "start: self.start + 1,",
+        "mutated_line": "start: self.start + 1,",
+        "outcome": "tests_failed",
+        "failing_test": "copy::tests::a_clone_equals_its_original",
+        "equivalence_review": "not equivalent: a pinned value changes"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "a_clone_equals_its_original compares the clone with Window::new(3, 9) through the derived PartialEq, so any change to the start field fails it. Pattern from refuted pilot picks: semver identifier.rs:209-210 (head/tail in Identifier::clone).",
+  "labeling_observation": {
+    "ripr_commit": "b2f2a21",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}
