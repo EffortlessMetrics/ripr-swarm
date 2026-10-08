@@ -9,6 +9,8 @@
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
 
+use crate::analysis::test_grip_evidence::CONTRADICTION_DISCLOSURE;
+
 mod markdown;
 mod path;
 mod render_json;
@@ -81,6 +83,18 @@ pub(crate) struct StaticSeamRecord {
     /// one, but only the explicit form can establish satisfaction (#5250
     /// review: receipt guidance must not promote unrecorded to satisfied).
     missing_discriminators_present: bool,
+    /// Related tests whose evidence summary names the analysis layer's
+    /// static-contradiction disclosure (#7007): each entry is
+    /// `{name}: {summary}`. Rendered from the snapshot's capped
+    /// `related_tests` projection, so this list can miss a contradicted
+    /// test ranked outside it.
+    contradicted_related_tests: Vec<String>,
+    /// #7007 review: the producer-owned contradiction count over the FULL
+    /// related set, when the snapshot records it. `None` means the source
+    /// did not record the field, which establishes nothing either way —
+    /// a positive count is the completeness authority that keeps the gate
+    /// closed when the rendered subset omits the contradicted test.
+    statically_contradicted_related_tests: Option<usize>,
     evidence_source: String,
     evidence_path: BTreeMap<String, StaticEvidenceStage>,
     related_tests_total: usize,
@@ -209,6 +223,15 @@ pub(crate) struct TargetedTestOutcomeMovement {
     after_missing_discriminators: Option<Vec<String>>,
     after_discriminate_state: Option<String>,
     after_open_legs: Vec<String>,
+    /// #7007: the after evidence set's statically contradicted related
+    /// tests, each `{name}: {summary}`. While one remains, the gap cannot
+    /// be reported closed and the receipt names the contradiction.
+    after_contradicted_related_tests: Vec<String>,
+    /// #7007 review: the producer count behind those names (`None` when the
+    /// snapshot did not record it). When it exceeds the named entries, the
+    /// rendered subset omitted a contradicted test and the receipt says so
+    /// by count instead of staying silent.
+    after_contradicted_test_count: Option<usize>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -228,6 +251,11 @@ pub(crate) struct TargetedTestOutcomeSeam {
     file: String,
     line: usize,
     grip_class: String,
+    /// #7007 review: a seam that exists only in the after snapshot carries
+    /// its contradiction disclosure here, so the weak/unknown section can
+    /// surface it the same way it does for moved seams.
+    contradicted_related_tests: Vec<String>,
+    statically_contradicted_related_tests: Option<usize>,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -303,6 +331,8 @@ pub(crate) fn targeted_rerun_movement_from_json(
             missing_discriminators: Vec::new(),
             // Synthetic current facts carry no source list: never present.
             missing_discriminators_present: false,
+            statically_contradicted_related_tests: None,
+            contradicted_related_tests: Vec::new(),
             evidence_source: "targeted_rerun_current".to_string(),
             evidence_path: BTreeMap::new(),
             related_tests_total: 0,
@@ -409,6 +439,8 @@ fn parse_rerun_before_static_seams(json: &str) -> Result<Vec<StaticSeamRecord>, 
                     missing_discriminators: Vec::new(),
                     // The minimal rerun shape records no missing list.
                     missing_discriminators_present: false,
+                    statically_contradicted_related_tests: None,
+                    contradicted_related_tests: Vec::new(),
                     evidence_source: "targeted_rerun_before".to_string(),
                     evidence_path: BTreeMap::new(),
                     related_tests_total: 0,
@@ -488,6 +520,11 @@ fn parse_repo_exposure_seams(seams: &[Value]) -> Result<Vec<StaticSeamRecord>, S
                 let consulted = consulted_missing_discriminators_source(evidence_record, seam);
                 missing_discriminators_well_formed(consulted)
             },
+            contradicted_related_tests: contradicted_related_tests(oracle_source),
+            statically_contradicted_related_tests: optional_json_usize(
+                evidence_record,
+                "statically_contradicted_related_tests",
+            ),
             evidence_source: if evidence_record.is_some() {
                 "evidence_record".to_string()
             } else {
@@ -580,6 +617,8 @@ fn static_seam_record_from_check_finding(finding: &Value) -> Option<StaticSeamRe
         observed_values_complete: finding.get("observed_values_total").is_none(),
         missing_discriminators,
         missing_discriminators_present,
+        contradicted_related_tests: contradicted_related_tests(finding),
+        statically_contradicted_related_tests: None,
         evidence_source: "check_output_finding".to_string(),
         evidence_path,
         related_tests_total,
@@ -710,6 +749,20 @@ fn targeted_test_outcome_movement(
         after.seam_grip_class.as_str(),
         direction,
     );
+    // #7007: while the after evidence set carries a statically contradicted
+    // related test, the gap cannot be reported closed: that assert fails at
+    // baseline and would pass under the mutation, so the sibling strong
+    // oracle cannot vouch for the seam's newest discriminator. The named
+    // list comes from the capped rendered projection, so the producer count
+    // is the completeness authority: a positive count holds the gate even
+    // when every named entry was truncated away. The class movement itself
+    // stays honestly `improved`.
+    let after_contradicted = !after.contradicted_related_tests.is_empty()
+        || after.statically_contradicted_related_tests.unwrap_or(0) > 0;
+    let gap_movement = match gap_movement {
+        "closed" if after_contradicted => "improved",
+        movement => movement,
+    };
     let evidence_source = movement_evidence_source(before, after);
     let reach_delta = stage_delta(before, after, "reach");
     let activate_delta = stage_delta(before, after, "activate");
@@ -754,7 +807,17 @@ fn targeted_test_outcome_movement(
         oracle_strength_delta: oracle_strength_delta.as_deref(),
         related_test_delta,
     };
-    let evidence_delta = targeted_outcome_evidence_delta(before, after, &delta_inputs);
+    let mut evidence_delta = targeted_outcome_evidence_delta(before, after, &delta_inputs);
+    // #7007: the moved entry names each contradiction that remains in the
+    // after evidence set, so the inverted discriminator sits next to the
+    // evidence delta instead of the receipt crediting the sibling test
+    // alone. Appended before the no-movement check, an unchanged seam that
+    // gained a contradicted test also renders the disclosure.
+    for contradiction in &after.contradicted_related_tests {
+        evidence_delta.push(format!(
+            "contradicted related test remains in the evidence set: {contradiction}"
+        ));
+    }
     let no_movement_reason = no_movement_reason(
         direction,
         &evidence_delta,
@@ -791,6 +854,8 @@ fn targeted_test_outcome_movement(
             .get("discriminate")
             .map(|entry| entry.state.clone()),
         after_open_legs: after_open_legs(after),
+        after_contradicted_related_tests: after.contradicted_related_tests.clone(),
+        after_contradicted_test_count: after.statically_contradicted_related_tests,
         no_movement_reason,
     }
 }
@@ -802,6 +867,8 @@ fn targeted_test_outcome_seam(seam: &StaticSeamRecord) -> TargetedTestOutcomeSea
         file: seam.file.clone(),
         line: seam.line,
         grip_class: seam.seam_grip_class.clone(),
+        contradicted_related_tests: seam.contradicted_related_tests.clone(),
+        statically_contradicted_related_tests: seam.statically_contradicted_related_tests,
     }
 }
 
@@ -1011,6 +1078,32 @@ fn oracle_strength_rank(strength: &str) -> u8 {
         "none" => 1,
         _ => 0,
     }
+}
+
+/// The related tests whose evidence summary names the analysis layer's
+/// static-contradiction disclosure (#7007), each as `{name}: {summary}`.
+/// Only that shared producer constant matches, so a prose summary that
+/// merely mentions values cannot manufacture a contradiction, and a
+/// snapshot from a producer that never states the disclosure reports none.
+fn contradicted_related_tests(source: &Value) -> Vec<String> {
+    let mut contradicted = Vec::new();
+    let Some(related) = source.get("related_tests").and_then(Value::as_array) else {
+        return contradicted;
+    };
+    for test in related {
+        let Some(summary) = test.get("evidence_summary").and_then(Value::as_str) else {
+            continue;
+        };
+        if !summary.starts_with(CONTRADICTION_DISCLOSURE) {
+            continue;
+        }
+        let name = test
+            .get("name")
+            .and_then(Value::as_str)
+            .unwrap_or("unnamed related test");
+        contradicted.push(format!("{name}: {summary}"));
+    }
+    contradicted
 }
 
 fn evidence_record_values_or_legacy(
@@ -1751,6 +1844,308 @@ mod tests {
                 .evidence_delta
                 .iter()
                 .any(|delta| delta.contains("threshold equality"))
+        );
+        Ok(())
+    }
+
+    /// #7007: the issue's exact receipt shape — a consistent strong oracle
+    /// carries the seam to `strongly_gripped` while a statically contradicted
+    /// related test remains in the after evidence set. The gap must not be
+    /// reported closed, the moved entry must name the contradiction, and the
+    /// weak/unknown section must not render its empty fallback.
+    #[test]
+    fn contradicted_related_test_keeps_gap_open_and_names_the_contradiction() -> Result<(), String>
+    {
+        let before = r#"{
+  "schema_version": "0.2",
+  "scope": "repo",
+  "seams": [
+    {
+      "seam_id": "seam-a",
+      "kind": "predicate_boundary",
+      "file": "src/pricing.rs",
+      "line": 42,
+      "grip_class": "weakly_gripped",
+      "related_tests": [
+        {"name": "happy_path", "oracle_kind": "exact_value", "oracle_strength": "weak"}
+      ],
+      "observed_values": ["1_000"],
+      "missing_discriminators": [
+        {"value": "threshold (equality boundary)", "reason": "not observed"}
+      ]
+    }
+  ]
+}"#;
+        let after = r#"{
+  "schema_version": "0.2",
+  "scope": "repo",
+  "seams": [
+    {
+      "seam_id": "seam-a",
+      "kind": "predicate_boundary",
+      "file": "src/pricing.rs",
+      "line": 42,
+      "grip_class": "strongly_gripped",
+      "related_tests": [
+        {"name": "happy_path", "oracle_kind": "exact_value", "oracle_strength": "strong"},
+        {"name": "boundary_asserts_flipped_value", "oracle_kind": "exact_value",
+         "oracle_strength": "weak",
+         "evidence_summary": "assertion expected value contradicts static evaluation (asserts 5_000, owner folds to 3500)"}
+      ],
+      "observed_values": ["1_000", "5_000"],
+      "missing_discriminators": []
+    }
+  ]
+}"#;
+        let report = targeted_test_outcome_report_from_json(
+            before,
+            after,
+            "before.json".to_string(),
+            "after.json".to_string(),
+        )?;
+        assert_eq!(report.moved.len(), 1);
+        let movement = &report.moved[0];
+        assert_eq!(movement.before, "weakly_gripped");
+        assert_eq!(movement.after, "strongly_gripped");
+        assert_eq!(
+            movement.gap_movement, "improved",
+            "a contradicted related test in the after evidence set must not report the gap closed"
+        );
+        assert!(
+            movement
+                .evidence_delta
+                .iter()
+                .any(|delta| delta.contains("boundary_asserts_flipped_value")
+                    && delta.contains("contradicts static evaluation")),
+            "the moved entry must name the contradiction: {:?}",
+            movement.evidence_delta
+        );
+        let markdown = render_targeted_test_outcome_md(&report);
+        assert!(
+            !markdown.contains("No weak or unknown after-snapshot seams"),
+            "the weak/unknown section must not be empty while a contradicted test remains:\n{markdown}"
+        );
+        assert!(
+            markdown.contains("contradicts static evaluation")
+                && markdown.contains("boundary_asserts_flipped_value"),
+            "the receipt must name the contradiction:\n{markdown}"
+        );
+        let receipt = serde_json::from_str::<Value>(&render_targeted_test_outcome_json(&report)?)
+            .map_err(|err| format!("outcome JSON should parse: {err}"))?;
+        assert!(
+            receipt["review_receipt"]["remaining_weak_or_unknown"]
+                .as_array()
+                .is_some_and(
+                    |items| items.iter().any(|item| item.as_str().is_some_and(|text| {
+                        text.contains("contradicts static evaluation")
+                            && text.contains("boundary_asserts_flipped_value")
+                    }))
+                ),
+            "the JSON weak/unknown section must name the contradiction: {receipt}"
+        );
+        Ok(())
+    }
+
+    /// A prose summary that merely mentions the word pair cannot manufacture
+    /// a contradiction: only the analysis layer's shared disclosure prefix
+    /// counts, so the receipt never downgrades a gap on token coincidence.
+    #[test]
+    fn prose_that_mentions_contradiction_without_the_disclosure_does_not_block_closure()
+    -> Result<(), String> {
+        let before = r#"{
+  "schema_version": "0.2",
+  "scope": "repo",
+  "seams": [
+    {
+      "seam_id": "seam-a",
+      "kind": "predicate_boundary",
+      "file": "src/pricing.rs",
+      "line": 42,
+      "grip_class": "weakly_gripped",
+      "related_tests": [
+        {"name": "boundary_test", "oracle_kind": "exact_value", "oracle_strength": "weak"}
+      ],
+      "observed_values": ["5_000"],
+      "missing_discriminators": [
+        {"value": "threshold (equality boundary)", "reason": "not observed"}
+      ]
+    }
+  ]
+}"#;
+        let after = r#"{
+  "schema_version": "0.2",
+  "scope": "repo",
+  "seams": [
+    {
+      "seam_id": "seam-a",
+      "kind": "predicate_boundary",
+      "file": "src/pricing.rs",
+      "line": 42,
+      "grip_class": "strongly_gripped",
+      "related_tests": [
+        {"name": "boundary_test", "oracle_kind": "exact_value", "oracle_strength": "strong",
+         "evidence_summary": "assertion agrees; the unrelated note claims the value contradicts static evaluation in prose"}
+      ],
+      "observed_values": ["5_000"],
+      "missing_discriminators": []
+    }
+  ]
+}"#;
+        let report = targeted_test_outcome_report_from_json(
+            before,
+            after,
+            "before.json".to_string(),
+            "after.json".to_string(),
+        )?;
+        assert_eq!(report.moved.len(), 1);
+        assert_eq!(
+            report.moved[0].gap_movement, "closed",
+            "a non-disclosure summary must not hold the gap open"
+        );
+        Ok(())
+    }
+
+    /// #7007 review: the rendered `related_tests` projection is capped and
+    /// each entry names only its best oracle, so a contradicted test can be
+    /// invisible there while still being in the evidence set. The
+    /// producer-owned count is the completeness authority: a positive count
+    /// holds the gap open and the weak/unknown section says so by count.
+    #[test]
+    fn producer_contradiction_count_holds_the_gap_open_without_a_named_entry() -> Result<(), String>
+    {
+        let before = r#"{
+  "schema_version": "0.2",
+  "scope": "repo",
+  "seams": [
+    {
+      "seam_id": "seam-a",
+      "kind": "predicate_boundary",
+      "file": "src/pricing.rs",
+      "line": 42,
+      "grip_class": "weakly_gripped",
+      "related_tests": [
+        {"name": "happy_path", "oracle_kind": "exact_value", "oracle_strength": "weak"}
+      ],
+      "observed_values": ["1_000"],
+      "missing_discriminators": [
+        {"value": "threshold (equality boundary)", "reason": "not observed"}
+      ]
+    }
+  ]
+}"#;
+        let after = r#"{
+  "schema_version": "0.2",
+  "scope": "repo",
+  "seams": [
+    {
+      "seam_id": "seam-a",
+      "kind": "predicate_boundary",
+      "file": "src/pricing.rs",
+      "line": 42,
+      "grip_class": "strongly_gripped",
+      "evidence_record": {
+        "seam_id": "seam-a",
+        "related_tests_total": 9,
+        "statically_contradicted_related_tests": 1,
+        "related_tests": [
+          {"name": "happy_path", "oracle_kind": "exact_value", "oracle_strength": "strong",
+           "evidence_summary": "exact value assertion"}
+        ]
+      },
+      "observed_values": ["1_000", "5_000"],
+      "missing_discriminators": []
+    }
+  ]
+}"#;
+        let report = targeted_test_outcome_report_from_json(
+            before,
+            after,
+            "before.json".to_string(),
+            "after.json".to_string(),
+        )?;
+        assert_eq!(report.moved.len(), 1);
+        let movement = &report.moved[0];
+        assert_eq!(
+            movement.gap_movement, "improved",
+            "the producer count holds the gate even with no named contradicted entry"
+        );
+        let markdown = render_targeted_test_outcome_md(&report);
+        assert!(
+            markdown
+                .contains("keeps 1 statically contradicted related test(s) in its evidence set"),
+            "the section must say the count the rendered subset could not name:\n{markdown}"
+        );
+        assert!(
+            !markdown.contains("No weak or unknown after-snapshot seams"),
+            "the weak/unknown section must not be empty:\n{markdown}"
+        );
+        Ok(())
+    }
+
+    /// #7007 review: a seam that exists only in the after snapshot is a new
+    /// seam, not a movement record — its contradiction must still surface
+    /// in the weak/unknown section instead of the empty fallback.
+    #[test]
+    fn a_new_seam_with_a_contradicted_test_surfaces_in_the_weak_section() -> Result<(), String> {
+        let before = r#"{
+  "schema_version": "0.2",
+  "scope": "repo",
+  "seams": []
+}"#;
+        let after = r#"{
+  "schema_version": "0.2",
+  "scope": "repo",
+  "seams": [
+    {
+      "seam_id": "seam-new",
+      "kind": "predicate_boundary",
+      "file": "src/pricing.rs",
+      "line": 7,
+      "grip_class": "strongly_gripped",
+      "evidence_record": {
+        "seam_id": "seam-new",
+        "related_tests_total": 2,
+        "statically_contradicted_related_tests": 1,
+        "related_tests": [
+          {"name": "happy_path", "oracle_kind": "exact_value", "oracle_strength": "strong",
+           "evidence_summary": "exact value assertion"},
+          {"name": "boundary_asserts_flipped_value", "oracle_kind": "exact_value",
+           "oracle_strength": "weak",
+           "evidence_summary": "assertion expected value contradicts static evaluation (asserts 5_000, owner folds to 3500)"}
+        ]
+      },
+      "observed_values": ["5_000"],
+      "missing_discriminators": []
+    }
+  ]
+}"#;
+        let report = targeted_test_outcome_report_from_json(
+            before,
+            after,
+            "before.json".to_string(),
+            "after.json".to_string(),
+        )?;
+        assert!(report.moved.is_empty());
+        assert_eq!(report.new.len(), 1);
+        let markdown = render_targeted_test_outcome_md(&report);
+        assert!(
+            markdown.contains("boundary_asserts_flipped_value")
+                && markdown.contains("contradicts static evaluation"),
+            "the new seam's contradiction must be named:\n{markdown}"
+        );
+        assert!(
+            !markdown.contains("No weak or unknown after-snapshot seams"),
+            "the weak/unknown section must not be empty:\n{markdown}"
+        );
+        let receipt = serde_json::from_str::<Value>(&render_targeted_test_outcome_json(&report)?)
+            .map_err(|err| format!("outcome JSON should parse: {err}"))?;
+        assert!(
+            receipt["review_receipt"]["remaining_weak_or_unknown"]
+                .as_array()
+                .is_some_and(|items| items.iter().any(|item| item
+                    .as_str()
+                    .is_some_and(|text| text.contains("contradicts static evaluation")))),
+            "the JSON weak/unknown section must name the new seam's contradiction: {receipt}"
         );
         Ok(())
     }
@@ -3069,6 +3464,8 @@ mod tests {
             observed_values_complete: true,
             missing_discriminators: Vec::new(),
             missing_discriminators_present: false,
+            statically_contradicted_related_tests: None,
+            contradicted_related_tests: Vec::new(),
             evidence_source: "legacy_fields".to_string(),
             evidence_path: BTreeMap::new(),
             related_tests_total: 0,
