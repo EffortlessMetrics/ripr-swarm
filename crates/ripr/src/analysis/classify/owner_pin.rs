@@ -1128,6 +1128,10 @@ struct WholeValueField {
     /// CamelCase names the workspace gives a `const`, `static` or `fn`: an
     /// expected value naming one may be computed, not a constructor.
     computed_names: BTreeSet<String>,
+    /// Struct, enum, union and variant names the workspace declares, plus
+    /// the standard `None`/`Some`/`Ok`/`Err`: a bare CamelCase name outside
+    /// this set may be a test-local binding (`let Expected = ..;`).
+    constructor_names: BTreeSet<String>,
 }
 
 impl OwnerReturnPin {
@@ -1346,6 +1350,7 @@ impl OwnerReturnPin {
                 wrapper: tail.wrapper,
                 field_is_string,
                 computed_names: camel_case_value_items(index),
+                constructor_names: declared_constructor_names(index),
             }),
             returns_bool: false,
             owner_file: owner.file.clone(),
@@ -2650,8 +2655,17 @@ impl WholeValueField {
                 .expr()
                 .is_some_and(|value| independent_value(&value, self.field_is_string))
             && !literal.syntax().descendants().any(|node| {
-                ast::NameRef::cast(node)
+                ast::NameRef::cast(node.clone())
                     .is_some_and(|name| self.computed_names.contains(name.text()))
+                    // #7066 review: a bare CamelCase value the workspace never
+                    // declares as a type or variant may be a local binding.
+                    || ast::PathExpr::cast(node)
+                        .and_then(|path| path.path())
+                        .filter(|path| path.qualifier().is_none())
+                        .and_then(|path| path.segment()?.name_ref())
+                        .is_some_and(|name| {
+                            !self.constructor_names.contains(name.text())
+                        })
             })
     }
 }
@@ -2803,6 +2817,75 @@ fn in_import_item(masked: &str, offset: usize) -> bool {
             || ch.is_whitespace()
             || matches!(ch, '_' | '#' | ':' | '{' | '}' | ',' | '*')
     })
+}
+
+/// #7066 review: the struct, enum and union names every indexed file
+/// declares, the variants of each `enum` (names that open an item at the
+/// body's top level), and the standard `None`, `Some`, `Ok` and `Err`.
+/// Lexical: a name missed here only withholds credit.
+fn declared_constructor_names(index: &RustIndex) -> BTreeSet<String> {
+    let mut names: BTreeSet<String> = ["None", "Some", "Ok", "Err"]
+        .into_iter()
+        .map(str::to_string)
+        .collect();
+    let ident = |text: &str| -> String {
+        text.trim_start()
+            .chars()
+            .take_while(|ch| ch.is_alphanumeric() || *ch == '_')
+            .collect()
+    };
+    for facts in index.files().values() {
+        let masked = mask_comments_and_strings(&facts.source);
+        for keyword in ["struct", "enum", "union"] {
+            for offset in whole_word_offsets(&masked, keyword) {
+                let rest = &masked[offset + keyword.len()..];
+                let name = ident(rest);
+                if name.is_empty() {
+                    continue;
+                }
+                names.insert(name);
+                if keyword != "enum" {
+                    continue;
+                }
+                let Some(open) = rest.find('{') else {
+                    continue;
+                };
+                let mut depth = 0usize;
+                let mut item_start = true;
+                for (at, ch) in rest[open..].char_indices() {
+                    match ch {
+                        '{' | '(' | '[' => {
+                            depth += 1;
+                            if depth == 1 {
+                                item_start = true;
+                            }
+                        }
+                        '}' | ')' | ']' => {
+                            depth = depth.saturating_sub(1);
+                            if depth == 0 {
+                                break;
+                            }
+                            // An attribute's `]` leaves the variant to come.
+                            if depth == 1 && ch == ']' {
+                                item_start = true;
+                            }
+                        }
+                        ',' if depth == 1 => item_start = true,
+                        '#' if depth == 1 => {}
+                        _ if depth == 1 && item_start && !ch.is_whitespace() => {
+                            let variant = ident(&rest[open + at..]);
+                            if !variant.is_empty() {
+                                names.insert(variant);
+                            }
+                            item_start = false;
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+    }
+    names
 }
 
 /// A path that names a variant or a struct: its last segment is CamelCase

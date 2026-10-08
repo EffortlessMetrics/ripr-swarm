@@ -4019,6 +4019,26 @@ fn whole_value_identity_holes_stay_closed() {
     let (index, pin) = whole_value_pin(CONFIG_LIB, "build", &tests);
     assert!(pin.is_some_and(|pin| !admitted_texts(&index, &pin).is_empty()));
 
+    // A bare CamelCase value the workspace never declares may be a local.
+    assert!(!whole_value_admits(
+        CONFIG_LIB,
+        "build",
+        "#[allow(non_snake_case)]\nlet Expected = 4;\nassert_eq!(build(3), Config { retries: Expected, name: \"x\".into(), count: Count(3) });"
+    ));
+    let names = declared_constructor_names(&index);
+    for name in ["Config", "Count", "None", "Ok"] {
+        assert!(names.contains(name), "{name}");
+    }
+    let lib = format!(
+        "{CONFIG_LIB}pub enum Mode {{\n    #[default]\n    Fast,\n    Slow(Count),\n    Exact = 3,\n}}\n"
+    );
+    let (mode_index, _) = whole_value_pin(&lib, "build", &tests);
+    let names = declared_constructor_names(&mode_index);
+    for name in ["Mode", "Fast", "Slow", "Exact"] {
+        assert!(names.contains(name), "{name}");
+    }
+    assert!(!names.contains("Expected"));
+
     // A workspace `Ok` function or a `Some` variant is not the standard one.
     let ok_body = format!("assert_eq!(parse(\"3\"), Ok({literal}));");
     assert!(whole_value_admits(CONFIG_LIB, "parse", &ok_body));
