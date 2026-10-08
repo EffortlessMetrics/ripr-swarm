@@ -1,0 +1,13 @@
+//! Shapes the older RIPR specs define: error seams, builders, mocks, config
+//! lookups, duplicative tests, assertion-shaped owners, macros, help text and
+//! an unsafe edge line. Each module pairs one changed behavior with one test
+//! shape.
+
+pub mod checks;
+pub mod errors;
+pub mod fees;
+pub mod help;
+pub mod macros;
+pub mod notify;
+pub mod raw;
+pub mod settings;

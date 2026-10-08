@@ -1,0 +1,59 @@
+{
+  "case_id": "trap-ceiling-wide-min-control",
+  "subject_id": "authored-trap-reach",
+  "diff": "cases/trap-ceiling-wide-min-control.diff",
+  "anchor": {
+    "file": "src/ceilings.rs",
+    "line": 2
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "result_projected_through_wide_clamp",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "base * 42",
+        "mutated_line": "base * 42",
+        "outcome": "tests_failed",
+        "failing_test": "ceilings::tests::ceiling_stays_under_the_limit",
+        "equivalence_review": "not equivalent: replaces `41 * base` with `base * 42`, which changes the result"
+      },
+      {
+        "replacement": "base + 41",
+        "mutated_line": "base + 41",
+        "outcome": "tests_failed",
+        "failing_test": "ceilings::tests::ceiling_stays_under_the_limit",
+        "equivalence_review": "not equivalent: replaces `41 * base` with `base + 41`, which changes the result"
+      },
+      {
+        "replacement": "base * 40",
+        "mutated_line": "base * 40",
+        "outcome": "tests_failed",
+        "failing_test": "ceilings::tests::ceiling_stays_under_the_limit",
+        "equivalence_review": "not equivalent: replaces `41 * base` with `base * 40`, which changes the result"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "Negative control for trap-cap-min-clamp: the same projection with .min(100), above every listed value, so ceiling_stays_under_the_limit pins ceiling(2).min(100) == 82 and fails for each mutant.",
+  "labeling_observation": {
+    "ripr_commit": "fce75e1",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

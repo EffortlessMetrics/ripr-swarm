@@ -11,15 +11,15 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io::{Read as _, Seek as _, SeekFrom};
 use std::path::{Component, Path, PathBuf};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
-/// Producer-neutral inline test-module region cage (#4783).
-/// Staged until the InlineUnit producer (#4784) and RepairAttempt bind it.
+/// Producer-neutral inline test-module region cage (#4783), bound to the
+/// repair attempt for a production Rust target (#5210).
 #[cfg_attr(
     not(test),
     expect(
         dead_code,
-        reason = "staged inline-test region cage; #4784 and RepairAttempt consume it next"
+        reason = "the explicit-module capture API and authority fields beyond the attempt binding are exercised by tests only"
     )
 )]
 pub(crate) mod inline_test_region;
@@ -29,6 +29,60 @@ const MAX_CAPTURE_FILE_BYTES: u64 = 16 * 1024 * 1024;
 const MAX_CAPTURE_TOTAL_FILE_BYTES: u64 = 64 * 1024 * 1024;
 const MAX_CAPTURE_TOTAL_WORK_BYTES: u64 = 384 * 1024 * 1024;
 const IGNORED_FILE_SAMPLE_BYTES: u64 = 4 * 1024;
+
+/// Opt-in stderr trace switch for repair-attempt persist latency (#6897):
+/// before-phase baseline capture and attempt publication, plus the
+/// after-phase state recapture (`reevaluate_*` spans). Presence enables
+/// tracing; the value is never read. Mirrors the
+/// `RIPR_REPO_EXPOSURE_LATENCY_TRACE` contract: unset means nothing is
+/// printed, so default stdout and default stderr are unchanged.
+pub(crate) const PERSIST_LATENCY_TRACE_ENV: &str = "RIPR_PERSIST_LATENCY_TRACE";
+
+/// Whether the persist-latency trace family is enabled for this process.
+pub(crate) fn persist_latency_trace_enabled() -> bool {
+    std::env::var_os(PERSIST_LATENCY_TRACE_ENV).is_some()
+}
+
+/// Emit one wall-clock persist-phase line. The single owner of that line
+/// shape for every persist span, so a new span cannot invent a parallel
+/// spelling. Spans trace completed work only: a span that errors returns
+/// before its line, so every printed line is a measurement, not an attempt.
+pub(crate) fn trace_persist_latency(phase: &str, duration: Duration) {
+    if persist_latency_trace_enabled() {
+        eprintln!("{}", persist_latency_trace_line(phase, duration));
+    }
+}
+
+/// The wall-clock persist-phase line. Crate visible so a consumer's test
+/// can assert the exact wire shape without reading stderr.
+pub(crate) fn persist_latency_trace_line(phase: &str, duration: Duration) -> String {
+    format!(
+        "ripr_persist_latency phase={phase} status=ok duration_ms={}",
+        duration.as_millis()
+    )
+}
+
+/// Which repair-loop operation a repository-state capture serves. The
+/// persist-latency trace prefixes capture spans with the operation, so an
+/// after-phase recapture never reads as baseline work when stderr is
+/// aggregated by phase (#6917).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum CaptureTraceLabel {
+    /// Before-phase baseline recording (`baseline_*` spans).
+    Baseline,
+    /// After-phase state recapture for edit evaluation (`reevaluate_*`
+    /// spans).
+    Reevaluation,
+}
+
+impl CaptureTraceLabel {
+    fn as_str(self) -> &'static str {
+        match self {
+            CaptureTraceLabel::Baseline => "baseline",
+            CaptureTraceLabel::Reevaluation => "reevaluate",
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -114,6 +168,14 @@ pub(crate) struct AttemptDelta {
     /// changes are part of `changes`.
     pub(crate) comparable: bool,
     pub(crate) changes: Vec<AttemptPathChange>,
+    /// The selected target's inline test-module confinement, observed when
+    /// the policy confines a production Rust target to its one governed
+    /// inline `#[cfg(test)]` module and that target changed (#5210). Part of
+    /// the bound delta, so a later edit of production code in the same file
+    /// changes the recomputed delta and breaks the receipt binding. Absent
+    /// for every other attempt, which keeps their serialized deltas unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) inline_test_region: Option<inline_test_region::InlineTestRegionObservation>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -123,6 +185,10 @@ pub(crate) struct AttemptBaseline {
     policy: EditCagePolicy,
     paths: BTreeMap<String, RepositoryPathState>,
     ambiguous: bool,
+    /// Exact before text and module identity of the selected target's inline
+    /// test module, captured only when the policy confines the target to it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    inline_test_region: Option<inline_test_region::InlineTestRegionBaseline>,
     #[cfg(windows)]
     #[serde(skip, default)]
     _unknown_ignored_write_guards: Vec<fs::File>,
@@ -204,7 +270,30 @@ pub(crate) fn capture_attempt_baseline(
     policy: &EditCagePolicy,
 ) -> Result<AttemptBaseline, String> {
     let root = canonical_repository_root(root)?;
-    capture_repository_state(root, policy.clone())
+    // A production Rust target is admitted only with its one governed inline
+    // test module captured first: no region, no attempt.
+    let inline_test_region = if policy.inline_test_module_target {
+        Some(inline_test_region::capture_attempt_inline_region(
+            &root,
+            &policy.selected_target.path,
+        )?)
+    } else {
+        None
+    };
+    let mut baseline = capture_repository_state(root, policy.clone(), CaptureTraceLabel::Baseline)?;
+    if let Some(region) = &inline_test_region
+        && baseline.worktree_digest(&region.path)
+            != Some(inline_test_region::digest_bytes(region.source.as_bytes()).as_str())
+    {
+        // The file moved between the region capture and the repository
+        // capture; the retained before text would not be the baseline's.
+        baseline.ambiguous = true;
+    }
+    if let Some(region) = &inline_test_region {
+        require_inline_target_at_head(&baseline, &region.path)?;
+    }
+    baseline.inline_test_region = inline_test_region;
+    Ok(baseline)
 }
 
 pub(crate) fn evaluate_repository_edit_cage(
@@ -238,16 +327,127 @@ pub(crate) fn evaluate_repository_edit_cage_with_head_movement(
     baseline: &AttemptBaseline,
     movement: HeadMovement,
 ) -> Result<(AttemptDelta, EditCageVerdict), String> {
-    let after = capture_repository_state(baseline.root.clone(), baseline.policy.clone())?;
+    let after = capture_repository_state(
+        baseline.root.clone(),
+        baseline.policy.clone(),
+        CaptureTraceLabel::Reevaluation,
+    )?;
     let committed = match movement {
         HeadMovement::RequireBaselineHead => (baseline.head == after.head).then(Vec::new),
         HeadMovement::AdmitDescendantCommits => {
             committed_changes(&baseline.root, &baseline.head, &after.head)?
         }
     };
-    let delta = delta_from_repository_states(baseline, &after, committed.as_deref());
+    let mut delta = delta_from_repository_states(baseline, &after, committed.as_deref());
+    if let Some(region) = &baseline.inline_test_region
+        && delta.changes.iter().any(|change| {
+            normalize_repo_relative_path(&change.path).is_ok_and(|path| path == region.path)
+        })
+    {
+        delta.inline_test_region = Some(observe_inline_target(baseline, &after, region)?);
+    }
     let verdict = evaluate_edit_cage(&baseline.policy, &delta);
     Ok((delta, verdict))
+}
+
+/// The confined selected target must match HEAD in both the worktree and
+/// the index. The region validator compares the after bytes with the captured
+/// before bytes, and the premise gate admits this path because it is the
+/// allowed surface, so an uncommitted production edit outside the module
+/// would otherwise become part of the "before" text and reach the receipt
+/// unseen (#6678 closed the same hole for test-surface targets).
+fn require_inline_target_at_head(baseline: &AttemptBaseline, path: &str) -> Result<(), String> {
+    let root = &baseline.root;
+    let committed = git_text(
+        root,
+        &[
+            "rev-parse",
+            "--verify",
+            "--quiet",
+            &format!("{}:{path}", baseline.head),
+        ],
+    )
+    .ok()
+    .filter(|object| !object.is_empty());
+    let worktree = git_text(root, &["hash-object", "--", path]).ok();
+    let index = baseline
+        .index_entry(path)
+        .and_then(|entry| entry.split_ascii_whitespace().nth(1))
+        .map(str::to_string);
+    match committed {
+        Some(committed)
+            if worktree.as_deref() == Some(committed.as_str())
+                && index.as_deref() == Some(committed.as_str()) =>
+        {
+            Ok(())
+        }
+        _ => Err(inline_test_region::uncommitted_target_refusal(path)),
+    }
+}
+
+/// Observe the confined selected target: the worktree bytes go through the
+/// region validator, and the index and any committed copy must each be
+/// unchanged since the before phase or exactly those validated bytes, so
+/// nothing a commit could carry escapes validation.
+fn observe_inline_target(
+    baseline: &AttemptBaseline,
+    after: &AttemptBaseline,
+    region: &inline_test_region::InlineTestRegionBaseline,
+) -> Result<inline_test_region::InlineTestRegionObservation, String> {
+    let root = &baseline.root;
+    // The validated bytes must be the bytes the after state recorded; a file
+    // that moved between the two reads is not observed at all.
+    let worktree =
+        inline_test_region::read_attempt_inline_target(root, &region.path).and_then(|bytes| {
+            let digest = inline_test_region::digest_bytes(bytes.as_bytes());
+            if after.worktree_digest(&region.path) == Some(digest.as_str()) {
+                Ok(bytes)
+            } else {
+                Err("the file changed while the after phase observed it".to_string())
+            }
+        });
+    let worktree_object = if worktree.is_ok() {
+        git_text(root, &["hash-object", "--", &region.path]).ok()
+    } else {
+        None
+    };
+    let index_object = |state: &AttemptBaseline| {
+        state
+            .index_entry(&region.path)
+            .and_then(|entry| entry.split_ascii_whitespace().nth(1))
+            .map(str::to_string)
+    };
+    let before_index = index_object(baseline);
+    let after_index = index_object(after);
+    let index_matches =
+        after_index == before_index || (after_index.is_some() && after_index == worktree_object);
+    let head_matches = if after.head == baseline.head {
+        true
+    } else {
+        let committed = |head: &str| {
+            git_text(
+                root,
+                &[
+                    "rev-parse",
+                    "--verify",
+                    "--quiet",
+                    &format!("{head}:{}", region.path),
+                ],
+            )
+            .ok()
+        };
+        let before_commit = committed(&baseline.head);
+        let after_commit = committed(&after.head);
+        after_commit == before_commit || (after_commit.is_some() && after_commit == worktree_object)
+    };
+    Ok(inline_test_region::observe_attempt_inline_region(
+        inline_test_region::InlineTargetCopies {
+            worktree,
+            index_matches,
+            head_matches,
+            baseline: region,
+        },
+    ))
 }
 
 /// The path changes committed between the baseline head and the current
@@ -314,7 +514,13 @@ fn committed_changes(
 fn capture_repository_state(
     root: PathBuf,
     policy: EditCagePolicy,
+    trace_label: CaptureTraceLabel,
 ) -> Result<AttemptBaseline, String> {
+    // One trace-switch read per capture: the span names below allocate,
+    // so they are built only when tracing is on.
+    let trace_spans = persist_latency_trace_enabled();
+    let span_prefix = trace_label.as_str();
+    let inventory_started = Instant::now();
     let head = git_text(&root, &["rev-parse", "--verify", "HEAD"])?;
     let index = git_bytes(&root, &["ls-files", "--stage", "-z"])?;
     let tracked = git_bytes(&root, &["ls-files", "-z"])?;
@@ -323,6 +529,12 @@ fn capture_repository_state(
 
     let (inventory, mut ambiguous) =
         inventory_paths(&tracked, &untracked, &ignored, MAX_CAPTURE_PATHS)?;
+    if trace_spans {
+        trace_persist_latency(
+            &format!("{span_prefix}_git_inventory"),
+            inventory_started.elapsed(),
+        );
+    }
 
     let mut paths = BTreeMap::new();
     let mut remaining_file_bytes = MAX_CAPTURE_TOTAL_FILE_BYTES;
@@ -331,6 +543,7 @@ fn capture_repository_state(
     let mut unknown_ignored_write_guards = Vec::new();
     #[cfg(windows)]
     let mut expected_write_authorities = Vec::new();
+    let identity_started = Instant::now();
     for (path, ignored_path) in inventory {
         // The before-phase serialization lock is an authority artifact, not
         // an agent edit. It is necessarily held while the baseline is
@@ -411,10 +624,24 @@ fn capture_repository_state(
             },
         );
     }
+    if trace_spans {
+        trace_persist_latency(
+            &format!("{span_prefix}_worktree_identity"),
+            identity_started.elapsed(),
+        );
+    }
+    let index_records_started = Instant::now();
     apply_index_records(&mut paths, &mut ambiguous, &index)?;
+    if trace_spans {
+        trace_persist_latency(
+            &format!("{span_prefix}_index_records"),
+            index_records_started.elapsed(),
+        );
+    }
 
     // A capture is usable only when its repository identity stayed stable
     // while paths and content identities were read.
+    let stability_started = Instant::now();
     let stable_head = git_text(&root, &["rev-parse", "--verify", "HEAD"])?;
     let stable_index = git_bytes(&root, &["ls-files", "--stage", "-z"])?;
     let stable_tracked = git_bytes(&root, &["ls-files", "-z"])?;
@@ -450,6 +677,12 @@ fn capture_repository_state(
     {
         ambiguous = true;
     }
+    if trace_spans {
+        trace_persist_latency(
+            &format!("{span_prefix}_stability_recheck"),
+            stability_started.elapsed(),
+        );
+    }
 
     Ok(AttemptBaseline {
         root,
@@ -457,6 +690,7 @@ fn capture_repository_state(
         policy,
         paths,
         ambiguous,
+        inline_test_region: None,
         #[cfg(windows)]
         _unknown_ignored_write_guards: unknown_ignored_write_guards,
         #[cfg(windows)]
@@ -757,6 +991,7 @@ fn delta_from_repository_states(
             && !after.ambiguous
             && !changed_symlink,
         changes,
+        inline_test_region: None,
     }
 }
 
@@ -788,6 +1023,7 @@ pub(crate) fn without_later_operational_writes(
     };
     AttemptDelta {
         comparable: delta.comparable,
+        inline_test_region: delta.inline_test_region.clone(),
         changes: delta
             .changes
             .iter()
@@ -1316,6 +1552,14 @@ pub(crate) struct EditCagePolicy {
     /// baselines captured before this field existed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) untracked_build_lockfile: Option<CagePathRule>,
+    /// The selected target is a production Rust file whose authored edit is
+    /// confined to its one governed inline `#[cfg(test)]` module (#5210).
+    /// The before phase refuses unless that module is captured, and the
+    /// verdict is compliant only when the inline region validator admits the
+    /// edit as a pure insertion of test functions. Absent (false) in every
+    /// other policy, which keeps their serialized form unchanged.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub(crate) inline_test_module_target: bool,
 }
 
 impl EditCagePolicy {
@@ -1362,6 +1606,7 @@ pub(crate) enum EditCageViolationKind {
     OutsideAllowedSurface,
     SelectedTargetNotChanged,
     UnexpectedDeletionOrRename,
+    OutsideInlineTestRegion,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Serialize, Deserialize)]
@@ -1426,6 +1671,36 @@ pub(crate) fn evaluate_edit_cage(policy: &EditCagePolicy, delta: &AttemptDelta) 
             path: policy.selected_target.path.clone(),
             reason: "the attempt did not change its selected test target".to_string(),
         });
+    } else if policy.inline_test_module_target {
+        // A production file is the target only through its inline test
+        // module: the change is compliant only with an admitted observation
+        // of exactly that file. A missing observation fails closed.
+        let admitted = delta
+            .inline_test_region
+            .as_ref()
+            .is_some_and(|observation| {
+                observation.admitted && observation.path == policy.selected_target.path
+            });
+        if !admitted {
+            let detail = delta
+                .inline_test_region
+                .as_ref()
+                .map(|observation| {
+                    format!(
+                        "`mod {}`: {}",
+                        observation.module,
+                        observation.reason.as_deref().unwrap_or("not admitted")
+                    )
+                })
+                .unwrap_or_else(|| "the inline test region was not observed".to_string());
+            violations.push(EditCageViolation {
+                kind: EditCageViolationKind::OutsideInlineTestRegion,
+                path: policy.selected_target.path.clone(),
+                reason: format!(
+                    "the edit is not a pure insertion of test functions into the selected file's inline test module ({detail}); production code, the module declaration, and existing tests must stay byte-identical"
+                ),
+            });
+        }
     }
 
     changed_paths.sort();
@@ -1610,6 +1885,14 @@ fn validate_policy(policy: &EditCagePolicy) -> Vec<EditCageViolation> {
             "the selected target overlaps an explicit forbidden path",
         ));
     }
+    if policy.inline_test_module_target
+        && Path::new(&selected_path).extension() != Some(std::ffi::OsStr::new("rs"))
+    {
+        violations.push(invalid_policy_violation(
+            &selected_path,
+            "an inline test-module target must be a Rust source file",
+        ));
+    }
     if let Some(build_output) = &policy.ignored_build_output {
         if build_output.scope != CagePathScope::Subtree {
             violations.push(invalid_policy_violation(
@@ -1732,6 +2015,23 @@ mod tests {
     use serde::de::DeserializeOwned;
     use std::time::{SystemTime, UNIX_EPOCH};
 
+    #[test]
+    fn persist_latency_trace_line_keeps_the_phase_spelling() {
+        assert_eq!(
+            persist_latency_trace_line("baseline_git_inventory", Duration::from_millis(7)),
+            "ripr_persist_latency phase=baseline_git_inventory status=ok duration_ms=7"
+        );
+    }
+
+    #[test]
+    fn capture_trace_labels_keep_baseline_and_reevaluate_distinct() {
+        // #6917: the after-phase recapture must never aggregate as
+        // baseline work. The CLI journey tests pin the emitted lines;
+        // this pins the label contract itself.
+        assert_eq!(CaptureTraceLabel::Baseline.as_str(), "baseline");
+        assert_eq!(CaptureTraceLabel::Reevaluation.as_str(), "reevaluate");
+    }
+
     struct GitFixture {
         root: PathBuf,
     }
@@ -1808,6 +2108,7 @@ mod tests {
             expected_operational_writes: vec![CagePathRule::subtree("target/ripr")?],
             ignored_build_output: None,
             untracked_build_lockfile: None,
+            inline_test_module_target: false,
         })
     }
 
@@ -2376,6 +2677,7 @@ mod tests {
                 &invalid_policy,
                 &AttemptDelta {
                     comparable: true,
+                    inline_test_region: None,
                     changes: vec![AttemptPathChange::modified("tests/pricing.rs")],
                 },
             );
@@ -2505,6 +2807,7 @@ mod tests {
             .push(CagePathRule::exact("target/ripr/authored.json")?);
         let bound = AttemptDelta {
             comparable: true,
+            inline_test_region: None,
             changes: vec![
                 AttemptPathChange::modified("tests/pricing.rs"),
                 AttemptPathChange::added("target/ripr/workflow/agent-verify.json"),
@@ -2521,6 +2824,7 @@ mod tests {
                 &policy,
                 &AttemptDelta {
                     comparable: true,
+                    inline_test_region: None,
                     changes,
                 },
                 &bound_verdict.changed_paths,
@@ -2569,6 +2873,7 @@ mod tests {
             &policy,
             &AttemptDelta {
                 comparable: false,
+                inline_test_region: None,
                 changes: bound.changes.clone(),
             },
             &bound_verdict.changed_paths,
@@ -2588,6 +2893,7 @@ mod tests {
                 &invalid_policy,
                 &AttemptDelta {
                     comparable: true,
+                    inline_test_region: None,
                     changes: vec![AttemptPathChange::modified("tests/pricing.rs")],
                 },
             );
@@ -3232,6 +3538,7 @@ mod tests {
             &policy()?,
             &AttemptDelta {
                 comparable: true,
+                inline_test_region: None,
                 changes: vec![
                     AttemptPathChange::modified("tests\\pricing.rs"),
                     AttemptPathChange::added("target/ripr/reports/agent-receipt.json"),
@@ -3256,6 +3563,7 @@ mod tests {
             &policy()?,
             &AttemptDelta {
                 comparable: true,
+                inline_test_region: None,
                 changes: vec![
                     AttemptPathChange::modified("tests/pricing.rs"),
                     AttemptPathChange::modified("src/pricing.rs"),
@@ -3276,6 +3584,7 @@ mod tests {
             &policy()?,
             &AttemptDelta {
                 comparable: true,
+                inline_test_region: None,
                 changes: vec![AttemptPathChange::added(
                     "target/ripr/reports/agent-receipt.json",
                 )],
@@ -3298,6 +3607,7 @@ mod tests {
                 &policy()?,
                 &AttemptDelta {
                     comparable: true,
+                    inline_test_region: None,
                     changes: vec![change],
                 },
             );
@@ -3318,6 +3628,7 @@ mod tests {
             &rename_policy,
             &AttemptDelta {
                 comparable: true,
+                inline_test_region: None,
                 changes: vec![AttemptPathChange::renamed(
                     "tests/other.rs",
                     "tests/pricing.rs",
@@ -3349,11 +3660,13 @@ mod tests {
             expected_operational_writes: Vec::new(),
             ignored_build_output: None,
             untracked_build_lockfile: None,
+            inline_test_module_target: false,
         };
         let verdict = evaluate_edit_cage(
             &subtree_policy,
             &AttemptDelta {
                 comparable: true,
+                inline_test_region: None,
                 changes: vec![AttemptPathChange::modified("tests/pricing/boundary.rs")],
             },
         );
@@ -3394,6 +3707,7 @@ mod tests {
                 &invalid_policy,
                 &AttemptDelta {
                     comparable: true,
+                    inline_test_region: None,
                     changes: vec![AttemptPathChange::modified("tests/pricing.rs")],
                 },
             );
@@ -3464,6 +3778,7 @@ mod tests {
             &authored_tests_policy,
             &AttemptDelta {
                 comparable: true,
+                inline_test_region: None,
                 changes: vec![malformed_change],
             },
         );
@@ -3489,6 +3804,7 @@ mod tests {
                 &policy()?,
                 &AttemptDelta {
                     comparable: true,
+                    inline_test_region: None,
                     changes: vec![AttemptPathChange::modified(path)],
                 },
             );
@@ -3506,6 +3822,7 @@ mod tests {
             &policy()?,
             &AttemptDelta {
                 comparable: false,
+                inline_test_region: None,
                 changes: vec![AttemptPathChange::modified("tests/pricing.rs")],
             },
         );

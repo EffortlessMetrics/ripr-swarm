@@ -1,0 +1,52 @@
+{
+  "case_id": "old-tool-build-script-limit",
+  "subject_id": "authored-old-tool",
+  "diff": "cases/old-tool-build-script-limit.diff",
+  "anchor": {
+    "file": "build.rs",
+    "line": 4
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value",
+  "test_shape": "build_script_env_read_by_lib_test",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "println!(\"cargo:rustc-env=TALLY_LIMIT={}\", 63);",
+        "mutated_line": "println!(\"cargo:rustc-env=TALLY_LIMIT={}\", 63);",
+        "outcome": "tests_failed",
+        "failing_test": "tests::limit_is_sixty_four",
+        "equivalence_review": "not equivalent: the limit is 63"
+      },
+      {
+        "replacement": "println!(\"cargo:rustc-env=TALLY_LIMIT={}\", 65);",
+        "mutated_line": "println!(\"cargo:rustc-env=TALLY_LIMIT={}\", 65);",
+        "outcome": "tests_failed",
+        "failing_test": "tests::limit_is_sixty_four",
+        "equivalence_review": "not equivalent: the limit is 65"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "build.rs sets TALLY_LIMIT, which limit() reads through env!, and limit_is_sixty_four pins 64, so either neighbor fails it. Spec cells: RIPR-SPEC-0153 (a manifest-built build.rs still seeds probes).",
+  "labeling_observation": {
+    "ripr_commit": "e19e16c",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "no_static_path"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

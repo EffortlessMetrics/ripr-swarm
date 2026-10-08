@@ -112,7 +112,80 @@ pub(crate) fn validate_editor_gap_cockpit_fixture_case(
         let hover = read_text_lossy(&hover_path)?;
         validate_editor_gap_hover(case, &hover, violations);
     }
+    validate_editor_commands_name_selected_root(&expected, violations)?;
     Ok(())
+}
+
+/// #4001 control 12: an editor projection names the selected workspace in
+/// every copied command (`--root <root>` in checked-in fixtures), never the
+/// portable `--root .`, which would analyze the directory the command is
+/// pasted into.
+fn validate_editor_commands_name_selected_root(
+    expected: &Path,
+    violations: &mut Vec<String>,
+) -> Result<(), String> {
+    for file in [
+        "lsp-diagnostics.json",
+        "lsp-hover.md",
+        "lsp-code-actions.json",
+    ] {
+        let path = expected.join(file);
+        if !path.exists() {
+            continue;
+        }
+        let text = read_text_lossy(&path)?;
+        if contains_portable_root_arg(&text) {
+            violations.push(format!(
+                "{} renders a `--root .` command; editor commands must name the selected workspace (`--root <root>`)",
+                normalize_path(&path)
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Whether `text` holds `--root .` or `--root=.` as a whole argument: the
+/// dot is not the start of a longer path such as `./sub` or `.cache`, so any
+/// quote, bracket, separator or escape may follow it. A root inside a
+/// single-quoted option value (`--verify-command 'ripr check --root .'`) is
+/// recorded data, which the server leaves as is, not the copied command's root.
+fn contains_portable_root_arg(text: &str) -> bool {
+    ["--root .", "--root=.", "--root '.'", "--root \".\""]
+        .iter()
+        .any(|form| {
+            text.match_indices(form).any(|(index, needle)| {
+                let whole = text[index + needle.len()..]
+                    .chars()
+                    .next()
+                    .is_none_or(|next| {
+                        !(next.is_alphanumeric() || matches!(next, '/' | '.' | '_' | '-'))
+                    });
+                whole && !inside_quoted_option_value(text, index)
+            })
+        })
+}
+
+/// Whether `index` falls inside a `'...'` span on its line that opens as the
+/// value of a `--flag` (`--flag '` or `--flag='`).
+fn inside_quoted_option_value(text: &str, index: usize) -> bool {
+    let line_start = text[..index].rfind('\n').map_or(0, |at| at + 1);
+    let mut open = None;
+    for (offset, ch) in text[line_start..index].char_indices() {
+        if ch == '\'' {
+            open = match open {
+                Some(_) => None,
+                None => Some(line_start + offset),
+            };
+        }
+    }
+    let Some(quote) = open else {
+        return false;
+    };
+    let before = text[line_start..quote].trim_end_matches([' ', '=']);
+    before
+        .rsplit(' ')
+        .next()
+        .is_some_and(|flag| flag.starts_with("--") && flag.len() > 2)
 }
 
 fn validate_editor_gap_case_semantics(
@@ -364,6 +437,7 @@ fn validate_editor_first_run_usability_case(
             }
         }
     }
+    validate_editor_commands_name_selected_root(&expected, violations)?;
     Ok(())
 }
 
@@ -1665,4 +1739,47 @@ fn editor_actionable_gap_queue_allowed_commands(case: &str) -> BTreeSet<&'static
         &["ripr.refresh"]
     };
     commands.iter().copied().collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::contains_portable_root_arg;
+
+    #[test]
+    fn portable_root_detector_matches_whole_dot_arguments_only() {
+        for text in [
+            "ripr agent verify --root .",
+            "ripr agent verify --root . --json",
+            "\"ripr agent verify --root .\"",
+            "`ripr agent verify --root .`",
+            "'ripr agent verify --root .'",
+            "(--root .)",
+            "--root .,",
+            "--root .\t--json",
+            "--root .\r\n",
+            "ripr agent verify --root=. --json",
+        ] {
+            assert!(contains_portable_root_arg(text), "{text:?}");
+        }
+        for text in [
+            "ripr agent verify --root <root> --json",
+            "ripr agent verify --root ./sub --json",
+            "ripr agent verify --root .cache --json",
+            "ripr agent verify --root ..",
+            "ripr agent verify --root=./sub",
+            "ripr receipt write --verify-command 'ripr check --root . --json' --root <root>",
+            "ripr receipt write --verify-command='ripr check --root=.' --root <root>",
+        ] {
+            assert!(!contains_portable_root_arg(text), "{text:?}");
+        }
+        // A quoted value does not hide a top-level portable root after it.
+        for text in [
+            "ripr receipt write --verify-command 'ripr check --root . --json' --root . --json",
+            "\"ripr receipt write --note 'x' --root . --json\"",
+            "ripr agent verify --root '.' --json",
+            "ripr agent verify --root \".\" --json",
+        ] {
+            assert!(contains_portable_root_arg(text), "{text:?}");
+        }
+    }
 }

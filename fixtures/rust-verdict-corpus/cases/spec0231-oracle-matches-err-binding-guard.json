@@ -1,0 +1,54 @@
+{
+  "case_id": "spec0231-oracle-matches-err-binding-guard",
+  "subject_id": "authored-spec0231-3",
+  "diff": "cases/spec0231-oracle-matches-err-binding-guard.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 3
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "error_message_value",
+  "test_shape": "matches_err_binding_guard",
+  "hard_case": "ripr reports exact_error_variant / strong; the spec adopts broad_error / weak (measured defect, admission rule 2).",
+  "truth": {
+    "state": "partially_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "return Err(String::from(\"small\"));",
+        "mutated_line": "return Err(String::from(\"small\"));",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: the error text becomes \"small\""
+      },
+      {
+        "replacement": "return Err(String::new());",
+        "mutated_line": "return Err(String::new());",
+        "outcome": "tests_failed",
+        "failing_test": "tests::check_twenty_has_an_error_message",
+        "equivalence_review": "not equivalent: the error text becomes empty"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "The guard only requires a non-empty error: an empty message fails it, a different message passes. Spec cells: RIPR-SPEC-0231 example 3; spec-adopted oracle broad_error / weak.",
+  "labeling_observation": {
+    "ripr_commit": "96c1a18e9",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0231#3"
+  ]
+}

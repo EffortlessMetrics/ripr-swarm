@@ -1,0 +1,13 @@
+diff --git a/src/parse.rs b/src/parse.rs
+index 093d870..21127f6 100644
+--- a/src/parse.rs
++++ b/src/parse.rs
+@@ -11,7 +11,7 @@ fn digit(c: char) -> Option<u32> {
+ }
+ 
+ pub fn parse_code(s: &str) -> Result<u32, CodeError> {
+-    if s.len() < 4 {
++    if s.len() < 2 + 2 {
+         return Err(CodeError::Short);
+     }
+     let mut value = 0;

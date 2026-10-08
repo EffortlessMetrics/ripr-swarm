@@ -1,0 +1,98 @@
+# Golden Output Changes
+
+## Pending — match_arm_expected_side_trap (1)
+
+Reason:
+RIPR-SPEC-0093: new fixture (#5432) - the only owner call selects Kind::Alpha, so a Kind::Beta token on the expected side no longer confirms the changed Kind::Beta arm
+
+Command:
+`cargo xtask goldens bless match_arm_expected_side_trap --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — match_arm_expected_side_trap (2)
+
+Reason:
+RIPR-SPEC-0229: selection outranks tokens; the expected-side Kind::Beta token no longer confirms the unselected arm
+
+Command:
+`cargo xtask goldens bless match_arm_expected_side_trap --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — match_arm_expected_side_trap (3)
+
+Reason:
+RIPR-SPEC-0229 merged with RIPR-SPEC-0224 (#5424): the named unselected arm and weak infection now carry into the examined-test miss reason
+
+Command:
+`cargo xtask goldens bless match_arm_expected_side_trap --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — match_arm_expected_side_trap (4)
+
+Reason:
+RIPR-SPEC-0229 with RIPR-SPEC-0224: an unselected arm is a missing input (no test input selects the arm), not a missing exact assertion
+
+Command:
+`cargo xtask goldens bless match_arm_expected_side_trap --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — match_arm_expected_side_trap (5)
+
+Reason:
+RIPR-SPEC-0002: merge of origin/main onto the #5996 workspace-relative location owner — expected files regenerate with main's match-arm verdict updates and the shared root-relative location form (issue #5996)
+RIPR-SPEC-0045: combined-tree re-bless after merging #5432/#5638 - the Rust canonical gap members (#5268) join the match-arm verdict re-bless on these fixtures; golden-drift.json shows zero semantic flips
+
+Command:
+`cargo xtask goldens bless match_arm_expected_side_trap --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — match_arm_expected_side_trap (6)
+
+Reason:
+RIPR-SPEC-0002: merge of origin/main (#5268 canonical_gap for Rust and sibling updates) onto the #5996 workspace-relative location owner — expected files regenerate through the merged tree
+
+Command:
+`cargo xtask goldens bless match_arm_expected_side_trap --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — match_arm_expected_side_trap (7)
+
+Reason:
+RIPR-SPEC-0116: the check drill-in binds --root to the resolved repository (#3948); goldens carry the <cwd>/ placeholder
+
+Command:
+`cargo xtask goldens bless match_arm_expected_side_trap --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — match_arm_expected_side_trap (8)
+
+Reason:
+RIPR-SPEC-0122 #5471: stub route printed only when the resolver yields a stub, with --kind; refusal or nothing otherwise (merge re-bless)
+
+Command:
+`cargo xtask goldens bless match_arm_expected_side_trap --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

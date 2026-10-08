@@ -1,0 +1,55 @@
+{
+  "case_id": "tokens-base-six-hop-chain",
+  "subject_id": "authored-tokens",
+  "diff": "cases/tokens-base-six-hop-chain.diff",
+  "anchor": {
+    "file": "src/reach.rs",
+    "line": 16
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "helper_chain_six_hops",
+  "hard_case": "RIPR-SPEC-0114 bounds the transitive walk at five hops; this owner sits six hops from the test.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "x * 6",
+        "mutated_line": "x * 6",
+        "outcome": "tests_failed",
+        "failing_test": "reach::tests::deep_multiplies_by_seven",
+        "equivalence_review": "not equivalent: deep(2) becomes 12"
+      },
+      {
+        "replacement": "x + 7",
+        "mutated_line": "x + 7",
+        "outcome": "tests_failed",
+        "failing_test": "reach::tests::deep_multiplies_by_seven",
+        "equivalence_review": "not equivalent: deep(2) becomes 9"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "deep(2) is pinned to 14 through six helper hops, so both mutants fail it. Spec cells: RIPR-SPEC-0114.",
+  "labeling_observation": {
+    "ripr_commit": "b0c6ef6",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0114#5"
+  ]
+}

@@ -94,6 +94,7 @@ use crate::agent::loop_commands::{
 use crate::app::repair_attempt::BeforeArtifactSource;
 use std::fs::File;
 use std::path::Path;
+use std::time::Instant;
 
 pub fn run(args: Vec<String>) -> Result<(), CommandError> {
     let outcome = run_command(args);
@@ -136,24 +137,50 @@ fn run_command(mut args: Vec<String>) -> Result<(), CommandError> {
     // first side-effecting step (workflow execution and attempt publication),
     // so a lock loser fails closed without producing any workflow artifacts.
     let before_attempt = before_repair_attempt(&args)?;
-    let _before_lock = before_attempt
-        .as_ref()
-        .map(|options| lock_before_repair_attempt(&options.root))
-        .transpose()?;
     if let Some(options) = before_attempt {
-        let seam_id = options.seam_id.as_deref().ok_or_else(|| {
-            "before-phase repair attempt is missing its seam identity".to_string()
-        })?;
-        let identity = crate::app::repair_attempt::BeforeRepairAttemptIdentity::prepare(
-            &options.root,
-            seam_id,
-        )?;
-        commands::run_before_repair_with_identity(options.clone(), &identity)?;
-        persist_before_repair_attempt(&options, &identity)?;
+        drive_before_phase(options)?;
     } else {
         execute::execute(parse::parse_args(args)?)?;
     }
     Ok(())
+}
+
+/// Drive one before phase through the locked publication path: serialize
+/// against concurrent before phases, prepare the attempt identity, run the
+/// shared workflow, and persist the attempt. Shared by the advanced
+/// `agent repair --phase before` spelling and the task-first `ripr repair`
+/// façade (#6305), so both produce the same attempt from the same subject.
+/// Returns the published attempt id so the façade can name the started
+/// attempt when its follow-on card render fails (#7032).
+pub(in crate::cli) fn drive_before_phase(
+    options: agent::AgentRepairOptions,
+) -> Result<String, CommandError> {
+    let (attempt_id, stdout_document) = drive_before_phase_deferring_stdout(options)?;
+    // The advanced spelling prints its success document immediately; only
+    // the façade holds stdout across its follow-on card render (#7032).
+    print!("{stdout_document}");
+    Ok(attempt_id)
+}
+
+/// The publication path of [`drive_before_phase`] with the success stdout
+/// returned instead of printed: the published attempt id plus the exact
+/// document the immediate route would have written. The task-first façade
+/// composes this with its card render so `cmd:repair` can keep
+/// `EXIT_TYPED_REFUSAL_EMPTY_STDOUT` honest when the card refuses after
+/// the attempt already exists (#7032).
+pub(in crate::cli) fn drive_before_phase_deferring_stdout(
+    options: agent::AgentRepairOptions,
+) -> Result<(String, String), CommandError> {
+    let _before_lock = lock_before_repair_attempt(&options.root)?;
+    let seam_id = options
+        .seam_id
+        .as_deref()
+        .ok_or_else(|| "before-phase repair attempt is missing its seam identity".to_string())?;
+    let identity =
+        crate::app::repair_attempt::BeforeRepairAttemptIdentity::prepare(&options.root, seam_id)?;
+    commands::run_before_repair_with_identity(options.clone(), &identity)?;
+    let stdout_document = persist_before_repair_attempt(&options, &identity)?;
+    Ok((identity.attempt_id().to_string(), stdout_document))
 }
 
 /// Serialize before-phase execution and attempt publication per repository.
@@ -207,10 +234,16 @@ fn before_repair_attempt(args: &[String]) -> Result<Option<agent::AgentRepairOpt
     }
 }
 
+/// Publish one before attempt and return its success stdout: the exact
+/// document the caller prints (or holds, façade-side, until its follow-on
+/// card renders). Composing the document without printing keeps one owner
+/// for the bytes, so the immediate and deferred routes cannot drift
+/// (#7032).
 fn persist_before_repair_attempt(
     options: &agent::AgentRepairOptions,
     identity: &crate::app::repair_attempt::BeforeRepairAttemptIdentity,
-) -> Result<(), String> {
+) -> Result<String, String> {
+    let persist_started = Instant::now();
     let root = &options.root;
     let seam_id = options
         .seam_id
@@ -311,6 +344,10 @@ fn persist_before_repair_attempt(
         },
         identity,
     )?;
+    // The persist total stops at publication: everything below is success
+    // narration and stdout rendering, and a slow stdout reader must not
+    // inflate the persistence measurement (#6917).
+    crate::edit_cage::trace_persist_latency("persist_before_attempt", persist_started.elapsed());
     // The before-phase success stdout is one document, printed only after the
     // attempt is published, so a refusal above is never preceded by a success
     // document. With `--json` it is the packet envelope carrying the additive
@@ -331,9 +368,19 @@ fn persist_before_repair_attempt(
             binding.verified.attempt_id, binding.verified.selection_digest
         );
     }
-    eprintln!(
-        "ripr: before phase complete. Next: add or strengthen one focused test (leave production code unchanged), then run the --attempt command printed below. Editing any file outside that one test surface fails the attempt terminally."
-    );
+    if policy.inline_test_module_target {
+        // #5210: the cage admits only new test functions inserted into the
+        // target's inline test module, so "strengthen" an existing test, or
+        // any other byte of the production file, would fail the attempt.
+        eprintln!(
+            "ripr: before phase complete. Next: add one new focused test function inside the existing `#[cfg(test)]` module of {} (leave production code, the module declaration, and existing tests unchanged), then run the --attempt command printed below. Any other edit fails the attempt terminally.",
+            policy.selected_target.path()
+        );
+    } else {
+        eprintln!(
+            "ripr: before phase complete. Next: add or strengthen one focused test (leave production code unchanged), then run the --attempt command printed below. Editing any file outside that one test surface fails the attempt terminally."
+        );
+    }
     eprintln!(
         "ripr: keep this command's output out of the checkout: the edit cage counts a file you redirect it into (for example `> packet.json` or `2> before.err`) as an edit outside the test surface. The packet is already at target/ripr/workflow/agent-packet.json; to keep a copy, redirect under target/ripr/ or outside the repository. The same applies to the after phase."
     );
@@ -357,25 +404,22 @@ fn persist_before_repair_attempt(
     if let Some(form) = &next_powershell {
         eprintln!("ripr: attempt next command (PowerShell): {form}");
     }
-    print!(
-        "{}",
-        commands::before_phase_stdout(
-            &packet_text,
-            &agent_packet.display().to_string(),
-            options.json,
-            &continuation,
-        )?
-    );
+    let mut stdout_document = commands::before_phase_stdout(
+        &packet_text,
+        &agent_packet.display().to_string(),
+        options.json,
+        &continuation,
+    )?;
     if !options.json {
-        println!(
-            "Next, after the test edit: {}",
+        stdout_document.push_str(&format!(
+            "Next, after the test edit: {}\n",
             result.manifest.next_command
-        );
+        ));
         if let Some(form) = &next_powershell {
-            println!("(PowerShell) {form}");
+            stdout_document.push_str(&format!("(PowerShell) {form}\n"));
         }
     }
-    Ok(())
+    Ok(stdout_document)
 }
 
 #[cfg(test)]

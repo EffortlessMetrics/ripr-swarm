@@ -1,0 +1,53 @@
+{
+  "case_id": "ledger-stock-insert",
+  "subject_id": "authored-ledger",
+  "diff": "cases/ledger-stock-insert.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 78
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "side_effect",
+  "test_shape": "unit_test_assert_eq_accessor",
+  "hard_case": "call-deletion mutant is the statement removed (replacement is the empty line)",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "self.stock.insert(sku.to_owned(), available);",
+        "mutated_line": "self.stock.insert(sku.to_owned(), available);",
+        "outcome": "tests_failed",
+        "failing_test": "tests::shipping_below_threshold_flags_low_stock",
+        "equivalence_review": "not equivalent: shipping 8 of 10 leaves 10 on hand, so the SKU is not flagged low (and shipping 3 of 10 leaves 10 instead of 7)"
+      },
+      {
+        "replacement": "",
+        "mutated_line": "",
+        "outcome": "tests_failed",
+        "failing_test": "tests::shipping_below_threshold_flags_low_stock",
+        "equivalence_review": "not equivalent: with the insert removed, shipping 8 of 10 leaves 10 on hand, so the SKU is not flagged low (and shipping 3 of 10 leaves 10 instead of 7)"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "shipping_returns_a_receipt_and_lowers_stock asserts on_hand == 7 and shipping_below_threshold_flags_low_stock asserts the SKU is flagged low after shipping 8 of 10, so keeping the old level or dropping the insert fails both. ripr reports call_deletion exposed but a weakly_exposed side_effect probe on the same line, so the line reads as a false actionable gap.",
+  "labeling_observation": {
+    "ripr_commit": "62fb7aaa5",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "exposed",
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

@@ -2,13 +2,15 @@
 //! RIPR-SPEC-0005 (and the agent-packet shape in
 //! `docs/OUTPUT_SCHEMA.md` § "Agent Seam Packets").
 //!
-//! Packets are emitted for actionable classes:
+//! Packets are emitted for queue-visible classes
+//! (`repair_packet_queue_visible`):
 //!
-//! - Headline-eligible classes (`Ungripped`, `WeaklyGripped`,
-//!   `ReachableUnrevealed`, the four `*_unknown` classes) emit a
-//!   `task: "write_targeted_test"` packet.
-//! - `Opaque` emits a conservative `task: "inspect_static_limitation"`
-//!   packet so the agent at least sees the static boundary.
+//! - Gap classes (`Ungripped`, `WeaklyGripped`, `ReachableUnrevealed`)
+//!   emit a `task: "write_targeted_test"` packet when the producer-owned
+//!   repair route is ready, else `task: "inspect_static_limitation"`.
+//! - Static limitations (the four `*_unknown` classes and `Opaque`) emit
+//!   a conservative `task: "inspect_static_limitation"` packet so the
+//!   agent at least sees the static boundary that hides evidence (#6775).
 //!
 //! `StronglyGripped`, `Intentional`, and `Suppressed` produce no
 //! packet — there is nothing for the agent to do.
@@ -35,7 +37,9 @@ use crate::analysis::repair_route::{
     NewTestKind, RepairTargetSelection, cross_language_test_target_unresolved,
     is_safe_for_repair_packet, repair_packet_eligibility, repair_packet_queue_visible,
 };
-use crate::analysis::seams::{ExpectedSink, RequiredDiscriminator, SeamGripClass, SeamKind};
+use crate::analysis::seams::{
+    ExpectedSink, OwnerCallShape, RequiredDiscriminator, SeamGripClass, SeamKind,
+};
 use crate::analysis::test_grip_evidence::{RelatedTestGrip, TestGripEvidence};
 use crate::analysis::{ClassifiedSeam, SeamLimitInfo, SeamLimitSource};
 use crate::analysis_outcome::AnalysisOutcome;
@@ -45,7 +49,8 @@ use crate::app::causal_projection::CausalDeltaArtifact;
 use crate::domain::CommandRole;
 use crate::output::evidence_record::{
     CROSS_LANGUAGE_TARGET_UNRESOLVED_REPAIR_ROUTE, evidence_record_json_value,
-    evidence_record_with_verify_command, workflow_snapshot_verify_command,
+    evidence_record_with_bound_verify_command, workflow_snapshot_verify_command,
+    workflow_snapshot_verify_command_for,
 };
 use crate::output::first_pr::STATIC_EVIDENCE_BOUNDARY;
 use crate::output::gap_decision_ledger::{GapRecord, GapRepairRoute, projection_eligible};
@@ -62,6 +67,7 @@ use crate::repair_guidance::{
 };
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
+use std::path::Path;
 
 /// Cap on related-tests rendered per packet. Mirrors the JSON-side
 /// limit in `output::repo_exposure` so an agent inspecting the same
@@ -94,6 +100,15 @@ pub(crate) const EDIT_CAGE_PRODUCTION_STATEMENT: &str =
 /// The terminality warning carried in the packet's `must_not_change` field
 /// and the before-phase TTY narration (#4330): violating the unstated cage
 /// used to be the only way an agent learned it existed.
+/// The `must_not_change` statement for a repair confined to a production
+/// file's inline test module (#5210): the cage admits only new test functions
+/// (and `use` items) inserted into that module's body.
+pub(crate) fn inline_test_module_edit_statement(file: &str, module: &str) -> String {
+    format!(
+        "in {file}, only insert new test functions inside the existing `#[cfg(test)] mod {module}`; production code, the module declaration, and existing tests must stay byte-identical"
+    )
+}
+
 pub(crate) const EDIT_CAGE_TERMINALITY_WARNING: &str =
     "editing any file outside allowed_edit_surface fails the repair attempt terminally";
 
@@ -143,11 +158,12 @@ fn push_analysis_outcome_projection(
     out.push_str(",\n");
 }
 
-/// Render every actionable `ClassifiedSeam` in `classified` as an agent
+/// Render every queue-visible `ClassifiedSeam` in `classified` as an agent
 /// packet, returning a JSON object with a `packets` array. Strongly-gripped,
-/// intentional, and suppressed seams are skipped. `Opaque` seams emit a
-/// conservative `inspect_static_limitation` packet so the agent at least
-/// sees the static boundary that hides evidence.
+/// intentional, and suppressed seams are skipped. Static-limitation seams
+/// (opaque and the `*_unknown` classes) emit a conservative
+/// `inspect_static_limitation` packet so the agent at least sees the static
+/// boundary that hides evidence.
 ///
 /// When `limit_info` is `Some`, the artifact carries a `limitations[]` block
 /// so consumers know the output is bounded and can opt out via the env var.
@@ -187,6 +203,26 @@ pub(crate) fn render_agent_seam_packets_json_with_causal_and_outcome(
         analysis_outcome,
         analysis_outcome_required,
         PacketCommandContext::Portable,
+    )
+}
+
+/// The pilot packet names the repository pilot analyzed, so its loop
+/// commands bind that root instead of `.`; a portable `--root .` whose
+/// redirect anchors at the renderer's working directory sends every
+/// snapshot to the wrong repository when pilot ran with `--root X` (#5324).
+pub(crate) fn render_agent_seam_packets_json_for_root(
+    classified: &[ClassifiedSeam],
+    limit_info: Option<&SeamLimitInfo>,
+    causal_projection: Option<&CausalDeltaArtifact>,
+    root: &str,
+) -> String {
+    render_agent_seam_packets_json_with_root(
+        classified,
+        limit_info,
+        causal_projection,
+        None,
+        false,
+        PacketCommandContext::Standalone { root },
     )
 }
 
@@ -272,10 +308,17 @@ fn render_agent_seam_packets_json_with_root(
     // verify route — the after phase verifies against the attempt's retained
     // before snapshot, not the repository-global path another attempt can
     // overwrite — so its embedded records keep every verify projection null.
-    let embedded_verify_command = match context {
+    // A standalone document binds its `next` block to the selected root, so
+    // its embedded verify names that root too (#3948, #3999): pasted from
+    // another directory it verifies the same repository.
+    let embedded_verify = match context {
         PacketCommandContext::Prepared { .. } => None,
-        PacketCommandContext::Portable | PacketCommandContext::Standalone { .. } => {
-            Some(workflow_snapshot_verify_command())
+        PacketCommandContext::Portable => Some((
+            workflow_snapshot_verify_command(),
+            crate::agent::command_specs::PORTABLE_ROOT,
+        )),
+        PacketCommandContext::Standalone { root } => {
+            Some((workflow_snapshot_verify_command_for(root), root))
         }
     };
     out.push_str("  \"packets\": [");
@@ -288,7 +331,9 @@ fn render_agent_seam_packets_json_with_root(
             entry,
             canonical_gaps.get(entry.seam.id()),
             causal_projection,
-            embedded_verify_command.as_deref(),
+            embedded_verify
+                .as_ref()
+                .map(|(command, root)| (command.as_str(), Path::new(*root))),
         );
         if idx + 1 != actionable.len() {
             out.push_str(",\n");
@@ -1523,6 +1568,7 @@ fn format_command_role(role: CommandRole) -> &'static str {
         CommandRole::Regeneration => "regeneration",
         CommandRole::Inspection => "inspection",
         CommandRole::TargetedRerun => "targeted_rerun",
+        CommandRole::RepairStart => "repair_start",
     }
 }
 
@@ -2109,16 +2155,13 @@ pub(crate) fn task_for(entry: &ClassifiedSeam) -> &'static str {
     // (`repair_packet_queue_visible`); under that filter the authority's
     // fail-closed flip reduces to producer route readiness.
     //
-    // The recommended target must also be a test surface (#4330 cage
-    // contract): a producer-owned inline-module proposal names a production
-    // file, and advertising it as `allowed_edit_surface` alongside the
-    // must-not-change production statement would promise an edit surface the
-    // cage's own policy text forbids. Those seams render as inspection
-    // packets, matching the evidence-record and pilot-command gating of the
-    // same check.
-    if is_safe_for_repair_packet(entry)
-        && crate::analysis::is_test_surface_path(&recommended_test_for(entry).file)
-    {
+    // The recommended target must also be one the edit cage can route
+    // (#4330 cage contract): a test surface, or the seam's own production
+    // Rust file confined to its one governed inline `#[cfg(test)]` module
+    // (#5210). Any other production file would promise an edit surface the
+    // cage refuses, so those seams render as inspection packets, matching
+    // the evidence-record and pilot-command gating of the same predicate.
+    if is_safe_for_repair_packet(entry) && recommended_test_is_repair_edit_target(entry) {
         TASK_WRITE_TARGETED_TEST
     } else {
         "inspect_static_limitation"
@@ -2130,7 +2173,7 @@ fn push_packet_json(
     entry: &ClassifiedSeam,
     canonical_gap: Option<&CanonicalGapIdentity>,
     causal_projection: Option<&CausalDeltaArtifact>,
-    verify_command: Option<&str>,
+    verify: Option<(&str, &Path)>,
 ) {
     let seam = &entry.seam;
     let evidence = &entry.evidence;
@@ -2234,6 +2277,17 @@ fn push_packet_json(
             json_escape(&format!(
                 "{EDIT_CAGE_TERMINALITY_WARNING} (allowed: {})",
                 allowed_edit_surface.join(", ")
+            ))
+        ));
+    }
+    if actionable
+        && let Some(module) = recommended_inline_test_module(entry, recommended.file.as_str())
+    {
+        out.push_str(&format!(
+            ", \"{}\"",
+            json_escape(&inline_test_module_edit_statement(
+                recommended.file.as_str(),
+                module
             ))
         ));
     }
@@ -2447,6 +2501,7 @@ fn push_packet_json(
             suggested_assertions_for(
                 seam.kind(),
                 seam.owner(),
+                seam.owner_call(),
                 Some(seam.required_discriminator()),
                 evidence,
             )
@@ -2483,10 +2538,14 @@ fn push_packet_json(
     // records keep every verify projection null: an orchestrator following the
     // typed spec can never verify against a snapshot another attempt can
     // overwrite.
-    let evidence_record = evidence_record_json_value(&evidence_record_with_verify_command(
+    let evidence_record = evidence_record_json_value(&evidence_record_with_bound_verify_command(
         entry,
         canonical_gap,
-        verify_command,
+        verify.map(|(command, _)| command),
+        verify.map_or(
+            Path::new(crate::agent::command_specs::PORTABLE_ROOT),
+            |(_, root)| root,
+        ),
     ));
     out.push_str("      \"evidence_record\": ");
     out.push_str(&evidence_record.to_string());
@@ -2700,6 +2759,42 @@ pub(crate) fn recommended_test_for(entry: &ClassifiedSeam) -> RecommendedTest {
         source: RecommendedTestSource::RelatedTestEvidence,
         reason: "place the new targeted test next to the producer-owned related test".to_string(),
     }
+}
+
+/// Whether `ripr agent repair` can route its edit to the target that
+/// [`recommended_test_for`] names: a test surface, or the seam's own
+/// production Rust file whose one governed inline `#[cfg(test)]` module the
+/// InlineUnit producer admitted (#5210). Every surface that offers a repair
+/// start or states an allowed edit surface asks this one predicate; the edit
+/// cage re-captures the module at the before phase and enforces it at the
+/// after phase, so this projection can only under-offer, never widen.
+pub(crate) fn recommended_test_is_repair_edit_target(entry: &ClassifiedSeam) -> bool {
+    let recommended = recommended_test_for(entry);
+    crate::analysis::is_test_surface_path(&recommended.file)
+        || recommended_inline_test_module(entry, &recommended.file).is_some()
+}
+
+/// The governed inline test module's name when `recommended_file` is the
+/// seam's own production Rust file and the InlineUnit producer admitted that
+/// file's one inline cfg-test module; `None` for a test surface or any other
+/// production file.
+pub(crate) fn recommended_inline_test_module<'a>(
+    entry: &'a ClassifiedSeam,
+    recommended_file: &str,
+) -> Option<&'a str> {
+    if recommended_file == "not_applicable"
+        || crate::analysis::is_test_surface_path(recommended_file)
+        || display_path(entry.seam.file()) != recommended_file
+    {
+        return None;
+    }
+    let region = entry
+        .evidence
+        .new_test_target
+        .as_ref()?
+        .owner_inline_region
+        .as_ref()?;
+    (display_path(&region.file) == recommended_file).then_some(region.module_name.as_str())
 }
 
 fn not_applicable_recommended_test(reason: &str) -> RecommendedTest {
@@ -2923,13 +3018,17 @@ pub(crate) fn nearest_strong_test_to_imitate(
     seam_kind: SeamKind,
     evidence: &TestGripEvidence,
 ) -> Option<&crate::analysis::test_grip_evidence::RelatedTestGrip> {
-    evidence.related_tests.iter().find(|test| {
-        test.oracle_strength == crate::domain::OracleStrength::Strong
-            && crate::analysis::test_grip_evidence::oracle_kind_matches_seam_kind(
-                seam_kind,
-                &test.oracle_kind,
-            )
-    })
+    evidence
+        .related_tests
+        .iter()
+        .find(|test| {
+            test.oracle_strength == crate::domain::OracleStrength::Strong
+                && crate::analysis::test_grip_evidence::oracle_kind_matches_seam_kind(
+                    seam_kind,
+                    &test.oracle_kind,
+                )
+        })
+        .map(std::sync::Arc::as_ref)
 }
 
 fn push_related_test_reference(
@@ -3011,6 +3110,7 @@ pub(crate) fn assertion_shape_for_entry(entry: &ClassifiedSeam) -> AssertionShap
         assertion_guidance_for(
             entry.seam.kind(),
             entry.seam.owner(),
+            entry.seam.owner_call(),
             Some(entry.seam.required_discriminator()),
             &entry.evidence,
         )
@@ -3025,6 +3125,7 @@ fn assertion_shape_from_guidance(guidance: AssertionGuidance) -> AssertionShape 
 fn assertion_guidance_for(
     kind: SeamKind,
     owner: &str,
+    owner_call: &OwnerCallShape,
     required: Option<&RequiredDiscriminator>,
     evidence: &TestGripEvidence,
 ) -> AssertionGuidance {
@@ -3034,7 +3135,7 @@ fn assertion_guidance_for(
         SeamKind::CallPresence => Some(ObserverKind::CallSite),
         _ => None,
     };
-    let derived_example = suggested_assertions_for(kind, owner, required, evidence)
+    let derived_example = suggested_assertions_for(kind, owner, owner_call, required, evidence)
         .into_iter()
         .find(|suggestion| {
             let trimmed = suggestion.trim_start();
@@ -3262,35 +3363,46 @@ fn oracle_strength_recipe(oracle_kind: &str, current_strength: &str) -> String {
 fn suggested_assertions_for(
     kind: SeamKind,
     owner: &str,
+    owner_call: &OwnerCallShape,
     required: Option<&RequiredDiscriminator>,
     evidence: &TestGripEvidence,
 ) -> Vec<String> {
     let owner_short = owner.rsplit("::").next().unwrap_or(owner);
+    // #5357: the owner's parser facts decide the call syntax, so a method
+    // reads `<receiver>.name(..)` and an unestablished shape names the owner
+    // in a comment instead of presenting a free-function call.
+    let call = |arguments: &str| owner_call.call(owner_short, arguments);
     match kind {
         SeamKind::PredicateBoundary => {
             let hint = predicate_boundary_assertion_hint(required, evidence);
             vec![format!(
-                "assert_eq!({owner_short}(/* {hint} */), /* expected */)"
+                "assert_eq!({}, /* expected */)",
+                call(&format!("/* {hint} */"))
             )]
         }
         SeamKind::ErrorVariant => {
             let (trigger_hint, expected_label, pattern_hint) =
                 error_variant_assertion_hint(required);
             vec![format!(
-                "let err = {owner_short}(/* trigger {trigger_hint} */).expect_err(\"expected {expected_label}\"); assert!(matches!(err, {pattern_hint} /* exact payload if applicable */));"
+                "let err = {}.expect_err(\"expected {expected_label}\"); assert!(matches!(err, {pattern_hint} /* exact payload if applicable */));",
+                call(&format!("/* trigger {trigger_hint} */"))
             )]
         }
         SeamKind::ReturnValue => vec![format!(
-            "assert_eq!({owner_short}(/* input */), /* expected */)"
+            "assert_eq!({}, /* expected */)",
+            call("/* input */")
         )],
         SeamKind::FieldConstruction => vec![format!(
-            "let result = {owner_short}(/* input */); assert_eq!(result.field, /* expected */);"
+            "let result = {}; assert_eq!(result.field, /* expected */);",
+            call("/* input */")
         )],
         SeamKind::SideEffect => vec![format!(
-            "// arrange a mock/observer; assert {owner_short}(...) produced the expected effect"
+            "// arrange a mock/observer; assert {} produced the expected effect",
+            call("...")
         )],
         SeamKind::MatchArm => vec![format!(
-            "assert_eq!({owner_short}(/* input selecting this arm */), /* expected */)"
+            "assert_eq!({}, /* expected */)",
+            call("/* input selecting this arm */")
         )],
         SeamKind::CallPresence => vec![format!(
             "// assert that {owner_short} called the expected target"
@@ -3468,6 +3580,8 @@ mod tests {
             },
             ExpectedSink::ReturnValue,
         )
+        // `discounted_total` models a module-level function (#5357).
+        .with_owner_call(OwnerCallShape::Free)
     }
 
     fn seam_with(
@@ -3486,6 +3600,7 @@ mod tests {
             required,
             sink,
         )
+        .with_owner_call(OwnerCallShape::Free)
     }
 
     fn related_test_with(
@@ -3523,7 +3638,7 @@ mod tests {
             seam,
             evidence: TestGripEvidence {
                 seam_id,
-                related_tests,
+                related_tests: related_tests.into_iter().map(std::sync::Arc::new).collect(),
                 reach: stage(StageState::Yes),
                 activate: stage(StageState::Yes),
                 propagate: stage(StageState::Weak),
@@ -3531,6 +3646,7 @@ mod tests {
                 discriminate: stage(StageState::No),
                 observed_values: Vec::new(),
                 missing_discriminators: Vec::new(),
+                statically_contradicted_related_tests: 0,
                 new_test_target: None,
             },
             class,
@@ -3573,7 +3689,7 @@ mod tests {
         let seam = boundary_seam();
         let evidence = TestGripEvidence {
             seam_id: seam.id().clone(),
-            related_tests: vec![RelatedTestGrip {
+            related_tests: vec![std::sync::Arc::new(RelatedTestGrip {
                 test_name: "below_threshold_has_no_discount".to_string(),
                 file: PathBuf::from("tests/pricing.rs"),
                 line: 12,
@@ -3590,7 +3706,7 @@ mod tests {
                 relation_reason:
                     crate::analysis::test_grip_evidence::RelationReason::DirectOwnerCall,
                 relation_confidence: crate::analysis::test_grip_evidence::RelationConfidence::High,
-            }],
+            })],
             reach: stage(StageState::Yes),
             activate: stage(StageState::Yes),
             propagate: stage(StageState::Yes),
@@ -3608,6 +3724,7 @@ mod tests {
                 flow_sink: None,
             }],
             new_test_target: None,
+            statically_contradicted_related_tests: 0,
         };
         ClassifiedSeam {
             seam,
@@ -3628,6 +3745,7 @@ mod tests {
             discriminate: stage(StageState::No),
             observed_values: Vec::new(),
             missing_discriminators: Vec::new(),
+            statically_contradicted_related_tests: 0,
             new_test_target: None,
         };
         ClassifiedSeam {
@@ -3649,6 +3767,7 @@ mod tests {
             discriminate: stage(StageState::Yes),
             observed_values: Vec::new(),
             missing_discriminators: Vec::new(),
+            statically_contradicted_related_tests: 0,
             new_test_target: None,
         };
         ClassifiedSeam {
@@ -3791,8 +3910,9 @@ mod tests {
         // (`repair_packet_queue_visible`) must exclude it before `task_for`
         // is ever reached.
         let mut entry = weakly_gripped_classified();
-        entry.evidence.related_tests[0].file = PathBuf::from("tests/pricing.ts");
-        entry.evidence.related_tests[0].test_target = None;
+        std::sync::Arc::make_mut(&mut entry.evidence.related_tests[0]).file =
+            PathBuf::from("tests/pricing.ts");
+        std::sync::Arc::make_mut(&mut entry.evidence.related_tests[0]).test_target = None;
         let json = render_agent_seam_packets_json(&[entry], None);
         if !json.contains("\"packets_total\": 0") {
             return Err(format!(
@@ -3808,7 +3928,9 @@ mod tests {
         // through the shared extension authority; near-misses stay
         // unlabeled. The expected labels are pinned here as a removal
         // control, not read back from the authority.
-        let base_test = weakly_gripped_classified().evidence.related_tests[0].clone();
+        let base_test = weakly_gripped_classified().evidence.related_tests[0]
+            .as_ref()
+            .clone();
         let cases = [
             ("ts", Some("typescript")),
             ("tsx", Some("typescript")),
@@ -3994,7 +4116,7 @@ mod tests {
         };
         // Caller provides a ranked vec — `evidence_for_seam` always
         // emits ranked, so this mirrors the production path.
-        entry.evidence.related_tests = vec![high, low];
+        entry.evidence.related_tests = vec![std::sync::Arc::new(high), std::sync::Arc::new(low)];
 
         let json = render_agent_seam_packets_json(&[entry], None);
         let high_idx = json
@@ -5607,7 +5729,8 @@ mod tests {
     #[test]
     fn packet_v2_normalizes_windows_related_test_paths() -> Result<(), String> {
         let mut entry = weakly_gripped_classified();
-        entry.evidence.related_tests[0].file = PathBuf::from(r"tests\pricing.rs");
+        std::sync::Arc::make_mut(&mut entry.evidence.related_tests[0]).file =
+            PathBuf::from(r"tests\pricing.rs");
 
         let json = render_agent_seam_packets_json(&[entry], None);
         assert!(
@@ -5715,12 +5838,13 @@ mod tests {
         );
         assert!(integration.symbol_id.is_some());
 
-        entry.evidence.related_tests[0].file = PathBuf::from("src/pricing.rs");
+        std::sync::Arc::make_mut(&mut entry.evidence.related_tests[0]).file =
+            PathBuf::from("src/pricing.rs");
         let inline = recommended_test_for(&entry);
         assert_eq!(inline.target_kind, RecommendedTestTargetKind::ExistingTest);
         assert!(inline.symbol_id.is_some());
 
-        entry.evidence.related_tests[0].test_target = None;
+        std::sync::Arc::make_mut(&mut entry.evidence.related_tests[0]).test_target = None;
         let production_fallback = recommended_test_for(&entry);
         assert_eq!(
             production_fallback.target_kind,
@@ -5794,6 +5918,7 @@ mod tests {
             }),
             region: None,
             blocker: None,
+            owner_inline_region: None,
         });
         let recommended = recommended_test_for(&entry);
         assert_eq!(
@@ -6497,6 +6622,7 @@ mod tests {
             }),
             region: None,
             blocker: None,
+            owner_inline_region: None,
         });
         // Pin both preconditions so the demotion below is attributable to the
         // non-test recommended target, not to route readiness.
@@ -6522,6 +6648,69 @@ mod tests {
             serde_json::json!([]),
             "the inspection packet must allow no edits: {json}"
         );
+        Ok(())
+    }
+
+    /// #5210: the same inline proposal, with the owner file's one governed
+    /// inline module recorded, is actionable. The packet's edit surface is
+    /// that production file, it is no longer forbidden, and `must_not_change`
+    /// states the module confinement the cage enforces.
+    #[test]
+    fn inline_module_proposal_with_a_recorded_region_is_actionable_and_confined()
+    -> Result<(), String> {
+        use crate::analysis::new_test_target::InlineTestRegionAuthority;
+        use crate::analysis::repair_route::{
+            NewTestKind, NewTestProposalProvenance, NewTestTargetAdmission, NewTestTargetProposal,
+        };
+        let mut entry = classified_with(boundary_seam(), SeamGripClass::WeaklyGripped, Vec::new());
+        entry.evidence.missing_discriminators = vec![MissingDiscriminatorFact {
+            value: "amount >= discount_threshold".to_string(),
+            reason: "no observed activation values for boundary predicate".to_string(),
+            flow_sink: None,
+        }];
+        let region = InlineTestRegionAuthority {
+            file: PathBuf::from("src/pricing.rs"),
+            module_name: "tests".to_string(),
+            parent_modules: Vec::new(),
+            body_start: 0,
+            close_brace_start: 0,
+            source_digest: String::new(),
+        };
+        entry.evidence.new_test_target = Some(NewTestTargetAdmission {
+            proposal: Some(NewTestTargetProposal {
+                kind: NewTestKind::InlineUnit,
+                file: PathBuf::from("src/pricing.rs"),
+                owner: "pricing::discounted_total".to_string(),
+                provenance: NewTestProposalProvenance::ProducerOwned,
+            }),
+            region: Some(region.clone()),
+            blocker: None,
+            owner_inline_region: Some(region),
+        });
+        let json = render_agent_seam_packets_json(&[entry], None);
+        let value = parsed_envelope(&json)?;
+        let packet = &value["packets"][0];
+        if packet["task"] != TASK_WRITE_TARGETED_TEST {
+            return Err(format!("expected an actionable packet: {json}"));
+        }
+        assert_eq!(
+            packet["allowed_edit_surface"],
+            serde_json::json!(["src/pricing.rs"])
+        );
+        assert_eq!(packet["forbidden_files"], serde_json::json!([]));
+        let confinement = inline_test_module_edit_statement("src/pricing.rs", "tests");
+        assert!(
+            packet["must_not_change"]
+                .as_array()
+                .is_some_and(|entries| entries.iter().any(|entry| entry == &confinement)),
+            "must_not_change must state the inline module confinement: {json}"
+        );
+        // The cage authority reads the same packet and confines the target.
+        let policy = crate::app::repair_attempt::edit_cage_policy_from_packet(
+            &json,
+            packet["seam_id"].as_str().unwrap_or_default(),
+        )?;
+        assert!(policy.inline_test_module_target);
         Ok(())
     }
 
@@ -6867,6 +7056,69 @@ mod tests {
             ),
             "expected templated assert_eq! suggestion: {json}"
         );
+    }
+
+    /// The boundary fixture re-shaped as the bytesize repro from #5357.
+    fn weakly_gripped_with_owner_call(owner_call: OwnerCallShape) -> ClassifiedSeam {
+        let mut entry = weakly_gripped_classified();
+        entry.seam = entry.seam.with_owner_call(owner_call);
+        entry
+    }
+
+    /// #5357: every renderer reads the one call shape, so the JSON packet,
+    /// the editor/pilot suggested assertion and the brief outline agree.
+    /// Before the fix all three printed `discounted_total(..)` for a method.
+    #[test]
+    fn suggested_assertion_uses_method_syntax_for_self_receiver_owner() {
+        let entry = weakly_gripped_with_owner_call(OwnerCallShape::Method {
+            self_type: "Pricing".to_string(),
+        });
+        let expected = "assert_eq!(/* Pricing value */.discounted_total(/* boundary input where amount >= discount_threshold */), /* expected */)";
+        assert_eq!(
+            suggested_assertion_for_classified_seam(&entry).as_deref(),
+            Some(expected)
+        );
+        assert_eq!(
+            targeted_test_brief_outline_for_classified_seam(&entry).assertion_shape,
+            expected
+        );
+        let json = render_agent_seam_packets_json(std::slice::from_ref(&entry), None);
+        assert!(
+            json.contains(&json_escape(expected)),
+            "packet must carry the method call: {json}"
+        );
+        assert!(
+            !json.contains("assert_eq!(discounted_total("),
+            "packet must not present a free call for a method: {json}"
+        );
+    }
+
+    #[test]
+    fn suggested_assertion_uses_type_path_for_associated_owner() {
+        let entry = weakly_gripped_with_owner_call(OwnerCallShape::Associated {
+            self_type: "Pricing".to_string(),
+        });
+        assert_eq!(
+            suggested_assertion_for_classified_seam(&entry).as_deref(),
+            Some(
+                "assert_eq!(Pricing::discounted_total(/* boundary input where amount >= discount_threshold */), /* expected */)"
+            )
+        );
+    }
+
+    /// An unestablished call shape keeps the concrete boundary guidance (the
+    /// actionability flip is unchanged) but names the owner in a comment
+    /// instead of presenting a call that may not compile.
+    #[test]
+    fn suggested_assertion_names_owner_without_call_when_shape_unknown() {
+        let entry = weakly_gripped_with_owner_call(OwnerCallShape::Unknown);
+        assert!(assertion_shape_for_entry(&entry).is_concrete());
+        let suggestion = suggested_assertion_for_classified_seam(&entry).unwrap_or_default();
+        assert_eq!(
+            suggestion,
+            "assert_eq!(/* call discounted_total (receiver or path not established) with boundary input where amount >= discount_threshold */, /* expected */)"
+        );
+        assert!(!suggestion.contains("discounted_total("), "{suggestion}");
     }
 
     // -- Pilot seam budget disclosure tests ----------------------------------

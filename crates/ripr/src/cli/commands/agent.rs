@@ -23,7 +23,7 @@ use crate::cli::commands_agent_support::{
     validate_agent_verify_snapshot_path,
 };
 use crate::cli::commands_context::{ensure_command_root, load_root_input_and_config};
-use crate::config::load_for_root;
+use crate::config::{RiprConfig, load_for_root};
 use crate::output;
 use crate::output::human::terminal_safe;
 use std::io::{BufWriter, Write};
@@ -191,15 +191,27 @@ struct AgentStartWritten {
 fn write_agent_start(options: AgentStartOptions) -> Result<AgentStartWritten, String> {
     ensure_command_root(&options.root, "agent start")?;
     let (input, config) = load_root_input_and_config(&options.root)?;
+    let report = analysis::inventory_classified_seams_report_at_with_config(&input.root, &config)?;
+    write_agent_start_with_report(&options, &input, &config, &report)
+}
 
+/// `write_agent_start` over one caller-supplied inventory (#5301 item 1):
+/// the before phase shares a single `ClassifiedSeamsReport` across packet,
+/// start, and snapshot instead of reloading the same classified seams three
+/// times. The standalone route above loads its own report; the bytes are
+/// identical either way because the root and config are the same.
+fn write_agent_start_with_report(
+    options: &AgentStartOptions,
+    input: &app::CheckInput,
+    config: &RiprConfig,
+    report: &analysis::ClassifiedSeamsReport,
+) -> Result<AgentStartWritten, String> {
     let working_set = AgentBriefResolvedWorkingSet::seam_id(options.seam_id.clone());
-    let (classified, _) =
-        analysis::inventory_classified_seams_at_with_config(&input.root, &config)?;
     let selection = select_agent_brief_seams(
-        &classified,
+        &report.classified,
         &working_set,
         1,
-        AgentBriefPolicy::from_config(&config),
+        AgentBriefPolicy::from_config(config),
     );
     if selection.top_seams.is_empty() {
         return Err(format!(
@@ -216,7 +228,7 @@ fn write_agent_start(options: AgentStartOptions) -> Result<AgentStartWritten, St
     let agent_brief_json = output::agent_brief::render_agent_brief_json(
         &input.root,
         &input.mode,
-        &config,
+        config,
         &working_set,
         &selection,
     )?;
@@ -319,25 +331,41 @@ fn render_agent_packet_with_context(
         "agent packet requires --seam-id or --gap-ledger with --gap-id".to_string()
     })?;
     let config = load_for_root(&options.root)?;
-    let (classified, _) =
-        analysis::inventory_classified_seams_at_with_config(&options.root, &config)?;
-    let entry = classified
+    let report =
+        analysis::inventory_classified_seams_report_at_with_config(&options.root, &config)?;
+    render_agent_packet_for_seam_with_report(&options.root, seam_id, &config, &report, context)
+}
+
+/// The `--seam-id` packet route over one caller-supplied inventory (#5301
+/// item 1): the before phase shares a single `ClassifiedSeamsReport` across
+/// packet, start, and snapshot instead of reloading the same classified
+/// seams three times. The standalone route above loads its own report; the
+/// bytes are identical either way because the root and config are the same.
+fn render_agent_packet_for_seam_with_report(
+    root: &Path,
+    seam_id: &str,
+    config: &RiprConfig,
+    report: &analysis::ClassifiedSeamsReport,
+    context: output::agent_seam_packets::PacketCommandContext<'_>,
+) -> Result<String, String> {
+    let entry = report
+        .classified
         .iter()
         .find(|entry| entry.seam.id().as_str() == seam_id)
         .ok_or_else(|| {
             format!(
                 "agent packet seam_id {seam_id} was not found. {}",
-                unknown_seam_id_hint(&options.root, seam_id)
+                unknown_seam_id_hint(root, seam_id)
             )
         })?;
 
-    let policy = AgentBriefPolicy::from_config(&config);
+    let policy = AgentBriefPolicy::from_config(config);
     if let Some(reason) = policy.omission_reason_for_class(entry.class) {
         // #4332: a policy-omitted seam is a dead end without the listing
         // route; name it like the not-found refusals do.
         return Err(format!(
             "agent packet seam_id {seam_id} {reason}. {}",
-            unknown_seam_id_hint(&options.root, seam_id)
+            unknown_seam_id_hint(root, seam_id)
         ));
     }
 
@@ -376,11 +404,16 @@ fn render_agent_verify(options: &AgentVerifyOptions) -> Result<String, String> {
         &before_identity.currentness,
         &after_identity.currentness,
     );
-    let report = output::outcome::targeted_test_outcome_report_from_json(
+    // Both snapshots validated above, so the report reuses the validated
+    // heads instead of re-parsing each document a fourth time (#5301
+    // item 7).
+    let report = output::outcome::targeted_test_outcome_report_from_json_with_heads(
         &before_json,
         &after_json,
         agent_identity_path(&options.before),
         agent_identity_path(&options.after),
+        Some(before_identity.repository_head),
+        Some(after_identity.repository_head),
     )?;
     // Bind the verify result to the exact artifact bytes it compared (#2922
     // PR B): the validated content commitments ride in canonical output so a
@@ -588,7 +621,9 @@ fn resolve_agent_receipt_out_path(root: &Path, out: &Path) -> Result<PathBuf, St
     Ok(base.join(out))
 }
 
-fn run_agent_status(options: AgentStatusOptions) -> Result<(), String> {
+/// Shared with the task-first `ripr status` façade (#6305): both spellings
+/// build and render the same status services.
+pub(in crate::cli) fn run_agent_status(options: AgentStatusOptions) -> Result<(), String> {
     ensure_command_root(&options.root, "agent status")?;
 
     // The report inspects the fixed `target/ripr/workflow` and
@@ -702,7 +737,10 @@ pub(in crate::cli) fn run_before_repair_with_identity(
     run_agent_repair_with_identity(options, Some(identity))
 }
 
-fn run_agent_repair_with_identity(
+/// Shared with the task-first `ripr continue` façade (#6305): both
+/// spellings run the same after-phase service with the same refusal
+/// recording and artifact resolution.
+pub(in crate::cli) fn run_agent_repair_with_identity(
     options: AgentRepairOptions,
     identity: Option<&crate::app::repair_attempt::BeforeRepairAttemptIdentity>,
 ) -> Result<(), CommandError> {
@@ -1062,15 +1100,24 @@ fn run_agent_repair_phase(
             // packet names no test file ripr may edit refuses here, before any
             // workflow artifact is written, so neither this phase nor
             // `ripr agent status` reads as a started repair.
+            //
+            // #5301 item 1: one inventory for the whole before phase. Packet,
+            // start, and snapshot each resolved the same (root, config) and
+            // reloaded the same classified seams; the shared report below
+            // feeds all three, so a warm before phase pays one cache load
+            // instead of three. The load precedes admission but writes no
+            // workflow artifact, so F15-12 still holds.
             let packet_root = crate::agent::loop_commands::bound_root(&root.to_string_lossy());
-            let packet = render_agent_packet_with_context(
-                &AgentPacketOptions {
-                    root: root.clone(),
-                    seam_id: Some(seam_id.clone()),
-                    gap_ledger: None,
-                    gap_id: None,
-                    json: true,
-                },
+            let (before_input, before_config) = load_root_input_and_config(&root)?;
+            let before_report = analysis::inventory_classified_seams_report_at_with_config(
+                &before_input.root,
+                &before_config,
+            )?;
+            let packet = render_agent_packet_for_seam_with_report(
+                &root,
+                &seam_id,
+                &before_config,
+                &before_report,
                 output::agent_seam_packets::PacketCommandContext::Prepared {
                     root: &packet_root,
                     attempt_id: identity.attempt_id(),
@@ -1121,12 +1168,17 @@ fn run_agent_repair_phase(
             // packet. The start step's `Next: ripr check ...` hint is dropped
             // because this phase writes that before snapshot itself; printing
             // it sent users to redo it.
-            let started = write_agent_start(AgentStartOptions {
-                root: root.clone(),
-                seam_id: seam_id.clone(),
-                out_dir: std::path::PathBuf::from("target/ripr/workflow"),
-                json: false,
-            })?;
+            let started = write_agent_start_with_report(
+                &AgentStartOptions {
+                    root: root.clone(),
+                    seam_id: seam_id.clone(),
+                    out_dir: std::path::PathBuf::from("target/ripr/workflow"),
+                    json: false,
+                },
+                &before_input,
+                &before_config,
+                &before_report,
+            )?;
             for path in &started.paths {
                 eprintln!(
                     "{}",
@@ -1135,7 +1187,12 @@ fn run_agent_repair_phase(
             }
 
             let before = root.join("target/ripr/workflow/before.repo-exposure.json");
-            write_agent_repo_exposure_snapshot(&root, &before)?;
+            write_agent_repo_exposure_snapshot_with_report(
+                &root,
+                &before_config,
+                before_report,
+                &before,
+            )?;
 
             let packet_path = root.join("target/ripr/workflow/agent-packet.json");
             write_text_file(&packet_path, &packet)?;
@@ -1708,6 +1765,22 @@ fn write_agent_analysis_outcome(root: &Path) -> Result<(), String> {
 fn write_agent_repo_exposure_snapshot(root: &Path, path: &Path) -> Result<(), String> {
     let config = load_for_root(root)?;
     let report = analysis::inventory_classified_seams_report_at_with_config(root, &config)?;
+    write_agent_repo_exposure_snapshot_with_report(root, &config, report, path)
+}
+
+/// `write_agent_repo_exposure_snapshot` over one caller-supplied inventory
+/// (#5301 item 1): the before phase shares a single
+/// `ClassifiedSeamsReport` across packet, start, and snapshot instead of
+/// reloading the same classified seams three times. The report moves in as
+/// the last consumer; the standalone and after-phase routes above load their
+/// own report. The bytes are identical either way because the root and
+/// config are the same.
+fn write_agent_repo_exposure_snapshot_with_report(
+    root: &Path,
+    config: &RiprConfig,
+    report: analysis::ClassifiedSeamsReport,
+    path: &Path,
+) -> Result<(), String> {
     let ts_guidance = output::render::detect_ts_full_repo_guidance_pub(root, &report.classified);
     let python_guidance =
         output::render::detect_python_repo_exposure_guidance_pub(root, &report.classified);
@@ -1719,7 +1792,7 @@ fn write_agent_repo_exposure_snapshot(root: &Path, path: &Path) -> Result<(), St
         root.to_path_buf(),
         "ready".to_string(),
         None,
-        &config,
+        config,
     )?;
     if let Some(parent) = path
         .parent()
@@ -2182,7 +2255,16 @@ fn before_phase_summary(packet: &str, packet_path: &str) -> Option<String> {
     if let Some(missing) = text("/missing_discriminators/0/value") {
         lines.push(format!("  missing discriminator: {missing}"));
     }
+    let inline_module_target = !crate::analysis::is_test_surface_path(test_file);
     match text("/recommended_test/name") {
+        // #5210: a production file is routed only as its inline test module,
+        // where the cage admits nothing but newly inserted test functions.
+        Some(name) if inline_module_target => lines.push(format!(
+            "  add one new test function (suggested `{name}`) inside the existing `#[cfg(test)]` module of {test_file}; leave production code, the module declaration, and existing tests unchanged"
+        )),
+        None if inline_module_target => lines.push(format!(
+            "  add one new test function inside the existing `#[cfg(test)]` module of {test_file}; leave production code, the module declaration, and existing tests unchanged"
+        )),
         Some(name) => lines.push(format!(
             "  edit one test file: {test_file} (suggested test `{name}`); leave production code unchanged"
         )),

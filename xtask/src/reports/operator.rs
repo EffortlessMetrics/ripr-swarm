@@ -4,7 +4,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 #[path = "../../../crates/ripr/src/agent/loop_commands.rs"]
-mod loop_commands;
+pub(super) mod loop_commands;
 
 const TOP_WEAK_SEAMS_LIMIT: usize = 5;
 const BEFORE_SNAPSHOT_COMMAND: &str = "ripr pilot --out target/ripr/pilot";
@@ -234,6 +234,23 @@ fn keep_shared_loop_templates_reachable() {
             loop_commands::WORKFLOW_AGENT_BRIEF_ARTIFACT,
         ),
         loop_commands::agent_start_command(".", "seam-id", "target/ripr/workflow"),
+        loop_commands::portable_agent_brief_command(
+            ".",
+            "seam-id",
+            loop_commands::WORKFLOW_AGENT_BRIEF_ARTIFACT,
+        ),
+        loop_commands::portable_check_analysis_outcome_command_with_base(
+            ".",
+            None,
+            "draft",
+            loop_commands::WORKFLOW_ANALYSIS_OUTCOME_ARTIFACT,
+        ),
+        loop_commands::portable_agent_verify_command(
+            ".",
+            loop_commands::WORKFLOW_BEFORE_SNAPSHOT_ARTIFACT,
+            loop_commands::WORKFLOW_AFTER_SNAPSHOT_ARTIFACT,
+            Some(loop_commands::WORKFLOW_AGENT_VERIFY_ARTIFACT),
+        ),
         loop_commands::check_analysis_outcome_command(
             ".",
             "draft",
@@ -1100,6 +1117,18 @@ fn usize_value(value: Option<&Value>) -> Option<usize> {
         .and_then(|value| usize::try_from(value).ok())
 }
 
+/// Cwd read guard for `loop_commands` tests included here via `#[path]`.
+///
+/// Those tests cannot name `crate::acquire_test_cwd_read_guard` when the
+/// same file is compiled as `ripr::agent::loop_commands`. The ripr parent
+/// supplies `testing::cwd_lock::hold_cwd()`; xtask must hold this lock so
+/// `--root .` redirect render and expectation cannot race with
+/// `with_temp_cwd` (#7034).
+#[cfg(test)]
+fn loop_commands_cwd_read_guard() -> impl Drop {
+    crate::acquire_test_cwd_read_guard()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1390,6 +1419,10 @@ mod tests {
 
     #[test]
     fn operator_cockpit_matches_editor_agent_loop_fixture() -> Result<(), String> {
+        // Hold across report render and `<cwd>/` projection: both read
+        // `current_dir()`, and other `editor_` tests switch CWD under the
+        // write guard (#7034).
+        let _cwd_guard = crate::acquire_test_cwd_read_guard();
         let root = temp_report_dir("editor-agent-loop")?;
         let dir = root.join("target/ripr/reports");
         fs::create_dir_all(&dir)

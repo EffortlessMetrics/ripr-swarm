@@ -22,8 +22,8 @@ use crate::app::pr_evidence::PR_EVIDENCE_HELP;
 use crate::app::pr_summary::PR_SUMMARY_HELP;
 use crate::app::ripr_plus::PLUS_HELP;
 use crate::cli::commands::{
-    CACHE_CLEAR_HELP, CACHE_STATUS_HELP, FEEDBACK_EXPORT_HELP, FEEDBACK_RECORD_HELP,
-    RECEIPT_CHECK_HELP, RECEIPT_WRITE_HELP,
+    CACHE_CLEAR_HELP, CACHE_STATUS_HELP, CONTINUE_HELP, FEEDBACK_EXPORT_HELP, FEEDBACK_RECORD_HELP,
+    RECEIPT_CHECK_HELP, RECEIPT_WRITE_HELP, REPAIR_HELP, STATUS_HELP,
 };
 use crate::output::first_pr::FIRST_PR_HELP;
 
@@ -61,6 +61,7 @@ const REGISTERED_COMMAND_PATHS: &[&str] = &[
     "check",
     "config validate",
     "context",
+    "continue",
     "coverage-grip frontier",
     "diff",
     "doctor",
@@ -94,6 +95,7 @@ const REGISTERED_COMMAND_PATHS: &[&str] = &[
     "pr-summary",
     "receipt check",
     "receipt write",
+    "repair",
     "reports ci-packet",
     "reports ci-summary",
     "reports gap-ledger",
@@ -102,6 +104,7 @@ const REGISTERED_COMMAND_PATHS: &[&str] = &[
     "reports ts-limitations",
     "rerun",
     "review-comments",
+    "status",
     "swarm ingest",
     "swarm queue",
     "zero status",
@@ -135,6 +138,7 @@ pub(super) fn help_text_for(command: &str) -> Option<&'static str> {
         "check" => CHECK_HELP,
         "config validate" => CONFIG_HELP,
         "context" => CONTEXT_HELP,
+        "continue" => CONTINUE_HELP,
         "coverage-grip frontier" => COVERAGE_GRIP_HELP,
         "diff" => DIFF_HELP,
         "doctor" => DOCTOR_HELP,
@@ -166,6 +170,7 @@ pub(super) fn help_text_for(command: &str) -> Option<&'static str> {
         "pr-summary" => PR_SUMMARY_HELP,
         "receipt check" => RECEIPT_CHECK_HELP,
         "receipt write" => RECEIPT_WRITE_HELP,
+        "repair" => REPAIR_HELP,
         "reports ci-packet"
         | "reports ci-summary"
         | "reports gap-ledger"
@@ -174,6 +179,7 @@ pub(super) fn help_text_for(command: &str) -> Option<&'static str> {
         | "reports ts-limitations" => REPORTS_HELP,
         "rerun" => RERUN_HELP,
         "review-comments" => REVIEW_COMMENTS_HELP,
+        "status" => STATUS_HELP,
         "swarm ingest" => SWARM_INGEST_HELP,
         "swarm queue" => SWARM_QUEUE_HELP,
         "zero status" => ZERO_HELP,
@@ -395,13 +401,13 @@ mod tests {
     }
     use super::{
         AGENT_BRIEF_HELP, AGENT_CARD_HELP, AGENT_HELP, AGENT_PACKET_HELP, AGENT_RECEIPT_HELP,
-        AGENT_REVIEW_SUMMARY_HELP, AGENT_START_HELP, AGENT_STATUS_HELP, AGENT_VERIFY_HELP,
-        ANNOTATIONS_HELP, ASSISTANT_LOOP_HELP, BASELINE_HELP, CACHE_CLEAR_HELP, CACHE_STATUS_HELP,
-        CALIBRATE_HELP, CHECK_HELP, CONFIG_HELP, CONTEXT_HELP, COVERAGE_GRIP_HELP, DIFF_HELP,
-        DOCTOR_HELP, EVIDENCE_HEALTH_HELP, EXPLAIN_HELP, FEEDBACK_EXPORT_HELP,
-        FEEDBACK_RECORD_HELP, FIRST_ACTION_HELP, FIRST_PR_HELP, GATE_HELP, HELP, HELP_ALL,
-        IMPACTED_EVIDENCE_HELP, INIT_HELP, LSP_HELP, OUTCOME_HELP, PILOT_HELP, PLUS_HELP,
-        POLICY_HELP, PR_COMMENTS_HELP, PR_EVIDENCE_HELP, PR_LEDGER_HELP, PR_REVIEW_HELP,
+        AGENT_REPAIR_HELP, AGENT_REVIEW_SUMMARY_HELP, AGENT_START_HELP, AGENT_STATUS_HELP,
+        AGENT_VERIFY_HELP, ANNOTATIONS_HELP, ASSISTANT_LOOP_HELP, BASELINE_HELP, CACHE_CLEAR_HELP,
+        CACHE_STATUS_HELP, CALIBRATE_HELP, CHECK_HELP, CONFIG_HELP, CONTEXT_HELP,
+        COVERAGE_GRIP_HELP, DIFF_HELP, DOCTOR_HELP, EVIDENCE_HEALTH_HELP, EXPLAIN_HELP,
+        FEEDBACK_EXPORT_HELP, FEEDBACK_RECORD_HELP, FIRST_ACTION_HELP, FIRST_PR_HELP, GATE_HELP,
+        HELP, HELP_ALL, IMPACTED_EVIDENCE_HELP, INIT_HELP, LSP_HELP, OUTCOME_HELP, PILOT_HELP,
+        PLUS_HELP, POLICY_HELP, PR_COMMENTS_HELP, PR_EVIDENCE_HELP, PR_LEDGER_HELP, PR_REVIEW_HELP,
         PR_SUMMARY_HELP, REPORTS_HELP, RERUN_HELP, REVIEW_COMMENTS_HELP, SWARM_HELP,
         SWARM_INGEST_HELP, SWARM_QUEUE_HELP, ZERO_HELP, print_agent_brief_help,
         print_agent_card_help, print_agent_help, print_agent_packet_help, print_agent_receipt_help,
@@ -463,6 +469,9 @@ mod tests {
         assert!(HELP_ALL.contains("ripr agent receipt"));
         assert!(HELP_ALL.contains("ripr agent status"));
         assert!(HELP_ALL.contains("ripr agent review-summary"));
+        assert!(HELP_ALL.contains("ripr repair [<item>] [--root PATH]"));
+        assert!(HELP_ALL.contains("ripr continue [--attempt ID] [--root PATH]"));
+        assert!(HELP_ALL.contains("ripr status [--attempt ID] [--root PATH] [--json]"));
         assert!(HELP_ALL.contains("ripr swarm queue"));
         assert!(HELP_ALL.contains("ripr swarm ingest"));
         assert!(HELP_ALL.contains("ripr plus"));
@@ -521,6 +530,18 @@ mod tests {
         // The advisory boundary belongs on the first screen; a reader should not
         // have to opt into `--all` to learn that ripr does not run mutants.
         assert!(HELP.contains("does not run mutants"));
+    }
+
+    /// #6305: short help is task-first — the repair task routes through the
+    /// façade, and the internal phase route stays out of the first screen.
+    #[test]
+    fn help_overview_routes_repair_through_the_facade() {
+        assert!(HELP.contains("ripr repair [<item>]"));
+        assert!(HELP.contains("ripr continue"));
+        assert!(
+            !HELP.contains("agent repair"),
+            "short help must not teach the internal phase route first"
+        );
     }
 
     /// The machine catalog is a first-screen discovery route (#5266). A
@@ -636,6 +657,16 @@ mod tests {
         // index scope, so a caller can predict the wall-clock difference.
         assert!(CHECK_HELP.contains("Cost class: whole-workspace modes"));
         assert!(CHECK_HELP.contains("order of magnitude longer"));
+    }
+
+    #[test]
+    fn repair_help_names_the_persist_latency_trace_env() {
+        // #6897, same #4946(d) rule as the check surface: every env var a
+        // repair user can set is documented on the same
+        // "Environment variables:" surface.
+        assert!(AGENT_REPAIR_HELP.contains("RIPR_PERSIST_LATENCY_TRACE"));
+        assert!(AGENT_REPAIR_HELP.contains("emits diagnostic persist-phase"));
+        assert!(AGENT_REPAIR_HELP.contains("Presence enables"));
     }
 
     #[test]
@@ -1026,6 +1057,7 @@ mod tests {
     const CACHE_PARSER_RS: &str = include_str!("commands/cache.rs");
     const RECEIPT_PARSER_RS: &str = include_str!("commands/receipt.rs");
     const FEEDBACK_PARSER_RS: &str = include_str!("commands/feedback.rs");
+    const TASK_FIRST_PARSER_RS: &str = include_str!("commands/task_first.rs");
     const POLICY_PARSE_RS: &str = include_str!("commands/policy/parse.rs");
     const SWARM_QUEUE_PARSER_RS: &str = include_str!("commands/swarm/queue.rs");
     const SWARM_INGEST_PARSER_RS: &str = include_str!("commands/swarm/ingest.rs");
@@ -1142,6 +1174,7 @@ mod tests {
             &["config", "parse_validate_root"],
         ),
         ("context", CONTEXT_PARSER_RS, &["context"]),
+        ("continue", TASK_FIRST_PARSER_RS, &["parse_continue_args"]),
         (
             "coverage-grip frontier",
             CLI_COMMANDS_RS,
@@ -1267,6 +1300,7 @@ mod tests {
             RECEIPT_PARSER_RS,
             &["parse_receipt_write_options"],
         ),
+        ("repair", TASK_FIRST_PARSER_RS, &["parse_repair_args"]),
         (
             "reports ci-packet",
             CI_PACKET_PARSER_RS,
@@ -1303,6 +1337,7 @@ mod tests {
             REVIEW_COMMENTS_PARSER_RS,
             &["parse_review_comments_options"],
         ),
+        ("status", TASK_FIRST_PARSER_RS, &["parse_status_args"]),
         ("swarm ingest", SWARM_INGEST_PARSER_RS, &["parse_options"]),
         ("swarm queue", SWARM_QUEUE_PARSER_RS, &["parse_options"]),
         (

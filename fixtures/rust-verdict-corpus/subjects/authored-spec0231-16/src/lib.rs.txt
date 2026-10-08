@@ -1,0 +1,16 @@
+pub fn emit(n: u32) -> Vec<u32> {
+    let mut events = Vec::new();
+    events.push(n * 2);
+    events
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn emit_records_an_event() {
+        let events = emit(3);
+        assert!(!events.is_empty());
+    }
+}

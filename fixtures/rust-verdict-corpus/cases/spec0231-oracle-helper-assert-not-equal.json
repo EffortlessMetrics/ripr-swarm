@@ -1,0 +1,61 @@
+{
+  "case_id": "spec0231-oracle-helper-assert-not-equal",
+  "subject_id": "authored-spec0231-11",
+  "diff": "cases/spec0231-oracle-helper-assert-not-equal.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 2
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "scalar_return_value",
+  "test_shape": "custom_helper_inequality",
+  "hard_case": "ripr reports exact_value / strong for the helper call (name ends in 'equal'); the spec adopts relational_check / weak (measured defect, rules 1 and 6). ripr also attributes the helper body's assert!(a != b) to the test as a second related_tests entry (relational_check / weak), so related_tests_total is 2 for one test.",
+  "truth": {
+    "state": "partially_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "x * 3",
+        "mutated_line": "x * 3",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: score(2) becomes 6 (the spec's changed-from value)"
+      },
+      {
+        "replacement": "x * 0",
+        "mutated_line": "x * 0",
+        "outcome": "tests_failed",
+        "failing_test": "tests::score_is_not_zero",
+        "equivalence_review": "not equivalent: score(2) becomes 0"
+      },
+      {
+        "replacement": "x - 2",
+        "mutated_line": "x - 2",
+        "outcome": "tests_failed",
+        "failing_test": "tests::score_is_not_zero",
+        "equivalence_review": "not equivalent: score(2) becomes 0"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "The helper only rejects equality with 0: x * 0 and x - 2 fail it, x * 3 passes. Spec cells: RIPR-SPEC-0231 example 11; spec-adopted oracle relational_check / weak.",
+  "labeling_observation": {
+    "ripr_commit": "96c1a18e9",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0231#11"
+  ]
+}

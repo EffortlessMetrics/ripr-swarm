@@ -111,6 +111,7 @@ fn check_output(findings: Vec<Finding>) -> CheckOutput {
         suppression: None,
         analysis_outcome: None,
         partial_scope: None,
+        analyzed_revisions: None,
     }
 }
 
@@ -134,7 +135,7 @@ fn classified_seam(class: SeamGripClass) -> ClassifiedSeam {
     ClassifiedSeam {
         evidence: TestGripEvidence {
             seam_id: seam.id().clone(),
-            related_tests: vec![RelatedTestGrip {
+            related_tests: vec![std::sync::Arc::new(RelatedTestGrip {
                 test_name: "discounted_total_boundary".to_string(),
                 file: PathBuf::from("tests/pricing.rs"),
                 line: 8,
@@ -148,7 +149,7 @@ fn classified_seam(class: SeamGripClass) -> ClassifiedSeam {
                 evidence_summary: "exact return assertion".to_string(),
                 relation_reason: RelationReason::DirectOwnerCall,
                 relation_confidence: RelationConfidence::High,
-            }],
+            })],
             reach: stage(StageState::Yes),
             activate: stage(StageState::Yes),
             propagate: stage(StageState::Yes),
@@ -161,6 +162,7 @@ fn classified_seam(class: SeamGripClass) -> ClassifiedSeam {
                 flow_sink: None,
             }],
             new_test_target: None,
+            statically_contradicted_related_tests: 0,
         },
         seam,
         class,
@@ -1895,6 +1897,7 @@ fn check_output_with_preview_advisory(
         suppression: None,
         analysis_outcome: None,
         partial_scope: None,
+        analyzed_revisions: None,
     }
 }
 

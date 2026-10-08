@@ -1,0 +1,17 @@
+pub fn limit(base: u32) -> u32 {
+    base * 5
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    #[allow(unnameable_test_items)]
+    fn limit_suite() {
+        #[test]
+        fn limit_is_ten() {
+            assert_eq!(limit(2), 10);
+        }
+    }
+}

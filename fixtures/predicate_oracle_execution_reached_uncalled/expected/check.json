@@ -11,6 +11,18 @@
   "findings": [
     {
       "id": "probe:src_lib.rs:predicate:c80557eb",
+      "canonical_gap_id": "gap:rust:src/lib.rs:discounted_total:predicate_boundary:predicate:amount==discount_threshold",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:discounted_total:predicate_boundary:predicate:amount==discount_threshold",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "discounted_total",
+        "behavior_kind": "predicate_boundary",
+        "probe_kind": "predicate",
+        "normalized_discriminator": "amount==discount_threshold"
+
+      },
       "classification": "reachable_unrevealed",
       "severity": "warning",
       "confidence": 0.79,
@@ -18,7 +30,7 @@
         "id": "probe:src_lib.rs:predicate:c80557eb",
         "family": "predicate",
         "delta": "control",
-        "file": "fixtures/predicate_oracle_execution_reached_uncalled/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 2,
         "expression": "amount >= discount_threshold"
        },
@@ -33,8 +45,8 @@
       "flow_sinks": [
         {"kind":"return_value","text":"amount - 10","line":3}
       ],
-      "evidence": ["Changed behavior appears to influence returned value: amount - 10", "Detected related test input at the changed boundary", "No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)", "No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)", "Related tests appear to reach discounted_total: equality_threshold_discounts"],
-      "missing": ["No detected assertion observes the changed value, error, field, or effect", "No relevant oracle was detected", "No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)", "No strong discriminator was detected"],
+      "evidence": ["Changed behavior appears to influence returned value: amount - 10", "Detected related test input at the changed boundary", "No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)", "No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)", "Related tests appear to reach discounted_total: equality_threshold_discounts", "assertion not credited: `assert_eq!` in equality_threshold_discounts at src/lib.rs:15: the assertion is inside a closure ripr cannot see invoked exactly once"],
+      "missing": ["No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)", "No strong discriminator was detected"],
       "assertion_texts": {
         "14": "let _ = discounted_total(100, 100);",
         "15": "assert_eq!(discounted_total(100, 100), 90);"
@@ -145,8 +157,8 @@
       "stop_reasons": [],
       "oracle_kind": "unknown",
       "oracle_strength": "none",
-      "recommended_next_step": "Establish that the test is collected and enabled, that the assertion runs on its executed path, and that it resolves to the intended standard macro, then check the changed returned value.",
-      "suggested_next_action": "Establish that the test is collected and enabled, that the assertion runs on its executed path, and that it resolves to the intended standard macro, then check the changed returned value.",
+      "recommended_next_step": "ripr did not credit the `assert_eq!` in equality_threshold_discounts at src/lib.rs:15; the \"not credited\" note says why. That shape can keep the assertion from checking the change, so this is not a static limit: make the check run on every default test run, as the standard `assert_eq!`, in a test expected to pass.",
+      "suggested_next_action": "ripr did not credit the `assert_eq!` in equality_threshold_discounts at src/lib.rs:15; the \"not credited\" note says why. That shape can keep the assertion from checking the change, so this is not a static limit: make the check run on every default test run, as the standard `assert_eq!`, in a test expected to pass.",
       "language": "rust",
       "source_currentness": "candidate_current"
     }

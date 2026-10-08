@@ -1,0 +1,51 @@
+{
+  "case_id": "grid-results-swallowed-err",
+  "subject_id": "authored-grid-results",
+  "diff": "cases/grid-results-swallowed-err.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 25
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "error_path",
+  "test_shape": "swallowed_err_arm_match",
+  "hard_case": null,
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "return Err(PayError::Limit);",
+        "mutated_line": "return Err(PayError::Limit);",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: refund(10, 20) is Err(Limit) instead of Err(Insufficient); the empty Err arm accepts both"
+      },
+      {
+        "replacement": "return Ok(0);",
+        "mutated_line": "return Ok(0);",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: refund(10, 20) is Ok(0) instead of Err; the Ok arm's assert_eq!(left, 0) passes"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "Error return observed only through a match whose Err arm is empty. RIPR-SPEC-0175 says an arm that returns normally swallows the error and must not be credited. Neither mutant fails: the Err arm accepts any variant and Ok(0) satisfies the Ok arm's assert_eq; Ok(0) is listed as the one Ok value that arm accepts, and an Ok(1) would be caught. ripr reaches its gap because owner-pin admission refuses the Ok arm's assert_eq!, not through RIPR-SPEC-0175. 0 of 2 listed mutants fail cargo test. Spec cells: RIPR-SPEC-0175.",
+  "labeling_observation": {
+    "ripr_commit": "fddf363",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "reachable_unrevealed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

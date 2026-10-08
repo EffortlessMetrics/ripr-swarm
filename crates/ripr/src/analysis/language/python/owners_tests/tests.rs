@@ -221,7 +221,7 @@ fn non_underscore_names_preserve_selectors_and_owner_relations() -> Result<(), S
         .iter()
         .find(|owner| owner.qualified_name == "price")
         .ok_or_else(|| "fixture must produce the price owner".to_string())?;
-    let related = find_related_tests(owner, &tests);
+    let related = find_related_tests(owner, &tests, None);
     let mut names = related
         .iter()
         .map(|test| test.name.as_str())

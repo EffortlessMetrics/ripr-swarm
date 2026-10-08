@@ -9,4 +9,4 @@
   apostrophe or backtick in a root or branch stays one argument in Bash and
   PowerShell. The missing-base fetch names the repository with `git -C`,
   fetches with an explicit refspec and runs before the rerun. Older packets
-  keep their `next_command` presentation.
+  keep their `next_command` presentation (#5338).

@@ -1,0 +1,52 @@
+{
+  "case_id": "tokens-long-flag-strip-prefix",
+  "subject_id": "authored-tokens",
+  "diff": "cases/tokens-long-flag-strip-prefix.diff",
+  "anchor": {
+    "file": "src/flow.rs",
+    "line": 15
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "literal_through_strip_prefix_boundary",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "name.len() > 2",
+        "mutated_line": "name.len() > 2",
+        "outcome": "tests_failed",
+        "failing_test": "flow::tests::long_flags_have_two_letters",
+        "equivalence_review": "not equivalent: --ab stops being long"
+      },
+      {
+        "replacement": "name.len() >= 1",
+        "mutated_line": "name.len() >= 1",
+        "outcome": "tests_failed",
+        "failing_test": "flow::tests::long_flags_have_two_letters",
+        "equivalence_review": "not equivalent: --a becomes long"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "--ab and --a straddle the two-letter boundary after strip_prefix, so both shifts fail the test. Spec cells: RIPR-SPEC-0158.",
+  "labeling_observation": {
+    "ripr_commit": "b0c6ef6",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}
