@@ -3412,8 +3412,7 @@ pub(crate) const GENERATED_CI_PACKET_INDEX_REPAIR: &str = "Regenerate command: `
 
 const GENERATED_CI_JOB_CONTINUE_ON_ERROR: &str =
     "continue-on-error: ${{ vars.RIPR_GATE_MODE == '' || vars.RIPR_GATE_MODE == 'visible-only' }}";
-const GENERATED_CI_SUMMARY_STEP_HEAD: &str =
-    "      - name: Add RIPR advisory summary\n        if: always()";
+const GENERATED_CI_SUMMARY_STEP_HEAD: &str = "      - name: Add RIPR advisory summary\n        if: always()\n        continue-on-error: true";
 const GENERATED_CI_SUMMARY_INVOKE: &str =
     "ripr reports ci-summary --root . >> \"$GITHUB_STEP_SUMMARY\"";
 const GENERATED_CI_TYPESCRIPT_GROUPING_ROW: &str = "- `typescript`: artifact_entries=`1`, preview_entries=`1`, missing_preview_status=`0`, static_limit_entries=`0`, classifications=`weakly_exposed=1`, static_limit_kinds=`none`, actionability_states=`actionable=1`, actionability_categories=`none`, repair_packet_ready=`1`, gate_impact=`none`";
@@ -3541,8 +3540,8 @@ pub(crate) fn dogfood_generated_ci_cockpit_run_from_surfaces(
     let expected_repair_commands = 4usize;
     let gate_authority_boundary =
         summary.contains("ripr gate evaluate") && summary.contains("Gate authority:");
-    let summary_step = workflow.contains(GENERATED_CI_SUMMARY_STEP_HEAD)
-        && workflow.contains(GENERATED_CI_SUMMARY_INVOKE);
+    let summary_step_head = workflow.contains(GENERATED_CI_SUMMARY_STEP_HEAD);
+    let summary_invoke = workflow.contains(GENERATED_CI_SUMMARY_INVOKE);
     let default_advisory = workflow.contains(GENERATED_CI_JOB_CONTINUE_ON_ERROR)
         && summary.contains("RIPR is advisory static evidence");
     let artifact_upload =
@@ -3577,7 +3576,13 @@ pub(crate) fn dogfood_generated_ci_cockpit_run_from_surfaces(
     if !artifact_upload {
         errors.push("generated CI must upload the report artifact packet".to_string());
     }
-    if !summary_step {
+    if !summary_step_head {
+        errors.push(
+            "generated CI advisory summary step must run if: always() and continue-on-error: true"
+                .to_string(),
+        );
+    }
+    if !summary_invoke {
         errors.push(
             "generated CI must invoke ripr reports ci-summary into the step summary".to_string(),
         );

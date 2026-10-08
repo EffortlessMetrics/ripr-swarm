@@ -20248,6 +20248,7 @@ jobs:
     steps:
       - name: Add RIPR advisory summary
         if: always()
+        continue-on-error: true
         run: |
           ripr reports ci-summary --root . >> \"$GITHUB_STEP_SUMMARY\"
       - uses: actions/upload-artifact@v7
@@ -20412,6 +20413,25 @@ RIPR is advisory static evidence. It does not edit source, generate tests, or ru
             .any(|error| error.contains("invoke ripr reports ci-summary")),
         "{:?}",
         disconnected.errors
+    );
+
+    let blocking_summary_step = dogfood_generated_ci_cockpit_run_from_surfaces(
+        "summary-step-without-continue-on-error",
+        command,
+        10,
+        &workflow.replace(
+            "      - name: Add RIPR advisory summary\n        if: always()\n        continue-on-error: true",
+            "      - name: Add RIPR advisory summary\n        if: always()\n        continue-on-error: false",
+        ),
+        &summary,
+    );
+    assert!(
+        blocking_summary_step
+            .errors
+            .iter()
+            .any(|error| error.contains("continue-on-error: true")),
+        "{:?}",
+        blocking_summary_step.errors
     );
 
     let blocking_job = workflow.replace(
