@@ -1,0 +1,59 @@
+{
+  "case_id": "grid-loop-helper",
+  "subject_id": "authored-grid-loop",
+  "diff": "cases/grid-loop-helper.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 30
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "loop_accumulator",
+  "test_shape": "helper_wrapped_assert",
+  "hard_case": "A changed compound assignment maps to no probe family and reads static_unknown (#6485).",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "points -= r;",
+        "mutated_line": "points -= r;",
+        "outcome": "tests_failed",
+        "failing_test": "tests::rolls_add_up",
+        "equivalence_review": "not equivalent: rolls_add_up fails on it"
+      },
+      {
+        "replacement": "points *= r;",
+        "mutated_line": "points *= r;",
+        "outcome": "tests_failed",
+        "failing_test": "tests::rolls_add_up",
+        "equivalence_review": "not equivalent: rolls_add_up fails on it"
+      },
+      {
+        "replacement": "(delete the statement)",
+        "mutated_line": "",
+        "outcome": "tests_failed",
+        "failing_test": "tests::rolls_add_up",
+        "equivalence_review": "not equivalent: rolls_add_up fails on it"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "Grid cell: loop accumulator (rewritten as `+=`; mutants change the operator or delete the statement) x helper_wrapped_assert. The test routes every assertion through a local check_* helper; 3 of 3 listed mutants fail cargo test. Spec cells: RIPR-SPEC-0197, RIPR-SPEC-0231.",
+  "labeling_observation": {
+    "ripr_commit": "1273096",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "static_unknown"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

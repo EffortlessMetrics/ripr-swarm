@@ -1389,9 +1389,6 @@ pub(crate) fn oracle_metadata_evidence_lines(
 pub(crate) fn collect_oracle_metadata_evidence_lines(
     probe_family: &ProbeFamily,
     candidates: &[TypeScriptRelatedCandidate<'_>],
-    owner: &TypeScriptOwner,
-    alias_map: Option<&TsAliasMap>,
-    workspace_root: Option<&Path>,
 ) -> Vec<String> {
     // Candidates observing an owner-name call: trusted relations by
     // construction, plus gate-denied relations whose test still calls the
@@ -1399,17 +1396,16 @@ pub(crate) fn collect_oracle_metadata_evidence_lines(
     // credit (see `candidate_observes_owner_call`).
     let strongest_assertion_with_file = candidates
         .iter()
-        .filter(|candidate| {
-            candidate_observes_owner_call(candidate, owner, alias_map, workspace_root)
+        .filter(|candidate| candidate_observes_owner_call(candidate))
+        // Each test contributes the assertion its related-test row shows
+        // (#5525), so the metadata and the row never describe different
+        // assertions of one test; across tests the last strongest wins, the
+        // same rule the repair packet uses to pick its target row.
+        .filter_map(|candidate| {
+            select_family_relevant_assertion(&candidate.test.assertions, Some(probe_family))
+                .assertion()
+                .map(|assertion| (assertion, &candidate.test.file))
         })
-        .flat_map(|candidate| {
-            candidate
-                .test
-                .assertions
-                .iter()
-                .map(move |assertion| (assertion, &candidate.test.file))
-        })
-        .filter(|(assertion, _)| ts_oracle_kind_matches_seam(&assertion.oracle_kind, probe_family))
         .max_by_key(|(assertion, _)| assertion.oracle_strength.rank());
 
     match strongest_assertion_with_file {

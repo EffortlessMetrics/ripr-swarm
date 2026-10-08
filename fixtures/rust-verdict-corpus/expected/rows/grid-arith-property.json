@@ -1,0 +1,22 @@
+{
+  "case_id": "grid-arith-property",
+  "subject_id": "authored-grid-arith",
+  "origin": "authored",
+  "anchor": "src/lib.rs:12",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "property_invariant_loop",
+  "hard_case": false,
+  "truth": "partially_discriminated",
+  "ideal_verdict": "gap",
+  "observed_verdict": "gap",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "weakly_exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

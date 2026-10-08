@@ -1,0 +1,11 @@
+diff --git a/src/ramps.rs b/src/ramps.rs
+index 0cd526c..3438379 100644
+--- a/src/ramps.rs
++++ b/src/ramps.rs
+@@ -1,5 +1,5 @@
+ pub fn ramp(base: u32) -> u32 {
+-    base * 29
++    29 * base
+ }
+ 
+ #[cfg(test)]

@@ -59,7 +59,9 @@ fn context_rank(context: &ValueContext) -> u8 {
         ValueContext::FunctionArgument => 0,
         ValueContext::TableRow => 1,
         ValueContext::BuilderMethod => 2,
-        ValueContext::EnumVariant => 3,
+        // Constants were labelled enum variants before #5357; they keep
+        // that tier so the cap retains the same values.
+        ValueContext::EnumVariant | ValueContext::Constant => 3,
         ValueContext::ReturnValue => 4,
         ValueContext::AssertionArgument => 5,
         ValueContext::Unknown => 6,

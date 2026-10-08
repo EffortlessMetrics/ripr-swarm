@@ -1,3 +1,4 @@
+use super::assertion_selection::{PythonAssertionFocus, select_relevant_assertion};
 use super::related_tests::{
     PythonRelatedCandidate, body_calls_owner, dunder_method_class, is_python_identifier_char,
     line_prefix_looks_like_comment_or_string, test_may_reach_owner_class,
@@ -13,8 +14,29 @@ pub(super) struct PythonStaticLimit {
     pub(super) missing: String,
 }
 
+/// The static limit for a changed line without its old text. Callers that
+/// have the finding's assertion focus use [`static_limit_for_focused_change`]
+/// so a changed dict key is localized the same way the rows are.
+#[cfg(test)]
 pub(super) fn static_limit_for_change(
     line_text: &str,
+    owner: &PythonOwner,
+    related_candidates: &[PythonRelatedCandidate<'_>],
+) -> Option<PythonStaticLimit> {
+    let focus = PythonAssertionFocus::for_change(
+        super::probe_shape::classify_probe_shape(line_text).0,
+        line_text,
+        None,
+    );
+    static_limit_for_focused_change(line_text, &focus, owner, related_candidates)
+}
+
+/// `focus` is the one the finding's rows are selected with (#5572): only the
+/// assertion a row selects can suppress a test-side limit, so a strong
+/// sibling-field or other-family assertion never hides one.
+pub(super) fn static_limit_for_focused_change(
+    line_text: &str,
+    focus: &PythonAssertionFocus,
     owner: &PythonOwner,
     related_candidates: &[PythonRelatedCandidate<'_>],
 ) -> Option<PythonStaticLimit> {
@@ -104,7 +126,7 @@ pub(super) fn static_limit_for_change(
             missing: "Static limit `mocked_module`: a related Python test uses patch/mock/monkeypatch module syntax; the preview adapter does not resolve runtime substitution semantics.".to_string(),
         });
     }
-    if related_candidates_have_property_based_test_limit(related_candidates) {
+    if related_candidates_have_property_based_test_limit(related_candidates, focus) {
         return Some(PythonStaticLimit {
             kind: StaticLimitKind::PropertyBasedTest,
             evidence: "static_limit property_based_test: related test uses generated inputs"
@@ -121,7 +143,7 @@ pub(super) fn static_limit_for_change(
             missing: "Static limit `unresolved_pytest_fixture`: a related pytest test depends on fixture-sourced values; syntax-first preview evidence cannot prove whether the fixture supplies the changed discriminator or expected value.".to_string(),
         });
     }
-    if related_candidates_have_opaque_custom_assertion_limit(related_candidates) {
+    if related_candidates_have_opaque_custom_assertion_limit(related_candidates, focus) {
         return Some(PythonStaticLimit {
             kind: StaticLimitKind::OpaqueCustomAssertionHelper,
             evidence: "static_limit opaque_custom_assertion_helper: related test uses an opaque custom assertion helper"
@@ -471,16 +493,25 @@ fn body_calls_at_name_boundary(body: &str, call: &str) -> bool {
 
 fn related_candidates_have_property_based_test_limit(
     related_candidates: &[PythonRelatedCandidate<'_>],
+    focus: &PythonAssertionFocus,
 ) -> bool {
     related_candidates
         .iter()
         .filter(|candidate| candidate.relation.uses_oracle())
         .any(|candidate| {
             test_uses_property_based_inputs(candidate.test)
-                && !candidate.test.assertions.iter().any(|assertion| {
-                    assertion.oracle_strength.rank() >= OracleStrength::Strong.rank()
-                })
+                && !selected_assertion_is_strong(candidate.test, focus)
         })
+}
+
+/// Whether the assertion the rows select for this test is a strong oracle.
+/// A strong sibling-field or other-family assertion the selector passes over
+/// is not a known oracle for this change, so it never suppresses a
+/// test-side limit (#5572).
+fn selected_assertion_is_strong(test: &PythonTest, focus: &PythonAssertionFocus) -> bool {
+    select_relevant_assertion(&test.assertions, Some(focus))
+        .assertion()
+        .is_some_and(|assertion| assertion.oracle_strength.rank() >= OracleStrength::Strong.rank())
 }
 
 fn test_uses_property_based_inputs(test: &PythonTest) -> bool {
@@ -576,6 +607,7 @@ pub(super) fn has_identifier_boundary(body_text: &str, idx: usize, len: usize) -
 
 fn related_candidates_have_opaque_custom_assertion_limit(
     related_candidates: &[PythonRelatedCandidate<'_>],
+    focus: &PythonAssertionFocus,
 ) -> bool {
     let mut has_opaque_helper = false;
     let mut has_known_strong_oracle = false;
@@ -584,12 +616,16 @@ fn related_candidates_have_opaque_custom_assertion_limit(
         .iter()
         .filter(|candidate| candidate.relation.uses_oracle())
     {
-        for assertion in &candidate.test.assertions {
-            if assertion.oracle_shape == PythonOracleShape::UnknownCustomHelper {
-                has_opaque_helper = true;
-            } else if assertion.oracle_strength.rank() >= OracleStrength::Strong.rank() {
-                has_known_strong_oracle = true;
-            }
+        if candidate
+            .test
+            .assertions
+            .iter()
+            .any(|assertion| assertion.oracle_shape == PythonOracleShape::UnknownCustomHelper)
+        {
+            has_opaque_helper = true;
+        }
+        if selected_assertion_is_strong(candidate.test, focus) {
+            has_known_strong_oracle = true;
         }
     }
 

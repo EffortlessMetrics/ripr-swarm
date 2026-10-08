@@ -772,9 +772,14 @@ where
 /// parent (`src/`, `tests/`, ...) when there is one, else the nearest
 /// ancestor manifest inside the workspace. Files outside every source
 /// layout (a build script beside its manifest, a declared `[lib] path =
-/// "lib/foo.rs"` root) take the second route.
+/// "lib/foo.rs"` root) take the second route. A layout parent above the
+/// workspace root (a root at `~/src/shop` has `src` among its own
+/// ancestors) is not the owner either: like the manifest search, the
+/// layout search never leaves the analyzed workspace.
 pub(super) fn owning_package_dir(workspace_root: &Path, anchored: &Path) -> Option<PathBuf> {
-    package_root_of(anchored).or_else(|| nearest_manifest_dir(workspace_root, anchored))
+    package_root_of(workspace_root, anchored)
+        .filter(|dir| dir.starts_with(workspace_root))
+        .or_else(|| nearest_manifest_dir(workspace_root, anchored))
 }
 
 /// Normalize absolute declared-target paths back to workspace-relative
@@ -807,18 +812,44 @@ pub(super) fn nearest_manifest_dir(workspace_root: &Path, file: &Path) -> Option
 
 /// The package root owning `file`: the nearest ancestor directory that
 /// starts a Cargo source layout (`src/`, `tests/`, `benches/`,
-/// `examples/` — mirroring `workspace::classify::package_root`).
-fn package_root_of(file: &Path) -> Option<PathBuf> {
+/// `examples/`; `workspace::classify::package_root` is the path-only twin).
+///
+/// A `tests/`, `benches/` or `examples/` directory only starts a layout when
+/// a manifest sits beside it (checked on disk; the overlay-aware twin is in
+/// `may_be_unreached`). Without one it is an ordinary module
+/// directory (`src/tests/` holds `#[cfg(test)] mod tests;`, #6979), so the
+/// search keeps climbing to the real package. If nothing better is found the
+/// first such candidate is kept, so a tree with no manifests at all resolves
+/// as it did before. The climb never leaves `floor` (the analyzed root): a
+/// root such as `<tmp>/tests/fixtures/app` has `tests` among its own
+/// ancestors, which must not become the owner or hide the fallback inside it.
+fn package_root_of(floor: &Path, file: &Path) -> Option<PathBuf> {
     let mut parent = file.parent()?;
+    let mut manifestless: Option<PathBuf> = None;
     loop {
+        if !parent.starts_with(floor) {
+            return manifestless;
+        }
         let name = parent
             .file_name()
             .map(|name| name.to_string_lossy().to_string())
             .unwrap_or_default();
         if matches!(name.as_str(), "src" | "tests" | "benches" | "examples") {
-            return parent.parent().map(Path::to_path_buf);
+            let owner = parent.parent().map(Path::to_path_buf);
+            let target_dir = name != "src";
+            if !target_dir
+                || owner
+                    .as_ref()
+                    .is_some_and(|dir| dir.join("Cargo.toml").is_file())
+            {
+                return owner;
+            }
+            manifestless = manifestless.or(owner);
         }
-        parent = parent.parent()?;
+        match parent.parent() {
+            Some(next) => parent = next,
+            None => return manifestless,
+        }
     }
 }
 
@@ -981,19 +1012,69 @@ mod extraction {
     #[test]
     fn package_root_resolution_covers_source_layouts() {
         assert_eq!(
-            package_root_of(Path::new("/ws/pkg-a/src/lib.rs")),
+            package_root_of(Path::new("/ws"), Path::new("/ws/pkg-a/src/lib.rs")),
             Some(PathBuf::from("/ws/pkg-a"))
         );
         assert_eq!(
-            package_root_of(Path::new("/ws/pkg-a/tests/it.rs")),
+            package_root_of(Path::new("/ws"), Path::new("/ws/pkg-a/tests/it.rs")),
             Some(PathBuf::from("/ws/pkg-a"))
         );
         assert_eq!(
-            package_root_of(Path::new("/ws/pkg-a/benches/perf.rs")),
+            package_root_of(Path::new("/ws"), Path::new("/ws/pkg-a/benches/perf.rs")),
             Some(PathBuf::from("/ws/pkg-a"))
         );
         // A file with no Cargo source-layout ancestor has no package root.
-        assert_eq!(package_root_of(Path::new("/ws/loose.rs")), None);
+        assert_eq!(
+            package_root_of(Path::new("/ws"), Path::new("/ws/loose.rs")),
+            None
+        );
+    }
+
+    #[test]
+    fn package_root_of_climbs_past_manifestless_target_named_directories() -> Result<(), String> {
+        // #6979: `pkg/src/tests/x.rs` belongs to `pkg`, not `pkg/src`; a root
+        // that itself sits under a `tests/` directory keeps its own fallback.
+        let temp = unique_workspace("package-root-tests-module");
+        let pkg = temp.join("pkg");
+        std::fs::create_dir_all(pkg.join("src").join("tests")).map_err(|err| err.to_string())?;
+        std::fs::create_dir_all(pkg.join("tests")).map_err(|err| err.to_string())?;
+        std::fs::write(pkg.join("Cargo.toml"), "[package]\nname = 'pkg'\n")
+            .map_err(|err| err.to_string())?;
+        let module = package_root_of(&temp, &pkg.join("src").join("tests").join("x.rs"));
+        let target = package_root_of(&temp, &pkg.join("tests").join("it.rs"));
+        let app = temp.join("tests").join("fixtures").join("app");
+        std::fs::create_dir_all(app.join("tests")).map_err(|err| err.to_string())?;
+        let bounded = package_root_of(&app, &app.join("tests").join("it.rs"));
+        let owned = owning_package_dir(&app, &app.join("tests").join("it.rs"));
+        let _ = std::fs::remove_dir_all(&temp);
+        assert_eq!(module, Some(pkg.clone()));
+        assert_eq!(target, Some(pkg));
+        assert_eq!(bounded, Some(app.clone()));
+        assert_eq!(owned, Some(app));
+        Ok(())
+    }
+
+    #[test]
+    fn owning_package_dir_stays_inside_a_root_under_a_src_directory() -> Result<(), String> {
+        // #6944 review: a root at `<tmp>/src/shop` must not resolve
+        // `build.rs` to `<tmp>` through the `src` above the root.
+        let temp = unique_workspace("owning-package-src-ancestor");
+        let root = temp.join("src").join("shop");
+        let nested = root.join("crates").join("a");
+        std::fs::create_dir_all(nested.join("src")).map_err(|err| err.to_string())?;
+        std::fs::write(root.join("Cargo.toml"), "[package]\nname = 'shop'\n")
+            .map_err(|err| err.to_string())?;
+        std::fs::write(nested.join("Cargo.toml"), "[package]\nname = 'a'\n")
+            .map_err(|err| err.to_string())?;
+        let at_root = owning_package_dir(&root, &root.join("build.rs"));
+        let nested_script = owning_package_dir(&root, &nested.join("build.rs"));
+        // The layout route still wins inside the root.
+        let nested_lib = owning_package_dir(&root, &nested.join("src").join("lib.rs"));
+        let _ = std::fs::remove_dir_all(&temp);
+        assert_eq!(at_root, Some(root));
+        assert_eq!(nested_script, Some(nested.clone()));
+        assert_eq!(nested_lib, Some(nested));
+        Ok(())
     }
 }
 

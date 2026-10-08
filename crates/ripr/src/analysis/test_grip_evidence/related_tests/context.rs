@@ -1,6 +1,7 @@
 use super::*;
 use crate::analysis::syntax::parse_clean_source_file;
 use crate::analysis::test_grip_evidence::owner_result_binding::ParsedTestFile;
+use crate::analysis::test_grip_evidence::shared_grips::SharedGrips;
 use crate::analysis::value_resolution::{FileValueScan, ValueEnvFacts};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
 
@@ -58,6 +59,13 @@ pub(crate) struct CompactGripContext<'a> {
     /// Per owner id: the unresolved-reach summary, or `None` when the
     /// `no` reach is established. Seams share owners.
     unresolved_reach: Mutex<BTreeMap<String, Option<String>>>,
+    /// One shared record per distinct related-test grip (#5341, #5362).
+    /// Seams relate to the same tests over and over: on ripr-swarm 10,000
+    /// seams hold 1.28M related-test entries but only about 15k distinct
+    /// records; sharing them cut the cold-pilot peak from 1.42 GB to about 700 MB.
+    /// Records are immutable, so sharing one does not couple seams. Window
+    /// boundaries drop only the records no seam holds any more.
+    shared_grips: Mutex<SharedGrips>,
 }
 
 /// Candidate generation only: the existing `contains` and `same_module`
@@ -203,6 +211,16 @@ impl<'a> CompactGripContext<'a> {
         memo(&self.owner_named_cache).clear();
         memo(&self.same_module_cache).clear();
         memo(&self.parsed_sources).clear();
+        memo(&self.shared_grips).release_unheld();
+    }
+
+    /// The run's shared copy of `grip`: an equal record already handed out,
+    /// or `grip` itself, now shared.
+    pub(in crate::analysis::test_grip_evidence) fn share_grip(
+        &self,
+        grip: RelatedTestGrip,
+    ) -> Arc<RelatedTestGrip> {
+        memo(&self.shared_grips).share(grip)
     }
 
     /// Number of indexed functions with exactly `name`; 0 for unknown or
@@ -473,6 +491,7 @@ impl<'a> CompactGripContext<'a> {
             transitive_reach: crate::analysis::classify::TransitiveReachIndex::new(index),
             type_mentions: OnceLock::new(),
             unresolved_reach: Mutex::new(BTreeMap::new()),
+            shared_grips: Mutex::new(SharedGrips::default()),
         })
     }
 

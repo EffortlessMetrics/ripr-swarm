@@ -1,0 +1,97 @@
+{
+  "schema_version": "0.2",
+  "tool": "ripr",
+  "mode": "fast",
+  "root": "fixtures/evidence-promotion-honesty-corpus/discarded-matcher-subjects/bare-wildcard-original",
+  "summary": {"changed_rust_files":1,"probes":1,"findings":1,"exposed":0,"weakly_exposed":0,"reachable_unrevealed":1,"no_static_path":0,"infection_unknown":0,"propagation_unknown":0,"static_unknown":0,"changed_files_by_language":[{"language":"rust","files":1}]},
+  "analysis_outcome": {
+    "analysis_complete": true,
+    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":null,"base_revision":null,"input_identity":"sha256:3737b680f6243d9f66b3b8c13f5d59433736098c1ce100edecca81d6d1f518a9","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":2,"candidate_line_count":1,"probe_count":1,"finding_count":1},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
+  },
+  "findings": [
+    {
+      "id": "probe:src_lib.rs:return_value:519eff0d",
+      "canonical_gap_id": "gap:rust:src/lib.rs:score:return_value:return_value:value+1",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:score:return_value:return_value:value+1",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "score",
+        "behavior_kind": "return_value",
+        "probe_kind": "return_value",
+        "normalized_discriminator": "value+1"
+
+      },
+      "classification": "reachable_unrevealed",
+      "severity": "warning",
+      "confidence": 0.79,
+      "probe": {
+        "id": "probe:src_lib.rs:return_value:519eff0d",
+        "family": "return_value",
+        "delta": "value",
+        "file": "./src/lib.rs",
+        "line": 2,
+        "expression": "value + 1"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach score: observes_score"},
+        "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
+        "propagate": {"state":"yes","confidence":"high","summary":"Complete propagation witness reaches returned value: value + 1"},
+        "observe": {"state":"no","confidence":"medium","summary":"Related tests were found, but no assertion appears to observe the changed value, error, field, or effect"},
+        "discriminate": {"state":"no","confidence":"medium","summary":"No assertion found on related tests"}
+       },
+      "evidence_path": ["reach yes: Related tests appear to reach score: observes_score", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches returned value: value + 1", "observation no: Related tests were found, but no assertion appears to observe the changed value, error, field, or effect", "discriminator no: No assertion found on related tests", "local flow reaches returned value: value + 1 (line 2)", "related test src/lib.rs:8 observes_score uses none unknown oracle", "source function argument value value = 1 at line 9"],
+      "flow_sinks": [
+        {"kind":"return_value","text":"value + 1","line":2}
+      ],
+      "evidence": ["Complete propagation witness reaches returned value: value + 1", "No assertion found on related tests", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach score: observes_score", "Related tests were found, but no assertion appears to observe the changed value, error, field, or effect"],
+      "missing": ["No detected assertion observes the changed value, error, field, or effect", "No relevant oracle was detected", "No strong discriminator was detected"],
+      "assertion_texts": {
+        "9": "let value = super::score(1);"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 9,
+            "value": "value = 1",
+            "context": "function_argument"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 9,
+          "value": "value = 1",
+          "context": "function_argument"
+        }
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "observes_score",
+          "file": "src/lib.rs",
+          "line": 8,
+          "oracle_strength": "none",
+          "oracle_kind": "unknown",
+          "oracle": "",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high",
+          "miss": "no_assertion",
+          "why": "has no assertion"
+        }
+      ],
+      "stop_reasons": [],
+      "oracle_kind": "unknown",
+      "oracle_strength": "none",
+      "recommended_next_step": "Add a meaningful assertion that observes the changed value, branch, error, field, event, or side effect.",
+      "suggested_next_action": "Add a meaningful assertion that observes the changed value, branch, error, field, event, or side effect.",
+      "language": "rust",
+      "source_currentness": "candidate_current"
+    }
+  ]
+}

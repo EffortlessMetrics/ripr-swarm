@@ -39,15 +39,15 @@
         "reach": {"state":"yes","confidence":"low","summary":"1 related Python test(s) found for owner `parse`"},
         "infect": {"state":"yes","confidence":"low","summary":"Changed Python error path can alter raised exception/control behavior: `raise KeyError(\"empty\")`"},
         "propagate": {"state":"yes","confidence":"low","summary":"Changed Python error path propagates through the exception/control boundary."},
-        "observe": {"state":"weak","confidence":"low","summary":"Strongest extracted Python oracle kind: `exact_value` (rank 5)"},
-        "discriminate": {"state":"weak","confidence":"low","summary":"Related Python test uses a `exact_value` oracle, but static evidence does not establish discrimination of the changed behavior."}
+        "observe": {"state":"weak","confidence":"low","summary":"No related Python assertion observes the changed error path; the strongest related assertion observes another behavior (`exact_value`)."},
+        "discriminate": {"state":"weak","confidence":"low","summary":"Python preview adapter found no strong discriminator; missing proof: `raises KeyError matching \"empty\"`."}
        },
-      "evidence_path": ["reach yes: 1 related Python test(s) found for owner `parse`", "infection yes: Changed Python error path can alter raised exception/control behavior: `raise KeyError(\"empty\")`", "propagation yes: Changed Python error path propagates through the exception/control boundary.", "observation weak: Strongest extracted Python oracle kind: `exact_value` (rank 5)", "discriminator weak: Related Python test uses a `exact_value` oracle, but static evidence does not establish discrimination of the changed behavior.", "local flow reaches error variant: raise KeyError(\"empty\") (line 3)", "related test tests/test_parseint.py:4 test_parse_ok uses strong exact value oracle: assert parse(\"42\") == 42", "missing discriminator raises KeyError matching \"empty\": changed Python exception at line 3 lacks a concrete repair discriminator"],
+      "evidence_path": ["reach yes: 1 related Python test(s) found for owner `parse`", "infection yes: Changed Python error path can alter raised exception/control behavior: `raise KeyError(\"empty\")`", "propagation yes: Changed Python error path propagates through the exception/control boundary.", "observation weak: No related Python assertion observes the changed error path; the strongest related assertion observes another behavior (`exact_value`).", "discriminator weak: Python preview adapter found no strong discriminator; missing proof: `raises KeyError matching \"empty\"`.", "local flow reaches error variant: raise KeyError(\"empty\") (line 3)", "related test tests/test_parseint.py:4 test_parse_ok uses unknown unknown oracle", "missing discriminator raises KeyError matching \"empty\": changed Python exception at line 3 lacks a concrete repair discriminator"],
       "flow_sinks": [
         {"kind":"error_variant","text":"raise KeyError(\"empty\")","line":3}
       ],
-      "evidence": ["owner: parse", "owner_kind: function", "missing_discriminator: raises KeyError matching \"empty\"", "suggested_repair_action: strengthen_existing_test", "suggested_test_file: tests/test_parseint.py", "suggested_test_name: test_parse_ok", "suggested_test_node_id: tests/test_parseint.py::test_parse_ok", "suggested_verify_command: python -m pytest tests/test_parseint.py::test_parse_ok", "suggested_verify_command_confidence: high", "suggested_test_location_reason: strengthen existing weak pytest relation", "test_framework: pytest (test_parse_ok)", "test_verify_command: python -m pytest tests/test_parseint.py::test_parse_ok (test_parse_ok)", "related_test_relation: syntactic_call (test_parse_ok)", "test_oracle: exact_value strong (test_parse_ok)"],
-      "missing": ["A strong Python oracle reaches `parse`, but its assertion does not observe the changed owner's output; static evidence cannot confirm the changed behavior is discriminated. Add an assertion on the changed owner's output."],
+      "evidence": ["owner: parse", "owner_kind: function", "missing_discriminator: raises KeyError matching \"empty\"", "suggested_repair_action: strengthen_existing_test", "suggested_test_file: tests/test_parseint.py", "suggested_test_name: test_parse_ok", "suggested_test_node_id: tests/test_parseint.py::test_parse_ok", "suggested_verify_command: python -m pytest tests/test_parseint.py::test_parse_ok", "suggested_verify_command_confidence: high", "suggested_test_location_reason: strengthen existing weak pytest relation", "test_framework: pytest (test_parse_ok)", "test_verify_command: python -m pytest tests/test_parseint.py::test_parse_ok (test_parse_ok)", "related_test_relation: syntactic_call (test_parse_ok)", "test_oracle_shape: no_error_path_relevant_assertion (test_parse_ok)"],
+      "missing": ["Related Python test reaches `parse`, but its assertions observe a different behavior (strongest: `exact_value`) and none observes the changed error path; add or strengthen a focused assertion for the exact exception type/message."],
       "assertion_texts": {
       },
       "activation": {
@@ -76,9 +76,9 @@
           "name": "test_parse_ok",
           "file": "tests/test_parseint.py",
           "line": 4,
-          "oracle_strength": "strong",
-          "oracle_kind": "exact_value",
-          "oracle": "assert parse(\"42\") == 42"
+          "oracle_strength": "unknown",
+          "oracle_kind": "unknown",
+          "oracle": ""
         }
       ],
       "repair_placement": {
@@ -98,7 +98,7 @@
         "repair_action": "strengthen_existing_test",
         "changed_owner": "parse",
         "changed_behavior": "exception_path changed at src/parseint.py:3: `raise KeyError(\"empty\")`",
-        "current_test_evidence": "tests/test_parseint.py:4 test_parse_ok currently has oracle_strength=strong, oracle_kind=exact_value: assert parse(\"42\") == 42",
+        "current_test_evidence": "tests/test_parseint.py:4 test_parse_ok currently has oracle_strength=unknown, oracle_kind=unknown",
         "missing_discriminator": "raises KeyError matching \"empty\"",
         "recommended_test_shape": "Strengthen the existing pytest exception assertion for `raises KeyError matching \"empty\"`.",
         "suggested_assertion": "with pytest.raises(KeyError, match=\"empty\"): ...",
@@ -120,17 +120,16 @@
         "limits": ["Syntax-first Python preview evidence only.", "No source edits, generated tests, mutation execution, provider calls, or gate authority.", "Verify success alone is not a gap-closure receipt."]
        },
       "stop_reasons": [],
-      "oracle_kind": "exact_value",
-      "oracle_strength": "strong",
+      "oracle_kind": "unknown",
+      "oracle_strength": "unknown",
       "recommended_next_step": "Python preview: strengthen the existing related test with an exception assertion for missing discriminator `raises KeyError matching \"empty\"`.",
       "suggested_next_action": "Python preview: strengthen the existing related test with an exception assertion for missing discriminator `raises KeyError matching \"empty\"`.",
       "language": "python",
       "language_status": "preview",
       "owner_kind": "function",
       "changed_sink": "KeyError, empty",
-      "observed_sink": "assert parse(\"42\") == 42",
-      "oracle_alignment": "direct",
-      "alignment_reason": "strong_oracle_observes_owner_name",
+      "oracle_alignment": "unknown",
+      "alignment_reason": "no_family_relevant_assertion",
       "source_currentness": "candidate_current"
     }
   ],

@@ -357,6 +357,52 @@ pub(crate) fn probe(
     }))
 }
 
+/// Untracked files a language adapter routes, root-relative and
+/// `/`-separated, in order (RIPR-SPEC-0116). A working-tree read diffs
+/// tracked files only (`git diff <merge-base>`), so these files are not in
+/// its diff; the output layer names them instead of letting an empty or
+/// partial result read as covering them. Fails closed like [`probe`]: a
+/// status that cannot be read is an error, not an empty list.
+pub(crate) fn untracked_routed_paths(
+    root: &Path,
+    git_timeout: Option<Duration>,
+) -> Result<Vec<String>, CoreError> {
+    let status = git_bytes(
+        root,
+        &[
+            "status",
+            "--porcelain",
+            "-z",
+            "--untracked-files=all",
+            "--",
+            ".",
+        ],
+        git_timeout,
+    )?;
+    let records = parse_porcelain_z(&status)?;
+    if records.untracked.is_empty() {
+        return Ok(Vec::new());
+    }
+    let prefix = String::from_utf8(git_bytes(
+        root,
+        &["rev-parse", "--show-prefix"],
+        git_timeout,
+    )?)
+    .map_err(|_utf8_error| {
+        "committed-source probe: `git rev-parse --show-prefix` returned a non-UTF-8 prefix"
+            .to_string()
+    })?;
+    let prefix = prefix.trim_end_matches(['\n', '\r']);
+    Ok(records
+        .untracked
+        .into_iter()
+        .filter_map(|path| path.strip_prefix(prefix).map(str::to_string))
+        .filter(|path| !path.is_empty())
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect())
+}
+
 fn is_regular_file_mode(mode: &str) -> bool {
     mode == "100644" || mode == "100755"
 }

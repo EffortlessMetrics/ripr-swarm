@@ -12,6 +12,425 @@ use std::fs;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+#[test]
+fn registered_trials_do_not_credit_discarded_matcher_computations()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = temp_dir("discarded-matcher")?;
+    let source = with_harness_main(
+        r#"fn score(value: i32) -> i32 { value + 2 }
+fn trials() -> Vec<libtest_mimic::Trial> {
+    vec![
+        libtest_mimic::Trial::test("discarded", || {
+            let value = score(1);
+            matches!(value, _);
+            matches!(value, 2);
+            let matched = matches!(value, 2);
+            let expected_match = matches!(value, 2);
+            Ok(())
+        }),
+        libtest_mimic::Trial::test("asserted", || {
+            let value = score(1);
+            assert!(matches!(value, 2));
+            Ok(())
+        }),
+        libtest_mimic::Trial::test("wildcard", || {
+            let value = score(1);
+            assert!(matches!(value, _));
+            Ok(())
+        }),
+    ]
+}
+"#,
+        "trials()",
+    );
+    write_workspace(&root, &[("tests/matcher.rs", &source)])?;
+    declare_harness_false_target(&root, "matcher", "tests/matcher.rs")?;
+    let files = [PathBuf::from("tests/matcher.rs")];
+    let registrations = [custom_target_registration("tests/matcher.rs")];
+    let index = build_index_with_test_harnesses(&root.0, &files, &registrations)?;
+    assert_eq!(
+        index.harness_subjects.len(),
+        3,
+        "real trial setup must succeed"
+    );
+    let tests = index.tests();
+    let discarded = tests
+        .iter()
+        .find(|test| test.name == "discarded")
+        .ok_or("missing discarded trial")?;
+    assert!(
+        discarded.assertions.is_empty(),
+        "{:?}",
+        discarded.assertions
+    );
+    for (name, kind, strength) in [
+        ("asserted", OracleKind::ExactValue, OracleStrength::Strong),
+        (
+            "wildcard",
+            OracleKind::RelationalCheck,
+            OracleStrength::Weak,
+        ),
+    ] {
+        let test = tests
+            .iter()
+            .find(|test| test.name == name)
+            .ok_or("missing retained trial")?;
+        let [oracle] = test.assertions.as_slice() else {
+            return Err(format!(
+                "expected one consumed oracle in {name}: {:?}",
+                test.assertions
+            )
+            .into());
+        };
+        assert_eq!(oracle.kind, kind);
+        assert_eq!(oracle.strength, strength);
+        assert!(oracle.text.contains("matches!(value"));
+    }
+    Ok(())
+}
+
+fn registered_matcher_control_source(statement: &str, helper_callback: bool) -> String {
+    let source = if helper_callback {
+        format!(
+            "fn score() -> i32 {{ 2 }}\nfn sibling() -> i32 {{ 7 }}\n\
+             fn check_score() -> Result<(), libtest_mimic::Failed> {{\n\
+             let value = score();\n{statement}\nOk(())\n}}\n\
+             fn trials() -> Vec<libtest_mimic::Trial> {{\n\
+             vec![libtest_mimic::Trial::test(\"observes_score\", check_score)]\n}}\n"
+        )
+    } else {
+        format!(
+            "fn score() -> i32 {{ 2 }}\nfn sibling() -> i32 {{ 7 }}\n\
+             fn trials() -> Vec<libtest_mimic::Trial> {{\n\
+             vec![libtest_mimic::Trial::test(\"observes_score\", || {{\n\
+             let value = score();\n{statement}\nOk(())\n}})]\n}}\n"
+        )
+    };
+    with_harness_main(&source, "trials()")
+}
+
+fn check_registered_terminal_matcher_guard_twins(
+    helper_callback: bool,
+    multiline: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    for (pattern, kind, strength) in [
+        ("2", OracleKind::ExactValue, OracleStrength::Strong),
+        ("_", OracleKind::RelationalCheck, OracleStrength::Weak),
+    ] {
+        for (statement, inline_sibling_line) in [
+            (
+                format!("if !matches!(value, {pattern}) {{ return Err(\"bad\".into()); }}"),
+                7,
+            ),
+            (format!("assert!(matches!(value, {pattern}));"), 7),
+            (
+                format!("if !matches!(\nvalue,\n{pattern}\n) {{\nreturn Err(\"bad\".into());\n}}"),
+                12,
+            ),
+            (format!("assert!(matches!(\nvalue,\n{pattern}\n));"), 10),
+        ] {
+            if statement.contains('\n') != multiline {
+                continue;
+            }
+            let root = temp_dir("terminal-matcher-twin")?;
+            let statement = format!("{statement}\nassert_eq!(sibling(), 7);");
+            let source = registered_matcher_control_source(&statement, helper_callback);
+            write_workspace(&root, &[("tests/matcher.rs", &source)])?;
+            declare_harness_false_target(&root, "matcher", "tests/matcher.rs")?;
+            let files = [PathBuf::from("tests/matcher.rs")];
+            let registrations = [custom_target_registration("tests/matcher.rs")];
+            let index = build_index_with_test_harnesses(&root.0, &files, &registrations)?;
+            let [subject] = index.harness_subjects.as_slice() else {
+                return Err(
+                    "terminal matcher control must contain exactly one named subject".into(),
+                );
+            };
+            assert_eq!(subject.registration_id, "mimic-suite");
+            assert_eq!(subject.name, "observes_score");
+            assert_eq!(subject.file, PathBuf::from("tests/matcher.rs"));
+            assert!(subject.start_line > 0 && subject.end_line >= subject.start_line);
+            let tests = index.tests();
+            if tests.len() != 1 {
+                return Err("terminal matcher control must contain exactly one TestFact".into());
+            }
+            let test = tests.first().ok_or("terminal matcher TestFact missing")?;
+            assert_eq!(test.name, subject.name);
+            assert_eq!(test.file, subject.file);
+            let line_shift = usize::from(helper_callback);
+            for calls in [&subject.calls, &test.calls] {
+                assert!(
+                    calls
+                        .iter()
+                        .any(|call| call.name == "score" && call.line == 5 - line_shift)
+                );
+            }
+            for facts in [&subject.assertions, &test.assertions] {
+                let [matcher, sibling] = facts.as_slice() else {
+                    return Err(format!(
+                        "registered guard/assert twin lost or invented evidence (helper={helper_callback}): {statement}: {facts:?}"
+                    ).into());
+                };
+                assert_eq!(matcher.line, 6 - line_shift, "{matcher:?}");
+                assert_eq!(matcher.kind, kind, "{matcher:?}");
+                assert_eq!(matcher.strength, strength, "{matcher:?}");
+                assert!(matcher.observed_tokens.contains(&"value".to_string()));
+                assert_eq!(
+                    sibling.line,
+                    inline_sibling_line - line_shift,
+                    "{sibling:?}"
+                );
+                assert_eq!(sibling.kind, OracleKind::ExactValue);
+                assert_eq!(sibling.strength, OracleStrength::Strong);
+                assert!(sibling.text.starts_with("assert_eq!(sibling()"));
+            }
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn inline_trial_terminal_matcher_guard_twins_preserve_single_line_and_sibling_coordinates()
+-> Result<(), Box<dyn std::error::Error>> {
+    check_registered_terminal_matcher_guard_twins(false, false)
+}
+
+#[test]
+fn inline_trial_terminal_matcher_guard_twins_preserve_multiline_and_sibling_coordinates()
+-> Result<(), Box<dyn std::error::Error>> {
+    check_registered_terminal_matcher_guard_twins(false, true)
+}
+
+#[test]
+fn helper_trial_terminal_matcher_guard_twins_preserve_multiline_and_sibling_coordinates()
+-> Result<(), Box<dyn std::error::Error>> {
+    check_registered_terminal_matcher_guard_twins(true, false)?;
+    check_registered_terminal_matcher_guard_twins(true, true)
+}
+
+fn check_registered_guard_boundary(
+    helper_callback: bool,
+    literal_brace: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let (assertion, guard, guard_sibling, call_line) = if literal_brace {
+        (
+            "assert!(matches!(score(\"{\"), _));",
+            "if !matches!(score(\"{\"), _) { return Err(\"bad\".into()); }",
+            7,
+            6,
+        )
+    } else {
+        (
+            "assert!(matches!(\nvalue,\n_\n));",
+            "if !matches!(\nvalue,\n_\n)\n{\nreturn Err(\"bad\".into());\n}",
+            13,
+            5,
+        )
+    };
+    for (statement, sibling_line) in [
+        (assertion, if literal_brace { 7 } else { 10 }),
+        (guard, guard_sibling),
+    ] {
+        let root = temp_dir("terminal-guard-boundary")?;
+        let statement = format!("{statement}\nassert_eq!(sibling(), 7);");
+        let mut source = registered_matcher_control_source(&statement, helper_callback);
+        if literal_brace {
+            assert_eq!(source.matches("fn score() -> i32 { 2 }").count(), 1);
+            assert_eq!(source.matches("let value = score();").count(), 1);
+            source = source
+                .replace("fn score() -> i32 { 2 }", "fn score(_: &str) -> i32 { 2 }")
+                .replace("let value = score();", "let _setup = 0;");
+        }
+        write_workspace(&root, &[("tests/matcher.rs", &source)])?;
+        declare_harness_false_target(&root, "matcher", "tests/matcher.rs")?;
+        let files = [PathBuf::from("tests/matcher.rs")];
+        let registrations = [custom_target_registration("tests/matcher.rs")];
+        let index = build_index_with_test_harnesses(&root.0, &files, &registrations)?;
+        let [subject] = index.harness_subjects.as_slice() else {
+            return Err("guard-boundary control lost its one registered subject".into());
+        };
+        assert_eq!(subject.registration_id, "mimic-suite");
+        assert_eq!(subject.name, "observes_score");
+        assert_eq!(subject.file, PathBuf::from("tests/matcher.rs"));
+        let tests = index.tests();
+        assert_eq!(tests.len(), 1);
+        let test = tests.first().ok_or("guard-boundary TestFact missing")?;
+        assert_eq!(test.name, subject.name);
+        assert_eq!(test.file, subject.file);
+        let shift = usize::from(helper_callback);
+        for calls in [&subject.calls, &test.calls] {
+            assert!(
+                calls
+                    .iter()
+                    .any(|call| call.name == "score" && call.line == call_line - shift)
+            );
+        }
+        for facts in [&subject.assertions, &test.assertions] {
+            let [matcher, sibling] = facts.as_slice() else {
+                return Err(format!("registered guard-boundary evidence missing (helper={helper_callback}, literal={literal_brace}): {statement}: {facts:?}").into());
+            };
+            assert_eq!(matcher.line, 6 - shift);
+            assert_eq!(matcher.kind, OracleKind::RelationalCheck, "{matcher:?}");
+            assert_eq!(matcher.strength, OracleStrength::Weak, "{matcher:?}");
+            assert!(
+                matcher
+                    .observed_tokens
+                    .contains(&if literal_brace { "score" } else { "value" }.to_string())
+            );
+            if literal_brace {
+                assert!(matcher.text.contains("score(\"{\")"), "{matcher:?}");
+            }
+            assert_eq!(sibling.line, sibling_line - shift, "{sibling:?}");
+            assert_eq!(sibling.kind, OracleKind::ExactValue);
+            assert_eq!(sibling.strength, OracleStrength::Strong);
+            assert_eq!(
+                sibling.text.trim_end_matches(';'),
+                "assert_eq!(sibling(), 7)"
+            );
+            assert!(sibling.observed_tokens.contains(&"sibling".to_string()));
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn inline_trial_terminal_guard_literal_brace_keeps_wildcard_twin()
+-> Result<(), Box<dyn std::error::Error>> {
+    check_registered_guard_boundary(false, true)
+}
+
+#[test]
+fn helper_trial_terminal_guard_literal_brace_keeps_wildcard_twin()
+-> Result<(), Box<dyn std::error::Error>> {
+    check_registered_guard_boundary(true, true)
+}
+
+#[test]
+fn inline_trial_terminal_guard_later_body_brace_keeps_twin_and_sibling()
+-> Result<(), Box<dyn std::error::Error>> {
+    check_registered_guard_boundary(false, false)
+}
+
+#[test]
+fn helper_trial_terminal_guard_later_body_brace_keeps_twin_and_sibling()
+-> Result<(), Box<dyn std::error::Error>> {
+    check_registered_guard_boundary(true, false)
+}
+
+#[test]
+fn inline_trial_skips_multiline_inert_terminal_matcher_input()
+-> Result<(), Box<dyn std::error::Error>> {
+    // A blind line-based pass over the whole invocation would incorrectly
+    // credit this guard at line 7. SPEC0173 skips nonassertion macro input.
+    let root = temp_dir("terminal-matcher-inert-multiline")?;
+    let source = registered_matcher_control_source(
+        "inert! {\nif !matches!(value, 2) {\nreturn Err(\"bad\".into());\n}\n}\nassert_eq!(sibling(), 7);",
+        false,
+    );
+    write_workspace(&root, &[("tests/matcher.rs", &source)])?;
+    declare_harness_false_target(&root, "matcher", "tests/matcher.rs")?;
+    let files = [PathBuf::from("tests/matcher.rs")];
+    let registrations = [custom_target_registration("tests/matcher.rs")];
+    let index = build_index_with_test_harnesses(&root.0, &files, &registrations)?;
+    let [subject] = index.harness_subjects.as_slice() else {
+        return Err("multiline inert control subject missing".into());
+    };
+    assert_eq!(subject.registration_id, "mimic-suite");
+    assert_eq!(subject.name, "observes_score");
+    assert!(
+        subject
+            .calls
+            .iter()
+            .any(|call| call.name == "score" && call.line == 5)
+    );
+    let tests = index.tests();
+    assert_eq!(tests.len(), 1);
+    let test = tests
+        .first()
+        .ok_or("multiline inert control TestFact missing")?;
+    for facts in [&subject.assertions, &test.assertions] {
+        let [sibling] = facts.as_slice() else {
+            return Err(format!("inert multiline guard received credit: {facts:?}").into());
+        };
+        assert_eq!(sibling.line, 11);
+        assert!(sibling.text.starts_with("assert_eq!(sibling()"));
+        assert_eq!(sibling.kind, OracleKind::ExactValue);
+        assert_eq!(sibling.strength, OracleStrength::Strong);
+    }
+    Ok(())
+}
+
+#[test]
+fn registered_terminal_matcher_controls_reject_discarded_opaque_and_inert_inputs()
+-> Result<(), Box<dyn std::error::Error>> {
+    for helper_callback in [false, true] {
+        for (statement, inline_sibling_line) in [
+            ("matches!(value, 2);", None),
+            ("let expected_match = matches!(\nvalue,\n2\n);", None),
+            (
+                "if matches!(value, 2) { return Err(\"bad\".into()); }",
+                Some(7),
+            ),
+            (
+                "if matches!(\nvalue,\n2\n) {\nreturn Err(\"bad\".into());\n}",
+                Some(12),
+            ),
+            ("if opaque(value) { return Err(\"bad\".into()); }", Some(7)),
+            (
+                "inert! { if !matches!(value, 2) { return Err(\"bad\".into()); } }",
+                Some(7),
+            ),
+            (
+                "macro_rules! dormant { () => { if !matches!(value, 2) { return Err(\"bad\".into()); } }; }",
+                Some(7),
+            ),
+        ] {
+            let root = temp_dir("terminal-matcher-negative")?;
+            let statement = if inline_sibling_line.is_some() {
+                format!("{statement}\nassert_eq!(sibling(), 7);")
+            } else {
+                statement.to_string()
+            };
+            let source = registered_matcher_control_source(&statement, helper_callback);
+            write_workspace(&root, &[("tests/matcher.rs", &source)])?;
+            declare_harness_false_target(&root, "matcher", "tests/matcher.rs")?;
+            let files = [PathBuf::from("tests/matcher.rs")];
+            let registrations = [custom_target_registration("tests/matcher.rs")];
+            let index = build_index_with_test_harnesses(&root.0, &files, &registrations)?;
+            let [subject] = index.harness_subjects.as_slice() else {
+                return Err("negative control subject missing".into());
+            };
+            assert_eq!(subject.registration_id, "mimic-suite");
+            assert_eq!(subject.name, "observes_score");
+            let tests = index.tests();
+            if tests.len() != 1 {
+                return Err("negative control TestFact missing".into());
+            }
+            let test = tests.first().ok_or("negative control TestFact missing")?;
+            for calls in [&subject.calls, &test.calls] {
+                assert!(calls.iter().any(|call| call.name == "score"));
+            }
+            for facts in [&subject.assertions, &test.assertions] {
+                if let Some(sibling_line) = inline_sibling_line {
+                    let [sibling] = facts.as_slice() else {
+                        return Err(format!(
+                            "inert/opaque guard received credit: {statement}: {facts:?}"
+                        )
+                        .into());
+                    };
+                    assert!(sibling.text.starts_with("assert_eq!(sibling()"));
+                    assert_eq!(sibling.line, sibling_line - usize::from(helper_callback));
+                } else {
+                    assert!(
+                        facts.is_empty(),
+                        "discarded matcher received credit: {facts:?}"
+                    );
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 struct TempDir(PathBuf);
 
 impl Drop for TempDir {
@@ -4559,6 +4978,85 @@ fn trials() -> Vec<Trial> {
             limitation.detail.contains("dead_warm_case"),
             "{label}: {limitation:?}"
         );
+    }
+    Ok(())
+}
+
+#[test]
+fn registered_negated_blocks_keep_twins_and_failure_macros_require_authority()
+-> Result<(), Box<dyn std::error::Error>> {
+    for helper_callback in [false, true] {
+        for (pattern, kind, strength) in [
+            ("2", OracleKind::ExactValue, OracleStrength::Strong),
+            ("_", OracleKind::RelationalCheck, OracleStrength::Weak),
+        ] {
+            for statement in [
+                format!("assert!({{ matches!(value, {pattern}) }});"),
+                format!("if !{{ matches!(value, {pattern}) }} {{ return Err(\"bad\".into()); }}"),
+                format!("if !matches!(value, {pattern}) {{ panic!(\"bad\"); }}"),
+                format!("if !matches!(value, {pattern}) {{ bail!(\"unresolved\"); }}"),
+                format!(
+                    "macro_rules! panic {{ ($message:expr) => {{{{ let _ = $message; }}}}; }} if !matches!(value, {pattern}) {{ panic!(\"diagnostic only\"); }}"
+                ),
+                format!(
+                    "macro_rules! bail {{ ($message:expr) => {{{{ let _ = $message; }}}}; }} if !matches!(value, {pattern}) {{ bail!(\"diagnostic only\"); }}"
+                ),
+            ] {
+                let deferred_custom_macro =
+                    statement.contains("bail!") || statement.contains("panic!");
+                let root = temp_dir("terminal-block-and-failure")?;
+                let statement = format!("{statement}\nassert_eq!(sibling(), 7);");
+                let source = registered_matcher_control_source(&statement, helper_callback);
+                write_workspace(&root, &[("tests/matcher.rs", &source)])?;
+                declare_harness_false_target(&root, "matcher", "tests/matcher.rs")?;
+                let files = [PathBuf::from("tests/matcher.rs")];
+                let registrations = [custom_target_registration("tests/matcher.rs")];
+                let index = build_index_with_test_harnesses(&root.0, &files, &registrations)?;
+                let [subject] = index.harness_subjects.as_slice() else {
+                    return Err("terminal failure control lost its registered subject".into());
+                };
+                assert_eq!(subject.registration_id, "mimic-suite");
+                assert_eq!(subject.name, "observes_score");
+                assert_eq!(subject.file, PathBuf::from("tests/matcher.rs"));
+                let tests = index.tests();
+                assert_eq!(tests.len(), 1);
+                let test = tests.first().ok_or("terminal failure TestFact missing")?;
+                let shift = usize::from(helper_callback);
+                for calls in [&subject.calls, &test.calls] {
+                    assert!(
+                        calls
+                            .iter()
+                            .any(|call| call.name == "score" && call.line == 5 - shift)
+                    );
+                }
+                for facts in [&subject.assertions, &test.assertions] {
+                    if deferred_custom_macro {
+                        let [sibling] = facts.as_slice() else {
+                            return Err(format!(
+                                "unresolved custom macro supplied matcher credit: {facts:?}"
+                            )
+                            .into());
+                        };
+                        assert_eq!(sibling.line, 7 - shift);
+                        assert_eq!(sibling.kind, OracleKind::ExactValue);
+                        assert_eq!(sibling.strength, OracleStrength::Strong);
+                        assert_eq!(sibling.observed_tokens, ["sibling"]);
+                        continue;
+                    }
+                    let [matcher, sibling] = facts.as_slice() else {
+                        return Err(format!("terminal block/failure evidence missing (helper={helper_callback}): {statement}: {facts:?}").into());
+                    };
+                    assert_eq!(matcher.line, 6 - shift, "{matcher:?}");
+                    assert_eq!(matcher.kind, kind, "{matcher:?}");
+                    assert_eq!(matcher.strength, strength, "{matcher:?}");
+                    assert_eq!(matcher.observed_tokens, ["matches", "value"]);
+                    assert_eq!(sibling.line, 7 - shift, "{sibling:?}");
+                    assert_eq!(sibling.kind, OracleKind::ExactValue);
+                    assert_eq!(sibling.strength, OracleStrength::Strong);
+                    assert_eq!(sibling.observed_tokens, ["sibling"]);
+                }
+            }
+        }
     }
     Ok(())
 }

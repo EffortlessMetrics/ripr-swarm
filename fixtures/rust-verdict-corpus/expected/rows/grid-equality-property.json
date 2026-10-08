@@ -1,0 +1,23 @@
+{
+  "case_id": "grid-equality-property",
+  "subject_id": "authored-grid-equality",
+  "origin": "authored",
+  "anchor": "src/lib.rs:12",
+  "behavior_family": "predicate_equality",
+  "test_shape": "property_invariant_loop",
+  "hard_case": false,
+  "truth": "partially_discriminated",
+  "ideal_verdict": "gap",
+  "observed_verdict": "limited",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "infection_unknown",
+    "propagation_unknown"
+  ],
+  "outcome": "abstained",
+  "contradictions": [],
+  "findings_scored": 2,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

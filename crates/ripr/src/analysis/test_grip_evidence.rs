@@ -14,6 +14,7 @@
 mod owner_result_binding;
 mod reach_limit;
 mod related_tests;
+pub(crate) mod shared_grips;
 mod value_contradiction;
 
 use value_contradiction::{
@@ -49,6 +50,7 @@ use serde::{Deserialize, Serialize};
 use std::cmp::Reverse;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
@@ -56,7 +58,8 @@ use std::time::{Duration, Instant};
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub(crate) struct TestGripEvidence {
     pub(crate) seam_id: SeamId,
-    pub(crate) related_tests: Vec<RelatedTestGrip>,
+    /// Shared records: equal grips across seams are one allocation (#5341).
+    pub(crate) related_tests: Vec<Arc<RelatedTestGrip>>,
     pub(crate) reach: StageEvidence,
     pub(crate) activate: StageEvidence,
     pub(crate) propagate: StageEvidence,
@@ -77,7 +80,7 @@ const EVIDENCE_PROGRESS_CHUNK: usize = 500;
 const HELPER_OWNER_CALL_GRAPH_MAX_HOPS: usize = 3;
 
 /// Per-related-test grip facts attached to a `TestGripEvidence`.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct RelatedTestGrip {
     pub(crate) test_name: String,
     pub(crate) file: PathBuf,
@@ -88,6 +91,18 @@ pub(crate) struct RelatedTestGrip {
     pub(crate) evidence_summary: String,
     pub(crate) relation_reason: RelationReason,
     pub(crate) relation_confidence: RelationConfidence,
+}
+
+/// Hashes the identifying fields only; `Eq` still compares every field, so
+/// records that differ elsewhere collide and stay distinct.
+impl std::hash::Hash for RelatedTestGrip {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.test_name.hash(state);
+        self.file.hash(state);
+        self.line.hash(state);
+        self.evidence_summary.hash(state);
+        std::mem::discriminant(&self.relation_reason).hash(state);
+    }
 }
 
 /// Producer-owned identity for an existing Rust test target.
@@ -323,9 +338,17 @@ fn evidence_for_seam_with_context(
     let observe = observe_evidence(&related);
     let discriminate = discriminate_evidence(seam, &related, owner_fn);
 
-    let related_tests: Vec<RelatedTestGrip> = related_with_reason
+    let related_tests: Vec<Arc<RelatedTestGrip>> = related_with_reason
         .iter()
-        .map(|(indexed, reason)| related_test_grip(seam, indexed.test, *reason, context, owner_fn))
+        .map(|(indexed, reason)| {
+            context.share_grip(related_test_grip(
+                seam,
+                indexed.test,
+                *reason,
+                context,
+                owner_fn,
+            ))
+        })
         .collect();
     let new_test_target = new_test_target_admission(seam, context);
 
@@ -2003,7 +2026,7 @@ fn guarded_result_oracle_matches_seam_variant(
     oracle_text: &str,
     ok_value_observed: Option<bool>,
 ) -> bool {
-    use super::classify::{enum_variant_values, exact_error_variant};
+    use super::classify::{changed_error_variant, enum_variant_values, exact_error_variant};
     use crate::analysis::seams::RequiredDiscriminator;
 
     let Some(owner_terminal) = seam.owner().rsplit("::").next() else {
@@ -2033,7 +2056,9 @@ fn guarded_result_oracle_matches_seam_variant(
             pins.iter().any(|pin| pin == &seam_variant)
                 && tuple_variant_payload_oracle_matches_seam(seam, oracle_text)
         }
-        _ => match exact_error_variant(seam.expression()) {
+        // The shared identity owner (#6695): an `ok_or(Type::Variant)?`
+        // seam compares pins the same way an `Err(Type::Variant)` one does.
+        _ => match changed_error_variant(seam.expression()) {
             Some(seam_variant) => {
                 pins.iter().any(|pin| pin == &seam_variant)
                     && tuple_variant_payload_oracle_matches_seam(seam, oracle_text)

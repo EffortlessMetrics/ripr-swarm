@@ -617,14 +617,20 @@ fn shared_corpus_manifest_maps_fast_tier_to_default_runs() -> Result<(), String>
 #[test]
 fn mutation_spot_check_receipt_maps_agreement_and_join_coverage() -> Result<(), String> {
     let receipt = json!({
-        "schema_version": "ripr-mutation-spot-check-v1",
+        "schema_version": "ripr-mutation-spot-check-v2",
         "scored_families": {
             "claims_discriminator": {"agreement_rate": 1.0, "mutants_scored": 14},
             "claims_no_discriminator": {"agreement_rate": 0.043, "mutants_scored": 23},
         },
         "repos": [
-            {"pairings": {"seam_precise": 2}, "calibration_metrics": {"mutants_total": 86}},
-            {"pairings": {"seam_precise": 170}, "calibration_metrics": {"mutants_total": 1659}},
+            {"name": "atuin", "revision": "90f590b9", "cargo_mutants_version": "27.1.0",
+             "mutant_set_sha256": "aa", "cargo_mutants_args": null,
+             "pairings": {"canonical_precise": 2, "records_total": 86, "seam_precise": 80},
+             "calibration_metrics": {"mutants_total": 86}},
+            {"name": "semver", "revision": "280ebcb6", "cargo_mutants_version": "27.1.0",
+             "mutant_set_sha256": "bb", "cargo_mutants_args": null,
+             "pairings": {"canonical_precise": 170, "records_total": 1659},
+             "calibration_metrics": {"mutants_total": 1659}},
         ],
         "pilot_top_recommendations": {"scored": 39, "precision": 0.385, "by_tier": {"seam": {"confirmed": 2, "refuted": 5}, "owner": {"confirmed": 13, "refuted": 19}}, "repos": [{"name": "semver"}, {"name": "humantime"}]},
     });
@@ -649,11 +655,13 @@ fn mutation_spot_check_receipt_maps_agreement_and_join_coverage() -> Result<(), 
             .find(|row| row["id"] == "trust.pilot_top_recommendation_precision")
             .and_then(|row| row["evidence"].as_str())
     });
-    assert_eq!(
-        pilot_evidence,
-        Some(
-            "39 pilot recommendations scored (seam 2/7, line 0/0, owner 13/32) over semver, humantime"
-        )
+    // The pilot row carries the receipt version and the pooled population
+    // like the agreement rows, so its baseline guard is the same (#6311).
+    assert!(
+        pilot_evidence.is_some_and(|evidence| evidence.starts_with(
+            "ripr-mutation-spot-check-v2: 39 pilot recommendations scored (seam 2/7, line 0/0, owner 13/32) over semver, humantime population=["
+        )),
+        "{pilot_evidence:?}"
     );
 
     let evidence = |input: &Value| input["evidence"].as_str().unwrap_or_default().to_string();
@@ -695,6 +703,238 @@ fn mutation_spot_check_receipt_maps_agreement_and_join_coverage() -> Result<(), 
             .all(|sample| !sample.detail.contains("cargo-mutants arguments"))
     );
 
+    // A baseline row recorded from a v1 receipt is not a like-for-like
+    // trend, so it is not compared; one recorded from v2 is.
+    let current = build_report(
+        &config,
+        &["trust".to_string()],
+        &unsampled,
+        &context("r"),
+        None,
+        false,
+    );
+    let mut v1_baseline = current.clone();
+    for row in v1_baseline["metrics"].as_array_mut().into_iter().flatten() {
+        for sample in row["samples"].as_array_mut().into_iter().flatten() {
+            sample["detail"] =
+                json!("ingested from mutation-spot-check: 14 seam-precise mutants scored");
+        }
+    }
+    for (baseline, comparable) in [(&v1_baseline, false), (&current, true)] {
+        let report = build_report(
+            &config,
+            &["trust".to_string()],
+            &unsampled,
+            &context("r"),
+            Some(baseline),
+            true,
+        );
+        for id in [
+            "trust.discriminator_claim_agreement",
+            "trust.gap_claim_agreement",
+            "trust.mutation_join_coverage",
+            "trust.pilot_top_recommendation_precision",
+        ] {
+            assert_eq!(
+                metric(&report, id)?["baseline"]["comparable"].as_bool(),
+                Some(comparable),
+                "{id}"
+            );
+        }
+    }
+
+    // Every row names the population it pooled, as one JSON value.
+    let names = |detail: &str| -> Option<Vec<String>> {
+        let start = detail.find(" population=")? + " population=".len();
+        let population: Value = serde_json::from_str(&detail[start..]).ok()?;
+        population.as_array().map(|members| {
+            members
+                .iter()
+                .map(|member| member["name"].as_str().unwrap_or_default().to_string())
+                .collect()
+        })
+    };
+    for sample in &unsampled {
+        assert_eq!(
+            names(&sample.detail),
+            Some(vec!["atuin".to_string(), "semver".to_string()]),
+            "{}",
+            sample.detail
+        );
+    }
+
+    // A pooled rate over a different population is not a trend: swapping a
+    // repository, moving a revision, or changing the cargo-mutants arguments
+    // or version each make the baseline incomparable (#6311). Repository
+    // order alone does not.
+    let comparable_against = |receipt: &Value| -> Result<Vec<Option<bool>>, String> {
+        let samples = parse_ingest(receipt, &config)?;
+        let report = build_report(
+            &config,
+            &["trust".to_string()],
+            &samples,
+            &context("r"),
+            Some(&current),
+            true,
+        );
+        [
+            "trust.discriminator_claim_agreement",
+            "trust.gap_claim_agreement",
+            "trust.mutation_join_coverage",
+            "trust.pilot_top_recommendation_precision",
+        ]
+        .iter()
+        .map(|id| Ok(metric(&report, id)?["baseline"]["comparable"].as_bool()))
+        .collect()
+    };
+    let mut reordered = receipt.clone();
+    if let Some(repos) = reordered["repos"].as_array_mut() {
+        repos.reverse();
+    }
+    assert_eq!(comparable_against(&reordered)?, vec![Some(true); 4]);
+    let mut swapped = receipt.clone();
+    swapped["repos"][1]["name"] = json!("ripgrep");
+    let mut moved = receipt.clone();
+    moved["repos"][0]["revision"] = json!("0123abcd");
+    let mut upgraded = receipt.clone();
+    upgraded["repos"][1]["cargo_mutants_version"] = json!("27.2.0");
+    // A supplied mutants.out whose arguments went unrecorded (null) is not
+    // the same population as a run this harness started with none ([]),
+    // and a different mutant set is a different population whatever the
+    // recorded arguments say.
+    let mut recorded = receipt.clone();
+    recorded["repos"][0]["cargo_mutants_args"] = json!([]);
+    let mut reselected = receipt.clone();
+    reselected["repos"][0]["mutant_set_sha256"] = json!("cc");
+    // An argument that mimics the population marker cannot hide the rest.
+    let mut marker = receipt.clone();
+    marker["repos"][0]["cargo_mutants_args"] = json!([" population=[]"]);
+    // A different harness timeout turns slow caught mutants into timeouts.
+    let mut timed = receipt.clone();
+    timed["repos"][0]["mutant_timeout_secs"] = json!(5);
+    for changed in [
+        &swapped,
+        &moved,
+        &upgraded,
+        &sampled,
+        &recorded,
+        &reselected,
+        &marker,
+        &timed,
+    ] {
+        assert_eq!(comparable_against(changed)?, vec![Some(false); 4]);
+    }
+    // An unrecorded cargo-mutants version could hide an instrument change,
+    // so it is not comparable even against a baseline that also lacks it.
+    let mut unversioned = receipt.clone();
+    unversioned["repos"][1]["cargo_mutants_version"] = Value::Null;
+    let unversioned_samples = parse_ingest(&unversioned, &config)?;
+    let unversioned_baseline = build_report(
+        &config,
+        &["trust".to_string()],
+        &unversioned_samples,
+        &context("r"),
+        None,
+        false,
+    );
+    let report = build_report(
+        &config,
+        &["trust".to_string()],
+        &unversioned_samples,
+        &context("r"),
+        Some(&unversioned_baseline),
+        true,
+    );
+    assert_eq!(
+        metric(&report, "trust.gap_claim_agreement")?["baseline"]["comparable"].as_bool(),
+        Some(false)
+    );
+    for (field, malformed) in [
+        ("cargo_mutants_version", json!("")),
+        ("cargo_mutants_version", json!(27)),
+        ("mutant_timeout_secs", json!(0)),
+        ("mutant_timeout_secs", json!("60")),
+    ] {
+        let mut bad = receipt.clone();
+        bad["repos"][0][field] = malformed;
+        assert!(mutation_spot_check_to_input(&bad).is_err(), "{field}");
+    }
+    let samples = parse_ingest(&swapped, &config)?;
+    let report = build_report(
+        &config,
+        &["trust".to_string()],
+        &samples,
+        &context("r"),
+        Some(&current),
+        true,
+    );
+    let reason = metric(&report, "trust.gap_claim_agreement")?["baseline"]["reason"]
+        .as_str()
+        .unwrap_or_default()
+        .to_string();
+    assert!(
+        reason.contains(r#""name":"semver""#) && reason.contains(r#""name":"ripgrep""#),
+        "{reason}"
+    );
+
+    // Argument vectors compare as vectors, not as text joined by spaces.
+    let mut split = receipt.clone();
+    split["repos"][0]["cargo_mutants_args"] = json!(["--re=a", "--exclude=b"]);
+    let mut joined = receipt.clone();
+    joined["repos"][0]["cargo_mutants_args"] = json!(["--re=a --exclude=b"]);
+    let split_report = build_report(
+        &config,
+        &["trust".to_string()],
+        &parse_ingest(&split, &config)?,
+        &context("r"),
+        None,
+        false,
+    );
+    let report = build_report(
+        &config,
+        &["trust".to_string()],
+        &parse_ingest(&joined, &config)?,
+        &context("r"),
+        Some(&split_report),
+        true,
+    );
+    assert_eq!(
+        metric(&report, "trust.gap_claim_agreement")?["baseline"]["comparable"].as_bool(),
+        Some(false)
+    );
+
+    // A v2 baseline written before rows named their population cannot show
+    // it measured the same repositories, so it is not compared either.
+    let mut unrecorded = current.clone();
+    for row in unrecorded["metrics"].as_array_mut().into_iter().flatten() {
+        for sample in row["samples"].as_array_mut().into_iter().flatten() {
+            sample["detail"] = json!(
+                "ingested from mutation-spot-check: ripr-mutation-spot-check-v2: 14 canonical precise mutants scored"
+            );
+        }
+    }
+    let report = build_report(
+        &config,
+        &["trust".to_string()],
+        &unsampled,
+        &context("r"),
+        Some(&unrecorded),
+        true,
+    );
+    assert_eq!(
+        metric(&report, "trust.mutation_join_coverage")?["baseline"]["comparable"].as_bool(),
+        Some(false)
+    );
+
+    // v1 operator-text pairings measure a different population, so a v1
+    // receipt is refused rather than read through a key fallback.
+    let mut v1 = receipt.clone();
+    v1["schema_version"] = json!("ripr-mutation-spot-check-v1");
+    assert!(
+        parse_ingest(&v1, &config)
+            .is_err_and(|e| e.contains("re-run `cargo xtask mutation-spot-check`"))
+    );
+
     // A receipt from before the pilot section, or with nothing scored, adds
     // no pilot row rather than a misleading zero.
     // A run with a repository's pilot unavailable measured a smaller
@@ -732,6 +972,163 @@ fn mutation_spot_check_receipt_maps_agreement_and_join_coverage() -> Result<(), 
             return Err(format!("accepted pilot scored {scored}"));
         }
     }
+    Ok(())
+}
+
+#[test]
+fn a_slower_install_fails_the_gate_against_a_same_runner_baseline() -> Result<(), String> {
+    // Slack is max(baseline * regression_pct/100, regression_floor) from the
+    // committed first_run.install_seconds row. Hard-coding 158 s / 170 s here
+    // would keep passing after those margins change.
+    let config = parse_config(include_str!(
+        "../../../../benchmarks/dx_scoreboard/scoreboards.toml"
+    ))?;
+    let install = config
+        .metric
+        .iter()
+        .find(|metric| metric.id == "first_run.install_seconds")
+        .ok_or("first_run.install_seconds missing from scoreboards.toml")?;
+    if install.regression_additive {
+        return Err(
+            "first_run.install_seconds uses additive slack; this test derives max(pct, floor)"
+                .to_string(),
+        );
+    }
+    if !install.runner_dependent {
+        return Err("first_run.install_seconds must be runner_dependent".to_string());
+    }
+    let pct = install.regression_pct;
+    let floor = install.regression_floor;
+    // The receipt also emits time_to_first_useful_result_s, which moves with
+    // install duration. Gate only the parsed install metric so a larger
+    // install slack cannot fail the other row.
+    let mut gate_config = config.clone();
+    gate_config
+        .metric
+        .retain(|metric| metric.id == "first_run.install_seconds");
+    let boards = vec!["first_run".to_string()];
+    let with_install = |secs: f64| -> Result<Vec<Sample>, String> {
+        let mut receipt = first_run_receipt(true);
+        let steps = receipt["setup"]
+            .as_array_mut()
+            .ok_or("receipt setup missing")?;
+        for step in steps.iter_mut() {
+            if step["step"].as_str() == Some("install_published") {
+                step["secs"] = json!(secs);
+            }
+        }
+        parse_ingest(&receipt, &config)
+    };
+    let baseline_samples = parse_ingest(&first_run_receipt(true), &config)?;
+    let baseline_secs = baseline_samples
+        .iter()
+        .find(|sample| sample.metric == "first_run.install_seconds")
+        .and_then(|sample| match sample.outcome {
+            SampleOutcome::Value(value) => Some(value),
+            _ => None,
+        })
+        .ok_or("first_run receipt did not yield a completed install_seconds sample")?;
+    let slack = (baseline_secs * pct / 100.0).max(floor);
+    if slack < 1.0 {
+        return Err(
+            "first_run.install_seconds slack is under 1 s; cannot place \
+             just-inside/just-outside samples"
+                .to_string(),
+        );
+    }
+    // Stay 1 s off the allowed worsening so an exact-boundary sample cannot
+    // fail from floating-point rounding of pct * baseline.
+    let inside = baseline_secs + slack - 1.0;
+    let outside = baseline_secs + slack + 1.0;
+    let baseline = build_report(
+        &gate_config,
+        &boards,
+        &baseline_samples,
+        &context("runner-a"),
+        None,
+        false,
+    );
+    let gate = |secs: f64, runner: &str| -> Result<Value, String> {
+        Ok(build_report(
+            &gate_config,
+            &boards,
+            &with_install(secs)?,
+            &context(runner),
+            Some(&baseline),
+            true,
+        ))
+    };
+    assert_eq!(
+        gate(inside, "runner-a")?["gate"]["status"].as_str(),
+        Some("pass")
+    );
+    let slower = gate(outside, "runner-a")?;
+    assert_eq!(slower["gate"]["status"].as_str(), Some("fail"));
+    assert!(
+        gate_failure_message(&slower).contains("first_run.install_seconds"),
+        "{}",
+        gate_failure_message(&slower)
+    );
+    // A different runner class is never compared for a wall-time metric.
+    assert_eq!(
+        gate(outside, "runner-b")?["gate"]["status"].as_str(),
+        Some("pass")
+    );
+    Ok(())
+}
+
+#[test]
+fn the_nightly_row_receipt_gates_a_slower_walk_and_a_failed_step() -> Result<(), String> {
+    // The nightly lane ingests first-run-rows.jsonl because only the row
+    // converter emits walk seconds and failed steps; the summary receipt cannot
+    // fail the gate on either.
+    let config = parse_config(include_str!(
+        "../../../../benchmarks/dx_scoreboard/scoreboards.toml"
+    ))?;
+    let boards = vec!["first_run".to_string()];
+    let rows = |walk: f64, check_exit: i32| -> Result<Vec<Sample>, String> {
+        let text = [
+            r#"{"schema":"first_run_row.v1","ripr":"ripr 0.11.0","case":"_setup","step":"install_published","metric":"secs","value":40.0,"budget":null,"better":"lower"}"#.to_string(),
+            r#"{"schema":"first_run_row.v1","ripr":"ripr 0.11.0","case":"_setup","step":"install_published","metric":"exit","value":0,"budget":0,"better":"equal"}"#.to_string(),
+            format!(r#"{{"schema":"first_run_row.v1","ripr":"ripr 0.11.0","case":"a","step":"check","metric":"secs","value":{walk},"budget":60,"better":"lower"}}"#),
+            format!(r#"{{"schema":"first_run_row.v1","ripr":"ripr 0.11.0","case":"a","step":"check","metric":"exit","value":{check_exit},"budget":0,"better":"equal"}}"#),
+        ]
+        .join("\n");
+        parse_ingest(&parse_ingest_text(&text)?, &config)
+    };
+    let baseline = build_report(
+        &config,
+        &boards,
+        &rows(5.0, 0)?,
+        &context("runner-a"),
+        None,
+        false,
+    );
+    let gate = |walk: f64, exit: i32| -> Result<Value, String> {
+        Ok(build_report(
+            &config,
+            &boards,
+            &rows(walk, exit)?,
+            &context("runner-a"),
+            Some(&baseline),
+            true,
+        ))
+    };
+    assert_eq!(gate(5.0, 0)?["gate"]["status"].as_str(), Some("pass"));
+    let slower = gate(20.0, 0)?;
+    assert_eq!(slower["gate"]["status"].as_str(), Some("fail"));
+    assert!(
+        gate_failure_message(&slower).contains("first_run.walk_secs"),
+        "{}",
+        gate_failure_message(&slower)
+    );
+    let failed = gate(5.0, 1)?;
+    assert_eq!(failed["gate"]["status"].as_str(), Some("fail"));
+    assert!(
+        gate_failure_message(&failed).contains("first_run.failed_steps"),
+        "{}",
+        gate_failure_message(&failed)
+    );
     Ok(())
 }
 
@@ -1189,9 +1586,42 @@ fn malformed_mutation_and_generic_receipts_are_rejected() {
             "claims_discriminator": {"agreement_rate": 1.0, "mutants_scored": 1},
             "claims_no_discriminator": {"agreement_rate": 0.5, "mutants_scored": 1},
         },
-        "repos": [{"pairings": {"seam_precise": 5}}],
+        "repos": [{"name": "a", "revision": "abc", "mutant_set_sha256": "aa", "cargo_mutants_args": null,
+                   "pairings": {"seam_precise": 5}, "calibration_metrics": {"mutants_total": 9}}],
     });
-    assert!(mutation_spot_check_to_input(&receipt).is_err_and(|e| e.contains("mutants_total")));
+    // A v1-shaped repo row must not fall back to its `seam_precise` count.
+    assert!(
+        mutation_spot_check_to_input(&receipt)
+            .is_err_and(|e| e.contains("pairings.canonical_precise"))
+    );
+    let mut receipt = receipt;
+    receipt["repos"][0]["pairings"] = json!({"canonical_precise": 5, "records_total": 8});
+    assert!(
+        mutation_spot_check_to_input(&receipt)
+            .is_err_and(|e| e.contains("calibration_metrics.mutants_total differs"))
+    );
+    receipt["repos"][0]["pairings"]["records_total"] = json!(9);
+    // A rate that cannot name the repositories it pooled is not ingested.
+    for (field, bad) in [
+        ("name", json!("")),
+        ("revision", json!("")),
+        ("mutant_set_sha256", Value::Null),
+        ("cargo_mutants_args", json!("--re=a")),
+        ("cargo_mutants_args", json!([1])),
+    ] {
+        let mut anonymous = receipt.clone();
+        anonymous["repos"][0][field] = bad;
+        assert!(
+            mutation_spot_check_to_input(&anonymous)
+                .is_err_and(|e| e.contains("needs a name, revision, mutant_set_sha256")),
+            "{field}"
+        );
+    }
+    assert!(mutation_spot_check_to_input(&receipt).is_ok_and(|input| {
+        input["metrics"]
+            .as_array()
+            .is_some_and(|rows| rows.len() == 3)
+    }));
     assert!(
         first_run_to_input(&json!({"schema_version": "first_run.v1", "cases": []}))
             .is_err_and(|e| e.contains("non-empty"))
@@ -2098,4 +2528,81 @@ fn a_checkout_whose_directory_name_ends_in_a_space_is_its_own_checkout() -> Resu
     let verdict = super::measure::verify_own_checkout(&dir);
     let _ = fs::remove_dir_all(&root);
     verdict
+}
+
+#[test]
+fn verdict_corpus_sources_derive_each_rate_from_the_committed_rows() -> Result<(), String> {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    let config = load_config(&committed_config())?;
+    let mut seen = 0;
+    for metric in &config.metric {
+        let Some(reference) = metric.source.strip_prefix("verdict-corpus:") else {
+            continue;
+        };
+        seen += 1;
+        let (dir, rate) = reference.split_once('#').ok_or("no #rate")?;
+        let report = super::super::verdict_corpus::expected_report(&root.join(dir))?;
+        let expected = serde_json::to_value(&report).map_err(|err| err.to_string())?;
+        let numerator = expected[rate]["numerator"]
+            .as_f64()
+            .ok_or(rate.to_string())?;
+        let denominator = expected[rate]["denominator"]
+            .as_f64()
+            .ok_or(rate.to_string())?;
+        let mut absolute = metric.clone();
+        absolute.source = format!("verdict-corpus:{}#{rate}", root.join(dir).display());
+        let sample = verdict_corpus_sample(
+            &absolute,
+            absolute.source.trim_start_matches("verdict-corpus:"),
+        );
+        assert!(
+            matches!(sample.outcome, SampleOutcome::Value(v) if (v - numerator / denominator).abs() < 1e-12),
+            "{}: {:?} {}",
+            metric.id,
+            sample.outcome,
+            sample.detail
+        );
+    }
+    assert_eq!(seen, 5, "the five trust rates read the corpus rows");
+
+    // A corpus that cannot be read is not measured, never a perfect rate.
+    let mut missing = config
+        .metric
+        .iter()
+        .find(|metric| metric.source.starts_with("verdict-corpus:"))
+        .cloned()
+        .ok_or("no verdict-corpus metric")?;
+    missing.source = "verdict-corpus:no/such/corpus#false_verdict_rate".to_string();
+    let sample = verdict_corpus_sample(&missing, "no/such/corpus#false_verdict_rate");
+    assert!(
+        matches!(sample.outcome, SampleOutcome::NotMeasured),
+        "{:?}",
+        sample.outcome
+    );
+    assert!(
+        sample.detail.contains("restore the corpus"),
+        "{}",
+        sample.detail
+    );
+
+    // A corpus whose rows no longer parse is a failed instrument, not a gap.
+    let dir = crate::tests::temp_dir("dx-verdict-corpus-bad-row");
+    crate::tests::write(
+        &dir.join("corpus.json"),
+        r#"{"spec": "RIPR-SPEC-0219", "non_claims": []}"#,
+    );
+    crate::tests::write(&dir.join("cases/a-case.json"), r#"{"case_id": "a-case"}"#);
+    crate::tests::write(
+        &dir.join("expected/rows/a-case.json"),
+        r#"{"case_id": "a-case"}"#,
+    );
+    let reference = format!("{}#false_verdict_rate", dir.display());
+    let sample = verdict_corpus_sample(&missing, &reference);
+    assert!(
+        matches!(sample.outcome, SampleOutcome::Failed),
+        "{:?} {}",
+        sample.outcome,
+        sample.detail
+    );
+    Ok(())
 }

@@ -1,0 +1,28 @@
+use libtest_mimic::{Arguments, Failed, Trial};
+
+fn check_shipping() -> Result<(), Failed> {
+    assert_eq!(harness::shipping(3), 12);
+    Ok(())
+}
+
+fn check_quantity() -> Result<(), Failed> {
+    harness::parse_qty("5").unwrap();
+    Ok(())
+}
+
+#[allow(dead_code)]
+fn spare_trials() -> Vec<Trial> {
+    vec![Trial::test("handling_is_six_each", || {
+        assert_eq!(harness::handling(2), 12);
+        Ok(())
+    })]
+}
+
+fn main() {
+    let args = Arguments::from_args();
+    let trials = vec![
+        Trial::test("shipping_is_four_per_kilo", check_shipping),
+        Trial::test("quantity_parses", check_quantity),
+    ];
+    libtest_mimic::run(&args, trials).exit();
+}

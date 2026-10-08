@@ -1,0 +1,13 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 9ea04c7..1d76e43 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -54,7 +54,7 @@ pub fn mask(payload: &mut [u8]) {
+ static DIGITS: [u8; 16] = [
+     b'0', b'1', b'2', b'3', b'4', b'5', b'6', b'7',
+     b'8', b'9',
+-    b'a', b'b', b'c', b'd', b'e', b'f',
++    0x61, 0x62, 0x63, 0x64, 0x65, 0x66,
+ ];
+ 
+ /// Lower-case hex for a byte slice.

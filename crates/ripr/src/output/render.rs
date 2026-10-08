@@ -3,11 +3,16 @@ use super::{
     repo_seams, sarif, suppressions,
 };
 use crate::analysis;
+use crate::analysis::resource_cost::trace_latency_phase;
 use crate::app::causal_projection::CausalDeltaArtifact;
-use crate::app::{AnalysisProgressSink, CheckOutput, FindingDrillIn, repo_inventory_with_progress};
+use crate::app::{
+    AnalysisProgressSink, CheckDiffProvenance, CheckOutput, FindingDrillIn,
+    repo_inventory_with_progress,
+};
 use crate::config::RiprConfig;
 use crate::output::repo_exposure::TsFullRepoGuidance;
 use std::collections::BTreeMap;
+use std::time::Instant;
 
 /// Path (relative to the analyzed workspace root) where the
 /// test-efficiency report is expected when rendering `ripr+` badge formats.
@@ -273,10 +278,11 @@ pub(crate) fn render_check_with_config_and_navigation_and_progress(
     config: &RiprConfig,
     drill_in: Option<&FindingDrillIn>,
     progress: Option<&dyn AnalysisProgressSink>,
+    provenance: CheckDiffProvenance,
 ) -> Result<String, String> {
     match format {
         OutputFormat::Human => Ok(human::terminal_safe(
-            human::render_bounded_with_config_and_navigation(output, config, drill_in),
+            human::render_bounded_with_config_and_navigation(output, config, drill_in, provenance),
         )),
         OutputFormat::HumanFull => Ok(human::terminal_safe(
             human::render_full_with_config_and_navigation(output, config, drill_in),
@@ -291,7 +297,10 @@ pub(crate) fn detect_ts_full_repo_guidance_pub(
     root: &std::path::Path,
     classified: &[crate::analysis::ClassifiedSeam],
 ) -> Option<TsFullRepoGuidance> {
-    detect_ts_full_repo_guidance(root, classified)
+    let started = Instant::now();
+    let guidance = detect_ts_full_repo_guidance(root, classified);
+    trace_latency_phase("guidance_ts_detect", "ok", started.elapsed());
+    guidance
 }
 
 /// Public re-export for CLI callers that drive the streaming JSON path directly.
@@ -299,7 +308,10 @@ pub(crate) fn detect_python_repo_exposure_guidance_pub(
     root: &std::path::Path,
     classified: &[crate::analysis::ClassifiedSeam],
 ) -> Option<repo_exposure::PythonRepoExposureGuidance> {
-    detect_python_repo_exposure_guidance(root, classified)
+    let started = Instant::now();
+    let guidance = detect_python_repo_exposure_guidance(root, classified);
+    trace_latency_phase("guidance_python_detect", "ok", started.elapsed());
+    guidance
 }
 
 /// Detect whether a TypeScript diff-first guidance disclosure should fire.
@@ -725,7 +737,7 @@ mod tests {
         let seams_md =
             render_check_with_config(&output, &OutputFormat::RepoSeamsMd, &RiprConfig::default())?;
 
-        assert!(seams_json.contains("\"schema_version\": \"0.1\""));
+        assert!(seams_json.contains("\"schema_version\": \"0.2\""));
         assert!(seams_json.contains("over_threshold"));
         assert!(seams_md.contains("over_threshold"));
         remove_temp_root(&output.root)?;
@@ -807,7 +819,7 @@ mod tests {
         let sarif =
             render_check_with_config(&output, &OutputFormat::RepoSarif, &RiprConfig::default())?;
 
-        assert!(exposure_json.contains("\"schema_version\": \"0.3\""));
+        assert!(exposure_json.contains("\"schema_version\": \"0.4\""));
         assert!(exposure_json.contains("over_threshold"));
         let exposure_summary = render_check_with_config(
             &output,
@@ -1591,6 +1603,7 @@ fn happy_path_passes() {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         }
     }
 
