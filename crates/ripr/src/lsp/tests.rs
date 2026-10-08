@@ -23386,6 +23386,263 @@ fn framed_lsp_component_degradation_is_typed_logged_and_recovers() -> Result<(),
 }
 
 #[test]
+#[serial]
+fn framed_lsp_gap_ledger_degradation_is_typed_logged_and_recovers() -> Result<(), String> {
+    // #7147 / RIPR-SPEC-0141: a gap decision ledger that exists but cannot
+    // be parsed must degrade the refresh through the production path — the
+    // single shared ledger load records one typed `gap_ledger` outcome, the
+    // run leaves `full`, the client sees exactly one WARNING naming the
+    // component and its recovery, and ordinary findings still publish.
+    // Mirror of `framed_lsp_component_degradation_is_typed_logged_and_recovers`.
+    //
+    // The shared run status is `cache_limited`, not `limited`: the workspace
+    // gap-artifact report independently rejects the malformed ledger, and
+    // that rejection outranks the component-outcome rule in the spec's
+    // first-match-wins precedence (the acceptance example requires only
+    // "not full" for this reason).
+    work_done_progress_runtime()?.block_on(async {
+        let temp = boundary_gap_git_fixture_root("gap-ledger-degradation")?;
+        let root = temp.path().to_path_buf();
+
+        let (client_io, server_io) = tokio::io::duplex(64 * 1024);
+        let (mut client_read, mut client_write) = tokio::io::split(client_io);
+        let (server_read, server_write) = tokio::io::split(server_io);
+        let (service, socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
+        let mut server_task = tokio::spawn(async move {
+            Server::new(server_read, server_write, socket)
+                .serve(service)
+                .await;
+        });
+        let root_uri = file_uri_for_path(&root)?;
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "processId": null,
+                    "rootUri": root_uri.as_str(),
+                    "initializationOptions": {
+                        "baseRef": "HEAD",
+                        "checkMode": "instant",
+                        "diagnosticProfile": "full"
+                    },
+                    "capabilities": {
+                        "window": {"workDoneProgress": true}
+                    }
+                }
+            }),
+        )
+        .await?;
+        let initialize = read_lsp_response(&mut client_read, 1).await?;
+        if initialize.get("error").is_some() {
+            return Err(format!("initialize failed: {initialize}"));
+        }
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({"jsonrpc": "2.0", "method": "initialized", "params": {}}),
+        )
+        .await?;
+
+        // Refresh 1 (baseline): a clean run must not warn about degradation.
+        let baseline = run_wire_refresh_collecting(&mut client_read, &mut client_write, 2).await?;
+        let baseline_warnings = log_messages_of_type(&baseline, 2);
+        if baseline_warnings
+            .iter()
+            .any(|message| message.contains("ripr analysis limited"))
+        {
+            return Err(format!(
+                "a clean baseline run must not warn about degradation: {baseline_warnings:?}"
+            ));
+        }
+        let baseline_status = analysis_status_params(&baseline);
+        let Some(baseline_status) = baseline_status.last() else {
+            return Err("baseline refresh published no analysis status".to_string());
+        };
+        if baseline_status["run_status"].as_str() != Some("full") {
+            return Err(format!("baseline run must be full, got: {baseline_status}"));
+        };
+
+        // Plant a malformed gap decision ledger at the production default
+        // path: the ledger exists but cannot be parsed, so the gap_ledger
+        // component fails while diff and seam evidence remain usable.
+        let ledger_path = root.join(
+            crate::output::gap_decision_ledger::DEFAULT_GAP_DECISION_LEDGER_OUT,
+        );
+        std::fs::create_dir_all(
+            ledger_path
+                .parent()
+                .ok_or_else(|| "ledger path must have a parent".to_string())?,
+        )
+        .map_err(|err| format!("create ledger dir failed: {err}"))?;
+        std::fs::write(&ledger_path, "{not json")
+            .map_err(|err| format!("write malformed ledger failed: {err}"))?;
+
+        // Refresh 2 (degraded): typed status + one WARNING + limited progress
+        // + ordinary evidence still published.
+        let degraded = run_wire_refresh_collecting(&mut client_read, &mut client_write, 3).await?;
+        let degraded_status = analysis_status_params(&degraded);
+        let Some(status) = degraded_status.last() else {
+            return Err("degraded refresh published no analysis status".to_string());
+        };
+        if status["run_status"].as_str() != Some("cache_limited") {
+            return Err(format!(
+                "a malformed ledger must limit the run via the gap-artifact rejection, got: {status}"
+            ));
+        }
+        let components = status["components"]
+            .as_array()
+            .ok_or_else(|| format!("status must expose typed components: {status}"))?;
+        let ledger = components
+            .iter()
+            .find(|outcome| outcome["component"].as_str() == Some("gap_ledger"));
+        let Some(ledger) = ledger else {
+            return Err(format!(
+                "components must include the gap_ledger outcome: {components:?}"
+            ));
+        };
+        if ledger["state"].as_str() != Some("failed")
+            || ledger["kind"].as_str() != Some("gap_ledger_parse_failed")
+            || ledger["findings_trustworthy"].as_bool() != Some(true)
+            || ledger["snapshot_identity"].is_null()
+        {
+            return Err(format!("unexpected gap_ledger outcome: {ledger}"));
+        }
+        let recovery = ledger["recovery"].as_str().unwrap_or("");
+        if !recovery.contains("ripr check") {
+            return Err(format!(
+                "the degraded outcome must name a concrete recovery route: {ledger}"
+            ));
+        }
+        let diff = components
+            .iter()
+            .find(|outcome| outcome["component"].as_str() == Some("diff"));
+        if diff.and_then(|outcome| outcome["state"].as_str()) != Some("complete") {
+            return Err(format!(
+                "ordinary diff findings must stay complete and disclosed: {components:?}"
+            ));
+        }
+        let warnings = log_messages_of_type(&degraded, 2);
+        let degradation_warnings = warnings
+            .iter()
+            .filter(|message| message.contains("gap_ledger failed"))
+            .count();
+        if degradation_warnings != 1 {
+            return Err(format!(
+                "expected exactly one degradation warning, got {degradation_warnings}: {warnings:?}"
+            ));
+        }
+        if !warnings.iter().any(|message| {
+            message.contains("gap_ledger failed") && message.contains("recovery:")
+        }) {
+            return Err(format!(
+                "the degradation warning must name the recovery route: {warnings:?}"
+            ));
+        }
+        let progress_end_limited = degraded.iter().any(|message| {
+            message.get("method").and_then(serde_json::Value::as_str) == Some("$/progress")
+                && message["params"]["value"]["kind"].as_str() == Some("end")
+                && message["params"]["value"]["message"].as_str()
+                    == Some("analysis completed with limited evidence")
+        });
+        if !progress_end_limited {
+            return Err(format!(
+                "progress must end limited for a degraded run: {degraded:?}"
+            ));
+        }
+        let published_evidence = degraded.iter().any(|message| {
+            message.get("method").and_then(serde_json::Value::as_str)
+                == Some("textDocument/publishDiagnostics")
+                && message["params"]["diagnostics"]
+                    .as_array()
+                    .is_some_and(|diagnostics| !diagnostics.is_empty())
+        });
+        if !published_evidence {
+            return Err(
+                "ordinary evidence must remain published under a degraded optional component"
+                    .to_string(),
+            );
+        }
+
+        // Refresh 3 (identical degradation): no repeated warning spam; the
+        // typed status still discloses the degradation.
+        let repeated = run_wire_refresh_collecting(&mut client_read, &mut client_write, 4).await?;
+        let repeated_warnings = log_messages_of_type(&repeated, 2)
+            .into_iter()
+            .filter(|message| message.contains("gap_ledger failed"))
+            .count();
+        if repeated_warnings != 0 {
+            return Err("a byte-identical repeated degradation must not warn again".to_string());
+        }
+        let repeated_status = analysis_status_params(&repeated);
+        if repeated_status
+            .last()
+            .and_then(|status| status["run_status"].as_str())
+            != Some("cache_limited")
+        {
+            return Err(format!(
+                "the repeated degradation must stay typed on status: {repeated_status:?}"
+            ));
+        }
+
+        // Refresh 4 (repaired): one INFO recovery line, full status restored.
+        std::fs::remove_file(&ledger_path)
+            .map_err(|err| format!("remove malformed ledger failed: {err}"))?;
+        let recovered = run_wire_refresh_collecting(&mut client_read, &mut client_write, 5).await?;
+        let recovery_infos = log_messages_of_type(&recovered, 3)
+            .into_iter()
+            .filter(|message| message.contains("recovered"))
+            .count();
+        if recovery_infos != 1 {
+            return Err(format!(
+                "recovery must log exactly one INFO line, got {recovery_infos}"
+            ));
+        }
+        let recovered_status = analysis_status_params(&recovered);
+        if recovered_status
+            .last()
+            .and_then(|status| status["run_status"].as_str())
+            != Some("full")
+        {
+            return Err(format!(
+                "the repaired refresh must restore a full run: {recovered_status:?}"
+            ));
+        }
+
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({"jsonrpc": "2.0", "id": 6, "method": "shutdown", "params": null}),
+        )
+        .await?;
+        let shutdown = read_lsp_response(&mut client_read, 6).await?;
+        if shutdown.get("error").is_some() {
+            return Err(format!("shutdown failed: {shutdown}"));
+        }
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({"jsonrpc": "2.0", "method": "exit", "params": null}),
+        )
+        .await?;
+        client_write
+            .shutdown()
+            .await
+            .map_err(|err| format!("failed to close test client: {err}"))?;
+        match tokio::time::timeout(Duration::from_secs(2), &mut server_task).await {
+            Ok(join_result) => {
+                join_result.map_err(|err| format!("LSP server task failed: {err}"))?;
+            }
+            Err(_) => {
+                server_task.abort();
+                return Err("LSP server did not stop after exit notification".to_string());
+            }
+        }
+        drop(temp);
+        Ok(())
+    })
+}
+
+#[test]
 fn workspace_diagnostics_production_like_opt_in_target_keeps_editor_projection()
 -> Result<(), String> {
     // #3285: the out-of-scope partition must consume the producer-owned
