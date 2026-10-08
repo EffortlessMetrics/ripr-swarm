@@ -201,7 +201,7 @@ and without execution authority (ADR 0022):
   hosted wire interop controls, including the post-refresh
   `get_repair_card_after_refresh_matches_cli_agent_card` success path and
   the `resource_reads_match_tools_after_refresh` card tool/resource
-  byte-equality control (#7145).
+  parsed-document-equality control (#7145).
 
 ## Implementation Mapping
 
