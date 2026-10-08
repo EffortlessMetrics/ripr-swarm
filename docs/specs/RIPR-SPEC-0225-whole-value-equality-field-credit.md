@@ -194,7 +194,12 @@ rejected alternative. Any can be reversed later without touching the rest.
      `.to_owned()`, `String::from(..)` or (for a `String` field) `.into()`;
      constants are refused, since a `const` may be computed by a workspace
      `const fn`; generic types and `.into()` inside nested constructors are
-     refused too.
+     refused too. `String::from(..)` counts only when `String` names the
+     standard type workspace-wide: a workspace `mod String`, type, fn,
+     const, static, trait, macro or variant of that name, a rename to it, or
+     a non-std `use` of it refuses the pin, because the shadowed `from` can
+     return the owner's own field and both compared operands then move
+     together (#7066 review);
    A field read inside the braces of an expected literal no longer clears the
    `FieldValue` missing discriminator (example 12, which had read `exposed`).
    The parser-backed `whole_object_equality` classifier change is not part of
@@ -270,6 +275,10 @@ The diff changes `retries: n + 2` to `retries: n + 1` in `build`; `Config` deriv
   `fixtures/rust-verdict-corpus/corpus.json`, one per buildable acceptance
   example, each naming its example in its reasoning and labeled with runtime
   mutant truth.
+- Honesty corpus: `rust_owner_pin_whole_value_string_from_shadow` in
+  `fixtures/evidence-promotion-honesty-corpus/corpus.json`, the
+  should-stay-`weakly_exposed` control for the `String::from` shadow
+  refusal (#7066 review).
 - Planned: oracle classifier unit tests for braces outside struct-literal
   operands.
 

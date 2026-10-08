@@ -4537,6 +4537,64 @@ fn whole_value_identity_holes_stay_closed() {
     }
 }
 
+/// The `name` field pin of `build` against `tests` (one test): the changed
+/// line is the `String` field initializer.
+fn string_field_pin(lib: &str, tests: &str) -> (RustIndex, Option<OwnerReturnPin>) {
+    let index = index(&[(LIB, lib), (TESTS, tests)]);
+    let pin = field_pin_of(
+        &index,
+        lib,
+        "build",
+        "name: render(retries),",
+        "name: render(retries),",
+    );
+    (index, pin)
+}
+
+fn string_field_admits(lib: &str, body: &str) -> bool {
+    let tests = format!("use demo::*;\n#[test]\nfn pins() {{\n{body}\n}}\n");
+    let (index, pin) = string_field_pin(lib, &tests);
+    assert!(pin.is_some(), "the string field pin must establish: {lib}");
+    pin.is_some_and(|pin| !admitted_texts(&index, &pin).is_empty())
+}
+
+const STRING_FIELD_LIB: &str = r#"#[derive(Debug, Clone, PartialEq)]
+pub struct Config {
+    pub retries: u32,
+    pub name: String,
+}
+
+pub fn build(retries: u32) -> Config {
+    Config {
+        retries,
+        name: render(retries),
+    }
+}
+
+pub fn render(retries: u32) -> String {
+    format!("cfg-{retries}")
+}
+"#;
+
+/// #7066 review (fourth round): a test file's `mod String` makes an expected
+/// `String::from(..)` the owner's own output, so both operands move together
+/// and the pin refuses the spelling; the standard conversion still pins.
+#[test]
+fn whole_value_string_from_refuses_a_workspace_string() {
+    let body = "assert_eq!(build(3), Config { retries: 3, name: String::from(\"3\") });";
+    // Control: the standard `String::from` carries an independent value.
+    assert!(string_field_admits(STRING_FIELD_LIB, body));
+
+    // The test file declaring `mod String` rebinds the conversion to a
+    // function that returns the owner's own name.
+    let shadowed_tests = format!(
+        "use demo::*;\n#[test]\nfn pins() {{\n{body}\n}}\nmod String {{\n    pub fn from(value: &str) -> std::string::String {{\n        demo::build(value.trim().parse().unwrap_or(0)).name\n    }}\n}}\n"
+    );
+    let (index, pin) = string_field_pin(STRING_FIELD_LIB, &shadowed_tests);
+    assert!(pin.is_some(), "the pin still establishes under the shadow");
+    assert!(pin.is_some_and(|pin| admitted_texts(&index, &pin).is_empty()));
+}
+
 /// #6974: the assertions a `weight` pin admits when `lib` (the crate root,
 /// holding the owner and a `#[cfg(test)] mod tests`) and `tests` (an
 /// integration test) are the workspace.

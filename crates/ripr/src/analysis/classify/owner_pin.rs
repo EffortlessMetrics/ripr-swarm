@@ -1233,6 +1233,11 @@ struct WholeValueField {
     /// the standard `None`/`Some`/`Ok`/`Err`: a bare CamelCase name outside
     /// this set may be a test-local binding (`let Expected = ..;`).
     constructor_names: BTreeSet<String>,
+    /// `String` may name a workspace item (`mod String`, a type, fn, const,
+    /// static, trait, macro or variant of that name, a rename to it, or a
+    /// non-std `use` of it), so an expected `String::from(..)` is not the
+    /// standard conversion and gives no credit (#7066 review).
+    string_from_may_be_rebound: bool,
 }
 
 impl OwnerReturnPin {
@@ -1452,6 +1457,7 @@ impl OwnerReturnPin {
                 field_is_string,
                 computed_names: camel_case_value_items(index),
                 constructor_names: declared_constructor_names(index),
+                string_from_may_be_rebound: wrapper_may_be_rebound("String", index),
             }),
             returns_bool: false,
             owner_file: owner.file.clone(),
@@ -2858,9 +2864,13 @@ impl WholeValueField {
         // A shorthand `field` reads a local binding of that name.
         names_type
             && pinned.name_ref().is_some()
-            && pinned
-                .expr()
-                .is_some_and(|value| independent_value(&value, self.field_is_string))
+            && pinned.expr().is_some_and(|value| {
+                independent_value(
+                    &value,
+                    self.field_is_string,
+                    self.string_from_may_be_rebound,
+                )
+            })
             && !literal.syntax().descendants().any(|node| {
                 ast::NameRef::cast(node.clone())
                     .is_some_and(|name| self.computed_names.contains(name.text()))
@@ -2881,10 +2891,17 @@ impl WholeValueField {
 /// result: literals (negated too), tuples and arrays of them, unit and tuple
 /// variants or structs and struct literals named by a CamelCase path, and a
 /// string literal's `.to_string()`, `.to_owned()`, `String::from(..)`, or
-/// `.into()` when the field is a `String`. A local binding, a constant, a
-/// workspace function or any other method can carry the owner's output
-/// (`retries: c.retries`, `RETRIES` from a `const fn`) and gives no credit.
-fn independent_value(value: &ast::Expr, string_field: bool) -> bool {
+/// `.into()` when the field is a `String`. `String::from(..)` counts only
+/// when `String` names the standard type workspace-wide; a workspace
+/// `mod String` or rename makes the call an unknown function (#7066 review).
+/// A local binding, a constant, a workspace function or any other method can
+/// carry the owner's output (`retries: c.retries`, `RETRIES` from a
+/// `const fn`) and gives no credit.
+fn independent_value(
+    value: &ast::Expr,
+    string_field: bool,
+    string_from_may_be_rebound: bool,
+) -> bool {
     let string_literal = |expr: Option<ast::Expr>| {
         matches!(expr, Some(ast::Expr::Literal(literal))
             if matches!(literal.kind(), ast::LiteralKind::String(_)))
@@ -2895,17 +2912,17 @@ fn independent_value(value: &ast::Expr, string_field: bool) -> bool {
             prefix.op_kind() == Some(ast::UnaryOp::Neg)
                 && matches!(prefix.expr(), Some(ast::Expr::Literal(_)))
         }
-        ast::Expr::ParenExpr(inner) => inner
-            .expr()
-            .is_some_and(|inner| independent_value(&inner, string_field)),
+        ast::Expr::ParenExpr(inner) => inner.expr().is_some_and(|inner| {
+            independent_value(&inner, string_field, string_from_may_be_rebound)
+        }),
         ast::Expr::TupleExpr(tuple) => tuple
             .fields()
-            .all(|item| independent_value(&item, string_field)),
+            .all(|item| independent_value(&item, string_field, string_from_may_be_rebound)),
         ast::Expr::ArrayExpr(items) => {
             items.semicolon_token().is_none()
                 && items
                     .exprs()
-                    .all(|item| independent_value(&item, string_field))
+                    .all(|item| independent_value(&item, string_field, string_from_may_be_rebound))
         }
         ast::Expr::PathExpr(path) => path.path().is_some_and(|path| constructor_path(&path)),
         ast::Expr::CallExpr(call) => {
@@ -2917,15 +2934,16 @@ fn independent_value(value: &ast::Expr, string_field: bool) -> bool {
             };
             let arguments = call.arg_list().map(|list| list.args().collect::<Vec<_>>());
             if path.syntax().text() == "String::from" {
-                return arguments.is_some_and(|arguments| {
-                    arguments.len() == 1 && string_literal(arguments.into_iter().next())
-                });
+                return !string_from_may_be_rebound
+                    && arguments.is_some_and(|arguments| {
+                        arguments.len() == 1 && string_literal(arguments.into_iter().next())
+                    });
             }
             constructor_path(&path)
                 && arguments.is_some_and(|arguments| {
                     arguments
                         .iter()
-                        .all(|argument| independent_value(argument, false))
+                        .all(|argument| independent_value(argument, false, false))
                 })
         }
         ast::Expr::RecordExpr(literal) => {
@@ -2937,7 +2955,7 @@ fn independent_value(value: &ast::Expr, string_field: bool) -> bool {
                             field.name_ref().is_some()
                                 && field
                                     .expr()
-                                    .is_some_and(|value| independent_value(&value, false))
+                                    .is_some_and(|value| independent_value(&value, false, false))
                         })
                 })
         }
