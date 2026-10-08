@@ -27,7 +27,7 @@ Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/tail_comparison_boundary/input --diff <cwd>/fixtures/tail_comparison_boundary/diff.patch --mode fast probe:src_lib.rs:predicate:ca3e18b4
   ripr context --root <cwd>/fixtures/tail_comparison_boundary/input --diff <cwd>/fixtures/tail_comparison_boundary/diff.patch --mode fast --at probe:src_lib.rs:predicate:ca3e18b4
 Write a test for it:
-  ripr agent stub --root <cwd>/fixtures/tail_comparison_boundary/input --at src/lib.rs:3
+  ripr agent stub --root <cwd>/fixtures/tail_comparison_boundary/input --at src/lib.rs:3 --kind predicate
 
 Hidden:
   3 lower-priority finding(s) omitted from default human output.

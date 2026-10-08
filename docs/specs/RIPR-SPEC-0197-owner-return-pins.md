@@ -147,8 +147,8 @@ rule only for an assertion whose context was admitted.
    included) has no other token in the test (no shadowing, mutation, alias
    or second use). No attribute may appear anywhere in the rows, since a
    `#[cfg]` can remove every element. Every row leaf is a literal, a negated
-   literal, `None`, `Some(..)`, `Ok(..)`, `Err(..)`, a qualified path whose
-   segments are all CamelCase without generic arguments (`Kind::Empty`,
+   literal, `None`, `Some`, `Ok` or `Err` (bare or called), a qualified path
+   whose segments are all CamelCase other than `Self`, without generic arguments (`Kind::Empty`,
    `Status::Complete(5)`), or `vec![..]` whose tokens are literals and the
    punctuation `[ ] ( ) , - &`; parentheses, references, tuples and nested
    arrays of these are constant. A bare CamelCase name may be a `fn` or
@@ -156,8 +156,8 @@ rule only for an assertion whose context was admitted.
    ranges, indexes and repeat arrays (`[r; n]`), since they may be empty or
    carry the owner's own output. A `break` or `continue` anywhere in the
    loop before the assertion refuses it, as for `loop`. This admits the
-   assertion's execution only; every other rule still applies to it, and a
-   loop-bound argument is not a literal input for boundary pairing.
+   assertion's execution only; every other rule still applies to it.
+   RIPR-SPEC-0186 says when a loop-bound argument is a boundary input.
    `?` in a root test remains supported (an error fails an ordinary Result
    test); `?` in a closure is refused because its result could be discarded.
    Exactly
