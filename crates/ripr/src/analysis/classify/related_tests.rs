@@ -2891,10 +2891,12 @@ fn owner_call_relation_reason(
     // #7053: a trait-impl owner is also shadowed by a same-named `trait`
     // declared in the test's own module scope: `Render::render(..)` and
     // `.render()` there name the test-local trait, so the production impl is
-    // never called. A trait the symbol id names (even a generic one) counts.
+    // never called. A trait the symbol id names (even a generic one) counts,
+    // and so does one declared at the root of an out-of-line parent module
+    // of the test file (#7087).
     let owner_trait = owner_trait_name(&owner.id.0);
-    if let Some(trait_name) = owner_trait.as_deref()
-        && test_source.is_some_and(|source| {
+    if owner_trait.as_deref().is_some_and(|trait_name| {
+        test_source.is_some_and(|source| {
             super::owner_pin::test_module_shadows_trait(
                 test,
                 source,
@@ -2902,7 +2904,9 @@ fn owner_call_relation_reason(
                 owner_scope.in_file(&test.file),
             )
         })
-    {
+    }) || owner_trait.as_deref().is_some_and(|trait_name| {
+        super::owner_pin::parent_chain_shadows_trait(test, trait_name, owner_scope, index)
+    }) {
         return RelationReason::WeakTokenSubstring;
     }
     if indexed_same_name_count <= 1 {
@@ -4636,6 +4640,204 @@ mod tests {
                 "{body}"
             );
         }
+    }
+
+    /// #7087: production `trait Render` with a hand-written `impl Render for
+    /// f64` (`fn render` on line 3) and an out-of-line `#[cfg(test)] mod
+    /// helpers;` (`mod` token on line 7).
+    const TRAIT_LIB_SOURCE: &str = "pub trait Render { fn render(&self) -> String; }\nimpl Render for f64 {\n    fn render(&self) -> String { String::new() }\n}\n\n#[cfg(test)]\nmod helpers;\n";
+
+    /// #7087: the nested child test calls `render` on a float. The test fn
+    /// spans line 4.
+    const TRAIT_CHILD_SOURCE: &str =
+        "use super::*;\n\n#[test]\nfn t() { assert_eq!((-0.0f64).render(), \"\"); }\n";
+
+    /// The relation of the nested out-of-line trait shape, with `helpers_src`
+    /// as the `helpers` parent module (declaring `mod render_tests;` on
+    /// `mod_line`). `two_impls` adds a second `render` owner so the
+    /// ambiguous-name branch is exercised too.
+    fn out_of_line_trait_relation(
+        helpers_src: &str,
+        mod_line: usize,
+        two_impls: bool,
+    ) -> RelationReason {
+        let mut owner = impl_function("src/lib.rs", "render", "impl Render for f64");
+        owner.start_line = 3;
+        let mut functions = vec![owner.clone()];
+        if two_impls {
+            let mut other = impl_function("src/lib.rs", "render", "impl Render for u8");
+            other.start_line = 90;
+            functions.push(other);
+        }
+        let mut child_test = test_with_call(
+            "src/helpers/render_tests.rs",
+            "t",
+            "assert_eq!((-0.0f64).render(), \"\");",
+            "render",
+        );
+        child_test.start_line = 4;
+        child_test.end_line = 4;
+        let mut index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions,
+            tests: vec![child_test],
+            ..Default::default()
+        });
+        with_source(&mut index, "src/lib.rs", TRAIT_LIB_SOURCE);
+        with_source(&mut index, "src/helpers.rs", helpers_src);
+        with_source_provenance(
+            &mut index,
+            "src/helpers/render_tests.rs",
+            TRAIT_CHILD_SOURCE,
+            SourceRoleProvenance {
+                edges: vec![
+                    composed_module_edge("src/lib.rs", "src/helpers.rs", "helpers", 7, true),
+                    composed_module_edge(
+                        "src/helpers.rs",
+                        "src/helpers/render_tests.rs",
+                        "render_tests",
+                        mod_line,
+                        false,
+                    ),
+                ],
+                earliest_unresolved_reason: None,
+            },
+        );
+        let probe = probe("src/lib.rs", "String::new()");
+        let related = find_related_tests(&probe, Some(&owner), &index, true, None, None);
+        assert_eq!(related.len(), 1, "the same-named call is still related");
+        related[0].1
+    }
+
+    /// #7087 (the out-of-line analog of #7053): the `helpers` parent module
+    /// declares its own `trait Render` at its root, so the nested child test's
+    /// `.render()` names the test-local trait, not the production impl. A
+    /// raw-identifier declaration shadows the same name.
+    #[test]
+    fn given_out_of_line_parent_declares_owner_trait_then_name_only_relation() {
+        for helpers in [
+            "trait Render { fn render(&self) -> String; }\n\nmod render_tests;\n",
+            "trait r#Render { fn render(&self) -> String; }\n\nmod render_tests;\n",
+        ] {
+            for two_impls in [true, false] {
+                assert_eq!(
+                    out_of_line_trait_relation(helpers, 3, two_impls),
+                    RelationReason::WeakTokenSubstring,
+                    "parent trait shadow must not be direct_owner_call: {helpers:?} two_impls={two_impls}"
+                );
+            }
+        }
+    }
+
+    /// #7087 precision: the same nested layout with no parent declaration, or
+    /// a parent that only imports the production trait, keeps
+    /// `direct_owner_call`. The production root's `trait Render` is the
+    /// owner's own scope and never a shadow.
+    #[test]
+    fn given_out_of_line_parent_without_trait_declaration_then_direct_owner_call() {
+        for (helpers, mod_line) in [
+            ("mod render_tests;\n", 1),
+            ("use crate::Render;\n\nmod render_tests;\n", 3),
+        ] {
+            for two_impls in [true, false] {
+                assert_eq!(
+                    out_of_line_trait_relation(helpers, mod_line, two_impls),
+                    RelationReason::DirectOwnerCall,
+                    "{helpers:?} two_impls={two_impls}"
+                );
+            }
+        }
+    }
+
+    /// #7111 split-file layout: the production trait is declared at the root of
+    /// `src/lib.rs`, its `impl Render for f64` lives in `src/impls.rs`
+    /// (`fn render` on line 2), and the out-of-line test module hangs off
+    /// `lib.rs` as `helpers` (`mod` token on line 4).
+    const SPLIT_LIB_SOURCE: &str = "pub trait Render { fn render(&self) -> String; }\n\n#[cfg(test)]\nmod helpers;\n\nmod impls;\n";
+    const SPLIT_IMPLS_SOURCE: &str =
+        "impl Render for f64 {\n    fn render(&self) -> String { String::new() }\n}\n";
+
+    /// The relation of the split-file trait layout, with `helpers_src` as the
+    /// `helpers` parent module (declaring `mod render_tests;` on `mod_line`).
+    fn split_trait_relation(helpers_src: &str, mod_line: usize) -> RelationReason {
+        let mut owner = impl_function("src/impls.rs", "render", "impl Render for f64");
+        owner.start_line = 2;
+        let mut child_test = test_with_call(
+            "src/helpers/render_tests.rs",
+            "t",
+            "assert_eq!((-0.0f64).render(), \"\");",
+            "render",
+        );
+        child_test.start_line = 4;
+        child_test.end_line = 4;
+        let mut index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions: vec![owner.clone()],
+            tests: vec![child_test],
+            ..Default::default()
+        });
+        with_source(&mut index, "src/lib.rs", SPLIT_LIB_SOURCE);
+        with_source(&mut index, "src/helpers.rs", helpers_src);
+        with_source_provenance(
+            &mut index,
+            "src/impls.rs",
+            SPLIT_IMPLS_SOURCE,
+            SourceRoleProvenance {
+                edges: vec![composed_module_edge(
+                    "src/lib.rs",
+                    "src/impls.rs",
+                    "impls",
+                    6,
+                    false,
+                )],
+                earliest_unresolved_reason: None,
+            },
+        );
+        with_source_provenance(
+            &mut index,
+            "src/helpers/render_tests.rs",
+            TRAIT_CHILD_SOURCE,
+            SourceRoleProvenance {
+                edges: vec![
+                    composed_module_edge("src/lib.rs", "src/helpers.rs", "helpers", 4, true),
+                    composed_module_edge(
+                        "src/helpers.rs",
+                        "src/helpers/render_tests.rs",
+                        "render_tests",
+                        mod_line,
+                        false,
+                    ),
+                ],
+                earliest_unresolved_reason: None,
+            },
+        );
+        let probe = probe("src/impls.rs", "String::new()");
+        let related = find_related_tests(&probe, Some(&owner), &index, true, None, None);
+        assert_eq!(related.len(), 1, "the same-named call is still related");
+        related[0].1
+    }
+
+    /// #7111 (review of #7110): the production trait declared in an ancestor
+    /// file of the impl's file is the owner's declaration, not a shadow, so an
+    /// out-of-line test importing it keeps `direct_owner_call`.
+    #[test]
+    fn given_trait_declared_in_ancestor_of_impl_file_then_direct_owner_call() {
+        assert_eq!(
+            split_trait_relation("use crate::Render;\n\nmod render_tests;\n", 3),
+            RelationReason::DirectOwnerCall
+        );
+    }
+
+    /// #7111 precision: a separate `trait Render` in the test's own parent
+    /// module still shadows in the split-file layout; only the owner's
+    /// ancestors are exempt.
+    #[test]
+    fn given_split_layout_with_separate_parent_trait_then_name_only_relation() {
+        assert_eq!(
+            split_trait_relation(
+                "trait Render { fn render(&self) -> String; }\n\nmod render_tests;\n",
+                3
+            ),
+            RelationReason::WeakTokenSubstring
+        );
     }
 
     /// #7053 precision: a `trait Render` that is not in the test's own module
