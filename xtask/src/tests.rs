@@ -20246,6 +20246,10 @@ jobs:
   ripr:
     continue-on-error: ${{ vars.RIPR_GATE_MODE == '' || vars.RIPR_GATE_MODE == 'visible-only' }}
     steps:
+      - name: Add RIPR advisory summary
+        if: always()
+        run: |
+          ripr reports ci-summary --root . >> \"$GITHUB_STEP_SUMMARY\"
       - uses: actions/upload-artifact@v7
         with:
           path: |
@@ -20268,7 +20272,7 @@ RIPR is advisory static evidence. It does not edit source, generate tests, or ru
 ### Language preview grouping
 - Grouped preview evidence languages: `javascript typescript`
 - Boundary: preview-language groups are advisory presentation only; `ripr gate evaluate` remains pass/fail authority when explicitly configured.
-- `typescript`: artifact_entries=`1`, preview_entries=`1`, missing_preview_status=`0`, static_limit_kinds=`none`, actionability_states=`actionable=1`, actionability_categories=`none`, repair_packet_ready=`1`, gate_impact=`none`
+- `typescript`: artifact_entries=`1`, preview_entries=`1`, missing_preview_status=`0`, static_limit_entries=`0`, classifications=`weakly_exposed=1`, static_limit_kinds=`none`, actionability_states=`actionable=1`, actionability_categories=`none`, repair_packet_ready=`1`, gate_impact=`none`
 "
     );
 
@@ -20361,6 +20365,19 @@ RIPR is advisory static evidence. It does not edit source, generate tests, or ru
     );
     assert_eq!(stale.repair_commands, 3);
 
+    let names_elsewhere = summary.replace(
+        "- `typescript`: artifact_entries=`1`, preview_entries=`1`, missing_preview_status=`0`, static_limit_entries=`0`, classifications=`weakly_exposed=1`, static_limit_kinds=`none`, actionability_states=`actionable=1`, actionability_categories=`none`, repair_packet_ready=`1`, gate_impact=`none`",
+        "- `typescript`: configured preview/advisory; no language findings were emitted in this run; gate_impact=`none`.\nmissing_preview_status static_limit_kinds actionability_states",
+    );
+    let loose_metrics = dogfood_generated_ci_cockpit_run_from_surfaces(
+        "grouping-metrics-not-on-typescript-row",
+        command,
+        10,
+        workflow,
+        &names_elsewhere,
+    );
+    assert_eq!(loose_metrics.language_grouping_status, "missing");
+
     let rust_only = dogfood_generated_ci_cockpit_run_from_surfaces(
         "rust-only-no-grouping",
         command,
@@ -20376,6 +20393,25 @@ RIPR is advisory static evidence. It does not edit source, generate tests, or ru
             .any(|error| error.contains("preview-language grouping")),
         "{:?}",
         rust_only.errors
+    );
+
+    let disconnected = dogfood_generated_ci_cockpit_run_from_surfaces(
+        "summary-without-workflow-invoke",
+        command,
+        10,
+        &workflow.replace(
+            "ripr reports ci-summary --root . >> \"$GITHUB_STEP_SUMMARY\"",
+            "echo skipped",
+        ),
+        &summary,
+    );
+    assert!(
+        disconnected
+            .errors
+            .iter()
+            .any(|error| error.contains("invoke ripr reports ci-summary")),
+        "{:?}",
+        disconnected.errors
     );
 
     let blocking_job = workflow.replace(

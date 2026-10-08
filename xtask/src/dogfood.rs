@@ -3410,10 +3410,13 @@ pub(crate) const GENERATED_CI_FIRST_PR_REPAIR: &str = "ripr first-pr --root . --
 pub(crate) const GENERATED_CI_FRONT_PANEL_REPAIR: &str = "Safe next action: run `ripr pr-review front-panel --root . --pr-guidance target/ripr/review/comments.json --out target/ripr/reports/pr-review-front-panel.json --out-md target/ripr/reports/pr-review-front-panel.md` after attaching at least one explicit input.";
 pub(crate) const GENERATED_CI_PACKET_INDEX_REPAIR: &str = "Regenerate command: `ripr reports index --root . --reports-dir target/ripr/reports --review-dir target/ripr/review --receipts-dir target/ripr/receipts --workflow-dir target/ripr/workflow --agent-dir target/ripr/agent --pilot-dir target/ripr/pilot --ci-dir target/ci --out target/ripr/reports/index.json --out-md target/ripr/reports/index.md`.";
 
-const GENERATED_CI_SUMMARY_FIXTURE_ROOT: &str =
-    "target/ripr/dogfood/generated-ci-cockpit/ci-summary";
 const GENERATED_CI_JOB_CONTINUE_ON_ERROR: &str =
     "continue-on-error: ${{ vars.RIPR_GATE_MODE == '' || vars.RIPR_GATE_MODE == 'visible-only' }}";
+const GENERATED_CI_SUMMARY_STEP_HEAD: &str =
+    "      - name: Add RIPR advisory summary\n        if: always()";
+const GENERATED_CI_SUMMARY_INVOKE: &str =
+    "ripr reports ci-summary --root . >> \"$GITHUB_STEP_SUMMARY\"";
+const GENERATED_CI_TYPESCRIPT_GROUPING_ROW: &str = "- `typescript`: artifact_entries=`1`, preview_entries=`1`, missing_preview_status=`0`, static_limit_entries=`0`, classifications=`weakly_exposed=1`, static_limit_kinds=`none`, actionability_states=`actionable=1`, actionability_categories=`none`, repair_packet_ready=`1`, gate_impact=`none`";
 
 pub(crate) fn dogfood_generated_ci_cockpit_run() -> Result<DogfoodGeneratedCiCockpitRun, String> {
     let args = [
@@ -3447,12 +3450,30 @@ pub(crate) fn dogfood_generated_ci_cockpit_run() -> Result<DogfoodGeneratedCiCoc
 /// into TypeScript preview so language grouping is present, without the
 /// start-here / front-panel / index artifacts that would hide the four
 /// regeneration commands (#6958).
+fn generated_ci_summary_fixture_root() -> PathBuf {
+    let stamp = match SystemTime::now().duration_since(UNIX_EPOCH) {
+        Ok(elapsed) => elapsed.as_nanos(),
+        Err(_) => 0,
+    };
+    PathBuf::from(format!(
+        "target/ripr/dogfood/generated-ci-cockpit/ci-summary-{}-{stamp}",
+        std::process::id()
+    ))
+}
+
 fn generated_ci_summary_for_cockpit() -> Result<String, String> {
-    let root = Path::new(GENERATED_CI_SUMMARY_FIXTURE_ROOT);
-    if root.exists() {
-        fs::remove_dir_all(root)
-            .map_err(|err| format!("failed to clear {}: {err}", normalize_path(root)))?;
+    let root = generated_ci_summary_fixture_root();
+    let result = render_generated_ci_summary_at(&root);
+    match result {
+        Ok(summary) => {
+            let _ = fs::remove_dir_all(&root);
+            Ok(summary)
+        }
+        Err(err) => Err(format!("{err} (fixture left at {})", normalize_path(&root))),
     }
+}
+
+fn render_generated_ci_summary_at(root: &Path) -> Result<String, String> {
     let review_dir = root.join("target/ripr/review");
     fs::create_dir_all(&review_dir)
         .map_err(|err| format!("failed to create {}: {err}", normalize_path(&review_dir)))?;
@@ -3520,6 +3541,8 @@ pub(crate) fn dogfood_generated_ci_cockpit_run_from_surfaces(
     let expected_repair_commands = 4usize;
     let gate_authority_boundary =
         summary.contains("ripr gate evaluate") && summary.contains("Gate authority:");
+    let summary_step = workflow.contains(GENERATED_CI_SUMMARY_STEP_HEAD)
+        && workflow.contains(GENERATED_CI_SUMMARY_INVOKE);
     let default_advisory = workflow.contains(GENERATED_CI_JOB_CONTINUE_ON_ERROR)
         && summary.contains("RIPR is advisory static evidence");
     let artifact_upload =
@@ -3528,12 +3551,7 @@ pub(crate) fn dogfood_generated_ci_cockpit_run_from_surfaces(
         && summary.contains("- Grouped preview evidence languages: `javascript typescript`")
         && summary.contains("preview-language groups are advisory presentation only")
         && summary.contains("ripr gate evaluate")
-        && summary.contains("missing_preview_status")
-        && summary.contains("static_limit_kinds")
-        && summary.contains("actionability_states")
-        && summary.contains("actionability_categories")
-        && summary.contains("repair_packet_ready=")
-        && summary.contains("gate_impact=`none`");
+        && summary.contains(GENERATED_CI_TYPESCRIPT_GROUPING_ROW);
     let language_grouping_status = if language_grouping_checked {
         "checked"
     } else {
@@ -3558,6 +3576,11 @@ pub(crate) fn dogfood_generated_ci_cockpit_run_from_surfaces(
     }
     if !artifact_upload {
         errors.push("generated CI must upload the report artifact packet".to_string());
+    }
+    if !summary_step {
+        errors.push(
+            "generated CI must invoke ripr reports ci-summary into the step summary".to_string(),
+        );
     }
     if !language_grouping_checked {
         errors.push(
