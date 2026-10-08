@@ -1416,7 +1416,9 @@ mod tests {
             markdown
                 .lines()
                 .find(|line| line.starts_with("- why not actionable:")),
-            Some("- why not actionable: RIPR_PILOT_SEAM_BUDGET capped the pilot artifacts; not all seams were rendered in this run.")
+            Some(
+                "- why not actionable: RIPR_PILOT_SEAM_BUDGET capped the pilot artifacts; not all seams were rendered in this run."
+            )
         );
         Ok(())
     }

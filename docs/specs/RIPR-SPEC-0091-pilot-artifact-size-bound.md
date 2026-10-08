@@ -124,7 +124,11 @@ For repo-exposure JSON, the default pilot repair route is
 `Set RIPR_PILOT_SEAM_BUDGET=0 to disable the pilot artifact budget.`;
 the configured route is
 `Set RIPR_PILOT_SEAM_BUDGET=0 to disable the pilot artifact budget, or raise it to render more seams in the pilot artifacts.`.
-Markdown names the same control in its partial-scan disclosure.
+Markdown names the same control in its partial-scan disclosure. These
+repo-exposure routes describe removal of the pilot artifact budget only. If
+the inventory cap also fired, recovering inventory-excluded seams separately
+requires `RIPR_REPO_EXPOSURE_SEAM_LIMIT=0`; disabling the pilot budget alone
+does not recover those seams.
 
 The `pilot-summary.json` and `pilot-summary.md` artifacts are NOT modified.
 They already reflect the top-N seams from the pilot summary logic, which is
@@ -136,7 +140,8 @@ governed separately.
 - The budget is a presentation bound, not an analysis bound. The inventory
   still classifies all seams; only the artifact output is capped.
 - This spec does NOT imply that the uncapped seams are unimportant. The repair
-  route in the disclosure tells users how to recover the full output.
+  routes identify the applied cap. Full output requires disabling every cap
+  that fired.
 
 ## Non-Goals
 
