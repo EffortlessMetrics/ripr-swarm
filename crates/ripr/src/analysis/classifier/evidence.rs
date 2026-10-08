@@ -207,24 +207,20 @@ impl ClassifiedProbeEvidence {
             .unwrap_or_default();
         // #5830/#7024: names of functions that transitively call the owner,
         // computed once per owner per run through the attached memo and only
-        // when an assertion asks. Unit-test contexts without a memo keep the
-        // per-probe cell.
+        // when an assertion asks. The memo answers under its borrow without
+        // cloning; unit-test contexts without a memo keep the per-probe cell.
         let owner_callers = std::cell::OnceCell::new();
         let expected_reaches_owner = |ty: Option<&str>, name: &str| {
             context.owner_fn.is_some_and(|owner| {
-                let owned;
-                let callers = match context.owner_caller_names {
-                    Some(memo) => {
-                        owned = memo.callers_for(context.index, owner);
-                        &owned
-                    }
-                    None => {
-                        owner_callers.get_or_init(|| transitive_caller_names(owner, context.index))
-                    }
-                };
-                callers.iter().any(|(caller_type, caller)| {
-                    caller == name && ty.is_none_or(|ty| caller_type.as_deref() == Some(ty))
-                })
+                if let Some(memo) = context.owner_caller_names {
+                    return memo.caller_reaches(context.index, owner, ty, name);
+                }
+                owner_callers
+                    .get_or_init(|| transitive_caller_names(owner, context.index))
+                    .iter()
+                    .any(|(caller_type, caller)| {
+                        caller == name && ty.is_none_or(|ty| caller_type.as_deref() == Some(ty))
+                    })
             })
         };
         // #3731 review (F11): the related test's file source is reachable
@@ -675,7 +671,33 @@ pub(in crate::analysis) struct OwnerCallerNames {
 }
 
 impl OwnerCallerNames {
+    /// Whether a caller named `name` (optionally of type `ty`) reaches
+    /// `owner`: a cache hit scans the cached set under its borrow and never
+    /// clones. Misses walk once, then cache by move.
+    pub(in crate::analysis) fn caller_reaches(
+        &self,
+        index: &RustIndex,
+        owner: &FunctionSummary,
+        ty: Option<&str>,
+        name: &str,
+    ) -> bool {
+        let matches = |caller: &(Option<String>, String)| {
+            caller.1 == name && ty.is_none_or(|ty| caller.0.as_deref() == Some(ty))
+        };
+        let Some(slot) = self.slot_key(index, owner) else {
+            return transitive_caller_names(owner, index).iter().any(matches);
+        };
+        if let Some(cached) = self.by_owner_slot.borrow().get(&slot) {
+            return cached.iter().any(matches);
+        }
+        let callers = transitive_caller_names(owner, index);
+        let found = callers.iter().any(matches);
+        self.by_owner_slot.borrow_mut().insert(slot, callers);
+        found
+    }
+
     /// `transitive_caller_names(owner, index)`, computed once per owner per run.
+    #[cfg(test)]
     pub(in crate::analysis) fn callers_for(
         &self,
         index: &RustIndex,
@@ -692,6 +714,13 @@ impl OwnerCallerNames {
             .borrow_mut()
             .insert(slot, callers.clone());
         callers
+    }
+
+    /// The cache cells, so tests can hold a shared borrow across a repeat
+    /// query: a hit only borrows, while a recompute's `borrow_mut` panics.
+    #[cfg(test)]
+    pub(in crate::analysis) fn slots_for_test(&self) -> &std::cell::RefCell<OwnerCallerSets> {
+        &self.by_owner_slot
     }
 
     fn slot_key(&self, index: &RustIndex, owner: &FunctionSummary) -> Option<usize> {
@@ -1323,45 +1352,77 @@ mod tests {
     #[test]
     fn owner_caller_memo_agrees_with_the_walk_and_never_crosses_indexes() -> Result<(), String> {
         use crate::analysis::rust_index::{RaRustSyntaxAdapter, RustSyntaxAdapter};
-        fn indexed_owner(
-            source: &str,
-            owner: &str,
-        ) -> Result<(RustIndex, FunctionSummary), String> {
+        fn indexed_source(source: &str) -> Result<RustIndex, String> {
             let path = PathBuf::from("src/lib.rs");
             let facts = RaRustSyntaxAdapter.summarize_file(&path, source)?;
             let functions = facts.functions.clone();
             let mut index = RustIndex::default();
             index.insert_file_only(path, facts);
             index.extend_functions(functions);
-            let owner = index
+            Ok(index)
+        }
+        // Borrowed from the arena, like `resolve_owner_function` in
+        // production: a clone is not an arena element, so the memo's
+        // pointer-based slot key would never resolve and the test would
+        // exercise compute-fresh twice instead of a cache hit.
+        fn find_owner<'index>(
+            index: &'index RustIndex,
+            owner: &str,
+        ) -> Result<&'index FunctionSummary, String> {
+            index
                 .functions()
                 .iter()
                 .find(|function| function.id.0.ends_with(owner))
-                .cloned()
-                .ok_or_else(|| format!("owner {owner} indexed"))?;
-            Ok((index, owner))
+                .ok_or_else(|| format!("owner {owner} indexed"))
         }
         let source = "pub fn tax(subtotal: i64) -> i64 { subtotal * 8 / 100 }\n\
             pub fn reference(subtotal: i64) -> i64 { tax(subtotal) }\n";
-        let (index, owner) = indexed_owner(source, "src/lib.rs::tax")?;
+        let index = indexed_source(source)?;
+        let owner = find_owner(&index, "src/lib.rs::tax")?;
         let memo = super::OwnerCallerNames::default();
-        let direct = super::transitive_caller_names(&owner, &index);
+        let direct = super::transitive_caller_names(owner, &index);
         assert!(!direct.is_empty(), "the fixture owner has callers");
         assert_eq!(
-            memo.callers_for(&index, &owner),
+            memo.callers_for(&index, owner),
             direct,
             "the first memo query walks and caches"
         );
         assert_eq!(
-            memo.callers_for(&index, &owner),
-            direct,
-            "the repeat query serves the cached set"
+            memo.slots_for_test().borrow().len(),
+            1,
+            "the first query populated the cache"
+        );
+        // The repeat query must hit: a shared borrow is held across it, so
+        // a recompute's `borrow_mut` panics instead of silently re-walking.
+        {
+            let _guard = memo.slots_for_test().borrow();
+            assert_eq!(
+                memo.callers_for(&index, owner),
+                direct,
+                "the repeat query serves the cached set"
+            );
+        }
+        // The borrow-scoped predicate agrees with the walked set.
+        for (ty, caller) in &direct {
+            assert!(
+                memo.caller_reaches(&index, owner, ty.as_deref(), caller),
+                "the predicate finds walked caller {caller}"
+            );
+            assert!(
+                !memo.caller_reaches(&index, owner, Some("NotTheType"), caller),
+                "the predicate honors the type filter for {caller}"
+            );
+        }
+        assert!(
+            !memo.caller_reaches(&index, owner, None, "no_such_caller"),
+            "the predicate misses a name the walk never found"
         );
         let lonely_source = "pub fn tax(subtotal: i64) -> i64 { subtotal * 8 / 100 }\n";
-        let (lonely_index, lonely_owner) = indexed_owner(lonely_source, "src/lib.rs::tax")?;
+        let lonely_index = indexed_source(lonely_source)?;
+        let lonely_owner = find_owner(&lonely_index, "src/lib.rs::tax")?;
         assert_eq!(
-            memo.callers_for(&lonely_index, &lonely_owner),
-            super::transitive_caller_names(&lonely_owner, &lonely_index),
+            memo.callers_for(&lonely_index, lonely_owner),
+            super::transitive_caller_names(lonely_owner, &lonely_index),
             "a query against another index computes fresh instead of \
              serving the first index's cached set"
         );
