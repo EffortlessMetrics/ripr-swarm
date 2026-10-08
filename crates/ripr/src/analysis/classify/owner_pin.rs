@@ -4151,7 +4151,8 @@ fn binding_type(
 ///   splice in text the scan never reads.
 ///
 /// Items a derive or attribute proc macro emits stay invisible, as for
-/// every other pin rule.
+/// every other pin rule, as do items an out-of-workspace `macro_rules!`
+/// invocation emits (#7160).
 fn unit_struct_value(name: &str, test_file: &Path, index: &RustIndex) -> bool {
     // A prelude value (`None`, `Some`, `Ok`, `Err`) is in scope without any
     // import, so the struct may not be the item the test names.

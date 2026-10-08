@@ -283,7 +283,8 @@ rule only for an assertion whose context was admitted.
      re-export), raw identifiers, macro input, `include!`, Unicode
      whitespace inside a macro matcher and a prelude name can each put
      another value under the name, so any of them refuses. Items a derive
-     or attribute proc macro emits stay invisible, as for every other rule.
+     or attribute proc macro emits stay invisible, as for every other rule,
+     as do items an out-of-workspace `macro_rules!` invocation emits (#7160).
      An inline receiver `T::f(..).name(..)` is typed exactly as
      `let recv = T::f(..);` would be, so `Stack::new(1).depth()` pins
      `Stack::depth` under the same constructor-signature rules.
