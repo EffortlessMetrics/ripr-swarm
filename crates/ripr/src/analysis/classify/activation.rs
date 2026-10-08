@@ -3339,6 +3339,7 @@ mod tests {
             // A struct update that leaves the field to its base passes it
             // through, as does a value read back from the receiver.
             "let q = bundle(3);\n let q = Quote { items: 4, ..q };\n assert_eq!(q.total, 45);",
+            "let q = bundle(3);\n let q = Quote::<u8> { items: 4, ..q };\n assert_eq!(q.total, 45);",
             "let q = bundle(3);\n let q = Quote { total: q.total, ..q };\n assert_eq!(q.total, 45);",
             "let q = bundle(3);\n let total = q.total;\n let q = Quote { total, ..q };\n assert_eq!(q.total, 45);",
             "let mut q = bundle(3);\n q.total = q.total;\n assert_eq!(q.total, 45);",

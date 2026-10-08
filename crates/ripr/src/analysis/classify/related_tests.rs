@@ -2922,13 +2922,19 @@ fn enclosing_modules(source: &str, line: usize) -> Option<Vec<String>> {
     } else {
         masked.match_indices('\n').nth(line - 2)?.0 + 1
     };
-    let is_ident = |ch: char| ch.is_ascii_alphanumeric() || ch == '_';
+    // Rust identifiers may be non-ASCII (`mod módulo`), so the name runs to
+    // the previous non-identifier char boundary.
+    let is_ident = |ch: char| ch.is_alphanumeric() || ch == '_';
     let mut stack: Vec<Option<String>> = Vec::new();
     for (index, ch) in masked[..offset].char_indices() {
         match ch {
             '{' => {
                 let head = masked[..index].trim_end();
-                let name_start = head.rfind(|ch: char| !is_ident(ch)).map_or(0, |at| at + 1);
+                let name_start = head
+                    .char_indices()
+                    .rev()
+                    .find(|(_, ch)| !is_ident(*ch))
+                    .map_or(0, |(at, ch)| at + ch.len_utf8());
                 let name = &head[name_start..];
                 let keyword = head[..name_start].trim_end();
                 let is_mod = !name.is_empty()
@@ -2994,9 +3000,18 @@ fn test_imports_same_name_twin(
         if start <= body_open || body[..start].chars().next_back().is_some_and(is_ident) {
             continue;
         }
-        // An attributed import (`#[cfg(any())] use ..`) may be compiled
-        // out, so the name may still bind the owner: undecided.
-        if body[..start].trim_end().ends_with(']') {
+        // An attributed import (`#[cfg(any())] use ..`, also behind a
+        // `pub`/`pub(crate)`) may be compiled out, so the name may still
+        // bind the owner: undecided.
+        let before = body[..start].trim_end();
+        if before.ends_with(']')
+            || before.ends_with(')')
+            || (before.ends_with("pub")
+                && !before[..before.len() - 3]
+                    .chars()
+                    .next_back()
+                    .is_some_and(is_ident))
+        {
             return false;
         }
         let Some(path) = body[start + 4..].split(';').next() else {
@@ -3363,6 +3378,14 @@ mod tests {
             "fn t() {\n #[cfg(any())]\n use super::retail::*;\n price_quote(3);\n}",
             owner
         ));
+        assert!(!twin(
+            "fn t() {\n #[cfg(any())] pub use super::retail::*;\n price_quote(3);\n}",
+            owner
+        ));
+        assert!(!twin(
+            "fn t() {\n #[cfg(any())] pub(crate) use super::retail::*;\n price_quote(3);\n}",
+            owner
+        ));
         // A path-qualified or method call of the name keeps the relation.
         assert!(!twin(
             "fn t() {\n use super::retail::*;\n super::wholesale::price_quote(3);\n}",
@@ -3524,6 +3547,11 @@ mod tests {
         );
         assert_eq!(enclosing_modules(source, 7), Some(Vec::new()));
         assert_eq!(enclosing_modules(source, 99), None);
+        let unicode = "mod módulo {\n    mod tests {\n        fn t() {}\n    }\n}\n";
+        assert_eq!(
+            enclosing_modules(unicode, 3),
+            Some(vec!["módulo".to_string(), "tests".to_string()])
+        );
     }
 
     #[test]
