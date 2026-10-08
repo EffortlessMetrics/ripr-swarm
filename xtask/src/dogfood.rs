@@ -3538,6 +3538,21 @@ fn generated_ci_advisory_summary_step(workflow: &str) -> Option<&str> {
     Some(&rest[..end])
 }
 
+const GENERATED_CI_SUMMARY_RUN_BLOCK: &str = "\n        run: |\n";
+
+/// True when a trimmed, non-comment `run: |` line equals the ci-summary
+/// invoke. A substring match still passes `echo '…'` or `# …` copies (#6958).
+fn generated_ci_summary_step_has_executable_invoke(step: &str) -> bool {
+    let Some(run_at) = step.find(GENERATED_CI_SUMMARY_RUN_BLOCK) else {
+        return false;
+    };
+    let run_block = &step[run_at + GENERATED_CI_SUMMARY_RUN_BLOCK.len()..];
+    run_block.lines().any(|line| {
+        let trimmed = line.trim();
+        !trimmed.is_empty() && !trimmed.starts_with('#') && trimmed == GENERATED_CI_SUMMARY_INVOKE
+    })
+}
+
 /// Check workflow step wiring and `ripr reports ci-summary` text separately
 /// so the old inline-shell strings cannot satisfy the summary properties
 /// (#6958).
@@ -3564,8 +3579,7 @@ pub(crate) fn dogfood_generated_ci_cockpit_run_from_surfaces(
         summary.contains("ripr gate evaluate") && summary.contains("Gate authority:");
     let summary_step = generated_ci_advisory_summary_step(workflow);
     let summary_step_head = summary_step.is_some();
-    let summary_invoke =
-        summary_step.is_some_and(|step| step.contains(GENERATED_CI_SUMMARY_INVOKE));
+    let summary_invoke = summary_step.is_some_and(generated_ci_summary_step_has_executable_invoke);
     let default_advisory = workflow.contains(GENERATED_CI_JOB_CONTINUE_ON_ERROR)
         && summary.contains("RIPR is advisory static evidence");
     let artifact_upload =
