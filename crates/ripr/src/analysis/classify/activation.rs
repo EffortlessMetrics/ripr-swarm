@@ -1618,22 +1618,66 @@ fn owner_call_parameter_values(
             else {
                 continue;
             };
-            let row = arguments
+            // A constant-row `for` table (#5328) yields one value per row,
+            // and cells of the same row belong together: the call runs once
+            // per row, so it contributes one input row per table row. A
+            // single value spreads to every row only when it holds for all
+            // of them (a literal or `let`); an rstest `#[case]` column drops
+            // the cases it cannot read, so its slots no longer line up with
+            // rows and it keeps contributing its first value alone.
+            let cells = arguments
                 .iter()
                 .enumerate()
                 .filter_map(|(idx, argument)| {
-                    let parameter = parameters.get(idx)?;
-                    let value = owner_argument_values(test, argument).into_iter().next()?;
-                    Some(ParameterValue {
-                        parameter: parameter.clone(),
-                        value,
-                        line: call.line,
-                        text: call.text.clone(),
-                    })
+                    let values = owner_argument_values(test, argument);
+                    let table_column = !values.is_empty()
+                        && crate::analysis::syntax::constant_table_column(
+                            &test.body,
+                            argument.trim(),
+                        )
+                        .is_some();
+                    Some((parameters.get(idx)?, values, argument.trim(), table_column))
                 })
+                .filter(|(_, values, _, _)| !values.is_empty())
                 .collect::<Vec<_>>();
-            if !row.is_empty() {
-                rows.push(row);
+            let case_column = |argument: &str| {
+                !crate::analysis::value_resolution::test_case_bound_literals(test, argument)
+                    .is_empty()
+            };
+            let by_row = cells.iter().any(|(_, _, _, table)| *table)
+                && cells.iter().all(|(_, values, argument, table)| {
+                    *table || (values.len() == 1 && !case_column(argument))
+                });
+            let height = if by_row {
+                cells
+                    .iter()
+                    .map(|(_, values, _, _)| values.len())
+                    .max()
+                    .unwrap_or(0)
+            } else {
+                usize::from(!cells.is_empty())
+            };
+            for position in 0..height {
+                let row = cells
+                    .iter()
+                    .filter_map(|(parameter, values, _, _)| {
+                        let value = match values.len() {
+                            _ if !by_row => values.first(),
+                            1 => values.first(),
+                            len if len == height => values.get(position),
+                            _ => None,
+                        }?;
+                        Some(ParameterValue {
+                            parameter: (*parameter).clone(),
+                            value: value.clone(),
+                            line: call.line,
+                            text: call.text.clone(),
+                        })
+                    })
+                    .collect::<Vec<_>>();
+                if !row.is_empty() {
+                    rows.push(row);
+                }
             }
         }
     }
@@ -1673,9 +1717,11 @@ fn call_values_for_owner(
 /// variables are all bound to exact values (`is_exact`), constants
 /// (`LIMIT`), or none at all. Such a call sits at one definite input that
 /// may be the boundary, so the boundary is unresolved. A computation over
-/// a value ripr cannot bind (a loop variable in `can_retire(age + 1)`) is
-/// no more readable than that bare variable, which already yields no
-/// input row without unresolving the boundary, so it is not counted.
+/// a value ripr cannot bind (a variable of a range loop in
+/// `can_retire(age + 1)`) is no more readable than that bare variable,
+/// which already yields no input row without unresolving the boundary, so
+/// it is not counted. A constant-row table's loop variable is bound (#5328),
+/// so a computation over it unresolves the boundary like one over a `let`.
 fn deterministic_computed_argument(argument: &str, is_exact: impl Fn(&str) -> bool) -> bool {
     is_computed_value_expression(argument)
         && free_identifiers(argument)
@@ -2524,6 +2570,23 @@ pub(in crate::analysis) fn owner_argument_values(
             .collect();
     if !let_bound.is_empty() {
         return let_bound;
+    }
+    // A `for` pattern over a constant-row table carries one value per row
+    // (#5328); a row whose cell is not a plain scalar yields nothing at all,
+    // since a partial column would hide the rows ripr cannot read.
+    if let Some(column) = crate::analysis::syntax::constant_table_column(&test.body, name) {
+        let scalars: Option<Vec<String>> = column
+            .iter()
+            .map(|cell| {
+                // The cell must be one whole scalar, as an rstest case is:
+                // `Some(1)` or `"1"` is not the value `1`.
+                let cell = cell.trim();
+                (!cell.starts_with(['"', '\''])
+                    && scalar_values(cell).as_slice() == [cell.to_string()])
+                .then(|| cell.to_string())
+            })
+            .collect();
+        return scalars.unwrap_or_default();
     }
     // An rstest `#[case]` parameter carries one value per case row.
     crate::analysis::value_resolution::test_case_bound_literals(test, name)
@@ -4751,6 +4814,98 @@ assert_eq!(input.amount, 100);"#
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
         }
+    }
+
+    #[test]
+    fn a_constant_row_table_feeds_one_input_row_per_table_row() {
+        let body = "fn table() {\n    let cases = [(4_999, false), (5_000, true)];\n    for (cents, want) in cases {\n        assert_eq!(score(cents, 7), want);\n    }\n}";
+        let test = test_with_body_calls(body, &[(13, "score(cents, 7)")]);
+        assert_eq!(
+            owner_argument_values(&test, "cents"),
+            vec!["4_999".to_string(), "5_000".to_string()]
+        );
+        let rows = owner_call_parameter_values(
+            &[&test],
+            "score",
+            &["amount".to_string(), "rate".to_string()],
+        );
+        let cells = rows
+            .iter()
+            .map(|row| {
+                row.iter()
+                    .map(|cell| format!("{} = {}", cell.parameter, cell.value))
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            cells,
+            vec![
+                vec!["amount = 4_999".to_string(), "rate = 7".to_string()],
+                vec!["amount = 5_000".to_string(), "rate = 7".to_string()],
+            ]
+        );
+        // A row cell ripr cannot read as one scalar drops the whole column:
+        // a partial column would hide the rows it cannot see.
+        for unreadable in [
+            "fn table() {\n    for (cents, want) in [(5_000, true), (\"x\", false)] {\n        assert_eq!(score(cents, 7), want);\n    }\n}",
+            "fn table() {\n    for (cents, want) in [(5_000, true), (Some(1), false)] {\n        assert_eq!(score(cents, 7), want);\n    }\n}",
+            // Not a table the loop is known to iterate.
+            "fn table() {\n    for (cents, want) in rows() {\n        assert_eq!(score(cents, 7), want);\n    }\n}",
+            // A second binding of the name.
+            "fn table() {\n    for (cents, want) in [(5_000, true)] {\n        for cents in [1] {\n            assert_eq!(score(cents, 7), want);\n        }\n    }\n}",
+            // A row of another arity.
+            "fn table() {\n    for (cents, want) in [(5_000, true), (1, false, 2)] {\n        assert_eq!(score(cents, 7), want);\n    }\n}",
+            // A nested pattern.
+            "fn table() {\n    for ((cents, _), want) in [((5_000, 1), true)] {\n        assert_eq!(score(cents, 7), want);\n    }\n}",
+            // A jump after the call: only the first row reaches it.
+            "fn table() {\n    for (cents, want) in [(4_999, false), (5_000, true)] {\n        assert_eq!(score(cents, 7), want);\n        break;\n    }\n}",
+            "fn table() {\n    for (cents, want) in [(4_999, false), (5_000, true)] {\n        assert_eq!(score(cents, 7), want);\n        return;\n    }\n}",
+            // A row-dependent branch skips the assertion for some rows.
+            "fn table() {\n    for (cents, want) in [(4_999, None), (5_000, Some(true))] {\n        if let Some(want) = want {\n            assert_eq!(score(cents, 7), want);\n        }\n    }\n}",
+            "fn table() {\n    for (cents, want) in [(4_999, false), (5_000, true)] {\n        match cents {\n            5_000 => assert_eq!(score(cents, 7), want),\n            _ => {}\n        }\n    }\n}",
+            // A short-circuit skips the call for some rows.
+            "fn table() {\n    for cents in [4_999, 5_000] {\n        let _ = cents != 5_000 && score(cents, 7);\n    }\n}",
+            // A closure inside the macro rebinds the name the parser cannot see.
+            "fn table() {\n    for (cents, want) in [(4_999, false), (5_000, true)] {\n        assert_eq!([1].map(|cents| score(cents, 7)), [want]);\n    }\n}",
+        ] {
+            let test = test_with_body_calls(unreadable, &[(12, "score(cents, 7)")]);
+            assert!(
+                owner_argument_values(&test, "cents").is_empty(),
+                "{unreadable}"
+            );
+        }
+        // An rstest column drops the cases it cannot read, so its values no
+        // longer line up with rows: `LOW` leaves `amount` one value, which
+        // must not be spread into a `(100, 100)` row no case runs.
+        let mut cases = test_with_body_calls(
+            "fn t(#[case] amount: u32, #[case] limit: u32, #[case] want: bool) {\n    assert_eq!(score(amount, limit), want);\n}",
+            &[(11, "score(amount, limit)")],
+        );
+        cases.attrs = vec![
+            "#[rstest]".to_string(),
+            "#[case(100, 7, true)]".to_string(),
+            "#[case(LOW, 100, false)]".to_string(),
+        ];
+        assert_eq!(owner_argument_values(&cases, "amount"), vec!["100"]);
+        assert_eq!(owner_argument_values(&cases, "limit"), vec!["7", "100"]);
+        let rows = owner_call_parameter_values(
+            &[&cases],
+            "score",
+            &["amount".to_string(), "rate".to_string()],
+        );
+        assert_eq!(rows.len(), 1);
+        assert!(
+            rows[0]
+                .iter()
+                .all(|cell| cell.value != "100" || cell.parameter == "amount"),
+            "{rows:?}"
+        );
+        let whole = "fn table() {\n    for cents in [4_999, 5_000] {\n        assert!(score(cents, 7) > 0);\n    }\n}";
+        let test = test_with_body_calls(whole, &[(12, "score(cents, 7)")]);
+        assert_eq!(
+            owner_argument_values(&test, "cents"),
+            vec!["4_999".to_string(), "5_000".to_string()]
+        );
     }
 
     #[test]

@@ -361,13 +361,34 @@ fn argument_list_activates_boundary(
     let left_index = parameter_index(&parameters, &left);
     let right_index = parameter_index(&parameters, &right);
     if let (Some(left_index), Some(right_index)) = (left_index, right_index) {
-        return values_overlap(
-            arg_values.get(left_index).map(Vec::as_slice).unwrap_or(&[]),
-            arg_values
-                .get(right_index)
-                .map(Vec::as_slice)
-                .unwrap_or(&[]),
-        );
+        let left_values = arg_values.get(left_index).map(Vec::as_slice).unwrap_or(&[]);
+        let right_values = arg_values
+            .get(right_index)
+            .map(Vec::as_slice)
+            .unwrap_or(&[]);
+        // Two columns of one constant-row table (#5328) meet only within one
+        // row: `[(100, 99), (99, 100)]` holds 100 in each column but never
+        // runs the call with both. A table column beside an rstest column is
+        // two independent dimensions: every case runs every row, so any
+        // overlap is reached.
+        let table_column = |index: usize| {
+            arguments.get(index).is_some_and(|argument| {
+                crate::analysis::syntax::constant_table_column(&test.body, argument.trim())
+                    .is_some()
+            })
+        };
+        if left_values.len() > 1
+            && right_values.len() > 1
+            && table_column(left_index)
+            && table_column(right_index)
+        {
+            return left_values.len() == right_values.len()
+                && left_values
+                    .iter()
+                    .zip(right_values)
+                    .any(|(left, right)| left == right);
+        }
+        return values_overlap(left_values, right_values);
     }
     if let Some(left_index) = left_index {
         let right_literals = extract_literals(&right);
@@ -2073,6 +2094,41 @@ mod tests {
             pairing_with_admitted_oracles(&probe, Some(&owner), &[&alone], &activation),
             "a line holding only the asserted owner call keeps the activation fallback"
         );
+    }
+
+    #[test]
+    fn table_columns_meet_within_a_row_and_rstest_cases_cross_every_row() {
+        let probe = predicate_probe("left == right");
+        let mut owner = gate_owner();
+        owner.body = "pub fn gate(left: u32, right: u32) -> bool { left == right }".into();
+        let call = |body: &str| test_summary("t", body, vec![], vec![], &[]);
+        let arguments = ["left".to_string(), "right".to_string()];
+        // One table, 100 in each column but never in the same row.
+        let across = call(
+            "fn t() {\n    for (left, right) in [(100, 99), (99, 100)] {\n        assert!(!gate(left, right));\n    }\n}",
+        );
+        assert!(!argument_list_activates_boundary(
+            &probe, &owner, &across, &arguments
+        ));
+        let within = call(
+            "fn t() {\n    for (left, right) in [(100, 99), (100, 100)] {\n        assert!(gate(left, right) == (left == right));\n    }\n}",
+        );
+        assert!(argument_list_activates_boundary(
+            &probe, &owner, &within, &arguments
+        ));
+        // An rstest case column beside a table column: each case runs every
+        // row, so `left = 100` meets the `right = 100` row.
+        let mut crossed = call(
+            "fn t(#[case] left: u32) {\n    for right in [99, 100] {\n        assert!(gate(left, right) == (left == right));\n    }\n}",
+        );
+        crossed.attrs = vec![
+            "#[rstest]".to_string(),
+            "#[case(100)]".to_string(),
+            "#[case(99)]".to_string(),
+        ];
+        assert!(argument_list_activates_boundary(
+            &probe, &owner, &crossed, &arguments
+        ));
     }
 
     fn predicate_probe(expression: &str) -> Probe {
