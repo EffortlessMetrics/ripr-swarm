@@ -23,10 +23,14 @@ Cargo semver applies to the `ripr` crate version:
   break the endorsed-stable subset, and must document each break in the
   changelog under a `Changed` section naming the old and new shape.
 
-The endorsed-stable subset is exactly the integration surface named in
+The endorsed-stable subset is the integration surface named in
 `crates/ripr/src/lib.rs`: `CheckInput`, `check_workspace`, `CheckOutput`,
-`explain_finding`, `collect_context`, and the domain re-exports the crate
-root documents for editor tooling, CI automation, and custom reporting.
+`explain_finding`, `collect_context`, the public field types required to
+use those entrypoints (`Mode`, `OutputFormat`, and the other root-level
+field types documented there), and the domain re-exports documented in the
+crate root for editor tooling, CI automation, and custom reporting. A
+public field type required by an endorsed entrypoint inherits its promise:
+a minor release must not break consumers through those types either.
 Everything else reachable through `pub mod` — the twenty modules recorded
 in `policy/public_api.txt` — is recorded-but-unendorsed: present and
 nameable, but subject to narrowing, moving, or removal in a minor release
@@ -44,14 +48,21 @@ Each machine-readable contract carries its own `schema_version` namespace;
 there is no single product-wide number. The contract table and per-contract
 bump rules live in `docs/OUTPUT_SCHEMA.md`:
 
-- Additive changes (new optional fields, new enum spellings behind
-  `#[serde(default)]`, new nested objects consumers may ignore) keep the
-  contract version.
-- A breaking shape change (removed or retyped fields, changed meaning of an
-  existing value) mints a new contract version, and the changelog names the
-  old and new versions plus the migration.
-- Refusals never share a version with a success document: a version always
-  denotes one envelope shape.
+- Additive changes (new optional fields, new nested objects consumers may
+  ignore) keep the contract version. `#[serde(default)]` covers absent
+  fields only: it never makes an old reader accept a new enum spelling or
+  a retyped value.
+- A new enum spelling, a removed or retyped field, or a changed meaning of
+  an existing value mints a new contract version — unless supported old
+  readers have an explicit unknown-preserving variant or custom decoder for
+  that spelling, proven by an old-reader/new-spelling compatibility test.
+  The changelog names the old and new versions plus the migration.
+- A version denotes one envelope shape, selected by any documented
+  discriminator. Distinct versions for success and refusal documents are
+  preferred for new contracts. The one grandfathered exception is
+  `ripr agent stub --json` 0.1, where the `state` field (`ready` vs
+  `refused`) selects the shape; consumers must dispatch on `state`, never
+  on the version alone.
 
 SARIF output follows the SARIF 2.1.0 standard envelope; standard fields
 track the standard, and `ripr`-specific properties follow the additive /
@@ -59,23 +70,24 @@ breaking rules above.
 
 ## CLI surface
 
-Stable: command names, flag spellings, exit-code meanings, and the JSON
-documents selected by `--format json` / `--json` flags (each under its own
-contract version). Integrations must consume those documents, never
-human-readable stdout: prose, tables, progress lines, and suggestion text
-may change in any release, including patches.
+Stable: command names (including `ripr mcp` and `ripr lsp`: the names
+stay even while their behavior is unstable), flag spellings, exit-code
+meanings, and the JSON documents selected by `--format json` / `--json`
+flags (each under its own contract version). Integrations must consume
+those documents, never human-readable stdout: prose, tables, progress
+lines, and suggestion text may change in any release, including patches.
 
-Unstable: `ripr mcp` (bounded read-only adapter; envelopes are versioned
-per tool but the tool set may grow), `ripr lsp` (experimental sidecar),
-`ripr doctor` prose, and every `cargo xtask` command (repository tooling,
-not product surface).
+Unstable: `ripr mcp` behavior (bounded read-only adapter; envelopes are
+versioned per tool but the tool set may grow), `ripr lsp` behavior
+(experimental sidecar), `ripr doctor` prose, and every `cargo xtask`
+command (repository tooling, not product surface).
 
 ## Breaking-change process
 
 1. Name the break in the PR body (old shape, new shape, affected
    contracts) and in `changelog.d/` under `Changed`.
 2. Mint new contract versions for every affected output family; keep
-   emitting the old version alongside only when the producer can do so
+   emitting the old version alongside, but only when the producer can do so
    without lying about provenance (otherwise cut over, loudly).
 3. Update this policy's endorsed lists when the break touches them.
 4. The release notes repeat the migration in one place per break.
