@@ -293,6 +293,13 @@ fn worktree_damage_error(base: &str, merge_base_stderr: &[u8]) -> CoreError {
     ))
 }
 
+/// Whether a `rev-parse --verify --quiet` probe ran and answered "no": exit
+/// 1 without a message. A refusal answers another nonzero exit with a
+/// `fatal:` line, and must not read as a missing ref or object (#7076).
+fn rev_parse_answered_no(output: &std::process::Output) -> bool {
+    output.status.code() == Some(1) && String::from_utf8_lossy(&output.stderr).trim().is_empty()
+}
+
 /// The fail-closed error when `git merge-base <base> HEAD` ran and found no
 /// origin for the working-tree diff (#7076). The failure is classified before
 /// any cause is named, because a wrong actionable repair is worse than a
@@ -314,18 +321,17 @@ fn no_worktree_merge_base_error(
     if git_stderr_names_object_damage(&stderr) {
         return worktree_damage_error(base, &merge_base.stderr);
     }
-    // Only a `rev-parse` that ran and answered "no" proves an unresolvable
-    // HEAD; a probe that cannot complete proves nothing, so it keeps the
-    // classifications below rather than asserting an unborn branch.
-    let head_ref_proven_unresolvable = matches!(
-        crate::git::run_git_output_with_deadline(
-            root,
-            &["rev-parse", "--verify", "--quiet", "HEAD"],
-            git_timeout,
-        ),
-        Ok(output) if !output.status.success()
+    // A missing ref and a missing object both answer exit 1 without a
+    // message; a refusal (cyclic `refs/replace`, an unreadable ref database)
+    // answers another nonzero exit with a `fatal:` line, and must keep the
+    // classifications below instead of reading as unborn or damaged. A probe
+    // that cannot complete proves nothing either.
+    let head_ref = crate::git::run_git_output_with_deadline(
+        root,
+        &["rev-parse", "--verify", "--quiet", "HEAD"],
+        git_timeout,
     );
-    if head_ref_proven_unresolvable {
+    if matches!(&head_ref, Ok(output) if rev_parse_answered_no(output)) {
         return CoreError::message(format!(
             "the working-tree diff from `{base}` cannot start: HEAD does not resolve to a commit \
              (HEAD may be unborn or point at a missing branch; the analysis did not run). Commit \
@@ -335,16 +341,19 @@ fn no_worktree_merge_base_error(
     // The ref resolves, but an unpeeled `rev-parse` returns the stored ID
     // without reading the object: when the tip commit itself is missing,
     // `merge-base` refuses with `Not a valid commit name`, which is object
-    // damage, not an unborn branch and not a named-file repair. Only a peel
-    // that ran and answered "no" proves it.
-    let head_object_proven_missing = matches!(
-        crate::git::run_git_output_with_deadline(
-            root,
-            &["rev-parse", "--verify", "--quiet", "HEAD^{commit}"],
-            git_timeout,
-        ),
-        Ok(output) if !output.status.success()
-    );
+    // damage, not an unborn branch and not a named-file repair. The peel only
+    // runs when the ref resolves, so an unborn branch can never read as
+    // damage here.
+    let head_ref_resolves = matches!(&head_ref, Ok(output) if output.status.success());
+    let head_object_proven_missing = head_ref_resolves
+        && matches!(
+            crate::git::run_git_output_with_deadline(
+                root,
+                &["rev-parse", "--verify", "--quiet", "HEAD^{commit}"],
+                git_timeout,
+            ),
+            Ok(output) if rev_parse_answered_no(&output)
+        );
     if head_object_proven_missing {
         return worktree_damage_error(base, &merge_base.stderr);
     }
