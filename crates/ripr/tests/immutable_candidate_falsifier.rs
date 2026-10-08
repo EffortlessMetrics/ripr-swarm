@@ -274,13 +274,20 @@ fn same_tree_immutable_and_committed_analysis_agree() -> Result<(), String> {
         // Declared non-portable telemetry ONLY: the identity block
         // (input fingerprints differ by construction between a range
         // diff and a tree-to-tree diff), the mode string, the root
-        // echo, and the base echo. Completeness, counts, and
-        // limitations are acceptance-named and MUST match (#3279
+        // echo, and the base echo plus the live run's analyzed
+        // revisions (RIPR-SPEC-0116 amendment), which a candidate-tree
+        // subject names in its identity instead. Completeness, counts,
+        // and limitations are acceptance-named and MUST match (#3279
         // review M2).
         copy["analysis_outcome"]["outcome"]["identity"] = Value::Null;
         copy["mode"] = Value::Null;
         copy["root"] = Value::Null;
         copy["base"] = Value::Null;
+        if let Some(object) = copy.as_object_mut() {
+            for live_only in ["base_commit", "merge_base_commit", "head"] {
+                object.remove(live_only);
+            }
+        }
         copy
     };
     assert_eq!(

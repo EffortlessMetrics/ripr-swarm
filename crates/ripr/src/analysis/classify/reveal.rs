@@ -8,6 +8,7 @@ use super::propagation_witness::{
 };
 use super::reach::{invokes_opaque_macro, is_proximity_only};
 use super::rust_string_literals;
+use super::text::changed_error_variant;
 use crate::analysis::classifier::oracle_binds_sink_identity;
 use crate::domain::*;
 
@@ -35,6 +36,10 @@ pub(in crate::analysis) struct ReturnOracleAdmission<'a> {
     /// type a call names (`Money` in `Money::new(8)`), when it names one:
     /// such a call reaches the owner only through that type's function.
     pub(in crate::analysis) expected_reaches_owner: &'a dyn Fn(Option<&str>, &str) -> bool,
+    /// RIPR-SPEC-0094 Part D: whether an effect observer can carry the state
+    /// the changed effect writes (`EffectStateCarrier::admits`). Consulted
+    /// only for effect families after `effect_observer_confirms`.
+    pub(in crate::analysis) effect_state_carried: &'a dyn Fn(&TestSummary, &OracleFact) -> bool,
 }
 
 #[cfg(test)]
@@ -55,6 +60,7 @@ fn reveal_evidence(
             proximity_may_reach_owner: &|_| false,
             owner_parameters: &[],
             expected_reaches_owner: &|_, _| false,
+            effect_state_carried: &|_, _| true,
         },
         None,
     );
@@ -174,7 +180,11 @@ pub(in crate::analysis) fn reveal_outcome(
         StageEvidence::new(
             StageState::Weak,
             Confidence::Medium,
-            PROXIMITY_CONFIRMATION_WITHHELD,
+            if matches!(probe.family, ProbeFamily::MatchArm) {
+                PROXIMITY_CONFIRMATION_WITHHELD
+            } else {
+                PROXIMITY_VARIANT_CONFIRMATION_WITHHELD
+            },
         )
     } else {
         build_discriminate_evidence(
@@ -195,6 +205,8 @@ pub(in crate::analysis) fn reveal_outcome(
 }
 
 const PROXIMITY_CONFIRMATION_WITHHELD: &str = "Discriminator unconfirmed: no assertion in a test that calls or otherwise reaches this function names the changed arm; a test that only shares its file or module, and calls nothing that reaches the function, cannot confirm the arm (observation_unverified)";
+
+const PROXIMITY_VARIANT_CONFIRMATION_WITHHELD: &str = "Discriminator unconfirmed: no assertion in a test that calls or otherwise reaches this function names the changed error variant; a test that only shares its file or module pins that variant on another function's result (observation_unverified)";
 
 struct RevealAssertionAnalysis {
     related: Vec<RelatedTest>,
@@ -539,6 +551,17 @@ fn analyze_related_assertions(
             && !is_proximity_only(*reason)
     });
 
+    let names_shared_variant = matches!(probe.family, ProbeFamily::MatchArm)
+        || (matches!(
+            probe.family,
+            ProbeFamily::ErrorPath | ProbeFamily::ReturnValue
+        ) && (changed_error_variant(&probe.expression).is_some()
+            // A change confined to the payload line of a multiline
+            // `Err::<T, E>(\n E::X,\n)` leaves only `E::X,` in the probe
+            // expression; the enclosing constructor is in the analysis
+            // expression (#7094 review).
+            || error_construction_path.is_some()));
+
     for (test, reason) in related_tests {
         let relation_reason = Some(*reason);
         let relation_confidence = Some(reason.confidence());
@@ -553,7 +576,13 @@ fn analyze_related_assertions(
         // `matches!(Unit::from_str(..), Ok(Unit::Fortnight))` confirmed the
         // `seconds` arm, so the arm's verdict followed edits to a test that
         // never runs `seconds`.
-        let confirms_observation = !(matches!(probe.family, ProbeFamily::MatchArm)
+        //
+        // An exact error variant (`Err(PayError::Limit)`) is the same kind of
+        // shared enum value: a same-file `matches!(refund(..),
+        // Err(PayError::Limit))` must not confirm `deposit_cap`'s
+        // `return Err(PayError::Limit)` while another test reaches
+        // `deposit_cap` (#7063).
+        let confirms_observation = !(names_shared_variant
             && owner_reaching_related
             && is_proximity_only(*reason)
             && !invokes_opaque_macro(&test.body)
@@ -714,7 +743,10 @@ fn analyze_related_assertions(
                                     .is_none()
                                     && (has_token_match
                                         || (is_effect_family(&probe.family)
-                                            && effect_observer_confirms(assertion)))))));
+                                            && effect_observer_confirms(assertion)
+                                            && (return_admission.effect_state_carried)(
+                                                test, assertion,
+                                            )))))));
                 proximity_confirmation_withheld |= !confirms_observation;
                 if confirm_required {
                     // Observation is confirmed when the assertion specifically
@@ -979,6 +1011,27 @@ fn called_names(text: &str) -> Vec<String> {
         .collect()
 }
 
+fn is_called_path_ident_byte(byte: u8) -> bool {
+    !byte.is_ascii() || is_ident_byte(byte)
+}
+
+fn is_called_path_ident_start_byte(byte: u8) -> bool {
+    !byte.is_ascii() || byte.is_ascii_alphabetic() || byte == b'_'
+}
+
+/// Last path segment of `path`, treating non-ASCII characters as identifier
+/// characters so a name such as `módulo` is not cut at `ó`. `rfind` yields
+/// a character start; skip that whole character rather than one byte.
+fn last_called_path_segment(path: &str) -> &str {
+    let path = path.trim_end();
+    let begin = path
+        .rfind(|ch: char| ch.is_ascii() && !(ch.is_ascii_alphanumeric() || ch == '_'))
+        .map_or(0, |at| {
+            at + path[at..].chars().next().map_or(1, char::len_utf8)
+        });
+    path.get(begin..).unwrap_or("")
+}
+
 /// Every call in `text` as (named type, identifier): the type is the
 /// upper-case path segment directly before the identifier (`Money` in
 /// `Money::new(8)`), and `None` for a bare call, a method call, a module
@@ -989,27 +1042,21 @@ fn called_paths(text: &str) -> Vec<(Option<String>, String)> {
     let mut names = Vec::new();
     let mut index = 0;
     while index < bytes.len() {
-        if !(bytes[index].is_ascii_alphabetic() || bytes[index] == b'_') {
+        if !is_called_path_ident_start_byte(bytes[index]) {
             index += 1;
             continue;
         }
         let start = index;
-        while index < bytes.len() && is_ident_byte(bytes[index]) {
+        while index < bytes.len() && is_called_path_ident_byte(bytes[index]) {
             index += 1;
         }
-        let preceded_by_ident = start > 0 && is_ident_byte(bytes[start - 1]);
+        let preceded_by_ident = start > 0 && is_called_path_ident_byte(bytes[start - 1]);
         let rest = masked[index..].trim_start();
         if !preceded_by_ident && (rest.starts_with('(') || rest.starts_with("::<")) {
             let qualifier = masked[..start]
                 .trim_end()
                 .strip_suffix("::")
-                .map(|path| {
-                    let path = path.trim_end();
-                    let begin = path
-                        .rfind(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_'))
-                        .map_or(0, |at| at + 1);
-                    &path[begin..]
-                })
+                .map(last_called_path_segment)
                 .filter(|segment| {
                     *segment != "Self" && segment.starts_with(|ch: char| ch.is_ascii_uppercase())
                 })
@@ -3380,6 +3427,7 @@ mod tests {
                     proximity_may_reach_owner: &|_| false,
                     owner_parameters: &[],
                     expected_reaches_owner: &|_, _| false,
+                    effect_state_carried: &|_, _| true,
                 },
                 None,
             )
@@ -3472,6 +3520,7 @@ mod tests {
                     proximity_may_reach_owner: &|_| false,
                     owner_parameters: &[],
                     expected_reaches_owner: &|_, _| false,
+                    effect_state_carried: &|_, _| true,
                 },
                 None,
             )
@@ -3821,6 +3870,7 @@ mod tests {
                 proximity_may_reach_owner: &|_| false,
                 owner_parameters: &[],
                 expected_reaches_owner: &|_, _| false,
+                effect_state_carried: &|_, _| true,
             },
             None,
         );
@@ -3889,6 +3939,7 @@ mod tests {
                 proximity_may_reach_owner: &|_| false,
                 owner_parameters: &[],
                 expected_reaches_owner: &|_, _| false,
+                effect_state_carried: &|_, _| true,
             },
             None,
         );
@@ -5415,6 +5466,7 @@ return Err(\"typed pin\".into());
                 proximity_may_reach_owner: &|_| false,
                 owner_parameters: &[],
                 expected_reaches_owner: &|_, _| false,
+                effect_state_carried: &|_, _| true,
             },
             None,
         );
@@ -5468,6 +5520,7 @@ return Err(\"typed pin\".into());
                 proximity_may_reach_owner: &|_| false,
                 owner_parameters: &[],
                 expected_reaches_owner: &|_, _| false,
+                effect_state_carried: &|_, _| true,
             },
             None,
         );
@@ -5492,6 +5545,7 @@ return Err(\"typed pin\".into());
                 proximity_may_reach_owner: &|_| false,
                 owner_parameters: &[],
                 expected_reaches_owner: &|_, _| false,
+                effect_state_carried: &|_, _| true,
             },
             None,
         );
@@ -5535,6 +5589,7 @@ return Err(\"typed pin\".into());
                 proximity_may_reach_owner: &|_| false,
                 owner_parameters: &[],
                 expected_reaches_owner: &|_, _| false,
+                effect_state_carried: &|_, _| true,
             },
             None,
         );
@@ -5580,6 +5635,7 @@ return Err(\"typed pin\".into());
                 proximity_may_reach_owner: &|_| false,
                 owner_parameters: &[],
                 expected_reaches_owner: &|_, _| false,
+                effect_state_carried: &|_, _| true,
             },
             None,
         );
@@ -5750,6 +5806,7 @@ return Err(\"typed pin\".into());
                 proximity_may_reach_owner: &|_| false,
                 owner_parameters: &[],
                 expected_reaches_owner: &|_, _| false,
+                effect_state_carried: &|_, _| true,
             },
             None,
         );
@@ -5777,6 +5834,7 @@ return Err(\"typed pin\".into());
                 proximity_may_reach_owner: &|_| false,
                 owner_parameters: &[],
                 expected_reaches_owner: &|_, _| false,
+                effect_state_carried: &|_, _| true,
             },
             None,
         );
@@ -6044,6 +6102,58 @@ return Err(\"typed pin\".into());
         );
     }
 
+    /// RIPR-SPEC-0094 Part D (#7046 review): when the effect carrier refuses
+    /// a whole-object equality, the effect-observer branch withholds the
+    /// confirmation; a token match still confirms on its own.
+    #[test]
+    fn a_refused_effect_carrier_withholds_only_the_whole_object_observer() {
+        let probe = probe(ProbeFamily::CallDeletion, "persist_audit(record)");
+        let reveal = |kind: OracleKind, text: &str, carried: bool| {
+            let test = test_with_assertions(
+                "store_matches_expected",
+                vec![oracle(text, kind, OracleStrength::Strong)],
+            );
+            let carried = move |_: &TestSummary, _: &OracleFact| carried;
+            reveal_evidence_with_expression(
+                &probe,
+                &probe.expression,
+                &[(&test, RelationReason::DirectOwnerCall)],
+                &[],
+                &|_, _| false,
+                &|_, _| false,
+                &ReturnOracleAdmission {
+                    owner_return_pin: &|_, _| false,
+                    assertion_admitted: &|_, _| true,
+                    proximity_may_reach_owner: &|_| false,
+                    owner_parameters: &[],
+                    expected_reaches_owner: &|_, _| false,
+                    effect_state_carried: &carried,
+                },
+                None,
+            )
+            .1
+            .summary
+        };
+        let whole = "assert_eq!(store, expected);";
+        assert!(
+            !reveal(OracleKind::WholeObjectEquality, whole, true)
+                .contains("observation_unverified")
+        );
+        assert!(
+            reveal(OracleKind::WholeObjectEquality, whole, false)
+                .contains("observation_unverified")
+        );
+        // A token match confirms without the effect-observer branch.
+        assert!(
+            !reveal(
+                OracleKind::WholeObjectEquality,
+                "assert_eq!(persist_audit(record), expected);",
+                false,
+            )
+            .contains("observation_unverified")
+        );
+    }
+
     /// A VALUE family (ReturnValue) must NOT treat a mock/whole-object as an
     /// observation confirmation — only a token_match confirms value families.
     /// This guards against the effect-family relaxation leaking into value
@@ -6291,10 +6401,180 @@ return Err(\"typed pin\".into());
                 proximity_may_reach_owner: &|test| test.name == "from_str_fortnight",
                 owner_parameters: &[],
                 expected_reaches_owner: &|_, _| false,
+                effect_state_carried: &|_, _| true,
             },
             None,
         );
         assert_eq!(may_reach.state, StageState::Yes, "{}", may_reach.summary);
+    }
+
+    /// #7063: an exact error variant is shared by every function returning
+    /// that enum, so a same-file pin of another function's
+    /// `Err(PayError::Limit)` cannot confirm this owner's
+    /// `return Err(PayError::Limit)` while a test that calls the owner is
+    /// related. Alone, the same-file test still confirms, as for #6297.
+    #[test]
+    fn error_variant_proximity_test_cannot_confirm_beside_reaching_test() {
+        let reaching = test_with_assertions(
+            "a_small_deposit_is_accepted",
+            vec![oracle(
+                "assert_eq!(deposit_cap(100), Ok(100));",
+                OracleKind::ExactValue,
+                OracleStrength::Strong,
+            )],
+        );
+        let other_owner = test_with_assertions(
+            "a_large_refund_hits_the_limit",
+            vec![oracle(
+                "assert!(matches!(refund(20_000), Err(PayError::Limit)));",
+                OracleKind::ExactErrorVariant,
+                OracleStrength::Strong,
+            )],
+        );
+        for (family, expression) in [
+            (ProbeFamily::ErrorPath, "return Err(PayError::Limit);"),
+            (
+                ProbeFamily::ErrorPath,
+                "return Err::<i64, PayError>(PayError::Limit);",
+            ),
+            (
+                ProbeFamily::ReturnValue,
+                "return Err::<i64, PayError>(PayError::Limit);",
+            ),
+            (
+                ProbeFamily::ErrorPath,
+                "let v = amount.checked_mul(2).ok_or(PayError::Limit)?;",
+            ),
+        ] {
+            let probe = probe(family, expression);
+            let (_, beside, _) = reveal_evidence(
+                &probe,
+                &[
+                    (&reaching, RelationReason::DirectOwnerCall),
+                    (&other_owner, RelationReason::SameTestFile),
+                ],
+            );
+            assert_ne!(
+                beside.state,
+                StageState::Yes,
+                "{expression}: {}",
+                beside.summary
+            );
+            assert_eq!(
+                beside.summary, PROXIMITY_VARIANT_CONFIRMATION_WITHHELD,
+                "{expression}"
+            );
+            let (_, alone, _) =
+                reveal_evidence(&probe, &[(&other_owner, RelationReason::SameTestFile)]);
+            assert_eq!(
+                alone.state,
+                StageState::Yes,
+                "{expression}: {}",
+                alone.summary
+            );
+
+            // A same-file test that may run the owner keeps confirming.
+            let (_, may_reach, _, _) = reveal_evidence_with_expression(
+                &probe,
+                &probe.expression,
+                &[
+                    (&reaching, RelationReason::DirectOwnerCall),
+                    (&other_owner, RelationReason::SameTestFile),
+                ],
+                &[],
+                &|_, _| false,
+                &|_, _| false,
+                &ReturnOracleAdmission {
+                    owner_return_pin: &|_, _| false,
+                    assertion_admitted: &|_, _| true,
+                    proximity_may_reach_owner: &|test| test.name == "a_large_refund_hits_the_limit",
+                    owner_parameters: &[],
+                    expected_reaches_owner: &|_, _| false,
+                    effect_state_carried: &|_, _| true,
+                },
+                None,
+            );
+            assert_eq!(
+                may_reach.state,
+                StageState::Yes,
+                "{expression}: {}",
+                may_reach.summary
+            );
+        }
+
+        // A change confined to the payload line of a multiline turbofish
+        // leaves only `PayError::Limit,` in the probe expression; the guard
+        // reads the enclosing constructor from the analysis expression.
+        let payload_probe = probe(ProbeFamily::ErrorPath, "PayError::Limit,");
+        let (_, payload_beside, _, _) = reveal_evidence_with_expression(
+            &payload_probe,
+            "return Err::<i64, PayError>(\n    PayError::Limit,\n);",
+            &[
+                (&reaching, RelationReason::DirectOwnerCall),
+                (&other_owner, RelationReason::SameTestFile),
+            ],
+            &[],
+            &|_, _| false,
+            &|_, _| false,
+            &ReturnOracleAdmission {
+                owner_return_pin: &|_, _| false,
+                assertion_admitted: &|_, _| true,
+                proximity_may_reach_owner: &|_| false,
+                owner_parameters: &[],
+                expected_reaches_owner: &|_, _| false,
+                effect_state_carried: &|_, _| true,
+            },
+            None,
+        );
+        assert_ne!(
+            payload_beside.state,
+            StageState::Yes,
+            "{}",
+            payload_beside.summary
+        );
+        assert_eq!(
+            payload_beside.summary,
+            PROXIMITY_VARIANT_CONFIRMATION_WITHHELD
+        );
+
+        // A custom `MyErr::<E>(E::X)` constructor names no `Result::Err`
+        // variant, so the guard does not apply to it.
+        let custom_probe = probe(
+            ProbeFamily::ReturnValue,
+            "return MyErr::<PayError>(PayError::Limit);",
+        );
+        let (_, custom_beside, _) = reveal_evidence(
+            &custom_probe,
+            &[
+                (&reaching, RelationReason::DirectOwnerCall),
+                (&other_owner, RelationReason::SameTestFile),
+            ],
+        );
+        assert_ne!(
+            custom_beside.summary,
+            PROXIMITY_VARIANT_CONFIRMATION_WITHHELD
+        );
+
+        // A return value that names no error variant keeps the #4486
+        // same-file credit beside a reaching test.
+        let ok_probe = probe(ProbeFamily::ReturnValue, "return Ok(amount + 1);");
+        let same_file_ok = test_with_assertions(
+            "refund_adds_one",
+            vec![oracle(
+                "assert_eq!(refund(1), Ok(amount + 1));",
+                OracleKind::ExactValue,
+                OracleStrength::Strong,
+            )],
+        );
+        let (_, ok_beside, _) = reveal_evidence(
+            &ok_probe,
+            &[
+                (&reaching, RelationReason::DirectOwnerCall),
+                (&same_file_ok, RelationReason::SameTestFile),
+            ],
+        );
+        assert_ne!(ok_beside.summary, PROXIMITY_VARIANT_CONFIRMATION_WITHHELD);
+        assert_eq!(ok_beside.state, StageState::Yes, "{}", ok_beside.summary);
     }
 
     /// MatchArm: assertion containing the specific VARIANT token confirms the arm.
@@ -6592,6 +6872,7 @@ return Err(\"typed pin\".into());
                 proximity_may_reach_owner: &|_| false,
                 owner_parameters: &[],
                 expected_reaches_owner: &|_, _| false,
+                effect_state_carried: &|_, _| true,
             },
             None,
         );
@@ -6888,6 +7169,7 @@ return Err(\"typed pin\".into());
                 proximity_may_reach_owner: &|_| false,
                 owner_parameters,
                 expected_reaches_owner: reaches,
+                effect_state_carried: &|_, _| true,
             },
             None,
         );
@@ -7125,6 +7407,32 @@ return Err(\"typed pin\".into());
                 (Some("Invoice".to_string()), "new".to_string()),
                 (None, "new".to_string()),
                 (None, "new".to_string()),
+            ]
+        );
+    }
+
+    /// #7062: a non-ASCII module or function name used to abort
+    /// `called_paths` (`rfind(..) + 1` inside `ó`) or be read as the
+    /// ASCII tail (`dulo`). ASCII paths are the no-change control.
+    #[test]
+    fn called_paths_reads_non_ascii_identifiers_on_char_boundaries() {
+        assert_eq!(
+            called_paths("crate::módulo::render(2)"),
+            vec![(None, "render".to_string())]
+        );
+        assert_eq!(
+            called_names("módulo(2) + función(1)"),
+            vec!["módulo".to_string(), "función".to_string()]
+        );
+        assert_eq!(
+            called_paths("Módulo::new(8)"),
+            vec![(Some("Módulo".to_string()), "new".to_string())]
+        );
+        assert_eq!(
+            called_paths("crate::a::render(2) + Money::new(8)"),
+            vec![
+                (None, "render".to_string()),
+                (Some("Money".to_string()), "new".to_string()),
             ]
         );
     }

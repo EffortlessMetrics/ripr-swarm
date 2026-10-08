@@ -1,0 +1,52 @@
+{
+  "case_id": "old-tip-duplicative-tests",
+  "subject_id": "authored-old-errors",
+  "diff": "cases/old-tip-duplicative-tests.diff",
+  "anchor": {
+    "file": "src/fees.rs",
+    "line": 20
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "two_identical_exact_value_tests",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "amount * 16 / 100",
+        "mutated_line": "amount * 16 / 100",
+        "outcome": "tests_failed",
+        "failing_test": "fees::tests::tip_on_two_hundred",
+        "equivalence_review": "not equivalent: a sixteen percent tip gives 32; fees::tests::tip_on_two_hundred_again also failed"
+      },
+      {
+        "replacement": "amount * 15 / 10",
+        "mutated_line": "amount * 15 / 10",
+        "outcome": "tests_failed",
+        "failing_test": "fees::tests::tip_on_two_hundred",
+        "equivalence_review": "not equivalent: dividing by ten gives 300; fees::tests::tip_on_two_hundred_again also failed"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "Two identical tests pin tip(200) to 30, so either mutant fails both. Spec cells: RIPR-SPEC-0004 (duplicative tests stay credited, not penalized).",
+  "labeling_observation": {
+    "ripr_commit": "e19e16c",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

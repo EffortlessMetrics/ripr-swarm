@@ -2,6 +2,7 @@ mod evidence;
 mod finding;
 mod owner;
 
+pub(in crate::analysis) use evidence::OwnerCallerNames;
 pub(in crate::analysis) use finding::oracle_binds_sink_identity;
 
 use self::evidence::ClassifiedProbeEvidence;
@@ -71,7 +72,8 @@ pub(in crate::analysis) fn classify_probe_with_candidate_index(
     .with_helper_chain(helper_chain)
     .with_file_use_statements(candidate_index.file_use_statements())
     .with_owner_pin_syntax(candidate_index.owner_pin_syntax())
-    .with_test_value_facts(candidate_index.test_value_facts());
+    .with_test_value_facts(candidate_index.test_value_facts())
+    .with_owner_caller_names(candidate_index.owner_caller_names());
     let reveal_expression = parser_expression_for_probe(
         index,
         &probe.location.file,

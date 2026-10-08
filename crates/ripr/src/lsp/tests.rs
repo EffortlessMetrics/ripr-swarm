@@ -13747,6 +13747,7 @@ fn sample_classified_seam() -> crate::analysis::ClassifiedSeam {
                 flow_sink: None,
             }],
             new_test_target: None,
+            statically_contradicted_related_tests: 0,
         },
         class: SeamGripClass::WeaklyGripped,
     }
@@ -13783,6 +13784,7 @@ fn sample_side_effect_seam_without_related_tests() -> crate::analysis::Classifie
             discriminate: StageEvidence::new(StageState::No, Confidence::Low, "no discriminator"),
             observed_values: Vec::new(),
             missing_discriminators: Vec::new(),
+            statically_contradicted_related_tests: 0,
             new_test_target: None,
         },
         class: SeamGripClass::Ungripped,

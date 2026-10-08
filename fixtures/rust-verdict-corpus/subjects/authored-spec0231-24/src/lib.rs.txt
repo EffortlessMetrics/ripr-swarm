@@ -1,0 +1,16 @@
+pub fn lookup(k: u32) -> Option<u32> {
+    if k == 1 {
+        return Some(4);
+    }
+    None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn lookup_one_is_an_option() {
+        assert!(matches!(lookup(1), Some(_) | None));
+    }
+}

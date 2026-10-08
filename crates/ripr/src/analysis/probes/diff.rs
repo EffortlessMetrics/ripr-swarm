@@ -115,27 +115,21 @@ pub(crate) fn probes_for_file_with_relations(
                     text: canonical_text.clone(),
                 };
                 let before = removed_before(shape.start_line, &canonical_text, changed);
-                // #6995: a predicate's or arm head's `after` is the parser
-                // shape, not the whole line, so cut the same span from the
-                // old line. #7020: the arm consumers that parse `before` as a
-                // whole arm (`tuple_match`) need an arm whose body changed;
-                // a body edit falls outside the head shape and is never cut.
-                // An old line with a second `=>` (two arms, or a nested match
-                // in the body) stays whole so arm selection keeps reading it
-                // as unknown: which arm changed is not established there.
-                let before =
-                    if matches!(shape.family, ProbeFamily::Predicate | ProbeFamily::MatchArm) {
-                        before.map(|line| {
-                            if shape.family == ProbeFamily::MatchArm
-                                && line.matches("=>").count() > 1
-                            {
-                                return line;
-                            }
-                            removed_span_of_shape(text, &canonical_text, &line).unwrap_or(line)
-                        })
-                    } else {
-                        before
-                    };
+                // #5312 (widening #6995): a canonical shape's `after` is the
+                // parser shape, not the whole line, so cut the same span from
+                // the old line for every family. #7020: the arm consumers that
+                // parse `before` as a whole arm (`tuple_match`) need an arm
+                // whose body changed; a body edit falls outside the head shape
+                // and is never cut. An old line with a second `=>` (two arms,
+                // or a nested match in the body) stays whole so arm selection
+                // keeps reading it as unknown: which arm changed is not
+                // established there.
+                let before = before.map(|line| {
+                    if shape.family == ProbeFamily::MatchArm && line.matches("=>").count() > 1 {
+                        return line;
+                    }
+                    removed_span_of_shape(text, &canonical_text, &line).unwrap_or(line)
+                });
                 let probe = build_probe(
                     &build_context,
                     &canonical_line,
@@ -1116,11 +1110,15 @@ mod tests {
     }
 
     /// One changed line `removed` -> `added` with a single parser shape.
+    /// `file_source` is the file text the shape offsets resolve against; call
+    /// shapes need the real bytes (a line-leading shape followed by `;`) to
+    /// route as standalone, while other families only need the shape text.
     fn single_shape_probes(
         added: &str,
         removed: &str,
         kind: ProbeShapeKind,
         shape_text: &str,
+        file_source: &str,
     ) -> Vec<Probe> {
         let path = PathBuf::from("src/lib.rs");
         let line = |text: &str| ChangedLine {
@@ -1133,7 +1131,9 @@ mod tests {
             added_lines: vec![line(added)],
             removed_lines: vec![line(removed)],
         };
-        let start_byte = 20 + added.find(shape_text).unwrap_or(0);
+        let start_byte = file_source
+            .find(shape_text)
+            .unwrap_or_else(|| 20 + added.find(shape_text).unwrap_or(0));
         let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
             files: BTreeMap::from([(
                 path.clone(),
@@ -1166,6 +1166,7 @@ mod tests {
                         text: shape_text.into(),
                         value_consumed: false,
                     }],
+                    source: file_source.into(),
                     ..FileFacts::default()
                 },
             )]),
@@ -1184,6 +1185,7 @@ mod tests {
             "if string.len() > MAX_LEN {",
             ProbeShapeKind::Predicate,
             "string.len() >= MAX_LEN",
+            "",
         );
 
         assert_eq!(probes.len(), 1);
@@ -1202,6 +1204,7 @@ mod tests {
             "x if x < 10 => panic!(\"old\"),",
             ProbeShapeKind::MatchArm,
             "x if x <= 10 =>",
+            "",
         );
 
         let arm = probes
@@ -1210,6 +1213,76 @@ mod tests {
         assert_eq!(
             arm.and_then(|probe| probe.before.as_deref()),
             Some("x if x < 10 =>"),
+            "{probes:?}"
+        );
+    }
+
+    /// #5312: the span cut is not predicate-only. A return shape narrower
+    /// than its line (the trailing `;` is framing) takes the same span of
+    /// the old line, so `before` reads against `after` like for like.
+    #[test]
+    fn return_value_before_is_cut_to_the_parser_shape_span() {
+        let probes = single_shape_probes(
+            "return Err(ParseError::InvalidData);",
+            "return Err(ParseError::UnexpectedEof);",
+            ProbeShapeKind::ReturnValue,
+            "return Err(ParseError::InvalidData)",
+            "",
+        );
+
+        assert_eq!(probes.len(), 1);
+        let probe = &probes[0];
+        assert_eq!(probe.family, ProbeFamily::ReturnValue);
+        assert_eq!(
+            probe.after.as_deref(),
+            Some("return Err(ParseError::InvalidData)")
+        );
+        assert_eq!(
+            probe.before.as_deref(),
+            Some("return Err(ParseError::UnexpectedEof)")
+        );
+    }
+
+    /// #5312: a call shape narrower than its line takes the same span of
+    /// the old line, like every other non-arm canonical shape.
+    #[test]
+    fn call_deletion_before_is_cut_to_the_parser_shape_span() {
+        let probes = single_shape_probes(
+            "record_effect(rows);",
+            "record_effect(&mut Vec::new());",
+            ProbeShapeKind::CallDeletion,
+            "record_effect(rows)",
+            "fn format() {\nrecord_effect(rows);\n}\n",
+        );
+
+        assert_eq!(probes.len(), 1);
+        let probe = &probes[0];
+        assert_eq!(probe.family, ProbeFamily::CallDeletion);
+        assert_eq!(probe.after.as_deref(), Some("record_effect(rows)"));
+        assert_eq!(
+            probe.before.as_deref(),
+            Some("record_effect(&mut Vec::new())")
+        );
+    }
+
+    /// #7037: the `match` scrutinee shape is a MatchArm shape too, so a
+    /// changed scrutinee is cut to the old scrutinee without the brace.
+    #[test]
+    fn match_scrutinee_edit_cuts_before_to_the_old_scrutinee() {
+        let probes = single_shape_probes(
+            "match kind.trim() {",
+            "match kind {",
+            ProbeShapeKind::MatchArm,
+            "match kind.trim()",
+            "",
+        );
+
+        let arm = probes
+            .iter()
+            .find(|probe| probe.family == ProbeFamily::MatchArm);
+        assert_eq!(
+            arm.and_then(|probe| probe.before.as_deref()),
+            Some("match kind"),
             "{probes:?}"
         );
     }
@@ -1223,6 +1296,7 @@ mod tests {
             "(true, false) => \"old\",",
             ProbeShapeKind::MatchArm,
             "(true, false) =>",
+            "",
         );
 
         let arm = probes
@@ -1249,7 +1323,7 @@ mod tests {
                 "\"b\" | \"d\" =>",
             ),
         ] {
-            let probes = single_shape_probes(added, removed, ProbeShapeKind::MatchArm, shape);
+            let probes = single_shape_probes(added, removed, ProbeShapeKind::MatchArm, shape, "");
             let arm = probes
                 .iter()
                 .find(|probe| probe.family == ProbeFamily::MatchArm);

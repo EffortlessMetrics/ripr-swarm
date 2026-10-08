@@ -142,6 +142,8 @@ Updated:
 Reason:
 RIPR-SPEC-0224: a matched related test keeps its oracle kind and strength in full output and adds why it still misses; verdicts unchanged
 
+RIPR-SPEC-0122 #5312: human-full before: shows the same canonical span as after (the removed line is projected onto the probe expression span); classifications, stages, JSON, and ids unchanged
+
 Command:
 `cargo xtask goldens bless oracle_confirmation_mixed --reason "..."`
 

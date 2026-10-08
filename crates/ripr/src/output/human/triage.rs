@@ -1,4 +1,5 @@
 use crate::agent::loop_commands::shell_arg;
+use crate::app::test_stub::StubRouteDecision;
 use crate::app::{CheckDiffProvenance, CheckOutput, FindingDrillIn};
 use crate::config::RiprConfig;
 use crate::domain::{
@@ -226,7 +227,16 @@ pub(crate) fn render_human_triage(
         // (a default base was resolved and compared) — the honest action is
         // to change something, not to provide a scope.
         NextActionCheckCase::ScopeMissing => {
-            if let Some(base) = output.base.as_deref() {
+            // RIPR-SPEC-0116: a working-tree read already includes staged
+            // and unstaged tracked edits, so `--worktree` is no remedy there;
+            // only untracked files (intent-to-add) or a new edit can add scope.
+            if let Some(base) = output.base.as_deref()
+                && crate::output::analyzed_revisions::is_working_tree_read(output)
+            {
+                out.push_str(&format!(
+                    "  Safe next action: the working tree has no changed tracked files against `{base}`; make a change, or `git add -N <path>` a new file, and re-run.\n"
+                ));
+            } else if let Some(base) = output.base.as_deref() {
                 // "tracked" (#5258): `--worktree` diffs tracked edits only,
                 // so the line must not promise it covers untracked files.
                 out.push_str(&format!(
@@ -257,10 +267,12 @@ pub(crate) fn render_human_triage(
             // #5355: a Rust gap gets the one-step route to a runnable test.
             // A gap withheld because ripr could not read the related
             // assertions (RIPR-SPEC-0240) claims no missing test, so it gets
-            // no test-writing route either.
+            // no test-writing route either, and neither does a weak finding
+            // whose reach witness ripr could not trace (#7071).
             if finding.class != ExposureClass::Exposed
                 && finding.static_limit_kind
                     != Some(StaticLimitKind::RustAssertionContextUnresolved)
+                && !super::sections::untraced_reach_weak_finding(finding)
                 && matches!(
                     finding.probe.family,
                     ProbeFamily::Predicate
@@ -276,16 +288,21 @@ pub(crate) fn render_human_triage(
                     .and_then(|ext| ext.to_str())
                     == Some("rs")
             {
-                // `--at` resolves against `--root`, so name the file
-                // relative to it, not as the checkout-relative display path.
-                let location = &finding.probe.location.file;
-                let relative = location.strip_prefix(&output.root).unwrap_or(location);
-                let file = display_path(relative);
-                let command = navigation
-                    .stub_command(file.trim_start_matches("./"), finding.probe.location.line);
-                out.push_str("Write a test for it:\n");
-                out.push_str(&format!("  {command}\n"));
-                super::push_powershell_variant(out, "  ", &command);
+                // #5471: only when the check pipeline ran the stub's own
+                // resolver for this finding and it produced a stub; a refusal
+                // prints its reason, and no decision prints nothing.
+                match navigation.stub_route_for(&finding.id) {
+                    Some(StubRouteDecision::Stub { file, line, kind }) => {
+                        let command = navigation.stub_command(file, *line, kind);
+                        out.push_str("Write a test for it:\n");
+                        out.push_str(&format!("  {command}\n"));
+                        super::push_powershell_variant(out, "  ", &command);
+                    }
+                    Some(StubRouteDecision::Refused { reason }) => {
+                        out.push_str(&format!("No test stub here: {reason}\n"));
+                    }
+                    None => {}
+                }
             }
         }
     }
@@ -963,6 +980,7 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         }
     }
 

@@ -1,0 +1,13 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 133a718..d4c35b8 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -25,7 +25,7 @@ pub fn token_len(name: &[u8]) -> Result<usize, ChunkError> {
+     let mut count = 0;
+     for _ in name {
+         count += 1;
+-        if count > 64 {
++        if 64 < count {
+             return Err(ChunkError::TooLong);
+         }
+     }

@@ -1,7 +1,7 @@
 use super::{delimited_contents_at, enum_variant_values};
 
 pub(in crate::analysis) fn exact_error_variant(text: &str) -> Option<String> {
-    let open = match text.find("Err(") {
+    let open = match find_err_segment(text, "Err(") {
         Some(start) => start + "Err".len(),
         // `Err::<T, E>(..)` constructs the same error: without this the
         // turbofish spelling escaped the RIPR-SPEC-0106 sibling-variant
@@ -50,10 +50,32 @@ pub(in crate::analysis) fn changed_error_variant(text: &str) -> Option<String> {
     }
 }
 
+/// Byte offset of the first `pattern` (`Err(` or `Err::<`) whose `Err` is a
+/// whole path segment: `MyErr::<E>(E::V)` constructs a custom type, not a
+/// `Result::Err`, so a substring hit must not bind the error identity
+/// (#7094 review). `Result::Err(..)` and `std::result::Result::Err(..)`
+/// still match.
+fn find_err_segment(text: &str, pattern: &str) -> Option<usize> {
+    text.match_indices(pattern)
+        .map(|(start, _)| start)
+        .find(|start| {
+            !text[..*start]
+                .chars()
+                .next_back()
+                .is_some_and(|ch| ch.is_alphanumeric() || ch == '_')
+        })
+}
+
+/// Whether `text` spells a `Result::Err` construction, `Err(..)` or
+/// `Err::<..>(..)`, with `Err` as a whole path segment.
+pub(in crate::analysis) fn spells_result_err(text: &str) -> bool {
+    find_err_segment(text, "Err(").is_some() || turbofish_err_open(text).is_some()
+}
+
 /// Byte offset of the `(` that opens the argument of the first
 /// `Err::<..>(` turbofish constructor, or `None`.
 fn turbofish_err_open(text: &str) -> Option<usize> {
-    let start = text.find("Err::<")?;
+    let start = find_err_segment(text, "Err::<")?;
     let generics = start + "Err::".len();
     let mut depth = 0i32;
     for (offset, ch) in text[generics..].char_indices() {

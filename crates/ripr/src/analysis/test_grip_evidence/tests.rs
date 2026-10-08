@@ -3948,6 +3948,281 @@ fn while_some_size_hint_upper_bound() {
     Ok(())
 }
 
+/// #6713 bytesize shape: a free `kb` beside the associated `ByteSize::kb`.
+/// `test_body` is the single inline test's body.
+fn free_kb_return_evidence(
+    test_body: &str,
+) -> Result<(TestGripEvidence, crate::analysis::seams::SeamGripClass), String> {
+    let prod_src = format!(
+        r#"
+pub const KB: u64 = 1_000;
+
+pub fn kb(size: impl Into<u64>) -> u64 {{
+    size.into() * KB
+}}
+
+#[derive(Debug, PartialEq)]
+pub struct ByteSize(pub u64);
+
+impl ByteSize {{
+    pub const fn kb(size: u64) -> ByteSize {{
+        ByteSize(size + KB)
+    }}
+}}
+
+#[cfg(test)]
+mod tests {{
+    use super::*;
+
+    #[test]
+    fn units() {{
+        {test_body}
+    }}
+}}
+"#
+    );
+    let files: Vec<(PathBuf, &str)> = vec![(PathBuf::from("src/lib.rs"), prod_src.as_str())];
+    let index = index_from_files(&files)?;
+    let seams = inventory_seams_from_index(&[PathBuf::from("src/lib.rs")], &index);
+    let free_kb = seams
+        .iter()
+        .find(|s| s.kind() == SeamKind::ReturnValue && s.expression() == "size.into() * KB")
+        .ok_or_else(|| "free kb return seam present".to_string())?;
+    let evidence = evidence_for_seam(free_kb, &index);
+    let class = crate::analysis::seam_classification::classify_seam(free_kb, &evidence);
+    Ok((evidence, class))
+}
+
+/// #6713: a test that only calls the associated `ByteSize::kb` neither
+/// calls nor activates the free `kb`, so the free function's return seam
+/// cannot read strongly gripped from it.
+#[test]
+fn given_free_fn_when_tests_call_only_same_named_associated_fn_then_not_strongly_gripped()
+-> Result<(), String> {
+    let (evidence, class) =
+        free_kb_return_evidence("assert_eq!(ByteSize::kb(1), ByteSize(1_000));")?;
+    let labels: Vec<_> = evidence
+        .related_tests
+        .iter()
+        .map(|g| (g.test_name.clone(), g.relation_reason))
+        .collect();
+    assert!(
+        labels
+            .iter()
+            .all(|(_, reason)| *reason != RelationReason::DirectOwnerCall),
+        "ByteSize::kb is not a call of the free kb: {labels:?}"
+    );
+    assert!(
+        evidence.observed_values.is_empty(),
+        "ByteSize::kb arguments are not the free kb's activation values: {:?}",
+        evidence.observed_values
+    );
+    assert_ne!(evidence.activate.state, StageState::Yes);
+    assert_ne!(
+        class,
+        crate::analysis::seams::SeamGripClass::StronglyGripped,
+        "{evidence:?}"
+    );
+    Ok(())
+}
+
+/// #6713 control: a bare `kb(1)` call keeps the direct relation and its
+/// activation value.
+#[test]
+fn given_free_fn_when_test_calls_it_bare_then_direct_owner_call_and_activated() -> Result<(), String>
+{
+    let (evidence, _class) = free_kb_return_evidence("assert_eq!(ByteSize::kb(1).0, kb(2));")?;
+    assert!(
+        evidence
+            .related_tests
+            .iter()
+            .any(|g| g.test_name == "units" && g.relation_reason == RelationReason::DirectOwnerCall),
+        "bare kb(2u64) is a direct call: {:?}",
+        evidence.related_tests
+    );
+    assert_eq!(evidence.activate.state, StageState::Yes);
+    assert!(
+        evidence
+            .observed_values
+            .iter()
+            .all(|fact| fact.value != "1")
+            && evidence
+                .observed_values
+                .iter()
+                .any(|fact| fact.value.starts_with('2')),
+        "only the same-line bare call's argument is an activation value: {:?}",
+        evidence.observed_values
+    );
+    Ok(())
+}
+
+/// #6713 review: a helper that calls only the associated
+/// `Widget::render_unit` is not a helper-owner edge of the free
+/// `render_unit`, so a test calling only the helper neither relates nor
+/// activates the free function. The control spells the free call in the
+/// helper and keeps both.
+#[test]
+fn given_free_fn_when_helper_calls_only_same_named_associated_fn_then_no_helper_owner_credit()
+-> Result<(), String> {
+    let helper_evidence =
+        |helper_body: &str| -> Result<(StageState, Vec<(String, RelationReason)>), String> {
+            let prod_src = r#"
+pub fn render_unit(size: u64) -> u64 {
+    size * 2
+}
+
+pub struct Widget;
+
+impl Widget {
+    pub fn render_unit(size: u64) -> u64 {
+        size + 1
+    }
+}
+"#;
+            let support = PathBuf::from("tests/support.rs");
+            let support_src =
+                format!("pub fn check_render_unit() -> u64 {{\n    {helper_body}\n}}\n");
+            let tests = PathBuf::from("tests/widget_tests.rs");
+            let tests_src = r#"
+use support::check_render_unit;
+
+#[test]
+fn renders_through_helper() {
+    assert_eq!(check_render_unit(), 11);
+}
+"#;
+            let index = index_from_files(&[
+                (PathBuf::from("src/widget.rs"), prod_src),
+                (support, support_src.as_str()),
+                (tests, tests_src),
+            ])?;
+            let seams = inventory_seams_from_index(&[PathBuf::from("src/widget.rs")], &index);
+            let free_render = seams
+                .iter()
+                .find(|s| s.kind() == SeamKind::ReturnValue && s.expression() == "size * 2")
+                .ok_or_else(|| "free render_unit return seam present".to_string())?;
+            let evidence = evidence_for_seam(free_render, &index);
+            let labels = evidence
+                .related_tests
+                .iter()
+                .map(|g| (g.test_name.clone(), g.relation_reason))
+                .collect::<Vec<_>>();
+            Ok((evidence.activate.state, labels))
+        };
+
+    let (activation, labels) = helper_evidence("Widget::render_unit(10)")?;
+    assert!(
+        labels.iter().all(|(_, reason)| !matches!(
+            reason,
+            RelationReason::DirectOwnerCall | RelationReason::HelperOwnerCall
+        )),
+        "a helper calling only Widget::render_unit is not an owner edge of the free fn: {labels:?}"
+    );
+    assert_ne!(
+        activation,
+        StageState::Yes,
+        "the associated call's arguments are not the free fn's activation values"
+    );
+
+    let (activation, labels) = helper_evidence("render_unit(10)")?;
+    assert!(
+        labels
+            .iter()
+            .any(|(_, reason)| *reason == RelationReason::HelperOwnerCall),
+        "a helper spelling the free call keeps the helper-owner relation: {labels:?}"
+    );
+    assert_eq!(activation, StageState::Yes);
+    Ok(())
+}
+
+/// #6713 review, grip mode: a nested `fn kb(..)` declaration in the test
+/// body defines the name, it does not call it, so it cannot restore the
+/// direct relation or the activation the associated-only call lost.
+#[test]
+fn given_free_fn_when_test_declares_same_named_fn_then_not_strongly_gripped() -> Result<(), String>
+{
+    let (evidence, class) = free_kb_return_evidence(
+        "fn kb(x: u64) -> u64 { x * 3 }\nassert_eq!(ByteSize::kb(1), ByteSize(1_000));",
+    )?;
+    assert!(
+        evidence
+            .related_tests
+            .iter()
+            .all(|g| g.relation_reason != RelationReason::DirectOwnerCall),
+        "a nested fn declaration is not a call of the free kb: {:?}",
+        evidence.related_tests
+    );
+    assert_ne!(evidence.activate.state, StageState::Yes);
+    assert_ne!(
+        class,
+        crate::analysis::seams::SeamGripClass::StronglyGripped,
+        "{evidence:?}"
+    );
+    Ok(())
+}
+
+/// #6713: a boundary test through a same-named associated function
+/// (`Gate::over(100, 100)`) does not pin the free `over`'s equality
+/// boundary; the control spells the free call.
+#[test]
+fn given_free_fn_boundary_when_only_same_named_associated_fn_hits_it_then_boundary_stays_missing()
+-> Result<(), String> {
+    let boundary_debt = |test_body: &str| -> Result<Vec<String>, String> {
+        let prod_src = format!(
+            r#"
+pub fn over(amount: u64, limit: u64) -> bool {{
+    amount >= limit
+}}
+
+pub struct Gate;
+
+impl Gate {{
+    pub fn over(amount: u64, limit: u64) -> bool {{
+        amount > limit
+    }}
+}}
+
+#[cfg(test)]
+mod tests {{
+    use super::*;
+
+    #[test]
+    fn gate() {{
+        {test_body}
+    }}
+}}
+"#
+        );
+        let files: Vec<(PathBuf, &str)> = vec![(PathBuf::from("src/lib.rs"), prod_src.as_str())];
+        let index = index_from_files(&files)?;
+        let seams = inventory_seams_from_index(&[PathBuf::from("src/lib.rs")], &index);
+        let boundary = seams
+            .iter()
+            .find(|s| {
+                s.kind() == SeamKind::PredicateBoundary && s.expression() == "amount >= limit"
+            })
+            .ok_or_else(|| "free over boundary seam present".to_string())?;
+        let evidence = evidence_for_seam(boundary, &index);
+        Ok(evidence
+            .missing_discriminators
+            .iter()
+            .map(|fact| fact.value.clone())
+            .collect())
+    };
+
+    let type_path_only = boundary_debt("assert!(!Gate::over(100, 100));")?;
+    assert!(
+        !type_path_only.is_empty(),
+        "Gate::over(100, 100) must not close the free over's boundary"
+    );
+    let free_call = boundary_debt("assert!(over(100, 100));")?;
+    assert!(
+        free_call.is_empty(),
+        "over(100, 100) closes the boundary: {free_call:?}"
+    );
+    Ok(())
+}
+
 /// #6732: compact grip relates a trait-path call (`Render::render(&-0.0f64)`)
 /// to the impl its argument selects, and only to that impl.
 #[test]
@@ -17713,6 +17988,167 @@ fn boundary_asserts_true_value() {
         .ok_or_else(|| "the control test must stay related".to_string())?;
     assert_eq!(related.oracle_strength, OracleStrength::Strong);
     assert_eq!(related.evidence_summary, "exact value assertion");
+    Ok(())
+}
+
+/// #7007: the issue's exact composition — a consistent happy-path test
+/// keeps its strong oracle while the wrong-valued boundary assert stays in
+/// the evidence set. The contradiction must withhold the wrong test's
+/// call-site credit: its `5_000` argument completes the equality boundary
+/// only in the mutant's favor (`>=` -> `>` makes the assert pass), so
+/// counting it would close the gap the single-test fold already keeps open.
+#[test]
+fn wrongval_assert_beside_consistent_test_keeps_gap_open() -> Result<(), String> {
+    let (evidence, seam, _index) = wrongval_seam_evidence(
+        r#"
+#[test]
+fn happy_path_returns_undiscounted_total() {
+    assert_eq!(discounted_total(1_000, 5_000), 1_000);
+}
+
+#[test]
+fn boundary_asserts_flipped_value() {
+    assert_eq!(discounted_total(5_000, 5_000), 5_000);
+}
+"#,
+    )?;
+    let class = crate::analysis::seam_classification::classify_seam(&seam, &evidence);
+    if class == SeamGripClass::StronglyGripped {
+        return Err(
+            "the wrongval assert beside a consistent test must not close the gap".to_string(),
+        );
+    }
+    // The wrong test's 5_000 call argument must not count toward the seam's
+    // observed activation values: only the consistent test's 1_000 remains.
+    let observed = evidence
+        .observed_values
+        .iter()
+        .map(|fact| fact.value.replace('_', ""))
+        .collect::<Vec<_>>();
+    assert!(
+        !observed.iter().any(|value| value == "5000"),
+        "the contradicted test's 5_000 argument must not be credited as observed: {observed:?}"
+    );
+    assert!(
+        observed.iter().any(|value| value == "1000"),
+        "the consistent test's 1_000 argument keeps its activation credit: {observed:?}"
+    );
+    // The equality boundary the wrong test appeared to cover stays missing.
+    assert!(
+        evidence
+            .missing_discriminators
+            .iter()
+            .any(|fact| fact.value.contains("equality boundary")),
+        "the equality boundary must stay missing: {:?}",
+        evidence.missing_discriminators
+    );
+    let related = evidence
+        .related_tests
+        .iter()
+        .find(|test| test.test_name == "boundary_asserts_flipped_value")
+        .ok_or_else(|| "the wrongval test must stay related to the seam".to_string())?;
+    assert!(
+        related
+            .evidence_summary
+            .contains("contradicts static evaluation"),
+        "the composition must name the contradiction: {}",
+        related.evidence_summary
+    );
+    Ok(())
+}
+
+/// #7007 review: the per-test grip names only the test's BEST oracle, so a
+/// test carrying both a consistent strong assertion and a contradicted one
+/// renders no contradiction at all. The producer-owned count over the full
+/// assertion set is the completeness authority the receipt's gate reads.
+#[test]
+fn contradiction_count_counts_a_test_beside_its_best_oracle() -> Result<(), String> {
+    let (evidence, _seam, _index) = wrongval_seam_evidence(
+        r#"
+#[test]
+fn consistent_oracle_beside_a_flipped_assert() {
+    assert_eq!(discounted_total(5_000, 5_000), 3_500);
+    assert_eq!(discounted_total(1_000, 5_000), 999);
+}
+"#,
+    )?;
+    assert_eq!(
+        evidence.statically_contradicted_related_tests, 1,
+        "the producer count sees the contradicted assertion beside the strong one"
+    );
+    let related = evidence
+        .related_tests
+        .iter()
+        .find(|test| test.test_name == "consistent_oracle_beside_a_flipped_assert")
+        .ok_or_else(|| "the two-oracle test must stay related".to_string())?;
+    assert_eq!(
+        related.oracle_strength,
+        OracleStrength::Strong,
+        "the best oracle stays strong"
+    );
+    assert_eq!(
+        related.evidence_summary, "exact value assertion",
+        "the rendered summary carries no contradiction: this lossy channel is why the count exists"
+    );
+    Ok(())
+}
+
+/// #7007 review: a value-insensitive seam (ReturnValue) whose only related
+/// test carries a statically contradicted exact-value assertion gains no
+/// activation credit from that test's bare owner call — in the full path or
+/// the compact path. The baseline-failing call is the inverted repair
+/// attempt, not established activation.
+#[test]
+fn wrongval_only_test_grants_no_activation_credit_on_value_insensitive_seam() -> Result<(), String>
+{
+    let prod = PathBuf::from("src/main.rs");
+    let prod_src = r#"
+pub fn capped_charge(cents: u64) -> u64 {
+    cents * 2
+}
+"#;
+    let tests = PathBuf::from("tests/main_tests.rs");
+    let index = index_from_files(&[
+        (prod.clone(), prod_src),
+        (
+            tests,
+            r#"
+#[test]
+fn charge_asserts_flipped_value() {
+    assert_eq!(capped_charge(2_000), 4_001);
+}
+"#,
+        ),
+    ])?;
+    let seams = inventory_seams_from_index(&[prod], &index);
+    let seam = seams
+        .iter()
+        .find(|seam| seam.kind() == SeamKind::ReturnValue)
+        .ok_or_else(|| "expected a return value seam for the pure tail owner".to_string())?
+        .clone();
+    let evidence = evidence_for_seam(&seam, &index);
+    if evidence.activate.state == StageState::Yes {
+        return Err(format!(
+            "a contradicted-only test must not grant activation credit on a value-insensitive seam: {}",
+            evidence.activate.summary
+        ));
+    }
+    assert!(
+        evidence.activate.summary.contains("withheld"),
+        "the activation stage must disclose the withholding: {}",
+        evidence.activate.summary
+    );
+    let compact = compact_evidence_for_seam(&seam, &CompactGripContext::new(&index));
+    if compact.activate.state == StageState::Yes {
+        return Err(format!(
+            "the compact path must not grant activation credit either: {}",
+            compact.activate.summary
+        ));
+    }
+    assert_eq!(
+        evidence.statically_contradicted_related_tests, 1,
+        "the producer count names the contradicted test"
+    );
     Ok(())
 }
 

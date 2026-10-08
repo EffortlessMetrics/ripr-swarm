@@ -1,0 +1,12 @@
+diff --git a/src/main.rs b/src/main.rs
+--- a/src/main.rs
++++ b/src/main.rs
+@@ -1,7 +1,7 @@
+ //! The tally command: exits with the usage code without arguments.
+ 
+ fn usage_exit_code() -> i32 {
+-    2
++    1 + 1
+ }
+ 
+ fn main() {

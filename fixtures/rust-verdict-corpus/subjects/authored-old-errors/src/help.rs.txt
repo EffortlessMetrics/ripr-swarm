@@ -1,0 +1,38 @@
+//! Help text constants: one a test observes, one a test only checks is
+//! non-empty, one printed and never read back.
+
+pub const USAGE: &str = "usage: tally [--json] FILE";
+pub const ABOUT: &str = "Counts lines in files.";
+pub const VERSION_TEXT: &str = "tally 1.4";
+
+pub fn help() -> String {
+    format!("{USAGE}\n")
+}
+
+pub fn about() -> &'static str {
+    ABOUT
+}
+
+pub fn print_version() {
+    println!("{VERSION_TEXT}");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn help_mentions_json() {
+        assert!(help().contains("--json"));
+    }
+
+    #[test]
+    fn about_is_present() {
+        assert!(!about().is_empty());
+    }
+
+    #[test]
+    fn version_prints() {
+        print_version();
+    }
+}

@@ -1240,6 +1240,29 @@ fn equality_execution_uses_statement_prefix_and_closure_invocation() -> Result<(
                 format!("while false {{ {direct} }}"),
                 false,
             ),
+            // A `for` over a non-empty constant-row table runs its body at
+            // least once (#5328); an empty table or an earlier `continue`
+            // can skip the assertion.
+            (
+                "constant_table_for",
+                format!("for _ in [1u8, 2] {{ {direct} }}"),
+                true,
+            ),
+            (
+                "bound_constant_table_for",
+                format!("let rows = [(1u8, Some(2u8)), (3, None)];\nfor _ in &rows {{ {direct} }}"),
+                true,
+            ),
+            (
+                "empty_constant_table_for",
+                format!("let rows: [u8; 0] = [];\nfor _ in rows {{ {direct} }}"),
+                false,
+            ),
+            (
+                "continue_before_assertion_in_table",
+                format!("for skip in [true] {{ if skip {{ continue; }}\n{direct} }}"),
+                false,
+            ),
         ] {
             let scratch = Scratch::create()?;
             let source = format!("{prefix}    #[test]\n    fn checks() {{\n{body}\n    }}\n}}\n");
@@ -2525,6 +2548,104 @@ fn spawned_thread_assertion_matched_static_and_runtime_controls() -> Result<(), 
                 &format!("thread pin {case} {label}"),
                 1,
                 should_fail,
+            )?;
+        }
+    }
+    Ok(())
+}
+
+/// A constant-row table feeds the owner one input row per table row, and
+/// cells of one row stay together (#5328). The predicate reads `exposed`
+/// exactly when a row reaches the changed `>=` boundary, which is when the
+/// compiled test catches the wrong `>`.
+#[test]
+fn constant_row_table_pairs_each_row_with_its_boundary_input() -> Result<(), String> {
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures/predicate_oracle_execution_direct");
+    let original = std::fs::read_to_string(fixture.join("input/src/lib.rs"))
+        .map_err(|error| error.to_string())?;
+    let Some((prefix, _)) = original.split_once("    #[test]\n") else {
+        return Err("fixture lost its test".to_string());
+    };
+    let pinned = "assert_eq!(discounted_total(amount, threshold), want);";
+    for (case, body, exposed) in [
+        (
+            "boundary_row",
+            "for (amount, want) in [(99, 99), (100, 90), (150, 140)] {\nassert_eq!(discounted_total(amount, 100), want);\n}"
+                .to_string(),
+            true,
+        ),
+        (
+            "no_boundary_row",
+            "let rows = [(99, 99), (150, 140)];\nfor (amount, want) in rows {\nassert_eq!(discounted_total(amount, 100), want);\n}"
+                .to_string(),
+            false,
+        ),
+        (
+            "both_columns_meet_in_one_row",
+            format!("for (amount, threshold, want) in [(150, 100, 140), (100, 100, 90)] {{\n{pinned}\n}}"),
+            true,
+        ),
+        // Each column holds 100, but never in the same row.
+        (
+            "columns_meet_only_across_rows",
+            format!("for (amount, threshold, want) in [(100, 99, 90), (99, 100, 99)] {{\n{pinned}\n}}"),
+            false,
+        ),
+        // An unasserted call meets the boundary, and the asserted table
+        // never does: the columns must not meet as unordered sets.
+        (
+            "unasserted_boundary_call_beside_a_table",
+            format!("let _ = discounted_total(100, 100);\nfor (amount, threshold, want) in [(100, 99, 90), (99, 100, 99)] {{\n{pinned}\n}}"),
+            false,
+        ),
+    ] {
+        let scratch = Scratch::create()?;
+        let source = format!("{prefix}    #[test]\n    fn checks() {{\n{body}\n    }}\n}}\n");
+        std::fs::create_dir(scratch.0.join("src")).map_err(|error| error.to_string())?;
+        std::fs::copy(
+            fixture.join("input/Cargo.toml"),
+            scratch.0.join("Cargo.toml"),
+        )
+        .map_err(|error| error.to_string())?;
+        std::fs::write(scratch.0.join("src/lib.rs"), &source).map_err(|error| error.to_string())?;
+        let report = check_workspace(CheckInput {
+            root: scratch.0.clone(),
+            diff_file: Some(fixture.join("diff.patch")),
+            mode: Mode::Fast,
+            format: OutputFormat::Json,
+            include_unchanged_tests: true,
+            ..CheckInput::default()
+        })?;
+        let json: serde_json::Value =
+            serde_json::from_str(&render_check(&report, &OutputFormat::Json)?)
+                .map_err(|error| error.to_string())?;
+        let findings = json["findings"]
+            .as_array()
+            .ok_or("missing findings")?
+            .iter()
+            .filter(|finding| finding["probe"]["family"] == "predicate")
+            .collect::<Vec<_>>();
+        assert_eq!(findings.len(), 1, "{case}");
+        assert_eq!(
+            findings[0]["classification"] == "exposed",
+            exposed,
+            "{case}: {}",
+            findings[0]["classification"]
+        );
+        let correct = "amount >= discount_threshold";
+        assert_eq!(source.matches(correct).count(), 1);
+        for wrong in [false, true] {
+            let runtime_source = if wrong {
+                source.replace(correct, "amount > discount_threshold")
+            } else {
+                source.clone()
+            };
+            source_runtime_control(
+                &runtime_source,
+                &format!("table rows: {case}, wrong={wrong}"),
+                1,
+                wrong && exposed,
             )?;
         }
     }

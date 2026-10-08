@@ -50,6 +50,7 @@ A useful targeted test intent names:
 | False-positive rate of top findings | Protects trust. | Down |
 | Survived-mutant recall after calibration | Tests whether static gaps predict real mutation outcomes. | Up |
 | Top-N precision after calibration | Keeps reports useful. | Up |
+| Verdict-corpus spec-example coverage | Share of in-scope numbered spec acceptance examples (minus waived) that a runtime-labeled case cites, so each specified verdict behavior can be measured (RIPR-SPEC-0219; `cargo xtask verdict-corpus check` gates its floor). | Up to 100% |
 
 ## Engineering Metrics
 
