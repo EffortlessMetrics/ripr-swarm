@@ -1542,9 +1542,11 @@ fn generated_test_sites<'a>(file: &'a Path, source: &str) -> Vec<GeneratedTestSi
     let generators: Vec<(&str, usize)> = definitions
         .iter()
         .filter(|definition| {
+            // One arm only: with several, ripr cannot tell which arm an
+            // invocation selects, and another arm may emit no test.
             definition
                 .body
-                .is_some_and(|(_, body)| body.contains("#[test]"))
+                .is_some_and(|(_, body)| body.contains("#[test]") && macro_arm_count(body) == 1)
         })
         .map(|definition| (definition.name, line_of(definition.marker_start)))
         .collect();
@@ -1552,16 +1554,26 @@ fn generated_test_sites<'a>(file: &'a Path, source: &str) -> Vec<GeneratedTestSi
         return Vec::new();
     }
     let lines: Vec<&str> = masked.lines().collect();
-    let item_lines = module_scope_lines(&masked);
+    let line_starts: Vec<usize> = std::iter::once(0)
+        .chain(masked.match_indices('\n').map(|(offset, _)| offset + 1))
+        .collect();
+    let invocations: Vec<(MacroInvocation, usize)> = macro_invocations_in_text(&masked, 1)
+        .into_iter()
+        .filter_map(|invocation| {
+            let line = lines.get(invocation.line.saturating_sub(1))?;
+            let column = macro_bang_column(line, &invocation.name)?;
+            let start = line_starts.get(invocation.line.saturating_sub(1))?;
+            Some((invocation, start + column))
+        })
+        .collect();
+    let offsets: Vec<usize> = invocations.iter().map(|(_, offset)| *offset).collect();
+    let in_test_build_item_scope = test_build_item_scope(&masked, &offsets);
     let mut sites = Vec::new();
-    for invocation in macro_invocations_in_text(&masked, 1) {
+    for ((invocation, _), item_scope) in invocations.into_iter().zip(in_test_build_item_scope) {
         // Rust registers no test for a `#[test]` item nested in a function
-        // or other non-module block ("cannot test inner items").
-        if !item_lines
-            .get(invocation.line.saturating_sub(1))
-            .copied()
-            .unwrap_or(false)
-        {
+        // or other non-module block ("cannot test inner items"), nor for an
+        // invocation a cfg other than `cfg(test)` may remove.
+        if !item_scope {
             continue;
         }
         // `macro_rules!` is textually scoped: an invocation above the
@@ -1597,18 +1609,26 @@ fn generated_test_sites<'a>(file: &'a Path, source: &str) -> Vec<GeneratedTestSi
     sites
 }
 
-/// Per line of `masked`, whether the line starts at module scope: every
-/// brace enclosing it opens a `mod` block. A block whose header does not
-/// name `mod` (a function, impl, const or plain block) is not module scope.
-fn module_scope_lines(masked: &str) -> Vec<bool> {
-    let mut lines = vec![true];
+/// For each byte offset in `offsets` (ascending), whether an item there
+/// is in the test build at module scope: every enclosing block opens a
+/// `mod`, and neither those `mod` headers nor the item's own leading
+/// attributes carry a cfg other than `cfg(test)`. A block whose header does
+/// not name `mod` (a function, impl, const or plain block) is not module
+/// scope.
+fn test_build_item_scope(masked: &str, offsets: &[usize]) -> Vec<bool> {
+    let mut results = Vec::with_capacity(offsets.len());
+    let mut pending = offsets.iter().copied().peekable();
     let mut stack: Vec<bool> = Vec::new();
     let mut header_start = 0usize;
     for (offset, byte) in masked.bytes().enumerate() {
+        while pending.next_if(|&wanted| wanted == offset).is_some() {
+            let header = masked.get(header_start..offset).unwrap_or_default();
+            results.push(stack.iter().all(|ok| *ok) && only_test_cfg(header));
+        }
         match byte {
             b'{' => {
                 let header = masked.get(header_start..offset).unwrap_or_default();
-                stack.push(contains_identifier(header, "mod"));
+                stack.push(is_mod_header(header) && only_test_cfg(header));
                 header_start = offset + 1;
             }
             b'}' => {
@@ -1616,11 +1636,91 @@ fn module_scope_lines(masked: &str) -> Vec<bool> {
                 header_start = offset + 1;
             }
             b';' => header_start = offset + 1,
-            b'\n' => lines.push(stack.iter().all(|is_mod| *is_mod)),
             _ => {}
         }
     }
-    lines
+    results.resize(offsets.len(), false);
+    results
+}
+
+/// Whether the text before a `{` ends in a `mod name` declaration. A `mod`
+/// elsewhere in the header (a raw `r#mod` parameter, say) does not count.
+fn is_mod_header(header: &str) -> bool {
+    let trimmed = header.trim_end();
+    let name_start = trimmed
+        .bytes()
+        .rposition(|byte| !is_ascii_ident_byte(byte))
+        .map_or(0, |index| index + 1);
+    if name_start == trimmed.len() {
+        return false;
+    }
+    let before_name = trimmed.get(..name_start).unwrap_or_default();
+    let Some(keyword_part) = before_name.strip_suffix(|c: char| c.is_whitespace()) else {
+        return false;
+    };
+    let Some(prefix) = keyword_part.trim_end().strip_suffix("mod") else {
+        return false;
+    };
+    !prefix
+        .as_bytes()
+        .last()
+        .is_some_and(|byte| is_ascii_ident_byte(*byte) || *byte == b'#')
+}
+
+/// Whether every cfg attribute in `header` is exactly `cfg(test)`; any
+/// `cfg_attr` fails, since it may add a cfg.
+fn only_test_cfg(header: &str) -> bool {
+    let compact: String = header.chars().filter(|c| !c.is_whitespace()).collect();
+    if contains_identifier(&compact, "cfg_attr") {
+        return false;
+    }
+    compact.match_indices("cfg").all(|(start, _)| {
+        let before_ident = start > 0
+            && compact
+                .as_bytes()
+                .get(start - 1)
+                .is_some_and(|byte| is_ascii_ident_byte(*byte));
+        let rest = compact.get(start + 3..).unwrap_or_default();
+        let after_ident = rest
+            .as_bytes()
+            .first()
+            .is_some_and(|byte| is_ascii_ident_byte(*byte));
+        before_ident || after_ident || rest.starts_with("(test)")
+    })
+}
+
+/// The byte column of `macro_name!` in `line`, at an identifier boundary.
+fn macro_bang_column(line: &str, macro_name: &str) -> Option<usize> {
+    let needle = format!("{macro_name}!");
+    line.match_indices(&needle)
+        .map(|(start, _)| start)
+        .find(|&start| {
+            start == 0
+                || !line
+                    .as_bytes()
+                    .get(start - 1)
+                    .is_some_and(|byte| is_ascii_ident_byte(*byte))
+        })
+}
+
+/// The number of `matcher => transcriber` arms in a `macro_rules!` body:
+/// `=>` tokens outside any bracket nested in the body.
+fn macro_arm_count(body: &str) -> usize {
+    let inner = body
+        .get(1..body.len().saturating_sub(1))
+        .unwrap_or_default();
+    let bytes = inner.as_bytes();
+    let mut depth = 0usize;
+    let mut arms = 0usize;
+    for (index, byte) in bytes.iter().enumerate() {
+        match byte {
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' => depth = depth.saturating_sub(1),
+            b'=' if depth == 0 && bytes.get(index + 1) == Some(&b'>') => arms += 1,
+            _ => {}
+        }
+    }
+    arms
 }
 
 /// The identifier right after the first `macro_name!(` (or `[`/`{`) in
@@ -3337,6 +3437,65 @@ mod tests {
             .map(|site| site.test_name)
             .collect();
         assert_eq!(names, vec!["in_a_module".to_string()]);
+    }
+
+    #[test]
+    fn generated_test_sites_require_module_scope_test_build_and_one_arm() {
+        let source = "macro_rules! case {
+    ($name:ident) => {
+        #[test]
+        fn $name() { owner(); }
+    };
+}
+macro_rules! two_arms {
+    ($name:ident) => { #[test] fn $name() { owner(); } };
+    () => {};
+}
+fn helper() { case!(same_line_inner); }
+fn raw(r#mod: ()) {
+    case!(raw_mod_parameter);
+}
+#[cfg(any())]
+case!(cfg_disabled);
+#[cfg(feature = \"x\")]
+mod gated {
+    case!(in_gated_module);
+}
+#[cfg(test)]
+mod tests {
+    #[cfg(test)]
+    case!(cfg_test_kept);
+    case!(plain_kept);
+    two_arms!(ambiguous_arm);
+}
+";
+        let names: Vec<String> = generated_test_sites(Path::new("src/lib.rs"), source)
+            .into_iter()
+            .map(|site| site.test_name)
+            .collect();
+        assert_eq!(
+            names,
+            vec!["cfg_test_kept".to_string(), "plain_kept".to_string()]
+        );
+    }
+
+    #[test]
+    fn macro_arms_are_counted_at_the_body_top_level() {
+        assert_eq!(macro_arm_count("{ ($a:expr) => { $a => 1 }; }"), 1);
+        assert_eq!(
+            macro_arm_count("{ () => {}; ($a:ident) => { fn $a() {} }; }"),
+            2
+        );
+        assert!(only_test_cfg("#[cfg(test)] mod tests"));
+        assert!(only_test_cfg("#[ cfg ( test ) ]\n"));
+        assert!(!only_test_cfg("#[cfg(any())]"));
+        assert!(!only_test_cfg("#[cfg_attr(test, cfg(any()))]"));
+        assert!(only_test_cfg("fn configure()"));
+        assert!(is_mod_header("#[cfg(test)]\nmod tests "));
+        assert!(is_mod_header("pub(crate) mod inner"));
+        assert!(!is_mod_header("fn helper(r#mod: ()) "));
+        assert!(!is_mod_header("fn module_helper() "));
+        assert!(!is_mod_header("impl mod_like for X "));
     }
 
     #[test]

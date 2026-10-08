@@ -8581,6 +8581,8 @@ tests = [
   "crates/ripr/src/analysis/classify/transitive_reach.rs::tests::a_test_attribute_only_in_a_string_makes_no_generator",
   "crates/ripr/src/analysis/classify/transitive_reach.rs::tests::an_invocation_above_the_generator_definition_is_not_a_generated_test",
   "crates/ripr/src/analysis/classify/transitive_reach.rs::tests::a_generator_invoked_inside_a_function_is_not_a_generated_test",
+  "crates/ripr/src/analysis/classify/transitive_reach.rs::tests::generated_test_sites_require_module_scope_test_build_and_one_arm",
+  "crates/ripr/src/analysis/classify/transitive_reach.rs::tests::macro_arms_are_counted_at_the_body_top_level",
   "crates/ripr/src/output/human.rs::tests::human_output_surfaces_static_limitation_detail",
   "crates/ripr/src/domain/language.rs::tests::static_limit_kind_wire_strings_are_stable",
 ]
