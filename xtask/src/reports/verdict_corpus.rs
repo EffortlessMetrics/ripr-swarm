@@ -1516,9 +1516,9 @@ fn subject_violations(subject: &Subject, dir: &Path) -> Vec<String> {
     if subject.origin == SubjectOrigin::Authored {
         let mut pins_registry = false;
         for file in &subject.retained_files {
-            if !Path::new(&file.path)
+            if Path::new(&file.path)
                 .file_name()
-                .is_some_and(|name| name == "Cargo.toml")
+                .is_none_or(|name| name != "Cargo.toml")
             {
                 continue;
             }
