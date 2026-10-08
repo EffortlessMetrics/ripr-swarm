@@ -23464,6 +23464,49 @@ fn framed_lsp_gap_ledger_degradation_is_typed_logged_and_recovers() -> Result<()
             return Err(format!("baseline run must be full, got: {baseline_status}"));
         };
 
+        // Seed an uncommitted behavior change alongside the degradation:
+        // the degraded refresh must still publish this diff finding's
+        // diagnostics, not merely a nonempty batch (a suppression
+        // regression that drops diff findings while keeping seam
+        // diagnostics would otherwise pass).
+        let seed_path = root.join("src/lib.rs");
+        let seed_source = std::fs::read_to_string(&seed_path)
+            .map_err(|err| format!("read seeded lib failed: {err}"))?;
+        let seed_changed = seed_source
+            .replace("amount >= discount_threshold", "amount > discount_threshold");
+        if seed_changed == seed_source {
+            return Err("seeded boundary text not found in the fixture lib".to_string());
+        }
+        std::fs::write(&seed_path, seed_changed)
+            .map_err(|err| format!("write seeded lib failed: {err}"))?;
+        let lib_diagnostics = |messages: &[serde_json::Value]| -> Vec<String> {
+            let mut found = Vec::new();
+            for message in messages {
+                if message.get("method").and_then(serde_json::Value::as_str)
+                    != Some("textDocument/publishDiagnostics")
+                {
+                    continue;
+                }
+                if !message["params"]["uri"]
+                    .as_str()
+                    .is_some_and(|uri| uri.ends_with("src/lib.rs"))
+                {
+                    continue;
+                }
+                if let Some(diagnostics) = message["params"]["diagnostics"].as_array() {
+                    for diagnostic in diagnostics {
+                        if let Some(text) =
+                            diagnostic.get("message").and_then(serde_json::Value::as_str)
+                        {
+                            found.push(text.to_string());
+                        }
+                    }
+                }
+            }
+            found.sort();
+            found
+        };
+
         // Plant a malformed gap decision ledger at the production default
         // path: the ledger exists but cannot be parsed, so the gap_ledger
         // component fails while diff and seam evidence remain usable.
@@ -23494,14 +23537,18 @@ fn framed_lsp_gap_ledger_degradation_is_typed_logged_and_recovers() -> Result<()
         let components = status["components"]
             .as_array()
             .ok_or_else(|| format!("status must expose typed components: {status}"))?;
-        let ledger = components
+        let ledger_outcomes: Vec<_> = components
             .iter()
-            .find(|outcome| outcome["component"].as_str() == Some("gap_ledger"));
-        let Some(ledger) = ledger else {
+            .filter(|outcome| outcome["component"].as_str() == Some("gap_ledger"))
+            .collect();
+        // The single shared ledger load records exactly one outcome: a
+        // wiring change that appends it twice must fail, not pass on `find`.
+        if ledger_outcomes.len() != 1 {
             return Err(format!(
-                "components must include the gap_ledger outcome: {components:?}"
+                "components must include exactly one gap_ledger outcome: {components:?}"
             ));
-        };
+        }
+        let ledger = ledger_outcomes[0];
         if ledger["state"].as_str() != Some("failed")
             || ledger["kind"].as_str() != Some("gap_ledger_parse_failed")
             || ledger["findings_trustworthy"].as_bool() != Some(true)
@@ -23551,16 +23598,10 @@ fn framed_lsp_gap_ledger_degradation_is_typed_logged_and_recovers() -> Result<()
                 "progress must end limited for a degraded run: {degraded:?}"
             ));
         }
-        let published_evidence = degraded.iter().any(|message| {
-            message.get("method").and_then(serde_json::Value::as_str)
-                == Some("textDocument/publishDiagnostics")
-                && message["params"]["diagnostics"]
-                    .as_array()
-                    .is_some_and(|diagnostics| !diagnostics.is_empty())
-        });
-        if !published_evidence {
+        let degraded_lib = lib_diagnostics(&degraded);
+        if degraded_lib.is_empty() {
             return Err(
-                "ordinary evidence must remain published under a degraded optional component"
+                "the degraded refresh must still publish the seeded diff finding diagnostics"
                     .to_string(),
             );
         }
@@ -23590,9 +23631,13 @@ fn framed_lsp_gap_ledger_degradation_is_typed_logged_and_recovers() -> Result<()
         std::fs::remove_file(&ledger_path)
             .map_err(|err| format!("remove malformed ledger failed: {err}"))?;
         let recovered = run_wire_refresh_collecting(&mut client_read, &mut client_write, 5).await?;
+        // Match the aggregate recovery line exactly: a bare "recovered"
+        // substring would also accept an unrelated INFO message.
         let recovery_infos = log_messages_of_type(&recovered, 3)
             .into_iter()
-            .filter(|message| message.contains("recovered"))
+            .filter(|message| {
+                message.contains("ripr analysis recovered: all recorded analysis components are complete")
+            })
             .count();
         if recovery_infos != 1 {
             return Err(format!(
@@ -23607,6 +23652,24 @@ fn framed_lsp_gap_ledger_degradation_is_typed_logged_and_recovers() -> Result<()
         {
             return Err(format!(
                 "the repaired refresh must restore a full run: {recovered_status:?}"
+            ));
+        }
+        // The degraded refresh must have published every diff finding
+        // diagnostic the clean run publishes: degradation suppresses
+        // nothing, it only limits the run status.
+        let recovered_lib = lib_diagnostics(&recovered);
+        if recovered_lib.is_empty() {
+            return Err(
+                "the repaired refresh must publish the seeded diff finding diagnostics".to_string(),
+            );
+        }
+        let suppressed: Vec<_> = recovered_lib
+            .iter()
+            .filter(|text| !degraded_lib.contains(text))
+            .collect();
+        if !suppressed.is_empty() {
+            return Err(format!(
+                "the degraded refresh suppressed diff finding diagnostics: {suppressed:?}"
             ));
         }
 
