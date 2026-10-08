@@ -1,0 +1,46 @@
+{
+  "case_id": "old-unit-assert-matches-macro",
+  "subject_id": "authored-old-errors",
+  "diff": "cases/old-unit-assert-matches-macro.diff",
+  "anchor": {
+    "file": "src/errors.rs",
+    "line": 97
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "error_variant",
+  "test_shape": "local_assert_matches_macro_pattern",
+  "hard_case": "The pin is a pattern inside a test-local macro; the error_path probe credits it while the match_arm probe on the same line reads observation_unverified.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "_ => Err(UnitError::Blank),",
+        "mutated_line": null,
+        "outcome": "tests_failed",
+        "failing_test": "errors::tests::unknown_unit_is_rejected",
+        "equivalence_review": "not equivalent: an unknown unit reports Blank instead of Unknown"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "unknown_unit_is_rejected pins Err(UnitError::Unknown) through a local assert_matches! macro, so the fallback arm returning Blank fails it. Spec cells: RIPR-SPEC-0002 (assert_matches-style exact error check), RIPR-SPEC-0120.",
+  "labeling_observation": {
+    "ripr_commit": "e19e16c",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "exposed",
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

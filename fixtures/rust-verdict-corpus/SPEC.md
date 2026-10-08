@@ -10,9 +10,11 @@ itoa, bytesize, rusqlite, strsim, atuin; semver and bytesize at two pins) under
 with license files (Rust sources stored as `.rs.txt`), small authored
 crates written to fill cells the real crates leave empty (`authored-pricing`,
 `authored-ledger` and `authored-config` for verdict and probe-family cells;
-`authored-accounts`, `authored-checkout`, `authored-tokens`, `authored-shop`
-and `authored-roles` for test shapes other RIPR specs define, each case naming
-its specs in its reasoning; one `authored-specNNNN-<k>` crate per acceptance
+`authored-accounts`, `authored-checkout`, `authored-tokens`, `authored-shop`,
+`authored-roles`, `authored-old-errors`, `authored-old-tool`,
+`authored-old-shell` and `authored-old-deps` for test shapes other RIPR specs
+define, each case naming its specs in its reasoning; one
+`authored-specNNNN-<k>` crate per acceptance
 example of RIPR-SPEC-0225 to 0228, isolated so no other example's test relates
 to its owner; eleven `authored-grid-*` crates crossing cargo-mutants operator
 classes with five test styles: exact pin, table-driven loop, property-style
