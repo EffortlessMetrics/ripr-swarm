@@ -2852,6 +2852,39 @@ fn owner_call_relation_reason(
         // methods share this branch (their ids carry no `::impl` segment)
         // and impl-block methods never reach it (#3047).
         if !is_established_free_function(owner) {
+            // #7123: a trait-declaration owner (a default method — its id
+            // carries no `::impl` segment, so it cannot reach the
+            // trait-impl shadow checks below) is shadowed by a same-named
+            // `trait` declared in the test's own module scope exactly like
+            // a trait-impl owner (#7053): `self::Counter::advance(..)`
+            // — and every other trait-path spelling — names the
+            // test-local trait, so the production default never runs. A
+            // same-named trait at the root of an out-of-line parent module
+            // refuses the same way (#7087). The trait name comes from the
+            // parser-backed container fact; an unestablished container keeps
+            // the credit.
+            if let FunctionContainer::Trait { trait_name } = &owner.item.container {
+                let owner_scope = super::owner_pin::OwnerScope::new(
+                    owner.name.as_str(),
+                    owner.start_line,
+                    &owner.file,
+                );
+                if test_source.is_some_and(|source| {
+                    super::owner_pin::test_module_shadows_trait(
+                        test,
+                        source,
+                        trait_name,
+                        owner_scope.in_file(&test.file),
+                    )
+                }) || super::owner_pin::parent_chain_shadows_trait(
+                    test,
+                    trait_name,
+                    owner_scope,
+                    index,
+                ) {
+                    return RelationReason::WeakTokenSubstring;
+                }
+            }
             return RelationReason::DirectOwnerCall;
         }
         if free_function_call_spells_free_call(test, owner_name) {
@@ -2891,9 +2924,11 @@ fn owner_call_relation_reason(
     // #7053: a trait-impl owner is also shadowed by a same-named `trait`
     // declared in the test's own module scope: `Render::render(..)` and
     // `.render()` there name the test-local trait, so the production impl is
-    // never called. A trait the symbol id names (even a generic one) counts,
-    // and so does one declared at the root of an out-of-line parent module
-    // of the test file (#7087).
+    // never called. The refusal is spelling-blind — path-qualified
+    // `self::`/`super::`/`crate::` trait paths refuse the same way — and a
+    // trait-declaration default-method owner shares it (#7123). A trait the
+    // symbol id names (even a generic one) counts, and so does one declared
+    // at the root of an out-of-line parent module of the test file (#7087).
     let owner_trait = owner_trait_name(&owner.id.0);
     if owner_trait.as_deref().is_some_and(|trait_name| {
         test_source.is_some_and(|source| {
@@ -4746,6 +4781,169 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// #7123 fixture: the issue's exact repro — production `trait Counter`
+    /// with a default `fn advance`, plus a test module that either redeclares
+    /// `Counter` (`shadow`) or only imports the production items. Returns the
+    /// source and the 1-based line span of the test fn.
+    fn counter_default_source(shadow: bool, test_body: &str) -> (String, usize, usize) {
+        let mut source = String::from(
+            "pub trait Counter {\n    fn step(&self) -> u32;\n    fn advance(&self) -> u32 { 4 * self.step() }\n}\npub struct Unit;\nimpl Counter for Unit { fn step(&self) -> u32 { 2 } }\n\n#[cfg(test)]\nmod tests {\n",
+        );
+        if shadow {
+            source.push_str("    trait Counter {\n        fn step(&self) -> u32;\n        fn advance(&self) -> u32 { 8 }\n    }\n    impl Counter for Unit { fn step(&self) -> u32 { 2 } }\n");
+        } else {
+            source.push_str("    use super::*;\n");
+        }
+        source.push_str("    #[test]\n");
+        let start = source.matches('\n').count() + 1;
+        source.push_str(&format!("    fn advances() {{ {test_body} }}\n}}\n"));
+        let end = source.matches('\n').count();
+        (source, start, end)
+    }
+
+    /// The relation of the #7123 shape: the owner is the trait-declaration
+    /// default method (its id carries no `::impl` segment), and the test
+    /// calls it through `test_body`.
+    fn counter_default_relation(shadow: bool, test_body: &str) -> RelationReason {
+        let (source, start, end) = counter_default_source(shadow, test_body);
+        let mut owner = trait_function("src/lib.rs", "advance", "Counter");
+        owner.start_line = 3;
+        let mut test = test_with_call("src/lib.rs", "advances", test_body, "advance");
+        test.start_line = start;
+        test.end_line = end;
+        let mut index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions: vec![owner.clone()],
+            tests: vec![test],
+            ..Default::default()
+        });
+        with_source(&mut index, "src/lib.rs", &source);
+        let probe = probe("src/lib.rs", "4 * self.step()");
+        let related = find_related_tests(&probe, Some(&owner), &index, true, None, None);
+        assert_eq!(related.len(), 1, "the same-named call is still related");
+        related[0].1
+    }
+
+    /// #7123: a test module that redeclares the production trait shadows a
+    /// trait-declaration default-method owner exactly like a trait-impl owner
+    /// (#7053): every trait-path spelling names the test-local trait, so the
+    /// production default never runs. The `self::` form is the issue's exact
+    /// repro; the bare form pins the owner-kind mechanism (pre-fix every
+    /// spelling was credited).
+    #[test]
+    fn given_test_module_redeclares_default_method_trait_then_name_only_relation() {
+        for body in [
+            r#"assert_eq!(self::Counter::advance(&Unit), 8);"#,
+            r#"assert_eq!(super::Counter::advance(&Unit), 8);"#,
+            r#"assert_eq!(crate::Counter::advance(&Unit), 8);"#,
+            r#"assert_eq!(Counter::advance(&Unit), 8);"#,
+        ] {
+            assert_eq!(
+                counter_default_relation(true, body),
+                RelationReason::WeakTokenSubstring,
+                "shadowed default-method trait must not be direct_owner_call: {body}"
+            );
+        }
+    }
+
+    /// #7123 precision: the same qualified spellings with the production
+    /// trait in scope (no redeclaration) keep `direct_owner_call`, so the
+    /// refusal is the shadow and nothing else.
+    #[test]
+    fn given_test_module_imports_default_method_trait_then_direct_owner_call() {
+        for body in [
+            r#"assert_eq!(self::Counter::advance(&Unit), 8);"#,
+            r#"assert_eq!(super::Counter::advance(&Unit), 8);"#,
+            r#"assert_eq!(crate::Counter::advance(&Unit), 8);"#,
+            r#"assert_eq!(Counter::advance(&Unit), 8);"#,
+        ] {
+            assert_eq!(
+                counter_default_relation(false, body),
+                RelationReason::DirectOwnerCall,
+                "{body}"
+            );
+        }
+    }
+
+    /// The relation of the nested out-of-line trait shape for a
+    /// trait-declaration default-method owner (#7123, the #7087 analog):
+    /// `helpers_src` is the `helpers` parent module (declaring
+    /// `mod render_tests;` on `mod_line`), and the child test calls through
+    /// `super::Render`, which names the parent scope.
+    fn out_of_line_default_trait_relation(
+        helpers_src: &str,
+        mod_line: usize,
+        test_body: &str,
+    ) -> RelationReason {
+        let child_source = format!("use super::*;\n\n#[test]\nfn t() {{ {test_body} }}\n");
+        let mut owner = trait_function("src/lib.rs", "render", "Render");
+        owner.start_line = 1;
+        let mut child_test =
+            test_with_call("src/helpers/render_tests.rs", "t", test_body, "render");
+        child_test.start_line = 4;
+        child_test.end_line = 4;
+        let mut index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions: vec![owner.clone()],
+            tests: vec![child_test],
+            ..Default::default()
+        });
+        with_source(&mut index, "src/lib.rs", TRAIT_LIB_SOURCE);
+        with_source(&mut index, "src/helpers.rs", helpers_src);
+        with_source_provenance(
+            &mut index,
+            "src/helpers/render_tests.rs",
+            &child_source,
+            SourceRoleProvenance {
+                edges: vec![
+                    composed_module_edge("src/lib.rs", "src/helpers.rs", "helpers", 7, true),
+                    composed_module_edge(
+                        "src/helpers.rs",
+                        "src/helpers/render_tests.rs",
+                        "render_tests",
+                        mod_line,
+                        false,
+                    ),
+                ],
+                earliest_unresolved_reason: None,
+            },
+        );
+        let probe = probe("src/lib.rs", "String::new()");
+        let related = find_related_tests(&probe, Some(&owner), &index, true, None, None);
+        assert_eq!(related.len(), 1, "the same-named call is still related");
+        related[0].1
+    }
+
+    /// #7123 (the out-of-line analog): the `helpers` parent module declares
+    /// its own `trait Render` at its root, so the nested child test's
+    /// `super::Render::render(..)` names the test-local trait, not the
+    /// production default.
+    #[test]
+    fn given_out_of_line_parent_declares_default_method_trait_then_name_only_relation() {
+        assert_eq!(
+            out_of_line_default_trait_relation(
+                "trait Render { fn render(&self) -> String; }\n\nmod render_tests;\n",
+                3,
+                r#"assert_eq!(super::Render::render(&-0.0f64), "");"#,
+            ),
+            RelationReason::WeakTokenSubstring,
+            "parent default-method trait shadow must not be direct_owner_call"
+        );
+    }
+
+    /// #7123 precision: the same nested layout with no parent declaration
+    /// keeps `direct_owner_call`. The production root's `trait Render` is the
+    /// owner's own scope and never a shadow.
+    #[test]
+    fn given_out_of_line_parent_without_default_method_trait_then_direct_owner_call() {
+        assert_eq!(
+            out_of_line_default_trait_relation(
+                "mod render_tests;\n",
+                1,
+                r#"assert_eq!(super::Render::render(&-0.0f64), "");"#,
+            ),
+            RelationReason::DirectOwnerCall,
+        );
     }
 
     /// #7111 split-file layout: the production trait is declared at the root of
