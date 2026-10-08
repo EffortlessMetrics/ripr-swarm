@@ -2374,6 +2374,27 @@ fn refuse_expected_out(out: &Path, expected_dir: &Path, language: &str) -> Resul
     Ok(())
 }
 
+/// Refuse an `--out` inside ANY discovered corpus's expected directory, not
+/// just the selected one: with sibling corpora, `--language typescript
+/// --out fixtures/rust-verdict-corpus/expected` would otherwise pass the
+/// selected guard and let `write_report` pollute the sibling's blessed
+/// state, failing the next run on files only `bless` should write.
+fn refuse_any_expected_out(out: &Path, dir: &Path) -> Result<(), String> {
+    // The selected corpus is always guarded, even when sibling discovery
+    // fails or this corpus lives outside a fixtures tree.
+    refuse_expected_out(out, &dir.join("expected"), &corpus_language(dir)?)?;
+    let Some(fixtures) = dir.parent() else {
+        return Ok(());
+    };
+    let Ok(discovered) = corpus_dirs(fixtures) else {
+        return Ok(());
+    };
+    for sibling in discovered.into_iter().flatten() {
+        refuse_expected_out(out, &sibling.join("expected"), &corpus_language(&sibling)?)?;
+    }
+    Ok(())
+}
+
 const DRIFT_SHOWN: usize = 20;
 
 const FIXTURES_DIR: &str = "fixtures";
@@ -2528,7 +2549,7 @@ fn score_loaded_corpus(
         Some(out) => out,
         None => default_out(dir)?,
     };
-    refuse_expected_out(&out, &expected_dir, &corpus_language(dir)?)?;
+    refuse_any_expected_out(&out, dir)?;
     let mut report = run_corpus(dir, &corpus, &work_root(dir)?)?;
     report.spec_example_coverage = coverage;
     write_report(&out, &report, &corpus_language(dir)?)?;

@@ -1645,3 +1645,35 @@ fn present_but_invalid_ledger_still_fails() -> Result<(), String> {
     assert!(err.contains(coverage::LEDGER_FILE), "{err}");
     Ok(())
 }
+
+#[test]
+fn out_inside_a_sibling_corpus_expected_directory_is_refused() -> Result<(), String> {
+    // `--language typescript --out <rust expected>` must fail: only `bless`
+    // writes expected state, for the selected corpus and every sibling.
+    let root = crate::tests::temp_dir("verdict-sibling-out");
+    let fixtures = root.join("fixtures");
+    for language in ["rust", "typescript"] {
+        crate::tests::write(
+            &fixtures.join(format!("{language}-verdict-corpus/corpus.json")),
+            "{}\n",
+        );
+    }
+    let selected = fixtures.join("typescript-verdict-corpus");
+    let sibling_expected = fixtures.join("rust-verdict-corpus/expected");
+    let err = refuse_any_expected_out(&sibling_expected, &selected)
+        .err()
+        .unwrap_or_default();
+    assert!(
+        err.contains("rust-verdict-corpus"),
+        "sibling expected dir must be named: {err}"
+    );
+    // The selected corpus keeps its own guard, and a neutral directory
+    // still passes.
+    let own_expected = selected.join("expected");
+    let err = refuse_any_expected_out(&own_expected, &selected)
+        .err()
+        .unwrap_or_default();
+    assert!(err.contains("typescript-verdict-corpus"), "{err}");
+    refuse_any_expected_out(&root.join("reports"), &selected)?;
+    Ok(())
+}
