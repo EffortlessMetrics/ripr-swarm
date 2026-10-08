@@ -1476,9 +1476,10 @@ pub(super) fn command_payload_is_safe(root: &Path, command: &str) -> bool {
 /// root and a relative redirect target is anchored under it, like every other
 /// editor command (#3948). A command that is not a safe payload, or carries
 /// no top-level `--root .`, is returned unchanged so the validator still sees
-/// it as written. A `--root .` route that cannot be bound is withheld
-/// (`None`) rather than shown portable, since a pasted portable route
-/// analyzes whatever directory the terminal is in.
+/// it as written. A `--root .` route that cannot be bound, including a
+/// mixed-quote spelling `command_tokens` still reads as `--root .`, is
+/// withheld (`None`) rather than shown portable, since a pasted portable
+/// route analyzes whatever directory the terminal is in.
 pub(super) fn bind_portable_command(root: &Path, command: &str) -> Option<String> {
     let trimmed = command.trim();
     if !command_payload_is_safe(root, trimmed) {
@@ -1501,19 +1502,32 @@ pub(super) fn bind_portable_command(root: &Path, command: &str) -> Option<String
         return (!portable).then(|| command.to_string());
     }
     let spans = top_level_token_spans(body);
-    let dots: Vec<_> = spans
-        .windows(2)
-        .filter(|pair| {
-            literal_token(&body[pair[0].clone()]) == Some("--root")
-                && literal_token(&body[pair[1].clone()]) == Some(".")
-        })
-        .map(|pair| pair[1].clone())
-        .collect();
+    // Decide on the same unquoted tokens `command_payload_is_safe` uses. A
+    // mixed-quote spelling such as `.''` or `"--root"''` still unquotes to a
+    // portable `--root .` pair, but `literal_token` cannot read it to rewrite,
+    // so the route is withheld rather than shown unbound (#7054).
+    let mut dots = Vec::new();
+    let mut unreadable_portable_root = false;
+    for pair in spans.windows(2) {
+        let flag = &body[pair[0].clone()];
+        let value = &body[pair[1].clone()];
+        if !token_unquotes_to(flag, "--root") || !token_unquotes_to(value, ".") {
+            continue;
+        }
+        if literal_token(flag) == Some("--root") && literal_token(value) == Some(".") {
+            dots.push(pair[1].clone());
+        } else {
+            unreadable_portable_root = true;
+        }
+    }
+    if unreadable_portable_root {
+        return None;
+    }
     // Producers write `--root .`; a `--root=.` spelling is still portable but
     // is not rewritten, so its route is withheld rather than passed through.
     if spans
         .iter()
-        .any(|span| body[span.clone()].replace(['\'', '"'], "") == "--root=.")
+        .any(|span| token_unquotes_to(&body[span.clone()], "--root=."))
     {
         return None;
     }
@@ -1633,6 +1647,13 @@ fn literal_token(token: &str) -> Option<&str> {
         let inner = token.strip_prefix(quote)?.strip_suffix(quote)?;
         (!inner.contains(['\'', '"'])).then_some(inner)
     })
+}
+
+/// Whether one top-level token unquotes to `expected` under the same quote
+/// pairing `command_tokens` / `command_payload_is_safe` use. Mixed quotes that
+/// collapse to a single word are visible here even when `literal_token` is not.
+fn token_unquotes_to(token: &str, expected: &str) -> bool {
+    matches!(command_tokens(token).as_slice(), [word] if word == expected)
 }
 
 /// Split off the one stdout redirect the producers append (#4306 persists
@@ -2048,6 +2069,35 @@ mod tests {
             bind_portable_command(&control_root, "ripr agent verify --root ./sub --json"),
             Some("ripr agent verify --root ./sub --json".to_string())
         );
+    }
+
+    /// #7054: mixed-quote `--root .` spellings unquote to a portable root in
+    /// `command_tokens` (so they pass `command_payload_is_safe`) but
+    /// `literal_token` cannot read them. Withhold rather than pass the unbound
+    /// route through. A plain `--root .` still binds.
+    #[test]
+    fn bind_portable_command_withholds_mixed_quote_root_spellings() -> Result<(), String> {
+        let root = std::env::temp_dir().join("ripr-mixed-quote-root");
+        let bound = crate::agent::loop_commands::shell_arg(
+            &crate::agent::loop_commands::bound_root(&root.to_string_lossy()),
+        );
+        assert_binds(
+            &root,
+            "ripr agent verify --root . --json",
+            &format!("ripr agent verify --root {bound} --json"),
+        )?;
+        for command in [
+            "ripr agent verify --root .'' --json",
+            "ripr agent verify --root \".\"'' --json",
+            "ripr agent verify \"--root\"'' . --json",
+        ] {
+            assert!(
+                command_payload_is_safe(&root, command),
+                "{command:?} must be payload-safe so withhold is the binder, not the safety check"
+            );
+            assert_eq!(bind_portable_command(&root, command), None, "{command:?}");
+        }
+        Ok(())
     }
 
     fn assert_binds(root: &Path, command: &str, expected: &str) -> Result<(), String> {
