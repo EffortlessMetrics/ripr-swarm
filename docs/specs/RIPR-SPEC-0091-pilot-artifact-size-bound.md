@@ -195,6 +195,7 @@ governed separately.
 - `crates/ripr/tests/cli_smoke.rs::pilot_snapshot_truncated_by_the_seam_budget_is_not_a_verify_baseline` — built CLI configured/both/inventory-only/uncapped/replay controls.
 - `crates/ripr/src/output/repo_exposure.rs::tests::pilot_limit_disclosure_names_the_applied_cap` — default/configured pilot JSON and Markdown literals, plus uncapped nonempty output.
 - `crates/ripr/src/output/repo_exposure.rs::tests::inventory_limit_routes_remain_unchanged` — default/configured inventory repair routes.
+- `crates/ripr/src/app/pr_summary/json.rs::tests::pilot_budget_disclosure_is_preserved_in_pr_summary` — the summary consumer preserves the repair route and names the pilot presentation cap.
 
 - `crates/ripr/src/analysis/seam_inventory.rs::tests::pilot_seam_budget_default_constant_is_smaller_than_repo_exposure_cap`
 - `crates/ripr/src/analysis/seam_inventory.rs::tests::pilot_seam_budget_env_zero_parses_as_unbounded`

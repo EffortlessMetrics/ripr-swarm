@@ -13970,8 +13970,7 @@ fn pilot_snapshot_truncated_by_the_seam_budget_is_not_a_verify_baseline()
         "{wrong_control}"
     );
     assert_eq!(
-        wrong_control["limitations"][0]["control"],
-        "RIPR_PILOT_SEAM_BUDGET",
+        wrong_control["limitations"][0]["control"], "RIPR_PILOT_SEAM_BUDGET",
         "{wrong_control}"
     );
 
