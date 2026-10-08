@@ -51,7 +51,9 @@ head it analyzed.
   tree, routed or not, because the working-tree diff (`git diff
   <merge-base>`) covers tracked files only. A clean or untracked-only tree,
   or a dirtiness probe that cannot run, keeps the committed-history read
-  `git diff <base>...HEAD`; that run's own loader names any git failure, so
+  `git diff <base>...HEAD`. An unborn or dangling `HEAD` also keeps it,
+  because staged files there read as additions and would otherwise bypass the
+  committed-history refusal; that run's own loader names any git failure, so
   the probe adds no second warning, and on an untracked-only tree the
   RIPR-SPEC-0112 note names the untracked files and the staging repair
   (#5258).
