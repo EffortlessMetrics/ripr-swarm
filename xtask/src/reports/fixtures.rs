@@ -441,6 +441,7 @@ pub(crate) fn is_manifest_only_fixture_dir(path: &Path) -> bool {
                     | "surface-projection-alignment"
                     | "swarm-plan-packet-corpus"
                     | "work_portfolio"
+                    | "work_selection_identity"
                     | "typescript-bun-ub-calibration"
                     | "typescript-preview-false-actionable-audit"
                     | "typescript-preview-repair-loop"

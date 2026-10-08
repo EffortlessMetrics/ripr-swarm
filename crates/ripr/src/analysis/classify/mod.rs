@@ -22,11 +22,12 @@ mod value_transfer;
 
 pub(in crate::analysis) use activation::{
     ARM_UNSELECTED_REASON_PREFIX, LocalBoundary, TestValueFacts, activation_and_boundary_input,
-    comparison_operands, literal_operand_value, local_boundary, signature_parameters,
+    comparison_operands, computed_input_parameters, literal_operand_value, local_boundary,
+    signature_parameters,
 };
 pub(in crate::analysis) use arm_selection::ArmSelector;
 pub(in crate::analysis) use boundary_pairing::{
-    has_same_test_boundary_oracle_pairing, same_test_pairing_missing_summary,
+    WrapperEntryPairing, has_same_test_boundary_oracle_pairing, same_test_pairing_missing_summary,
 };
 pub(in crate::analysis) use context::ProbeContext;
 pub(in crate::analysis) use decision::{
@@ -38,7 +39,10 @@ pub(in crate::analysis) use flow::{local_flow_sinks, propagation_evidence_with_w
 pub(in crate::analysis) use gap_admission::{
     REFUSALS_ARE_ANALYZER_LIMITS, withhold_unsupported_gap,
 };
-pub(in crate::analysis) use helper_transfer::{callee_is_unique, resolve_chain};
+pub(in crate::analysis) use helper_transfer::{
+    HELPER_RESULT_NOT_FORWARDED, callee_is_unique, chain_forwards_to_observed_hops,
+    chain_passes_effect_target_to_observed_hops, helper_only_reach, resolve_chain,
+};
 pub(in crate::analysis) use infection::infection_evidence_with_boundary_input;
 pub(in crate::analysis) use owner_pin::{
     OwnerPinSyntax, OwnerReturnPin, WithheldMacroBindings, pin_scope_needs,

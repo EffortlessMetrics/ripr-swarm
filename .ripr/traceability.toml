@@ -10144,6 +10144,17 @@ name = "Bounded helper-call transfer"
 spec = "docs/specs/RIPR-SPEC-0159-bounded-helper-transfer.md"
 tests = [
   "crates/ripr/src/analysis/classify/helper_transfer.rs::tests",
+  "crates/ripr/src/analysis/classify/related_tests.rs::tests::same_file_wrapper_test_keeps_the_helper_call_relation",
+  "crates/ripr/tests/helper_wrapper_reach.rs::match_arm_behind_a_dropping_wrapper_is_not_credited",
+  "crates/ripr/tests/helper_wrapper_reach.rs::wrapper_that_rebinds_the_parameter_does_not_credit_the_boundary",
+  "crates/ripr/tests/helper_wrapper_reach.rs::intermediate_hop_test_is_not_stopped_by_a_dropping_outer_wrapper",
+  "crates/ripr/tests/helper_wrapper_reach.rs::mixed_direct_weak_and_wrapper_exact_oracles_do_not_credit_the_wrapper",
+  "crates/ripr/tests/helper_wrapper_reach.rs::buried_scalar_in_a_wrapper_argument_does_not_pair",
+  "crates/ripr/tests/helper_wrapper_reach.rs::shadowed_wrapper_call_does_not_relate_or_pair",
+  "crates/ripr/tests/helper_wrapper_reach.rs::helper_side_effect_behind_a_discarding_wrapper_keeps_its_propagation",
+  "crates/ripr/src/analysis/classify/related_tests.rs::tests::shadowed_wrapper_call_earns_no_helper_owner_call",
+  "crates/ripr/tests/helper_wrapper_reach.rs::helper_effect_on_a_wrapper_owned_target_abstains",
+  "crates/ripr/tests/helper_wrapper_reach.rs::aliased_or_same_named_wrapper_does_not_relate_or_pair",
 ]
 fixtures = [
   "fixtures/helper_chain_one_hop",
@@ -10154,6 +10165,7 @@ code = [
   "crates/ripr/src/analysis/classify/helper_transfer.rs",
   "crates/ripr/src/analysis/classify/related_tests.rs",
   "crates/ripr/src/analysis/classify/activation.rs",
+  "crates/ripr/src/analysis/classifier/evidence.rs",
 ]
 outputs = []
 metrics = [
@@ -11156,6 +11168,29 @@ tests = [
   "crates/ripr/src/analysis/classify/boundary_pairing.rs::tests::aliased_operand_named_constant_activation_still_pairs",
   "crates/ripr/src/analysis/classify/boundary_pairing.rs::tests::typed_literal_argument_pairs",
   "crates/ripr/src/analysis/classify/boundary_pairing.rs::tests::pairing_argument_values_keep_direct_inputs_and_drop_buried_literals",
+  "crates/ripr/src/analysis/classify/boundary_pairing.rs::tests::forwarding_wrapper_oracle_pairs_with_the_helper_boundary",
+  "crates/ripr/src/analysis/classify/boundary_pairing.rs::tests::wrapper_oracle_off_the_boundary_line_does_not_pair",
+  "crates/ripr/tests/helper_wrapper_reach.rs::forwarding_wrapper_relates_and_pairs_its_boundary_pin",
+  "crates/ripr/tests/helper_wrapper_reach.rs::wrapper_tests_that_miss_the_boundary_still_report_the_gap",
+  "crates/ripr/tests/helper_wrapper_reach.rs::wrapper_that_drops_the_helper_result_keeps_pairing_missing",
+  "crates/ripr/tests/helper_wrapper_reach.rs::wrapper_that_transforms_the_argument_transfers_no_boundary_value",
+  "crates/ripr/tests/helper_wrapper_reach.rs::generic_helper_behind_a_constant_argument_wrapper_pairs",
+  "crates/ripr/tests/helper_wrapper_reach.rs::wrapper_that_rebinds_the_parameter_does_not_credit_the_boundary",
+  "crates/ripr/tests/helper_wrapper_reach.rs::wrapper_with_a_computed_branch_does_not_pair",
+  "crates/ripr/tests/helper_wrapper_reach.rs::match_arm_behind_a_dropping_wrapper_is_not_credited",
+  "crates/ripr/tests/helper_wrapper_reach.rs::match_arm_behind_a_forwarding_wrapper_keeps_its_verdict_path",
+  "crates/ripr/src/analysis/classify/boundary_pairing.rs::tests::same_line_owner_row_does_not_pair_a_far_wrapper_pin",
+  "crates/ripr/src/analysis/classify/boundary_pairing.rs::tests::entry_guard_refuses_repeated_entry_calls_and_owner_mentions",
+  "crates/ripr/src/analysis/classify/boundary_pairing.rs::tests::rebinding_or_computed_branch_wrappers_do_not_pair",
+  "crates/ripr/src/analysis/classify/boundary_pairing.rs::tests::another_tests_same_line_row_does_not_pair_the_wrapper_pin",
+  "crates/ripr/tests/helper_wrapper_reach.rs::match_arm_behind_a_transforming_wrapper_is_not_credited",
+  "crates/ripr/tests/helper_wrapper_reach.rs::return_value_behind_a_dropping_or_transforming_wrapper_is_not_credited",
+  "crates/ripr/tests/helper_wrapper_reach.rs::return_value_behind_a_forwarding_wrapper_is_not_stopped_at_the_hop",
+  "crates/ripr/tests/helper_wrapper_reach.rs::intermediate_hop_test_is_not_stopped_by_a_dropping_outer_wrapper",
+  "crates/ripr/tests/helper_wrapper_reach.rs::buried_scalar_in_a_wrapper_argument_does_not_pair",
+  "crates/ripr/tests/helper_wrapper_reach.rs::mixed_direct_weak_and_wrapper_exact_oracles_do_not_credit_the_wrapper",
+  "crates/ripr/tests/helper_wrapper_reach.rs::shadowed_wrapper_call_does_not_relate_or_pair",
+  "crates/ripr/tests/helper_wrapper_reach.rs::aliased_or_same_named_wrapper_does_not_relate_or_pair",
   "crates/ripr/src/analysis/classify/boundary_pairing.rs::tests::reassigned_boundary_binding_does_not_pair",
   "crates/ripr/src/analysis/classify/boundary_pairing.rs::tests::compound_assigned_boundary_binding_does_not_pair",
   "crates/ripr/src/analysis/classify/boundary_pairing.rs::tests::mutably_borrowed_boundary_binding_does_not_pair",
@@ -11171,6 +11206,7 @@ fixtures = [
 ]
 code = [
   "crates/ripr/src/analysis/classify/boundary_pairing.rs",
+  "crates/ripr/src/analysis/classify/helper_transfer.rs",
   "crates/ripr/src/analysis/classifier/evidence.rs",
   "crates/ripr/src/analysis/classify/decision.rs"
 ]
@@ -11801,6 +11837,9 @@ tests = [
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::an_integration_path_is_closed_to_raw_and_macro_shadows",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::an_unreadable_expected_binding_is_scanned_only_beside_another_owner_call",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_cfg_gated_owner_is_not_reached_by_a_path",
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_cfg_gated_owner_is_not_reached_by_a_bare_call",
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::an_ancestor_file_a_cfg_may_drop_gates_the_owner",
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_cfg_attr_path_on_the_owners_declaration_gates_it_through_real_composition",
   "crates/ripr/tests/owner_pin_execution.rs::owner_pin_matched_static_and_runtime_controls",
   "crates/ripr/tests/owner_pin_execution.rs::owner_pin_token_overlap_cannot_bypass_oracle_admission",
   "crates/ripr/tests/owner_pin_execution.rs::owner_pin_shared_admission_keeps_credit_on_one_admitted_oracle",
@@ -13157,6 +13196,8 @@ tests = [
   "crates/ripr/src/analysis/seam_cache/store.rs::tests::orphan_generations_are_swept_only_when_old_and_unreferenced",
   "crates/ripr/src/analysis/seam_cache/store.rs::tests::orphan_sweep_does_nothing_without_a_valid_manifest",
   "crates/ripr/src/analysis/seam_cache/store.rs::tests::replaced_generation_cleanup_only_deletes_files_inside_generation_directories",
+  "crates/ripr/src/analysis/seam_cache/store.rs::tests::publication_skips_while_another_writer_holds_the_key_lock",
+  "crates/ripr/src/analysis/seam_cache/store.rs::tests::publication_skips_a_competing_publisher_inside_the_commit_window",
   "crates/ripr/src/analysis/seam_cache/store.rs::tests::replaced_generation_cleanup_does_not_follow_a_symlinked_generation_directory",
   "crates/ripr/src/analysis/seam_cache/store.rs::tests::replaced_generation_cleanup_does_not_follow_a_symlinked_entry_directory",
   "crates/ripr/src/analysis/seam_cache/store.rs::tests::symlink_guard_rejects_parent_and_root_components",
@@ -13261,6 +13302,49 @@ code = [
 ]
 outputs = [
   "docs/specs/RIPR-SPEC-0234-work-portfolio-compiler.md",
+]
+metrics = [
+  "unit_test_pass_rate",
+]
+[[behavior]]
+id = "RIPR-SPEC-0244"
+name = "Shared selected-work identity schemas and legacy compatibility"
+spec = "docs/specs/RIPR-SPEC-0244-selected-work-identity.md"
+tests = [
+  "xtask/src/work_selection_identity.rs::tests::work_selection_identity_committed_corpus_twelve_scenarios_hold",
+  "xtask/src/work_selection_identity.rs::tests::work_selection_identity_wrong_identities_fail_visibly_with_exact_routes",
+  "xtask/src/work_selection_identity.rs::tests::work_selection_identity_snapshot_change_keeps_compatible_issue_head",
+  "xtask/src/work_selection_identity.rs::tests::work_selection_identity_new_overlap_forces_reconcile",
+  "xtask/src/work_selection_identity.rs::tests::work_selection_identity_legacy_refs_read_only_no_authority",
+  "xtask/src/work_selection_identity.rs::tests::work_selection_identity_campaign_representations_without_default",
+  "xtask/src/work_selection_identity.rs::tests::work_selection_identity_no_singleton_or_runtime_state_fields",
+  "xtask/src/work_selection_identity.rs::tests::work_selection_identity_human_and_json_projections_agree",
+  "xtask/src/work_selection_identity.rs::tests::work_selection_identity_plan_disposition_vocabulary_frozen",
+  "xtask/src/work_selection_identity.rs::tests::work_selection_identity_stable_forms_and_equality",
+  "xtask/src/work_selection_identity.rs::tests::work_selection_identity_burndown_partial_projection_states",
+  "xtask/src/work_selection_identity.rs::tests::work_selection_identity_fresh_root_resume_from_artifacts_only",
+  "xtask/src/work_selection_identity.rs::tests::work_selection_identity_deterministic_output",
+  "xtask/src/work_selection_identity.rs::tests::work_selection_identity_corpus_loader_fails_closed",
+  "xtask/src/work_selection_identity.rs::tests::work_selection_identity_provenance_fails_closed",
+  "xtask/src/work_selection_identity.rs::tests::work_selection_identity_command_mutate_nothing_mutation_negative",
+  "xtask/src/work_selection_identity.rs::tests::work_selection_identity_basis_completeness_reflects_sources",
+  "xtask/src/work_selection_identity.rs::tests::work_selection_identity_subject_binding_laws_fail_closed",
+  "xtask/src/work_selection_identity.rs::tests::work_selection_identity_markdown_renders_wire_names",
+  "xtask/src/work_selection_identity.rs::tests::work_selection_identity_scenario_captured_resolution",
+  "xtask/src/work_selection_identity.rs::tests::work_selection_identity_spec_ref_wire_shape",
+  "xtask/src/work_selection_identity.rs::tests::work_selection_identity_committed_provenance_covers_every_corpus_byte",
+]
+fixtures = [
+  "fixtures/work_selection_identity",
+]
+code = [
+  "xtask/src/work_selection_identity.rs",
+  "xtask/src/work_portfolio.rs",
+  "xtask/src/command.rs",
+  "xtask/src/dispatch.rs",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0244-selected-work-identity.md",
 ]
 metrics = [
   "unit_test_pass_rate",

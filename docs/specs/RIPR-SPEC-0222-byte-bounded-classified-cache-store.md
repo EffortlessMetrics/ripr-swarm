@@ -69,11 +69,17 @@ proving a universal RSS threshold.
   began, so a competing writer that rolls back late cannot restore an
   older single entry over the newer generation. A single entry a later
   writer published is newer and stays.
-  There is no per-key cross-process lock, so a stat-then-remove window
-  remains: a late rollback that restores an older single entry after the
-  post-commit check, followed by termination before its own re-check, can
-  leave a stale classified result for that key until the next publish.
-  The cost is a stale cache result, never a corrupt one (#5350).
+  Publication for one key holds an advisory file lock
+  (`<sharded layer>/<key>.lock`) from before the first mutation through
+  cleanup, so two writers of the same key cannot interleave their
+  stat-then-remove and rollback-restore steps. The OS releases the lock
+  when the writer exits, so a crashed writer leaves no stale lock; the
+  leftover lock file is harmless. A writer that cannot take the lock within
+  two seconds skips with `skipped_publication_busy` and no advisory, since
+  the other writer is publishing that key. A cache that cannot lock
+  (read-only layer, filesystem without advisory locks) publishes unlocked as
+  before, and a process from a build without the lock can still race a
+  locked one. Readers never lock.
   Generation directories are swept only after a successful sharded commit,
   so writers terminated before any commit leave directories until a later
   commit for that key.
@@ -184,6 +190,8 @@ proving a universal RSS threshold.
 - `crates/ripr/src/analysis/seam_cache/store.rs::tests::orphan_generations_are_swept_only_when_old_and_unreferenced`
 - `crates/ripr/src/analysis/seam_cache/store.rs::tests::orphan_sweep_does_nothing_without_a_valid_manifest`
 - `crates/ripr/src/analysis/seam_cache/store.rs::tests::replaced_generation_cleanup_only_deletes_files_inside_generation_directories`
+- `crates/ripr/src/analysis/seam_cache/store.rs::tests::publication_skips_while_another_writer_holds_the_key_lock`
+- `crates/ripr/src/analysis/seam_cache/store.rs::tests::publication_skips_a_competing_publisher_inside_the_commit_window`
 - `crates/ripr/src/analysis/seam_cache/store.rs::tests::replaced_generation_cleanup_does_not_follow_a_symlinked_generation_directory`
 - `crates/ripr/src/analysis/seam_cache/store.rs::tests::replaced_generation_cleanup_does_not_follow_a_symlinked_entry_directory`
 - `crates/ripr/src/analysis/seam_cache/store.rs::tests::symlink_guard_rejects_parent_and_root_components`

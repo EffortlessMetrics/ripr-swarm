@@ -86,6 +86,33 @@ merely contains the literal does not pair, including `gate(if false { 10 } else
 { 50 })`, `gate(std::cmp::max(10, 50))`, and a bool-owner `assert!(gate(..))`
 pin of either shape (#6668). Those cases fall back to `same_test_pairing_missing`.
 
+A private helper reached only through a wrapper (RIPR-SPEC-0159 chain,
+#6694 / #6672) pairs on the wrapper call: an admitted discriminating
+assertion whose subject is one call of the chain's entry, that names no
+second entry call and no owner call, and whose entry arguments are each a
+plain identifier, a whole scalar literal or a path (a scalar buried in a
+compound argument such as `entry(std::cmp::max(10, 50))` or `entry(10 * 2)`
+does not pair, since activation binds its first scalar), pairs when activation recorded a
+boundary `==` row bound down the chain from that assertion's line. This
+holds only when every hop hands its call's result to its caller's return:
+the caller body has no `return` or `?`, it does not rebind or assign a
+parameter it forwards to the hop, and its tail is the hop call itself or
+`if <call> { A } else { B }` (or `if !<call>`) where `A` and `B` are
+literals of distinct values (`05` and `5` are equal; an escaped string or
+char literal never counts as distinct). A discarded, let-bound, transformed, branch-guarded or
+computed-branch result, or a rebound forwarded parameter, keeps the
+pairing missing (and RIPR-SPEC-0159 makes propagation unknown). A match
+guard that only reads a forwarded parameter (`n if n > qty =>`) is not a
+rebinding; a pattern that binds it (`Some(qty) =>`) is. The row must come
+from the entry call on the assertion's own line, in the assertion's own
+test: activation is recomputed from that test alone, because a row carries
+no source test and another test in another file can share the line. That
+line holds one entry call and no direct owner call. A computed hop argument
+already stops the row transfer (RIPR-SPEC-0159), so no `==` row exists to
+pair, and so does an entry call shadowed by a test-local closure or nested
+fn of the entry's name. The owner-return pin (RIPR-SPEC-0197) judges the owner's own call and
+never admits a wrapper assertion here.
+
 A `let`-bound boundary name stays paired only while the binding still holds
 the call's result. A post-`let` reassignment (`got = true`), compound
 assignment (`got += 1`), or `&mut` borrow (`&mut got`) voids the binding
@@ -115,8 +142,8 @@ and joins each one. An rstest `#[case]` column still contributes only its
 first value to the call's input row: it drops the cases it cannot read, so its
 slots do not line up with another column's.
 
-Helper-call transfer, proximity-only oracle credit, and bare-name method
-relation are out of scope.
+Proximity-only oracle credit and bare-name method relation are out of
+scope.
 
 ## Required Evidence
 
@@ -169,6 +196,12 @@ relation are out of scope.
   Given `let amount = raw; amount >= threshold` and
   `assert_eq!(gate(if false { 10 } else { 50 }, 10), true)`, pairing does
   not treat the aliased input as a boundary just because `threshold` is 10.
+- Given private `fn is_bulk(qty: u32) -> bool { 10 <= qty }` reached only
+  through `pub fn order_discount(qty: u32) -> u32 { if is_bulk(qty) { 5 } else
+  { 0 } }` and `assert_eq!(order_discount(10), 5)`, when the predicate is
+  classified, then it pairs. With `let _ = is_bulk(qty); 5` as the wrapper
+  body, or with the tests calling only `order_discount(12)` and
+  `order_discount(3)`, it does not.
 - Given `let mut got = gate(10); got = true; assert_eq!(got, true)`, or
   `got += 1` / `&mut got` in place of the reassignment, when the predicate
   is classified, then it does not pair: the binding no longer holds the
@@ -185,10 +218,13 @@ relation are out of scope.
 - `fixtures/predicate_pairing_compound_assigned_binding`
 - `fixtures/predicate_pairing_mutably_borrowed_binding`
 - `crates/ripr/tests/owner_pin_execution.rs::predicate_pairing_cannot_reuse_refused_boundary_equalities`
+- `crates/ripr/tests/helper_wrapper_reach.rs`
 
 ## Implementation Mapping
 
 - `crates/ripr/src/analysis/classify/boundary_pairing.rs`: pairing authority.
+- `crates/ripr/src/analysis/classify/helper_transfer.rs`: the hop forwarding
+  and parameter-rebinding checks the wrapper-entry pairing uses.
 - `crates/ripr/src/analysis/classifier/evidence.rs`: apply the pairing gate
   before `exposed`.
 - `crates/ripr/src/analysis/classify/decision.rs`: missing evidence names the

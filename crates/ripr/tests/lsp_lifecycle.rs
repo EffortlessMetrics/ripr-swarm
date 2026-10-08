@@ -22,6 +22,9 @@
 //! 11. the compatibility-command journey (`initialize` → server-executed
 //!     collect commands → `shutdown`/`exit`) runs over the real wire and
 //!     emits a bounded receipt (issue #1930).
+//! 12. `ripr/listActionableItems` answers the honest `no_snapshot` shape
+//!     before refresh and the `actionable_items` envelope echoing the
+//!     refreshed snapshot after it (issue #7146).
 //!
 //! Named limitations (verified against tower-lsp-server 0.23, the transport
 //! stack in `crates/ripr/src/lsp.rs`):
@@ -2431,5 +2434,122 @@ fn single_workspace_root_starts_without_a_root_warning() -> Result<(), String> {
         ));
     }
     session.request("shutdown", serde_json::Value::Null)?;
+    shutdown_exit_and_wait(&mut session)
+}
+
+/// `ripr/listActionableItems` over the real wire before and after a refresh
+/// that commits a snapshot (#7146). Pre-refresh the request must disclose
+/// the honest `no_snapshot` shape (the same fail-closed shape the agentic
+/// bench pins); post-refresh it must answer the `actionable_items` success
+/// envelope whose `snapshot_id` echoes the refreshed snapshot. A real
+/// refresh producing a snapshot the handler misreads would pass the
+/// handler-level tests; this journey is the wire witness.
+#[test]
+fn list_actionable_items_wire_journey_around_refresh() -> Result<(), String> {
+    let base = unique_compat_fixture_root("list-actionable")?;
+    let root = build_native_root_fixture(&base.path, "repo")?;
+    let root_uri = editor_file_uri(&root)?;
+    let mut session = LspSession::spawn()?;
+    let initialize = session.request(
+        "initialize",
+        serde_json::json!({
+            "processId": null,
+            "rootUri": root_uri,
+            "initializationOptions": {
+                "baseRef": "HEAD~1",
+                "checkMode": "instant",
+                "diagnosticProfile": "full"
+            },
+            "capabilities": {},
+        }),
+    )?;
+    expect_result(&initialize, "initialize")?;
+    session.notify("initialized", Some(serde_json::json!({})))?;
+
+    // Pre-refresh: the honest no-snapshot shape, never a success envelope.
+    let pre = session.request("ripr/listActionableItems", serde_json::json!({}))?;
+    let pre_result = expect_result(&pre, "ripr/listActionableItems")?;
+    if pre_result
+        .pointer("/error/kind")
+        .and_then(serde_json::Value::as_str)
+        != Some("no_snapshot")
+    {
+        return Err(format!(
+            "pre-refresh listActionableItems must disclose the honest no_snapshot shape: {pre}"
+        ));
+    }
+
+    // Refresh commits the snapshot. The fixture-setup guard requires the
+    // refresh to publish diagnostics, so `selected_count >= 1` below is a
+    // real budget selection, not a vacuous count over an empty snapshot.
+    let refresh_id = fire(
+        &mut session,
+        "workspace/executeCommand",
+        serde_json::json!({"command": "ripr.refresh", "arguments": []}),
+    )?;
+    let (published, refresh) =
+        collect_publishes_until_response(&mut session, refresh_id, "ripr.refresh response")?;
+    expect_result(&refresh, "ripr.refresh")?;
+    if !published.iter().any(|(_, count)| *count > 0) {
+        return Err(format!(
+            "fixture setup: refresh must publish diagnostics before the listing can select them: {published:?}"
+        ));
+    }
+
+    // The independent snapshot identity for the echo assertion: the same
+    // generation string `ripr.refresh` committed, served by the status
+    // surface rather than the listing under test.
+    let status = session.request(
+        "workspace/executeCommand",
+        serde_json::json!({"command": "ripr.collectWorkspaceStatus", "arguments": []}),
+    )?;
+    let status_result = expect_result(&status, "ripr.collectWorkspaceStatus")?;
+    let expected_snapshot = status_result
+        .pointer("/analysis_status/snapshot_id")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| {
+            format!("post-refresh: workspace status must carry the committed snapshot id: {status}")
+        })?;
+
+    let listed = session.request("ripr/listActionableItems", serde_json::json!({}))?;
+    let listed_result = expect_result(&listed, "ripr/listActionableItems")?;
+    if listed_result
+        .get("status")
+        .and_then(serde_json::Value::as_str)
+        != Some("ok")
+    {
+        return Err(format!(
+            "post-refresh listActionableItems must answer status ok: {listed}"
+        ));
+    }
+    if listed_result
+        .get("kind")
+        .and_then(serde_json::Value::as_str)
+        != Some("actionable_items")
+    {
+        return Err(format!(
+            "post-refresh listActionableItems must answer kind actionable_items: {listed}"
+        ));
+    }
+    let selected_count = listed_result
+        .get("selected_count")
+        .and_then(serde_json::Value::as_u64)
+        .ok_or_else(|| {
+            format!("post-refresh listActionableItems must carry a selected_count: {listed}")
+        })?;
+    if selected_count < 1 {
+        return Err(format!(
+            "post-refresh listActionableItems must select at least one item: {listed}"
+        ));
+    }
+    if listed_result
+        .get("snapshot_id")
+        .and_then(serde_json::Value::as_str)
+        != Some(expected_snapshot)
+    {
+        return Err(format!(
+            "post-refresh listActionableItems must echo the refreshed snapshot id {expected_snapshot:?}: {listed}"
+        ));
+    }
     shutdown_exit_and_wait(&mut session)
 }
