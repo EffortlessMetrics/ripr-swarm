@@ -335,7 +335,7 @@ Updated:
 ## Pending — rust_constructor_field_observation (15)
 
 Reason:
-RIPR-SPEC-0116: the check drill-in binds --root to the resolved repository (#3948); goldens carry the <cwd>/ placeholder
+RIPR-SPEC-0159 (#6694/#6672): the tests/lower.rs test that calls the lower_ast entry now relates to private lower_statement through the chain (helper_owner_call, reach yes) instead of weak_token_substring, because the chain relation now outranks token proximity; class unchanged. human.txt and human-full.txt also drop the "ripr found no static test path..." footer note, since that finding now has a static test path
 
 Command:
 `cargo xtask goldens bless rust_constructor_field_observation --reason "..."`
@@ -346,6 +346,19 @@ Updated:
 - `expected/human-full.txt`
 
 ## Pending — rust_constructor_field_observation (16)
+
+Reason:
+RIPR-SPEC-0116: the check drill-in binds --root to the resolved repository (#3948); goldens carry the <cwd>/ placeholder
+
+Command:
+`cargo xtask goldens bless rust_constructor_field_observation --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — rust_constructor_field_observation (17)
 
 Reason:
 RIPR-SPEC-0122 #5471: stub route printed only when the resolver yields a stub, with --kind; refusal or nothing otherwise (merge re-bless)

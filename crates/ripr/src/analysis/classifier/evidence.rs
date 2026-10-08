@@ -1,12 +1,14 @@
 use crate::analysis::classify::{
     ARM_UNSELECTED_REASON_PREFIX, ASSERTION_CONTEXT_UNESTABLISHED, ArmSelector, EffectStateCarrier,
-    OwnerPinSyntax, OwnerReturnPin, ProbeContext, PropagationWitnessV1, ReturnOracleAdmission,
-    TransitiveReachIndex, activation_and_boundary_input, body_contains_owner_call,
-    callee_is_unique, classify, confidence_score, contains_as_whole_word, current_path_witness,
-    has_same_test_boundary_oracle_pairing, infection_evidence_with_boundary_input,
-    local_flow_sinks, oracle_crediting_relations, owner_may_be_reached_unseen, package_prefix,
-    propagation_evidence_with_witness, reach_evidence, reveal_outcome,
-    same_test_pairing_missing_summary, signature_parameters,
+    HELPER_RESULT_NOT_FORWARDED, OwnerPinSyntax, OwnerReturnPin, ProbeContext,
+    PropagationWitnessV1, ReturnOracleAdmission, TransitiveReachIndex, WrapperEntryPairing,
+    activation_and_boundary_input, body_contains_owner_call, callee_is_unique,
+    chain_forwards_to_observed_hops, chain_passes_effect_target_to_observed_hops, classify,
+    confidence_score, contains_as_whole_word, current_path_witness,
+    has_same_test_boundary_oracle_pairing, helper_only_reach,
+    infection_evidence_with_boundary_input, local_flow_sinks, oracle_crediting_relations,
+    owner_may_be_reached_unseen, package_prefix, propagation_evidence_with_witness, reach_evidence,
+    reveal_outcome, same_test_pairing_missing_summary, signature_parameters,
 };
 use crate::analysis::facts::{FunctionSummary, OracleFact, RustIndex, TestSummary};
 use crate::domain::*;
@@ -131,6 +133,54 @@ impl ClassifiedProbeEvidence {
             &activation,
             gathered.unresolved_boundary.as_deref(),
         );
+        // #6796's computed-argument discipline, wrapper edition (#6672,
+        // #6694): when the tests reach the owner only through the helper
+        // chain and a chain entry argument is a computed expression
+        // (`base + 1`), whether the changed boundary is activated at all is
+        // unreadable. The predicate lens abstains through activation's
+        // unresolved-boundary reason; a non-predicate lens on the same owner
+        // reads infection off the same tests' reach, so without this guard it
+        // grades the finding as a gap ("tests miss the boundary") that the
+        // computed argument makes unreadable — a claim this seam must not
+        // make. Infection abstains with the same reason.
+        let chain_computed_inputs = match (context.owner_fn, context.helper_chain.as_ref()) {
+            (Some(owner), Some(chain)) => {
+                let chain_tests = context
+                    .related_tests
+                    .iter()
+                    .map(|(test, _)| *test)
+                    .collect::<Vec<_>>();
+                !crate::analysis::classify::computed_input_parameters(
+                    owner,
+                    &owner_parameter_names(owner),
+                    &chain_tests,
+                    Some(chain),
+                )
+                .is_empty()
+            }
+            _ => false,
+        };
+        let infect = match (context.owner_fn, context.helper_chain.as_ref()) {
+            (Some(owner), Some(_))
+                if !matches!(context.probe.family, ProbeFamily::Predicate)
+                    && chain_computed_inputs
+                    && helper_only_reach(&context.related_tests)
+                    && matches!(infect.state, StageState::Yes | StageState::Weak) =>
+            {
+                StageEvidence::new(
+                    StageState::Unknown,
+                    Confidence::Low,
+                    format!(
+                        "Infection unknown: a related test passes a computed argument for `{}`, so ripr cannot tell whether the changed boundary is activated",
+                        owner_parameter_names(owner)
+                            .first()
+                            .cloned()
+                            .unwrap_or_else(|| "the changed input".to_string())
+                    ),
+                )
+            }
+            _ => infect,
+        };
         let valid_witness = propagation_witness
             .as_ref()
             .and_then(|diagnostic| match diagnostic {
@@ -139,6 +189,56 @@ impl ClassifiedProbeEvidence {
             });
         let propagate =
             propagation_evidence_with_witness(context.probe, &flow_sinks, valid_witness);
+        // #6780 review B2: when the owner is reached only through the
+        // RIPR-SPEC-0159 chain (no related test calls it directly), the
+        // tests observe a hop caller's result, not the owner's. Unless every
+        // hop up to the highest one a test calls directly hands the call's
+        // result to its caller's return, the owner's
+        // change is not shown to reach that result: propagation is unknown
+        // (an abstention), never credit or an actionable gap.
+        // #6780 Devin review and round 5: a side effect or deleted call acts
+        // on state, not on a returned value. It keeps its owner-local
+        // effect-sink propagation only when every observed hop passes the
+        // effect's target through from its own parameter (`wrapper(out) {
+        // record(out) }`), so the test's caller-owned state is what changes.
+        // A fresh temporary or a wrapper-local target is invisible to the
+        // test: those abstain like a dropped result (fail closed).
+        let effect_family = matches!(
+            context.probe.family,
+            ProbeFamily::SideEffect | ProbeFamily::CallDeletion
+        );
+        let propagate = match (context.owner_fn, context.helper_chain.as_ref()) {
+            // An already-unknown stage keeps its own reason.
+            (Some(owner), Some(chain))
+                if matches!(propagate.state, StageState::Yes | StageState::Weak)
+                    && helper_only_reach(&context.related_tests)
+                    && if effect_family {
+                        !chain_passes_effect_target_to_observed_hops(
+                            owner,
+                            &context.probe.expression,
+                            chain,
+                            &context.related_tests,
+                        )
+                    } else {
+                        !chain_forwards_to_observed_hops(&owner.name, chain, &context.related_tests)
+                    } =>
+            {
+                let stop = if effect_family {
+                    "a caller that does not pass the changed state through from its own parameter"
+                } else {
+                    "a caller that does not forward its result unchanged"
+                };
+                StageEvidence::new(
+                    StageState::Unknown,
+                    Confidence::Low,
+                    format!(
+                        "Propagation unknown: the related tests reach `{}` only through {stop} ({HELPER_RESULT_NOT_FORWARDED})",
+                        owner.name
+                    ),
+                )
+            }
+            _ => propagate,
+        };
         // Both defeats below depend only on the test's file (and the probe's
         // constant owner callee), never on the individual test. A
         // high-traffic owner relates to thousands of tests spread over a
@@ -333,6 +433,21 @@ impl ClassifiedProbeEvidence {
         // the owner call that sits on the boundary. Pairing reuses
         // activation's `==` facts so named constants and helper hops that
         // already infected stay paired when the same test holds the oracle.
+        // The wrapper-entry pairing reads only rows recomputed from the
+        // asserting test (#6780 review): a run-wide row names no test.
+        let one_test_activation = |test: &TestSummary| {
+            activation_and_boundary_input(
+                context.probe,
+                context.owner_fn,
+                &[test],
+                &flow_sinks,
+                context.helper_chain.as_ref(),
+                context.index,
+                context.workspace_complete,
+                context.test_value_facts,
+            )
+            .activation
+        };
         let discriminate = if matches!(context.probe.family, ProbeFamily::Predicate)
             && infect.state == StageState::Yes
             && discriminate.state == StageState::Yes
@@ -352,6 +467,13 @@ impl ClassifiedProbeEvidence {
                         })
                         && owner_pin_admits(test, assertion)
                 },
+                context
+                    .helper_chain
+                    .as_ref()
+                    .map(|chain| WrapperEntryPairing {
+                        chain,
+                        test_activation: &one_test_activation,
+                    }),
             ) {
             StageEvidence::new(
                 StageState::Weak,

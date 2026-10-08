@@ -12,8 +12,7 @@
   "followed_retarget": false,
   "changed_since_labeling": true,
   "observed_classifications": [
-    "infection_unknown",
-    "weakly_exposed"
+    "infection_unknown"
   ],
   "outcome": "abstained",
   "contradictions": [],
