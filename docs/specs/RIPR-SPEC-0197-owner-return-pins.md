@@ -997,19 +997,26 @@ assertions. This repair shares the existing callback without that larger migrati
 - Unit borrowed check-helper controls
   (`crates/ripr/src/analysis/classify/owner_pin/tests/helper_pins.rs`, #6482):
   `an_eagerly_called_local_check_helper_lends_its_assertion` (plain,
-  `#[track_caller]`, one eager plus one deferred call, directly invoked
-  closure); `a_helper_call_off_the_eager_path_lends_nothing` (loop, branch,
+  `#[track_caller]`, one eager plus one deferred call, a `for` loop over a
+  non-empty constant-row table); `a_helper_call_off_the_eager_path_lends_nothing`
+  (a loop over a non-constant iterator, branch,
   uninvoked closure, argument, after `return`, cfg-attributed, `async`
   block, qualified path, macro operand, untrusted macro);
   `a_call_that_may_not_name_the_helper_lends_nothing` (closure and nested-fn
   shadows, `use` in the test, duplicate definition in another module, helper
   outside the test's module);
   `only_a_plain_helper_that_runs_to_its_end_lends_its_assertion` (generic,
-  early `return`, return type, assertion in a loop, untrusted macro, cfg
-  attribute, `async fn`); `a_helper_that_rebinds_or_feeds_back_the_owner_is_not_a_pin`
+  early `return`, a `return` on one match arm, return type, assertion in a
+  loop, a match arm or an `if let` branch, untrusted macro, cfg attribute,
+  `async fn`); `a_helper_that_rebinds_or_feeds_back_the_owner_is_not_a_pin`
   (owner name as a helper parameter, owner called in a call-site argument);
   `the_indexed_helper_assertion_is_the_admitted_one` (the index's own
-  helper crediting yields the coordinate the admission accepts); and
+  helper crediting yields the coordinate the admission accepts);
+  `only_producer_credited_helper_calls_lend_an_assertion` (through
+  `build_index`, the table loop reaches `test.assertions` and a directly
+  invoked closure does not);
+  `a_borrowed_assertion_takes_neither_the_path_nor_the_let_bound_pin`;
+  `a_helper_that_names_the_owner_twice_lends_nothing`; and
   `a_helper_scoped_assert_eq_binding_refuses_the_loan` (an empty or
   forwarding `macro_rules! assert_eq` inside the helper's body). Each
   negative test carries the positive control, so the six admission tests
