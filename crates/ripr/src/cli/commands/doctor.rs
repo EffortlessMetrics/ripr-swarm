@@ -3018,13 +3018,17 @@ mod tests {
         );
         // An adapter that was not compiled into this binary says so on the
         // same line; the typed `adapter_available` field is what says it in JSON.
+        // The expectation follows the compiled features: `--all-features`
+        // builds (like CI's JUnit job) compile the Perl adapter (#7137).
         let unavailable = detected_language_entries(&[LanguageId::Perl], Some(&[]));
-        assert!(!unavailable[0].adapter_available);
-        assert!(
-            detected_languages_lines(&unavailable, &[])[0].contains("[adapter not compiled]"),
-            "{:?}",
-            detected_languages_lines(&unavailable, &[])
-        );
+        let first = &detected_languages_lines(&unavailable, &[])[0];
+        if cfg!(feature = "lang-perl") {
+            assert!(unavailable[0].adapter_available);
+            assert!(!first.contains("[adapter not compiled]"), "{first}");
+        } else {
+            assert!(!unavailable[0].adapter_available);
+            assert!(first.contains("[adapter not compiled]"), "{first}");
+        }
     }
 
     #[test]
