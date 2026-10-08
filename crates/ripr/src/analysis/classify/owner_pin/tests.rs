@@ -3990,6 +3990,53 @@ fn whole_value_review_holes_stay_closed() {
     assert!(camel_case_value_items(&index).contains("Count"));
 }
 
+/// #7066 review (second round): a cfg-elided binding, a qualified or
+/// test-side rebound expected type, and a workspace `Ok`/`Some` that is not
+/// the standard variant each refuse the whole-value pin.
+#[test]
+fn whole_value_identity_holes_stay_closed() {
+    let literal = r#"Config { retries: 4, name: "x".into(), count: Count(3) }"#;
+    // `#[cfg(any())] let c = ..;` leaves `c` naming an outer item.
+    assert!(!whole_value_admits(
+        CONFIG_LIB,
+        "build",
+        &format!("#[cfg(any())]\nlet current = build(3);\nassert_eq!(current, {literal});")
+    ));
+    // A qualified expected path may name another type.
+    assert!(!whole_value_admits(
+        CONFIG_LIB,
+        "build",
+        &format!("assert_eq!(build(3), external::{literal});")
+    ));
+    // The test file importing another `Config` rebinds the bare name.
+    let tests = format!(
+        "use demo::{{build, Count}};\nuse external::Config;\n#[test]\nfn pins() {{\n    assert_eq!(build(3), {literal});\n}}\n"
+    );
+    let (index, pin) = whole_value_pin(CONFIG_LIB, "build", &tests);
+    assert!(pin.is_some_and(|pin| admitted_texts(&index, &pin).is_empty()));
+    // Fixture control: the same test importing the workspace type pins.
+    let tests = tests.replace("use external::Config;", "use demo::Config;");
+    let (index, pin) = whole_value_pin(CONFIG_LIB, "build", &tests);
+    assert!(pin.is_some_and(|pin| !admitted_texts(&index, &pin).is_empty()));
+
+    // A workspace `Ok` function or a `Some` variant is not the standard one.
+    let ok_body = format!("assert_eq!(parse(\"3\"), Ok({literal}));");
+    assert!(whole_value_admits(CONFIG_LIB, "parse", &ok_body));
+    for shadow in [
+        "#[allow(non_snake_case)]\npub fn Ok(c: Config) -> Result<Config, String> {\n    Result::Ok(c)\n}\n",
+        "pub enum Probe {\n    Ok(u8),\n    Fail,\n}\n",
+        "pub use other::Ok;\n",
+    ] {
+        let lib = format!("{CONFIG_LIB}{shadow}");
+        let (_, pin) = whole_value_pin(
+            &lib,
+            "parse",
+            &format!("use demo::*;\n#[test]\nfn pins() {{\n{ok_body}\n}}\n"),
+        );
+        assert!(pin.is_none(), "{shadow}");
+    }
+}
+
 /// #6974: the assertions a `weight` pin admits when `lib` (the crate root,
 /// holding the owner and a `#[cfg(test)] mod tests`) and `tests` (an
 /// integration test) are the workspace.

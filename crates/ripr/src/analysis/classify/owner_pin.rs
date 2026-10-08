@@ -1321,7 +1321,11 @@ impl OwnerReturnPin {
         // The owner's file must name the workspace declaration: a `use
         // other::Config;` there makes the literal another crate's type.
         let owner_source = &index.files().get(&owner.file)?.source;
-        if declaring_file_rebinds(owner_source, &type_name, true, index) {
+        if declaring_file_rebinds(owner_source, &type_name, true, index)
+            || tail
+                .wrapper
+                .is_some_and(|wrapper| wrapper_may_be_rebound(wrapper, index))
+        {
             return None;
         }
         let field_is_string = derived_equality(&type_name, index).is_some_and(|(facts, _)| {
@@ -1468,6 +1472,15 @@ impl OwnerReturnPin {
                     return false;
                 }
             }
+        }
+        // The expected literal's bare name must reach the workspace type in
+        // the test's file too (`use external::Config;` there makes it another).
+        if let ReturnPathGate::WholeValueField(gate) = &self.path
+            && index.files().get(&test.file).is_none_or(|facts| {
+                declaring_file_rebinds(&facts.source, &gate.type_name, true, index)
+            })
+        {
+            return false;
         }
         let test_source = index
             .files()
@@ -1876,6 +1889,11 @@ fn bound_owner_call<'a>(
             // outer item.
             let before = &masked[..start];
             if before.matches('{').count() != before.matches('}').count() + 1 {
+                return None;
+            }
+            // An attribute (`#[cfg(..)] let c = ..;`) may compile the
+            // binding away, leaving the operand naming some outer item.
+            if before.trim_end().ends_with(']') {
                 return None;
             }
             // The binding is the name's first occurrence, so the
@@ -2602,9 +2620,13 @@ impl WholeValueField {
         }) {
             return false;
         }
+        // A bare name only: a qualified path (`external::Config`) may name
+        // another type whose equality with the owner's ignores the field.
         let names_type = literal.path().is_some_and(|path| {
-            path.segments()
-                .all(|segment| segment.generic_arg_list().is_none())
+            path.qualifier().is_none()
+                && path
+                    .segments()
+                    .all(|segment| segment.generic_arg_list().is_none())
                 && path
                     .segment()
                     .and_then(|segment| segment.name_ref())
@@ -3291,6 +3313,70 @@ fn strip_type_arguments(self_ty: &str) -> &str {
     self_ty.split('<').next().unwrap_or(self_ty).trim()
 }
 
+/// #7066 review: whether `Ok` or `Some` may name something other than the
+/// standard variant anywhere in the workspace: a type, `fn`, `const`,
+/// `static`, `mod`, `trait` or macro of that name, a variant of a workspace
+/// `enum`, a rename to it, or a `use` naming it from outside `std`, `core`
+/// and `alloc`. Lexical and workspace-wide, so it fails closed.
+fn wrapper_may_be_rebound(wrapper: &str, index: &RustIndex) -> bool {
+    index.files().values().any(|facts| {
+        facts.source.contains(wrapper) && {
+            let masked = mask_comments_and_strings(&facts.source);
+            let declared_after = |keyword: &str| {
+                whole_word_offsets(&masked, keyword)
+                    .into_iter()
+                    .any(|offset| {
+                        let rest = masked[offset + keyword.len()..].trim_start();
+                        let rest = rest.strip_prefix('!').map_or(rest, str::trim_start);
+                        starts_with_word(rest, wrapper)
+                    })
+            };
+            declares_type(&masked, wrapper)
+                || [
+                    "fn",
+                    "const",
+                    "static",
+                    "mod",
+                    "trait",
+                    "type",
+                    "macro_rules",
+                ]
+                .into_iter()
+                .any(declared_after)
+                || whole_word_offsets(&masked, "enum")
+                    .into_iter()
+                    .any(|offset| {
+                        let Some(open) = masked[offset..].find('{').map(|at| offset + at) else {
+                            return true;
+                        };
+                        let mut depth = 0usize;
+                        let close = masked[open..].char_indices().find_map(|(at, ch)| {
+                            match ch {
+                                '{' => depth += 1,
+                                '}' => {
+                                    depth -= 1;
+                                    if depth == 0 {
+                                        return Some(open + at);
+                                    }
+                                }
+                                _ => {}
+                            }
+                            None
+                        });
+                        close.is_none_or(|close| {
+                            contains_as_whole_word(&masked[open..close], wrapper)
+                        })
+                    })
+                || file_renames_to(&facts.source, wrapper)
+                || file_use_statements(&facts.source).iter().any(|statement| {
+                    contains_as_whole_word(statement, wrapper)
+                        && use_statement_first_segment(statement)
+                            .is_none_or(|root| !STD_ROOTS.contains(&root))
+                })
+        }
+    })
+}
+
 /// Whether masked `text` declares a struct, enum or union named `name`.
 fn declares_type(text: &str, name: &str) -> bool {
     ["struct", "enum", "union"].iter().any(|keyword| {
@@ -3920,7 +4006,11 @@ fn let_bound_owner_call<'a>(
     let masked = mask_comments_and_strings(&test.body);
     let binding_at = binding.as_ptr() as usize - test.body.as_ptr() as usize;
     let let_at = *whole_word_offsets(&masked[..binding_at], "let").last()?;
-    if contains_as_whole_word(&masked[let_at..binding_at], "mut") {
+    // #7066 review: an attribute (`#[cfg(any())] let total = ..;`) may
+    // compile the binding away, leaving the operand naming an outer item.
+    if contains_as_whole_word(&masked[let_at..binding_at], "mut")
+        || masked[..let_at].trim_end().ends_with(']')
+    {
         return None;
     }
     let let_line = test.start_line + masked[..let_at].matches('\n').count();
