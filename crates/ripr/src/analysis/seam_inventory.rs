@@ -2663,8 +2663,13 @@ pub(crate) fn inventory_seams_from_index_bounded(
             continue;
         };
         let lookup = rust_index::FileOwnerLookup::new(facts.functions.iter());
+        // One line index per file: span derivation reuses it for every
+        // shape, exactly like the unbounded inventory loop above.
+        let line_starts = build_line_starts(&facts.source);
         for shape in &facts.probe_shapes {
-            if let Some(seam) = build_seam_from_shape(file, shape, &lookup) {
+            if let Some(seam) =
+                build_seam_from_shape(file, shape, &lookup, &facts.source, &line_starts)
+            {
                 collector.push(seam);
             }
         }

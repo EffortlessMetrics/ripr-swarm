@@ -1822,7 +1822,7 @@ fn free_identifiers(text: &str) -> Vec<String> {
 /// (`owner(x + 1)`). Such an argument yields no input row (it is not an exact
 /// value), yet the call may still sit on the boundary, so a boundary over
 /// one of these parameters is unresolved rather than missing (#6672).
-fn computed_input_parameters(
+pub(in crate::analysis) fn computed_input_parameters(
     owner: &FunctionSummary,
     parameters: &[String],
     related_tests: &[&TestSummary],

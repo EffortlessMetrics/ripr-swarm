@@ -133,6 +133,54 @@ impl ClassifiedProbeEvidence {
             &activation,
             gathered.unresolved_boundary.as_deref(),
         );
+        // #6796's computed-argument discipline, wrapper edition (#6672,
+        // #6694): when the tests reach the owner only through the helper
+        // chain and a chain entry argument is a computed expression
+        // (`base + 1`), whether the changed boundary is activated at all is
+        // unreadable. The predicate lens abstains through activation's
+        // unresolved-boundary reason; a non-predicate lens on the same owner
+        // reads infection off the same tests' reach, so without this guard it
+        // grades the finding as a gap ("tests miss the boundary") that the
+        // computed argument makes unreadable — a claim this seam must not
+        // make. Infection abstains with the same reason.
+        let chain_computed_inputs = match (context.owner_fn, context.helper_chain.as_ref()) {
+            (Some(owner), Some(chain)) => {
+                let chain_tests = context
+                    .related_tests
+                    .iter()
+                    .map(|(test, _)| *test)
+                    .collect::<Vec<_>>();
+                !crate::analysis::classify::computed_input_parameters(
+                    owner,
+                    &owner_parameter_names(owner),
+                    &chain_tests,
+                    Some(chain),
+                )
+                .is_empty()
+            }
+            _ => false,
+        };
+        let infect = match (context.owner_fn, context.helper_chain.as_ref()) {
+            (Some(owner), Some(_))
+                if !matches!(context.probe.family, ProbeFamily::Predicate)
+                    && chain_computed_inputs
+                    && helper_only_reach(&context.related_tests)
+                    && matches!(infect.state, StageState::Yes | StageState::Weak) =>
+            {
+                StageEvidence::new(
+                    StageState::Unknown,
+                    Confidence::Low,
+                    format!(
+                        "Infection unknown: a related test passes a computed argument for `{}`, so ripr cannot tell whether the changed boundary is activated",
+                        owner_parameter_names(owner)
+                            .first()
+                            .cloned()
+                            .unwrap_or_else(|| "the changed input".to_string())
+                    ),
+                )
+            }
+            _ => infect,
+        };
         let valid_witness = propagation_witness
             .as_ref()
             .and_then(|diagnostic| match diagnostic {
