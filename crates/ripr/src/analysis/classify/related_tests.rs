@@ -3039,7 +3039,10 @@ pub(in crate::analysis) fn is_free_function_call_at(text: &str, at: usize, name:
         while before > 0 && bytes[before - 1].is_ascii_whitespace() {
             before -= 1;
         }
-        if before > 0 && bytes[before - 1] == b'.' {
+        // A receiver dot selects a method; the first dot of a range
+        // (`0..bound(x)`) does not — the call is a bare free call computing
+        // the bound, the same rule `receiver_dot_before` applies (#7006).
+        if before > 0 && bytes[before - 1] == b'.' && (before < 2 || bytes[before - 2] != b'.') {
             return false;
         }
         // A nested `fn name(` declaration defines the name, it does not
@@ -4167,6 +4170,8 @@ mod tests {
             "units::kb :: <Vec<u8>> (1)",
             "r#kb(1)",
             "kb::<fn() -> u8>(f)",
+            // The first dot of a range is not a receiver dot (#7006 rule).
+            "(0..kb(1)).sum()",
         ] {
             assert!(text_has_free_function_call(text, "kb"), "{text}");
         }
