@@ -216,7 +216,39 @@ rule only for an assertion whose context was admitted.
      (`a_cfg_gated_owner_is_not_reached_by_a_bare_call`,
      `an_ancestor_file_a_cfg_may_drop_gates_the_owner`,
      `a_cfg_attr_path_on_the_owners_declaration_gates_it_through_real_composition`).
-     The same file rule applies to a path call.
+     The same file rule applies to a path call. The test's binding of the
+     name must resolve to the owner (#7097): a `static` (plain or `mut`),
+     `const`, tuple or unit struct, or extern item of the name in the test's
+     body or own module scope takes the call, so it refuses; an explicit `use` binding the
+     name must be the only one in its scope and resolve to a module
+     holding the owner — the owner's own path (`self`/`super` from the
+     scope, `crate` under the owner's root, or the owner's library crate
+     name from the manifest authority) or one `use` re-exporting it; a
+     glob must deliver the owner's binding from such a module holding no
+     twin (an item, a `use` to elsewhere, or a macro that may emit one);
+     and with neither `use` nor glob the test must sit in the owner's own
+     module. Type-only items (`mod`,
+     `trait`, `type`, `enum`, `union`, braced `struct`) share no
+     namespace with the call and keep the pin. A `super` at the top of an
+     out-of-line file climbs into the inline scope holding its `mod`
+     declaration in the declaring parent, so `use super::name` and
+     `use super::*` there resolve past it; include edges never climb.
+     Anything unplaced — a
+     foreign crate, an unresolved path, a re-export chain past one hop —
+     refuses
+     (`a_bare_call_to_an_imported_same_named_twin_is_not_a_pin`,
+     `a_bare_call_beside_a_competing_import_is_not_a_pin`,
+     `a_same_named_item_in_the_test_file_is_not_the_owner`,
+     `a_bare_call_through_the_owners_own_import_pins_beside_a_twin`,
+     `a_bare_call_through_a_glob_pins_only_past_the_owners_module`,
+     `a_bare_call_without_an_import_pins_only_in_the_owners_module`,
+     `a_same_named_type_only_item_in_the_test_file_keeps_the_pin`,
+     `a_unit_struct_twin_refuses_the_bare_call`,
+     `an_extern_twin_refuses_the_bare_call`,
+     `a_static_mut_twin_refuses_the_bare_call`,
+     `an_out_of_line_super_glob_pins_past_the_declaring_parent`,
+     `an_out_of_line_super_use_pins_past_the_declaring_parent`,
+     `an_out_of_line_super_glob_refuses_past_a_parent_twin`).
    - A path call `a::b::name(..)` (#6974) names the same free function only
      when the path resolves to exactly the module that declares the owner.
      There an explicit `fn name` takes the value name from every glob, and
@@ -259,7 +291,32 @@ rule only for an assertion whose context was admitted.
      `.expect(..)`, and any other `T::f(..)` only when `f` is `T`'s one
      inherent associated function of that name and declares `-> Self` (or
      `-> T`), or `Result`/`Option` of it followed by `?`, `.unwrap()` or
-     `.expect(..)`; or a byte-slice expression (`&[..][..]`, `&b".."[..]`).
+     `.expect(..)`; a unit struct's own name (`let recv = Unit;`); or a
+     byte-slice expression (`&[..][..]`, `&b".."[..]`). A receiver that no
+     `let` binds is a path expression: `Unit.advance()` is typed as
+     `let recv = Unit;` would be (#7083). Telling what a bare name resolves to
+     takes name resolution, so a bare name types its receiver only in a shape
+     where nothing else can supply the name. The workspace must declare it
+     exactly once, as a non-generic unit struct (`struct Unit;`), and in the
+     test's own file. Every other spelling of the name in the workspace must
+     be an `impl` header, a method call (`Unit.f(..)`) or a `let`
+     initializer (`= Unit;`). No workspace `macro_rules!` matcher may take an
+     `ident` or `tt` fragment, no file that defines a macro may spell the
+     name (one `struct Unit;` in a macro body declares a type per
+     invocation), every workspace glob import must be a `crate`,
+     `self` or `super` path through declared workspace modules that no
+     workspace `use` or `extern crate` also binds (so neither a foreign glob
+     nor `use std::u32 as nums;` with `use crate::nums::*` qualifies, even
+     beside an unrelated `mod nums`), no workspace file may use
+     `include!` or `#[path]` (either spelling, including raw `#[r#path]`),
+     and the name may not be a prelude value
+     (`None`, `Some`, `Ok`, `Err`). Review found that imports
+     (`use self::Kind::Unit`, a lower-case `pub use std::u32::MAX`
+     re-export), raw identifiers, macro input, `include!`, Unicode
+     whitespace inside a macro matcher and a prelude name can each put
+     another value under the name, so any of them refuses. Items a derive
+     or attribute proc macro emits stay invisible, as for every other rule,
+     as do items an out-of-workspace `macro_rules!` invocation emits (#7160).
      An inline receiver `T::f(..).name(..)` is typed exactly as
      `let recv = T::f(..);` would be, so `Stack::new(1).depth()` pins
      `Stack::depth` under the same constructor-signature rules.
@@ -298,7 +355,8 @@ rule only for an assertion whose context was admitted.
      package, or its `::`-rooted form), or declares it. A byte-slice
      receiver never credits a name `&[u8]` itself resolves (slice methods,
      prelude and `std::io` trait methods). A named receiver never credits
-     a by-value prelude trait method name (`count`, `map`, `into`, ...):
+     a by-value prelude trait method name (`count`, `map`, `into`,
+     `into_future`, `Iterator`'s `eq`/`ne`/`cmp`/`partial_cmp`/`lt`/...):
      method lookup tries `T` before `&T`, so `Iterator::count(self)` takes
      `c.count()` before an inherent `count(&self)` whenever the type is an
      iterator, and ripr cannot see which std traits a type implements.
@@ -959,7 +1017,13 @@ assertions. This repair shares the existing callback without that larger migrati
   `a_module_child_of_an_ambiguous_include_fragment_stays_workspace_wide`,
   `a_withheld_crate_roots_private_glob_is_routed_by_root`); plain `assert_eq!` against an owner-free value, `#[should_panic]`
   and assertions outside the test body; by-value prelude method names;
-  constructor signatures; macro-bound, aliased and parameter receivers;
+  constructor signatures; unit-struct receivers
+  (`unit_struct_receiver_is_typed_by_its_own_name`,
+  `unit_struct_value_admits_only_spellings_nothing_else_can_bind`,
+  `edition_2024_into_future_is_a_by_value_prelude_method`,
+  `iterator_by_value_comparisons_are_prelude_methods`,
+  `unstable_is_partitioned_custom_default_is_admitted`);
+  macro-bound, aliased and parameter receivers;
   lexical fallback; the item-container fact.
 - Unit execution and macro context controls: `owner_pin_requires_an_executed_assertion_context`,
   `owner_pin_requires_unambiguous_standard_assert_eq`, `owner_pin_refuses_ambiguous_oracle_coordinates`,
@@ -999,6 +1063,21 @@ assertions. This repair shares the existing callback without that larger migrati
   call or binding only in a message argument or an operand comment, and a boundary call left
   unasserted on the assertion's line) against the rewrite and a `<`
   mutant; only the two `exposed` layouts fail on the mutant.
+  `unit_struct_receiver_matched_static_and_runtime_controls` (#7083) pins a
+  kept trait default through `Unit.advance()` and through `let unit = Unit;`,
+  and refuses an impl that overrides the default; only the two `exposed`
+  layouts fail on a `4 + self.step()` mutant.
+  `reexported_value_under_a_unit_struct_name_is_not_credited` imports a
+  `pub use std::u32::MAX;` re-export over a unit struct `MAX`, and
+  `aliased_outside_module_beside_a_same_named_module_is_not_credited` globs
+  `use std::u32 as nums;` beside an unrelated `mod nums`; in both the mutant
+  passes and the finding reads `weakly_exposed`.
+  `unstable_is_partitioned_custom_default_matched_controls` (#7098 review)
+  credits a custom `is_partitioned` default through a receiver that also
+  implements `Iterator` — the std method is still unstable on 1.95, so the
+  mutant fails; `raw_path_shadow_module_keeps_the_mutant_green` (#7098
+  review) loads a rival `Unit` from a `#[r#path]`-named non-`.rs` module,
+  and the mutant passes while the finding refuses.
 - Bool-owner unit tests: `a_bare_assert_pins_a_bool_owner_to_true_or_false`,
   `a_bare_assert_pins_nothing_on_a_non_bool_owner`,
   `a_bare_assert_keeps_the_owner_binding_defeats`; pairing unit test

@@ -172,6 +172,7 @@ pub(crate) enum XtaskCommand {
     WorkPortfolio(Vec<String>),
     WorkCandidates(Vec<String>),
     WorkExplain(Vec<String>),
+    WorkSelectionCheck(Vec<String>),
     Unknown(String),
 }
 
@@ -360,6 +361,13 @@ impl XtaskCommand {
                 Some("portfolio") => Self::WorkPortfolio(rest[1..].to_vec()),
                 Some("candidates") => Self::WorkCandidates(rest[1..].to_vec()),
                 Some("explain") => Self::WorkExplain(rest[1..].to_vec()),
+                Some("selection") => match rest.get(1).map(|arg| arg.as_str()) {
+                    Some("check") => Self::WorkSelectionCheck(rest[2..].to_vec()),
+                    _ => Self::Unknown(format!(
+                        "work selection {}",
+                        rest.get(1).map(|arg| arg.as_str()).unwrap_or("")
+                    )),
+                },
                 _ => Self::Unknown(format!(
                     "work {}",
                     rest.first().map(|arg| arg.as_str()).unwrap_or("")
@@ -616,6 +624,7 @@ pub(crate) fn known_commands() -> Vec<&'static str> {
         "work portfolio [--captured <dir>] [--json]",
         "work candidates [--captured <dir>] [--campaign <id>] [--surface <id>] [--limit <n>] [--json]",
         "work explain --candidate <id> [--captured <dir>] [--json]",
+        "work selection check [--corpus <dir>] [--json]",
     ]
 }
 
@@ -2278,6 +2287,14 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
             false,
             false,
             "Renders exactly one work candidate by stable id with its lifecycle stage, next durable transition, blockers, conflicts, capacity, costs, confidence and the eight explicit ordered ranking factors; unknown ids fail closed.",
+        ),
+        command_entry(
+            "work selection check [--corpus <dir>] [--json]",
+            "report_only",
+            "target/ripr/reports/work-selection-check.{json,md}",
+            false,
+            false,
+            "Validates committed SelectedWorkIdentityV1 packets against the PortfolioBasisV1 compiled from immutable captured inputs (#1706 PR A, RIPR-SPEC-0244); wrong repository/issue/action/basis/worktree/head identities fail with exact recompile/reconcile routes, legacy active-goal/current-work-item refs stay read-only with no authority, and no GitHub, branch, worktree, claim, spec, campaign or source state is touched.",
         ),
     ]
 }

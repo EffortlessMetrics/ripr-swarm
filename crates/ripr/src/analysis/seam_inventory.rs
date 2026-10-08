@@ -2706,6 +2706,13 @@ fn build_seam_from_shape(
     line_starts: &[usize],
 ) -> Option<RepoSeam> {
     let kind = seam_kind_from_probe_shape(shape.kind)?;
+    // A call whose value feeds a consumer cannot be deleted without breaking
+    // the build, so no mutant asks whether tests notice it is gone. The
+    // consumer's predicate, return or error seam carries that behavior
+    // (#6677). Diff-scope `call_deletion` probes are unchanged.
+    if kind == SeamKind::CallPresence && shape.value_consumed {
+        return None;
+    }
     let owner_fact = owners.owner(shape.start_line)?;
     // Skip shapes whose owner is itself a test function (e.g.,
     // `#[test] fn ...` inside an in-file `#[cfg(test)] mod tests`).
@@ -3796,6 +3803,176 @@ fn notify() {}
     }
 
     #[test]
+    fn seam_inventory_keeps_call_presence_only_for_calls_whose_value_is_discarded()
+    -> Result<(), String> {
+        // #6677: deleting a call whose value feeds a consumer does not
+        // compile, so no mutant asks whether tests notice the call is gone.
+        let path = PathBuf::from("src/code.rs");
+        let source = r#"
+pub fn parse_code(s: &str, log: &mut Vec<u32>) -> Result<u32, CodeError> {
+    if s.len() < 4 {
+        return Err(short_error());
+    }
+    let d = digit(s).ok_or(CodeError::NotDigit)?;
+    let total = scale(d) + offset();
+    for c in chars(s) {
+        log.push(c);
+    }
+    notify(d);
+    validate(d)?;
+    let _ = announce(d);
+    let _guard = lock(d);
+    let label = match kind(d) {
+        0 => zero_label(),
+        _ => other_label(),
+    };
+    let run = || refresh(d);
+    while ready() {
+        tick();
+    }
+    sink(label, run);
+    Ok(finish(total))
+}
+
+pub fn tail_discarded(x: u32) {
+    record(x)
+}
+
+pub fn early_unit_return(x: u32) {
+    if x == 0 {
+        return reset(x);
+    }
+    _ = drop_me(x);
+}
+
+pub fn spaced_unit(x: u32) -> ( ) {
+    spaced(x)
+}
+
+pub fn future_tail(x: u32) -> impl Future<Output = ()> {
+    async move { work(x).await }
+}
+
+pub fn checked(x: u32) -> Result<(), CodeError> {
+    commit(x)
+}
+
+pub fn loop_value(x: u32) -> u32 {
+    let found = loop {
+        break search(x);
+    };
+    let tagged = 'outer: {
+        for step in 0..x {
+            if step > 2 {
+                break 'outer probe(step);
+            }
+        }
+        0
+    };
+    loop {
+        break flush(x);
+    }
+    while x > 0 {
+        break;
+    }
+    found + tagged
+}
+
+pub fn positions(x: u32, v: &[u32]) -> u32 {
+    let a = pair(x).0;
+    let b = v[slot(x)];
+    let c = [elem(x), 1];
+    let t = (tup(x), 2);
+    let p = Point { y: field_init(x) };
+    let r = 0..bound(x);
+    let n = !flag(x);
+    let w = &borrowed(x);
+    let k = (wrapped(x)) as u64;
+    let m = if let Some(z) = maybe(x) { z } else { 0 };
+    match x {
+        _ if guard(x) => 1,
+        _ => 0,
+    }
+}
+"#;
+        let index = index_from_files(&[(path.clone(), source)])?;
+        let seams = inventory_seams_from_index(std::slice::from_ref(&path), &index);
+        let call_presence = seams
+            .iter()
+            .filter(|seam| seam.kind() == SeamKind::CallPresence)
+            .map(|seam| seam.expression().to_string())
+            .collect::<Vec<_>>();
+        let mut expected = vec![
+            "announce(d)".to_string(),
+            "drop_me(x)".to_string(),
+            "flush(x)".to_string(),
+            "lock(d)".to_string(),
+            "reset(x)".to_string(),
+            "spaced(x)".to_string(),
+            "work(x)".to_string(),
+            "log.push(c)".to_string(),
+            "notify(d)".to_string(),
+            "record(x)".to_string(),
+            "refresh(d)".to_string(),
+            "sink(label, run)".to_string(),
+            "tick()".to_string(),
+            "validate(d)".to_string(),
+        ];
+        let mut observed = call_presence.clone();
+        observed.sort();
+        expected.sort();
+        assert_eq!(observed, expected, "call_presence seams: {call_presence:?}");
+
+        // The consumer seams stay, and the diff-scope `call_deletion` shapes
+        // are still emitted for every call, consumed or not.
+        let kinds = seams.iter().map(|seam| seam.kind()).collect::<Vec<_>>();
+        assert!(kinds.contains(&SeamKind::PredicateBoundary), "{kinds:?}");
+        assert!(kinds.contains(&SeamKind::ReturnValue), "{kinds:?}");
+        let facts = RaRustSyntaxAdapter.summarize_file(&path, source)?;
+        let consumed = facts
+            .probe_shapes
+            .iter()
+            .filter(|shape| shape.kind == ProbeShapeKind::CallDeletion && shape.value_consumed)
+            .map(|shape| shape.text.as_str())
+            .collect::<Vec<_>>();
+        for call in [
+            "s.len()",
+            "short_error()",
+            "digit(s)",
+            "digit(s).ok_or(CodeError::NotDigit)",
+            "scale(d)",
+            "offset()",
+            "chars(s)",
+            "kind(d)",
+            "zero_label()",
+            "other_label()",
+            "ready()",
+            "finish(total)",
+            "Ok(finish(total))",
+            "commit(x)",
+            "search(x)",
+            "probe(step)",
+            "pair(x)",
+            "slot(x)",
+            "elem(x)",
+            "tup(x)",
+            "field_init(x)",
+            "bound(x)",
+            "flag(x)",
+            "borrowed(x)",
+            "wrapped(x)",
+            "maybe(x)",
+            "guard(x)",
+        ] {
+            assert!(
+                consumed.contains(&call),
+                "{call} should read consumed: {consumed:?}"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
     fn seam_inventory_skips_inline_test_functions_inside_production_files() -> Result<(), String> {
         let path = PathBuf::from("src/lib.rs");
         let source = r#"
@@ -4582,6 +4759,7 @@ pub fn classify(amount: i32, service: &mut Service) -> Result<Quote, Error> {
                     end_byte: 26,
                     kind: ProbeShapeKind::UnsafeBoundary,
                     text: "owner_body".into(),
+                    value_consumed: false,
                 }],
                 ..FileFacts::default()
             },
@@ -4635,6 +4813,7 @@ pub fn classify(amount: i32, service: &mut Service) -> Result<Quote, Error> {
                     end_byte: 126,
                     kind: ProbeShapeKind::Predicate,
                     text: "x >= 0".into(),
+                    value_consumed: false,
                 }],
                 ..FileFacts::default()
             },

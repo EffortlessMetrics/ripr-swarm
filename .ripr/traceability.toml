@@ -9619,6 +9619,7 @@ tests = [
   "crates/ripr/src/lsp/diagnostics.rs::seam_diagnostic_tests::load_gap_ledger_records_types_every_failure_mode",
   "crates/ripr/src/lsp/tests.rs::lsp_production_sources_have_no_stderr_degradation_fallback",
   "crates/ripr/src/lsp/tests.rs::framed_lsp_component_degradation_is_typed_logged_and_recovers",
+  "crates/ripr/src/lsp/tests.rs::framed_lsp_gap_ledger_degradation_is_typed_logged_and_recovers",
   "crates/ripr/src/lsp/diagnostics.rs::oversized_diff_error_converts_to_a_committed_limited_snapshot_with_one_warning",
   "crates/ripr/src/lsp/diagnostics.rs::repo_scope_and_wrapped_guard_errors_do_not_convert",
   "crates/ripr/src/lsp/tests.rs::oversized_diff_warning_snapshot_prepares_commits_and_publishes",
@@ -11571,6 +11572,11 @@ tests = [
   "crates/ripr/src/app/repair_card_handoff.rs::tests::repair_card_assembly_preserves_static_limitations_without_cage_admission",
   "crates/ripr/src/app/repair_card_handoff.rs::tests::repair_card_assembly_stays_within_the_default_bounds",
   "crates/ripr/src/app/repair_card_handoff.rs::tests::gap_names_seam_requires_owner_match",
+  "crates/ripr/src/app/repair_card_handoff.rs::tests::producer_gap_names_seam_by_file_owner_and_kind",
+  "crates/ripr/src/app/repair_card_handoff.rs::tests::producer_gap_finding_binds_the_seam_witness_when_unique",
+  "crates/ripr/src/app/repair_card_handoff.rs::tests::producer_gap_with_sibling_owner_binds_no_witness",
+  "crates/ripr/src/app/repair_card_handoff.rs::tests::producer_finding_binds_only_the_twin_seam_at_its_line",
+  "crates/ripr/src/app/repair_card_handoff.rs::tests::content_hash_match_wins_over_producer_match",
   "crates/ripr/src/app/repair_card_handoff.rs::tests::packet_queue_omission_marks_canonical_packet_unavailable",
   "crates/ripr/src/app/repair_card_handoff.rs::tests::attempt_recorded_at_another_head_is_stale_not_current",
   "crates/ripr/tests/cli_smoke.rs::agent_card_readiness_agrees_with_repair_target_admission",
@@ -11791,6 +11797,11 @@ tests = [
   "crates/ripr/tests/owner_pin_execution.rs::async_test_discovery_does_not_supply_execution_provenance",
   "crates/ripr/tests/owner_pin_execution.rs::equality_execution_uses_statement_prefix_and_closure_invocation",
   "crates/ripr/tests/owner_pin_execution.rs::spawned_thread_assertion_matched_static_and_runtime_controls",
+  "crates/ripr/tests/owner_pin_execution.rs::unit_struct_receiver_matched_static_and_runtime_controls",
+  "crates/ripr/tests/owner_pin_execution.rs::reexported_value_under_a_unit_struct_name_is_not_credited",
+  "crates/ripr/tests/owner_pin_execution.rs::aliased_outside_module_beside_a_same_named_module_is_not_credited",
+  "crates/ripr/tests/owner_pin_execution.rs::unstable_is_partitioned_custom_default_matched_controls",
+  "crates/ripr/tests/owner_pin_execution.rs::raw_path_shadow_module_keeps_the_mutant_green",
   "crates/ripr/tests/owner_pin_execution.rs::an_extern_crate_named_thread_refuses_spawned_thread_credit",
   "crates/ripr/tests/owner_pin_execution.rs::a_leading_colon_thread_path_refuses_spawned_thread_credit",
   "crates/ripr/tests/owner_pin_execution.rs::an_out_of_line_super_glob_refuses_spawned_thread_credit",
@@ -11799,6 +11810,11 @@ tests = [
   "crates/ripr/tests/owner_pin_execution.rs::equality_family_admission_preserves_mixed_oracle_identity_and_projection",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::trait_default_pinned_through_a_byte_slice_receiver",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::trait_method_needs_its_trait_imported_from_the_workspace",
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::unit_struct_receiver_is_typed_by_its_own_name",
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::unit_struct_value_admits_only_spellings_nothing_else_can_bind",
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::edition_2024_into_future_is_a_by_value_prelude_method",
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::iterator_by_value_comparisons_are_prelude_methods",
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::unstable_is_partitioned_custom_default_is_admitted",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::another_definition_of_the_method_defeats_the_pin",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::receiver_must_be_bound_to_a_type_that_dispatches_to_the_owner",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_slice_method_name_resolves_to_the_slice_first",
@@ -11856,6 +11872,19 @@ tests = [
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_cfg_gated_owner_is_not_reached_by_a_bare_call",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::an_ancestor_file_a_cfg_may_drop_gates_the_owner",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_cfg_attr_path_on_the_owners_declaration_gates_it_through_real_composition",
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_bare_call_to_an_imported_same_named_twin_is_not_a_pin",
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_bare_call_beside_a_competing_import_is_not_a_pin",
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_same_named_item_in_the_test_file_is_not_the_owner",
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_bare_call_through_the_owners_own_import_pins_beside_a_twin",
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_bare_call_through_a_glob_pins_only_past_the_owners_module",
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_bare_call_without_an_import_pins_only_in_the_owners_module",
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_same_named_type_only_item_in_the_test_file_keeps_the_pin",
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_unit_struct_twin_refuses_the_bare_call",
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::an_extern_twin_refuses_the_bare_call",
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_static_mut_twin_refuses_the_bare_call",
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::an_out_of_line_super_glob_pins_past_the_declaring_parent",
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::an_out_of_line_super_use_pins_past_the_declaring_parent",
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::an_out_of_line_super_glob_refuses_past_a_parent_twin",
   "crates/ripr/tests/owner_pin_execution.rs::owner_pin_matched_static_and_runtime_controls",
   "crates/ripr/tests/owner_pin_execution.rs::owner_pin_token_overlap_cannot_bypass_oracle_admission",
   "crates/ripr/tests/owner_pin_execution.rs::owner_pin_shared_admission_keeps_credit_on_one_admitted_oracle",
@@ -12512,6 +12541,7 @@ tests = [
   "crates/ripr/src/mcp/server_tests.rs::list_gaps_accepts_offset_and_limit_at_the_dispatch_edge",
   "crates/ripr/tests/mcp_sdk.rs",
   "crates/ripr/tests/mcp_stdio.rs::gap_tools_fail_closed_before_the_first_refresh",
+  "crates/ripr/tests/mcp_stdio.rs::resource_reads_match_tools_after_refresh",
   "crates/ripr/tests/mcp_stdio.rs::post_initialize_ping_with_handshake_meta_returns_an_empty_result",
   "crates/ripr/src/mcp/gaps.rs::tests::gap_projection_renders_every_served_file_root_relative",
   "crates/ripr/src/mcp/gaps.rs::tests::gap_projection_keeps_an_out_of_root_file_stable",
@@ -12683,6 +12713,7 @@ tests = [
   "crates/ripr/src/mcp/server_tests.rs::repair_tools_reject_bad_arguments_at_the_dispatch_edge",
   "crates/ripr/tests/mcp_sdk.rs",
   "crates/ripr/tests/mcp_stdio.rs",
+  "crates/ripr/tests/mcp_stdio.rs::resource_reads_match_tools_after_refresh",
 ]
 code = [
   "crates/ripr/src/mcp/repair.rs",
@@ -12709,11 +12740,16 @@ tests = [
   "crates/ripr/src/mcp/repair_card.rs::tests::witness_bound_card_projects_the_shared_handoff_card",
   "crates/ripr/src/mcp/repair_card.rs::tests::refusal_kinds_travel_under_their_pinned_wire_spellings",
   "crates/ripr/src/mcp/repair_card.rs::tests::seam_binding_requires_the_gap_owner_match",
+  "crates/ripr/src/mcp/repair_card.rs::tests::producer_shaped_finding_binds_its_item_at_bind_time",
+  "crates/ripr/src/mcp/repair_card.rs::tests::exposed_finding_binds_its_item_without_projecting_a_witness",
+  "crates/ripr/src/mcp/repair_card.rs::tests::retain_unambiguous_item_bindings_drops_shared_items",
   "crates/ripr/src/mcp/protocol.rs::tests",
   "crates/ripr/src/mcp/server_tests.rs::repair_card_fails_closed_before_refresh",
   "crates/ripr/src/mcp/server_tests.rs::repair_tools_reject_bad_arguments_at_the_dispatch_edge",
   "crates/ripr/tests/mcp_sdk.rs",
   "crates/ripr/tests/mcp_stdio.rs",
+  "crates/ripr/tests/mcp_stdio.rs::get_repair_card_after_refresh_matches_cli_agent_card",
+  "crates/ripr/tests/mcp_stdio.rs::resource_reads_match_tools_after_refresh",
 ]
 code = [
   "crates/ripr/src/mcp/repair_card.rs",
@@ -13295,15 +13331,65 @@ metrics = [
   "unit_test_pass_rate",
 ]
 [[behavior]]
+id = "RIPR-SPEC-0244"
+name = "Shared selected-work identity schemas and legacy compatibility"
+spec = "docs/specs/RIPR-SPEC-0244-selected-work-identity.md"
+tests = [
+  "xtask/src/work_selection_identity.rs::tests::work_selection_identity_committed_corpus_twelve_scenarios_hold",
+  "xtask/src/work_selection_identity.rs::tests::work_selection_identity_wrong_identities_fail_visibly_with_exact_routes",
+  "xtask/src/work_selection_identity.rs::tests::work_selection_identity_snapshot_change_keeps_compatible_issue_head",
+  "xtask/src/work_selection_identity.rs::tests::work_selection_identity_new_overlap_forces_reconcile",
+  "xtask/src/work_selection_identity.rs::tests::work_selection_identity_legacy_refs_read_only_no_authority",
+  "xtask/src/work_selection_identity.rs::tests::work_selection_identity_campaign_representations_without_default",
+  "xtask/src/work_selection_identity.rs::tests::work_selection_identity_no_singleton_or_runtime_state_fields",
+  "xtask/src/work_selection_identity.rs::tests::work_selection_identity_human_and_json_projections_agree",
+  "xtask/src/work_selection_identity.rs::tests::work_selection_identity_plan_disposition_vocabulary_frozen",
+  "xtask/src/work_selection_identity.rs::tests::work_selection_identity_stable_forms_and_equality",
+  "xtask/src/work_selection_identity.rs::tests::work_selection_identity_burndown_partial_projection_states",
+  "xtask/src/work_selection_identity.rs::tests::work_selection_identity_fresh_root_resume_from_artifacts_only",
+  "xtask/src/work_selection_identity.rs::tests::work_selection_identity_deterministic_output",
+  "xtask/src/work_selection_identity.rs::tests::work_selection_identity_corpus_loader_fails_closed",
+  "xtask/src/work_selection_identity.rs::tests::work_selection_identity_provenance_fails_closed",
+  "xtask/src/work_selection_identity.rs::tests::work_selection_identity_command_mutate_nothing_mutation_negative",
+  "xtask/src/work_selection_identity.rs::tests::work_selection_identity_basis_completeness_reflects_sources",
+  "xtask/src/work_selection_identity.rs::tests::work_selection_identity_subject_binding_laws_fail_closed",
+  "xtask/src/work_selection_identity.rs::tests::work_selection_identity_markdown_renders_wire_names",
+  "xtask/src/work_selection_identity.rs::tests::work_selection_identity_scenario_captured_resolution",
+  "xtask/src/work_selection_identity.rs::tests::work_selection_identity_spec_ref_wire_shape",
+  "xtask/src/work_selection_identity.rs::tests::work_selection_identity_committed_provenance_covers_every_corpus_byte",
+]
+fixtures = [
+  "fixtures/work_selection_identity",
+]
+code = [
+  "xtask/src/work_selection_identity.rs",
+  "xtask/src/work_portfolio.rs",
+  "xtask/src/command.rs",
+  "xtask/src/dispatch.rs",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0244-selected-work-identity.md",
+]
+metrics = [
+  "unit_test_pass_rate",
+]
+[[behavior]]
 id = "RIPR-SPEC-0225"
 name = "Whole-value equality credit for constructed fields"
 spec = "docs/specs/RIPR-SPEC-0225-whole-value-equality-field-credit.md"
-tests = []
+tests = [
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_whole_value_literal_naming_the_field_pins_it",
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_whole_value_literal_without_an_independent_field_value_does_not_pin",
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_whole_value_field_pin_needs_derived_equality_and_the_returned_literal",
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::whole_value_string_from_refuses_a_workspace_string",
+  "crates/ripr/src/analysis/classify/activation.rs::field_reads_count_only_on_the_owner_result",
+]
 fixtures = []
 code = [
   "crates/ripr/src/analysis/extract/oracles/classify.rs",
   "crates/ripr/src/analysis/extract/oracles/patterns.rs",
   "crates/ripr/src/analysis/classify/activation.rs",
+  "crates/ripr/src/analysis/classify/owner_pin.rs",
 ]
 outputs = [
   "docs/specs/RIPR-SPEC-0225-whole-value-equality-field-credit.md",

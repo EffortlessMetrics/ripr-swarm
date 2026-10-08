@@ -2852,6 +2852,39 @@ fn owner_call_relation_reason(
         // methods share this branch (their ids carry no `::impl` segment)
         // and impl-block methods never reach it (#3047).
         if !is_established_free_function(owner) {
+            // #7123: a trait-declaration owner (a default method — its id
+            // carries no `::impl` segment, so it cannot reach the
+            // trait-impl shadow checks below) is shadowed by a same-named
+            // `trait` declared in the test's own module scope exactly like
+            // a trait-impl owner (#7053): `self::Counter::advance(..)`
+            // — and every other trait-path spelling — names the
+            // test-local trait, so the production default never runs. A
+            // same-named trait at the root of an out-of-line parent module
+            // refuses the same way (#7087). The trait name comes from the
+            // parser-backed container fact; an unestablished container keeps
+            // the credit.
+            if let FunctionContainer::Trait { trait_name } = &owner.item.container {
+                let owner_scope = super::owner_pin::OwnerScope::new(
+                    owner.name.as_str(),
+                    owner.start_line,
+                    &owner.file,
+                );
+                if test_source.is_some_and(|source| {
+                    super::owner_pin::test_module_shadows_trait(
+                        test,
+                        source,
+                        trait_name,
+                        owner_scope.in_file(&test.file),
+                    )
+                }) || super::owner_pin::parent_chain_shadows_trait(
+                    test,
+                    trait_name,
+                    owner_scope,
+                    index,
+                ) {
+                    return RelationReason::WeakTokenSubstring;
+                }
+            }
             return RelationReason::DirectOwnerCall;
         }
         if free_function_call_spells_free_call(test, owner_name) {
@@ -2891,9 +2924,11 @@ fn owner_call_relation_reason(
     // #7053: a trait-impl owner is also shadowed by a same-named `trait`
     // declared in the test's own module scope: `Render::render(..)` and
     // `.render()` there name the test-local trait, so the production impl is
-    // never called. A trait the symbol id names (even a generic one) counts,
-    // and so does one declared at the root of an out-of-line parent module
-    // of the test file (#7087).
+    // never called. The refusal is spelling-blind — path-qualified
+    // `self::`/`super::`/`crate::` trait paths refuse the same way — and a
+    // trait-declaration default-method owner shares it (#7123). A trait the
+    // symbol id names (even a generic one) counts, and so does one declared
+    // at the root of an out-of-line parent module of the test file (#7087).
     let owner_trait = owner_trait_name(&owner.id.0);
     if owner_trait.as_deref().is_some_and(|trait_name| {
         test_source.is_some_and(|source| {
@@ -4746,6 +4781,169 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// #7123 fixture: the issue's exact repro — production `trait Counter`
+    /// with a default `fn advance`, plus a test module that either redeclares
+    /// `Counter` (`shadow`) or only imports the production items. Returns the
+    /// source and the 1-based line span of the test fn.
+    fn counter_default_source(shadow: bool, test_body: &str) -> (String, usize, usize) {
+        let mut source = String::from(
+            "pub trait Counter {\n    fn step(&self) -> u32;\n    fn advance(&self) -> u32 { 4 * self.step() }\n}\npub struct Unit;\nimpl Counter for Unit { fn step(&self) -> u32 { 2 } }\n\n#[cfg(test)]\nmod tests {\n",
+        );
+        if shadow {
+            source.push_str("    trait Counter {\n        fn step(&self) -> u32;\n        fn advance(&self) -> u32 { 8 }\n    }\n    impl Counter for Unit { fn step(&self) -> u32 { 2 } }\n");
+        } else {
+            source.push_str("    use super::*;\n");
+        }
+        source.push_str("    #[test]\n");
+        let start = source.matches('\n').count() + 1;
+        source.push_str(&format!("    fn advances() {{ {test_body} }}\n}}\n"));
+        let end = source.matches('\n').count();
+        (source, start, end)
+    }
+
+    /// The relation of the #7123 shape: the owner is the trait-declaration
+    /// default method (its id carries no `::impl` segment), and the test
+    /// calls it through `test_body`.
+    fn counter_default_relation(shadow: bool, test_body: &str) -> RelationReason {
+        let (source, start, end) = counter_default_source(shadow, test_body);
+        let mut owner = trait_function("src/lib.rs", "advance", "Counter");
+        owner.start_line = 3;
+        let mut test = test_with_call("src/lib.rs", "advances", test_body, "advance");
+        test.start_line = start;
+        test.end_line = end;
+        let mut index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions: vec![owner.clone()],
+            tests: vec![test],
+            ..Default::default()
+        });
+        with_source(&mut index, "src/lib.rs", &source);
+        let probe = probe("src/lib.rs", "4 * self.step()");
+        let related = find_related_tests(&probe, Some(&owner), &index, true, None, None);
+        assert_eq!(related.len(), 1, "the same-named call is still related");
+        related[0].1
+    }
+
+    /// #7123: a test module that redeclares the production trait shadows a
+    /// trait-declaration default-method owner exactly like a trait-impl owner
+    /// (#7053): every trait-path spelling names the test-local trait, so the
+    /// production default never runs. The `self::` form is the issue's exact
+    /// repro; the bare form pins the owner-kind mechanism (pre-fix every
+    /// spelling was credited).
+    #[test]
+    fn given_test_module_redeclares_default_method_trait_then_name_only_relation() {
+        for body in [
+            r#"assert_eq!(self::Counter::advance(&Unit), 8);"#,
+            r#"assert_eq!(super::Counter::advance(&Unit), 8);"#,
+            r#"assert_eq!(crate::Counter::advance(&Unit), 8);"#,
+            r#"assert_eq!(Counter::advance(&Unit), 8);"#,
+        ] {
+            assert_eq!(
+                counter_default_relation(true, body),
+                RelationReason::WeakTokenSubstring,
+                "shadowed default-method trait must not be direct_owner_call: {body}"
+            );
+        }
+    }
+
+    /// #7123 precision: the same qualified spellings with the production
+    /// trait in scope (no redeclaration) keep `direct_owner_call`, so the
+    /// refusal is the shadow and nothing else.
+    #[test]
+    fn given_test_module_imports_default_method_trait_then_direct_owner_call() {
+        for body in [
+            r#"assert_eq!(self::Counter::advance(&Unit), 8);"#,
+            r#"assert_eq!(super::Counter::advance(&Unit), 8);"#,
+            r#"assert_eq!(crate::Counter::advance(&Unit), 8);"#,
+            r#"assert_eq!(Counter::advance(&Unit), 8);"#,
+        ] {
+            assert_eq!(
+                counter_default_relation(false, body),
+                RelationReason::DirectOwnerCall,
+                "{body}"
+            );
+        }
+    }
+
+    /// The relation of the nested out-of-line trait shape for a
+    /// trait-declaration default-method owner (#7123, the #7087 analog):
+    /// `helpers_src` is the `helpers` parent module (declaring
+    /// `mod render_tests;` on `mod_line`), and the child test calls through
+    /// `super::Render`, which names the parent scope.
+    fn out_of_line_default_trait_relation(
+        helpers_src: &str,
+        mod_line: usize,
+        test_body: &str,
+    ) -> RelationReason {
+        let child_source = format!("use super::*;\n\n#[test]\nfn t() {{ {test_body} }}\n");
+        let mut owner = trait_function("src/lib.rs", "render", "Render");
+        owner.start_line = 1;
+        let mut child_test =
+            test_with_call("src/helpers/render_tests.rs", "t", test_body, "render");
+        child_test.start_line = 4;
+        child_test.end_line = 4;
+        let mut index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions: vec![owner.clone()],
+            tests: vec![child_test],
+            ..Default::default()
+        });
+        with_source(&mut index, "src/lib.rs", TRAIT_LIB_SOURCE);
+        with_source(&mut index, "src/helpers.rs", helpers_src);
+        with_source_provenance(
+            &mut index,
+            "src/helpers/render_tests.rs",
+            &child_source,
+            SourceRoleProvenance {
+                edges: vec![
+                    composed_module_edge("src/lib.rs", "src/helpers.rs", "helpers", 7, true),
+                    composed_module_edge(
+                        "src/helpers.rs",
+                        "src/helpers/render_tests.rs",
+                        "render_tests",
+                        mod_line,
+                        false,
+                    ),
+                ],
+                earliest_unresolved_reason: None,
+            },
+        );
+        let probe = probe("src/lib.rs", "String::new()");
+        let related = find_related_tests(&probe, Some(&owner), &index, true, None, None);
+        assert_eq!(related.len(), 1, "the same-named call is still related");
+        related[0].1
+    }
+
+    /// #7123 (the out-of-line analog): the `helpers` parent module declares
+    /// its own `trait Render` at its root, so the nested child test's
+    /// `super::Render::render(..)` names the test-local trait, not the
+    /// production default.
+    #[test]
+    fn given_out_of_line_parent_declares_default_method_trait_then_name_only_relation() {
+        assert_eq!(
+            out_of_line_default_trait_relation(
+                "trait Render { fn render(&self) -> String; }\n\nmod render_tests;\n",
+                3,
+                r#"assert_eq!(super::Render::render(&-0.0f64), "");"#,
+            ),
+            RelationReason::WeakTokenSubstring,
+            "parent default-method trait shadow must not be direct_owner_call"
+        );
+    }
+
+    /// #7123 precision: the same nested layout with no parent declaration
+    /// keeps `direct_owner_call`. The production root's `trait Render` is the
+    /// owner's own scope and never a shadow.
+    #[test]
+    fn given_out_of_line_parent_without_default_method_trait_then_direct_owner_call() {
+        assert_eq!(
+            out_of_line_default_trait_relation(
+                "mod render_tests;\n",
+                1,
+                r#"assert_eq!(super::Render::render(&-0.0f64), "");"#,
+            ),
+            RelationReason::DirectOwnerCall,
+        );
     }
 
     /// #7111 split-file layout: the production trait is declared at the root of
@@ -9172,6 +9370,182 @@ quickcheck! {
         assert!(
             names.is_empty(),
             "opaque macros must not mint tests: {names:?}"
+        );
+        Ok(())
+    }
+
+    /// #1924 measurement: string-churn profile of the classify relate path.
+    ///
+    /// Builds a high-cardinality fixture (200 tests sharing long path
+    /// prefixes and module names, 200 probes) and drives the indexed relate
+    /// path, reporting generator-input string-byte volumes (total vs
+    /// deduplicated) and wall time. This is the profile the interning gate
+    /// requires: it pins the duplication ratio as a fact about the code
+    /// and fixture. The volumes cover generator inputs only, not every
+    /// retained string: each summary keeps its own body/name/file copy,
+    /// `CallFact.text` repeats the generator body, and the candidate
+    /// index holds derived clones alongside per-test-distinct owner
+    /// strings, so the reported ratio is an input-only ratio, not a
+    /// bound on retained duplication in either direction. The go/no-go
+    /// judgment lives on #1924 with the measured numbers; this test
+    /// asserts measurement validity (completion, exact counts, pinned
+    /// volumes), not a gate threshold. The wall timer covers only the
+    /// indexed relate calls plus result consumption: query construction
+    /// is prebuilt outside it.
+    #[test]
+    fn classify_string_churn_profile_reports_volumes() -> Result<(), String> {
+        use std::collections::HashSet;
+        use std::time::Instant;
+
+        const GROUPS: usize = 20;
+        const PER_GROUP: usize = 10;
+        const COUNT: usize = GROUPS * PER_GROUP;
+
+        // Owned generator inputs: the volume source of truth.
+        let mut files: Vec<String> = Vec::with_capacity(COUNT);
+        let mut names: Vec<String> = Vec::with_capacity(COUNT);
+        let mut bodies: Vec<String> = Vec::with_capacity(COUNT);
+        let mut summaries = Vec::with_capacity(COUNT);
+        for g in 0..GROUPS {
+            for t in 0..PER_GROUP {
+                let i = g * PER_GROUP + t;
+                let file = format!("crates/ripr/tests/integration/area_{g:02}/checks_{g:02}.rs");
+                let name = format!("check_{i:03}_behaves");
+                let owner = format!("verify_{i:03}");
+                let body = format!("assert!({owner}(input));");
+                files.push(file.clone());
+                names.push(name.clone());
+                bodies.push(body.clone());
+                let mut summary = test(&file, &name, &body);
+                summary.calls = vec![CallFact {
+                    line: 1,
+                    name: owner,
+                    text: body,
+                }];
+                summaries.push(summary);
+            }
+        }
+        let index_built = Instant::now();
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            tests: summaries,
+            ..Default::default()
+        });
+        let candidate_index = RelatedTestCandidateIndex::new(&index);
+        let index_elapsed = index_built.elapsed();
+
+        // Relate every probe against its own owner. Query construction
+        // (owner-name formatting, `FunctionSummary` and `Probe` builds)
+        // happens once up front, outside every timer: the wall measurement
+        // must cover only the indexed production path under test, not
+        // harness formatting. The test-only indexed/full-scan parity check
+        // rebuilds its candidate index and runs a full scan per call, so it
+        // stays outside the timer, as does the candidate-evaluation count.
+        // Each indexed evaluation runs the per-candidate string matching
+        // (lowering, normalization, substring checks) that interning would
+        // have to beat.
+        let mut timed_queries = Vec::with_capacity(COUNT);
+        for (i, expected) in names.iter().enumerate() {
+            let owner_name = format!("verify_{i:03}");
+            let owner = function("src/owners.rs", &owner_name);
+            let probe = probe("src/owners.rs", &format!("{owner_name}(value)"));
+            timed_queries.push((probe, owner, expected.clone()));
+        }
+        let mut candidate_evaluations = 0usize;
+        let mut parity_own = 0usize;
+        for (probe, owner, expected) in &timed_queries {
+            candidate_evaluations += candidate_index
+                .candidate_indices(probe, Some(owner), None, None)
+                .len();
+            let related = find_related_tests(probe, Some(owner), &index, true, None, None);
+            if related.iter().any(|(test, _)| test.name == *expected) {
+                parity_own += 1;
+            }
+        }
+        let started = Instant::now();
+        let mut related_own = 0usize;
+        for (probe, owner, expected) in &timed_queries {
+            let related = find_related_tests_with_candidate_index(
+                probe,
+                Some(owner),
+                &index,
+                true,
+                None,
+                None,
+                &candidate_index,
+            );
+            if related.iter().any(|(test, _)| test.name == *expected) {
+                related_own += 1;
+            }
+        }
+        let elapsed = started.elapsed();
+
+        // Generator-input volumes only. Summaries retain their own
+        // body/name/file copies, `CallFact.text` repeats each generator
+        // body, and the candidate index holds derived clones alongside
+        // per-test-distinct owner strings, so these totals describe the
+        // inputs, not the retained string volume (see the note above).
+        let mut total_bytes: usize = 0;
+        let mut unique: HashSet<&str> = HashSet::new();
+        for part in files.iter().chain(names.iter()).chain(bodies.iter()) {
+            total_bytes += part.len();
+            unique.insert(part.as_str());
+        }
+        let unique_bytes: usize = unique.iter().map(|s| s.len()).sum();
+        let unique_files: HashSet<&str> = files.iter().map(|file| file.as_str()).collect();
+
+        if parity_own != COUNT {
+            return Err(format!(
+                "parity pass must relate every own test, got {parity_own}/{COUNT}"
+            ));
+        }
+        if related_own != COUNT {
+            return Err(format!(
+                "indexed pass must relate every own test, got {related_own}/{COUNT}"
+            ));
+        }
+        if unique_files.len() != GROUPS {
+            return Err(format!(
+                "fixture must span exactly {GROUPS} files, got {}",
+                unique_files.len()
+            ));
+        }
+        // Pinned generator-input volumes: the #1924 interning decision
+        // rests on these exact totals (18,800 total bytes, 9,800 unique,
+        // ratio 1.92). A fixture change that moves them must fail here and
+        // force an explicit re-measurement plus a #1924 update, never pass
+        // silently on a bare consistency check.
+        const EXPECTED_TOTAL_BYTES: usize = 18_800;
+        const EXPECTED_UNIQUE_BYTES: usize = 9_800;
+        if total_bytes != EXPECTED_TOTAL_BYTES || unique_bytes != EXPECTED_UNIQUE_BYTES {
+            return Err(format!(
+                "generator-input volumes drifted: unique {unique_bytes} total {total_bytes}, \
+                 expected unique {EXPECTED_UNIQUE_BYTES} total {EXPECTED_TOTAL_BYTES}; \
+                 re-measure and update #1924 before re-pinning"
+            ));
+        }
+        if candidate_evaluations == 0 {
+            return Err("candidate index must select candidates".to_string());
+        }
+        // The trigram index must narrow matching to ~O(matches per probe),
+        // not the full P×T scan: on this fixture each probe matches its own
+        // test, so anything far above one evaluation per probe means the
+        // narrowing regressed (and the #1924 interning premise would need a
+        // re-measurement, since per-candidate string work scales with it).
+        if candidate_evaluations > COUNT * 2 {
+            return Err(format!(
+                "candidate index must narrow matching, got {candidate_evaluations} evaluations for {COUNT} probes"
+            ));
+        }
+        eprintln!(
+            "ripr-churn-profile tests={COUNT} probes={COUNT} full_scan_opportunities={} \
+             indexed_candidate_evaluations={candidate_evaluations} \
+             generator_input_string_total_bytes={total_bytes} \
+             generator_input_string_unique_bytes={unique_bytes} \
+             generator_input_duplication_ratio={:.2} index_build_ms={} indexed_relate_wall_ms={}",
+            COUNT * COUNT,
+            total_bytes as f64 / unique_bytes as f64,
+            index_elapsed.as_millis(),
+            elapsed.as_millis()
         );
         Ok(())
     }
