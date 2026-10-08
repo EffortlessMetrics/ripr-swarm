@@ -33,6 +33,9 @@ pub(in crate::analysis) struct ProbeContext<'a> {
     pub test_value_facts: Option<&'a TestValueFacts>,
     /// Run-scoped private assertion context, shared across all probes.
     pub owner_pin_syntax: Option<&'a super::OwnerPinSyntax>,
+    /// Run-scoped #5830 caller-walk memo, shared across all probes;
+    /// `None` (unit-test contexts) walks per probe.
+    pub owner_caller_names: Option<&'a super::super::classifier::OwnerCallerNames>,
 }
 
 impl<'a> ProbeContext<'a> {
@@ -55,6 +58,7 @@ impl<'a> ProbeContext<'a> {
             file_use_statements: None,
             test_value_facts: None,
             owner_pin_syntax: None,
+            owner_caller_names: None,
         }
     }
 
@@ -81,6 +85,15 @@ impl<'a> ProbeContext<'a> {
         test_value_facts: &'a TestValueFacts,
     ) -> Self {
         self.test_value_facts = Some(test_value_facts);
+        self
+    }
+
+    /// Share one classification run's caller-walk memo across probes.
+    pub(in crate::analysis) fn with_owner_caller_names(
+        mut self,
+        owner_caller_names: &'a super::super::classifier::OwnerCallerNames,
+    ) -> Self {
+        self.owner_caller_names = Some(owner_caller_names);
         self
     }
 

@@ -624,7 +624,13 @@ tests = [
   "editors/vscode/test/suite/extension.test.ts::limited status surfaces findings_trustworthy false as untrustworthy snapshot evidence (#5004)",
   "editors/vscode/test/suite/extension.test.ts::limited status keeps the canned refresh step when no degraded component names a recovery (#5004)",
   "editors/vscode/test/suite/extension.test.ts::limited partial scope keeps the budget remedy alongside the component recovery (#5004)",
-  "editors/vscode/test/suite/extension.test.ts::limited status fails closed to the canned step for a malformed components payload (#5004)"
+  "editors/vscode/test/suite/extension.test.ts::limited status fails closed to the canned step for a malformed components payload (#5004)",
+  "crates/ripr/src/analysis/seam_inventory.rs::tests::bounded_matches_legacy_across_limits_and_orders",
+  "crates/ripr/src/analysis/seam_inventory.rs::tests::bounded_first_seam_discovered_last",
+  "crates/ripr/src/analysis/seam_inventory.rs::tests::bounded_duplicate_shapes_do_not_consume_slots",
+  "crates/ripr/src/analysis/seam_inventory.rs::tests::bounded_peak_stays_capped_on_high_cardinality",
+  "crates/ripr/src/analysis/seam_inventory.rs::tests::bounded_unlimited_equals_legacy_exactly",
+  "crates/ripr/src/analysis/seam_inventory.rs::tests::bounded_cancellation_fails_closed"
 ]
 fixtures = [
   "fixtures/benches_harness_evidence",
@@ -7613,6 +7619,8 @@ tests = [
   "crates/ripr/src/analysis/classify/related_tests.rs::tests::given_really_ambiguous_parent_when_test_calls_owner_method_then_name_only_relation",
   "crates/ripr/src/analysis/classify/related_tests.rs::tests::given_parent_root_rename_when_test_calls_owner_method_then_name_only_relation",
   "crates/ripr/src/analysis/classify/related_tests.rs::tests::given_parent_root_plain_import_when_test_calls_owner_then_direct",
+  "crates/ripr/src/analysis/classify/related_tests.rs::tests::given_single_file_rename_when_test_calls_owner_method_then_name_only_relation",
+  "crates/ripr/src/analysis/classify/related_tests.rs::tests::given_single_file_plain_import_when_test_calls_owner_then_direct",
   "crates/ripr/src/analysis/classify/reveal.rs::tests::related_tests_cap_keeps_a_second_test_when_one_test_has_many_oracles",
   "crates/ripr/src/analysis/test_grip_evidence/tests.rs::given_two_impls_when_compact_grip_sees_other_type_call_then_not_direct_owner_call",
   "crates/ripr/src/analysis/test_grip_evidence/tests.rs::given_two_impls_when_compact_grip_sees_owner_type_call_then_direct_owner_call",
@@ -8527,6 +8535,17 @@ tests = [
   "crates/ripr/tests/cli_smoke.rs::check_untracked_files_keep_committed_default_and_working_tree_reads_name_them",
   "crates/ripr/src/output/analyzed_revisions.rs::tests::labels_name_ref_short_commits_and_the_head_source",
   "crates/ripr/src/output/analyzed_revisions.rs::tests::labels_disclose_a_distinct_merge_base_and_unresolved_commits",
+  "crates/ripr/src/analysis/diff/load.rs::tests::worktree_load_without_merge_base_fails_closed_with_the_committed_diagnosis",
+  "crates/ripr/src/analysis/diff/load.rs::tests::worktree_load_with_unborn_head_names_head_not_a_merge_base",
+  "crates/ripr/tests/cli_smoke.rs::check_dirty_tree_without_merge_base_fails_closed_in_shallow_clone",
+  "crates/ripr/tests/cli_smoke.rs::check_dirty_tree_on_orphan_branch_fails_closed",
+  "crates/ripr/tests/cli_smoke.rs::check_dirty_tree_with_unborn_head_names_head",
+  "crates/ripr/src/analysis/diff/load.rs::tests::worktree_load_with_damaged_store_names_damage_not_unrelated_history",
+  "crates/ripr/tests/cli_smoke.rs::check_dirty_tree_with_damaged_store_names_damage",
+  "crates/ripr/src/analysis/diff/load.rs::tests::worktree_load_with_cyclic_replace_preserves_git_refusal",
+  "crates/ripr/tests/cli_smoke.rs::check_dirty_tree_with_cyclic_replace_preserves_git_refusal",
+  "crates/ripr/src/analysis/diff/load.rs::tests::worktree_load_with_deleted_head_tip_names_damage_not_ref_repair",
+  "crates/ripr/tests/cli_smoke.rs::check_dirty_tree_with_deleted_head_tip_names_damage",
 ]
 fixtures = []
 code = [
@@ -11811,6 +11830,8 @@ tests = [
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::an_out_of_line_production_module_at_the_parent_root_keeps_its_pin",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_parent_root_rename_of_the_receiver_refuses_the_pin",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_parent_root_plain_import_of_the_receiver_keeps_its_pin",
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_single_file_rename_of_the_receiver_refuses_the_pin_in_both_spellings",
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_single_file_plain_import_of_the_receiver_keeps_its_pin",
 ]
 fixtures = [
   "fixtures/predicate_boundary_oracle_refused",
@@ -11857,6 +11878,7 @@ fixtures = [
   "fixtures/owner_return_pin_out_of_line_cfg",
   "fixtures/owner_return_pin_test_module_shadow",
   "fixtures/owner_return_pin_out_of_line_test_module_shadow",
+  "fixtures/owner_return_pin_single_file_raw_rename_shadow",
 ]
 code = [
   "crates/ripr/src/output/observed_values.rs",
@@ -13355,11 +13377,21 @@ tests = [
   "crates/ripr/src/analysis/test_grip_evidence/tests.rs::wrongval_boundary_assert_does_not_close_the_gap",
   "crates/ripr/src/analysis/test_grip_evidence/tests.rs::correct_boundary_literal_still_closes_the_gap",
   "crates/ripr/src/analysis/test_grip_evidence/tests.rs::non_evaluable_owner_keeps_the_prior_credit",
+  "crates/ripr/src/analysis/test_grip_evidence/tests.rs::wrongval_assert_beside_consistent_test_keeps_gap_open",
+  "crates/ripr/src/output/outcome/mod.rs::contradicted_related_test_keeps_gap_open_and_names_the_contradiction",
+  "crates/ripr/src/output/outcome/mod.rs::prose_that_mentions_contradiction_without_the_disclosure_does_not_block_closure",
+  "crates/ripr/src/analysis/test_grip_evidence/tests.rs::contradiction_count_counts_a_test_beside_its_best_oracle",
+  "crates/ripr/src/analysis/test_grip_evidence/tests.rs::wrongval_only_test_grants_no_activation_credit_on_value_insensitive_seam",
+  "crates/ripr/src/output/outcome/mod.rs::producer_contradiction_count_holds_the_gap_open_without_a_named_entry",
+  "crates/ripr/src/output/outcome/mod.rs::a_new_seam_with_a_contradicted_test_surfaces_in_the_weak_section",
 ]
 fixtures = []
 code = [
   "crates/ripr/src/analysis/test_grip_evidence/value_contradiction.rs",
   "crates/ripr/src/analysis/test_grip_evidence.rs",
+  "crates/ripr/src/output/outcome/mod.rs",
+  "crates/ripr/src/output/outcome/review.rs",
+  "crates/ripr/src/output/evidence_record.rs",
 ]
 outputs = [
   "docs/specs/RIPR-SPEC-0233-statically-contradicted-exact-value-oracle.md",
