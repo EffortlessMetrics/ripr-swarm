@@ -217,9 +217,9 @@ rule only for an assertion whose context was admitted.
      `an_ancestor_file_a_cfg_may_drop_gates_the_owner`,
      `a_cfg_attr_path_on_the_owners_declaration_gates_it_through_real_composition`).
      The same file rule applies to a path call. The test's binding of the
-     name must resolve to the owner (#7097): a `static`, `const`, tuple
-     struct or extern item of the name in the test's body or own module
-     scope takes the call, so it refuses; an explicit `use` binding the
+     name must resolve to the owner (#7097): a `static` (plain or `mut`),
+     `const`, tuple or unit struct, or extern item of the name in the test's
+     body or own module scope takes the call, so it refuses; an explicit `use` binding the
      name must be the only one in its scope and resolve to a module
      holding the owner — the owner's own path (`self`/`super` from the
      scope, `crate` under the owner's root, or the owner's library crate
@@ -228,8 +228,12 @@ rule only for an assertion whose context was admitted.
      twin (an item, a `use` to elsewhere, or a macro that may emit one);
      and with neither `use` nor glob the test must sit in the owner's own
      module. Type-only items (`mod`,
-     `trait`, `type`, `enum`, `union`, non-tuple `struct`) share no
-     namespace with the call and keep the pin. Anything unplaced — a
+     `trait`, `type`, `enum`, `union`, braced `struct`) share no
+     namespace with the call and keep the pin. A `super` at the top of an
+     out-of-line file climbs into the inline scope holding its `mod`
+     declaration in the declaring parent, so `use super::name` and
+     `use super::*` there resolve past it; include edges never climb.
+     Anything unplaced — a
      foreign crate, an unresolved path, a re-export chain past one hop —
      refuses
      (`a_bare_call_to_an_imported_same_named_twin_is_not_a_pin`,
@@ -238,7 +242,13 @@ rule only for an assertion whose context was admitted.
      `a_bare_call_through_the_owners_own_import_pins_beside_a_twin`,
      `a_bare_call_through_a_glob_pins_only_past_the_owners_module`,
      `a_bare_call_without_an_import_pins_only_in_the_owners_module`,
-     `a_same_named_type_only_item_in_the_test_file_keeps_the_pin`).
+     `a_same_named_type_only_item_in_the_test_file_keeps_the_pin`,
+     `a_unit_struct_twin_refuses_the_bare_call`,
+     `an_extern_twin_refuses_the_bare_call`,
+     `a_static_mut_twin_refuses_the_bare_call`,
+     `an_out_of_line_super_glob_pins_past_the_declaring_parent`,
+     `an_out_of_line_super_use_pins_past_the_declaring_parent`,
+     `an_out_of_line_super_glob_refuses_past_a_parent_twin`).
    - A path call `a::b::name(..)` (#6974) names the same free function only
      when the path resolves to exactly the module that declares the owner.
      There an explicit `fn name` takes the value name from every glob, and

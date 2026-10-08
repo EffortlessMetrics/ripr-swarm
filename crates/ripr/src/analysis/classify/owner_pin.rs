@@ -72,6 +72,7 @@ use rayon::prelude::*;
 use std::cell::{OnceCell, RefCell};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 
 /// The owner-side half of the pin, established once per probe.
 pub(in crate::analysis) struct OwnerReturnPin {
@@ -127,7 +128,7 @@ pub(in crate::analysis) struct OwnerPinSyntax {
     path_memo: RefCell<PathCallMemo>,
     /// #7097: per-file module scopes (direct `use`s and value-taking
     /// items), parsed once per run; `None` when the file does not parse.
-    file_scopes: RefCell<BTreeMap<PathBuf, Option<FileScopes>>>,
+    file_scopes: RefCell<BTreeMap<PathBuf, Option<Rc<FileScopes>>>>,
     /// #7097: bare-call binding verdicts per [`BareCallKey`].
     bare_call_memo: RefCell<BTreeMap<BareCallKey, bool>>,
     /// #7097: out-of-line module children per (parent file, `mod` name):
@@ -1917,8 +1918,15 @@ impl OwnerReturnPin {
     ) -> Option<(PathBuf, Vec<String>)> {
         match first {
             "self" | "super" => {
-                let (stack, rest) = pop_super(scope.stack, first, segments)?;
-                resolve_module_path(index, syntax, scope.file, &stack, &rest)
+                let (file, stack, rest) = pop_super_across_files(
+                    index,
+                    syntax,
+                    scope.file,
+                    scope.stack,
+                    first,
+                    segments,
+                )?;
+                resolve_module_path(index, syntax, &file, &stack, &rest)
             }
             "crate" => {
                 let root = composed_root(&self.owner_file, index);
@@ -3572,15 +3580,17 @@ impl OwnerPinSyntax {
         })
     }
 
-    /// #7097: `file`'s scope table, parsed once per run.
-    fn file_scopes(&self, index: &RustIndex, file: &Path) -> Option<FileScopes> {
+    /// #7097: `file`'s scope table, parsed once per run and shared:
+    /// lookups clone the `Rc`, never the table (#7176 review).
+    fn file_scopes(&self, index: &RustIndex, file: &Path) -> Option<Rc<FileScopes>> {
         if let Some(known) = self.file_scopes.borrow().get(file) {
             return known.clone();
         }
         let scopes = index
             .files()
             .get(file)
-            .and_then(|facts| build_file_scopes(&facts.source));
+            .and_then(|facts| build_file_scopes(&facts.source))
+            .map(Rc::new);
         self.file_scopes
             .borrow_mut()
             .insert(file.to_path_buf(), scopes.clone());
@@ -3722,16 +3732,27 @@ impl ModuleScope {
             ast::Item::Static(item) => self.twin_name(item.name()),
             ast::Item::Const(item) => self.twin_name(item.name()),
             ast::Item::Struct(item) => {
-                if matches!(item.kind(), ast::StructKind::Tuple(_)) {
+                // Tuple and unit structs take the value namespace (a unit
+                // struct's constructor collides with an imported fn, E0255;
+                // braced structs do not conflict — both probed with rustc,
+                // #7176 review).
+                if matches!(
+                    item.kind(),
+                    ast::StructKind::Tuple(_) | ast::StructKind::Unit
+                ) {
                     self.twin_name(item.name());
                 }
             }
             ast::Item::ExternBlock(block) => {
-                for child in block.syntax().children().filter_map(ast::ExternItem::cast) {
-                    match &child {
-                        ast::ExternItem::Fn(item) => self.twin_name(item.name()),
-                        ast::ExternItem::Static(item) => self.twin_name(item.name()),
-                        _ => {}
+                // Extern items hang under the EXTERN_ITEM_LIST node, not
+                // under the block itself (#7176 review).
+                if let Some(list) = block.extern_item_list() {
+                    for child in list.extern_items() {
+                        match &child {
+                            ast::ExternItem::Fn(item) => self.twin_name(item.name()),
+                            ast::ExternItem::Static(item) => self.twin_name(item.name()),
+                            _ => {}
+                        }
                     }
                 }
             }
@@ -3808,22 +3829,45 @@ fn declares_value_twin(masked: &str, name: &str) -> bool {
         whole_word_offsets(masked, keyword)
             .into_iter()
             .any(|offset| {
-                strip_item_name(masked[offset + keyword.len()..].trim_start(), name).is_some()
+                let rest = masked[offset + keyword.len()..].trim_start();
+                // `static mut name` carries a qualifier between the keyword
+                // and the name (#7176 review); `const` never does.
+                let rest = if *keyword == "static" {
+                    skip_mut_qualifier(rest)
+                } else {
+                    rest
+                };
+                strip_item_name(rest, name).is_some()
             })
     }) || whole_word_offsets(masked, "struct")
         .into_iter()
         .any(|offset| {
             strip_item_name(masked[offset + "struct".len()..].trim_start(), name)
                 .and_then(skip_generics)
-                .is_some_and(|after| after.starts_with('('))
+                // Tuple structs take the call; unit structs collide with an
+                // imported fn (E0255, rustc-probed); braced structs share
+                // no namespace with the call (#7176 review).
+                .is_some_and(|after| after.starts_with('(') || after.starts_with(';'))
         })
+}
+
+/// The text after a `mut` qualifier, when `rest` opens with one as a
+/// whole word. Anything else (including `mutx`) passes through.
+fn skip_mut_qualifier(rest: &str) -> &str {
+    let Some(after) = rest.strip_prefix("mut") else {
+        return rest;
+    };
+    if after.starts_with(|c: char| c.is_ascii_alphanumeric() || c == '_') {
+        return rest;
+    }
+    after.trim_start()
 }
 
 /// Whether the test body declares a value-taking item of `name`. A body
 /// `fn` or `let` is already refused (`test_body_shadows_owner`); a
-/// `static`, `const` or tuple struct there shadows every import the same
-/// way. Items in a nested block or `fn` cannot reach the call, so
-/// counting them over-refuses (residual).
+/// `static` (plain or `mut`), `const`, tuple or unit struct there shadows
+/// every import the same way. Items in a nested block or `fn` cannot reach
+/// the call, so counting them over-refuses (residual).
 fn body_defines_value_twin(body: &str, name: &str) -> bool {
     declares_value_twin(&mask_comments_and_strings(body), name)
 }
@@ -3964,25 +4008,31 @@ fn split_glob_prefix(path: &str) -> Option<(&str, Vec<&str>)> {
     Some((*first, rest.to_vec()))
 }
 
-/// #7097: pop `stack` for a `self`/`super` root plus leading `super`
-/// segments; the rest walks forward from there. `None` when a pop
-/// climbs past the file top (a parent in another file, which this walk
-/// does not place) or a keyword appears mid-path.
-fn pop_super<'a>(
+/// #7097: `pop_super`, climbing past the file top into the declaring
+/// parent through module edges: an out-of-line `tests.rs` at file-top
+/// stack `[]` climbs `super::` into the inline scope holding its `mod`
+/// declaration (#7176 review). Include edges never climb (a textual
+/// paste has no parent module). Each pop consumes one `super`, so the
+/// walk terminates.
+fn pop_super_across_files<'a>(
+    index: &RustIndex,
+    syntax: &OwnerPinSyntax,
+    file: &Path,
     stack: &[String],
     first: &str,
     segments: &[&'a str],
-) -> Option<(Vec<String>, Vec<&'a str>)> {
+) -> Option<(PathBuf, Vec<String>, Vec<&'a str>)> {
+    let mut file = file.to_path_buf();
     let mut module = stack.to_vec();
     if first == "super" {
-        module.pop()?;
+        climb_one_level(index, syntax, &mut file, &mut module)?;
     }
     let supers = segments
         .iter()
         .take_while(|segment| **segment == "super")
         .count();
     for _ in 0..supers {
-        module.pop()?;
+        climb_one_level(index, syntax, &mut file, &mut module)?;
     }
     if segments[supers..]
         .iter()
@@ -3990,7 +4040,34 @@ fn pop_super<'a>(
     {
         return None;
     }
-    Some((module, segments[supers..].to_vec()))
+    Some((file, module, segments[supers..].to_vec()))
+}
+
+/// #7097: climb one `super` level: pop the inline stack, or — at the
+/// file top — continue from the inline scope holding this file's `mod`
+/// declaration in its declaring parent. Include edges never climb.
+fn climb_one_level(
+    index: &RustIndex,
+    syntax: &OwnerPinSyntax,
+    file: &mut PathBuf,
+    stack: &mut Vec<String>,
+) -> Option<()> {
+    if stack.pop().is_some() {
+        return Some(());
+    }
+    let facts = index.files().get(file.as_path())?;
+    let edge = facts.role_provenance.edges.last()?;
+    if edge.kind != SourceRoleProvenanceEdgeKind::Module {
+        return None;
+    }
+    let parent = index.files().get(&edge.parent)?;
+    let scopes = syntax.file_scopes(index, &edge.parent)?;
+    *stack = scopes
+        .scope_at(&parent.data().source, edge.line)?
+        .stack
+        .clone();
+    *file = edge.parent.clone();
+    Some(())
 }
 
 /// #7097: walk `segments` from (`file`, `stack`): each names an inline
