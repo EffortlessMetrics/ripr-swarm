@@ -1,0 +1,12 @@
+diff --git a/src/help.rs b/src/help.rs
+--- a/src/help.rs
++++ b/src/help.rs
+@@ -1,7 +1,7 @@
+ //! Help text constants: one a test observes, one a test only checks is
+ //! non-empty, one printed and never read back.
+ 
+-pub const USAGE: &str = "usage: tally [--json] FILE";
++pub const USAGE: &str = "usage: tally [--format json] FILE";
+ pub const ABOUT: &str = "Counts lines in files.";
+ pub const VERSION_TEXT: &str = "tally 1.4";
+ 

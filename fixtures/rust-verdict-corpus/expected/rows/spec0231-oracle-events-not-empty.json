@@ -1,0 +1,22 @@
+{
+  "case_id": "spec0231-oracle-events-not-empty",
+  "subject_id": "authored-spec0231-16",
+  "origin": "authored",
+  "anchor": "src/lib.rs:3",
+  "behavior_family": "side_effect_push",
+  "test_shape": "negated_is_empty_on_events",
+  "hard_case": true,
+  "truth": "partially_discriminated",
+  "ideal_verdict": "gap",
+  "observed_verdict": "limited",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "propagation_unknown"
+  ],
+  "outcome": "abstained",
+  "contradictions": [],
+  "findings_scored": 2,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

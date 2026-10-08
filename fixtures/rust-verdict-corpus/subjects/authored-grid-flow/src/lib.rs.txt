@@ -1,0 +1,85 @@
+//! Control-flow shapes other RIPR specs define: a structural `} else {` line,
+//! field-assignment activation, and a test-body Err-return guard used as an oracle.
+
+#[derive(Debug, Default)]
+pub struct Manifest {
+    pub version: u32,
+}
+
+pub const CURRENT: u32 = 7;
+
+pub fn is_stale(manifest: &Manifest) -> bool {
+    manifest.version < CURRENT
+}
+
+pub fn needs_upgrade(manifest: &Manifest) -> bool {
+    manifest.version < CURRENT - 2
+}
+
+pub fn shipping_fee(weight: u32) -> u32 {
+    let mut fee = 100;
+    if weight > 1_000 {
+        fee += 50;
+        fee += 10;
+    }
+    fee
+}
+
+pub fn handling_fee(weight: u32) -> u32 {
+    let mut fee = 20;
+    if weight > 500 {
+        fee += 5;
+        fee += 1;
+    }
+    fee
+}
+
+pub fn label(version: u32) -> String {
+    format!("v{version}")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn lookup(version: u32) -> u32 {
+        std::hint::black_box(version)
+    }
+
+    #[test]
+    fn manifests_older_than_current_are_stale() {
+        let mut manifest = Manifest::default();
+        manifest.version = CURRENT - 1;
+        assert_eq!(is_stale(&manifest), true);
+        manifest.version = CURRENT;
+        assert_eq!(is_stale(&manifest), false);
+    }
+
+    #[test]
+    fn old_manifests_need_upgrade() {
+        let mut manifest = Manifest::default();
+        manifest.version = lookup(4);
+        assert_eq!(needs_upgrade(&manifest), true);
+        manifest.version = lookup(5);
+        assert_eq!(needs_upgrade(&manifest), false);
+    }
+
+    #[test]
+    fn heavy_parcels_pay_the_surcharge() {
+        assert_eq!(shipping_fee(2_000), 160);
+    }
+
+    #[test]
+    fn handling_grows_with_weight() {
+        assert!(handling_fee(600) > 20);
+    }
+
+    #[test]
+    fn label_starts_with_v() -> Result<(), String> {
+        let text = label(3);
+        if !text.starts_with('v') {
+            return Err(format!("bad label {text}"));
+        }
+        Ok(())
+    }
+}

@@ -23,6 +23,44 @@ fn json_error(message: impl Into<String>) -> serde_json::Error {
     <serde_json::Error as serde::de::Error>::custom(message.into())
 }
 
+/// Deserialize a valid DTO plus one extra field on that struct's JSON object.
+/// Nested children are serialized as-is so this pins `deny_unknown_fields` on
+/// `T` itself rather than a nested owner.
+fn reject_unknown_field_at_struct_level<T>(label: &str, valid: T) -> Result<(), serde_json::Error>
+where
+    T: serde::Serialize + serde::de::DeserializeOwned + PartialEq + std::fmt::Debug,
+{
+    let encoded = serde_json::to_value(&valid)?;
+    let round_tripped = serde_json::from_value::<T>(encoded.clone())?;
+    assert_eq!(round_tripped, valid, "{label} did not round-trip");
+
+    let mut value = encoded;
+    let Some(object) = value.as_object_mut() else {
+        return Err(json_error(format!(
+            "{label} did not serialize as an object"
+        )));
+    };
+    if object.contains_key("unexpected") {
+        return Err(json_error(format!(
+            "{label} already serialized an `unexpected` field"
+        )));
+    }
+    object.insert("unexpected".into(), json!(true));
+    match serde_json::from_value::<T>(value) {
+        Err(error) => {
+            let message = error.to_string();
+            if message.contains("unknown field") {
+                Ok(())
+            } else {
+                Err(json_error(format!(
+                    "{label} extra field failed for a reason other than unknown-field: {message}"
+                )))
+            }
+        }
+        Ok(_) => Err(json_error(format!("unknown {label} field was accepted"))),
+    }
+}
+
 fn required_excluded_claims() -> Vec<String> {
     RIPR_REQUIRED_EXCLUDED_CLAIMS
         .iter()
@@ -108,6 +146,17 @@ fn receipt() -> RiprAnalysisReceiptV1 {
         limitations: Vec::new(),
         claim_boundary: RIPR_PROVIDER_CLAIM_BOUNDARY.into(),
         excluded_claims: required_excluded_claims(),
+    }
+}
+
+fn diagnostic() -> RiprProviderDiagnosticV1 {
+    RiprProviderDiagnosticV1 {
+        code: "stale_snapshot".into(),
+        message: "source snapshot changed".into(),
+        source_path: None,
+        start_line: None,
+        start_column: None,
+        next_action: Some("rerun the provider".into()),
     }
 }
 
@@ -385,15 +434,27 @@ fn public_wire_round_trips_and_rejects_unknown_fields() -> Result<(), serde_json
     let decoded = serde_json::from_str::<RiprAnalysisReceiptV1>(&serialized)?;
     assert_eq!(decoded, receipt);
 
-    let mut request_value = serde_json::to_value(request())?;
-    let Some(object) = request_value.as_object_mut() else {
-        return Err(json_error("request did not serialize as an object"));
+    let capabilities = RiprProviderCapabilitySetV1::read_only("0.4.0");
+    let Some(descriptor) = capabilities.capabilities.first().cloned() else {
+        return Err(json_error("read-only capability set had no descriptors"));
     };
-    object.insert("unexpected".into(), json!(true));
-    match serde_json::from_value::<RiprAnalysisRequestV1>(request_value) {
-        Err(_) => Ok(()),
-        Ok(_) => Err(json_error("unknown request field was accepted")),
-    }
+    let Some(entry) = summary().related_tests.into_iter().next() else {
+        return Err(json_error("summary fixture had no evidence entries"));
+    };
+
+    reject_unknown_field_at_struct_level("receipt", receipt)?;
+    reject_unknown_field_at_struct_level("capability set", capabilities)?;
+    reject_unknown_field_at_struct_level("capability descriptor", descriptor)?;
+    reject_unknown_field_at_struct_level(
+        "repository snapshot",
+        snapshot(RiprSourceViewV1::GitTree),
+    )?;
+    reject_unknown_field_at_struct_level("subject", request().subject)?;
+    reject_unknown_field_at_struct_level("request", request())?;
+    reject_unknown_field_at_struct_level("summary", summary())?;
+    reject_unknown_field_at_struct_level("evidence entry", entry)?;
+    reject_unknown_field_at_struct_level("diagnostic", diagnostic())?;
+    Ok(())
 }
 
 #[test]

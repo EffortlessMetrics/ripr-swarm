@@ -516,13 +516,566 @@ pub(crate) fn strict_literal(argument: &str) -> Option<String> {
     Some(trimmed.to_string())
 }
 
+/// Whether a test's call of `callee` on absolute line `call_line` is
+/// shadowed by a test-local `fn callee` (hoisted, defeats every line) or a
+/// `let` binding naming it at or before the call (#6780 Devin review: a
+/// `let order_discount = |_| 5;` closure never reaches the helper). The
+/// authority follows the test file's producer, as for seam calls: parser
+/// body facts on parser-backed files, the masked-body lexical scanners on
+/// fallback files or files absent from the index.
+///
+/// #6780 round 5 (fail closed): the call also counts as shadowed when
+/// `callee` names more than one workspace function (a same-named `fn` in
+/// `mod tests` or in another test file), or when the test's file imports
+/// another item under that name: a `use .. as <callee>` rename or a `use`
+/// of `<callee>` from a foreign crate.
+pub(crate) fn test_call_is_shadowed(
+    index: &RustIndex,
+    test: &crate::analysis::facts::TestSummary,
+    callee: &str,
+    call_line: usize,
+) -> bool {
+    use crate::analysis::extract::ShadowAuthority;
+    if !callee_is_unique(callee, index) {
+        return true;
+    }
+    let files = index.files();
+    let file_facts = files.get(&test.file);
+    let source: &str = match &file_facts {
+        Some(facts) => &facts.source,
+        None => test.body.as_str(),
+    };
+    let renamed_import = super::reveal::flattened_use_paths(source)
+        .iter()
+        .any(|import| {
+            import.alias.as_deref() == Some(callee)
+                && import.path.rsplit("::").next() != Some(callee)
+        });
+    if renamed_import
+        || super::reveal::file_imports_foreign_callee_name(source, callee, &index.package_names)
+    {
+        return true;
+    }
+    let parser_backed = file_facts
+        .as_ref()
+        .is_some_and(|facts| !facts.used_lexical_fallback);
+    let body_line = call_line.saturating_sub(test.start_line);
+    if parser_backed {
+        ShadowAuthority::ParserBodyFacts {
+            nested_fn_names: &test.nested_fn_names,
+            let_bindings: &test.let_bindings,
+        }
+        .body_shadows_callee_at_line("", callee, body_line)
+    } else {
+        let masked = crate::analysis::extract::mask_comments_and_strings(&test.body);
+        ShadowAuthority::LexicalMaskedBody.body_shadows_callee_at_line(&masked, callee, body_line)
+    }
+}
+
+/// Stop token named when the owner is reached only through a chain whose
+/// hops do not hand the owner's result to the entry's return (#6780).
+pub(crate) const HELPER_RESULT_NOT_FORWARDED: &str = "helper_result_not_forwarded";
+
+/// True when some related test reaches the owner through the helper chain
+/// and none calls it directly: every oracle then observes a hop caller's
+/// result, never the owner's own.
+pub(crate) fn helper_only_reach(
+    related_tests: &[(
+        &crate::analysis::facts::TestSummary,
+        crate::domain::RelationReason,
+    )],
+) -> bool {
+    use crate::domain::RelationReason;
+    related_tests
+        .iter()
+        .any(|(_, reason)| *reason == RelationReason::HelperOwnerCall)
+        && !related_tests
+            .iter()
+            .any(|(_, reason)| *reason == RelationReason::DirectOwnerCall)
+}
+
+/// Whether every hop of `chain` hands the result of its call straight to
+/// its caller's return (#6694, #6672), so an exact oracle on the entry's
+/// result can stand for an oracle on the owner's result.
+///
+/// Each hop's caller body must have no early `return` and no `?`, and its
+/// tail expression must be either the hop call itself (`capped(value,
+/// 10)`) or `if <call> { A } else { B }` / `if !<call> { A } else { B }`
+/// with textually distinct branches. Any other shape — a discarded or
+/// let-bound result, arithmetic on the result, an `else if` chain, a call
+/// inside one branch, a `match` — answers `false` (fail closed): reach
+/// still holds, but the entry's oracle is not paired with the owner's
+/// boundary.
+pub(crate) fn chain_forwards_owner_result(owner_name: &str, chain: &HelperChain) -> bool {
+    hops_forward_owner_result(owner_name, &chain.hops)
+}
+
+/// [`chain_forwards_owner_result`] over only the hops the related tests
+/// observe (#6780 review): a test calling an intermediate hop caller
+/// (`middle(10)`) observes that caller's result, so hops above the highest
+/// hop any `helper_owner_call` test calls directly do not matter. The
+/// highest such hop across all those tests bounds the check; a test whose
+/// called hop cannot be determined checks the whole chain (fail closed).
+pub(crate) fn chain_forwards_to_observed_hops(
+    owner_name: &str,
+    chain: &HelperChain,
+    related_tests: &[(
+        &crate::analysis::facts::TestSummary,
+        crate::domain::RelationReason,
+    )],
+) -> bool {
+    hops_forward_owner_result(owner_name, observed_hops(chain, related_tests))
+}
+
+/// The hops a related test observes: up to the highest hop any
+/// `helper_owner_call` test calls directly, or the whole chain when a
+/// test's called hop cannot be determined or none is found (fail closed).
+fn observed_hops<'a>(
+    chain: &'a HelperChain,
+    related_tests: &[(
+        &crate::analysis::facts::TestSummary,
+        crate::domain::RelationReason,
+    )],
+) -> &'a [HelperHop] {
+    let mut highest: Option<usize> = None;
+    for (test, reason) in related_tests {
+        if *reason != crate::domain::RelationReason::HelperOwnerCall {
+            continue;
+        }
+        let called = chain.hops.iter().rposition(|hop| {
+            test.calls.iter().any(|call| {
+                call.name == hop.caller.name && is_direct_call_site(&call.text, &hop.caller.name)
+            })
+        });
+        let Some(called) = called else {
+            return &chain.hops;
+        };
+        highest = Some(highest.map_or(called, |top| top.max(called)));
+    }
+    highest
+        .and_then(|top| chain.hops.get(..=top))
+        .unwrap_or(&chain.hops)
+}
+
+/// For a side-effect or call-deletion probe reached only through the chain
+/// (#6780 round 5): whether the state the owner's change acts on reaches a
+/// related test's call. The probe expression must name at least one owner
+/// parameter (the effect target, `out` in `out.push(10)`), and every
+/// observed hop must pass each such parameter through from its own
+/// parameter, unchanged and not rebound (`wrapper(out) { record(out) }`).
+/// A fresh temporary (`record(&mut Vec::new())`), a wrapper-local
+/// (`let mut v = ..; record(&mut v)`), a field, a static or any other
+/// argument answers `false`: the caller's test cannot see that state, so
+/// propagation abstains (fail closed).
+pub(crate) fn chain_passes_effect_target_to_observed_hops(
+    owner: &FunctionSummary,
+    probe_expression: &str,
+    chain: &HelperChain,
+    related_tests: &[(
+        &crate::analysis::facts::TestSummary,
+        crate::domain::RelationReason,
+    )],
+) -> bool {
+    use super::activation::function_parameters;
+    let hops = observed_hops(chain, related_tests);
+    let owner_parameters = function_parameters(owner);
+    let mut tracked: Vec<usize> = owner_parameters
+        .iter()
+        .enumerate()
+        .filter(|(_, parameter)| {
+            is_identifier(parameter) && parameter.as_str() != "self" && {
+                let masked =
+                    crate::analysis::language::mask_rust_comments_and_strings(probe_expression);
+                contains_word(&masked, parameter)
+            }
+        })
+        .map(|(index, _)| index)
+        .collect();
+    if tracked.is_empty() || hops.is_empty() {
+        return false;
+    }
+    for hop in hops {
+        let caller_parameters = function_parameters(&hop.caller);
+        let mut next = Vec::new();
+        for index in &tracked {
+            let Some(argument) = hop.arguments.get(*index).map(|argument| argument.trim()) else {
+                return false;
+            };
+            let Some(position) = caller_parameters
+                .iter()
+                .position(|parameter| parameter == argument)
+            else {
+                return false;
+            };
+            if !is_identifier(argument) || caller_rebinds_parameter(&hop.caller.body, argument) {
+                return false;
+            }
+            next.push(position);
+        }
+        tracked = next;
+    }
+    true
+}
+
+fn hops_forward_owner_result(owner_name: &str, hops: &[HelperHop]) -> bool {
+    !hops.is_empty()
+        && hops.iter().enumerate().all(|(step, hop)| {
+            let callee = match step.checked_sub(1) {
+                None => owner_name,
+                Some(below) => match hops.get(below) {
+                    Some(lower) => lower.caller.name.as_str(),
+                    None => return false,
+                },
+            };
+            caller_tail_forwards_call(&hop.caller.body, callee)
+                && hop.arguments.iter().all(|argument| {
+                    !is_identifier(argument.trim())
+                        || !caller_rebinds_parameter(&hop.caller.body, argument.trim())
+                })
+        })
+}
+
+fn caller_tail_forwards_call(body: &str, callee: &str) -> bool {
+    let masked = crate::analysis::language::mask_rust_comments_and_strings(body);
+    if masked.len() != body.len() || callee.is_empty() {
+        return false;
+    }
+    let (Some(open), Some(close)) = (masked.find('{'), masked.rfind('}')) else {
+        return false;
+    };
+    if close <= open {
+        return false;
+    }
+    let inner = &masked[open + 1..close];
+    if inner.contains('?') || contains_word(inner, "return") {
+        return false;
+    }
+    // The tail starts after the last depth-0 `;`.
+    let mut depth = 0usize;
+    let mut tail_start = 0usize;
+    for (at, character) in inner.char_indices() {
+        match character {
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => {
+                let Some(next) = depth.checked_sub(1) else {
+                    return false;
+                };
+                depth = next;
+            }
+            ';' if depth == 0 => tail_start = at + 1,
+            _ => {}
+        }
+    }
+    if depth != 0 {
+        return false;
+    }
+    let Some(raw_inner) = body.get(open + 1..close) else {
+        return false;
+    };
+    let tail = inner[tail_start..].trim();
+    let lead = inner[tail_start..].len() - inner[tail_start..].trim_start().len();
+    let Some(raw_tail) = raw_inner.get(tail_start + lead..tail_start + lead + tail.len()) else {
+        return false;
+    };
+    if is_exact_call(tail, callee) {
+        return true;
+    }
+    let Some(after_if) = tail.strip_prefix("if ") else {
+        return false;
+    };
+    let base = tail.len() - after_if.len();
+    let Some(then_open) = after_if.find('{') else {
+        return false;
+    };
+    let condition = after_if[..then_open].trim();
+    let condition = condition.strip_prefix('!').unwrap_or(condition).trim();
+    if !is_exact_call(condition, callee) {
+        return false;
+    }
+    let then_open = base + then_open;
+    let Some(then_close) = matching_close(tail, then_open) else {
+        return false;
+    };
+    let rest = &tail[then_close + 1..];
+    let Some(after_else) = rest.trim_start().strip_prefix("else") else {
+        return false;
+    };
+    let else_open_rel = after_else.len() - after_else.trim_start().len();
+    if !after_else[else_open_rel..].starts_with('{') {
+        return false;
+    }
+    let else_open = tail.len() - after_else.len() + else_open_rel;
+    let Some(else_close) = matching_close(tail, else_open) else {
+        return false;
+    };
+    if !tail[else_close + 1..].trim().is_empty() {
+        return false;
+    }
+    match (
+        raw_tail.get(then_open + 1..then_close),
+        raw_tail.get(else_open + 1..else_close),
+    ) {
+        // Both branches must be distinct literals (#6780 review B3): a
+        // computed branch (`qty / 2`) can equal the other at the boundary.
+        (Some(then_raw), Some(else_raw)) => {
+            match (strict_literal(then_raw), strict_literal(else_raw)) {
+                (Some(then_value), Some(else_value)) => {
+                    literal_values_differ(&then_value, &else_value)
+                }
+                _ => false,
+            }
+        }
+        _ => false,
+    }
+}
+
+/// Whether two `strict_literal` texts denote different values (#6780
+/// review round 2). Integers compare by value (`05` equals `5`); a string
+/// or char literal with an escape may spell another literal's value
+/// (`"\x61"` is `"a"`), so it never counts as distinct (fail closed).
+fn literal_values_differ(left: &str, right: &str) -> bool {
+    let is_integer = |text: &str| text.chars().all(|ch| ch.is_ascii_digit());
+    if is_integer(left) && is_integer(right) {
+        let value = |text: &str| {
+            let digits = text.trim_start_matches('0');
+            if digits.is_empty() {
+                "0".to_string()
+            } else {
+                digits.to_string()
+            }
+        };
+        return value(left) != value(right);
+    }
+    if left.contains('\\') || right.contains('\\') {
+        return false;
+    }
+    left != right
+}
+
+/// Whether `body` (a caller's full text) rebinds or assigns `parameter`
+/// after its signature (#6780 review B1): a `let` pattern, a closure
+/// parameter list, a `for` pattern, a match-arm or `@` pattern, or a plain
+/// or compound assignment naming it. A rebound parameter no longer holds
+/// the caller's input, so the test's argument cannot bind through it.
+pub(crate) fn caller_rebinds_parameter(body: &str, parameter: &str) -> bool {
+    let masked = crate::analysis::language::mask_rust_comments_and_strings(body);
+    let Some(open) = masked.find('{') else {
+        return true;
+    };
+    let inner = &masked[open + 1..];
+    let word_at = |text: &str, at: usize| {
+        let before = text[..at].chars().next_back();
+        let after = text[at + parameter.len()..].chars().next();
+        !before.is_some_and(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+            && !after.is_some_and(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+    };
+    let mentions = |segment: &str| {
+        segment
+            .match_indices(parameter)
+            .any(|(at, _)| word_at(segment, at))
+    };
+    for (at, _) in inner.match_indices(parameter) {
+        if !word_at(inner, at) {
+            continue;
+        }
+        let after = inner[at + parameter.len()..].trim_start();
+        let assigns =
+            (after.starts_with('=') && !after.starts_with("==") && !after.starts_with("=>"))
+                || ["+=", "-=", "*=", "/=", "%=", "|=", "&=", "^=", "<<=", ">>="]
+                    .iter()
+                    .any(|op| after.starts_with(op))
+                || after.starts_with('@');
+        if assigns {
+            return true;
+        }
+    }
+    // `let` patterns: the text between `let` and its `=` or `;`.
+    for (at, _) in inner.match_indices("let") {
+        if inner[..at]
+            .chars()
+            .next_back()
+            .is_some_and(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+        {
+            continue;
+        }
+        let rest = &inner[at + 3..];
+        let end = rest.find(['=', ';']).unwrap_or(rest.len());
+        if mentions(&rest[..end]) {
+            return true;
+        }
+    }
+    // `for <pattern> in`.
+    for (at, _) in inner.match_indices("for ") {
+        let rest = &inner[at + 4..];
+        if let Some(end) = rest.find(" in ")
+            && mentions(&rest[..end])
+        {
+            return true;
+        }
+    }
+    // Match-arm patterns: the text before each `=>` back to the enclosing
+    // `{` or a top-level `,`, cut at a top-level `if` guard. A guard only
+    // reads the parameter (`n if n > qty =>`); the pattern before it can
+    // bind it (`Some(qty) if .. =>`, `Foo { qty } =>`).
+    for (at, _) in inner.match_indices("=>") {
+        let start = match_arm_start(&inner[..at]);
+        let arm = &inner[start..at];
+        // A comma-less block arm before this one (`None => if f { 1 } else
+        // { 2 } Some(qty) =>`) leaves its own `=>` and `if` in the arm
+        // text, which could cut this arm's pattern away (#6780 review
+        // round 2): when that arm text names the parameter at all, answer
+        // "rebinds" (fail closed). Rustfmt writes block arms without
+        // commas, so an arm text that never names it stays forwarding.
+        if (has_top_level_arrow(arm) && mentions(arm)) || mentions(match_arm_pattern(arm)) {
+            return true;
+        }
+    }
+    // Closure parameter lists `|..|` on one line (`||` is not one).
+    for line in inner.lines() {
+        let pipes: Vec<usize> = line
+            .match_indices('|')
+            .map(|(index, _)| index)
+            .filter(|index| !line[..*index].ends_with('|') && !line[index + 1..].starts_with('|'))
+            .collect();
+        for pair in pipes.chunks(2) {
+            if let [left, right] = pair
+                && mentions(&line[left + 1..*right])
+            {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// Where the match arm ending at the end of `before` starts: after the
+/// nearest unmatched opening bracket or top-level `,`, scanning backward so
+/// a struct pattern's own braces (`Foo { qty }`) stay inside the arm. A
+/// preceding block arm without a comma is kept in the arm text, which can
+/// only report a rebinding, never hide one.
+fn match_arm_start(before: &str) -> usize {
+    let mut depth = 0usize;
+    for (at, character) in before.char_indices().rev() {
+        match character {
+            ')' | ']' | '}' => depth += 1,
+            '(' | '[' | '{' if depth == 0 => return at + 1,
+            '(' | '[' | '{' => depth -= 1,
+            ',' if depth == 0 => return at + 1,
+            _ => {}
+        }
+    }
+    0
+}
+
+/// Whether `text` holds a `=>` outside any bracket.
+fn has_top_level_arrow(text: &str) -> bool {
+    let mut depth = 0usize;
+    for (at, character) in text.char_indices() {
+        match character {
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => depth = depth.saturating_sub(1),
+            '=' if depth == 0 && text[at..].starts_with("=>") => return true,
+            _ => {}
+        }
+    }
+    false
+}
+
+/// The pattern part of a match arm: `arm` before its last `if` keyword
+/// outside any bracket. Patterns cannot contain `if`, so the last top-level
+/// one opens the guard; without a guard the whole arm is the pattern.
+fn match_arm_pattern(arm: &str) -> &str {
+    let is_word = |ch: char| ch.is_ascii_alphanumeric() || ch == '_';
+    let mut depth = 0usize;
+    let mut guard = None;
+    for (at, character) in arm.char_indices() {
+        match character {
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => depth = depth.saturating_sub(1),
+            'i' if depth == 0
+                && arm[at..].starts_with("if")
+                && !arm[..at].chars().next_back().is_some_and(is_word)
+                && !arm[at + 2..].chars().next().is_some_and(is_word) =>
+            {
+                guard = Some(at);
+            }
+            _ => {}
+        }
+    }
+    guard.map_or(arm, |at| &arm[..at])
+}
+
+/// `text` is exactly one direct call of `callee` (nothing before or after).
+fn is_exact_call(text: &str, callee: &str) -> bool {
+    if direct_call_paren(text, callee) != Some(0) {
+        return false;
+    }
+    matching_close(text, callee.len()).is_some_and(|close| close + 1 == text.len())
+}
+
+/// Index of the bracket closing the one opened at `open` (masked text).
+fn matching_close(text: &str, open: usize) -> Option<usize> {
+    let mut depth = 0usize;
+    for (at, character) in text.char_indices().skip_while(|(at, _)| *at < open) {
+        match character {
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => {
+                depth = depth.checked_sub(1)?;
+                if depth == 0 {
+                    return Some(at);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+fn is_identifier(text: &str) -> bool {
+    text.chars()
+        .next()
+        .is_some_and(|ch| ch.is_ascii_alphabetic() || ch == '_')
+        && text
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+}
+
+fn contains_word(text: &str, word: &str) -> bool {
+    text.match_indices(word).any(|(at, _)| {
+        let before = text[..at].chars().next_back();
+        let after = text[at + word.len()..].chars().next();
+        !before.is_some_and(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+            && !after.is_some_and(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::analysis::facts::FunctionSourceRole;
     use crate::analysis::facts::{CallFact, FunctionSummary};
-    use crate::domain::SymbolId;
+    use crate::domain::{RelationReason, SymbolId};
     use std::path::PathBuf;
+
+    fn test_summary_calling(name: &str, text: &str) -> crate::analysis::facts::TestSummary {
+        crate::analysis::facts::TestSummary {
+            name: "calls".to_string(),
+            file: PathBuf::from("tests/chain.rs"),
+            start_line: 1,
+            end_line: 3,
+            body: text.into(),
+            calls: vec![CallFact {
+                name: name.to_string(),
+                line: 2,
+                text: text.to_string(),
+            }],
+            assertions: Vec::new(),
+            literals: Vec::new(),
+            attrs: Vec::new(),
+            nested_fn_names: Vec::new(),
+            let_bindings: Vec::new(),
+        }
+    }
 
     fn function(file: &str, name: &str, calls: &[(&str, &str)]) -> FunctionSummary {
         FunctionSummary {
@@ -664,6 +1217,290 @@ mod tests {
         ));
         assert!(is_direct_call_site("let x = helper();", "helper"));
         Ok(())
+    }
+
+    fn one_hop_chain(caller_body: &str) -> HelperChain {
+        let mut caller = function("src/lib.rs", "wrapper", &[]);
+        caller.body = caller_body.to_string().into();
+        HelperChain {
+            hops: vec![HelperHop {
+                caller,
+                call_text: String::new(),
+                arguments: Vec::new(),
+            }],
+            stop_above: None,
+        }
+    }
+
+    // #6694 / #6672: an exact oracle on the wrapper's result stands for the
+    // helper's result only when the wrapper hands that result to its return.
+    #[test]
+    fn chain_forwards_owner_result_accepts_tail_call_and_if_condition() {
+        for body in [
+            "pub fn capped_score(value: u32) -> u32 {\n    capped(value, 10)\n}",
+            "pub fn order_discount(qty: u32) -> u32 {\n    if is_bulk(qty) {\n        5\n    } else {\n        0\n    }\n}",
+            "pub fn order_discount(qty: u32) -> u32 {\n    // a comment; with a semicolon\n    if !is_bulk(qty) { 0 } else { 5 }\n}",
+            "pub fn w(qty: u32) -> u32 {\n    let _unused = 3;\n    capped(qty, 10)\n}",
+            // Controls for the value comparison: distinct values forward.
+            "pub fn w(qty: u32) -> u32 {\n    if is_bulk(qty) { 05 } else { 6 }\n}",
+            "pub fn w(qty: u32) -> &str {\n    if is_bulk(qty) { \"b\" } else { \"a\" }\n}",
+        ] {
+            let callee = if body.contains("is_bulk") {
+                "is_bulk"
+            } else {
+                "capped"
+            };
+            assert!(
+                chain_forwards_owner_result(callee, &one_hop_chain(body)),
+                "{body}"
+            );
+        }
+    }
+
+    #[test]
+    fn chain_forwards_owner_result_refuses_shapes_that_drop_or_transform_the_result() {
+        for body in [
+            // discarded result
+            "pub fn w(qty: u32) -> u32 {\n    let _ = is_bulk(qty);\n    5\n}",
+            "pub fn w(qty: u32) -> u32 {\n    is_bulk(qty);\n    5\n}",
+            // let-bound result (not followed in V1)
+            "pub fn w(qty: u32) -> u32 {\n    let bulk = is_bulk(qty);\n    if bulk { 5 } else { 0 }\n}",
+            // the call sits in one branch, behind another condition
+            "pub fn w(qty: u32) -> bool {\n    if qty == 10 { true } else { is_bulk(qty) }\n}",
+            // equal branches never reveal the helper's result
+            "pub fn w(qty: u32) -> u32 {\n    if is_bulk(qty) { 5 } else { 5 }\n}",
+            // #6780 review round 2: equal by value, distinct by text
+            "pub fn w(qty: u32) -> u32 {\n    if is_bulk(qty) { 05 } else { 5 }\n}",
+            "pub fn w(qty: u32) -> &str {\n    if is_bulk(qty) { \"\\x61\" } else { \"a\" }\n}",
+            // compound condition
+            "pub fn w(qty: u32) -> u32 {\n    if is_bulk(qty) && qty > 99 { 5 } else { 0 }\n}",
+            // else-if chain
+            "pub fn w(qty: u32) -> u32 {\n    if is_bulk(qty) { 5 } else if qty > 3 { 1 } else { 0 }\n}",
+            // arithmetic on the result
+            "pub fn w(qty: u32) -> bool {\n    is_bulk(qty) || true\n}",
+            // early exit before the tail
+            "pub fn w(qty: u32) -> bool {\n    if qty == 10 { return true; }\n    is_bulk(qty)\n}",
+            "pub fn w(qty: u32) -> Option<bool> {\n    let q = Some(qty)?;\n    Some(is_bulk(q))\n}",
+            // method call with the same name is not the hop
+            "pub fn w(qty: u32) -> bool {\n    self.is_bulk(qty)\n}",
+        ] {
+            assert!(
+                !chain_forwards_owner_result("is_bulk", &one_hop_chain(body)),
+                "{body}"
+            );
+        }
+        assert!(!chain_forwards_owner_result(
+            "is_bulk",
+            &HelperChain {
+                hops: Vec::new(),
+                stop_above: None,
+            }
+        ));
+    }
+
+    // #6780 review B1 / B3: rebinding the forwarded parameter or a computed
+    // branch value refuses forwarding.
+    #[test]
+    fn chain_forwards_owner_result_refuses_rebinding_and_computed_branches() {
+        let chain_with_args = |body: &str| {
+            let mut chain = one_hop_chain(body);
+            if let Some(hop) = chain.hops.first_mut() {
+                hop.arguments = vec!["qty".to_string()];
+            }
+            chain
+        };
+        assert!(chain_forwards_owner_result(
+            "is_bulk",
+            &chain_with_args(
+                "pub fn w(qty: u32) -> u32 {\n    if is_bulk(qty) { 5 } else { 0 }\n}"
+            )
+        ));
+        for body in [
+            "pub fn w(qty: u32) -> u32 {\n    let qty = qty * 2;\n    if is_bulk(qty) { 5 } else { 0 }\n}",
+            "pub fn w(mut qty: u32) -> u32 {\n    qty = qty + 1;\n    if is_bulk(qty) { 5 } else { 0 }\n}",
+            "pub fn w(mut qty: u32) -> u32 {\n    qty <<= 1;\n    if is_bulk(qty) { 5 } else { 0 }\n}",
+            "pub fn w(qty: u32) -> u32 {\n    if is_bulk(qty) { qty / 2 } else { 5 }\n}",
+            "pub fn w(qty: u32) -> u32 {\n    if is_bulk(qty) { FIVE } else { 0 }\n}",
+        ] {
+            assert!(
+                !chain_forwards_owner_result("is_bulk", &chain_with_args(body)),
+                "{body}"
+            );
+        }
+    }
+
+    #[test]
+    fn caller_rebinds_parameter_finds_patterns_and_assignments() {
+        for body in [
+            "fn w(qty: u32) -> u32 { let qty = 2; qty }",
+            "fn w(qty: u32) -> u32 { let (a, qty) = (1, 2); qty }",
+            "fn w(mut qty: u32) -> u32 { qty -= 1; qty }",
+            "fn w(qty: u32) -> u32 { for qty in 0..3 {} 1 }",
+            "fn w(qty: Option<u32>) -> u32 { match qty { Some(qty) => qty, None => 0 } }",
+            "fn w(qty: u32) -> u32 { [1].iter().map(|qty| qty + 1).sum() }",
+            "fn w(qty: u32) -> u32 { match qty { n @ 1..=3 => n, qty @ _ => qty } }",
+            // A guarded arm whose pattern binds the parameter still rebinds.
+            "fn w(qty: Option<u32>) -> u32 { match qty { Some(qty) if qty > 3 => qty, _ => 0 } }",
+            "fn w(qty: Line) -> u32 { match qty { Line { qty } => qty } }",
+            "fn w(qty: u32, n: Line) -> u32 { match n { Line { qty, .. } if qty > 1 => qty, _ => 0 } }",
+            // #6780 review round 2: a comma-less block arm before the
+            // binding arm must not hide `Some(qty)`.
+            "fn w(qty: Option<u32>, f: bool) -> bool { match qty { None => if f { 1 } else { 2 } Some(qty) => is_bulk(qty) } }",
+        ] {
+            assert!(caller_rebinds_parameter(body, "qty"), "{body}");
+        }
+        for body in [
+            "fn w(qty: u32) -> u32 { if is_bulk(qty) { 5 } else { 0 } }",
+            "fn w(qty: u32) -> bool { qty <= 3 || qty == 9 || qty >= 7 }",
+            "fn w(qty: u32) -> u32 { let other = qty + 1; other }",
+            // CodeRabbit (#6780): a match guard only reads the parameter.
+            "fn w(qty: u32, n: u32) -> u32 { match n { n if n > qty => 1, _ => 0 } }",
+            "fn w(qty: u32, n: u32) -> u32 { match n { 0 => 0, m if is_bulk(qty) => m, _ => 1 } }",
+            // A guard-like word inside the pattern is not a guard.
+            "fn w(qty: u32, n: Diff) -> u32 { match n { Diff { iff } if iff > qty => 1, _ => 0 } }",
+            // #6780 review round 3: a comma-less block arm (rustfmt's
+            // layout) that never names the parameter is not a rebinding.
+            "fn w(qty: u32, n: Option<u32>, f: bool) -> u32 { let k = is_bulk(qty); match n { None => {\n if f { 1 } else { 2 }\n }\n Some(m) => m, } }",
+        ] {
+            assert!(!caller_rebinds_parameter(body, "qty"), "{body}");
+        }
+    }
+
+    // #6780 round 5: the lexical fallback path of `test_call_is_shadowed`
+    // (the test's file is absent from the index, so no parser facts exist).
+    #[test]
+    fn test_call_is_shadowed_on_the_lexical_fallback_path() {
+        let wrapper = function("src/lib.rs", "order_discount", &[]);
+        let idx = index(vec![wrapper.clone()]);
+        let mut test = test_summary_calling("order_discount", "order_discount(10)");
+        test.start_line = 10;
+        test.end_line = 14;
+        assert!(test.nested_fn_names.is_empty() && test.let_bindings.is_empty());
+        test.body = "{\n    assert_eq!(order_discount(9), 0);\n    let order_discount = |_: u32| 5;\n    assert_eq!(order_discount(10), 5);\n}"
+            .into();
+        assert!(idx.files().get(&test.file).is_none(), "fallback path only");
+        // The binding on body line 2 shadows the call on line 3, not line 1.
+        assert!(test_call_is_shadowed(&idx, &test, "order_discount", 13));
+        assert!(!test_call_is_shadowed(&idx, &test, "order_discount", 11));
+        // A hoisted nested fn shadows every line.
+        test.body = "{\n    assert_eq!(order_discount(10), 5);\n    fn order_discount(_: u32) -> u32 { 5 }\n}"
+            .into();
+        assert!(test_call_is_shadowed(&idx, &test, "order_discount", 11));
+        // A renamed import shadows; a plain body does not.
+        test.body = "{\n    use crate::other::fake as order_discount;\n    assert_eq!(order_discount(10), 5);\n}"
+            .into();
+        assert!(test_call_is_shadowed(&idx, &test, "order_discount", 12));
+        test.body = "{\n    assert_eq!(order_discount(10), 5);\n}".into();
+        assert!(!test_call_is_shadowed(&idx, &test, "order_discount", 11));
+        // A second workspace function of the same name: not unique.
+        let mut twin = wrapper;
+        twin.file = PathBuf::from("src/tests.rs");
+        let twins = index(vec![function("src/lib.rs", "order_discount", &[]), twin]);
+        assert!(test_call_is_shadowed(&twins, &test, "order_discount", 11));
+    }
+
+    // #6780 review round 3: the abstention applies only when every
+    // owner-reaching relation is the chain; one direct owner call lifts it.
+    #[test]
+    fn helper_only_reach_requires_chain_relations_without_a_direct_call() {
+        let helper = test_summary_calling("entry", "entry(10)");
+        let direct = test_summary_calling("is_bulk", "is_bulk(10)");
+        let near = test_summary_calling("other", "other(1)");
+        assert!(helper_only_reach(&[(
+            &helper,
+            RelationReason::HelperOwnerCall
+        )]));
+        assert!(helper_only_reach(&[
+            (&helper, RelationReason::HelperOwnerCall),
+            (&near, RelationReason::SameTestFile),
+        ]));
+        assert!(!helper_only_reach(&[
+            (&helper, RelationReason::HelperOwnerCall),
+            (&direct, RelationReason::DirectOwnerCall),
+        ]));
+        assert!(!helper_only_reach(&[
+            (&direct, RelationReason::DirectOwnerCall),
+            (&helper, RelationReason::HelperOwnerCall),
+        ]));
+        assert!(!helper_only_reach(&[(
+            &direct,
+            RelationReason::DirectOwnerCall
+        )]));
+        assert!(!helper_only_reach(&[(&near, RelationReason::SameTestFile)]));
+        assert!(!helper_only_reach(&[]));
+    }
+
+    #[test]
+    fn chain_forwards_owner_result_checks_every_hop() {
+        let mut lower = function("src/lib.rs", "middle", &[]);
+        lower.body = "fn middle(qty: u32) -> bool {\n    is_bulk(qty)\n}"
+            .to_string()
+            .into();
+        let mut upper = function("src/lib.rs", "entry", &[]);
+        upper.body = "pub fn entry(qty: u32) -> u32 {\n    if middle(qty) { 5 } else { 0 }\n}"
+            .to_string()
+            .into();
+        let hop = |caller: FunctionSummary| HelperHop {
+            caller,
+            call_text: String::new(),
+            arguments: Vec::new(),
+        };
+        let chain = HelperChain {
+            hops: vec![hop(lower.clone()), hop(upper)],
+            stop_above: None,
+        };
+        assert!(chain_forwards_owner_result("is_bulk", &chain));
+        let mut dropping = function("src/lib.rs", "entry", &[]);
+        dropping.body = "pub fn entry(qty: u32) -> u32 {\n    let _ = middle(qty);\n    5\n}"
+            .to_string()
+            .into();
+        let chain = HelperChain {
+            hops: vec![hop(lower), hop(dropping)],
+            stop_above: None,
+        };
+        assert!(!chain_forwards_owner_result("is_bulk", &chain));
+        // #6780 review: a test calling only `middle` observes `middle`'s
+        // forwarded result, so the dropping `entry` above it does not
+        // matter; a test calling `entry` (alone or beside one calling
+        // `middle`) still bounds the check at `entry`.
+        fn related<'a>(
+            tests: &[&'a crate::analysis::facts::TestSummary],
+        ) -> Vec<(&'a crate::analysis::facts::TestSummary, RelationReason)> {
+            tests
+                .iter()
+                .map(|test| (*test, RelationReason::HelperOwnerCall))
+                .collect()
+        }
+        let calling = |name: &str, text: &str| {
+            let mut test = test_summary_calling(name, text);
+            test.name = format!("calls_{name}");
+            test
+        };
+        let middle_test = calling("middle", "assert!(middle(10));");
+        let entry_test = calling("entry", "assert_eq!(entry(10), 5);");
+        assert!(chain_forwards_to_observed_hops(
+            "is_bulk",
+            &chain,
+            &related(&[&middle_test])
+        ));
+        assert!(!chain_forwards_to_observed_hops(
+            "is_bulk",
+            &chain,
+            &related(&[&entry_test])
+        ));
+        assert!(!chain_forwards_to_observed_hops(
+            "is_bulk",
+            &chain,
+            &related(&[&middle_test, &entry_test])
+        ));
+        // A helper-owner-call test whose hop cannot be found checks the
+        // whole chain.
+        let unknown = calling("other", "assert!(other(10));");
+        assert!(!chain_forwards_to_observed_hops(
+            "is_bulk",
+            &chain,
+            &related(&[&middle_test, &unknown])
+        ));
     }
 
     // #3296 review B2: only whole-token literals bind; an identifier

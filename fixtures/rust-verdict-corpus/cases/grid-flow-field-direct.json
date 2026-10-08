@@ -1,0 +1,53 @@
+{
+  "case_id": "grid-flow-field-direct",
+  "subject_id": "authored-grid-flow",
+  "diff": "cases/grid-flow-field-direct.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 12
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "field_assignment_activation_const",
+  "hard_case": "A comparison against a named constant reads infection_unknown in either operand order (with the constant on the left ripr sees no literal boundary; on the right it says it cannot see the constant's value), although RIPR-SPEC-0001's named-constant rule resolves `CURRENT` to 7; the field assignments `CURRENT - 1` and `CURRENT` never become activation evidence. A return_value probe on the line reads propagation_unknown (#6671).",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "CURRENT >= manifest.version",
+        "mutated_line": "CURRENT >= manifest.version",
+        "outcome": "tests_failed",
+        "failing_test": "manifests_older_than_current_are_stale",
+        "equivalence_review": "not equivalent: manifests_older_than_current_are_stale fails on it"
+      },
+      {
+        "replacement": "CURRENT < manifest.version",
+        "mutated_line": "CURRENT < manifest.version",
+        "outcome": "tests_failed",
+        "failing_test": "manifests_older_than_current_are_stale",
+        "equivalence_review": "not equivalent: manifests_older_than_current_are_stale fails on it"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "Field-assignment activation: the test sets `manifest.version = CURRENT - 1` and then `CURRENT`, a same-file constant with a bounded offset. RIPR-SPEC-0001's field-assignment rule names this assignment form; its worked example is an `==` predicate, so this case extends the cell to a `>` boundary. Both mutants fail the exact pins. 2 of 2 listed mutants fail cargo test. Spec cells: RIPR-SPEC-0001.",
+  "labeling_observation": {
+    "ripr_commit": "fddf363",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "infection_unknown",
+      "propagation_unknown"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

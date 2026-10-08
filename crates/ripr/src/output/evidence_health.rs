@@ -913,6 +913,7 @@ mod tests {
                     flow_sink: None,
                 }],
                 new_test_target: None,
+                statically_contradicted_related_tests: 0,
             },
             class: SeamGripClass::WeaklyGripped,
         }
@@ -976,6 +977,7 @@ mod tests {
                 ),
                 observed_values: Vec::new(),
                 missing_discriminators: Vec::new(),
+                statically_contradicted_related_tests: 0,
                 new_test_target: None,
             },
             class: SeamGripClass::Ungripped,

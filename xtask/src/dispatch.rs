@@ -191,6 +191,7 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
         XtaskCommand::CheckCoveredBy => super::check_covered_by(),
         XtaskCommand::RustConversionCandidates => super::rust_conversion_candidates(),
         XtaskCommand::CheckExecutableFiles => super::check_executable_files(),
+        XtaskCommand::CheckTextEncoding => super::check_text_encoding(),
         XtaskCommand::CheckWorkflows => super::check_workflows(),
         XtaskCommand::CheckDroidReviewConfig => super::check_droid_review_config(),
         XtaskCommand::CheckSpecFormat => super::check_spec_format(),

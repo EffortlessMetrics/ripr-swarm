@@ -1,0 +1,22 @@
+{
+  "case_id": "spec0231-oracle-err-ref-binding-guard",
+  "subject_id": "authored-spec0231-21a",
+  "origin": "authored",
+  "anchor": "src/lib.rs:3",
+  "behavior_family": "error_return",
+  "test_shape": "matches_err_ref_binding_guard",
+  "hard_case": true,
+  "truth": "partially_discriminated",
+  "ideal_verdict": "gap",
+  "observed_verdict": "gap",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "weakly_exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": [],
+  "findings_scored": 2,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}
