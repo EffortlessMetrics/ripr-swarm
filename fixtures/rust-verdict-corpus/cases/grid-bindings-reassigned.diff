@@ -1,0 +1,13 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 55be37b..0de9fd6 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -8,7 +8,7 @@ pub fn within_quota(used: u32) -> bool {
+ }
+ 
+ pub fn within_budget(spent: u32) -> bool {
+-    let mut budget = 100;
++    let mut budget = 50 * 2;
+     budget += 20;
+     spent <= budget
+ }

@@ -1,0 +1,51 @@
+{
+  "case_id": "grid-bits-or-loose",
+  "subject_id": "authored-grid-bits",
+  "diff": "cases/grid-bits-or-loose.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 40
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "unit_test_relational_assert",
+  "hard_case": null,
+  "truth": {
+    "state": "partially_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "0x80 & base",
+        "mutated_line": "0x80 & base",
+        "outcome": "tests_failed",
+        "failing_test": "flagged_values_are_nonzero",
+        "equivalence_review": "not equivalent: flagged_values_are_nonzero fails on it"
+      },
+      {
+        "replacement": "0x80 ^ base",
+        "mutated_line": "0x80 ^ base",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: with_flag(0x80) is 0 instead of 0x80"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "Bitwise `base | 0x80` with operands swapped, checked only by with_flag(1) > 0. The `&` mutant returns 0 and fails; the `^` mutant returns 0x81 and passes. 1 of 2 listed mutants fail cargo test. No RIPR spec defines a bitwise-operator cell.",
+  "labeling_observation": {
+    "ripr_commit": "fddf363",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

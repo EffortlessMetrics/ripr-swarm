@@ -31,7 +31,9 @@ oracle confirmation (RIPR-SPEC-0094), non-escaping sinks (0096), owner-result
 field bindings and same-name owner resolution (0005) and owner-return
 identity traps (0197); `authored-spec-harness` for harness and package-reach
 cells: libtest-mimic trials (RIPR-SPEC-0173), `cargo_bin` subprocess output
-(0166) and xtask edits (0153)), and
+(0166) and xtask edits (0153); four `authored-grid-*` crates for
+control-flow, changed-binding, Result-match and bitwise or input-length
+cells), and
 one-line edits under `cases/`. Each case is labeled
 with what the crate's own test suite discriminates, established by running
 the listed mutants of the edited expression against the full pinned
