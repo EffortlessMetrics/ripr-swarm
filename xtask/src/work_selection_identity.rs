@@ -1,5 +1,5 @@
 //! Shared selected-work identity schemas and legacy compatibility (#1706,
-//! delivery slice PR A, RIPR-SPEC-0235).
+//! delivery slice PR A, RIPR-SPEC-0244).
 //!
 //! `cargo xtask work selection check [--corpus <dir>] [--json]` validates
 //! committed `SelectedWorkIdentityV1` packets against a `PortfolioBasisV1`
@@ -18,7 +18,7 @@
 //!
 //! Identity law: every wrong repository, issue, action, basis, worktree or
 //! head fails visibly with the exact recompile/reconcile route recorded on
-//! the violation (RIPR-SPEC-0235 acceptance: stale/wrong identity states
+//! the violation (RIPR-SPEC-0244 acceptance: stale/wrong identity states
 //! return exact recompile/reconcile routes).
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -128,7 +128,7 @@ pub(crate) struct RelevantCampaignRefV1 {
 
 /// The live overlap set: issues, PRs, claims, worktrees and semantic
 /// resources that touch the selected work and must stay visible before any
-/// mutation (RIPR-SPEC-0235 acceptance: existing PR/claim/worktree overlap
+/// mutation (RIPR-SPEC-0244 acceptance: existing PR/claim/worktree overlap
 /// is visible before mutation).
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -686,7 +686,7 @@ fn check_packet(
     // Subject identity: at least one subject, canonical string forms, and
     // the subject must exist in the compiled portfolio or the captured
     // issue source (standalone work no campaign records stays
-    // representable, RIPR-SPEC-0235 acceptance 4).
+    // representable, RIPR-SPEC-0244 acceptance 4).
     let mut subject_known = false;
     let mut standalone_issue = false;
     if packet.issue.is_none() && packet.work_item.is_none() && packet.pull_request.is_none() {
@@ -1620,7 +1620,7 @@ pub(crate) fn work_selection_check_markdown(view: &WorkSelectionCheckViewV1) -> 
 }
 
 /// `cargo xtask work selection check [--corpus <dir>] [--json]` (#1706 PR A,
-/// RIPR-SPEC-0235): validate the committed selection corpus against the
+/// RIPR-SPEC-0244): validate the committed selection corpus against the
 /// compiled portfolio bases and render JSON or the derived Markdown.
 /// Read-only: no GitHub, branch, worktree, claim, spec, campaign or source
 /// state is touched.

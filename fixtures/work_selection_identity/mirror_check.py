@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Python mirror of the RIPR-SPEC-0235 identity law engine.
+"""Python mirror of the RIPR-SPEC-0244 identity law engine.
 
 Replays fixtures/work_selection_identity/corpus.json against the same laws
 implemented in xtask/src/work_selection_identity.rs so corpus/logic

@@ -1627,7 +1627,7 @@ fn issue_has_accepted_slice(graph: &WorkCapturedCargoAllowV1, issue: &WorkCaptur
 
 /// Classify one captured issue with the same candidate-kind law the compiler
 /// applies to portfolio candidates, so identity checks for issues no
-/// campaign records (#1706 standalone work, RIPR-SPEC-0235) never fork the
+/// campaign records (#1706 standalone work, RIPR-SPEC-0244) never fork the
 /// action taxonomy. Collision marks are compiler-internal edge derivations;
 /// a standalone issue is classified without them, and its claim/branch
 /// collisions stay visible through the selection law's overlap checks

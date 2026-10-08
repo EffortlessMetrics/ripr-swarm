@@ -13237,9 +13237,9 @@ metrics = [
   "unit_test_pass_rate",
 ]
 [[behavior]]
-id = "RIPR-SPEC-0235"
+id = "RIPR-SPEC-0244"
 name = "Shared selected-work identity schemas and legacy compatibility"
-spec = "docs/specs/RIPR-SPEC-0235-selected-work-identity.md"
+spec = "docs/specs/RIPR-SPEC-0244-selected-work-identity.md"
 tests = [
   "xtask/src/work_selection_identity.rs::tests::work_selection_identity_committed_corpus_twelve_scenarios_hold",
   "xtask/src/work_selection_identity.rs::tests::work_selection_identity_wrong_identities_fail_visibly_with_exact_routes",
@@ -13274,7 +13274,7 @@ code = [
   "xtask/src/dispatch.rs",
 ]
 outputs = [
-  "docs/specs/RIPR-SPEC-0235-selected-work-identity.md",
+  "docs/specs/RIPR-SPEC-0244-selected-work-identity.md",
 ]
 metrics = [
   "unit_test_pass_rate",

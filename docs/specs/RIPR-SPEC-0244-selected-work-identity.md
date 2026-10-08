@@ -1,4 +1,4 @@
-# RIPR-SPEC-0235: Shared selected-work identity schemas and legacy compatibility
+# RIPR-SPEC-0244: Shared selected-work identity schemas and legacy compatibility
 
 Status: proposed
 

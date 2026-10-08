@@ -2,7 +2,7 @@
   "schema_version": "work_selection_identity_provenance.v1",
   "repository": "EffortlessMetrics/ripr-swarm",
   "captured_at": "2026-10-05T12:00:00Z",
-  "capture_method": "authored captured-input corpora for the RIPR-SPEC-0235 selected-work identity law checker; regenerate with fixtures/work_selection_identity/author_corpus.py",
+  "capture_method": "authored captured-input corpora for the RIPR-SPEC-0244 selected-work identity law checker; regenerate with fixtures/work_selection_identity/author_corpus.py",
   "files": [
     {
       "path": "captured/multi-campaign/campaigns.json",

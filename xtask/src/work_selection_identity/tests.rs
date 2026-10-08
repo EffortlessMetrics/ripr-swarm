@@ -1,5 +1,5 @@
 //! Tests for the shared selected-work identity schemas (#1706 PR A,
-//! RIPR-SPEC-0235). Every test name carries the `work_selection_identity`
+//! RIPR-SPEC-0244). Every test name carries the `work_selection_identity`
 //! prefix so the suite is greppable as one delivery slice.
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -334,7 +334,7 @@ fn work_selection_identity_scenario_captured_resolution() -> Result<(), String> 
 /// `-<slug>` suffix; anything else fails closed.
 #[test]
 fn work_selection_identity_spec_ref_wire_shape() -> Result<(), String> {
-    for accepted in ["RIPR-SPEC-0202", "RIPR-SPEC-0235-selected-work-identity"] {
+    for accepted in ["RIPR-SPEC-0202", "RIPR-SPEC-0244-selected-work-identity"] {
         if !spec_ref_has_canonical_shape(accepted) {
             return Err(format!(
                 "`{accepted}` must satisfy the canonical wire shape"

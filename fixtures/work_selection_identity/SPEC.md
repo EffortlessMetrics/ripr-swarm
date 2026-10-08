@@ -1,4 +1,4 @@
-# Selected-work identity corpora (RIPR-SPEC-0235, #1706)
+# Selected-work identity corpora (RIPR-SPEC-0244, #1706)
 
 Captured corpora for the shared selected-work identity law checker in
 `xtask/src/work_selection_identity.rs` (#1706, delivery slice PR A). The

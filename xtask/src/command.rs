@@ -2283,7 +2283,7 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
             "target/ripr/reports/work-selection-check.{json,md}",
             false,
             false,
-            "Validates committed SelectedWorkIdentityV1 packets against the PortfolioBasisV1 compiled from immutable captured inputs (#1706 PR A, RIPR-SPEC-0235); wrong repository/issue/action/basis/worktree/head identities fail with exact recompile/reconcile routes, legacy active-goal/current-work-item refs stay read-only with no authority, and no GitHub, branch, worktree, claim, spec, campaign or source state is touched.",
+            "Validates committed SelectedWorkIdentityV1 packets against the PortfolioBasisV1 compiled from immutable captured inputs (#1706 PR A, RIPR-SPEC-0244); wrong repository/issue/action/basis/worktree/head identities fail with exact recompile/reconcile routes, legacy active-goal/current-work-item refs stay read-only with no authority, and no GitHub, branch, worktree, claim, spec, campaign or source state is touched.",
         ),
     ]
 }

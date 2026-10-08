@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Author the RIPR-SPEC-0235 selected-work identity corpus (#1706, PR A).
+"""Author the RIPR-SPEC-0244 selected-work identity corpus (#1706, PR A).
 
 Regenerates:
   corpus.json                       the twelve required selection scenarios
@@ -132,7 +132,7 @@ def packet(
 ):
     # The selection id is derived, never free-typed: the packet's own action
     # and issue binding fix the canonical `selection:<action>:issue:<n>` form
-    # (RIPR-SPEC-0235 acceptance 8), so a packet cannot carry an id naming
+    # (RIPR-SPEC-0244 acceptance 8), so a packet cannot carry an id naming
     # another issue or action.
     return {
         "selection_id": "selection:{}:issue:{}".format(action, number),
@@ -570,7 +570,7 @@ def build_provenance():
         "schema_version": "work_selection_identity_provenance.v1",
         "repository": REPOSITORY,
         "captured_at": "2026-10-05T12:00:00Z",
-        "capture_method": "authored captured-input corpora for the RIPR-SPEC-0235 selected-work identity law checker; regenerate with fixtures/work_selection_identity/author_corpus.py",
+        "capture_method": "authored captured-input corpora for the RIPR-SPEC-0244 selected-work identity law checker; regenerate with fixtures/work_selection_identity/author_corpus.py",
         "files": files,
     }
     write_json(ROOT / "provenance.json", provenance)
