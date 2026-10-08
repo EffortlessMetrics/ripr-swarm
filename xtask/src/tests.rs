@@ -20491,6 +20491,26 @@ RIPR is advisory static evidence. It does not edit source, generate tests, or ru
         commented.errors
     );
 
+    let early_exit_invoke = workflow.replace(
+        "          ripr reports ci-summary --root . >> \"$GITHUB_STEP_SUMMARY\"",
+        "          exit 0\n          ripr reports ci-summary --root . >> \"$GITHUB_STEP_SUMMARY\"",
+    );
+    let early_exit = dogfood_generated_ci_cockpit_run_from_surfaces(
+        "unreachable-summary-invoke",
+        command,
+        10,
+        &early_exit_invoke,
+        &summary,
+    );
+    assert!(
+        early_exit
+            .errors
+            .iter()
+            .any(|error| error.contains("invoke ripr reports ci-summary")),
+        "{:?}",
+        early_exit.errors
+    );
+
     let blocking_summary_step = dogfood_generated_ci_cockpit_run_from_surfaces(
         "summary-step-without-continue-on-error",
         command,

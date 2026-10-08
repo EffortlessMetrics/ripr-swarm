@@ -6,4 +6,4 @@
   artifact-upload wiring on the workflow. The family receipt names both
   `init --ci github --dry-run` and `reports ci-summary --base-ref main`.
   The advisory-summary invoke must be an executable `run` line, not a
-  quoted echo or comment (#6958).
+  quoted echo, comment, or a line after a whole-line `exit 0` (#6958).

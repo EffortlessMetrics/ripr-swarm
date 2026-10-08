@@ -3541,16 +3541,34 @@ fn generated_ci_advisory_summary_step(workflow: &str) -> Option<&str> {
 const GENERATED_CI_SUMMARY_RUN_BLOCK: &str = "\n        run: |\n";
 
 /// True when a trimmed, non-comment `run: |` line equals the ci-summary
-/// invoke. A substring match still passes `echo '…'` or `# …` copies (#6958).
+/// invoke and no earlier whole-line `exit`/`exit 0` made it unreachable.
+/// `echo '…'` / `# …` copies still fail. This is not a shell interpreter:
+/// the generated install-failure `echo …; exit 1` stays a different line
+/// (#6958).
 fn generated_ci_summary_step_has_executable_invoke(step: &str) -> bool {
     let Some(run_at) = step.find(GENERATED_CI_SUMMARY_RUN_BLOCK) else {
         return false;
     };
     let run_block = &step[run_at + GENERATED_CI_SUMMARY_RUN_BLOCK.len()..];
-    run_block.lines().any(|line| {
+    let mut unreachable = false;
+    for line in run_block.lines() {
         let trimmed = line.trim();
-        !trimmed.is_empty() && !trimmed.starts_with('#') && trimmed == GENERATED_CI_SUMMARY_INVOKE
-    })
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        if generated_ci_run_line_is_unconditional_exit(trimmed) {
+            unreachable = true;
+            continue;
+        }
+        if trimmed == GENERATED_CI_SUMMARY_INVOKE {
+            return !unreachable;
+        }
+    }
+    false
+}
+
+fn generated_ci_run_line_is_unconditional_exit(trimmed: &str) -> bool {
+    trimmed == "exit" || trimmed == "exit 0" || trimmed.starts_with("exit 0;")
 }
 
 /// Check workflow step wiring and `ripr reports ci-summary` text separately
