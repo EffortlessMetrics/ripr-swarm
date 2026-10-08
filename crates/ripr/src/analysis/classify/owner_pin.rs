@@ -2009,10 +2009,13 @@ fn cfg_attr_payload_may_drop(text: &str) -> bool {
             _ => {}
         }
     }
+    // Strings and comments are masked first, so `doc = "path"` names no
+    // `path` attribute.
     payload.is_none_or(|payload| {
+        let payload = mask_comments_and_strings(payload);
         ["cfg", "cfg_attr", "path"]
             .iter()
-            .any(|word| contains_as_whole_word(payload, word))
+            .any(|word| contains_as_whole_word(&payload, word))
     })
 }
 

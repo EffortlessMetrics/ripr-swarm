@@ -1137,6 +1137,11 @@ fn a_cfg_gated_owner_is_not_reached_by_a_bare_call() {
         file_admitted("pub mod scale;\n", &lint_toggle, &[]),
         ["assert_eq!(weight(4), 12);"]
     );
+    let doc_toggle = format!("#![cfg_attr(feature = \"alt\", doc = \"path cfg\")]\n{scale}");
+    assert_eq!(
+        file_admitted("pub mod scale;\n", &doc_toggle, &[]),
+        ["assert_eq!(weight(4), 12);"]
+    );
     let cfg_toggle = format!("#![cfg_attr(feature = \"alt\", cfg(any()))]\n{scale}");
     assert!(file_admitted("pub mod scale;\n", &cfg_toggle, &[]).is_empty());
     // Control: the plain declaration pins, even beside a cfg'd `mod scale;`
