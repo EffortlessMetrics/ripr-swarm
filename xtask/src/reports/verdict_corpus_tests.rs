@@ -603,69 +603,68 @@ fn validator_requires_a_lockfile_on_authored_registry_subjects() -> Result<(), S
 
 #[test]
 fn manifest_pins_registry_crate_reads_version_pins_not_path_deps() {
-    assert!(
+    assert_eq!(
         manifest_pins_registry_crate(
             "[package]\nname = \"confirm\"\n\n[dependencies]\nlog = \"=0.4.34\"\n"
-        )
-        .expect("string version pin")
+        ),
+        Ok(true)
     );
-    assert!(
+    assert_eq!(
         manifest_pins_registry_crate(
             "[dev-dependencies]\nassert_cmd = \"=2.2.2\"\nlibtest-mimic = \"=0.8.2\"\n"
-        )
-        .expect("dev-dep string pins")
+        ),
+        Ok(true)
     );
-    assert!(
-        manifest_pins_registry_crate("[dependencies]\nlog = { version = \"=0.4.34\" }\n")
-            .expect("inline version pin")
+    assert_eq!(
+        manifest_pins_registry_crate("[dependencies]\nlog = { version = \"=0.4.34\" }\n"),
+        Ok(true)
     );
-    assert!(
-        manifest_pins_registry_crate("[target.'cfg(unix)'.dependencies]\nlibc = \"0.2\"\n")
-            .expect("target-specific registry pin")
+    assert_eq!(
+        manifest_pins_registry_crate("[target.'cfg(unix)'.dependencies]\nlibc = \"0.2\"\n"),
+        Ok(true)
     );
-    assert!(
-        !manifest_pins_registry_crate("[dependencies]\npricing = { path = \"../pricing\" }\n")
-            .expect("inline path dep")
+    assert_eq!(
+        manifest_pins_registry_crate("[dependencies]\npricing = { path = \"../pricing\" }\n"),
+        Ok(false)
     );
-    assert!(
-        !manifest_pins_registry_crate("[package]\nname = \"authored-pricing\"\n\n[dependencies]\n")
-            .expect("empty deps")
+    assert_eq!(
+        manifest_pins_registry_crate("[package]\nname = \"authored-pricing\"\n\n[dependencies]\n"),
+        Ok(false)
     );
 }
 
 #[test]
 fn manifest_pins_registry_crate_ignores_dotted_features_and_multiline_path_tables() {
-    assert!(
-        !manifest_pins_registry_crate("[dependencies.pricing]\nfeatures = [\"std\"]\n")
-            .expect("dotted features-only table is not a registry pin")
+    assert_eq!(
+        manifest_pins_registry_crate("[dependencies.pricing]\nfeatures = [\"std\"]\n"),
+        Ok(false)
     );
-    assert!(
-        !manifest_pins_registry_crate("[dependencies]\npricing = {\n  path = \"../pricing\"\n}\n")
-            .expect("multi-line path inline table is not a registry pin")
+    assert_eq!(
+        manifest_pins_registry_crate("[dependencies]\npricing = {\n  path = \"../pricing\"\n}\n"),
+        Ok(false)
     );
-    assert!(
-        !manifest_pins_registry_crate(
+    assert_eq!(
+        manifest_pins_registry_crate(
             "[dependencies]\nfoo = { git = \"https://example.com/foo.git\" }\n"
-        )
-        .expect("git dep is not a crates.io pin")
+        ),
+        Ok(false)
     );
-    assert!(
-        !manifest_pins_registry_crate("[dependencies]\nfoo = { workspace = true }\n")
-            .expect("workspace inherit is not a crates.io pin")
+    assert_eq!(
+        manifest_pins_registry_crate("[dependencies]\nfoo = { workspace = true }\n"),
+        Ok(false)
     );
-    assert!(
-        !manifest_pins_registry_crate("[dependencies]\nfoo = { version = { workspace = true } }\n")
-            .expect("version.workspace inherit is not a crates.io pin")
+    assert_eq!(
+        manifest_pins_registry_crate("[dependencies]\nfoo = { version = { workspace = true } }\n"),
+        Ok(false)
     );
 }
 
 #[test]
 fn manifest_pins_registry_crate_fails_closed_on_invalid_toml() {
-    let err = manifest_pins_registry_crate("[dependencies\nlog = \"1\"\n")
-        .expect_err("unclosed table must not look like a non-pin");
+    let result = manifest_pins_registry_crate("[dependencies\nlog = \"1\"\n");
     assert!(
-        err.contains("not valid TOML"),
-        "parse error should be explicit, got {err}"
+        matches!(&result, Err(err) if err.contains("not valid TOML")),
+        "unclosed table must not look like a non-pin: {result:?}"
     );
 }
 
