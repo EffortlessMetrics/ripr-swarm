@@ -14,6 +14,7 @@ Linked issues:
 - #4666 (bounded detail references; landed as PR #4980, RIPR-SPEC-0193)
 - #4669 (measured budget ratification)
 - #4330 (edit-cage authority)
+- #7179 (nested same-kind spans select most-specific candidate)
 - EffortlessMetrics/ripr#1810 (primary journey truthfulness)
 
 Support-tier impact:
@@ -64,7 +65,10 @@ check), then assembles one `RepairCardV1`:
   finding's probe line to fall on the seam — inside its recorded span, else
   exactly its display line — so twin seams of one function that share file,
   owner, and kind split by line and another seam's witness is never credited
-  to this card (#7177). The
+  to this card (#7177). When nested same-kind seams in one function share a line
+  (such as compound expressions enclosing sub-expressions), the join selects the
+  most-specific span: an outer strictly enclosing seam is refused when an inner
+  candidate matches, and competing equal minimal spans fail closed as ambiguous (#7179). The
   repository head (`git rev-parse HEAD`), the portable
   workspace identity, the seam's most recent repair-attempt manifest by
   `created_unix_ms`, the rendered canonical packet behind a portable

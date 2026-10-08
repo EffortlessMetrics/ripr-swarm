@@ -35,6 +35,7 @@ pub(super) fn seam_repair_card(
         &snapshot.findings,
         entry,
         readiness.canonical_gap_id.as_deref(),
+        &snapshot.classified_seams,
     ) {
         Some((finding_id, witness)) => (Some(finding_id), Some(witness)),
         None => (None, None),
