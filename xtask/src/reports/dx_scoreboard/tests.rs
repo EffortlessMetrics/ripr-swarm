@@ -2606,3 +2606,30 @@ fn verdict_corpus_sources_derive_each_rate_from_the_committed_rows() -> Result<(
     );
     Ok(())
 }
+
+#[test]
+fn file_sources_point_at_committed_receipts() -> Result<(), String> {
+    // A `file:` source whose path is missing renders `not_measured` with a
+    // restore hint that can never work (#6638 review: the coverage metric
+    // pointed at `expected/report.json`, deleted by the rows layout in
+    // #6658). Metrics without a producer stay `source = "pending"` with a
+    // reason until one exists (#7134).
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    let config = load_config(&committed_config())?;
+    let mut seen = 0;
+    for metric in &config.metric {
+        let Some(reference) = metric.source.strip_prefix("file:") else {
+            continue;
+        };
+        seen += 1;
+        let (path, _pointer) = reference.split_once('#').unwrap_or((reference, ""));
+        if !root.join(path).is_file() {
+            return Err(format!(
+                "metric `{}` reads `{path}`, which is not a committed file",
+                metric.id
+            ));
+        }
+    }
+    assert_eq!(seen, 1, "the committed file-backed receipts");
+    Ok(())
+}

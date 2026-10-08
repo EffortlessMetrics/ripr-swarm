@@ -1,0 +1,55 @@
+{
+  "case_id": "spec0231-oracle-helper-assert-json-eq",
+  "subject_id": "authored-spec0231-12",
+  "diff": "cases/spec0231-oracle-helper-assert-json-eq.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 2
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "scalar_return_value",
+  "test_shape": "custom_helper_equality",
+  "hard_case": "Kind/strength match the spec. ripr also attributes the helper body's assert!(actual == expected) to the test as a second related_tests entry (relational_check / weak).",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "x * 3",
+        "mutated_line": "x * 3",
+        "outcome": "tests_failed",
+        "failing_test": "tests::score_renders_as_json",
+        "equivalence_review": "not equivalent: score(2) becomes 6 (the spec's changed-from value)"
+      },
+      {
+        "replacement": "x * 0",
+        "mutated_line": "x * 0",
+        "outcome": "tests_failed",
+        "failing_test": "tests::score_renders_as_json",
+        "equivalence_review": "not equivalent: score(2) becomes 0"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "The helper compares the rendered JSON with {\"score\":4}, so both mutants fail it. Spec cells: RIPR-SPEC-0231 example 12 (control: spec marks it unchanged); spec-adopted oracle exact_value / strong.",
+  "labeling_observation": {
+    "ripr_commit": "96c1a18e9",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0231#12"
+  ]
+}

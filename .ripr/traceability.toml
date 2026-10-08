@@ -8578,6 +8578,19 @@ tests = [
   "crates/ripr/src/analysis/language/rust/proximity_reach_tests.rs::proximity_only_reach_through_a_helper_names_the_transitive_limit",
   "crates/ripr/src/output/human.rs::tests::human_output_surfaces_static_limitation_detail",
   "crates/ripr/src/domain/language.rs::tests::static_limit_kind_wire_strings_are_stable",
+  "crates/ripr/src/analysis/syntax/local_test_macros.rs::tests::expands_each_invocation_with_its_arguments_and_lines",
+  "crates/ripr/src/analysis/syntax/local_test_macros.rs::tests::repetition_shadowing_scope_and_order_refuse",
+  "crates/ripr/src/analysis/syntax/local_test_macros.rs::tests::arm_selection_follows_count_and_fragment_shape",
+  "crates/ripr/src/analysis/syntax/local_test_macros.rs::tests::a_macro_without_a_test_attribute_is_not_expanded",
+  "crates/ripr/src/analysis/syntax/local_test_macros.rs::tests::cfg_context_local_macros_and_uncertain_fragments_refuse",
+  "crates/ripr/src/analysis/syntax/local_test_macros.rs::tests::an_earlier_arm_outside_the_shape_refuses",
+  "crates/ripr/src/analysis/syntax/local_test_macros.rs::tests::conditional_attributes_in_the_expansion_and_imported_names_refuse",
+  "crates/ripr/src/analysis/facts/macro_generated_tests.rs::tests::macro_generated_tests_are_indexed_at_their_invocations",
+  "crates/ripr/tests/macro_generated_tests.rs::a_macro_generated_test_reads_like_the_hand_written_test",
+  "crates/ripr/tests/macro_generated_tests.rs::refused_shapes_and_uninvoked_generators_add_no_test",
+  "crates/ripr/tests/macro_generated_tests.rs::a_deferred_assertion_in_a_generated_test_is_refused_like_a_hand_written_one",
+  "crates/ripr/tests/macro_generated_tests.rs::a_shadowing_let_in_a_generated_test_reads_like_the_hand_written_one",
+  "crates/ripr/tests/macro_generated_tests.rs::a_cfg_gated_invocation_adds_no_test",
 ]
 fixtures = [
   "fixtures/benches_harness_evidence",
@@ -8591,6 +8604,9 @@ code = [
   "crates/ripr/src/analysis/classify/mod.rs",
   "crates/ripr/src/analysis/language/rust/mod.rs",
   "crates/ripr/src/output/human/sections.rs",
+  "crates/ripr/src/analysis/syntax/local_test_macros.rs",
+  "crates/ripr/src/analysis/facts/macro_generated_tests.rs",
+  "crates/ripr/src/analysis/classify/owner_pin.rs",
 ]
 outputs = [
   "docs/specs/RIPR-SPEC-0117-rust-macro-reach-limitation.md",
@@ -12702,6 +12718,17 @@ tests = [
   "xtask/src/reports/verdict_corpus_tests.rs::build_report_counts_rates_over_the_right_denominators",
   "xtask/src/reports/verdict_corpus_tests.rs::contradiction_counts_use_one_per_finding_unit",
   "xtask/src/reports/verdict_corpus_tests.rs::stored_paths_keep_vendored_rust_out_of_the_workspace",
+  "xtask/src/reports/verdict_corpus_coverage_tests.rs::numbered_examples_read_only_top_level_items_under_acceptance_examples",
+  "xtask/src/reports/verdict_corpus_coverage_tests.rs::numbered_examples_skip_tilde_and_long_fences_until_a_matching_close",
+  "xtask/src/reports/verdict_corpus_coverage_tests.rs::spec_ids_come_from_the_spec_file_name",
+  "xtask/src/reports/verdict_corpus_coverage_tests.rs::example_ids_accept_only_the_canonical_spelling",
+  "xtask/src/reports/verdict_corpus_coverage_tests.rs::citations_of_malformed_unknown_or_unnumbered_examples_are_rejected",
+  "xtask/src/reports/verdict_corpus_coverage_tests.rs::citing_an_out_of_scope_spec_is_rejected",
+  "xtask/src/reports/verdict_corpus_coverage_tests.rs::an_example_both_waived_and_covered_is_rejected",
+  "xtask/src/reports/verdict_corpus_coverage_tests.rs::ledger_must_name_every_spec_with_numbered_examples_and_only_real_ones",
+  "xtask/src/reports/verdict_corpus_coverage_tests.rs::coverage_counts_cited_in_scope_examples_over_the_unwaived_ones",
+  "xtask/src/reports/verdict_corpus_coverage_tests.rs::floor_gate_fails_below_passes_at_and_invites_a_raise_above",
+  "xtask/src/reports/verdict_corpus_coverage_tests.rs::committed_ledger_is_valid_and_meets_its_floor",
   "xtask/src/reports/verdict_corpus_tests.rs::corpus_records_load_in_file_name_order_and_must_match_their_ids",
   "xtask/src/reports/verdict_corpus_tests.rs::split_moves_the_one_file_layout_into_records_without_loss",
   "xtask/src/reports/verdict_corpus_tests.rs::drift_names_moved_missing_and_stale_rows_and_a_subset_compares_only_its_rows",
@@ -12732,6 +12759,7 @@ fixtures = [
 ]
 code = [
   "xtask/src/reports/verdict_corpus.rs",
+  "xtask/src/reports/verdict_corpus_coverage.rs",
   "xtask/src/reports/verdict_corpus_relabel.rs",
 ]
 outputs = [
@@ -12741,6 +12769,7 @@ metrics = [
   "verdict_corpus_false_verdict_rate",
   "verdict_corpus_false_actionable_rate",
   "verdict_corpus_contradiction_rate",
+  "verdict_corpus_spec_example_coverage",
 ]
 
 [[behavior]]
@@ -13077,6 +13106,9 @@ tests = [
   "crates/ripr/src/analysis/seam_cache/store.rs::tests::orphan_generations_are_swept_only_when_old_and_unreferenced",
   "crates/ripr/src/analysis/seam_cache/store.rs::tests::orphan_sweep_does_nothing_without_a_valid_manifest",
   "crates/ripr/src/analysis/seam_cache/store.rs::tests::replaced_generation_cleanup_only_deletes_files_inside_generation_directories",
+  "crates/ripr/src/analysis/seam_cache/store.rs::tests::replaced_generation_cleanup_does_not_follow_a_symlinked_generation_directory",
+  "crates/ripr/src/analysis/seam_cache/store.rs::tests::replaced_generation_cleanup_does_not_follow_a_symlinked_entry_directory",
+  "crates/ripr/src/analysis/seam_cache/store.rs::tests::symlink_guard_rejects_parent_and_root_components",
   "crates/ripr/src/analysis/seam_cache/store.rs::tests::sharded_publication_sweeps_an_old_orphan_generation",
   "crates/ripr/src/analysis/seam_cache/store.rs::tests::tampered_previous_manifest_never_deletes_the_live_manifest",
 ]

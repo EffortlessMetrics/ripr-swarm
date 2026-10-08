@@ -1,0 +1,54 @@
+{
+  "case_id": "spec0231-oracle-events-not-empty",
+  "subject_id": "authored-spec0231-16",
+  "diff": "cases/spec0231-oracle-events-not-empty.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 3
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "side_effect_push",
+  "test_shape": "negated_is_empty_on_events",
+  "hard_case": "Control matches (mock_expectation / medium). ripr reads propagation_unknown for both call_deletion and side_effect, although the deleted-push mutant is caught.",
+  "truth": {
+    "state": "partially_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "events.push(n * 3);",
+        "mutated_line": "events.push(n * 3);",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: the pushed event is 9, not 6; the test only checks non-empty"
+      },
+      {
+        "replacement": "let _ = n;",
+        "mutated_line": "let _ = n;",
+        "outcome": "tests_failed",
+        "failing_test": "tests::emit_records_an_event",
+        "equivalence_review": "not equivalent: no event is pushed, so events is empty"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "!events.is_empty() catches the deleted push but not a wrong pushed value. Spec cells: RIPR-SPEC-0231 example 16 (unchanged; control).",
+  "labeling_observation": {
+    "ripr_commit": "96c1a18e9",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "propagation_unknown"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0231#16"
+  ]
+}
