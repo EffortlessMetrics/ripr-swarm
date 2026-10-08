@@ -338,7 +338,7 @@ rejected alternative. Any can be reversed later without touching the rest.
 - Existing: `classify.rs` unit test for `ensure!(s != X)` changes with
   example 13.
 - Verdict corpus: 28 cases `spec0231-*` in
-  `fixtures/rust-verdict-corpus/corpus.json` for acceptance examples 1-26
+  `fixtures/rust-verdict-corpus/cases/` for acceptance examples 1-26
   (two forms each for 21 and 23), each naming its example in its reasoning
   and labeled with runtime mutant truth. The verdict score cannot see an
   oracle-kind error that leaves the line verdict unchanged, so each case's

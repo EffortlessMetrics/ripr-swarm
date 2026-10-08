@@ -230,7 +230,7 @@ changes `self.count += 2` to `self.count += 1`.
   `fixtures/observation_verified_side_effect`,
   `fixtures/observation_unverified_side_effect`.
 - Verdict corpus: 10 cases `spec0228-*` in
-  `fixtures/rust-verdict-corpus/corpus.json` for acceptance examples 1-9,
+  `fixtures/rust-verdict-corpus/cases/` for acceptance examples 1-9,
   each naming its example in its reasoning and labeled with runtime mutant
   truth. Examples 10 and 11 are dead writes: every mutant of the write is
   equivalent, so they have no runtime-labeled case.

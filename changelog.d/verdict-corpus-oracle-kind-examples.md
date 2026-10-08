@@ -5,5 +5,5 @@
   `exact_error_variant` / strong where the spec admits only a weak or smoke
   oracle. The line verdict hides most of these: 22 of 28 still score ideal.
   Measured verdict errors: a length pin reads `exposed` while a mutant
-  passes, and 4 discriminated controls read as gaps. Corpus 2026-10-04.8,
-  175 cases (#6638; the overclaims are tracked in #6640).
+  passes, and 4 discriminated controls read as gaps (#6638; the overclaims
+  are tracked in #6640).

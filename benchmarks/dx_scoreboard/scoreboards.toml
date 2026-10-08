@@ -268,8 +268,8 @@ target = 1.0
 regression_pct = 0
 regression_floor = 0
 runner_dependent = false
-source = "file:fixtures/rust-verdict-corpus/expected/report.json#spec_example_coverage.coverage"
-pending_reason = "fixtures/rust-verdict-corpus/expected/report.json is missing; restore it from main; `cargo xtask verdict-corpus check` reports any drift"
+source = "pending"
+pending_reason = "expected_report derives only row verdict rates; board wiring for the coverage rate follows in #7134; `cargo xtask verdict-corpus check` gates the covered count against the floor in spec-coverage.toml meanwhile"
 
 [[metric]]
 id = "trust.discriminator_claim_agreement"
