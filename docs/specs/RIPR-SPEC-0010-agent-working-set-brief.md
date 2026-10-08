@@ -109,19 +109,23 @@ The first implementation should use a deterministic ranking policy:
 6. `explicit_seam_id`
 7. `repo_actionable_fallback`
 
-Tie-breakers:
+Tie-breakers (among retained repair targets; static-limitation seams are
+omitted before ranking and neither rank nor count toward the cap):
 
 1. configured severity (`warning`, then `info`, then `note`);
-2. grip class priority (`weakly_gripped`, `ungripped`,
-   `reachable_unrevealed`, unknown-stage classes, then `opaque`);
+2. grip class priority (`weakly_gripped`, `ungripped`, then
+   `reachable_unrevealed`);
 3. related-test confidence;
 4. file path;
 5. line;
 6. seam ID.
 
 `--seam-id` is an explicit lookup and should return that seam first when it is
-visible under current config. Other seams may be included only when the caller
-also asks for more than one result.
+a selectable repair target under current config. Other seams may be included
+only when the caller also asks for more than one result. A requested seam
+that is not selectable (a static limitation, a strongly-gripped,
+intentional, or suppressed seam, or a configured-off class) yields an empty
+brief with a named omission warning instead.
 
 When `changed_test_for_related_seam` comes from a file-only request, it is
 broader than a line-level `changed_assertion_near_related_test` match and
