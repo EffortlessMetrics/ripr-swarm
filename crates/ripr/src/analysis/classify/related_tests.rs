@@ -2905,17 +2905,21 @@ pub(in crate::analysis) fn test_calls_free_function(test: &TestSummary, name: &s
     // the call facts did not capture. A `name(` token inside an opaque
     // property macro is macro-internal syntax, not a call the test makes,
     // so the fallback excludes those ranges exactly as
-    // [`body_contains_owner_call`] does (#6713 review).
+    // [`body_contains_owner_call`] does (#6713 review). Every free-call
+    // spelling is checked, not only the first: a macro-internal occurrence
+    // must not hide a genuine bare call later in the body.
     test.calls
         .iter()
         .any(|call| call.name == name && call_text_may_call_free_function(&call.text, name))
-        || free_function_call_start_in(&mask_comments_and_strings(&test.body), name).is_some_and(
-            |at| {
-                !crate::analysis::extract::property_macros::opaque_property_macros(&test.body)
-                    .iter()
-                    .any(|item| item.range.contains(&at))
-            },
-        )
+        || {
+            let masked = mask_comments_and_strings(&test.body);
+            let opaque =
+                crate::analysis::extract::property_macros::opaque_property_macros(&test.body);
+            masked.match_indices(name).map(|(at, _)| at).any(|at| {
+                is_free_function_call_at(&masked, at, name)
+                    && !opaque.iter().any(|item| item.range.contains(&at))
+            })
+        }
 }
 
 /// Whether one captured call's raw source text spells a free-function call
@@ -4117,6 +4121,37 @@ mod tests {
                 .map(|(_, reason)| reason)
                 .collect::<Vec<_>>(),
             vec![RelationReason::WeakTokenSubstring]
+        );
+    }
+
+    /// #6713 review: a macro-internal `kb(` token does not hide a genuine
+    /// bare call later in the body — every free-call spelling is checked
+    /// against the opaque ranges, so the later call keeps the direct
+    /// relation.
+    #[test]
+    fn given_free_fn_when_genuine_call_follows_macro_internal_token_then_direct_owner_call() {
+        let owner = free_function("src/lib.rs", "kb");
+        let mut method = impl_function("src/lib.rs", "kb", "impl ByteSize");
+        method.impl_context = FunctionImplContext::Impl {
+            self_type: "ByteSize".to_string(),
+        };
+        let body = "let _ = ByteSize::kb(1);\nproptest!(|input in 0u8..10| { prop_assert_eq!(kb(input), 1000); });\nassert_eq!(kb(2), 1000);";
+        let mut test = test_with_call("tests/units.rs", "test_comparison", body, "kb");
+        // No captured free-call fact: the captured line is the associated
+        // call, so the fallback must find the later genuine bare call.
+        test.calls[0].text = "let _ = ByteSize::kb(1);".to_string();
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions: vec![owner.clone(), method],
+            tests: vec![test],
+            ..Default::default()
+        });
+        let probe = probe("src/lib.rs", "size.into() * KB");
+        assert_eq!(
+            find_related_tests(&probe, Some(&owner), &index, true, None, None)
+                .into_iter()
+                .map(|(_, reason)| reason)
+                .collect::<Vec<_>>(),
+            vec![RelationReason::DirectOwnerCall]
         );
     }
 
