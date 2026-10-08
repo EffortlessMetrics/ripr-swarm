@@ -5494,8 +5494,13 @@ fn has_utf8_bom(bytes: &[u8]) -> bool {
 /// One BOM violation: the file plus a byte-exact POSIX and PowerShell
 /// one-liner that drops the first three bytes without re-encoding the rest.
 fn text_encoding_violation(path: &str) -> String {
+    // Quote each shell separately: POSIX closes the quote around '\''
+    // and PowerShell doubles the quote, so an apostrophe in the path
+    // cannot break either strip one-liner.
+    let posix = path.replace('\'', "'\\''");
+    let powershell = path.replace('\'', "''");
     format!(
-        "{path} starts with a UTF-8 BOM (EF BB BF); save as UTF-8 without BOM\n  strip (POSIX): tail -c +4 '{path}' > '{path}.nobom' && mv '{path}.nobom' '{path}'\n  strip (PowerShell): $p='{path}'; $b=[IO.File]::ReadAllBytes($p); $n=New-Object byte[] ($b.Length-3); [Array]::Copy($b,3,$n,0,$n.Length); [IO.File]::WriteAllBytes($p,$n)"
+        "{path} starts with a UTF-8 BOM (EF BB BF); save as UTF-8 without BOM\n  strip (POSIX): tail -c +4 '{posix}' > '{posix}.nobom' && mv '{posix}.nobom' '{posix}'\n  strip (PowerShell): $p='{powershell}'; $b=[IO.File]::ReadAllBytes($p); $n=New-Object byte[] ($b.Length-3); [Array]::Copy($b,3,$n,0,$n.Length); [IO.File]::WriteAllBytes($p,$n)"
     )
 }
 
@@ -22345,8 +22350,10 @@ pub(crate) fn is_file_policy_candidate(path: &str) -> bool {
 
 /// Text classes the BOM scan covers: the union of the sibling hygiene text
 /// lists plus the text extensions observed in the tracked tree. Extensionless
-/// tracked files (today: LICENSE files) are scanned fail-closed; only
-/// known-binary extensions stay out of the candidate set by omission.
+/// tracked files (today: LICENSE files) are scanned fail-closed, and dotted
+/// matching is case-insensitive (`Makefile.PL`, `README.MD`). Any other
+/// dotted extension stays out by omission, so a novel future text extension
+/// needs adding to the list (fail-open there by design).
 fn is_text_encoding_candidate(path: &str) -> bool {
     if path
         .rsplit('/')
@@ -22409,7 +22416,10 @@ fn is_text_encoding_candidate(path: &str) -> bool {
         ".yml",
         ".zsh",
     ];
-    extensions.iter().any(|extension| path.ends_with(extension))
+    let lowered = path.to_ascii_lowercase();
+    extensions
+        .iter()
+        .any(|extension| lowered.ends_with(extension))
 }
 
 pub(crate) fn is_non_rust_programming_candidate(path: &str) -> bool {

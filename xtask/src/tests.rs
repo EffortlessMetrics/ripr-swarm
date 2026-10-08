@@ -11571,13 +11571,25 @@ fn text_encoding_violation_names_file_and_both_strip_commands() -> Result<(), St
             ));
         }
     }
+    // An apostrophe in the path must stay inside each shell's quoting:
+    // POSIX closes the quote around '\'' and PowerShell doubles it.
+    let quoted = super::text_encoding_violation("docs/it's.md");
+    for required in ["tail -c +4 'docs/it'\\''s.md'", "$p='docs/it''s.md'"] {
+        if !quoted.contains(required) {
+            return Err(format!(
+                "BOM violation must quote apostrophes ({required:?}): {quoted:?}"
+            ));
+        }
+    }
     Ok(())
 }
 
 #[test]
 fn text_encoding_candidates_cover_issue_text_classes() -> Result<(), String> {
     // The three #7091 BOM sites were .txt, .rs, and .md; extensionless
-    // tracked files (LICENSE files) are scanned fail-closed.
+    // tracked files (LICENSE files) are scanned fail-closed. Extension
+    // matching is case-insensitive: the tracked `Makefile.PL` fixture and
+    // any future `README.MD`-style path must be scanned too (#7154).
     for candidate in [
         "policy/process_allowlist.txt",
         "crates/ripr/tests/agent_stub_compiles.rs",
@@ -11585,6 +11597,8 @@ fn text_encoding_candidates_cover_issue_text_classes() -> Result<(), String> {
         "Cargo.lock",
         "LICENSE-MIT",
         "editors/vscode/.vscodeignore",
+        "fixtures/perl_cpan_alpha/input/Makefile.PL",
+        "notes.TXT",
     ] {
         if !super::is_text_encoding_candidate(candidate) {
             return Err(format!("text path must be scanned: {candidate}"));
@@ -11601,6 +11615,40 @@ fn text_encoding_candidates_cover_issue_text_classes() -> Result<(), String> {
 #[test]
 fn text_encoding_clean_tree_passes() -> Result<(), String> {
     with_repo_cwd(super::check_text_encoding)
+}
+
+#[test]
+fn text_encoding_reports_a_tracked_bom_file() -> Result<(), String> {
+    // The load-bearing direction: a tracked file starting with EF BB BF
+    // must fail the real check with the file named. Without this test,
+    // deleting the reporting branch leaves every other text-encoding
+    // test green (#7154).
+    with_temp_cwd("text-encoding-tracked-bom", |root| -> Result<(), String> {
+        badge_fixture_git(&["init", "--initial-branch=main", "--quiet"])?;
+        let mut bytes = vec![0xEF, 0xBB, 0xBF];
+        bytes.extend_from_slice(b"# heading\n");
+        std::fs::write(root.join("bom.md"), &bytes)
+            .map_err(|err| format!("failed to write BOM fixture: {err}"))?;
+        badge_fixture_git(&["add", "bom.md"])?;
+        // Setup assertion: enumeration must see the fixture before the
+        // check runs, so a git-layout failure cannot masquerade as a
+        // clean scan or a passing red test.
+        let listed = super::tracked_files()?;
+        if !listed.iter().any(|path| path == "bom.md") {
+            return Err(format!(
+                "BOM fixture must be git-tracked before the check runs: {listed:?}"
+            ));
+        }
+        let Err(err) = super::check_text_encoding() else {
+            return Err("a tracked BOM file must fail check_text_encoding".to_string());
+        };
+        if !err.contains("bom.md") || !err.contains("UTF-8 BOM") {
+            return Err(format!(
+                "BOM failure must name the file and the mark: {err}"
+            ));
+        }
+        Ok(())
+    })
 }
 
 #[test]
