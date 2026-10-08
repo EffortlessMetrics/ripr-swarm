@@ -19,7 +19,7 @@
 
 use crate::run::{capture_output_with_timeout, run, run_output, run_output_owned_with_envs};
 use serde_json::{Value, json};
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
@@ -56,6 +56,12 @@ const STATIC_CLASSES: [&str; 7] = [
     "static_unknown",
 ];
 const UNKNOWN_CLASSES: [&str; 3] = ["infection_unknown", "propagation_unknown", "static_unknown"];
+// `run_status`/`category` the check renderer carries in top-level
+// `run_limitations[]` when the findings-array byte budget engages (#5203).
+// Mirrors `crates/ripr/src/output/json/report.rs::FINDINGS_BOUND_RUN_STATUS`,
+// which is `pub(crate)` to the product and unreachable from xtask; the bench
+// re-reads the wire string the same way the gate predicate does.
+const FINDINGS_BOUND_RUN_STATUS: &str = "limited_findings_bound";
 // Deterministically generated mid corpus layout (spec: 20 packages x 25 files).
 const MID_PACKAGES: usize = 20;
 const MID_SRC_FILES: usize = 20;
@@ -115,10 +121,15 @@ pub(crate) fn bench_agent_surfaces(args: &[String]) -> Result<(), String> {
     let mut m1_map = serde_json::Map::new();
     let mut m4_map = serde_json::Map::new();
     let mut m5_map = serde_json::Map::new();
+    // Per-corpus M1 finding counts: they extend the zero-subject premise to
+    // the repo corpus, whose M1 envelopes establish what the checkout diff
+    // actually holds (#5952).
+    let mut m1_findings: HashMap<&'static str, u64> = HashMap::new();
     for corpus in &corpora {
         let m1_result = run_m1_corpus(&binary, corpus, &options, &caches_root, timeout)?;
         warned |= m1_result.had_timeout;
         collect_m1_violations(corpus, &m1_result, &mut violations);
+        m1_findings.insert(corpus.id.label(), m1_measured_findings(&m1_result));
         m4_map.insert(
             corpus.id.label().to_string(),
             actionability_metrics(&m1_result.envelopes),
@@ -147,9 +158,15 @@ pub(crate) fn bench_agent_surfaces(args: &[String]) -> Result<(), String> {
     let mut m2_map = serde_json::Map::new();
     let mut m3_map = serde_json::Map::new();
     for corpus in &corpora {
+        // The zero-subject premise: a corpus constructed to carry findings,
+        // or one whose own M1 measurement found findings (the repo corpus
+        // reports whatever the checkout diff holds).
+        let premise_requires_findings =
+            corpus.expects_findings || m1_findings.get(corpus.id.label()).copied().unwrap_or(0) > 0;
         let m2_result = run_m2_corpus(
             &binary,
             corpus,
+            premise_requires_findings,
             &options,
             &caches_root,
             timeout,
@@ -381,6 +398,11 @@ struct Corpus {
     /// checkout diff holds, so its zero findings are a recorded disclosure,
     /// never a violation.
     expects_findings: bool,
+    /// The corpus tree is harness-created and removed by the DirGuard when
+    /// the run ends, so the recorded digest is its only durable identity
+    /// (#5971). The repo corpus is the live checkout; it stays on disk and
+    /// is pinned by its source revision, base and diff digest instead.
+    tree_removed_after_run: bool,
 }
 
 fn pinned_git_env() -> Vec<(&'static str, &'static str)> {
@@ -531,6 +553,7 @@ fn prepare_tiny_corpus(corpora_root: &Path) -> Result<Corpus, String> {
         base: None,
         kind: "derived_from_checked_in_sample",
         expects_findings: true,
+        tree_removed_after_run: true,
     })
 }
 
@@ -596,6 +619,7 @@ fn prepare_mid_corpus(corpora_root: &Path) -> Result<Corpus, String> {
         base: None,
         kind: "generated_deterministic",
         expects_findings: true,
+        tree_removed_after_run: true,
     })
 }
 
@@ -623,6 +647,7 @@ fn prepare_repo_corpus() -> Result<Corpus, String> {
         base: Some(base),
         kind: origin,
         expects_findings: false,
+        tree_removed_after_run: false,
     })
 }
 
@@ -1109,6 +1134,20 @@ fn m1_run_counts(id: CorpusId, options: &Options) -> (usize, usize) {
     (cold, warm)
 }
 
+/// The largest finding count any valid M1 sample measured for a corpus: the
+/// premise evidence that the analyzed diff carries findings. Zero when no
+/// sample parsed an envelope (all timed out or failed) — no premise is
+/// established by absence.
+fn m1_measured_findings(result: &M1Result) -> u64 {
+    result
+        .cold
+        .iter()
+        .chain(result.warm.iter())
+        .filter_map(|sample| sample.findings)
+        .max()
+        .unwrap_or(0)
+}
+
 fn m1_args(corpus: &Corpus, deep: bool) -> Result<Vec<String>, String> {
     let mut args = vec![
         "check".to_string(),
@@ -1568,6 +1607,12 @@ struct M2Op {
     response_bytes: usize,
     detail: Option<String>,
     response: Option<Value>,
+    /// The committed snapshot outcome a refresh response already carries
+    /// (`outcome_kind`, `finding_count`, `total_items`, `snapshot_id`),
+    /// recorded so a zero-subject analysis can never publish itself as a
+    /// valid latency sample (#5952). `None` for ops whose response holds no
+    /// parseable snapshot.
+    outcome: Option<Value>,
 }
 
 impl M2Result {
@@ -1597,7 +1642,14 @@ impl M2Result {
                     },
                     "failures": samples.iter().filter(|sample| sample.status == "fail").count(),
                     "timeouts": samples.iter().filter(|sample| sample.status == "timeout").count(),
+                    "invalid_zero_findings": samples.iter().filter(|sample| sample.status == "invalid_zero_findings").count(),
                     "details": samples.iter().filter_map(|sample| sample.detail.clone()).collect::<Vec<_>>(),
+                    "outcomes": samples.iter().filter_map(|sample| {
+                        sample.outcome.as_ref().map(|outcome| json!({
+                            "status": sample.status,
+                            "outcome": outcome,
+                        }))
+                    }).collect::<Vec<_>>(),
                 }),
             );
         }
@@ -1617,6 +1669,7 @@ const MCP_OPS: [&str; 6] = [
 fn run_m2_corpus(
     binary: &Path,
     corpus: &Corpus,
+    premise_requires_findings: bool,
     options: &Options,
     caches_root: &Path,
     timeout: Duration,
@@ -1680,9 +1733,15 @@ fn run_m2_corpus(
         ));
         let refresh_cold = rpc_tool_op(&mut session, "ripr_refresh", json!({}), timeout);
         let refresh_failure = refresh_failure_code(&refresh_cold);
-        ops.push(rename_op(refresh_cold, "ripr_refresh_cold"));
+        ops.push(mark_zero_subject_refresh(
+            rename_op(refresh_cold, "ripr_refresh_cold"),
+            premise_requires_findings,
+        ));
         let refresh_warm = rpc_tool_op(&mut session, "ripr_refresh", json!({}), timeout);
-        ops.push(rename_op(refresh_warm, "ripr_refresh_warm"));
+        ops.push(mark_zero_subject_refresh(
+            rename_op(refresh_warm, "ripr_refresh_warm"),
+            premise_requires_findings,
+        ));
         let list = rpc_tool_op(&mut session, "ripr_list_gaps", json!({}), timeout);
         let list = name_no_snapshot_absence(list, refresh_failure.as_deref(), "list_gaps");
         let gap_id = list.response.as_ref().and_then(gap_id_from_list_response);
@@ -1692,7 +1751,7 @@ fn run_m2_corpus(
                 let get = rpc_tool_op(
                     &mut session,
                     "ripr_get_gap",
-                    json!({ "gap_id": gap_id }),
+                    get_gap_request_arguments(&gap_id),
                     timeout,
                 );
                 ops.push(name_no_snapshot_absence(get, refresh_failure.as_deref(), "get_gap"));
@@ -1707,6 +1766,7 @@ fn run_m2_corpus(
                         .to_string(),
                 ),
                 response: None,
+                outcome: None,
             }),
         }
         had_timeout |= ops.iter().any(|op| op.status == "timeout");
@@ -1756,6 +1816,39 @@ fn name_no_snapshot_absence(mut op: M2Op, refresh_failure: Option<&str>, op_name
     op
 }
 
+/// A refresh whose committed snapshot found nothing on a corpus whose
+/// premise requires findings is the M2 zero-subject witness (#5952): the
+/// measured round-trip dispatched an empty (or finding-free) analysis, so
+/// its latency is not a valid analysis-latency sample. The op keeps its
+/// recorded outcome and duration but leaves the valid population, and the
+/// named violation mirrors M1's zero-subject gate ("a zero-subject run
+/// proves nothing").
+fn mark_zero_subject_refresh(mut op: M2Op, premise_requires_findings: bool) -> M2Op {
+    if !premise_requires_findings || op.status != "pass" {
+        return op;
+    }
+    let Some(outcome) = &op.outcome else {
+        return op;
+    };
+    let Some(finding_count) = outcome.get("finding_count").and_then(Value::as_u64) else {
+        // No parseable count: record what arrived, gate nothing. Absence of
+        // evidence is not manufactured evidence.
+        return op;
+    };
+    if finding_count > 0 {
+        return op;
+    }
+    op.status = "invalid_zero_findings";
+    op.detail = Some(format!(
+        "zero-subject refresh: snapshot outcome_kind {} with finding_count 0; the corpus premise requires findings (a zero-subject run proves nothing)",
+        outcome
+            .get("outcome_kind")
+            .and_then(Value::as_str)
+            .unwrap_or("unavailable")
+    ));
+    op
+}
+
 fn failed_op(op: &'static str, detail: String) -> M2Op {
     M2Op {
         op,
@@ -1764,14 +1857,12 @@ fn failed_op(op: &'static str, detail: String) -> M2Op {
         response_bytes: 0,
         detail: Some(detail),
         response: None,
+        outcome: None,
     }
 }
 
 fn rpc_op(session: &mut RpcSession, op: &'static str, params: &Value, timeout: Duration) -> M2Op {
-    match session.request("initialize", params.clone(), timeout) {
-        Ok(outcome) => m2_op_from_response(op, outcome),
-        Err(err) => failed_op(op, err),
-    }
+    m2_op_from_request(op, session.request("initialize", params.clone(), timeout))
 }
 
 fn rpc_tool_op(
@@ -1780,13 +1871,44 @@ fn rpc_tool_op(
     arguments: Value,
     timeout: Duration,
 ) -> M2Op {
-    match session.request(
-        "tools/call",
-        json!({ "name": tool, "arguments": arguments }),
-        timeout,
-    ) {
-        Ok(outcome) => m2_op_from_response(tool, outcome),
-        Err(err) => failed_op(tool, err),
+    m2_op_from_request(
+        tool,
+        session.request(
+            "tools/call",
+            json!({ "name": tool, "arguments": arguments }),
+            timeout,
+        ),
+    )
+}
+
+/// Why an RPC round-trip produced no response. A per-op timeout is runner
+/// capacity, not a product contract violation: the spec (#5257) defines
+/// `warn` as "a timed-out sample; exits zero" and reserves `fail` for
+/// validity gates such as an MCP `isError` on an expected-success op. M1/M3/M5
+/// classify the identically-shaped condition as warn, so M2 must too (#5962)
+/// — the receipt's `timeouts` counter stays reachable through this status.
+enum RpcFailure {
+    Timeout { detail: String, elapsed_ms: u128 },
+    Failed(String),
+}
+
+fn timeout_op(op: &'static str, detail: String, elapsed_ms: u128) -> M2Op {
+    M2Op {
+        op,
+        status: "timeout",
+        duration_ms: elapsed_ms,
+        response_bytes: 0,
+        detail: Some(detail),
+        response: None,
+        outcome: None,
+    }
+}
+
+fn m2_op_from_request(op: &'static str, result: Result<RpcOutcome, RpcFailure>) -> M2Op {
+    match result {
+        Ok(outcome) => m2_op_from_response(op, outcome),
+        Err(RpcFailure::Timeout { detail, elapsed_ms }) => timeout_op(op, detail, elapsed_ms),
+        Err(RpcFailure::Failed(err)) => failed_op(op, err),
     }
 }
 
@@ -1798,6 +1920,7 @@ fn m2_op_from_response(op: &'static str, outcome: RpcOutcome) -> M2Op {
         response_bytes: outcome.response_bytes,
         detail: None,
         response: None,
+        outcome: None,
     };
     let response = outcome.response;
     if outcome.response_bytes > MCP_EGRESS_BOUND_BYTES {
@@ -1828,8 +1951,42 @@ fn m2_op_from_response(op: &'static str, outcome: RpcOutcome) -> M2Op {
         ));
         return sample;
     }
+    sample.outcome = snapshot_outcome(&response);
     sample.response = Some(response);
     sample
+}
+
+/// The committed snapshot outcome a refresh response already carries, read
+/// from `structuredContent` or the text copy (the egress-bound envelope
+/// drops `structuredContent`, keeping text). Only a `completed` attempt's
+/// snapshot is this op's own outcome: a failed attempt never replaces
+/// `last_good` (mcp/server.rs), so its document can still carry the
+/// PREVIOUS snapshot with `isError: false`, and attributing it here would
+/// feed stale data to the zero-subject classification. An attempt that
+/// never committed records its refusal through the typed-failure chains
+/// instead. Recorded per op so a zero-subject analysis is disclosed, never
+/// silently averaged in as a valid latency sample (#5952).
+fn snapshot_outcome(response: &Value) -> Option<Value> {
+    let document = response
+        .pointer("/result/structuredContent")
+        .cloned()
+        .or_else(|| {
+            let text = response
+                .pointer("/result/content/0/text")
+                .and_then(Value::as_str)?;
+            serde_json::from_str(text).ok()
+        })?;
+    if document.pointer("/attempt/state").and_then(Value::as_str) != Some("completed") {
+        return None;
+    }
+    let snapshot = document.get("snapshot")?;
+    let outcome_kind = snapshot.get("outcome_kind").and_then(Value::as_str)?;
+    Some(json!({
+        "outcome_kind": outcome_kind,
+        "finding_count": snapshot.get("finding_count").and_then(Value::as_u64),
+        "total_items": snapshot.get("total_items").and_then(Value::as_u64),
+        "snapshot_id": snapshot.get("snapshot_id").and_then(Value::as_str),
+    }))
 }
 
 /// First gap id from the list payload (`items[0]`), tolerating the typed
@@ -1851,16 +2008,34 @@ fn gap_id_from_list_response(response: &Value) -> Option<String> {
     None
 }
 
+/// The `ripr_get_gap` request arguments: the id must be sent under the
+/// tool's registered input name `canonical_id` (the server rejects any
+/// other spelling with `unknown argument …; allowed: ["canonical_id",
+/// "snapshot_id"]`).
+fn get_gap_request_arguments(canonical_id: &str) -> Value {
+    json!({ "canonical_id": canonical_id })
+}
+
 fn collect_m2_violations(corpus: &Corpus, result: &M2Result, violations: &mut Vec<String>) {
     for session in &result.sessions {
         for op in &session.ops {
-            if op.status == "fail" {
-                violations.push(format!(
+            match op.status {
+                "fail" => violations.push(format!(
                     "mcp_expected_success_failed: corpus {} op {} failed: {}",
                     corpus.id.label(),
                     op.op,
                     op.detail.clone().unwrap_or_default()
-                ));
+                )),
+                // A timed-out op is warn-class (receipt `warned` flag), not a
+                // validity-gate violation (#5962); only a real contract
+                // failure or a zero-subject analysis gates here.
+                "invalid_zero_findings" => violations.push(format!(
+                    "zero_findings: m2 corpus {} op {} returned a zero-subject snapshot: {}",
+                    corpus.id.label(),
+                    op.op,
+                    op.detail.clone().unwrap_or_default()
+                )),
+                _ => {}
             }
         }
     }
@@ -2025,7 +2200,23 @@ fn lsp_session_latency(
         "capabilities": {},
     });
     if let Err(err) = session.request("initialize", init_params, timeout) {
-        return Ok((failed_m3_sample(format!("initialize failed: {err}")), false));
+        return Ok(match err {
+            // A timed-out initialize is runner capacity, warn-class like the
+            // publishDiagnostics timeout below — never a contract failure
+            // (#5962).
+            RpcFailure::Timeout { detail, elapsed_ms } => (
+                M3Sample {
+                    status: "timeout",
+                    duration_ms: elapsed_ms,
+                    diagnostics: None,
+                    detail: Some(detail),
+                },
+                true,
+            ),
+            RpcFailure::Failed(err) => {
+                (failed_m3_sample(format!("initialize failed: {err}")), false)
+            }
+        });
     }
     if let Err(err) = session.notify_frame("initialized", json!({})) {
         return Ok((
@@ -2158,6 +2349,10 @@ fn actionability_metrics(envelopes: &[Value]) -> Value {
     let mut repair_bearing_seen = false;
     let mut complete = true;
     let mut max_limitations: usize = 0;
+    let mut max_run_limitations: usize = 0;
+    let mut envelopes_findings_bound: u64 = 0;
+    let mut reported: u64 = 0;
+    let mut reported_known = true;
     let mut alignment_state = "alignment_absent";
     let mut raw_signals: Option<u64> = None;
     let mut canonical_items: Option<u64> = None;
@@ -2174,6 +2369,31 @@ fn actionability_metrics(envelopes: &[Value]) -> Value {
             .and_then(Value::as_array)
         {
             max_limitations = max_limitations.max(limitations.len());
+        }
+        // The emitted `findings` array can be a byte-budget prefix of the
+        // analyzed set (#5203); the cap is disclosed in top-level
+        // `run_limitations`, never in the analysis_outcome path above, so M4
+        // must read both (#7016).
+        if let Some(limitations) = envelope.get("run_limitations").and_then(Value::as_array) {
+            max_run_limitations = max_run_limitations.max(limitations.len());
+            if limitations.iter().any(|entry| {
+                entry.get("run_status").and_then(Value::as_str) == Some(FINDINGS_BOUND_RUN_STATUS)
+                    || entry.get("category").and_then(Value::as_str)
+                        == Some(FINDINGS_BOUND_RUN_STATUS)
+            }) {
+                envelopes_findings_bound += 1;
+            }
+        }
+        // Same pointer M1 reads per sample, so the pooled reported
+        // denominator reconciles with the M1 rows above it. Unknown when any
+        // pooled envelope omits it — never a fake zero.
+        if let Some(count) = envelope
+            .pointer("/summary/findings")
+            .and_then(Value::as_u64)
+        {
+            reported = reported.saturating_add(count);
+        } else {
+            reported_known = false;
         }
         if let Some(summary) = envelope.pointer("/finding_alignment/summary") {
             raw_signals = summary.get("raw_signals").and_then(Value::as_u64);
@@ -2254,6 +2474,10 @@ fn actionability_metrics(envelopes: &[Value]) -> Value {
         "state": state,
         "envelopes_pooled": envelopes.len(),
         "findings_total": total,
+        "findings_reported": if envelopes.is_empty() || !reported_known { json!(null) } else {
+            json!(reported)
+        },
+        "envelopes_findings_bound": envelopes_findings_bound,
         "class_histogram": Value::Object(classes),
         "actionable_intent_fraction": fraction(actionable_intent),
         "evidence_path_fraction": fraction(with_evidence_path),
@@ -2264,6 +2488,7 @@ fn actionability_metrics(envelopes: &[Value]) -> Value {
         "unknown_class_findings": unknown_total,
         "analysis_complete_all_envelopes": complete,
         "max_typed_limitations": max_limitations,
+        "max_run_limitations": max_run_limitations,
         "repair_readiness": {
             "findings_with_repair_packet_ready": if repair_bearing_seen { json!(repair_ready) } else {
                 json!("named_absence: check envelope carries no repair-bearing field on this run")
@@ -2389,7 +2614,7 @@ impl RpcSession {
         method: &str,
         params: Value,
         timeout: Duration,
-    ) -> Result<RpcOutcome, String> {
+    ) -> Result<RpcOutcome, RpcFailure> {
         let id = self.next_id;
         self.next_id += 1;
         let message = json!({
@@ -2399,14 +2624,18 @@ impl RpcSession {
             "params": params,
         });
         let started = Instant::now();
-        self.write_message(&message)?;
+        if let Err(err) = self.write_message(&message) {
+            return Err(RpcFailure::Failed(err));
+        }
         loop {
             let remaining = timeout.saturating_sub(started.elapsed());
             match self.receiver.recv_timeout(remaining) {
                 Ok(message) => {
                     if message.get("id").and_then(Value::as_u64) == Some(id) {
                         let bytes = serde_json::to_vec(&message)
-                            .map_err(|err| format!("re-serialize response: {err}"))?
+                            .map_err(|err| {
+                                RpcFailure::Failed(format!("re-serialize response: {err}"))
+                            })?
                             .len();
                         return Ok(RpcOutcome {
                             response: message,
@@ -2418,13 +2647,18 @@ impl RpcSession {
                     continue;
                 }
                 Err(RecvTimeoutError::Timeout) => {
-                    return Err(format!(
-                        "bench-agent-surfaces: {method} response timed out after {} ms",
-                        timeout.as_millis()
-                    ));
+                    return Err(RpcFailure::Timeout {
+                        detail: format!(
+                            "bench-agent-surfaces: {method} response timed out after {} ms",
+                            timeout.as_millis()
+                        ),
+                        elapsed_ms: started.elapsed().as_millis(),
+                    });
                 }
                 Err(RecvTimeoutError::Disconnected) => {
-                    return Err("bench-agent-surfaces: server closed its output stream".to_string());
+                    return Err(RpcFailure::Failed(
+                        "bench-agent-surfaces: server closed its output stream".to_string(),
+                    ));
                 }
             }
         }
@@ -2573,14 +2807,29 @@ fn identity_overlay(binary: &Path, corpora: &[Corpus]) -> Result<Value, String> 
             }
             (None, None) => "no_diff_input".to_string(),
         };
-        corpus_digests.insert(
-            corpus.id.label().to_string(),
-            json!({
-                "kind": corpus.kind,
-                "base": corpus.base,
-                "input_digest": digest,
-            }),
-        );
+        // The diff digest cannot see the oracle-mix test files or the
+        // unmutated sources; the tree digest pins them (#5971, spec
+        // CORPORA C2 "both digests are recorded"). Computed here, while the
+        // harness-created trees still exist — the DirGuard removes them
+        // when the run ends.
+        let mut entry = serde_json::Map::new();
+        entry.insert("kind".to_string(), json!(corpus.kind));
+        entry.insert("base".to_string(), json!(corpus.base));
+        entry.insert("input_digest".to_string(), json!(digest));
+        if corpus.tree_removed_after_run {
+            let tree = tree_digest(&corpus.root)?;
+            entry.insert("tree_digest".to_string(), json!(tree));
+        } else {
+            entry.insert("tree_digest".to_string(), Value::Null);
+            entry.insert(
+                "tree_digest_note".to_string(),
+                json!(format!(
+                    "{} corpus tree is the live checkout, pinned by source_sha + base + input_digest; it is not removed after the run",
+                    corpus.id.label()
+                )),
+            );
+        }
+        corpus_digests.insert(corpus.id.label().to_string(), Value::Object(entry));
     }
     Ok(json!({
         "source_sha": git_revision(),
@@ -2598,6 +2847,60 @@ fn identity_overlay(binary: &Path, corpora: &[Corpus]) -> Result<Value, String> 
             "ripr_seam_limit_pinned": SEAM_LIMIT_PINNED,
         },
     }))
+}
+
+/// SHA-256 over a corpus tree: for every file, its root-relative path
+/// (forward slashes, sorted), a separator, the content length and the
+/// content bytes. Covers exactly the measured bytes — including the
+/// oracle-mix test files and unmutated sources the diff digest cannot see
+/// (#5971) — and is computed while the harness-created tree exists.
+fn tree_digest(root: &Path) -> Result<String, String> {
+    let mut files = Vec::new();
+    collect_tree_files(root, root, &mut files)?;
+    files.sort();
+    let mut pinned = Vec::new();
+    for (relative, path) in &files {
+        let content = fs::read(path).map_err(|err| format!("read {}: {err}", path.display()))?;
+        pinned.extend_from_slice(relative.as_bytes());
+        pinned.push(0);
+        pinned.extend_from_slice(&content.len().to_le_bytes());
+        pinned.extend_from_slice(&content);
+    }
+    Ok(crate::blind_journey::sha256_hex(&pinned))
+}
+
+/// Depth-first collection of regular files under `root`, skipping `.git`
+/// (the corpora's pinned commits carry the same content; the object store
+/// is not measured state). Symlinks are skipped: corpora have none, and
+/// digesting a link's target would attribute bytes the tree does not hold.
+fn collect_tree_files(
+    root: &Path,
+    dir: &Path,
+    files: &mut Vec<(String, PathBuf)>,
+) -> Result<(), String> {
+    let entries = fs::read_dir(dir).map_err(|err| format!("read dir {}: {err}", dir.display()))?;
+    for entry in entries {
+        let entry = entry.map_err(|err| format!("dir entry in {}: {err}", dir.display()))?;
+        let path = entry.path();
+        let file_type = entry
+            .file_type()
+            .map_err(|err| format!("file type {}: {err}", path.display()))?;
+        let name = entry.file_name().to_string_lossy().to_string();
+        if file_type.is_dir() {
+            if name == ".git" {
+                continue;
+            }
+            collect_tree_files(root, &path, files)?;
+        } else if file_type.is_file() {
+            let relative = path
+                .strip_prefix(root)
+                .map_err(|err| format!("relative to {}: {err}", root.display()))?
+                .to_string_lossy()
+                .replace('\\', "/");
+            files.push((relative, path));
+        }
+    }
+    Ok(())
 }
 
 fn git_revision() -> String {
@@ -2811,8 +3114,10 @@ fn receipt_markdown(receipt: &Value, previous: Option<&Value>) -> String {
     if let Some(corpora) = receipt["m4"].as_object() {
         for (corpus, body) in corpora {
             out.push_str(&format!(
-                "- **{corpus}**: findings_total {}, classes {}, actionable_intent {}, evidence_path {}, related_tests {}, unknown_disclosed {} (of {} unknown-class), analysis_complete {}, max_limitations {}, alignment {}/{} ({})\n",
+                "- **{corpus}**: findings_total {} (reported {}), findings_bound_envelopes {}, classes {}, actionable_intent {}, evidence_path {}, related_tests {}, unknown_disclosed {} (of {} unknown-class), analysis_complete {}, max_limitations {}, max_run_limitations {}, alignment {}/{} ({})\n",
                 body["findings_total"],
+                body["findings_reported"],
+                body["envelopes_findings_bound"],
                 body["class_histogram"],
                 body["actionable_intent_fraction"],
                 body["evidence_path_fraction"],
@@ -2821,6 +3126,7 @@ fn receipt_markdown(receipt: &Value, previous: Option<&Value>) -> String {
                 body["unknown_class_findings"],
                 body["analysis_complete_all_envelopes"],
                 body["max_typed_limitations"],
+                body["max_run_limitations"],
                 body["finding_alignment"]["raw_signals"],
                 body["finding_alignment"]["canonical_items"],
                 body["finding_alignment"]["state"],
@@ -3220,6 +3526,7 @@ mod tests {
             base: None,
             kind: "test",
             expects_findings: true,
+            tree_removed_after_run: false,
         };
         let repo_style = Corpus {
             id: CorpusId::Repo,
@@ -3228,6 +3535,7 @@ mod tests {
             base: Some("HEAD~1".to_string()),
             kind: "head_parent_fallback",
             expects_findings: false,
+            tree_removed_after_run: false,
         };
         let success = crate::run::TimedOutput {
             status: Some(std::process::ExitStatus::default()),
@@ -3326,6 +3634,7 @@ mod tests {
             base: Some("HEAD~1".to_string()),
             kind: "head_parent_fallback",
             expects_findings: false,
+            tree_removed_after_run: false,
         };
         let oversized = crate::run::TimedOutput {
             status: Some(failing_child_status()?),
@@ -3449,6 +3758,20 @@ mod tests {
         assert_eq!(gap_id_from_list_response(&empty), None);
     }
 
+    /// The extracted gap id must be sent under the tool's registered input
+    /// name: the server rejects any other spelling (`unknown argument
+    /// "gap_id"; allowed: ["canonical_id", "snapshot_id"]`), which turned
+    /// every get_gap op on a gap-bearing corpus into a receipt failure.
+    #[test]
+    fn get_gap_request_uses_the_registered_canonical_id_argument() {
+        let args = get_gap_request_arguments("gap:any");
+        assert_eq!(args["canonical_id"], "gap:any");
+        assert!(
+            args.get("gap_id").is_none(),
+            "the unregistered `gap_id` spelling is rejected by the server"
+        );
+    }
+
     #[test]
     fn m5_timeout_is_a_warn_note_not_a_failure() {
         let mut runs = Vec::new();
@@ -3503,5 +3826,502 @@ mod tests {
             m4["repair_readiness"]["findings_with_repair_packet_ready"], 1,
             "readiness must be read wherever the renderer emits it"
         );
+    }
+
+    /// #7016: M4 pools the emitted `findings` prefix, but a byte-budget-capped
+    /// envelope reports the analyzed total in `summary.findings` and discloses
+    /// the cap in top-level `run_limitations`. M4 must forward both — the
+    /// emitted-vs-reported denominator and the limitation — instead of
+    /// presenting the capped subset as complete.
+    #[test]
+    fn m4_discloses_findings_bound_population() {
+        let capped = json!({
+            "summary": { "findings": 112 },
+            "analysis_outcome": { "analysis_complete": true, "outcome": { "limitations": [] } },
+            "run_limitations": [{
+                "category": "limited_findings_bound",
+                "run_status": "limited_findings_bound",
+                "basis": "check_findings_byte_budget",
+                "downstream_consumable": false,
+                "message": "rendered 2 of 112 findings within the findings-array byte budget (default 1000000-byte budget; set RIPR_CHECK_FINDINGS_BYTES to override, =0 for the full set)",
+                "repair_route": "output/check-findings-budget",
+            }],
+            "findings": [
+                { "classification": "weakly_exposed" },
+                { "classification": "static_unknown", "stop_reasons": ["no related test file resolved"] },
+            ],
+        });
+        let uncapped = json!({
+            "summary": { "findings": 3 },
+            "analysis_outcome": { "analysis_complete": true, "outcome": { "limitations": [] } },
+            "findings": [
+                { "classification": "exposed" },
+                { "classification": "exposed" },
+                { "classification": "exposed" },
+            ],
+        });
+        let m4 = actionability_metrics(&[capped, uncapped]);
+        assert_eq!(
+            m4["findings_total"], 5,
+            "findings_total stays the emitted denominator"
+        );
+        assert_eq!(
+            m4["findings_reported"], 115,
+            "the reported denominator sums summary.findings"
+        );
+        assert_eq!(
+            m4["envelopes_findings_bound"], 1,
+            "only the capped envelope discloses the bound"
+        );
+        assert_eq!(
+            m4["max_run_limitations"], 1,
+            "top-level run_limitations must be read"
+        );
+        assert_eq!(
+            m4["max_typed_limitations"], 0,
+            "the analysis_outcome path is unchanged"
+        );
+        assert_eq!(
+            m4["analysis_complete_all_envelopes"], true,
+            "the analysis completed; only rendering is bounded"
+        );
+    }
+
+    /// #7016 control: an unbounded population reports equal denominators and
+    /// no bound, and a missing `summary.findings` reads as unknown (null),
+    /// never a fake zero.
+    #[test]
+    fn m4_reports_full_denominator_when_unbounded() {
+        let envelope = json!({
+            "summary": { "findings": 2 },
+            "analysis_outcome": { "analysis_complete": true, "outcome": { "limitations": [] } },
+            "findings": [
+                { "classification": "weakly_exposed" },
+                { "classification": "weakly_exposed" },
+            ],
+        });
+        let m4 = actionability_metrics(&[envelope]);
+        assert_eq!(m4["findings_total"], 2);
+        assert_eq!(m4["findings_reported"], 2);
+        assert_eq!(m4["envelopes_findings_bound"], 0);
+        assert_eq!(m4["max_run_limitations"], 0);
+
+        let no_summary = json!({
+            "analysis_outcome": { "analysis_complete": true, "outcome": { "limitations": [] } },
+            "findings": [{ "classification": "weakly_exposed" }],
+        });
+        let m4 = actionability_metrics(&[no_summary]);
+        assert_eq!(m4["findings_total"], 1);
+        assert!(
+            m4["findings_reported"].is_null(),
+            "unreported denominators stay null, never 0"
+        );
+    }
+
+    /// #7016 follow-up: the M4 Markdown receipt discloses the capped
+    /// population — reported-vs-emitted denominators, the bound-envelope
+    /// count, and run-limitation counts — so a dropped or misordered
+    /// placeholder fails here, not in a published receipt.
+    #[test]
+    fn m4_markdown_discloses_findings_bound_population() {
+        let capped = json!({
+            "summary": { "findings": 112 },
+            "analysis_outcome": { "analysis_complete": true, "outcome": { "limitations": [] } },
+            "run_limitations": [{
+                "category": "limited_findings_bound",
+                "run_status": "limited_findings_bound",
+                "basis": "check_findings_byte_budget",
+                "downstream_consumable": false,
+                "message": "rendered 2 of 112 findings",
+                "repair_route": "output/check-findings-budget",
+            }],
+            "findings": [
+                { "classification": "weakly_exposed" },
+                { "classification": "static_unknown", "stop_reasons": ["no related test file resolved"] },
+            ],
+        });
+        let uncapped = json!({
+            "summary": { "findings": 3 },
+            "analysis_outcome": { "analysis_complete": true, "outcome": { "limitations": [] } },
+            "findings": [
+                { "classification": "exposed" },
+                { "classification": "exposed" },
+                { "classification": "exposed" },
+            ],
+        });
+        let receipt = json!({
+            "status": "pass",
+            "identity": {},
+            "m4": { "tiny": actionability_metrics(&[capped, uncapped]) },
+        });
+        let markdown = receipt_markdown(&receipt, None);
+        assert!(
+            markdown.contains("findings_total 5 (reported 115)"),
+            "the M4 line discloses the emitted-vs-reported denominators:\n{markdown}"
+        );
+        assert!(
+            markdown.contains("findings_bound_envelopes 1"),
+            "the M4 line discloses the bound-envelope count:\n{markdown}"
+        );
+        assert!(
+            markdown.contains("max_run_limitations 1"),
+            "the M4 line discloses run-limitation counts:\n{markdown}"
+        );
+    }
+
+    fn test_corpus(expects_findings: bool) -> Corpus {
+        Corpus {
+            id: CorpusId::Tiny,
+            root: PathBuf::from("."),
+            diff_path: Some(PathBuf::from("example.diff")),
+            base: None,
+            kind: "test",
+            expects_findings,
+            tree_removed_after_run: false,
+        }
+    }
+
+    fn refresh_response(snapshot: Value) -> RpcOutcome {
+        refresh_response_with_state("completed", snapshot)
+    }
+
+    fn refresh_response_with_state(state: &str, snapshot: Value) -> RpcOutcome {
+        RpcOutcome {
+            response: json!({
+                "result": {
+                    "structuredContent": {
+                        "attempt": { "state": state, "failure": null },
+                        "snapshot": snapshot,
+                    },
+                    "isError": false,
+                }
+            }),
+            response_bytes: 64,
+            elapsed: Duration::from_millis(5),
+        }
+    }
+
+    /// #5962: a timed-out op is its own warn-class status — it must not fail
+    /// the receipt like an `isError` contract violation, and the ops
+    /// `timeouts` counter must actually count it (the old code had no path
+    /// that ever assigned op status "timeout").
+    #[test]
+    fn m2_timeout_is_a_warn_class_sample_and_the_counter_is_reachable() {
+        let timed_out = m2_op_from_request(
+            "ripr_refresh_cold",
+            Err(RpcFailure::Timeout {
+                detail: "bench-agent-surfaces: tools/call response timed out after 3000 ms"
+                    .to_string(),
+                elapsed_ms: 3000,
+            }),
+        );
+        assert_eq!(timed_out.status, "timeout");
+        let failing = failed_op("ripr_get_gap", "isError: contract violation".to_string());
+        let passing = m2_op_from_response(
+            "initialize",
+            RpcOutcome {
+                response: json!({ "result": {} }),
+                response_bytes: 14,
+                elapsed: Duration::from_millis(1),
+            },
+        );
+        let result = M2Result {
+            sessions: vec![M2Session {
+                ops: vec![timed_out, failing, passing],
+            }],
+        };
+        let body = result.to_json();
+        assert_eq!(body["ops"]["ripr_refresh_cold"]["n"], 1);
+        assert_eq!(body["ops"]["ripr_refresh_cold"]["valid_n"], 0);
+        assert_eq!(body["ops"]["ripr_refresh_cold"]["timeouts"], 1);
+        assert_eq!(body["ops"]["ripr_refresh_cold"]["failures"], 0);
+        assert_eq!(body["ops"]["initialize"]["valid_n"], 1);
+        assert_eq!(body["ops"]["ripr_get_gap"]["failures"], 1);
+        let mut violations = Vec::new();
+        collect_m2_violations(&test_corpus(true), &result, &mut violations);
+        assert_eq!(
+            violations.len(),
+            1,
+            "a timeout is warn-class; only the isError failure gates: {violations:?}"
+        );
+        assert!(violations[0].starts_with("mcp_expected_success_failed:"));
+        assert!(!violations[0].contains("timed out"));
+        // Warn-class alone keeps the receipt out of the hard-fail path.
+        assert_eq!(receipt_status(&[], true, &[]), "warn");
+    }
+
+    /// #5952: the refresh response the harness already holds must disclose
+    /// its snapshot outcome in the receipt, and a zero-subject snapshot on a
+    /// corpus whose premise requires findings must leave the valid latency
+    /// population and raise the named violation (the repo's zero-subject
+    /// rule applied to M2).
+    #[test]
+    fn m2_refresh_snapshot_outcome_is_recorded_and_zero_subject_gates() -> Result<(), String> {
+        let no_scope = m2_op_from_response(
+            "ripr_refresh",
+            refresh_response(json!({
+                "snapshot_id": "snap-1",
+                "outcome_kind": "no_scope",
+                "finding_count": 0,
+                "total_items": 0,
+            })),
+        );
+        let recorded = no_scope
+            .outcome
+            .as_ref()
+            .ok_or("the snapshot outcome must be recorded from the held response")?;
+        assert_eq!(recorded["outcome_kind"], "no_scope");
+        assert_eq!(recorded["finding_count"], 0);
+        assert_eq!(recorded["snapshot_id"], "snap-1");
+
+        let marked = mark_zero_subject_refresh(rename_op(no_scope, "ripr_refresh_cold"), true);
+        assert_eq!(marked.status, "invalid_zero_findings");
+        let result = M2Result {
+            sessions: vec![M2Session { ops: vec![marked] }],
+        };
+        let body = result.to_json();
+        assert_eq!(body["ops"]["ripr_refresh_cold"]["valid_n"], 0);
+        assert_eq!(body["ops"]["ripr_refresh_cold"]["failures"], 0);
+        assert_eq!(body["ops"]["ripr_refresh_cold"]["invalid_zero_findings"], 1);
+        assert_eq!(
+            body["ops"]["ripr_refresh_cold"]["outcomes"][0]["outcome"]["outcome_kind"], "no_scope",
+            "the outcome itself stays disclosed next to the invalid status"
+        );
+        let mut violations = Vec::new();
+        collect_m2_violations(&test_corpus(true), &result, &mut violations);
+        assert!(
+            violations
+                .iter()
+                .any(|v| v.starts_with("zero_findings: m2")),
+            "a zero-subject refresh on a findings premise must gate: {violations:?}"
+        );
+
+        // Same no_scope snapshot on a corpus whose premise does not require
+        // findings (an all-zero repo checkout): recorded, still a valid
+        // dispatch-latency sample, no violation.
+        let repo_zero = m2_op_from_response(
+            "ripr_refresh",
+            refresh_response(json!({
+                "outcome_kind": "no_scope",
+                "finding_count": 0,
+                "total_items": 0,
+            })),
+        );
+        let unmarked = mark_zero_subject_refresh(repo_zero, false);
+        assert_eq!(unmarked.status, "pass");
+        assert!(unmarked.outcome.is_some());
+
+        // A real finding-carrying snapshot stays a valid sample.
+        let findings = m2_op_from_response(
+            "ripr_refresh",
+            refresh_response(json!({
+                "snapshot_id": "snap-2",
+                "outcome_kind": "findings",
+                "finding_count": 3,
+                "total_items": 3,
+            })),
+        );
+        let valid = mark_zero_subject_refresh(findings, true);
+        assert_eq!(valid.status, "pass");
+
+        // A snapshot without a parseable finding_count gates nothing (no
+        // manufactured evidence), and a response without a committed
+        // snapshot records no outcome at all.
+        let shapeless = m2_op_from_response(
+            "ripr_refresh",
+            refresh_response(json!({ "outcome_kind": "findings" })),
+        );
+        assert_eq!(
+            mark_zero_subject_refresh(shapeless, true).status,
+            "pass",
+            "missing finding_count must not be read as zero"
+        );
+        let no_snapshot = m2_op_from_response(
+            "ripr_refresh",
+            RpcOutcome {
+                response: json!({ "result": { "structuredContent": { "snapshot": null } } }),
+                response_bytes: 10,
+                elapsed: Duration::from_millis(1),
+            },
+        );
+        assert!(no_snapshot.outcome.is_none());
+
+        // The text-copy path: an egress-bound envelope drops
+        // structuredContent, keeping the document as content[0].text.
+        let text_only = m2_op_from_response(
+            "ripr_refresh",
+            RpcOutcome {
+                response: json!({
+                    "result": { "content": [{
+                        "type": "text",
+                        "text": "{\"attempt\": {\"state\": \"completed\"}, \"snapshot\": {\"outcome_kind\": \"no_scope\", \"finding_count\": 0, \"total_items\": 0}}",
+                    }] }
+                }),
+                response_bytes: 40,
+                elapsed: Duration::from_millis(1),
+            },
+        );
+        let text_outcome = text_only
+            .outcome
+            .as_ref()
+            .ok_or("the text copy must also disclose the snapshot outcome")?;
+        assert_eq!(text_outcome["outcome_kind"], "no_scope");
+        assert_eq!(
+            mark_zero_subject_refresh(text_only, true).status,
+            "invalid_zero_findings"
+        );
+        Ok(())
+    }
+
+    /// A failed attempt never replaces `last_good` (mcp/server.rs), so its
+    /// refresh response can carry the PREVIOUS snapshot with `isError:
+    /// false`. That stale outcome must not be attributed to the failed op
+    /// and must not drive the zero-subject classification.
+    #[test]
+    fn failed_attempt_refresh_does_not_inherit_the_stale_snapshot_outcome() -> Result<(), String> {
+        let stale = m2_op_from_response(
+            "ripr_refresh",
+            refresh_response_with_state(
+                "failed",
+                json!({
+                    "snapshot_id": "snapshot:stale",
+                    "outcome_kind": "no_scope",
+                    "finding_count": 0,
+                    "total_items": 0,
+                }),
+            ),
+        );
+        assert!(
+            stale.outcome.is_none(),
+            "the retained last_good snapshot is not a failed attempt's outcome"
+        );
+        assert_eq!(
+            mark_zero_subject_refresh(rename_op(stale, "ripr_refresh_warm"), true).status,
+            "pass",
+            "the zero-subject gate must not consume a stale outcome"
+        );
+        // A completed attempt with the same snapshot body is still attributed.
+        let completed = m2_op_from_response(
+            "ripr_refresh",
+            refresh_response_with_state(
+                "completed",
+                json!({ "outcome_kind": "no_scope", "finding_count": 0 }),
+            ),
+        );
+        assert!(completed.outcome.is_some());
+        Ok(())
+    }
+
+    /// #5971: the identity overlay must record the corpus tree digest the
+    /// spec promises (CORPORA C2 "both digests are recorded") — the diff
+    /// digest cannot see the oracle-mix test files, and the DirGuard deletes
+    /// the tree after the run.
+    #[test]
+    fn tree_digest_pins_the_whole_corpus_tree_and_identity_records_it() -> Result<(), String> {
+        let base = std::env::temp_dir().join(format!("ripr-bench-tree-{}", unix_stamp()));
+        let tree = base.join("corpus");
+        let src = tree.join("pkg_00/src");
+        fs::create_dir_all(&src).map_err(|err| err.to_string())?;
+        fs::write(tree.join("Cargo.toml"), "[package]\nname = \"t\"\n")
+            .map_err(|err| err.to_string())?;
+        fs::write(src.join("m07.rs"), "before\n").map_err(|err| err.to_string())?;
+        fs::write(tree.join("tests_oracle.rs"), "assert_eq!(1, 1);\n")
+            .map_err(|err| err.to_string())?;
+        let diff_path = base.join("corpus.diff");
+        fs::write(&diff_path, "-if amount >= threshold").map_err(|err| err.to_string())?;
+        let _cleanup = DirGuard::new(base.clone());
+
+        let corpus = || Corpus {
+            id: CorpusId::Mid,
+            root: tree.clone(),
+            diff_path: Some(diff_path.clone()),
+            base: None,
+            kind: "generated_deterministic",
+            expects_findings: true,
+            tree_removed_after_run: true,
+        };
+        let binary = base.join("ripr-under-test.bin");
+        fs::write(&binary, b"binary bytes").map_err(|err| err.to_string())?;
+        let overlay = identity_overlay(&binary, &[corpus()])?;
+        let entry = overlay
+            .pointer("/corpora/mid")
+            .ok_or("identity corpora.mid missing")?;
+        let recorded = entry
+            .get("tree_digest")
+            .and_then(Value::as_str)
+            .ok_or("tree_digest must be recorded for a harness-created corpus")?
+            .to_string();
+        assert_eq!(
+            recorded,
+            tree_digest(&tree)?,
+            "the recorded pin is the tree digest"
+        );
+        let diff_digest = entry
+            .get("input_digest")
+            .and_then(Value::as_str)
+            .ok_or("input_digest missing")?
+            .to_string();
+
+        // Determinism: the same tree digests identically.
+        assert_eq!(tree_digest(&tree)?, recorded);
+        // A generator change touching only oracle content moves the tree pin
+        // while the diff digest is unchanged — exactly the drift the diff
+        // digest cannot see.
+        fs::write(tree.join("tests_oracle.rs"), "assert_eq!(2, 2);\n")
+            .map_err(|err| err.to_string())?;
+        let changed = identity_overlay(&binary, &[corpus()])?;
+        let changed_entry = changed
+            .pointer("/corpora/mid")
+            .ok_or("corpora.mid missing")?;
+        let changed_tree = changed_entry
+            .get("tree_digest")
+            .and_then(Value::as_str)
+            .ok_or("tree_digest missing")?;
+        assert_ne!(
+            changed_tree, recorded,
+            "oracle-byte drift must move the tree pin"
+        );
+        assert_eq!(
+            changed_entry.get("input_digest").and_then(Value::as_str),
+            Some(diff_digest.as_str()),
+            "the diff digest is unchanged by oracle-only drift"
+        );
+        // The .git object store is not measured state.
+        let git_dir = tree.join(".git");
+        fs::create_dir_all(&git_dir).map_err(|err| err.to_string())?;
+        fs::write(git_dir.join("HEAD"), "ref: refs/heads/bench-after\n")
+            .map_err(|err| err.to_string())?;
+        assert_eq!(
+            tree_digest(&tree)?,
+            changed_tree,
+            ".git must not enter the pin"
+        );
+
+        // A live-checkout corpus records the null digest with its note.
+        let repo = Corpus {
+            id: CorpusId::Repo,
+            root: tree.clone(),
+            diff_path: None,
+            base: Some("HEAD~1".to_string()),
+            kind: "head_parent_fallback",
+            expects_findings: false,
+            tree_removed_after_run: false,
+        };
+        let repo_overlay = identity_overlay(&binary, &[repo])?;
+        let repo_entry = repo_overlay
+            .pointer("/corpora/repo")
+            .ok_or("corpora.repo missing")?;
+        assert!(
+            repo_entry.get("tree_digest").is_some_and(Value::is_null),
+            "a live-checkout corpus records no tree digest"
+        );
+        assert!(
+            repo_entry
+                .get("tree_digest_note")
+                .and_then(Value::as_str)
+                .is_some_and(|note| note.contains("live checkout")),
+            "the null digest carries its reason: {repo_entry}"
+        );
+        Ok(())
     }
 }

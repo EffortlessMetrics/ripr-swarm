@@ -376,6 +376,10 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
     // default path triggers auto-resolution.
     let mut base_explicitly_provided = false;
     let mut worktree_explicitly_provided = false;
+    // RIPR-SPEC-0116 amendment: `--committed` forces the committed-history
+    // diff (`<base>...HEAD`) even when the working tree is dirty. Without it
+    // or `--worktree`, a dirty tree is analyzed as a working tree.
+    let mut committed_explicitly_provided = false;
     // #4535: the output selection that argv made, spelled as the user wrote
     // it, so a second selection that disagrees is refused by name instead of
     // silently winning.
@@ -422,6 +426,11 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
             "--worktree" => {
                 scope_explicitly_provided = true;
                 worktree_explicitly_provided = true;
+            }
+            "--committed" => {
+                // Not a scope provider: it picks how the default or explicit
+                // base is diffed, not what the base is.
+                committed_explicitly_provided = true;
             }
             "--mode" => {
                 i += 1;
@@ -556,6 +565,30 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
             effective_format,
             "check --worktree cannot be combined with --diff".to_string(),
         ));
+    }
+    if committed_explicitly_provided {
+        if worktree_explicitly_provided {
+            return Err(refuse_check(
+                &envelope_input,
+                effective_format,
+                "check --committed and --worktree select different diff sources; pass one"
+                    .to_string(),
+            ));
+        }
+        if input.diff_file.is_some() {
+            return Err(refuse_check(
+                &envelope_input,
+                effective_format,
+                "check --committed cannot be combined with --diff".to_string(),
+            ));
+        }
+        if candidate_tree.is_some() {
+            return Err(refuse_check(
+                &envelope_input,
+                effective_format,
+                "check --committed cannot be combined with --candidate-tree".to_string(),
+            ));
+        }
     }
     // #1441: --suppression-policy applies to the findings-based check
     // surfaces only. SARIF keeps its existing `.ripr/suppressions.toml`
@@ -867,6 +900,26 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
         validate_repo_scope_diff_inputs(&input, base_explicitly_provided)
             .map_err(|err| refuse_check(&envelope_input, effective_format, err))?;
     }
+    if committed_explicitly_provided {
+        if gap_ledger.is_some() {
+            return Err(refuse_check(
+                &envelope_input,
+                effective_format,
+                "check --committed selects a diff source; --gap-ledger renders a supplied ledger and reads no diff"
+                    .to_string(),
+            ));
+        }
+        if format.is_repo_scope() || matches!(format, OutputFormat::RepoExposureJson) {
+            return Err(refuse_check(
+                &envelope_input,
+                effective_format,
+                format!(
+                    "check --committed selects a diff source; --format {} is repo-scoped and reads no diff",
+                    format.primary_cli_name()
+                ),
+            ));
+        }
+    }
     if let Some(gap_ledger) = gap_ledger.as_ref() {
         write_stdout_chunked(
             &render_check_gap_ledger_badge(gap_ledger, &format, &config)
@@ -965,9 +1018,31 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
     if !format.is_repo_scope() && !format.is_repo_seam_inventory() {
         disclose_attached_terminal_stdin_read(input.diff_file.as_deref());
     }
+    // RIPR-SPEC-0116 amendment: a live-repository diff run reads the working
+    // tree by default when it holds uncommitted work. The decision has one
+    // owner (`app::diff_source`), shared with `ripr pilot`. Explicit
+    // `--worktree` keeps its prior meaning everywhere; the default applies
+    // only where a live diff source exists to choose.
+    let diff_source_request = if worktree_explicitly_provided {
+        app::diff_source::DiffSourceRequest::WorkingTree
+    } else if committed_explicitly_provided {
+        app::diff_source::DiffSourceRequest::CommittedOnly
+    } else {
+        app::diff_source::DiffSourceRequest::Default
+    };
+    let live_diff_source =
+        !input_diff_file_is_some && candidate_tree.is_none() && !format.is_repo_scope();
+    let worktree_run = worktree_explicitly_provided
+        || (live_diff_source
+            && app::diff_source::select_live_diff_source(
+                &input.root,
+                diff_source_request,
+                input.git_timeout,
+            )
+            .is_working_tree());
     let progress_scope = if format.is_repo_scope() {
         app::AnalysisProgressScope::Repo
-    } else if worktree_explicitly_provided {
+    } else if worktree_run {
         app::AnalysisProgressScope::Worktree
     } else {
         app::AnalysisProgressScope::Diff
@@ -994,7 +1069,7 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
             &limited_check_input,
             &config,
             &output.findings,
-            worktree_explicitly_provided,
+            worktree_run,
         )
         .map_err(|err| refuse_check(&envelope_input, effective_format, err))?;
     }
@@ -1068,25 +1143,47 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
     // analyzed, so a zero-finding result must not read as a clean pass. It
     // stays off for --diff, --worktree, --candidate-tree and repo-scope
     // formats, none of which is a committed-history diff of the live tree.
-    let committed_history_diff = !worktree_explicitly_provided
+    let committed_history_diff = !worktree_run
         && !input_diff_file_is_some
         && candidate_tree.is_none()
         && !format.is_repo_scope();
     if !committed_history_diff {
         output.unanalyzed_working_tree = false;
         // #5258: the untracked list drives the same disclosure family; a
-        // non-committed-history mode must not inherit it either.
-        output.untracked_working_tree_source_paths.clear();
+        // mode that is neither committed history nor a working-tree read
+        // must not inherit it. A working-tree read keeps it: its diff covers
+        // tracked files only, so the untracked routed files are named in a
+        // note of their own (RIPR-SPEC-0116).
+        if !worktree_run {
+            output.untracked_working_tree_source_paths.clear();
+        }
     }
-    // A `--worktree` run carries `--worktree` into its drill-in commands, so
-    // `explain` and `context` analyze the same uncommitted edits and the
-    // block never needs an artifact to stay executable (#4321).
-    let drill_in = app::FindingDrillIn::Commands(app::finding_navigation_with_worktree(
+    // A working-tree run (explicit `--worktree`, or the dirty-tree default)
+    // carries `--worktree` into its drill-in commands, so `explain` and
+    // `context` analyze the same uncommitted edits and the block never needs
+    // an artifact to stay executable (#4321).
+    let navigation = app::finding_navigation_with_worktree(
         &limited_check_input,
         write_artifact.as_deref(),
         explicit.mode,
-        worktree_explicitly_provided,
-    ));
+        worktree_run,
+    );
+    // #5471: only the default human render prints the `ripr agent stub`
+    // route, and only as the stub resolver decides it for that finding. The
+    // resolver reads the files on disk, so a check of other bytes (a
+    // candidate tree, or HEAD content behind uncommitted edits) prints no
+    // route: it could stub an expression the finding never saw.
+    let analyzed_live_files = candidate_tree.is_none() && !output.unanalyzed_working_tree;
+    let navigation = if matches!(format, OutputFormat::Human) && analyzed_live_files {
+        navigation.with_stub_route(app::test_stub::check_stub_route(
+            &limited_check_input.root,
+            &config,
+            &output,
+        ))
+    } else {
+        navigation
+    };
+    let drill_in = app::FindingDrillIn::Commands(navigation);
     // #4945: repo seam-driven formats run their walks inside the render arms,
     // so the sink threads through rendering to bracket those walks with
     // repo-scope stage boundaries; diff-scoped arms ignore it.

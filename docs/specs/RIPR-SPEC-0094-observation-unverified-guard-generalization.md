@@ -12,6 +12,7 @@ Linked issues:
 - #4404
 - #4486
 - #6297
+- #7063
 
 Linked PRs:
 
@@ -246,6 +247,121 @@ Proof: `mutating_collection_a_while_asserting_b_stays_unverified`,
 `cache_insert_call_deletion_keeps_legacy_syntax_propagation`, and
 `direct_collection_mutation_discriminates_actual_observer_not_sibling_collection`.
 
+## Part D: a whole-object effect observer must be able to carry the effect
+
+Part C lets any whole-object equality confirm an effect-family probe. That is
+sound only when the compared object can hold the state the effect writes. The
+verdict-corpus case `ledger-receive-refresh-low-stock` inserts
+`self.refresh_low_stock(sku);` into `Inventory::receive`; the helper writes
+only `self.low_stock`, read only by `is_low`, and no test reads `is_low` after
+a `receive`. `assert_eq!(inv.history(), &[..])` and
+`assert_eq!(receipt, Receipt { .. })` confirmed the call, so the finding read
+`exposed` although the mutant's tests passed.
+
+The owner side is established once per probe (`EffectStateCarrier`) and only
+when the written state is statically bounded:
+
+- the probe is a `CallDeletion` or `SideEffect` probe;
+- the changed expression is exactly `self.callee(args)`, with no `?` and no
+  `&mut` argument, in a method of an inherent or trait impl in a
+  parser-backed file;
+- `callee` resolves to exactly one `&mut self` method (a by-value `mut self`
+  does not count) of the same self type with no return type and no `&mut`
+  parameter, and no trait, unparsed or other-type method shares its name;
+- the callee and every `self.method(..)` it calls transitively touch state
+  only through `self.<field>`: no bare `self`, no free function call, no
+  path-qualified call (`Audit::record(..)`, `crate::audit::record(..)`, and
+  also `Self::record()`, which is not traversed) outside std roots (`std`,
+  `core`, `alloc` and the primitive types), no field method outside the
+  read-only list and known collection mutators (`self.file.write_all(..)`
+  and `self.sink.publish(..)` are out), no chained method outside those
+  lists and the entry/`Option` chain helpers (`or_insert`, `unwrap`, ...;
+  `self.journal.as_ref().write_all(..)` and `self.tx.clone().send(..)` are
+  out), no turbofish method call outside those lists
+  (`self.events.record::<Low>(..)`), no std path into `fs`, `io`, `env`, `net`, `process`,
+  `sync` or `thread`, no method call on a parameter or local outside the
+  read-only and pure by-value list (`sink.record(..)` is out, `sku.trim()`
+  is in), no `borrow`/`get_mut` handle access, no non-pure macro, no `ref mut` pattern, no interior
+  mutability marker or `unsafe`, and every transitive self call resolves the
+  same way;
+- the callee writes at least one field, and the self type's single braced
+  `struct` declares every written field with std collections, `Option` and
+  primitives only (a user type's `push` or `AddAssign`, or a user key's
+  `Ord`, runs user code);
+- the workspace index is complete, since an omitted file may hold a
+  same-name method, a `Drop` impl or the type's definition;
+- the workspace has no user `Drop` impl, since a collection mutator that
+  removes or replaces a value would run it;
+- the owner itself, apart from the changed call, reads no written field,
+  uses no bare `self` and calls no other reading self method. An owner that
+  reads the state back (`if self.low_stock.contains(sku) { self.log.push(..) }`)
+  can move it into any field a whole-object equality compares.
+
+A field counts as written for an assignment, a compound assignment, a
+`&mut self.field` borrow, an index, or a method call on it outside a fixed
+read-only list (`get`, `contains`, `len`, `iter`, ...). A self-type method
+reads a written field when it uses the field other than as a discarded
+statement-level store (`insert`, `push`, `remove`, `clear`, ...), passes the
+whole receiver (including an inline `format!("{self:?}")` capture), or calls
+a reading or unresolved self method.
+
+With a carrier established, a whole-object equality confirms the effect
+only when one of its identifiers may hold a written field: the field itself,
+a reading method, the self type's name, a method name defined on another
+type or in a trait, or a binding that is not provably non-carrying. A
+binding is provably non-carrying only when its single `let` initializer in
+the test is itself non-carrying, for example a value returned by a resolved,
+non-reading method of the self type (`let receipt = inv.ship(..).unwrap();`).
+A binding with no `let`, several `let`s, or an unresolved method call on it
+(`inv.clone()`) is followed to its initializer or treated as a carrier. A
+`let` annotated with the self type, any `let mut` binding, a macro
+initializer (`format!("{inv:?}")` may capture the receiver), and any shared
+handle (`Rc`, `Arc`, `Weak`) carry.
+A field read on a binding (`receipt.sku`) is decided at the field when the
+field belongs to the self type; any other field (`app.inventory`) may hold
+the receiver, so its binding is resolved as above. A call through a std or
+primitive path (`u32::from(..)`, `String::from(..)`, `Vec::<Event>::new()`)
+is decided by its arguments; any other free or module-path call
+(`setup()`, `fixtures::stocked()`, or an associated function of a non-std
+type such as `TestBed::with_inventory()`) may return the receiver and carries.
+
+State can also reach a non-reading observer through a later test action. When
+the test calls a `&mut self` method of the self type, other than the owner,
+that reads a written field (`inv.reorder()` turning `low_stock` into log
+entries, or `Inventory::reorder(&mut inv)`), or a `&self` reader that also
+reaches outside the object (one writing the field to a file), every
+whole-object equality in that test is admitted, because the observed field
+may now depend on the written one. Call order is not established, since the owner may be reached
+indirectly. A `&mut self` method that reads no written field (`inv.ship(..)`
+in the corpus case) does not admit: it cannot move the written state. A
+test that takes a `&mut` borrow of a binding (`restock(&mut inv)`,
+`let r = &mut inv;`) other than as an argument to a resolved non-reading
+method of the self type, that passes a binding by value or shared reference
+as a call argument (`publish(&inv)`, `audit.record(inv)`), or that reassigns a
+binding (`inv = restocked(inv);`), is admitted too, since a helper may call a
+reader or read the field itself.
+
+When any owner-side gate fails, the Part C reading stands: any whole-object
+equality confirms. Refusing the confirmation would turn `exposed` into an
+actionable gap, and a wrong actionable signal is worse than a missed
+advisory, so an unbounded effect keeps the credit. Mock expectations and
+snapshots are never refused, and a `token_match` still confirms on its own.
+
+Residuals: methods generated by derive or attribute macros are invisible to
+the reader scan (an unresolved method on a binding falls back to that
+binding's initializer), and state shared through `Rc`/`Arc` without an
+interior-mutability marker in the scanned bodies is not detected.
+
+Proof: `crates/ripr/src/analysis/classify/effect_carrier/tests.rs`
+(`ledger_carrier_bounds_written_fields_and_readers`,
+`whole_object_equality_confirms_only_when_it_can_hold_the_written_field`,
+`unbounded_effects_keep_the_part_c_reading`,
+`a_mutating_reader_called_by_the_test_carries_the_written_state`,
+`path_calls_and_ref_mut_patterns_keep_the_part_c_reading`,
+`primitive_and_std_path_calls_do_not_count_as_fixture_helpers`) and the verdict-corpus row
+`ledger-receive-refresh-low-stock`, which moves from `false_exposed` to
+`ideal` (`weakly_exposed`, `observation_unverified`).
+
 ## Name-only relations cannot supply the oracle (#4486)
 
 A related test whose only tie to the owner is its name has no evidence of
@@ -299,8 +415,16 @@ Without this rule a same-file
 `Unit::Fortnight =>` arm of an unrelated `seconds` function `exposed`, and
 rewriting only that assertion moved the arm to `weakly_exposed`.
 
-The rule is scoped to match arms. A return-value token names the changed
-expression itself, and the #4486 same-file credit stays for other families.
+The rule covers match arms and, since #7063, an exact error variant. An
+`error_path` or `return_value` probe whose changed expression constructs
+`Err(E::Variant)` (including the turbofish form `Err::<T, E>(E::Variant)`)
+or returns it through `.ok_or(E::Variant)?` (the RIPR-SPEC-0106 identity
+owner, `changed_error_variant`) names a variant every function returning `E` shares, so a same-file
+`assert!(matches!(refund(20_000), Err(PayError::Limit)))` cannot confirm
+`deposit_cap`'s `return Err(PayError::Limit)` beside a test that calls
+`deposit_cap`. Its summary names the error variant instead of the arm. Any
+other return-value token names the changed expression itself, and the #4486
+same-file credit stays for other families.
 
 When the arm stays unconfirmed and such a test was withheld, the discriminator
 summary says that a test which only shares the file or module cannot confirm

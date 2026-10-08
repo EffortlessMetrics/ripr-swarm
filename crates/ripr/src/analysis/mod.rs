@@ -49,10 +49,11 @@ pub use diff::records::{
     PathRecordError, StatusRecord, parse_git_path_records, parse_git_status_records,
 };
 pub(crate) use diff::{
-    load_diff, load_diff_range_with_deadline_core, load_diff_with_effective_base_core,
-    load_worktree_diff, load_worktree_diff_with_effective_base_core, no_merge_base_diagnosis,
-    parse_unified_diff, probe_working_tree_tracked_changes_within, resolve_base_commit,
-    resolve_effective_base, working_tree_has_tracked_changes,
+    AnalyzedRevisions, load_diff, load_diff_range_with_deadline_core,
+    load_diff_with_effective_base_core, load_worktree_diff,
+    load_worktree_diff_with_effective_base_core, no_merge_base_diagnosis, parse_unified_diff,
+    probe_working_tree_tracked_changes_within, resolve_base_commit, resolve_effective_base,
+    working_tree_has_tracked_changes, working_tree_has_uncommitted_changes,
 };
 /// Shared RIPR-SPEC-0084 default-base authority and pinned analysis-range
 /// diff assembly (#4003): the one named owner for badge input base/diff,
@@ -89,12 +90,13 @@ pub(crate) use seam_inventory::{
     ClassifiedSeamsReport, DEFAULT_REPO_EXPOSURE_SEAM_LIMIT, ScopedClassifiedSeamInventory,
     ScopedEvidenceConsumer, SeamLimitInfo, SeamLimitSource, TargetedTestInventoryError,
     apply_pilot_seam_budget, classify_seams_in_files_at_with_config, diff_only_rust_files,
+    file_seams_without_evidence_at_with_config,
     inventory_changed_test_classified_seams_at_with_config_node,
     inventory_classified_seams_at_with_config, inventory_classified_seams_report_at_with_config,
     inventory_compact_classified_seams_at_with_config,
     inventory_diff_scoped_classified_seams_at_with_config,
     inventory_diff_scoped_streamed_seams_at_with_config, inventory_seams_at_with_config,
-    pilot_seam_budget, workspace_cache_key_at_with_config,
+    pilot_seam_budget, seam_kind_for_probe_family, workspace_cache_key_at_with_config,
 };
 pub(crate) use seams::{RepoSeam, RequiredDiscriminator};
 pub(crate) use syntax::fn_signature::{owner_fn_line_span, rust_source_parses_cleanly};
@@ -893,10 +895,17 @@ pub struct AnalysisResult {
     /// add; they decide the uncommitted-edits note. Empty for every other
     /// mode.
     pub(crate) uncommitted_source_paths: Vec<String>,
-    /// The untracked subset of [`AnalysisResult::uncommitted_source_paths`]
-    /// (#5258): files neither the committed diff nor `--worktree` analyzes,
-    /// so the note can name the real repair (staging) instead of offering
-    /// `--worktree`. Empty when no untracked routed file exists.
+    /// The base and head commits a live-repository diff analyzed, for the
+    /// check header. `None` for diff-file/stdin inputs, repo-scope runs and
+    /// subject-materialized runs, whose revisions are not live refs.
+    pub(crate) analyzed_revisions: Option<diff::AnalyzedRevisions>,
+    /// Untracked routed files (#5258): on a committed-history run, the
+    /// untracked subset of [`AnalysisResult::uncommitted_source_paths`]; on
+    /// a working-tree run (RIPR-SPEC-0116), every untracked routed file,
+    /// because the working-tree diff covers tracked files only. Neither diff
+    /// analyzes them, so the note names the real repair (intent-to-add or
+    /// staging) instead of offering `--worktree`. Empty when no untracked
+    /// routed file exists.
     pub(crate) untracked_source_paths: Vec<String>,
     /// Crate-private numeric diagnostic origins for Rust findings (#4464).
     pub(crate) rust_diagnostic_origins: crate::analysis::diagnostic_origin::RustDiagnosticOrigins,

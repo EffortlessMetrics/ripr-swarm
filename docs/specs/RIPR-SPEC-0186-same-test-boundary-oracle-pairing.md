@@ -120,8 +120,30 @@ fail-closed, so a later exact assertion on the name does not pair (#7004).
 `let mut` alone does not void, and a mutation before the boundary `let`
 does not void the fresh binding. Re-`let` shadowing is unchanged.
 
-Proximity-only oracle credit, and bare-name method
-relation are out of scope.
+A name bound by the pattern of a `for` over a constant-row table (RIPR-SPEC-0197,
+#5328) is also a boundary input, one value per row: `for (amount, want) in
+[(99, 99), (100, 90)] { assert_eq!(gate(amount), want); }` pairs when some row
+holds the boundary. The name's only binding in the test must be a plain
+identifier that is the whole pattern of an unlabeled `for` or one field of a
+flat tuple pattern whose fields are identifiers or `_`, every row must be a
+tuple of that arity, and every cell of the column must be one whole numeric or
+boolean literal (a string, char, constructor or call yields nothing);
+otherwise the column yields nothing. A `break`, `continue` or `return`
+anywhere in the loop body voids the column, since a row after it may never
+reach the call; so does an `if`, `match`, `while`, `loop`, nested `for`,
+`|` (a closure), `&&` or `||` anywhere in the body, since it can run the call
+for some rows alone (`if let Some(want) = want { .. }`), and so does any macro
+argument that names the column beside `|`, `let`, `for`, `fn` or `=>`, since
+the parser cannot see a rebinding there.
+Cells of one row stay together: a call with two table-bound arguments is one
+input row per table row, so `[(100, 99, ..), (99, 100, ..)]` never feeds
+`amount == threshold`. A literal or `let`-bound argument holds for every row
+and joins each one. An rstest `#[case]` column still contributes only its
+first value to the call's input row: it drops the cases it cannot read, so its
+slots do not line up with another column's.
+
+Proximity-only oracle credit and bare-name method relation are out of
+scope.
 
 ## Required Evidence
 

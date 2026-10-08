@@ -9,7 +9,7 @@
   "edit_kind": "behavior_preserving_rewrite",
   "behavior_family": "predicate_boolean",
   "test_shape": "helper_wrapped_assert",
-  "hard_case": "The helper's assert_eq! is refused by owner-pin admission (RIPR-SPEC-0197 rule 1, #6482); the `false == hidden` rewrite also reads propagation_unknown and static_unknown.",
+  "hard_case": "The helper's assert_eq! is refused by owner-pin admission (RIPR-SPEC-0197 rule 1, #6482); the `false == hidden` rewrite also reads propagation_unknown.",
   "truth": {
     "state": "discriminated",
     "method": "runtime_mutant_kill",

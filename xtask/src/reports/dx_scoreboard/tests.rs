@@ -977,13 +977,36 @@ fn mutation_spot_check_receipt_maps_agreement_and_join_coverage() -> Result<(), 
 
 #[test]
 fn a_slower_install_fails_the_gate_against_a_same_runner_baseline() -> Result<(), String> {
-    // The metric block mirrors scoreboards.toml (25% / 30 s floor on install,
-    // 25% / 60 s on time to first result) but is inlined so the test stays
-    // hermetic: update both copies when those thresholds change.
-    let config = parse_config(&MINIMAL.replace(
-        "[[metric]]\nid = \"first_run.friction_events\"",
-        "[[metric]]\nid = \"first_run.install_seconds\"\nboard = \"first_run\"\ntitle = \"i\"\nunit = \"s\"\ndirection = \"lower_is_better\"\ntarget = 120\nregression_pct = 25\nregression_floor = 30\nrunner_dependent = true\nsource = \"ingest:first-run\"\n\n[[metric]]\nid = \"first_run.time_to_first_useful_result_s\"\nboard = \"first_run\"\ntitle = \"t\"\nunit = \"s\"\ndirection = \"lower_is_better\"\ntarget = 300\nregression_pct = 25\nregression_floor = 60\nrunner_dependent = true\nsource = \"ingest:first-run\"\n\n[[metric]]\nid = \"first_run.unknown_verdicts\"\nboard = \"first_run\"\ntitle = \"u\"\nunit = \"cases\"\ndirection = \"lower_is_better\"\ntarget = 0\nregression_pct = 0\nregression_floor = 0\nrunner_dependent = false\nsource = \"ingest:first-run\"\n\n[[metric]]\nid = \"first_run.friction_events\"",
+    // Slack is max(baseline * regression_pct/100, regression_floor) from the
+    // committed first_run.install_seconds row. Hard-coding 158 s / 170 s here
+    // would keep passing after those margins change.
+    let config = parse_config(include_str!(
+        "../../../../benchmarks/dx_scoreboard/scoreboards.toml"
     ))?;
+    let install = config
+        .metric
+        .iter()
+        .find(|metric| metric.id == "first_run.install_seconds")
+        .ok_or("first_run.install_seconds missing from scoreboards.toml")?;
+    if install.regression_additive {
+        return Err(
+            "first_run.install_seconds uses additive slack; this test derives max(pct, floor)"
+                .to_string(),
+        );
+    }
+    if !install.runner_dependent {
+        return Err("first_run.install_seconds must be runner_dependent".to_string());
+    }
+    let pct = install.regression_pct;
+    let floor = install.regression_floor;
+    // The receipt also emits time_to_first_useful_result_s, which moves with
+    // install duration. Gate only the parsed install metric so a larger
+    // install slack cannot fail the other row.
+    let mut gate_config = config.clone();
+    gate_config
+        .metric
+        .retain(|metric| metric.id == "first_run.install_seconds");
+    let boards = vec!["first_run".to_string()];
     let with_install = |secs: f64| -> Result<Vec<Sample>, String> {
         let mut receipt = first_run_receipt(true);
         let steps = receipt["setup"]
@@ -996,30 +1019,50 @@ fn a_slower_install_fails_the_gate_against_a_same_runner_baseline() -> Result<()
         }
         parse_ingest(&receipt, &config)
     };
+    let baseline_samples = parse_ingest(&first_run_receipt(true), &config)?;
+    let baseline_secs = baseline_samples
+        .iter()
+        .find(|sample| sample.metric == "first_run.install_seconds")
+        .and_then(|sample| match sample.outcome {
+            SampleOutcome::Value(value) => Some(value),
+            _ => None,
+        })
+        .ok_or("first_run receipt did not yield a completed install_seconds sample")?;
+    let slack = (baseline_secs * pct / 100.0).max(floor);
+    if slack < 1.0 {
+        return Err(
+            "first_run.install_seconds slack is under 1 s; cannot place \
+             just-inside/just-outside samples"
+                .to_string(),
+        );
+    }
+    // Stay 1 s off the allowed worsening so an exact-boundary sample cannot
+    // fail from floating-point rounding of pct * baseline.
+    let inside = baseline_secs + slack - 1.0;
+    let outside = baseline_secs + slack + 1.0;
     let baseline = build_report(
-        &config,
-        &all_boards(),
-        &with_install(128.0)?,
+        &gate_config,
+        &boards,
+        &baseline_samples,
         &context("runner-a"),
         None,
         false,
     );
     let gate = |secs: f64, runner: &str| -> Result<Value, String> {
         Ok(build_report(
-            &config,
-            &all_boards(),
+            &gate_config,
+            &boards,
             &with_install(secs)?,
             &context(runner),
             Some(&baseline),
             true,
         ))
     };
-    // 128 s allows the larger of 25% (32 s) and the 30 s floor: 160 s passes.
     assert_eq!(
-        gate(158.0, "runner-a")?["gate"]["status"].as_str(),
+        gate(inside, "runner-a")?["gate"]["status"].as_str(),
         Some("pass")
     );
-    let slower = gate(170.0, "runner-a")?;
+    let slower = gate(outside, "runner-a")?;
     assert_eq!(slower["gate"]["status"].as_str(), Some("fail"));
     assert!(
         gate_failure_message(&slower).contains("first_run.install_seconds"),
@@ -1028,7 +1071,7 @@ fn a_slower_install_fails_the_gate_against_a_same_runner_baseline() -> Result<()
     );
     // A different runner class is never compared for a wall-time metric.
     assert_eq!(
-        gate(170.0, "runner-b")?["gate"]["status"].as_str(),
+        gate(outside, "runner-b")?["gate"]["status"].as_str(),
         Some("pass")
     );
     Ok(())
@@ -2561,5 +2604,32 @@ fn verdict_corpus_sources_derive_each_rate_from_the_committed_rows() -> Result<(
         sample.outcome,
         sample.detail
     );
+    Ok(())
+}
+
+#[test]
+fn file_sources_point_at_committed_receipts() -> Result<(), String> {
+    // A `file:` source whose path is missing renders `not_measured` with a
+    // restore hint that can never work (#6638 review: the coverage metric
+    // pointed at `expected/report.json`, deleted by the rows layout in
+    // #6658). Metrics without a producer stay `source = "pending"` with a
+    // reason until one exists (#7134).
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    let config = load_config(&committed_config())?;
+    let mut seen = 0;
+    for metric in &config.metric {
+        let Some(reference) = metric.source.strip_prefix("file:") else {
+            continue;
+        };
+        seen += 1;
+        let (path, _pointer) = reference.split_once('#').unwrap_or((reference, ""));
+        if !root.join(path).is_file() {
+            return Err(format!(
+                "metric `{}` reads `{path}`, which is not a committed file",
+                metric.id
+            ));
+        }
+    }
+    assert_eq!(seen, 1, "the committed file-backed receipts");
     Ok(())
 }

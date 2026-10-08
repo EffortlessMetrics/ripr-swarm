@@ -134,6 +134,9 @@ pub(crate) fn run_diff_pipeline_with_oracle_policy_and_rust_config(
         result.uncommitted_source_paths = overlay.dirty_source_paths();
         result.untracked_source_paths = overlay.untracked_source_paths();
     }
+    result.analyzed_revisions = loaded.effective_base.as_deref().map(|base| {
+        diff::resolve_analyzed_revisions(&options.root, base, false, options.git_timeout)
+    });
     bind_effective_base(&mut result, loaded.effective_base)?;
     Ok(result)
 }
@@ -222,6 +225,13 @@ pub(crate) fn run_worktree_pipeline_with_oracle_policy_and_rust_config(
     cancellation::checkpoint()?;
     let mut result =
         run_pipeline_for_diff_text(options, oracle_policy, languages, rust_config, &loaded.text)?;
+    // RIPR-SPEC-0116: the working-tree diff covers tracked files only; name
+    // the untracked routed files it cannot contain so the output can say so.
+    result.untracked_source_paths =
+        committed_source::untracked_routed_paths(&options.root, options.git_timeout)?;
+    result.analyzed_revisions = loaded.effective_base.as_deref().map(|base| {
+        diff::resolve_analyzed_revisions(&options.root, base, true, options.git_timeout)
+    });
     bind_effective_base(&mut result, loaded.effective_base)?;
     Ok(result)
 }
@@ -1153,6 +1163,7 @@ fn run_pipeline_for_diff_text(
         // effective base (#3940); every other path involves no base.
         effective_base: None,
         uncommitted_source_paths: Vec::new(),
+        analyzed_revisions: None,
         untracked_source_paths: Vec::new(),
         rust_diagnostic_origins,
         rust_consumed_sources,
@@ -1361,6 +1372,7 @@ pub(crate) fn run_repo_pipeline_with_oracle_policy_and_rust_config(
         partial_scope: None,
         effective_base: None,
         uncommitted_source_paths: Vec::new(),
+        analyzed_revisions: None,
         untracked_source_paths: Vec::new(),
         rust_diagnostic_origins,
         rust_consumed_sources,

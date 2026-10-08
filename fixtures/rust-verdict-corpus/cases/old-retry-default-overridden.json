@@ -1,0 +1,45 @@
+{
+  "case_id": "old-retry-default-overridden",
+  "subject_id": "authored-old-errors",
+  "diff": "cases/old-retry-default-overridden.diff",
+  "anchor": {
+    "file": "src/settings.rs",
+    "line": 16
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "field_construction",
+  "test_shape": "builder_default_overridden_by_test",
+  "hard_case": "The test asserts exactly on the field the default seeds, but only after overriding it; an exact-value credit on the default would be false.",
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "RetryBuilder { attempts: 4, delay_ms: 100 }",
+        "mutated_line": null,
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: a default builder retries four times instead of three"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "override_sets_attempts sets attempts to 5 before building, so the builder's default of 3 never reaches an assertion and changing it to 4 passes. Spec cells: RIPR-SPEC-0040 (builder override).",
+  "labeling_observation": {
+    "ripr_commit": "e19e16c",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "exposed",
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

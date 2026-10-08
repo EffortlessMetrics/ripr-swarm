@@ -24,7 +24,7 @@ use std::time::{Duration, Instant};
 #[path = "common/mod.rs"]
 mod common;
 
-use common::fixture_git::fixture_git_ok;
+use common::fixture_git::{fixture_git_ok, fixture_git_output};
 
 static NEXT_BASE: AtomicU64 = AtomicU64::new(0);
 
@@ -616,6 +616,9 @@ fn user_git_configuration_does_not_change_the_result() -> Result<(), String> {
         ("core.autocrlf", "true"),
         ("core.pager", "/bin/false"),
         ("log.showSignature", "true"),
+        // #5325: a dangling orderfile must not abort the run; the diff
+        // invocation pins `diff.orderFile=/dev/null`.
+        ("diff.orderFile", "/nonexistent-ripr-orderfile"),
     ];
     for (key, value) in settings {
         let ran = ripr(
@@ -628,6 +631,74 @@ fn user_git_configuration_does_not_change_the_result() -> Result<(), String> {
             ],
         )?;
         assert_found_change(&ran, &format!("git config {key}={value}"))?;
+    }
+    // #5325, live half: an orderfile that exists must also leave the
+    // result alone on the standard single-file fixture; the reorder half
+    // below covers multi-file patch reordering.
+    let order_path = scratch.path.join("orderfile");
+    fs::write(&order_path, "tests/t.rs\nsrc/lib.rs\n")
+        .map_err(|e| format!("write orderfile failed: {e}"))?;
+    let order_value = order_path
+        .to_str()
+        .ok_or_else(|| format!("orderfile path is not UTF-8: {}", order_path.display()))?
+        .to_owned();
+    let ran = ripr(
+        &root,
+        &["check"],
+        &[
+            ("GIT_CONFIG_COUNT", "1"),
+            ("GIT_CONFIG_KEY_0", "diff.orderFile"),
+            ("GIT_CONFIG_VALUE_0", order_value.as_str()),
+        ],
+    )?;
+    assert_found_change(&ran, "git config diff.orderFile=<live>")?;
+    // #5325, reorder half: with two changed files and a live orderfile,
+    // ripr's output must be byte-identical with and without the ambient
+    // setting. Setup asserts git really reorders the stimulus diff, so the
+    // comparison cannot pass vacuously.
+    let root2 = scratch.path.join("r2");
+    repo(&root2, |r| {
+        change_lib(r)?;
+        fs::write(
+            r.join("tests/t.rs"),
+            "use hx::total;\n#[test]\nfn t() { assert_eq!(total(1), 2); }\n",
+        )
+        .map_err(|e| format!("write failed: {e}"))
+    })?;
+    let order_env = [
+        ("GIT_CONFIG_COUNT", "1"),
+        ("GIT_CONFIG_KEY_0", "diff.orderFile"),
+        ("GIT_CONFIG_VALUE_0", order_value.as_str()),
+    ];
+    // The stimulus probes go through the hardened helper with `-c`,
+    // which sets the same config the env form would; the `ripr` calls
+    // below keep the env form because they simulate ambient user config.
+    let diff_args = ["diff", "--name-only", "main", "--"];
+    let default_order = fixture_git_output(&root2, &diff_args)?;
+    let order_arg = format!("diff.orderFile={order_value}");
+    let reordered_args = [
+        "-c",
+        order_arg.as_str(),
+        "diff",
+        "--name-only",
+        "main",
+        "--",
+    ];
+    let reordered = fixture_git_output(&root2, &reordered_args)?;
+    if default_order == reordered {
+        return Err(format!(
+            "orderfile did not reorder the stimulus diff:\n{default_order}"
+        ));
+    }
+    let plain_run = ripr(&root2, &["check"], &[])?;
+    assert_sane(&plain_run, "two-file baseline")?;
+    let ordered_run = ripr(&root2, &["check"], &order_env)?;
+    assert_sane(&ordered_run, "two-file live orderfile")?;
+    if plain_run.code != ordered_run.code || plain_run.stdout != ordered_run.stdout {
+        return Err(format!(
+            "live orderfile changed the result: {:?} vs {:?}\n--- baseline ---\n{}\n--- ordered ---\n{}",
+            plain_run.code, ordered_run.code, plain_run.stdout, ordered_run.stdout
+        ));
     }
     Ok(())
 }
@@ -899,11 +970,23 @@ fn control_bytes_in_names_and_config_never_reach_github_output_stderr_or_command
     }
     fs::remove_file(root.join("ripr.toml")).map_err(|e| format!("remove ripr.toml failed: {e}"))?;
 
-    // A tracked file deleted from the working tree is named in a stderr notice.
+    // A tracked file deleted from the working tree makes the default run read
+    // the working tree, which has no such file to name. It must still not leak.
     fs::remove_file(root.join("src/a\u{1b}[2Jb.rs"))
         .map_err(|e| format!("delete hostile file failed: {e}"))?;
-    let deleted = ripr(&root, &["check", "--base", "main"], &[])?;
-    assert_sane(&deleted, "check with a deleted hostile file")?;
+    let worktree = ripr(&root, &["check", "--base", "main"], &[])?;
+    assert_sane(&worktree, "check with a deleted hostile file")?;
+    if leaks(&worktree.stdout) || leaks(&worktree.stderr) {
+        return Err(format!(
+            "working-tree run leaked after the delete\n{:?}",
+            worktree.stderr
+        ));
+    }
+    // The committed-history run names the deleted tracked file in a stderr
+    // notice; `--committed` pins that source (#5997 made the dirty tree the
+    // default, which no longer reaches the notice).
+    let deleted = ripr(&root, &["check", "--base", "main", "--committed"], &[])?;
+    assert_sane(&deleted, "check --committed with a deleted hostile file")?;
     if leaks(&deleted.stdout) || leaks(&deleted.stderr) {
         return Err(format!("deleted-file notice leaked\n{:?}", deleted.stderr));
     }

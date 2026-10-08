@@ -1,0 +1,12 @@
+diff --git a/src/fees.rs b/src/fees.rs
+--- a/src/fees.rs
++++ b/src/fees.rs
+@@ -3,7 +3,7 @@
+ 
+ /// A flat surcharge on orders of at least 1000.
+ pub fn surcharge(amount: u64) -> u64 {
+-    if amount >= 1000 {
++    if amount > 999 {
+         25
+     } else {
+         0

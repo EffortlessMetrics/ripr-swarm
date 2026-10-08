@@ -13747,6 +13747,7 @@ fn sample_classified_seam() -> crate::analysis::ClassifiedSeam {
                 flow_sink: None,
             }],
             new_test_target: None,
+            statically_contradicted_related_tests: 0,
         },
         class: SeamGripClass::WeaklyGripped,
     }
@@ -13783,6 +13784,7 @@ fn sample_side_effect_seam_without_related_tests() -> crate::analysis::Classifie
             discriminate: StageEvidence::new(StageState::No, Confidence::Low, "no discriminator"),
             observed_values: Vec::new(),
             missing_discriminators: Vec::new(),
+            statically_contradicted_related_tests: 0,
             new_test_target: None,
         },
         class: SeamGripClass::Ungripped,
@@ -23348,6 +23350,401 @@ fn framed_lsp_component_degradation_is_typed_logged_and_recovers() -> Result<(),
         {
             return Err(format!(
                 "the repaired refresh must restore a full run: {recovered_status:?}"
+            ));
+        }
+
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({"jsonrpc": "2.0", "id": 6, "method": "shutdown", "params": null}),
+        )
+        .await?;
+        let shutdown = read_lsp_response(&mut client_read, 6).await?;
+        if shutdown.get("error").is_some() {
+            return Err(format!("shutdown failed: {shutdown}"));
+        }
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({"jsonrpc": "2.0", "method": "exit", "params": null}),
+        )
+        .await?;
+        client_write
+            .shutdown()
+            .await
+            .map_err(|err| format!("failed to close test client: {err}"))?;
+        match tokio::time::timeout(Duration::from_secs(2), &mut server_task).await {
+            Ok(join_result) => {
+                join_result.map_err(|err| format!("LSP server task failed: {err}"))?;
+            }
+            Err(_) => {
+                server_task.abort();
+                return Err("LSP server did not stop after exit notification".to_string());
+            }
+        }
+        drop(temp);
+        Ok(())
+    })
+}
+
+#[test]
+#[serial]
+fn framed_lsp_gap_ledger_degradation_is_typed_logged_and_recovers() -> Result<(), String> {
+    // #7147 / RIPR-SPEC-0141: a gap decision ledger that exists but cannot
+    // be parsed must degrade the refresh through the production path — the
+    // single shared ledger load records one typed `gap_ledger` outcome, the
+    // run leaves `full`, the client sees exactly one WARNING naming the
+    // component and its recovery, and ordinary findings still publish.
+    // Mirror of `framed_lsp_component_degradation_is_typed_logged_and_recovers`.
+    //
+    // The shared run status is `cache_limited`, not `limited`: the workspace
+    // gap-artifact report independently rejects the malformed ledger, and
+    // that rejection outranks the component-outcome rule in the spec's
+    // first-match-wins precedence (the acceptance example requires only
+    // "not full" for this reason).
+    work_done_progress_runtime()?.block_on(async {
+        let temp = boundary_gap_git_fixture_root("gap-ledger-degradation")?;
+        let root = temp.path().to_path_buf();
+
+        let (client_io, server_io) = tokio::io::duplex(64 * 1024);
+        let (mut client_read, mut client_write) = tokio::io::split(client_io);
+        let (server_read, server_write) = tokio::io::split(server_io);
+        let (service, socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
+        let mut server_task = tokio::spawn(async move {
+            Server::new(server_read, server_write, socket)
+                .serve(service)
+                .await;
+        });
+        let root_uri = file_uri_for_path(&root)?;
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "processId": null,
+                    "rootUri": root_uri.as_str(),
+                    "initializationOptions": {
+                        "baseRef": "HEAD",
+                        "checkMode": "instant",
+                        "diagnosticProfile": "full"
+                    },
+                    "capabilities": {
+                        "window": {"workDoneProgress": true}
+                    }
+                }
+            }),
+        )
+        .await?;
+        let initialize = read_lsp_response(&mut client_read, 1).await?;
+        if initialize.get("error").is_some() {
+            return Err(format!("initialize failed: {initialize}"));
+        }
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({"jsonrpc": "2.0", "method": "initialized", "params": {}}),
+        )
+        .await?;
+
+        // Refresh 1 (baseline): a clean run must not warn about degradation.
+        let baseline = run_wire_refresh_collecting(&mut client_read, &mut client_write, 2).await?;
+        let baseline_warnings = log_messages_of_type(&baseline, 2);
+        if baseline_warnings
+            .iter()
+            .any(|message| message.contains("ripr analysis limited"))
+        {
+            return Err(format!(
+                "a clean baseline run must not warn about degradation: {baseline_warnings:?}"
+            ));
+        }
+        let baseline_status = analysis_status_params(&baseline);
+        let Some(baseline_status) = baseline_status.last() else {
+            return Err("baseline refresh published no analysis status".to_string());
+        };
+        if baseline_status["run_status"].as_str() != Some("full") {
+            return Err(format!("baseline run must be full, got: {baseline_status}"));
+        };
+
+        // Seed an uncommitted behavior change alongside the degradation:
+        // the degraded refresh must still publish this diff finding's
+        // diagnostics, not merely a nonempty batch (a suppression
+        // regression that drops diff findings while keeping seam
+        // diagnostics would otherwise pass).
+        let seed_path = root.join("src/lib.rs");
+        let seed_source = std::fs::read_to_string(&seed_path)
+            .map_err(|err| format!("read seeded lib failed: {err}"))?;
+        let seed_changed = seed_source
+            .replace("amount >= discount_threshold", "amount > discount_threshold");
+        if seed_changed == seed_source {
+            return Err("seeded boundary text not found in the fixture lib".to_string());
+        }
+        std::fs::write(&seed_path, seed_changed)
+            .map_err(|err| format!("write seeded lib failed: {err}"))?;
+        let lib_diagnostics = |messages: &[serde_json::Value]| -> Vec<String> {
+            let mut found = Vec::new();
+            for message in messages {
+                if message.get("method").and_then(serde_json::Value::as_str)
+                    != Some("textDocument/publishDiagnostics")
+                {
+                    continue;
+                }
+                if !message["params"]["uri"]
+                    .as_str()
+                    .is_some_and(|uri| uri.ends_with("src/lib.rs"))
+                {
+                    continue;
+                }
+                if let Some(diagnostics) = message["params"]["diagnostics"].as_array() {
+                    for diagnostic in diagnostics {
+                        if let Some(text) =
+                            diagnostic.get("message").and_then(serde_json::Value::as_str)
+                        {
+                            found.push(text.to_string());
+                        }
+                    }
+                }
+            }
+            found.sort();
+            found
+        };
+        // The seeded boundary edit lands on `src/lib.rs` line 2 (1-based),
+        // so its diff finding diagnostic starts at 0-based LSP line 1.
+        // Finding codes are the verbatim `ExposureClass` labels while seam
+        // and gap diagnostics carry `ripr-`-prefixed codes. Matching code
+        // and range pins the seeded finding itself: message text alone also
+        // matches the pre-existing seam diagnostic the clean baseline
+        // already publishes for this file (#7170 review).
+        const SEEDED_LINE: u64 = 1;
+        let finding_codes: std::collections::BTreeSet<String> = [
+            crate::domain::ExposureClass::Exposed,
+            crate::domain::ExposureClass::WeaklyExposed,
+            crate::domain::ExposureClass::ReachableUnrevealed,
+            crate::domain::ExposureClass::NoStaticPath,
+            crate::domain::ExposureClass::InfectionUnknown,
+            crate::domain::ExposureClass::PropagationUnknown,
+            crate::domain::ExposureClass::StaticUnknown,
+        ]
+        .into_iter()
+        .map(|class| super::diagnostic_catalog::finding_code(&class))
+        .collect();
+        let seeded_findings = |messages: &[serde_json::Value]| -> Vec<(String, u64, String)> {
+            let mut found = Vec::new();
+            for message in messages {
+                if message.get("method").and_then(serde_json::Value::as_str)
+                    != Some("textDocument/publishDiagnostics")
+                {
+                    continue;
+                }
+                if !message["params"]["uri"]
+                    .as_str()
+                    .is_some_and(|uri| uri.ends_with("src/lib.rs"))
+                {
+                    continue;
+                }
+                if let Some(diagnostics) = message["params"]["diagnostics"].as_array() {
+                    for diagnostic in diagnostics {
+                        let code = diagnostic
+                            .get("code")
+                            .and_then(serde_json::Value::as_str)
+                            .unwrap_or_default();
+                        let line = diagnostic["range"]["start"]["line"].as_u64();
+                        let text = diagnostic
+                            .get("message")
+                            .and_then(serde_json::Value::as_str)
+                            .unwrap_or_default();
+                        if finding_codes.contains(code) && line == Some(SEEDED_LINE) {
+                            found.push((code.to_string(), SEEDED_LINE, text.to_string()));
+                        }
+                    }
+                }
+            }
+            found.sort();
+            found
+        };
+
+        // Plant a malformed gap decision ledger at the production default
+        // path: the ledger exists but cannot be parsed, so the gap_ledger
+        // component fails while diff and seam evidence remain usable.
+        let ledger_path = root.join(
+            crate::output::gap_decision_ledger::DEFAULT_GAP_DECISION_LEDGER_OUT,
+        );
+        std::fs::create_dir_all(
+            ledger_path
+                .parent()
+                .ok_or_else(|| "ledger path must have a parent".to_string())?,
+        )
+        .map_err(|err| format!("create ledger dir failed: {err}"))?;
+        std::fs::write(&ledger_path, "{not json")
+            .map_err(|err| format!("write malformed ledger failed: {err}"))?;
+
+        // Refresh 2 (degraded): typed status + one WARNING + limited progress
+        // + ordinary evidence still published.
+        let degraded = run_wire_refresh_collecting(&mut client_read, &mut client_write, 3).await?;
+        let degraded_status = analysis_status_params(&degraded);
+        let Some(status) = degraded_status.last() else {
+            return Err("degraded refresh published no analysis status".to_string());
+        };
+        if status["run_status"].as_str() != Some("cache_limited") {
+            return Err(format!(
+                "a malformed ledger must limit the run via the gap-artifact rejection, got: {status}"
+            ));
+        }
+        let components = status["components"]
+            .as_array()
+            .ok_or_else(|| format!("status must expose typed components: {status}"))?;
+        let ledger_outcomes: Vec<_> = components
+            .iter()
+            .filter(|outcome| outcome["component"].as_str() == Some("gap_ledger"))
+            .collect();
+        // The single shared ledger load records exactly one outcome: a
+        // wiring change that appends it twice must fail, not pass on `find`.
+        if ledger_outcomes.len() != 1 {
+            return Err(format!(
+                "components must include exactly one gap_ledger outcome: {components:?}"
+            ));
+        }
+        let ledger = ledger_outcomes[0];
+        if ledger["state"].as_str() != Some("failed")
+            || ledger["kind"].as_str() != Some("gap_ledger_parse_failed")
+            || ledger["findings_trustworthy"].as_bool() != Some(true)
+            || ledger["snapshot_identity"].is_null()
+        {
+            return Err(format!("unexpected gap_ledger outcome: {ledger}"));
+        }
+        let recovery = ledger["recovery"].as_str().unwrap_or("");
+        if !recovery.contains("ripr check") {
+            return Err(format!(
+                "the degraded outcome must name a concrete recovery route: {ledger}"
+            ));
+        }
+        let diff = components
+            .iter()
+            .find(|outcome| outcome["component"].as_str() == Some("diff"));
+        if diff.and_then(|outcome| outcome["state"].as_str()) != Some("complete") {
+            return Err(format!(
+                "ordinary diff findings must stay complete and disclosed: {components:?}"
+            ));
+        }
+        let warnings = log_messages_of_type(&degraded, 2);
+        let degradation_warnings = warnings
+            .iter()
+            .filter(|message| message.contains("gap_ledger failed"))
+            .count();
+        if degradation_warnings != 1 {
+            return Err(format!(
+                "expected exactly one degradation warning, got {degradation_warnings}: {warnings:?}"
+            ));
+        }
+        if !warnings.iter().any(|message| {
+            message.contains("gap_ledger failed") && message.contains("recovery:")
+        }) {
+            return Err(format!(
+                "the degradation warning must name the recovery route: {warnings:?}"
+            ));
+        }
+        let progress_end_limited = degraded.iter().any(|message| {
+            message.get("method").and_then(serde_json::Value::as_str) == Some("$/progress")
+                && message["params"]["value"]["kind"].as_str() == Some("end")
+                && message["params"]["value"]["message"].as_str()
+                    == Some("analysis completed with limited evidence")
+        });
+        if !progress_end_limited {
+            return Err(format!(
+                "progress must end limited for a degraded run: {degraded:?}"
+            ));
+        }
+        let degraded_lib = lib_diagnostics(&degraded);
+        if degraded_lib.is_empty() {
+            return Err(
+                "the degraded refresh must still publish the seeded diff finding diagnostics"
+                    .to_string(),
+            );
+        }
+        let degraded_seeded = seeded_findings(&degraded);
+        if degraded_seeded.is_empty() {
+            return Err(format!(
+                "the degraded refresh must still publish the seeded finding diagnostic (finding code at line {SEEDED_LINE}), got: {degraded_lib:?}"
+            ));
+        }
+
+        // Refresh 3 (identical degradation): no repeated warning spam; the
+        // typed status still discloses the degradation.
+        let repeated = run_wire_refresh_collecting(&mut client_read, &mut client_write, 4).await?;
+        let repeated_warnings = log_messages_of_type(&repeated, 2)
+            .into_iter()
+            .filter(|message| message.contains("gap_ledger failed"))
+            .count();
+        if repeated_warnings != 0 {
+            return Err("a byte-identical repeated degradation must not warn again".to_string());
+        }
+        let repeated_status = analysis_status_params(&repeated);
+        if repeated_status
+            .last()
+            .and_then(|status| status["run_status"].as_str())
+            != Some("cache_limited")
+        {
+            return Err(format!(
+                "the repeated degradation must stay typed on status: {repeated_status:?}"
+            ));
+        }
+
+        // Refresh 4 (repaired): one INFO recovery line, full status restored.
+        std::fs::remove_file(&ledger_path)
+            .map_err(|err| format!("remove malformed ledger failed: {err}"))?;
+        let recovered = run_wire_refresh_collecting(&mut client_read, &mut client_write, 5).await?;
+        // Match the aggregate recovery line exactly: a bare "recovered"
+        // substring would also accept an unrelated INFO message.
+        let recovery_infos = log_messages_of_type(&recovered, 3)
+            .into_iter()
+            .filter(|message| {
+                message.contains("ripr analysis recovered: all recorded analysis components are complete")
+            })
+            .count();
+        if recovery_infos != 1 {
+            return Err(format!(
+                "recovery must log exactly one INFO line, got {recovery_infos}"
+            ));
+        }
+        let recovered_status = analysis_status_params(&recovered);
+        if recovered_status
+            .last()
+            .and_then(|status| status["run_status"].as_str())
+            != Some("full")
+        {
+            return Err(format!(
+                "the repaired refresh must restore a full run: {recovered_status:?}"
+            ));
+        }
+        // The degraded refresh must have published every diff finding
+        // diagnostic the clean run publishes: degradation suppresses
+        // nothing, it only limits the run status.
+        let recovered_lib = lib_diagnostics(&recovered);
+        if recovered_lib.is_empty() {
+            return Err(
+                "the repaired refresh must publish the seeded diff finding diagnostics".to_string(),
+            );
+        }
+        let suppressed: Vec<_> = recovered_lib
+            .iter()
+            .filter(|text| !degraded_lib.contains(text))
+            .collect();
+        if !suppressed.is_empty() {
+            return Err(format!(
+                "the degraded refresh suppressed diff finding diagnostics: {suppressed:?}"
+            ));
+        }
+        let recovered_seeded = seeded_findings(&recovered);
+        if recovered_seeded.is_empty() {
+            return Err(format!(
+                "the repaired refresh must publish the seeded finding diagnostic (finding code at line {SEEDED_LINE}), got: {recovered_lib:?}"
+            ));
+        }
+        let seeded_suppressed: Vec<_> = recovered_seeded
+            .iter()
+            .filter(|seeded| !degraded_seeded.contains(seeded))
+            .collect();
+        if !seeded_suppressed.is_empty() {
+            return Err(format!(
+                "the degraded refresh suppressed seeded finding diagnostics: {seeded_suppressed:?}"
             ));
         }
 

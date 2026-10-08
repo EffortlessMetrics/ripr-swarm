@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- A test that calls a trait default method through a trait the test module redeclares under the same name no longer reads as a direct call to the production default; the relation stays name-only. The refusal covers path-qualified spellings (`self::`, `super::`, `crate::`) and out-of-line parent-module declarations, matching the trait-impl shadow refusal ([#7123](https://github.com/EffortlessMetrics/ripr-swarm/issues/7123)).

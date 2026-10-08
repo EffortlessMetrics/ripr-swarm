@@ -32,8 +32,8 @@ use crate::analysis::ClassifiedSeam;
 use crate::analysis::inventory_diff_scoped_classified_seams_at_with_config;
 use crate::analysis::repair_route::repair_packet_eligibility;
 use crate::app::repair_card_handoff::{
-    AgentCardError, SeamCardFacts, assemble_repair_card, card_packet_json, latest_attempt_for_seam,
-    witness_from_findings, workspace_identity_for,
+    AgentCardError, SeamCardFacts, assemble_repair_card, card_packet_json, finding_for_seam,
+    latest_attempt_for_seam, witness_from_findings, workspace_identity_for,
 };
 use crate::config::RiprConfig;
 use crate::domain::{AgentCardRefusalKind, RepairCardSnapshotCurrentness};
@@ -198,6 +198,10 @@ pub(crate) fn bind_snapshot_card_producers(
             });
         }
     }
+    // Sibling seams can share one producer shape for one finding; the shared
+    // witness authority is per-seam, so the item-fan-in ambiguity is refused
+    // here, once, instead of letting the read bind the first claimant.
+    retain_unambiguous_item_bindings(&mut bindings);
     snapshot.card_producers = Some(SnapshotCardProducers {
         repository_head,
         bindings,
@@ -205,25 +209,45 @@ pub(crate) fn bind_snapshot_card_producers(
     Ok(())
 }
 
-/// The snapshot canonical item one classified seam owner-discriminated
-/// binds, if any. The binding rule is the shared card producer's own: the
-/// seam's readiness canonical gap id must name the item, and the gap's
-/// producer-recorded owner must be this seam's owner — a gap id shared with
-/// a sibling owner never credits this seam with another seam's item.
+/// The snapshot canonical item one classified seam binds, if any. The binding
+/// rule is the shared card producer's own: the seam's finding under
+/// [`finding_for_seam`] — the same seam↔finding join the CLI
+/// `ripr agent card` handoff consumes — names the item it was projected from.
+/// The seam's content-hash gap id never appears on produced findings
+/// (producers mint `gap:<lang>:…` identities), so the join runs on the
+/// finding identity, never on id-string equality across the two schemes
+/// (#7162). Owner discrimination and the ambiguity refusal ride along from
+/// the shared authority: a gap id shared with a sibling owner still never
+/// credits this seam with another seam's item. Binding is not projection —
+/// the item binds even when the finding projects no witness, exactly like
+/// the CLI card whose witness is optional.
 fn item_bound_by_seam<'a>(snapshot: &'a Snapshot, entry: &ClassifiedSeam) -> Option<&'a GapItem> {
     let readiness = repair_packet_eligibility(entry).readiness;
-    let canonical_id = readiness.canonical_gap_id.as_deref()?;
-    let item = snapshot
-        .items
-        .iter()
-        .find(|item| item.canonical_id == canonical_id)?;
-    let owner_names_seam = snapshot.findings.iter().any(|finding| {
-        finding
-            .canonical_gap
-            .as_ref()
-            .is_some_and(|gap| gap.id == canonical_id && gap.owner == entry.seam.owner())
+    let hit = finding_for_seam(
+        &snapshot.findings,
+        entry,
+        readiness.canonical_gap_id.as_deref(),
+    )?;
+    snapshot.items.iter().find(|item| item.finding_id == hit.id)
+}
+
+/// Drop every binding whose item more than one seam claims. A shared
+/// (file, owner, kind) shape can name one finding from two sibling seams;
+/// binding either seam's card to that item would credit the wrong seam, so
+/// an item with competing claims binds no seam at all — the read fails with
+/// the pinned `seam_not_found`, never a cross-wired card.
+fn retain_unambiguous_item_bindings(bindings: &mut Vec<SeamCardBinding>) {
+    let mut claims = std::collections::HashMap::new();
+    for binding in bindings.iter() {
+        *claims
+            .entry(binding.item_canonical_id.clone())
+            .or_insert(0_usize) += 1;
+    }
+    bindings.retain(|binding| {
+        claims
+            .get(&binding.item_canonical_id)
+            .is_some_and(|count| *count == 1)
     });
-    owner_names_seam.then_some(item)
 }
 
 /// Map one card-assembly failure onto the typed wire vocabulary. Refusal
@@ -302,19 +326,14 @@ impl WorkspaceSession {
             ));
         };
         let entry = &binding.seam;
-        // The bind-time owner discrimination is re-verified against the
-        // committed findings on every read: the retained binding is honored
-        // only while one finding still names this item's gap with this
-        // seam's owner. A stale or owner-mismatched binding credits the seam
-        // with another owner's item, so the read fails closed exactly like
-        // an unbound item instead of projecting a mis-attributed card.
-        let owner_names_seam = snapshot.findings.iter().any(|finding| {
-            finding
-                .canonical_gap
-                .as_ref()
-                .is_some_and(|gap| gap.id == item.canonical_id && gap.owner == entry.seam.owner())
-        });
-        if !owner_names_seam {
+        // The bind-time join is re-verified against the committed findings on
+        // every read by re-running the shared bind rule itself: the retained
+        // binding is honored only while this seam still binds this item. A
+        // stale or owner-mismatched binding credits the seam with another
+        // owner's item, so the read fails closed exactly like an unbound item
+        // instead of projecting a mis-attributed card.
+        let rebound = item_bound_by_seam(snapshot, entry);
+        if rebound.is_none_or(|bound| bound.canonical_id != item.canonical_id) {
             return Err(AttemptFailure::new(
                 CODE_SEAM_NOT_FOUND,
                 format!(
@@ -445,7 +464,9 @@ mod tests {
         RelatedTestGrip, TestGripEvidence, TestTargetEvidence,
     };
     use crate::analysis_outcome::{AnalysisOutcome, AnalysisOutcomeCounts, AnalysisOutcomeKind};
-    use crate::domain::{Confidence, FindingCanonicalGap, OracleKind, OracleStrength};
+    use crate::domain::{
+        Confidence, ExposureClass, FindingCanonicalGap, OracleKind, OracleStrength,
+    };
     use std::path::PathBuf;
     use std::sync::Arc;
 
@@ -498,6 +519,7 @@ mod tests {
                 discriminate: stage(crate::domain::StageState::No),
                 observed_values: Vec::new(),
                 missing_discriminators: Vec::new(),
+                statically_contradicted_related_tests: 0,
                 new_test_target: None,
             },
             class: SeamGripClass::WeaklyGripped,
@@ -535,6 +557,7 @@ mod tests {
             unlinked_python_tests: None,
             suppression: None,
             partial_scope: None,
+            analyzed_revisions: None,
         })
     }
 
@@ -935,6 +958,173 @@ mod tests {
             .map_err(|failure| failure.detail)?;
         if item_bound_by_seam(&other_snapshot, &entry).is_some() {
             return Err("owner-mismatched seam must bind no item at bind time".to_string());
+        }
+        Ok(())
+    }
+
+    /// A live-shaped headline seam: the file and rust-index symbol-id owner a
+    /// produced B4-style finding names, with no related-test evidence (the
+    /// bind needs identity only, never grip).
+    fn live_shaped_entry() -> ClassifiedSeam {
+        let seam = RepoSeam::new(
+            "src/lib.rs",
+            "src/lib.rs::discounted_total",
+            SeamKind::PredicateBoundary,
+            12,
+            2,
+            "amount > discount_threshold",
+            RequiredDiscriminator::BoundaryValue {
+                description: "amount > discount_threshold".to_string(),
+            },
+            ExpectedSink::ReturnValue,
+        );
+        let seam_id = seam.id().clone();
+        ClassifiedSeam {
+            seam,
+            evidence: TestGripEvidence {
+                seam_id,
+                related_tests: Vec::new(),
+                reach: stage(crate::domain::StageState::Yes),
+                activate: stage(crate::domain::StageState::Yes),
+                propagate: stage(crate::domain::StageState::Yes),
+                observe: stage(crate::domain::StageState::Yes),
+                discriminate: stage(crate::domain::StageState::No),
+                observed_values: Vec::new(),
+                missing_discriminators: Vec::new(),
+                statically_contradicted_related_tests: 0,
+                new_test_target: None,
+            },
+            class: SeamGripClass::WeaklyGripped,
+        }
+    }
+
+    /// #7162: a produced finding whose gap structurally names the seam binds
+    /// the seam to the finding's item — the join the content-hash branch can
+    /// never make. A sibling owner and an ambiguous duplicate twin both bind
+    /// nothing.
+    #[test]
+    fn producer_shaped_finding_binds_its_item_at_bind_time() -> Result<(), String> {
+        let entry = live_shaped_entry();
+        let producer_id = "gap:rust:src/lib.rs:discounted_total:predicate_boundary:predicate:amount==discount_threshold";
+        let seam_gap_id = repair_packet_eligibility(&entry)
+            .readiness
+            .canonical_gap_id
+            .clone()
+            .ok_or_else(|| "fixture seam must name a canonical gap".to_string())?;
+        if producer_id == seam_gap_id {
+            return Err("the producer id must differ from the content-hash id".to_string());
+        }
+        // Positive: the unique producer match binds the finding's item.
+        let mut finding = super::super::gaps::test_finding()?;
+        let gap = finding
+            .canonical_gap
+            .as_mut()
+            .ok_or_else(|| "fixture finding must name a canonical gap".to_string())?;
+        gap.id = producer_id.to_string();
+        gap.file = "src/lib.rs".to_string();
+        gap.owner = "discounted_total".to_string();
+        gap.probe_kind = "predicate".to_string();
+        // #7177: the probe line must fall on the seam.
+        finding.probe.location.line = entry.seam.display_line();
+        let matched_output = output(std::slice::from_ref(&finding))?;
+        let snapshot = Snapshot::from_output(&matched_output, Some("root:sha256:a"))
+            .map_err(|failure| failure.detail)?;
+        let bound = item_bound_by_seam(&snapshot, &entry)
+            .ok_or_else(|| "producer-shaped seam must bind its item at bind time".to_string())?;
+        if bound.canonical_id != producer_id {
+            return Err(format!("bound the wrong item: {}", bound.canonical_id));
+        }
+        // Negative: the same gap shape with a sibling owner binds nothing.
+        let mut other = super::super::gaps::test_finding()?;
+        let other_gap = other
+            .canonical_gap
+            .as_mut()
+            .ok_or_else(|| "fixture finding must name a canonical gap".to_string())?;
+        other_gap.id = producer_id.to_string();
+        other_gap.file = "src/lib.rs".to_string();
+        other_gap.owner = "other_total".to_string();
+        other_gap.probe_kind = "predicate".to_string();
+        let other_output = output(std::slice::from_ref(&other))?;
+        let other_snapshot = Snapshot::from_output(&other_output, Some("root:sha256:a"))
+            .map_err(|failure| failure.detail)?;
+        if item_bound_by_seam(&other_snapshot, &entry).is_some() {
+            return Err("a sibling owner's gap must bind no item at bind time".to_string());
+        }
+        // Negative: twin findings sharing the shape are ambiguous and bind
+        // nothing rather than crediting the seam with a sibling's item.
+        let mut twin = finding.clone();
+        twin.id = "finding:test:2".to_string();
+        let twin_output = output(&[finding, twin])?;
+        let twin_snapshot = Snapshot::from_output(&twin_output, Some("root:sha256:a"))
+            .map_err(|failure| failure.detail)?;
+        if item_bound_by_seam(&twin_snapshot, &entry).is_some() {
+            return Err("ambiguous producer twins must bind no item at bind time".to_string());
+        }
+        Ok(())
+    }
+
+    /// #7162: binding is not projection — an exposed finding (which the
+    /// witness authority deliberately refuses to relabel as a gap) still binds
+    /// its seam to its item; the card simply carries no witness, exactly like
+    /// the CLI card for the same seam.
+    #[test]
+    fn exposed_finding_binds_its_item_without_projecting_a_witness() -> Result<(), String> {
+        let entry = live_shaped_entry();
+        let producer_id = "gap:rust:src/lib.rs:discounted_total:predicate_boundary:predicate:amount==discount_threshold";
+        let mut finding = super::super::gaps::test_finding()?;
+        finding.class = ExposureClass::Exposed;
+        finding.activation.missing_discriminators.clear();
+        let gap = finding
+            .canonical_gap
+            .as_mut()
+            .ok_or_else(|| "fixture finding must name a canonical gap".to_string())?;
+        gap.id = producer_id.to_string();
+        gap.file = "src/lib.rs".to_string();
+        gap.owner = "discounted_total".to_string();
+        gap.probe_kind = "predicate".to_string();
+        // #7177: the probe line must fall on the seam.
+        finding.probe.location.line = entry.seam.display_line();
+        let matched_output = output(std::slice::from_ref(&finding))?;
+        let snapshot = Snapshot::from_output(&matched_output, Some("root:sha256:a"))
+            .map_err(|failure| failure.detail)?;
+        let bound = item_bound_by_seam(&snapshot, &entry)
+            .ok_or_else(|| "an exposed finding must still bind its item".to_string())?;
+        if bound.canonical_id != producer_id {
+            return Err(format!("bound the wrong item: {}", bound.canonical_id));
+        }
+        let readiness = repair_packet_eligibility(&entry).readiness;
+        if witness_from_findings(
+            &snapshot.findings,
+            &entry,
+            readiness.canonical_gap_id.as_deref(),
+        )
+        .is_some()
+        {
+            return Err("an exposed finding must project no witness".to_string());
+        }
+        Ok(())
+    }
+
+    /// #7162: an item claimed by two sibling seams binds neither — the
+    /// ambiguity is refused at commit time instead of letting the read bind
+    /// the first claimant.
+    #[test]
+    fn retain_unambiguous_item_bindings_drops_shared_items() -> Result<(), String> {
+        let entry = weakly_gripped_entry();
+        let mut bindings = vec![
+            binding_for(&entry, "gap:shared"),
+            binding_for(&entry, "gap:shared"),
+            binding_for(&entry, "gap:single"),
+        ];
+        retain_unambiguous_item_bindings(&mut bindings);
+        if bindings.len() != 1 {
+            return Err(format!(
+                "shared claims must drop, leaving one binding: {}",
+                bindings.len()
+            ));
+        }
+        if bindings[0].item_canonical_id != "gap:single" {
+            return Err("the singleton claim must survive".to_string());
         }
         Ok(())
     }

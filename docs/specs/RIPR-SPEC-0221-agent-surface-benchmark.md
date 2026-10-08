@@ -96,12 +96,15 @@ One new xtask command, `cargo xtask bench-agent-surfaces`, writes
   took 572 s, and warm-cache sessions produced no document publish
   within 600 s.
 - **M4 — output actionability.** Pooled from the M1 envelopes per
-  corpus: findings total, the seven static-class histogram,
-  actionable-intent fraction (missing discriminator or typed next
-  action), evidence-path fraction, related-test-evidence fraction,
-  unknown-disclosure fraction (unknown is a valid result; this is a
-  disclosure direction, not a "fewer unknowns" direction),
-  `analysis_outcome` completeness and typed limitation counts, repair
+  corpus: findings total (the emitted array length) alongside findings
+  reported (the `summary.findings` sum, null when unreported, never a
+  fake zero), the findings-bound envelope count, the seven
+  static-class histogram, actionable-intent fraction (missing
+  discriminator or typed next action), evidence-path fraction,
+  related-test-evidence fraction, unknown-disclosure fraction
+  (unknown is a valid result; this is a disclosure direction, not a
+  "fewer unknowns" direction), `analysis_outcome` completeness with
+  typed limitation counts plus top-level run-limitation counts, repair
   readiness only where the contract actually emits it (a named absence
   otherwise), and `finding_alignment.summary` recorded as alignment
   evidence or `alignment_absent`.

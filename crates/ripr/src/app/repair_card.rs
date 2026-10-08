@@ -278,15 +278,17 @@ fn instruction_label(state: FixInstructionState) -> &'static str {
     }
 }
 
-/// The canonical effect label of an offered command role: what the card
-/// producer claims running that route records.
-fn command_effect_label(role: CommandRole) -> &'static str {
+/// The canonical effect label of an offered command role: what the offering
+/// producer claims running that route records. Shared with the task-first
+/// repair-start producer (#6305) so the effect vocabulary has one owner.
+pub(crate) fn command_effect_label(role: CommandRole) -> &'static str {
     match role {
         CommandRole::Verify => "verification_recorded",
         CommandRole::Receipt => "receipt_recorded",
         CommandRole::Regeneration => "evidence_regenerated",
         CommandRole::Inspection => "packet_inspected",
         CommandRole::TargetedRerun => "rerun_recorded",
+        CommandRole::RepairStart => "repair_started",
     }
 }
 

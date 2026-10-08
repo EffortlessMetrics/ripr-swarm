@@ -1,0 +1,22 @@
+{
+  "case_id": "old-slot-downcast-type-only",
+  "subject_id": "authored-old-errors",
+  "origin": "authored",
+  "anchor": "src/errors.rs:80",
+  "behavior_family": "error_variant",
+  "test_shape": "guarded_match_downcast_type_pin",
+  "hard_case": true,
+  "truth": "not_discriminated",
+  "ideal_verdict": "gap",
+  "observed_verdict": "gap",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "weakly_exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": [],
+  "findings_scored": 2,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

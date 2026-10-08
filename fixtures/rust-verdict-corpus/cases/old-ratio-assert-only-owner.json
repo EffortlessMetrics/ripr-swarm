@@ -1,0 +1,52 @@
+{
+  "case_id": "old-ratio-assert-only-owner",
+  "subject_id": "authored-old-errors",
+  "diff": "cases/old-ratio-assert-only-owner.diff",
+  "anchor": {
+    "file": "src/checks.rs",
+    "line": 6
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "predicate",
+  "test_shape": "assertion_shaped_owner_without_production_caller",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "assert!(num < den, \"ratio above one\");",
+        "mutated_line": "assert!(num < den, \"ratio above one\");",
+        "outcome": "tests_failed",
+        "failing_test": "checks::tests::equal_ratio_is_allowed",
+        "equivalence_review": "not equivalent: an equal ratio panics"
+      },
+      {
+        "replacement": "assert!(num <= den + 1, \"ratio above one\");",
+        "mutated_line": "assert!(num <= den + 1, \"ratio above one\");",
+        "outcome": "tests_failed",
+        "failing_test": "checks::tests::ratio_above_one_panics",
+        "equivalence_review": "not equivalent: a ratio of 3/2 no longer panics"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "check_ratio is only an assert; equal_ratio_is_allowed and the should_panic test pin both sides of num <= den, so each mutant fails one. Spec cells: RIPR-SPEC-0133 (assert-only src fn without a production caller).",
+  "labeling_observation": {
+    "ripr_commit": "e19e16c",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "static_unknown"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

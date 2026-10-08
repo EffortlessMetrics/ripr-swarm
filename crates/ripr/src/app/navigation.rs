@@ -1,3 +1,4 @@
+use super::test_stub::{StubRoute, StubRouteDecision};
 use super::{CheckInput, Mode};
 use crate::agent::loop_commands::{bound_root, bound_root_path, root_path_display, shell_arg};
 use std::path::Path;
@@ -22,6 +23,9 @@ pub(crate) struct FindingNavigation {
     context_prefix: String,
     list_prefix: String,
     stub_prefix: String,
+    /// The `ripr agent stub` decision the check pipeline computed for its
+    /// selected finding (#5471). Absent means no route is printed.
+    stub_route: Option<StubRoute>,
 }
 
 impl FindingNavigation {
@@ -31,7 +35,23 @@ impl FindingNavigation {
             context_prefix: "ripr context".to_string(),
             list_prefix: "ripr check".to_string(),
             stub_prefix: "ripr agent stub".to_string(),
+            stub_route: None,
         }
+    }
+
+    /// Carry the check pipeline's stub-route decision to the renderer.
+    pub(crate) fn with_stub_route(mut self, stub_route: Option<StubRoute>) -> Self {
+        self.stub_route = stub_route;
+        self
+    }
+
+    /// The stub-route decision for `finding_id`, when one was computed for
+    /// that finding.
+    pub(crate) fn stub_route_for(&self, finding_id: &str) -> Option<&StubRouteDecision> {
+        self.stub_route
+            .as_ref()
+            .filter(|route| route.finding_id == finding_id)
+            .map(|route| &route.decision)
     }
 
     pub(crate) fn explain_command(&self, selector: &str) -> String {
@@ -44,11 +64,14 @@ impl FindingNavigation {
 
     /// The one-step `ripr agent stub` route from a finding location to a
     /// runnable test (#5355). It reads the working tree at the same root.
-    pub(crate) fn stub_command(&self, file: &str, line: usize) -> String {
+    /// `kind` is the finding's probe family, so the stub targets the seam
+    /// the finding reported when its line holds several (#5471).
+    pub(crate) fn stub_command(&self, file: &str, line: usize, kind: &str) -> String {
         format!(
-            "{} --at {}",
+            "{} --at {} --kind {}",
             self.stub_prefix,
-            shell_arg(&format!("{file}:{line}"))
+            shell_arg(&format!("{file}:{line}")),
+            shell_arg(kind)
         )
     }
 
@@ -103,6 +126,7 @@ pub(crate) fn finding_navigation_with_worktree(
             "ripr agent stub --root {}",
             shell_arg(&bound_root(&input.root.display().to_string()))
         ),
+        stub_route: None,
     }
 }
 
@@ -324,7 +348,7 @@ mod tests {
             navigation.explain_command("probe:id"),
             navigation.context_command("probe:id"),
             navigation.list_command(),
-            navigation.stub_command("src/lib.rs", 5),
+            navigation.stub_command("src/lib.rs", 5, "predicate"),
         ] {
             assert!(
                 command.contains(&root_arg),
