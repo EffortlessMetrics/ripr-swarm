@@ -20,7 +20,7 @@
         "replacement": "return amount - 20;",
         "mutated_line": null,
         "outcome": "tests_failed",
-        "failing_test": "price",
+        "failing_test": "test/priceEx09a.test.ts > price",
         "equivalence_review": "not equivalent: price(150) becomes 130 instead of 140"
       }
     ]

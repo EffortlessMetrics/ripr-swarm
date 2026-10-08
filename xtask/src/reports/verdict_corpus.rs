@@ -2523,6 +2523,14 @@ pub(crate) fn language_corpus_dir_in(fixtures: &Path, language: &str) -> Result<
         ));
     }
     let dir = fixtures.join(format!("{language}{CORPUS_SUFFIX}"));
+    // bless and split rewrite files under this directory, so a symlink would
+    // let them write outside fixtures/; check-all refuses one the same way.
+    if fs::symlink_metadata(&dir).is_ok_and(|meta| meta.is_symlink()) {
+        return Err(format!(
+            "verdict-corpus: --language `{language}`: {} is a symlink; a corpus is one real directory",
+            normalize_path(&dir)
+        ));
+    }
     if !dir.join("corpus.json").is_file() {
         return Err(format!(
             "verdict-corpus: --language `{language}` names no corpus; {} has no corpus.json",

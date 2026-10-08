@@ -1449,6 +1449,27 @@ fn language_names_its_own_corpus_directory_and_nothing_else() -> Result<(), Stri
     Ok(())
 }
 
+#[cfg(unix)]
+#[test]
+fn language_refuses_a_symlinked_corpus_directory() -> Result<(), String> {
+    let fixtures = crate::tests::temp_dir("verdict-language-symlink");
+    let elsewhere = crate::tests::temp_dir("verdict-language-symlink-target");
+    crate::tests::write(&elsewhere.join("corpus.json"), "{}\n");
+    crate::tests::write(&fixtures.join("go-verdict-corpus/corpus.json"), "{}\n");
+    std::os::unix::fs::symlink(&elsewhere, fixtures.join("perl-verdict-corpus"))
+        .map_err(|e| format!("symlink failed: {e}"))?;
+    let err = language_corpus_dir_in(&fixtures, "perl")
+        .err()
+        .ok_or("a symlinked corpus directory was accepted")?;
+    assert!(err.contains("is a symlink"), "{err}");
+    // A real directory beside it still resolves.
+    assert_eq!(
+        language_corpus_dir_in(&fixtures, "go")?,
+        fixtures.join("go-verdict-corpus")
+    );
+    Ok(())
+}
+
 #[test]
 fn only_a_rust_corpus_holds_labels_to_cargo_commands_and_rust_test_names() -> Result<(), String> {
     for (name, rust) in [

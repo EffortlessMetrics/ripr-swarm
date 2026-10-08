@@ -12742,6 +12742,7 @@ name = "Per-language labeled verdict corpora"
 spec = "docs/specs/RIPR-SPEC-0244-per-language-verdict-corpora.md"
 tests = [
   "xtask/src/reports/verdict_corpus_tests.rs::language_names_its_own_corpus_directory_and_nothing_else",
+  "xtask/src/reports/verdict_corpus_tests.rs::language_refuses_a_symlinked_corpus_directory",
   "xtask/src/reports/verdict_corpus_tests.rs::language_option_parses_in_any_position_and_refuses_misuse",
   "xtask/src/reports/verdict_corpus_tests.rs::a_report_and_its_rebless_hint_name_the_corpus_language",
   "xtask/src/reports/verdict_corpus_tests.rs::only_a_rust_corpus_holds_labels_to_cargo_commands_and_rust_test_names",

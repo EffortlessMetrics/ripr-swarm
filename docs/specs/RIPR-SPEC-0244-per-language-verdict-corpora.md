@@ -70,8 +70,8 @@ cases under `target/ripr/verdict-corpus/<language>/`.
 without it they act on the Rust corpus, as before. A language name is
 lowercase ASCII letters, digits, `-` and `_`, not starting with `-`, so it
 is a directory component and can be pasted into a command unquoted; any
-other name, or one that names no directory holding a `corpus.json`, is
-refused before anything runs, and `check-all` refuses a corpus directory
+other name, one whose corpus directory is a symlink, or one that names no
+directory holding a `corpus.json`, is refused before anything runs, and `check-all` refuses a corpus directory
 whose name gives no such language. `check-all` refuses
 `--language`, since it checks every corpus. A drifted `check` names the
 `bless --language <language>` command that re-blesses it, and a report's
@@ -114,7 +114,8 @@ labeling toolchain and test command each case names.
 ## Required Evidence
 
 - `--language` maps a language to its own corpus directory and refuses a
-  name that is not a directory component or that names no corpus; it parses
+  name that needs shell quoting, a symlinked corpus directory, or a name
+  that names no corpus; it parses
   before or after the subcommand, is refused twice and on `check-all`.
 - A report's title and its re-bless hint name the corpus language.
 - Only a Rust corpus holds labels to cargo test commands and Rust test
@@ -149,6 +150,7 @@ labeling toolchain and test command each case names.
 Tests live in `xtask/src/reports/verdict_corpus_tests.rs`:
 
 - `language_names_its_own_corpus_directory_and_nothing_else`
+- `language_refuses_a_symlinked_corpus_directory`
 - `language_option_parses_in_any_position_and_refuses_misuse`
 - `a_report_and_its_rebless_hint_name_the_corpus_language`
 - `only_a_rust_corpus_holds_labels_to_cargo_commands_and_rust_test_names`
