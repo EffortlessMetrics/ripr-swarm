@@ -88,12 +88,15 @@ pub(crate) fn render_finding_digest_with_config(
         // discriminator a test could supply. Label it as the limitation it
         // is when no real discriminator is missing; keep the
         // discriminator label whenever one exists.
+        // #7071: a weak finding whose reach witness ripr could not trace
+        // carries the limit's prose here, not a discriminator.
         let label = if finding.class == ExposureClass::Exposed {
             "Discriminator (observed, advisory)"
-        } else if matches!(
+        } else if (matches!(
             finding.class,
             ExposureClass::PropagationUnknown | ExposureClass::StaticUnknown
-        ) && finding.activation.missing_discriminators.is_empty()
+        ) || untraced_reach_weak_finding(finding))
+            && finding.activation.missing_discriminators.is_empty()
         {
             "Analyzer limit"
         } else {
@@ -217,6 +220,20 @@ fn compact_discriminator_token(finding: &Finding) -> &'static str {
     } else {
         "missing"
     }
+}
+
+/// A `weakly_exposed` finding whose only reach is proximity and whose
+/// transitive or macro reach witness ripr could not trace (#7071): it names
+/// a limit, so it claims no missing test.
+pub(super) fn untraced_reach_weak_finding(finding: &Finding) -> bool {
+    finding.class == ExposureClass::WeaklyExposed
+        && finding.stop_reasons.iter().any(|reason| {
+            matches!(
+                reason,
+                crate::domain::StopReason::TransitiveReachUnresolved
+                    | crate::domain::StopReason::MacroReachUnresolved
+            )
+        })
 }
 
 /// Collapse a possibly-multi-line value to one bounded display line.
@@ -442,7 +459,8 @@ pub(crate) fn render_finding_with_config(
         ));
     }
 
-    // RIPR-SPEC-0115/0117: when a Rust no_static_path limitation named a
+    // RIPR-SPEC-0115/0117: when a Rust reach limitation (on a no_static_path
+    // finding, or a proximity-only weakly_exposed one, #7071) named a
     // witnessing test, surface it in human output as a concrete "Where to look"
     // pointer. The witness prose lives in `evidence` (the limitation channel);
     // we recognize it by the shared prefix so JSON evidence and human output
