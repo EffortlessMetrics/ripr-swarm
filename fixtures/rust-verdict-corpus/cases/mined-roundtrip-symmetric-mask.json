@@ -1,0 +1,51 @@
+{
+  "case_id": "mined-roundtrip-symmetric-mask",
+  "subject_id": "authored-mined-wire",
+  "diff": "cases/mined-roundtrip-symmetric-mask.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 45
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "behavior_selector_const",
+  "test_shape": "roundtrip_only_symmetric_constant",
+  "hard_case": "The only test masks twice and checks the payload is restored. XOR with any key is its own inverse, so a round trip cannot tell keys apart. Round-trip oracles are common in codecs (byteorder's quickcheck properties read back what they write); a constant shared by both directions defeats them.",
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "const MASK: u8 = 0x5b;",
+        "mutated_line": "const MASK: u8 = 0x5b;",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: masked bytes differ on the wire"
+      },
+      {
+        "replacement": "const MASK: u8 = 0;",
+        "mutated_line": "const MASK: u8 = 0;",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: masking becomes the identity"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "masking_twice_restores_the_payload holds for every MASK value, and nothing asserts the masked bytes, so both mutants pass.",
+  "labeling_observation": {
+    "ripr_commit": "da6a44d",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "static_unknown"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

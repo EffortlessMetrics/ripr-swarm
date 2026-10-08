@@ -1,0 +1,13 @@
+pub fn total(items: &[i64]) -> i64 {
+    items.iter().sum::<i64>() + 1
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn total_of_three_items() {
+        let items = [1, 2, 3];
+        let total = items.iter().sum::<i64>();
+        assert_eq!(total, 6);
+    }
+}

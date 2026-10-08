@@ -1,0 +1,11 @@
+diff --git a/src/shapes.rs b/src/shapes.rs
+index 41e628a..ee1c034 100644
+--- a/src/shapes.rs
++++ b/src/shapes.rs
+@@ -1,5 +1,5 @@
+ pub fn area(width: u32, height: u32) -> u32 {
+-    width * height
++    height * width
+ }
+ 
+ pub fn area_rounded(width: u32, height: u32) -> u32 {

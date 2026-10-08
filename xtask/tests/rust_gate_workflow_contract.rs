@@ -15,6 +15,10 @@ const REQUIRED_GATES: &[(&str, &str)] = &[
     ("network_policy", "cargo xtask check-network-policy"),
     ("workspace_check", "cargo check --workspace --all-targets"),
     (
+        "all_features_check",
+        "cargo check -p ripr --all-targets --all-features",
+    ),
+    (
         "clippy",
         "cargo clippy --workspace --all-targets -- -D warnings",
     ),

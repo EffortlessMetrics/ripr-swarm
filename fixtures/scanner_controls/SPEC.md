@@ -22,11 +22,13 @@ cargo xtask fixtures scanner_controls
 
 ## Then
 
-Every control stays `weakly_exposed`: the operand evaluation stops at
-its named edge (bound exceeded, computed argument, non-literal arm,
-bare identifier) and no scanner hop or evaluated state value appears
-in the observed values — the missing-discriminator reason keeps
-`unknown` operand values rather than invented states.
+Every control stays at its fail-closed class, `infection_unknown`:
+the operand evaluation stops at its named edge (bound exceeded,
+computed argument, non-literal arm, bare identifier) and no scanner hop
+or evaluated state value appears in the observed values — the
+infection stage reads `Changed boundary input is unresolved` naming
+`final_state` (RIPR-SPEC-0001, #6674) rather than inventing a state or
+asking for a missing input.
 
 ## Must Not
 

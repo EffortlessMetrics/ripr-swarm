@@ -106,12 +106,13 @@ shown above, `--worktree`, and the repair steps below need a development build:
 cargo install --locked --git https://github.com/EffortlessMetrics/ripr-swarm ripr
 ```
 
-This compiles from source in the workspace, with its fat-LTO release profile:
-about 12 minutes (751 s) on a cold 4-core Linux container in October 2026
-(`cargo install ripr` for 0.10.0 took about 2 minutes on an earlier run). The packaged 0.11.0 crate drops that
-profile, so `cargo install ripr --locked` should build in about 4.6 minutes (275 s) once
-0.11.0 is on crates.io (measured by building the packaged crate on a 4-core
-container, not a download). The
+This compiles from source in the workspace, with its fat-LTO release profile.
+A `cargo build --release` there took about 12 minutes (751 s) on a cold 4-core
+Linux container in October 2026 (`cargo install ripr` for 0.10.0 took about 2
+minutes on an earlier run). The packaged 0.11.0 crate drops that profile, so
+`cargo install ripr --locked` should build in about 4.6 minutes (275 s) once
+0.11.0 is on crates.io (measured by building the packaged crate with
+`cargo build --release` on a 4-core container, not a download). The
 walk's `doctor` and `check` runs after that each took under 3 seconds on small
 crates; `ripr pilot` takes longer on large repositories. There is no prebuilt 0.11
 download until 0.11.0 is published; the
@@ -152,7 +153,10 @@ their IDs belong to that run and cannot be copied from documentation.
 IDs from `check` are rejected there.
 
 Between the repair phases, the attempt refuses any new file outside the allowed
-test files, whether Git ignores it or not. Build output under a gitignored
+test files, whether Git ignores it or not. When your tests live in an inline
+`#[cfg(test)] mod tests` inside the source file (the `cargo new --lib` layout),
+the repair edits that file, but only by adding new test functions inside that
+one module; any other change to the file fails the attempt. Build output under a gitignored
 `target/` is the exception. Before starting a repair, make sure `target/` is in
 a committed `.gitignore`; changing `.gitignore` mid-attempt is itself refused.
 Redirect ripr output under `target/ripr/` or outside the repository.
@@ -211,7 +215,8 @@ and limits; the [capability matrix](docs/CAPABILITY_MATRIX.md) and
 
 [Quickstart](docs/QUICKSTART.md) · [Configuration](docs/CONFIGURATION.md) ·
 [Editor extension](docs/EDITOR_EXTENSION.md) · [Agent guide](docs/LLM_OPERATOR_GUIDE.md) ·
-[Output formats](docs/OUTPUT_SCHEMA.md) · [All documentation](docs/README.md)
+[Output formats](docs/OUTPUT_SCHEMA.md) · [Proof and limits](docs/PUBLIC_PROOF.md) ·
+[All documentation](docs/README.md)
 
 For the full test-and-evidence walkthrough, see [Targeted tests](docs/TARGETED_TEST_WORKFLOW.md),
 [First PR workflow](docs/FIRST_PR_WORKFLOW.md), and [repair recovery](docs/REPAIR_ATTEMPT.md).

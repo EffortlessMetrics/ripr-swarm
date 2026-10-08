@@ -21,7 +21,9 @@ cargo xtask fixtures match_arm_controls
 
 ## Then
 
-Every probe stays `weakly_exposed`: the match evaluator refuses each
+Every probe stays at its fail-closed class, `infection_unknown` with
+`Changed boundary input is unresolved` naming `final_label`
+(RIPR-SPEC-0001, #6674): the match evaluator refuses each
 variant by rule (a computed value is not an exact return; a guard or
 unresolved pattern could match anything; a bare identifier may be a
 binding — the token-coincidence family; a non-string scrutinee is a

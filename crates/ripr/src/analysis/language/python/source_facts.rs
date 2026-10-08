@@ -1,3 +1,4 @@
+use super::admission::PythonAdmissionContext;
 use super::module_constants::{module_literal_constants, with_module_rebinding};
 use super::owners_tests::{
     TestImportContext, collect_imports_from_statements, collect_owners_from_statements,
@@ -214,6 +215,22 @@ pub(super) fn source_facts_parse_error(
     })
 }
 
+/// The producer-owned *syntax* parse-error row: a failed module parse the
+/// nesting budget did not cause. The PR-local diff/worktree pass (#6824)
+/// promotes this into a run-level `producer_failure` limitation so an
+/// unparseable changed file can never yield an analyzed, limitations-empty
+/// zero. Budget refusals keep their own typed `parse_budget` promotion and
+/// stay excluded here, so a budget-capped file never emits two limitations.
+pub(super) fn source_facts_syntax_parse_error(
+    facts: &PythonSourceFacts,
+) -> Option<&PythonSourceLimitation> {
+    facts.limitations.iter().find(|limitation| {
+        limitation.kind == StaticLimitKind::UnsupportedSyntax
+            && limitation.evidence.starts_with("source_fact_parse_error")
+            && !limitation.evidence.contains("parse_budget:")
+    })
+}
+
 pub(super) fn extract_source_facts(file: &Path, source: &str) -> PythonSourceFacts {
     let mut snapshot = PythonSourceFacts {
         file: file.to_path_buf(),
@@ -285,6 +302,11 @@ pub(super) fn extract_source_facts(file: &Path, source: &str) -> PythonSourceFac
         TestImportContext {
             body: &imports,
             definition: &[],
+            admission: &PythonAdmissionContext::of_module(
+                &module.body,
+                &imports,
+                &dotted_dir(file),
+            ),
         },
         &mut snapshot.tests,
     );
@@ -1389,4 +1411,20 @@ fn is_log_call_name(name: &str) -> bool {
         name.rsplit('.').next(),
         Some("debug" | "info" | "warning" | "warn" | "error" | "exception" | "critical" | "log")
     ) && (name.starts_with("logging.") || name.starts_with("logger."))
+}
+
+/// The dotted directory of a source file: `e2e/api` for `e2e/api/test_m.py`
+/// reads `e2e.api`; a file at the root reads "".
+fn dotted_dir(file: &Path) -> String {
+    file.parent()
+        .map(|dir| {
+            dir.components()
+                .filter_map(|component| match component {
+                    std::path::Component::Normal(part) => part.to_str(),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+                .join(".")
+        })
+        .unwrap_or_default()
 }

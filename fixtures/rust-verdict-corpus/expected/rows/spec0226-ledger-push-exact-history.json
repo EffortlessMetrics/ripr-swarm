@@ -1,0 +1,22 @@
+{
+  "case_id": "spec0226-ledger-push-exact-history",
+  "subject_id": "authored-spec0226-2",
+  "origin": "authored",
+  "anchor": "src/lib.rs:10",
+  "behavior_family": "side_effect_push",
+  "test_shape": "default_receiver_exact_collection_assert",
+  "hard_case": false,
+  "truth": "discriminated",
+  "ideal_verdict": "credited",
+  "observed_verdict": "credited",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": [],
+  "findings_scored": 2,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

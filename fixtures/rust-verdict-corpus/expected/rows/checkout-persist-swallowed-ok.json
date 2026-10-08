@@ -1,0 +1,22 @@
+{
+  "case_id": "checkout-persist-swallowed-ok",
+  "subject_id": "authored-checkout",
+  "origin": "authored",
+  "anchor": "src/store.rs:32",
+  "behavior_family": "call_deletion",
+  "test_shape": "swallowed_ok_tail_observed_store",
+  "hard_case": false,
+  "truth": "discriminated",
+  "ideal_verdict": "credited",
+  "observed_verdict": "limited",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "propagation_unknown"
+  ],
+  "outcome": "abstained",
+  "contradictions": [],
+  "findings_scored": 2,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

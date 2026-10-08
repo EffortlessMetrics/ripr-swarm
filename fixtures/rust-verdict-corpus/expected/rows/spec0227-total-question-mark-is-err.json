@@ -1,0 +1,22 @@
+{
+  "case_id": "spec0227-total-question-mark-is-err",
+  "subject_id": "authored-spec0227-9",
+  "origin": "authored",
+  "anchor": "src/lib.rs:16",
+  "behavior_family": "question_mark_propagation",
+  "test_shape": "is_err_on_reached_err",
+  "hard_case": true,
+  "truth": "discriminated",
+  "ideal_verdict": "credited",
+  "observed_verdict": "credited",
+  "followed_retarget": false,
+  "changed_since_labeling": true,
+  "observed_classifications": [
+    "exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

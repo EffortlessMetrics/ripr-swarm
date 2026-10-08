@@ -7,7 +7,7 @@ Summary: 2 probe(s), 0 exposed, 2 weakly_exposed, 0 reachable_unrevealed, 0 no_s
 Analysis outcome: findings below (analysis complete; complete_with_findings).
   Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 2 probe(s), 2 finding(s).
 
-WARNING fixtures/wrapper_seam_callee_call_attribution/input/src/lib.rs:14
+WARNING ./src/lib.rs:14
   id: probe:src_lib.rs:error_path:463e8297
 
 Changed
@@ -23,7 +23,7 @@ Static exposure
   weakly_exposed (warning, confidence 0.66)
 
 Evidence
-  - reach yes: Related tests exercise the wrapper seam's converted callee (the changed owner is not invoked by them): calls_callee_before_shadow_binding, observes_callee_outcome
+  - reach weak: Related tests exercise the wrapper seam's converted callee (the changed owner is not invoked by them): calls_callee_before_shadow_binding, observes_callee_outcome
   - infection yes: Reachable tests can plausibly activate this changed behavior
   - propagation weak: No complete owner-bound propagation witness found for error variant: try_parse_summary(raw).map_err(|error| error.to_string().into())
   - observation yes: A related test observes a value or effect near the changed behavior
@@ -50,10 +50,10 @@ Limitation detail
 Next step
   Typed static limitation (wrapper_error_binding_unresolved): ripr cannot statically establish that this boxed wrapper conversion carries the callee's error variant, so an existing exact downcast witness is not statically creditable. Verify via real mutation testing or deeper conversion modeling.
 Drill in:
-  ripr explain --root fixtures/wrapper_seam_callee_call_attribution/input --diff fixtures/wrapper_seam_callee_call_attribution/diff.patch --mode fast probe:src_lib.rs:error_path:463e8297
-  ripr context --root fixtures/wrapper_seam_callee_call_attribution/input --diff fixtures/wrapper_seam_callee_call_attribution/diff.patch --mode fast --at probe:src_lib.rs:error_path:463e8297
+  ripr explain --root <cwd>/fixtures/wrapper_seam_callee_call_attribution/input --diff <cwd>/fixtures/wrapper_seam_callee_call_attribution/diff.patch --mode fast probe:src_lib.rs:error_path:463e8297
+  ripr context --root <cwd>/fixtures/wrapper_seam_callee_call_attribution/input --diff <cwd>/fixtures/wrapper_seam_callee_call_attribution/diff.patch --mode fast --at probe:src_lib.rs:error_path:463e8297
 
-WARNING fixtures/wrapper_seam_callee_call_attribution/input/src/lib.rs:14
+WARNING ./src/lib.rs:14
   id: probe:src_lib.rs:return_value:7ef92e0f
 
 Changed
@@ -69,7 +69,7 @@ Static exposure
   weakly_exposed (warning, confidence 0.66)
 
 Evidence
-  - reach yes: Related tests exercise the wrapper seam's converted callee (the changed owner is not invoked by them): calls_callee_before_shadow_binding, observes_callee_outcome
+  - reach weak: Related tests exercise the wrapper seam's converted callee (the changed owner is not invoked by them): calls_callee_before_shadow_binding, observes_callee_outcome
   - infection yes: Reachable tests can plausibly activate this changed behavior
   - propagation weak: No complete owner-bound propagation witness found for returned value: try_parse_summary(raw).map_err(|error| error.to_string().into())
   - observation yes: A related test observes a value or effect near the changed behavior
@@ -97,5 +97,5 @@ Limitation detail
 Next step
   Typed static limitation (wrapper_error_binding_unresolved): ripr cannot statically establish that this boxed wrapper conversion carries the callee's error variant, so an existing exact downcast witness is not statically creditable. Verify via real mutation testing or deeper conversion modeling.
 Drill in:
-  ripr explain --root fixtures/wrapper_seam_callee_call_attribution/input --diff fixtures/wrapper_seam_callee_call_attribution/diff.patch --mode fast probe:src_lib.rs:return_value:7ef92e0f
-  ripr context --root fixtures/wrapper_seam_callee_call_attribution/input --diff fixtures/wrapper_seam_callee_call_attribution/diff.patch --mode fast --at probe:src_lib.rs:return_value:7ef92e0f
+  ripr explain --root <cwd>/fixtures/wrapper_seam_callee_call_attribution/input --diff <cwd>/fixtures/wrapper_seam_callee_call_attribution/diff.patch --mode fast probe:src_lib.rs:return_value:7ef92e0f
+  ripr context --root <cwd>/fixtures/wrapper_seam_callee_call_attribution/input --diff <cwd>/fixtures/wrapper_seam_callee_call_attribution/diff.patch --mode fast --at probe:src_lib.rs:return_value:7ef92e0f

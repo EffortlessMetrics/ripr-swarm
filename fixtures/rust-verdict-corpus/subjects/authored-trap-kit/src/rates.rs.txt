@@ -1,0 +1,14 @@
+pub fn rate(base: u32) -> u32 {
+    base * 3
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    #[ignore = "slow"]
+    fn rate_is_pinned() {
+        assert_eq!(rate(2), 6);
+    }
+}

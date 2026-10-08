@@ -23,7 +23,7 @@ use super::expr_full_name;
 use super::module_constants::body_bound_names;
 use super::source_utils::text_for_range;
 use rustpython_parser::ast::{self, Expr, Ranged};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// Product cap for stacked decorators; above it no case is recorded.
 const MAX_PARAMETRIZE_CASES: usize = 256;
@@ -36,6 +36,16 @@ pub(super) struct PythonParametrizeCases {
 }
 
 impl PythonParametrizeCases {
+    /// Every argname the parametrize stack binds. Unlike
+    /// [`Self::excluding_body_bindings`], body rebinding does not remove a
+    /// name: pytest still supplies that parameter, not a fixture.
+    pub(super) fn argnames(&self) -> BTreeSet<String> {
+        self.cases
+            .iter()
+            .flat_map(|case| case.keys().cloned())
+            .collect()
+    }
+
     /// The cases without the argnames the test body rebinds (an assignment,
     /// a tuple, loop, `with` or `except` target, an import, `del`), so a
     /// rebound name never pairs with its case value; None when the body's

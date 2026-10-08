@@ -1,0 +1,6 @@
+use meter::Dial as Knob;
+
+#[test]
+fn knob_level_is_seven() {
+    assert_eq!(Knob::level(), 7);
+}

@@ -35,8 +35,8 @@ use crate::domain::{
 };
 use crate::output::agent_seam_packets::{
     EDIT_CAGE_PRODUCTION_STATEMENT, EDIT_CAGE_TERMINALITY_WARNING, PacketCommandContext,
-    TASK_WRITE_TARGETED_TEST, recommended_test_for, render_agent_seam_packet_json_with_context,
-    task_for,
+    TASK_WRITE_TARGETED_TEST, inline_test_module_edit_statement, recommended_inline_test_module,
+    recommended_test_for, render_agent_seam_packet_json_with_context, task_for,
 };
 use crate::output::path::display_path;
 use crate::repair_card_budget::RepairCardDetailSource;
@@ -350,6 +350,12 @@ pub(crate) fn assemble_repair_card(
             allowed_files.join(", ")
         ));
     }
+    // A production file is allowed only as its inline test module (#5210);
+    // the card states that confinement in the packet's own words, so a
+    // compact handoff never reads as file-level permission.
+    if actionable && let Some(module) = recommended_inline_test_module(entry, &recommended.file) {
+        stop_conditions.push(inline_test_module_edit_statement(&recommended.file, module));
+    }
 
     let changed_behavior = facts
         .witness
@@ -420,6 +426,7 @@ pub(crate) fn assemble_repair_card(
         packet_eligible: eligibility.eligible(),
         edit_cage_refusal,
         next_command,
+        packet_route,
         allowed_files,
         forbidden_files,
         done_when,
@@ -778,6 +785,119 @@ mod tests {
         }
     }
 
+    /// A repair-ready seam whose weak related test lives in the seam's own
+    /// file, whose one governed inline module the InlineUnit producer
+    /// recorded (#5210): the card's allowed file is the production file.
+    fn own_file_inline_entry() -> ClassifiedSeam {
+        use crate::analysis::test_grip_evidence::{
+            RelatedTestGrip, RelationConfidence, RelationReason, TestTargetEvidence,
+        };
+        use crate::domain::{
+            FlowSinkFact, FlowSinkKind, MissingDiscriminatorFact, OracleKind, OracleStrength,
+            ValueContext, ValueFact,
+        };
+        let mut entry = weakly_gripped_entry();
+        entry.evidence.discriminate = stage(StageState::Weak);
+        entry.evidence.observed_values = vec![ValueFact {
+            line: 120,
+            text: "discounted_total(50, 100)".to_string(),
+            value: "50".to_string(),
+            context: ValueContext::FunctionArgument,
+        }];
+        entry.evidence.missing_discriminators = vec![MissingDiscriminatorFact {
+            value: "discount_threshold (equality boundary)".to_string(),
+            reason: "observed values do not include the equality-boundary case".to_string(),
+            flow_sink: Some(FlowSinkFact {
+                kind: FlowSinkKind::ReturnValue,
+                text: "return discounted_total".to_string(),
+                line: 88,
+                owner: None,
+            }),
+        }];
+        entry.evidence.related_tests = vec![std::sync::Arc::new(RelatedTestGrip {
+            test_name: "below_threshold_has_no_discount".to_string(),
+            file: std::path::PathBuf::from("src/pricing.rs"),
+            line: 120,
+            test_target: Some(TestTargetEvidence::fixture(
+                "below_threshold_has_no_discount",
+                Path::new("src/pricing.rs"),
+                120,
+            )),
+            oracle_kind: OracleKind::BroadError,
+            oracle_strength: OracleStrength::Weak,
+            evidence_summary: "broad assertion".to_string(),
+            relation_reason: RelationReason::DirectOwnerCall,
+            relation_confidence: RelationConfidence::High,
+        })];
+        entry.evidence.new_test_target =
+            Some(crate::analysis::new_test_target::NewTestTargetAdmission {
+                owner_inline_region: Some(
+                    crate::analysis::new_test_target::InlineTestRegionAuthority {
+                        file: std::path::PathBuf::from("src/pricing.rs"),
+                        module_name: "tests".to_string(),
+                        parent_modules: Vec::new(),
+                        body_start: 0,
+                        close_brace_start: 0,
+                        source_digest: String::new(),
+                    },
+                ),
+                ..Default::default()
+            });
+        entry
+    }
+
+    /// Devin 4179587247: a compact card that allows a production file must
+    /// carry the inline-module confinement in its stop conditions, in the
+    /// packet's own words, so the handoff is safe without the packet.
+    #[test]
+    fn inline_repair_card_stop_conditions_name_the_module_confinement() -> Result<(), String> {
+        let entry = own_file_inline_entry();
+        let packet = packet_for(&entry);
+        let card = assemble_repair_card(&facts_for(&entry, &packet))?;
+        if card.allowed_files != vec!["src/pricing.rs".to_string()] {
+            return Err(format!(
+                "fixture must allow the production file, got {:?}",
+                card.allowed_files
+            ));
+        }
+        let confinement = crate::output::agent_seam_packets::inline_test_module_edit_statement(
+            "src/pricing.rs",
+            "tests",
+        );
+        if !card.stop_conditions.contains(&confinement) {
+            return Err(format!(
+                "stop conditions omit the module confinement: {:?}",
+                card.stop_conditions
+            ));
+        }
+        // A test-surface card states no module confinement.
+        let mut under_tests = own_file_inline_entry();
+        for test in &mut under_tests.evidence.related_tests {
+            let test = std::sync::Arc::make_mut(test);
+            test.file = std::path::PathBuf::from("tests/pricing.rs");
+            test.test_target = Some(
+                crate::analysis::test_grip_evidence::TestTargetEvidence::fixture(
+                    "below_threshold_has_no_discount",
+                    Path::new("tests/pricing.rs"),
+                    120,
+                ),
+            );
+        }
+        let card = assemble_repair_card(&facts_for(&under_tests, &packet))?;
+        if card.allowed_files != vec!["tests/pricing.rs".to_string()]
+            || card
+                .stop_conditions
+                .iter()
+                .any(|condition| condition.contains("#[cfg(test)] mod"))
+        {
+            return Err(format!(
+                "a test-surface card must not be module-confined: {:?} {:?}",
+                card.allowed_files, card.stop_conditions
+            ));
+        }
+        Ok(())
+    }
+
     #[test]
     fn repair_card_assembly_projects_every_family_with_packet_route() -> Result<(), String> {
         let entry = weakly_gripped_entry();
@@ -912,6 +1032,100 @@ mod tests {
         }
         if gap_names_seam(&gap, "gap-1", "pricing::other_total") {
             return Err("a gap id shared with another owner must not name the seam".to_string());
+        }
+        Ok(())
+    }
+
+    /// #5268: the Rust producer now populates canonical gaps on diff
+    /// findings, but a producer gap id (`gap:rust:...`) is a different
+    /// identity scheme from the repo seam's content-hashed canonical gap id,
+    /// so a populated finding must still not be credited as this seam's
+    /// witness — the id match alone would bind a diff finding to a seam it
+    /// did not come from.
+    #[test]
+    fn rust_producer_gap_does_not_bind_a_seam_witness_by_id_coincidence() -> Result<(), String> {
+        use crate::domain::{
+            ActivationEvidence, DeltaKind, ExposureClass, OracleKind, OracleStrength, Probe,
+            ProbeFamily, ProbeId, RelatedTest, RevealEvidence, RiprEvidence, SourceLocation,
+            SymbolId,
+        };
+        let entry = weakly_gripped_entry();
+        let seam_gap_id = crate::analysis::canonical_gap::canonical_gap_identity(&entry)
+            .ok_or_else(|| {
+                "the weakly gripped seam must carry a canonical gap identity".to_string()
+            })?
+            .id;
+        // Weakly exposed with an oracle row, so a (wrong) id match would
+        // actually produce a witness and fail this control.
+        let finding = crate::domain::Finding {
+            id: "probe:src_lib.rs:predicate:4036edfa".to_string(),
+            canonical_gap: Some(FindingCanonicalGap {
+                id: "gap:rust:src/lib.rs:pricing::discounted_total:predicate_boundary:predicate:amount==discount_threshold"
+                    .to_string(),
+                language: "rust".to_string(),
+                file: "src/lib.rs".to_string(),
+                owner: "pricing::discounted_total".to_string(),
+                behavior_kind: "predicate_boundary".to_string(),
+                probe_kind: "predicate".to_string(),
+                normalized_discriminator: "amount==discount_threshold".to_string(),
+            }),
+            probe: Probe {
+                id: ProbeId("probe:src_lib.rs:predicate:4036edfa".to_string()),
+                location: SourceLocation::new("src/lib.rs", 2, 5),
+                owner: Some(SymbolId("src/lib.rs::pricing::discounted_total".to_string())),
+                family: ProbeFamily::Predicate,
+                delta: DeltaKind::Control,
+                before: None,
+                after: None,
+                expression: "if amount >= discount_threshold {".to_string(),
+                expected_sinks: Vec::new(),
+                required_oracles: Vec::new(),
+            },
+            class: ExposureClass::WeaklyExposed,
+            ripr: RiprEvidence {
+                reach: stage(StageState::Yes),
+                infect: stage(StageState::Weak),
+                propagate: stage(StageState::Yes),
+                reveal: RevealEvidence {
+                    observe: stage(StageState::Yes),
+                    discriminate: stage(StageState::Weak),
+                },
+            },
+            confidence: 0.5,
+            evidence: Vec::new(),
+            missing: vec!["Missing discriminator value: amount == discount_threshold".to_string()],
+            flow_sinks: Vec::new(),
+            activation: ActivationEvidence::default(),
+            stop_reasons: Vec::new(),
+            related_tests_matched_total: Some(1),
+            related_tests: vec![RelatedTest {
+                name: "below_threshold_has_no_discount".to_string(),
+                file: std::path::PathBuf::from("tests/pricing.rs"),
+                line: 2,
+                oracle: Some("assert_eq!(discounted_total(50, 100), 50)".to_string()),
+                oracle_kind: OracleKind::ExactValue,
+                oracle_strength: OracleStrength::Strong,
+                relation_reason: None,
+                relation_confidence: None,
+                miss: None,
+            }],
+            recommended_next_step: None,
+            language: Some(crate::domain::LanguageId::Rust),
+            language_status: None,
+            owner_kind: None,
+            static_limit_kind: None,
+            changed_sink: None,
+            observed_sink: None,
+            oracle_alignment: None,
+            alignment_reason: None,
+            source_currentness: crate::domain::SourceCurrentness::CandidateCurrent,
+        };
+        if witness_from_findings(std::slice::from_ref(&finding), &entry, Some(&seam_gap_id))
+            .is_some()
+        {
+            return Err(format!(
+                "a producer-gap finding must not bind as the seam witness for gap id {seam_gap_id}"
+            ));
         }
         Ok(())
     }

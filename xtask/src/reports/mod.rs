@@ -64,6 +64,7 @@ mod targeted_rerun;
 mod targeted_test;
 mod test_oracles;
 mod verdict_corpus;
+mod verdict_corpus_relabel;
 
 pub(crate) use agentic_bench::agentic_bench;
 pub(crate) use annotations::ripr_annotations;
@@ -193,7 +194,10 @@ pub(crate) use test_oracles::{test_efficiency_report, test_oracle_report};
 pub(crate) use test_oracles::{
     test_oracle_report_impl_for_roots, test_oracle_report_json, test_oracle_report_markdown,
 };
-pub(crate) use verdict_corpus::verdict_corpus;
+pub(crate) use verdict_corpus::{
+    expected_report as verdict_corpus_expected_report,
+    render_report_json as render_verdict_corpus_report, verdict_corpus,
+};
 
 fn ensure_parent_dir(path: &std::path::Path, label: &str) -> Result<(), String> {
     let Some(parent) = path.parent() else {

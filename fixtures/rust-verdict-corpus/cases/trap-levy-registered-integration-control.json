@@ -1,0 +1,59 @@
+{
+  "case_id": "trap-levy-registered-integration-control",
+  "subject_id": "authored-trap-reach",
+  "diff": "cases/trap-levy-registered-integration-control.diff",
+  "anchor": {
+    "file": "src/levies.rs",
+    "line": 2
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "integration_test_registered_autotests_off",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "base * 16",
+        "mutated_line": "base * 16",
+        "outcome": "tests_failed",
+        "failing_test": "levy_is_thirty",
+        "equivalence_review": "not equivalent: replaces `15 * base` with `base * 16`, which changes the result"
+      },
+      {
+        "replacement": "base + 15",
+        "mutated_line": "base + 15",
+        "outcome": "tests_failed",
+        "failing_test": "levy_is_thirty",
+        "equivalence_review": "not equivalent: replaces `15 * base` with `base + 15`, which changes the result"
+      },
+      {
+        "replacement": "base * 14",
+        "mutated_line": "base * 14",
+        "outcome": "tests_failed",
+        "failing_test": "levy_is_thirty",
+        "equivalence_review": "not equivalent: replaces `15 * base` with `base * 14`, which changes the result"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "Negative control for trap-charge-unbuilt-integration-test: tests/registered.rs is listed as a `[[test]]` target, so levy_is_thirty runs and pins levy(2) == 30 despite `autotests = false`.",
+  "labeling_observation": {
+    "ripr_commit": "fce75e1",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}
