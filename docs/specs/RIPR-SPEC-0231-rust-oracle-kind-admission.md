@@ -253,8 +253,10 @@ Two pattern terms are used below.
      or operators never match, and neither does a bare `.any()` without
      the iteration call.
    - The closure has one identifier parameter (an optional type
-     annotation is ignored): no `move`, no patterns, no second
-     parameter. Its body is exactly one `==` with nothing else: no
+     annotation is ignored; commas nested in `()`, `[]`, or `{}` still
+     read as one parameter, while a comma nested only in `<>` stays
+     rejected): no `move`, no patterns, no second parameter. Its body
+     is exactly one `==` with nothing else: no
      negation, no `<`, `>`, `!=`, `&&`, `||`, no second `==`, no
      parens, brackets, blocks, method calls, or closures. String and
      comment contents are masked before this reading, so an operator
@@ -263,11 +265,19 @@ Two pattern terms are used below.
    - The left side is the bound element only: the parameter, optionally
      dereferenced (`*l`) or field-selected (`l.total`, `l.0`). Calls
      (`l.len()`), indexing, and foreign roots never match.
-   - The right side is a boolean, numeric, string, or character literal,
-     or a `::` path whose last segment starts uppercase (`EXPECTED`,
-     `Config::LIMIT`, `Color::Red`, `None`). Calls, constructors
-     (`Some(1)`), lowercase bindings, and signed or borrowed constants
-     never pin.
+   - The right side is a boolean, numeric (with an optional `e`/`E`
+     decimal exponent: `1e-3`, `1.5E+6`), string, or character literal,
+     or a `::` path whose last segment starts uppercase
+     (`Config::LIMIT`, `Color::Red`), or bare `None`. Calls,
+     constructors (`Some(1)`), lowercase bindings, and signed or
+     borrowed constants never pin. A bare uppercase name (`EXPECTED`)
+     never pins either: it may be a local assigned from dynamic data
+     (`let EXPECTED = xs[0]`), which no name-only check can
+     distinguish from a constant; only a `::` path or `None` (which no
+     local binding can shadow) is unforgeable. An operand containing a
+     comment (`x == /* budget */ 7`) stays weak: the literal check
+     reads the unmasked operand, and comment-tolerant reading is a
+     fail-closed residual.
    - A `.any()` shape inside a string literal, a negated condition, a
      compound condition, or an `== true` comparison never matches.
    - `.contains()` keeps its step 13 weak reading; it is out of scope.
@@ -317,10 +327,11 @@ rejected alternative. Any can be reversed later without touching the rest.
 - Rule 7 moves no verdict-corpus row: the full corpus before/after delta
   is empty (283 cases), with zero new `false_exposed` rows, and
   `cargo xtask check-evidence-promotion-honesty` passes. In particular
-  `cell-0096-log-info-captured` keeps its `false_actionable` row while
-  its audit test reads `exact_value` / strong: the grade is fixed, and
-  the remaining gap is reveal observation confirmation, owned outside
-  this spec.
+  `cell-0096-log-info-captured` keeps its gap verdict while the
+  golden fixture `exact_any_membership_oracle` pins the fixed grade
+  (`exact_value` / strong in `related_tests[]`): the grade is fixed,
+  and the remaining gap is reveal observation confirmation, owned
+  outside this spec.
 
 ## Non-Goals
 
@@ -397,13 +408,18 @@ rejected alternative. Any can be reversed later without touching the rest.
     `exact_value` / strong (today `relational_check` / weak at the
     catch-all; #6991). The twin `assert!(lines.contains(&id))` stays
     `relational_check` / weak.
-28. `assert!(ids.iter().any(|id| id == EXPECTED_ID))`,
-    `assert!(xs.iter().any(|x| x == Config::LIMIT))`,
+28. `assert!(xs.iter().any(|x| x == Config::LIMIT))`,
+    `assert!(xs.iter().any(|x| x == None))`,
     `assert!(counts.into_iter().any(|n| n == 42))`,
     `debug_assert!(buf.iter_mut().any(|b| *b == 0xFF))`,
-    `assert!(rows.iter().any(|r| r.total == 33))`: `exact_value` /
-    strong. The literal forms `42`, `-1`, `'a'`, `"a>b"`, `"a|b"`,
-    `r#"raw"#` pin the same way.
+    `assert!(vals.iter().any(|v| v == 0x1E))`,
+    `assert!(xs.iter().any(|x| x == 1e-3))`,
+    `assert!(xs.iter().any(|x| x == 1.5E+6))`,
+    `assert!(rows.iter().any(|r| r.total == 33))`,
+    `assert!(pairs.iter().any(|pair: &(u32, u32)| pair.0 == 7))`:
+    `exact_value` / strong. The literal forms `42`, `-1`, `'a'`,
+    `"a>b"`, `"a|b"`, `r#"raw"#` pin the same way. A bare uppercase
+    name (`EXPECTED_ID`) never pins: it may be a local.
 29. `assert!(xs.iter().any(|x| x > 1))`,
     `assert!(xs.iter().any(|x| x != 1))`,
     `assert!(!xs.iter().any(|x| x == 1))`,
@@ -416,6 +432,11 @@ rejected alternative. Any can be reversed later without touching the rest.
     `assert!(xs.iter().any(|x| x.len() == 1))`,
     `assert!(xs.iter().all(|x| x == 1))`,
     `assert!(xs.iter().any(|x| x == Some(1)))`,
+    `assert!(ids.iter().any(|id| id == EXPECTED_ID))`,
+    `assert!(xs.iter().any(|x| x == Some))`,
+    `assert!(xs.iter().any(|x| x == 1e))`,
+    `assert!(pairs.iter().any(|pair: Pair<u32, u32>| pair.0 == 7))`,
+    `assert!(xs.iter().any(|x| x == /* budget */ 7))`,
     `assert!(xs.iter().any(|a, b| a == b))`,
     `assert!(xs.iter().any(move |x| x == 1))`,
     `assert!(xs.iter().any(|x| { x == 1 }))`,
@@ -432,10 +453,12 @@ rejected alternative. Any can be reversed later without touching the rest.
 - Rule 7: `exact_membership_any_assertion_admits_exact_equality` and
   `exact_membership_any_assertion_rejects_non_exact_shapes` in
   `classify.rs` pin examples 27 to 29 at the classifier; example 27 is
-  additionally pinned end to end by verdict-corpus case
-  `cell-0096-log-info-captured`, whose audit test reads `exact_value` /
-  strong in `related_tests[]` while the row keeps its (separately owned)
-  `false_actionable` verdict.
+  additionally pinned end to end by golden fixture
+  `exact_any_membership_oracle`, whose audit test reads `exact_value` /
+  strong in `related_tests[]` (weak on the pre-rule-7 binary) while the
+  finding keeps its `weakly_exposed` gap. Verdict-corpus case
+  `cell-0096-log-info-captured` exercises the same assertion shape but
+  pins only verdicts, not oracle grades.
 
 ## Implementation Mapping
 
@@ -443,7 +466,7 @@ rejected alternative. Any can be reversed later without touching the rest.
 - `crates/ripr/src/analysis/extract/oracles/scan.rs`: the RIPR-SPEC-0106
   upgrade, unchanged.
 - `crates/ripr/src/analysis/extract/oracles/patterns.rs`: token-level
-  matching for rules 1 to 6.
+  matching for rules 1 to 7.
 
 ## Metrics
 

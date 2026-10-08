@@ -230,10 +230,11 @@ mod tests {
         for text in [
             // Issue #6991 repro: exact membership over a captured log buffer.
             r#"assert!(lines.iter().any(|l| l == "audited 42"), "{lines:?}");"#,
-            "assert!(ids.iter().any(|id| id == EXPECTED_ID));",
             "assert!(xs.iter().any(|x| x == Config::LIMIT));",
+            "assert!(xs.iter().any(|x| x == None));",
             "assert!(counts.into_iter().any(|n| n == 42));",
             "debug_assert!(buf.iter_mut().any(|b| *b == 0xFF));",
+            "assert!(vals.iter().any(|v| v == 0x1E));",
             "assert!(chars.iter().any(|c| c == 'a'));",
             // Operator-lookalikes inside the literal must not defeat the shape.
             r#"assert!(xs.iter().any(|x| x == "a>b"));"#,
@@ -241,7 +242,11 @@ mod tests {
             r##"assert!(xs.iter().any(|x| x == r#"raw"#));"##,
             "assert!(rows.iter().any(|r| r.total == 33));",
             "assert!(xs.iter().any(|x| x == -1));",
+            "assert!(xs.iter().any(|x| x == 1e-3));",
+            "assert!(xs.iter().any(|x| x == 1.5E+6));",
             r#"assert!(lines.iter().any(|l: &String| l == "audited 42"));"#,
+            // A comma nested in the type ascription is not a second parameter.
+            "assert!(pairs.iter().any(|pair: &(u32, u32)| pair.0 == 7));",
         ] {
             require_classification(text, OracleKind::ExactValue, OracleStrength::Strong)?;
         }
@@ -269,6 +274,16 @@ mod tests {
             r#"assert!(x == ".any(|l| l == 1");"#,
             // Constructor calls stay weak: only literals and const paths pin.
             "assert!(xs.iter().any(|x| x == Some(1)));",
+            // Bare uppercase names may be locals (`let EXPECTED = xs[0]`),
+            // so only `::` paths and `None` pin.
+            "assert!(ids.iter().any(|id| id == EXPECTED_ID));",
+            "assert!(xs.iter().any(|x| x == Some));",
+            // Malformed exponents never pin.
+            "assert!(xs.iter().any(|x| x == 1e));",
+            // Angle-nested commas stay rejected (fail-closed residual).
+            "assert!(pairs.iter().any(|pair: Pair<u32, u32>| pair.0 == 7));",
+            // A comment inside the operand stays weak (fail-closed residual).
+            "assert!(xs.iter().any(|x| x == /* budget */ 7));",
             "assert!(xs.iter().any(|a, b| a == b));",
             "assert!(xs.iter().any(move |x| x == 1));",
             "assert!(xs.iter().any(|x| { x == 1 }));",

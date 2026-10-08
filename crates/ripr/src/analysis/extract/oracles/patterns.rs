@@ -650,8 +650,11 @@ fn exact_equality_closure(closure: &str) -> Option<(&str, &str)> {
     if params.is_empty() || params == "_" {
         return None;
     }
-    // One parameter only; a top-level comma or a second `|` means more.
-    if params.bytes().any(|byte| matches!(byte, b',' | b'|')) {
+    // One parameter only; a second `|` or a comma outside any bracket
+    // pair means more. Commas nested in a type ascription (`&(u32, u32)`)
+    // still read as one parameter; angle-nested commas stay rejected
+    // (fail-closed residual: `<` also opens const-generic comparisons).
+    if params.bytes().any(|byte| byte == b'|') || has_top_level_comma(params) {
         return None;
     }
     let name = params.split(':').next()?.trim();
@@ -660,6 +663,22 @@ fn exact_equality_closure(closure: &str) -> Option<(&str, &str)> {
     }
     let body = after_first.get(params_end + 1..)?;
     Some((name, body))
+}
+
+/// True when `params` holds a comma at nesting depth zero, outside any
+/// `()`, `[]`, or `{}` pair. A nested comma belongs to a type ascription,
+/// not to a second parameter.
+fn has_top_level_comma(params: &str) -> bool {
+    let mut depth = 0u32;
+    for byte in params.bytes() {
+        match byte {
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' => depth = depth.saturating_sub(1),
+            b',' if depth == 0 => return true,
+            _ => {}
+        }
+    }
+    false
 }
 
 /// True when the masked body is exactly `element == expected` with no
@@ -727,8 +746,8 @@ fn element_accesses_param(element: &str, param: &str) -> bool {
 
 /// True when `expected` is a boolean, numeric, string, or character
 /// literal, or a path whose last segment reads as a constant or variant
-/// (`EXPECTED`, `Config::LIMIT`, `Color::Red`). Calls, constructors,
-/// lowercase bindings, and operators never pin.
+/// (`Config::LIMIT`, `Color::Red`, `None`). Calls, constructors,
+/// lowercase bindings, bare uppercase names, and operators never pin.
 fn is_pinned_expected_value(expected: &str) -> bool {
     if matches!(expected, "true" | "false") {
         return true;
@@ -750,7 +769,43 @@ fn is_numeric_literal(expected: &str) -> bool {
     if digits.contains("..") {
         return false;
     }
-    let mut parts = digits.split('.');
+    let (mantissa, exponent) = split_decimal_exponent(digits);
+    if !is_decimal_mantissa(mantissa) {
+        return false;
+    }
+    match exponent {
+        None => true,
+        Some(exp) => {
+            let exp = exp.strip_prefix(['-', '+']).unwrap_or(exp);
+            let mut bytes = exp.bytes();
+            matches!(bytes.next(), Some(b) if b.is_ascii_digit())
+                && bytes.all(|b| b.is_ascii_alphanumeric() || b == b'_')
+        }
+    }
+}
+
+/// Splits one optional `e`/`E` decimal exponent (`1e-3`, `1.5E+6`) from
+/// the mantissa. Radix-prefixed mantissas (`0x1E`) never split: the radix
+/// prefix owns the `e`.
+fn split_decimal_exponent(digits: &str) -> (&str, Option<&str>) {
+    let bytes = digits.as_bytes();
+    if bytes.len() > 2
+        && bytes[0] == b'0'
+        && matches!(bytes[1], b'x' | b'X' | b'o' | b'O' | b'b' | b'B')
+    {
+        return (digits, None);
+    }
+    match digits.find(['e', 'E']) {
+        Some(idx) => {
+            let (mantissa, rest) = digits.split_at(idx);
+            (mantissa, rest.get(1..))
+        }
+        None => (digits, None),
+    }
+}
+
+fn is_decimal_mantissa(mantissa: &str) -> bool {
+    let mut parts = mantissa.split('.');
     let int = parts.next().unwrap_or_default();
     if int.is_empty() || !int.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_') {
         return false;
@@ -840,8 +895,17 @@ fn is_char_literal(expected: &str) -> bool {
     body.chars().count() == 1
 }
 
+/// True when `expected` names a constant or variant that cannot be a
+/// local binding: a `::` path whose last segment starts uppercase
+/// (`Config::LIMIT`, `Color::Red`), or bare `None` (`let None = ..`
+/// never compiles, so no local can shadow it). A bare uppercase name
+/// (`EXPECTED`) may be a local assigned from dynamic data, so it never
+/// pins.
 fn is_const_path(expected: &str) -> bool {
-    if expected.is_empty() {
+    if expected == "None" {
+        return true;
+    }
+    if expected.is_empty() || !expected.contains("::") {
         return false;
     }
     let mut last = "";
