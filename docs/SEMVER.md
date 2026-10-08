@@ -37,10 +37,12 @@ nameable, but subject to narrowing, moving, or removal in a minor release
 with a changelog note. New public items land as unendorsed; promotion to
 endorsed-stable needs an explicit maintainer decision recorded here.
 
-`provider_contract` is versioned separately by its `ripr_*_v1` schema
-versions and its unknown-field rejection: unknown fields fail closed, so
-old readers reject new writers loudly rather than misreading them. That
-fail-closed behavior is itself stable.
+`provider_contract` is excluded from the generic additive rule below.
+It is versioned separately by its `ripr_*_v1` schema versions, and
+unknown fields fail closed (proven by the unknown-field rejection
+tests): an added field breaks old readers, so it must mint a new
+provider schema version. Old readers reject new writers loudly rather
+than misreading them; that fail-closed behavior is itself stable.
 
 ## Output contracts
 
@@ -48,10 +50,10 @@ Each machine-readable contract carries its own `schema_version` namespace;
 there is no single product-wide number. The contract table and per-contract
 bump rules live in `docs/OUTPUT_SCHEMA.md`:
 
-- Additive changes (new optional fields, new nested objects consumers may
-  ignore) keep the contract version. `#[serde(default)]` covers absent
-  fields only: it never makes an old reader accept a new enum spelling or
-  a retyped value.
+- Outside `provider_contract`, additive changes (new optional fields,
+  new nested objects consumers may ignore) keep the contract version.
+  `#[serde(default)]` covers absent fields only: it never makes an old
+  reader accept a new enum spelling or a retyped value.
 - A new enum spelling, a removed or retyped field, or a changed meaning of
   an existing value mints a new contract version — unless supported old
   readers have an explicit unknown-preserving variant or custom decoder for
@@ -63,6 +65,11 @@ bump rules live in `docs/OUTPUT_SCHEMA.md`:
   `ripr agent stub --json` 0.1, where the `state` field (`ready` vs
   `refused`) selects the shape; consumers must dispatch on `state`, never
   on the version alone.
+- Consumers select on `schema_version`, never on shape familiarity: one
+  version denotes one set of field meanings, and only the version tells
+  a same-shaped successor apart. A consumer that keys on a familiar
+  field while ignoring the version silently inherits whatever meaning
+  the newest producer gives that shape.
 
 SARIF output follows the SARIF 2.1.0 standard envelope; standard fields
 track the standard, and `ripr`-specific properties follow the additive /
