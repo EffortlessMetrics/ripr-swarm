@@ -264,4 +264,4 @@ support.
 ## Metrics
 
 - `unit_test_pass_rate` over the `work_selection_identity` test prefix.
-- Corpus expectation coverage: 12/12 scenarios, 18/18 pinned cases passing.
+- Corpus expectation coverage: 12/12 scenarios, 19/19 pinned cases passing.

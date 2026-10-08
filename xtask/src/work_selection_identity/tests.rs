@@ -7,7 +7,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use super::*;
-use crate::work_portfolio::{compile_work_portfolio_corpus, load_work_captured_dir};
+use crate::work_portfolio::{
+    compile_work_portfolio, compile_work_portfolio_corpus, load_work_captured_dir,
+};
 
 fn committed_check() -> Result<WorkSelectionCheckViewV1, String> {
     let corpus = committed_corpus()?;
@@ -982,5 +984,108 @@ fn work_selection_identity_basis_completeness_reflects_sources() -> Result<(), S
     if canonical.manifest.repository != view.repository {
         return Err("corpus repository must match the captured manifest".to_string());
     }
+    Ok(())
+}
+
+#[test]
+fn work_selection_identity_standalone_overlaps_use_compiler_effective_root() -> Result<(), String> {
+    // Manifest root and local-state root diverge: standalone overlap
+    // worktrees must use the same effective-root spelling the compiler
+    // renders, or a packet using the compiler spelling fails visibility.
+    let root = std::env::temp_dir().join(format!(
+        "ripr-selection-effective-root-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|elapsed| elapsed.as_nanos())
+            .unwrap_or(0)
+    ));
+    let source = workspace_path("fixtures/work_selection_identity/captured/standalone");
+    let mut copied = 0;
+    for entry in
+        fs::read_dir(&source).map_err(|err| format!("read standalone captured dir: {err}"))?
+    {
+        let entry = entry.map_err(|err| format!("read standalone entry: {err}"))?;
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else {
+            continue;
+        };
+        if !name.ends_with(".json") {
+            continue;
+        }
+        let body = fs::read_to_string(entry.path()).map_err(|err| format!("read {name}: {err}"))?;
+        fs::create_dir_all(&root).map_err(|err| format!("create temp root: {err}"))?;
+        fs::write(root.join(name), body).map_err(|err| format!("write {name}: {err}"))?;
+        copied += 1;
+    }
+    if copied == 0 {
+        return Err("standalone captured dir contributed no JSON inputs".to_string());
+    }
+    // Diverge the local root and hang the open PR worktree under it.
+    let local_text = fs::read_to_string(root.join("local_state.json"))
+        .map_err(|err| format!("read temp local_state.json: {err}"))?;
+    let mut local: serde_json::Value = serde_json::from_str(&local_text)
+        .map_err(|err| format!("parse temp local_state: {err}"))?;
+    local["root"] = serde_json::Value::String("C:/diverged-local".to_string());
+    fs::write(root.join("local_state.json"), local.to_string())
+        .map_err(|err| format!("write diverged local_state: {err}"))?;
+    let prs_text = fs::read_to_string(root.join("pull_requests.json"))
+        .map_err(|err| format!("read temp pull_requests.json: {err}"))?;
+    let mut prs: serde_json::Value = serde_json::from_str(&prs_text)
+        .map_err(|err| format!("parse temp pull_requests: {err}"))?;
+    let Some(pr) = prs["pull_requests"].as_array_mut().and_then(|prs| {
+        prs.iter_mut()
+            .find(|pr| pr["number"].as_u64() == Some(8802))
+    }) else {
+        return Err("standalone PR 8802 must exist for the root test".to_string());
+    };
+    pr["worktree_path"] = serde_json::Value::String("C:/diverged-local/wt-9102".to_string());
+    fs::write(root.join("pull_requests.json"), prs.to_string())
+        .map_err(|err| format!("write diverged pull_requests: {err}"))?;
+    let claims_text = fs::read_to_string(root.join("claims.json"))
+        .map_err(|err| format!("read temp claims.json: {err}"))?;
+    let mut claims: serde_json::Value =
+        serde_json::from_str(&claims_text).map_err(|err| format!("parse temp claims: {err}"))?;
+    let Some(claim) = claims["claims"].as_array_mut().and_then(|claims| {
+        claims
+            .iter_mut()
+            .find(|claim| claim["issue"].as_u64() == Some(9102))
+    }) else {
+        return Err("standalone claim on 9102 must exist for the root test".to_string());
+    };
+    claim["worktree"] = serde_json::Value::String("C:/diverged-local/wt-9102".to_string());
+    fs::write(root.join("claims.json"), claims.to_string())
+        .map_err(|err| format!("write diverged claims: {err}"))?;
+
+    let captured = load_work_captured_dir(&root)?;
+    let snapshot = compile_work_portfolio(&captured, None)?;
+    let live = live_overlaps_captured(&snapshot, &captured, 9102);
+    if !live.pull_requests.contains(&8802) {
+        return Err(format!(
+            "PR 8802 must overlap issue 9102: {:?}",
+            live.pull_requests
+        ));
+    }
+    let Some(compiled) = snapshot
+        .pull_requests
+        .iter()
+        .find(|pr| pr.number == 8802)
+        .and_then(|pr| pr.worktree.clone())
+    else {
+        return Err("compiler must render PR 8802 worktree".to_string());
+    };
+    if live.worktrees != vec![compiled.clone()] {
+        return Err(format!(
+            "standalone overlap worktrees must match the compiler spelling `{compiled}`: {:?}",
+            live.worktrees
+        ));
+    }
+    if live.worktrees != vec!["<root>/wt-9102".to_string()] {
+        return Err(format!(
+            "diverged-local worktree must relativize: {:?}",
+            live.worktrees
+        ));
+    }
+    let _ = fs::remove_dir_all(&root);
     Ok(())
 }
