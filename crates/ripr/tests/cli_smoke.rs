@@ -13836,24 +13836,28 @@ fn pilot_snapshot_truncated_by_the_seam_budget_is_not_a_verify_baseline()
             "{name}: {artifact}"
         );
         assert_eq!(limit["limit_source"], "configured", "{name}: {artifact}");
-        let repair = limit["repair_route"].as_str().unwrap_or_default();
-        assert!(
-            repair.contains("RIPR_PILOT_SEAM_BUDGET"),
-            "{name}: {artifact}"
-        );
-        assert!(
-            !repair.contains("RIPR_REPO_EXPOSURE_SEAM_LIMIT"),
-            "{name}: {artifact}"
-        );
     }
     let exposure_md = std::fs::read_to_string(root.join("target/ripr/pilot/repo-exposure.md"))?;
-    assert!(
-        exposure_md.contains("RIPR_PILOT_SEAM_BUDGET"),
-        "{exposure_md}"
+    assert_eq!(
+        before["limitations"][0]["repair_route"],
+        "Remove or raise RIPR_PILOT_SEAM_BUDGET to render more seams in the pilot artifacts."
     );
-    assert!(
-        !exposure_md.contains("RIPR_REPO_EXPOSURE_SEAM_LIMIT"),
-        "{exposure_md}"
+    assert_eq!(
+        packets["limitations"][0]["repair_route"],
+        "Remove or raise RIPR_PILOT_SEAM_BUDGET to render packets for more seams, or scope the run to a change with `ripr check --base <REV>` (or `ripr check --diff <PATH>`)."
+    );
+    let limit_line = exposure_md
+        .lines()
+        .find(|line| line.starts_with("> Partial scan:"));
+    assert_eq!(
+        limit_line,
+        Some(
+            format!(
+                "> Partial scan: analyzed 1 of {} seams (seam_limit_applied; remove or raise RIPR_PILOT_SEAM_BUDGET to render more seams in the pilot artifacts).",
+                count(&full)
+            )
+            .as_str()
+        )
     );
     assert!(
         before.get("artifact").is_none(),
@@ -13903,8 +13907,8 @@ fn pilot_snapshot_truncated_by_the_seam_budget_is_not_a_verify_baseline()
 
     // A configured pilot budget that did not fire must not relabel an inventory cut.
     assert!(
-        full_total < 999,
-        "fixture must fit the inactive pilot budget"
+        (3..999).contains(&full_total),
+        "fixture must exceed the inventory cap and fit the inactive pilot budget"
     );
     let inventory = run_command_with_env(
         env!("CARGO_BIN_EXE_ripr"),
@@ -13919,7 +13923,8 @@ fn pilot_snapshot_truncated_by_the_seam_budget_is_not_a_verify_baseline()
     let inventory: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(
         root.join("target/ripr/pilot/repo-exposure.json"),
     )?)?;
-    assert_eq!(count(&inventory), 2, "{inventory}");
+    // Pilot may append changed seams after the inventory cap (#6943).
+    assert_eq!(inventory["run_status"], "seam_limit_applied", "{inventory}");
     assert_eq!(
         inventory["limitations"][0]["category"], "repo_seam_limit_applied",
         "{inventory}"
