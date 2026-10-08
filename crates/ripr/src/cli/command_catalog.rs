@@ -192,6 +192,9 @@ pub(crate) enum CommandDispatch {
     Cache,
     Rerun,
     Mcp,
+    Repair,
+    Continue,
+    Status,
 }
 
 /// One governed command identity.
@@ -587,21 +590,25 @@ const CATALOG: &[CommandCatalogEntry] = &[
         DiscoveryPosture::OrdinaryPublic,
     ),
     public_top("cmd:agent", "agent", CommandDispatch::Agent),
+    // #6305: the task-first `repair` / `continue` / `status` façade is the
+    // ordinary public route into the repair transaction; the `agent`
+    // spellings stay supported as the advanced routes over the same
+    // services.
     nested(
         "cmd:agent.repair",
         "agent repair",
-        CommandClass::Public,
+        CommandClass::Advanced,
         CommandDispatch::Agent,
         AGENT,
-        DiscoveryPosture::OrdinaryPublic,
+        DiscoveryPosture::Advanced,
     ),
     nested(
         "cmd:agent.status",
         "agent status",
-        CommandClass::Public,
+        CommandClass::Advanced,
         CommandDispatch::Agent,
         AGENT,
-        DiscoveryPosture::OrdinaryPublic,
+        DiscoveryPosture::Advanced,
     ),
     nested(
         "cmd:agent.start",
@@ -675,6 +682,9 @@ const CATALOG: &[CommandCatalogEntry] = &[
         AGENT,
         DiscoveryPosture::Advanced,
     ),
+    public_top("cmd:repair", "repair", CommandDispatch::Repair),
+    public_top("cmd:continue", "continue", CommandDispatch::Continue),
+    public_top("cmd:status", "status", CommandDispatch::Status),
     public_top("cmd:swarm", "swarm", CommandDispatch::Swarm),
     nested(
         "cmd:swarm.queue",
@@ -1149,7 +1159,19 @@ mod tests {
     fn public_inventory_excludes_compatibility_and_advanced() {
         let public = public_inventory_paths(catalog());
         assert!(public.contains(&"first-pr"));
-        assert!(public.contains(&"agent repair"));
+        // #6305: the task-first façade is the ordinary public repair route;
+        // the agent spellings stay supported as advanced routes.
+        assert!(public.contains(&"repair"));
+        assert!(public.contains(&"continue"));
+        assert!(public.contains(&"status"));
+        assert!(
+            !public.contains(&"agent repair"),
+            "advanced repair route leaked into the ordinary public inventory: {public:?}"
+        );
+        assert!(
+            !public.contains(&"agent status"),
+            "advanced status route leaked into the ordinary public inventory: {public:?}"
+        );
         assert!(
             !public.contains(&"start-here"),
             "compatibility alias leaked into the ordinary public inventory: {public:?}"

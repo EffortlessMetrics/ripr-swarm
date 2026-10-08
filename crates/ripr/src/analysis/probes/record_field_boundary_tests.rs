@@ -263,7 +263,9 @@ fn a_removed_comment_repeating_the_new_field_does_not_mark_it_unchanged() -> Res
 fn adjacent_replaced_literals_pair_with_their_own_removed_lines() -> Result<(), String> {
     // Both removed lines share the `Id` token with both added lines. The
     // second added line must compare against the second removed line, where
-    // `b: 2` is new, not the first, where `b: 2` already appeared.
+    // `b: 2` is new, not the first, where `b: 2` already appeared. Each
+    // `before` is cut to the field span (#5312); the pairing still reads off
+    // it because `b: 3` only exists on the second removed line.
     let source = "pub struct Id {\n    a: u8,\n    b: u8,\n}\npub fn pair() -> (Id, Id) {\n    (\n        Id { a: 0, b: 4 },\n        Id { a: 1, b: 2 },\n    )\n}\n";
     let probes = probes_for_replaced_block(
         source,
@@ -285,11 +287,7 @@ fn adjacent_replaced_literals_pair_with_their_own_removed_lines() -> Result<(), 
         .iter()
         .map(|probe| probe.before.as_deref())
         .collect::<Vec<_>>();
-    assert_eq!(
-        befores,
-        vec![Some("Id { a: 0, b: 2 },"), Some("Id { a: 1, b: 3 },")],
-        "{probes:?}"
-    );
+    assert_eq!(befores, vec![Some("b: 2"), Some("b: 3")], "{probes:?}");
     Ok(())
 }
 

@@ -1089,6 +1089,149 @@ pub fn working_tree_has_tracked_changes(root: &Path) -> bool {
     }
 }
 
+/// Return `true` when the working tree at `root` holds uncommitted work a
+/// working-tree run would read differently from a committed-history run: a
+/// staged or unstaged edit to any tracked file.
+///
+/// This is the dirtiness signal behind `ripr check`'s default diff source
+/// (RIPR-SPEC-0116 amendment): a dirty tree is analyzed as a working tree.
+/// Untracked files never make a tree dirty, routed or not: the working-tree
+/// diff (`git diff <merge-base>`) covers tracked files only, so an
+/// untracked-only tree would switch to a read that still cannot see the new
+/// file. It stays on committed history, where the RIPR-SPEC-0112 note names
+/// the untracked files and the staging repair (#5258). A probe that cannot
+/// run (no git, not a repository) reads as clean without a warning of its
+/// own: the run then takes the committed-history path, whose diff loader
+/// names the same git failure in ripr's voice, and whose committed-content
+/// probe still discloses any uncommitted edits it finds (RIPR-SPEC-0112).
+/// An unborn or dangling `HEAD` also reads as clean: every staged file there
+/// looks like an addition, and the committed-history loader owns that refusal.
+pub(crate) fn working_tree_has_uncommitted_changes(
+    root: &Path,
+    git_timeout: Option<std::time::Duration>,
+) -> bool {
+    matches!(
+        uncommitted_changes_probe(root, git_timeout),
+        WorkingTreeProbe::Dirty
+    )
+}
+
+fn uncommitted_changes_probe(
+    root: &Path,
+    git_timeout: Option<std::time::Duration>,
+) -> WorkingTreeProbe {
+    // The caller's `--git-timeout` caps this probe like every other git
+    // invocation; without one the probe keeps its own one-minute deadline so
+    // a hung git cannot stall source selection forever (#5997: the fixed
+    // deadline ignored `--git-timeout 1` and failed
+    // check_json_timeout_and_bad_base_have_distinct_identities).
+    let result = crate::git::run_git_output_with_deadline(
+        root,
+        &[
+            "status",
+            "--porcelain",
+            "-z",
+            "--untracked-files=no",
+            "--",
+            ".",
+        ],
+        git_timeout.or(Some(WORKING_TREE_PROBE_DEADLINE)),
+    );
+    match result {
+        Ok(out) if out.status.success() => {
+            if porcelain_z_has_uncommitted_source_work(&out.stdout) {
+                // An unborn or dangling HEAD reports every staged file as a new
+                // addition, which is not uncommitted work on top of a history.
+                // Keep it on the committed-history path so the diff loader
+                // refuses in ripr's voice instead of completing a worktree run
+                // against nothing. Only a `rev-parse` that ran and answered
+                // "no" proves this; a probe that could not run stays dirty.
+                let head_unresolved = crate::git::run_git_output_with_deadline(
+                    root,
+                    &["rev-parse", "--verify", "--quiet", "HEAD"],
+                    git_timeout.or(Some(WORKING_TREE_PROBE_DEADLINE)),
+                )
+                .is_ok_and(|head| !head.status.success());
+                if head_unresolved {
+                    WorkingTreeProbe::Clean
+                } else {
+                    WorkingTreeProbe::Dirty
+                }
+            } else {
+                WorkingTreeProbe::Clean
+            }
+        }
+        Ok(out) => {
+            let stderr = String::from_utf8_lossy(&out.stderr);
+            let detail = stderr.lines().next().unwrap_or("unknown git error");
+            WorkingTreeProbe::Error(format!("git status exited with {}: {detail}", out.status))
+        }
+        Err(err) => WorkingTreeProbe::Error(format!("git could not be run: {err}")),
+    }
+}
+
+/// Decide dirtiness from `git status --porcelain -z` records. Any record that
+/// is not untracked (`??`) is a tracked change, which ends the scan before a
+/// rename's second NUL-separated path could be misread as a record. The probe
+/// asks git for no untracked records; an untracked record that appears anyway
+/// is skipped, because the working-tree diff cannot include it.
+fn porcelain_z_has_uncommitted_source_work(stdout: &[u8]) -> bool {
+    stdout
+        .split(|byte| *byte == 0)
+        .filter(|record| !record.is_empty())
+        .any(|record| !record.starts_with(b"?? "))
+}
+
+/// The revisions a live-repository diff analyzed, resolved to commits for
+/// the check header (base ref and commit, and the head the diff ended at).
+///
+/// Every commit is `None` when it could not be resolved (an unborn `HEAD`,
+/// a probe that timed out); renderers then say so instead of inventing one.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct AnalyzedRevisions {
+    /// The base ref the loader used (explicit `--base` or resolved default).
+    pub(crate) base_ref: String,
+    /// Full commit id of `base_ref`.
+    pub(crate) base_commit: Option<String>,
+    /// Full commit id the diff starts from when it differs from
+    /// `base_commit`: both live diff sources diff from the merge base of the
+    /// base and `HEAD`.
+    pub(crate) merge_base_commit: Option<String>,
+    /// Full commit id of `HEAD`.
+    pub(crate) head_commit: Option<String>,
+    /// `true` when the diff ended at the working tree (staged and unstaged
+    /// tracked edits on top of `HEAD`), `false` when it ended at `HEAD`.
+    pub(crate) working_tree: bool,
+}
+
+/// Resolve the commits behind a live-repository diff of `base` (already
+/// verified by [`resolve_effective_base`]). Resolution is best effort: it
+/// only describes the run, so a failed probe leaves a field `None` rather
+/// than failing an analysis that already loaded its diff.
+pub(crate) fn resolve_analyzed_revisions(
+    root: &Path,
+    base: &str,
+    working_tree: bool,
+    git_timeout: Option<Duration>,
+) -> AnalyzedRevisions {
+    let base_commit = resolve_base_commit(root, Some(base), git_timeout);
+    let head_commit = resolve_base_commit(root, Some("HEAD"), git_timeout);
+    let merge_base_commit =
+        crate::git::run_git_output_with_deadline(root, &["merge-base", base, "HEAD"], git_timeout)
+            .ok()
+            .filter(|output| output.status.success())
+            .and_then(|output| String::from_utf8(output.stdout).ok())
+            .map(|commit| commit.trim().to_string())
+            .filter(|commit| !commit.is_empty() && Some(commit) != base_commit.as_ref());
+    AnalyzedRevisions {
+        base_ref: base.to_string(),
+        base_commit,
+        merge_base_commit,
+        head_commit,
+        working_tree,
+    }
+}
+
 /// The working-tree probe with its failure kept distinct from a clean tree,
 /// for callers that must not read a failed probe as "no uncommitted
 /// changes" (pilot's current change records it as unavailable instead).
@@ -3177,6 +3320,50 @@ mod tests {
 
         ignore_remove_dir_all(&dir);
         Ok(())
+    }
+
+    /// RIPR-SPEC-0116 amendment: the dirty-tree default counts a staged or
+    /// unstaged edit of any tracked file, and no untracked file, routed or
+    /// not: the working-tree diff cannot contain an untracked file.
+    #[test]
+    fn uncommitted_change_detector_counts_tracked_edits_not_untracked_files() -> std::io::Result<()>
+    {
+        let dir = unique_fixture_root("uncommitted-change-detector")?;
+        ignore_remove_dir_all(&dir);
+        init_git_repo(&dir, "main")?;
+        let dirty = |label: &str, expected: bool| -> std::io::Result<()> {
+            if working_tree_has_uncommitted_changes(&dir, None) == expected {
+                Ok(())
+            } else {
+                Err(std::io::Error::other(format!(
+                    "{label}: expected dirty={expected}"
+                )))
+            }
+        };
+        dirty("clean tree", false)?;
+        fs::write(dir.join("notes.txt"), "scratch\n")?;
+        dirty("untracked file no adapter reads", false)?;
+        fs::create_dir_all(dir.join("tests/nested"))?;
+        fs::write(dir.join("tests/nested/new.rs"), "#[test]\nfn t() {}\n")?;
+        dirty("untracked routed file in an untracked directory", false)?;
+        fs::write(dir.join("README"), "changed\n")?;
+        dirty("tracked edit beside an untracked routed file", true)?;
+        ignore_remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn porcelain_z_records_decide_dirtiness_without_misreading_rename_sources() {
+        assert!(!porcelain_z_has_uncommitted_source_work(b""));
+        assert!(!porcelain_z_has_uncommitted_source_work(b"?? notes.txt\0"));
+        assert!(!porcelain_z_has_uncommitted_source_work(b"?? src/new.rs\0"));
+        assert!(porcelain_z_has_uncommitted_source_work(b"A  src/new.rs\0"));
+        assert!(porcelain_z_has_uncommitted_source_work(b" M README\0"));
+        // A rename record is a tracked change; its second NUL field (the
+        // old path) is never parsed as a record of its own.
+        assert!(porcelain_z_has_uncommitted_source_work(
+            b"R  new.txt\0?? old.txt\0"
+        ));
     }
 
     #[test]

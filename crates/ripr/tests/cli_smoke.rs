@@ -1906,7 +1906,7 @@ fn check_from_a_subcrate_discloses_workspace_root_and_honors_explicit_root() -> 
     let implicit = run_command(
         bin,
         Some(&subcrate),
-        &["check", "--base", "HEAD", "--format", "json"],
+        &["check", "--base", "HEAD", "--committed", "--format", "json"],
     )
     .map_err(|error| format!("run implicit-root check: {error}"))?;
     assert_success(&implicit);
@@ -1928,7 +1928,14 @@ fn check_from_a_subcrate_discloses_workspace_root_and_honors_explicit_root() -> 
         bin,
         Some(&subcrate),
         &[
-            "check", "--root", &root, "--base", "HEAD", "--format", "json",
+            "check",
+            "--root",
+            &root,
+            "--base",
+            "HEAD",
+            "--committed",
+            "--format",
+            "json",
         ],
     )
     .map_err(|error| format!("run explicit-root check: {error}"))?;
@@ -4738,17 +4745,19 @@ fn agent_card_identity_is_portable_across_equivalent_checkout_roots()
     Ok(())
 }
 
-/// A statically admitted inline test is not an executable repair surface.
-/// The default card must disclose the same refusal as the Before phase,
-/// while a separate test file remains ready and can publish an attempt.
+/// The card's readiness agrees with the Before phase for every target shape:
+/// a separate test file and one governed inline `#[cfg(test)]` module are
+/// ready and publish an attempt (#5210), while a file with two candidate
+/// inline test modules stays an ambiguous edit target and the card discloses
+/// the same refusal as the Before phase.
 #[test]
 fn agent_card_readiness_agrees_with_repair_target_admission()
 -> Result<(), Box<dyn std::error::Error>> {
-    for inline in [true, false] {
-        let root = unbuilt_repair_fixture(if inline {
-            "agent-card-inline-admission"
-        } else {
-            "agent-card-separate-admission"
+    for (inline, ambiguous) in [(true, false), (true, true), (false, false)] {
+        let root = unbuilt_repair_fixture(match (inline, ambiguous) {
+            (true, false) => "agent-card-inline-admission",
+            (true, true) => "agent-card-ambiguous-inline-admission",
+            _ => "agent-card-separate-admission",
         })?;
         if inline {
             let tests = std::fs::read_to_string(root.join("tests/pricing.rs"))?.replace(
@@ -4757,6 +4766,11 @@ fn agent_card_readiness_agrees_with_repair_target_admission()
             );
             let mut source = std::fs::read_to_string(root.join("src/lib.rs"))?;
             source.push_str(&format!("\n#[cfg(test)]\nmod tests {{\n{tests}\n}}\n"));
+            if ambiguous {
+                source.push_str(
+                    "\n#[cfg(test)]\nmod more_tests {\n    #[test]\n    fn smoke() {\n        assert_eq!(1 + 1, 2);\n    }\n}\n",
+                );
+            }
             std::fs::write(root.join("src/lib.rs"), source)?;
             std::fs::remove_file(root.join("tests/pricing.rs"))?;
             run_git(&root, &["add", "src/lib.rs", "tests/pricing.rs"])?;
@@ -4784,9 +4798,9 @@ fn agent_card_readiness_agrees_with_repair_target_admission()
                 "tests/pricing.rs"
             }
         );
-        assert_eq!(card["readiness"]["repair_ready"], !inline, "{card:#}");
+        assert_eq!(card["readiness"]["repair_ready"], !ambiguous, "{card:#}");
         let before = run_repair_phase(&root, &["--seam-id", BOUNDARY_GAP_SEAM_ID], "before")?;
-        if inline {
+        if ambiguous {
             assert_failure(&before);
             let blocker = card["exact_blocker"]
                 .as_str()
@@ -4821,7 +4835,11 @@ fn agent_card_readiness_agrees_with_repair_target_admission()
             assert_success(&before);
             assert_eq!(
                 card["allowed_files"],
-                serde_json::json!(["tests/pricing.rs"])
+                serde_json::json!([if inline {
+                    "src/lib.rs"
+                } else {
+                    "tests/pricing.rs"
+                }])
             );
             assert_eq!(card["readiness"]["missing_evidence"], serde_json::json!([]));
             let (attempt_id, manifest) = sole_repair_attempt(&root)?;
@@ -4874,7 +4892,16 @@ fn first_action_routes_live_unchanged_receipt_to_revise_focused_test()
     assert_success(&verify);
     std::fs::write(artifact_dir.join("agent-verify.json"), &verify.stdout)?;
     let analysis_outcome = run_ripr_in_workspace(&[
-        "check", "--root", ".", "--mode", "draft", "--base", "HEAD", "--format", "json",
+        "check",
+        "--root",
+        ".",
+        "--mode",
+        "draft",
+        "--base",
+        "HEAD",
+        "--committed",
+        "--format",
+        "json",
     ])?;
     assert_success(&analysis_outcome);
     std::fs::write(
@@ -5013,7 +5040,16 @@ fn editor_agent_loop_fixture_outputs_match_expected() -> Result<(), Box<dyn std:
     let verify_artifact_path = "target/ripr/test-agent-verify/agent-verify.json";
     std::fs::write(artifact_dir.join("agent-verify.json"), &verify.stdout)?;
     let analysis_outcome = run_ripr_in_workspace(&[
-        "check", "--root", ".", "--mode", "draft", "--base", "HEAD", "--format", "json",
+        "check",
+        "--root",
+        ".",
+        "--mode",
+        "draft",
+        "--base",
+        "HEAD",
+        "--committed",
+        "--format",
+        "json",
     ])?;
     assert_success(&analysis_outcome);
     std::fs::write(
@@ -7434,14 +7470,25 @@ fn repo_scope_formats_reject_unresolvable_base_and_missing_diff()
     Ok(())
 }
 
-/// F15-12: a seam whose only related test lives inline in another crate has
-/// no test file the repair can edit. The before phase refuses before it
-/// writes any workflow artifact and never prints a completion line first, so
-/// neither the phase nor a later `agent status` reads as a started repair.
+/// F15-12: a seam whose only related tests live inline in a crate file with
+/// two candidate `#[cfg(test)]` modules has no test target the repair can
+/// edit. The before phase refuses before it writes any workflow artifact and
+/// never prints a completion line first, so neither the phase nor a later
+/// `agent status` reads as a started repair. With one governed inline module
+/// the same seam starts an attempt confined to that module (#5210).
 #[test]
 fn agent_repair_before_refuses_a_seam_without_a_test_file_before_writing_anything()
 -> Result<(), Box<dyn std::error::Error>> {
-    let root = unique_temp_workspace("agent-repair-no-test-target");
+    agent_repair_before_inline_only_seam(true)?;
+    agent_repair_before_inline_only_seam(false)
+}
+
+fn agent_repair_before_inline_only_seam(ambiguous: bool) -> Result<(), Box<dyn std::error::Error>> {
+    let root = unique_temp_workspace(if ambiguous {
+        "agent-repair-no-test-target"
+    } else {
+        "agent-repair-inline-test-target"
+    });
     std::fs::create_dir_all(root.join("crates/rates/src"))?;
     std::fs::write(
         root.join("Cargo.toml"),
@@ -7453,7 +7500,14 @@ fn agent_repair_before_refuses_a_seam_without_a_test_file_before_writing_anythin
     )?;
     std::fs::write(
         root.join("crates/rates/src/lib.rs"),
-        "/// Tax in basis points for the given region code.\npub fn tax_bps(region: &str) -> u32 {\n    match region {\n        \"EU\" => 2000,\n        _ => 0,\n    }\n}\n\n/// Orders at or above this many items ship free.\npub fn ships_free(items: u32) -> bool {\n    items >= 10\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    #[test]\n    fn eu_tax() {\n        assert_eq!(tax_bps(\"EU\"), 2000);\n    }\n}\n",
+        format!(
+            "/// Tax in basis points for the given region code.\npub fn tax_bps(region: &str) -> u32 {{\n    match region {{\n        \"EU\" => 2000,\n        _ => 0,\n    }}\n}}\n\n/// Orders at or above this many items ship free.\npub fn ships_free(items: u32) -> bool {{\n    items >= 10\n}}\n\n#[cfg(test)]\nmod tests {{\n    use super::*;\n\n    #[test]\n    fn eu_tax() {{\n        assert_eq!(tax_bps(\"EU\"), 2000);\n    }}\n\n    #[test]\n    fn large_order_ships_free() {{\n        assert!(ships_free(20));\n    }}\n}}\n{}",
+            if ambiguous {
+                "\n#[cfg(test)]\nmod more_tests {\n    #[test]\n    fn smoke() {\n        assert_eq!(1 + 1, 2);\n    }\n}\n"
+            } else {
+                ""
+            }
+        ),
     )?;
     std::fs::write(root.join(".gitignore"), "/target\n")?;
     run_git(&root, &["init", "-q"])?;
@@ -7482,10 +7536,26 @@ fn agent_repair_before_refuses_a_seam_without_a_test_file_before_writing_anythin
         .as_str()
         .ok_or("seam has no id")?
         .to_string();
-    // Fixture construction: the seam's only related test is the inline one.
+    // Fixture construction: the seam's related tests are inline, and a
+    // weak `assert!(ships_free(20))` keeps the route ready (a seam with no
+    // calling test reads `activation_unknown`, which no repair targets).
     assert_eq!(seam["related_tests"][0]["file"], "crates/rates/src/lib.rs");
+    assert_eq!(seam["grip_class"], "weakly_gripped", "{seam:#}");
 
     let before = run_repair_phase(&root, &["--seam-id", &seam_id], "before")?;
+    if !ambiguous {
+        assert_success(&before);
+        let before: serde_json::Value = serde_json::from_slice(&before.stdout)?;
+        assert_eq!(
+            before["packets"][0]["allowed_edit_surface"],
+            serde_json::json!(["crates/rates/src/lib.rs"]),
+            "{before:#}"
+        );
+        let (_attempt_id, manifest) = sole_repair_attempt(&root)?;
+        assert_eq!(manifest["state"], "awaiting_edit");
+        std::fs::remove_dir_all(root)?;
+        return Ok(());
+    }
     assert_failure(&before);
     let stderr = String::from_utf8_lossy(&before.stderr);
     assert!(
@@ -10687,7 +10757,7 @@ fn doctor_json_reports_current_schema() -> Result<(), String> {
 
     let report: serde_json::Value = serde_json::from_slice(&output.stdout)
         .map_err(|err| format!("doctor JSON did not parse: {err}"))?;
-    assert_eq!(report["schema_version"], "0.3");
+    assert_eq!(report["schema_version"], "0.4");
     assert_eq!(report["tool"], "ripr");
     assert_eq!(report["profile"], "analysis");
     assert_eq!(report["ripr_version"], env!("CARGO_PKG_VERSION"));
@@ -10696,7 +10766,504 @@ fn doctor_json_reports_current_schema() -> Result<(), String> {
         report["runtime_probes"].is_array(),
         "doctor JSON must expose typed runtime probe results: {report}"
     );
+    // #5214: schema 0.3 published a `sections` array that could never carry
+    // content, because its only mutator and only reader were `#[cfg(test)]`.
+    // It is gone rather than permanently empty.
+    assert!(
+        report.get("sections").is_none(),
+        "a dead sections array must not stay in the released document: {report}"
+    );
     std::fs::remove_dir_all(workspace).map_err(|err| format!("remove workspace: {err}"))?;
+    Ok(())
+}
+
+/// A workspace that makes the human doctor screen print every environment fact
+/// #5214 types: detected languages, an unanalyzed language, a detected-but-
+/// disabled preview language, cache state, detected test surfaces, and the Perl
+/// preview. `ripr.toml` exists and enables only Rust, so Python stays detected
+/// and disabled instead of being auto-enabled by the no-config default path.
+/// It also configures `[profiles.bun_ub]` with a custom bridge-hints path, so
+/// the parity assertions cover the profile facts on both surfaces.
+/// Git-initialized so the core checks decide the exit status, not the fixture
+/// location.
+fn doctor_environment_fact_root(label: &str) -> Result<PathBuf, String> {
+    let root = unique_temp_workspace(label);
+    for dir in ["src", "lib", "t"] {
+        std::fs::create_dir_all(root.join(dir)).map_err(|err| format!("create {dir}: {err}"))?;
+    }
+    for (path, text) in [
+        (
+            "Cargo.toml",
+            "[package]\nname = \"doctor-json-parity\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+        ),
+        ("src/lib.rs", "pub fn placeholder() {}\n"),
+        (
+            "ripr.toml",
+            "[languages]\nenabled = [\"rust\"]\n[profiles.bun_ub]\ntest_roots = [\"bun-tests\"]\nbridge_hints = \"custom/bridge-hints.toml\"\n",
+        ),
+        (
+            "pyproject.toml",
+            "[project]\nname = \"fixture\"\nversion = \"0.1.0\"\n",
+        ),
+        ("calc.py", "def add(a, b):\n    return a + b\n"),
+        (
+            "Makefile.PL",
+            "use ExtUtils::MakeMaker;\nWriteMakefile(NAME => 'Pricing');\n",
+        ),
+        (
+            "lib/Pricing.pm",
+            "package Pricing;\nsub discount { return 0; }\n1;\n",
+        ),
+        (
+            "t/pricing.t",
+            "use Test::More;\nok(1, 'placeholder');\ndone_testing();\n",
+        ),
+        ("tool.go", "package main\n\nfunc main() {}\n"),
+    ] {
+        std::fs::write(root.join(path), text).map_err(|err| format!("write {path}: {err}"))?;
+    }
+    run_git(&root, &["init"])?;
+    Ok(root)
+}
+
+fn doctor_json_for(root: &Path) -> Result<serde_json::Value, String> {
+    let root_arg = root.display().to_string();
+    let output = run_ripr(&["doctor", "--root", &root_arg, "--json"]);
+    serde_json::from_slice(&output.stdout).map_err(|err| {
+        format!(
+            "doctor JSON did not parse: {err}\n{}",
+            String::from_utf8_lossy(&output.stdout)
+        )
+    })
+}
+
+fn doctor_human_stdout(root: &Path) -> Result<String, String> {
+    let root_arg = root.display().to_string();
+    let output = run_ripr(&["doctor", "--root", &root_arg]);
+    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
+fn json_array<'a>(
+    report: &'a serde_json::Value,
+    key: &str,
+) -> Result<&'a [serde_json::Value], String> {
+    report[key]
+        .as_array()
+        .map(Vec::as_slice)
+        .ok_or_else(|| format!("`{key}` must be an array in the doctor report: {report}"))
+}
+
+/// #5214 acceptance 2 — coverage, not presence. For one root where the human
+/// screen prints each fact, every corresponding typed JSON field must be
+/// present and non-empty, and must name the same value the screen printed.
+/// Dropping a fact from either surface makes this red.
+#[test]
+fn doctor_json_carries_every_environment_fact_the_human_screen_prints() -> Result<(), String> {
+    let root = doctor_environment_fact_root("doctor-json-parity")?;
+    let human = doctor_human_stdout(&root)?;
+    let report = doctor_json_for(&root)?;
+    let outcome = (|| -> Result<(), String> {
+        // Detected languages, with the tier the screen prints in parentheses.
+        let detected = json_array(&report, "detected_languages")?;
+        let rust = detected
+            .iter()
+            .find(|entry| entry["language"] == "rust")
+            .ok_or_else(|| format!("detected_languages must name rust: {detected:?}"))?;
+        if rust["status"] != "stable" {
+            return Err(format!("rust must carry its tier: {rust}"));
+        }
+        assert!(
+            human.contains("- Detected languages: rust (stable)"),
+            "the screen must print the detected tier: {human}"
+        );
+        let python = detected
+            .iter()
+            .find(|entry| entry["language"] == "python")
+            .ok_or_else(|| format!("detected_languages must name python: {detected:?}"))?;
+        if python["status"] != "preview" {
+            return Err(format!("python must carry its tier: {python}"));
+        }
+        assert!(
+            human.contains("python (preview)"),
+            "the screen must print python as a preview: {human}"
+        );
+        // Unanalyzed source languages.
+        let unanalyzed = json_array(&report, "unanalyzed_source_languages")?;
+        let go = unanalyzed
+            .iter()
+            .find(|entry| entry["language"] == "Go")
+            .ok_or_else(|| format!("unanalyzed_source_languages must name Go: {unanalyzed:?}"))?;
+        let count = go["file_count"].as_u64().unwrap_or(0);
+        if count < 1 {
+            return Err(format!("Go must carry its file count: {go}"));
+        }
+        assert!(
+            human.contains(&format!("~ Unanalyzed languages: Go ({count} file(s))")),
+            "the screen must print the same Go count the JSON carries: {human}"
+        );
+        // Preview enablement gap. A gap is suggested only for a preview
+        // language whose adapter is compiled in: telling a rust-only binary's
+        // user to enable python would mislead, since nothing could analyze
+        // it. Parity therefore means presence in python builds and agreed
+        // absence otherwise.
+        if cfg!(feature = "lang-python") {
+            let gaps = json_array(&report, "preview_language_gaps")?;
+            let gap = gaps
+                .iter()
+                .find(|entry| entry["config_entry"] == "python")
+                .ok_or_else(|| format!("preview_language_gaps must name python: {gaps:?}"))?;
+            if gap["detected_language"] != "python" {
+                return Err(format!("the gap must name its detected source: {gap}"));
+            }
+            assert!(
+                human.contains("- Tip: python files detected but not enabled"),
+                "the screen must print the enablement tip: {human}"
+            );
+        } else {
+            assert!(
+                report
+                    .get("preview_language_gaps")
+                    .is_none_or(serde_json::Value::is_null),
+                "without the python adapter no gap may be suggested: {report}"
+            );
+            assert!(
+                !human.contains("files detected but not enabled"),
+                "without the python adapter no enablement tip may print: {human}"
+            );
+        }
+        // Cache state.
+        let cache = &report["cache"];
+        let cache_dir = cache["cache_dir"].as_str().unwrap_or_default();
+        if !cache_dir.ends_with("target/ripr/cache") {
+            return Err(format!("cache_dir must name the workspace cache: {cache}"));
+        }
+        if cache["size_bytes"].as_u64().is_none() {
+            return Err(format!("cache must carry a numeric size: {cache}"));
+        }
+        assert!(
+            human.contains(&format!("- Cache location: {cache_dir}")),
+            "the screen must print the same cache directory: {human}"
+        );
+        assert!(
+            human.contains(&format!(
+                "- Cache size: {}",
+                cache["size_display"].as_str().unwrap_or_default()
+            )),
+            "the screen must print the same cache size: {human}"
+        );
+        // Detected test surfaces.
+        let surfaces = json_array(&report, "test_surfaces")?;
+        let rust_surface = surfaces
+            .iter()
+            .find(|surface| surface["language"] == "rust")
+            .ok_or_else(|| format!("test_surfaces must carry the rust surface: {surfaces:?}"))?;
+        if rust_surface["framework"] != "cargo test" {
+            return Err(format!(
+                "the rust surface must type its framework: {rust_surface}"
+            ));
+        }
+        let rendered = surfaces
+            .iter()
+            .map(|surface| surface["evidence"].as_str().unwrap_or_default())
+            .collect::<Vec<_>>()
+            .join("; ");
+        assert!(
+            !rendered.is_empty()
+                && human.contains(&format!("- Detected test surfaces: {rendered}")),
+            "the screen must print exactly the JSON evidence fragments: {human}"
+        );
+        // Perl preview / exporter state.
+        let preview = &report["perl_preview"];
+        if preview.is_null() {
+            return Err(format!("a Perl root must carry perl_preview: {report}"));
+        }
+        if preview["pm_files"].as_u64() != Some(1) || preview["t_files"].as_u64() != Some(1) {
+            return Err(format!(
+                "perl_preview must carry the real file counts: {preview}"
+            ));
+        }
+        if preview["expected_schema"] != "ripr-perl-facts-v1" {
+            return Err(format!(
+                "perl_preview must carry the packet schema it consumes: {preview}"
+            ));
+        }
+        let state = preview["exporter"]["state"].as_str().unwrap_or_default();
+        if !matches!(state, "compatible" | "incompatible" | "not_found") {
+            return Err(format!(
+                "exporter state must be typed, not free text: {preview}"
+            ));
+        }
+        assert!(
+            human.contains("- Perl preview:")
+                && human.contains(&format!(
+                    "  project: {} .pm, {} .pl, {} .t",
+                    preview["pm_files"], preview["pl_files"], preview["t_files"]
+                ))
+                && human.contains(&format!(
+                    "  schema: {} expected",
+                    preview["expected_schema"].as_str().unwrap_or_default()
+                )),
+            "the screen must print the counts and schema the JSON carries: {human}"
+        );
+        // Exact block shape, heading flush and body indented by two. The
+        // refactor that produced the typed preview briefly indented the
+        // heading too, and only this assertion caught it.
+        assert!(
+            human.contains(&format!(
+                "- Perl preview:\n  project: {} .pm, {} .pl, {} .t\n",
+                preview["pm_files"], preview["pl_files"], preview["t_files"]
+            )),
+            "the Perl preview block shape must not drift: {human}"
+        );
+        assert!(
+            human.contains(&format!("  test roots: {}", human_test_roots(preview))),
+            "the screen must print the test roots the JSON carries: {human}"
+        );
+        assert!(
+            human.contains(&format!(
+                "  frameworks: {}",
+                human_perl_list(&preview["frameworks"], "none detected")
+            )),
+            "the screen must print the frameworks the JSON carries: {human}"
+        );
+        assert!(
+            human.contains(&format!(
+                "  runners: {}",
+                human_perl_list(&preview["runners"], "none found on PATH")
+            )),
+            "the screen must print the runners the JSON carries: {human}"
+        );
+        assert!(
+            human.contains(&format!(
+                "  next: {}",
+                preview["next_command"].as_str().unwrap_or_default()
+            )),
+            "the screen must print the next command the JSON carries: {human}"
+        );
+        // Effective configuration defaults.
+        let defaults = &report["config_defaults"];
+        if defaults.is_null() {
+            return Err(format!(
+                "a loadable config must carry config_defaults: {report}"
+            ));
+        }
+        assert!(
+            human.contains(&format!(
+                "- Analysis mode default: {}",
+                defaults["analysis_mode"].as_str().unwrap_or_default()
+            )) && human.contains(&format!(
+                "- LSP seam diagnostics default: {}",
+                defaults["lsp_seam_diagnostics"]
+            )) && human.contains(&format!(
+                "- Suppressions path: {}",
+                defaults["suppressions_path"].as_str().unwrap_or_default()
+            )),
+            "the screen must print the config defaults the JSON carries: {human}"
+        );
+        // Bun UB profile facts, including the custom bridge-hints path: the
+        // screen and the JSON must carry the same actionable values (#5283).
+        if defaults["bun_ub_profile_configured"] != true {
+            return Err(format!(
+                "the fixture profile must read as configured: {defaults}"
+            ));
+        }
+        let roots = defaults["bun_ub_test_roots"]
+            .as_array()
+            .map(|entries| {
+                entries
+                    .iter()
+                    .map(|value| value.as_str().unwrap_or_default().to_string())
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        if roots != vec!["bun-tests".to_string()] {
+            return Err(format!(
+                "the JSON must carry the fixture test roots: {defaults}"
+            ));
+        }
+        let hints = defaults["bun_ub_bridge_hints"].as_str().unwrap_or_default();
+        if hints != "custom/bridge-hints.toml" {
+            return Err(format!(
+                "the JSON must carry the custom bridge-hints path: {defaults}"
+            ));
+        }
+        assert!(
+            human.contains("- Bun UB profile: configured (preview advisory only)")
+                && human.contains("- Bun UB test roots: bun-tests")
+                && human.contains(&format!("- Bun UB bridge hints: {hints}")),
+            "the screen must print the profile facts the JSON carries: {human}"
+        );
+        Ok(())
+    })();
+    let human_status = run_ripr(&["doctor", "--root", &root.display().to_string()]).status;
+    let json_status = run_ripr(&["doctor", "--root", &root.display().to_string(), "--json"]).status;
+    ignore_remove_dir_all(&root);
+    outcome?;
+    // #5214 acceptance 7: the two surfaces answer with the same status for the
+    // same root. The value itself is #5102's contract, not this issue's.
+    assert_eq!(
+        human_status.code(),
+        json_status.code(),
+        "doctor and doctor --json must share one exit status for one root"
+    );
+    Ok(())
+}
+
+fn human_test_roots(preview: &serde_json::Value) -> String {
+    let roots = preview["test_roots"]
+        .as_array()
+        .map(|entries| {
+            entries
+                .iter()
+                .map(|value| value.as_str().unwrap_or_default().to_string())
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    match roots.as_slice() {
+        [] => "none detected".to_string(),
+        [only] => format!("{only} detected"),
+        [first, .., last] => format!("{first} and {last} detected"),
+    }
+}
+
+fn human_perl_list(values: &serde_json::Value, empty: &str) -> String {
+    let entries = values.as_array().cloned().unwrap_or_default();
+    if entries.is_empty() {
+        return empty.to_string();
+    }
+    entries
+        .iter()
+        .map(|value| value.as_str().unwrap_or_default())
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// #5214 acceptance 1's live correctness trap. `languages` is what `ripr.toml`
+/// enables; `detected_languages` is what the root contains. A repo with a
+/// `pyproject.toml` and no Python in `[languages] enabled` must let a consumer
+/// see that Python was detected and never enabled, rather than reading a
+/// plausible `languages` array and concluding Python is analyzed.
+#[test]
+fn doctor_json_separates_detected_languages_from_enabled_languages() -> Result<(), String> {
+    let root = doctor_environment_fact_root("doctor-json-detected-vs-enabled")?;
+    let report = doctor_json_for(&root)?;
+    ignore_remove_dir_all(&root);
+
+    let enabled = json_array(&report, "languages")?
+        .iter()
+        .map(|value| value.as_str().unwrap_or_default().to_string())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        enabled,
+        vec!["rust".to_string()],
+        "the enabled set must stay the configured one: {report}"
+    );
+
+    let detected = json_array(&report, "detected_languages")?;
+    let python = detected
+        .iter()
+        .find(|entry| entry["language"] == "python")
+        .ok_or_else(|| format!("python must be reported as detected: {detected:?}"))?;
+    assert_eq!(
+        python["enabled"], false,
+        "a detected language must carry whether the config enables it: {python}"
+    );
+    // The conflation this guards: if `detected_languages` echoed the enabled
+    // set, python would read as analyzed.
+    assert!(
+        !enabled.iter().any(|language| language == "python"),
+        "python must not appear in the enabled set for this fixture: {report}"
+    );
+    assert!(
+        detected.iter().any(|entry| entry["language"] == "perl"
+            && entry["status"] == "preview"
+            && entry["enabled"] == false),
+        "a detected preview language must carry its tier and its disabled state: {report}"
+    );
+    Ok(())
+}
+
+/// #5214 acceptance 6 / RIPR-SPEC-0007. A malformed `ripr.toml` must not leak
+/// its source excerpt into any newly typed field, and the document must not
+/// claim a configuration default it never verified.
+#[test]
+fn doctor_json_keeps_config_parse_errors_redacted_in_the_typed_fields() -> Result<(), String> {
+    let root = unique_temp_workspace("doctor-json-redaction");
+    std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+    // Both markers sit on the offending line, because `toml`'s error Display
+    // embeds the source excerpt for the failing line and only that line. A
+    // marker on a later line would sit outside the excerpt and the test would
+    // pass against a leak.
+    std::fs::write(
+        root.join("ripr.toml"),
+        "secret_marker_9f2b = \"do-not-publish\n",
+    )
+    .map_err(|err| format!("write config: {err}"))?;
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"redaction\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )
+    .map_err(|err| format!("write Cargo.toml: {err}"))?;
+
+    let root_arg = root.display().to_string();
+    let output = run_ripr(&["doctor", "--root", &root_arg, "--json"]);
+    let document = String::from_utf8_lossy(&output.stdout).into_owned();
+    ignore_remove_dir_all(&root);
+
+    assert!(
+        !document.contains("secret_marker_9f2b") && !document.contains("do-not-publish"),
+        "ripr.toml source text must never reach the doctor JSON document: {document}"
+    );
+    let report: serde_json::Value = serde_json::from_str(&document)
+        .map_err(|err| format!("doctor JSON did not parse: {err}\n{document}"))?;
+    let config = report["checks"]
+        .as_array()
+        .and_then(|checks| checks.iter().find(|check| check["name"] == "config"))
+        .ok_or_else(|| format!("doctor JSON must report the config check: {report}"))?;
+    assert_eq!(config["status"], "fail");
+    // The environment fields are still computed from the filesystem, so the
+    // leak had every chance to happen and did not.
+    assert!(
+        report["cache"]["cache_dir"].is_string(),
+        "cache facts must still be reported: {report}"
+    );
+    assert!(
+        report["config_defaults"].is_null(),
+        "an unloadable config must not claim verified defaults: {report}"
+    );
+    Ok(())
+}
+
+/// An unloadable `ripr.toml` must not be reported as carrying verified
+/// configuration defaults: the field is `null`, not a guess.
+#[test]
+fn doctor_json_reports_no_config_defaults_for_an_unloadable_config() -> Result<(), String> {
+    let root = unique_temp_workspace("doctor-json-no-defaults");
+    std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+    std::fs::write(root.join("ripr.toml"), "[languages\n")
+        .map_err(|err| format!("write config: {err}"))?;
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"no-defaults\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )
+    .map_err(|err| format!("write Cargo.toml: {err}"))?;
+
+    let report = doctor_json_for(&root)?;
+    ignore_remove_dir_all(&root);
+
+    assert!(
+        report["config_defaults"].is_null(),
+        "an unreadable config must not claim verified defaults: {report}"
+    );
+    let detected = json_array(&report, "detected_languages")?;
+    let rust = detected
+        .iter()
+        .find(|entry| entry["language"] == "rust")
+        .ok_or_else(|| format!("rust must still be reported as detected: {detected:?}"))?;
+    assert!(
+        rust["enabled"].is_null(),
+        "an unreadable config must leave enablement unknown, not disabled: {rust}"
+    );
     Ok(())
 }
 
@@ -13467,38 +14034,17 @@ fn first_pr_and_gap_ledger_refuse_a_root_that_does_not_exist() -> Result<(), Str
     Ok(())
 }
 
-/// A seam whose only test is an inline `#[cfg(test)]` module gets a focused-test
-/// suggestion but no repair target. The README sends readers to the
-/// `ripr agent repair` command pilot prints, so the terminal must say none is
-/// coming instead of going silent and offering the snapshot choreography as if
-/// it were the repair route.
+/// A seam whose only tests sit in a file with two candidate inline
+/// `#[cfg(test)]` modules gets a focused-test suggestion but no repair target.
+/// The README sends readers to the `ripr agent repair` command pilot prints,
+/// so the terminal must say none is coming instead of going silent and
+/// offering the snapshot choreography as if it were the repair route.
 #[test]
 fn pilot_says_so_when_the_top_seam_has_no_repair_command() -> Result<(), String> {
-    let root = unique_temp_workspace("pilot-no-repair-command");
-    let src = root.join("src");
-    std::fs::create_dir_all(&src).map_err(|e| format!("create src: {e}"))?;
-    std::fs::write(
-        root.join("Cargo.toml"),
-        "[package]\nname = \"demo\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
-    )
-    .map_err(|e| format!("write manifest: {e}"))?;
-    std::fs::write(
-        src.join("lib.rs"),
-        "pub fn price(amount: u32, threshold: u32) -> u32 {\n    if amount >= threshold { amount - 10 } else { amount }\n}\n\n#[cfg(test)]\nmod t {\n    use super::*;\n    #[test]\n    fn below() {\n        assert_eq!(price(1, 100), 1);\n    }\n}\n",
-    )
-    .map_err(|e| format!("write lib: {e}"))?;
-    let out_dir = unique_temp_workspace("pilot-no-repair-command-out");
-    let output = run_ripr(&[
-        "pilot",
-        "--root",
-        &root.display().to_string(),
-        "--out",
-        &out_dir.display().to_string(),
-    ]);
-    assert_success(&output);
-    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-    let _ = std::fs::remove_dir_all(&root);
-    let _ = std::fs::remove_dir_all(&out_dir);
+    let stdout = pilot_inline_only_stdout(
+        "pilot-no-repair-command",
+        "\n#[cfg(test)]\nmod more {\n    #[test]\n    fn smoke() {\n        assert_eq!(1 + 1, 2);\n    }\n}\n",
+    )?;
     assert!(stdout.contains("focused test: add "), "{stdout}");
     assert!(
         stdout.contains("repair this seam: not available for this seam"),
@@ -13513,6 +14059,58 @@ fn pilot_says_so_when_the_top_seam_has_no_repair_command() -> Result<(), String>
         "no repair command may be printed for an ineligible seam:\n{stdout}"
     );
     Ok(())
+}
+
+/// The `cargo new --lib` layout, one governed inline `#[cfg(test)]` module,
+/// gets the repair command, and the next step confines the edit to new test
+/// functions inside that module (#5210).
+#[test]
+fn pilot_prints_a_module_confined_repair_for_one_inline_test_module() -> Result<(), String> {
+    let stdout = pilot_inline_only_stdout("pilot-inline-repair-command", "")?;
+    assert!(stdout.contains("focused test: add "), "{stdout}");
+    assert!(
+        stdout.contains("repair this seam: ripr agent repair --root"),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains(
+            "2. add the focused test named above (new test functions inside `mod t` of src/lib.rs only; production code and existing tests stay unchanged)"
+        ),
+        "{stdout}"
+    );
+    assert!(!stdout.contains("not available for this seam"), "{stdout}");
+    Ok(())
+}
+
+fn pilot_inline_only_stdout(label: &str, extra_source: &str) -> Result<String, String> {
+    let root = unique_temp_workspace(label);
+    let src = root.join("src");
+    std::fs::create_dir_all(&src).map_err(|e| format!("create src: {e}"))?;
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"demo\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    )
+    .map_err(|e| format!("write manifest: {e}"))?;
+    std::fs::write(
+        src.join("lib.rs"),
+        format!(
+            "pub fn price(amount: u32, threshold: u32) -> u32 {{\n    if amount >= threshold {{ amount - 10 }} else {{ amount }}\n}}\n\n#[cfg(test)]\nmod t {{\n    use super::*;\n    #[test]\n    fn below() {{\n        assert_eq!(price(1, 100), 1);\n    }}\n}}\n{extra_source}"
+        ),
+    )
+    .map_err(|e| format!("write lib: {e}"))?;
+    let out_dir = unique_temp_workspace(&format!("{label}-out"));
+    let output = run_ripr(&[
+        "pilot",
+        "--root",
+        &root.display().to_string(),
+        "--out",
+        &out_dir.display().to_string(),
+    ]);
+    assert_success(&output);
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    let _ = std::fs::remove_dir_all(&root);
+    let _ = std::fs::remove_dir_all(&out_dir);
+    Ok(stdout)
 }
 
 #[test]
@@ -18809,10 +19407,12 @@ fn check_with_base_scope_does_not_show_no_scope_disclosure_smoke() {
 
 // RIPR-SPEC-0112 regression guards: --base must disclose uncommitted working-tree changes.
 
-/// RIPR-SPEC-0112: `ripr check --base HEAD --json` with an uncommitted change to a
-/// tracked .rs file must emit `unanalyzed_working_tree: true` in JSON and the human
-/// Note in stdout. The committed diff vs HEAD is empty (no new commits), so findings
-/// are zero — this is the false-clean case the disclosure must prevent.
+/// RIPR-SPEC-0112: `ripr check --base HEAD --committed --json` with an uncommitted
+/// change to a tracked .rs file must emit `unanalyzed_working_tree: true` in JSON and
+/// the human Note in stdout. The committed diff vs HEAD is empty (no new commits), so
+/// findings are zero — this is the false-clean case the disclosure must prevent. Since
+/// the RIPR-SPEC-0116 amendment only `--committed` forces this committed-history read
+/// on a dirty tree.
 #[test]
 fn check_base_head_with_uncommitted_edit_shows_unanalyzed_working_tree_disclosure() {
     let root = unique_temp_workspace("unanalyzed-wt-fires");
@@ -18839,23 +19439,31 @@ fn check_base_head_with_uncommitted_edit_shows_unanalyzed_working_tree_disclosur
         "pub fn add(a: i32, b: i32) -> i32 { a + b + 1 }\n",
     )
     .unwrap();
-    let bin = env!("CARGO_BIN_EXE_ripr");
     let root_str = root.to_string_lossy().into_owned();
     // JSON mode: assert unanalyzed_working_tree == true
-    let output = std::process::Command::new(bin)
-        .args(["check", "--root", &root_str, "--base", "HEAD", "--json"])
-        .output()
-        .unwrap();
+    let output = run_ripr(&[
+        "check",
+        "--root",
+        &root_str,
+        "--base",
+        "HEAD",
+        "--committed",
+        "--json",
+    ]);
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
         stdout.contains("\"unanalyzed_working_tree\": true"),
         "check --base HEAD with uncommitted edit must emit unanalyzed_working_tree: true in JSON; got:\n{stdout}"
     );
     // Human mode: assert the Note is present
-    let output_human = std::process::Command::new(bin)
-        .args(["check", "--root", &root_str, "--base", "HEAD"])
-        .output()
-        .unwrap();
+    let output_human = run_ripr(&[
+        "check",
+        "--root",
+        &root_str,
+        "--base",
+        "HEAD",
+        "--committed",
+    ]);
     let human = String::from_utf8_lossy(&output_human.stdout);
     assert!(
         human.contains("uncommitted source and test changes were not analyzed"),
@@ -18864,8 +19472,8 @@ fn check_base_head_with_uncommitted_edit_shows_unanalyzed_working_tree_disclosur
     // The note must name the remedy that works. Staging does not change a
     // committed-history diff, so "commit or stage" was a false remedy.
     assert!(
-        human.contains("add `--worktree`"),
-        "the disclosure must name --worktree as the remedy; got:\n{human}"
+        human.contains("drop `--committed` (or pass `--worktree`)"),
+        "the disclosure must name the remedies that include the edit; got:\n{human}"
     );
     assert!(
         !human.contains("commit or stage"),
@@ -18925,15 +19533,16 @@ fn check_base_reads_tests_as_committed_and_notes_only_source_changes()
         Ok(serde_json::from_slice(&output.stdout)?)
     };
     let noted = |json: &serde_json::Value| json["unanalyzed_working_tree"] == true;
-    let committed = check(&[])?;
+    let committed = check(&["--committed"])?;
     assert!(!noted(&committed));
     let discriminating_test =
         "#[test]\nfn t() { assert!(committed_tests::ok(10)); assert!(!committed_tests::ok(9)); }\n";
 
-    // Uncommitted test edit: plain check keeps the committed result and notes
-    // the change; --worktree reads the edit and moves.
+    // Uncommitted test edit: a forced committed-history check keeps the
+    // committed result and notes the change; --worktree reads the edit and
+    // moves, and so does the default on this dirty tree (RIPR-SPEC-0116).
     std::fs::write(root.join("tests/ok.rs"), discriminating_test)?;
-    let plain = check(&[])?;
+    let plain = check(&["--committed"])?;
     assert_eq!(plain["summary"], committed["summary"]);
     assert_eq!(plain["findings"], committed["findings"]);
     assert!(noted(&plain));
@@ -18942,32 +19551,44 @@ fn check_base_reads_tests_as_committed_and_notes_only_source_changes()
         worktree["summary"], committed["summary"],
         "fixture must discriminate: the edited test changes a --worktree result"
     );
+    let default = check(&[])?;
+    assert_eq!(default["summary"], worktree["summary"]);
+    assert_eq!(default["head"]["source"], "working_tree");
+    assert!(!noted(&default));
     run_git(&root, &["checkout", "-q", "--", "tests/ok.rs"])?;
 
-    // A new untracked test is not committed content either.
+    // A new untracked test is not committed content either. Untracked files
+    // alone do not make the tree dirty for the default (the working-tree diff
+    // cannot contain them), so the default stays on committed history and
+    // discloses the file like `--committed` (RIPR-SPEC-0116).
     std::fs::write(root.join("tests/new.rs"), discriminating_test)?;
-    let untracked = check(&[])?;
+    let untracked = check(&["--committed"])?;
     assert_eq!(untracked["summary"], committed["summary"]);
     assert!(noted(&untracked));
+    let untracked_default = check(&[])?;
+    assert_eq!(untracked_default["summary"], committed["summary"]);
+    assert_eq!(untracked_default["head"]["source"], "commit");
+    assert!(noted(&untracked_default));
     std::fs::remove_file(root.join("tests/new.rs"))?;
 
     // A README edit changes nothing an adapter reads: no note.
     std::fs::write(root.join("README.md"), "edited\n")?;
-    let readme = check(&[])?;
+    let readme = check(&["--committed"])?;
     assert_eq!(readme["summary"], committed["summary"]);
     assert!(!noted(&readme));
     ignore_remove_dir_all(&root);
     Ok(())
 }
 
-/// RIPR-SPEC-0112 (default base): bare `ripr check` resolves the default base
-/// and diffs committed history exactly like an explicit `--base`, so an
-/// uncommitted tracked edit is excluded there too and must be disclosed. This
-/// is the first-run path: edit a file, run `ripr check`, see nothing.
+/// RIPR-SPEC-0116 amendment (default base, dirty tree): bare `ripr check`
+/// reads the working tree when it holds uncommitted work, so an edit made
+/// and checked before committing is analyzed — exactly as `--worktree` would
+/// analyze it — and the header names the working tree it read. `--committed`
+/// keeps the old committed-history read and its RIPR-SPEC-0112 note. This is
+/// the first-run path: edit a file, run `ripr check`, see the finding.
 #[test]
-fn check_default_base_with_uncommitted_edit_shows_unanalyzed_working_tree_disclosure()
--> Result<(), String> {
-    let root = unique_temp_workspace("unanalyzed-wt-default-base");
+fn check_default_base_with_uncommitted_edit_analyzes_the_working_tree() -> Result<(), String> {
+    let root = unique_temp_workspace("default-dirty-reads-worktree");
     std::fs::create_dir_all(root.join("src")).map_err(|err| format!("create src: {err}"))?;
     run_git(&root, &["init", "-b", "main"])?;
     run_git(&root, &["config", "user.email", "test@test.com"])?;
@@ -18979,7 +19600,7 @@ fn check_default_base_with_uncommitted_edit_shows_unanalyzed_working_tree_disclo
     .map_err(|err| format!("write base lib.rs: {err}"))?;
     std::fs::write(
         root.join("Cargo.toml"),
-        "[package]\nname = \"spec-0112-default-base-fixture\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+        "[package]\nname = \"spec-0116-default-dirty-fixture\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
     )
     .map_err(|err| format!("write Cargo.toml: {err}"))?;
     run_git(&root, &["add", "."])?;
@@ -18990,53 +19611,372 @@ fn check_default_base_with_uncommitted_edit_shows_unanalyzed_working_tree_disclo
     )
     .map_err(|err| format!("write dirty lib.rs: {err}"))?;
     let root_str = root.to_string_lossy().into_owned();
+    let head = common::fixture_git::fixture_git_output(&root, &["rev-parse", "HEAD"])?;
+    let head = head.trim();
+    let parse = |output: &std::process::Output| -> Result<serde_json::Value, String> {
+        assert_success(output);
+        serde_json::from_slice(&output.stdout).map_err(|err| {
+            format!(
+                "parse check JSON: {err}\n{}",
+                String::from_utf8_lossy(&output.stdout)
+            )
+        })
+    };
+    let finding_ids = |report: &serde_json::Value| -> Vec<String> {
+        report["findings"]
+            .as_array()
+            .map(|findings| {
+                findings
+                    .iter()
+                    .filter_map(|finding| finding["id"].as_str().map(str::to_string))
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
 
     // Fixture precondition: the default base resolves to `main` == HEAD, so
     // the committed diff is empty while the edit exists only in the worktree.
-    let worktree = run_ripr(&["check", "--root", &root_str, "--worktree", "--json"]);
-    assert_success(&worktree);
-    let worktree_stdout = String::from_utf8_lossy(&worktree.stdout);
-    let worktree_report: serde_json::Value = serde_json::from_str(&worktree_stdout)
-        .map_err(|err| format!("parse --worktree JSON: {err}\n{worktree_stdout}"))?;
-    let worktree_findings = worktree_report
-        .pointer("/findings")
-        .and_then(serde_json::Value::as_array)
-        .map_or(0, Vec::len);
-    if worktree_findings == 0 {
+    let worktree = parse(&run_ripr(&[
+        "check",
+        "--root",
+        &root_str,
+        "--worktree",
+        "--json",
+    ]))?;
+    if finding_ids(&worktree).is_empty() {
         return Err(format!(
-            "fixture must carry an analyzable uncommitted edit; --worktree found none:\n{worktree_stdout}"
+            "fixture must carry an analyzable uncommitted edit; --worktree found none:\n{worktree}"
         ));
     }
 
-    let json = run_ripr(&["check", "--root", &root_str, "--json"]);
-    assert_success(&json);
-    let json_stdout = String::from_utf8_lossy(&json.stdout);
-    if !json_stdout.contains("\"unanalyzed_working_tree\": true") {
+    let default = parse(&run_ripr(&["check", "--root", &root_str, "--json"]))?;
+    if finding_ids(&default) != finding_ids(&worktree) {
         return Err(format!(
-            "bare check with an uncommitted edit must emit unanalyzed_working_tree: true; got:\n{json_stdout}"
+            "bare check on a dirty tree must analyze the working tree like --worktree; got:\n{default}"
+        ));
+    }
+    if default.get("unanalyzed_working_tree").is_some() {
+        return Err(format!(
+            "a working-tree default run must not claim the edit was excluded:\n{default}"
+        ));
+    }
+    if default["base"] != "main"
+        || default["base_commit"] != head
+        || default["head"]["source"] != "working_tree"
+        || default["head"]["commit"] != head
+    {
+        return Err(format!(
+            "JSON must name the analyzed base and the working-tree head on {head}:\n{default}"
         ));
     }
 
     let human = run_ripr(&["check", "--root", &root_str]);
     assert_success(&human);
     let human_stdout = String::from_utf8_lossy(&human.stdout);
-    if !human_stdout.contains("uncommitted source and test changes were not analyzed")
-        || !human_stdout.contains("add `--worktree`")
-    {
+    let short = &head[..7];
+    let header =
+        format!("base: main {short}\nhead: working tree (uncommitted changes on HEAD {short})\n");
+    if !human_stdout.contains(&header) {
         return Err(format!(
-            "bare check must disclose the excluded edit and name --worktree; got:\n{human_stdout}"
+            "human header must name base and working-tree head ({header:?}); got:\n{human_stdout}"
         ));
     }
-    // The generic no-scope note recommends `--base origin/main`, which would
-    // exclude the same edit; the specific worktree note replaces it.
-    if human_stdout.contains("no analysis scope was provided") {
+    if human_stdout.contains("were not analyzed") {
         return Err(format!(
-            "bare check must not pair the worktree note with the no-scope remedy; got:\n{human_stdout}"
+            "a working-tree default run must not print the unanalyzed note; got:\n{human_stdout}"
+        ));
+    }
+    // Drill-in commands reproduce the same subject.
+    if !human_stdout.contains("ripr explain --root") || !human_stdout.contains(" --worktree ") {
+        return Err(format!(
+            "drill-in commands must carry --worktree for a working-tree default run; got:\n{human_stdout}"
+        ));
+    }
+
+    // Forced committed history: the old read, with its disclosure.
+    let committed = parse(&run_ripr(&[
+        "check",
+        "--root",
+        &root_str,
+        "--committed",
+        "--json",
+    ]))?;
+    if !finding_ids(&committed).is_empty()
+        || committed["unanalyzed_working_tree"] != true
+        || committed["head"]["source"] != "commit"
+    {
+        return Err(format!(
+            "--committed must read committed history and disclose the excluded edit:\n{committed}"
+        ));
+    }
+    let committed_human = run_ripr(&["check", "--root", &root_str, "--committed"]);
+    assert_success(&committed_human);
+    let committed_stdout = String::from_utf8_lossy(&committed_human.stdout);
+    if !committed_stdout.contains(&format!("head: HEAD {short}\n"))
+        || !committed_stdout.contains("uncommitted source and test changes were not analyzed")
+        || committed_stdout.contains("no analysis scope was provided")
+    {
+        return Err(format!(
+            "--committed human output must name HEAD and disclose the excluded edit; got:\n{committed_stdout}"
         ));
     }
 
     ignore_remove_dir_all(&root);
     Ok(())
+}
+
+/// RIPR-SPEC-0116 (B1 of the #5997 review): untracked files never flip the
+/// default to a working-tree read, because the working-tree diff
+/// (`git diff <merge-base>`) covers tracked files only. A working-tree read
+/// still names the untracked routed files it cannot contain, gives the
+/// intent-to-add repair instead of `--worktree` advice, and an empty
+/// working-tree read describes the merge-base-to-working-tree diff rather
+/// than `<base>...HEAD`.
+#[test]
+fn check_untracked_files_keep_committed_default_and_working_tree_reads_name_them()
+-> Result<(), String> {
+    let root = unique_temp_workspace("default-untracked-files");
+    std::fs::create_dir_all(root.join("src")).map_err(|err| format!("create src: {err}"))?;
+    run_git(&root, &["init", "-b", "main"])?;
+    run_git(&root, &["config", "user.email", "test@test.com"])?;
+    run_git(&root, &["config", "user.name", "Test"])?;
+    std::fs::write(
+        root.join("src/lib.rs"),
+        "pub fn over_threshold(amount: i32, threshold: i32) -> bool {\n    amount >= threshold\n}\n",
+    )
+    .map_err(|err| format!("write base lib.rs: {err}"))?;
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"spec-0116-untracked-fixture\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )
+    .map_err(|err| format!("write Cargo.toml: {err}"))?;
+    run_git(&root, &["add", "."])?;
+    run_git(&root, &["commit", "-m", "initial"])?;
+    std::fs::write(
+        root.join("src/new.rs"),
+        "pub fn fresh(value: i32) -> bool {\n    value > 3\n}\n",
+    )
+    .map_err(|err| format!("write untracked new.rs: {err}"))?;
+    let status = common::fixture_git::fixture_git_output(&root, &["status", "--porcelain"])?;
+    if status.trim() != "?? src/new.rs" {
+        return Err(format!(
+            "fixture precondition: only src/new.rs is untracked; got {status:?}"
+        ));
+    }
+    let root_str = root.to_string_lossy().into_owned();
+    let parse = |output: &std::process::Output| -> Result<serde_json::Value, String> {
+        assert_success(output);
+        serde_json::from_slice(&output.stdout).map_err(|err| {
+            format!(
+                "parse check JSON: {err}\n{}",
+                String::from_utf8_lossy(&output.stdout)
+            )
+        })
+    };
+    let human = |args: &[&str]| -> String {
+        let output = run_ripr(args);
+        assert_success(&output);
+        String::from_utf8_lossy(&output.stdout).into_owned()
+    };
+    let worktree_advice = [
+        "add `--worktree`",
+        "pass `--worktree`",
+        "rerun `ripr check --worktree`",
+    ];
+
+    // (a) Untracked-only tree: the default stays on committed history and
+    // carries the #5258 note naming the file.
+    let untracked_only = parse(&run_ripr(&["check", "--root", &root_str, "--json"]))?;
+    if untracked_only["head"]["source"] != "commit"
+        || untracked_only["unanalyzed_working_tree"] != true
+    {
+        return Err(format!(
+            "an untracked-only tree must keep the committed-history default and disclose it:\n{untracked_only}"
+        ));
+    }
+    // #5997 review: the JSON report must name the excluded untracked files,
+    // not just flag that the working tree went unanalyzed.
+    let untracked_only_paths = untracked_only["untracked_working_tree_source_paths"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    if !untracked_only_paths.iter().any(|path| path == "src/new.rs") {
+        return Err(format!(
+            "an untracked-only tree must name the excluded file in JSON:\n{untracked_only}"
+        ));
+    }
+    let untracked_only_human = human(&["check", "--root", &root_str]);
+    if !untracked_only_human
+        .contains("Untracked files (src/new.rs) are invisible to both; stage them first")
+    {
+        return Err(format!(
+            "the untracked-only default must print the #5258 note; got:\n{untracked_only_human}"
+        ));
+    }
+
+    // (c) An empty working-tree read describes the merge-base-to-working-tree
+    // diff, not `main...HEAD`, never offers `--worktree`, and names the
+    // untracked file. A staged edit reverted in the working tree makes the
+    // tree dirty (`MM`) while `git diff <merge-base>` stays empty, so the
+    // default selects the working tree and finds nothing to analyze.
+    let base_lib = "pub fn over_threshold(amount: i32, threshold: i32) -> bool {\n    amount >= threshold\n}\n";
+    std::fs::write(
+        root.join("src/lib.rs"),
+        "pub fn over_threshold(amount: i32, threshold: i32) -> bool {\n    amount > threshold + 1\n}\n",
+    )
+    .map_err(|err| format!("write staged lib.rs: {err}"))?;
+    run_git(&root, &["add", "src/lib.rs"])?;
+    std::fs::write(root.join("src/lib.rs"), base_lib)
+        .map_err(|err| format!("revert lib.rs: {err}"))?;
+    let empty_json = parse(&run_ripr(&["check", "--root", &root_str, "--json"]))?;
+    let why = empty_json["scope_disclosures"][0]["why"]
+        .as_str()
+        .unwrap_or_default();
+    if empty_json["head"]["source"] != "working_tree"
+        || !why.starts_with(
+            "empty working-tree range: the merge base of main and HEAD to the working tree",
+        )
+    {
+        return Err(format!(
+            "an empty default working-tree read must disclose the working-tree range:\n{empty_json}"
+        ));
+    }
+    // #5997 review: an empty working-tree JSON report must name the untracked
+    // files the tracked-only diff cannot contain, or it reads as complete.
+    let empty_paths = empty_json["untracked_working_tree_source_paths"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    if !empty_paths.iter().any(|path| path == "src/new.rs") {
+        return Err(format!(
+            "an empty working-tree read must name the untracked file in JSON:\n{empty_json}"
+        ));
+    }
+    let empty_worktree = human(&["check", "--root", &root_str]);
+    for expected in [
+        "Note: the working tree has no changed tracked files against `main` (diff from the merge base of `main` and HEAD to the working tree), so there was nothing to analyze.",
+        "Safe next action: the working tree has no changed tracked files against `main`",
+        "Untracked files (src/new.rs) are not in the working-tree diff",
+    ] {
+        if !empty_worktree.contains(expected) {
+            return Err(format!(
+                "the empty working-tree read must say {expected:?}; got:\n{empty_worktree}"
+            ));
+        }
+    }
+    if empty_worktree.contains("main...HEAD")
+        || worktree_advice
+            .iter()
+            .any(|advice| empty_worktree.contains(advice))
+    {
+        return Err(format!(
+            "the empty working-tree read must not describe `main...HEAD` or advise `--worktree`; got:\n{empty_worktree}"
+        ));
+    }
+
+    // (b) A tracked edit beside the untracked file flips the default to the
+    // working tree; the output names new.rs and gives no `--worktree` advice.
+    std::fs::write(
+        root.join("src/lib.rs"),
+        "pub fn over_threshold(amount: i32, threshold: i32) -> bool {\n    amount > threshold\n}\n",
+    )
+    .map_err(|err| format!("write dirty lib.rs: {err}"))?;
+    let mixed = parse(&run_ripr(&["check", "--root", &root_str, "--json"]))?;
+    if mixed["head"]["source"] != "working_tree" || mixed.get("unanalyzed_working_tree").is_some() {
+        return Err(format!(
+            "a tracked edit must flip the default to a working-tree read:\n{mixed}"
+        ));
+    }
+    // #5997 review: the working-tree JSON report must name the untracked
+    // files beside the tracked edit; `unanalyzed_working_tree` stays absent.
+    let mixed_paths = mixed["untracked_working_tree_source_paths"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    if !mixed_paths.iter().any(|path| path == "src/new.rs") {
+        return Err(format!(
+            "a working-tree default run must name the untracked file in JSON:\n{mixed}"
+        ));
+    }
+    let mixed_human = human(&["check", "--root", &root_str]);
+    if !mixed_human.contains(
+        "Untracked files (src/new.rs) are not in the working-tree diff, which covers tracked files only",
+    ) || !mixed_human.contains("`git add -N <path>`")
+    {
+        return Err(format!(
+            "a working-tree default run must name the untracked file and the intent-to-add repair; got:\n{mixed_human}"
+        ));
+    }
+    if worktree_advice
+        .iter()
+        .any(|advice| mixed_human.contains(advice))
+        || mixed_human.contains("were not analyzed; this run read each file as committed")
+    {
+        return Err(format!(
+            "a working-tree default run must not advise `--worktree` or print the committed note; got:\n{mixed_human}"
+        ));
+    }
+    let mixed_github = run_ripr(&["check", "--root", &root_str, "--format", "github"]);
+    assert_success(&mixed_github);
+    let mixed_github = String::from_utf8_lossy(&mixed_github.stdout);
+    if !mixed_github.contains("::warning title=ripr untracked files not analyzed::")
+        || !mixed_github.contains("src/new.rs")
+    {
+        return Err(format!(
+            "the GitHub stream must carry the untracked-files warning; got:\n{mixed_github}"
+        ));
+    }
+
+    ignore_remove_dir_all(&root);
+    Ok(())
+}
+
+/// `--committed` names a diff source, so it refuses the inputs that have none
+/// or that already chose one.
+#[test]
+fn check_committed_rejects_conflicting_diff_sources() {
+    for (extra, expected) in [
+        (
+            vec!["--worktree"],
+            "check --committed and --worktree select different diff sources; pass one",
+        ),
+        (
+            vec!["--diff", "change.patch"],
+            "check --committed cannot be combined with --diff",
+        ),
+        (
+            vec!["--format", "repo-exposure-md"],
+            "check --committed selects a diff source; --format repo-exposure-md is repo-scoped and reads no diff",
+        ),
+    ] {
+        let mut args = vec!["check", "--committed"];
+        args.extend(extra.iter().copied());
+        let output = run_ripr(&args);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            !output.status.success() && stderr.contains(expected),
+            "{args:?} must fail with {expected:?}; got status {:?} stderr:\n{stderr}",
+            output.status
+        );
+    }
+    // #5997 review: a `--json` caller gets the structured refusal envelope
+    // on stdout (#6834), with the prose kept on stderr.
+    let json_output = run_ripr(&["check", "--committed", "--worktree", "--json"]);
+    let json_stderr = String::from_utf8_lossy(&json_output.stderr);
+    // A non-envelope stdout parses to Null, which fails the `findings`
+    // assertion below with the raw bytes attached (no `expect`: the
+    // no-panic-family policy).
+    let refusal: serde_json::Value =
+        serde_json::from_slice(&json_output.stdout).unwrap_or(serde_json::Value::Null);
+    assert!(
+        !json_output.status.success()
+            && refusal.get("findings").is_some()
+            && json_stderr.contains("select different diff sources"),
+        "--committed --worktree --json must refuse with an envelope plus prose; got status {:?} stdout:\n{}\nstderr:\n{}",
+        json_output.status,
+        String::from_utf8_lossy(&json_output.stdout),
+        json_stderr
+    );
 }
 
 /// RIPR-SPEC-0112 (default base, clean): a bare `ripr check` on a clean
@@ -19094,6 +20034,16 @@ fn check_default_base_with_clean_worktree_keeps_no_scope_note_only() -> Result<(
             "empty-range Start-here must name `--worktree` for tracked edits; got:\n{stdout}"
         ));
     }
+    // RIPR-SPEC-0116 amendment: a clean tree (an untracked non-source file
+    // does not count) keeps the committed-history read, and the header names
+    // the base and the HEAD commit it ended at.
+    let head = common::fixture_git::fixture_git_output(&root, &["rev-parse", "HEAD"])?;
+    let short = &head.trim()[..7];
+    if !stdout.contains(&format!("base: main {short}\nhead: HEAD {short}\n")) {
+        return Err(format!(
+            "clean-tree header must name base main and HEAD {short}; got:\n{stdout}"
+        ));
+    }
     if !stdout.contains("compared base was `main`") || stdout.contains("--base origin/main") {
         return Err(format!(
             "no-origin repo must name its resolved local main rather than suggest a nonexistent remote ref; got:\n{stdout}"
@@ -19104,6 +20054,8 @@ fn check_default_base_with_clean_worktree_keeps_no_scope_note_only() -> Result<(
     let value: serde_json::Value = serde_json::from_slice(&json.stdout)
         .map_err(|err| format!("parse no-origin check JSON: {err}"))?;
     if value["base"] != "main"
+        || value["head"]["source"] != "commit"
+        || value["head"]["commit"] != head.trim()
         || !value["scope_disclosures"][0]["why"]
             .as_str()
             .is_some_and(|why| why.contains("main...HEAD") && !why.contains("origin/main"))
@@ -19636,8 +20588,16 @@ fn check_with_a_diff_file_does_not_show_unanalyzed_working_tree_disclosure() -> 
     let patch_str = patch.to_string_lossy().into_owned();
 
     // Fixture construction: this checkout does trigger the disclosure on a
-    // committed-history run.
-    let base_run = run_ripr(&["check", "--root", &root_str, "--base", "HEAD", "--json"]);
+    // forced committed-history run.
+    let base_run = run_ripr(&[
+        "check",
+        "--root",
+        &root_str,
+        "--base",
+        "HEAD",
+        "--committed",
+        "--json",
+    ]);
     assert_success(&base_run);
     let base_json = String::from_utf8_lossy(&base_run.stdout).into_owned();
     if !base_json.contains("\"unanalyzed_working_tree\": true") {
@@ -19647,7 +20607,14 @@ fn check_with_a_diff_file_does_not_show_unanalyzed_working_tree_disclosure() -> 
     }
     // Same for the human note, so the negative below cannot pass because the
     // note's wording changed.
-    let base_human_run = run_ripr(&["check", "--root", &root_str, "--base", "HEAD"]);
+    let base_human_run = run_ripr(&[
+        "check",
+        "--root",
+        &root_str,
+        "--base",
+        "HEAD",
+        "--committed",
+    ]);
     assert_success(&base_human_run);
     let base_human = String::from_utf8_lossy(&base_human_run.stdout).into_owned();
     if !base_human.contains("uncommitted source and test changes were not analyzed") {
