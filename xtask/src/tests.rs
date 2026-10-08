@@ -109,7 +109,7 @@ use super::{
     dogfood_finding_alignment_scenarios, dogfood_first_action_run, dogfood_first_action_scenarios,
     dogfood_first_pr_metrics, dogfood_first_pr_run, dogfood_first_pr_scenarios,
     dogfood_gate_adoption_run, dogfood_gate_adoption_scenarios, dogfood_gate_result,
-    dogfood_generated_ci_cockpit_run_from_workflow, dogfood_language_preview_run,
+    dogfood_generated_ci_cockpit_run_from_surfaces, dogfood_language_preview_run,
     dogfood_language_preview_scenarios, dogfood_pr_inline_comment_run,
     dogfood_pr_inline_comment_scenarios, dogfood_pr_review_front_panel_run,
     dogfood_pr_review_front_panel_scenarios, dogfood_push_python_quality_ratio_json,
@@ -14460,11 +14460,12 @@ fn dogfood_reports_are_advisory() -> Result<(), String> {
     assert_eq!(dogfood_report_status(&json_inputs), "pass");
     // A failing family the #2411 exit list used to skip must still fail the
     // command, and through the same owner as the report status (#4309).
-    let failing_generated_ci_runs = [dogfood_generated_ci_cockpit_run_from_workflow(
+    let failing_generated_ci_runs = [dogfood_generated_ci_cockpit_run_from_surfaces(
         "generated-pr-ci-review-workflow",
         "cargo run --quiet -p ripr -- init --ci github --dry-run",
         10,
         "name: RIPR",
+        "",
     )];
     let failing_preview_projection_runs = DogfoodPreviewProjectionRuns {
         generated_ci_cockpit: &failing_generated_ci_runs,
@@ -20238,45 +20239,45 @@ fn dogfood_user_surface_projection_alignment_matches_surface_projection_source()
 
 #[test]
 fn dogfood_generated_ci_cockpit_receipts_are_checked() {
-    let workflow = format!(
-            "\
+    let command = "cargo run --quiet -p ripr -- init --ci github --dry-run";
+    let workflow = "\
 name: RIPR
 jobs:
   ripr:
-    continue-on-error: ${{{{ vars.RIPR_GATE_MODE == '' || vars.RIPR_GATE_MODE == 'visible-only' }}}}
+    continue-on-error: ${{ vars.RIPR_GATE_MODE == '' || vars.RIPR_GATE_MODE == 'visible-only' }}
     steps:
       - uses: actions/upload-artifact@v7
-      - run: |
-          echo '### Start here'
-          echo '- Open `target/ripr/reports/start-here.md` first when it exists.'
-          echo 'name: Render RIPR first-pr start-here'
-          echo 'cat target/ripr/reports/start-here.md'
-          echo 'RIPR is advisory static evidence.'
-          echo 'Gate authority: `ripr gate evaluate` remains the pass/fail source.'
-          echo '{GENERATED_CI_FIRST_ACTION_REPAIR}'
-          echo '{GENERATED_CI_FIRST_PR_REPAIR}'
-          echo '{GENERATED_CI_FRONT_PANEL_REPAIR}'
-          echo '{GENERATED_CI_PACKET_INDEX_REPAIR}'
-          echo '### Language preview grouping'
-          echo 'if [ -n \"$preview_languages\" ]; then'
-          echo 'Grouped preview evidence languages'
-          echo 'grouped_preview_languages=\"$grouped_preview_languages javascript\"'
-          echo 'preview-language groups are advisory presentation only; `ripr gate evaluate` remains pass/fail authority when explicitly configured.'
-          echo 'missing_preview_status'
-          echo 'static_limit_kinds'
-          echo 'actionability_states'
-          echo 'actionability_categories'
-          echo 'repair_packet_ready_entries'
-          echo 'gate_impact=\\`none\\`'
-          echo 'target/ripr/reports'
-"
-        );
+        with:
+          path: |
+            target/ripr/reports
+";
+    let summary = format!(
+        "\
+## RIPR advisory summary
 
-    let run = dogfood_generated_ci_cockpit_run_from_workflow(
+RIPR is advisory static evidence. It does not edit source, generate tests, or run mutation testing.
+
+### Start here
+- Open `target/ripr/reports/start-here.md` first when it exists.
+- Gate authority: `ripr gate evaluate` remains the pass/fail source only when `RIPR_GATE_MODE` is configured.
+- {GENERATED_CI_FIRST_ACTION_REPAIR}
+- {GENERATED_CI_FIRST_PR_REPAIR}
+- {GENERATED_CI_FRONT_PANEL_REPAIR}
+- {GENERATED_CI_PACKET_INDEX_REPAIR}
+
+### Language preview grouping
+- Grouped preview evidence languages: `javascript typescript`
+- Boundary: preview-language groups are advisory presentation only; `ripr gate evaluate` remains pass/fail authority when explicitly configured.
+- `typescript`: artifact_entries=`1`, preview_entries=`1`, missing_preview_status=`0`, static_limit_kinds=`none`, actionability_states=`actionable=1`, actionability_categories=`none`, repair_packet_ready=`1`, gate_impact=`none`
+"
+    );
+
+    let run = dogfood_generated_ci_cockpit_run_from_surfaces(
         "generated-pr-ci-review-workflow",
-        "cargo run --quiet -p ripr -- init --ci github --dry-run",
+        command,
         10,
-        &workflow,
+        workflow,
+        &summary,
     );
     assert!(run.errors.is_empty(), "{:?}", run.errors);
     assert!(run.start_here);
@@ -20286,12 +20287,8 @@ jobs:
     assert!(run.artifact_upload);
     assert_eq!(run.language_grouping_status, "checked");
 
-    let missing = dogfood_generated_ci_cockpit_run_from_workflow(
-        "missing",
-        "cargo run --quiet -p ripr -- init --ci github --dry-run",
-        10,
-        "name: RIPR",
-    );
+    let missing =
+        dogfood_generated_ci_cockpit_run_from_surfaces("missing", command, 10, "name: RIPR", "");
     assert!(
         missing
             .errors
@@ -20305,19 +20302,102 @@ jobs:
             .any(|error| error.contains("regeneration commands"))
     );
 
+    // Removing one ci-summary string must fail the scenario again (#6958).
+    let mutated = dogfood_generated_ci_cockpit_run_from_surfaces(
+        "missing-start-here-heading",
+        command,
+        10,
+        workflow,
+        &summary.replace("### Start here", "### Start elsewhere"),
+    );
+    assert!(
+        mutated
+            .errors
+            .iter()
+            .any(|error| error.contains("Start here")),
+        "{:?}",
+        mutated.errors
+    );
+    assert!(!mutated.start_here);
+
+    // Workflow text that still carries the retired shell cannot satisfy the
+    // summary properties.
+    let legacy = dogfood_generated_ci_cockpit_run_from_surfaces(
+        "legacy-workflow-text",
+        command,
+        10,
+        &format!("{workflow}{summary}"),
+        "",
+    );
+    assert!(
+        legacy
+            .errors
+            .iter()
+            .any(|error| error.contains("Start here")),
+        "{:?}",
+        legacy.errors
+    );
+    assert!(
+        legacy
+            .errors
+            .iter()
+            .any(|error| error.contains("regeneration commands")),
+        "{:?}",
+        legacy.errors
+    );
+
     // Generated CI names the PR range since #4260; the unscoped form it
     // replaced must not satisfy the first-pr repair command.
-    let unscoped = workflow.replace(
+    let unscoped = summary.replace(
         GENERATED_CI_FIRST_PR_REPAIR,
         "ripr first-pr --root . --gap-ledger target/ripr/reports/gap-decision-ledger.json --first-action target/ripr/reports/first-useful-action.json --review-comments target/ripr/review/comments.json --agent-packet target/ripr/workflow/agent-packet.json --gate-decision target/ripr/reports/gate-decision.json --receipts-dir target/ripr/receipts --out-dir target/ripr/reports",
     );
-    let stale = dogfood_generated_ci_cockpit_run_from_workflow(
+    let stale = dogfood_generated_ci_cockpit_run_from_surfaces(
         "unscoped-first-pr",
-        "cargo run --quiet -p ripr -- init --ci github --dry-run",
+        command,
         10,
+        workflow,
         &unscoped,
     );
     assert_eq!(stale.repair_commands, 3);
+
+    let rust_only = dogfood_generated_ci_cockpit_run_from_surfaces(
+        "rust-only-no-grouping",
+        command,
+        10,
+        workflow,
+        &summary.replace("### Language preview grouping", "### No language preview"),
+    );
+    assert_eq!(rust_only.language_grouping_status, "missing");
+    assert!(
+        rust_only
+            .errors
+            .iter()
+            .any(|error| error.contains("preview-language grouping")),
+        "{:?}",
+        rust_only.errors
+    );
+
+    let blocking_job = workflow.replace(
+        "continue-on-error: ${{ vars.RIPR_GATE_MODE == '' || vars.RIPR_GATE_MODE == 'visible-only' }}",
+        "continue-on-error: false",
+    );
+    let blocking = dogfood_generated_ci_cockpit_run_from_surfaces(
+        "blocking-job",
+        command,
+        10,
+        &blocking_job,
+        &summary,
+    );
+    assert!(!blocking.default_advisory);
+    assert!(
+        blocking
+            .errors
+            .iter()
+            .any(|error| error.contains("advisory by default")),
+        "{:?}",
+        blocking.errors
+    );
 }
 
 #[test]

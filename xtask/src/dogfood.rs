@@ -3403,9 +3403,17 @@ pub(crate) fn dogfood_report_packet_index_run(
 }
 
 pub(crate) const GENERATED_CI_FIRST_ACTION_REPAIR: &str = "Safe next action: run `ripr first-action --root . --pr-guidance target/ripr/review/comments.json --out target/ripr/reports/first-useful-action.json --out-md target/ripr/reports/first-useful-action.md` after attaching at least one explicit input.";
-pub(crate) const GENERATED_CI_FIRST_PR_REPAIR: &str = "ripr first-pr --root . --base origin/${{ github.base_ref || github.event.repository.default_branch }} --head HEAD --gap-ledger target/ripr/reports/gap-decision-ledger.json --first-action target/ripr/reports/first-useful-action.json --review-comments target/ripr/review/comments.json --agent-packet target/ripr/workflow/agent-packet.json --gate-decision target/ripr/reports/gate-decision.json --receipts-dir target/ripr/receipts --out-dir target/ripr/reports";
+/// Range-scoped first-pr command `ripr reports ci-summary` prints on a first
+/// run (`--base-ref main`). The GitHub expression that used to sit in the
+/// workflow shell is no longer the text (#6958).
+pub(crate) const GENERATED_CI_FIRST_PR_REPAIR: &str = "ripr first-pr --root . --base origin/main --head HEAD --gap-ledger target/ripr/reports/gap-decision-ledger.json --first-action target/ripr/reports/first-useful-action.json --review-comments target/ripr/review/comments.json --agent-packet target/ripr/workflow/agent-packet.json --gate-decision target/ripr/reports/gate-decision.json --receipts-dir target/ripr/receipts --out-dir target/ripr/reports";
 pub(crate) const GENERATED_CI_FRONT_PANEL_REPAIR: &str = "Safe next action: run `ripr pr-review front-panel --root . --pr-guidance target/ripr/review/comments.json --out target/ripr/reports/pr-review-front-panel.json --out-md target/ripr/reports/pr-review-front-panel.md` after attaching at least one explicit input.";
 pub(crate) const GENERATED_CI_PACKET_INDEX_REPAIR: &str = "Regenerate command: `ripr reports index --root . --reports-dir target/ripr/reports --review-dir target/ripr/review --receipts-dir target/ripr/receipts --workflow-dir target/ripr/workflow --agent-dir target/ripr/agent --pilot-dir target/ripr/pilot --ci-dir target/ci --out target/ripr/reports/index.json --out-md target/ripr/reports/index.md`.";
+
+const GENERATED_CI_SUMMARY_FIXTURE_ROOT: &str =
+    "target/ripr/dogfood/generated-ci-cockpit/ci-summary";
+const GENERATED_CI_JOB_CONTINUE_ON_ERROR: &str =
+    "continue-on-error: ${{ vars.RIPR_GATE_MODE == '' || vars.RIPR_GATE_MODE == 'visible-only' }}";
 
 pub(crate) fn dogfood_generated_ci_cockpit_run() -> Result<DogfoodGeneratedCiCockpitRun, String> {
     let args = [
@@ -3425,24 +3433,81 @@ pub(crate) fn dogfood_generated_ci_cockpit_run() -> Result<DogfoodGeneratedCiCoc
     let command = format!("cargo {}", args.join(" "));
     let started = Instant::now();
     let workflow = run_output_owned("cargo", &args)?;
-    Ok(dogfood_generated_ci_cockpit_run_from_workflow(
+    let summary = generated_ci_summary_for_cockpit()?;
+    Ok(dogfood_generated_ci_cockpit_run_from_surfaces(
         "generated-pr-ci-review-workflow",
         &command,
         started.elapsed().as_millis(),
         &workflow,
+        &summary,
     ))
 }
 
-pub(crate) fn dogfood_generated_ci_cockpit_run_from_workflow(
+/// Render `ripr reports ci-summary` against a first-run fixture that opts
+/// into TypeScript preview so language grouping is present, without the
+/// start-here / front-panel / index artifacts that would hide the four
+/// regeneration commands (#6958).
+fn generated_ci_summary_for_cockpit() -> Result<String, String> {
+    let root = Path::new(GENERATED_CI_SUMMARY_FIXTURE_ROOT);
+    if root.exists() {
+        fs::remove_dir_all(root)
+            .map_err(|err| format!("failed to clear {}: {err}", normalize_path(root)))?;
+    }
+    let review_dir = root.join("target/ripr/review");
+    fs::create_dir_all(&review_dir)
+        .map_err(|err| format!("failed to create {}: {err}", normalize_path(&review_dir)))?;
+    fs::write(
+        root.join("ripr.toml"),
+        "[languages]\nenabled = [\"rust\", \"typescript\"]\n",
+    )
+    .map_err(|err| {
+        format!(
+            "failed to write {}: {err}",
+            normalize_path(&root.join("ripr.toml"))
+        )
+    })?;
+    fs::write(
+        review_dir.join("comments.json"),
+        r#"{"comments":[{"language":"typescript","language_status":"preview","classification":"weakly_exposed","preview_actionability":{"gap_state":"actionable","repair_packet_ready":true}}]}"#,
+    )
+    .map_err(|err| {
+        format!(
+            "failed to write {}: {err}",
+            normalize_path(&review_dir.join("comments.json"))
+        )
+    })?;
+    let root_text = normalize_path(root);
+    let args = [
+        "run",
+        "--quiet",
+        "-p",
+        "ripr",
+        "--",
+        "reports",
+        "ci-summary",
+        "--root",
+        &root_text,
+        "--base-ref",
+        "main",
+    ]
+    .iter()
+    .map(|value| (*value).to_string())
+    .collect::<Vec<_>>();
+    run_output_owned("cargo", &args)
+}
+
+/// Check workflow step wiring and `ripr reports ci-summary` text separately
+/// so the old inline-shell strings cannot satisfy the summary properties
+/// (#6958).
+pub(crate) fn dogfood_generated_ci_cockpit_run_from_surfaces(
     name: &str,
     command: &str,
     duration_ms: u128,
     workflow: &str,
+    summary: &str,
 ) -> DogfoodGeneratedCiCockpitRun {
-    let start_here = workflow.contains("### Start here")
-        && workflow.contains("Open `target/ripr/reports/start-here.md` first")
-        && workflow.contains("name: Render RIPR first-pr start-here")
-        && workflow.contains("cat target/ripr/reports/start-here.md");
+    let start_here = summary.contains("### Start here")
+        && summary.contains("Open `target/ripr/reports/start-here.md` first");
     let repair_commands = [
         GENERATED_CI_FIRST_ACTION_REPAIR,
         GENERATED_CI_FIRST_PR_REPAIR,
@@ -3450,28 +3515,25 @@ pub(crate) fn dogfood_generated_ci_cockpit_run_from_workflow(
         GENERATED_CI_PACKET_INDEX_REPAIR,
     ]
     .iter()
-    .filter(|command| workflow.contains(**command))
+    .filter(|command| summary.contains(**command))
     .count();
     let expected_repair_commands = 4usize;
     let gate_authority_boundary =
-        workflow.contains("ripr gate evaluate") && workflow.contains("Gate authority:");
-    let default_advisory = workflow.contains(
-        "continue-on-error: ${{ vars.RIPR_GATE_MODE == '' || vars.RIPR_GATE_MODE == 'visible-only' }}",
-    ) && workflow.contains("RIPR is advisory static evidence");
+        summary.contains("ripr gate evaluate") && summary.contains("Gate authority:");
+    let default_advisory = workflow.contains(GENERATED_CI_JOB_CONTINUE_ON_ERROR)
+        && summary.contains("RIPR is advisory static evidence");
     let artifact_upload =
         workflow.contains("actions/upload-artifact@v7") && workflow.contains("target/ripr/reports");
-    let language_grouping_checked = workflow.contains("if [ -n \"$preview_languages\" ]; then")
-        && workflow.contains("### Language preview grouping")
-        && workflow.contains("Grouped preview evidence languages")
-        && workflow.contains("grouped_preview_languages=\"$grouped_preview_languages javascript\"")
-        && workflow.contains("preview-language groups are advisory presentation only")
-        && workflow.contains("ripr gate evaluate")
-        && workflow.contains("missing_preview_status")
-        && workflow.contains("static_limit_kinds")
-        && workflow.contains("actionability_states")
-        && workflow.contains("actionability_categories")
-        && workflow.contains("repair_packet_ready_entries")
-        && workflow.contains("gate_impact=\\`none\\`");
+    let language_grouping_checked = summary.contains("### Language preview grouping")
+        && summary.contains("- Grouped preview evidence languages: `javascript typescript`")
+        && summary.contains("preview-language groups are advisory presentation only")
+        && summary.contains("ripr gate evaluate")
+        && summary.contains("missing_preview_status")
+        && summary.contains("static_limit_kinds")
+        && summary.contains("actionability_states")
+        && summary.contains("actionability_categories")
+        && summary.contains("repair_packet_ready=")
+        && summary.contains("gate_impact=`none`");
     let language_grouping_status = if language_grouping_checked {
         "checked"
     } else {
