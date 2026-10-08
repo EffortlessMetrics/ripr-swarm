@@ -23,6 +23,13 @@ Durable rules:
   what main added (here: no twin case).
 - Reconciliation must include a compile check of the landed tree, not just a
   content check of the squash.
+- A draft-to-ready re-route does NOT refresh GitHub's merge ref: after #7151
+  repaired main, #6686's re-routed gate still tested `Merge ... into
+  551456df5` (pre-fix main) and failed on the old E0061. Only a branch push
+  recomputes the ref, so after main moves under a PR, merge main into the
+  branch (or push) instead of toggling alone, and distrust a re-routed gate
+  until `git fetch origin pull/N/merge` shows the expected base as an
+  ancestor.
 
 ## 2026-10-07: PowerShell string pipelines add BOMs and mojibake; verify bytes (#7091)
 
