@@ -272,7 +272,7 @@ pub(crate) fn render_repo_exposure_json_with_limit(
     generated_skip: Option<&GeneratedRustSkip>,
 ) -> String {
     let mut bytes = Vec::new();
-    if write_repo_exposure_json_with_limit(
+    if write_repo_exposure_json(
         classified,
         limit_info,
         ts_guidance,
@@ -296,25 +296,7 @@ pub(crate) fn render_repo_exposure_json_with_limit(
 /// each seam carries its evidence record. CLI callers use this writer path so
 /// the JSON schema stays unchanged while memory pressure scales with one seam
 /// record rather than the full artifact.
-pub(crate) fn write_repo_exposure_json<W: io::Write>(
-    classified: &[ClassifiedSeam],
-    limit_info: Option<&SeamLimitInfo>,
-    ts_guidance: Option<&TsFullRepoGuidance>,
-    python_guidance: Option<&PythonRepoExposureGuidance>,
-    generated_skip: Option<&GeneratedRustSkip>,
-    out: &mut W,
-) -> io::Result<()> {
-    write_repo_exposure_json_with_limit(
-        classified,
-        limit_info.map(RepoExposureLimit::Inventory),
-        ts_guidance,
-        python_guidance,
-        generated_skip,
-        out,
-    )
-}
-
-fn write_repo_exposure_json_with_limit<W: io::Write>(
+fn write_repo_exposure_json<W: io::Write>(
     classified: &[ClassifiedSeam],
     limit_info: Option<RepoExposureLimit<'_>>,
     ts_guidance: Option<&TsFullRepoGuidance>,
