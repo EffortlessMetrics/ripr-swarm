@@ -697,6 +697,12 @@ fn install_b4_fixture(label: &str) -> Result<Fixture, String> {
         std::process::id(),
         TEMP_COUNTER.fetch_add(1, Ordering::Relaxed)
     ));
+    // The cleanup guard owns the path before anything is created: any
+    // early `?` return removes a partially installed fixture instead of
+    // leaking it. The local is a clone of the same path for the install
+    // steps below; the guard itself is returned.
+    let fixture = Fixture { root };
+    let root = fixture.root.clone();
     std::fs::create_dir_all(root.join("src")).map_err(|error| error.to_string())?;
     std::fs::create_dir_all(root.join("tests")).map_err(|error| error.to_string())?;
     std::fs::write(
@@ -731,7 +737,7 @@ fn install_b4_fixture(label: &str) -> Result<Fixture, String> {
     )
     .map_err(|error| error.to_string())?;
     commit_fixture(&root, "closed boundary").map_err(|error| format!("journey commit: {error}"))?;
-    Ok(Fixture { root })
+    Ok(fixture)
 }
 
 /// The listed `canonical_id` of the first item under one file suffix.
