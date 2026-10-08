@@ -9175,4 +9175,180 @@ quickcheck! {
         );
         Ok(())
     }
+
+    /// #1924 measurement: string-churn profile of the classify relate path.
+    ///
+    /// Builds a high-cardinality fixture (200 tests sharing long path
+    /// prefixes and module names, 200 probes) and drives the indexed relate
+    /// path, reporting generator-input string-byte volumes (total vs
+    /// deduplicated) and wall time. This is the profile the interning gate
+    /// requires: it pins the duplication ratio as a fact about the code
+    /// and fixture. The volumes cover generator inputs only, not every
+    /// retained string: each summary keeps its own body/name/file copy,
+    /// `CallFact.text` repeats the generator body, and the candidate
+    /// index holds derived clones alongside per-test-distinct owner
+    /// strings, so the reported ratio is an input-only ratio, not a
+    /// bound on retained duplication in either direction. The go/no-go
+    /// judgment lives on #1924 with the measured numbers; this test
+    /// asserts measurement validity (completion, exact counts, pinned
+    /// volumes), not a gate threshold. The wall timer covers only the
+    /// indexed relate calls plus result consumption: query construction
+    /// is prebuilt outside it.
+    #[test]
+    fn classify_string_churn_profile_reports_volumes() -> Result<(), String> {
+        use std::collections::HashSet;
+        use std::time::Instant;
+
+        const GROUPS: usize = 20;
+        const PER_GROUP: usize = 10;
+        const COUNT: usize = GROUPS * PER_GROUP;
+
+        // Owned generator inputs: the volume source of truth.
+        let mut files: Vec<String> = Vec::with_capacity(COUNT);
+        let mut names: Vec<String> = Vec::with_capacity(COUNT);
+        let mut bodies: Vec<String> = Vec::with_capacity(COUNT);
+        let mut summaries = Vec::with_capacity(COUNT);
+        for g in 0..GROUPS {
+            for t in 0..PER_GROUP {
+                let i = g * PER_GROUP + t;
+                let file = format!("crates/ripr/tests/integration/area_{g:02}/checks_{g:02}.rs");
+                let name = format!("check_{i:03}_behaves");
+                let owner = format!("verify_{i:03}");
+                let body = format!("assert!({owner}(input));");
+                files.push(file.clone());
+                names.push(name.clone());
+                bodies.push(body.clone());
+                let mut summary = test(&file, &name, &body);
+                summary.calls = vec![CallFact {
+                    line: 1,
+                    name: owner,
+                    text: body,
+                }];
+                summaries.push(summary);
+            }
+        }
+        let index_built = Instant::now();
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            tests: summaries,
+            ..Default::default()
+        });
+        let candidate_index = RelatedTestCandidateIndex::new(&index);
+        let index_elapsed = index_built.elapsed();
+
+        // Relate every probe against its own owner. Query construction
+        // (owner-name formatting, `FunctionSummary` and `Probe` builds)
+        // happens once up front, outside every timer: the wall measurement
+        // must cover only the indexed production path under test, not
+        // harness formatting. The test-only indexed/full-scan parity check
+        // rebuilds its candidate index and runs a full scan per call, so it
+        // stays outside the timer, as does the candidate-evaluation count.
+        // Each indexed evaluation runs the per-candidate string matching
+        // (lowering, normalization, substring checks) that interning would
+        // have to beat.
+        let mut timed_queries = Vec::with_capacity(COUNT);
+        for (i, expected) in names.iter().enumerate() {
+            let owner_name = format!("verify_{i:03}");
+            let owner = function("src/owners.rs", &owner_name);
+            let probe = probe("src/owners.rs", &format!("{owner_name}(value)"));
+            timed_queries.push((probe, owner, expected.clone()));
+        }
+        let mut candidate_evaluations = 0usize;
+        let mut parity_own = 0usize;
+        for (probe, owner, expected) in &timed_queries {
+            candidate_evaluations += candidate_index
+                .candidate_indices(probe, Some(owner), None, None)
+                .len();
+            let related = find_related_tests(probe, Some(owner), &index, true, None, None);
+            if related.iter().any(|(test, _)| test.name == *expected) {
+                parity_own += 1;
+            }
+        }
+        let started = Instant::now();
+        let mut related_own = 0usize;
+        for (probe, owner, expected) in &timed_queries {
+            let related = find_related_tests_with_candidate_index(
+                probe,
+                Some(owner),
+                &index,
+                true,
+                None,
+                None,
+                &candidate_index,
+            );
+            if related.iter().any(|(test, _)| test.name == *expected) {
+                related_own += 1;
+            }
+        }
+        let elapsed = started.elapsed();
+
+        // Generator-input volumes only. Summaries retain their own
+        // body/name/file copies, `CallFact.text` repeats each generator
+        // body, and the candidate index holds derived clones alongside
+        // per-test-distinct owner strings, so these totals describe the
+        // inputs, not the retained string volume (see the note above).
+        let mut total_bytes: usize = 0;
+        let mut unique: HashSet<&str> = HashSet::new();
+        for part in files.iter().chain(names.iter()).chain(bodies.iter()) {
+            total_bytes += part.len();
+            unique.insert(part.as_str());
+        }
+        let unique_bytes: usize = unique.iter().map(|s| s.len()).sum();
+        let unique_files: HashSet<&str> = files.iter().map(|file| file.as_str()).collect();
+
+        if parity_own != COUNT {
+            return Err(format!(
+                "parity pass must relate every own test, got {parity_own}/{COUNT}"
+            ));
+        }
+        if related_own != COUNT {
+            return Err(format!(
+                "indexed pass must relate every own test, got {related_own}/{COUNT}"
+            ));
+        }
+        if unique_files.len() != GROUPS {
+            return Err(format!(
+                "fixture must span exactly {GROUPS} files, got {}",
+                unique_files.len()
+            ));
+        }
+        // Pinned generator-input volumes: the #1924 interning decision
+        // rests on these exact totals (18,800 total bytes, 9,800 unique,
+        // ratio 1.92). A fixture change that moves them must fail here and
+        // force an explicit re-measurement plus a #1924 update, never pass
+        // silently on a bare consistency check.
+        const EXPECTED_TOTAL_BYTES: usize = 18_800;
+        const EXPECTED_UNIQUE_BYTES: usize = 9_800;
+        if total_bytes != EXPECTED_TOTAL_BYTES || unique_bytes != EXPECTED_UNIQUE_BYTES {
+            return Err(format!(
+                "generator-input volumes drifted: unique {unique_bytes} total {total_bytes}, \
+                 expected unique {EXPECTED_UNIQUE_BYTES} total {EXPECTED_TOTAL_BYTES}; \
+                 re-measure and update #1924 before re-pinning"
+            ));
+        }
+        if candidate_evaluations == 0 {
+            return Err("candidate index must select candidates".to_string());
+        }
+        // The trigram index must narrow matching to ~O(matches per probe),
+        // not the full P×T scan: on this fixture each probe matches its own
+        // test, so anything far above one evaluation per probe means the
+        // narrowing regressed (and the #1924 interning premise would need a
+        // re-measurement, since per-candidate string work scales with it).
+        if candidate_evaluations > COUNT * 2 {
+            return Err(format!(
+                "candidate index must narrow matching, got {candidate_evaluations} evaluations for {COUNT} probes"
+            ));
+        }
+        eprintln!(
+            "ripr-churn-profile tests={COUNT} probes={COUNT} full_scan_opportunities={} \
+             indexed_candidate_evaluations={candidate_evaluations} \
+             generator_input_string_total_bytes={total_bytes} \
+             generator_input_string_unique_bytes={unique_bytes} \
+             generator_input_duplication_ratio={:.2} index_build_ms={} indexed_relate_wall_ms={}",
+            COUNT * COUNT,
+            total_bytes as f64 / unique_bytes as f64,
+            index_elapsed.as_millis(),
+            elapsed.as_millis()
+        );
+        Ok(())
+    }
 }
