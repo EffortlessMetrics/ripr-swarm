@@ -40,16 +40,12 @@ def compile_snapshot(captured):
 
 def duplicate_family_issues(number, issues, captured):
     """Mirror the compiled duplicate-family edges (work_portfolio.rs): open
-    campaign issues grouped by requirement_refs, accepted contracts only,
-    with a shared-delta gate when the requirement row carries delta ids."""
-    portfolio_issue_numbers = {
-        n
-        for campaign in captured["campaigns"]["campaigns"]
-        for n in campaign["issues"]
-    }
+    captured issues (campaign members and standalone alike) grouped by
+    requirement_refs, accepted contracts only, with a shared-delta gate
+    when the requirement row carries delta ids."""
     requirement_members = {}
     for n, issue in issues.items():
-        if issue["state"] != "open" or n not in portfolio_issue_numbers:
+        if issue["state"] != "open":
             continue
         for requirement_id in issue.get("requirement_refs", []):
             requirement_members.setdefault(requirement_id, set()).add(n)

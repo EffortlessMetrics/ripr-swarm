@@ -244,7 +244,24 @@ def build_corpus():
                         overlap_issues=[9105],
                     ),
                     disposition="standalone_issue_work",
-                )
+                ),
+                # #6864 review: standalone duplicate-family siblings are live
+                # overlaps, so omitting 9105 fails overlap visibility.
+                case(
+                    packet(
+                        9106,
+                        "start_build",
+                        [],
+                        requirements=["REQ-dup-family"],
+                        specs=["RIPR-SPEC-0202"],
+                        slices=["slice-9106"],
+                    ),
+                    expect="fail",
+                    violations=[
+                        {"law": "overlap_visibility", "route": "reconcile_selection"}
+                    ],
+                    disposition="standalone_issue_work",
+                ),
             ],
         },
         {

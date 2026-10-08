@@ -16,6 +16,15 @@ fn committed_check() -> Result<WorkSelectionCheckViewV1, String> {
     run_work_selection_check(DEFAULT_WORK_SELECTION_CORPUS_DIR, &corpus)
 }
 
+/// Remove a temp dir on every exit path, including early `return Err(..)`.
+struct TempRootGuard(PathBuf);
+
+impl Drop for TempRootGuard {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.0);
+    }
+}
+
 fn scenario<'a>(
     view: &'a WorkSelectionCheckViewV1,
     id: &str,
@@ -72,9 +81,9 @@ fn work_selection_identity_committed_corpus_twelve_scenarios_hold() -> Result<()
             view.counts.scenarios
         ));
     }
-    if view.counts.cases != 19 || view.counts.passed != 19 || view.counts.failed != 0 {
+    if view.counts.cases != 20 || view.counts.passed != 20 || view.counts.failed != 0 {
         return Err(format!(
-            "expected 19/19 passed cases, got {:?}",
+            "expected 20/20 passed cases, got {:?}",
             view.counts
         ));
     }
@@ -1000,6 +1009,7 @@ fn work_selection_identity_standalone_overlaps_use_compiler_effective_root() -> 
             .map(|elapsed| elapsed.as_nanos())
             .unwrap_or(0)
     ));
+    let _guard = TempRootGuard(root.clone());
     let source = workspace_path("fixtures/work_selection_identity/captured/standalone");
     let mut copied = 0;
     for entry in
@@ -1091,6 +1101,41 @@ fn work_selection_identity_standalone_overlaps_use_compiler_effective_root() -> 
             live.worktrees
         ));
     }
-    let _ = fs::remove_dir_all(&root);
+    // `_guard` removes the temp root on every exit path.
+    Ok(())
+}
+
+/// #6864 review: standalone issues participate in duplicate families. In
+/// the standalone captured set, 9105 (a campaign member) and 9106 (in no
+/// campaign) share accepted `REQ-dup-family`, so the compiled edge must
+/// name both and the standalone live overlaps for 9106 must carry 9105.
+#[test]
+fn work_selection_identity_standalone_issue_gains_duplicate_family_sibling() -> Result<(), String> {
+    let root = workspace_path("fixtures/work_selection_identity/captured/standalone");
+    let captured = load_work_captured_dir(&root)?;
+    let snapshot = compile_work_portfolio(&captured, None)?;
+    let family = snapshot
+        .conflict_edges
+        .iter()
+        .find(|edge| edge.id == "edge:duplicate_family:REQ-dup-family")
+        .ok_or_else(|| "standalone set must compile the REQ-dup-family edge".to_string())?;
+    if family.subjects
+        != vec![
+            "candidate:issue:9105".to_string(),
+            "candidate:issue:9106".to_string(),
+        ]
+    {
+        return Err(format!(
+            "duplicate-family subjects drifted: {:?}",
+            family.subjects
+        ));
+    }
+    let live = live_overlaps_captured(&snapshot, &captured, 9106);
+    if live.issues != vec![9105] {
+        return Err(format!(
+            "standalone live overlaps for 9106 must carry 9105: {:?}",
+            live.issues
+        ));
+    }
     Ok(())
 }

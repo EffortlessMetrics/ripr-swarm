@@ -1921,11 +1921,14 @@ pub(crate) fn compile_work_portfolio(
     let mut claim_collision_lanes: BTreeSet<String> = BTreeSet::new();
     let mut branch_collision_lanes: BTreeSet<String> = BTreeSet::new();
 
-    // Duplicate families: distinct open campaign issues sharing an accepted
-    // requirement reference.
+    // Duplicate families: distinct open captured issues sharing an accepted
+    // requirement reference. Standalone issues participate exactly like
+    // campaign members: the overlap-visibility law requires every live
+    // duplicate-family sibling in the packet, and the standalone live-overlap
+    // path reads these compiled edges (#6864 review).
     let mut requirement_issues: BTreeMap<String, Vec<u64>> = BTreeMap::new();
     for issue in issues {
-        if issue.state != "open" || !portfolio_issue_numbers.contains(&issue.number) {
+        if issue.state != "open" {
             continue;
         }
         for requirement in &issue.requirement_refs {

@@ -192,6 +192,60 @@
           "expect": "pass",
           "expect_violations": [],
           "plan_disposition": "standalone_issue_work"
+        },
+        {
+          "packet": {
+            "selection_id": "selection:start_build:issue:9106",
+            "repository": "EffortlessMetrics/ripr-swarm",
+            "candidate_id": "candidate:issue:9106",
+            "issue": {
+              "number": 9106,
+              "identity": "issue:9106"
+            },
+            "work_item": null,
+            "pull_request": null,
+            "lifecycle_action": "start_build",
+            "accepted_requirements": [
+              "REQ-dup-family"
+            ],
+            "spec_refs": [
+              "RIPR-SPEC-0202"
+            ],
+            "implementation_slices": [
+              "slice-9106"
+            ],
+            "campaign_refs": [],
+            "basis_sha": "7cb64d60c9dd0dda59586e6b72dcdf150296a26f",
+            "expected_head": "7cb64d60c9dd0dda59586e6b72dcdf150296a26f",
+            "overlaps": {
+              "issues": [],
+              "pull_requests": [],
+              "claims": [],
+              "worktrees": [],
+              "resources": []
+            },
+            "role_context_budget": {
+              "role": "writer",
+              "context_profile": "bounded-candidate",
+              "budget": "single-agent",
+              "single_agent": false
+            },
+            "claim_boundary": "Implement only the recorded slices; no campaign, spec or claim mutation.",
+            "stop_conditions": [
+              "acceptance rows covered or explicitly omitted with reasons"
+            ],
+            "legacy_active_goal_ref": null,
+            "legacy_current_work_item_ref": null
+          },
+          "legacy_packet": null,
+          "expect": "fail",
+          "expect_violations": [
+            {
+              "law": "overlap_visibility",
+              "route": "reconcile_selection"
+            }
+          ],
+          "plan_disposition": "standalone_issue_work"
         }
       ]
     },
