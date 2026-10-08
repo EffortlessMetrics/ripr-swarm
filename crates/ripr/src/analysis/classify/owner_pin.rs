@@ -3959,8 +3959,9 @@ fn unit_struct_value(name: &str, test_file: &Path, index: &RustIndex) -> bool {
             return false;
         }
         // `include!` and `#[path]` splice in text the index may never
-        // read, so no spelling scan covers them.
-        if masked.contains("include") || masked.contains("#[path") {
+        // read, so no spelling scan covers them. The cheap filter matches
+        // the bare words: `# [ path` may carry whitespace.
+        if masked.contains("include") || masked.contains("path") {
             let compact = without_rust_whitespace(&masked);
             if compact.contains("include!") || compact.contains("#[path") {
                 return false;
@@ -4027,9 +4028,15 @@ fn without_rust_whitespace(text: &str) -> String {
         .collect()
 }
 
-/// Every name a workspace file declares with `mod`.
+/// Every name a workspace file declares with `mod`, less every name a `use`
+/// or `extern crate` anywhere in the workspace may introduce. Names are not
+/// resolved per crate or scope, so `use std::u32 as nums;` in one crate and
+/// `mod nums` in another must not let `use crate::nums::*` pass (#7098
+/// review): a segment that some import binds is never treated as a
+/// workspace module.
 fn workspace_module_names(index: &RustIndex) -> BTreeSet<String> {
     let mut modules = BTreeSet::new();
+    let mut imported = BTreeSet::new();
     for (_, facts) in index.files().iter() {
         let masked = mask_comments_and_strings(&facts.source);
         for offset in whole_word_offsets(&masked, "mod") {
@@ -4041,8 +4048,45 @@ fn workspace_module_names(index: &RustIndex) -> BTreeSet<String> {
                 modules.insert(rest[..end].to_string());
             }
         }
+        for keyword in ["use", "extern"] {
+            for offset in whole_word_offsets(&masked, keyword) {
+                let rest = &masked[offset + keyword.len()..];
+                let Some(end) = rest.find(';') else {
+                    continue;
+                };
+                imported.extend(import_bound_names(&rest[..end]));
+            }
+        }
     }
+    modules.retain(|module| !imported.contains(module));
     modules
+}
+
+/// Every identifier in an import statement that is not followed by `::`
+/// (Rust whitespace allowed between): each name the statement may bind,
+/// whether a leaf, a group member or an `as` rename, plus harmless keywords.
+fn import_bound_names(statement: &str) -> Vec<String> {
+    let mut names = Vec::new();
+    let mut position = 0;
+    while position < statement.len() {
+        let rest = &statement[position..];
+        let length = rest
+            .find(|character: char| !(character.is_alphanumeric() || character == '_'))
+            .unwrap_or(rest.len());
+        if length == 0 {
+            position += rest.chars().next().map_or(1, char::len_utf8);
+            continue;
+        }
+        let word = &rest[..length];
+        let next = rest[length..].trim_start_matches(|character: char| {
+            character.is_whitespace() || matches!(character, '\u{200E}' | '\u{200F}')
+        });
+        if !next.starts_with("::") {
+            names.push(word.to_string());
+        }
+        position += length;
+    }
+    names
 }
 
 /// Whether `masked` holds a glob `use` that may reach items outside the

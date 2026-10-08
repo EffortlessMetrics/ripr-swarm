@@ -2234,12 +2234,47 @@ fn reexported_value_under_a_unit_struct_name_is_not_credited() -> Result<(), Str
     let production = "pub trait Counter {\n    fn step(&self) -> u32;\n\n    fn count_ones(&self) -> u32 {\n        4 * self.step()\n    }\n}\n\n#[allow(non_camel_case_types)]\npub struct MAX;\n\nimpl Counter for MAX {\n    fn step(&self) -> u32 {\n        8\n    }\n}\n\npub mod limits;\n";
     let limits = "#![allow(deprecated)]\npub use std::u32::MAX;\n";
     let tests = "#[cfg(test)]\nmod tests {\n    use super::Counter;\n    use crate::limits::MAX;\n\n    #[test]\n    fn counts() {\n        assert_eq!(MAX.count_ones(), 32);\n    }\n}\n";
+    unit_struct_shadow_is_not_credited(
+        "reexported value",
+        production,
+        &[("limits.rs", limits)],
+        tests,
+    )
+}
+
+/// #7098 review: `use std::u32 as nums;` at the crate root and an unrelated
+/// `mod nums` elsewhere. `use crate::nums::*` reaches std's `MAX`, so a
+/// same-named module declared somewhere else must not admit the glob.
+#[test]
+fn aliased_outside_module_beside_a_same_named_module_is_not_credited() -> Result<(), String> {
+    let production = "#![allow(deprecated)]\npub trait Counter {\n    fn step(&self) -> u32;\n\n    fn count_ones(&self) -> u32 {\n        4 * self.step()\n    }\n}\n\n#[allow(non_camel_case_types)]\npub struct MAX;\n\nimpl Counter for MAX {\n    fn step(&self) -> u32 {\n        8\n    }\n}\n\nuse std::u32 as nums;\npub mod other {\n    pub mod nums {}\n}\n";
+    let tests = "#[cfg(test)]\nmod tests {\n    use super::Counter;\n    use crate::nums::*;\n\n    #[test]\n    fn counts() {\n        assert_eq!(MAX.count_ones(), 32);\n    }\n}\n";
+    unit_struct_shadow_is_not_credited("aliased module glob", production, &[], tests)
+}
+
+/// The changed `Counter::count_ones` default on line 5 reads weakly_exposed,
+/// and the mutant passes because the test's `MAX` is not the unit struct.
+fn unit_struct_shadow_is_not_credited(
+    label: &str,
+    production: &str,
+    modules: &[(&str, &str)],
+    tests: &str,
+) -> Result<(), String> {
     let diff = "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -3,5 +3,5 @@ pub trait Counter {\n \n     fn count_ones(&self) -> u32 {\n-        self.step() * 4\n+        4 * self.step()\n     }\n }\n";
+    let changed_line = production
+        .lines()
+        .position(|line| line.contains("4 * self.step()"))
+        .map(|index| index + 1)
+        .ok_or("production has no changed tail")?;
+    let diff = diff.replace(
+        "@@ -3,5 +3,5",
+        &format!("@@ -{0},5 +{0},5", changed_line - 2),
+    );
     let workspace = Scratch::create()?;
     std::fs::create_dir(workspace.0.join("src")).map_err(|error| error.to_string())?;
     std::fs::write(
         workspace.0.join("Cargo.toml"),
-        "[package]\nname = \"reexported_value_control\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+        "[package]\nname = \"unit_struct_shadow_control\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
     )
     .map_err(|error| error.to_string())?;
     std::fs::write(
@@ -2247,7 +2282,10 @@ fn reexported_value_under_a_unit_struct_name_is_not_credited() -> Result<(), Str
         format!("{production}\n{tests}"),
     )
     .map_err(|error| error.to_string())?;
-    std::fs::write(workspace.0.join("src/limits.rs"), limits).map_err(|error| error.to_string())?;
+    for (name, text) in modules {
+        std::fs::write(workspace.0.join("src").join(name), text)
+            .map_err(|error| error.to_string())?;
+    }
     std::fs::write(workspace.0.join("diff.patch"), diff).map_err(|error| error.to_string())?;
     let report = check_workspace(CheckInput {
         root: workspace.0.clone(),
@@ -2260,25 +2298,26 @@ fn reexported_value_under_a_unit_struct_name_is_not_credited() -> Result<(), Str
         .findings
         .iter()
         .find(|finding| {
-            finding.probe.family == ProbeFamily::ReturnValue && finding.probe.location.line == 5
+            finding.probe.family == ProbeFamily::ReturnValue
+                && finding.probe.location.line == changed_line
         })
         .ok_or("no return_value finding on the changed tail")?;
     // Refused receiver typing leaves the proximity-only gap, not a credit.
     assert_eq!(
         finding.class,
         ExposureClass::WeaklyExposed,
-        "{:?}",
+        "{label}: {:?}",
         finding.class
     );
     // The mutant passes: the test never runs the default.
-    for (label, tail) in [
+    for (variant, tail) in [
         ("rewrite", "4 * self.step()"),
         ("mutant", "4 + self.step()"),
     ] {
         source_runtime_control_with(
             &format!("{}\n{tests}", production.replace("4 * self.step()", tail)),
-            &[("limits.rs", limits)],
-            &format!("reexported value {label}"),
+            modules,
+            &format!("{label} {variant}"),
             1,
             false,
         )?;

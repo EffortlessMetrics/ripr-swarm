@@ -251,9 +251,10 @@ rule only for an assertion whose context was admitted.
      `ident` or `tt` fragment, no file that defines a macro may spell the
      name (one `struct Unit;` in a macro body declares a type per
      invocation), every workspace glob import must be a `crate`,
-     `self` or `super` path through declared workspace modules (so neither a
-     foreign glob nor `use std::u32 as nums;` with `use crate::nums::*`
-     qualifies), no workspace file may use
+     `self` or `super` path through declared workspace modules that no
+     workspace `use` or `extern crate` also binds (so neither a foreign glob
+     nor `use std::u32 as nums;` with `use crate::nums::*` qualifies, even
+     beside an unrelated `mod nums`), no workspace file may use
      `include!` or `#[path]`, and the name may not be a prelude value
      (`None`, `Some`, `Ok`, `Err`). Review found that imports
      (`use self::Kind::Unit`, a lower-case `pub use std::u32::MAX`
@@ -969,8 +970,10 @@ assertions. This repair shares the existing callback without that larger migrati
   and refuses an impl that overrides the default; only the two `exposed`
   layouts fail on a `4 + self.step()` mutant.
   `reexported_value_under_a_unit_struct_name_is_not_credited` imports a
-  `pub use std::u32::MAX;` re-export over a unit struct `MAX`; the mutant
-  passes and the finding is not `exposed`.
+  `pub use std::u32::MAX;` re-export over a unit struct `MAX`, and
+  `aliased_outside_module_beside_a_same_named_module_is_not_credited` globs
+  `use std::u32 as nums;` beside an unrelated `mod nums`; in both the mutant
+  passes and the finding reads `weakly_exposed`.
 - Bool-owner unit tests: `a_bare_assert_pins_a_bool_owner_to_true_or_false`,
   `a_bare_assert_pins_nothing_on_a_non_bool_owner`,
   `a_bare_assert_keeps_the_owner_binding_defeats`; pairing unit test

@@ -11699,6 +11699,7 @@ tests = [
   "crates/ripr/tests/owner_pin_execution.rs::spawned_thread_assertion_matched_static_and_runtime_controls",
   "crates/ripr/tests/owner_pin_execution.rs::unit_struct_receiver_matched_static_and_runtime_controls",
   "crates/ripr/tests/owner_pin_execution.rs::reexported_value_under_a_unit_struct_name_is_not_credited",
+  "crates/ripr/tests/owner_pin_execution.rs::aliased_outside_module_beside_a_same_named_module_is_not_credited",
   "crates/ripr/tests/owner_pin_execution.rs::an_extern_crate_named_thread_refuses_spawned_thread_credit",
   "crates/ripr/tests/owner_pin_execution.rs::a_leading_colon_thread_path_refuses_spawned_thread_credit",
   "crates/ripr/tests/owner_pin_execution.rs::an_out_of_line_super_glob_refuses_spawned_thread_credit",

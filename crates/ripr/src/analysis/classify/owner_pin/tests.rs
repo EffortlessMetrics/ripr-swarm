@@ -326,6 +326,8 @@ fn unit_struct_value_admits_only_spellings_nothing_else_can_bind() {
         "macro_rules! constant { (= $name:\u{200E}ident;) => {}; }\n",
         "include!(\"shadow.in\");\n",
         "#[path = \"other.rs\"]\nmod other;\n",
+        "# [ path = \"other.rs\"]\nmod other;\n",
+        "#\n[path = \"other.rs\"]\nmod other;\n",
         // A foreign glob in any file can reach the test through `crate::*`.
         "pub use std::u32::*;\n",
         // #7083 round 4: an outside module renamed or re-exported into the
@@ -335,6 +337,12 @@ fn unit_struct_value_admits_only_spellings_nothing_else_can_bind() {
         "extern crate core as k;\nuse crate::k::u32::*;\n",
         "use crate::Kind::*;\n",
         "use crate::{helpers::*, Counter};\n",
+        // #7098 review: a same-named module declared anywhere else does not
+        // make the imported name a workspace module.
+        "mod inner { mod nums {} }\nuse std::u32 as nums;\nuse crate::nums::*;\n",
+        "mod inner { mod u32 {} }\npub use std::u32;\nuse crate::u32::*;\n",
+        "mod a { mod k {} }\nextern crate core as k;\nuse crate::k::*;\n",
+        "mod b { mod nums {} }\nuse std::{u32 as nums};\nuse crate::nums::*;\n",
         // #7083 round 5: one spelling in a macro body declares a struct per
         // invocation.
         "macro_rules! unit { () => { pub struct Other; }; }\nfn n() -> u32 {\n    Unit.advance()\n}\n",

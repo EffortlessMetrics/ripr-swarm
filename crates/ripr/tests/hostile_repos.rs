@@ -900,9 +900,13 @@ fn control_bytes_in_names_and_config_never_reach_github_output_stderr_or_command
     fs::remove_file(root.join("ripr.toml")).map_err(|e| format!("remove ripr.toml failed: {e}"))?;
 
     // A tracked file deleted from the working tree is named in a stderr notice.
+    // `--committed` is load-bearing: the notice belongs to the RIPR-SPEC-0112
+    // committed-history disclosure family, and the dirty-tree default would
+    // read the working tree (the disk) instead, where there is no skew to
+    // disclose. Broke when #5997 landed; caught by #6638's full-suite gate.
     fs::remove_file(root.join("src/a\u{1b}[2Jb.rs"))
         .map_err(|e| format!("delete hostile file failed: {e}"))?;
-    let deleted = ripr(&root, &["check", "--base", "main"], &[])?;
+    let deleted = ripr(&root, &["check", "--base", "main", "--committed"], &[])?;
     assert_sane(&deleted, "check with a deleted hostile file")?;
     if leaks(&deleted.stdout) || leaks(&deleted.stderr) {
         return Err(format!("deleted-file notice leaked\n{:?}", deleted.stderr));
