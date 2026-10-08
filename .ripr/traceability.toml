@@ -11574,6 +11574,7 @@ tests = [
   "crates/ripr/src/app/repair_card_handoff.rs::tests::producer_gap_names_seam_by_file_owner_and_kind",
   "crates/ripr/src/app/repair_card_handoff.rs::tests::producer_gap_finding_binds_the_seam_witness_when_unique",
   "crates/ripr/src/app/repair_card_handoff.rs::tests::producer_gap_with_sibling_owner_binds_no_witness",
+  "crates/ripr/src/app/repair_card_handoff.rs::tests::producer_finding_binds_only_the_twin_seam_at_its_line",
   "crates/ripr/src/app/repair_card_handoff.rs::tests::content_hash_match_wins_over_producer_match",
   "crates/ripr/src/app/repair_card_handoff.rs::tests::packet_queue_omission_marks_canonical_packet_unavailable",
   "crates/ripr/src/app/repair_card_handoff.rs::tests::attempt_recorded_at_another_head_is_stale_not_current",

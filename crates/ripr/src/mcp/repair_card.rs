@@ -1024,6 +1024,8 @@ mod tests {
         gap.file = "src/lib.rs".to_string();
         gap.owner = "discounted_total".to_string();
         gap.probe_kind = "predicate".to_string();
+        // #7177: the probe line must fall on the seam.
+        finding.probe.location.line = entry.seam.display_line();
         let matched_output = output(std::slice::from_ref(&finding))?;
         let snapshot = Snapshot::from_output(&matched_output, Some("root:sha256:a"))
             .map_err(|failure| failure.detail)?;
@@ -1080,6 +1082,8 @@ mod tests {
         gap.file = "src/lib.rs".to_string();
         gap.owner = "discounted_total".to_string();
         gap.probe_kind = "predicate".to_string();
+        // #7177: the probe line must fall on the seam.
+        finding.probe.location.line = entry.seam.display_line();
         let matched_output = output(std::slice::from_ref(&finding))?;
         let snapshot = Snapshot::from_output(&matched_output, Some("root:sha256:a"))
             .map_err(|failure| failure.detail)?;
