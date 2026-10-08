@@ -40,7 +40,7 @@ use super::test_grip_evidence;
 use super::workspace;
 use crate::analysis::cancellation;
 use crate::config::RiprConfig;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
@@ -760,10 +760,40 @@ fn inventory_classified_seams_from_state_with_config(
     let lexical_fallback_files = rust_index::lexical_fallback_files(&cached.index);
     trace_latency_phase("apply_oracle_policy", "ok", policy_started.elapsed());
     let seams_started = Instant::now();
-    let mut seams = inventory_seams_from_index(&production_files, &cached.index);
+    // Resolve the cap before construction (issue #4997) so inventory
+    // retains at most K seam objects instead of materializing the full
+    // vector and truncating after. An invalid limit errors here, before
+    // inventory work, rather than after; every other behavior is unchanged.
+    let limit_and_source = repo_exposure_seam_limit()?;
+    let limit = limit_and_source.as_ref().map(|(limit, _)| *limit);
+    let bounded = inventory_seams_from_index_bounded(&production_files, &cached.index, limit)?;
     cancellation::checkpoint()?;
-    trace_latency_phase("inventory_seams", "ok", seams_started.elapsed());
-    let limit_info = apply_repo_exposure_seam_limit(&mut seams)?;
+    // The retained-object peak is production-observable here (issue #4997):
+    // the retained prefix stays within K while the trace reports the peak
+    // retained count. It excludes the single in-flight candidate that
+    // `push` owns while it decides membership.
+    trace_latency_phase(
+        "inventory_seams",
+        &format!("ok peak_retained_seams={}", bounded.peak_retained),
+        seams_started.elapsed(),
+    );
+    let seams = bounded.seams;
+    let limit_info = limit_and_source.and_then(|(limit, source)| {
+        if bounded.total_unique <= limit {
+            None
+        } else {
+            trace_latency_phase(
+                "repo_exposure_seam_limit",
+                &format!("limit_{}_of_{}", seams.len(), bounded.total_unique),
+                Duration::ZERO,
+            );
+            Some(SeamLimitInfo {
+                analyzed: seams.len(),
+                total: bounded.total_unique,
+                source,
+            })
+        }
+    });
     let evidence_started = Instant::now();
     trace_latency_phase(
         "evidence_for_seams",
@@ -1903,13 +1933,10 @@ fn parse_seam_limit(env_name: &str, value: &str) -> Result<Option<usize>, String
     }
 }
 
-pub(crate) fn apply_repo_exposure_seam_limit(
-    seams: &mut Vec<RepoSeam>,
-) -> Result<Option<SeamLimitInfo>, String> {
-    Ok(repo_exposure_seam_limit()?
-        .and_then(|(limit, source)| apply_repo_exposure_seam_limit_inner(seams, limit, source)))
-}
-
+/// Legacy truncate-after-materialization helper (issue #4997): production
+/// now bounds during construction, so this survives only as the oracle the
+/// truncation-format unit tests pin.
+#[cfg(test)]
 fn apply_repo_exposure_seam_limit_inner(
     seams: &mut Vec<RepoSeam>,
     limit: usize,
@@ -2509,6 +2536,154 @@ fn seams_from_index_files(production_files: &[PathBuf], index: &RustIndex) -> Ve
     });
 
     seams
+}
+
+/// Canonical sort identity shared by the legacy full sort and the bounded
+/// collector (issue #4997): file, byte offset, kind as displayed, owner.
+/// Derived field order matches the legacy comparator exactly, so a bounded
+/// prefix equals the legacy sorted prefix.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+struct SeamSortKey {
+    file: PathBuf,
+    byte_offset: usize,
+    kind: String,
+    owner: String,
+}
+
+impl SeamSortKey {
+    fn of(seam: &RepoSeam) -> Self {
+        Self {
+            file: seam.file().to_path_buf(),
+            byte_offset: seam.byte_offset(),
+            kind: seam.kind().as_str().to_string(),
+            owner: seam.owner().to_string(),
+        }
+    }
+}
+
+/// Bounded top-K seam collector (issue #4997). Retains at most K live
+/// seam objects: duplicates never consume a slot and never inflate the
+/// unique total, and a later-discovered seam that sorts before the retained
+/// frontier displaces it. `total_unique` counts deduplicated seams exactly
+/// like the legacy post-dedup length, and `peak_retained` records the
+/// maximum live retained objects so tests pin the bound.
+///
+/// Exact totals with eviction fundamentally require remembering evicted
+/// identities: a dropped seam seen again must still count as seen, so the
+/// collector keeps one compact dedup key per unique seam (path, offset,
+/// kind, owner strings only — no expression or discriminator payloads).
+/// That key set scales with the unique count while live seam objects stay
+/// within K; the high-cardinality instrument pins the live-object side.
+struct BoundedSeamCollector {
+    retained: BTreeMap<SeamSortKey, RepoSeam>,
+    seen: HashSet<SeamSortKey>,
+    total_unique: usize,
+    limit: Option<usize>,
+    peak_retained: usize,
+}
+
+impl BoundedSeamCollector {
+    fn new(limit: Option<usize>) -> Self {
+        Self {
+            retained: BTreeMap::new(),
+            seen: HashSet::new(),
+            total_unique: 0,
+            limit,
+            peak_retained: 0,
+        }
+    }
+
+    fn push(&mut self, seam: RepoSeam) {
+        let key = SeamSortKey::of(&seam);
+        if !self.seen.insert(key.clone()) {
+            return;
+        }
+        self.total_unique += 1;
+        match self.limit {
+            None => {
+                self.retained.insert(key, seam);
+            }
+            Some(cap) => {
+                if self.retained.len() < cap {
+                    self.retained.insert(key, seam);
+                } else if let Some((frontier, _)) = self.retained.last_key_value() {
+                    // Strictly-before-frontier displaces; equal keys are
+                    // duplicates and were already skipped above.
+                    if key < *frontier {
+                        self.retained.pop_last();
+                        self.retained.insert(key, seam);
+                    }
+                }
+            }
+        }
+        self.peak_retained = self.peak_retained.max(self.retained.len());
+    }
+
+    fn finish(self) -> BoundedSeamInventory {
+        BoundedSeamInventory {
+            seams: self.retained.into_values().collect(),
+            total_unique: self.total_unique,
+            peak_retained: self.peak_retained,
+        }
+    }
+}
+
+/// Bounded inventory result: the retained canonical prefix, the exact
+/// deduplicated total (for limit disclosure), and the peak live retained
+/// objects observed while building.
+pub(crate) struct BoundedSeamInventory {
+    pub(crate) seams: Vec<RepoSeam>,
+    pub(crate) total_unique: usize,
+    pub(crate) peak_retained: usize,
+}
+
+/// Bounded twin of [`inventory_seams_from_index`] (issue #4997): visits
+/// every probe shape in the same order with the same index-level
+/// disclosures and the same seam construction, but retains at most K seam
+/// objects instead of materializing the full vector before truncation.
+/// With `limit: None` the retained set equals the legacy output exactly.
+pub(crate) fn inventory_seams_from_index_bounded(
+    production_files: &[PathBuf],
+    index: &RustIndex,
+    limit: Option<usize>,
+) -> Result<BoundedSeamInventory, String> {
+    if let Some(disclosure) = rust_index::lexical_fallback_disclosure(index) {
+        eprintln!("{disclosure}");
+    }
+    if let Some(disclosure) = rust_index::include_resolution_disclosure(index) {
+        eprintln!("{disclosure}");
+    }
+    if let Some(disclosure) = rust_index::module_composition_disclosure(index) {
+        eprintln!("{disclosure}");
+    }
+    let mut collector = BoundedSeamCollector::new(limit);
+    for file in production_files {
+        cancellation::checkpoint()?;
+        let Some(facts) = index.files().get(file) else {
+            continue;
+        };
+        let lookup = rust_index::FileOwnerLookup::new(facts.functions.iter());
+        for shape in &facts.probe_shapes {
+            if let Some(seam) = build_seam_from_shape(file, shape, &lookup) {
+                collector.push(seam);
+            }
+        }
+    }
+    Ok(collector.finish())
+}
+
+/// Test-only entry that feeds pre-built seams through the bounded
+/// collector core, mirroring `apply_repo_exposure_seam_limit_for_test`.
+#[cfg(test)]
+fn bounded_seams_from_shapes_for_test(
+    seams: Vec<RepoSeam>,
+    limit: Option<usize>,
+) -> Result<BoundedSeamInventory, String> {
+    let mut collector = BoundedSeamCollector::new(limit);
+    for seam in seams {
+        collector.push(seam);
+    }
+    Ok(collector.finish())
 }
 
 fn build_seam_from_shape(
@@ -6515,6 +6690,302 @@ marker = "libtest_mimic::Trial"
             return Err(format!(
                 "below-cap inventory should produce None limit_info, got {result:?}"
             ));
+        }
+        Ok(())
+    }
+
+    // ---- bounded seam inventory (issue #4997) ------------------------
+    //
+    // The finite-limit production path must retain at most K seam objects
+    // plus a small dedup bound while reporting the exact unique total, and
+    // its retained prefix must equal the legacy full-materialization
+    // oracle. These tests pin the bounded constructor to that oracle.
+
+    fn synthetic_seam(
+        file: &str,
+        owner: &str,
+        kind: &str,
+        offset: usize,
+    ) -> Result<RepoSeam, String> {
+        Ok(RepoSeam::new(
+            file,
+            owner,
+            SeamKind::from_str(kind).ok_or_else(|| format!("unknown kind {kind}"))?,
+            offset,
+            1,
+            "synthetic()",
+            RequiredDiscriminator::BoundaryValue {
+                description: "synthetic".to_string(),
+            },
+            ExpectedSink::SideEffect,
+        ))
+    }
+
+    fn bounded_probe_sources() -> Vec<(PathBuf, &'static str)> {
+        vec![
+            (
+                PathBuf::from("src/z_last.rs"),
+                "pub fn zeta(x: i32) -> bool { x > 0 }\n",
+            ),
+            (
+                PathBuf::from("src/m_mid.rs"),
+                "pub fn mu_a(x: i32) -> bool { x > 1 }\npub fn mu_b(x: i32) -> bool { x < 1 }\n",
+            ),
+            (
+                PathBuf::from("src/a_first.rs"),
+                "pub fn alpha(x: i32) -> bool { x > 2 }\n",
+            ),
+        ]
+    }
+
+    fn legacy_oracle(
+        files: &[(PathBuf, &str)],
+        order: &[usize],
+    ) -> Result<(crate::analysis::rust_index::RustIndex, Vec<RepoSeam>), String> {
+        let index = index_from_files(files)?;
+        let paths: Vec<PathBuf> = order.iter().map(|&i| files[i].0.clone()).collect();
+        let seams = inventory_seams_from_index(&paths, &index);
+        Ok((index, seams))
+    }
+
+    /// Fixed-seed shuffle (LCG): deterministic without new dependencies.
+    fn shuffled_order(len: usize, mut seed: u64) -> Vec<usize> {
+        let mut order: Vec<usize> = (0..len).collect();
+        for i in (1..len).rev() {
+            seed = seed
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            order.swap(i, (seed >> 33) as usize % (i + 1));
+        }
+        order
+    }
+
+    #[test]
+    fn bounded_matches_legacy_across_limits_and_orders() -> Result<(), String> {
+        let files = bounded_probe_sources();
+        let orders = vec![
+            (0..files.len()).collect::<Vec<_>>(),
+            (0..files.len()).rev().collect::<Vec<_>>(),
+            shuffled_order(files.len(), 0x4997),
+        ];
+        for order in &orders {
+            let (index, legacy) = legacy_oracle(&files, order)?;
+            let total = legacy.len();
+            if total == 0 {
+                return Err("probe fixture must yield seams".to_string());
+            }
+            let limits: Vec<Option<usize>> = vec![
+                None,
+                Some(total + 100),
+                Some(total),
+                Some(total - 1),
+                Some(1),
+                Some(0),
+            ];
+            for limit in limits {
+                let paths: Vec<PathBuf> = order.iter().map(|&i| files[i].0.clone()).collect();
+                let bounded = inventory_seams_from_index_bounded(&paths, &index, limit)?;
+                let expected: Vec<RepoSeam> = match limit {
+                    None => legacy.clone(),
+                    Some(k) => legacy.iter().take(k).cloned().collect(),
+                };
+                if bounded.seams != expected {
+                    return Err(format!(
+                        "order {order:?} limit {limit:?}: retained prefix must equal legacy oracle"
+                    ));
+                }
+                if bounded.total_unique != total {
+                    return Err(format!(
+                        "order {order:?} limit {limit:?}: total_unique {} must equal legacy {total}",
+                        bounded.total_unique
+                    ));
+                }
+                if let Some(k) = limit
+                    && bounded.peak_retained > k
+                {
+                    return Err(format!(
+                        "order {order:?} limit {k}: peak_retained {} exceeds K",
+                        bounded.peak_retained
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn bounded_first_seam_discovered_last() -> Result<(), String> {
+        // Canonical-first seam lives in src/a_first.rs, discovered last in
+        // this order; K=1 must still retain exactly the legacy head.
+        let files = bounded_probe_sources();
+        let order = vec![0, 1, 2];
+        let (index, legacy) = legacy_oracle(&files, &order)?;
+        if legacy.is_empty() {
+            return Err("probe fixture must yield seams".to_string());
+        }
+        if legacy[0].file() != PathBuf::from("src/a_first.rs").as_path() {
+            return Err("fixture must sort src/a_first.rs first".to_string());
+        }
+        let paths: Vec<PathBuf> = order.iter().map(|&i| files[i].0.clone()).collect();
+        let bounded = inventory_seams_from_index_bounded(&paths, &index, Some(1))?;
+        if bounded.seams != legacy[..1] {
+            return Err("K=1 must retain exactly the legacy head seam".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn bounded_duplicate_shapes_do_not_consume_slots() -> Result<(), String> {
+        // Same identity pushed twice must neither consume a second slot
+        // nor inflate the total; a pre-dedup counter would report 8/6 here
+        // instead of the correct 5/5 with 3 retained under K=3.
+        let mut shapes = Vec::new();
+        for (owner, offset) in [
+            ("dup::a", 10),
+            ("dup::b", 20),
+            ("dup::c", 30),
+            ("dup::d", 40),
+            ("dup::e", 50),
+        ] {
+            shapes.push(synthetic_seam(
+                "src/dup.rs",
+                owner,
+                "predicate_boundary",
+                offset,
+            )?);
+        }
+        shapes.push(synthetic_seam(
+            "src/dup.rs",
+            "dup::b",
+            "predicate_boundary",
+            20,
+        )?);
+        shapes.push(synthetic_seam(
+            "src/dup.rs",
+            "dup::d",
+            "predicate_boundary",
+            40,
+        )?);
+        shapes.push(synthetic_seam(
+            "src/dup.rs",
+            "dup::a",
+            "predicate_boundary",
+            10,
+        )?);
+        let bounded = bounded_seams_from_shapes_for_test(shapes, Some(3))?;
+        if bounded.seams.len() != 3 {
+            return Err(format!(
+                "K=3 must retain 3 unique seams, got {}",
+                bounded.seams.len()
+            ));
+        }
+        if bounded.total_unique != 5 {
+            return Err(format!(
+                "total_unique must be 5 deduplicated seams, got {}",
+                bounded.total_unique
+            ));
+        }
+        let owners: Vec<&str> = bounded.seams.iter().map(|seam| seam.owner()).collect();
+        if owners != ["dup::a", "dup::b", "dup::c"] {
+            return Err(format!("retained prefix must be [a, b, c], got {owners:?}"));
+        }
+        if bounded.peak_retained > 3 {
+            return Err(format!(
+                "peak_retained {} exceeds K=3",
+                bounded.peak_retained
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn bounded_peak_stays_capped_on_high_cardinality() -> Result<(), String> {
+        // 200 generated files cross several would-be batch windows; K=5
+        // must report a peak of at most 5 while matching the legacy head.
+        let files: Vec<(PathBuf, String)> = (0..200)
+            .map(|i| {
+                (
+                    PathBuf::from(format!("src/gen_{i:03}.rs")),
+                    format!("pub fn gen_{i}(x: i32) -> bool {{ x > {i} }}\n"),
+                )
+            })
+            .collect();
+        let borrowed: Vec<(PathBuf, &str)> = files
+            .iter()
+            .map(|(path, source)| (path.clone(), source.as_str()))
+            .collect();
+        let index = index_from_files(&borrowed)?;
+        let paths: Vec<PathBuf> = borrowed.iter().map(|(path, _)| path.clone()).collect();
+        let legacy = inventory_seams_from_index(&paths, &index);
+        if legacy.len() < 100 {
+            return Err(format!(
+                "high-cardinality fixture must yield many seams, got {}",
+                legacy.len()
+            ));
+        }
+        let bounded = inventory_seams_from_index_bounded(&paths, &index, Some(5))?;
+        if bounded.seams != legacy[..5] {
+            return Err("K=5 must retain exactly the legacy head".to_string());
+        }
+        if bounded.total_unique != legacy.len() {
+            return Err("total_unique must equal the legacy unique count".to_string());
+        }
+        if bounded.peak_retained > 5 {
+            return Err(format!(
+                "peak_retained {} exceeds K=5 over {} unique seams",
+                bounded.peak_retained,
+                legacy.len()
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn bounded_unlimited_equals_legacy_exactly() -> Result<(), String> {
+        let files = bounded_probe_sources();
+        let (index, legacy) = legacy_oracle(&files, &[0, 1, 2])?;
+        let bounded = inventory_seams_from_index_bounded(
+            &files
+                .iter()
+                .map(|(path, _)| path.clone())
+                .collect::<Vec<_>>(),
+            &index,
+            None,
+        )?;
+        if bounded.seams != legacy {
+            return Err(
+                "unlimited bounded inventory must equal the legacy vec exactly".to_string(),
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn bounded_cancellation_fails_closed() -> Result<(), String> {
+        use crate::analysis::cancellation::{
+            AnalysisAbortKind, AnalysisCancellationToken, with_token,
+        };
+        let files = bounded_probe_sources();
+        let (index, _) = legacy_oracle(&files, &[0, 1, 2])?;
+        let paths: Vec<PathBuf> = files.iter().map(|(path, _)| path.clone()).collect();
+        // Control: uncancelled token walks fine.
+        let calm = AnalysisCancellationToken::new();
+        let ok = with_token(&calm, || {
+            inventory_seams_from_index_bounded(&paths, &index, Some(1))
+        });
+        if ok.is_err() {
+            return Err("uncancelled walk must succeed".to_string());
+        }
+        // Pre-cancelled token must fail closed before publishing anything.
+        let fired = AnalysisCancellationToken::new();
+        if !fired.cancel(AnalysisAbortKind::Cancelled) {
+            return Err("test token must accept cancellation".to_string());
+        }
+        let refused = with_token(&fired, || {
+            inventory_seams_from_index_bounded(&paths, &index, Some(1))
+        });
+        if refused.is_ok() {
+            return Err("cancelled walk must fail closed, not publish a prefix".to_string());
         }
         Ok(())
     }
