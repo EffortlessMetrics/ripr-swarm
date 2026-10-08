@@ -10,6 +10,7 @@ use crate::config::{CheckInputExplicit, RiprConfig, apply_to_check_input, load_f
 use crate::core_error::CoreError;
 use crate::output;
 use crate::output::human::terminal_safe;
+use crate::output::repo_exposure::RepoExposureLimit;
 use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -41,7 +42,7 @@ fn write_pilot_repo_exposure_json(
     input: &CheckInput,
     config: &RiprConfig,
     classified: &[analysis::ClassifiedSeam],
-    limit_info: Option<&analysis::SeamLimitInfo>,
+    limit_info: Option<RepoExposureLimit<'_>>,
     generated_skip: Option<&output::repo_exposure::GeneratedRustSkip>,
     population_differs_from_check: bool,
 ) -> Result<(), String> {
@@ -52,7 +53,7 @@ fn write_pilot_repo_exposure_json(
     if population_differs_from_check {
         return write_pilot_file(
             path,
-            output::repo_exposure::render_repo_exposure_json_with_generated_skip(
+            output::repo_exposure::render_repo_exposure_json_with_limit(
                 classified,
                 limit_info,
                 ts_guidance.as_ref(),
@@ -76,7 +77,7 @@ fn write_pilot_repo_exposure_json(
         let mut writer = std::io::BufWriter::new(file);
         if let Err(err) = output::repo_exposure::write_repo_exposure_json_with_context(
             classified,
-            limit_info,
+            limit_info.map(RepoExposureLimit::info),
             ts_guidance.as_ref(),
             python_guidance.as_ref(),
             generated_skip,
@@ -292,6 +293,13 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
         (budget, inventory) => budget.clone().or_else(|| inventory.clone()),
     };
     let limit_info = pilot_budget_info.or(inventory_limit_info);
+    let repo_exposure_limit = limit_info.as_ref().map(|info| {
+        if pilot_budget_truncated {
+            RepoExposureLimit::PilotBudget(info)
+        } else {
+            RepoExposureLimit::Inventory(info)
+        }
+    });
     let (causal_projection, causal_projection_warning) =
         crate::app::causal_projection::CausalDeltaArtifact::load_optional(&input.root);
     if let Some(warning) = causal_projection_warning {
@@ -333,15 +341,15 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
         &input,
         &config,
         &classified,
-        limit_info.as_ref(),
+        repo_exposure_limit,
         generated_skip.as_ref(),
         pilot_budget_truncated || change_seams_added,
     )?;
     write_pilot_file(
         &artifacts.repo_exposure_md,
-        output::repo_exposure::render_repo_exposure_md_with_generated_skip(
+        output::repo_exposure::render_repo_exposure_md_with_limit(
             &classified,
-            limit_info.as_ref(),
+            repo_exposure_limit,
             ts_guidance.as_ref(),
             python_guidance.as_ref(),
             generated_skip.as_ref(),

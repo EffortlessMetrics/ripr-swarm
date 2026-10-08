@@ -3688,18 +3688,25 @@ Field contract:
 - `scope` — always `"repo"`.
 - `run_status` — always present; one of `"complete"` or
   `"seam_limit_applied"`. `"complete"` means the run analyzed all
-  seams. `"seam_limit_applied"` means `RIPR_REPO_EXPOSURE_SEAM_LIMIT`
-  truncated the inventory. Consumers must read `run_status` before
+  seams. `"seam_limit_applied"` means the inventory cap or pilot artifact
+  budget truncated the reported population. Consumers must read `run_status` before
   treating counts as complete-repo totals. Added as an additive field
   within schema version `0.3` per RIPR-SPEC-0074.
 - `limitations[]` — present when repo exposure has a named run limitation or
   guidance disclosure. Consumers must branch on `category`.
-  - `category: "repo_seam_limit_applied"` appears when `run_status` is
-    `"seam_limit_applied"`. It carries `seams_analyzed`, `seams_total`,
+  - `category: "repo_seam_limit_applied"` identifies an inventory cut when
+    `run_status` is `"seam_limit_applied"`. It carries `seams_analyzed`, `seams_total`,
     `limit_source`, `control`, and `repair_route`. `limit_source` is
     `"default"` when the cap came from the built-in default
     (`DEFAULT_REPO_EXPOSURE_SEAM_LIMIT = 10_000`) and `"configured"` when
     `RIPR_REPO_EXPOSURE_SEAM_LIMIT` was explicitly set in the environment.
+    `control` and `repair_route` name that inventory control.
+  - `category: "pilot_seam_budget_applied"` identifies a pilot artifact
+    budget cut, with the same count/source fields and `control:
+    "RIPR_PILOT_SEAM_BUDGET"`. Its default is 2,000; a configured value
+    retains `limit_source: "configured"`. The repair route names the pilot
+    budget that actually fired, even when an inventory cap also applied.
+    An inactive pilot budget does not relabel an inventory limitation.
   - `category: "typescript_diff_first"` appears when a TS/JS-predominant
     workspace has TS/JS files, no Rust files, and zero classified seams.
     `run_status` remains `"complete"` because the Rust repo-exposure scan

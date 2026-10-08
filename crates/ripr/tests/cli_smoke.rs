@@ -13777,6 +13777,9 @@ fn pilot_snapshot_truncated_by_the_seam_budget_is_not_a_verify_baseline()
         "\npub fn shipping_fee(weight: i32, free_limit: i32) -> i32 {\n    if weight > free_limit { 5 } else { 0 }\n}\n\npub fn handling_fee(items: i32) -> i32 {\n    if items > 3 { 2 } else { 0 }\n}\n",
     );
     std::fs::write(root.join("src/lib.rs"), lib)?;
+    // Keep the expanded inventory in the baseline so an inventory cap cannot
+    // be erased by current-change supplementation (#6943).
+    commit_repair_fixture(&root, &["-qam", "expanded pilot fixture"])?;
 
     let pilot = run_command_with_env(
         env!("CARGO_BIN_EXE_ripr"),
@@ -13934,13 +13937,17 @@ fn pilot_snapshot_truncated_by_the_seam_budget_is_not_a_verify_baseline()
         "{inventory}"
     );
     let inventory_md = std::fs::read_to_string(root.join("target/ripr/pilot/repo-exposure.md"))?;
+    let inventory_line = inventory_md
+        .lines()
+        .find(|line| line.starts_with("> Partial scan:"))
+        .ok_or("inventory-only run must disclose its cap")?;
     assert!(
-        inventory_md.contains("RIPR_REPO_EXPOSURE_SEAM_LIMIT"),
-        "{inventory_md}"
+        inventory_line.contains("RIPR_REPO_EXPOSURE_SEAM_LIMIT"),
+        "{inventory_line}"
     );
     assert!(
-        !inventory_md.contains("RIPR_PILOT_SEAM_BUDGET"),
-        "{inventory_md}"
+        !inventory_line.contains("RIPR_PILOT_SEAM_BUDGET"),
+        "{inventory_line}"
     );
 
     // Removing both caps recovers the full population in the same workspace.

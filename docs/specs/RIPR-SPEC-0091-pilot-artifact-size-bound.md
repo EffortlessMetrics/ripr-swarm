@@ -21,6 +21,7 @@ Linked plan:
 Linked issues:
 
 - #1170 — `ripr pilot` writes ~400 MB artifacts for a one-file change
+- #5861 — repo-exposure guidance must name the pilot budget that actually fired
 
 Linked PRs:
 
@@ -112,9 +113,18 @@ When the budget is applied, both `repo-exposure.json` and
 ]
 ```
 
-When the budget is not applied, `"run_status": "complete"` is emitted with no
-`limitations` array (mirroring the existing `repo-exposure.json` contract from
-RIPR-SPEC-0074).
+When neither cap is applied, `"run_status": "complete"` is emitted with no
+cap limitation (mirroring the existing `repo-exposure.json` contract from
+RIPR-SPEC-0074). An inventory-only cut keeps repo-exposure's
+`repo_seam_limit_applied` category and `RIPR_REPO_EXPOSURE_SEAM_LIMIT` control.
+The renderer receives the identity of the cap that fired; a configured but
+inactive pilot budget must not relabel inventory guidance.
+
+For repo-exposure JSON, the default pilot repair route is
+`Set RIPR_PILOT_SEAM_BUDGET=0 to render all seams in the pilot artifacts.`;
+the configured route is
+`Remove or raise RIPR_PILOT_SEAM_BUDGET to render more seams in the pilot artifacts.`.
+Markdown names the same control in its partial-scan disclosure.
 
 The `pilot-summary.json` and `pilot-summary.md` artifacts are NOT modified.
 They already reflect the top-N seams from the pilot summary logic, which is
@@ -182,6 +192,10 @@ governed separately.
 
 ## Test Mapping
 
+- `crates/ripr/tests/cli_smoke.rs::pilot_snapshot_truncated_by_the_seam_budget_is_not_a_verify_baseline` — built CLI configured/both/inventory-only/uncapped/replay controls.
+- `crates/ripr/src/output/repo_exposure.rs::tests::pilot_limit_disclosure_names_the_applied_cap` — default/configured pilot JSON and Markdown literals, plus uncapped nonempty output.
+- `crates/ripr/src/output/repo_exposure.rs::tests::inventory_limit_routes_remain_unchanged` — default/configured inventory repair routes.
+
 - `crates/ripr/src/analysis/seam_inventory.rs::tests::pilot_seam_budget_default_constant_is_smaller_than_repo_exposure_cap`
 - `crates/ripr/src/analysis/seam_inventory.rs::tests::pilot_seam_budget_env_zero_parses_as_unbounded`
 - `crates/ripr/src/analysis/seam_inventory.rs::tests::apply_pilot_seam_budget_inner_truncates_when_above_limit`
@@ -198,9 +212,11 @@ governed separately.
 - `crates/ripr/src/output/agent_seam_packets.rs` — adds `limit_info: Option<&SeamLimitInfo>`
   parameter to `render_agent_seam_packets_json`; emits `run_status` and `limitations[]`
   mirroring the repo-exposure renderer pattern.
+- `crates/ripr/src/output/repo_exposure.rs` — `RepoExposureLimit` preserves
+  inventory versus pilot cap identity while sharing the bounded document writer.
 - `crates/ripr/src/cli/commands/pilot.rs` — threads `SeamLimitInfo` from the
-  inventory result through `apply_pilot_seam_budget` and passes `limit_info.as_ref()`
-  to both renderers.
+  inventory result through `apply_pilot_seam_budget`; selects repo-exposure's
+  cap context from whether the pilot budget actually truncated the population.
 - `crates/ripr/src/cli/help/core.rs` — adds `RIPR_PILOT_SEAM_BUDGET` documentation
   to `PILOT_HELP`.
 
