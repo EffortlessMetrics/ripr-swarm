@@ -326,14 +326,25 @@ fn only_bindings_and_field_reads(body: &str, receivers: &[&str], owner_name: &st
         .filter(|statement| !statement.is_empty())
         .all(|statement| {
             if let Some(rest) = statement.strip_prefix("let ") {
-                let name = rest.split(['=', ':']).next().unwrap_or_default().trim();
-                return receivers.contains(&name);
+                // The whole statement, so a transform chained on the next
+                // line (`let q = quote(2_500, 4)\n    .with_coupon(500)`)
+                // is seen too.
+                let Some((name, value)) = rest.split_once('=') else {
+                    return false;
+                };
+                let name = name.split(':').next().unwrap_or_default().trim();
+                return receivers.contains(&name) && is_bare_owner_call(value, owner_name);
             }
-            // The macro's own parenthesis is the only call allowed: a helper
-            // inside an assertion (`assert_eq!(make_quote(1_000, 1), ..)`)
-            // may run the owner and see the operand.
+            // An assertion macro whose own parenthesis is the only bracket: a
+            // helper inside it (`assert_eq!(make_quote(1_000, 1), ..)`,
+            // `make_quote![..]`) or a helper named `assert_*` may run the
+            // owner and see the operand.
+            let macro_name_len = statement
+                .find(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_'))
+                .unwrap_or(statement.len());
             statement.starts_with("assert")
-                && statement.matches('(').count() == 1
+                && statement[macro_name_len..].starts_with("!(")
+                && statement.matches(['(', '[', '{']).count() == 1
                 && whole_word_count(statement, owner_name) == 0
                 && !receivers
                     .iter()
@@ -387,6 +398,12 @@ fn bound_once_from_owner_call(body: &str, receiver: &str, owner_name: &str) -> b
         return false;
     };
     let value = value.split_once("//").map_or(*value, |(code, _)| code);
+    is_bare_owner_call(value, owner_name)
+}
+
+/// Whether `value` is exactly one call to `owner_name` (`quote(..)`,
+/// `crate::quote(..)`), with nothing chained after it.
+fn is_bare_owner_call(value: &str, owner_name: &str) -> bool {
     let value = value.trim().trim_end_matches(';').trim_end();
     let Some(open) = value.find('(') else {
         return false;
@@ -807,11 +824,32 @@ mod tests {
             "assert_eq!(q.subtotal_cents, 9_000);",
             "assert_eq!(q.total_cents, 9_000);",
         ])]);
+        let transformed_next_line = pin(&[test_with(&[
+            "let q = quote(2_500, 4)",
+            "    .with_coupon(500);",
+            "assert_eq!(q.subtotal_cents, 9_000);",
+            "assert_eq!(q.total_cents, 9_000);",
+        ])]);
+        let assert_named_helper = pin(&[test_with(&[
+            "let q = quote(2_500, 4);",
+            "assert_eq!(q.subtotal_cents, 9_000);",
+            "assert_eq!(q.total_cents, 9_000);",
+            "assert_quote_total(1_000, 1);",
+        ])]);
+        let bracket_macro = pin(&[test_with(&[
+            "let q = quote(2_500, 4);",
+            "assert_eq!(q.subtotal_cents, 9_000);",
+            "assert_eq!(q.total_cents, 9_000);",
+            "assert_eq!(make_quote![1_000, 1].tier, Tier::Standard);",
+        ])]);
 
         assert_eq!(helper, None);
         assert_eq!(helper_in_assertion, None);
         assert_eq!(owner_in_assertion, None);
         assert_eq!(transformed, None);
+        assert_eq!(transformed_next_line, None);
+        assert_eq!(assert_named_helper, None);
+        assert_eq!(bracket_macro, None);
         assert_eq!(second_result, None);
         assert!(other_field.is_some());
         assert!(in_fn.is_some());
