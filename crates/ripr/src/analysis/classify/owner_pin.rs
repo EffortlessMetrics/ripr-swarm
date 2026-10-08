@@ -135,6 +135,10 @@ pub(in crate::analysis) struct OwnerPinSyntax {
     /// the composed child file, or `None` when declarations conflict.
     /// Built once per run; the index is immutable.
     mod_children: OnceCell<BTreeMap<(PathBuf, String), Option<PathBuf>>>,
+    /// #7172: [`unit_struct_value`]'s workspace-wide scan verdicts,
+    /// computed once per run over the once-built module-name set.
+    /// The index is immutable, so the memo never goes stale.
+    unit_struct_facts: OnceCell<UnitStructFacts>,
     withheld: WithheldMacroBindings,
 }
 
@@ -1665,6 +1669,7 @@ impl OwnerReturnPin {
                             index,
                             imports_foreign,
                             owner_scope,
+                            syntax,
                         )
                     }
                     // An inline constructor types the receiver the same way
@@ -1676,6 +1681,7 @@ impl OwnerReturnPin {
                         index,
                         imports_foreign,
                         owner_scope,
+                        syntax,
                     ),
                     CallShape::Bare | CallShape::Path(_) => None,
                 };
@@ -5151,6 +5157,7 @@ fn test_receiver_type(
     index: &RustIndex,
     imports_foreign: ForeignImport<'_>,
     owner: OwnerScope<'_>,
+    syntax: &OwnerPinSyntax,
 ) -> Option<ReceiverType> {
     let bindings = receiver_let_bindings(test, receiver)?;
     if bindings.is_empty() {
@@ -5163,12 +5170,20 @@ fn test_receiver_type(
             index,
             imports_foreign,
             owner,
+            syntax,
         );
     }
     let mut bound: Option<ReceiverType> = None;
     for binding in bindings {
-        let receiver_type =
-            binding_type(binding, test, test_source, index, imports_foreign, owner)?;
+        let receiver_type = binding_type(
+            binding,
+            test,
+            test_source,
+            index,
+            imports_foreign,
+            owner,
+            syntax,
+        )?;
         match &bound {
             None => bound = Some(receiver_type),
             Some(existing) if *existing == receiver_type => {}
@@ -5717,6 +5732,7 @@ fn binding_type(
     index: &RustIndex,
     imports_foreign: ForeignImport<'_>,
     owner: OwnerScope<'_>,
+    syntax: &OwnerPinSyntax,
 ) -> Option<ReceiverType> {
     let binding = binding.trim();
     let (annotation, initializer) = if let Some(rest) = binding.strip_prefix(':') {
@@ -5742,7 +5758,7 @@ fn binding_type(
         // `named_or_slice` refuses a lower-case name anyway; checking first
         // skips the workspace scan for every local-variable receiver.
         if !initializer.starts_with(|character: char| character.is_ascii_uppercase())
-            || !unit_struct_value(initializer, &test.file, index)
+            || !unit_struct_value(initializer, &test.file, index, syntax)
         {
             return None;
         }
@@ -5786,6 +5802,85 @@ fn binding_type(
     named_or_slice(type_name, test, test_source, index, imports_foreign, owner)
 }
 
+impl OwnerPinSyntax {
+    /// #7172: [`unit_struct_value`]'s name-independent inputs, computed
+    /// once per run; the index is immutable, so the memo never goes stale.
+    fn unit_struct_facts(&self, index: &RustIndex) -> &UnitStructFacts {
+        self.unit_struct_facts
+            .get_or_init(|| UnitStructFacts::collect(index))
+    }
+}
+
+/// #7172: the name-independent inputs to [`unit_struct_value`], scanned
+/// once per run over the immutable index. A bare-name receiver check runs
+/// per assertion, and every call used to rebuild the module-name set and
+/// mask + scan every indexed file; the per-name spelling checks stay per
+/// call. Every verdict below conjoins exactly as the per-call scans did,
+/// so hoisting them changes no admission.
+#[derive(Clone, Debug, Default)]
+struct UnitStructFacts {
+    /// A glob in some file may reach outside the workspace's modules.
+    glob_outside: bool,
+    /// Some file splices unread text (`include!`) or redirects a module
+    /// (`#[path]`, either spelling).
+    spliced: bool,
+    /// Some file's `macro_rules!` matcher takes an `:ident` or `:tt`
+    /// fragment, which could declare any name it is given.
+    macro_takes_name: bool,
+    /// Files whose masked source mentions `macro_rules!`: only these can
+    /// refuse a name by spelling it in a macro definition.
+    macro_files: BTreeSet<PathBuf>,
+}
+
+impl UnitStructFacts {
+    /// Scan the workspace once. The module-name set feeds the glob
+    /// verdict and is dropped; the predicates are the name-independent
+    /// halves of [`unit_struct_value`]'s per-file checks, unchanged.
+    fn collect(index: &RustIndex) -> Self {
+        let modules = workspace_module_names(index);
+        let mut glob_outside = false;
+        let mut spliced = false;
+        let mut macro_takes_name = false;
+        let mut macro_files = BTreeSet::new();
+        for (file, facts) in index.files().iter() {
+            let masked = mask_comments_and_strings(&facts.source);
+            // A glob that reaches outside the workspace's modules, in any
+            // file, can bring the name to the test without spelling it.
+            glob_outside |= glob_reaches_outside(&masked, &modules);
+            // `include!` and `#[path]` splice in text the index may never
+            // read, so no spelling scan covers them. The cheap filter
+            // matches the bare words: `# [ path` may carry whitespace, and
+            // rustc accepts the raw-identifier spelling `#[r#path = ..]`
+            // too (#7098 review).
+            if masked.contains("include") || masked.contains("path") {
+                let compact = without_rust_whitespace(&masked);
+                spliced |= compact.contains("include!")
+                    || compact.contains("#[path")
+                    || compact.contains("#[r#path");
+            }
+            // A macro may take the name as an `ident` or `tt` fragment; the
+            // spelling half (no macro-defining file spells the name) stays
+            // per name at the call.
+            if masked.contains("macro_rules") {
+                macro_files.insert(file.clone());
+                let compact = without_rust_whitespace(&masked);
+                macro_takes_name |= compact.contains(":ident") || compact.contains(":tt");
+            }
+        }
+        Self {
+            glob_outside,
+            spliced,
+            macro_takes_name,
+            macro_files,
+        }
+    }
+
+    /// Whether the workspace-wide scans refuse every name.
+    fn refused(&self) -> bool {
+        self.glob_outside || self.spliced || self.macro_takes_name
+    }
+}
+
 /// Whether the bare name `name`, spelled in `test_file`, evaluates to the
 /// workspace unit struct `name` (#7083). Reading what a bare name resolves
 /// to needs name resolution, so the rule admits only a shape where nothing
@@ -5812,48 +5907,36 @@ fn binding_type(
 /// Items a derive or attribute proc macro emits stay invisible, as for
 /// every other pin rule, as do items an out-of-workspace `macro_rules!`
 /// invocation emits (#7160).
-fn unit_struct_value(name: &str, test_file: &Path, index: &RustIndex) -> bool {
+fn unit_struct_value(
+    name: &str,
+    test_file: &Path,
+    index: &RustIndex,
+    syntax: &OwnerPinSyntax,
+) -> bool {
     // A prelude value (`None`, `Some`, `Ok`, `Err`) is in scope without any
     // import, so the struct may not be the item the test names.
     if PRELUDE_VALUES.contains(&name) {
         return false;
     }
-    let modules = workspace_module_names(index);
+    // #7172: the workspace-wide scans ran once per call; they now come
+    // from the run-scoped memo, and only the per-name spelling checks run.
+    let unit_struct = syntax.unit_struct_facts(index);
+    if unit_struct.refused() {
+        return false;
+    }
     let mut declared_in_test_file = 0usize;
     for (file, facts) in index.files().iter() {
-        let masked = mask_comments_and_strings(&facts.source);
-        // A glob that reaches outside the workspace's modules, in any file,
-        // can bring the name to the test without spelling it.
-        if glob_reaches_outside(&masked, &modules) {
-            return false;
-        }
-        // `include!` and `#[path]` splice in text the index may never
-        // read, so no spelling scan covers them. The cheap filter matches
-        // the bare words: `# [ path` may carry whitespace, and rustc
-        // accepts the raw-identifier spelling `#[r#path = ..]` too
-        // (#7098 review).
-        if masked.contains("include") || masked.contains("path") {
-            let compact = without_rust_whitespace(&masked);
-            if compact.contains("include!")
-                || compact.contains("#[path")
-                || compact.contains("#[r#path")
-            {
-                return false;
-            }
-        }
-        // A macro may take the name as an `ident` or `tt` fragment, or emit
-        // `struct name;` more than once from one spelling in its body.
-        if masked.contains("macro_rules") {
-            let compact = without_rust_whitespace(&masked);
-            if compact.contains(":ident")
-                || compact.contains(":tt")
-                || !whole_word_offsets(&masked, name).is_empty()
-            {
-                return false;
-            }
-        }
+        // Masking only blanks comments and strings, so a whole word in the
+        // masked source is spelled in the raw source too: skipping files
+        // without the name cannot skip a spelling the scan would refuse.
         if !facts.source.contains(name) {
             continue;
+        }
+        let masked = mask_comments_and_strings(&facts.source);
+        // One spelling in a macro body declares a struct per invocation,
+        // so no file that defines a macro may spell the name.
+        if unit_struct.macro_files.contains(file) && !whole_word_offsets(&masked, name).is_empty() {
+            return false;
         }
         for offset in whole_word_offsets(&masked, name) {
             let before = masked[..offset].trim_end();
