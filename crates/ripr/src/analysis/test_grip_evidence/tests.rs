@@ -17907,6 +17907,101 @@ fn boundary_asserts_flipped_value() {
     Ok(())
 }
 
+/// #7007 review: the per-test grip names only the test's BEST oracle, so a
+/// test carrying both a consistent strong assertion and a contradicted one
+/// renders no contradiction at all. The producer-owned count over the full
+/// assertion set is the completeness authority the receipt's gate reads.
+#[test]
+fn contradiction_count_counts_a_test_beside_its_best_oracle() -> Result<(), String> {
+    let (evidence, _seam, _index) = wrongval_seam_evidence(
+        r#"
+#[test]
+fn consistent_oracle_beside_a_flipped_assert() {
+    assert_eq!(discounted_total(5_000, 5_000), 3_500);
+    assert_eq!(discounted_total(1_000, 5_000), 999);
+}
+"#,
+    )?;
+    assert_eq!(
+        evidence.statically_contradicted_related_tests, 1,
+        "the producer count sees the contradicted assertion beside the strong one"
+    );
+    let related = evidence
+        .related_tests
+        .iter()
+        .find(|test| test.test_name == "consistent_oracle_beside_a_flipped_assert")
+        .ok_or_else(|| "the two-oracle test must stay related".to_string())?;
+    assert_eq!(
+        related.oracle_strength,
+        OracleStrength::Strong,
+        "the best oracle stays strong"
+    );
+    assert_eq!(
+        related.evidence_summary, "exact value assertion",
+        "the rendered summary carries no contradiction: this lossy channel is why the count exists"
+    );
+    Ok(())
+}
+
+/// #7007 review: a value-insensitive seam (ReturnValue) whose only related
+/// test carries a statically contradicted exact-value assertion gains no
+/// activation credit from that test's bare owner call — in the full path or
+/// the compact path. The baseline-failing call is the inverted repair
+/// attempt, not established activation.
+#[test]
+fn wrongval_only_test_grants_no_activation_credit_on_value_insensitive_seam() -> Result<(), String>
+{
+    let prod = PathBuf::from("src/main.rs");
+    let prod_src = r#"
+pub fn capped_charge(cents: u64) -> u64 {
+    cents * 2
+}
+"#;
+    let tests = PathBuf::from("tests/main_tests.rs");
+    let index = index_from_files(&[
+        (prod.clone(), prod_src),
+        (
+            tests,
+            r#"
+#[test]
+fn charge_asserts_flipped_value() {
+    assert_eq!(capped_charge(2_000), 4_001);
+}
+"#,
+        ),
+    ])?;
+    let seams = inventory_seams_from_index(&[prod], &index);
+    let seam = seams
+        .iter()
+        .find(|seam| seam.kind() == SeamKind::ReturnValue)
+        .ok_or_else(|| "expected a return value seam for the pure tail owner".to_string())?
+        .clone();
+    let evidence = evidence_for_seam(&seam, &index);
+    if evidence.activate.state == StageState::Yes {
+        return Err(format!(
+            "a contradicted-only test must not grant activation credit on a value-insensitive seam: {}",
+            evidence.activate.summary
+        ));
+    }
+    assert!(
+        evidence.activate.summary.contains("withheld"),
+        "the activation stage must disclose the withholding: {}",
+        evidence.activate.summary
+    );
+    let compact = compact_evidence_for_seam(&seam, &CompactGripContext::new(&index));
+    if compact.activate.state == StageState::Yes {
+        return Err(format!(
+            "the compact path must not grant activation credit either: {}",
+            compact.activate.summary
+        ));
+    }
+    assert_eq!(
+        evidence.statically_contradicted_related_tests, 1,
+        "the producer count names the contradicted test"
+    );
+    Ok(())
+}
+
 /// The limitation stays honest in the other direction: when the owner is not
 /// statically evaluable, the wrong-valued assert keeps today's credit and
 /// the gap closes. No fabrication either way.

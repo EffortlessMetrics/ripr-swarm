@@ -3866,6 +3866,14 @@ Field contract:
   existing seam evidence, including related-test relation fields. The
   nested `related_tests` array is capped like the top-level array and keeps
   `related_tests_total`.
+- `seams[].evidence_record.statically_contradicted_related_tests` -
+  additive, present only when positive (RIPR-SPEC-0233, #7007). Producer
+  count of related tests whose exact-value assertion statically contradicts
+  the seam owner's fold, over the FULL related set - the capped
+  `related_tests` projection can omit a contradicted test and each entry
+  names only its best oracle, so a positive count here is the completeness
+  authority for outcome receipts: the gap cannot be reported closed while
+  it is positive, even when no rendered entry names the contradiction.
 - `seams[].evidence_record.related_tests[].oracle_semantics` - structured
   oracle-shape explanation with `observes`, `missing`, and nullable
   `upgrade_suggestion`. Weak, broad, smoke-only, and unknown oracle shapes
@@ -18099,7 +18107,7 @@ targeted-rerun receipt shape:
     "recomputation_reasons": ["selected_test_scope_recomputed"],
     "invalidation_status": "not_available",
     "input_fingerprint": {
-      "schema_version": "1.49",
+      "schema_version": "1.51",
       "analyzer_version": "0.11.0+0123456789abcdef0123456789abcdef01234567",
       "workspace_root_hash": "…",
       "files_content_hash": "…",

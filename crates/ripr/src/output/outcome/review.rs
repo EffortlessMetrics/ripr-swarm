@@ -148,7 +148,61 @@ pub(super) fn targeted_test_outcome_gap_summary_sentence(
 }
 
 pub(super) fn review_remaining_weak_or_unknown(report: &TargetedTestOutcomeReport) -> Vec<String> {
-    let mut items = Vec::new();
+    // Contradiction disclosures come first and are exempt from the item
+    // cap (#7007 review): a capped attention row must not be able to push
+    // the receipt's only contradiction disclosure out of the section.
+    let mut contradictions: Vec<String> = Vec::new();
+    for movement in report
+        .moved
+        .iter()
+        .chain(report.unchanged.iter())
+        .chain(report.regressed.iter())
+    {
+        for contradiction in &movement.after_contradicted_related_tests {
+            contradictions.push(format!(
+                "{} at {}:{} keeps a contradicted discriminator in its evidence set: {}.",
+                movement.seam_kind, movement.file, movement.line, contradiction
+            ));
+        }
+        // The named list comes from the capped rendered projection; when
+        // the producer count is larger, the section says so by count
+        // instead of leaving the omitted contradicted tests silent.
+        if let Some(count) = movement.after_contradicted_test_count
+            && count > movement.after_contradicted_related_tests.len()
+        {
+            contradictions.push(format!(
+                "{} at {}:{} keeps {count} statically contradicted related test(s) in its evidence set ({} named above; the count covers the full related set).",
+                movement.seam_kind,
+                movement.file,
+                movement.line,
+                movement.after_contradicted_related_tests.len()
+            ));
+        }
+    }
+    // New seams carry their own disclosures: a seam that exists only in the
+    // after snapshot is not a movement record, so its contradiction would
+    // otherwise be invisible here (#7007 review).
+    for seam in &report.new {
+        for contradiction in &seam.contradicted_related_tests {
+            contradictions.push(format!(
+                "New {} at {}:{} carries a contradicted discriminator in its evidence set: {}.",
+                seam.seam_kind, seam.file, seam.line, contradiction
+            ));
+        }
+        if let Some(count) = seam.statically_contradicted_related_tests
+            && count > seam.contradicted_related_tests.len()
+        {
+            contradictions.push(format!(
+                "New {} at {}:{} carries {count} statically contradicted related test(s) in its evidence set ({} named above; the count covers the full related set).",
+                seam.seam_kind,
+                seam.file,
+                seam.line,
+                seam.contradicted_related_tests.len()
+            ));
+        }
+    }
+
+    let mut items: Vec<String> = Vec::new();
     for movement in report
         .moved
         .iter()
@@ -170,26 +224,16 @@ pub(super) fn review_remaining_weak_or_unknown(report: &TargetedTestOutcomeRepor
             ));
         }
     }
-    // #7007: a contradicted related test keeps the seam's gap open even when
-    // the class itself reached a terminal class, so the contradiction is
-    // surfaced here instead of an empty weak/unknown section.
-    for movement in report
-        .moved
-        .iter()
-        .chain(report.unchanged.iter())
-        .chain(report.regressed.iter())
-    {
-        for contradiction in &movement.after_contradicted_related_tests {
-            items.push(format!(
-                "{} at {}:{} keeps a contradicted discriminator in its evidence set: {}.",
-                movement.seam_kind, movement.file, movement.line, contradiction
-            ));
-        }
+    if contradictions.is_empty() {
+        review_limit_or_default(
+            items,
+            "No weak or unknown after-snapshot seams were present in the compared artifacts.",
+        )
+    } else {
+        items.truncate(REVIEW_ATTENTION_ITEM_LIMIT);
+        contradictions.extend(items);
+        contradictions
     }
-    review_limit_or_default(
-        items,
-        "No weak or unknown after-snapshot seams were present in the compared artifacts.",
-    )
 }
 
 pub(super) fn review_should_inspect(report: &TargetedTestOutcomeReport) -> Vec<String> {
@@ -283,6 +327,11 @@ fn review_limit_or_default(mut items: Vec<String>, fallback: &str) -> Vec<String
     if items.is_empty() {
         return vec![fallback.to_string()];
     }
-    items.truncate(5);
+    items.truncate(REVIEW_ATTENTION_ITEM_LIMIT);
     items
 }
+
+/// The noise cap for the generic attention rows. Contradiction disclosures
+/// are deliberately exempt from it (#7007 review): they are the receipt's
+/// contract, not noise.
+const REVIEW_ATTENTION_ITEM_LIMIT: usize = 5;

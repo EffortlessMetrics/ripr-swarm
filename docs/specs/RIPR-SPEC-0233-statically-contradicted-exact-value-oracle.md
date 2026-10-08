@@ -44,10 +44,12 @@ Policy impact:
   (`1.32`/`0.38`) and #6718 bool-owner pin (`1.33`/`0.39`) transitions this
   PR rebased over — because warm entries would keep serving the
   contradicted assertion's strong credit. The #7007 activation transition
-  bumps again — full `1.47` -> `1.48` and sharded/compact `0.53` -> `0.54`
-  (stacked above #5328's constant-row-table `1.47`/`0.53` transition this
-  PR rebased over) — because warm entries would keep serving the
-  contradicted test's observed value and the closed gap.
+  bumps again — full `1.49` -> `1.50` -> `1.51` and sharded/compact
+  `0.55` -> `0.56` -> `0.57` (stacked above #5328's constant-row-table
+  `1.47`/`0.53` and table-row-boundary `1.48`/`0.54` and #5334's
+  macro-generated-test `1.49`/`0.55` transitions this PR rebased over) —
+  because warm entries would keep serving the contradicted test's observed
+  value, the closed gap, and a count-less evidence shape.
 - No repo-exposure schema version bump: the evidence-record shape is
   unchanged; only values and evidence summaries move.
 
@@ -88,15 +90,29 @@ The verdict is decided per related-test assertion against the seam owner:
   value — in the stage and related-test evidence summaries.
 - The same fold also withholds the contradicted test's call-site credit
   (#7007): its owner-call argument values do not count toward the seam's
-  activation/observed-values evidence, and its arguments do not satisfy
-  boundary-equality coverage, because completing the equality boundary in
-  the mutant's favor is exactly the inverted signal. Consistent and
-  not-evaluable tests keep their activation credit unchanged.
+  activation/observed-values evidence, its arguments do not satisfy
+  boundary-equality coverage, and its bare owner call grants no
+  value-insensitive activation credit in either the full or the compact
+  path, because completing the equality boundary or crediting a
+  baseline-failing call in the mutant's favor is exactly the inverted
+  signal. Consistent and not-evaluable tests keep their activation credit
+  unchanged.
+- The evidence carries a producer-owned contradiction count over the FULL
+  related set (#7007 review). The evidence record's `related_tests` array
+  is a capped projection and each entry names only its best oracle, so the
+  count is the completeness authority: outcome parsing keeps the gap open
+  on a positive count even when the rendered subset names no contradicted
+  test, and a snapshot that records no count establishes nothing either
+  way.
 - While a contradicted related test remains in an evidence set, the outcome
   receipt cannot report that evidence set's gap closed, and the receipt's
   weak/unknown section names the contradiction instead of rendering its
   empty fallback. Detection keys on the shared disclosure prefix the
-  analysis producer writes into the related-test evidence summary.
+  analysis producer writes into the related-test evidence summary, plus
+  the producer count. New seams (present only in the after snapshot) carry
+  the same disclosure, and contradiction disclosures are exempt from the
+  section's generic item cap so a capped attention row cannot push them
+  out.
 
 ## Rule
 
@@ -208,6 +224,17 @@ Source: the issue #6026 crate — `discounted_total` with an
   receipt contract, with
   `::prose_that_mentions_contradiction_without_the_disclosure_does_not_block_closure`
   pinning the disclosure-prefix identity.
+- #7007 review:
+  `test_grip_evidence/tests.rs::contradiction_count_counts_a_test_beside_its_best_oracle`
+  and `::wrongval_only_test_grants_no_activation_credit_on_value_insensitive_seam`
+  (both red on the pre-review behavior), plus
+  `output/outcome/mod.rs::producer_contradiction_count_holds_the_gap_open_without_a_named_entry`
+  and `::a_new_seam_with_a_contradicted_test_surfaces_in_the_weak_section`
+  (red on the pre-review receipt), pin the completeness count, the
+  value-insensitive activation bound, and the new-seam/cap-exempt
+  disclosures. The RC rehearsal
+  (`crates/ripr/tests/cli_smoke.rs::agent_repair_after_a_failing_test_says_the_test_was_not_run`)
+  pins the agent-repair surfaces under the corrected unchanged movement.
 - Not pinned by the existing honesty corpora: the RIPR-SPEC-0108 corpus
   asserts diff-scoped finding classifications and the actionable-gap corpus
   joins hand-authored receipts, while this rule is the repo-scope seam
@@ -227,15 +254,25 @@ Source: the issue #6026 crate — `discounted_total` with an
   summaries name the contradiction. `test_has_contradicted_assertion`
   (#7007) additionally withholds the contradicted test's activation
   credit: its call-site values and boundary-equality arguments do not count
-  toward `observed_values` or boundary coverage in `activate_evidence`.
+  toward `observed_values` or boundary coverage in `activate_evidence`, and
+  its bare owner call grants no value-insensitive activation credit in the
+  full or compact activation paths (#7007 review). The evidence records
+  `statically_contradicted_related_tests`, the producer count over the
+  full related set.
+- `crates/ripr/src/output/evidence_record.rs`: the record renders the
+  producer count (`statically_contradicted_related_tests`) only while it is
+  positive, so its presence is the completeness signal (#7007 review).
 - `crates/ripr/src/output/outcome/`: the receipt bound (#7007) —
   `contradicted_related_tests` parses the shared disclosure prefix from the
-  after evidence set, a non-empty set downgrades `closed` to `improved`,
-  the moved entry's evidence delta names each contradiction, and the
-  weak/unknown review section lists them instead of its empty fallback.
+  after evidence set, a non-empty set — or a positive producer count —
+  downgrades `closed` to `improved`, the moved entry's evidence delta names
+  each contradiction, and the weak/unknown review section lists them
+  instead of its empty fallback, ahead of the capped attention rows and
+  including new seams (#7007 review).
 - `crates/ripr/src/analysis/seam_cache.rs`: the classified-seam cache
   generation bumps so warm entries cannot keep serving the strong credit
-  (`1.34`, then `1.48` for the #7007 activation transition).
+  (`1.34`, then `1.50` for the #7007 activation transition and `1.51` for
+  the producer contradiction count).
 
 ## Required Evidence
 

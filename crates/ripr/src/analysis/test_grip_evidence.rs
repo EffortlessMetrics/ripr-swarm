@@ -71,6 +71,15 @@ pub(crate) struct TestGripEvidence {
     pub(crate) discriminate: StageEvidence,
     pub(crate) observed_values: Vec<ValueFact>,
     pub(crate) missing_discriminators: Vec<MissingDiscriminatorFact>,
+    /// #7007: how many related tests carry a statically contradicted
+    /// exact-value assertion, counted by the producer over the FULL related
+    /// set. This is the completeness authority for the contradiction gate:
+    /// the evidence record's `related_tests` array is a capped projection
+    /// and each entry names only its best oracle, so absence of a disclosure
+    /// there cannot establish absence from the evidence set. No serde
+    /// default: a stored entry predating this field must miss (the cache
+    /// generation bump) rather than deserialize as a silent zero.
+    pub(crate) statically_contradicted_related_tests: usize,
     /// Producer-owned Integration or InlineUnit proposal, or the typed
     /// blocker that kept the target `Missing`. Compact evidence leaves this
     /// empty so the compact classified-seam cache does not need a generation
@@ -355,6 +364,12 @@ fn evidence_for_seam_with_context(
         })
         .collect();
     let new_test_target = new_test_target_admission(seam, context);
+    // Counted over the full related set, not the rendered record projection:
+    // this count is the contradiction gate's completeness authority (#7007).
+    let statically_contradicted_related_tests = related
+        .iter()
+        .filter(|test| test_has_contradicted_assertion(test, owner_fn))
+        .count();
 
     TestGripEvidence {
         seam_id: seam.id().clone(),
@@ -366,6 +381,7 @@ fn evidence_for_seam_with_context(
         discriminate,
         observed_values,
         missing_discriminators,
+        statically_contradicted_related_tests,
         new_test_target,
     }
 }
@@ -407,6 +423,10 @@ pub(crate) fn compact_evidence_for_seam(
     let propagate = propagate_evidence(seam, &related, owner_fn);
     let observe = observe_evidence(&related);
     let discriminate = discriminate_evidence(seam, &related, owner_fn);
+    let statically_contradicted_related_tests = related
+        .iter()
+        .filter(|test| test_has_contradicted_assertion(test, owner_fn))
+        .count();
 
     TestGripEvidence {
         seam_id: seam.id().clone(),
@@ -418,6 +438,7 @@ pub(crate) fn compact_evidence_for_seam(
         discriminate,
         observed_values: Vec::new(),
         missing_discriminators,
+        statically_contradicted_related_tests,
         new_test_target: None,
     }
 }
@@ -557,7 +578,7 @@ fn activate_evidence(
     let direct_value_insensitive_owner_call = !owner_name.is_empty()
         && !requires_concrete_activation_values(seam)
         && owner_fn.is_some_and(|owner_fn| {
-            related
+            activation_credited
                 .iter()
                 .any(|indexed| has_direct_owner_call(indexed, owner_fn))
         });
@@ -567,7 +588,7 @@ fn activate_evidence(
         && !requires_concrete_activation_values(seam)
         && owner_fn.is_some_and(|owner_fn| {
             let free_owner = owner_fn.impl_context == FunctionImplContext::Free;
-            related.iter().any(|indexed| {
+            activation_credited.iter().any(|indexed| {
                 if free_owner {
                     indexed
                         .free_spelling_helper_owner_call_names
@@ -1388,6 +1409,19 @@ fn compact_activate_evidence(
     }
 
     let owner_name = owner_fn.map(|f| f.name.as_str()).unwrap_or("");
+    // Same contradiction gate as the full path (#7007 review): a related
+    // test whose equality assertion statically contradicts the owner's fold
+    // contributes no activation credit here either, so the compact evidence
+    // cannot disagree with the full evidence on whose call counts.
+    // Same contradiction gate as the full path (#7007 review): a related
+    // test whose equality assertion statically contradicts the owner's fold
+    // contributes no activation credit here either, so the compact evidence
+    // cannot disagree with the full evidence on whose call counts.
+    let activation_credited: Vec<&CompactTest<'_>> = related
+        .iter()
+        .copied()
+        .filter(|indexed| !test_has_contradicted_assertion(indexed.test, owner_fn))
+        .collect();
     let target_affinity_tokens =
         (!requires_concrete_activation_values(seam)).then(|| assertion_target_tokens(seam));
     // A free owner is called only by a bare or module-qualified spelling:
@@ -1397,7 +1431,7 @@ fn compact_activate_evidence(
     // `Type::name(..)` cannot activate the free `name` (#6713 review).
     let free_owner = owner_fn.is_some_and(|owner| owner.impl_context == FunctionImplContext::Free);
     let direct_owner_call = !owner_name.is_empty()
-        && related.iter().any(|indexed| {
+        && activation_credited.iter().any(|indexed| {
             if free_owner {
                 (indexed.call_names.contains(owner_name)
                     && test_calls_free_function(indexed.test, owner_name))
