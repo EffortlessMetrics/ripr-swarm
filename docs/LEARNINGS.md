@@ -60,6 +60,16 @@ the tail `dulo`, and `rfind(..) + 1` sliced inside `ó`, aborting `ripr
 check`. Non-ASCII bytes are identifier bytes there; the qualifier slice
 skips the whole found character. ASCII paths stay unchanged. Do not
 assume an ASCII identifier vocabulary is a char-boundary walk.
+## 2026-10-07: Pin-side refusals need reach mirrors, and raw spellings need every matching site (#7067)
+
+The owner pin refused single-file receiver renames while reach kept
+`direct_owner_call` for the same file: `owner_call_relation_reason`
+shared the module and parent shadow checks but never the file-wide rename
+check. A trust fix on one side must audit the other before claiming the
+hole closed. Separately, `r#Name` denotes `Name` at every matching site,
+not just declarations: the rename matcher tested the plain spelling only,
+so `use x::Y as r#Window` escaped while `struct r#Window` was already
+caught. Audit all spellings at all related sites when changing one.
 
 ## 2026-10-07: Out-of-line shadows live at parent roots, and owner-side gates fire first (#6950)
 

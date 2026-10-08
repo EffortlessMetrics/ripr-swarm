@@ -2992,8 +2992,9 @@ fn bound_by_macro(masked: &str, name: &str) -> bool {
 }
 
 /// Whether the file renames some item to `name` (`use a::b as name;`), so
-/// `name` may not be the item it looks like.
-fn file_renames_to(source: &str, name: &str) -> bool {
+/// `name` may not be the item it looks like. Related-test reach shares the
+/// single-file rename refusal (#7067).
+pub(in crate::analysis) fn file_renames_to(source: &str, name: &str) -> bool {
     if !source.contains(name) {
         return false;
     }
@@ -4034,8 +4035,12 @@ fn named_or_slice(
     // module scope — in its own file (#6905) or in an out-of-line parent
     // module (#6950) — binds a different type than the workspace declaration.
     let source = test_source?;
+    // `r#Window` denotes `Window`: a raw-identifier alias rebinds the name
+    // too (#7067, mirroring the #7051 parent-root check).
+    let raw = format!("r#{base}");
     if imports_foreign(&test.file, base)
         || file_renames_to(source, base)
+        || file_renames_to(source, raw.as_str())
         || file_aliases_type(source, base)
         || test_module_shadows_type(test, source, base, owner.in_file(&test.file))
         || parent_chain_shadows_type(test, base, owner, index)
