@@ -1,0 +1,22 @@
+{
+  "case_id": "grid-results-routed-match",
+  "subject_id": "authored-grid-results",
+  "origin": "authored",
+  "anchor": "src/lib.rs:15",
+  "behavior_family": "error_path",
+  "test_shape": "match_err_arm_assert_eq",
+  "hard_case": true,
+  "truth": "discriminated",
+  "ideal_verdict": "credited",
+  "observed_verdict": "credited",
+  "followed_retarget": false,
+  "changed_since_labeling": true,
+  "observed_classifications": [
+    "exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": [],
+  "findings_scored": 2,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

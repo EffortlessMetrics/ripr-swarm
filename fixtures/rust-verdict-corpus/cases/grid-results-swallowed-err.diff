@@ -1,0 +1,13 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index d7001b3..84c0f94 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -22,7 +22,7 @@ pub fn refund(paid: u64, amount: u64) -> Result<u64, PayError> {
+         return Err(PayError::Limit);
+     }
+     if amount > paid {
+-        return Err(PayError::Insufficient);
++        return Result::Err(PayError::Insufficient);
+     }
+     Ok(paid - amount)
+ }

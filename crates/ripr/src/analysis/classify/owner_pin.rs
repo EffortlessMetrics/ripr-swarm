@@ -2992,8 +2992,9 @@ fn bound_by_macro(masked: &str, name: &str) -> bool {
 }
 
 /// Whether the file renames some item to `name` (`use a::b as name;`), so
-/// `name` may not be the item it looks like.
-fn file_renames_to(source: &str, name: &str) -> bool {
+/// `name` may not be the item it looks like. Related-test reach shares the
+/// single-file rename refusal (#7067).
+pub(in crate::analysis) fn file_renames_to(source: &str, name: &str) -> bool {
     if !source.contains(name) {
         return false;
     }
@@ -4034,8 +4035,12 @@ fn named_or_slice(
     // module scope — in its own file (#6905) or in an out-of-line parent
     // module (#6950) — binds a different type than the workspace declaration.
     let source = test_source?;
+    // `r#Window` denotes `Window`: a raw-identifier alias rebinds the name
+    // too (#7067, mirroring the #7051 parent-root check).
+    let raw = format!("r#{base}");
     if imports_foreign(&test.file, base)
         || file_renames_to(source, base)
+        || file_renames_to(source, raw.as_str())
         || file_aliases_type(source, base)
         || test_module_shadows_type(test, source, base, owner.in_file(&test.file))
         || parent_chain_shadows_type(test, base, owner, index)
@@ -4238,10 +4243,39 @@ pub(in crate::analysis) fn parent_chain_shadows_type(
     owner: OwnerScope<'_>,
     index: &RustIndex,
 ) -> bool {
+    parent_chain_shadows_item(test, base, owner, index, ShadowKind::Type)
+}
+
+/// [`parent_chain_shadows_type`] for the owner's trait (#7087): a `trait`
+/// item, or a macro whose own text declares one, at the root of an
+/// out-of-line parent module of the test file names the test-local trait,
+/// so `Trait::method(..)` and `.method()` there never reach the production
+/// `impl Trait for T`. Same chain, fail-closed and owner-scope rules as the
+/// type check; declarations only, like [`test_module_shadows_trait`].
+pub(in crate::analysis) fn parent_chain_shadows_trait(
+    test: &TestSummary,
+    trait_name: &str,
+    owner: OwnerScope<'_>,
+    index: &RustIndex,
+) -> bool {
+    parent_chain_shadows_item(test, trait_name, owner, index, ShadowKind::Trait)
+}
+
+fn parent_chain_shadows_item(
+    test: &TestSummary,
+    base: &str,
+    owner: OwnerScope<'_>,
+    index: &RustIndex,
+    kind: ShadowKind,
+) -> bool {
     let Some(facts) = index.files().get(&test.file) else {
         return false;
     };
     let chain = &facts.role_provenance;
+    let owner_ancestors = match kind {
+        ShadowKind::Type => Vec::new(),
+        ShadowKind::Trait => owner_module_ancestors(owner, index),
+    };
     // The reason leads: an immediately ambiguous parent composes to empty
     // edges with the reason set, which is unresolved, not standalone.
     if chain.earliest_unresolved_reason.is_some() {
@@ -4257,31 +4291,47 @@ pub(in crate::analysis) fn parent_chain_shadows_type(
         let Some(parent) = index.files().get(&edge.parent) else {
             return true;
         };
-        parent_root_shadows_type(&parent.source, &edge.parent, base, owner)
+        parent_root_shadows_item(
+            &parent.source,
+            &edge.parent,
+            base,
+            owner,
+            kind,
+            &owner_ancestors,
+        )
     })
 }
 
 /// Whether one parent file's root declares the receiver type name: the
-/// per-edge step of [`parent_chain_shadows_type`]. A root-level
+/// per-edge step of [`parent_chain_shadows_type`] and
+/// [`parent_chain_shadows_trait`]. A root-level
 /// `use ... as <name>` rebinds the name to a different type and shadows
 /// too; a plain root-level `use` may re-export production, so only
 /// renames refuse. The owner's own root (the file holding a root-level
 /// owner) is the production declaration's scope, never a shadow; every
 /// other declaring root refuses.
-fn parent_root_shadows_type(
+fn parent_root_shadows_item(
     parent_source: &str,
     parent_file: &Path,
     base: &str,
     owner: OwnerScope<'_>,
+    kind: ShadowKind,
+    owner_ancestors: &[PathBuf],
 ) -> bool {
     let masked = mask_comments_and_strings(parent_source);
     // `r#Window` denotes `Window`: a raw-identifier declaration shadows too.
     let raw = format!("r#{base}");
-    if !declares_type(&masked, base)
-        && !masked.contains(raw.as_str())
-        && !file_aliases_type(parent_source, base)
-        && !file_renames_to(parent_source, base)
-    {
+    // Aliases and renames rebind a type name only; a trait is shadowed by a
+    // declaration (#7087), matching the in-file trait check (#7053).
+    let declared = match kind {
+        ShadowKind::Type => {
+            declares_type(&masked, base)
+                || file_aliases_type(parent_source, base)
+                || file_renames_to(parent_source, base)
+        }
+        ShadowKind::Trait => declares_trait(&masked, base),
+    };
+    if !declared && !masked.contains(raw.as_str()) {
         return false;
     }
     let Some(parse) = parse_clean_source_file(parent_source) else {
@@ -4291,9 +4341,9 @@ fn parent_root_shadows_type(
     let root_items: Vec<ast::Item> = root.children().filter_map(ast::Item::cast).collect();
     if !root_items
         .iter()
-        .any(|item| module_item_names_type(item, base))
+        .any(|item| module_item_names(item, base, kind))
         && !root_items.iter().any(|item| {
-            if !matches!(item, ast::Item::Use(_)) {
+            if kind == ShadowKind::Trait || !matches!(item, ast::Item::Use(_)) {
                 return false;
             }
             let text = item.syntax().text().to_string();
@@ -4307,7 +4357,36 @@ fn parent_root_shadows_type(
     if owner.file == parent_file && owner_at_file_root(&root, parent_source, owner) {
         return false;
     }
+    // A trait is commonly declared in an ancestor file of the file holding
+    // its impls (#7111): a declaring root on the owner's own module chain is
+    // the production declaration, not a shadow.
+    if owner_ancestors
+        .iter()
+        .any(|ancestor| ancestor == parent_file)
+    {
+        return false;
+    }
     true
+}
+
+/// The files whose module scope encloses the owner's file: the file itself
+/// (its root encloses every inline module in it) and the parents on its
+/// composed module chain. Empty when the owner file is not indexed, which
+/// keeps the fail-closed shadow check.
+fn owner_module_ancestors(owner: OwnerScope<'_>, index: &RustIndex) -> Vec<PathBuf> {
+    let Some(facts) = index.files().get(owner.file) else {
+        return Vec::new();
+    };
+    std::iter::once(owner.file.to_path_buf())
+        .chain(
+            facts
+                .role_provenance
+                .edges
+                .iter()
+                .filter(|edge| edge.kind == SourceRoleProvenanceEdgeKind::Module)
+                .map(|edge| edge.parent.clone()),
+        )
+        .collect()
 }
 
 /// The text range of the inline module directly enclosing the owner
