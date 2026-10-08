@@ -225,12 +225,24 @@ pub(crate) fn validate_analysis_outcome_artifact(
             crate::analysis_outcome::AnalysisOutcomeKind::NoScope
         )
     {
-        let diff =
-            crate::analysis::load_diff(root, declared_base, None, None).map_err(|error| {
-                invalid(format!(
-                    "Current analysis input could not be established: {error}."
-                ))
-            })?;
+        // RIPR-SPEC-0116 amendment: a check run on a dirty tree reads the
+        // working tree by default and records `head.source: "working_tree"`;
+        // re-derive the same diff source it analyzed, or a valid working-tree
+        // artifact would be compared with the committed diff.
+        let working_tree = value
+            .pointer("/head/source")
+            .and_then(Value::as_str)
+            .is_some_and(|source| source == "working_tree");
+        let loaded = if working_tree {
+            crate::analysis::load_worktree_diff(root, declared_base, None)
+        } else {
+            crate::analysis::load_diff(root, declared_base, None, None)
+        };
+        let diff = loaded.map_err(|error| {
+            invalid(format!(
+                "Current analysis input could not be established: {error}."
+            ))
+        })?;
         let digest = Sha256::digest(diff.as_bytes());
         let expected_input_identity = format!("sha256:{}", digest_hex(digest.as_ref()));
         if outcome.identity.input_identity.as_deref() != Some(expected_input_identity.as_str()) {
@@ -509,6 +521,96 @@ mod tests {
                     .to_string()
             ))
         );
+        Ok(())
+    }
+
+    /// RIPR-SPEC-0116 amendment: an artifact whose `head.source` is
+    /// `working_tree` is checked against the working-tree diff, and any other
+    /// artifact against the committed diff. The fixture's two diffs differ
+    /// (an uncommitted edit on a clean `HEAD`), so each identity is accepted
+    /// only under its own head source.
+    #[test]
+    fn validates_working_tree_head_source_against_the_working_tree_diff() -> Result<(), String> {
+        use crate::testing::fixture_git::{fixture_git_ok, remove_fixture_tree};
+        let root = std::env::temp_dir().join(format!(
+            "ripr-analysis-outcome-working-tree-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_err(|error| format!("clock before epoch: {error}"))?
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(root.join("src"))
+            .map_err(|error| format!("create fixture: {error}"))?;
+        fixture_git_ok(&root, &["init", "-q", "-b", "main"])?;
+        fixture_git_ok(&root, &["config", "user.email", "test@test.com"])?;
+        fixture_git_ok(&root, &["config", "user.name", "Test"])?;
+        std::fs::write(root.join("src/lib.rs"), "pub fn f() -> i32 { 1 }\n")
+            .map_err(|error| format!("write lib.rs: {error}"))?;
+        fixture_git_ok(&root, &["add", "."])?;
+        fixture_git_ok(&root, &["commit", "-q", "-m", "base"])?;
+        std::fs::write(root.join("src/lib.rs"), "pub fn f() -> i32 { 2 }\n")
+            .map_err(|error| format!("write dirty lib.rs: {error}"))?;
+        let identity_of = |diff: String| {
+            let digest = Sha256::digest(diff.as_bytes());
+            format!("sha256:{}", digest_hex(digest.as_ref()))
+        };
+        let working_tree_identity = identity_of(crate::analysis::load_worktree_diff(
+            &root,
+            Some("HEAD"),
+            None,
+        )?);
+        let committed_identity =
+            identity_of(crate::analysis::load_diff(&root, Some("HEAD"), None, None)?);
+        assert_ne!(
+            working_tree_identity, committed_identity,
+            "fixture precondition: the working-tree and committed diffs must differ"
+        );
+        let root_display = root.display().to_string();
+        let artifact_for = |identity: &str, head_source: Option<&str>| -> Result<Value, String> {
+            let mut outcome = complete_outcome(AnalysisOutcomeKind::CompleteNoFindings)?;
+            outcome.identity.input_identity = Some(identity.to_string());
+            let mut value = artifact(&outcome, true)?;
+            value["root"] = Value::String(root_display.clone());
+            if let Some(source) = head_source {
+                value["head"] = serde_json::json!({ "source": source });
+            }
+            Ok(value)
+        };
+        let mismatch = Err(AnalysisOutcomeArtifactError::Invalid(
+            "Analysis outcome artifact input identity does not match the current diff.".to_string(),
+        ));
+        let accepted = validate_analysis_outcome_artifact(
+            &root,
+            &root_display,
+            &artifact_for(&working_tree_identity, Some("working_tree"))?,
+        );
+        let committed_accepted = validate_analysis_outcome_artifact(
+            &root,
+            &root_display,
+            &artifact_for(&committed_identity, Some("commit"))?,
+        );
+        let working_tree_identity_as_commit = validate_analysis_outcome_artifact(
+            &root,
+            &root_display,
+            &artifact_for(&working_tree_identity, Some("commit"))?,
+        );
+        let committed_identity_as_working_tree = validate_analysis_outcome_artifact(
+            &root,
+            &root_display,
+            &artifact_for(&committed_identity, Some("working_tree"))?,
+        );
+        let working_tree_identity_without_head = validate_analysis_outcome_artifact(
+            &root,
+            &root_display,
+            &artifact_for(&working_tree_identity, None)?,
+        );
+        remove_fixture_tree(&root)?;
+        assert!(accepted.is_ok(), "{accepted:?}");
+        assert!(committed_accepted.is_ok(), "{committed_accepted:?}");
+        assert_eq!(working_tree_identity_as_commit, mismatch);
+        assert_eq!(committed_identity_as_working_tree, mismatch);
+        assert_eq!(working_tree_identity_without_head, mismatch);
         Ok(())
     }
 

@@ -12,7 +12,8 @@
 //! - The walk stops (and NAMES the limitation) at any boundary:
 //!   macro invocations (`name!`), callee names not found in the production
 //!   function set, or depth > 5.
-//! - Finding classification NEVER changes: `no_static_path` stays `no_static_path`.
+//! - Finding classification NEVER changes: `no_static_path` stays `no_static_path`
+//!   (and a proximity-only `weakly_exposed` finding stays `weakly_exposed`, #7071).
 //!   This check only sets `static_limit_kind` to name the limitation.
 //! - If no candidate transitive path is found the finding is left exactly as-is.
 
@@ -108,7 +109,8 @@ pub(in crate::analysis) const MACRO_WITNESS_TEST_BODY_HOST: &str = "test body";
 /// The caller is responsible for wiring the result into `static_limit_kind`
 /// ONLY when the finding's class is `no_static_path` and `related_tests` is
 /// empty - i.e. only after the direct-call classifier has already returned
-/// empty-handed. Classification NEVER changes.
+/// empty-handed - or when a `weakly_exposed` finding's related tests are all
+/// proximity-only (#7071). Classification NEVER changes.
 #[cfg(test)]
 fn find_transitive_witness(owner_name: &str, index: &RustIndex) -> Option<TransitiveWitness> {
     TransitiveReachIndex::new(index).transitive_witness(owner_name)
