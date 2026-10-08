@@ -20606,6 +20606,92 @@ fn check_dirty_tree_with_cyclic_replace_preserves_git_refusal() -> Result<(), St
     Ok(())
 }
 
+/// #7076 review: an unpeeled `rev-parse HEAD` returns the stored ID without
+/// reading the object, so a deleted tip commit still "resolves" while
+/// `merge-base` refuses with `Not a valid commit name`. The explicit
+/// `--worktree` read must keep the object-restoration repair there, not the
+/// named-file repair and not the unborn-branch message. The dirty-default
+/// leg stays on committed history (the dirtiness probe cannot read `status`
+/// without the tip tree) and fails closed without reaching the worktree
+/// loader; its message text stays owned by the committed path.
+#[test]
+fn check_dirty_tree_with_deleted_head_tip_names_damage() -> Result<(), String> {
+    let root = unique_temp_workspace("worktree-deleted-head-tip");
+    std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+    run_git(&root, &["init", "-b", "main"])?;
+    run_git(&root, &["config", "user.email", "test@test.com"])?;
+    run_git(&root, &["config", "user.name", "Test"])?;
+    // The missing object below must stay a loose file, never packed.
+    run_git(&root, &["config", "gc.auto", "0"])?;
+    std::fs::write(root.join("lib.rs"), "pub fn f() -> bool { 1 > 0 }\n")
+        .map_err(|err| format!("write base lib.rs: {err}"))?;
+    run_git(&root, &["add", "."])?;
+    run_git(&root, &["commit", "-m", "A"])?;
+    run_git(&root, &["checkout", "-b", "feature"])?;
+    std::fs::write(root.join("lib.rs"), "pub fn f() -> bool { 1 >= 0 }\n")
+        .map_err(|err| format!("write feat lib.rs: {err}"))?;
+    run_git(&root, &["commit", "-am", "F"])?;
+    run_git(&root, &["checkout", "main"])?;
+    std::fs::write(root.join("note.txt"), "moved on")
+        .map_err(|err| format!("write note: {err}"))?;
+    run_git(&root, &["add", "."])?;
+    run_git(&root, &["commit", "-m", "B"])?;
+    run_git(&root, &["checkout", "feature"])?;
+    // Dirty the tree with a tracked edit.
+    std::fs::write(root.join("lib.rs"), "pub fn f() -> bool { 2 > 0 }\n")
+        .map_err(|err| format!("write dirty lib.rs: {err}"))?;
+
+    let tip = common::fixture_git::fixture_git_output(&root, &["rev-parse", "feature"])?;
+    let tip = tip.trim();
+    let object = root.join(".git/objects").join(&tip[..2]).join(&tip[2..]);
+    if !object.is_file() {
+        return Err(format!(
+            "fixture precondition: the tip object must be loose at {}",
+            object.display()
+        ));
+    }
+    std::fs::remove_file(&object).map_err(|err| format!("delete tip object: {err}"))?;
+
+    let root_str = root.to_string_lossy().into_owned();
+    let output = run_ripr(&[
+        "check",
+        "--root",
+        root_str.as_str(),
+        "--base",
+        "main",
+        "--worktree",
+        "--json",
+    ]);
+    assert_worktree_origin_refusal(
+        &output,
+        "explicit --worktree",
+        "main",
+        &["damaged object store", "git fsck"],
+        &[
+            "unrelated histories",
+            "correct or restore",
+            "does not resolve to a commit",
+        ],
+    )?;
+    let output = run_ripr(&[
+        "check",
+        "--root",
+        root_str.as_str(),
+        "--base",
+        "main",
+        "--json",
+    ]);
+    assert_origin_refusal(
+        &output,
+        "dirty default",
+        &[],
+        &["the working-tree diff from"],
+    )?;
+
+    ignore_remove_dir_all(&root);
+    Ok(())
+}
+
 /// The argv of a printed `ripr ...` command, without the program name.
 /// Printed commands quote with POSIX single quotes (`shell_arg`).
 fn printed_ripr_args(command: &str) -> Result<Vec<String>, String> {

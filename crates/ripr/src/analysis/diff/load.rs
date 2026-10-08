@@ -280,6 +280,19 @@ fn worktree_diff_origin(
     ))
 }
 
+/// The fail-closed error when the working-tree diff origin cannot be
+/// established because the object store is damaged: either `merge-base` said
+/// so itself, or `HEAD` resolves to a ref whose commit object is missing
+/// (#7076). Both keep the object-restoration repair with Git's own reason.
+fn worktree_damage_error(base: &str, merge_base_stderr: &[u8]) -> CoreError {
+    let reason = git_reason_line(merge_base_stderr)
+        .map(|reason| format!("{reason}. "))
+        .unwrap_or_default();
+    CoreError::message(format!(
+        "the working-tree diff from `{base}` cannot start: {reason}{OBJECT_DAMAGE_REPAIR}"
+    ))
+}
+
 /// The fail-closed error when `git merge-base <base> HEAD` ran and found no
 /// origin for the working-tree diff (#7076). The failure is classified before
 /// any cause is named, because a wrong actionable repair is worse than a
@@ -299,17 +312,12 @@ fn no_worktree_merge_base_error(
 ) -> CoreError {
     let stderr = String::from_utf8_lossy(&merge_base.stderr);
     if git_stderr_names_object_damage(&stderr) {
-        let reason = git_reason_line(&merge_base.stderr)
-            .map(|reason| format!("{reason}. "))
-            .unwrap_or_default();
-        return CoreError::message(format!(
-            "the working-tree diff from `{base}` cannot start: {reason}{OBJECT_DAMAGE_REPAIR}"
-        ));
+        return worktree_damage_error(base, &merge_base.stderr);
     }
     // Only a `rev-parse` that ran and answered "no" proves an unresolvable
     // HEAD; a probe that cannot complete proves nothing, so it keeps the
     // classifications below rather than asserting an unborn branch.
-    let head_proven_unresolvable = matches!(
+    let head_ref_proven_unresolvable = matches!(
         crate::git::run_git_output_with_deadline(
             root,
             &["rev-parse", "--verify", "--quiet", "HEAD"],
@@ -317,12 +325,28 @@ fn no_worktree_merge_base_error(
         ),
         Ok(output) if !output.status.success()
     );
-    if head_proven_unresolvable {
+    if head_ref_proven_unresolvable {
         return CoreError::message(format!(
             "the working-tree diff from `{base}` cannot start: HEAD does not resolve to a commit \
              (HEAD may be unborn or point at a missing branch; the analysis did not run). Commit \
              the working tree or check out an existing branch, then re-run."
         ));
+    }
+    // The ref resolves, but an unpeeled `rev-parse` returns the stored ID
+    // without reading the object: when the tip commit itself is missing,
+    // `merge-base` refuses with `Not a valid commit name`, which is object
+    // damage, not an unborn branch and not a named-file repair. Only a peel
+    // that ran and answered "no" proves it.
+    let head_object_proven_missing = matches!(
+        crate::git::run_git_output_with_deadline(
+            root,
+            &["rev-parse", "--verify", "--quiet", "HEAD^{commit}"],
+            git_timeout,
+        ),
+        Ok(output) if !output.status.success()
+    );
+    if head_object_proven_missing {
+        return worktree_damage_error(base, &merge_base.stderr);
     }
     // Git's genuine no-merge-base result is exit 1 without a message — a
     // shallow clone and unrelated histories both answer this way — where a
@@ -3263,6 +3287,65 @@ mod tests {
         assert!(
             !err.contains("unrelated histories"),
             "damage must not be diagnosed as unrelated histories, got: {err}"
+        );
+
+        ignore_remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn worktree_load_with_deleted_head_tip_names_damage_not_ref_repair() -> std::io::Result<()> {
+        // #7076 review: an unpeeled `rev-parse HEAD` returns the stored ID
+        // without reading the object, so a deleted tip commit still
+        // "resolves" while `merge-base` refuses with `Not a valid commit
+        // name`. That is object damage (restore the object), not an unborn
+        // branch and not a config/ref-file repair.
+        let dir = unique_fixture_root("worktree-deleted-head-tip")?;
+        ignore_remove_dir_all(&dir);
+        init_git_repo(&dir, "main")?;
+        // The missing object below must stay a loose file, never packed.
+        run_git_checked(&dir, &["config", "gc.auto", "0"])?;
+        fs::write(dir.join("a.txt"), "a\n")?;
+        run_git_checked(&dir, &["add", "."])?;
+        run_git_checked(&dir, &["commit", "-m", "A"])?;
+        run_git_checked(&dir, &["checkout", "--quiet", "-b", "feature"])?;
+        fs::write(dir.join("b.txt"), "b\n")?;
+        run_git_checked(&dir, &["add", "."])?;
+        run_git_checked(&dir, &["commit", "--quiet", "-m", "F"])?;
+        run_git_checked(&dir, &["checkout", "--quiet", "main"])?;
+        fs::write(dir.join("c.txt"), "c\n")?;
+        run_git_checked(&dir, &["add", "."])?;
+        run_git_checked(&dir, &["commit", "--quiet", "-m", "B"])?;
+        run_git_checked(&dir, &["checkout", "--quiet", "feature"])?;
+
+        let tip = run_git_checked(&dir, &["rev-parse", "feature"])?;
+        let tip = tip.trim();
+        let object = dir.join(".git/objects").join(&tip[..2]).join(&tip[2..]);
+        assert!(
+            object.is_file(),
+            "fixture precondition: the tip object must be loose at {}",
+            object.display()
+        );
+        fs::remove_file(&object)?;
+        let stale = run_git_checked(&dir, &["rev-parse", "--verify", "--quiet", "HEAD"])?;
+        assert_eq!(
+            stale.trim(),
+            tip,
+            "fixture precondition: the unpeeled ref still resolves to the stale ID"
+        );
+        run_git_checked(&dir, &["merge-base", "main", "feature"])
+            .expect_err("a deleted tip must refuse merge-base");
+        let err = load_worktree_diff(&dir, Some("main"), None)
+            .expect_err("a deleted tip has no worktree diff origin");
+        assert!(
+            err.contains("damaged object store") && err.contains("git fsck"),
+            "a deleted tip must keep the object-restoration repair, got: {err}"
+        );
+        assert!(
+            !err.contains("correct or restore")
+                && !err.contains("unrelated histories")
+                && !err.contains("does not resolve to a commit"),
+            "a deleted tip is damage, not a ref repair or an unborn branch, got: {err}"
         );
 
         ignore_remove_dir_all(&dir);
