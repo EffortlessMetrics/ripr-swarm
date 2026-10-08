@@ -6,5 +6,7 @@
   artifact-upload wiring on the workflow. The family receipt names both
   `init --ci github --dry-run` and `reports ci-summary --base-ref main`.
   The advisory-summary invoke must be an executable `run` line, not a
-  quoted echo, comment, or a line after a whole-line `exit 0`. The Dogfood
-  Report example in `docs/OUTPUT_SCHEMA.md` names both producers (#6958).
+  quoted echo, comment, or a line after a whole-line `exit` / `exit <status>`.
+  The generated install-failure `echo …; exit 1` stays a different line. The
+  Dogfood Report example in `docs/OUTPUT_SCHEMA.md` names both producers
+  (#6958).

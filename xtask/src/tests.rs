@@ -20511,6 +20511,46 @@ RIPR is advisory static evidence. It does not edit source, generate tests, or ru
         early_exit.errors
     );
 
+    let early_exit_one_invoke = workflow.replace(
+        "          ripr reports ci-summary --root . >> \"$GITHUB_STEP_SUMMARY\"",
+        "          exit 1\n          ripr reports ci-summary --root . >> \"$GITHUB_STEP_SUMMARY\"",
+    );
+    let early_exit_one = dogfood_generated_ci_cockpit_run_from_surfaces(
+        "unreachable-summary-invoke-exit-1",
+        command,
+        10,
+        &early_exit_one_invoke,
+        &summary,
+    );
+    assert!(
+        early_exit_one
+            .errors
+            .iter()
+            .any(|error| error.contains("invoke ripr reports ci-summary")),
+        "{:?}",
+        early_exit_one.errors
+    );
+
+    let install_guard_invoke = workflow.replace(
+        "        run: |\n          ripr reports ci-summary --root . >> \"$GITHUB_STEP_SUMMARY\"",
+        "        run: |\n          if [ \"${RIPR_INSTALL_OUTCOME:-}\" != success ]; then\n            echo \"::error::not installed\"; exit 1\n          fi\n          ripr reports ci-summary --root . >> \"$GITHUB_STEP_SUMMARY\"",
+    );
+    let install_guard = dogfood_generated_ci_cockpit_run_from_surfaces(
+        "install-failure-exit-stays-conditional",
+        command,
+        10,
+        &install_guard_invoke,
+        &summary,
+    );
+    assert!(
+        install_guard
+            .errors
+            .iter()
+            .all(|error| !error.contains("invoke ripr reports ci-summary")),
+        "{:?}",
+        install_guard.errors
+    );
+
     let blocking_summary_step = dogfood_generated_ci_cockpit_run_from_surfaces(
         "summary-step-without-continue-on-error",
         command,
