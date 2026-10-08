@@ -1300,6 +1300,21 @@ fn a_cfg_attr_path_on_the_owners_declaration_gates_it_through_real_composition()
     Ok(())
 }
 
+/// #7104 review: a comma inside a predicate string must not select the
+/// payload boundary — `cfg_attr(mode = "a,b", cfg(..))` drops, while a
+/// non-dropping attribute with a comma in its predicate string does not.
+#[test]
+fn cfg_attr_payload_with_comma_in_predicate_string() {
+    assert!(
+        cfg_attr_payload_may_drop("cfg_attr(mode = \"a,b\", cfg(feature = \"x\"))"),
+        "a string comma must not hide the dropping cfg payload"
+    );
+    assert!(
+        !cfg_attr_payload_may_drop("cfg_attr(mode = \"a,b\", allow(dead_code))"),
+        "a non-dropping payload stays non-dropping with a string comma"
+    );
+}
+
 const COUNTER_LIB: &str = "pub struct Counter {\n    n: usize,\n}\n\nimpl Counter {\n    pub fn new() -> Self {\n        Counter { n: 0 }\n    }\n\n    pub fn try_new(n: usize) -> Result<Self, String> {\n        Ok(Counter { n })\n    }\n\n    pub fn count(&self) -> usize {\n        self.n + 1\n    }\n\n    pub fn tally(&self) -> usize {\n        self.n + 1\n    }\n}\n";
 
 fn counter_admitted(owner_name: &str, prelude: &str, binding: &str) -> usize {

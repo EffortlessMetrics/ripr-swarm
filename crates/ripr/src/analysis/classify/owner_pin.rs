@@ -1996,9 +1996,17 @@ fn cfg_attr_payload_may_drop(text: &str) -> bool {
         return true;
     };
     let inner = &text[open + 1..];
+    // Scan the masked text: a comma inside a predicate string must not
+    // select the payload boundary (#7104 review). Splitting the unmasked
+    // text at a string comma leaves a dangling quote whose masking then
+    // hides the real payload (`cfg_attr(mode = "a,b", cfg(..))` would
+    // admit a droppable owner). The masker preserves byte length and the
+    // matched comma is a literal `,` byte in both, so `at` slices the
+    // original soundly.
+    let masked_inner = mask_comments_and_strings(inner);
     let mut depth = 0_i32;
     let mut payload = None;
-    for (at, character) in inner.char_indices() {
+    for (at, character) in masked_inner.char_indices() {
         match character {
             '(' | '[' | '{' => depth += 1,
             ')' | ']' | '}' => depth -= 1,
