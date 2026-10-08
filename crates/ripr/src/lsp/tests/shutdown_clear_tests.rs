@@ -305,13 +305,70 @@ where
     }
 }
 
-fn tracked_uris_have_empty_publish(drain: &[serde_json::Value], tracked: &[String]) -> bool {
+fn drain_from(drain: &[serde_json::Value], start: usize) -> &[serde_json::Value] {
+    drain.get(start..).unwrap_or(&[])
+}
+
+fn tracked_uri_publishes(
+    drain: &[serde_json::Value],
+    start: usize,
+    tracked: &[String],
+) -> Vec<(String, usize)> {
+    drain_from(drain, start)
+        .iter()
+        .filter_map(publish_diagnostics_of)
+        .filter(|(uri, _)| tracked.contains(uri))
+        .collect()
+}
+
+fn tracked_uris_have_empty_publish(
+    drain: &[serde_json::Value],
+    start: usize,
+    tracked: &[String],
+) -> bool {
+    let publishes = tracked_uri_publishes(drain, start, tracked);
     tracked.iter().all(|uri| {
-        drain
+        publishes
             .iter()
-            .filter_map(publish_diagnostics_of)
-            .any(|(published, count)| published == *uri && count == 0)
+            .any(|(published, count)| published == uri && *count == 0)
     })
+}
+
+/// Root-change clears must empty each tracked URI exactly once after the
+/// `workspace/workspaceFolders` response. Pre-response traffic is not
+/// the clear, and a second or nonempty publish in this slice is a
+/// duplicate rather than SETUP success.
+fn assert_tracked_cleared_exactly_once(
+    drain: &[serde_json::Value],
+    start: usize,
+    tracked: &[String],
+) -> Result<(), String> {
+    let publishes = tracked_uri_publishes(drain, start, tracked);
+    let mut missing = Vec::new();
+    let mut duplicated = Vec::new();
+    let mut nonempty = Vec::new();
+    for uri in tracked {
+        let hits: Vec<usize> = publishes
+            .iter()
+            .filter(|(published, _)| published == uri)
+            .map(|(_, count)| *count)
+            .collect();
+        let empties = hits.iter().filter(|count| **count == 0).count();
+        if hits.iter().any(|count| *count != 0) {
+            nonempty.push((uri.clone(), hits.clone()));
+        }
+        if empties == 0 {
+            missing.push(uri.clone());
+        } else if empties > 1 {
+            duplicated.push((uri.clone(), empties));
+        }
+    }
+    if missing.is_empty() && duplicated.is_empty() && nonempty.is_empty() {
+        return Ok(());
+    }
+    Err(format!(
+        "SETUP: root change must empty every tracked URI once; missing {missing:?}, duplicated {duplicated:?}, nonempty {nonempty:?} (transition drain: {publishes:?})"
+    ))
 }
 
 /// Answer a server-to-client request so a liveness-bounded round-trip
@@ -353,14 +410,15 @@ async fn answer_server_request_if_needed(
 async fn drain_until_tracked_uris_cleared(
     client: &mut ShutdownClearClient,
     drain: &mut Vec<serde_json::Value>,
+    start: usize,
     tracked: &[String],
     workspace_folders: &serde_json::Value,
 ) -> Result<(), String> {
-    if tracked_uris_have_empty_publish(drain, tracked) {
+    if tracked_uris_have_empty_publish(drain, start, tracked) {
         return Ok(());
     }
     let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
-    while !tracked_uris_have_empty_publish(drain, tracked) {
+    while !tracked_uris_have_empty_publish(drain, start, tracked) {
         let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
         if remaining.is_zero() {
             break;
@@ -374,10 +432,10 @@ async fn drain_until_tracked_uris_cleared(
         answer_server_request_if_needed(&mut client.writer, &message, workspace_folders).await?;
         drain.push(message);
     }
-    if tracked_uris_have_empty_publish(drain, tracked) {
+    if tracked_uris_have_empty_publish(drain, start, tracked) {
         return Ok(());
     }
-    let publishes: Vec<(String, usize)> = drain.iter().filter_map(publish_diagnostics_of).collect();
+    let publishes = tracked_uri_publishes(drain, start, tracked);
     let missing: Vec<String> = tracked
         .iter()
         .filter(|uri| {
@@ -709,14 +767,19 @@ fn shutdown_after_root_change_publishes_no_duplicates() -> Result<(), String> {
             // sibling `lsp::tests` load the poll can match before the
             // clears are readable, and a drain that does not answer
             // server-to-client requests can then stall until its budget
-            // expires with an empty capture.
+            // expires with an empty capture. Count only traffic after
+            // this folders response so a pre-response empty cannot
+            // stand in for the root-change clear.
+            let post_response_start = transition_drain.len();
             drain_until_tracked_uris_cleared(
                 &mut client,
                 &mut transition_drain,
+                post_response_start,
                 &tracked,
                 &folders_result,
             )
             .await?;
+            assert_tracked_cleared_exactly_once(&transition_drain, post_response_start, &tracked)?;
             let mut status_span = Vec::new();
             assert_status_root_changed_to(
                 &mut client,
