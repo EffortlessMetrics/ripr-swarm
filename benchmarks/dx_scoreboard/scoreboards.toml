@@ -254,6 +254,24 @@ source = "verdict-corpus:fixtures/rust-verdict-corpus#false_exposed_rate"
 pending_reason = "the rates are derived from fixtures/rust-verdict-corpus/expected/rows; restore the corpus from main; `cargo xtask verdict-corpus check` reports any drift"
 
 [[metric]]
+id = "trust.verdict_corpus_spec_example_coverage"
+board = "trust"
+title = "In-scope numbered spec acceptance examples (minus waived) that a runtime-labeled verdict-corpus case cites"
+unit = "ratio"
+direction = "higher_is_better"
+# Coverage, not correctness: the verdict rates above say whether ripr is
+# right on the covered cases. `verdict-corpus check` separately fails when
+# the covered count falls below the floor in spec-coverage.toml. Scoping in
+# a new spec lowers this rate without lowering the count: the advisory
+# regression flags it on purpose, because new uncovered examples are work.
+target = 1.0
+regression_pct = 0
+regression_floor = 0
+runner_dependent = false
+source = "pending"
+pending_reason = "expected_report derives only row verdict rates; board wiring for the coverage rate follows in #7134; `cargo xtask verdict-corpus check` gates the covered count against the floor in spec-coverage.toml meanwhile"
+
+[[metric]]
 id = "trust.discriminator_claim_agreement"
 board = "trust"
 title = "When ripr says a test discriminates, real mutants are caught"

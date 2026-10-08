@@ -448,6 +448,13 @@ rejected alternative. Any can be reversed later without touching the rest.
 - Existing: `crates/ripr/src/analysis/extract/oracles/classify.rs` unit tests.
 - Existing: `classify.rs` unit test for `ensure!(s != X)` changes with
   example 13.
+- Verdict corpus: 28 cases `spec0231-*` in
+  `fixtures/rust-verdict-corpus/cases/` for acceptance examples 1-26
+  (two forms each for 21 and 23), each naming its example in its reasoning
+  and labeled with runtime mutant truth. The verdict score cannot see an
+  oracle-kind error that leaves the line verdict unchanged, so each case's
+  `hard_case` records where ripr's related-test kind or strength differs
+  from this spec.
 - Planned: one classifier unit test per acceptance example, and a fixture
   for example 1 showing the related test's reported kind and strength.
 - Rule 7: `exact_membership_any_assertion_admits_exact_equality` and

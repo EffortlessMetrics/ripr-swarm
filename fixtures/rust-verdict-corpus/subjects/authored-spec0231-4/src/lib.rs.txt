@@ -1,0 +1,16 @@
+pub fn check(x: u32) -> Result<u32, String> {
+    if x > 10 {
+        return Err(String::from("big"));
+    }
+    Ok(x)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn check_twenty_is_an_error() {
+        assert!(matches!(check(20), Err(_)));
+    }
+}
