@@ -72,3 +72,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — property_macro_noop_named_test (6)
+
+Reason:
+RIPR-SPEC-0117: rust_macro_reach_unresolved description no longer claims the class stays no_static_path (#7071)
+
+Command:
+`cargo xtask goldens bless property_macro_noop_named_test --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
