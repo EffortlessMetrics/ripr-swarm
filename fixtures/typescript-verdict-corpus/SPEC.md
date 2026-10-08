@@ -1,6 +1,6 @@
 # Fixture Corpus: typescript-verdict-corpus
 
-Spec: RIPR-SPEC-0244 (per-language corpora), with cases drawn from the
+Spec: RIPR-SPEC-0245 (per-language corpora), with cases drawn from the
 RIPR-SPEC-0243 acceptance examples and from test patterns seen in public
 TypeScript repositories (re-authored, not copied).
 

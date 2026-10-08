@@ -12795,9 +12795,9 @@ metrics = [
 ]
 
 [[behavior]]
-id = "RIPR-SPEC-0244"
+id = "RIPR-SPEC-0245"
 name = "Per-language labeled verdict corpora"
-spec = "docs/specs/RIPR-SPEC-0244-per-language-verdict-corpora.md"
+spec = "docs/specs/RIPR-SPEC-0245-per-language-verdict-corpora.md"
 tests = [
   "xtask/src/reports/verdict_corpus_tests.rs::language_names_its_own_corpus_directory_and_nothing_else",
   "xtask/src/reports/verdict_corpus_tests.rs::language_refuses_a_symlinked_corpus_directory",

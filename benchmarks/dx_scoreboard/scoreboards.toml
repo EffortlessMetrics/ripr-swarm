@@ -253,7 +253,7 @@ runner_dependent = false
 source = "verdict-corpus:fixtures/rust-verdict-corpus#false_exposed_rate"
 pending_reason = "the rates are derived from fixtures/rust-verdict-corpus/expected/rows; restore the corpus from main; `cargo xtask verdict-corpus check` reports any drift"
 
-# TypeScript verdict corpus (RIPR-SPEC-0244). Every TypeScript case is
+# TypeScript verdict corpus (RIPR-SPEC-0245). Every TypeScript case is
 # authored to cover a test-library oracle or reach rule (RIPR-SPEC-0243) under
 # jest, vitest, mocha with chai or node:test, so these describe those cells,
 # not real-world code. One more wrong case out of 62 discriminated (0.016) or

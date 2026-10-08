@@ -1481,6 +1481,32 @@ fn language_refuses_a_symlinked_corpus_directory() -> Result<(), String> {
     Ok(())
 }
 
+#[cfg(unix)]
+#[test]
+fn split_refuses_symlinks_below_the_corpus_directory() -> Result<(), String> {
+    // #6686 review: split writes subjects/, cases/ and back to
+    // corpus.json, so a link at any of them would redirect writes
+    // outside the corpus. Each link is refused before anything is read.
+    let legacy = corpus_value(&repo_corpus_dir())?;
+    let elsewhere = crate::tests::temp_dir("verdict-split-symlink-target");
+    for name in ["subjects", "cases", "corpus.json"] {
+        let dir = crate::tests::temp_dir(&format!("verdict-split-symlink-{name}"));
+        if name == "corpus.json" {
+            std::os::unix::fs::symlink(elsewhere.join("corpus.json"), dir.join("corpus.json"))
+                .map_err(|err| format!("symlink failed: {err}"))?;
+        } else {
+            crate::tests::write(&dir.join("corpus.json"), &format!("{legacy:#}"));
+            std::os::unix::fs::symlink(&elsewhere, dir.join(name))
+                .map_err(|err| format!("symlink failed: {err}"))?;
+        }
+        let err = split(&dir)
+            .err()
+            .ok_or_else(|| format!("split followed a symlinked {name}"))?;
+        assert!(err.contains("is a symlink"), "{err}");
+    }
+    Ok(())
+}
+
 #[test]
 fn ledgerless_corpus_validates_without_the_coverage_gate() -> Result<(), String> {
     // A language with cases but no spec ledger still passes structural

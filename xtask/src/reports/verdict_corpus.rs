@@ -1178,7 +1178,25 @@ fn pretty<T: Serialize>(value: &T, what: &str) -> Result<String, String> {
 /// arrays resolves its conflict by keeping its own `corpus.json` and running
 /// this: records that already exist with the same content are skipped, and
 /// one that exists with different content is left alone and named.
+/// Mutating destinations under `dir` must be real files, never links:
+/// `split` writes `subjects/`, `cases/` and back to `corpus.json`, so a
+/// repository-controlled symlink at any of them would redirect writes
+/// outside the corpus. Missing entries are fine; links are refused.
+fn reject_nested_symlinks(dir: &Path) -> Result<(), String> {
+    for name in ["corpus.json", "subjects", "cases"] {
+        let path = dir.join(name);
+        if fs::symlink_metadata(&path).is_ok_and(|meta| meta.is_symlink()) {
+            return Err(format!(
+                "verdict-corpus split: {} is a symlink; refusing to write through it",
+                normalize_path(&path)
+            ));
+        }
+    }
+    Ok(())
+}
+
 fn split(dir: &Path) -> Result<(), String> {
+    reject_nested_symlinks(dir)?;
     let path = dir.join("corpus.json");
     let mut raw = parse_json(&path)?;
     let Some(fields) = raw.as_object_mut() else {
