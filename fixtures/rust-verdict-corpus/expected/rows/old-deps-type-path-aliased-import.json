@@ -1,0 +1,22 @@
+{
+  "case_id": "old-deps-type-path-aliased-import",
+  "subject_id": "authored-old-deps",
+  "origin": "authored",
+  "anchor": "meter/src/lib.rs:15",
+  "behavior_family": "return_value",
+  "test_shape": "type_path_call_via_aliased_import",
+  "hard_case": false,
+  "truth": "discriminated",
+  "ideal_verdict": "credited",
+  "observed_verdict": "limited",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "no_static_path"
+  ],
+  "outcome": "abstained",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

@@ -27,7 +27,7 @@ Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/self_computed_expected_value/input --diff <cwd>/fixtures/self_computed_expected_value/diff.patch --mode fast probe:src_lib.rs:return_value:df11903a
   ripr context --root <cwd>/fixtures/self_computed_expected_value/input --diff <cwd>/fixtures/self_computed_expected_value/diff.patch --mode fast --at probe:src_lib.rs:return_value:df11903a
 Write a test for it:
-  ripr agent stub --root <cwd>/fixtures/self_computed_expected_value/input --at src/lib.rs:6
+  ripr agent stub --root <cwd>/fixtures/self_computed_expected_value/input --at src/lib.rs:6 --kind return_value
 
 More:
   Full evidence: rerun with --format human-full

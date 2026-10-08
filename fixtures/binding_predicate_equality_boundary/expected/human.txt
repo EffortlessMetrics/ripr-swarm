@@ -27,7 +27,7 @@ Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/binding_predicate_equality_boundary/input --diff <cwd>/fixtures/binding_predicate_equality_boundary/diff.patch --mode fast probe:src_lib.rs:predicate:5290fd4d
   ripr context --root <cwd>/fixtures/binding_predicate_equality_boundary/input --diff <cwd>/fixtures/binding_predicate_equality_boundary/diff.patch --mode fast --at probe:src_lib.rs:predicate:5290fd4d
 Write a test for it:
-  ripr agent stub --root <cwd>/fixtures/binding_predicate_equality_boundary/input --at src/lib.rs:4
+  ripr agent stub --root <cwd>/fixtures/binding_predicate_equality_boundary/input --at src/lib.rs:4 --kind predicate
 
 More:
   Full evidence: rerun with --format human-full

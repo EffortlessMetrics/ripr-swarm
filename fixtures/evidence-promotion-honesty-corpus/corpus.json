@@ -4463,6 +4463,38 @@
           "class": "weakly_exposed"
         }
       ]
+    },
+    {
+      "id": "rust_shared_error_variant_proximity_other_owner",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_adversarial_shared_error_variant_proximity",
+      "vector": "shared_error_variant_same_file_pin_on_other_owner_not_confirmed",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_disclose_scope"
+        },
+        {
+          "type": "must_not_emit_repair_packet"
+        },
+        {
+          "type": "must_not_have_receipt_command"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "maximum_class",
+          "class": "weakly_exposed"
+        }
+      ]
     }
   ]
 }

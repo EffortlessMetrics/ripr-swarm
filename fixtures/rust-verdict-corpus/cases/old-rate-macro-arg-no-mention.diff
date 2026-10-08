@@ -1,0 +1,12 @@
+diff --git a/src/macros.rs b/src/macros.rs
+--- a/src/macros.rs
++++ b/src/macros.rs
+@@ -8,7 +8,7 @@
+ }
+ 
+ pub fn base_rate() -> u32 {
+-    7
++    3 + 4
+ }
+ 
+ pub fn doubled_rate() -> u32 {
