@@ -724,7 +724,10 @@ fn kind_not_found_refusal_preserves_the_requested_probe_family() -> Result<(), S
         Duration::from_mins(2),
     )?;
     assert_eq!(refused.status.code(), Some(3));
-    assert!(refused.stdout.is_empty(), "a not-found decision has no JSON");
+    assert!(
+        refused.stdout.is_empty(),
+        "a not-found decision has no JSON"
+    );
     let stderr = String::from_utf8_lossy(&refused.stderr);
     assert!(
         stderr.starts_with(
@@ -794,7 +797,10 @@ fn kind_nearest_hint_filters_before_the_cap_and_recovers_the_error_stub() -> Res
         Duration::from_mins(2),
     )?;
     assert_eq!(refused.status.code(), Some(3));
-    assert!(refused.stdout.is_empty(), "a not-found decision has no JSON");
+    assert!(
+        refused.stdout.is_empty(),
+        "a not-found decision has no JSON"
+    );
     let stderr = String::from_utf8_lossy(&refused.stderr);
     let (_, tail) = stderr
         .split_once("; nearest: ")
@@ -830,7 +836,10 @@ fn kind_nearest_hint_filters_before_the_cap_and_recovers_the_error_stub() -> Res
     let recovered: serde_json::Value =
         serde_json::from_slice(&recovered.stdout).map_err(|error| error.to_string())?;
     assert_eq!(recovered["seam_id"], emitted_id);
-    assert_eq!(recovered, control, "recovery must select the same error stub");
+    assert_eq!(
+        recovered, control,
+        "recovery must select the same error stub"
+    );
 
     let repeated = run_bounded(
         kind_refusal_command(root, "src/lib.rs:2", Some("error_path")),
@@ -884,7 +893,10 @@ fn kind_not_found_without_a_matching_family_suggests_no_other_seams() -> Result<
         Duration::from_mins(2),
     )?;
     assert_eq!(refused.status.code(), Some(3));
-    assert!(refused.stdout.is_empty(), "a not-found decision has no JSON");
+    assert!(
+        refused.stdout.is_empty(),
+        "a not-found decision has no JSON"
+    );
     let stderr = String::from_utf8_lossy(&refused.stderr);
     let (_, tail) = stderr
         .split_once("; nearest: ")

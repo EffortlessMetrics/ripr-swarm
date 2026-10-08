@@ -152,10 +152,7 @@ fn resolve_at_location(
     kind: Option<&str>,
 ) -> Result<TestStubResolution, TestStubError> {
     let kind = kind.and_then(|family| {
-        analysis::seam_kind_for_probe_family(family).map(|seam_kind| AtKind {
-            family,
-            seam_kind,
-        })
+        analysis::seam_kind_for_probe_family(family).map(|seam_kind| AtKind { family, seam_kind })
     });
     match (scoped_file(root, file), kind) {
         (Some(relative), Some(_)) => {
