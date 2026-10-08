@@ -1,0 +1,56 @@
+{
+  "schema_version": "work_campaigns.v1",
+  "campaigns": [
+    {
+      "id": "campaign-editor-ux",
+      "title": "Editor UX campaign",
+      "state": "active",
+      "surfaces": [
+        "surface-editor"
+      ],
+      "issues": [
+        9202,
+        1693
+      ]
+    },
+    {
+      "id": "campaign-doc-polish",
+      "title": "Docs polish campaign",
+      "state": "complete",
+      "surfaces": [
+        "surface-docs"
+      ],
+      "issues": [
+        9301
+      ]
+    },
+    {
+      "id": "campaign-rust-repair",
+      "title": "Rust repair campaign",
+      "state": "active",
+      "surfaces": [
+        "surface-rust-cli"
+      ],
+      "issues": [
+        9107,
+        9103,
+        9101,
+        9109,
+        9108,
+        9104,
+        9105,
+        9102
+      ]
+    },
+    {
+      "id": "campaign-infra-hardening",
+      "title": "Infra hardening campaign",
+      "state": "active",
+      "surfaces": [
+        "surface-ci"
+      ],
+      "issues": [],
+      "note": "no eligible current work; the campaign must stay visible without hiding others"
+    }
+  ]
+}
