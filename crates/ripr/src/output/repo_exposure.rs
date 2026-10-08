@@ -1730,8 +1730,7 @@ mod tests {
                 source,
             };
             let limit = Some(RepoExposureLimit::PilotBudget(&info));
-            let json =
-                render_repo_exposure_json_with_limit(&classified, limit, None, None, None);
+            let json = render_repo_exposure_json_with_limit(&classified, limit, None, None, None);
             let artifact: Value = serde_json::from_str(&json)
                 .map_err(|err| format!("parse pilot disclosure failed: {err}\n{json}"))?;
             assert_eq!(artifact["run_status"], "seam_limit_applied");
