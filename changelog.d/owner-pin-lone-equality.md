@@ -6,4 +6,5 @@
   Only a lone top-level `==` counts: an `==` guard, a negated condition,
   `<`/`>`/`<=`/`>=`/`!=`, an equality joined by `&&` or `||`, and an
   expected side that names or reaches the owner stay below `exposed`. The
-  verdict-corpus case `checkout-fee-err-return-guard` now reads credited.
+  verdict-corpus case `checkout-fee-err-return-guard` now reads credited
+  (RIPR-SPEC-0197, #7063).

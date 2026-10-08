@@ -1091,8 +1091,13 @@ fn expected_computed_through_owner(
 ) -> bool {
     // RIPR-SPEC-0197: `assert!(a == b)` and its Err-return guard twin
     // compare the same operands an `assert_eq!` would.
+    // Selected the way the pin selects (#7094 follow-up): a guard reads its
+    // condition and a plain `assert!` its comparison, so an `assert_eq!`
+    // spelled in a message, comment or guard body cannot switch the reader.
     let equality;
-    let [left, right] = if text.contains("assert_eq!") {
+    let reads_equality = crate::analysis::extract::err_return_guard_twin(text).is_some()
+        || super::owner_pin::is_plain_macro(text, "assert");
+    let [left, right] = if !reads_equality && text.contains("assert_eq!") {
         let Some(operands) = assertion_comparison_operands(text) else {
             return false;
         };
@@ -7379,6 +7384,10 @@ return Err(\"typed pin\".into());
         for text in [
             "assert!(sub + tax(sub) == invoice(3, 100));",
             "if invoice(3, 100) != sub + tax(sub) { return Err(..) }",
+            // An `assert_eq!` spelled in a message, comment or guard body
+            // does not switch the reader away from the compared operands.
+            "assert!(tax(300) == invoice(3, 100) - 300, \"assert_eq! equivalent\");",
+            "if tax(300) != invoice(3, 100) - 300 {\n    // was assert_eq!(tax(300), 24)\n    return Err(..)\n}",
         ] {
             assert!(
                 expected_computed_through_owner(text, "tax", &reaches),

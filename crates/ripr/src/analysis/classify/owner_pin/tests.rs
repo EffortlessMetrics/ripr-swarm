@@ -4541,12 +4541,28 @@ fn an_err_return_guard_pins_only_on_an_established_execution_path() {
         "    if weight(1) != 3 {\n        return Ok(());\n    }\n    if weight(4) != 12 {\n        return Err(\"mismatch\".to_string());\n    }\n    Ok(())",
         // A closure nobody calls never runs it.
         "    let check = || -> Result<(), String> {\n        if weight(4) != 12 {\n            return Err(\"mismatch\".to_string());\n        }\n        Ok(())\n    };\n    let _ = &check;\n    Ok(())",
+        // A closure that runs but whose `Err` is discarded: the guard's
+        // `return` leaves only the closure, so the test passes regardless.
+        // The syntax gate's closure-exit refusal covers these (#7094
+        // follow-up review).
+        "    let _ = (|| -> Result<(), String> {\n        if weight(4) != 12 {\n            return Err(\"mismatch\".to_string());\n        }\n        Ok(())\n    })();\n    Ok(())",
+        "    std::thread::scope(|_| -> Result<(), String> {\n        if weight(4) != 12 {\n            return Err(\"mismatch\".to_string());\n        }\n        Ok(())\n    });\n    Ok(())",
+        "    let _ = std::thread::spawn(|| -> Result<(), String> {\n        if weight(4) != 12 {\n            return Err(\"mismatch\".to_string());\n        }\n        Ok(())\n    })\n    .join()\n    .unwrap();\n    Ok(())",
     ] {
         assert_not_pinned(
             &weight_test(" -> Result<(), String>", body),
             "if weight(4) != 12",
         );
     }
+    // A guard reads only its condition: an `assert_eq!` inside its body runs
+    // only when the guard fires, and here it never does.
+    assert_not_pinned(
+        &weight_test(
+            " -> Result<(), String>",
+            "    if weight(4) != weight(4) {\n        return Err({\n            assert_eq!(weight(4), 12);\n            String::new()\n        });\n    }\n    Ok(())",
+        ),
+        "if weight(4) != weight(4)",
+    );
     // `#[should_panic]` and `#[ignore]` settle the outcome.
     for attribute in ["#[should_panic]", "#[ignore]"] {
         let tests = format!(

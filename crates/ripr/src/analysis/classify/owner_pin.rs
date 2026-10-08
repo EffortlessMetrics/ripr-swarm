@@ -1307,13 +1307,17 @@ impl OwnerReturnPin {
         }
         let condition;
         // RIPR-SPEC-0197: `assert!(owner(..) == v)` and its guard twin
-        // `if owner(..) != v { return Err(..) }` read like `assert_eq!`.
-        let equality = if is_plain_macro(&assertion.text, "assert_eq") {
+        // `if owner(..) != v { return Err(..) }` read like `assert_eq!`. A
+        // guard reads only its condition, never a macro inside its body,
+        // since the syntax gate admits the guard's path, not the body's.
+        let is_guard = err_return_guard_twin(&assertion.text).is_some();
+        let reads_assert_eq = !is_guard && is_plain_macro(&assertion.text, "assert_eq");
+        let equality = if reads_assert_eq {
             None
         } else {
             equality_condition_operands(&assertion.text)
         };
-        let (call, expected) = if is_plain_macro(&assertion.text, "assert_eq") {
+        let (call, expected) = if reads_assert_eq {
             let Some(operands) = assertion_comparison_operands(&assertion.text) else {
                 return false;
             };
@@ -1348,7 +1352,7 @@ impl OwnerReturnPin {
                 (None, Some(call)) => (call, left.as_str()),
                 _ => return false,
             }
-        } else if self.returns_bool && is_plain_macro(&assertion.text, "assert") {
+        } else if !is_guard && self.returns_bool && is_plain_macro(&assertion.text, "assert") {
             // `assert!(owner(..))` is `assert_eq!(owner(..), true)` and
             // `assert!(!owner(..))` is `assert_eq!(owner(..), false)`. The
             // message arguments never decide whether the test fails.
@@ -2997,7 +3001,7 @@ fn top_level_equality_operands(condition: &str) -> Option<[String; 2]> {
 /// `debug_assert_eq!` (compiled out in release tests), not a crate's own
 /// `*_assert_eq!`, not a path-qualified or repeated one.
 /// The text is exactly one unqualified invocation of `macro_name`.
-fn is_plain_macro(text: &str, macro_name: &str) -> bool {
+pub(in crate::analysis) fn is_plain_macro(text: &str, macro_name: &str) -> bool {
     let masked = mask_comments_and_strings(text);
     let invocations = macro_invocations(&masked);
     let [(name, _)] = invocations.as_slice() else {

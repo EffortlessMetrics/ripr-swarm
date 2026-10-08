@@ -7474,6 +7474,7 @@ tests = [
   "crates/ripr/src/analysis/classify/flow.rs::tests::question_mark_ok_or_sink_requires_the_owner_error_type_to_be_the_variant_enum",
   "crates/ripr/src/analysis/classify/propagation_witness.rs::tests::qualified_and_unqualified_err_turbofish_complete_the_error_witness",
   "crates/ripr/src/analysis/classify/text/error_variant.rs::tests::changed_error_variant_is_opaque_when_the_two_readers_disagree",
+  "crates/ripr/src/analysis/classify/text/error_variant.rs::tests::err_constructor_must_be_a_whole_code_segment",
 ]
 fixtures = [
   "fixtures/benches_harness_evidence",

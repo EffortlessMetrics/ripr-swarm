@@ -60,16 +60,45 @@ pub(in crate::analysis) fn changed_error_variant(text: &str) -> Option<String> {
 /// construction. The mask keeps byte offsets, so callers read the original
 /// text at the returned offset.
 /// `Result::Err(..)` and `std::result::Result::Err(..)` still match.
+///
+/// A fragment that opens or closes a string begun on another line (an odd
+/// count of unescaped `"`) would invert the mask, so it is searched as
+/// written, as before the mask existed.
 fn find_err_segment(text: &str, pattern: &str) -> Option<usize> {
-    let code = mask_comments_and_strings(text);
+    let code = if has_unbalanced_string_quote(text) {
+        text.to_string()
+    } else {
+        mask_comments_and_strings(text)
+    };
     code.match_indices(pattern)
         .map(|(start, _)| start)
         .find(|start| {
             !code[..*start]
                 .chars()
                 .next_back()
-                .is_some_and(|ch| ch.is_alphanumeric() || ch == '_' || !ch.is_ascii())
+                .is_some_and(continues_identifier)
         })
+}
+
+/// Whether `ch` can end an identifier that `Err` would continue. Non-ASCII
+/// characters other than whitespace (`U+2028`, `U+0085`) and the
+/// direction marks Rust also reads as whitespace can only be part of one.
+fn continues_identifier(ch: char) -> bool {
+    ch.is_alphanumeric()
+        || ch == '_'
+        || (!ch.is_ascii() && !ch.is_whitespace() && !matches!(ch, '\u{200E}' | '\u{200F}'))
+}
+
+/// An odd count of `"` outside char literals (`'"'`) and escapes.
+fn has_unbalanced_string_quote(text: &str) -> bool {
+    let quotes = text
+        .replace("'\\\"'", "")
+        .replace("'\"'", "")
+        .replace("\\\\", "")
+        .replace("\\\"", "")
+        .matches('"')
+        .count();
+    quotes % 2 == 1
 }
 
 /// Whether `text` spells a `Result::Err` construction, `Err(..)` or
@@ -240,6 +269,14 @@ mod tests {
             assert!(!spells_result_err(text), "{text}");
             assert_eq!(exact_error_variant(text), None, "{text}");
         }
+        // Rust whitespace before `Err` is no identifier.
+        assert!(spells_result_err("return\u{2028}Err(E::V);"));
+        // A fragment closing a string begun on an earlier line is read as
+        // written rather than with an inverted mask.
+        assert_eq!(
+            exact_error_variant("second\", Err(E::V))").as_deref(),
+            Some("E::V")
+        );
         // The first code occurrence wins even after a commented one.
         assert_eq!(
             exact_error_variant("/* Err(E::W) */ return Err(E::V);").as_deref(),

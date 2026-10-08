@@ -527,7 +527,16 @@ reads `assert_eq!` operands when:
    macro admission (the parser keys each terminal Err-return guard by its
    `if` line and whitespace-free condition, with the same eager-path
    gates), `#[should_panic]`, the test's line range and the return-path
-   gate.
+   gate. The #6974 let-bound result rule applies to `assert_eq!` only.
+4. A guard reads only its condition. A macro inside its body runs only
+   when the guard fires, so it is never the pinned assertion, and the
+   self-computed check selects its reader the same way: an `assert_eq!`
+   spelled in a message, comment or guard body does not switch it.
+
+Refused, conservatively: a guard with an `else` branch; `if !(a == b)`;
+a parenthesised `(a == b)`; a condition split across lines; a guard
+inside a closure, nested `fn` or async block, whose `return` leaves only
+that body; and a second guard or assertion after a guard's `return`.
 
 ## Required Evidence
 
@@ -838,7 +847,8 @@ assertions. This repair shares the existing callback without that larger migrati
 ## Non-Goals
 
 - Shared admission covers Rust `return_value`, `error_path` and `predicate`
-  evidence from bare `assert_eq!` invocations. Qualified assertion macros, other
+  evidence from bare `assert_eq!` invocations, a bool owner's `assert!` and
+  the lone-equality forms above. Qualified assertion macros, other
   oracle kinds/families and general control-flow or macro resolution retain
   their existing authorities; this is not a general execution-proof system.
 
