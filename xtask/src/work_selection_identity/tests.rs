@@ -1021,12 +1021,16 @@ fn work_selection_identity_standalone_overlaps_use_compiler_effective_root() -> 
     if copied == 0 {
         return Err("standalone captured dir contributed no JSON inputs".to_string());
     }
-    // Diverge the local root and hang the open PR worktree under it.
+    // Diverge the local root and hang the open PR worktree under it. The
+    // diverged paths are built from the temp dir at runtime so no absolute
+    // path literal is committed (check-local-context).
+    let diverged = root.join("diverged-local");
+    let diverged_worktree = diverged.join("wt-9102");
     let local_text = fs::read_to_string(root.join("local_state.json"))
         .map_err(|err| format!("read temp local_state.json: {err}"))?;
     let mut local: serde_json::Value = serde_json::from_str(&local_text)
         .map_err(|err| format!("parse temp local_state: {err}"))?;
-    local["root"] = serde_json::Value::String("C:/diverged-local".to_string());
+    local["root"] = serde_json::Value::String(diverged.to_string_lossy().into_owned());
     fs::write(root.join("local_state.json"), local.to_string())
         .map_err(|err| format!("write diverged local_state: {err}"))?;
     let prs_text = fs::read_to_string(root.join("pull_requests.json"))
@@ -1039,7 +1043,8 @@ fn work_selection_identity_standalone_overlaps_use_compiler_effective_root() -> 
     }) else {
         return Err("standalone PR 8802 must exist for the root test".to_string());
     };
-    pr["worktree_path"] = serde_json::Value::String("C:/diverged-local/wt-9102".to_string());
+    pr["worktree_path"] =
+        serde_json::Value::String(diverged_worktree.to_string_lossy().into_owned());
     fs::write(root.join("pull_requests.json"), prs.to_string())
         .map_err(|err| format!("write diverged pull_requests: {err}"))?;
     let claims_text = fs::read_to_string(root.join("claims.json"))
@@ -1053,7 +1058,7 @@ fn work_selection_identity_standalone_overlaps_use_compiler_effective_root() -> 
     }) else {
         return Err("standalone claim on 9102 must exist for the root test".to_string());
     };
-    claim["worktree"] = serde_json::Value::String("C:/diverged-local/wt-9102".to_string());
+    claim["worktree"] = serde_json::Value::String(diverged_worktree.to_string_lossy().into_owned());
     fs::write(root.join("claims.json"), claims.to_string())
         .map_err(|err| format!("write diverged claims: {err}"))?;
 
