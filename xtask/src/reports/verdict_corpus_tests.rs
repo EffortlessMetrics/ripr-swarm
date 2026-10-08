@@ -1531,7 +1531,7 @@ fn only_a_rust_corpus_holds_labels_to_cargo_commands_and_rust_test_names() -> Re
         validate_with("rounds 1, 2 and 3 cents down")?,
         Vec::<String>::new()
     );
-    for bad in ["two\nlines", " padded", ""] {
+    for bad in ["two\nlines", "first\rsecond", " padded", ""] {
         assert!(
             validate_with(bad)?
                 .iter()
@@ -1675,6 +1675,34 @@ fn out_inside_a_sibling_corpus_expected_directory_is_refused() -> Result<(), Str
         .unwrap_or_default();
     assert!(err.contains("typescript-verdict-corpus"), "{err}");
     refuse_any_expected_out(&root.join("reports"), &selected)?;
+    Ok(())
+}
+
+#[test]
+fn a_sibling_that_names_no_usable_language_does_not_abort_the_guard() -> Result<(), String> {
+    // Discovery accepts `Bad`/`x;y` via safe_id but corpus_language refuses
+    // them; the shared --out guard must skip such siblings instead of
+    // aborting the selected corpus's run. Their errors still fail check-all
+    // through corpus_dirs/check_each.
+    let root = crate::tests::temp_dir("verdict-malformed-sibling");
+    let fixtures = root.join("fixtures");
+    for language in ["rust", "typescript", "Bad", "x;y"] {
+        crate::tests::write(
+            &fixtures.join(format!("{language}-verdict-corpus/corpus.json")),
+            "{}\n",
+        );
+    }
+    let selected = fixtures.join("typescript-verdict-corpus");
+    refuse_any_expected_out(&root.join("reports"), &selected)?;
+    // The valid sibling's guard still holds.
+    let sibling_expected = fixtures.join("rust-verdict-corpus/expected");
+    let err = refuse_any_expected_out(&sibling_expected, &selected)
+        .err()
+        .unwrap_or_default();
+    assert!(
+        err.contains("rust-verdict-corpus"),
+        "sibling expected dir must be named: {err}"
+    );
     Ok(())
 }
 

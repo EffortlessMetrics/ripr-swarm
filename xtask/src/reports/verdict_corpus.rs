@@ -1077,7 +1077,7 @@ fn is_one_test_name(name: &str) -> bool {
 /// spaces and commas, so the only shape it can be held to is one non-empty
 /// trimmed line.
 fn is_one_test_title(name: &str) -> bool {
-    !name.is_empty() && name == name.trim() && !name.contains('\n')
+    !name.is_empty() && name == name.trim() && !name.contains(['\n', '\r'])
 }
 
 /// Whether a corpus directory keeps the Rust label rules: every directory
@@ -2406,7 +2406,15 @@ fn refuse_any_expected_out(out: &Path, dir: &Path) -> Result<(), String> {
         return Ok(());
     };
     for sibling in discovered.into_iter().flatten() {
-        refuse_expected_out(out, &sibling.join("expected"), &corpus_language(&sibling)?)?;
+        // A sibling that names no usable language cannot be checked,
+        // reported, or blessed, so there is no blessed state of its to
+        // protect; its error still fails check-all through corpus_dirs.
+        // Skipping it here keeps one malformed sibling from aborting every
+        // other corpus's run through this shared guard.
+        let Ok(language) = corpus_language(&sibling) else {
+            continue;
+        };
+        refuse_expected_out(out, &sibling.join("expected"), &language)?;
     }
     Ok(())
 }
