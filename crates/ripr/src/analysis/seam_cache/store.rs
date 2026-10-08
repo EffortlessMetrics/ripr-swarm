@@ -202,7 +202,8 @@ fn acquire_publication_lock(
     key: &RepoSeamCacheKey,
 ) -> Result<PublicationLock, String> {
     let stem = key.filename();
-    let name = format!("{}.lock", stem.trim_end_matches(".json"));
+    let stem = stem.strip_suffix(".json").unwrap_or(stem.as_str());
+    let name = format!("{stem}.lock");
     if std::fs::create_dir_all(&cache.sharded_dir).is_err() {
         return Ok(PublicationLock::Unsupported);
     }
@@ -2077,9 +2078,9 @@ mod tests {
         let (dir, cache, key, seams) = sharded_fixture("publication-lock", 6)?;
         LOCK_WAIT_OVERRIDE.with(|wait| wait.set(Some(std::time::Duration::from_millis(50))));
         std::fs::create_dir_all(&cache.sharded_dir).map_err(|err| err.to_string())?;
-        let lock_path = cache
-            .sharded_dir
-            .join(format!("{}.lock", key.filename().trim_end_matches(".json")));
+        let stem = key.filename();
+        let stem = stem.strip_suffix(".json").unwrap_or(stem.as_str());
+        let lock_path = cache.sharded_dir.join(format!("{stem}.lock"));
         let holder = std::fs::OpenOptions::new()
             .create(true)
             .truncate(false)
@@ -2106,6 +2107,42 @@ mod tests {
         let stored = cache
             .store_classified_seams_with_record_and_byte_limits(&key, &seams, None, 2, 1_000_000)?;
         assert_ne!(stored.label, PUBLICATION_BUSY_LABEL);
+        round_trip(&cache, &key, &seams)?;
+        LOCK_WAIT_OVERRIDE.with(|wait| wait.set(None));
+        ignore_remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn publication_skips_a_competing_publisher_inside_the_commit_window() -> Result<(), String> {
+        // Writer B publishes the same key from inside writer A's sharded
+        // commit window (via the after-commit hook, while A still holds
+        // the key lock): B must see Busy and mutate nothing, and A must
+        // complete with its own seams intact.
+        let (dir, cache, key, seams) = sharded_fixture("publication-race", 6)?;
+        LOCK_WAIT_OVERRIDE.with(|wait| wait.set(Some(std::time::Duration::from_millis(50))));
+        let cache = std::rc::Rc::new(cache);
+        let cache_b = std::rc::Rc::clone(&cache);
+        let key_b = key.clone();
+        let rival = vec![classified_with_pad("rival-publisher")];
+        let seen = std::rc::Rc::new(std::cell::RefCell::new(None));
+        let seen_b = std::rc::Rc::clone(&seen);
+        after_next_manifest_commit(Box::new(move || {
+            let status = cache_b
+                .store_classified_seams_with_record_and_byte_limits(
+                    &key_b, &rival, None, 2, 1_000_000,
+                )
+                .expect("competing publish must return a status");
+            *seen_b.borrow_mut() = Some(status.label);
+        }));
+        let stored = cache
+            .store_classified_seams_with_record_and_byte_limits(&key, &seams, None, 2, 1_000_000)?;
+        assert_ne!(stored.label, PUBLICATION_BUSY_LABEL);
+        assert_eq!(
+            seen.borrow().as_deref(),
+            Some(PUBLICATION_BUSY_LABEL),
+            "the competing publish must have run inside the commit window and seen Busy"
+        );
         round_trip(&cache, &key, &seams)?;
         LOCK_WAIT_OVERRIDE.with(|wait| wait.set(None));
         ignore_remove_dir_all(&dir);
