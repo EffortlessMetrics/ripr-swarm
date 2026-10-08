@@ -9059,8 +9059,10 @@ quickcheck! {
     /// strings, so the reported ratio is an input-only ratio, not a
     /// bound on retained duplication in either direction. The go/no-go
     /// judgment lives on #1924 with the measured numbers; this test
-    /// asserts measurement validity (completion, exact counts,
-    /// consistency), not a gate threshold.
+    /// asserts measurement validity (completion, exact counts, pinned
+    /// volumes), not a gate threshold. The wall timer covers only the
+    /// indexed relate calls plus result consumption: query construction
+    /// is prebuilt outside it.
     #[test]
     fn classify_string_churn_profile_reports_volumes() -> Result<(), String> {
         use std::collections::HashSet;
@@ -9102,36 +9104,40 @@ quickcheck! {
         let candidate_index = RelatedTestCandidateIndex::new(&index);
         let index_elapsed = index_built.elapsed();
 
-        // Relate every probe against its own owner. The test-only
-        // indexed/full-scan parity check rebuilds its candidate index and
-        // runs a full scan per call, so it stays outside the timer, as does
-        // the candidate-evaluation count. The timer covers only the indexed
-        // production path under test. Each indexed evaluation runs the
-        // per-candidate string matching (lowering, normalization,
-        // substring checks) that interning would have to beat.
-        let mut candidate_evaluations = 0usize;
-        let mut parity_own = 0usize;
+        // Relate every probe against its own owner. Query construction
+        // (owner-name formatting, `FunctionSummary` and `Probe` builds)
+        // happens once up front, outside every timer: the wall measurement
+        // must cover only the indexed production path under test, not
+        // harness formatting. The test-only indexed/full-scan parity check
+        // rebuilds its candidate index and runs a full scan per call, so it
+        // stays outside the timer, as does the candidate-evaluation count.
+        // Each indexed evaluation runs the per-candidate string matching
+        // (lowering, normalization, substring checks) that interning would
+        // have to beat.
+        let mut timed_queries = Vec::with_capacity(COUNT);
         for (i, expected) in names.iter().enumerate() {
             let owner_name = format!("verify_{i:03}");
             let owner = function("src/owners.rs", &owner_name);
             let probe = probe("src/owners.rs", &format!("{owner_name}(value)"));
+            timed_queries.push((probe, owner, expected.clone()));
+        }
+        let mut candidate_evaluations = 0usize;
+        let mut parity_own = 0usize;
+        for (probe, owner, expected) in &timed_queries {
             candidate_evaluations += candidate_index
-                .candidate_indices(&probe, Some(&owner), None, None)
+                .candidate_indices(probe, Some(owner), None, None)
                 .len();
-            let related = find_related_tests(&probe, Some(&owner), &index, true, None, None);
+            let related = find_related_tests(probe, Some(owner), &index, true, None, None);
             if related.iter().any(|(test, _)| test.name == *expected) {
                 parity_own += 1;
             }
         }
         let started = Instant::now();
         let mut related_own = 0usize;
-        for (i, expected) in names.iter().enumerate() {
-            let owner_name = format!("verify_{i:03}");
-            let owner = function("src/owners.rs", &owner_name);
-            let probe = probe("src/owners.rs", &format!("{owner_name}(value)"));
+        for (probe, owner, expected) in &timed_queries {
             let related = find_related_tests_with_candidate_index(
-                &probe,
-                Some(&owner),
+                probe,
+                Some(owner),
                 &index,
                 true,
                 None,
@@ -9174,9 +9180,18 @@ quickcheck! {
                 unique_files.len()
             ));
         }
-        if unique_bytes > total_bytes || total_bytes == 0 {
+        // Pinned generator-input volumes: the #1924 interning decision
+        // rests on these exact totals (18,800 total bytes, 9,800 unique,
+        // ratio 1.92). A fixture change that moves them must fail here and
+        // force an explicit re-measurement plus a #1924 update, never pass
+        // silently on a bare consistency check.
+        const EXPECTED_TOTAL_BYTES: usize = 18_800;
+        const EXPECTED_UNIQUE_BYTES: usize = 9_800;
+        if total_bytes != EXPECTED_TOTAL_BYTES || unique_bytes != EXPECTED_UNIQUE_BYTES {
             return Err(format!(
-                "inconsistent volumes: unique {unique_bytes} total {total_bytes}"
+                "generator-input volumes drifted: unique {unique_bytes} total {total_bytes}, \
+                 expected unique {EXPECTED_UNIQUE_BYTES} total {EXPECTED_TOTAL_BYTES}; \
+                 re-measure and update #1924 before re-pinning"
             ));
         }
         if candidate_evaluations == 0 {
