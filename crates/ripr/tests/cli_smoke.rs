@@ -20544,7 +20544,9 @@ fn check_dirty_tree_with_damaged_store_names_damage() -> Result<(), String> {
 /// cyclic `refs/replace` (exit 128) must preserve Git's own reason with the
 /// named-file repair: no `--base` repair can fix a replace cycle. The
 /// explicit `--worktree` leg uses an explicit base; the dirty-default leg
-/// also exercises default base resolution.
+/// also exercises default base resolution, and it stays on committed history
+/// there because the dirtiness probe itself cannot read `status` through the
+/// cycle — that committed read still fails closed on Git's reason.
 #[test]
 fn check_dirty_tree_with_cyclic_replace_preserves_git_refusal() -> Result<(), String> {
     let root = unique_temp_workspace("worktree-cyclic-replace");
@@ -20593,12 +20595,11 @@ fn check_dirty_tree_with_cyclic_replace_preserves_git_refusal() -> Result<(), St
         &["unrelated histories"],
     )?;
     let output = run_ripr(&["check", "--root", root_str.as_str(), "--json"]);
-    assert_worktree_origin_refusal(
+    assert_origin_refusal(
         &output,
         "dirty default with default base",
-        "main",
-        &["replace depth", "correct or restore"],
-        &["unrelated histories"],
+        &["replace depth too high"],
+        &["unrelated histories", "the working-tree diff from"],
     )?;
 
     ignore_remove_dir_all(&root);
