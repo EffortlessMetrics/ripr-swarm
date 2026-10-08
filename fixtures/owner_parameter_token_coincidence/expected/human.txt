@@ -27,7 +27,7 @@ Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/owner_parameter_token_coincidence/input --diff <cwd>/fixtures/owner_parameter_token_coincidence/diff.patch --mode fast probe:src_lib.rs:return_value:df11903a
   ripr context --root <cwd>/fixtures/owner_parameter_token_coincidence/input --diff <cwd>/fixtures/owner_parameter_token_coincidence/diff.patch --mode fast --at probe:src_lib.rs:return_value:df11903a
 Write a test for it:
-  ripr agent stub --root <cwd>/fixtures/owner_parameter_token_coincidence/input --at src/lib.rs:6
+  ripr agent stub --root <cwd>/fixtures/owner_parameter_token_coincidence/input --at src/lib.rs:6 --kind return_value
 
 More:
   Full evidence: rerun with --format human-full

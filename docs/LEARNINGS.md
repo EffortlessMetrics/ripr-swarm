@@ -3,6 +3,56 @@
 This log captures repo knowledge that should survive individual PRs and chat
 sessions. It is intentionally short and actionable.
 
+## 2026-10-07: PowerShell string pipelines add BOMs and mojibake; verify bytes (#7091)
+
+Round-tripping a file through `Get-Content`/`Set-Content` or `>` redirection
+re-encodes it: one merge repair gained a UTF-8 BOM plus Latin-1-decoded
+em-dashes in `process_allowlist.txt` (failing `check-process-policy`), a BOM
+in a test file, and a BOM plus a dropped sentence in a corpus SPEC.md, across
+three lanes (#6306, #5745, #6577). Worse, PowerShell string pipelines are
+BOM-blind on read, so grepping the diff for damage finds nothing. Resolve
+merges with byte-exact tools, never a shell string round-trip, and verify
+with byte reads (`[IO.File]::ReadAllBytes`, `git cat-file` through `cmd`,
+or a script that opens files in binary) before pushing.
+
+## 2026-10-07: Diff-routed gates let a broken main hide; prove behavior changes fully (#7114)
+
+#5997's dirty-tree default flipped a `hostile_repos` assertion (the 0112
+deleted-file notice fires only on committed-history reads), but its gate ran
+a diff-routed subset that never executed that binary, so main broke silently
+at `9cc79a167`. Only full-suite gates (#6638's, then #6715's) caught the
+single FAIL. A green diff-routed gate on a behavior change proves the
+touched paths, not the suite. Behavior changes that alter CLI defaults,
+output contracts, or shared validators need full-suite evidence (or an
+explicit routing justification) before merge.
+
+## 2026-10-07: Split corpus records must match the writer's null/empty conventions (#6577)
+
+Two comparisons guard a split, and they disagree about missing keys. `split`
+itself re-reads an existing record through its type before comparing, so a
+key serde fills (`mutated_line` omitted becomes `None`, then `null`) is not
+a conflict — but a field with no `#[serde(default)]` fails to parse before
+any comparison. The round-trip test then reassembles `corpus.json` from the
+raw record files, where a missing key differs from `null` and from `[]`.
+And `validate` separately refuses a `behavior_preserving_rewrite` mutant
+without `mutated_line`. So a hand-grafted record must carry every key the
+writer emits (nulls and empty arrays included) while still satisfying the
+struct and the validate laws; a new optional `Vec` needs both
+`#[serde(default)]` and `skip_serializing_if` (`spec_examples` is the
+precedent). Migrate through the real `split` writer where possible.
+
+## 2026-10-04: Generated tests need indexing and admission in the expansion (#5334)
+
+Tests written through a same-file `macro_rules!` generator were invisible:
+the parser sees token trees, so an owner they fully test read `ungripped`
+(repo mode) or `no_static_path` (diff mode). Indexing them alone is not
+enough. Assertion admission (`classify/owner_pin.rs`) looks a test up in the
+file text by its lines, so a generated test's `assert_eq!` was refused and
+diff mode turned the old `no_static_path` into a `reachable_unrevealed` gap.
+Admission now reruns over the invocation's expansion. Two more traps: the
+test-style normalizer rebuilds tests from parsed functions, so generated
+tests must be registered after it; and wrapping a single-literal `expr`
+argument in parentheses hid the boundary value from activation.
 ## 2026-10-07: Call-path scans must treat non-ASCII as identifier text (#7062)
 
 `called_paths` walked bytes with an ASCII identifier set. `módulo` became

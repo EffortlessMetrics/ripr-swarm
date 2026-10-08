@@ -1,0 +1,39 @@
+//! Assertion-shaped owners: one only tests call, one a production caller
+//! calls.
+
+/// Panics when the ratio is above one.
+pub fn check_ratio(num: u32, den: u32) {
+    assert!(num <= den, "ratio above one");
+}
+
+fn check_share(num: u32, den: u32) {
+    assert!(den > 0, "empty denominator");
+    let _ = num;
+}
+
+/// A percentage share.
+pub fn share(num: u32, den: u32) -> u32 {
+    check_share(num, den);
+    num * 100 / den
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn equal_ratio_is_allowed() {
+        check_ratio(2, 2);
+    }
+
+    #[test]
+    #[should_panic(expected = "ratio above one")]
+    fn ratio_above_one_panics() {
+        check_ratio(3, 2);
+    }
+
+    #[test]
+    fn quarter_share() {
+        assert_eq!(share(1, 4), 25);
+    }
+}

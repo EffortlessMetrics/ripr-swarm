@@ -1457,7 +1457,20 @@ fn run_git_diff_bytes(
             format!("refusing to diff `{range}`: a revision range cannot start with `-`").into(),
         );
     }
-    let mut args: Vec<&str> = vec!["-c", "core.quotePath=true", "diff"];
+    // `diff.orderFile=/dev/null` neutralizes ambient file ordering (#5325):
+    // a dangling user orderfile otherwise aborts the diff before any
+    // analysis runs, and a live one only reorders output the parser does
+    // not need ordered. An empty value is NOT an off switch — git fails
+    // reading orderfile `''` — while /dev/null holds no patterns on any
+    // platform git runs (verified on git-for-Windows 2.47.1, which maps it
+    // to NUL; the hostile-config test pins the behavior everywhere it runs).
+    let mut args: Vec<&str> = vec![
+        "-c",
+        "core.quotePath=true",
+        "-c",
+        "diff.orderFile=/dev/null",
+        "diff",
+    ];
     args.extend_from_slice(extra_args);
     // Analysis consumes source-coordinate patches, not human diff views.
     // Pin every caller, including worktree mode: helpers can suppress real

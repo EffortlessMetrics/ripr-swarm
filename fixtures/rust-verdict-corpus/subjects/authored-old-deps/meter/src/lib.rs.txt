@@ -1,0 +1,33 @@
+//! Readings behind associated functions on types the panel crate imports.
+
+pub struct Gauge;
+
+impl Gauge {
+    pub fn reading() -> u32 {
+        42
+    }
+}
+
+pub struct Dial;
+
+impl Dial {
+    pub fn level() -> u32 {
+        7
+    }
+}
+
+pub struct Lamp;
+
+impl Lamp {
+    pub fn lumens() -> u32 {
+        800
+    }
+}
+
+pub struct Meter;
+
+impl Meter {
+    pub fn tick() -> u32 {
+        5
+    }
+}

@@ -6778,7 +6778,11 @@ fn absent_delimiter_boundary_returns_head() {
             .iter()
             .filter(|finding| {
                 let path = &finding.probe.location.file;
-                path.strip_prefix(root).unwrap_or(path).to_string_lossy() == file
+                path.strip_prefix(root)
+                    .unwrap_or(path)
+                    .to_string_lossy()
+                    .replace('\\', "/")
+                    == file
             })
             .flat_map(|finding| finding.related_tests.iter().map(|test| test.name.clone()))
             .collect()
