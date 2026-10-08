@@ -3415,6 +3415,7 @@ const GENERATED_CI_JOB_CONTINUE_ON_ERROR: &str =
 const GENERATED_CI_SUMMARY_STEP_HEAD: &str = "      - name: Add RIPR advisory summary\n        if: always()\n        continue-on-error: true";
 const GENERATED_CI_SUMMARY_INVOKE: &str =
     "ripr reports ci-summary --root . >> \"$GITHUB_STEP_SUMMARY\"";
+const GENERATED_CI_NEXT_STEP: &str = "\n      - ";
 const GENERATED_CI_TYPESCRIPT_GROUPING_ROW: &str = "- `typescript`: artifact_entries=`1`, preview_entries=`1`, missing_preview_status=`0`, static_limit_entries=`0`, classifications=`weakly_exposed=1`, static_limit_kinds=`none`, actionability_states=`actionable=1`, actionability_categories=`none`, repair_packet_ready=`1`, gate_impact=`none`";
 
 pub(crate) fn dogfood_generated_ci_cockpit_run() -> Result<DogfoodGeneratedCiCockpitRun, String> {
@@ -3516,6 +3517,21 @@ fn render_generated_ci_summary_at(root: &Path) -> Result<String, String> {
     run_output_owned("cargo", &args)
 }
 
+/// Slice of the generated `Add RIPR advisory summary` step, from its
+/// `if: always()` / `continue-on-error: true` head through the line before
+/// the next same-indent step. A whole-workflow invoke grep is not enough:
+/// the command must stay in this step's `run` block (#6958).
+fn generated_ci_advisory_summary_step(workflow: &str) -> Option<&str> {
+    let start = workflow.find(GENERATED_CI_SUMMARY_STEP_HEAD)?;
+    let rest = &workflow[start..];
+    let after_head = GENERATED_CI_SUMMARY_STEP_HEAD.len();
+    let end = rest[after_head..]
+        .find(GENERATED_CI_NEXT_STEP)
+        .map(|offset| after_head + offset)
+        .unwrap_or(rest.len());
+    Some(&rest[..end])
+}
+
 /// Check workflow step wiring and `ripr reports ci-summary` text separately
 /// so the old inline-shell strings cannot satisfy the summary properties
 /// (#6958).
@@ -3540,8 +3556,10 @@ pub(crate) fn dogfood_generated_ci_cockpit_run_from_surfaces(
     let expected_repair_commands = 4usize;
     let gate_authority_boundary =
         summary.contains("ripr gate evaluate") && summary.contains("Gate authority:");
-    let summary_step_head = workflow.contains(GENERATED_CI_SUMMARY_STEP_HEAD);
-    let summary_invoke = workflow.contains(GENERATED_CI_SUMMARY_INVOKE);
+    let summary_step = generated_ci_advisory_summary_step(workflow);
+    let summary_step_head = summary_step.is_some();
+    let summary_invoke =
+        summary_step.is_some_and(|step| step.contains(GENERATED_CI_SUMMARY_INVOKE));
     let default_advisory = workflow.contains(GENERATED_CI_JOB_CONTINUE_ON_ERROR)
         && summary.contains("RIPR is advisory static evidence");
     let artifact_upload =
@@ -3584,7 +3602,8 @@ pub(crate) fn dogfood_generated_ci_cockpit_run_from_surfaces(
     }
     if !summary_invoke {
         errors.push(
-            "generated CI must invoke ripr reports ci-summary into the step summary".to_string(),
+            "generated CI must invoke ripr reports ci-summary in the Add RIPR advisory summary step"
+                .to_string(),
         );
     }
     if !language_grouping_checked {
