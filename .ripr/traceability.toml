@@ -8579,6 +8579,8 @@ tests = [
   "crates/ripr/src/analysis/classify/transitive_reach.rs::tests::generated_test_names_read_the_first_identifier_argument",
   "crates/ripr/src/analysis/classify/transitive_reach.rs::tests::generated_test_sites_skip_comments_and_definition_bodies",
   "crates/ripr/src/analysis/classify/transitive_reach.rs::tests::a_test_attribute_only_in_a_string_makes_no_generator",
+  "crates/ripr/src/analysis/classify/transitive_reach.rs::tests::generated_test_names_follow_the_transcriber",
+  "crates/ripr/src/analysis/classify/transitive_reach.rs::tests::generators_that_may_emit_no_active_test_are_rejected",
   "crates/ripr/src/analysis/classify/transitive_reach.rs::tests::an_invocation_above_the_generator_definition_is_not_a_generated_test",
   "crates/ripr/src/analysis/classify/transitive_reach.rs::tests::a_generator_invoked_inside_a_function_is_not_a_generated_test",
   "crates/ripr/src/analysis/classify/transitive_reach.rs::tests::generated_test_sites_require_module_scope_test_build_and_one_arm",
