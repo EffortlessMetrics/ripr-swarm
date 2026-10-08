@@ -392,6 +392,64 @@ async fn drain_until_tracked_uris_cleared(
     ))
 }
 
+/// After the empty publishes are observed, confirm the folder transition
+/// installed B. Status is not the capture window (#6981); it is a
+/// post-condition so a clear that never selects B cannot pass SETUP.
+async fn assert_status_root_changed_to(
+    client: &mut ShutdownClearClient,
+    expected_root: &str,
+    workspace_folders: &serde_json::Value,
+) -> Result<(), String> {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
+    let mut last = serde_json::Value::Null;
+    while !deadline
+        .saturating_duration_since(tokio::time::Instant::now())
+        .is_zero()
+    {
+        let id = client.request_id();
+        write_lsp_message(
+            &mut client.writer,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "method": "workspace/executeCommand",
+                "params": {"command": COLLECT_WORKSPACE_STATUS_COMMAND, "arguments": []}
+            }),
+        )
+        .await?;
+        loop {
+            let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+            if remaining.is_zero() {
+                break;
+            }
+            let message =
+                match tokio::time::timeout(remaining, read_lsp_message(&mut client.reader)).await {
+                    Ok(Ok(message)) => message,
+                    Ok(Err(err)) => return Err(err),
+                    Err(_) => break,
+                };
+            answer_server_request_if_needed(&mut client.writer, &message, workspace_folders)
+                .await?;
+            if !is_awaited_response(&message, &[id]) {
+                continue;
+            }
+            if message.get("error").is_some() {
+                return Err(format!("workspace status failed: {message}"));
+            }
+            last = message["result"]["analysis_status"].clone();
+            if status_root_state(&last) == Some("root_changed")
+                && last["effective_root"].as_str() == Some(expected_root)
+            {
+                return Ok(());
+            }
+            break;
+        }
+    }
+    Err(format!(
+        "SETUP: root change must select B ({expected_root}) with root_changed; last status: {last}"
+    ))
+}
+
 fn run_shutdown_clear_exchange<Fut>(failure: &str, exchange: Fut) -> Result<(), String>
 where
     Fut: std::future::Future<Output = Result<(), String>>,
@@ -651,6 +709,12 @@ fn shutdown_after_root_change_publishes_no_duplicates() -> Result<(), String> {
                 &mut client,
                 &mut transition_drain,
                 &tracked,
+                &folders_result,
+            )
+            .await?;
+            assert_status_root_changed_to(
+                &mut client,
+                &server_path_text(&root_b_path),
                 &folders_result,
             )
             .await?;
