@@ -160,6 +160,13 @@ pub(crate) fn rust_module_tree_scan(text: &str) -> RustModuleTreeScan {
                 name: name.text().trim_start_matches("r#").to_string(),
             }),
             ModulePathTarget::Literal(path) if inline.is_empty() => {
+                // A backslash separates components on Windows and is a plain
+                // file-name character elsewhere, so which file the edge names
+                // depends on the build host: the edge is kept, but the scan
+                // can no longer prove a file unreached.
+                if path.contains('\\') {
+                    scan.complete = false;
+                }
                 scan.edges
                     .push(RustModuleTreeEdge::Path(PathBuf::from(path)));
             }
@@ -486,6 +493,8 @@ mod tests {
             "fn f() { let _ = preinclude!(\"x.rs\"); }\n",
             "fn f() { println!(\"{}\", decl::with_module!(generated)); }\n",
             "mod broken\n",
+            // A backslash names a different file on Windows than elsewhere.
+            "#[path = \"back\\\\slash.rs\"]\nmod platform;\n",
         ] {
             assert!(
                 !rust_module_tree_scan(source).complete,

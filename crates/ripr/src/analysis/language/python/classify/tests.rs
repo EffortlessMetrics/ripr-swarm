@@ -2,7 +2,7 @@
 
 use super::super::owners_tests::{extract_owners, extract_tests};
 use super::classify_change_with_old;
-use crate::domain::{ExposureClass, Finding, StageState};
+use crate::domain::{ExposureClass, Finding, OracleStrength, StageState};
 use std::path::Path;
 
 /// Exercise the existing source-fact producer and final classifier together.
@@ -473,7 +473,21 @@ fn normal_path_oracle_does_not_credit_the_changed_error_path_summary() -> Result
         "        raise ValueError(\"empty\")",
         "        raise KeyError(\"empty\")",
     )?;
-    assert_strong_oracle_is_not_discrimination(&finding);
+    // The exact value assertion observes another behavior family, so it is
+    // neither the row's oracle nor credited as a strong-but-orthogonal
+    // observer: the finding names the missing exception discriminator (#5572).
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+    assert_eq!(finding.ripr.reveal.discriminate.state, StageState::Weak);
+    assert_eq!(
+        finding.ripr.reveal.discriminate.summary,
+        "Python preview adapter found no strong discriminator; missing proof: `raises KeyError matching \"empty\"`."
+    );
+    assert_eq!(finding.related_tests.len(), 1);
+    assert_eq!(finding.related_tests[0].oracle, None);
+    assert_eq!(
+        finding.related_tests[0].oracle_strength,
+        OracleStrength::Unknown
+    );
     Ok(())
 }
 

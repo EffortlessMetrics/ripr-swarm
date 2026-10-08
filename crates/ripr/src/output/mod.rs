@@ -5,6 +5,7 @@ pub(crate) mod agent_seam_packets;
 #[path = "agent_seam_packets.rs"]
 mod agent_seam_packets_legacy;
 pub(crate) mod agent_workflow;
+pub(crate) mod analyzed_revisions;
 pub(crate) mod assistant_loop_health;
 pub(crate) mod badge;
 pub(crate) mod baseline;
@@ -37,6 +38,7 @@ pub(crate) mod limited_check;
 pub(crate) mod markdown;
 pub(crate) mod mutation_calibration;
 pub use mutation_calibration::{CargoMutantsOutcomeRecord, parse_cargo_mutants_outcomes_json};
+pub(crate) mod next_action;
 pub(crate) mod next_step;
 pub(crate) mod observed_values;
 pub(crate) mod outcome;

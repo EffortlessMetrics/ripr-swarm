@@ -1,0 +1,13 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 97eae71..df09121 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -29,7 +29,7 @@ impl Id {
+     pub fn new_v2() -> Id {
+         Id {
+             counter: 0x00ab_cdef,
+-            version: 2,
++            version: 0x2,
+         }
+     }
+ 

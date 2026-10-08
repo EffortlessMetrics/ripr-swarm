@@ -127,7 +127,6 @@ mod tests {
         let facts = RaRustSyntaxAdapter.summarize_file(Path::new("src/lib.rs"), source)?;
         Ok(FileData {
             path: facts.path,
-            calls: facts.calls,
             returns: facts.returns,
             literals: facts.literals,
             probe_shapes: facts.probe_shapes,
@@ -136,6 +135,8 @@ mod tests {
             unresolved_property_macros: facts.unresolved_property_macros,
             role_provenance: facts.role_provenance,
             source: facts.source,
+            item_scopes: facts.item_scopes,
+            macro_candidates: facts.macro_candidates,
         })
     }
 

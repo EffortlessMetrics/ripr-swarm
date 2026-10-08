@@ -1,0 +1,13 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 8840c6e..dd14700 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -7,7 +7,7 @@ pub const MULTIPLIER: u32 = 3;
+ 
+ /// Return value whose test expectation names the same constant.
+ pub fn compute_score(x: i64) -> i64 {
+-    x * SCALE_FACTOR
++    SCALE_FACTOR * x
+ }
+ 
+ /// Return value whose weak assert names the constant and whose exact assert does not.

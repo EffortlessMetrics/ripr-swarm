@@ -3,6 +3,116 @@
 This log captures repo knowledge that should survive individual PRs and chat
 sessions. It is intentionally short and actionable.
 
+## 2026-10-07: PowerShell string pipelines add BOMs and mojibake; verify bytes (#7091)
+
+Round-tripping a file through `Get-Content`/`Set-Content` or `>` redirection
+re-encodes it: one merge repair gained a UTF-8 BOM plus Latin-1-decoded
+em-dashes in `process_allowlist.txt` (failing `check-process-policy`), a BOM
+in a test file, and a BOM plus a dropped sentence in a corpus SPEC.md, across
+three lanes (#6306, #5745, #6577). Worse, PowerShell string pipelines are
+BOM-blind on read, so grepping the diff for damage finds nothing. Resolve
+merges with byte-exact tools, never a shell string round-trip, and verify
+with byte reads (`[IO.File]::ReadAllBytes`, `git cat-file` through `cmd`,
+or a script that opens files in binary) before pushing.
+
+## 2026-10-07: Diff-routed gates let a broken main hide; prove behavior changes fully (#7114)
+
+#5997's dirty-tree default flipped a `hostile_repos` assertion (the 0112
+deleted-file notice fires only on committed-history reads), but its gate ran
+a diff-routed subset that never executed that binary, so main broke silently
+at `9cc79a167`. Only full-suite gates (#6638's, then #6715's) caught the
+single FAIL. A green diff-routed gate on a behavior change proves the
+touched paths, not the suite. Behavior changes that alter CLI defaults,
+output contracts, or shared validators need full-suite evidence (or an
+explicit routing justification) before merge.
+
+## 2026-10-07: Split corpus records must match the writer's null/empty conventions (#6577)
+
+Two comparisons guard a split, and they disagree about missing keys. `split`
+itself re-reads an existing record through its type before comparing, so a
+key serde fills (`mutated_line` omitted becomes `None`, then `null`) is not
+a conflict — but a field with no `#[serde(default)]` fails to parse before
+any comparison. The round-trip test then reassembles `corpus.json` from the
+raw record files, where a missing key differs from `null` and from `[]`.
+And `validate` separately refuses a `behavior_preserving_rewrite` mutant
+without `mutated_line`. So a hand-grafted record must carry every key the
+writer emits (nulls and empty arrays included) while still satisfying the
+struct and the validate laws; a new optional `Vec` needs both
+`#[serde(default)]` and `skip_serializing_if` (`spec_examples` is the
+precedent). Migrate through the real `split` writer where possible.
+
+## 2026-10-04: Generated tests need indexing and admission in the expansion (#5334)
+
+Tests written through a same-file `macro_rules!` generator were invisible:
+the parser sees token trees, so an owner they fully test read `ungripped`
+(repo mode) or `no_static_path` (diff mode). Indexing them alone is not
+enough. Assertion admission (`classify/owner_pin.rs`) looks a test up in the
+file text by its lines, so a generated test's `assert_eq!` was refused and
+diff mode turned the old `no_static_path` into a `reachable_unrevealed` gap.
+Admission now reruns over the invocation's expansion. Two more traps: the
+test-style normalizer rebuilds tests from parsed functions, so generated
+tests must be registered after it; and wrapping a single-literal `expr`
+argument in parentheses hid the boundary value from activation.
+## 2026-10-07: Call-path scans must treat non-ASCII as identifier text (#7062)
+
+`called_paths` walked bytes with an ASCII identifier set. `módulo` became
+the tail `dulo`, and `rfind(..) + 1` sliced inside `ó`, aborting `ripr
+check`. Non-ASCII bytes are identifier bytes there; the qualifier slice
+skips the whole found character. ASCII paths stay unchanged. Do not
+assume an ASCII identifier vocabulary is a char-boundary walk.
+## 2026-10-07: Pin-side refusals need reach mirrors, and raw spellings need every matching site (#7067)
+
+The owner pin refused single-file receiver renames while reach kept
+`direct_owner_call` for the same file: `owner_call_relation_reason`
+shared the module and parent shadow checks but never the file-wide rename
+check. A trust fix on one side must audit the other before claiming the
+hole closed. Separately, `r#Name` denotes `Name` at every matching site,
+not just declarations: the rename matcher tested the plain spelling only,
+so `use x::Y as r#Window` escaped while `struct r#Window` was already
+caught. Audit all spellings at all related sites when changing one.
+
+## 2026-10-07: Out-of-line shadows live at parent roots, and owner-side gates fire first (#6950)
+
+The module-declaration producer emits top-level `mod` declarations only, so
+a recorded parent edge's scope is always the parent file's root: reasoning
+about inline modules enclosing a `mod` declaration is vacuous against real
+provenance. A test-local shadow in a parent file therefore sits at the
+parent root, and only the owner's own root (a root-level owner in that
+file) is exempt.
+
+Separately, the owner-side pin gates fail closed before the test-side
+receiver check ever runs: `derived_equality` refuses a type declared in
+two files (rule 6), and method competition refuses a compiling shadow
+method (rules 1-2). The #6950 code-reading traced only the test-side
+check; the end-to-end fail-open was in reach (`direct_owner_call`), not
+the pin. Reproduce a trust hole end-to-end before designing the fix, and
+keep honest fixtures compiling: a `tests/` child naming parent items
+breaks dual crate-root compilation, while `src/`-nested layouts compile.
+
+## 2026-10-06: The MCP tool envelope is a wire cost, not a free re-render (#6021)
+
+Serializing the same document twice into one tool response — pretty
+`content[0].text` plus `structuredContent` — made the wire response ~2.4x
+the compact document, so a listing the document guard approved at 65 KB
+died `result_too_large` at the 128 KiB bound after every budget layer had
+passed. Zero-finding fixtures cannot witness this; it needs hundreds of
+items. The envelope is now the calibration owner: compact text always,
+`structuredContent` only while the complete envelope measures under the
+bound, typed failure past that, and `ripr_list_gaps` byte-fills pages to
+`MAX_TOOL_DOCUMENT_BYTES` (half the response bound — worst-case JSON
+escaping doubles the text copy). When changing a wire shape, measure the
+final envelope, not the document.
+## 2026-10-07: Windows spawn and path spellings that tests must not assume (#6855)
+
+Windows `CreateProcess` resolves the executable through the parent's PATH
+and ignores the child's custom `PATH`, so restricting `PATH` to an empty
+directory never produces a missing-binary spawn failure on Windows (probed:
+bare `git` still spawns, exit 0). Force the miss with a deterministically
+absent absolute program instead. Separately, Git for Windows rejects
+verbatim path arguments (`worktree add` fails with "could not create
+leading directories"), so fixture setup must pass a plain or relative path
+even when the fixture root itself is verbatim.
+
 ## 2026-10-04: Operand-position error lexemes are not error observers (#5255)
 
 `assert_eq!((rdr.len(), error_count), (10, 0))` observes a successful length
@@ -350,6 +460,20 @@ compared operand is a local alias rather than a parameter name, activation
 fallback fail-closes to the whole argument list so a buried literal in the
 aliased slot cannot restore pairing. The reverse direction, helper-built
 inputs that read as gaps, is #6615.
+
+## 2026-10-07: A reassigned boundary binding is a stale pairing, not an observed result (#7004)
+
+Same-test pairing kept a `let`-bound boundary name live until a re-`let`
+shadowed it. `let mut got = gate(10); got = true; assert_eq!(got, true)`
+therefore paired the assertion with a call whose result it no longer
+observed, promoting the predicate toward `exposed`. A post-`let`
+reassignment, compound assignment, or `&mut` borrow now voids the binding
+fail-closed. `let mut` alone still pairs, and a mutation before the
+boundary `let` does not void the fresh binding. Compound assignment voids
+even when the shift preserves the value (`got += 1`): without value
+analysis the rule cannot tell a preserving shift from a destroying one
+(`*= 0`), so it fail-closes. Do not "fix" this with dataflow; alias and
+field/index mutation stay unmodeled by design.
 
 ## 2026-09-29: Whole-object equality is not an effect observer of a different collection (#4575)
 

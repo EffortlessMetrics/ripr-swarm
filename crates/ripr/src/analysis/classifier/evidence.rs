@@ -1,17 +1,20 @@
 use crate::analysis::classify::{
+    ARM_UNSELECTED_REASON_PREFIX, ASSERTION_CONTEXT_UNESTABLISHED, ArmSelector, EffectStateCarrier,
     OwnerPinSyntax, OwnerReturnPin, ProbeContext, PropagationWitnessV1, ReturnOracleAdmission,
-    activation_evidence_with_value_facts, classify, confidence_score, contains_as_whole_word,
-    current_path_witness, has_same_test_boundary_oracle_pairing, infection_evidence,
-    local_flow_sinks, owner_may_be_reached_unseen, package_prefix,
-    propagation_evidence_with_witness, reach_evidence, reveal_evidence_with_expression,
-    same_test_pairing_missing_summary,
+    TransitiveReachIndex, activation_and_boundary_input, body_contains_owner_call,
+    callee_is_unique, classify, confidence_score, contains_as_whole_word, current_path_witness,
+    has_same_test_boundary_oracle_pairing, infection_evidence_with_boundary_input,
+    local_flow_sinks, oracle_crediting_relations, owner_may_be_reached_unseen, package_prefix,
+    propagation_evidence_with_witness, reach_evidence, reveal_outcome,
+    same_test_pairing_missing_summary, signature_parameters,
 };
-use crate::analysis::facts::{FunctionSummary, OracleFact, TestSummary};
+use crate::analysis::facts::{FunctionSummary, OracleFact, RustIndex, TestSummary};
 use crate::domain::*;
-use std::cell::RefCell;
-use std::collections::BTreeMap;
+use std::cell::{Cell, RefCell};
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
+mod side_flip;
 mod tuple_match;
 
 pub(in crate::analysis) struct ClassifiedProbeEvidence {
@@ -34,6 +37,26 @@ pub(in crate::analysis) struct ClassifiedProbeEvidence {
     /// change. An owner with an unresolved caller chain keeps its
     /// shape-based class even when no related test was found.
     pub(in crate::analysis) reach_ruled_out: bool,
+    /// When the reveal is not fully established: where a refused related
+    /// assertion is, why it was refused, and whether its text calls the
+    /// changed owner. Only an owner-calling refusal could have observed
+    /// the change had it been credited, so only that one may be presented
+    /// as a possible static limit.
+    pub(in crate::analysis) assertion_refusal: Option<AssertionRefusalNote>,
+    /// When Observe is `rust_assertion_context_unestablished`: every refused
+    /// related `assert_eq!` was refused for an analyzer limit, so the gap
+    /// rests on what ripr could not read (RIPR-SPEC-0240).
+    pub(in crate::analysis) refusals_are_analyzer_limits: bool,
+}
+
+#[derive(Clone, Debug)]
+pub(in crate::analysis) struct AssertionRefusalNote {
+    pub(in crate::analysis) location: String,
+    pub(in crate::analysis) reason: String,
+    pub(in crate::analysis) calls_owner: bool,
+    /// Whether the refusal is a limit of ripr's own reading rather than a
+    /// shape that can keep the assertion from running (RIPR-SPEC-0240).
+    pub(in crate::analysis) is_analyzer_limit: bool,
 }
 
 impl ClassifiedProbeEvidence {
@@ -50,7 +73,7 @@ impl ClassifiedProbeEvidence {
         let flow_sinks = local_flow_sinks(context.probe, context.owner_fn);
         let propagation_witness = current_path_witness(context.probe, &flow_sinks)
             .map(PropagationWitnessDiagnostic::from_witness);
-        let activation = activation_evidence_with_value_facts(
+        let gathered = activation_and_boundary_input(
             context.probe,
             context.owner_fn,
             &test_summaries,
@@ -60,7 +83,54 @@ impl ClassifiedProbeEvidence {
             context.workspace_complete,
             context.test_value_facts,
         );
-        let infect = infection_evidence(context.probe, &test_summaries, &activation);
+        let mut activation = gathered.activation;
+        // #3731 review (F11, G1): the changed owner's package scope, computed
+        // once — the cross-package same-name defeats compare each related
+        // test's package against it.
+        let owner_package = context
+            .owner_fn
+            .and_then(|owner| package_prefix(&owner.file));
+        // RIPR-SPEC-0229: an unselected-arm discriminator reads each related
+        // test's owner calls as inputs to the changed owner. A test whose
+        // file imports a foreign same-named function, or whose own package
+        // defines one, may be calling that function instead, so the same
+        // identity defeats reveal applies withhold the named arm here.
+        if let Some(owner) = context.owner_fn
+            && activation
+                .missing_discriminators
+                .iter()
+                .any(|fact| fact.reason.starts_with(ARM_UNSELECTED_REASON_PREFIX))
+            && test_summaries.iter().any(|test| {
+                let imports_foreign = context.index.files().get(&test.file).is_some_and(|facts| {
+                    context.test_file_imports_foreign_callee_name(
+                        &test.file,
+                        &facts.source,
+                        &owner.name,
+                    )
+                });
+                let package_defines = package_prefix(&test.file).is_some_and(|test_package| {
+                    owner_package
+                        .as_deref()
+                        .is_some_and(|owner_package| owner_package != test_package)
+                        && context.index.functions().iter().any(|function| {
+                            function.name == owner.name
+                                && package_prefix(&function.file).as_deref()
+                                    == Some(test_package.as_str())
+                        })
+                });
+                imports_foreign || package_defines
+            })
+        {
+            activation
+                .missing_discriminators
+                .retain(|fact| !fact.reason.starts_with(ARM_UNSELECTED_REASON_PREFIX));
+        }
+        let infect = infection_evidence_with_boundary_input(
+            context.probe,
+            &test_summaries,
+            &activation,
+            gathered.unresolved_boundary.as_deref(),
+        );
         let valid_witness = propagation_witness
             .as_ref()
             .and_then(|diagnostic| match diagnostic {
@@ -69,12 +139,6 @@ impl ClassifiedProbeEvidence {
             });
         let propagate =
             propagation_evidence_with_witness(context.probe, &flow_sinks, valid_witness);
-        // #3731 review (G1): the changed owner's package scope, computed
-        // once — the cross-package same-name defeat below compares each
-        // related test's package against it.
-        let owner_package = context
-            .owner_fn
-            .and_then(|owner| package_prefix(&owner.file));
         // Both defeats below depend only on the test's file (and the probe's
         // constant owner callee), never on the individual test. A
         // high-traffic owner relates to thousands of tests spread over a
@@ -97,11 +161,68 @@ impl ClassifiedProbeEvidence {
         let owner_return_pin = context
             .owner_fn
             .and_then(|owner| OwnerReturnPin::establish(context.probe, owner, context.index));
+        // RIPR-SPEC-0229: which owner-call input selects a changed arm.
+        // A same-named function elsewhere (a trait method on another enum
+        // with the same variant names) makes a direct call ambiguous; a
+        // partial index cannot show the name is unique.
+        let arm_selector = context
+            .owner_fn
+            .filter(|owner| {
+                matches!(context.probe.family, ProbeFamily::MatchArm)
+                    && context.workspace_complete
+                    && callee_is_unique(&owner.name, context.index)
+            })
+            .and_then(|owner| ArmSelector::establish(context.probe, owner))
+            .map(|selector| {
+                selector.in_workspace(
+                    context.index,
+                    context
+                        .related_tests
+                        .iter()
+                        .map(|(test, _)| test.file.as_path()),
+                )
+            });
+        // RIPR-SPEC-0094 Part D: the state a deleted `self.callee(..)` writes,
+        // established once per probe; `None` keeps the Part C reading.
+        let effect_carrier = context.owner_fn.and_then(|owner| {
+            EffectStateCarrier::establish(
+                context.probe,
+                owner,
+                context.index,
+                context.workspace_complete,
+            )
+        });
         let package_defeats_by_file = FileDefeatMemo::default();
+        // Built lazily: only a match arm beside an owner-calling test asks
+        // whether a same-file test may run the owner (#6297).
+        let proximity_reach = TransitiveReachIndex::new(context.index);
+        let owner_reach = std::cell::OnceCell::new();
         let owner_locals = context
             .owner_fn
             .map(owner_local_binding_names)
             .unwrap_or_default();
+        let owner_parameters = context
+            .owner_fn
+            .map(owner_parameter_names)
+            .unwrap_or_default();
+        // #5830/#7024: names of functions that transitively call the owner,
+        // computed once per owner per run through the attached memo and only
+        // when an assertion asks. The memo answers under its borrow without
+        // cloning; unit-test contexts without a memo keep the per-probe cell.
+        let owner_callers = std::cell::OnceCell::new();
+        let expected_reaches_owner = |ty: Option<&str>, name: &str| {
+            context.owner_fn.is_some_and(|owner| {
+                if let Some(memo) = context.owner_caller_names {
+                    return memo.caller_reaches(context.index, owner, ty, name);
+                }
+                owner_callers
+                    .get_or_init(|| transitive_caller_names(owner, context.index))
+                    .iter()
+                    .any(|(caller_type, caller)| {
+                        caller == name && ty.is_none_or(|ty| caller_type.as_deref() == Some(ty))
+                    })
+            })
+        };
         // #3731 review (F11): the related test's file source is reachable
         // here, so the caller computes the same-name-import defeat per test
         // instead of restructuring the reveal inputs.
@@ -151,7 +272,7 @@ impl ClassifiedProbeEvidence {
                 )
             })
         };
-        let (observe, discriminate, related_tests, matched_total) = reveal_evidence_with_expression(
+        let reveal = reveal_outcome(
             context.probe,
             reveal_expression,
             &context.related_tests,
@@ -161,11 +282,50 @@ impl ClassifiedProbeEvidence {
             &ReturnOracleAdmission {
                 owner_return_pin: &owner_pin_admits,
                 assertion_admitted: &assertion_admitted,
+                proximity_may_reach_owner: &|test| {
+                    context.owner_fn.is_none_or(|owner| {
+                        owner_reach
+                            .get_or_init(|| proximity_reach.owner_reach(&owner.name))
+                            .test_may_reach(test)
+                    })
+                },
+                owner_parameters: &owner_parameters,
+                expected_reaches_owner: &expected_reaches_owner,
+                effect_state_carried: &|test, assertion| {
+                    effect_carrier
+                        .as_ref()
+                        .is_none_or(|carrier| carrier.admits(test, assertion))
+                },
             },
+            arm_selector.as_ref(),
         );
+        let (observe, discriminate, related_tests, matched_total) = (
+            reveal.observe,
+            reveal.discriminate,
+            reveal.related,
+            reveal.related_total,
+        );
+        // #6692: a clone-field pin (`assert_eq!(recv.clone(), recv)` through
+        // a derived `PartialEq`) observes the constructed field, so the
+        // missing-field fact below no longer stands for this probe. Only an
+        // owner pin that reveal credited clears it, after reveal's own
+        // gates (a name-only relation next to a reach-bearing test, a
+        // foreign same-name import, a cross-package same-name definition);
+        // a token match never does.
+        if matches!(context.probe.family, ProbeFamily::FieldConstruction)
+            && reveal.owner_pin_credited
+        {
+            activation.missing_discriminators.retain(|fact| {
+                fact.flow_sink
+                    .as_ref()
+                    .is_none_or(|sink| sink.kind != FlowSinkKind::StructField)
+            });
+        }
 
         let discriminate =
             tuple_match::discrimination(context, &observe, &discriminate).unwrap_or(discriminate);
+        let discriminate =
+            side_flip::discrimination(context, &observe, &discriminate).unwrap_or(discriminate);
         // #4828: a boundary-class probe may not read `exposed` by taking a
         // boundary input from one test and a discriminating oracle from
         // another. Infection and discrimination stay independently scored;
@@ -226,8 +386,11 @@ impl ClassifiedProbeEvidence {
             && context
                 .owner_fn
                 .is_some_and(|owner| !owner_may_be_reached_unseen(owner, context.index));
+        // A weak stage is replaced too: with no reaching test, an
+        // unconfirmed oracle (#5830 withholds confirmation from tokens that
+        // only coincide with the owner's) is no discriminator at all.
         let unreached = |stage: StageEvidence, verb: &str| {
-            if reach_ruled_out && stage.state == StageState::Yes {
+            if reach_ruled_out && matches!(stage.state, StageState::Yes | StageState::Weak) {
                 unreached_stage(verb)
             } else {
                 stage
@@ -246,7 +409,74 @@ impl ClassifiedProbeEvidence {
                 discriminate: discriminate.clone(),
             },
         };
-        let evidence = evidence_summaries([&reach, &infect, &propagate, &observe, &discriminate]);
+        let mut evidence =
+            evidence_summaries([&reach, &infect, &propagate, &observe, &discriminate]);
+        // Disclose a refused related `assert_eq!` whenever the refusal can
+        // matter: the reveal is not fully established. See
+        // `preferred_refusal_note` for which one.
+        let owner_name = context.owner_fn.map_or("", |owner| owner.name.as_str());
+        let assertion_refusal = (observe.summary == ASSERTION_CONTEXT_UNESTABLISHED
+            || discriminate.state != StageState::Yes)
+            .then(|| {
+                let mut notes = Vec::new();
+                for (test, _) in &context.related_tests {
+                    for assertion in &test.assertions {
+                        let Some(refusal) = pin_syntax.equality_assertion_refusal(
+                            context.probe,
+                            test,
+                            assertion,
+                            context.index,
+                        ) else {
+                            continue;
+                        };
+                        let calls_owner = body_contains_owner_call(&assertion.text, owner_name);
+                        let note = AssertionRefusalNote {
+                            location: format!(
+                                "`assert_eq!` in {} at {}:{}",
+                                test.name,
+                                test.file.display(),
+                                assertion.line
+                            ),
+                            reason: refusal.describe(),
+                            calls_owner,
+                            is_analyzer_limit: refusal.is_analyzer_limit(),
+                        };
+                        notes.push(note);
+                    }
+                }
+                preferred_refusal_note(notes)
+            })
+            .flatten();
+        if let Some(note) = &assertion_refusal {
+            evidence.push(format!(
+                "{ASSERTION_NOT_CREDITED_PREFIX}{}: {}",
+                note.location, note.reason
+            ));
+        }
+        let refusals_are_analyzer_limits = observe.summary == ASSERTION_CONTEXT_UNESTABLISHED && {
+            // Only tests that could have credited an oracle: a refused
+            // assertion in a name-only test cannot stand in for the missing
+            // oracle of a reach-bearing one.
+            let credits = oracle_crediting_relations(&context.related_tests);
+            let mut refusals = context
+                .related_tests
+                .iter()
+                .filter(|(_, reason)| credits(*reason))
+                .flat_map(|(test, _)| {
+                    test.assertions.iter().filter_map(|assertion| {
+                        pin_syntax.equality_assertion_refusal(
+                            context.probe,
+                            test,
+                            assertion,
+                            context.index,
+                        )
+                    })
+                });
+            refusals
+                .next()
+                .is_some_and(|first| first.is_analyzer_limit())
+                && refusals.all(|refusal| refusal.is_analyzer_limit())
+        };
 
         Self {
             ripr,
@@ -262,6 +492,8 @@ impl ClassifiedProbeEvidence {
             observe,
             discriminate,
             reach_ruled_out,
+            assertion_refusal,
+            refusals_are_analyzer_limits,
         }
     }
 
@@ -362,6 +594,238 @@ fn owner_local_binding_names(owner: &FunctionSummary) -> Vec<String> {
     names
 }
 
+/// Names the owner's signature binds as parameters, without `mut` or `ref`.
+fn owner_parameter_names(owner: &FunctionSummary) -> Vec<String> {
+    let mut names = signature_parameters(owner)
+        .into_iter()
+        .map(|name| {
+            name.trim_start_matches("ref ")
+                .trim_start_matches("mut ")
+                .trim()
+                .to_string()
+        })
+        .filter(|name| !name.is_empty())
+        .collect::<Vec<_>>();
+    names.sort();
+    names.dedup();
+    names
+}
+
+/// Bound on the caller walk: deeper chains keep the assertion's credit.
+const MAX_CALLER_DEPTH: usize = 6;
+
+/// Indexed functions whose calls reach `owner` within `MAX_CALLER_DEPTH`
+/// hops, as (impl type, name). A call counts only when its own syntax can
+/// name the callee (see `call_names_function`), so `String::new()` or
+/// `values.len()` never reaches an owner `Rect::new` or `Stack::len`. A
+/// type-qualified expected-side call (`Money::new(8)`) matches only a
+/// caller in that type's impl; any other call matches by name alone, so a
+/// same-named function elsewhere can only withhold credit.
+fn transitive_caller_names(
+    owner: &FunctionSummary,
+    index: &crate::analysis::facts::RustIndex,
+) -> std::collections::BTreeSet<(Option<String>, String)> {
+    let mut callers = std::collections::BTreeSet::new();
+    let mut visited = std::collections::HashSet::from([&owner.id]);
+    let mut frontier = vec![owner];
+    for _ in 0..MAX_CALLER_DEPTH {
+        let mut next = Vec::new();
+        for function in index.functions().iter() {
+            if visited.contains(&function.id) {
+                continue;
+            }
+            let reaches = function.calls.iter().any(|call| {
+                frontier
+                    .iter()
+                    .any(|callee| call_names_function(call, callee, function))
+            });
+            if reaches {
+                visited.insert(&function.id);
+                callers.insert((
+                    crate::analysis::classify::impl_self_type_name(&function.id.0),
+                    function.name.clone(),
+                ));
+                next.push(function);
+            }
+        }
+        if next.is_empty() {
+            break;
+        }
+        frontier = next;
+    }
+    callers
+}
+
+/// Run-scoped memo for #5830 transitive caller walks (#7024), mirroring
+/// `TestValueFacts`. Entries are keyed by the owner's slot in the index the
+/// memo was first queried with; an owner that is not an element of that
+/// index, or a query against another index, is computed fresh and never
+/// cached, so a key can only ever name the same caller set.
+/// Caller sets by owner slot — the memo payload for `OwnerCallerNames`.
+type OwnerCallerSets = BTreeMap<usize, BTreeSet<(Option<String>, String)>>;
+
+#[derive(Clone, Debug, Default)]
+pub(in crate::analysis) struct OwnerCallerNames {
+    index_identity: Cell<Option<(usize, usize, u64)>>,
+    by_owner_slot: RefCell<OwnerCallerSets>,
+}
+
+impl OwnerCallerNames {
+    /// Whether a caller named `name` (optionally of type `ty`) reaches
+    /// `owner`: a cache hit scans the cached set under its borrow and never
+    /// clones. Misses walk once, then cache by move.
+    pub(in crate::analysis) fn caller_reaches(
+        &self,
+        index: &RustIndex,
+        owner: &FunctionSummary,
+        ty: Option<&str>,
+        name: &str,
+    ) -> bool {
+        let matches = |caller: &(Option<String>, String)| {
+            caller.1 == name && ty.is_none_or(|ty| caller.0.as_deref() == Some(ty))
+        };
+        let Some(slot) = self.slot_key(index, owner) else {
+            return transitive_caller_names(owner, index).iter().any(matches);
+        };
+        if let Some(cached) = self.by_owner_slot.borrow().get(&slot) {
+            return cached.iter().any(matches);
+        }
+        let callers = transitive_caller_names(owner, index);
+        let found = callers.iter().any(matches);
+        self.by_owner_slot.borrow_mut().insert(slot, callers);
+        found
+    }
+
+    /// `transitive_caller_names(owner, index)`, computed once per owner per run.
+    #[cfg(test)]
+    pub(in crate::analysis) fn callers_for(
+        &self,
+        index: &RustIndex,
+        owner: &FunctionSummary,
+    ) -> BTreeSet<(Option<String>, String)> {
+        let Some(slot) = self.slot_key(index, owner) else {
+            return transitive_caller_names(owner, index);
+        };
+        if let Some(cached) = self.by_owner_slot.borrow().get(&slot) {
+            return cached.clone();
+        }
+        let callers = transitive_caller_names(owner, index);
+        self.by_owner_slot
+            .borrow_mut()
+            .insert(slot, callers.clone());
+        callers
+    }
+
+    /// The cache cells, so tests can hold a shared borrow across a repeat
+    /// query: a hit only borrows, while a recompute's `borrow_mut` panics.
+    #[cfg(test)]
+    pub(in crate::analysis) fn slots_for_test(&self) -> &std::cell::RefCell<OwnerCallerSets> {
+        &self.by_owner_slot
+    }
+
+    fn slot_key(&self, index: &RustIndex, owner: &FunctionSummary) -> Option<usize> {
+        let identity = index.storage_identity();
+        match self.index_identity.get() {
+            None => self.index_identity.set(Some(identity)),
+            Some(bound) if bound != identity => return None,
+            Some(_) => {}
+        }
+        index.function_slot(owner)
+    }
+}
+
+/// Roots whose paths never name a workspace function.
+const FOREIGN_PATH_ROOTS: [&str; 3] = ["std", "core", "alloc"];
+
+/// Whether `call`, written inside `caller`, can name `callee` by syntax alone.
+///
+/// A free function is named by a bare call or a lowercase module path that
+/// does not start at `std`/`core`/`alloc`. An associated function is named
+/// by `<Type>::name`, by `Self::name` inside an impl of the same type, or by
+/// `self.name(` inside such an impl. Any other method call (`values.len()`)
+/// or type-qualified call (`String::new()`) is unresolved and does not count.
+fn call_names_function(
+    call: &crate::analysis::facts::CallFact,
+    callee: &FunctionSummary,
+    caller: &FunctionSummary,
+) -> bool {
+    if call.name != callee.name {
+        return false;
+    }
+    let callee_type = crate::analysis::classify::impl_self_type_name(&callee.id.0);
+    let same_impl = || {
+        callee_type.is_some()
+            && crate::analysis::classify::impl_self_type_name(&caller.id.0) == callee_type
+    };
+    // Call facts keep the raw source line; a name inside a comment or
+    // string on that line is not a call (#6970 review).
+    let text = crate::analysis::extract::mask_comments_and_strings(&call.text);
+    call_name_prefixes(&text, &call.name).any(|prefix| {
+        if let Some(receiver) = prefix.strip_suffix('.') {
+            return receiver_is_self(receiver) && same_impl();
+        }
+        let Some(path) = prefix.strip_suffix("::") else {
+            // A bare call may follow a keyword (`return tax(v)`), a field
+            // label or any operator; only the declaration `fn tax(` is not
+            // a call.
+            return callee_type.is_none() && !ends_with_word(prefix, "fn");
+        };
+        let segments = trailing_path_segments(path);
+        match (&callee_type, segments.last()) {
+            (Some(ty), Some(last)) => *last == ty.as_str() || (*last == "Self" && same_impl()),
+            (None, Some(last)) => {
+                last.starts_with(|c: char| c.is_ascii_lowercase())
+                    && segments
+                        .first()
+                        .is_some_and(|root| !FOREIGN_PATH_ROOTS.contains(root))
+            }
+            (_, None) => false,
+        }
+    })
+}
+
+/// The text before each whole-word `name` that is followed by `(` or `::<`.
+fn call_name_prefixes<'a>(text: &'a str, name: &'a str) -> impl Iterator<Item = &'a str> + 'a {
+    text.match_indices(name).filter_map(move |(at, _)| {
+        let before = &text[..at];
+        let after = text[at + name.len()..].trim_start();
+        let word_start = !before.ends_with(|c: char| c.is_alphanumeric() || c == '_');
+        let called = after.starts_with('(') || after.starts_with("::<");
+        (word_start && called).then(|| before.trim_end())
+    })
+}
+
+fn ends_with_word(text: &str, word: &str) -> bool {
+    text.strip_suffix(word)
+        .is_some_and(|rest| !rest.ends_with(|c: char| c.is_alphanumeric() || c == '_'))
+}
+
+fn receiver_is_self(receiver: &str) -> bool {
+    receiver
+        .trim_end()
+        .strip_suffix("self")
+        .is_some_and(|rest| !rest.ends_with(|c: char| c.is_alphanumeric() || c == '_' || c == '.'))
+}
+
+/// The `::`-separated identifier segments ending at the end of `path`, with
+/// a trailing turbofish or generic list (`Stack::<u32>`) dropped.
+fn trailing_path_segments(path: &str) -> Vec<&str> {
+    let path = path.trim_end();
+    let path = match path.strip_suffix('>') {
+        Some(_) => path
+            .rfind('<')
+            .map_or("", |open| path[..open].trim_end_matches("::")),
+        None => path,
+    };
+    let start = path
+        .rfind(|c: char| !(c.is_alphanumeric() || c == '_' || c == ':'))
+        .map_or(0, |at| at + 1);
+    path[start..]
+        .split("::")
+        .filter(|segment| !segment.is_empty())
+        .collect()
+}
+
 /// Per-file defeat results for one probe, keyed by test file then callee.
 type FileDefeatMemo = RefCell<BTreeMap<PathBuf, BTreeMap<String, bool>>>;
 
@@ -385,6 +849,23 @@ fn memoized_file_defeat(
         .or_default()
         .insert(callee.to_string(), defeats);
     defeats
+}
+
+/// The refused `assert_eq!` to disclose. One whose text calls the changed
+/// owner comes first, since an unrelated refused assertion
+/// (`if flag { assert_eq!(1, 1) }`) could not observe the change even if it
+/// were credited. Among those, a refusal that is not an analyzer limit comes
+/// first (#6903): it is what keeps the gap, so the next step must not offer
+/// the static-limit reading a limit refusal earns.
+fn preferred_refusal_note(notes: Vec<AssertionRefusalNote>) -> Option<AssertionRefusalNote> {
+    let rank = |note: &AssertionRefusalNote| match (note.calls_owner, note.is_analyzer_limit) {
+        (true, false) => 0,
+        (true, true) => 1,
+        (false, _) => 2,
+    };
+    // `min_by_key` keeps the first of equal ranks, so test order still
+    // decides within a rank.
+    notes.into_iter().min_by_key(rank)
 }
 
 #[cfg(test)]
@@ -745,5 +1226,271 @@ mod tests {
             impl_context: Default::default(),
         };
         assert_eq!(owner_local_binding_names(&owner), vec!["table".to_string()]);
+    }
+
+    #[test]
+    fn preferred_refusal_note_puts_a_non_limit_owner_call_first() {
+        use super::{AssertionRefusalNote, preferred_refusal_note};
+        let note = |name: &str, calls_owner, is_analyzer_limit| AssertionRefusalNote {
+            location: name.to_string(),
+            reason: String::new(),
+            calls_owner,
+            is_analyzer_limit,
+        };
+        let pick = |notes: Vec<AssertionRefusalNote>| {
+            preferred_refusal_note(notes).map(|note| note.location)
+        };
+        // #6903: a limit refusal listed first must not front for the
+        // `if flag { assert_eq!(owner(..), ..) }` that keeps the gap.
+        assert_eq!(
+            pick(vec![
+                note("unrelated", false, false),
+                note("limit", true, true),
+                note("branch", true, false),
+            ]),
+            Some("branch".to_string())
+        );
+        assert_eq!(
+            pick(vec![
+                note("unrelated", false, false),
+                note("limit", true, true)
+            ]),
+            Some("limit".to_string())
+        );
+        // Without an owner call the first refusal in test order is kept.
+        assert_eq!(
+            pick(vec![
+                note("first", false, true),
+                note("second", false, false)
+            ]),
+            Some("first".to_string())
+        );
+        assert_eq!(pick(Vec::new()), None);
+    }
+
+    // --- #5830 review (A1): the caller walk names the owner by syntax ---
+
+    fn caller_names_for(source: &str, owner: &str) -> Result<Vec<String>, String> {
+        use crate::analysis::rust_index::{RaRustSyntaxAdapter, RustSyntaxAdapter};
+        let path = PathBuf::from("src/lib.rs");
+        let facts = RaRustSyntaxAdapter.summarize_file(&path, source)?;
+        let functions = facts.functions.clone();
+        let mut index = RustIndex::default();
+        index.insert_file_only(path, facts);
+        index.extend_functions(functions);
+        let owner = index
+            .functions()
+            .iter()
+            .find(|function| function.id.0.ends_with(owner))
+            .cloned()
+            .ok_or_else(|| format!("owner {owner} indexed"))?;
+        Ok(super::transitive_caller_names(&owner, &index)
+            .into_iter()
+            .map(|(_, name)| name)
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .collect())
+    }
+
+    #[test]
+    fn caller_walk_follows_qualified_chains_and_skips_foreign_same_names() -> Result<(), String> {
+        let source = "pub struct Stack { items: Vec<u32> }\n\
+            impl Stack {\n\
+                pub fn len(&self) -> usize { self.items.len() }\n\
+                pub fn is_empty(&self) -> bool { self.len() == 0 }\n\
+                pub fn fresh() -> usize { Self::len(&Stack { items: vec![] }) }\n\
+            }\n\
+            pub struct Other;\n\
+            impl Other { pub fn peek(&self, s: &Stack) -> bool { self.len(s) } fn len(&self, _s: &Stack) -> bool { true } }\n\
+            pub fn count_items(values: &[u32]) -> usize { values.len() }\n\
+            pub fn std_len(values: &[u32]) -> usize { core::primitive::slice::len(values) }\n\
+            pub fn typed(stack: &Stack) -> usize { Stack::len(stack) }\n\
+            pub fn depth_two(stack: &Stack) -> usize { typed(stack) + 1 }\n\
+            pub fn depth_three(stack: &Stack) -> usize { crate::depth_two(stack) }\n\
+            pub fn cycle_a(stack: &Stack) -> usize { cycle_b(stack) + typed(stack) }\n\
+            pub fn cycle_b(stack: &Stack) -> usize { cycle_a(stack) }\n";
+        assert_eq!(
+            caller_names_for(source, "Stack::len")?,
+            [
+                "cycle_a",
+                "cycle_b",
+                "depth_three",
+                "depth_two",
+                "fresh",
+                "is_empty",
+                "typed"
+            ],
+            "Stack::len, Self::len and self.len() in Stack reach the owner, chains \
+             and cycles close transitively; values.len(), core::...::len and \
+             self.len() inside another impl do not"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn caller_walk_names_a_free_owner_by_bare_or_module_path_only() -> Result<(), String> {
+        let source = "pub fn tax(subtotal: i64) -> i64 { subtotal * 8 / 100 }\n\
+            pub fn reference(subtotal: i64) -> i64 { tax(subtotal) }\n\
+            pub fn pathed(subtotal: i64) -> i64 { crate::tax(subtotal) }\n\
+            pub struct Rate;\n\
+            impl Rate { pub fn tax(&self) -> i64 { 0 } pub fn apply(&self) -> i64 { self.tax() } }\n\
+            pub fn typed() -> i64 { Rate::tax(&Rate) }\n\
+            pub fn std_rooted(v: &mut Vec<i64>) -> i64 { std::mem::take(v).len() as i64 }\n\
+            pub fn returned(v: i64) -> i64 { return tax(v) }\n\
+            pub fn matched(v: i64) -> i64 { match tax(v) { t => t } }\n\
+            pub struct Out { t: i64 }\n\
+            pub fn labelled(v: i64) -> Out { Out { t: tax(v) } }\n";
+        assert_eq!(
+            caller_names_for(source, "src/lib.rs::tax")?,
+            ["labelled", "matched", "pathed", "reference", "returned"],
+            "a free owner is reached by a bare or crate-path call, never by a \
+             method call or a type-qualified call of the same name"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn owner_caller_memo_agrees_with_the_walk_and_never_crosses_indexes() -> Result<(), String> {
+        use crate::analysis::rust_index::{RaRustSyntaxAdapter, RustSyntaxAdapter};
+        fn indexed_source(source: &str) -> Result<RustIndex, String> {
+            let path = PathBuf::from("src/lib.rs");
+            let facts = RaRustSyntaxAdapter.summarize_file(&path, source)?;
+            let functions = facts.functions.clone();
+            let mut index = RustIndex::default();
+            index.insert_file_only(path, facts);
+            index.extend_functions(functions);
+            Ok(index)
+        }
+        // Borrowed from the arena, like `resolve_owner_function` in
+        // production: a clone is not an arena element, so the memo's
+        // pointer-based slot key would never resolve and the test would
+        // exercise compute-fresh twice instead of a cache hit.
+        fn find_owner<'index>(
+            index: &'index RustIndex,
+            owner: &str,
+        ) -> Result<&'index FunctionSummary, String> {
+            index
+                .functions()
+                .iter()
+                .find(|function| function.id.0.ends_with(owner))
+                .ok_or_else(|| format!("owner {owner} indexed"))
+        }
+        let source = "pub fn tax(subtotal: i64) -> i64 { subtotal * 8 / 100 }\n\
+            pub fn reference(subtotal: i64) -> i64 { tax(subtotal) }\n";
+        let index = indexed_source(source)?;
+        let owner = find_owner(&index, "src/lib.rs::tax")?;
+        let memo = super::OwnerCallerNames::default();
+        let direct = super::transitive_caller_names(owner, &index);
+        assert!(!direct.is_empty(), "the fixture owner has callers");
+        assert_eq!(
+            memo.callers_for(&index, owner),
+            direct,
+            "the first memo query walks and caches"
+        );
+        assert_eq!(
+            memo.slots_for_test().borrow().len(),
+            1,
+            "the first query populated the cache"
+        );
+        // The repeat query must hit: a shared borrow is held across it, so
+        // a recompute's `borrow_mut` panics instead of silently re-walking.
+        {
+            let _guard = memo.slots_for_test().borrow();
+            assert_eq!(
+                memo.callers_for(&index, owner),
+                direct,
+                "the repeat query serves the cached set"
+            );
+        }
+        // The borrow-scoped predicate agrees with the walked set.
+        for (ty, caller) in &direct {
+            assert!(
+                memo.caller_reaches(&index, owner, ty.as_deref(), caller),
+                "the predicate finds walked caller {caller}"
+            );
+            assert!(
+                !memo.caller_reaches(&index, owner, Some("NotTheType"), caller),
+                "the predicate honors the type filter for {caller}"
+            );
+        }
+        assert!(
+            !memo.caller_reaches(&index, owner, None, "no_such_caller"),
+            "the predicate misses a name the walk never found"
+        );
+        let lonely_source = "pub fn tax(subtotal: i64) -> i64 { subtotal * 8 / 100 }\n";
+        let lonely_index = indexed_source(lonely_source)?;
+        let lonely_owner = find_owner(&lonely_index, "src/lib.rs::tax")?;
+        assert_eq!(
+            memo.callers_for(&lonely_index, lonely_owner),
+            super::transitive_caller_names(lonely_owner, &lonely_index),
+            "a query against another index computes fresh instead of \
+             serving the first index's cached set"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn caller_walk_ignores_owner_names_in_comments_and_strings_on_the_call_line()
+    -> Result<(), String> {
+        let source = "pub struct Stack { items: Vec<u32> }\n\
+            impl Stack { pub fn len(&self) -> usize { self.items.len() } }\n\
+            pub fn count_items(values: &[u32]) -> usize { values.len() } // Stack::len()\n\
+            pub fn labelled(values: &[u32]) -> (usize, &'static str) { (values.len(), \"Stack::len()\") }\n\
+            pub fn typed(stack: &Stack) -> usize { Stack::len(stack) }\n";
+        assert_eq!(
+            caller_names_for(source, "Stack::len")?,
+            ["typed"],
+            "a `Stack::len()` inside a comment or string on the line of an \
+             unrelated `values.len()` call does not reach the owner"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn owner_parameters_are_read_from_a_multiline_signature() -> Result<(), String> {
+        use crate::analysis::rust_index::{RaRustSyntaxAdapter, RustSyntaxAdapter};
+        let source = "pub fn tax(\n    subtotal: i64,\n    mut rate: i64,\n) -> i64 {\n    rate += 0;\n    subtotal * rate / 100\n}\n\
+            pub struct Input { pub base: i64, pub fee: i64 }\n\
+            pub fn levy<F: Fn(i64) -> i64>(Input { base, fee: charge }: Input, f: F) -> i64 { f(base) + charge }\n";
+        let facts = RaRustSyntaxAdapter.summarize_file(&PathBuf::from("src/lib.rs"), source)?;
+        let owner = facts
+            .functions
+            .iter()
+            .find(|function| function.name == "tax")
+            .ok_or("tax indexed")?;
+        assert_eq!(
+            super::owner_parameter_names(owner),
+            ["rate", "subtotal"],
+            "parameters on lines after `fn tax(` are owner-scoped tokens"
+        );
+        let levy = facts
+            .functions
+            .iter()
+            .find(|function| function.name == "levy")
+            .ok_or("levy indexed")?;
+        assert_eq!(
+            super::owner_parameter_names(levy),
+            ["base", "charge", "f", "fee"],
+            "a destructuring pattern binds its names; generic `Fn(..)` bounds are skipped"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn caller_walk_stops_after_six_hops() -> Result<(), String> {
+        let mut source = "pub fn tax(subtotal: i64) -> i64 { subtotal * 8 / 100 }\n".to_string();
+        let mut previous = "tax".to_string();
+        for hop in 1..=7 {
+            source.push_str(&format!(
+                "pub fn hop{hop}(v: i64) -> i64 {{ {previous}(v) }}\n"
+            ));
+            previous = format!("hop{hop}");
+        }
+        assert_eq!(
+            caller_names_for(&source, "src/lib.rs::tax")?,
+            ["hop1", "hop2", "hop3", "hop4", "hop5", "hop6"],
+            "callers six hops out reach the owner; the seventh hop does not"
+        );
+        Ok(())
     }
 }

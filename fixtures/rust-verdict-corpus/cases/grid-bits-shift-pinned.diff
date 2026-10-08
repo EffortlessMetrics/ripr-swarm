@@ -1,0 +1,13 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 133a718..1a32110 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -33,7 +33,7 @@ pub fn token_len(name: &[u8]) -> Result<usize, ChunkError> {
+ }
+ 
+ pub fn pack(hi: u8, lo: u8) -> u16 {
+-    (u16::from(hi) << 8) | u16::from(lo)
++    u16::from(lo) | (u16::from(hi) << 8)
+ }
+ 
+ pub fn with_flag(base: u8) -> u8 {

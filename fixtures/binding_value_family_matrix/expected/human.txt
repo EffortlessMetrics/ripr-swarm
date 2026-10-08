@@ -10,9 +10,10 @@ Analysis outcome: findings below (analysis complete; complete_with_findings).
 Start here:
   State: limited by static analysis (static_limited)
   Safe next action: inspect the named static limitation before treating this as repair-ready.
-  File: fixtures/binding_value_family_matrix/input/src/lib.rs:12
+  File: ./src/lib.rs:12
   Static exposure: unknown (propagation_unknown, note, confidence 0.66)
   Why unknown: the path from the changed behavior to an observable sink is not statically clear
+  Canonical gap: gap:rust:src/lib.rs:gate:predicate_boundary:predicate:open==want
   Changed behavior: label.starts_with("pre-")
   Analyzer limit: No clear propagation path from changed behavior to an observable sink
   Related test: tests/matrix.rs:14 starts_with_boundary_is_observed
@@ -23,10 +24,10 @@ Start here:
     - 7 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
-  ripr explain --root fixtures/binding_value_family_matrix/input --diff fixtures/binding_value_family_matrix/diff.patch --mode fast probe:src_lib.rs:predicate:a54b7c0f
-  ripr context --root fixtures/binding_value_family_matrix/input --diff fixtures/binding_value_family_matrix/diff.patch --mode fast --at probe:src_lib.rs:predicate:a54b7c0f
+  ripr explain --root <cwd>/fixtures/binding_value_family_matrix/input --diff <cwd>/fixtures/binding_value_family_matrix/diff.patch --mode fast probe:src_lib.rs:predicate:a54b7c0f
+  ripr context --root <cwd>/fixtures/binding_value_family_matrix/input --diff <cwd>/fixtures/binding_value_family_matrix/diff.patch --mode fast --at probe:src_lib.rs:predicate:a54b7c0f
 Write a test for it:
-  ripr agent stub --root fixtures/binding_value_family_matrix/input --at src/lib.rs:12
+  ripr agent stub --root <cwd>/fixtures/binding_value_family_matrix/input --at src/lib.rs:12 --kind predicate
 
 Hidden:
   5 lower-priority finding(s) omitted from default human output.

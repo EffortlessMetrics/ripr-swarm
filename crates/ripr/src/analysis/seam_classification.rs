@@ -230,7 +230,7 @@ fn all_stages_yes(evidence: &TestGripEvidence) -> bool {
 mod tests {
     use super::*;
     use crate::analysis::seams::{ExpectedSink, RepoSeam, RequiredDiscriminator, SeamKind};
-    use crate::analysis::test_grip_evidence::{RelatedTestGrip, TestGripEvidence};
+    use crate::analysis::test_grip_evidence::TestGripEvidence;
     use crate::domain::{
         Confidence, MissingDiscriminatorFact, StageEvidence, StageState, ValueFact,
     };
@@ -264,7 +264,7 @@ mod tests {
     ) -> TestGripEvidence {
         TestGripEvidence {
             seam_id: sample_seam().id().clone(),
-            related_tests: Vec::<RelatedTestGrip>::new(),
+            related_tests: Vec::new(),
             reach: stage(reach),
             activate: stage(activate),
             propagate: stage(propagate),
@@ -272,6 +272,7 @@ mod tests {
             discriminate: stage(discriminate),
             observed_values: Vec::<ValueFact>::new(),
             missing_discriminators: missing,
+            statically_contradicted_related_tests: 0,
             new_test_target: None,
         }
     }
@@ -581,7 +582,7 @@ mod tests {
 
         let strong_evidence = TestGripEvidence {
             seam_id: strong_seam.id().clone(),
-            related_tests: Vec::<RelatedTestGrip>::new(),
+            related_tests: Vec::new(),
             reach: stage(StageState::Yes),
             activate: stage(StageState::Yes),
             propagate: stage(StageState::Yes),
@@ -589,11 +590,12 @@ mod tests {
             discriminate: stage(StageState::Yes),
             observed_values: Vec::<ValueFact>::new(),
             missing_discriminators: no_missing(),
+            statically_contradicted_related_tests: 0,
             new_test_target: None,
         };
         let ungripped_evidence = TestGripEvidence {
             seam_id: ungripped_seam.id().clone(),
-            related_tests: Vec::<RelatedTestGrip>::new(),
+            related_tests: Vec::new(),
             reach: stage(StageState::No),
             activate: stage(StageState::No),
             propagate: stage(StageState::No),
@@ -601,6 +603,7 @@ mod tests {
             discriminate: stage(StageState::No),
             observed_values: Vec::<ValueFact>::new(),
             missing_discriminators: no_missing(),
+            statically_contradicted_related_tests: 0,
             new_test_target: None,
         };
 
@@ -643,7 +646,7 @@ mod tests {
 
         let evidence = TestGripEvidence {
             seam_id: unrelated_seam.id().clone(),
-            related_tests: Vec::<RelatedTestGrip>::new(),
+            related_tests: Vec::new(),
             reach: stage(StageState::Yes),
             activate: stage(StageState::Yes),
             propagate: stage(StageState::Yes),
@@ -651,6 +654,7 @@ mod tests {
             discriminate: stage(StageState::Yes),
             observed_values: Vec::<ValueFact>::new(),
             missing_discriminators: no_missing(),
+            statically_contradicted_related_tests: 0,
             new_test_target: None,
         };
 
@@ -676,7 +680,7 @@ mod tests {
 
         let orphan_evidence = TestGripEvidence {
             seam_id: orphan.id().clone(),
-            related_tests: Vec::<RelatedTestGrip>::new(),
+            related_tests: Vec::new(),
             reach: stage(StageState::No),
             activate: stage(StageState::No),
             propagate: stage(StageState::No),
@@ -684,6 +688,7 @@ mod tests {
             discriminate: stage(StageState::No),
             observed_values: Vec::<ValueFact>::new(),
             missing_discriminators: no_missing(),
+            statically_contradicted_related_tests: 0,
             new_test_target: None,
         };
         let matching_evidence = evidence_with(

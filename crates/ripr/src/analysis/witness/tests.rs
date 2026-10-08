@@ -269,7 +269,7 @@ impl SeamSpec {
             seam,
             evidence: TestGripEvidence {
                 seam_id,
-                related_tests: self.related,
+                related_tests: self.related.into_iter().map(std::sync::Arc::new).collect(),
                 reach: stage(self.reach),
                 activate: stage(self.activate),
                 propagate: stage(self.propagate),
@@ -285,6 +285,7 @@ impl SeamSpec {
                         flow_sink: None,
                     })
                     .collect(),
+                statically_contradicted_related_tests: 0,
                 new_test_target: None,
             },
             class: self.class,
@@ -1191,6 +1192,30 @@ fn absent_finding_canonical_gap_does_not_join_seam_gap_identity() {
             .rows
             .iter()
             .all(|row| row.disposition == ParityDisposition::NotComparable)
+    );
+}
+
+// #5268: with the Rust producer populating canonical gaps, a finding's
+// required discriminator now names the gap's normalized discriminator
+// (source `canonical_gap`) instead of falling back to the missing fact —
+// the same source precedence the Python/Perl producers already project.
+#[test]
+fn populated_canonical_gap_is_the_required_discriminator_source() {
+    let finding = FindingSpec::default().build();
+    let witness = from_finding(&finding);
+    assert_eq!(witness.portable_item_id, "gap:pricing:boundary");
+    assert_eq!(witness.required_discriminator.source, "canonical_gap");
+
+    let absent = FindingSpec {
+        canonical_id: None,
+        ..FindingSpec::default()
+    }
+    .build();
+    let witness = from_finding(&absent);
+    assert_eq!(witness.portable_item_id, "finding:pricing");
+    assert_eq!(
+        witness.required_discriminator.source,
+        "missing_discriminator_fact"
     );
 }
 

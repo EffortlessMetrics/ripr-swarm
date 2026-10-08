@@ -206,11 +206,40 @@ line; longer guidance wraps onto four-space continuation lines.
 After the drill-in commands, a selected Rust finding that is not `exposed` and
 whose probe family is `predicate`, `return_value`, `error_path`, or
 `match_arm` gets one more block, `Write a test for it:`, naming
-`ripr agent stub --root <root> --at <file>:<line>` (#5355). That command
+`ripr agent stub --root <root> --at <file>:<line> --kind <family>` (#5355,
+#5471), where `<family>` is the finding's probe family. That command
 resolves the finding location to the gap in the same function and prints a
-compiling test stub, or a named refusal. The line is a route, not a claim
-that a stub exists: side-effect, call-deletion, field-construction, and
-static-unknown families never get it, because the stub producer refuses them.
+compiling test stub, or a named refusal. Side-effect, call-deletion,
+field-construction, and static-unknown families never get the block, because
+the stub producer refuses them.
+
+The check pipeline runs that same `--at` resolver for the selected finding
+before rendering (#5471), with the configuration `ripr agent stub` loads for
+the same root. For a file under the root and a `--kind`, which the printed
+route always carries, that resolver reads the seams of
+that one file from a parse of the file alone, with no workspace index, test
+evidence, or seam classification: `check` already judged the location a gap,
+so the stub is not re-judged by a second classifier. (A bare `--at`, with no
+finding vouching for the location, classifies that one file and tries only
+its reported gaps.) Candidates are the seams
+on the finding line, then the seams in the same function nearest first,
+limited to seams whose kind matches `--kind` (the one seam kind each of the
+four families names: `predicate` boundary, `return_value`, `error_path` error
+variant, `match_arm`), so a seam of another kind never answers for the
+finding. Two equally near seams of that kind whose source spans do not nest
+(`a > 10 && b > 20`) are refused with their seam IDs rather than guessed, and
+the stub is placed inline (integration-file placement needs classified
+evidence and stays with `--seam-id`). The block is printed only when the
+resolver produces a stub. When it refuses, the block is replaced by one line,
+`No test stub here: <reason>`, naming the producer's refusal. When the
+function has no seam of that kind, or the location is refused as ambiguous,
+nothing is printed. The resolver reads the files on disk, so a check
+that analyzed other bytes (`--candidate-tree`, or a committed-history diff
+that read HEAD content behind uncommitted edits) prints no route, and neither
+does a finding whose expression is not on disk in the function holding its
+line (a `--diff` patch that disagrees with the checkout, or a removed line). Only the
+default human format runs the resolver; JSON and `human-full` output are
+unchanged.
 
 The stub producer covers free functions and methods of inherent or trait
 impls at module level whose generics are lifetimes only; a trait-impl method
@@ -291,6 +320,24 @@ sends readers to `human-full` for full evidence, so that rerun must not lose
 the only runnable next commands. Library renders without CLI navigation omit
 the block.
 
+A canonical-shape probe's `after` is often its parser shape, which is narrower
+than the changed line (`string.len() >= MAX`). In that case the producer cuts
+`before` to the same span of the old line (`string.len() > MAX`), so the
+`Changed` block does not set a whole old line (`if string.len() > MAX {`)
+against one expression (#6995, widened to every canonical-shape family by
+#5312). The cut is made only when the edit falls inside the shape. A match
+arm whose head changed (`x if x <= 10 =>` from `x if x < 10 => panic!(..)`)
+is cut the same way to its old head (#7020). An arm whose body changed keeps
+the whole old arm, because the edit falls outside the head shape and the arm
+consumers parse the old body. An old line with a second `=>` (two arms on one
+line, or a nested match in the body) is never cut: arm selection cannot tell
+which arm changed there and keeps that arm's selection unknown. A changed
+`match` scrutinee is cut the same way (`match kind` rather than
+`match kind {`). Otherwise `before` keeps the whole old line. The same
+`before` reaches the MCP `changed_behavior.before` field and the LSP
+diagnostic witness; `ripr check --format json` never serializes
+`probe.before`, so it is unchanged.
+
 ### Terminal safety
 
 Repository text (assertion source, test names, observed values, paths) reaches
@@ -311,8 +358,11 @@ warning is safe by default. The progress sink writes to the stderr handle
 directly and prints fixed stage text only. A printed drill-in command is the exception to "escaped
 text": a control or bidi character in a command argument is spelled as an adjacent
 POSIX `"$(printf '\ooo')"` segment (one octal escape per UTF-8 byte), so the line carries no raw control byte and still names the
-same argument when pasted. PowerShell has no translation for that form, so no
-PowerShell variant is offered for it.
+same argument when pasted. The PowerShell variant rebuilds each such argument
+as one parenthesized string expression (`('' + 'run' + [char]0x1b + ...)`) so
+it also carries no raw control byte. A control argument in program position or
+as a redirect target, and any segment the translation cannot rebuild exactly,
+withholds the PowerShell variant.
 
 ### Repo-scope warnings
 

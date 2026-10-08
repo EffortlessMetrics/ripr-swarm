@@ -914,29 +914,7 @@ struct KnownGap {
     reason: &'static str,
 }
 
-/// A drill-in that repeats a typed relative root names another repository.
-const WRONG_ROOT: &[&str] = &["--root ", "argument "];
-
-const KNOWN_GAPS: &[KnownGap] = &[
-    KnownGap {
-        source: "relative-root:check",
-        command: "ripr explain --root",
-        explains: WRONG_ROOT,
-        reason: "the `check` drill-in repeats a typed relative --root, so pasting from another directory targets another repository",
-    },
-    KnownGap {
-        source: "relative-root:check",
-        command: "ripr agent stub --root",
-        explains: WRONG_ROOT,
-        reason: "the `check` drill-in repeats a typed relative --root, so pasting from another directory targets another repository",
-    },
-    KnownGap {
-        source: "relative-root:check",
-        command: "ripr context --root",
-        explains: WRONG_ROOT,
-        reason: "the `check` drill-in repeats a typed relative --root, so pasting from another directory targets another repository",
-    },
-];
+const KNOWN_GAPS: &[KnownGap] = &[];
 
 fn known_gap(printed: &Printed) -> Option<usize> {
     KNOWN_GAPS.iter().position(|gap| {

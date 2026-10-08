@@ -1,0 +1,13 @@
+diff --git a/src/heaters.rs b/src/heaters.rs
+index d3742d5..7a35d26 100644
+--- a/src/heaters.rs
++++ b/src/heaters.rs
+@@ -6,7 +6,7 @@ pub enum Mode {
+ 
+ pub fn delay(mode: Mode) -> u32 {
+     match mode {
+-        Mode::Warm => 5,
++        Mode::Warm => 2 + 3,
+         Mode::Cold => 50,
+     }
+ }

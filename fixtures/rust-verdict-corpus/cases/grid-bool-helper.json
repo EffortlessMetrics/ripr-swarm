@@ -1,0 +1,60 @@
+{
+  "case_id": "grid-bool-helper",
+  "subject_id": "authored-grid-bool",
+  "diff": "cases/grid-bool-helper.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 16
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "predicate_boolean",
+  "test_shape": "helper_wrapped_assert",
+  "hard_case": "The helper's assert_eq! is refused by owner-pin admission (RIPR-SPEC-0197 rule 1, #6482); the `false == hidden` rewrite also reads propagation_unknown.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "false != hidden",
+        "mutated_line": "false != hidden",
+        "outcome": "tests_failed",
+        "failing_test": "tests::hidden_items_are_not_visible",
+        "equivalence_review": "not equivalent: hidden_items_are_not_visible fails on it"
+      },
+      {
+        "replacement": "true",
+        "mutated_line": "true",
+        "outcome": "tests_failed",
+        "failing_test": "tests::hidden_items_are_not_visible",
+        "equivalence_review": "not equivalent: hidden_items_are_not_visible fails on it"
+      },
+      {
+        "replacement": "false",
+        "mutated_line": "false",
+        "outcome": "tests_failed",
+        "failing_test": "tests::hidden_items_are_not_visible",
+        "equivalence_review": "not equivalent: hidden_items_are_not_visible fails on it"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "Grid cell: boolean logic (`!hidden` rewritten as `false == hidden`; mutants flip it to `!=` or replace the body with a constant) x helper_wrapped_assert. The test routes every assertion through a local check_* helper; 3 of 3 listed mutants fail cargo test. Spec cells: RIPR-SPEC-0197, RIPR-SPEC-0231.",
+  "labeling_observation": {
+    "ripr_commit": "1273096",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "propagation_unknown",
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

@@ -74,6 +74,8 @@ impl SeededProbe {
 }
 
 #[cfg(test)]
+mod error_return_boundary_tests;
+#[cfg(test)]
 mod parameter_boundary_tests;
 #[cfg(test)]
 mod record_field_boundary_tests;

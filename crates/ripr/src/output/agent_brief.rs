@@ -251,7 +251,7 @@ mod tests {
             class: SeamGripClass::WeaklyGripped,
             evidence: TestGripEvidence {
                 seam_id,
-                related_tests: vec![RelatedTestGrip {
+                related_tests: vec![std::sync::Arc::new(RelatedTestGrip {
                     test_name: "below_threshold_has_no_discount".to_string(),
                     file: PathBuf::from("tests/pricing.rs"),
                     line: 12,
@@ -267,7 +267,7 @@ mod tests {
                     evidence_summary: "exact returned value assertion".to_string(),
                     relation_reason: RelationReason::DirectOwnerCall,
                     relation_confidence: RelationConfidence::High,
-                }],
+                })],
                 reach: stage(StageState::Yes),
                 activate: stage(StageState::Yes),
                 propagate: stage(StageState::Yes),
@@ -280,6 +280,7 @@ mod tests {
                     flow_sink: None,
                 }],
                 new_test_target: None,
+                statically_contradicted_related_tests: 0,
             },
         }
     }

@@ -1,0 +1,45 @@
+{
+  "case_id": "bytesize-format-unit-first-run",
+  "subject_id": "bytesize",
+  "diff": "cases/bytesize-format-unit-first-run.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 192
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "unit_test_assert_eq",
+  "hard_case": "first-run harness edit (PR #5286); 0.10.0 said weakly_exposed, 0.11 dev says infection_unknown",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "bytes <= unit",
+        "mutated_line": null,
+        "outcome": "tests_failed",
+        "failing_test": "tests::test_display",
+        "equivalence_review": "the edit itself: exactly one unit formats as the raw byte count instead of one unit (\"1000 B\" instead of \"1.0 KB\" in test_display; \"1024 B\" instead of \"1.0 kiB\" in test_to_string_as)"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "The edit breaks tests::test_display and tests::test_to_string_as, which format exactly one unit. 0.10's weakly_exposed gap was a false actionable verdict; 0.11 dev's infection_unknown is an acceptable abstention.",
+  "labeling_observation": {
+    "ripr_commit": "a7a089e",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "infection_unknown"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

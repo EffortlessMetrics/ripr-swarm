@@ -148,7 +148,61 @@ pub(super) fn targeted_test_outcome_gap_summary_sentence(
 }
 
 pub(super) fn review_remaining_weak_or_unknown(report: &TargetedTestOutcomeReport) -> Vec<String> {
-    let mut items = Vec::new();
+    // Contradiction disclosures come first and are exempt from the item
+    // cap (#7007 review): a capped attention row must not be able to push
+    // the receipt's only contradiction disclosure out of the section.
+    let mut contradictions: Vec<String> = Vec::new();
+    for movement in report
+        .moved
+        .iter()
+        .chain(report.unchanged.iter())
+        .chain(report.regressed.iter())
+    {
+        for contradiction in &movement.after_contradicted_related_tests {
+            contradictions.push(format!(
+                "{} at {}:{} keeps a contradicted discriminator in its evidence set: {}.",
+                movement.seam_kind, movement.file, movement.line, contradiction
+            ));
+        }
+        // The named list comes from the capped rendered projection; when
+        // the producer count is larger, the section says so by count
+        // instead of leaving the omitted contradicted tests silent.
+        if let Some(count) = movement.after_contradicted_test_count
+            && count > movement.after_contradicted_related_tests.len()
+        {
+            contradictions.push(format!(
+                "{} at {}:{} keeps {count} statically contradicted related test(s) in its evidence set ({} named above; the count covers the full related set).",
+                movement.seam_kind,
+                movement.file,
+                movement.line,
+                movement.after_contradicted_related_tests.len()
+            ));
+        }
+    }
+    // New seams carry their own disclosures: a seam that exists only in the
+    // after snapshot is not a movement record, so its contradiction would
+    // otherwise be invisible here (#7007 review).
+    for seam in &report.new {
+        for contradiction in &seam.contradicted_related_tests {
+            contradictions.push(format!(
+                "New {} at {}:{} carries a contradicted discriminator in its evidence set: {}.",
+                seam.seam_kind, seam.file, seam.line, contradiction
+            ));
+        }
+        if let Some(count) = seam.statically_contradicted_related_tests
+            && count > seam.contradicted_related_tests.len()
+        {
+            contradictions.push(format!(
+                "New {} at {}:{} carries {count} statically contradicted related test(s) in its evidence set ({} named above; the count covers the full related set).",
+                seam.seam_kind,
+                seam.file,
+                seam.line,
+                seam.contradicted_related_tests.len()
+            ));
+        }
+    }
+
+    let mut items: Vec<String> = Vec::new();
     for movement in report
         .moved
         .iter()
@@ -170,10 +224,16 @@ pub(super) fn review_remaining_weak_or_unknown(report: &TargetedTestOutcomeRepor
             ));
         }
     }
-    review_limit_or_default(
-        items,
-        "No weak or unknown after-snapshot seams were present in the compared artifacts.",
-    )
+    if contradictions.is_empty() {
+        review_limit_or_default(
+            items,
+            "No weak or unknown after-snapshot seams were present in the compared artifacts.",
+        )
+    } else {
+        items.truncate(REVIEW_ATTENTION_ITEM_LIMIT);
+        contradictions.extend(items);
+        contradictions
+    }
 }
 
 pub(super) fn review_should_inspect(report: &TargetedTestOutcomeReport) -> Vec<String> {
@@ -194,6 +254,23 @@ pub(super) fn reviewer_may_believe(report: &TargetedTestOutcomeReport) -> Vec<St
         "RIPR compared only the listed static snapshots: {} and {}.",
         report.before_path, report.after_path
     )];
+    // #6031: the snapshot pair's head provenance belongs in the receipt, not
+    // only on stderr. State exactly what the heads can and cannot confirm.
+    match report.heads.head_match() {
+        Some(true) => items.push(format!(
+            "Both snapshots report repository head {}, so the pair is from the same commit.",
+            report.heads.before_repository_head.as_deref().unwrap_or_default()
+        )),
+        Some(false) => items.push(format!(
+            "The snapshots report different repository heads (before {}, after {}), so reported movement may include changes other than the one being measured.",
+            report.heads.before_repository_head.as_deref().unwrap_or_default(),
+            report.heads.after_repository_head.as_deref().unwrap_or_default()
+        )),
+        None => items.push(
+            "At least one snapshot does not carry a repository head, so this receipt cannot confirm the pair came from the same repository."
+                .to_string(),
+        ),
+    }
     let has_focused_proof_signal = report
         .moved
         .iter()
@@ -250,6 +327,11 @@ fn review_limit_or_default(mut items: Vec<String>, fallback: &str) -> Vec<String
     if items.is_empty() {
         return vec![fallback.to_string()];
     }
-    items.truncate(5);
+    items.truncate(REVIEW_ATTENTION_ITEM_LIMIT);
     items
 }
+
+/// The noise cap for the generic attention rows. Contradiction disclosures
+/// are deliberately exempt from it (#7007 review): they are the receipt's
+/// contract, not noise.
+const REVIEW_ATTENTION_ITEM_LIMIT: usize = 5;

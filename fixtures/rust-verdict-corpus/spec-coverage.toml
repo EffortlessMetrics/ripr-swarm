@@ -1,0 +1,614 @@
+# Spec-example coverage ledger for the Rust verdict corpus (RIPR-SPEC-0219).
+#
+# Every spec with numbered `## Acceptance Examples` items is listed here as
+# in or out of scope; `cargo xtask verdict-corpus validate` fails when one is
+# missing, so a new spec cannot leave the denominator silently. In scope means
+# the examples describe Rust analyzer verdict, oracle, probe or test-shape
+# behavior that a corpus case (a Rust diff plus runtime mutant truth) can
+# label. An in-scope example a case cannot label is waived with a reason;
+# waived examples are accounted for, never covered.
+#
+# `floor` is the covered-example count `verdict-corpus check` protects. Raise
+# it when coverage grows; lowering it is a reviewed edit with a reason.
+
+schema_version = "ripr_verdict_corpus_spec_coverage.v1"
+floor = 71
+
+# LSP Repair Packet Command
+[[spec]]
+id = "RIPR-SPEC-0077"
+scope = "out"
+reason = "LSP/editor surface, not an analyzer verdict"
+
+# LSP Top-Limitation Command
+[[spec]]
+id = "RIPR-SPEC-0078"
+scope = "out"
+reason = "LSP/editor surface, not an analyzer verdict"
+
+# Canonical Receipt Command Contract
+[[spec]]
+id = "RIPR-SPEC-0079"
+scope = "out"
+reason = "CLI, command or receipt contract, not an analyzer verdict"
+
+# Route-Quality Standalone Report
+[[spec]]
+id = "RIPR-SPEC-0080"
+scope = "out"
+reason = "evaluation or report tooling over ripr's output; no Rust edit with runtime mutant truth to label"
+
+# LSP Receipt-Status Command
+[[spec]]
+id = "RIPR-SPEC-0081"
+scope = "out"
+reason = "LSP/editor surface, not an analyzer verdict"
+
+# Preview-Language Disclosure
+[[spec]]
+id = "RIPR-SPEC-0082"
+scope = "out"
+reason = "output wording or disclosure; the classification is unchanged, so a verdict case cannot label it"
+
+# Check No-Scope Disclosure
+[[spec]]
+id = "RIPR-SPEC-0083"
+scope = "out"
+reason = "CLI, command or receipt contract, not an analyzer verdict"
+
+# Default Base Resolution
+[[spec]]
+id = "RIPR-SPEC-0084"
+scope = "out"
+reason = "CLI, command or receipt contract, not an analyzer verdict"
+
+# All-No-Path Disclosure
+[[spec]]
+id = "RIPR-SPEC-0090"
+scope = "out"
+reason = "output wording or disclosure; the classification is unchanged, so a verdict case cannot label it"
+
+# Pilot Artifact Size Bound
+[[spec]]
+id = "RIPR-SPEC-0091"
+scope = "out"
+reason = "CLI, command or receipt contract, not an analyzer verdict"
+
+# Disclose Unanalyzed Working Tree When Using `--base`
+[[spec]]
+id = "RIPR-SPEC-0112"
+scope = "out"
+reason = "CLI, command or receipt contract, not an analyzer verdict"
+
+# Honest `no_static_path` Messaging
+[[spec]]
+id = "RIPR-SPEC-0113"
+scope = "out"
+reason = "output wording or disclosure; the classification is unchanged, so a verdict case cannot label it"
+
+# Rust Transitive-Reach Limitation
+[[spec]]
+id = "RIPR-SPEC-0114"
+scope = "in"
+
+# Rust Transitive-Reach Witness
+[[spec]]
+id = "RIPR-SPEC-0115"
+scope = "in"
+
+[[spec.waived]]
+example = 4
+reason = "witness choice between two reaching tests is evidence text; the verdict is the same as example 1"
+
+[[spec.waived]]
+example = 5
+reason = "witness wording; a verdict case labels the verdict, not the evidence text"
+
+[[spec.waived]]
+example = 6
+reason = "an invariant over examples 1 to 5, not a distinct edit"
+
+[[spec.waived]]
+example = 7
+reason = "absence of a sentence in JSON and human output; not a verdict"
+
+# `check --worktree` Mode
+[[spec]]
+id = "RIPR-SPEC-0116"
+scope = "out"
+reason = "CLI, command or receipt contract, not an analyzer verdict"
+
+# Rust Macro-Reach Limitation
+[[spec]]
+id = "RIPR-SPEC-0117"
+scope = "in"
+
+# Rust Integration Public-API Path Limitation
+[[spec]]
+id = "RIPR-SPEC-0118"
+scope = "in"
+
+# Rust Direct Test Macro-Call Limitation
+[[spec]]
+id = "RIPR-SPEC-0119"
+scope = "in"
+
+# Rust Macro-Wrapped Assertion Limitation
+[[spec]]
+id = "RIPR-SPEC-0120"
+scope = "in"
+
+# Bounded Human Check Output
+[[spec]]
+id = "RIPR-SPEC-0122"
+scope = "out"
+reason = "output wording or disclosure; the classification is unchanged, so a verdict case cannot label it"
+
+# Targeted Rust Rerun
+[[spec]]
+id = "RIPR-SPEC-0123"
+scope = "out"
+reason = "CLI, command or receipt contract, not an analyzer verdict"
+
+# LSP Diagnostic Delivery Stability
+[[spec]]
+id = "RIPR-SPEC-0124"
+scope = "out"
+reason = "LSP/editor surface, not an analyzer verdict"
+
+# Rust missing-discriminator evidence fixtures
+[[spec]]
+id = "RIPR-SPEC-0125"
+scope = "in"
+
+[[spec.waived]]
+example = 2
+reason = "pilot-mapping bookkeeping: four observations stay distinct; no edit to label"
+
+[[spec.waived]]
+example = 3
+reason = "a process rule for later producer changes; no edit to label"
+
+# LSP Diagnostic Code Catalog
+[[spec]]
+id = "RIPR-SPEC-0127"
+scope = "out"
+reason = "LSP/editor surface, not an analyzer verdict"
+
+# Retired active-goal authority audit placeholder
+[[spec]]
+id = "RIPR-SPEC-0128"
+scope = "out"
+reason = "repository policy placeholder"
+
+# Assertion-Shaped Owner Guidance
+[[spec]]
+id = "RIPR-SPEC-0133"
+scope = "out"
+reason = "output wording or disclosure; the classification is unchanged, so a verdict case cannot label it"
+
+# Stable Cross-Platform Path Text
+[[spec]]
+id = "RIPR-SPEC-0170"
+scope = "out"
+reason = "CLI, command or receipt contract, not an analyzer verdict"
+
+# Rust repair-trust route-yield ladder
+[[spec]]
+id = "RIPR-SPEC-0178"
+scope = "out"
+reason = "evaluation or report tooling over ripr's output; no Rust edit with runtime mutant truth to label"
+
+# Local result-bound usefulness feedback receipts
+[[spec]]
+id = "RIPR-SPEC-0179"
+scope = "out"
+reason = "CLI, command or receipt contract, not an analyzer verdict"
+
+# Governed identity registry and compatibility map
+[[spec]]
+id = "RIPR-SPEC-0182"
+scope = "out"
+reason = "CLI, command or receipt contract, not an analyzer verdict"
+
+# Typed public command catalog and parser/alias parity
+[[spec]]
+id = "RIPR-SPEC-0184"
+scope = "out"
+reason = "CLI, command or receipt contract, not an analyzer verdict"
+
+# CLI analysis progress on stderr
+[[spec]]
+id = "RIPR-SPEC-0185"
+scope = "out"
+reason = "CLI, command or receipt contract, not an analyzer verdict"
+
+# Rich command metadata projected into human help and inventories
+[[spec]]
+id = "RIPR-SPEC-0187"
+scope = "out"
+reason = "CLI, command or receipt contract, not an analyzer verdict"
+
+# Windows trailing-component root disclosure
+[[spec]]
+id = "RIPR-SPEC-0188"
+scope = "out"
+reason = "CLI, command or receipt contract, not an analyzer verdict"
+
+# Typed workflow catalog and bounded `help workflow` discovery
+[[spec]]
+id = "RIPR-SPEC-0189"
+scope = "out"
+reason = "CLI, command or receipt contract, not an analyzer verdict"
+
+# Versioned machine discovery via `ripr help --json`
+[[spec]]
+id = "RIPR-SPEC-0190"
+scope = "out"
+reason = "CLI, command or receipt contract, not an analyzer verdict"
+
+# RepairCardV1 projected from shared repair authorities
+[[spec]]
+id = "RIPR-SPEC-0192"
+scope = "out"
+reason = "agent repair-loop surface, not an analyzer verdict"
+
+# RepairCard detail references and overflow disclosure
+[[spec]]
+id = "RIPR-SPEC-0193"
+scope = "out"
+reason = "agent repair-loop surface, not an analyzer verdict"
+
+# RepairCard as the default CLI agent handoff
+[[spec]]
+id = "RIPR-SPEC-0194"
+scope = "out"
+reason = "agent repair-loop surface, not an analyzer verdict"
+
+# Repair-attempt store identity and resolver
+[[spec]]
+id = "RIPR-SPEC-0195"
+scope = "out"
+reason = "agent repair-loop surface, not an analyzer verdict"
+
+# RepairCard context measurement and default budget ratification
+[[spec]]
+id = "RIPR-SPEC-0196"
+scope = "out"
+reason = "evaluation or report tooling over ripr's output; no Rust edit with runtime mutant truth to label"
+
+# RepairCard projection through standard LSP
+[[spec]]
+id = "RIPR-SPEC-0198"
+scope = "out"
+reason = "LSP/editor surface, not an analyzer verdict"
+
+# Rust judged-panel analyzer feedback ledger
+[[spec]]
+id = "RIPR-SPEC-0199"
+scope = "out"
+reason = "evaluation or report tooling over ripr's output; no Rust edit with runtime mutant truth to label"
+
+# Blind journey prompt, intervention and transcript receipt contract
+[[spec]]
+id = "RIPR-SPEC-0200"
+scope = "out"
+reason = "evaluation or report tooling over ripr's output; no Rust edit with runtime mutant truth to label"
+
+# Shared behavior-evidence witness adapters and parity corpus
+[[spec]]
+id = "RIPR-SPEC-0204"
+scope = "out"
+reason = "parity between two internal evidence paths; no runtime-truth verdict"
+
+# Blind journey execution consumer
+[[spec]]
+id = "RIPR-SPEC-0205"
+scope = "out"
+reason = "evaluation or report tooling over ripr's output; no Rust edit with runtime mutant truth to label"
+
+# Installed Rust journey fixture
+[[spec]]
+id = "RIPR-SPEC-0207"
+scope = "out"
+reason = "evaluation or report tooling over ripr's output; no Rust edit with runtime mutant truth to label"
+
+# LSP work-done progress consumes shared analysis stages
+[[spec]]
+id = "RIPR-SPEC-0208"
+scope = "out"
+reason = "LSP/editor surface, not an analyzer verdict"
+
+# Installed Python journey fixture
+[[spec]]
+id = "RIPR-SPEC-0209"
+scope = "out"
+reason = "non-Rust language or packaging surface"
+
+# Installed TypeScript journey fixture
+[[spec]]
+id = "RIPR-SPEC-0210"
+scope = "out"
+reason = "non-Rust language or packaging surface"
+
+# MCP workspace session — status, refresh, bounded gap lists, and evidence resources
+[[spec]]
+id = "RIPR-SPEC-0211"
+scope = "out"
+reason = "MCP adapter surface, not an analyzer verdict"
+
+# npm Native Launcher Boundary
+[[spec]]
+id = "RIPR-SPEC-0212"
+scope = "out"
+reason = "non-Rust language or packaging surface"
+
+# MCP repair transaction projection — prepare, attempt reads, and receipt status
+[[spec]]
+id = "RIPR-SPEC-0214"
+scope = "out"
+reason = "MCP adapter surface, not an analyzer verdict"
+
+# MCP repair card projection
+[[spec]]
+id = "RIPR-SPEC-0215"
+scope = "out"
+reason = "MCP adapter surface, not an analyzer verdict"
+
+# Matched RIPR intervention-study preregistration
+[[spec]]
+id = "RIPR-SPEC-0216"
+scope = "out"
+reason = "evaluation or report tooling over ripr's output; no Rust edit with runtime mutant truth to label"
+
+# Repair-attempt discovery selection and fresh-process resume
+[[spec]]
+id = "RIPR-SPEC-0217"
+scope = "out"
+reason = "agent repair-loop surface, not an analyzer verdict"
+
+# VS Code shared repair-attempt status and active-attempt resolution
+[[spec]]
+id = "RIPR-SPEC-0220"
+scope = "out"
+reason = "LSP/editor surface, not an analyzer verdict"
+
+# Examined-test miss evidence
+[[spec]]
+id = "RIPR-SPEC-0224"
+scope = "in"
+
+[[spec.waived]]
+example = 2
+reason = "an aggregate over 20 fast-tier corpus repositories and output sizes, not one edit"
+
+# Whole-value equality credit for constructed fields
+[[spec]]
+id = "RIPR-SPEC-0225"
+scope = "in"
+
+# Findings on one line agree on shared facts
+[[spec]]
+id = "RIPR-SPEC-0226"
+scope = "in"
+
+# Result-side oracles (`is_err`, `is_ok`, `unwrap_err`, `should_panic`)
+[[spec]]
+id = "RIPR-SPEC-0227"
+scope = "in"
+
+# Rust field writes are probed and observed, not unknown
+[[spec]]
+id = "RIPR-SPEC-0228"
+scope = "in"
+
+[[spec.waived]]
+example = 10
+reason = "dead write: the changed `+= 2` is overwritten by `count = 0`, so every mutant of it is equivalent and no runtime truth exists"
+
+[[spec.waived]]
+example = 11
+reason = "dead write: `reset()` overwrites the changed `+= 2`, so every mutant of it is equivalent and no runtime truth exists"
+
+# Match-arm selection names the unselected arm
+[[spec]]
+id = "RIPR-SPEC-0229"
+scope = "in"
+
+# Rust oracle kind and strength admission
+[[spec]]
+id = "RIPR-SPEC-0231"
+scope = "in"
+
+# Statically contradicted exact-value oracles
+[[spec]]
+id = "RIPR-SPEC-0233"
+scope = "in"
+
+# Perl fact-packet classification
+[[spec]]
+id = "RIPR-SPEC-0235"
+scope = "out"
+reason = "non-Rust language or packaging surface"
+
+# Seam grip classification order
+[[spec]]
+id = "RIPR-SPEC-0236"
+scope = "in"
+
+# Pilot seam ranking
+[[spec]]
+id = "RIPR-SPEC-0237"
+scope = "out"
+reason = "pilot presentation ordering, not an analyzer verdict"
+
+# Python oracle and reach rules
+[[spec]]
+id = "RIPR-SPEC-0238"
+scope = "out"
+reason = "non-Rust language or packaging surface"
+
+# `ripr plus` last-good receipt
+[[spec]]
+id = "RIPR-SPEC-0239"
+scope = "out"
+reason = "CLI, command or receipt contract, not an analyzer verdict"
+
+# TypeScript oracle and reach rules
+[[spec]]
+id = "RIPR-SPEC-0243"
+scope = "out"
+reason = "non-Rust language or packaging surface"
+
+# In-scope specs that corpus cases cite but whose acceptance examples are
+# prose, not numbered. Reported as `unmeasured_specs`; never counted.
+
+# Static Exposure Loop
+[[unmeasured]]
+id = "RIPR-SPEC-0001"
+reason = "acceptance examples are prose, not numbered; corpus cases cite the spec without an example number"
+
+# Fixture Laboratory
+[[unmeasured]]
+id = "RIPR-SPEC-0002"
+reason = "acceptance examples are prose, not numbered; corpus cases cite the spec without an example number"
+
+# Test Efficiency and Vacuity Signals
+[[unmeasured]]
+id = "RIPR-SPEC-0004"
+reason = "acceptance examples are prose, not numbered; corpus cases cite the spec without an example number"
+
+# Repo Seam Inventory and Test Grip
+[[unmeasured]]
+id = "RIPR-SPEC-0005"
+reason = "acceptance examples are prose, not numbered; corpus cases cite the spec without an example number"
+
+# Evidence Quality Benchmark Corpus
+[[unmeasured]]
+id = "RIPR-SPEC-0035"
+reason = "acceptance examples are prose, not numbered; corpus cases cite the spec without an example number"
+
+# Static/Runtime Confidence Expansion
+[[unmeasured]]
+id = "RIPR-SPEC-0040"
+reason = "acceptance examples are prose, not numbered; corpus cases cite the spec without an example number"
+
+# Config And Policy Constant Evidence
+[[unmeasured]]
+id = "RIPR-SPEC-0048"
+reason = "acceptance examples are prose, not numbered; corpus cases cite the spec without an example number"
+
+# Match-Arm Blind-Reach Downgrade
+[[unmeasured]]
+id = "RIPR-SPEC-0093"
+reason = "acceptance examples are prose, not numbered; corpus cases cite the spec without an example number"
+
+# observation_unverified Guard Generalization
+[[unmeasured]]
+id = "RIPR-SPEC-0094"
+reason = "acceptance examples are prose, not numbered; corpus cases cite the spec without an example number"
+
+# INFECT/PROPAGATE Fail-Closed (Parts A, B, C)
+[[unmeasured]]
+id = "RIPR-SPEC-0096"
+reason = "acceptance examples are prose, not numbered; corpus cases cite the spec without an example number"
+
+# Error-Seam unwrap_err / expect_err Variant Binding
+[[unmeasured]]
+id = "RIPR-SPEC-0106"
+reason = "acceptance examples are prose, not numbered; corpus cases cite the spec without an example number"
+
+# ErrorPath Requires a Variant-Observing Oracle
+[[unmeasured]]
+id = "RIPR-SPEC-0107"
+reason = "acceptance examples are prose, not numbered; corpus cases cite the spec without an example number"
+
+# Evidence-Promotion Honesty Meta-Gate
+[[unmeasured]]
+id = "RIPR-SPEC-0108"
+reason = "acceptance examples are prose, not numbered; corpus cases cite the spec without an example number"
+
+# Rust bounded value-propagation limitation
+[[unmeasured]]
+id = "RIPR-SPEC-0150"
+reason = "acceptance examples are prose, not numbered; corpus cases cite the spec without an example number"
+
+# Rust producer-owned source role
+[[unmeasured]]
+id = "RIPR-SPEC-0153"
+reason = "acceptance examples are prose, not numbered; corpus cases cite the spec without an example number"
+
+# Assertion-form parity
+[[unmeasured]]
+id = "RIPR-SPEC-0154"
+reason = "acceptance examples are prose, not numbered; corpus cases cite the spec without an example number"
+
+# Changed-binding → predicate-operand relation
+[[unmeasured]]
+id = "RIPR-SPEC-0157"
+reason = "acceptance examples are prose, not numbered; corpus cases cite the spec without an example number"
+
+# Bounded value transfer from exact test inputs
+[[unmeasured]]
+id = "RIPR-SPEC-0158"
+reason = "acceptance examples are prose, not numbered; corpus cases cite the spec without an example number"
+
+# Bounded helper-call transfer
+[[unmeasured]]
+id = "RIPR-SPEC-0159"
+reason = "acceptance examples are prose, not numbered; corpus cases cite the spec without an example number"
+
+# Bounded scanner-state transitions
+[[unmeasured]]
+id = "RIPR-SPEC-0163"
+reason = "acceptance examples are prose, not numbered; corpus cases cite the spec without an example number"
+
+# Bounded literal match-arm transfer
+[[unmeasured]]
+id = "RIPR-SPEC-0164"
+reason = "acceptance examples are prose, not numbered; corpus cases cite the spec without an example number"
+
+# Bounded recursive helper evaluation
+[[unmeasured]]
+id = "RIPR-SPEC-0165"
+reason = "acceptance examples are prose, not numbered; corpus cases cite the spec without an example number"
+
+# Unsafe execution boundary probes
+[[unmeasured]]
+id = "RIPR-SPEC-0168"
+reason = "acceptance examples are prose, not numbered; corpus cases cite the spec without an example number"
+
+# Contextual source-role composition
+[[unmeasured]]
+id = "RIPR-SPEC-0169"
+reason = "acceptance examples are prose, not numbered; corpus cases cite the spec without an example number"
+
+# path-dependency diff-scope expansion
+[[unmeasured]]
+id = "RIPR-SPEC-0171"
+reason = "acceptance examples are prose, not numbered; corpus cases cite the spec without an example number"
+
+# cross-crate test relation through dependency edges
+[[unmeasured]]
+id = "RIPR-SPEC-0172"
+reason = "acceptance examples are prose, not numbered; corpus cases cite the spec without an example number"
+
+# guarded Result match observations
+[[unmeasured]]
+id = "RIPR-SPEC-0175"
+reason = "acceptance examples are prose, not numbered; corpus cases cite the spec without an example number"
+
+# Same-test pairing for boundary-class probes
+[[unmeasured]]
+id = "RIPR-SPEC-0186"
+reason = "acceptance examples are prose, not numbered; corpus cases cite the spec without an example number"
+
+# Owner-return pins through calls that name the owner
+[[unmeasured]]
+id = "RIPR-SPEC-0197"
+reason = "acceptance examples are prose, not numbered; corpus cases cite the spec without an example number"
+
+# Labeled Rust verdict corpus
+[[unmeasured]]
+id = "RIPR-SPEC-0219"
+reason = "acceptance examples are prose, not numbered; corpus cases cite the spec without an example number"

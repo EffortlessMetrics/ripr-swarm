@@ -1,0 +1,22 @@
+{
+  "case_id": "spec0231-oracle-is-some-and-threshold",
+  "subject_id": "authored-spec0231-15",
+  "origin": "authored",
+  "anchor": "src/lib.rs:3",
+  "behavior_family": "option_return",
+  "test_shape": "is_some_and_threshold",
+  "hard_case": false,
+  "truth": "partially_discriminated",
+  "ideal_verdict": "gap",
+  "observed_verdict": "gap",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "weakly_exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}
