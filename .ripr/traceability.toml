@@ -13349,11 +13349,21 @@ tests = [
   "crates/ripr/src/analysis/test_grip_evidence/tests.rs::wrongval_boundary_assert_does_not_close_the_gap",
   "crates/ripr/src/analysis/test_grip_evidence/tests.rs::correct_boundary_literal_still_closes_the_gap",
   "crates/ripr/src/analysis/test_grip_evidence/tests.rs::non_evaluable_owner_keeps_the_prior_credit",
+  "crates/ripr/src/analysis/test_grip_evidence/tests.rs::wrongval_assert_beside_consistent_test_keeps_gap_open",
+  "crates/ripr/src/output/outcome/mod.rs::contradicted_related_test_keeps_gap_open_and_names_the_contradiction",
+  "crates/ripr/src/output/outcome/mod.rs::prose_that_mentions_contradiction_without_the_disclosure_does_not_block_closure",
+  "crates/ripr/src/analysis/test_grip_evidence/tests.rs::contradiction_count_counts_a_test_beside_its_best_oracle",
+  "crates/ripr/src/analysis/test_grip_evidence/tests.rs::wrongval_only_test_grants_no_activation_credit_on_value_insensitive_seam",
+  "crates/ripr/src/output/outcome/mod.rs::producer_contradiction_count_holds_the_gap_open_without_a_named_entry",
+  "crates/ripr/src/output/outcome/mod.rs::a_new_seam_with_a_contradicted_test_surfaces_in_the_weak_section",
 ]
 fixtures = []
 code = [
   "crates/ripr/src/analysis/test_grip_evidence/value_contradiction.rs",
   "crates/ripr/src/analysis/test_grip_evidence.rs",
+  "crates/ripr/src/output/outcome/mod.rs",
+  "crates/ripr/src/output/outcome/review.rs",
+  "crates/ripr/src/output/evidence_record.rs",
 ]
 outputs = [
   "docs/specs/RIPR-SPEC-0233-statically-contradicted-exact-value-oracle.md",

@@ -272,6 +272,7 @@ mod tests {
             discriminate: stage(discriminate),
             observed_values: Vec::<ValueFact>::new(),
             missing_discriminators: missing,
+            statically_contradicted_related_tests: 0,
             new_test_target: None,
         }
     }
@@ -589,6 +590,7 @@ mod tests {
             discriminate: stage(StageState::Yes),
             observed_values: Vec::<ValueFact>::new(),
             missing_discriminators: no_missing(),
+            statically_contradicted_related_tests: 0,
             new_test_target: None,
         };
         let ungripped_evidence = TestGripEvidence {
@@ -601,6 +603,7 @@ mod tests {
             discriminate: stage(StageState::No),
             observed_values: Vec::<ValueFact>::new(),
             missing_discriminators: no_missing(),
+            statically_contradicted_related_tests: 0,
             new_test_target: None,
         };
 
@@ -651,6 +654,7 @@ mod tests {
             discriminate: stage(StageState::Yes),
             observed_values: Vec::<ValueFact>::new(),
             missing_discriminators: no_missing(),
+            statically_contradicted_related_tests: 0,
             new_test_target: None,
         };
 
@@ -684,6 +688,7 @@ mod tests {
             discriminate: stage(StageState::No),
             observed_values: Vec::<ValueFact>::new(),
             missing_discriminators: no_missing(),
+            statically_contradicted_related_tests: 0,
             new_test_target: None,
         };
         let matching_evidence = evidence_with(
