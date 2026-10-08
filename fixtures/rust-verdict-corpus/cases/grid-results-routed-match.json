@@ -40,7 +40,7 @@
       "silent"
     ]
   },
-  "reasoning": "Error return observed through a Result match whose Ok arm panics and whose Err arm assert_eqs the variant. RIPR-SPEC-0175 treats an assert_eq! arm as neither terminal nor pinning (its routing form is a guarded accept arm beside a loud catch-all), so no spec credits this shape. Both mutants (wrong variant, Ok) fail the test. 2 of 2 listed mutants fail cargo test. Spec cells: RIPR-SPEC-0175, RIPR-SPEC-0197.",
+  "reasoning": "Error return observed through a Result match whose Ok arm panics and whose Err arm assert_eqs the variant. RIPR-SPEC-0175's asserted-Err form (#6673) pins exactly this two-arm shape — terminating Ok arm, Err arm binding a bare identifier with a single assert_eq! on a unit variant — emitting a strong fact. Both mutants (wrong variant, Ok) fail the test. 2 of 2 listed mutants fail cargo test. Spec cells: RIPR-SPEC-0175, RIPR-SPEC-0197.",
   "labeling_observation": {
     "ripr_commit": "fddf363",
     "full_checkout_verdict": "gap",
