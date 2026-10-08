@@ -28,15 +28,18 @@ explicit routing justification) before merge.
 
 ## 2026-10-07: Split corpus records must match the writer's null/empty conventions (#6577)
 
-`split_moves_the_one_file_layout_into_records_without_loss` compares untyped
-`serde_json::Value`s, where a missing key differs from `null` and from `[]`.
-Hand-migrated records that omit `mutated_line` fail against split output that
-writes explicit nulls (main-side convention: always present); conversely a
-`Vec` field the writer always serializes fails against records that omit it
-when empty (fixed with `skip_serializing_if`, matching the branch's own
-100/175 omission). Migrate through the real `split` writer where possible;
-when grafting by hand, copy the writer's exact key presence, not the
-sparse-tolerant reader's.
+Two comparisons guard a split, and they disagree about missing keys. `split`
+itself re-reads an existing record through its type before comparing, so a
+key serde fills (`mutated_line` omitted becomes `None`, then `null`) is not
+a conflict — but a field with no `#[serde(default)]` fails to parse before
+any comparison. The round-trip test then reassembles `corpus.json` from the
+raw record files, where a missing key differs from `null` and from `[]`.
+And `validate` separately refuses a `behavior_preserving_rewrite` mutant
+without `mutated_line`. So a hand-grafted record must carry every key the
+writer emits (nulls and empty arrays included) while still satisfying the
+struct and the validate laws; a new optional `Vec` needs both
+`#[serde(default)]` and `skip_serializing_if` (`spec_examples` is the
+precedent). Migrate through the real `split` writer where possible.
 
 ## 2026-10-07: Call-path scans must treat non-ASCII as identifier text (#7062)
 
