@@ -106,10 +106,15 @@ condition below must hold; any doubt keeps the gap:
    exactly one arm, whose body lexically mentions the owner. With several arms
    ripr cannot tell which one an invocation selects. The arm's transcriber
    carries `#[test]` at its own top level, outside any `$(...)` repetition or
-   nested block, and names no `cfg`, `cfg_attr`, `ignore` or nested
-   `macro_rules`: each can leave an invocation with no running test.
-2. The invocation is in the definition's file, below it (`macro_rules!` is
-   textually scoped), and outside any macro body. Body exclusion is by whole
+   nested block, is followed by a literal `fn` item, and names no `cfg`,
+   `cfg_attr`, `ignore` or nested `macro_rules`: each can leave an invocation
+   with no running test. No attribute in the transcriber may contain a `$`
+   fragment (`#[$m]`, `$(#[$m])*`), which would let the call site pass
+   `ignore` or a cfg.
+2. The invocation is in the definition's file, below it and inside the block
+   that holds the definition (`macro_rules!` is textually scoped; a
+   `#[macro_use]` module that widens the scope is not followed), and outside
+   any macro body. Body exclusion is by whole
    line, so an invocation sharing a line with a body's first or last line is
    skipped too.
 3. At the invocation's byte offset every enclosing block opens a `mod`: Rust
@@ -119,7 +124,8 @@ condition below must hold; any doubt keeps the gap:
    whitespace before `!` is not found, which keeps the gap.
 4. Neither the invocation's leading attributes nor any enclosing `mod`
    header carries a cfg other than `cfg(test)`, and none carries
-   `cfg_attr`.
+   `cfg_attr`. Any inner attribute (`#![..]`) in the file with a cfg other
+   than `cfg(test)` withholds every generator witness in that file.
 
 The scan masks comments and strings first, so a commented-out invocation or a
 `#[test]` inside a string does not count. The witness names the test only

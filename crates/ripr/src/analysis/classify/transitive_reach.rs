@@ -1534,6 +1534,14 @@ fn generated_test_sites<'a>(file: &'a Path, source: &str) -> Vec<GeneratedTestSi
         return Vec::new();
     }
     let masked = crate::analysis::extract::mask_comments_and_strings(source);
+    // An inner `#![cfg(..)]` can remove the file or a module the scope walk
+    // does not track, so any inner cfg other than `cfg(test)` gives none.
+    if attribute_groups(&masked)
+        .filter(|group| group.starts_with("#!") || group.contains("#!"))
+        .any(|group| !only_test_cfg(group))
+    {
+        return Vec::new();
+    }
     let line_of = |offset: usize| {
         masked
             .get(..offset)
@@ -1550,12 +1558,17 @@ fn generated_test_sites<'a>(file: &'a Path, source: &str) -> Vec<GeneratedTestSi
             ))
         })
         .collect();
-    let generators: Vec<(&str, usize, GeneratedTestName)> = definitions
+    let generators: Vec<(&str, usize, usize, GeneratedTestName)> = definitions
         .iter()
         .filter_map(|definition| {
             let (_, body) = definition.body?;
             let name = generated_test_name(body)?;
-            Some((definition.name, line_of(definition.marker_start), name))
+            Some((
+                definition.name,
+                line_of(definition.marker_start),
+                enclosing_block_end(&masked, definition.marker_start),
+                name,
+            ))
         })
         .collect();
     if generators.is_empty() {
@@ -1577,7 +1590,8 @@ fn generated_test_sites<'a>(file: &'a Path, source: &str) -> Vec<GeneratedTestSi
     let offsets: Vec<usize> = invocations.iter().map(|(_, offset)| *offset).collect();
     let in_test_build_item_scope = test_build_item_scope(&masked, &offsets);
     let mut sites = Vec::new();
-    for ((invocation, _), item_scope) in invocations.into_iter().zip(in_test_build_item_scope) {
+    for ((invocation, offset), item_scope) in invocations.into_iter().zip(in_test_build_item_scope)
+    {
         // Rust registers no test for a `#[test]` item nested in a function
         // or other non-module block ("cannot test inner items"), nor for an
         // invocation a cfg other than `cfg(test)` may remove.
@@ -1585,10 +1599,13 @@ fn generated_test_sites<'a>(file: &'a Path, source: &str) -> Vec<GeneratedTestSi
             continue;
         }
         // `macro_rules!` is textually scoped: an invocation above the
-        // definition cannot expand it.
-        let Some((macro_name, macro_line, name_source)) = generators
-            .iter()
-            .find(|(name, line, _)| *name == invocation.name && *line <= invocation.line)
+        // definition, or past the end of the block that holds it, cannot
+        // expand it. A `#[macro_use]` module that widens the scope is not
+        // followed, which keeps the gap.
+        let Some((macro_name, macro_line, _, name_source)) =
+            generators.iter().find(|(name, line, scope_end, _)| {
+                *name == invocation.name && *line <= invocation.line && offset < *scope_end
+            })
         else {
             continue;
         };
@@ -1662,6 +1679,11 @@ fn generated_test_name(body: &str) -> Option<GeneratedTestName> {
     {
         return None;
     }
+    // An attribute built from a fragment (`#[$m]`, `$(#[$m])*`) takes its
+    // content from the call site, which may pass `ignore` or a cfg.
+    if attribute_groups(transcriber).any(|group| group.contains('$')) {
+        return None;
+    }
     let test_attr = top_level_test_attribute(transcriber)?;
     let mut cursor = skip_ascii_whitespace(transcriber, test_attr + "#[test]".len());
     // Further attributes such as `#[should_panic]` may follow.
@@ -1677,7 +1699,9 @@ fn generated_test_name(body: &str) -> Option<GeneratedTestName> {
         .and_then(|rest| rest.strip_prefix("fn"))
         .filter(|rest| rest.starts_with(|c: char| c.is_whitespace()))
     else {
-        return Some(GeneratedTestName::Unknown);
+        // `#[test] $item` or another non-`fn` shape: the call site supplies
+        // the item, attributes included.
+        return None;
     };
     let name = after_fn.trim_start();
     if let Some(variable) = name.strip_prefix('$') {
@@ -1714,6 +1738,23 @@ fn generated_test_name(body: &str) -> Option<GeneratedTestName> {
     })
 }
 
+/// The text of every `#[...]` and `#![...]` attribute in `text`, brackets
+/// included.
+fn attribute_groups(text: &str) -> impl Iterator<Item = &str> {
+    text.match_indices('#').filter_map(move |(hash, _)| {
+        let open = skip_ascii_whitespace(text, hash + 1);
+        let open = if text.get(open..).is_some_and(|rest| rest.starts_with('!')) {
+            skip_ascii_whitespace(text, open + 1)
+        } else {
+            open
+        };
+        if !text.get(open..).is_some_and(|rest| rest.starts_with('[')) {
+            return None;
+        }
+        text.get(hash..=matching_close(text, open)?)
+    })
+}
+
 /// The byte offset of a `#[test]` at the top level of `transcriber`, outside
 /// every bracket (so outside a `$(...)` repetition or a nested item body).
 fn top_level_test_attribute(transcriber: &str) -> Option<usize> {
@@ -1734,6 +1775,21 @@ fn top_level_test_attribute(transcriber: &str) -> Option<usize> {
         }
     }
     None
+}
+
+/// The offset of the `}` closing the innermost block that encloses
+/// `offset`, or the text's length at file scope.
+fn enclosing_block_end(masked: &str, offset: usize) -> usize {
+    let mut depth = 0usize;
+    for (index, byte) in masked.bytes().enumerate().skip(offset) {
+        match byte {
+            b'{' => depth += 1,
+            b'}' if depth == 0 => return index,
+            b'}' => depth -= 1,
+            _ => {}
+        }
+    }
+    masked.len()
 }
 
 /// The offset of the bracket closing the one opening at `open`, if `open`
@@ -3727,6 +3783,47 @@ first!(lead_name, 2);
             generated_test_name("{ ($n:ident) => { #[test] fn $n() { owner(); } }; }"),
             Some(GeneratedTestName::FirstArgument)
         );
+    }
+
+    #[test]
+    fn attributes_from_macro_arguments_or_inner_cfg_make_no_generated_test() {
+        for body in [
+            "{ ($m:meta, $n:ident) => { #[$m] #[test] fn $n() { owner(); } }; }",
+            "{ ($n:ident $(, $m:meta)*) => { #[test] $(#[$m])* fn $n() { owner(); } }; }",
+            "{ ($i:item) => { #[test] $i }; }",
+        ] {
+            assert_eq!(generated_test_name(body), None, "{body}");
+        }
+        let inner_cfg = "mod tests {
+    #![cfg(any())]
+    macro_rules! case { ($n:ident) => { #[test] fn $n() { owner(); } }; }
+    case!(removed);
+}
+";
+        assert!(generated_test_sites(Path::new("src/lib.rs"), inner_cfg).is_empty());
+        let inner_test_cfg = inner_cfg.replace("any()", "test");
+        let names: Vec<String> = generated_test_sites(Path::new("src/lib.rs"), &inner_test_cfg)
+            .into_iter()
+            .map(|site| site.test_name)
+            .collect();
+        assert_eq!(names, vec!["removed".to_string()]);
+    }
+
+    #[test]
+    fn an_invocation_outside_the_definitions_block_is_not_a_generated_test() {
+        let source = "mod hidden {
+    macro_rules! case {
+        ($name:ident) => { #[test] fn $name() { owner(); } };
+    }
+    case!(inside_scope);
+}
+case!(outside_scope);
+";
+        let names: Vec<String> = generated_test_sites(Path::new("src/lib.rs"), source)
+            .into_iter()
+            .map(|site| site.test_name)
+            .collect();
+        assert_eq!(names, vec!["inside_scope".to_string()]);
     }
 
     #[test]
