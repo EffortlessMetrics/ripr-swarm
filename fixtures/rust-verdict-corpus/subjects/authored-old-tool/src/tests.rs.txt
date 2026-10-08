@@ -1,0 +1,20 @@
+use super::*;
+
+fn sample_words() -> &'static str {
+    "a b c"
+}
+
+#[test]
+fn counts_the_sample_words() {
+    assert_eq!(count_words(sample_words()), 3);
+}
+
+#[test]
+fn counts_the_fixture_fields() {
+    assert_eq!(count_fields(fixture_line()), 3);
+}
+
+#[test]
+fn limit_is_sixty_four() {
+    assert_eq!(limit(), 64);
+}

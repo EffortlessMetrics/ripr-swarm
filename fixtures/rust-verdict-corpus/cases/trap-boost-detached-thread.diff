@@ -1,0 +1,11 @@
+diff --git a/src/boosts.rs b/src/boosts.rs
+index 2377430..0631f12 100644
+--- a/src/boosts.rs
++++ b/src/boosts.rs
+@@ -1,5 +1,5 @@
+ pub fn boost(base: u32) -> u32 {
+-    base * 17
++    17 * base
+ }
+ 
+ #[cfg(test)]

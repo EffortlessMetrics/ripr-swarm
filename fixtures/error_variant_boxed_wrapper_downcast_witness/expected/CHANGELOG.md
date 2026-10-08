@@ -318,6 +318,13 @@ Updated:
 - `expected/human.txt`
 - `expected/human-full.txt`
 
+## Pending — error_variant_boxed_wrapper_downcast_witness (24)
+
+Reason:
+RIPR-SPEC-0002: issue #5996 routes finding locations through the shared workspace-relative owner (analysis::finding_location_text); the fixture-input root prefix (fixtures/<name>/input/...) no longer appears in check.json/human location fields, matching the root-relative form the LSP and MCP surfaces already emitted. The three inherited config_identity drifts in wrapper_seam_callee_call_attribution reproduce on the base and are not part of this blessing.
+
+Command:
+`cargo xtask goldens bless error_variant_boxed_wrapper_downcast_witness --reason "..."`
 ## Pending - #5713 reviewed discarded-matcher calibration
 
 Reason:
@@ -334,6 +341,13 @@ Updated:
 - `expected/human.txt`
 - `expected/human-full.txt`
 
+## Pending — error_variant_boxed_wrapper_downcast_witness (25)
+
+Reason:
+RIPR-SPEC-0002: issue #5996 routes finding locations through the shared workspace-relative owner (analysis::finding_location_text); the fixture-input root prefix (fixtures/<name>/input/...) no longer appears in check.json/human location fields, matching the root-relative form the LSP and MCP surfaces already emitted.
+
+Command:
+`cargo xtask goldens bless error_variant_boxed_wrapper_downcast_witness --reason "..."`
 ## #5713 incoming-main observation wording
 
 Reason:
@@ -347,6 +361,62 @@ Exact b5af748229100b48bb327bcca813af963d6861c9 actual output from
 run37252849648, artifact11322143395 (wildcard-calibration-1), ZIP SHA256
 b59ea1caa1d210a1c667b7e9fc34011943e169ef35358575ae5ef206645d47d9.
 Guarded producer-byte transfer after semantic review; no local cargo bless ran.
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — error_variant_boxed_wrapper_downcast_witness (26)
+
+Reason:
+RIPR-SPEC-0002: merge of origin/main onto the #5996 workspace-relative location owner — the expected files regenerate with main's triage/wording updates and the shared root-relative location form (issue #5996)
+## Pending — error_variant_boxed_wrapper_downcast_witness (24)
+
+Reason:
+RIPR-SPEC-0045: the Rust producer now populates Finding.canonical_gap and canonical_gap_id (#5268) with the gap:rust identity shape; additive output members only - golden-drift.json shows zero semantic flips (no added/removed findings, no class/oracle/stop-reason changes) across all 388 drifted surfaces
+
+Command:
+`cargo xtask goldens bless error_variant_boxed_wrapper_downcast_witness --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — error_variant_boxed_wrapper_downcast_witness (27)
+
+Reason:
+RIPR-SPEC-0002: merge of origin/main (#5268 canonical_gap for Rust and sibling updates) onto the #5996 workspace-relative location owner — expected files regenerate through the merged tree
+
+Command:
+`cargo xtask goldens bless error_variant_boxed_wrapper_downcast_witness --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — error_variant_boxed_wrapper_downcast_witness (28)
+
+Reason:
+RIPR-SPEC-0116: the check drill-in binds --root to the resolved repository (#3948); goldens carry the <cwd>/ placeholder
+
+Command:
+`cargo xtask goldens bless error_variant_boxed_wrapper_downcast_witness --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — error_variant_boxed_wrapper_downcast_witness (29)
+
+Reason:
+RIPR-SPEC-0122 #5471: stub route printed only when the resolver yields a stub, with --kind; refusal or nothing otherwise (merge re-bless)
+
+Command:
+`cargo xtask goldens bless error_variant_boxed_wrapper_downcast_witness --reason "..."`
 
 Updated:
 - `expected/check.json`

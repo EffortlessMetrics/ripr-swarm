@@ -76,6 +76,11 @@ pub enum StopReason {
     /// owner. ripr does not expand the macro; classification stays
     /// `no_static_path`. See RIPR-SPEC-0117.
     MacroReachUnresolved,
+    /// ripr could not establish the evidence a gap claim needs (today, that
+    /// the refused related assertions do not run), so the finding is an
+    /// unknown rather than a gap. A `static_limit_kind` names the missing
+    /// link. See RIPR-SPEC-0240.
+    GapEvidenceUnresolved,
 }
 
 impl StopReason {
@@ -94,6 +99,7 @@ impl StopReason {
             StopReason::StaticProbeUnknown => "static_probe_unknown",
             StopReason::TransitiveReachUnresolved => "transitive_reach_unresolved",
             StopReason::MacroReachUnresolved => "macro_reach_unresolved",
+            StopReason::GapEvidenceUnresolved => "gap_evidence_unresolved",
         }
     }
 
@@ -147,6 +153,10 @@ impl StopReason {
             }
             StopReason::MacroReachUnresolved => {
                 "a candidate test path stops at a same-repo macro ripr does not expand"
+            }
+            StopReason::GapEvidenceUnresolved => {
+                "ripr could not establish the evidence a gap needs for this change, so it does \
+                 not claim one"
             }
         }
     }
@@ -241,6 +251,9 @@ pub enum ValueContext {
     BuilderMethod,
     TableRow,
     EnumVariant,
+    /// A qualified path whose spelling establishes a constant (`u64::MAX`,
+    /// `crate::KIB`), not an enum variant (#5357).
+    Constant,
     ReturnValue,
     Unknown,
 }
@@ -253,6 +266,7 @@ impl ValueContext {
             ValueContext::BuilderMethod => "builder_method",
             ValueContext::TableRow => "table_row",
             ValueContext::EnumVariant => "enum_variant",
+            ValueContext::Constant => "constant",
             ValueContext::ReturnValue => "return_value",
             ValueContext::Unknown => "unknown",
         }
@@ -286,18 +300,27 @@ pub struct MissingDiscriminatorFact {
     pub flow_sink: Option<FlowSinkFact>,
 }
 
-/// The missing discriminator that names an input boundary a test never
-/// reaches. Only predicate probes produce one, and its value is always
-/// `left == right` (`classify::activation::missing_boundary_discriminator`);
-/// error-variant and field facts name an assertion that is missing instead.
+/// Opens the reason of a match-arm missing discriminator that names an arm
+/// no related test's input selects (RIPR-SPEC-0229). Shared so the analyzer
+/// that writes it and the miss renderer that reads it agree.
+pub(crate) const ARM_UNSELECTED_REASON_PREFIX: &str = "No related test call selects arm";
+
+/// The missing discriminator that names an input no test supplies: for a
+/// predicate probe the boundary `left == right` it never reaches
+/// (`classify::activation::missing_boundary_discriminator`), for a match-arm
+/// probe the arm no test input selects. Error-variant and field facts name
+/// an assertion that is missing instead.
 pub(crate) fn input_boundary_fact<'a>(
     facts: &'a [MissingDiscriminatorFact],
     family: &ProbeFamily,
 ) -> Option<&'a MissingDiscriminatorFact> {
-    if *family != ProbeFamily::Predicate {
-        return None;
+    match family {
+        ProbeFamily::Predicate => facts.iter().find(|fact| fact.value.contains(" == ")),
+        ProbeFamily::MatchArm => facts
+            .iter()
+            .find(|fact| fact.reason.starts_with(ARM_UNSELECTED_REASON_PREFIX)),
+        _ => None,
     }
-    facts.iter().find(|fact| fact.value.contains(" == "))
 }
 
 /// The missing discriminator that names an exact assertion no test makes
@@ -646,6 +669,7 @@ mod tests {
             StopReason::StaticProbeUnknown,
             StopReason::TransitiveReachUnresolved,
             StopReason::MacroReachUnresolved,
+            StopReason::GapEvidenceUnresolved,
         ] {
             let gloss = reason.describe();
             assert!(!gloss.contains("  "), "{}: {gloss}", reason.as_str());
@@ -712,6 +736,7 @@ mod tests {
             (ValueContext::BuilderMethod, "builder_method"),
             (ValueContext::TableRow, "table_row"),
             (ValueContext::EnumVariant, "enum_variant"),
+            (ValueContext::Constant, "constant"),
             (ValueContext::ReturnValue, "return_value"),
             (ValueContext::Unknown, "unknown"),
         ];

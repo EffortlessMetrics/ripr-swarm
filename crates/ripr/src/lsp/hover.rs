@@ -491,7 +491,17 @@ fn finding_hover_markdown(diagnostic: &Diagnostic, finding: &Finding) -> String 
         lines.push("## Canonical Gap".to_string());
         lines.push(format!("ID: `{}`", gap.id));
     }
-    if let Some(witness) = DiagnosticWitness::from_finding(finding) {
+    if let Some(mut witness) = DiagnosticWitness::from_finding(finding) {
+        // The diagnostic carries the session-bound drill-in (#3948); the
+        // hover shows the same command rather than the portable domain one.
+        if let Some(command) = diagnostic
+            .data
+            .as_ref()
+            .and_then(|data| data.get("explain_command"))
+            .and_then(Value::as_str)
+        {
+            witness.explain_command = command.to_string();
+        }
         push_diagnostic_witness(&mut lines, &witness);
         let summary = crate::domain::FixInstructionSummary::from_witness(&witness);
         lines.push(format!(
@@ -1339,10 +1349,11 @@ mod seam_hover_tests {
                 description: "amount >= discount_threshold".to_string(),
             },
             ExpectedSink::ReturnValue,
-        );
+        )
+        .with_owner_call(crate::analysis::seams::OwnerCallShape::Free);
         let evidence = TestGripEvidence {
             seam_id: seam.id().clone(),
-            related_tests: vec![RelatedTestGrip {
+            related_tests: vec![std::sync::Arc::new(RelatedTestGrip {
                 test_name: "below_threshold_has_no_discount".to_string(),
                 file: PathBuf::from("tests/pricing.rs"),
                 line: 12,
@@ -1359,7 +1370,7 @@ mod seam_hover_tests {
                 relation_reason:
                     crate::analysis::test_grip_evidence::RelationReason::DirectOwnerCall,
                 relation_confidence: crate::analysis::test_grip_evidence::RelationConfidence::High,
-            }],
+            })],
             reach: stage(StageState::Yes, "Related tests reach discounted_total"),
             activate: stage(StageState::Yes, "Observed amount = 50, amount = 10000"),
             propagate: stage(StageState::Yes, "Seam flows to return_value"),
@@ -1377,6 +1388,7 @@ mod seam_hover_tests {
                 flow_sink: None,
             }],
             new_test_target: None,
+            statically_contradicted_related_tests: 0,
         };
         ClassifiedSeam {
             seam,

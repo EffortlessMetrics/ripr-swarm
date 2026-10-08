@@ -1,0 +1,52 @@
+{
+  "case_id": "grid-results-routed-match",
+  "subject_id": "authored-grid-results",
+  "diff": "cases/grid-results-routed-match.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 15
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "error_path",
+  "test_shape": "match_err_arm_assert_eq",
+  "hard_case": "At labeling the Err arm's assert_eq! was refused by owner-pin admission (RIPR-SPEC-0197 rule 1) and the case read reachable_unrevealed. #6673 fixed the admission; at head the case reads ideal/credited (exposed). Retained as a regression pin for routed-match Err arms.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "return Err(PayError::Limit);",
+        "mutated_line": "return Err(PayError::Limit);",
+        "outcome": "tests_failed",
+        "failing_test": "overdraw_routes_to_insufficient",
+        "equivalence_review": "not equivalent: overdraw_routes_to_insufficient fails on it"
+      },
+      {
+        "replacement": "return Ok(0);",
+        "mutated_line": "return Ok(0);",
+        "outcome": "tests_failed",
+        "failing_test": "overdraw_routes_to_insufficient",
+        "equivalence_review": "not equivalent: overdraw_routes_to_insufficient fails on it"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "Error return observed through a Result match whose Ok arm panics and whose Err arm assert_eqs the variant. RIPR-SPEC-0175's asserted-Err form (#6673) pins exactly this two-arm shape — terminating Ok arm, Err arm binding a bare identifier with a single assert_eq! on a unit variant — emitting a strong fact. Both mutants (wrong variant, Ok) fail the test. 2 of 2 listed mutants fail cargo test. Spec cells: RIPR-SPEC-0175, RIPR-SPEC-0197.",
+  "labeling_observation": {
+    "ripr_commit": "fddf363",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "reachable_unrevealed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "case_id": "spec0231-oracle-negated-matches-err-variant",
+  "subject_id": "authored-spec0231-19",
+  "origin": "authored",
+  "anchor": "src/lib.rs:9",
+  "behavior_family": "error_return",
+  "test_shape": "negated_matches_err_variant",
+  "hard_case": true,
+  "truth": "partially_discriminated",
+  "ideal_verdict": "gap",
+  "observed_verdict": "gap",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "reachable_unrevealed"
+  ],
+  "outcome": "ideal",
+  "contradictions": [],
+  "findings_scored": 2,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

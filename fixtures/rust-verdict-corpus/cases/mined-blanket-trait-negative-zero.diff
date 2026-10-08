@@ -1,0 +1,13 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 97eae71..2a4bb59 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -59,7 +59,7 @@ impl<T: Render> ToText for T {
+ impl Render for f64 {
+     fn render(&self) -> String {
+         if *self == 0.0 && self.is_sign_negative() {
+-            return "-0.0".to_string();
++            return String::from("-0.0");
+         }
+         format!("{self:?}")
+     }

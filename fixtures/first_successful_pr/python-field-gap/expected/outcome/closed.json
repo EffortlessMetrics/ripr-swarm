@@ -38,6 +38,11 @@
     {
       "activate_delta": null,
       "after": "strongly_gripped",
+      "after_discriminate_state": "yes",
+      "after_missing_discriminators": [],
+      "after_open_legs": [
+        "propagate (weak)"
+      ],
       "before": "weakly_gripped",
       "direction": "improved",
       "discriminate_delta": {

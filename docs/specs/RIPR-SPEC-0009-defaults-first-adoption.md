@@ -194,9 +194,24 @@ changes, otherwise `<base>...HEAD`), ranks actionable seams on its changed
 lines first, and says in the terminal, Markdown and
 `pilot-summary.json` (`current_change`) whether the top recommendation is part
 of the change. When the change has no ranked seam, pilot says the
-recommendation is elsewhere in the repo and names `ripr check` for the change
+recommendation is elsewhere in the repo, says why no seam on the change ranks
+(pilot withholds its seams as static limitations, they are already gripped,
+intentional or suppressed, the seam limit left seams unanalyzed, the change is
+in a file pilot's repo-wide ranking leaves out by design (a Cargo build script,
+repository automation under `xtask/`, or a crate source declared outside
+`src`, which only diff analysis covers, also named after a reason drawn from
+the change's analyzed seams; #6944), or no seam
+pilot analyzed is on a changed line), and names `ripr check` for the change
 itself, with `--worktree` when the change is uncommitted, since plain `ripr
-check` reads committed history only. The terminal and Markdown "Inspected" block names the scope:
+check` reads committed history only. When the repo-exposure seam limit cuts
+the inventory, pilot classifies the seams on the change's lines on their own,
+within what is left of its deadline, and adds the ones the cut dropped, so they
+still rank change-first and count as analyzed; the seam-limit caveat about the
+change then no longer applies. If that classification fails or runs out of
+time, pilot says so on stderr, keeps the caveat and still completes. When
+pilot added any such seam, its `repo-exposure.json` is written without the
+comparable `artifact` identity, because `ripr check` never classifies those
+seams (#6943). The terminal and Markdown "Inspected" block names the scope:
 change-first with a change, otherwise the whole repository, with a short reason
 when the change could not be loaded. With no change, or when the diff cannot be
 loaded, the ranking is unchanged, the human output differs only by that scope
@@ -205,7 +220,8 @@ line, and a failed load never fails pilot (#1169).
 When a seam limit (the repo-exposure inventory limit or the pilot seam budget)
 cut the classified seams before ranking, `pilot-summary.md` must say so under
 "What Was Inspected": it names how many seams were ranked out of the outermost
-total (the inventory total when both limits cut), reads the actionable count as
+total (when both limits cut, the budget's analyzed count over the inventory's
+total), reads the actionable count as
 "at least N", and reads each "Also in this function" count as "at least N",
 because seams past the cut were never counted (#6602). Without a limit, the
 wording is unchanged.
@@ -426,6 +442,23 @@ when a user runs ripr pilot,
 then pilot says the top recommendation is elsewhere in the repo, not part of
 the current change, and names ripr check for the change itself.
 
+Given a branch whose changed lines hold only seams pilot withholds as static
+limitations (opaque or an unknown class),
+when a user runs ripr pilot,
+then pilot says it withholds the seams on the change and why, rather than that
+no seam pilot analyzed is on a changed line, and `withheld_seams_in_change` counts them.
+
+Given a branch whose only Rust change is in a Cargo build script,
+when a user runs ripr pilot,
+then pilot names the build script and says its repo-wide ranking leaves it
+out, rather than that no seam pilot analyzed is on a changed line.
+
+Given a repository past the inventory seam limit whose changed lines hold
+seams the limit cut,
+when a user runs ripr pilot,
+then pilot classifies the change's files on their own, ranks those seams
+change-first and counts them as analyzed.
+
 Given a change that exists only as uncommitted edits in the working tree,
 when a user runs ripr pilot and the top recommendation is not part of it,
 then the ripr check command pilot names carries --worktree.
@@ -532,6 +565,10 @@ Current tests and reports that support the contract:
 - `crates/ripr/tests/cli_smoke.rs::check_repo_badge_plus_json_emits_repo_scope_metadata`
 - `crates/ripr/src/output/pilot/tests.rs::pilot_ranking_prefers_actionable_class_order_before_tie_breakers`
 - `crates/ripr/src/output/pilot/tests.rs::pilot_ranking_uses_evidence_tie_breakers_then_stable_location`
+- `crates/ripr/src/output/pilot/tests.rs::pilot_ranking_admits_gap_classes_only`
+- `crates/ripr/src/output/pilot/tests.rs::pilot_summary_ranks_a_true_gap_ahead_of_withheld_limitations`
+- `crates/ripr/src/output/pilot/tests.rs::pilot_summary_with_only_limitations_is_not_a_clean_result`
+- `crates/ripr/tests/cli_smoke.rs::pilot_withholds_static_limitations_and_keeps_a_true_gap`
 - `crates/ripr/src/output/pilot/tests.rs::pilot_ranking_excludes_solved_governed_classes`
 - `crates/ripr/src/output/pilot/tests.rs::pilot_ranking_puts_seams_in_the_current_change_first`
 - `crates/ripr/src/output/pilot/tests.rs::pilot_current_change_matches_the_seam_span_and_new_side_lines`
@@ -623,6 +660,13 @@ Current implementation pieces:
 - `docs/INSTALLATION_VERIFICATION.md` defines the release proof path for
   `cargo install ripr`, checked package install, GitHub Release server assets,
   VSIX packaging, and known defaults-first limits.
+
+## Later Amendment
+
+RIPR-SPEC-0237 (2026-10-04) specifies the order that
+`output/pilot/ranking.rs` produces (class order, rank key and owner
+spread) and the Markdown "Also in this function" count. RIPR-SPEC-0236
+owns which grip classes enter the ranked set.
 
 ## Metrics
 

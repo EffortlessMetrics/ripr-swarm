@@ -135,6 +135,8 @@ mod tests {
             unresolved_property_macros: facts.unresolved_property_macros,
             role_provenance: facts.role_provenance,
             source: facts.source,
+            item_scopes: facts.item_scopes,
+            macro_candidates: facts.macro_candidates,
         })
     }
 

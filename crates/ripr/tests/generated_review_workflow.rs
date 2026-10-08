@@ -804,11 +804,17 @@ fn doctor_packet_refresh_missing_root_keeps_recovery_nonwriting() -> Result<(), 
     let stdout = String::from_utf8(doctor.stdout)?;
     assert!(stdout.contains("not yet generated"), "{stdout}");
     assert!(!stdout.contains("--head HEAD` refreshes it"), "{stdout}");
+    // #5252 item 3: the recovery is the recommendation now, not the old
+    // `ripr check --root <missing>` template, which failed the same way
+    // doctor just did. The non-writing half below is unchanged.
     assert!(
-        stdout.contains(&format!(
-            "- Recommended first command: ripr check --root '{}'",
-            missing.display()
-        )),
+        stdout.contains(
+            "- Recommended first command: The selected root does not exist; rerun with `--root <path>` naming an existing repository directory"
+        ),
+        "{stdout}"
+    );
+    assert!(
+        !stdout.contains("Recommended first command: ripr check --root"),
         "{stdout}"
     );
     assert!(!missing.exists());
@@ -855,9 +861,13 @@ fn doctor_packet_refresh_missing_alias_never_selects_decoy() -> Result<(), Box<d
             .lines()
             .find_map(|line| line.strip_prefix("- Recommended first command: "))
             .ok_or("doctor omitted its missing-root recovery")?;
+        // #5252 item 3: the recommendation is the recovery action, which
+        // renders no spelling at all, so neither the relative alias nor the
+        // absolute form can resolve into the decoy here. The decoy-untouched
+        // and non-creation assertions below stay the load-bearing half.
         assert_eq!(
             command,
-            format!("ripr check --root '{}'", absolute.display())
+            "The selected root does not exist; rerun with `--root <path>` naming an existing repository directory"
         );
         assert!(!absolute.exists());
         assert!(!physical.join("repo").exists());

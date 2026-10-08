@@ -90,6 +90,91 @@ fn exact_classifier_rejects_prefix_lookalikes_and_ambiguous_attributes() {
 }
 
 #[test]
+fn compile_out_helper_is_true_only_for_provably_false_cfgs() {
+    assert!(attributes_compile_out_in_test_build(["#[cfg(any())]"]));
+    assert!(attributes_compile_out_in_test_build([
+        "#[test]",
+        "#[cfg(not(test))]"
+    ]));
+    // Unknown atoms and true cfgs never drop a test.
+    assert!(!attributes_compile_out_in_test_build([
+        "#[cfg(feature = \"x\")]"
+    ]));
+    assert!(!attributes_compile_out_in_test_build(["#[cfg(test)]"]));
+    assert!(!attributes_compile_out_in_test_build(["#[test]"]));
+}
+
+#[test]
+fn test_under_a_cfg_that_is_false_in_a_test_build_is_not_a_test() -> Result<(), String> {
+    // #6293: `#[cfg(any())]` and `#[cfg(not(test))]` remove the item from a
+    // test build, so the test never runs and cannot be credited. A cfg ripr
+    // cannot evaluate (a feature atom) keeps the test, as before.
+    let source = r#"
+#[cfg(any())]
+#[test]
+fn never_compiled() { assert!(true); }
+
+#[cfg(not(test))]
+#[test]
+fn prod_only() { assert!(true); }
+
+#[cfg(feature = "slow")]
+#[test]
+fn feature_gated() { assert!(true); }
+
+#[test]
+fn ordinary() { assert!(true); }
+"#;
+    for adapter in [
+        &RaRustSyntaxAdapter as &dyn RustSyntaxAdapter,
+        &LexicalRustSyntaxAdapter as &dyn RustSyntaxAdapter,
+    ] {
+        let mut facts = adapter.summarize_file(Path::new("src/lib.rs"), source)?;
+        normalize_file_test_styles(&mut facts)?;
+        assert_eq!(test_names(&facts), ["feature_gated", "ordinary"]);
+        // A dead test body is evidence-only: not a test, and never a
+        // production probe subject.
+        for dead in ["never_compiled", "prod_only"] {
+            assert!(
+                facts
+                    .functions
+                    .iter()
+                    .find(|function| function.name == dead)
+                    .is_some_and(|function| function.source_role.is_evidence_role()
+                        && function.source_role != FunctionSourceRole::TestAttribute),
+                "{dead} must be an evidence-only role"
+            );
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn multiline_false_cfg_on_the_lexical_fallback_is_not_a_test() -> Result<(), String> {
+    // #6293: the lexical fallback saw only single-line `#[` attributes, so a
+    // multi-line `#[cfg(\n any()\n)]` left the dead test in `facts.tests`.
+    let source = "#[cfg(\n    any()\n)]\n#[test]\nfn never_compiled() { assert!(true); }\n\n#[cfg(\n    feature = \"slow\"\n)]\n#[test]\nfn feature_gated() { assert!(true); }\n\n#[test]\nfn ordinary() { assert!(true); }\n";
+    let adapter = LexicalRustSyntaxAdapter;
+    let mut facts = adapter.summarize_file(Path::new("src/lib.rs"), source)?;
+    assert!(
+        facts.used_lexical_fallback,
+        "fixture must exercise the lexical fallback"
+    );
+    normalize_file_test_styles(&mut facts)?;
+    assert_eq!(test_names(&facts), ["feature_gated", "ordinary"]);
+    assert!(
+        facts
+            .functions
+            .iter()
+            .find(|function| function.name == "never_compiled")
+            .is_some_and(|function| function.source_role.is_evidence_role()
+                && function.source_role != FunctionSourceRole::TestAttribute),
+        "never_compiled must be an evidence-only role"
+    );
+    Ok(())
+}
+
+#[test]
 fn parser_facts_recognize_explicit_nonstandard_test_styles() -> Result<(), String> {
     let adapter = RaRustSyntaxAdapter;
     let mut facts = adapter.summarize_file(
@@ -1103,5 +1188,89 @@ fn equal_function_keys_keep_distinct_local_context_and_legacy_flat_roles() -> Re
         3,
         "only the genuine role divergence creates a distinct normalized occurrence"
     );
+    Ok(())
+}
+
+/// The one-walk table (#5363) must give every function line the answer the
+/// per-function prefix walk gives, including lines inside a multi-line
+/// attribute, where the prefix walk stops mid-attribute.
+fn assert_table_matches_prefix_walks(source: &str, label: &str) {
+    let table = cfg_test_module_lines(source);
+    for start_line in 1..=source.lines().count() + 2 {
+        assert_eq!(
+            inside_cfg_test_module_at(&table, source, start_line),
+            is_inside_cfg_test_module(source, start_line),
+            "{label} line {start_line}"
+        );
+    }
+}
+
+#[test]
+fn one_walk_cfg_test_table_answers_like_each_prefix_walk() -> Result<(), Box<dyn Error>> {
+    let shapes = [
+        "#[cfg(test)]\nmod tests {\n    fn helper() {}\n}\nfn production() {}\n",
+        "#[cfg(\n    test\n)]\nmod tests {\n    #[cfg(\n        feature = \"x\"\n    )]\n    fn helper() {}\n}\n",
+        "#[cfg(test)] #[doc = \"x\"] mod tests {\n    mod inner {\n        fn helper() {}\n    }\n}\nmod later { fn f() {} }\n",
+        // An unclosed attribute must not swallow the rest of the file.
+        "#[cfg(test\nmod tests {\n    fn helper() {}\n}\n",
+        "",
+    ];
+    for (at, source) in shapes.iter().enumerate() {
+        assert_table_matches_prefix_walks(source, &format!("shape {at}"));
+    }
+    // Lines inside a multi-line attribute take the slow path; the table
+    // must mark them rather than guess.
+    let table = cfg_test_module_lines(shapes[1]);
+    assert_eq!(table[1], None, "premise: line 2 sits inside the attribute");
+    // Every other line starts a walk step, so the table answers it without
+    // the per-function prefix walk this table replaces.
+    let table = cfg_test_module_lines(shapes[0]);
+    assert!(
+        table.iter().all(Option::is_some),
+        "single-line steps must all be answered from the one walk: {table:?}"
+    );
+    // Expected answers written out by hand, independent of the shared walk:
+    // inside `mod tests` after its opening line, outside after its `}`.
+    assert_eq!(
+        table,
+        vec![
+            Some(false),
+            Some(false),
+            Some(true),
+            Some(true),
+            Some(false),
+            Some(false),
+        ]
+    );
+    // A deep non-test nest after the test module stays outside it.
+    let deep = format!(
+        "#[cfg(test)]\nmod tests {{\n    fn helper() {{}}\n}}\nfn generated() {{\n{}{}}}\n",
+        "{\n".repeat(200),
+        "}\n".repeat(200)
+    );
+    let table = cfg_test_module_lines(&deep);
+    assert_eq!(table[2], Some(true));
+    assert!(table[4..].iter().all(|entry| *entry == Some(false)));
+    assert_table_matches_prefix_walks(&deep, "deep nest");
+
+    // An independent corpus: this crate's own small files with test modules.
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let mut pending = vec![root];
+    let mut checked = 0;
+    while let Some(dir) = pending.pop() {
+        for entry in fs::read_dir(&dir)? {
+            let path = entry?.path();
+            if path.is_dir() {
+                pending.push(path);
+            } else if path.extension().and_then(|ext| ext.to_str()) == Some("rs") {
+                let source = fs::read_to_string(&path)?;
+                if source.contains("cfg(test)") && source.lines().count() <= 400 {
+                    assert_table_matches_prefix_walks(&source, &path.display().to_string());
+                    checked += 1;
+                }
+            }
+        }
+    }
+    assert!(checked > 20, "only {checked} files checked");
     Ok(())
 }

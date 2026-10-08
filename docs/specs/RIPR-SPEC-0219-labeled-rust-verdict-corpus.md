@@ -59,8 +59,14 @@ out, so a fix to one verdict cannot show it did not break another.
 
 ## Behavior
 
-`fixtures/rust-verdict-corpus/corpus.json` (`ripr_verdict_corpus.v1`) holds
-subjects and cases.
+`fixtures/rust-verdict-corpus/` (`ripr_verdict_corpus.v1`) holds
+subjects and cases. `corpus.json` carries only the corpus header; each
+subject is `subjects/<subject_id>.json` beside its retained files and each
+case is `cases/<case_id>.json` beside its `cases/<case_id>.diff`. A record
+file must be named after the id it holds, a case's `diff` must be its own,
+and `validate` names any other file in `cases/` or `subjects/`, and records load in file-name order. One file per
+record lets parallel PRs add cases without editing a shared array, and the
+corpus carries no version line that every PR would bump.
 
 A subject has an `origin`. An `upstream` subject (the default) is one
 pinned upstream repository: URL, 40-hex commit, version label, license, an
@@ -147,19 +153,32 @@ Contradictions are internal to ripr's output and need no label:
 `exposed_without_discriminator`, `related_tests_listed_exceed_total`, and
 summary counts that disagree with the findings list.
 
-`cargo xtask verdict-corpus` has four subcommands:
+`cargo xtask verdict-corpus` has seven subcommands:
 
-- `validate` checks the corpus offline: schema, subject digests and
-  unlisted files, diff anchors, truth derived from mutant outcomes, and the
-  label table.
-- `report [--out <dir>]` copies each subject to a run-owned workspace under
-  `target/ripr/verdict-corpus/`, applies the case diff with a strict patch
-  reader that refuses drifted context, runs `ripr check --json`, and writes
-  `report.json` and `report.md`.
-- `check [--out <dir>]` does the same and fails when `report.json` differs
-  from `fixtures/rust-verdict-corpus/expected/report.json` or `report.md`
-differs from `expected/report.md`. It refuses an
-  `--out` that is the expected directory, so it cannot replace its golden.
+- `validate` checks the corpus offline: schema, record file names, subject
+  digests and unlisted files, diff anchors, truth derived from mutant
+  outcomes, and the label table.
+- `report [--cases <id,...>] [--out <dir>]` copies each subject to a
+  run-owned workspace under `target/ripr/verdict-corpus/<language>/`, applies the case
+  diff with a strict patch reader that refuses drifted context, runs
+  `ripr check --json` on the cases in parallel, and writes `report.json` and
+  `report.md`. It refuses an `--out` inside the expected directory.
+- `check [--cases <id,...>] [--out <dir>]` does the same and fails, naming
+  each case, when a row differs from
+  `fixtures/rust-verdict-corpus/expected/rows/<case_id>.json`. A
+  whole-corpus run also fails when a row file is missing or `expected/`
+  holds any other file, including a `summary.json`: the summary is derived
+  from the rows, never committed. `--cases` compares only the named rows, for the inner loop
+  while writing a case.
+- `check-all` runs `check` on every `fixtures/<language>-verdict-corpus`
+  directory, found by name, and fails if any drifts or a corpus directory
+  has no `corpus.json`. Reports for languages other than Rust nest under
+  `target/ripr/reports/verdict-corpus/<language>/`.
+- `bless` runs the whole corpus and replaces `expected/` with one row file
+  per case.
+- `split` moves a one-file `corpus.json`'s subjects and cases into record
+  files and drops its `corpus_version`, skipping records that already exist
+  with the same content and naming any that differ.
 - `relabel [--sample <n> [--seed <s>] | --case <id>...] [--checkouts <dir>]
   [--repeat <k>] [--timeout-secs <t>] [--out <dir>] [--work-dir <dir>]`
   re-derives truth instead of trusting it. For each selected case it copies
@@ -213,6 +232,11 @@ differs from `expected/report.md`. It refuses an
   settings such as `CARGO_PROFILE_*` overflow checks still reach the subject
   build; and a killed run leaves its per-process tree directory behind.
 
+
+The required Rust gate runs `check-all` at Draft -> Ready and on main
+pushes, so every language's corpus gates without a workflow change. Truth labels are stored with each case, so no CI job reruns
+mutants.
+
 The report states false-verdict, false-actionable (over discriminated
 cases), false-exposed and false-silent (over the rest), ideal, abstention,
 and contradiction rates as exact fractions, the verdict rates again per
@@ -224,7 +248,91 @@ whole `ripr check` run, not only the anchor line, because a
 self-contradicting finding anywhere is an internal inconsistency.
 `contradictions_by_code` uses the same unit: findings carrying each code,
 plus one per run for a summary-count code. A row's `contradictions` lists
-the distinct codes seen in that case's run.
+the distinct codes seen in that case's run, and its `findings_scored`,
+`findings_contradicted` and `contradiction_counts` hold that run's share of
+the corpus counts. The summary is therefore a function of the rows: the dx
+scoreboard (`verdict-corpus:` sources) and the public proof receipt derive
+it from the committed rows, so parallel case PRs share no line.
+
+### Spec-example coverage
+
+The coverage unit is one numbered item (`1. `, `2. `, ...) written at the
+start of a line under a spec's `## Acceptance Examples` heading, up to the
+next second-level heading, outside fenced code. Its id is
+`RIPR-SPEC-NNNN#K`, where K is the item's own number.
+
+A case may carry an optional `spec_examples` array of those ids: the
+examples whose behavior its diff and runtime truth label. `validate`
+rejects an id that is not `RIPR-SPEC-NNNN#K` (K positive, no leading zero),
+a spec with no `docs/specs` file, a K that is not a numbered acceptance
+example of that spec, a citation of an out-of-scope spec, and an id cited
+twice by one case.
+
+`fixtures/rust-verdict-corpus/spec-coverage.toml`
+(`ripr_verdict_corpus_spec_coverage.v1`) is the ledger:
+
+- `[[spec]]` names every spec with at least one numbered acceptance
+  example, with `scope = "in"` or `scope = "out"`; an out-of-scope spec
+  needs a one-line `reason`. In scope means the examples describe Rust
+  analyzer verdict, oracle, probe or test-shape behavior that a corpus case
+  (a Rust diff plus runtime mutant truth) can label. Output formats, CLI,
+  editor, CI, agent, MCP, evaluation tooling, policy and non-Rust-language
+  specs are out.
+- `[[spec.waived]]` (`example`, `reason`) removes one example of an
+  in-scope spec from the denominator when no corpus case can label it, for
+  example a dead write where every mutant is equivalent
+  (RIPR-SPEC-0228 examples 10 and 11).
+- `[[unmeasured]]` (`id`, `reason`) lists in-scope specs whose acceptance
+  examples are prose, not numbered, reported as `unmeasured_specs` rather
+  than counted. The list is maintained by hand: nothing detects an in-scope
+  prose spec that is missing from it.
+- `floor` is the covered-example count the gate protects.
+
+`validate` fails when a spec with numbered examples is missing from the
+ledger (a new spec cannot leave the denominator silently), when the ledger
+names a spec that does not exist, scopes a spec with no numbered examples,
+lists as unmeasured a spec that now has numbered examples, waives an
+example that does not exist or without a reason, or waives an example a
+case covers, and when `floor` exceeds the coverable examples.
+
+Covered examples are the in-scope, non-waived examples at least one case
+cites. The report's `spec_example_coverage` section gives `coverage` as
+covered over in-scope examples minus waived, `accounted` as covered plus
+waived over in-scope examples, the in-scope, covered and waived example
+counts, the in-scope and out-of-scope spec counts, `unmeasured_specs`, and
+one row per in-scope spec with its in-scope examples, covered and waived
+counts, and uncovered example numbers. Waived examples are never folded
+into covered.
+
+`check` fails before running ripr when covered is below `floor`, naming the
+fall and the fix (restore the lost citation, or lower the floor with a
+reason when a case was deliberately retired). When covered is above `floor`
+it passes and prints that the floor can be raised. `validate` applies the
+same floor gate without running ripr; `report` prints the coverage without
+gating it. In CI the floor is enforced by the xtask unit test
+`committed_ledger_is_valid_and_meets_its_floor`, which the Rust gates
+workflow's workspace nextest run executes.
+
+Decisions:
+
+- The unit is the numbered acceptance example because it is the smallest
+  thing a spec already promises and names. Prose acceptance examples have
+  no stable identity, so they are listed, not counted.
+- Coverage counts citations, not verdict agreement. A covered example says
+  the corpus can measure that behavior; the verdict rates say whether ripr
+  gets it right. Folding the two would let a wrong verdict raise coverage.
+- The ledger names every spec with numbered examples, including
+  out-of-scope ones, so a new spec forces a scoping decision in review
+  instead of silently shrinking or growing the denominator. Rescoping a spec
+  out or adding a waiver shrinks the denominator without failing `check`;
+  only the ledger and golden-report diffs show it, so review owns that
+  decision. When unsure, a spec is scoped in, where it shows as uncovered
+  work.
+- Waivers are per example with a reason and are reported apart from
+  covered, so `accounted` can reach 1.0 while `coverage` stays honest.
+- The gate protects a committed count, not a rate, so adding a newly
+  scoped spec (which lowers the rate) passes while removing a citation
+  fails.
 
 ## Required Evidence
 
@@ -233,7 +341,12 @@ the distinct codes seen in that case's run.
 - Each validation rule rejects a tampered corpus.
 - The scoring table, verdict projection, contradiction codes, and rate
   arithmetic are pinned by unit tests.
-- The committed expected report agrees with the corpus labels row by row.
+- The committed expected rows agree with the corpus labels row by row.
+- A record file named after another id is refused; `split` reproduces the
+  one-file corpus exactly; a moved, missing, or stale row and a leftover
+  summary file are each named, and a `--cases` run compares only its rows.
+- The summary derived from the committed rows equals the summary of the run
+  that blessed them.
 - The validator holds upstream subjects to a pinned URL, commit, and license
   file, and authored subjects to the `authored-` id prefix, no upstream
   provenance, no license file, and this repository's license; the report
@@ -241,6 +354,13 @@ the distinct codes seen in that case's run.
   excerpt as authored therefore means renaming the subject and every case
   that names it, which review sees; the validator cannot detect a rename
   that also strips the license file.
+
+- Each spec-coverage validation rule rejects a tampered ledger or
+  citation, the numbered-example reader handles continued and indented
+  lines and specs without numbered items, and the floor gate fails below,
+  passes at, and invites a raise above the floor.
+- The committed ledger validates against `docs/specs` and its floor equals
+  the covered count.
 
 ## Non-Goals
 
@@ -251,7 +371,9 @@ the distinct codes seen in that case's run.
 - A population estimate. Rates describe these cases only.
 - Replacing the judged panels or the shared Rust corpus; this corpus draws
   on the shared corpus pins where they exist.
-- Wiring the check into CI; a regression gate consumes the report later.
+- A diff-selected CI subset. An analyzer change can move any verdict, so
+  selection by touched paths would pick the whole corpus for exactly the
+  PRs that matter; the whole run is cheap enough to stay the CI tier.
 
 ## Acceptance Examples
 
@@ -283,6 +405,36 @@ the distinct codes seen in that case's run.
   passes and the truth is `not_discriminated`. ripr's `exposed` scores
   `false_exposed`, the self-computed expected value RIPR-SPEC-0004 and
   RIPR-SPEC-0035 say must not count as a strong oracle.
+- authored `mined-doctest-only-read-u16` (`u16::from_be_bytes` rewritten
+  as shifts): the only test is the function's doc example, which `cargo test`
+  runs, so both byte-order mutants fail it and the truth is `discriminated`.
+  ripr's `weakly_exposed` scores `false_actionable`. The shape is mined from
+  bytes, where most `try_get_*` methods are pinned only by doc examples. Its
+  twin `mined-doctest-ignored-read-u16-le` fences the example `ignore`, so
+  nothing runs it and the same `weakly_exposed` scores `ideal`.
+- authored `mined-macro-closure-header-length` (`*len as usize + 2`
+  rewritten as `2 + *len as usize`): a `macro_rules!` test whose
+  `assert_eq!` sits in a closure the generated body always calls, mined from
+  httparse's `req!` tests. Both mutants fail it, so ripr's `weakly_exposed`
+  scores `false_actionable`. The corpus's other test-generating macro
+  cases (itoa) are `not_discriminated`.
+- authored `mined-roundtrip-symmetric-mask` (`0x5a` rewritten as `90`): the
+  only test masks twice and checks the payload comes back, which holds for
+  every key, so the truth is `not_discriminated` and ripr's `static_unknown`
+  scores `abstained`.
+- authored `mined-debug-assert-only-oracle` (`b & 0x07` rewritten as
+  `b % 8`): the test asserts only the output length, and the production
+  `debug_assert!` on the index is what fails under both mutants, so the truth
+  is `discriminated` under the debug test profile and does not hold under
+  `--release`. ripr's `static_unknown` scores `abstained`.
+- authored `mined-one-line-struct-literal-field` (`version: 1` rewritten as
+  `version: 0x1` inside `Id { counter: .., version: .. }` on one line): the
+  accessor assert pins the edited field. Before #6751 ripr's
+  field-construction finding asked for a pin of the unedited `counter` and
+  scored `false_actionable`, while its twin
+  `mined-multi-line-struct-literal-field`, the same edit with one field per
+  line, read `exposed` (#6731). Both now read `exposed` and score `ideal`, so
+  the pair guards against the verdict depending on formatting again.
 - bytesize `as_kb` division (`src/lib.rs:258`): ripr reports
   `no_static_path` while naming related tests, recorded as
   `no_static_path_with_related_tests`. semver `op()` at 1.0.23
@@ -318,6 +470,12 @@ Tests live in `xtask/src/reports/verdict_corpus_tests.rs`:
 - `validator_requires_both_truth_directions`
 - `expected_report_rows_agree_with_corpus_labels`
 - `build_report_counts_rates_over_the_right_denominators`
+- `corpus_records_load_in_file_name_order_and_must_match_their_ids`
+- `split_moves_the_one_file_layout_into_records_without_loss`
+- `drift_names_moved_missing_and_stale_rows_and_a_subset_compares_only_its_rows`
+- `summary_derived_from_blessed_rows_equals_the_run_summary`
+- `validator_rejects_a_case_that_borrows_another_cases_diff`
+- `check_all_finds_every_language_corpus_and_refuses_one_without_a_header`
 - `contradiction_counts_use_one_per_finding_unit`
 - `stored_paths_keep_vendored_rust_out_of_the_workspace`
 - `validator_holds_each_subject_origin_to_its_own_provenance`
@@ -325,6 +483,12 @@ Tests live in `xtask/src/reports/verdict_corpus_tests.rs`:
 - `validator_requires_a_replayable_mutated_line_that_changes_the_anchor`
 - `validator_refuses_a_mutated_line_on_a_behavior_change`
 - `validator_refuses_a_test_command_the_replay_cannot_run`
+
+The derived rates' consumers are tested beside them:
+`verdict_corpus_sources_derive_each_rate_from_the_committed_rows` in
+`xtask/src/reports/dx_scoreboard/tests.rs` and
+`verdict_receipt_derives_the_summary_from_rows_in_file_name_order` in
+`xtask/src/public_proof.rs`.
 
 Relabel tests live in `xtask/src/reports/verdict_corpus_relabel_tests.rs`:
 
@@ -342,10 +506,29 @@ Relabel tests live in `xtask/src/reports/verdict_corpus_relabel_tests.rs`:
 - `link_stays_inside_refuses_links_that_leave_the_copy`
 - `copy_checkout_refuses_a_chain_of_links_that_resolves_outside`
 
+Spec-example coverage tests live in
+`xtask/src/reports/verdict_corpus_coverage_tests.rs`:
+
+- `numbered_examples_read_only_top_level_items_under_acceptance_examples`
+- `numbered_examples_skip_tilde_and_long_fences_until_a_matching_close`
+- `spec_ids_come_from_the_spec_file_name`
+- `example_ids_accept_only_the_canonical_spelling`
+- `citations_of_malformed_unknown_or_unnumbered_examples_are_rejected`
+- `citing_an_out_of_scope_spec_is_rejected`
+- `an_example_both_waived_and_covered_is_rejected`
+- `ledger_must_name_every_spec_with_numbered_examples_and_only_real_ones`
+- `coverage_counts_cited_in_scope_examples_over_the_unwaived_ones`
+- `floor_gate_fails_below_passes_at_and_invites_a_raise_above`
+- `committed_ledger_is_valid_and_meets_its_floor`
+
 ## Implementation Mapping
 
 - `xtask/src/reports/verdict_corpus.rs` owns validation, materialization,
   scoring, and rendering.
+- `xtask/src/reports/verdict_corpus_coverage.rs` owns the numbered-example
+  reader, the spec-coverage ledger and citation law, the coverage metric,
+  and the floor gate.
+- `fixtures/rust-verdict-corpus/spec-coverage.toml` is the ledger.
 - `xtask/src/reports/verdict_corpus_relabel.rs` owns replaying runtime
   truth.
 - `fixtures/rust-verdict-corpus/` holds the corpus, retained upstream and
@@ -356,3 +539,6 @@ Relabel tests live in `xtask/src/reports/verdict_corpus_relabel_tests.rs`:
 - `verdict_corpus_false_verdict_rate`
 - `verdict_corpus_false_actionable_rate`
 - `verdict_corpus_contradiction_rate`
+- `verdict_corpus_spec_example_coverage` (dx-scoreboard
+  `trust.verdict_corpus_spec_example_coverage`, target 1.0, regression
+  margin 0)

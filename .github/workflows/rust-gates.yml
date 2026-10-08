@@ -199,6 +199,13 @@ jobs:
         id: workspace_check
         run: cargo check --workspace --all-targets
 
+      # Feature-gated test modules (lang-perl and other previews) compile only
+      # under their features; without this step two green PRs can break main
+      # together (#6854, #6879).
+      - name: All-features ripr target check
+        id: all_features_check
+        run: cargo check -p ripr --all-targets --all-features
+
       - name: Strict workspace Clippy
         id: clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
@@ -288,6 +295,16 @@ jobs:
         id: fixtures
         run: cargo xtask fixtures
 
+      # Scores ripr's verdicts on every labeled verdict corpus
+      # (fixtures/<language>-verdict-corpus) against their stored
+      # runtime-mutant labels (RIPR-SPEC-0219). Its `cargo build` of ripr
+      # finds the fixture step's artifacts current, so it compiles nothing
+      # new; it runs cases in parallel and runs no mutation testing. Required runs happen at Draft -> Ready and on main
+      # pushes, so a verdict move is caught on the PR that makes it.
+      - name: Verdict corpora
+        id: verdict_corpus
+        run: cargo xtask verdict-corpus check-all
+
       - name: PR evidence
         id: pr_evidence
         if: github.event_name == 'pull_request'
@@ -371,10 +388,12 @@ jobs:
           PROCESS_POLICY_RESULT: ${{ steps.process_policy.outcome }}
           NETWORK_POLICY_RESULT: ${{ steps.network_policy.outcome }}
           WORKSPACE_CHECK_RESULT: ${{ steps.workspace_check.outcome }}
+          ALL_FEATURES_CHECK_RESULT: ${{ steps.all_features_check.outcome }}
           CLIPPY_RESULT: ${{ steps.clippy.outcome }}
           RUST_TESTS_RESULT: ${{ steps.rust-tests.outcome }}
           GOLDENS_RESULT: ${{ steps.goldens.outcome }}
           FIXTURES_RESULT: ${{ steps.fixtures.outcome }}
+          VERDICT_CORPUS_RESULT: ${{ steps.verdict_corpus.outcome }}
           PR_EVIDENCE_RESULT: ${{ steps.pr_evidence.outcome }}
         run: |
           {
@@ -392,10 +411,12 @@ jobs:
             printf '| process_policy | %s |\n' "${PROCESS_POLICY_RESULT:-not_reported}"
             printf '| network_policy | %s |\n' "${NETWORK_POLICY_RESULT:-not_reported}"
             printf '| workspace_check | %s |\n' "${WORKSPACE_CHECK_RESULT:-not_reported}"
+            printf '| all_features_check | %s |\n' "${ALL_FEATURES_CHECK_RESULT:-not_reported}"
             printf '| clippy | %s |\n' "${CLIPPY_RESULT:-not_reported}"
             printf '| rust-tests | %s |\n' "${RUST_TESTS_RESULT:-not_reported}"
             printf '| goldens | %s |\n' "${GOLDENS_RESULT:-not_reported}"
             printf '| fixtures | %s |\n' "${FIXTURES_RESULT:-not_reported}"
+            printf '| verdict_corpus | %s |\n' "${VERDICT_CORPUS_RESULT:-not_reported}"
             printf '| pr_evidence | %s |\n' "${PR_EVIDENCE_RESULT:-not_reported}"
             echo ""
             echo "Step timings are available in the Actions job view and workflow-jobs API."

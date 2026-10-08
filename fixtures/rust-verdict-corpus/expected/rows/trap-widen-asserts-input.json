@@ -1,0 +1,22 @@
+{
+  "case_id": "trap-widen-asserts-input",
+  "subject_id": "authored-trap-kit",
+  "origin": "authored",
+  "anchor": "src/sizing.rs:2",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "assert_on_input_not_result",
+  "hard_case": true,
+  "truth": "not_discriminated",
+  "ideal_verdict": "gap",
+  "observed_verdict": "gap",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "weakly_exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

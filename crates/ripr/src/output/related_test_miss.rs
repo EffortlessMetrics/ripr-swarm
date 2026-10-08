@@ -38,13 +38,20 @@ pub(crate) fn related_test_miss_reason(
             "ripr could not confirm that this assertion observes the changed behavior".to_string()
         }
         // The analyzer assigns `missing_input` only for a predicate probe
-        // with a boundary fact, and `missing_exact_assertion` only when no
-        // boundary fact exists, so reading the facts as a predicate's picks
-        // the fact each miss was assigned from.
+        // with a boundary fact or a match-arm probe with an unselected-arm
+        // fact, and `missing_exact_assertion` only when neither exists, so
+        // reading the facts as a predicate's picks the fact each miss was
+        // assigned from.
         RelatedTestMiss::MissingInput => {
-            match input_boundary_fact(missing_discriminators, &ProbeFamily::Predicate) {
-                Some(fact) => format!("no test input reaches `{}`", one_line(&fact.value)),
-                None => "no test input reaches the changed boundary".to_string(),
+            if let Some(fact) = input_boundary_fact(missing_discriminators, &ProbeFamily::Predicate)
+            {
+                format!("no test input reaches `{}`", one_line(&fact.value))
+            } else if let Some(fact) =
+                input_boundary_fact(missing_discriminators, &ProbeFamily::MatchArm)
+            {
+                format!("no test input selects arm `{} =>`", one_line(&fact.value))
+            } else {
+                "no test input reaches the changed boundary".to_string()
             }
         }
         RelatedTestMiss::MissingExactAssertion => {
@@ -216,6 +223,21 @@ mod tests {
         );
     }
 
+    #[test]
+    fn an_unselected_arm_miss_names_the_arm_as_a_missing_input() {
+        let facts = vec![MissingDiscriminatorFact {
+            value: "Kind::Beta".to_string(),
+            reason: "No related test call selects arm `Kind::Beta =>`; observed `k` values: `Kind::Alpha`"
+                .to_string(),
+            flow_sink: None,
+        }];
+        let test = test_with(Some(RelatedTestMiss::MissingInput), None);
+        assert_eq!(
+            related_test_miss_reason(&test, &facts).as_deref(),
+            Some("no test input selects arm `Kind::Beta =>`")
+        );
+    }
+
     /// #5510: packet-backed Perl findings through every report surface this
     /// module's callers own. The findings come from frozen packets through
     /// the production Perl mapper (`analysis::perl_*` test exports).
@@ -243,6 +265,7 @@ mod tests {
                 analysis_outcome: None,
                 partial_scope: None,
                 unlinked_python_tests: None,
+                analyzed_revisions: None,
             }
         }
 
@@ -296,9 +319,10 @@ mod tests {
             let json: serde_json::Value =
                 serde_json::from_str(&crate::output::json::render(&output))
                     .map_err(|error| format!("parse check JSON: {error}"))?;
-            let context: serde_json::Value =
-                serde_json::from_str(&crate::output::json::render_context_packet(&finding, 8))
-                    .map_err(|error| format!("parse context packet: {error}"))?;
+            let context: serde_json::Value = serde_json::from_str(
+                &crate::output::json::render_context_packet(&finding, 8, std::path::Path::new(".")),
+            )
+            .map_err(|error| format!("parse context packet: {error}"))?;
             for rows in [
                 &json["findings"][0]["related_tests"],
                 &context["related_tests"],
@@ -321,6 +345,7 @@ mod tests {
                 &finding,
                 &crate::config::RiprConfig::default(),
                 "ripr explain probe",
+                std::path::Path::new("."),
             );
             let (evidence, verdict) = explain
                 .split_once("Why this verdict")
@@ -375,8 +400,12 @@ mod tests {
                     .map_err(|error| format!("parse check JSON: {error}"))?;
                 without_miss_keys(&mut report);
                 let mut context: serde_json::Value =
-                    serde_json::from_str(&crate::output::json::render_context_packet(finding, 8))
-                        .map_err(|error| format!("parse context packet: {error}"))?;
+                    serde_json::from_str(&crate::output::json::render_context_packet(
+                        finding,
+                        8,
+                        std::path::Path::new("."),
+                    ))
+                    .map_err(|error| format!("parse context packet: {error}"))?;
                 without_miss_keys(&mut context);
                 // The currentness-filtered projections (#6586): SARIF results,
                 // GitHub annotations and the diff badge only see

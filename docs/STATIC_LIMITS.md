@@ -38,6 +38,7 @@ rust_value_propagation_unresolved
 rust_subprocess_binary_reach_unresolved
 wrapper_error_binding_unresolved
 python_transitive_reach_unresolved
+rust_assertion_context_unresolved
 ```
 
 When `static_limit_kind` is absent but stable static-limit text is present,
@@ -58,7 +59,7 @@ action.
 | `unresolved_pytest_fixture` | A related pytest test depends on fixture-sourced values that the preview adapter does not execute or resolve. | Do not assume the fixture supplies the missing discriminator or expected value. Keep repair routing blocked unless a separate concrete oracle path exists. |
 | `unsupported_syntax` | The parser or preview adapter saw syntax outside the current preview contract. | Do not upgrade the finding into a stronger claim. Use the packet as a pointer for manual inspection. |
 | `cross_language_oracle_visibility_unresolved` | The changed Rust seam is exposed across a language boundary, but RIPR cannot statically tell whether the external-language oracle discriminates the change. | Verify the external oracle directly. Do not convert the finding into a Rust repair packet from this label alone. |
-| `rust_transitive_reach_unresolved` | A Rust test appears to call an entry point that may lead toward the changed owner through a transitive helper path RIPR does not fully trace. | Treat this as a named `no_static_path` limitation. Inspect the candidate path before adding or delegating repair work. |
+| `rust_transitive_reach_unresolved` | A Rust test appears to call an entry point that may lead toward the changed owner through a transitive helper path RIPR does not fully trace. | Treat this as a named reach limitation on a `no_static_path` finding, or on a `weakly_exposed` one whose related tests only share the owner's file or a name token. Inspect the candidate path before adding or delegating repair work. |
 | `rust_integration_public_api_path_unresolved` | An integration test appears to call crate public API, or a test helper that calls it, along a candidate path toward the changed owner. | Treat this as first-run evidence that RIPR saw the integration test but could not cross the public-API path. It is not a clean result or a reach claim. |
 | `rust_macro_reach_unresolved` | A Rust test appears to call an entry point whose path toward the changed owner stops at a same-repo macro invocation RIPR does not expand. | Inspect the macro path manually or improve macro-aware reach. Do not treat the macro mention as evidence that the test observes the change. |
 | `rust_macro_wrapped_test_call_unresolved` | A Rust test directly invokes a same-repo macro whose definition mentions the changed owner, but RIPR does not expand that macro. | Treat this as first-run evidence that RIPR saw the test-body macro call but could not cross it. It is not a clean result, reach claim, or repair packet. |
@@ -67,6 +68,7 @@ action.
 | `rust_subprocess_binary_reach_unresolved` | An integration test invokes a Cargo-built binary, but ripr does not yet map that executable back to the changed owner. | Treat this as a named `no_static_path` limitation. Inspect the subprocess test and binary target manually; do not infer reach, receipt validity, coverage, or repair readiness. |
 | `wrapper_error_binding_unresolved` | A wrapper error conversion (`callee(..).map_err(..)`) takes its error-variant identity from the converted callee, and RIPR cannot establish that the boxed conversion preserves that variant. | Keep the seam below `exposed`; verify the variant through the wrapper directly. This names the unresolved conversion binding, not a coverage or repair claim. |
 | `python_transitive_reach_unresolved` | A Python test constructs or calls into the owner's class, and a bounded same-class method path may lead toward the changed method. | Treat this as a named `no_static_path` limitation. Inspect the candidate class/method path before adding or delegating repair work. It is not a related-test or coverage claim. |
+| `rust_assertion_context_unresolved` | A related Rust test has an `assert_eq!`, but RIPR refused it for a limit of its own reading: the file did not parse or could not be placed, the test could not be identified, it carries a feature `cfg`, or a glob import or unresolved `#[macro_use]` may rebind the macro. | The gap is withheld (`static_unknown`, RIPR-SPEC-0240). The "not credited" note names the refused assertion; check that it compares the changed value, and add a test only if none does. |
 
 ## Seam Readings: `opaque` and `activation_unknown`
 

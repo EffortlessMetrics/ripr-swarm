@@ -1,0 +1,52 @@
+{
+  "case_id": "grid-arith-table",
+  "subject_id": "authored-grid-arith",
+  "diff": "cases/grid-arith-table.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 8
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "table_driven_loop",
+  "hard_case": "The assert_eq! sits inside a for loop over a let-bound array of literal rows; RIPR-SPEC-0197 admits it because a non-empty constant-row table runs its body at least once (#5328). Before that rule the loop body was refused as possibly running zero times.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "height + width",
+        "mutated_line": "height + width",
+        "outcome": "tests_failed",
+        "failing_test": "tests::area_table",
+        "equivalence_review": "not equivalent: area_table fails on it"
+      },
+      {
+        "replacement": "height / width",
+        "mutated_line": "height / width",
+        "outcome": "tests_failed",
+        "failing_test": "tests::area_table",
+        "equivalence_review": "not equivalent: area_table fails on it"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "Grid cell: arithmetic (operands swapped; mutants replace the operator, as cargo-mutants does) x table_driven_loop. The test loops over a table of (input, expected) rows and assert_eqs each; 2 of 2 listed mutants fail cargo test. Spec cells: RIPR-SPEC-0197.",
+  "labeling_observation": {
+    "ripr_commit": "1273096",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

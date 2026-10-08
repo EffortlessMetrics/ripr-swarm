@@ -5,9 +5,10 @@ mod incremental_edit_tests;
 
 use super::super::syntax::{LexicalRustSyntaxAdapter, RaRustSyntaxAdapter, RustSyntaxAdapter};
 use super::model::{RustIndex, WorkspaceRootAuthority};
-use crate::analysis::cancellation;
+use crate::analysis::cancellation::{self, WorkerError};
 use crate::analysis::seam_cache::{
-    CacheLoad, FileFactCacheStats, KnownFilePaths, RepoFileFactCache, RepoFileFactCacheKey,
+    CacheLoad, FileFactCacheStats, FilesContentHashBuilder, KnownFilePaths, RepoFileFactCache,
+    RepoFileFactCacheKey,
 };
 use rayon::prelude::*;
 use std::path::{Path, PathBuf};
@@ -25,6 +26,12 @@ pub fn build_index(root: &Path, files: &[PathBuf]) -> Result<RustIndex, String> 
 pub(crate) struct CachedRustIndex {
     pub(crate) index: RustIndex,
     pub(crate) file_fact_cache: FileFactCacheStats,
+    /// `(path, content digest)` of every file this build parsed or looked
+    /// up, folded in input order with [`FilesContentHashBuilder`]. For
+    /// path-sorted input it equals the workspace `files_content_hash` of
+    /// the same bytes, so a caller holding a key from an earlier read can
+    /// detect that a file changed before this build read it (#4996).
+    pub(crate) files_content_hash: String,
 }
 
 /// Whether a cached build names which misses replaced an entry this build
@@ -75,9 +82,126 @@ fn build_index_from_loaded_files_with_cache_and_adapters(
     )
 }
 
+/// Streaming variant of [`build_index_from_loaded_files_with_cache`]
+/// (issue #4996): builds the same index from on-demand per-file reads
+/// instead of a caller-retained `&[(PathBuf, Vec<u8>)]` corpus.
+///
+/// `paths` are consumed in the given order in `PARSE_BATCH_FILES` chunks;
+/// each chunk's raw bytes are released before the next chunk is read, so
+/// peak live source bytes scale with one batch plus the owned index facts,
+/// not the whole corpus. Cache lookup, parallel-parse batching, store, and
+/// insert ordering are the loaded-files path's own batch loop, so stats and
+/// same-phase error precedence are identical; the reads add one
+/// cancellation checkpoint per file.
+///
+/// One deliberate precedence delta: the loaded path reads every file before
+/// parsing any, so a later-file read error beats an earlier-file parse
+/// error; here an earlier chunk resolves fully (including parse errors)
+/// before a later chunk is read. Both orders fail closed with an error —
+/// no consumer branches on which error wins — and ordering within a chunk
+/// keeps first-error-in-input-order exactly.
+pub(crate) fn build_index_from_paths_with_cache(
+    root: &Path,
+    paths: &[PathBuf],
+    attribution: MissAttribution,
+) -> Result<CachedRustIndex, String> {
+    build_index_from_paths_with_cache_and_adapters(
+        root,
+        paths,
+        &RaRustSyntaxAdapter,
+        &LexicalRustSyntaxAdapter,
+        attribution,
+    )
+}
+
+fn build_index_from_paths_with_cache_and_adapters(
+    root: &Path,
+    paths: &[PathBuf],
+    adapter: &(dyn RustSyntaxAdapter + Send + Sync),
+    fallback: &(dyn RustSyntaxAdapter + Send + Sync),
+    attribution: MissAttribution,
+) -> Result<CachedRustIndex, String> {
+    let cache = RepoFileFactCache::at(root);
+    // Each batch is read only when the shared loop asks for it, so the
+    // previous batch's bytes are dropped before the next read.
+    let batches = paths
+        .chunks(PARSE_BATCH_FILES)
+        .map(|chunk| StreamedBatch::read(root, chunk));
+    build_index_with_file_fact_cache_batches(root, batches, adapter, fallback, &cache, || {
+        match attribution {
+            MissAttribution::Named => cache.known_file_paths(),
+            MissAttribution::Skipped => KnownFilePaths::default(),
+        }
+    })
+}
+
 fn build_index_with_file_fact_cache(
     root: &Path,
     files: &[(PathBuf, Vec<u8>)],
+    adapter: &(dyn RustSyntaxAdapter + Send + Sync),
+    fallback: &(dyn RustSyntaxAdapter + Send + Sync),
+    cache: &RepoFileFactCache,
+    load_known_file_paths: impl FnMut() -> KnownFilePaths,
+) -> Result<CachedRustIndex, String> {
+    build_index_with_file_fact_cache_batches(
+        root,
+        files.chunks(PARSE_BATCH_FILES).map(Ok),
+        adapter,
+        fallback,
+        cache,
+        load_known_file_paths,
+    )
+}
+
+/// One `PARSE_BATCH_FILES` slice of raw source read from disk. Test builds
+/// charge its bytes to the live-source probes until it drops.
+struct StreamedBatch {
+    files: Vec<(PathBuf, Vec<u8>)>,
+    #[cfg(test)]
+    _live_bytes: streamed_source_bytes::Charge,
+    #[cfg(test)]
+    _source_lifetime: crate::analysis::seam_inventory::source_lifetime_probe::Lease,
+}
+
+impl StreamedBatch {
+    fn read(root: &Path, chunk: &[PathBuf]) -> Result<Self, String> {
+        let mut files = Vec::with_capacity(chunk.len());
+        #[cfg(test)]
+        let mut charge = streamed_source_bytes::Charge::default();
+        for file in chunk {
+            cancellation::checkpoint()?;
+            let bytes = std::fs::read(root.join(file))
+                .map_err(|err| format!("read {} failed: {err}", file.display()))?;
+            #[cfg(test)]
+            charge.add(bytes.len());
+            files.push((file.clone(), bytes));
+        }
+        Ok(Self {
+            #[cfg(test)]
+            _source_lifetime: crate::analysis::seam_inventory::source_lifetime_probe::constructed(
+                root,
+                charge.bytes(),
+            ),
+            #[cfg(test)]
+            _live_bytes: charge,
+            files,
+        })
+    }
+}
+
+impl AsRef<[(PathBuf, Vec<u8>)]> for StreamedBatch {
+    fn as_ref(&self) -> &[(PathBuf, Vec<u8>)] {
+        &self.files
+    }
+}
+
+/// Shared by the loaded-corpus and streaming paths (#4996): `batches`
+/// yields one `PARSE_BATCH_FILES` slice at a time, either borrowed from a
+/// loaded corpus or read from disk on demand. A batch read error is the
+/// same fail-closed `Err` as a parse error in that batch.
+fn build_index_with_file_fact_cache_batches<B: AsRef<[(PathBuf, Vec<u8>)]>>(
+    root: &Path,
+    batches: impl Iterator<Item = Result<B, String>>,
     adapter: &(dyn RustSyntaxAdapter + Send + Sync),
     fallback: &(dyn RustSyntaxAdapter + Send + Sync),
     cache: &RepoFileFactCache,
@@ -86,7 +210,7 @@ fn build_index_with_file_fact_cache(
     let mut accounting = CacheAccounting::default();
     let batched = insert_cached_file_batches(
         root,
-        files,
+        batches,
         adapter,
         fallback,
         cache,
@@ -102,7 +226,7 @@ fn build_index_with_file_fact_cache(
     // reports the entries found in the batches it admitted: later batches
     // are never looked up, so their entries are not claimed either way.
     emit_corrupt_entries_warning(stats.corrupt_ignored, first_corrupt_reason.as_deref());
-    let mut index = batched?;
+    let (mut index, files_content_hash) = batched?;
     cancellation::checkpoint()?;
     super::includes::resolve_repository_local_includes(root, &mut index);
     cancellation::checkpoint()?;
@@ -115,10 +239,14 @@ fn build_index_with_file_fact_cache(
     ));
     cancellation::checkpoint()?;
     index.package_names = manifest_package_names(root);
+    index.macro_owned_crates = macro_owned_crates(root, &index);
+    index.drop_in_manifests = super::drop_in::DropInManifests::new(root);
+    index.member_crates = super::member_crates::MemberCrates::new(root);
     cancellation::checkpoint()?;
     Ok(CachedRustIndex {
         index,
         file_fact_cache: stats,
+        files_content_hash,
     })
 }
 
@@ -142,15 +270,18 @@ struct CacheAccounting {
 /// Earlier batches' fresh facts may already be stored when a later batch
 /// fails. That matches the per-file, non-transactional cache contract: each
 /// entry is keyed by its own content and remains a valid future hit.
-fn insert_cached_file_batches(
+///
+/// Also returns the input-order fold of each file's cache-key digest, so
+/// the index and that hash always describe the same bytes.
+fn insert_cached_file_batches<B: AsRef<[(PathBuf, Vec<u8>)]>>(
     root: &Path,
-    files: &[(PathBuf, Vec<u8>)],
+    batches: impl Iterator<Item = Result<B, String>>,
     adapter: &(dyn RustSyntaxAdapter + Send + Sync),
     fallback: &(dyn RustSyntaxAdapter + Send + Sync),
     cache: &RepoFileFactCache,
     load_known_file_paths: &mut impl FnMut() -> KnownFilePaths,
     accounting: &mut CacheAccounting,
-) -> Result<RustIndex, String> {
+) -> Result<(RustIndex, String), String> {
     let CacheAccounting {
         stats,
         first_corrupt_reason,
@@ -165,8 +296,11 @@ fn insert_cached_file_batches(
     // Initialized once, at the first miss.
     let mut known_cached_file_paths: Option<KnownFilePaths> = None;
     let mut index = RustIndex::default();
+    let mut content_hash = FilesContentHashBuilder::new();
     let token = cancellation::current_token();
-    for batch in files.chunks(PARSE_BATCH_FILES) {
+    for batch in batches {
+        let batch = batch?;
+        let batch = batch.as_ref();
         // Phase 1: this batch's cache lookups. Reading, decoding and
         // verifying an entry is most of a warm build, so the lookups run on
         // the rayon workers; the outcomes are then accounted sequentially in
@@ -188,6 +322,9 @@ fn insert_cached_file_batches(
         for ((file, _), lookup) in batch.iter().zip(lookups) {
             cancellation::checkpoint()?;
             let (key, load) = lookup?;
+            // Folded sequentially in input order: the returned hash always
+            // describes exactly the bytes this build parsed or looked up.
+            content_hash.push_digest(file, key.content_hash());
             match load {
                 CacheLoad::Hit(facts) => {
                     stats.hits += 1;
@@ -226,27 +363,33 @@ fn insert_cached_file_batches(
         parsed.resize_with(batch.len(), || None);
         if !parse_positions.is_empty() {
             cancellation::checkpoint()?;
-            let results: Vec<(usize, Result<super::FileFacts, String>)> = parse_positions
+            let results: Vec<(usize, Result<super::FileFacts, WorkerError>)> = parse_positions
                 .par_iter()
                 .map(|&position| {
                     let result = cancellation::with_optional_token(token.as_ref(), || {
-                        cancellation::checkpoint()?;
+                        cancellation::checkpoint_typed()?;
                         let (file, bytes) = &batch[position];
-                        let facts = summarize_loaded_file(file, bytes, adapter, fallback)?;
-                        cancellation::checkpoint()?;
+                        let facts = summarize_loaded_file(file, bytes, adapter, fallback)
+                            .map_err(WorkerError::Failed)?;
+                        cancellation::checkpoint_typed()?;
                         Ok(facts)
                     });
                     (position, result)
                 })
                 .collect();
             // Do not replace an observed failure with a deadline noticed
-            // only after joining.
-            if let Some(error) = results.iter().find_map(|(_, result)| result.as_ref().err()) {
-                return Err(error.clone());
+            // only after joining, nor with a sibling's abort (#6721).
+            if let Some(error) = cancellation::select_batch_error(
+                token.as_ref(),
+                results
+                    .iter()
+                    .filter_map(|(_, result)| result.as_ref().err()),
+            ) {
+                return Err(error);
             }
             cancellation::checkpoint()?;
             for (position, result) in results {
-                parsed[position] = Some(result?);
+                parsed[position] = Some(result.map_err(WorkerError::into_message)?);
             }
         }
         #[cfg(test)]
@@ -289,7 +432,7 @@ fn insert_cached_file_batches(
             cancellation::checkpoint()?;
         }
     }
-    Ok(index)
+    Ok((index, content_hash.finish()))
 }
 
 /// Test-only lifetime instrument for #5029: the most `FileFacts` held
@@ -313,6 +456,53 @@ pub(super) mod uninserted_facts {
     /// observed high-water mark.
     pub(in crate::analysis::facts) fn observe<T>(work: impl FnOnce() -> T) -> (T, usize) {
         HIGH_WATER.with(|high| high.set(0));
+        let result = work();
+        (result, HIGH_WATER.with(Cell::get))
+    }
+}
+
+/// Test-only live raw-source instrument for #4996: bytes held by
+/// [`StreamedBatch`]es that have been read and not yet dropped, with the
+/// high-water mark. Batches are read on the calling thread. A builder that
+/// reads the whole corpus before parsing reports the corpus size; the
+/// streaming builder reports at most one batch.
+#[cfg(test)]
+pub(crate) mod streamed_source_bytes {
+    use std::cell::Cell;
+
+    thread_local! {
+        static LIVE: Cell<usize> = const { Cell::new(0) };
+        static HIGH_WATER: Cell<usize> = const { Cell::new(0) };
+    }
+
+    #[derive(Default)]
+    pub(in crate::analysis::facts) struct Charge(usize);
+
+    impl Charge {
+        pub(in crate::analysis::facts) fn add(&mut self, bytes: usize) {
+            self.0 += bytes;
+            let live = LIVE.with(|live| {
+                live.set(live.get() + bytes);
+                live.get()
+            });
+            HIGH_WATER.with(|high| high.set(high.get().max(live)));
+        }
+
+        pub(in crate::analysis::facts) fn bytes(&self) -> usize {
+            self.0
+        }
+    }
+
+    impl Drop for Charge {
+        fn drop(&mut self) {
+            LIVE.with(|live| live.set(live.get().saturating_sub(self.0)));
+        }
+    }
+
+    /// Reset, run `work` on this thread, and return its result with the
+    /// observed high-water mark of live streamed bytes.
+    pub(crate) fn observe<T>(work: impl FnOnce() -> T) -> (T, usize) {
+        HIGH_WATER.with(|high| high.set(LIVE.with(Cell::get)));
         let result = work();
         (result, HIGH_WATER.with(Cell::get))
     }
@@ -347,23 +537,30 @@ fn build_index_with_adapters(
         // Read + parse run on rayon workers; every file is independent.
         // `collect` on an indexed parallel iterator preserves input order,
         // so `results[i]` corresponds to `batch[i]`.
-        let results: Vec<Result<(PathBuf, super::FileFacts, bool), String>> = batch
+        let results: Vec<Result<(PathBuf, super::FileFacts, bool), WorkerError>> = batch
             .par_iter()
             .map(|file| {
                 cancellation::with_optional_token(token.as_ref(), || {
-                    cancellation::checkpoint()?;
+                    cancellation::checkpoint_typed()?;
                     let full = root.join(file);
-                    let bytes = std::fs::read(&full)
-                        .map_err(|err| format!("failed to read {}: {err}", full.display()))?;
-                    cancellation::checkpoint()?;
-                    let summary = summarize_loaded_file(file, &bytes, adapter, fallback)?;
-                    cancellation::checkpoint()?;
+                    let bytes = std::fs::read(&full).map_err(|err| {
+                        WorkerError::Failed(format!("failed to read {}: {err}", full.display()))
+                    })?;
+                    cancellation::checkpoint_typed()?;
+                    let summary = summarize_loaded_file(file, &bytes, adapter, fallback)
+                        .map_err(WorkerError::Failed)?;
+                    cancellation::checkpoint_typed()?;
                     Ok((file.clone(), summary, rust_source_text(&bytes).not_utf8))
                 })
             })
             .collect();
-        if let Some(error) = results.iter().find_map(|result| result.as_ref().err()) {
-            return Err(error.clone());
+        // The first ordinary failure in input order wins over a sibling's
+        // abort (#6721); with none, the first abort in input order.
+        if let Some(error) = cancellation::select_batch_error(
+            token.as_ref(),
+            results.iter().filter_map(|result| result.as_ref().err()),
+        ) {
+            return Err(error);
         }
         cancellation::checkpoint()?;
         // Insert sequentially in original input order: `RustIndex.tests`
@@ -372,7 +569,7 @@ fn build_index_with_adapters(
         // in input order wins and the per-iteration checkpoint ordering
         // (error first, then checkpoint) is unchanged.
         for result in results {
-            let (file, summary, not_utf8) = result?;
+            let (file, summary, not_utf8) = result.map_err(WorkerError::into_message)?;
             if not_utf8 {
                 index.non_utf8_sources.insert(file.clone());
             }
@@ -393,16 +590,18 @@ fn build_index_with_adapters(
     ));
     cancellation::checkpoint()?;
     index.package_names = manifest_package_names(root);
+    index.macro_owned_crates = macro_owned_crates(root, &index);
+    index.drop_in_manifests = super::drop_in::DropInManifests::new(root);
+    index.member_crates = super::member_crates::MemberCrates::new(root);
     cancellation::checkpoint()?;
     Ok(index)
 }
 
 /// The crate names of the analyzed root manifest: the `[package] name`
 /// plus the `[lib] name` target when the manifest declares one. Root
-/// manifest only: member manifests are not resolved here, so multi-crate
-/// workspaces leave member-crate names unlisted and the same-name-import
-/// gate treats member imports as foreign (fail-closed under-credit; see
-/// `RustIndex.package_names`). Each name is stored in BOTH spellings —
+/// manifest only: a member crate's import of another member's owner is
+/// admitted per test and owner by `MemberCrates`, which reads the member
+/// manifests (RIPR-SPEC-0197 rule 5). Each name is stored in BOTH spellings —
 /// raw and crate-identifier form (#3731 review F23: hyphens normalize to
 /// underscores in crate identifiers, so a package named `foo-bar` is
 /// imported as `foo_bar`, and integration tests import the `[lib]`
@@ -437,6 +636,68 @@ fn manifest_package_names(root: &Path) -> std::collections::BTreeSet<String> {
         .and_then(toml::Value::as_str)
     {
         insert(name);
+    }
+    names
+}
+
+/// `index.package_names` plus every `[workspace] members` crate (literal
+/// paths and trailing `/*` globs, minus `exclude`) that has an indexed file.
+/// A member whose files are not indexed stays foreign: its macro
+/// definitions were not scanned.
+fn macro_owned_crates(root: &Path, index: &RustIndex) -> std::collections::BTreeSet<String> {
+    let mut names = index.package_names.clone();
+    let Ok(text) = std::fs::read_to_string(root.join("Cargo.toml")) else {
+        return names;
+    };
+    let Ok(value) = text.parse::<toml::Table>() else {
+        return names;
+    };
+    let Some(workspace) = value.get("workspace").and_then(toml::Value::as_table) else {
+        return names;
+    };
+    let patterns = |key: &str| {
+        workspace
+            .get(key)
+            .and_then(toml::Value::as_array)
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(toml::Value::as_str)
+                    .map(|item| item.trim_end_matches('/').to_string())
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default()
+    };
+    let excluded = patterns("exclude");
+    let mut members = Vec::new();
+    for pattern in patterns("members") {
+        if let Some(parent) = pattern.strip_suffix("/*") {
+            let Ok(entries) = std::fs::read_dir(root.join(parent)) else {
+                continue;
+            };
+            for entry in entries.flatten() {
+                if let Some(name) = entry.file_name().to_str() {
+                    members.push(format!("{parent}/{name}"));
+                }
+            }
+        } else if !pattern.contains(['*', '?', '[']) {
+            members.push(pattern);
+        }
+    }
+    for member in members {
+        if excluded.contains(&member) {
+            continue;
+        }
+        let directory = Path::new(&member);
+        if !index.files().iter().any(|(path, _)| {
+            let path = path.strip_prefix(root).unwrap_or(path);
+            path.strip_prefix("./")
+                .unwrap_or(path)
+                .starts_with(directory)
+        }) {
+            continue;
+        }
+        names.extend(manifest_package_names(&root.join(directory)));
     }
     names
 }
@@ -546,6 +807,46 @@ mod tests {
             root.join("Cargo.toml"),
             "[package]\nname='test'\nversion='0.1.0'\nedition='2024'\n",
         )?;
+        Ok(())
+    }
+
+    #[test]
+    fn macro_owned_crates_add_indexed_workspace_members_only() -> Result<(), Box<dyn Error>> {
+        let root = temp_dir("macro_owned_crates")?;
+        fs::write(
+            root.join("Cargo.toml"),
+            "[workspace]\nmembers = ['regex-syntax', 'crates/*']\nexclude = ['crates/skip']\n",
+        )?;
+        for (dir, manifest) in [
+            ("regex-syntax", "[package]\nname = 'regex-syntax'\n"),
+            (
+                "crates/cli",
+                "[package]\nname = 'grep-cli'\n[lib]\nname = 'grep_cli_lib'\n",
+            ),
+            ("crates/unindexed", "[package]\nname = 'unindexed'\n"),
+            ("crates/skip", "[package]\nname = 'skip'\n"),
+        ] {
+            fs::create_dir_all(root.join(dir).join("src"))?;
+            fs::write(root.join(dir).join("Cargo.toml"), manifest)?;
+            fs::write(root.join(dir).join("src/lib.rs"), "pub fn f() {}\n")?;
+        }
+        let files = vec![
+            PathBuf::from("regex-syntax/src/lib.rs"),
+            PathBuf::from("crates/cli/src/lib.rs"),
+            PathBuf::from("crates/skip/src/lib.rs"),
+        ];
+        let index = build_index(&root, &files)?;
+        // The root is a virtual manifest: no package names of its own.
+        assert!(index.package_names.is_empty());
+        let owned = index.macro_scope_crates();
+        for name in ["regex_syntax", "regex-syntax", "grep_cli", "grep_cli_lib"] {
+            assert!(owned.contains(name), "{name}: {owned:?}");
+        }
+        // Not indexed, or excluded: its macros were not scanned.
+        for name in ["unindexed", "skip"] {
+            assert!(!owned.contains(name), "{name}: {owned:?}");
+        }
+        fs::remove_dir_all(&root)?;
         Ok(())
     }
 
