@@ -52,10 +52,10 @@ use crate::analysis::facts::{
 };
 use crate::analysis::syntax::fn_signature::{LocalTypeEquality, local_type_equality};
 use crate::analysis::syntax::{
-    AssertionContextRefusal, MacroBindingCandidates, MacroBindingKind, MacroBindingSite,
-    OwnerPinAssertions, TRUSTED_MACRO_NAMES, attribute_settles_test_outcome,
-    empty_macro_binding_ambiguities, local_empty_macro_names, macro_binding_scan,
-    owner_pin_assertions, parse_clean_source_file, returns_leave_the_function,
+    AssertionContextRefusal, GeneratedTestPins, MacroBindingCandidates, MacroBindingKind,
+    MacroBindingSite, OwnerPinAssertions, TRUSTED_MACRO_NAMES, attribute_settles_test_outcome,
+    empty_macro_binding_ambiguities, generated_test_pins, local_empty_macro_names,
+    macro_binding_scan, owner_pin_assertions, parse_clean_source_file, returns_leave_the_function,
     trusted_macro_binding_sites,
 };
 use crate::domain::{Probe, ProbeFamily};
@@ -110,6 +110,9 @@ pub(in crate::analysis) struct OwnerPinSyntax {
     test_file_macro_sites: RefCell<TestFileMacroSites>,
     by_file: RefCell<BTreeMap<PathBuf, OwnerPinAssertions>>,
     empty_macro_ambiguities: RefCell<BTreeMap<PathBuf, BTreeSet<String>>>,
+    /// Per file: the expansion-coordinate admission facts of the tests a
+    /// same-file `macro_rules!` generated (#5334).
+    generated: RefCell<BTreeMap<PathBuf, Vec<GeneratedTestPins>>>,
     resolved_modules: OnceCell<BTreeSet<(PathBuf, usize, String)>>,
     /// Workspace-wide inputs to [`TargetRoots::root`], computed once.
     target_roots: OnceCell<TargetRoots>,
@@ -490,7 +493,7 @@ impl OwnerPinSyntax {
                 });
             }
         }
-        by_file
+        let file_refusal = by_file
             .entry(test.file.clone())
             .or_insert_with(|| owner_pin_assertions(&facts.source, NON_RETURNING_MACROS))
             .refusal(
@@ -498,8 +501,58 @@ impl OwnerPinSyntax {
                 &test.body,
                 (assertion.line, &assertion.text),
                 &ambiguous,
-            )
-            .map(AssertionRefusal::Syntax)
+            );
+        let file_refusal = file_refusal?;
+        // A generated test is not in the file's text: the same admission
+        // runs over its invocation's expansion, matched by name, attributes,
+        // body and assertion text in the expansion's own coordinates. A
+        // matched assertion carries the expansion's own verdict — admitted
+        // reads like the hand-written twin, and a refusal surfaces the
+        // expansion's reason, not the file text's "test not identified"
+        // (the invocation line holds no `fn`), so both twins refuse as the
+        // same kind.
+        let generated_verdicts = self
+            .generated
+            .borrow_mut()
+            .entry(test.file.clone())
+            .or_insert_with(|| generated_test_pins(&test.file, &facts.source, NON_RETURNING_MACROS))
+            .iter()
+            .filter(|invocation| {
+                invocation.start_line == test.start_line && invocation.end_line == test.end_line
+            })
+            .flat_map(|invocation| {
+                invocation
+                    .tests
+                    .iter()
+                    .filter(|local| {
+                        local.name == test.name
+                            && local.attrs == test.attrs
+                            && local.body == test.body
+                    })
+                    .map(move |local| (invocation, local))
+            })
+            .flat_map(|(invocation, local)| {
+                local
+                    .assertions
+                    .iter()
+                    .filter(|local_assertion| local_assertion.text == assertion.text)
+                    .map(|local_assertion| {
+                        invocation.pins.refusal(
+                            (local.start_line, local.end_line, &local.name),
+                            &local.body,
+                            (local_assertion.line, &local_assertion.text),
+                            &ambiguous,
+                        )
+                    })
+            })
+            .collect::<Vec<_>>();
+        if generated_verdicts.iter().any(|verdict| verdict.is_none()) {
+            return None;
+        }
+        if let Some(Some(generated_refusal)) = generated_verdicts.into_iter().next() {
+            return Some(AssertionRefusal::Syntax(generated_refusal));
+        }
+        Some(AssertionRefusal::Syntax(file_refusal))
     }
 }
 
