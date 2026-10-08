@@ -1,0 +1,13 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index f0ab98d..5992379 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -35,7 +35,7 @@ pub fn handling_fee(weight: u32) -> u32 {
+ }
+ 
+ pub fn label(version: u32) -> String {
+-    format!("v{version}")
++    format!("v{}", version)
+ }
+ 
+ #[cfg(test)]

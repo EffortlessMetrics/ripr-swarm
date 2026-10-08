@@ -127,6 +127,11 @@ pub(crate) struct EvidenceRecord {
     pub(crate) observed_values: Vec<EvidenceRecordObservedValue>,
     pub(crate) missing_discriminators: Vec<EvidenceRecordMissingDiscriminator>,
     pub(crate) related_tests_total: usize,
+    /// #7007: producer-owned count of related tests carrying a statically
+    /// contradicted exact-value assertion, over the FULL related set. The
+    /// `related_tests` array below is capped and names only each entry's
+    /// best oracle, so this count is the only complete contradiction signal.
+    pub(crate) statically_contradicted_related_tests: usize,
     pub(crate) related_tests: Vec<EvidenceRecordRelatedTest>,
     pub(crate) recommendation: EvidenceRecordRecommendation,
     pub(crate) actionability: EvidenceRecordActionability,
@@ -405,6 +410,8 @@ pub(crate) fn evidence_record_with_bound_verify_command(
         verify_command,
     );
     let related_tests_total = entry.evidence.related_tests.len();
+    let statically_contradicted_related_tests =
+        entry.evidence.statically_contradicted_related_tests;
     let static_limitations = static_limitations_for(entry);
     let raw_findings = raw_findings_for(entry);
     let canonical_item = canonical_item_for(
@@ -469,6 +476,7 @@ pub(crate) fn evidence_record_with_bound_verify_command(
             })
             .collect(),
         related_tests_total,
+        statically_contradicted_related_tests,
         related_tests: entry
             .evidence
             .related_tests
@@ -489,7 +497,7 @@ pub(crate) fn evidence_record_with_bound_verify_command(
 }
 
 pub(crate) fn evidence_record_json_value(record: &EvidenceRecord) -> Value {
-    json!({
+    let mut value = json!({
         "schema_version": EVIDENCE_RECORD_SCHEMA_VERSION,
         "seam_id": record.seam_id.as_str(),
         "canonical_gap_id": record.canonical_gap_id.as_deref(),
@@ -548,7 +556,16 @@ pub(crate) fn evidence_record_json_value(record: &EvidenceRecord) -> Value {
             .presentation_text
             .as_ref()
             .map_or(Value::Null, presentation_text_json),
-    })
+    });
+    // Rendered only while a contradiction exists, so existing consumers and
+    // goldens never see the field for clean evidence sets; its presence is
+    // the completeness signal — the count covers the FULL related set, not
+    // the capped `related_tests` projection (#7007 review).
+    if record.statically_contradicted_related_tests > 0 {
+        value["statically_contradicted_related_tests"] =
+            json!(record.statically_contradicted_related_tests);
+    }
+    value
 }
 
 use crate::output::path::display_path;
@@ -1953,6 +1970,7 @@ mod tests {
                     }),
                 }],
                 new_test_target: None,
+                statically_contradicted_related_tests: 0,
             },
             seam,
             class,
@@ -2016,6 +2034,7 @@ mod tests {
                     flow_sink: None,
                 }],
                 new_test_target: None,
+                statically_contradicted_related_tests: 0,
             },
             seam,
             class,
@@ -2084,6 +2103,7 @@ mod tests {
                 discriminate: stage(StageState::Weak, "broad assertion mentions target"),
                 observed_values: Vec::new(),
                 missing_discriminators: Vec::new(),
+                statically_contradicted_related_tests: 0,
                 new_test_target: None,
             },
             seam,

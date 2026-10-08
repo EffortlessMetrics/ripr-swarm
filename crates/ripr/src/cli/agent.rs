@@ -814,6 +814,7 @@ pub(super) fn parse_agent_stub_options(args: &[String]) -> Result<AgentStubOptio
     use crate::app::test_stub::TestStubSelector;
     let mut root = PathBuf::from(".");
     let mut selector: Option<TestStubSelector> = None;
+    let mut kind: Option<String> = None;
     let mut write = false;
     let mut json = false;
 
@@ -823,6 +824,13 @@ pub(super) fn parse_agent_stub_options(args: &[String]) -> Result<AgentStubOptio
             "--root" => {
                 i += 1;
                 root = PathBuf::from(expect_value(args, i, "--root")?);
+            }
+            "--kind" => {
+                i += 1;
+                if kind.is_some() {
+                    return Err("agent stub takes --kind once".to_string());
+                }
+                kind = Some(expect_value(args, i, "--kind")?.to_string());
             }
             "--seam-id" | "--at" => {
                 let flag = args[i].clone();
@@ -851,6 +859,10 @@ pub(super) fn parse_agent_stub_options(args: &[String]) -> Result<AgentStubOptio
         "agent stub requires --seam-id ID or --at FILE:LINE (the location `ripr check` prints)"
             .to_string()
     })?;
+    let selector = match kind {
+        Some(kind) => selector.with_kind(&kind)?,
+        None => selector,
+    };
     Ok(AgentStubOptions {
         root,
         selector,

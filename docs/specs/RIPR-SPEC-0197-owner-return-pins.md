@@ -25,6 +25,8 @@ Linked issues:
   production declarations keep their pin)
 - #6950 (an out-of-line parent module declaring the receiver shadows it:
   the parent chain refuses the pin and direct reach)
+- #7067 (a single-file `use ... as <name>` rename rebinds the receiver in
+  either spelling: the raw form refuses the pin and direct reach too)
 - RIPR-SPEC-0219 verdict corpus: `assert!(owner(..))` on a bool owner read
   as a weak relational check (bool-owner pins below)
 - #6482 (an `assert_eq!` in a test-local check helper the test calls
@@ -150,8 +152,8 @@ rule only for an assertion whose context was admitted.
    included) has no other token in the test (no shadowing, mutation, alias
    or second use). No attribute may appear anywhere in the rows, since a
    `#[cfg]` can remove every element. Every row leaf is a literal, a negated
-   literal, `None`, `Some(..)`, `Ok(..)`, `Err(..)`, a qualified path whose
-   segments are all CamelCase without generic arguments (`Kind::Empty`,
+   literal, `None`, `Some`, `Ok` or `Err` (bare or called), a qualified path
+   whose segments are all CamelCase other than `Self`, without generic arguments (`Kind::Empty`,
    `Status::Complete(5)`), or `vec![..]` whose tokens are literals and the
    punctuation `[ ] ( ) , - &`; parentheses, references, tuples and nested
    arrays of these are constant. A bare CamelCase name may be a `fn` or
@@ -159,8 +161,8 @@ rule only for an assertion whose context was admitted.
    ranges, indexes and repeat arrays (`[r; n]`), since they may be empty or
    carry the owner's own output. A `break` or `continue` anywhere in the
    loop before the assertion refuses it, as for `loop`. This admits the
-   assertion's execution only; every other rule still applies to it, and a
-   loop-bound argument is not a literal input for boundary pairing.
+   assertion's execution only; every other rule still applies to it.
+   RIPR-SPEC-0186 says when a loop-bound argument is a boundary input.
    `?` in a root test remains supported (an error fails an ordinary Result
    test); `?` in a closure is refused because its result could be discarded.
    Exactly
@@ -176,8 +178,9 @@ rule only for an assertion whose context was admitted.
    once, by an immutable `let v [: T] = <call>;`, is that call (#6974) when
    `v` appears nowhere else in the test but as a whole operand of
    `assert_eq!` assertions on later lines, and the assertion is the
-   statement right after the `let` (a statement between them could change
-   the value through a shared handle). A `mut` binding, a second binding, a
+   statement right after the `let` and the only statement on its line (a
+   statement between them, or one sharing the assertion's line, could
+   change the value through a shared handle). A `mut` binding, a second binding, a
    borrow, a method call or argument use of `v`, a use before the `let`,
    or an initializer with anything around the call leaves the assertion
    unpinned. An expected operand naming a `let` whose initializer mentions
@@ -198,7 +201,25 @@ rule only for an assertion whose context was admitted.
      workspace, the test must not bind the name (`let`, nested `fn`, the
      test's parameters, a `for`, closure or match-arm pattern, or a macro
      such as `let_assert!` that mentions it), and the test's file must not
-     rename an item to it (`use a::b as name`).
+     rename an item to it (`use a::b as name`). As for a path (below), the
+     owner must sit directly in a module ripr can place by parsing its
+     file, and neither the owner nor any enclosing inline module may carry
+     a `cfg` or `cfg_attr` attribute, outer or inner (#7082): a
+     complementary cfg may compile a same-named `static`, `const` or `use`
+     that the bare name reaches instead. Nor may the owner's file be
+     droppable by a cfg: a `cfg`, or a `cfg_attr` whose attributes name
+     `cfg`, `cfg_attr` or `path`, as an inner attribute at the top of the
+     owner's file or of any file on the chain that compiles it into its
+     crate, or on the out-of-line `mod name;` declaration of each step of
+     that chain, lets a same-named module replace the whole file. A
+     `cfg_attr` that only toggles lints or docs
+     (`#![cfg_attr(docsrs, feature(doc_cfg))]`) does not. An include edge,
+     an unresolved chain, or a non-root file with no recorded chain (ripr records none for a `#[path]` it cannot resolve,
+     such as one under `cfg_attr`) fails closed
+     (`a_cfg_gated_owner_is_not_reached_by_a_bare_call`,
+     `an_ancestor_file_a_cfg_may_drop_gates_the_owner`,
+     `a_cfg_attr_path_on_the_owners_declaration_gates_it_through_real_composition`).
+     The same file rule applies to a path call.
    - A path call `a::b::name(..)` (#6974) names the same free function only
      when the path resolves to exactly the module that declares the owner.
      There an explicit `fn name` takes the value name from every glob, and
@@ -250,7 +271,11 @@ rule only for an assertion whose context was admitted.
      parameters, a macro that mentions it) leaves the type unestablished. A
      named type must be a struct, enum or union declared in the workspace,
      and the test's file must not import it from outside the workspace,
-     rename another item to it, or declare a `type` alias of it. A type
+     rename another item to it, or declare a `type` alias of it. A rename
+     refuses in either spelling: `r#Window` denotes `Window`, so a
+     raw-identifier alias rebinds the same name (#7067). Related-test
+     reach shares the single-file rename refusal: a rebound receiver keeps
+     a name-only relation, never `direct_owner_call`. A type
      declaration of the name in the test's own module scope shadows the
      production type for that test (#6905), so it refuses the pin rather
      than crediting the production method. A macro definition or invocation
@@ -614,6 +639,11 @@ string literal is not a call or a reference. These rules hold for
   non-exposed (`fixtures/owner_return_pin_out_of_line_test_module_shadow`,
   #6950): the nested child test binds the parent module's own `Window`,
   so the pin is refused and the relation stays name-only
+  (`weak_token_substring`).
+- A fixture pins a single-file raw-identifier rename as non-exposed
+  (`fixtures/owner_return_pin_single_file_raw_rename_shadow`, #7067):
+  the test binds the renamed item through the plain spelling, so the
+  pin is refused and the relation stays name-only
   (`weak_token_substring`).
 - Unit tests pin every gate with a positive and a discriminating negative.
 - Twenty matched fixtures keep effective and ineffective tests separate:

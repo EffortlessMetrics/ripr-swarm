@@ -913,14 +913,20 @@ same-repo, non-draft PR heads with no `Ripr Rust Small Result` check run on the
 head SHA, and reports them (step-summary row plus a workflow warning). It is
 alert-only (#4986; issue #4937 option ii): it never dispatches
 `routed-rust.yml` and holds no `actions: write` permission. With Ready-only
-admission, a Ready head without the required check is either a dropped
-Ready-triggered delivery or a push made after Ready, and the watchdog cannot
-tell the two apart. A head mutated after Ready has revoked its own admission
+admission, a Ready head without the required check is a dropped
+Ready-triggered delivery, a push made after Ready, or a conflicting head with
+no merge ref (#7079). A conflicting (`dirty`) PR silently gets zero
+`pull_request` runs because `routed-rust.yml` evaluates from the merge ref,
+which does not exist while the PR conflicts. The watchdog cannot tell a
+dropped delivery from a post-Ready push, but its summary row carries each PR's
+`mergeable_state`, so the conflicted dark mode is distinguishable from both at
+a glance. A head mutated after Ready has revoked its own admission
 and must not be qualified by a lighter branch-head dispatch (which skips the
-`pull_request`-scoped PR-evidence steps). The remedy for every reported head
-is the same: convert the PR to Draft and mark it Ready for review again, which
-runs the full Ready-triggered qualification on the exact head and also
-recovers a dropped delivery. The required check, not run existence, is the
+`pull_request`-scoped PR-evidence steps). Before re-toggling, check merge
+conflicts first: query the PR's `mergeable_state`; `dirty` means merge `main`
+into the branch first, and only then convert the PR to Draft and mark it Ready
+for review again, which runs the full Ready-triggered qualification on the
+exact head and also recovers a dropped delivery. The required check, not run existence, is the
 discriminator: any `Ripr Rust Small Result` check run on the head SHA is a
 real qualification attempt on that exact head. That check run is created only
 when the `result` job starts, after every implementation job (up to 120
@@ -931,7 +937,8 @@ head would cancel the real run, so the watchdog never recommends it. This uses
 `actions: read` only. Drafts and fork heads are
 skipped. No PR comments are posted; each sweep's summary table is the audit
 trail. `xtask/tests/pr_readiness_workflow_contract.rs` pins the alert-only
-shape (no dispatch command, no `actions: write`) and the in-flight check.
+shape (no dispatch command, no `actions: write`), the in-flight check, and
+the `mergeable_state` column.
 
 ### Self-Hosted Runner Placement
 

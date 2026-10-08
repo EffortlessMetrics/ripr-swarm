@@ -32,6 +32,62 @@ can only hint that a caller "may lead here" without changing anything.
   direct call would produce. The owner's exact input rows bind down
   the chain, so #3295's boundary machinery evaluates the helper's
   operands with the tests' literals.
+- The chain relation outranks any file-path, test-name or token
+  proximity reason (#6694, #6672): a test that calls a resolved hop's
+  caller relates as `HelperOwnerCall`, not `same_test_file`,
+  `owner_named_test` or `weak_token_substring`. A test that calls no hop
+  caller keeps its proximity reason.
+- A hop-caller call that a test-local binding shadows (a nested
+  `fn <name>` anywhere in the test body, or a `let` binding naming it at
+  or before the call, such as `let order_discount = |_: u32| 5;`) is not a
+  call of the hop caller: it earns no `HelperOwnerCall` and binds no row
+  down the chain. The shadow authority is the seam-call one: parser body
+  facts on parser-backed files, the masked-body lexical scanners
+  otherwise. The call is also treated as shadowed (fail closed) when the
+  hop caller's name is not unique among workspace functions (a same-named
+  `fn` in `mod tests` or a test file), or when the test's file imports
+  another item under that name: a `use .. as <name>` rename, or a `use`
+  of `<name>` from a foreign crate. Known gap (#3727): the parser path
+  collects only `let` statements, so `if let`/`while let`, match-arm,
+  closure-parameter, `for` and macro-introduced bindings do not shadow on
+  parser-backed files.
+- Hop propagation (#6780): for probe families observed through the
+  owner's returned value (every family except `side_effect` and
+  `call_deletion`), when the related tests reach the owner only
+  through the chain (some `HelperOwnerCall`, no `DirectOwnerCall`), the
+  owner's result must be forwarded unchanged through every hop up to the
+  highest hop whose caller a `HelperOwnerCall` test calls directly (the
+  maximum across those tests); hops above it are not checked, because no
+  related test observes their result. When any such test's directly
+  called hop cannot be found, the whole chain is checked (fail closed).
+  A hop forwards when its caller has no `return` or `?`, does not rebind
+  or assign a parameter it forwards, and its tail is the hop call itself
+  or `if <call> { L1 } else { L2 }` / `if !<call> ..` with literals `L1`,
+  `L2` of distinct value. Otherwise the propagation stage is `unknown`
+  (`helper_result_not_forwarded`), so the finding abstains instead of
+  crediting the entry's oracle or reporting a gap. Arithmetic or
+  let-bound use of the result is not followed in V1.
+- Effect propagation (#6780): a `side_effect` or `call_deletion` probe
+  acts on state rather than on a returned value, so it is not judged by
+  result forwarding. Under the same chain-only reach and the same
+  observed-hop bound, it keeps its owner-local effect-sink propagation
+  only when the probe expression names at least one owner parameter (the
+  effect target, `out` in `out.push(10)`) and every observed hop passes
+  each such parameter through as one of its own parameters, by name and
+  not rebound or assigned (`wrapper(out) { record(out) }`). Any other
+  argument at that position — a fresh temporary (`record(&mut
+  Vec::new())`), a wrapper-local (`let mut v = ..; record(&mut v)`), a
+  field, a static or an expression — and a probe that names no owner
+  parameter make propagation `unknown` (`helper_result_not_forwarded`):
+  the caller's test cannot see that state, so the finding abstains.
+- Boundary pairing through the entry (RIPR-SPEC-0186) reads only rows
+  recomputed from the asserting test, and requires the assertion's
+  subject to hold exactly one entry call whose arguments are each a whole
+  literal, identifier or path; a scalar buried in a compound argument
+  (`entry(std::cmp::max(10, 50))`, `entry(10 * 2)`) does not pair.
+- A hop argument that is a caller parameter the caller rebinds or assigns
+  (`let qty = qty * 2;`, `qty += 1`, a `let`/`for`/closure/match pattern
+  naming it) stops the row transfer like a computed argument.
 - A comparison operand that is a **direct call to a unique helper**
   (`is_word_start(input, 0) == want`) evaluates through the helper's
   return when the body is simple single-line `let` statements plus a
@@ -108,7 +164,9 @@ limitation unchanged.
 `analysis/classify/helper_transfer.rs` `tests`;
 `analysis/classify/related_tests.rs` (the `HelperOwnerCall` relation
 branch); `analysis/classify/activation.rs` (transferred rows and the
-call operand); fixtures `helper_chain_{one_hop,multi_hop,controls}`.
+call operand); fixtures `helper_chain_{one_hop,multi_hop,controls}`;
+`crates/ripr/tests/helper_wrapper_reach.rs` (relation precedence, hop
+propagation stop, rebinding stop).
 
 ## Non-Goals
 
@@ -127,6 +185,8 @@ call operand); fixtures `helper_chain_{one_hop,multi_hop,controls}`.
 - `analysis/classify/related_tests.rs` — the relation branch.
 - `analysis/classify/activation.rs` — transferred rows, call operands.
 - `analysis/classify/context.rs` — the chain on `ProbeContext`.
+- `analysis/classifier/evidence.rs` — the hop-propagation stop
+  (`helper_result_not_forwarded`).
 
 ## Metrics
 

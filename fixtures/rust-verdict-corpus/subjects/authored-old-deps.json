@@ -1,0 +1,53 @@
+{
+  "subject_id": "authored-old-deps",
+  "origin": "authored",
+  "version_label": "authored 2026-10-04 for older spec-defined cells",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "Cargo.toml",
+      "sha256": "5962584f464486e5604e41c4ae922990c3f752b1070394326d6e13fb24237c7b"
+    },
+    {
+      "path": "meter/Cargo.toml",
+      "sha256": "425ecde248e99dfcbc33c2cbe3142d3edfc4f992b7198c51969a4ce845af9845"
+    },
+    {
+      "path": "meter/src/lib.rs",
+      "sha256": "26ac5b0d922703d77968944f69c6474bce63a41e73c2fee53717e1afc82ceee9"
+    },
+    {
+      "path": "panel/Cargo.toml",
+      "sha256": "e07dfa223527533d79923855dd24c15db508f8f5861f11eaa0e4b69e47d3a675"
+    },
+    {
+      "path": "panel/src/lib.rs",
+      "sha256": "3dc8184ab3099883ddead674d44aa517dcd343031a40c221c8c4c1cef155e56d"
+    },
+    {
+      "path": "panel/tests/aliased.rs",
+      "sha256": "07a403adbaa34b152ef852827c42bd64c801f5dfa5250784423069b3a5465484"
+    },
+    {
+      "path": "panel/tests/direct.rs",
+      "sha256": "34cbe2808c9657847eacdc2c8bb374c7264138a462b5418251b1b1bd5cd14d30"
+    },
+    {
+      "path": "panel/tests/globbed.rs",
+      "sha256": "51c6dda911f14e51dda8642b18bd336e786ddc28c41b2dcd5cd6e930d8418601"
+    },
+    {
+      "path": "panel/tests/other_dependency.rs",
+      "sha256": "1bedfb4530e01a9041b8cc38cb586e5e80fdba9b187f4025ce657701556ddf31"
+    },
+    {
+      "path": "spare/Cargo.toml",
+      "sha256": "eef039e3a20fc331e422820a496bc58506c26569f5354a6ad5b21b7357afc936"
+    },
+    {
+      "path": "spare/src/lib.rs",
+      "sha256": "96e8ac33339c391f29a8f44044eee6a0aa016e7ea5157acd8fadaf06458a6723"
+    }
+  ]
+}

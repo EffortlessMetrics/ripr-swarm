@@ -988,7 +988,7 @@ fn installed_release(tree: &Path, toolchain: &str) -> Option<String> {
 pub(crate) fn relabel(args: &[String]) -> Result<(), String> {
     let args = parse_args(args)?;
     let dir = Path::new(CORPUS_DIR);
-    let corpus: Corpus = validated_corpus(dir)?;
+    let (corpus, _coverage): (Corpus, _) = validated_corpus(dir)?;
     let subject = |id: &str| corpus.subjects.iter().find(|s| s.subject_id == id);
 
     let mut not_replayed = Vec::new();

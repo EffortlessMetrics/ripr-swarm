@@ -9,6 +9,7 @@ pub(crate) mod drop_in;
 mod harness_registry;
 mod includes;
 mod index;
+mod macro_generated_tests;
 pub(crate) mod member_crates;
 mod model;
 mod parameterized_tests;
@@ -41,6 +42,13 @@ pub fn build_index_with_test_harnesses(
     })?;
     index_phase("index_test_styles", || {
         test_styles::normalize_index_test_styles(&mut index)?;
+        index.refresh_memberships()
+    })?;
+    // #5334: same-file macro_rules! test generators, expanded in one
+    // bounded shape. After the style normalizer, which rebuilds
+    // tests from parsed functions and has none for a generated test.
+    index_phase("index_macro_generated_tests", || {
+        macro_generated_tests::register_macro_generated_tests(&mut index);
         index.refresh_memberships()
     })?;
     // Composition runs strictly after the normalizer: the normalizer
@@ -132,6 +140,13 @@ fn post_process_cached_index(
     })?;
     index_phase("index_test_styles", || {
         test_styles::normalize_index_test_styles(&mut cached.index)?;
+        cached.index.refresh_memberships()
+    })?;
+    // #5334: same-file macro_rules! test generators, expanded in one
+    // bounded shape. After the style normalizer, which rebuilds
+    // tests from parsed functions and has none for a generated test.
+    index_phase("index_macro_generated_tests", || {
+        macro_generated_tests::register_macro_generated_tests(&mut cached.index);
         cached.index.refresh_memberships()
     })?;
     index_phase("index_role_composition", || {
