@@ -1763,17 +1763,25 @@ fn matching_close(text: &str, open: usize) -> Option<usize> {
 /// is in the test build at module scope: every enclosing block opens a
 /// `mod`, and neither those `mod` headers nor the item's own leading
 /// attributes carry a cfg other than `cfg(test)`. A block whose header does
-/// not name `mod` (a function, impl, const or plain block) is not module
-/// scope.
+/// not name `mod` (a function, impl, const or plain block), and any
+/// parenthesised or bracketed token group, is not module scope.
 fn test_build_item_scope(masked: &str, offsets: &[usize]) -> Vec<bool> {
-    let mut results = Vec::with_capacity(offsets.len());
-    let mut pending = offsets.iter().copied().peekable();
+    // Invocation order need not follow byte order (nested invocations on
+    // one line), so walk the offsets sorted and map results back.
+    let mut order: Vec<usize> = (0..offsets.len()).collect();
+    order.sort_by_key(|&index| offsets.get(index).copied().unwrap_or_default());
+    let sorted: Vec<usize> = order
+        .iter()
+        .filter_map(|&index| offsets.get(index).copied())
+        .collect();
+    let mut sorted_results = Vec::with_capacity(sorted.len());
+    let mut pending = sorted.iter().copied().peekable();
     let mut stack: Vec<bool> = Vec::new();
     let mut header_start = 0usize;
     for (offset, byte) in masked.bytes().enumerate() {
         while pending.next_if(|&wanted| wanted == offset).is_some() {
             let header = masked.get(header_start..offset).unwrap_or_default();
-            results.push(stack.iter().all(|ok| *ok) && only_test_cfg(header));
+            sorted_results.push(stack.iter().all(|ok| *ok) && only_test_cfg(header));
         }
         match byte {
             b'{' => {
@@ -1785,11 +1793,25 @@ fn test_build_item_scope(masked: &str, offsets: &[usize]) -> Vec<bool> {
                 stack.pop();
                 header_start = offset + 1;
             }
+            // Inside parentheses or brackets an invocation is a token in
+            // another expression or macro input (`stringify!(case!(x))`),
+            // never a module item. An attribute's brackets close before
+            // the item, so it stays part of the header.
+            b'(' | b'[' => stack.push(false),
+            b')' | b']' => {
+                stack.pop();
+            }
             b';' => header_start = offset + 1,
             _ => {}
         }
     }
-    results.resize(offsets.len(), false);
+    sorted_results.resize(sorted.len(), false);
+    let mut results = vec![false; offsets.len()];
+    for (&index, ok) in order.iter().zip(sorted_results) {
+        if let Some(slot) = results.get_mut(index) {
+            *slot = ok;
+        }
+    }
     results
 }
 
@@ -3605,6 +3627,8 @@ fn helper() { case!(same_line_inner); }
 fn raw(r#mod: ()) {
     case!(raw_mod_parameter);
 }
+const RAW: &str = stringify!(case!(stringified));
+other! [ case!(bracketed); ]
 #[cfg(any())]
 case!(cfg_disabled);
 #[cfg(feature = \"x\")]

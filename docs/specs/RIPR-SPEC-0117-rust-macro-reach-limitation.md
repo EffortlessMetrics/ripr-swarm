@@ -114,6 +114,9 @@ condition below must hold; any doubt keeps the gap:
    skipped too.
 3. At the invocation's byte offset every enclosing block opens a `mod`: Rust
    registers no test for an item nested in a function, impl or other block.
+   An invocation inside any parentheses or brackets (`stringify!(case!(x))`)
+   is a token, not an item, and is skipped. An invocation written with
+   whitespace before `!` is not found, which keeps the gap.
 4. Neither the invocation's leading attributes nor any enclosing `mod`
    header carries a cfg other than `cfg(test)`, and none carries
    `cfg_attr`.
