@@ -1,4 +1,5 @@
 use super::{delimited_contents_at, enum_variant_values};
+use crate::analysis::extract::mask_comments_and_strings;
 
 pub(in crate::analysis) fn exact_error_variant(text: &str) -> Option<String> {
     let open = match find_err_segment(text, "Err(") {
@@ -51,18 +52,23 @@ pub(in crate::analysis) fn changed_error_variant(text: &str) -> Option<String> {
 }
 
 /// Byte offset of the first `pattern` (`Err(` or `Err::<`) whose `Err` is a
-/// whole path segment: `MyErr::<E>(E::V)` constructs a custom type, not a
-/// `Result::Err`, so a substring hit must not bind the error identity
-/// (#7094 review). `Result::Err(..)` and `std::result::Result::Err(..)`
-/// still match.
+/// whole path segment of code: `MyErr::<E>(E::V)` constructs a custom type,
+/// not a `Result::Err`, so a substring hit must not bind the error identity
+/// (#7094 review). Any non-ASCII character before `Err` continues an
+/// identifier (a combining mark in `My\u{301}Err`), and a spelling inside a
+/// string literal or comment (`return Ok(0); // was Err(E::X)`) is not a
+/// construction. The mask keeps byte offsets, so callers read the original
+/// text at the returned offset.
+/// `Result::Err(..)` and `std::result::Result::Err(..)` still match.
 fn find_err_segment(text: &str, pattern: &str) -> Option<usize> {
-    text.match_indices(pattern)
+    let code = mask_comments_and_strings(text);
+    code.match_indices(pattern)
         .map(|(start, _)| start)
         .find(|start| {
-            !text[..*start]
+            !code[..*start]
                 .chars()
                 .next_back()
-                .is_some_and(|ch| ch.is_alphanumeric() || ch == '_')
+                .is_some_and(|ch| ch.is_alphanumeric() || ch == '_' || !ch.is_ascii())
         })
 }
 
@@ -208,6 +214,35 @@ mod tests {
         );
         assert_eq!(
             changed_error_variant("let v = Err(E::V).or_else(|_| x.ok_or(E::V))?;").as_deref(),
+            Some("E::V")
+        );
+    }
+
+    #[test]
+    fn err_constructor_must_be_a_whole_code_segment() {
+        for text in [
+            "return Err(E::V);",
+            "return Result::Err(E::V);",
+            "return Err::<i64, E>(E::V);",
+            "return std::result::Result::Err::<i64, E>(E::V);",
+        ] {
+            assert!(spells_result_err(text), "{text}");
+            assert_eq!(exact_error_variant(text).as_deref(), Some("E::V"), "{text}");
+        }
+        for text in [
+            "return MyErr::<E>(E::V);",
+            "return MyErr(E::V);",
+            "return My\u{301}Err::<E>(E::V);",
+            "return Ok(0); // was Err(E::V)",
+            "return Ok(\"Err::<(), E>(E::V)\");",
+            "return Ok(0); /* Err(E::V) */",
+        ] {
+            assert!(!spells_result_err(text), "{text}");
+            assert_eq!(exact_error_variant(text), None, "{text}");
+        }
+        // The first code occurrence wins even after a commented one.
+        assert_eq!(
+            exact_error_variant("/* Err(E::W) */ return Err(E::V);").as_deref(),
             Some("E::V")
         );
     }
