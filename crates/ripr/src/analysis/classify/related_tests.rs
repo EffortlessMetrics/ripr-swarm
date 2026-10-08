@@ -64,6 +64,8 @@ pub(in crate::analysis) struct RelatedTestCandidateIndex {
     /// Run-scoped activation memo, keyed by slots of the same index.
     test_value_facts: super::TestValueFacts,
     owner_pin_syntax: super::OwnerPinSyntax,
+    /// Run-scoped #5830 caller-walk memo, keyed by owner slot (#7024).
+    owner_caller_names: super::super::classifier::OwnerCallerNames,
 }
 
 impl RelatedTestCandidateIndex {
@@ -153,6 +155,14 @@ impl RelatedTestCandidateIndex {
     /// classified against this index.
     pub(in crate::analysis) fn test_value_facts(&self) -> &super::TestValueFacts {
         &self.test_value_facts
+    }
+
+    /// The run-scoped #5830 caller-walk memo shared by every probe
+    /// classified against this index (#7024).
+    pub(in crate::analysis) fn owner_caller_names(
+        &self,
+    ) -> &super::super::classifier::OwnerCallerNames {
+        &self.owner_caller_names
     }
 
     fn candidate_indices(
