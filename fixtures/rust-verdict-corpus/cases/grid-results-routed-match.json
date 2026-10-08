@@ -9,7 +9,7 @@
   "edit_kind": "behavior_preserving_rewrite",
   "behavior_family": "error_path",
   "test_shape": "match_err_arm_assert_eq",
-  "hard_case": "The Err arm's assert_eq! is refused by owner-pin admission (RIPR-SPEC-0197 rule 1), and RIPR-SPEC-0175 credits neither an assert_eq! arm nor this shape, so a test that catches both mutants reads reachable_unrevealed (#6673).",
+  "hard_case": "At labeling the Err arm's assert_eq! was refused by owner-pin admission (RIPR-SPEC-0197 rule 1) and the case read reachable_unrevealed. #6673 fixed the admission; at head the case reads ideal/credited (exposed). Retained as a regression pin for routed-match Err arms.",
   "truth": {
     "state": "discriminated",
     "method": "runtime_mutant_kill",

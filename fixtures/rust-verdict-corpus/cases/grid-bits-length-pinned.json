@@ -9,7 +9,7 @@
   "edit_kind": "behavior_preserving_rewrite",
   "behavior_family": "predicate_boundary",
   "test_shape": "input_length_boundary_pinned",
-  "hard_case": "`count` is a local counter, not a parameter, so ripr has no input row to map it to (observed count values: unknown) and asks for a `count == 16` input that the 16- and 17-byte inputs already supply (#6674).",
+  "hard_case": "At labeling this read gap: `count` is a local counter, not a parameter, so ripr asked for a `count == 16` input the 16- and 17-byte inputs already supply. #6674 fixed the spurious request; at head the case reads abstained/limited (infection_unknown only). Retained as a regression pin for counter-of-input boundaries.",
   "truth": {
     "state": "discriminated",
     "method": "runtime_mutant_kill",

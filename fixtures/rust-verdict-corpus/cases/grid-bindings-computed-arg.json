@@ -9,7 +9,7 @@
   "edit_kind": "behavior_preserving_rewrite",
   "behavior_family": "predicate_boundary",
   "test_shape": "helper_reached_with_computed_args",
-  "hard_case": "Reach is weak: ripr relates the tests to the private is_bulk only by sharing its file, not through order_discount. Its activation rows also read `base + 1` as the literal 1 (observed qty values 1 and 9), so it asks for a `qty == 10` input the test already supplies (#6672).",
+  "hard_case": "At labeling this read gap: ripr related the tests to the private is_bulk only by file, and read `base + 1` as the literal 1 (observed qty values 1 and 9), asking for a `qty == 10` input the test already supplies. At head it reads abstained/limited (infection_unknown, weakly_exposed). #6672 stays open.",
   "truth": {
     "state": "discriminated",
     "method": "runtime_mutant_kill",

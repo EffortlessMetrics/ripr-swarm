@@ -9,7 +9,7 @@
   "edit_kind": "behavior_preserving_rewrite",
   "behavior_family": "return_value_arithmetic",
   "test_shape": "exact_pin_assert",
-  "hard_case": "The exact pin of the packed value reads as unconfirmed observation: ripr cannot tell that assert_eq!(pack(..), 0x1234) observes the bitwise expression (#6675).",
+  "hard_case": "At labeling the exact pin read as unconfirmed observation: ripr could not tell that assert_eq!(pack(..), 0x1234) observes the bitwise expression. #6675 fixed the connection; at head the case reads ideal/credited (exposed). Retained as a regression pin for exact bitwise pins.",
   "truth": {
     "state": "discriminated",
     "method": "runtime_mutant_kill",

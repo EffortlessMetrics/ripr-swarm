@@ -9,7 +9,7 @@
   "edit_kind": "behavior_preserving_rewrite",
   "behavior_family": "predicate_boundary",
   "test_shape": "field_assignment_activation_opaque",
-  "hard_case": "ripr reads the boundary of `CURRENT - 2 > manifest.version` as the literal 2 and collects the lookup() arguments 4 and 5 as test literals, so it reports a missing boundary input (weakly_exposed) instead of RIPR-SPEC-0001's field_assignment_value_unresolved stop. Read as 5, the boundary could match the literal inside lookup(5) and credit an opaque assignment. A return_value probe on the line reads exposed (#6671).",
+  "hard_case": "At labeling ripr read the boundary of `CURRENT - 2 > manifest.version` as the literal 2 and reported a missing boundary input (weakly_exposed) instead of stopping. At head the case reads ideal/credited (exposed and infection_unknown findings). #6671 stays open for the remaining named-constant shapes (grid-flow-field-direct still reads infection_unknown there).",
   "truth": {
     "state": "discriminated",
     "method": "runtime_mutant_kill",
