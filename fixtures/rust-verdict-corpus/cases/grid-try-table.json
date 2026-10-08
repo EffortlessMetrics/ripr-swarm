@@ -9,7 +9,7 @@
   "edit_kind": "behavior_preserving_rewrite",
   "behavior_family": "error_propagation_question_mark",
   "test_shape": "table_driven_loop",
-  "hard_case": "The assert_eq! inside a for loop over literal rows is admitted since #5328 (RIPR-SPEC-0197 constant-row tables). It still reads weakly_exposed because the pin is on parse_percent(text).ok(), which discards the error, and the error_path probe needs an exact error variant, as in grid-try-exact. A second probe on the same `let ...?;` line is typed field_construction and also reads weakly_exposed, looking for a field-value assertion where no field is built (#6676).",
+  "hard_case": "The assert_eq! inside a for loop over literal rows is admitted since #5328 (RIPR-SPEC-0197 constant-row tables). It still reads weakly_exposed because the pin is on parse_percent(text).ok(), which discards the error, and the error_path probe needs an exact error variant, as in grid-try-exact.",
   "truth": {
     "state": "discriminated",
     "method": "runtime_mutant_kill",

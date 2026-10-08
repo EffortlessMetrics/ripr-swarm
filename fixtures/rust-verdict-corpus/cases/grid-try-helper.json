@@ -9,7 +9,7 @@
   "edit_kind": "behavior_preserving_rewrite",
   "behavior_family": "error_propagation_question_mark",
   "test_shape": "helper_wrapped_assert",
-  "hard_case": "The assert_eq! inside a local check_* helper is refused by owner-pin admission (RIPR-SPEC-0197 rule 1: not in the test's own body; #6482). A second probe on the same `let ...?;` line is typed field_construction and also reads weakly_exposed, looking for a field-value assertion where no field is built (#6676).",
+  "hard_case": "The assert_eq! inside a local check_* helper is refused by owner-pin admission (RIPR-SPEC-0197 rule 1: not in the test's own body; #6482).",
   "truth": {
     "state": "discriminated",
     "method": "runtime_mutant_kill",

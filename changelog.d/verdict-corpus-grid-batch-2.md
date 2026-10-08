@@ -6,6 +6,6 @@
   shadowed and reassigned bindings (RIPR-SPEC-0157), a helper reached with
   computed arguments (RIPR-SPEC-0159), a swallowed Result match
   (RIPR-SPEC-0175) and one whose Err arm assert_eqs the variant, a boundary
-  on a counter of input bytes, and bitwise `|` and `<<`. ripr reads 3 ideal,
-  5 abstained and 6 false actionable, with no false exposed or false silent
+  on a counter of input bytes, and bitwise `|` and `<<`. ripr reads 5 ideal,
+  8 abstained and 1 false actionable, with no false exposed or false silent
   verdict ([#6715](https://github.com/EffortlessMetrics/ripr-swarm/pull/6715)).
