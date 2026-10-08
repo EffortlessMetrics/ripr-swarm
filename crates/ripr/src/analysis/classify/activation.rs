@@ -4827,6 +4827,7 @@ assert_eq!(input.amount, 100);"#
         let rows = owner_call_parameter_values(
             &[&test],
             "score",
+            false,
             &["amount".to_string(), "rate".to_string()],
         );
         let cells = rows
@@ -4891,6 +4892,7 @@ assert_eq!(input.amount, 100);"#
         let rows = owner_call_parameter_values(
             &[&cases],
             "score",
+            false,
             &["amount".to_string(), "rate".to_string()],
         );
         assert_eq!(rows.len(), 1);
