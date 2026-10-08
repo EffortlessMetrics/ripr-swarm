@@ -11532,6 +11532,78 @@ fn executable_allowlist_accepts_live_100755_row() -> Result<(), String> {
 }
 
 #[test]
+fn text_encoding_detects_only_bom_prefix() -> Result<(), String> {
+    if !super::has_utf8_bom(&[0xEF, 0xBB, 0xBF, b'#']) {
+        return Err("a leading EF BB BF must be detected as a BOM".to_string());
+    }
+    if !super::has_utf8_bom(&[0xEF, 0xBB, 0xBF]) {
+        return Err("a BOM-only file must be detected as a BOM".to_string());
+    }
+    for clean in [
+        Vec::new(),
+        vec![0xEF, 0xBB],
+        b"# heading".to_vec(),
+        b"\x00\x01\x02".to_vec(),
+        [b'x', 0xEF, 0xBB, 0xBF].to_vec(),
+    ] {
+        if super::has_utf8_bom(&clean) {
+            return Err(format!("non-BOM prefix must pass: {clean:?}"));
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn text_encoding_violation_names_file_and_both_strip_commands() -> Result<(), String> {
+    let violation = super::text_encoding_violation("policy/process_allowlist.txt");
+    for required in [
+        "policy/process_allowlist.txt",
+        "UTF-8 BOM",
+        "strip (POSIX):",
+        "tail -c +4 'policy/process_allowlist.txt'",
+        "strip (PowerShell):",
+        "[IO.File]::ReadAllBytes",
+        "[IO.File]::WriteAllBytes",
+    ] {
+        if !violation.contains(required) {
+            return Err(format!(
+                "BOM violation must contain {required:?}: {violation:?}"
+            ));
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn text_encoding_candidates_cover_issue_text_classes() -> Result<(), String> {
+    // The three #7091 BOM sites were .txt, .rs, and .md; extensionless
+    // tracked files (LICENSE files) are scanned fail-closed.
+    for candidate in [
+        "policy/process_allowlist.txt",
+        "crates/ripr/tests/agent_stub_compiles.rs",
+        "fixtures/rust-verdict-corpus/SPEC.md",
+        "Cargo.lock",
+        "LICENSE-MIT",
+        "editors/vscode/.vscodeignore",
+    ] {
+        if !super::is_text_encoding_candidate(candidate) {
+            return Err(format!("text path must be scanned: {candidate}"));
+        }
+    }
+    for skipped in ["assets/logo.png", "fixtures/corpus.gz"] {
+        if super::is_text_encoding_candidate(skipped) {
+            return Err(format!("binary path must be skipped: {skipped}"));
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn text_encoding_clean_tree_passes() -> Result<(), String> {
+    with_repo_cwd(super::check_text_encoding)
+}
+
+#[test]
 fn shape_rewrite_notice_lists_rewritten_files() {
     assert_eq!(super::shape_rewrite_notice(&[]), None);
     let notice =

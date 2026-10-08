@@ -272,7 +272,7 @@ use policy::{
     check_droid_review_config, check_executable_files, check_file_policy, check_local_context,
     check_network_policy, check_no_panic_family, check_positioning_language, check_process_policy,
     check_product_copy, check_proof_packs, check_release_targets, check_static_language,
-    check_workflows, qualify_python_wheelhouse,
+    check_text_encoding, check_workflows, qualify_python_wheelhouse,
 };
 use public_api_surface::public_api_surface;
 #[cfg(test)]
@@ -558,6 +558,7 @@ const PRECOMMIT_GATE_COMMANDS: &[&str] = &[
     "check-file-policy",
     "check-covered-by",
     "check-executable-files",
+    "check-text-encoding",
     "check-workflows",
     "check-droid-review-config",
     "check-spec-format",
@@ -606,6 +607,7 @@ fn precommit() -> Result<(), String> {
     check_file_policy()?;
     check_covered_by()?;
     check_executable_files()?;
+    check_text_encoding()?;
     check_workflows()?;
     check_droid_review_config()?;
     check_spec_format()?;
@@ -4650,7 +4652,7 @@ fn receipts_report_markdown(
 }
 
 fn precommit_report_body() -> String {
-    "# ripr precommit report\n\nStatus: pass\n\nChecks:\n\n- `cargo fmt --check`\n- `cargo xtask check-static-language`\n- `cargo xtask check-no-panic-family`\n- `cargo xtask check-allow-attributes`\n- `cargo xtask check-local-context`\n- `cargo xtask check-file-policy`\n- `cargo xtask check-covered-by`\n- `cargo xtask check-executable-files`\n- `cargo xtask check-workflows`\n- `cargo xtask check-droid-review-config`\n- `cargo xtask check-spec-format`\n- `cargo xtask check-spec-numbering`\n- `cargo xtask check-fixture-contracts`\n- `cargo xtask check-rust-judged-panel`\n- `cargo xtask check-release-challenge-selection`\n- `cargo xtask check-release-challenge-judgments`\n- `cargo xtask check-python-judged-panel`\n- `cargo xtask check-traceability`\n- `cargo xtask check-capabilities`\n- `cargo xtask check-workspace-shape`\n- `cargo xtask check-architecture`\n- `cargo xtask check-rust-source-role-authority`\n- `cargo xtask check-public-api`\n- `cargo xtask check-output-contracts`\n- `cargo xtask check-identity-registry`\n- `cargo xtask check-doc-artifacts`\n- `cargo xtask check-doc-index`\n- `cargo xtask check-readme-state`\n- `cargo xtask markdown-links`\n- `cargo xtask check-pr-shape`\n- `cargo xtask check-command-catalog`\n- `cargo xtask check-generated`\n- `cargo xtask check-badge-diff-policy`\n- `cargo xtask check-generated-clean`\n- `cargo xtask check-proof-packs`\n- `cargo xtask check-release-targets`\n- `cargo xtask check-dependencies`\n- `cargo xtask check-process-policy`\n- `cargo xtask check-network-policy`\n- `cargo xtask check-lint-policy`\n\nNext command:\n\n```bash\ncargo xtask check-pr\n```\n".to_string()
+    "# ripr precommit report\n\nStatus: pass\n\nChecks:\n\n- `cargo fmt --check`\n- `cargo xtask check-static-language`\n- `cargo xtask check-no-panic-family`\n- `cargo xtask check-allow-attributes`\n- `cargo xtask check-local-context`\n- `cargo xtask check-file-policy`\n- `cargo xtask check-covered-by`\n- `cargo xtask check-executable-files`\n- `cargo xtask check-text-encoding`\n- `cargo xtask check-workflows`\n- `cargo xtask check-droid-review-config`\n- `cargo xtask check-spec-format`\n- `cargo xtask check-spec-numbering`\n- `cargo xtask check-fixture-contracts`\n- `cargo xtask check-rust-judged-panel`\n- `cargo xtask check-release-challenge-selection`\n- `cargo xtask check-release-challenge-judgments`\n- `cargo xtask check-python-judged-panel`\n- `cargo xtask check-traceability`\n- `cargo xtask check-capabilities`\n- `cargo xtask check-workspace-shape`\n- `cargo xtask check-architecture`\n- `cargo xtask check-rust-source-role-authority`\n- `cargo xtask check-public-api`\n- `cargo xtask check-output-contracts`\n- `cargo xtask check-identity-registry`\n- `cargo xtask check-doc-artifacts`\n- `cargo xtask check-doc-index`\n- `cargo xtask check-readme-state`\n- `cargo xtask markdown-links`\n- `cargo xtask check-pr-shape`\n- `cargo xtask check-command-catalog`\n- `cargo xtask check-generated`\n- `cargo xtask check-badge-diff-policy`\n- `cargo xtask check-generated-clean`\n- `cargo xtask check-proof-packs`\n- `cargo xtask check-release-targets`\n- `cargo xtask check-dependencies`\n- `cargo xtask check-process-policy`\n- `cargo xtask check-network-policy`\n- `cargo xtask check-lint-policy`\n\nNext command:\n\n```bash\ncargo xtask check-pr\n```\n".to_string()
 }
 
 /// Compose the check-pr report for either terminal state (#3036). One
@@ -5446,6 +5448,55 @@ fn executable_allowlist_stale_row_violations(
         }
     }
     violations
+}
+
+fn check_text_encoding_impl() -> Result<(), String> {
+    let mut violations = Vec::new();
+
+    for path in tracked_files()? {
+        if !is_text_encoding_candidate(&path) {
+            continue;
+        }
+        let file_path = Path::new(&path);
+        if !file_path.exists() {
+            continue;
+        }
+        let bytes = fs::read(file_path)
+            .map_err(|err| format!("failed to read {}: {err}", file_path.display()))?;
+        if has_utf8_bom(&bytes) {
+            violations.push(text_encoding_violation(&path));
+        }
+    }
+
+    finish_policy_report(
+        PolicyReportSpec {
+            report_file: "text-encoding.md",
+            check: "check-text-encoding",
+            why_it_matters: "A UTF-8 BOM is invisible in review but shifts the first bytes of a file, so a later gate fails with a misleading error: serde rejects the JSON, a first-line heading or allowlist entry is missed, and rustc sees a stray token. Hand-resolved merge files must be saved as UTF-8 without a BOM.",
+            fix_kind: FixKind::AuthorDecisionRequired,
+            recommended_fixes: &[
+                "Strip the BOM with the POSIX or PowerShell one-liner in the violation.",
+                "Save resolved files as UTF-8 without a BOM (PowerShell 7: -Encoding utf8NoBOM; Windows PowerShell 5.1: [IO.File]::WriteAllText with UTF8Encoding($false)).",
+                "Verify merge resolutions with byte reads before pushing.",
+            ],
+            rerun_command: "cargo xtask check-text-encoding",
+            exception_template: None,
+        },
+        &violations,
+    )
+}
+
+/// True when `bytes` start with the UTF-8 byte-order mark (`EF BB BF`).
+fn has_utf8_bom(bytes: &[u8]) -> bool {
+    bytes.starts_with(&[0xEF, 0xBB, 0xBF])
+}
+
+/// One BOM violation: the file plus a byte-exact POSIX and PowerShell
+/// one-liner that drops the first three bytes without re-encoding the rest.
+fn text_encoding_violation(path: &str) -> String {
+    format!(
+        "{path} starts with a UTF-8 BOM (EF BB BF); save as UTF-8 without BOM\n  strip (POSIX): tail -c +4 '{path}' > '{path}.nobom' && mv '{path}.nobom' '{path}'\n  strip (PowerShell): $p='{path}'; $b=[IO.File]::ReadAllBytes($p); $n=New-Object byte[] ($b.Length-3); [Array]::Copy($b,3,$n,0,$n.Length); [IO.File]::WriteAllBytes($p,$n)"
+    )
 }
 
 fn check_workflows_impl() -> Result<(), String> {
@@ -22288,6 +22339,75 @@ pub(crate) fn is_file_policy_candidate(path: &str) -> bool {
         ".bash", ".c", ".cjs", ".cpp", ".cs", ".go", ".h", ".hpp", ".java", ".js", ".json", ".kt",
         ".lua", ".mjs", ".php", ".pl", ".ps1", ".py", ".rb", ".sh", ".swift", ".toml", ".ts",
         ".tsx", ".yaml", ".yml", ".zsh",
+    ];
+    extensions.iter().any(|extension| path.ends_with(extension))
+}
+
+/// Text classes the BOM scan covers: the union of the sibling hygiene text
+/// lists plus the text extensions observed in the tracked tree. Extensionless
+/// tracked files (today: LICENSE files) are scanned fail-closed; only
+/// known-binary extensions stay out of the candidate set by omission.
+fn is_text_encoding_candidate(path: &str) -> bool {
+    if path
+        .rsplit('/')
+        .next()
+        .is_some_and(|name| !name.contains('.'))
+    {
+        return true;
+    }
+    let extensions = [
+        ".bash",
+        ".c",
+        ".cfg",
+        ".cjs",
+        ".commit",
+        ".cpp",
+        ".cs",
+        ".diff",
+        ".example",
+        ".gitattributes",
+        ".gitignore",
+        ".go",
+        ".h",
+        ".hpp",
+        ".in",
+        ".ini",
+        ".java",
+        ".js",
+        ".json",
+        ".jsonl",
+        ".jsx",
+        ".kt",
+        ".lock",
+        ".log",
+        ".lua",
+        ".md",
+        ".mjs",
+        ".ndjson",
+        ".patch",
+        ".php",
+        ".pl",
+        ".pm",
+        ".ps1",
+        ".py",
+        ".rb",
+        ".rs",
+        ".rst",
+        ".sh",
+        ".stderr",
+        ".stdout",
+        ".svg",
+        ".swift",
+        ".t",
+        ".toml",
+        ".ts",
+        ".tsx",
+        ".txt",
+        ".vscodeignore",
+        ".xml",
+        ".yaml",
+        ".yml",
+        ".zsh",
     ];
     extensions.iter().any(|extension| path.ends_with(extension))
 }
