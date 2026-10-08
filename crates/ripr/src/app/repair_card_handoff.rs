@@ -717,6 +717,9 @@ fn producer_gap_names_seam(gap: &FindingCanonicalGap, seam: &RepoSeam, probe_lin
 /// never names a seam. Same-line same-kind twins without spans still
 /// collide — a documented residual for finding-side refusal, not a silent
 /// promotion: the spanless twin keeps today's bind, it gains no new one.
+/// Nested same-kind spans (an inner comparison inside an outer multiline
+/// condition) also still collide: containment cannot pick most-specific
+/// without the candidate set (#7179).
 fn probe_line_names_seam(probe_line: usize, seam: &RepoSeam) -> bool {
     if probe_line == 0 {
         return false;
