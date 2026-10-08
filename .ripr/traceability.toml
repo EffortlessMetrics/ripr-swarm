@@ -12715,6 +12715,7 @@ tests = [
   "crates/ripr/src/mcp/server_tests.rs::repair_tools_reject_bad_arguments_at_the_dispatch_edge",
   "crates/ripr/tests/mcp_sdk.rs",
   "crates/ripr/tests/mcp_stdio.rs",
+  "crates/ripr/tests/mcp_stdio.rs::get_repair_card_after_refresh_matches_cli_agent_card",
 ]
 code = [
   "crates/ripr/src/mcp/repair_card.rs",
