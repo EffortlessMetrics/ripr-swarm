@@ -20440,6 +20440,79 @@ fn check_dirty_tree_with_unborn_head_names_head() -> Result<(), String> {
     Ok(())
 }
 
+/// #7076 review: `merge-base` walks history, so a missing shared object fails
+/// it while both tips still resolve. A dirty-tree `check` there must keep the
+/// object-restoration repair (`git fsck`), never the unrelated-histories
+/// `--base` repair, which cannot fix damage. Both the explicit `--worktree`
+/// read and the dirty-default read must name the damage.
+#[test]
+fn check_dirty_tree_with_damaged_store_names_damage() -> Result<(), String> {
+    let root = unique_temp_workspace("worktree-damaged-store");
+    std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+    run_git(&root, &["init", "-b", "main"])?;
+    run_git(&root, &["config", "user.email", "test@test.com"])?;
+    run_git(&root, &["config", "user.name", "Test"])?;
+    std::fs::write(root.join("lib.rs"), "pub fn f() -> bool { 1 > 0 }\n")
+        .map_err(|err| format!("write base lib.rs: {err}"))?;
+    run_git(&root, &["add", "."])?;
+    run_git(&root, &["commit", "-m", "A"])?;
+    run_git(&root, &["checkout", "-b", "feature"])?;
+    std::fs::write(root.join("lib.rs"), "pub fn f() -> bool { 1 >= 0 }\n")
+        .map_err(|err| format!("write feat lib.rs: {err}"))?;
+    run_git(&root, &["commit", "-am", "F"])?;
+    run_git(&root, &["checkout", "main"])?;
+    std::fs::write(root.join("note.txt"), "moved on")
+        .map_err(|err| format!("write note: {err}"))?;
+    run_git(&root, &["add", "."])?;
+    run_git(&root, &["commit", "-m", "B"])?;
+    run_git(&root, &["checkout", "feature"])?;
+    // Dirty the tree with a tracked edit so the default selects the worktree.
+    std::fs::write(root.join("lib.rs"), "pub fn f() -> bool { 2 > 0 }\n")
+        .map_err(|err| format!("write dirty lib.rs: {err}"))?;
+
+    let fork = common::fixture_git::fixture_git_output(&root, &["rev-parse", "main~1"])?;
+    let fork = fork.trim();
+    let object = root.join(".git/objects").join(&fork[..2]).join(&fork[2..]);
+    if !object.is_file() {
+        return Err(format!(
+            "fixture precondition: the fork-point object must be loose at {}",
+            object.display()
+        ));
+    }
+    std::fs::remove_file(&object).map_err(|err| format!("delete fork object: {err}"))?;
+
+    // Fixture precondition: the base-tip form the old loader fell back to
+    // exits 0 here, so a passing test cannot be vacuous.
+    let tip_diff = common::fixture_git::fixture_git_output(&root, &["diff", "main"])?;
+    if !tip_diff.contains("lib.rs") {
+        return Err(format!(
+            "fixture must reverse base content through the base-tip diff:\n{tip_diff}"
+        ));
+    }
+
+    let root_str = root.to_string_lossy().into_owned();
+    let legs: [(&str, Vec<&str>); 2] = [
+        ("explicit --worktree", vec!["--worktree"]),
+        ("dirty default", vec![]),
+    ];
+    for (label, extra) in &legs {
+        let mut args = vec!["check", "--root", root_str.as_str(), "--base", "main"];
+        args.extend(extra.iter().copied());
+        args.push("--json");
+        let output = run_ripr(&args);
+        assert_worktree_origin_refusal(
+            &output,
+            label,
+            "main",
+            &["damaged object store", "git fsck"],
+            &["unrelated histories"],
+        )?;
+    }
+
+    ignore_remove_dir_all(&root);
+    Ok(())
+}
+
 /// The argv of a printed `ripr ...` command, without the program name.
 /// Printed commands quote with POSIX single quotes (`shell_arg`).
 fn printed_ripr_args(command: &str) -> Result<Vec<String>, String> {
