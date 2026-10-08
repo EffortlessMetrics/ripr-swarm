@@ -3866,6 +3866,14 @@ Field contract:
   existing seam evidence, including related-test relation fields. The
   nested `related_tests` array is capped like the top-level array and keeps
   `related_tests_total`.
+- `seams[].evidence_record.statically_contradicted_related_tests` -
+  additive, present only when positive (RIPR-SPEC-0233, #7007). Producer
+  count of related tests whose exact-value assertion statically contradicts
+  the seam owner's fold, over the FULL related set - the capped
+  `related_tests` projection can omit a contradicted test and each entry
+  names only its best oracle, so a positive count here is the completeness
+  authority for outcome receipts: the gap cannot be reported closed while
+  it is positive, even when no rendered entry names the contradiction.
 - `seams[].evidence_record.related_tests[].oracle_semantics` - structured
   oracle-shape explanation with `observes`, `missing`, and nullable
   `upgrade_suggestion`. Weak, broad, smoke-only, and unknown oracle shapes
@@ -7497,7 +7505,9 @@ Field contract:
   `seams[].evidence_record` is present, the comparison prefers that shared
   evidence spine; otherwise it falls back to legacy repo-exposure seam fields.
 - `evidence_delta[]` — advisory hints such as missing discriminators no longer
-  reported, new observed values, or stronger related oracles. These hints are
+  reported, new observed values, stronger related oracles, or a contradicted
+  related test that remains in the after evidence set (RIPR-SPEC-0233; while
+  one remains, `gap_movement` is `improved`, never `closed`). These hints are
   based on the rendered static artifact and do not claim runtime confirmation.
 - `evidence_source` — `evidence_record`, `legacy_fields`, or a mixed transition
   label when before and after snapshots differ in available evidence source.
@@ -16677,7 +16687,7 @@ JSON shape:
     "cases": [
       {
         "name": "generated-pr-ci-review-workflow",
-        "command": "cargo run --quiet -p ripr -- init --ci github --dry-run",
+        "command": "cargo run --quiet -p ripr -- init --ci github --dry-run && cargo run --quiet -p ripr -- reports ci-summary --root <generated-ci-cockpit-fixture> --base-ref main",
         "duration_ms": 123,
         "start_here": true,
         "repair_commands": 4,
@@ -18086,7 +18096,7 @@ targeted-rerun receipt shape:
     "direct_call_names": ["discounted_total"]
   },
   "cache": {
-    "schema_version": "1.33",
+    "schema_version": "1.34",
     "reuse_state": "reused_file_facts",
     "file_fact_status": "hits_2_misses_0_corrupt_0_store_errors_0",
     "hits": 2,
@@ -18097,7 +18107,7 @@ targeted-rerun receipt shape:
     "recomputation_reasons": ["selected_test_scope_recomputed"],
     "invalidation_status": "not_available",
     "input_fingerprint": {
-      "schema_version": "1.48",
+      "schema_version": "1.53",
       "analyzer_version": "0.11.0+0123456789abcdef0123456789abcdef01234567",
       "workspace_root_hash": "…",
       "files_content_hash": "…",

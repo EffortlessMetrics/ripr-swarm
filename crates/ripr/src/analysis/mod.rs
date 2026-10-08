@@ -90,12 +90,13 @@ pub(crate) use seam_inventory::{
     ClassifiedSeamsReport, DEFAULT_REPO_EXPOSURE_SEAM_LIMIT, ScopedClassifiedSeamInventory,
     ScopedEvidenceConsumer, SeamLimitInfo, SeamLimitSource, TargetedTestInventoryError,
     apply_pilot_seam_budget, classify_seams_in_files_at_with_config, diff_only_rust_files,
+    file_seams_without_evidence_at_with_config,
     inventory_changed_test_classified_seams_at_with_config_node,
     inventory_classified_seams_at_with_config, inventory_classified_seams_report_at_with_config,
     inventory_compact_classified_seams_at_with_config,
     inventory_diff_scoped_classified_seams_at_with_config,
     inventory_diff_scoped_streamed_seams_at_with_config, inventory_seams_at_with_config,
-    pilot_seam_budget, workspace_cache_key_at_with_config,
+    pilot_seam_budget, seam_kind_for_probe_family, workspace_cache_key_at_with_config,
 };
 pub(crate) use seams::{RepoSeam, RequiredDiscriminator};
 pub(crate) use syntax::fn_signature::{owner_fn_line_span, rust_source_parses_cleanly};

@@ -144,9 +144,9 @@ fn proximity_only_reach_through_a_macro_names_the_macro_limit() -> Result<(), St
 }
 
 #[test]
-fn proximity_only_reach_through_a_helper_names_the_transitive_limit() -> Result<(), String> {
-    // A same-file test is proximity even when it calls a helper that calls
-    // the owner, so the transitive witness names the limit.
+fn a_forwarding_helper_chain_relates_and_establishes_reach_without_credit() -> Result<(), String> {
+    // A same-file test that reaches a private helper through its forwarding
+    // caller relates by the chain, not file proximity.
     let fixture = Fixture::new(
         "transitive",
         "fn inner_rate(x: i64) -> i64 {
@@ -166,31 +166,29 @@ mod tests {
 ",
     )?;
     let finding = fixture.rate_finding()?;
+    // RIPR-SPEC-0159: the chain relation outranks file proximity, so the
+    // same-file test now relates to `inner_rate` through `outer` as a
+    // `helper_owner_call` and reach reads yes. The wrapper's return-value
+    // oracle is not credited for the helper's change (no return-value
+    // crediting through wrappers), so the class stays `weakly_exposed`
+    // without the transitive-reach limit.
     assert!(
-        all_relations(&finding, crate::analysis::classify::is_proximity_only),
+        finding
+            .related_tests
+            .iter()
+            .any(|test| test.relation_reason == Some(RelationReason::HelperOwnerCall)),
         "{:?}",
         finding.related_tests
     );
-    assert_eq!(finding.ripr.reach.state, StageState::Weak);
+    assert_eq!(finding.ripr.reach.state, StageState::Yes, "{finding:?}");
     assert_eq!(finding.class, ExposureClass::WeaklyExposed);
-    assert_eq!(
-        finding.static_limit_kind,
-        Some(StaticLimitKind::RustTransitiveReachUnresolved),
-        "{:?}",
-        finding.evidence
-    );
+    assert_eq!(finding.static_limit_kind, None, "{:?}", finding.evidence);
     assert!(
-        finding
+        !finding
             .stop_reasons
-            .contains(&StopReason::TransitiveReachUnresolved)
-    );
-    assert!(
-        finding
-            .recommended_next_step
-            .as_deref()
-            .is_some_and(|next| next.contains("`outer_triples`") && next.contains("`outer`")),
+            .contains(&StopReason::TransitiveReachUnresolved),
         "{:?}",
-        finding.recommended_next_step
+        finding.stop_reasons
     );
     Ok(())
 }

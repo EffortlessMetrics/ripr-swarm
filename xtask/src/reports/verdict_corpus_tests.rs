@@ -1358,3 +1358,40 @@ fn summary_derived_from_blessed_rows_equals_the_run_summary() -> Result<(), Stri
     );
     Ok(())
 }
+
+#[test]
+fn coverage_mode_follows_the_ledger_file() -> Result<(), String> {
+    // The ledger declares coverage: no file, no gate. Presence alone decides,
+    // so a present-but-unreadable ledger fails loudly instead of un-gating.
+    let dir = crate::tests::temp_dir("verdict-coverage-mode");
+    assert_eq!(corpus_coverage_mode(&dir), CorpusCoverage::Ungated);
+    crate::tests::write(&dir.join(coverage::LEDGER_FILE), "schema_version = \"x\"\n");
+    assert_eq!(corpus_coverage_mode(&dir), CorpusCoverage::Gated);
+    Ok(())
+}
+
+#[test]
+fn ledgerless_corpus_validates_without_the_coverage_gate() -> Result<(), String> {
+    // A language with cases but no spec ledger still passes structural
+    // validation; only the spec-example gate is skipped.
+    let dir = crate::tests::temp_dir("verdict-no-ledger");
+    crate::tests::copy_dir_recursive(&repo_corpus_dir(), &dir)?;
+    fs::remove_file(dir.join(coverage::LEDGER_FILE)).map_err(|err| err.to_string())?;
+    assert_eq!(corpus_coverage_mode(&dir), CorpusCoverage::Ungated);
+    let corpus = validated_corpus_without_coverage(&dir)?;
+    assert!(!corpus.cases.is_empty());
+    Ok(())
+}
+
+#[test]
+fn present_but_invalid_ledger_still_fails() -> Result<(), String> {
+    // Opting in is strict: a corrupt ledger is a loud failure, never a
+    // silent fallback to the un-gated path.
+    let dir = crate::tests::temp_dir("verdict-bad-ledger");
+    crate::tests::copy_dir_recursive(&repo_corpus_dir(), &dir)?;
+    crate::tests::write(&dir.join(coverage::LEDGER_FILE), "schema_version = 42\n");
+    assert_eq!(corpus_coverage_mode(&dir), CorpusCoverage::Gated);
+    let err = validated_corpus(&dir).err().unwrap_or_default();
+    assert!(err.contains(coverage::LEDGER_FILE), "{err}");
+    Ok(())
+}

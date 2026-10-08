@@ -15840,7 +15840,9 @@ fn pilot_honors_ripr_git_timeout_for_the_current_change() -> Result<(), String> 
 /// change's seams are counted before the cut.
 #[test]
 fn pilot_says_it_withholds_the_seam_on_the_current_change() -> Result<(), String> {
-    let lib = "pub fn checkout(total: u32) -> u32 {\n    tier(total) * 10\n}\n\nfn tier(total: u32) -> u32 {\n    if total > 100 { 2 } else { 1 }\n}\n";
+    // The repo-wide seam lives in `checkout`'s own guard: `tier(total)` feeds
+    // `*`, so it is a consumed call and no seam of its own (#6896).
+    let lib = "pub fn checkout(total: u32) -> u32 {\n    if total == 0 {\n        return 0;\n    }\n    tier(total) * 10\n}\n\nfn tier(total: u32) -> u32 {\n    if total > 100 { 2 } else { 1 }\n}\n";
     let root = pilot_language_fixture_repo(
         "pilot-withheld-current-change",
         &[
@@ -20177,6 +20179,521 @@ fn check_worktree_base_head_analyzes_uncommitted_tracked_edit() -> Result<(), St
     Ok(())
 }
 
+/// Assert a #7076 fail-closed refusal: exit 2, each expected cause/repair
+/// fragment on stderr, none of the forbidden fragments, and a JSON
+/// `analysis_failed` refusal with no findings.
+fn assert_origin_refusal(
+    output: &Output,
+    label: &str,
+    expected: &[&str],
+    forbidden: &[&str],
+) -> Result<(), String> {
+    if output.status.code() != Some(2) {
+        return Err(format!(
+            "{label}: expected exit 2, got {:?}\nstdout:\n{}\nstderr:\n{}",
+            output.status.code(),
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    for fragment in expected {
+        if !stderr.contains(fragment) {
+            return Err(format!(
+                "{label}: stderr must contain `{fragment}`:\n{stderr}"
+            ));
+        }
+    }
+    for fragment in forbidden {
+        if stderr.contains(fragment) {
+            return Err(format!(
+                "{label}: stderr must not contain `{fragment}`:\n{stderr}"
+            ));
+        }
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let report: serde_json::Value = serde_json::from_str(&stdout)
+        .map_err(|err| format!("{label}: parse refusal JSON: {err}\n{stdout}"))?;
+    if report
+        .pointer("/analysis_scope/basis")
+        .and_then(serde_json::Value::as_str)
+        != Some("analysis_failed")
+    {
+        return Err(format!(
+            "{label}: JSON must refuse as analysis_failed:\n{stdout}"
+        ));
+    }
+    let no_findings = report
+        .pointer("/findings")
+        .and_then(serde_json::Value::as_array)
+        .is_some_and(|findings| findings.is_empty())
+        && report
+            .pointer("/summary/findings")
+            .and_then(serde_json::Value::as_u64)
+            == Some(0);
+    if !no_findings {
+        return Err(format!(
+            "{label}: a refusal must carry no findings:\n{stdout}"
+        ));
+    }
+    Ok(())
+}
+
+/// Assert a #7076 worktree-origin refusal: [`assert_origin_refusal`] plus the
+/// worktree-subject lead naming the base the diff was read from.
+fn assert_worktree_origin_refusal(
+    output: &Output,
+    label: &str,
+    base: &str,
+    expected: &[&str],
+    forbidden: &[&str],
+) -> Result<(), String> {
+    let lead = format!("the working-tree diff from `{base}`");
+    let mut expected = expected.to_vec();
+    expected.insert(0, &lead);
+    assert_origin_refusal(output, label, &expected, forbidden)
+}
+
+/// #7076: a dirty-tree `check` in a shallow clone — the `actions/checkout`
+/// default shape — has no merge base, and the old worktree loader diffed
+/// from the base tip there, exiting 0 with base-tip content reversed as local
+/// changes. Both the explicit `--worktree` read and the dirty-default read
+/// must fail closed with the committed path's shallow-clone cause and repair.
+#[test]
+fn check_dirty_tree_without_merge_base_fails_closed_in_shallow_clone() -> Result<(), String> {
+    let scratch = unique_temp_workspace("worktree-no-merge-base-shallow");
+    let origin = scratch.join("origin");
+    std::fs::create_dir_all(&origin).map_err(|err| format!("create origin: {err}"))?;
+    run_git(&origin, &["init", "-b", "main"])?;
+    run_git(&origin, &["config", "user.email", "test@test.com"])?;
+    run_git(&origin, &["config", "user.name", "Test"])?;
+    std::fs::write(origin.join("lib.rs"), "pub fn f() -> bool { 1 > 0 }\n")
+        .map_err(|err| format!("write base lib.rs: {err}"))?;
+    run_git(&origin, &["add", "."])?;
+    run_git(&origin, &["commit", "-m", "base"])?;
+    run_git(&origin, &["checkout", "-b", "feat"])?;
+    std::fs::write(origin.join("lib.rs"), "pub fn f() -> bool { 1 >= 0 }\n")
+        .map_err(|err| format!("write feat lib.rs: {err}"))?;
+    run_git(&origin, &["commit", "-am", "feat"])?;
+    run_git(&origin, &["checkout", "main"])?;
+    std::fs::write(origin.join("README"), "moved on")
+        .map_err(|err| format!("write README: {err}"))?;
+    run_git(&origin, &["add", "."])?;
+    run_git(&origin, &["commit", "-m", "main moves"])?;
+
+    let parent = scratch.join("parent");
+    std::fs::create_dir_all(&parent).map_err(|err| format!("create parent: {err}"))?;
+    let url = format!("file://{}", origin.display());
+    run_git(
+        &parent,
+        &[
+            "clone", "-q", "--depth", "1", "--branch", "feat", &url, "clone",
+        ],
+    )?;
+    let clone = parent.join("clone");
+    run_git(
+        &clone,
+        &[
+            "fetch",
+            "-q",
+            "--depth",
+            "1",
+            "origin",
+            "main:refs/remotes/origin/main",
+        ],
+    )?;
+    // Dirty the tree with a tracked edit so the default selects the worktree.
+    std::fs::write(clone.join("lib.rs"), "pub fn f() -> bool { 2 > 0 }\n")
+        .map_err(|err| format!("write dirty lib.rs: {err}"))?;
+
+    // Fixture precondition: the base-tip form the old loader fell back to
+    // exits 0 here, so a passing test cannot be vacuous.
+    let tip_diff = common::fixture_git::fixture_git_output(&clone, &["diff", "origin/main"])?;
+    if !tip_diff.contains("lib.rs") {
+        return Err(format!(
+            "fixture must reverse base content through the base-tip diff:\n{tip_diff}"
+        ));
+    }
+
+    let root_str = clone.to_string_lossy().into_owned();
+    let legs: [(&str, Vec<&str>); 2] = [
+        ("explicit --worktree", vec!["--worktree"]),
+        ("dirty default", vec![]),
+    ];
+    for (label, extra) in &legs {
+        let mut args = vec![
+            "check",
+            "--root",
+            root_str.as_str(),
+            "--base",
+            "origin/main",
+        ];
+        args.extend(extra.iter().copied());
+        args.push("--json");
+        let output = run_ripr(&args);
+        assert_worktree_origin_refusal(
+            &output,
+            label,
+            "origin/main",
+            &["shallow clone", "git fetch --unshallow", "fetch-depth: 0"],
+            &["unrelated histories"],
+        )?;
+    }
+
+    ignore_remove_dir_all(&scratch);
+    Ok(())
+}
+
+/// #7076: a dirty-tree `check` on an orphan branch (unrelated histories) has
+/// no merge base either. Both the explicit `--worktree` read and the
+/// dirty-default read must fail closed with the unrelated-histories cause and
+/// its `--base` repair, never the shallow-clone diagnosis of a full clone.
+#[test]
+fn check_dirty_tree_on_orphan_branch_fails_closed() -> Result<(), String> {
+    let root = unique_temp_workspace("worktree-orphan-branch");
+    std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+    run_git(&root, &["init", "-b", "main"])?;
+    run_git(&root, &["config", "user.email", "test@test.com"])?;
+    run_git(&root, &["config", "user.name", "Test"])?;
+    std::fs::write(root.join("lib.rs"), "pub fn f() -> bool { 1 > 0 }\n")
+        .map_err(|err| format!("write base lib.rs: {err}"))?;
+    run_git(&root, &["add", "."])?;
+    run_git(&root, &["commit", "-m", "base"])?;
+    run_git(&root, &["checkout", "-q", "--orphan", "unrelated"])?;
+    run_git(&root, &["commit", "-q", "-m", "unrelated root"])?;
+    // Dirty the tree with a tracked edit so the default selects the worktree.
+    std::fs::write(root.join("lib.rs"), "pub fn f() -> bool { 1 >= 0 }\n")
+        .map_err(|err| format!("write dirty lib.rs: {err}"))?;
+
+    // Fixture precondition: the base-tip form the old loader fell back to
+    // exits 0 here, so a passing test cannot be vacuous.
+    let tip_diff = common::fixture_git::fixture_git_output(&root, &["diff", "main"])?;
+    if !tip_diff.contains("lib.rs") {
+        return Err(format!(
+            "fixture must reverse base content through the base-tip diff:\n{tip_diff}"
+        ));
+    }
+
+    let root_str = root.to_string_lossy().into_owned();
+    let legs: [(&str, Vec<&str>); 2] = [
+        ("explicit --worktree", vec!["--worktree"]),
+        ("dirty default", vec![]),
+    ];
+    for (label, extra) in &legs {
+        let mut args = vec!["check", "--root", root_str.as_str(), "--base", "main"];
+        args.extend(extra.iter().copied());
+        args.push("--json");
+        let output = run_ripr(&args);
+        assert_worktree_origin_refusal(
+            &output,
+            label,
+            "main",
+            &["unrelated histories", "Pass `--base <ref>`"],
+            &["shallow clone", "has no commits yet"],
+        )?;
+    }
+
+    ignore_remove_dir_all(&root);
+    Ok(())
+}
+
+/// #7076: an unborn HEAD has no merge base with anything, but the cause is
+/// the missing HEAD, not unrelated histories — no `--base` repair can help
+/// until the tree is committed or an existing branch is checked out. The
+/// explicit `--worktree` read names HEAD through the worktree loader; the
+/// dirty default stays on committed history (#7106: staged files on an
+/// unborn HEAD read as additions, not uncommitted work) and refuses with the
+/// committed unknown-revision hint. Both routes fail closed.
+#[test]
+fn check_dirty_tree_with_unborn_head_names_head() -> Result<(), String> {
+    let root = unique_temp_workspace("worktree-unborn-head");
+    std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+    run_git(&root, &["init", "-b", "main"])?;
+    run_git(&root, &["config", "user.email", "test@test.com"])?;
+    run_git(&root, &["config", "user.name", "Test"])?;
+    std::fs::write(root.join("lib.rs"), "pub fn f() -> bool { 1 > 0 }\n")
+        .map_err(|err| format!("write base lib.rs: {err}"))?;
+    run_git(&root, &["add", "."])?;
+    run_git(&root, &["commit", "-m", "base"])?;
+    run_git(&root, &["checkout", "-q", "--orphan", "empty"])?;
+    // The orphan switch stages the inherited tree; editing it leaves
+    // uncommitted work on an unborn HEAD.
+    std::fs::write(root.join("lib.rs"), "pub fn f() -> bool { 1 >= 0 }\n")
+        .map_err(|err| format!("write dirty lib.rs: {err}"))?;
+
+    // Fixture precondition: the base-tip form the old loader fell back to
+    // exits 0 here, so a passing test cannot be vacuous.
+    let tip_diff = common::fixture_git::fixture_git_output(&root, &["diff", "main"])?;
+    if !tip_diff.contains("lib.rs") {
+        return Err(format!(
+            "fixture must reverse base content through the base-tip diff:\n{tip_diff}"
+        ));
+    }
+
+    let root_str = root.to_string_lossy().into_owned();
+    let output = run_ripr(&[
+        "check",
+        "--root",
+        root_str.as_str(),
+        "--base",
+        "main",
+        "--worktree",
+        "--json",
+    ]);
+    assert_worktree_origin_refusal(
+        &output,
+        "explicit --worktree",
+        "main",
+        &["HEAD does not resolve to a commit", "unborn"],
+        &["unrelated histories", "has no merge base"],
+    )?;
+    let output = run_ripr(&[
+        "check",
+        "--root",
+        root_str.as_str(),
+        "--base",
+        "main",
+        "--json",
+    ]);
+    assert_origin_refusal(
+        &output,
+        "dirty default",
+        &["names a revision Git cannot resolve", "git rev-parse HEAD"],
+        &["the working-tree diff from"],
+    )?;
+
+    ignore_remove_dir_all(&root);
+    Ok(())
+}
+
+/// #7076 review: `merge-base` walks history, so a missing shared object fails
+/// it while both tips still resolve. A dirty-tree `check` there must keep the
+/// object-restoration repair (`git fsck`), never the unrelated-histories
+/// `--base` repair, which cannot fix damage. Both the explicit `--worktree`
+/// read and the dirty-default read must name the damage.
+#[test]
+fn check_dirty_tree_with_damaged_store_names_damage() -> Result<(), String> {
+    let root = unique_temp_workspace("worktree-damaged-store");
+    std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+    run_git(&root, &["init", "-b", "main"])?;
+    run_git(&root, &["config", "user.email", "test@test.com"])?;
+    run_git(&root, &["config", "user.name", "Test"])?;
+    // The missing object below must stay a loose file, never packed.
+    run_git(&root, &["config", "gc.auto", "0"])?;
+    std::fs::write(root.join("lib.rs"), "pub fn f() -> bool { 1 > 0 }\n")
+        .map_err(|err| format!("write base lib.rs: {err}"))?;
+    run_git(&root, &["add", "."])?;
+    run_git(&root, &["commit", "-m", "A"])?;
+    run_git(&root, &["checkout", "-b", "feature"])?;
+    std::fs::write(root.join("lib.rs"), "pub fn f() -> bool { 1 >= 0 }\n")
+        .map_err(|err| format!("write feat lib.rs: {err}"))?;
+    run_git(&root, &["commit", "-am", "F"])?;
+    run_git(&root, &["checkout", "main"])?;
+    std::fs::write(root.join("note.txt"), "moved on")
+        .map_err(|err| format!("write note: {err}"))?;
+    run_git(&root, &["add", "."])?;
+    run_git(&root, &["commit", "-m", "B"])?;
+    run_git(&root, &["checkout", "feature"])?;
+    // Dirty the tree with a tracked edit so the default selects the worktree.
+    std::fs::write(root.join("lib.rs"), "pub fn f() -> bool { 2 > 0 }\n")
+        .map_err(|err| format!("write dirty lib.rs: {err}"))?;
+
+    let fork = common::fixture_git::fixture_git_output(&root, &["rev-parse", "main~1"])?;
+    let fork = fork.trim();
+    let object = root.join(".git/objects").join(&fork[..2]).join(&fork[2..]);
+    if !object.is_file() {
+        return Err(format!(
+            "fixture precondition: the fork-point object must be loose at {}",
+            object.display()
+        ));
+    }
+    std::fs::remove_file(&object).map_err(|err| format!("delete fork object: {err}"))?;
+
+    // Fixture precondition: the base-tip form the old loader fell back to
+    // exits 0 here, so a passing test cannot be vacuous.
+    let tip_diff = common::fixture_git::fixture_git_output(&root, &["diff", "main"])?;
+    if !tip_diff.contains("lib.rs") {
+        return Err(format!(
+            "fixture must reverse base content through the base-tip diff:\n{tip_diff}"
+        ));
+    }
+
+    let root_str = root.to_string_lossy().into_owned();
+    let legs: [(&str, Vec<&str>); 2] = [
+        ("explicit --worktree", vec!["--worktree"]),
+        ("dirty default", vec![]),
+    ];
+    for (label, extra) in &legs {
+        let mut args = vec!["check", "--root", root_str.as_str(), "--base", "main"];
+        args.extend(extra.iter().copied());
+        args.push("--json");
+        let output = run_ripr(&args);
+        assert_worktree_origin_refusal(
+            &output,
+            label,
+            "main",
+            &["damaged object store", "git fsck"],
+            &["unrelated histories"],
+        )?;
+    }
+
+    ignore_remove_dir_all(&root);
+    Ok(())
+}
+
+/// #7076 review: only Git's genuine no-merge-base result (exit 1 without a
+/// message) takes the unrelated-histories diagnosis. A refusal such as
+/// cyclic `refs/replace` (exit 128) must preserve Git's own reason with the
+/// named-file repair: no `--base` repair can fix a replace cycle. The
+/// explicit `--worktree` leg uses an explicit base; the dirty-default leg
+/// also exercises default base resolution, and it stays on committed history
+/// there because the dirtiness probe itself cannot read `status` through the
+/// cycle — that committed read still fails closed on Git's reason.
+#[test]
+fn check_dirty_tree_with_cyclic_replace_preserves_git_refusal() -> Result<(), String> {
+    let root = unique_temp_workspace("worktree-cyclic-replace");
+    std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+    run_git(&root, &["init", "-b", "main"])?;
+    run_git(&root, &["config", "user.email", "test@test.com"])?;
+    run_git(&root, &["config", "user.name", "Test"])?;
+    std::fs::write(root.join("lib.rs"), "pub fn f() -> bool { 1 > 0 }\n")
+        .map_err(|err| format!("write base lib.rs: {err}"))?;
+    run_git(&root, &["add", "."])?;
+    run_git(&root, &["commit", "-m", "A"])?;
+    run_git(&root, &["checkout", "-b", "feature"])?;
+    std::fs::write(root.join("lib.rs"), "pub fn f() -> bool { 1 >= 0 }\n")
+        .map_err(|err| format!("write feat lib.rs: {err}"))?;
+    run_git(&root, &["commit", "-am", "F"])?;
+    run_git(&root, &["checkout", "main"])?;
+    std::fs::write(root.join("note.txt"), "moved on")
+        .map_err(|err| format!("write note: {err}"))?;
+    run_git(&root, &["add", "."])?;
+    run_git(&root, &["commit", "-m", "B"])?;
+    run_git(&root, &["checkout", "feature"])?;
+    // Dirty the tree with a tracked edit so the default selects the worktree.
+    std::fs::write(root.join("lib.rs"), "pub fn f() -> bool { 2 > 0 }\n")
+        .map_err(|err| format!("write dirty lib.rs: {err}"))?;
+
+    let fork = common::fixture_git::fixture_git_output(&root, &["rev-parse", "main~1"])?;
+    let tip = common::fixture_git::fixture_git_output(&root, &["rev-parse", "feature"])?;
+    run_git(&root, &["replace", fork.trim(), tip.trim()])?;
+    run_git(&root, &["replace", tip.trim(), fork.trim()])?;
+
+    let root_str = root.to_string_lossy().into_owned();
+    let output = run_ripr(&[
+        "check",
+        "--root",
+        root_str.as_str(),
+        "--base",
+        "main",
+        "--worktree",
+        "--json",
+    ]);
+    assert_worktree_origin_refusal(
+        &output,
+        "explicit --worktree",
+        "main",
+        &["replace depth", "correct or restore"],
+        &["unrelated histories"],
+    )?;
+    let output = run_ripr(&["check", "--root", root_str.as_str(), "--json"]);
+    assert_origin_refusal(
+        &output,
+        "dirty default with default base",
+        &["replace depth too high"],
+        &["unrelated histories", "the working-tree diff from"],
+    )?;
+
+    ignore_remove_dir_all(&root);
+    Ok(())
+}
+
+/// #7076 review: an unpeeled `rev-parse HEAD` returns the stored ID without
+/// reading the object, so a deleted tip commit still "resolves" while
+/// `merge-base` refuses with `Not a valid commit name`. The explicit
+/// `--worktree` read must keep the object-restoration repair there, not the
+/// named-file repair and not the unborn-branch message. The dirty-default
+/// leg stays on committed history (the dirtiness probe cannot read `status`
+/// without the tip tree) and fails closed without reaching the worktree
+/// loader; its message text stays owned by the committed path.
+#[test]
+fn check_dirty_tree_with_deleted_head_tip_names_damage() -> Result<(), String> {
+    let root = unique_temp_workspace("worktree-deleted-head-tip");
+    std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+    run_git(&root, &["init", "-b", "main"])?;
+    run_git(&root, &["config", "user.email", "test@test.com"])?;
+    run_git(&root, &["config", "user.name", "Test"])?;
+    // The missing object below must stay a loose file, never packed.
+    run_git(&root, &["config", "gc.auto", "0"])?;
+    std::fs::write(root.join("lib.rs"), "pub fn f() -> bool { 1 > 0 }\n")
+        .map_err(|err| format!("write base lib.rs: {err}"))?;
+    run_git(&root, &["add", "."])?;
+    run_git(&root, &["commit", "-m", "A"])?;
+    run_git(&root, &["checkout", "-b", "feature"])?;
+    std::fs::write(root.join("lib.rs"), "pub fn f() -> bool { 1 >= 0 }\n")
+        .map_err(|err| format!("write feat lib.rs: {err}"))?;
+    run_git(&root, &["commit", "-am", "F"])?;
+    run_git(&root, &["checkout", "main"])?;
+    std::fs::write(root.join("note.txt"), "moved on")
+        .map_err(|err| format!("write note: {err}"))?;
+    run_git(&root, &["add", "."])?;
+    run_git(&root, &["commit", "-m", "B"])?;
+    run_git(&root, &["checkout", "feature"])?;
+    // Dirty the tree with a tracked edit.
+    std::fs::write(root.join("lib.rs"), "pub fn f() -> bool { 2 > 0 }\n")
+        .map_err(|err| format!("write dirty lib.rs: {err}"))?;
+
+    let tip = common::fixture_git::fixture_git_output(&root, &["rev-parse", "feature"])?;
+    let tip = tip.trim();
+    let object = root.join(".git/objects").join(&tip[..2]).join(&tip[2..]);
+    if !object.is_file() {
+        return Err(format!(
+            "fixture precondition: the tip object must be loose at {}",
+            object.display()
+        ));
+    }
+    std::fs::remove_file(&object).map_err(|err| format!("delete tip object: {err}"))?;
+
+    let root_str = root.to_string_lossy().into_owned();
+    let output = run_ripr(&[
+        "check",
+        "--root",
+        root_str.as_str(),
+        "--base",
+        "main",
+        "--worktree",
+        "--json",
+    ]);
+    assert_worktree_origin_refusal(
+        &output,
+        "explicit --worktree",
+        "main",
+        &["damaged object store", "git fsck"],
+        &[
+            "unrelated histories",
+            "correct or restore",
+            "does not resolve to a commit",
+        ],
+    )?;
+    let output = run_ripr(&[
+        "check",
+        "--root",
+        root_str.as_str(),
+        "--base",
+        "main",
+        "--json",
+    ]);
+    assert_origin_refusal(
+        &output,
+        "dirty default",
+        &[],
+        &["the working-tree diff from"],
+    )?;
+
+    ignore_remove_dir_all(&root);
+    Ok(())
+}
+
 /// The argv of a printed `ripr ...` command, without the program name.
 /// Printed commands quote with POSIX single quotes (`shell_arg`).
 fn printed_ripr_args(command: &str) -> Result<Vec<String>, String> {
@@ -21479,10 +21996,14 @@ fn agent_repair_after_phase_stdout_is_one_json_document() -> Result<(), Box<dyn 
     Ok(())
 }
 
-/// RC rehearsal: a focused test with a wrong expected value still moves the
-/// static grip to `improved`, because ripr never runs it. Every surface a cold
-/// agent reads (after-phase stderr, the stdout envelope's status report, and
-/// `agent status` in both forms) must say the test was not run.
+/// RC rehearsal: a focused test with a wrong expected value no longer moves
+/// the static grip (#7007): the asserted value statically contradicts the
+/// owner's fold (`asserts 1, owner folds to 90`), so the test's call-site
+/// credit is withheld and the seam's gap stays open instead of improving on
+/// the inverted discriminator's account. ripr never runs the test, and every
+/// surface a cold agent reads (after-phase stderr, the stdout envelope's
+/// status report, and `agent status` in both forms) must still say the test
+/// was not run.
 #[test]
 fn agent_repair_after_a_failing_test_says_the_test_was_not_run()
 -> Result<(), Box<dyn std::error::Error>> {
@@ -21497,9 +22018,12 @@ fn agent_repair_after_a_failing_test_says_the_test_was_not_run()
     assert_success(&after);
 
     let stderr = String::from_utf8_lossy(&after.stderr);
+    // #7007: the wrong-valued assert is statically contradicted, so its
+    // activation credit is withheld and the static movement stays unchanged
+    // — the gap the repair packet names is still open.
     assert!(
-        stderr.contains(", improved)"),
-        "precondition: static movement improved:\n{stderr}"
+        stderr.contains(", unchanged)"),
+        "precondition: static movement unchanged while the contradicted test remains:\n{stderr}"
     );
     assert!(
         stderr

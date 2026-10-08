@@ -255,7 +255,7 @@ impl<'a> AgentBriefPolicy<'a> {
             ));
         }
 
-        if !is_agent_actionable(class) {
+        if !is_agent_result_visible(class) {
             return Some(format!(
                 "is {} and is not included in agent results",
                 class.as_str()
@@ -786,7 +786,24 @@ fn relation_confidence_priority(confidence: RelationConfidence) -> u8 {
     }
 }
 
+/// Whether the brief may select this class as a repair target: gap classes
+/// only. A static limitation (`SeamGripClass::is_static_limitation`: opaque
+/// and the four `*_unknown` classes) names evidence the analyzer could not
+/// establish, so selecting it would send the agent to repair a gap that may
+/// not exist; pilot withholds the same classes from its ranking (#5497,
+/// #6775). Omitted seams are named in warnings, never silently dropped
+/// (`AgentBriefOmission`).
 fn is_agent_actionable(class: SeamGripClass) -> bool {
+    class.is_headline_eligible() && !class.is_static_limitation()
+}
+
+/// Whether an explicitly named seam renders an agent result (packet,
+/// card): headline-eligible classes plus `Opaque`. Static limitations in
+/// that set render `inspect_static_limitation` packets. This is packet
+/// visibility, not repair-target selection: the brief selects gap classes
+/// only (`is_agent_actionable`), but an explicitly requested
+/// static-limitation seam still deserves its inspection packet (#6775).
+fn is_agent_result_visible(class: SeamGripClass) -> bool {
     class.is_headline_eligible() || matches!(class, SeamGripClass::Opaque)
 }
 
@@ -946,6 +963,7 @@ mod tests {
                     flow_sink: None,
                 }],
                 new_test_target: None,
+                statically_contradicted_related_tests: 0,
             },
         }
     }
@@ -1296,7 +1314,7 @@ mod tests {
                 10,
                 "pricing::a",
                 "a",
-                SeamGripClass::ActivationUnknown,
+                SeamGripClass::ReachableUnrevealed,
             ),
             classified(
                 "src/pricing.rs",
@@ -1542,7 +1560,7 @@ mod tests {
                 13,
                 "pricing::d",
                 "d",
-                SeamGripClass::ActivationUnknown,
+                SeamGripClass::WeaklyGripped,
             ),
         ];
         let working_set =
@@ -2132,5 +2150,95 @@ weakly_gripped = "off"
             ]
         );
         Ok(())
+    }
+
+    #[test]
+    fn agent_brief_selector_omits_static_limitation_seams_as_repair_targets() {
+        // #6775: static limitations (opaque and the four *_unknown classes)
+        // name evidence the analyzer could not establish, so the brief must
+        // not select them as repair targets — pilot withholds the same
+        // classes from its ranking (#5497). Omitted seams are named in
+        // warnings, never silently dropped.
+        for class in [
+            SeamGripClass::ActivationUnknown,
+            SeamGripClass::PropagationUnknown,
+            SeamGripClass::ObservationUnknown,
+            SeamGripClass::DiscriminationUnknown,
+            SeamGripClass::Opaque,
+        ] {
+            let limited = classified(
+                "src/pricing.rs",
+                88,
+                "pricing::discounted_total",
+                "amount >= discount_threshold",
+                class,
+            );
+            let limited_id = limited.seam.id().as_str().to_string();
+            let gap = classified(
+                "src/pricing.rs",
+                101,
+                "pricing::taxed_total",
+                "amount > 0",
+                SeamGripClass::WeaklyGripped,
+            );
+            let gap_id = gap.seam.id().as_str().to_string();
+            let seams = vec![limited, gap];
+            let working_set =
+                AgentBriefResolvedWorkingSet::files(vec![PathBuf::from("src/pricing.rs")]);
+
+            let selection = select(&seams, &working_set, 3);
+
+            assert_eq!(
+                selected_ids(&selection),
+                vec![gap_id],
+                "{class:?} must not be selected as a repair target"
+            );
+            assert_eq!(
+                selection.warnings,
+                vec![format!(
+                    "seam {limited_id} at src/pricing.rs:88 is {} and is not included in agent brief results",
+                    class.as_str()
+                )],
+                "{class:?} omission must be named honestly"
+            );
+        }
+    }
+
+    #[test]
+    fn agent_brief_selector_warns_when_explicit_seam_is_static_limitation() {
+        // #6775: an explicit lookup of a static-limitation seam is refused
+        // with the same named omission reason as other hidden classes.
+        for class in [
+            SeamGripClass::ActivationUnknown,
+            SeamGripClass::PropagationUnknown,
+            SeamGripClass::ObservationUnknown,
+            SeamGripClass::DiscriminationUnknown,
+            SeamGripClass::Opaque,
+        ] {
+            let limited = classified(
+                "src/pricing.rs",
+                88,
+                "pricing::discounted_total",
+                "amount >= discount_threshold",
+                class,
+            );
+            let seam_id = limited.seam.id().as_str().to_string();
+            let seams = vec![limited];
+
+            let selection = select(&seams, &AgentBriefResolvedWorkingSet::seam_id(&seam_id), 3);
+
+            assert!(
+                selection.top_seams.is_empty(),
+                "{class:?} must not be selected as a repair target"
+            );
+            assert_eq!(
+                selection.warnings,
+                vec![format!(
+                    "requested seam_id {seam_id} is {} and is not included in agent brief results",
+                    class.as_str()
+                )],
+                "{class:?} omission must be named honestly"
+            );
+        }
     }
 }

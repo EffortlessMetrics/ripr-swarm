@@ -202,6 +202,25 @@ impl TestValueFacts {
     }
 }
 
+fn is_free(function: &FunctionSummary) -> bool {
+    function.impl_context == crate::analysis::facts::FunctionImplContext::Free
+}
+
+/// The part of a captured call line that is a call of the owner: the whole
+/// line, or for a module-level `fn` the suffix from its own bare or
+/// module-qualified call, never a same-line `Type::name(..)` (#6713).
+fn owner_name_call_text<'text>(
+    text: &'text str,
+    owner_name: &str,
+    free_owner: bool,
+) -> Option<&'text str> {
+    if free_owner && !owner_name.is_empty() {
+        super::related_tests::free_function_call_text(text, owner_name)
+    } else {
+        Some(text)
+    }
+}
+
 /// The value context of a qualified path token found in a test (#5357):
 /// `Constant` when the path's spelling establishes a constant, otherwise the
 /// historical `EnumVariant`.
@@ -218,11 +237,14 @@ fn value_facts_for_test(test: &TestSummary, owner_fn: Option<&FunctionSummary>) 
     let parameters = owner_fn.map(function_parameters).unwrap_or_default();
     let mut facts = Vec::new();
 
+    let free_owner = owner_fn.is_some_and(is_free);
     for call in test.body_calls() {
         if !owner_name.is_empty() && call.name != owner_name {
             continue;
         }
-        let Some(arguments) = call_arguments(&call.text, &call.name) else {
+        let Some(arguments) = owner_name_call_text(&call.text, owner_name, free_owner)
+            .and_then(|text| call_arguments(text, &call.name))
+        else {
             continue;
         };
         for (idx, argument) in arguments.iter().enumerate() {
@@ -320,7 +342,7 @@ fn observed_discriminator_values(
     else {
         return Vec::new();
     };
-    let call_values = call_values_for_owner(owner, &parameters, related_tests, helper_chain);
+    let call_values = call_values_for_owner(owner, &parameters, related_tests, helper_chain, index);
     let left_parameter = boundary_operand_parameter(owner, &parameters, &left);
     let right_parameter = boundary_operand_parameter(owner, &parameters, &right);
     // #3295: the operands resolve once per probe (initializer or
@@ -838,7 +860,7 @@ fn missing_boundary_discriminator(
     let parameters = function_parameters(owner);
     let (left, right) =
         oriented_comparison_operands(owner, &parameters, &probe.expression, probe.location.line)?;
-    let call_values = call_values_for_owner(owner, &parameters, related_tests, helper_chain);
+    let call_values = call_values_for_owner(owner, &parameters, related_tests, helper_chain, index);
     if call_values.is_empty() {
         // Every related call passes only computed arguments (#6672): the
         // inputs exist but none is readable, so the boundary is
@@ -1698,7 +1720,21 @@ fn binds_from_owner_call(body: &str, receiver: &str, owner_call: &str) -> bool {
 fn owner_call_parameter_values(
     related_tests: &[&TestSummary],
     owner_name: &str,
+    free_owner: bool,
     parameters: &[String],
+) -> Vec<Vec<ParameterValue>> {
+    owner_call_parameter_values_where(related_tests, owner_name, free_owner, parameters, |_, _| {
+        true
+    })
+}
+
+/// `owner_call_parameter_values` over only the calls `keep` admits.
+fn owner_call_parameter_values_where(
+    related_tests: &[&TestSummary],
+    owner_name: &str,
+    free_owner: bool,
+    parameters: &[String],
+    keep: impl Fn(&TestSummary, &crate::analysis::facts::CallFact) -> bool,
 ) -> Vec<Vec<ParameterValue>> {
     let mut rows = Vec::new();
     if owner_name.is_empty() || parameters.is_empty() {
@@ -1706,28 +1742,74 @@ fn owner_call_parameter_values(
     }
     for test in related_tests {
         for call in test.body_calls() {
-            if call.name != owner_name {
+            if call.name != owner_name || !keep(test, call) {
                 continue;
             }
-            let Some(arguments) = call_arguments(&call.text, &call.name) else {
+            let Some(arguments) = owner_name_call_text(&call.text, owner_name, free_owner)
+                .and_then(|text| call_arguments(text, &call.name))
+            else {
                 continue;
             };
-            let row = arguments
+            // A constant-row `for` table (#5328) yields one value per row,
+            // and cells of the same row belong together: the call runs once
+            // per row, so it contributes one input row per table row. A
+            // single value spreads to every row only when it holds for all
+            // of them (a literal or `let`); an rstest `#[case]` column drops
+            // the cases it cannot read, so its slots no longer line up with
+            // rows and it keeps contributing its first value alone.
+            let cells = arguments
                 .iter()
                 .enumerate()
                 .filter_map(|(idx, argument)| {
-                    let parameter = parameters.get(idx)?;
-                    let value = owner_argument_values(test, argument).into_iter().next()?;
-                    Some(ParameterValue {
-                        parameter: parameter.clone(),
-                        value,
-                        line: call.line,
-                        text: call.text.clone(),
-                    })
+                    let values = owner_argument_values(test, argument);
+                    let table_column = !values.is_empty()
+                        && crate::analysis::syntax::constant_table_column(
+                            &test.body,
+                            argument.trim(),
+                        )
+                        .is_some();
+                    Some((parameters.get(idx)?, values, argument.trim(), table_column))
                 })
+                .filter(|(_, values, _, _)| !values.is_empty())
                 .collect::<Vec<_>>();
-            if !row.is_empty() {
-                rows.push(row);
+            let case_column = |argument: &str| {
+                !crate::analysis::value_resolution::test_case_bound_literals(test, argument)
+                    .is_empty()
+            };
+            let by_row = cells.iter().any(|(_, _, _, table)| *table)
+                && cells.iter().all(|(_, values, argument, table)| {
+                    *table || (values.len() == 1 && !case_column(argument))
+                });
+            let height = if by_row {
+                cells
+                    .iter()
+                    .map(|(_, values, _, _)| values.len())
+                    .max()
+                    .unwrap_or(0)
+            } else {
+                usize::from(!cells.is_empty())
+            };
+            for position in 0..height {
+                let row = cells
+                    .iter()
+                    .filter_map(|(parameter, values, _, _)| {
+                        let value = match values.len() {
+                            _ if !by_row => values.first(),
+                            1 => values.first(),
+                            len if len == height => values.get(position),
+                            _ => None,
+                        }?;
+                        Some(ParameterValue {
+                            parameter: (*parameter).clone(),
+                            value: value.clone(),
+                            line: call.line,
+                            text: call.text.clone(),
+                        })
+                    })
+                    .collect::<Vec<_>>();
+                if !row.is_empty() {
+                    rows.push(row);
+                }
             }
         }
     }
@@ -1745,20 +1827,22 @@ fn call_values_for_owner(
     parameters: &[String],
     related_tests: &[&TestSummary],
     helper_chain: Option<&super::helper_transfer::HelperChain>,
+    index: &crate::analysis::rust_index::RustIndex,
 ) -> Vec<Vec<ParameterValue>> {
     let parameters = if parameters.is_empty() {
         function_parameters(owner)
     } else {
         parameters.to_vec()
     };
-    let direct = owner_call_parameter_values(related_tests, &owner.name, &parameters);
+    let direct =
+        owner_call_parameter_values(related_tests, &owner.name, is_free(owner), &parameters);
     if !direct.is_empty() {
         return direct;
     }
     let Some(chain) = helper_chain else {
         return direct;
     };
-    helper_transferred_rows(&parameters, chain, related_tests)
+    helper_transferred_rows(&parameters, chain, related_tests, index)
 }
 
 /// Whether `argument` computes one deterministic value ripr cannot read
@@ -1766,9 +1850,11 @@ fn call_values_for_owner(
 /// variables are all bound to exact values (`is_exact`), constants
 /// (`LIMIT`), or none at all. Such a call sits at one definite input that
 /// may be the boundary, so the boundary is unresolved. A computation over
-/// a value ripr cannot bind (a loop variable in `can_retire(age + 1)`) is
-/// no more readable than that bare variable, which already yields no
-/// input row without unresolving the boundary, so it is not counted.
+/// a value ripr cannot bind (a variable of a range loop in
+/// `can_retire(age + 1)`) is no more readable than that bare variable,
+/// which already yields no input row without unresolving the boundary, so
+/// it is not counted. A constant-row table's loop variable is bound (#5328),
+/// so a computation over it unresolves the boundary like one over a `let`.
 fn deterministic_computed_argument(argument: &str, is_exact: impl Fn(&str) -> bool) -> bool {
     is_computed_value_expression(argument)
         && free_identifiers(argument)
@@ -1855,7 +1941,7 @@ fn free_identifiers(text: &str) -> Vec<String> {
 /// (`owner(x + 1)`). Such an argument yields no input row (it is not an exact
 /// value), yet the call may still sit on the boundary, so a boundary over
 /// one of these parameters is unresolved rather than missing (#6672).
-fn computed_input_parameters(
+pub(in crate::analysis) fn computed_input_parameters(
     owner: &FunctionSummary,
     parameters: &[String],
     related_tests: &[&TestSummary],
@@ -1901,8 +1987,13 @@ fn computed_input_parameters(
     // A hop argument computed from the caller's parameters is one exact
     // value per row only when the entry calls carry exact rows at all.
     if !entry_called
-        || owner_call_parameter_values(related_tests, &entry.caller.name, &entry_parameters)
-            .is_empty()
+        || owner_call_parameter_values(
+            related_tests,
+            &entry.caller.name,
+            is_free(&entry.caller),
+            &entry_parameters,
+        )
+        .is_empty()
     {
         return Vec::new();
     }
@@ -1941,13 +2032,29 @@ fn helper_transferred_rows(
     owner_parameters: &[String],
     chain: &super::helper_transfer::HelperChain,
     related_tests: &[&TestSummary],
+    index: &crate::analysis::rust_index::RustIndex,
 ) -> Vec<Vec<ParameterValue>> {
     let Some(entry) = chain.hops.last() else {
         return Vec::new();
     };
     let entry_parameters = function_parameters(&entry.caller);
-    let mut rows =
-        owner_call_parameter_values(related_tests, &entry.caller.name, &entry_parameters);
+    // #6780 Devin review: an entry call shadowed by a test-local closure or
+    // nested fn never reaches the helper, so it binds no row (the same
+    // shadow authority that denies its `helper_owner_call` relation).
+    let mut rows = owner_call_parameter_values_where(
+        related_tests,
+        &entry.caller.name,
+        is_free(&entry.caller),
+        &entry_parameters,
+        |test, call| {
+            !super::helper_transfer::test_call_is_shadowed(
+                index,
+                test,
+                &entry.caller.name,
+                call.line,
+            )
+        },
+    );
     if rows.is_empty() {
         return Vec::new();
     }
@@ -1965,6 +2072,18 @@ fn helper_transferred_rows(
         // M3 — the previous off-by-one silently dropped every row when
         // parameter names differed between hops).
         let caller_parameters = function_parameters(&hop.caller);
+        // #6780 review B1: a parameter the caller rebinds or assigns before
+        // the hop (`let qty = qty * 2;`) no longer holds the test's input,
+        // so the row stops instead of binding the stale value.
+        if hop.arguments.iter().any(|argument| {
+            let argument = argument.trim();
+            caller_parameters
+                .iter()
+                .any(|parameter| parameter == argument)
+                && super::helper_transfer::caller_rebinds_parameter(&hop.caller.body, argument)
+        }) {
+            return Vec::new();
+        }
         let mut bound_rows = Vec::new();
         for row in &rows {
             let mut bound = Vec::new();
@@ -2409,7 +2528,10 @@ fn owner_calls_passing_constant(
         .flat_map(|test| test.calls.iter())
         .filter(|call| call.name == owner.name)
         .filter_map(|call| {
-            let arguments = call_arguments(&call.text, &call.name)?;
+            // A free owner's arguments come from its own call site, never a
+            // same-line `Type::name(..)` (#6713).
+            let text = owner_name_call_text(&call.text, &owner.name, is_free(owner))?;
+            let arguments = call_arguments(text, &call.name)?;
             let argument = arguments.get(position)?;
             crate::analysis::value_resolution::argument_names_constant(argument, &constant.name)
                 .then(|| (call.line, call.text.clone()))
@@ -2605,6 +2727,23 @@ pub(in crate::analysis) fn owner_argument_values(
             .collect();
     if !let_bound.is_empty() {
         return let_bound;
+    }
+    // A `for` pattern over a constant-row table carries one value per row
+    // (#5328); a row whose cell is not a plain scalar yields nothing at all,
+    // since a partial column would hide the rows ripr cannot read.
+    if let Some(column) = crate::analysis::syntax::constant_table_column(&test.body, name) {
+        let scalars: Option<Vec<String>> = column
+            .iter()
+            .map(|cell| {
+                // The cell must be one whole scalar, as an rstest case is:
+                // `Some(1)` or `"1"` is not the value `1`.
+                let cell = cell.trim();
+                (!cell.starts_with(['"', '\''])
+                    && scalar_values(cell).as_slice() == [cell.to_string()])
+                .then(|| cell.to_string())
+            })
+            .collect();
+        return scalars.unwrap_or_default();
     }
     // An rstest `#[case]` parameter carries one value per case row.
     crate::analysis::value_resolution::test_case_bound_literals(test, name)
@@ -4652,10 +4791,12 @@ assert_eq!(input.amount, 100);"#
             let_bindings: Vec::new(),
         };
 
-        assert!(owner_call_parameter_values(&[&test], "", &["amount".to_string()]).is_empty());
-        assert!(owner_call_parameter_values(&[&test], "score", &[]).is_empty());
+        assert!(
+            owner_call_parameter_values(&[&test], "", false, &["amount".to_string()]).is_empty()
+        );
+        assert!(owner_call_parameter_values(&[&test], "score", false, &[]).is_empty());
 
-        let rows = owner_call_parameter_values(&[&test], "score", &["amount".to_string()]);
+        let rows = owner_call_parameter_values(&[&test], "score", false, &["amount".to_string()]);
 
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0][0].value, "2");
@@ -4865,6 +5006,100 @@ assert_eq!(input.amount, 100);"#
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
         }
+    }
+
+    #[test]
+    fn a_constant_row_table_feeds_one_input_row_per_table_row() {
+        let body = "fn table() {\n    let cases = [(4_999, false), (5_000, true)];\n    for (cents, want) in cases {\n        assert_eq!(score(cents, 7), want);\n    }\n}";
+        let test = test_with_body_calls(body, &[(13, "score(cents, 7)")]);
+        assert_eq!(
+            owner_argument_values(&test, "cents"),
+            vec!["4_999".to_string(), "5_000".to_string()]
+        );
+        let rows = owner_call_parameter_values(
+            &[&test],
+            "score",
+            false,
+            &["amount".to_string(), "rate".to_string()],
+        );
+        let cells = rows
+            .iter()
+            .map(|row| {
+                row.iter()
+                    .map(|cell| format!("{} = {}", cell.parameter, cell.value))
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            cells,
+            vec![
+                vec!["amount = 4_999".to_string(), "rate = 7".to_string()],
+                vec!["amount = 5_000".to_string(), "rate = 7".to_string()],
+            ]
+        );
+        // A row cell ripr cannot read as one scalar drops the whole column:
+        // a partial column would hide the rows it cannot see.
+        for unreadable in [
+            "fn table() {\n    for (cents, want) in [(5_000, true), (\"x\", false)] {\n        assert_eq!(score(cents, 7), want);\n    }\n}",
+            "fn table() {\n    for (cents, want) in [(5_000, true), (Some(1), false)] {\n        assert_eq!(score(cents, 7), want);\n    }\n}",
+            // Not a table the loop is known to iterate.
+            "fn table() {\n    for (cents, want) in rows() {\n        assert_eq!(score(cents, 7), want);\n    }\n}",
+            // A second binding of the name.
+            "fn table() {\n    for (cents, want) in [(5_000, true)] {\n        for cents in [1] {\n            assert_eq!(score(cents, 7), want);\n        }\n    }\n}",
+            // A row of another arity.
+            "fn table() {\n    for (cents, want) in [(5_000, true), (1, false, 2)] {\n        assert_eq!(score(cents, 7), want);\n    }\n}",
+            // A nested pattern.
+            "fn table() {\n    for ((cents, _), want) in [((5_000, 1), true)] {\n        assert_eq!(score(cents, 7), want);\n    }\n}",
+            // A jump after the call: only the first row reaches it.
+            "fn table() {\n    for (cents, want) in [(4_999, false), (5_000, true)] {\n        assert_eq!(score(cents, 7), want);\n        break;\n    }\n}",
+            "fn table() {\n    for (cents, want) in [(4_999, false), (5_000, true)] {\n        assert_eq!(score(cents, 7), want);\n        return;\n    }\n}",
+            // A row-dependent branch skips the assertion for some rows.
+            "fn table() {\n    for (cents, want) in [(4_999, None), (5_000, Some(true))] {\n        if let Some(want) = want {\n            assert_eq!(score(cents, 7), want);\n        }\n    }\n}",
+            "fn table() {\n    for (cents, want) in [(4_999, false), (5_000, true)] {\n        match cents {\n            5_000 => assert_eq!(score(cents, 7), want),\n            _ => {}\n        }\n    }\n}",
+            // A short-circuit skips the call for some rows.
+            "fn table() {\n    for cents in [4_999, 5_000] {\n        let _ = cents != 5_000 && score(cents, 7);\n    }\n}",
+            // A closure inside the macro rebinds the name the parser cannot see.
+            "fn table() {\n    for (cents, want) in [(4_999, false), (5_000, true)] {\n        assert_eq!([1].map(|cents| score(cents, 7)), [want]);\n    }\n}",
+        ] {
+            let test = test_with_body_calls(unreadable, &[(12, "score(cents, 7)")]);
+            assert!(
+                owner_argument_values(&test, "cents").is_empty(),
+                "{unreadable}"
+            );
+        }
+        // An rstest column drops the cases it cannot read, so its values no
+        // longer line up with rows: `LOW` leaves `amount` one value, which
+        // must not be spread into a `(100, 100)` row no case runs.
+        let mut cases = test_with_body_calls(
+            "fn t(#[case] amount: u32, #[case] limit: u32, #[case] want: bool) {\n    assert_eq!(score(amount, limit), want);\n}",
+            &[(11, "score(amount, limit)")],
+        );
+        cases.attrs = vec![
+            "#[rstest]".to_string(),
+            "#[case(100, 7, true)]".to_string(),
+            "#[case(LOW, 100, false)]".to_string(),
+        ];
+        assert_eq!(owner_argument_values(&cases, "amount"), vec!["100"]);
+        assert_eq!(owner_argument_values(&cases, "limit"), vec!["7", "100"]);
+        let rows = owner_call_parameter_values(
+            &[&cases],
+            "score",
+            false,
+            &["amount".to_string(), "rate".to_string()],
+        );
+        assert_eq!(rows.len(), 1);
+        assert!(
+            rows[0]
+                .iter()
+                .all(|cell| cell.value != "100" || cell.parameter == "amount"),
+            "{rows:?}"
+        );
+        let whole = "fn table() {\n    for cents in [4_999, 5_000] {\n        assert!(score(cents, 7) > 0);\n    }\n}";
+        let test = test_with_body_calls(whole, &[(12, "score(cents, 7)")]);
+        assert_eq!(
+            owner_argument_values(&test, "cents"),
+            vec!["4_999".to_string(), "5_000".to_string()]
+        );
     }
 
     #[test]
@@ -5288,6 +5523,15 @@ assert_eq!(input.amount, 100);"#
         };
         let mut test = test_with_call("entry_boundary", "assert!(entry(9));");
         test.calls[0].name = "entry".to_string();
+        // The #6780 shadow authority fails closed unless the entry caller is
+        // unique in the workspace index, and a resolved chain always lives in
+        // that index, so the setup registers the chain's three functions.
+        let index = crate::analysis::rust_index::RustIndex::from_owned(
+            crate::analysis::facts::OwnedRustIndex {
+                functions: vec![owner.clone(), inner.clone(), entry.clone()],
+                ..Default::default()
+            },
+        );
         let run = |chain: &super::super::helper_transfer::HelperChain, test: &TestSummary| {
             activation_and_boundary_input(
                 &probe(ProbeFamily::Predicate, "10 <= amount"),
@@ -5295,7 +5539,7 @@ assert_eq!(input.amount, 100);"#
                 &[test],
                 &[],
                 Some(chain),
-                &crate::analysis::rust_index::RustIndex::default(),
+                &index,
                 false,
                 None,
             )

@@ -24,3 +24,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — rust_adversarial_free_function_receiver (3)
+
+Reason:
+RIPR-SPEC-0122 #5471 re-bless: main's #7086 golden lacks the --kind suffix this PR's stub-route render appends; 1-line formatting-only route-line restoration, no verdict change
+
+Command:
+`cargo xtask goldens bless rust_adversarial_free_function_receiver --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

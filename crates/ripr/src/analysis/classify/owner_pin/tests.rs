@@ -194,6 +194,186 @@ fn trait_default_pinned_through_a_byte_slice_receiver() {
     );
 }
 
+/// #7083: a trait default method kept by a unit struct, called on the
+/// struct's own name or on a `let` bound to it.
+const KEPT_DEFAULT_LIB: &str = r#"pub trait Counter {
+    fn step(&self) -> u32;
+
+    fn advance(&self) -> u32 {
+        4 * self.step()
+    }
+}
+
+pub struct Unit;
+
+impl Counter for Unit {
+    fn step(&self) -> u32 {
+        2
+    }
+}
+"#;
+
+/// The kept-default library with its tests in the same file.
+fn kept_default_with_tests(body: &str) -> String {
+    format!(
+        "{KEPT_DEFAULT_LIB}\n#[cfg(test)]\nmod tests {{\n    use super::*;\n\n    #[test]\n    fn advances() {{\n{body}\n    }}\n}}\n"
+    )
+}
+
+#[test]
+fn unit_struct_receiver_is_typed_by_its_own_name() {
+    let lib = kept_default_with_tests(
+        "        let bound = Unit;\n        assert_eq!(Unit.advance(), 8);\n        assert_eq!(bound.advance(), 8);\n        assert_eq!(unit.advance(), 8);",
+    );
+    let index = index(&[(LIB, &lib)]);
+    let pin = establish(&index, "advance", "4 * self.step()");
+    assert!(pin.is_some(), "the kept default must establish a pin");
+    let Some(pin) = pin else { return };
+    // A lower-case receiver no `let` binds is not a unit struct.
+    assert_eq!(
+        admitted_texts(&index, &pin),
+        vec![
+            "assert_eq!(Unit.advance(), 8);".to_string(),
+            "assert_eq!(bound.advance(), 8);".to_string(),
+        ]
+    );
+}
+
+/// #7083 review: the 2024 prelude's `IntoFuture::into_future(self)` is found
+/// at the by-value step, before a `&self` trait default of the same name.
+#[test]
+fn edition_2024_into_future_is_a_by_value_prelude_method() {
+    let lib = kept_default_with_tests("        assert_eq!(Unit.into_future(), 8);")
+        .replace("fn advance(&self)", "fn into_future(&self)");
+    let index = index(&[(LIB, &lib)]);
+    let pin = establish(&index, "into_future", "4 * self.step()");
+    assert!(pin.is_some(), "the kept default must establish a pin");
+    let Some(pin) = pin else { return };
+    assert!(admitted_texts(&index, &pin).is_empty());
+}
+
+/// #7083 review: `Iterator`'s comparisons take `self`, so `Unit.ne(..)` on an
+/// iterator type runs `Iterator::ne` before a `&self` trait default `ne`.
+#[test]
+fn iterator_by_value_comparisons_are_prelude_methods() {
+    for name in ["cmp", "eq", "ge", "gt", "le", "lt", "ne", "partial_cmp"] {
+        let lib = kept_default_with_tests(&format!("        assert_eq!(Unit.{name}(), 8);"))
+            .replace("fn advance(&self)", &format!("fn {name}(&self)"));
+        let index = index(&[(LIB, &lib)]);
+        let pin = establish(&index, name, "4 * self.step()");
+        assert!(
+            pin.is_some(),
+            "the kept default `{name}` must establish a pin"
+        );
+        let Some(pin) = pin else { continue };
+        assert!(admitted_texts(&index, &pin).is_empty(), "`{name}` admitted");
+    }
+}
+
+/// #7098 review: `Iterator::is_partitioned` is still unstable on the
+/// supported 1.95 toolchain, so a custom default of that name is the only
+/// possible callee and its test is a genuine discriminator: the pin
+/// admits it.
+#[test]
+fn unstable_is_partitioned_custom_default_is_admitted() {
+    let lib = kept_default_with_tests("        assert_eq!(Unit.is_partitioned(), 8);")
+        .replace("fn advance(&self)", "fn is_partitioned(&self)");
+    let index = index(&[(LIB, &lib)]);
+    let pin = establish(&index, "is_partitioned", "4 * self.step()");
+    assert!(pin.is_some(), "the kept default must establish a pin");
+    let Some(pin) = pin else { return };
+    assert_eq!(
+        admitted_texts(&index, &pin),
+        vec!["assert_eq!(Unit.is_partitioned(), 8);".to_string()]
+    );
+}
+
+#[test]
+fn unit_struct_value_admits_only_spellings_nothing_else_can_bind() {
+    let lib = kept_default_with_tests("        assert_eq!(Unit.advance(), 8);");
+    let decide = |extra: &str| {
+        let index = index(&[(LIB, &lib), (HELPERS, extra)]);
+        unit_struct_value("Unit", Path::new(LIB), &index)
+    };
+    // Comments, other names, method calls and `let` initializers.
+    assert!(decide(
+        "mod inner {\n    use super::*;\n    use crate::inner::*;\n}\n"
+    ));
+    assert!(decide(
+        "// struct Unit { x: u32 }\npub struct Units;\nconst UNIT: u32 = 1;\nfn n() -> u32 {\n    let v = Unit;\n    Unit.advance() + v.advance()\n}\nimpl Unit {}\n"
+    ));
+    for rival in [
+        // Another declaration, or a non-unit or generic one.
+        "pub struct Unit;\n",
+        "pub struct Unit(u32);\n",
+        "pub struct Unit<T>;\n",
+        "pub enum Unit { A }\n",
+        "pub union Unit { a: u32 }\n",
+        // Rivals in the value namespace, renames and imports.
+        "pub const Unit: u32 = 1;\n",
+        "pub static Unit: u32 = 1;\n",
+        "pub static mut Unit: u32 = 1;\n",
+        "pub fn Unit() {}\n",
+        "pub type Unit = u32;\n",
+        "pub use other::Thing as Unit;\n",
+        "pub use std::u32::MAX as Unit;\n",
+        "pub use crate::m::Unit;\n",
+        "pub enum Text { Unit }\n",
+        "use self::Text::Unit;\n",
+        "const r#Unit: &str = \"\";\n",
+        "fn f(x: Kind) -> u32 { match x { Unit => 1 } }\n",
+        // Type positions and macro input are not read.
+        "fn take(u: &mut Unit) {}\n",
+        "value!(Unit);\n",
+        "constant!(= Unit);\n",
+        // A macro that may declare any name it is given.
+        "macro_rules! constant { ($name:ident) => {}; }\n",
+        "macro_rules! constant { ($name : tt) => {}; }\n",
+        // #7083 round 3: a left-to-right mark is whitespace to rustc, and
+        // `include!`/`#[path]` splice in text the scan never reads.
+        "macro_rules! constant { (= $name:\u{200E}ident;) => {}; }\n",
+        "include!(\"shadow.in\");\n",
+        "#[path = \"other.rs\"]\nmod other;\n",
+        "# [ path = \"other.rs\"]\nmod other;\n",
+        "#\n[path = \"other.rs\"]\nmod other;\n",
+        // #7098 review: rustc accepts the raw-identifier spelling too
+        // (`r#` directly before the ident; verified by compile probe).
+        "#[r#path = \"shadow.in\"]\nmod shadow;\n",
+        "#[r#path   =   \"shadow.in\"]\nmod shadow;\n",
+        // A foreign glob in any file can reach the test through `crate::*`.
+        "pub use std::u32::*;\n",
+        // #7083 round 4: an outside module renamed or re-exported into the
+        // crate, then globbed through a `crate::` path.
+        "use std::u32 as nums;\nuse crate::nums::*;\n",
+        "pub use std::u32;\nuse crate::u32::*;\n",
+        "extern crate core as k;\nuse crate::k::u32::*;\n",
+        "use crate::Kind::*;\n",
+        "use crate::{helpers::*, Counter};\n",
+        // #7098 review: a same-named module declared anywhere else does not
+        // make the imported name a workspace module.
+        "mod inner { mod nums {} }\nuse std::u32 as nums;\nuse crate::nums::*;\n",
+        "mod inner { mod u32 {} }\npub use std::u32;\nuse crate::u32::*;\n",
+        "mod a { mod k {} }\nextern crate core as k;\nuse crate::k::*;\n",
+        "mod b { mod nums {} }\nuse std::{u32 as nums};\nuse crate::nums::*;\n",
+        // #7083 round 5: one spelling in a macro body declares a struct per
+        // invocation.
+        "macro_rules! unit { () => { pub struct Other; }; }\nfn n() -> u32 {\n    Unit.advance()\n}\n",
+    ] {
+        assert!(!decide(rival), "{rival}");
+    }
+    // A declaration outside the test's file, or a foreign glob in it.
+    // A prelude value is in scope without an import.
+    let prelude =
+        kept_default_with_tests("        assert_eq!(None.advance(), 8);").replace("Unit", "None");
+    let prelude_index = index(&[(LIB, &prelude)]);
+    assert!(!unit_struct_value("None", Path::new(LIB), &prelude_index));
+    let own = index(&[(LIB, &lib)]);
+    assert!(!unit_struct_value("Unit", Path::new(HELPERS), &own));
+    let glob = lib.replace("use super::*;", "use super::*;\n    use std::u32::*;");
+    let foreign = index(&[(LIB, &glob)]);
+    assert!(!unit_struct_value("Unit", Path::new(LIB), &foreign));
+}
+
 #[test]
 fn trait_method_needs_its_trait_imported_from_the_workspace() {
     for imports in [
@@ -1039,6 +1219,282 @@ fn a_bare_call_through_any_other_binding_of_the_name_is_not_a_pin() {
     }
 }
 
+#[test]
+fn a_cfg_gated_owner_is_not_reached_by_a_bare_call() {
+    // #7082: under the complementary cfg the bare name reaches the
+    // same-named `static`, not the owner.
+    let tests = "use demo::weight;\n\n#[test]\nfn weighs() {\n    assert_eq!(weight(4), 12);\n}\n";
+    let lib = "pub fn helper(_: u32) -> u32 {\n    12\n}\n#[cfg(feature = \"alt\")]\n#[allow(non_upper_case_globals)]\npub static weight: fn(u32) -> u32 = helper;\n#[cfg(not(feature = \"alt\"))]\npub fn weight(x: u32) -> u32 {\n    x * 3\n}\n";
+    let ix = index(&[(LIB, lib), (TESTS, tests)]);
+    let pin = establish(&ix, "weight", "x * 3");
+    assert!(pin.is_some(), "the owner itself must establish");
+    if let Some(pin) = pin {
+        assert!(admitted_texts(&ix, &pin).is_empty());
+    }
+    // An enclosing inline module's cfg gates it the same way.
+    let lib = "#[cfg(not(feature = \"alt\"))]\npub mod scale {\n    pub fn weight(x: u32) -> u32 {\n        x * 3\n    }\n}\n";
+    let tests =
+        "use demo::scale::weight;\n\n#[test]\nfn weighs() {\n    assert_eq!(weight(4), 12);\n}\n";
+    let ix = index(&[(LIB, lib), (TESTS, tests)]);
+    let pin = establish(&ix, "weight", "x * 3");
+    assert!(pin.is_some(), "the nested owner must establish");
+    if let Some(pin) = pin {
+        assert!(admitted_texts(&ix, &pin).is_empty());
+        // Control: the same module without the cfg pins.
+        let lib = lib.replace("#[cfg(not(feature = \"alt\"))]\n", "");
+        let ix = index(&[(LIB, &lib), (TESTS, tests)]);
+        let pin = establish(&ix, "weight", "x * 3");
+        assert!(pin.is_some());
+        if let Some(pin) = pin {
+            assert_eq!(admitted_texts(&ix, &pin), ["assert_eq!(weight(4), 12);"]);
+        }
+    }
+    // The unit-test form: `#[cfg(test)]` swaps in the twin.
+    let twin = "pub fn helper(_: u32) -> u32 {\n    12\n}\n#[cfg(test)]\n#[allow(non_upper_case_globals)]\npub static weight: fn(u32) -> u32 = helper;\n\n";
+    let unit = unit_tests(twin, "assert_eq!(weight(4), 12);")
+        .replace("pub fn weight", "#[cfg(not(test))]\npub fn weight")
+        .replace("mod tests {\n", "mod tests {\n    use super::*;\n");
+    assert!(
+        unit.contains("#[cfg(not(test))]\npub fn weight") && unit.contains("use super::*;"),
+        "{unit}"
+    );
+    let ix = index(&[(LIB, &unit)]);
+    let pin = establish(&ix, "weight", "x * 3");
+    assert!(pin.is_some());
+    if let Some(pin) = pin {
+        assert!(admitted_texts(&ix, &pin).is_empty());
+    }
+    // An out-of-line module behind a cfg, or with a cfg'd `#[path]`, or a
+    // file-level `#![cfg]` in the owner's file: a cfg may swap the whole
+    // file for a same-named module holding the twin.
+    let scale = "pub fn weight(x: u32) -> u32 {\n    x * 3\n}\n";
+    let twin_mod = "#[cfg(feature = \"alt\")]\npub mod scale {\n    pub fn helper(_: u32) -> u32 {\n        12\n    }\n    #[allow(non_upper_case_globals)]\n    pub static weight: fn(u32) -> u32 = helper;\n}\n";
+    let tests =
+        "use demo::scale::weight;\n\n#[test]\nfn weighs() {\n    assert_eq!(weight(4), 12);\n}\n";
+    let file_admitted = |lib: &str, scale: &str, extra: &[(&str, &str)]| {
+        let mut files = vec![(LIB, lib), ("src/scale.rs", scale), (TESTS, tests)];
+        files.extend_from_slice(extra);
+        // Role composition records the `mod scale;` edge for the file.
+        let line = lib
+            .lines()
+            .position(|line| line.contains("mod scale;"))
+            .map_or(0, |at| at + 1);
+        assert!(line > 0, "{lib}");
+        let chain = SourceRoleProvenance {
+            edges: vec![module_edge(LIB, "src/scale.rs", "scale", line, false)],
+            earliest_unresolved_reason: None,
+        };
+        let ix = index_with_provenance(&files, &[("src/scale.rs", chain)]);
+        let owner = ix.functions().iter().find(|function| {
+            function.name == "weight" && function.file == Path::new("src/scale.rs")
+        });
+        assert!(
+            owner.is_some(),
+            "the owner must be indexed from src/scale.rs"
+        );
+        let pin = owner
+            .and_then(|owner| OwnerReturnPin::establish(&return_probe(owner, "x * 3"), owner, &ix));
+        assert!(pin.is_some(), "the file owner must establish: {lib}");
+        pin.map(|pin| admitted_texts(&ix, &pin)).unwrap_or_default()
+    };
+    let gated_decl = format!("#[cfg(not(feature = \"alt\"))]\npub mod scale;\n{twin_mod}");
+    assert!(file_admitted(&gated_decl, scale, &[]).is_empty());
+    let alt_file = "pub fn helper(_: u32) -> u32 {\n    12\n}\n#[allow(non_upper_case_globals)]\npub static weight: fn(u32) -> u32 = helper;\n";
+    assert!(
+        file_admitted(
+            "#[cfg_attr(feature = \"alt\", path = \"alt_scale.rs\")]\npub mod scale;\n",
+            scale,
+            &[("src/alt_scale.rs", alt_file)]
+        )
+        .is_empty()
+    );
+    let inner_gated = format!("#![cfg(not(feature = \"alt\"))]\n{scale}");
+    assert!(file_admitted("pub mod scale;\n", &inner_gated, &[]).is_empty());
+    // A `cfg_attr` that can only toggle lints keeps the pin; one that
+    // expands to a `cfg` drops the file.
+    let lint_toggle = format!("#![cfg_attr(docsrs, allow(unused))]\n{scale}");
+    assert_eq!(
+        file_admitted("pub mod scale;\n", &lint_toggle, &[]),
+        ["assert_eq!(weight(4), 12);"]
+    );
+    let doc_toggle = format!("#![cfg_attr(feature = \"alt\", doc = \"path cfg\")]\n{scale}");
+    assert_eq!(
+        file_admitted("pub mod scale;\n", &doc_toggle, &[]),
+        ["assert_eq!(weight(4), 12);"]
+    );
+    let cfg_toggle = format!("#![cfg_attr(feature = \"alt\", cfg(any()))]\n{scale}");
+    assert!(file_admitted("pub mod scale;\n", &cfg_toggle, &[]).is_empty());
+    // Control: the plain declaration pins, even beside a cfg'd `mod scale;`
+    // that declares another file (only the edge's own declaration counts).
+    assert_eq!(
+        file_admitted("pub mod scale;\n", scale, &[]),
+        ["assert_eq!(weight(4), 12);"]
+    );
+    assert_eq!(
+        file_admitted(
+            "pub mod scale;\nmod unused {\n    #[cfg(feature = \"alt\")]\n    mod scale;\n}\n",
+            scale,
+            &[]
+        ),
+        ["assert_eq!(weight(4), 12);"]
+    );
+    // Control: the ungated integration owner pins.
+    assert_eq!(
+        weight_admitted(
+            "use demo::weight;\n\n#[test]\nfn weighs() {\n    assert_eq!(weight(4), 12);\n}\n"
+        ),
+        ["assert_eq!(weight(4), 12);"]
+    );
+}
+
+#[test]
+fn an_ancestor_file_a_cfg_may_drop_gates_the_owner() {
+    // #7104 review: an inner `#![cfg]` at the top of `src/a.rs` drops
+    // `a::scale` with it.
+    let tests = "use demo::a::scale::weight;\n\n#[test]\nfn weighs() {\n    assert_eq!(weight(4), 12);\n}\n";
+    let owner_file = "src/a/scale.rs";
+    let admitted_with = |a: &str| {
+        let lib = "pub mod a;\n";
+        let files = [
+            (LIB, lib),
+            ("src/a.rs", a),
+            (owner_file, "pub fn weight(x: u32) -> u32 {\n    x * 3\n}\n"),
+            (TESTS, tests),
+        ];
+        let line = a
+            .lines()
+            .position(|line| line.contains("mod scale;"))
+            .map_or(0, |at| at + 1);
+        assert!(line > 0, "{a}");
+        let edges = vec![
+            module_edge(LIB, "src/a.rs", "a", 1, false),
+            module_edge("src/a.rs", owner_file, "scale", line, false),
+        ];
+        let chain = |edges: Vec<SourceRoleProvenanceEdge>| SourceRoleProvenance {
+            edges,
+            earliest_unresolved_reason: None,
+        };
+        let ix = index_with_provenance(
+            &files,
+            &[
+                ("src/a.rs", chain(edges[..1].to_vec())),
+                (owner_file, chain(edges)),
+            ],
+        );
+        let owner = ix
+            .functions()
+            .iter()
+            .find(|function| function.name == "weight" && function.file == Path::new(owner_file));
+        assert!(owner.is_some());
+        let pin = owner
+            .and_then(|owner| OwnerReturnPin::establish(&return_probe(owner, "x * 3"), owner, &ix));
+        assert!(pin.is_some(), "the nested file owner must establish");
+        pin.map(|pin| admitted_texts(&ix, &pin)).unwrap_or_default()
+    };
+    assert!(admitted_with("#![cfg(not(feature = \"alt\"))]\npub mod scale;\n").is_empty());
+    // Control: the same chain without the cfg pins.
+    assert_eq!(
+        admitted_with("pub mod scale;\n"),
+        ["assert_eq!(weight(4), 12);"]
+    );
+}
+
+#[test]
+fn a_cfg_attr_path_on_the_owners_declaration_gates_it_through_real_composition()
+-> Result<(), String> {
+    // #7104 review: ripr records no module edge for a `#[path]` under
+    // `cfg_attr`, so the owner's file has an empty chain; only a crate
+    // root may. An unrelated unresolvable `#[path]` elsewhere leaves
+    // other owners pinned.
+    let pinned = |label: &str, lib: &str| -> Result<Vec<String>, String> {
+        let root = std::env::temp_dir().join(format!(
+            "ripr-owner-pin-cfg-attr-path-{label}-{}",
+            std::process::id()
+        ));
+        let files = [
+            (
+                "Cargo.toml",
+                "[package]\nname = \"demo\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+            ),
+            ("src/lib.rs", lib),
+            (
+                "src/scale.rs",
+                "pub fn weight(x: u32) -> u32 {\n    x * 3\n}\n",
+            ),
+            ("src/sys.rs", "pub fn native() {}\n"),
+            ("src/sys_win.rs", "pub fn native() {}\n"),
+            (
+                "src/alt_scale.rs",
+                "pub fn helper(_: u32) -> u32 {\n    12\n}\n#[allow(non_upper_case_globals)]\npub static weight: fn(u32) -> u32 = helper;\n",
+            ),
+            (
+                "tests/t.rs",
+                "use demo::scale::weight;\n\n#[test]\nfn weighs() {\n    assert_eq!(weight(4), 12);\n}\n",
+            ),
+        ];
+        let mut paths = Vec::new();
+        for (path, text) in files {
+            let full = root.join(path);
+            if let Some(parent) = full.parent() {
+                std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+            }
+            std::fs::write(&full, text).map_err(|error| error.to_string())?;
+            if path.ends_with(".rs") {
+                paths.push(PathBuf::from(path));
+            }
+        }
+        let index = crate::analysis::facts::build_index(&root, &paths);
+        let _ = std::fs::remove_dir_all(&root);
+        let index = index?;
+        let owner = index
+            .functions()
+            .iter()
+            .find(|function| {
+                function.name == "weight" && function.file == Path::new("src/scale.rs")
+            })
+            .ok_or("the owner must be indexed from src/scale.rs")?;
+        let pin = OwnerReturnPin::establish(&return_probe(owner, "x * 3"), owner, &index)
+            .ok_or("the owner must establish")?;
+        Ok(admitted_texts(&index, &pin))
+    };
+    assert!(
+        pinned(
+            "gated",
+            "#[cfg_attr(feature = \"alt\", path = \"alt_scale.rs\")]\npub mod scale;\n"
+        )?
+        .is_empty()
+    );
+    // Control: the plain declaration pins, with the edge real composition
+    // records.
+    assert_eq!(
+        pinned("plain", "pub mod scale;\n")?,
+        ["assert_eq!(weight(4), 12);"]
+    );
+    assert_eq!(
+        pinned(
+            "platform",
+            "pub mod scale;\n#[cfg_attr(windows, path = \"sys_win.rs\")]\nmod sys;\n"
+        )?,
+        ["assert_eq!(weight(4), 12);"]
+    );
+    Ok(())
+}
+
+/// #7104 review: a comma inside a predicate string must not select the
+/// payload boundary — `cfg_attr(mode = "a,b", cfg(..))` drops, while a
+/// non-dropping attribute with a comma in its predicate string does not.
+#[test]
+fn cfg_attr_payload_with_comma_in_predicate_string() {
+    assert!(
+        cfg_attr_payload_may_drop("cfg_attr(mode = \"a,b\", cfg(feature = \"x\"))"),
+        "a string comma must not hide the dropping cfg payload"
+    );
+    assert!(
+        !cfg_attr_payload_may_drop("cfg_attr(mode = \"a,b\", allow(dead_code))"),
+        "a non-dropping payload stays non-dropping with a string comma"
+    );
+}
+
 const COUNTER_LIB: &str = "pub struct Counter {\n    n: usize,\n}\n\nimpl Counter {\n    pub fn new() -> Self {\n        Counter { n: 0 }\n    }\n\n    pub fn try_new(n: usize) -> Result<Self, String> {\n        Ok(Counter { n })\n    }\n\n    pub fn count(&self) -> usize {\n        self.n + 1\n    }\n\n    pub fn tally(&self) -> usize {\n        self.n + 1\n    }\n}\n";
 
 fn counter_admitted(owner_name: &str, prelude: &str, binding: &str) -> usize {
@@ -1110,6 +1566,30 @@ fn a_receiver_name_bound_or_typed_elsewhere_is_not_established() {
     assert!(pin.is_some());
     let Some(pin) = pin else { return };
     assert!(admitted_texts(&index, &pin).is_empty());
+}
+
+/// #7067: a single-file `use ... as Counter` rebinds the receiver to a
+/// different type, so the pin is refused. The raw spelling
+/// (`as r#Counter`) rebinds the same name.
+#[test]
+fn a_single_file_rename_of_the_receiver_refuses_the_pin_in_both_spellings() {
+    for prelude in [
+        "use other::Tally as Counter;\n",
+        "use other::Tally as r#Counter;\n",
+    ] {
+        assert_eq!(
+            counter_admitted("tally", prelude, "let c = Counter::new();"),
+            0,
+            "{prelude}"
+        );
+    }
+}
+
+/// #7067 precision: a plain single-file `use` of the receiver may
+/// re-export production, so it is not a shadow — the pin stays admitted.
+#[test]
+fn a_single_file_plain_import_of_the_receiver_keeps_its_pin() {
+    assert_eq!(counter_admitted("tally", "", "let c = Counter::new();"), 1);
 }
 
 #[test]
@@ -4256,6 +4736,10 @@ fn a_result_bound_once_and_only_asserted_pins_like_the_call() {
         // Two assertions of the binding on one line: the use count and the
         // only-statement-on-its-line rule each refuse it.
         "let total = crate::weight(4);\n        assert_eq!(total, 12); touch_count(); assert_eq!(total, 12);",
+        // Only the only-statement-on-its-line rule refuses this one: the
+        // first assertion is the next statement, and a statement runs
+        // before the second (#7061 round 3).
+        "let total = crate::weight(4);\n        assert_eq!(total, touch_count()); touch_count(); assert_eq!(total, 12);",
     ] {
         let lib = unit_tests(LET_BOUND_PRELUDE, body);
         assert!(path_admitted(&lib, "x * 3", None).is_empty(), "{body}");
