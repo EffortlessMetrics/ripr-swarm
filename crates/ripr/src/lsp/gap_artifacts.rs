@@ -1496,9 +1496,15 @@ pub(super) fn bind_portable_command(root: &Path, command: &str) -> Option<String
     // apostrophe reopens a quote), so a body carrying one is not split: its
     // `--root .` route, if any, is withheld rather than guessed at.
     if body.contains('\\') {
+        // Literal forms catch producer `--root .` / simply quoted `.`. Mixed-quote
+        // spellings such as `"--root"'' .` are not those substrings, so also
+        // consult the same unquoted tokens `command_payload_is_safe` uses.
         let portable = ["--root .", "--root '.'", "--root \".\""]
             .iter()
-            .any(|form| body.contains(form));
+            .any(|form| body.contains(form))
+            || command_tokens(body)
+                .windows(2)
+                .any(|pair| pair[0] == "--root" && pair[1] == ".");
         return (!portable).then(|| command.to_string());
     }
     let spans = top_level_token_spans(body);
@@ -2090,6 +2096,9 @@ mod tests {
             "ripr agent verify --root .'' --json",
             "ripr agent verify --root \".\"'' --json",
             "ripr agent verify \"--root\"'' . --json",
+            // An unrelated `\` takes the early return that used to miss this
+            // mixed-quote root and pass the unbound command through.
+            "ripr agent verify --note 'path\\file' \"--root\"'' . --json",
         ] {
             assert!(
                 command_payload_is_safe(&root, command),
@@ -2097,6 +2106,16 @@ mod tests {
             );
             assert_eq!(bind_portable_command(&root, command), None, "{command:?}");
         }
+        // `--root ./sub` contains the substring `--root .`, so use a relative
+        // root that is not `.` to show the backslash path still passes through
+        // when unquoted tokens are not a portable pair.
+        assert_eq!(
+            bind_portable_command(
+                &root,
+                "ripr agent verify --note 'path\\file' --root sub --json",
+            ),
+            Some("ripr agent verify --note 'path\\file' --root sub --json".to_string()),
+        );
         Ok(())
     }
 
