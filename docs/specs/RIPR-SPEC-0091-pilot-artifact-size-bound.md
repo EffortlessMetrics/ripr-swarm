@@ -21,6 +21,7 @@ Linked plan:
 Linked issues:
 
 - #1170 — `ripr pilot` writes ~400 MB artifacts for a one-file change
+- #5861 — repo-exposure guidance must name the pilot budget that actually fired
 
 Linked PRs:
 
@@ -86,7 +87,8 @@ analyzed count.
 
 - Unset → use `DEFAULT_PILOT_SEAM_BUDGET` (2,000). `SeamLimitSource::Default`.
 - Set to a positive integer N → use N. `SeamLimitSource::Configured`.
-- Set to `0` → no budget (opt-out). Both artifacts receive all seams.
+- Set to `0` → no pilot budget (opt-out). Both artifact renderers receive
+  the inventory-retained seam list.
 
 The budget is distinct from `RIPR_REPO_EXPOSURE_SEAM_LIMIT` (which bounds the
 inventory pass). When both caps apply the pilot budget fires on the already-
@@ -94,8 +96,7 @@ capped slice and the tighter cap's `SeamLimitInfo` is disclosed.
 
 ### Disclosure
 
-When the budget is applied, both `repo-exposure.json` and
-`agent-seam-packets.json` include:
+When the pilot budget is applied, `repo-exposure.json` includes:
 
 ```json
 "run_status": "seam_limit_applied",
@@ -106,15 +107,39 @@ When the budget is applied, both `repo-exposure.json` and
     "seams_total": <M>,
     "limit_source": "default" | "configured",
     "control": "RIPR_PILOT_SEAM_BUDGET",
-    "repair_route": "Set RIPR_PILOT_SEAM_BUDGET=<M> (or 0 to disable) to include all seams."
-                  | "Set RIPR_PILOT_SEAM_BUDGET=0 to disable the budget and include all seams."
+    "repair_route": "Set RIPR_PILOT_SEAM_BUDGET=0 to disable the pilot artifact budget."
+                  | "Set RIPR_PILOT_SEAM_BUDGET=0 to disable the pilot artifact budget, or raise it to render more seams in the pilot artifacts."
   }
 ]
 ```
 
-When the budget is not applied, `"run_status": "complete"` is emitted with no
-`limitations` array (mirroring the existing `repo-exposure.json` contract from
-RIPR-SPEC-0074).
+For a pilot cut, `agent-seam-packets.json` uses the same `run_status`,
+limitation category, counts, `limit_source` and control, with its existing
+packet-specific `repair_route`. This repo-exposure guidance change preserves
+those packet routes. When the pilot budget fired, the current packet routes are:
+
+- Default: ``Set RIPR_PILOT_SEAM_BUDGET=0 to render packets for all seams, or scope the run to a change with `ripr check --base <REV>` (or `ripr check --diff <PATH>`).``
+- Configured: ``Remove or raise RIPR_PILOT_SEAM_BUDGET to render packets for more seams, or scope the run to a change with `ripr check --base <REV>` (or `ripr check --diff <PATH>`).``
+
+Packet inventory-only attribution remains tracked separately in #7186 and is
+outside this repo-exposure repair.
+
+When neither cap is applied, `"run_status": "complete"` is emitted with no
+cap limitation (mirroring the existing `repo-exposure.json` contract from
+RIPR-SPEC-0074). An inventory-only cut keeps repo-exposure's
+`repo_seam_limit_applied` category and `RIPR_REPO_EXPOSURE_SEAM_LIMIT` control.
+The renderer receives the identity of the cap that fired; a configured but
+inactive pilot budget must not relabel inventory guidance.
+
+For repo-exposure JSON, the default pilot repair route is
+`Set RIPR_PILOT_SEAM_BUDGET=0 to disable the pilot artifact budget.`;
+the configured route is
+`Set RIPR_PILOT_SEAM_BUDGET=0 to disable the pilot artifact budget, or raise it to render more seams in the pilot artifacts.`.
+Markdown names the same control in its partial-scan disclosure. These
+repo-exposure routes describe removal of the pilot artifact budget only. If
+the inventory cap also fired, recovering inventory-excluded seams separately
+requires `RIPR_REPO_EXPOSURE_SEAM_LIMIT=0`; disabling the pilot budget alone
+does not recover those seams.
 
 The `pilot-summary.json` and `pilot-summary.md` artifacts are NOT modified.
 They already reflect the top-N seams from the pilot summary logic, which is
@@ -123,10 +148,12 @@ governed separately.
 ### Non-claims
 
 - This spec does NOT change the exit code or gate authority.
-- The budget is a presentation bound, not an analysis bound. The inventory
-  still classifies all seams; only the artifact output is capped.
+- The pilot budget is a presentation bound: it does not reduce the
+  classified inventory, only the artifact input. The separate inventory cap
+  may bound that inventory.
 - This spec does NOT imply that the uncapped seams are unimportant. The repair
-  route in the disclosure tells users how to recover the full output.
+  routes identify the applied cap. Full output requires disabling every cap
+  that fired.
 
 ## Non-Goals
 
@@ -160,27 +187,40 @@ governed separately.
 | Output | Schema impact | Notes |
 | --- | --- | --- |
 | `repo-exposure.json` `run_status` | Additive | `complete` or `seam_limit_applied` |
-| `repo-exposure.json` `limitations[]` | Additive | Present only when budget applied |
+| `repo-exposure.json` `limitations[]` | Additive | Includes a disclosure when a cap is applied |
 | `agent-seam-packets.json` `run_status` | NEW field | `complete` or `seam_limit_applied` |
-| `agent-seam-packets.json` `limitations[]` | NEW field | Present only when budget applied |
+| `agent-seam-packets.json` `limitations[]` | NEW field | Includes a disclosure when a cap is applied |
 | `pilot-summary.json` | None | Unchanged |
 | `check.json` | None | Unchanged |
 
 ## Acceptance Examples
 
-1. **Default budget**: workspace with 5,000 seams — both pilot artifacts
-   contain 2,000 seams, `run_status: "seam_limit_applied"`, `limitations[0].seams_analyzed: 2000`,
+Unless stated otherwise, these examples assume the inventory cap does not
+fire. Packet totals may be lower than the rendering input because the packet
+renderer retains its existing admission filter.
+
+1. **Default budget**: workspace with 5,000 seams — repo-exposure contains
+   2,000 seams; both pilot artifacts disclose `run_status: "seam_limit_applied"`,
+   `limitations[0].seams_analyzed: 2000`,
    `limitations[0].seams_total: 5000`, `limit_source: "default"`.
-2. **Opt-out**: `RIPR_PILOT_SEAM_BUDGET=0` — both artifacts contain all seams,
-   `run_status: "complete"`, no `limitations` array.
-3. **Custom budget**: `RIPR_PILOT_SEAM_BUDGET=500` with 800 seams — both
-   artifacts contain 500 seams, `limit_source: "configured"`.
-4. **Small workspace**: workspace with 100 seams, default budget 2,000 — both
-   artifacts contain all 100 seams, `run_status: "complete"`.
+2. **Opt-out**: `RIPR_PILOT_SEAM_BUDGET=0` and
+   `RIPR_REPO_EXPOSURE_SEAM_LIMIT=0` — repo-exposure contains all seams; both
+   artifacts disclose `run_status: "complete"` with no cap limitation.
+3. **Custom budget**: `RIPR_PILOT_SEAM_BUDGET=500` with 800 seams —
+   repo-exposure contains 500 seams; both artifacts disclose
+   `limit_source: "configured"`.
+4. **Small workspace**: workspace with 100 seams, default budget 2,000 —
+   repo-exposure contains all 100 seams; both artifacts disclose
+   `run_status: "complete"`.
 5. **Budget via help**: `ripr pilot --help` output names `RIPR_PILOT_SEAM_BUDGET`
    with its default, opt-out value, and disclosure explanation.
 
 ## Test Mapping
+
+- `crates/ripr/tests/cli_smoke.rs::pilot_snapshot_truncated_by_the_seam_budget_is_not_a_verify_baseline` — built CLI configured/both/inventory-only/uncapped/replay controls.
+- `crates/ripr/src/output/repo_exposure.rs::tests::pilot_limit_disclosure_names_the_applied_cap` — default/configured pilot JSON and Markdown literals, plus uncapped nonempty output.
+- `crates/ripr/src/output/repo_exposure.rs::tests::inventory_limit_routes_remain_unchanged` — default/configured inventory repair routes.
+- `crates/ripr/src/app/pr_summary/json.rs::tests::pilot_budget_disclosure_is_preserved_in_pr_summary` — the summary consumer preserves the repair route and names the pilot presentation cap.
 
 - `crates/ripr/src/analysis/seam_inventory.rs::tests::pilot_seam_budget_default_constant_is_smaller_than_repo_exposure_cap`
 - `crates/ripr/src/analysis/seam_inventory.rs::tests::pilot_seam_budget_env_zero_parses_as_unbounded`
@@ -198,9 +238,11 @@ governed separately.
 - `crates/ripr/src/output/agent_seam_packets.rs` — adds `limit_info: Option<&SeamLimitInfo>`
   parameter to `render_agent_seam_packets_json`; emits `run_status` and `limitations[]`
   mirroring the repo-exposure renderer pattern.
+- `crates/ripr/src/output/repo_exposure.rs` — `RepoExposureLimit` preserves
+  inventory versus pilot cap identity while sharing the bounded document writer.
 - `crates/ripr/src/cli/commands/pilot.rs` — threads `SeamLimitInfo` from the
-  inventory result through `apply_pilot_seam_budget` and passes `limit_info.as_ref()`
-  to both renderers.
+  inventory result through `apply_pilot_seam_budget`; selects repo-exposure's
+  cap context from whether the pilot budget actually truncated the population.
 - `crates/ripr/src/cli/help/core.rs` — adds `RIPR_PILOT_SEAM_BUDGET` documentation
   to `PILOT_HELP`.
 
