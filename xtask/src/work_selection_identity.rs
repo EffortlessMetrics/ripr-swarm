@@ -612,7 +612,12 @@ fn live_overlaps_captured(
         worktrees: Vec::new(),
         resources: Vec::new(),
     };
-    let root = captured.manifest.root.as_str();
+    // Worktree spellings must match the compiler's effective root
+    // (local_state.root when captured, else manifest.root).
+    let root = captured.local_state.as_ref().map_or_else(
+        || captured.manifest.root.as_str(),
+        |state| state.root.as_str(),
+    );
     if let Some(body) = &captured.pull_requests {
         for pr in &body.pull_requests {
             if pr.state == "open" && pr.linked_issues.contains(&number) {
@@ -1018,7 +1023,12 @@ fn check_packet(
     // recorded on claims and PRs in the captured sources.
     if !packet.overlaps.worktrees.is_empty() {
         let mut known_worktrees: BTreeSet<String> = BTreeSet::new();
-        let root = captured.manifest.root.as_str();
+        // Same effective root as the compiler: claim/PR worktree spellings
+        // must relativize exactly as the compiled snapshot renders them.
+        let root = captured.local_state.as_ref().map_or_else(
+            || captured.manifest.root.as_str(),
+            |state| state.root.as_str(),
+        );
         if let Some(body) = &captured.local_state {
             for worktree in &body.worktrees {
                 known_worktrees.insert(portable_path(&worktree.path, &body.root));

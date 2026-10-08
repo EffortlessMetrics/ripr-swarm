@@ -39,20 +39,53 @@ def compile_snapshot(captured):
 
 
 def duplicate_family_issues(number, issues, captured):
-    """Mirror of the compiled duplicate-family edges: a requirement whose
-    spec refs are accepted by two or more open issues groups those issues."""
-    siblings = set()
-    for requirement in captured["cargo_allow"]["requirements"]:
-        members = [
-            n
-            for n, issue in issues.items()
-            if issue["state"] == "open"
-            and set(issue.get("accepted_contracts", []))
-            & set(requirement.get("spec_refs", []))
-        ]
-        if len(members) < 2 or number not in members:
+    """Mirror the compiled duplicate-family edges (work_portfolio.rs): open
+    campaign issues grouped by requirement_refs, accepted contracts only,
+    with a shared-delta gate when the requirement row carries delta ids."""
+    portfolio_issue_numbers = {
+        n
+        for campaign in captured["campaigns"]["campaigns"]
+        for n in campaign["issues"]
+    }
+    requirement_members = {}
+    for n, issue in issues.items():
+        if issue["state"] != "open" or n not in portfolio_issue_numbers:
             continue
-        siblings.update(n for n in members if n != number)
+        for requirement_id in issue.get("requirement_refs", []):
+            requirement_members.setdefault(requirement_id, set()).add(n)
+
+    cargo_allow = captured.get("cargo_allow") or {}
+    requirement_rows = cargo_allow.get("requirements", [])
+    siblings = set()
+    for requirement_id, members in requirement_members.items():
+        accepted = {
+            n for n in members
+            if issues[n].get("contract_state") == "accepted"
+        }
+        if len(accepted) < 2 or number not in accepted:
+            continue
+
+        requirement = next(
+            (row for row in requirement_rows if row["id"] == requirement_id),
+            None,
+        )
+        if requirement is not None:
+            slices = requirement.get("slices", [])
+            if any(row_slice.get("delta_id", "") for row_slice in slices):
+                common_deltas = None
+                for n in accepted:
+                    deltas = {
+                        row_slice.get("delta_id", "")
+                        for row_slice in slices
+                        if n in row_slice.get("issue_refs", [])
+                    }
+                    common_deltas = (
+                        deltas if common_deltas is None
+                        else common_deltas & deltas
+                    )
+                if not common_deltas:
+                    continue
+        siblings.update(accepted - {number})
     return sorted(siblings)
 
 
