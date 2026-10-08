@@ -90,7 +90,31 @@ fn exercise(root: &Path, patch: &str, unrelated: &str, selector: &str) -> Result
             )?;
             let stderr = String::from_utf8_lossy(&refused.stderr);
             assert_eq!(refused.status.code(), Some(2), "{stderr}");
-            assert!(refused.stdout.is_empty(), "refusal must precede output");
+            // #6834: the refusal is a parseable envelope on stdout, not
+            // silence. The machine-readable document names the fallback
+            // identity and stays non-consumable; the human recovery text
+            // below is unchanged.
+            let refusal: serde_json::Value = serde_json::from_slice(&refused.stdout)
+                .map_err(|error| format!("parse refusal envelope: {error}"))?;
+            assert_eq!(
+                refusal["analysis_scope"]["run_status"], "analysis_failed",
+                "{refusal}"
+            );
+            assert_eq!(
+                refusal["analysis_scope"]["downstream_consumable"], false,
+                "{refusal}"
+            );
+            assert!(
+                refusal["run_limitations"][0]["message"]
+                    .as_str()
+                    .is_some_and(|message| message.contains("--write-artifact")),
+                "{refusal}"
+            );
+            assert_eq!(
+                refusal["findings"].as_array().map(Vec::len),
+                Some(0),
+                "{refusal}"
+            );
             assert!(
                 stderr.contains(&format!(
                     "--write-artifact {destination} cannot be combined with --diff -"

@@ -1,0 +1,44 @@
+{
+  "case_id": "old-deps-same-type-other-dependency",
+  "subject_id": "authored-old-deps",
+  "diff": "cases/old-deps-same-type-other-dependency.diff",
+  "anchor": {
+    "file": "meter/src/lib.rs",
+    "line": 31
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "return_value",
+  "test_shape": "same_type_name_from_other_dependency",
+  "hard_case": "The test calls Meter::tick() with the same spelling, but through the other dependency; crediting it would be token-coincidence false credit.",
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "6",
+        "mutated_line": null,
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: meter's Meter ticks 6"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "spare_meter_ticks_once imports spare::Meter, not meter::Meter, so changing meter's tick passes. Spec cells: RIPR-SPEC-0172 (wrong-dependency control).",
+  "labeling_observation": {
+    "ripr_commit": "e19e16c",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "no_static_path"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

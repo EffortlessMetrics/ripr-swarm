@@ -1,0 +1,14 @@
+pub fn retries(attempts: u32) -> u32 {
+    attempts * 2
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    #[allow(unused_comparisons)]
+    fn retries_is_never_negative() {
+        assert!(retries(3) >= 0);
+    }
+}

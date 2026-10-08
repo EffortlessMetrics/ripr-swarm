@@ -45,9 +45,9 @@ map is:
 | `ripr check --format json` | `schema_version` | `0.2` |
 | `ripr check --format sarif` | `version` | `2.1.0` (standard SARIF envelope) |
 | `ripr gate evaluate` | `schema_version` | `0.1` |
-| `ripr doctor --json` | `schema_version` | `0.3` |
+| `ripr doctor --json` | `schema_version` | `0.4` |
 | `ripr diff --json` (`kind: "ripr_diff"`) | `schema_version` | `0.1` |
-| `ripr check --format repo-exposure-json` | `schema_version` | `0.3` |
+| `ripr check --format repo-exposure-json` | `schema_version` | `0.4` |
 | `ripr rerun --json` | `schema_version` | `ripr-targeted-rerun-v1` |
 | `ripr agent packet` and `ripr check --format agent-seam-packets-json` | `schema_version` | `0.5` |
 | `ripr agent brief` | `schema_version` | `0.1` |
@@ -56,13 +56,14 @@ map is:
 | `ripr agent repair --phase before --json` success stdout | `schema_version` | `0.5` |
 | `ripr agent repair --phase after --json` success stdout | `schema_version` | `0.1` |
 | `ripr agent repair --phase after --json` refusal stdout (`repair_after_refusal`) | `schema_version` | `0.2` |
+| `ripr agent repair --phase after --json` failure stdout (`repair_after_failure`; #6033) | `schema_version` | `0.4` |
 | `ripr agent status` | `schema_version` | `0.1` |
 | `ripr agent status --attempt <id>` (`agent_attempt_status`; RIPR-SPEC-0217, #4798) | `schema_version` | `0.1` |
 | `ripr agent review-summary` | `schema_version` | `0.1` |
 | `ripr receipt write/check` | `schema_version` | `0.1` |
 | `ripr feedback record/export` | `schema_version` | `0.1` |
 | badge JSON | `schema_version` | `0.8` |
-| `ripr cache status --json` | `schema_version` | `0.1` |
+| `ripr cache status --json` | `schema_version` | `0.2` |
 | `ripr mcp` status tool and resource | `schema_version` | `ripr-mcp-workspace-status-v1` (see [MCP workspace status server](interop/mcp.md)) |
 | `ripr swarm queue --json` | `schema_version` | `0.2` |
 | `ripr help --json` | `schema_version` | `2` |
@@ -80,6 +81,7 @@ records that distinction.
 | Published schema | Current version | Version owner and rationale |
 | --- | --- | --- |
 | `schemas/ripr/check.schema.json` | `0.2` | `crates/ripr/src/app.rs`; check envelope |
+| `schemas/ripr/doctor.schema.json` | `0.4` | `crates/ripr/src/output/doctor.rs`; doctor environment report (#5214) |
 | `schemas/ripr/executed-control.schema.json` | `1` | `crates/ripr/src/domain/executed_control.rs` and `crates/ripr/src/output/executed_control.rs`; executed-control obligation/result/packet vocabulary (#4641) |
 | `schemas/ripr/gate-decision.schema.json` | `0.1` | `crates/ripr/src/output/gate.rs`; gate decision envelope |
 | `schemas/ripr/pr-evidence.schema.json` | `0.1` | `crates/ripr/src/app/pr_evidence.rs` (installed `ripr pr-evidence`) and `xtask/src/reports/pr_evidence.rs` (xtask compatibility); PR evidence envelope |
@@ -115,6 +117,18 @@ the canonical packet. A refusal sets `readiness.repair_ready` to false,
 appears verbatim in `readiness.missing_evidence` and `exact_blocker`, and
 prevents `next_action`. The statically selected target remains evidence,
 not edit authorization. No field shape or schema version changes.
+
+`next_action` is projected from the card's `canonical_next_action`
+(`canonical_next_action.v1`, #6304): `Some` exactly when the shared selector
+finds the offered route executable, so the reference and the decision cannot
+disagree. The canonical DTO carries the closed action class (see the
+`next_action_class` values list), the exact subject/currentness binding, the
+referenced command or a typed stop, and bounded subordinate alternatives.
+The semantic digest pins the decision's portable parts (schema, producer,
+class, command identity, stop kind, transition labels); displays, stop
+details, and alternative routes stay out like `next_action.display`. The
+human prose renders the same DTO's block, so both projections share one
+authority.
 
 The schema is additive within `repair_card.v1`: new fields arrive with
 `#[serde(default)]`; a breaking shape change mints a new version. The CLI
@@ -288,16 +302,112 @@ PATH, symlinks resolved, or `null`), `path_ripr_is_cargo_build_output`,
 advisory: they never change `status` or the exit code, because a workspace build
 on PATH is a legitimate development setup.
 
-`ripr cache status --json` (schema `0.1`) prints one object with
-`schema_version`, `cache_dir` (the inspected directory), `status`,
-`entry_count` (regular files under the cache, symlinks skipped), and
-`total_size_bytes`. That `schema_version` versions this status report, not
-the on-disk cache layers (those carry their own versions in their directory
-names). `status` is `ok`, `not_found` (no cache directory yet; both counts
-are `0`), `partial` (some directories or entries, including the cache
-directory itself, could not be read, so the counts are lower bounds), or
-`unavailable` (the path is not a directory, is a symlink, or its metadata
-could not be read; both counts are `0`).
+### Doctor environment fields (schema `0.4`, #5214)
+
+The published schema for this document is
+[`schemas/ripr/doctor.schema.json`](../schemas/ripr/doctor.schema.json).
+The `schema_version`, `tool`, `ripr_version`, `ripr_build_msrv`, `root`,
+`profile`, `status`, `checks[]`, `runtime_probes[]`, `languages`, and `binary`
+fields keep their `0.3` meanings; `0.4` is additive on top of them.
+Schema `0.4` adds the environment facts the human `ripr doctor` screen already
+printed and `--json` did not, as typed fields. Both surfaces read one probe per
+run, so a fact cannot be printed for a user and missing from the machine
+document.
+
+| Field | Meaning |
+| --- | --- |
+| `detected_languages[]` | Languages the root marker scan found: `language`, `status` (`stable` or `preview`), `adapter_available` (whether the adapter was compiled into this binary), `enabled` (whether the effective config enables it; `null` when the configuration could not be loaded, so enablement is unknown rather than disabled; JavaScript reads through its `typescript` entry). Omitted when no marker was found. |
+| `unanalyzed_source_languages[]` | Source in languages no adapter reads: `language` and `file_count`. A non-coverage disclosure, never a finding. Omitted when no such source exists. |
+| `preview_language_gaps[]` | Detected preview languages `ripr check` skips until they are enabled: `config_entry` (what `[languages] enabled` accepts) and `detected_language` (the source it analyzes). The two differ for a JavaScript-only workspace, which the `typescript` entry analyzes. Omitted when there is no such gap. |
+| `config_defaults` | The effective configuration: `source_path` (`null` when the built-in defaults apply), `analysis_mode`, `lsp_seam_diagnostics`, `suppressions_path`, `bun_ub_profile_configured`, `bun_ub_test_roots[]`, `bun_ub_bridge_hints` (the bridge-hints path, `null` when the profile is absent). The whole field is `null` when the configuration could not be loaded, so it never claims a default the run did not verify. |
+| `cache` | Always an object in a released document, never `null`: `cache_dir`, `relocated_by_env` (whether `RIPR_CACHE_DIR` relocated it), `size_bytes`, and `size_display`. `size_bytes` is `0` when the directory does not exist or cannot be read, which is a legitimate state, not a failed measurement. A producer that stopped reporting the cache fails the published schema instead of validating. |
+| `test_surfaces[]` | One or more entries per detected language: `language`, `framework` (`null` when no framework marker was confirmed), and `evidence` (the exact `<language>: …` fragment the human screen prints). Perl carries its adapter, runner, and first-command status lines as additional entries. |
+| `perl_preview` | `null` when the marker scan found no Perl project. Otherwise `pm_files`, `pl_files`, `t_files`, `adapter_compiled`, `producer`, `ignored_configured_executable`, `exporter` (`state` of `compatible` / `incompatible` / `not_found`, plus `executable` and `version`), `expected_schema`, `test_roots[]`, `frameworks[]`, `runners[]`, and `next_command`. |
+
+`languages` keeps its own meaning and is **not** the same set as
+`detected_languages`: `languages` is what `ripr.toml` enables, while
+`detected_languages` is what the root contains. A repository with a
+`pyproject.toml` and no Python in `[languages] enabled` therefore reports
+`detected_languages` containing `python` with `enabled: false` — the exact state
+the human screen's enablement tip exists to warn about. Conflating the two would
+tell a consumer that `ripr check` analyzes source it skips.
+
+Schema `0.4` **breaks** one field and adds the rest: the top-level `sections`
+array that `0.3` published is **removed**. Its only mutator and only reader were
+`#[cfg(test)]`, so every released document carried `"sections": []` — a field
+structurally incapable of carrying information, and therefore a field whose
+removal cannot lose data a consumer could have read. Populating it instead would
+have meant giving a text blob a production writer duplicating what the typed
+fields above now carry.
+
+Because the key disappears, `0.3` to `0.4` is **not** an additive minor for a
+consumer that reads `sections`: code doing `report.get("sections")`, or a
+strictly typed client decoding into a struct with a `sections` field under a
+closed shape, must be updated before it accepts a `0.4` document. Every `0.3`
+field keeps its meaning, and every field this version adds is additive for a
+consumer that ignores unknown keys. Reverting the change restores `0.3`
+exactly, so a revert is the migration path for a consumer that cannot yet adapt.
+
+### What `--json` now probes, and where that shows up
+
+Both surfaces read one probe per run, so `ripr doctor --json` performs the
+filesystem walks the human screen already performed — the seam-cache size walk
+and the unanalyzed-source discovery walk — on every root. On a root with Perl
+markers (`Makefile.PL`, `*.pm`, `cpanfile`, or a `t/` test) it additionally
+probes for a Perl fact exporter, which the JSON surface previously did not:
+
+- up to **four deadline-bounded subprocess probes** per `ripr doctor --json`
+  invocation — `--version` and `ripr-facts --help` for each of at most two
+  candidate binaries — each bounded by `[perl].timeout_ms` (30s by default), so
+  up to ~120s in the worst case;
+- up to **seven PATH lookups** for the Perl runners and the resolved exporter
+  path. These are `which`/`where` and, unlike the probes above, carry no
+  deadline; that is a pre-existing property of doctor's PATH lookup, unchanged by
+  schema `0.4`.
+
+None of this can change a check's status, the top-level `status`, or the exit
+code. The generated GitHub workflow's "Render RIPR preview promotion packets" step
+invokes `ripr doctor --root . --json` up to twice, and carries this disclosure in
+a comment beside that invocation.
+
+Known limitations and the start-here guidance block remain human-only. They are
+static product prose and a rendered recommendation, not observations of this
+root or this host, so typing them would duplicate documentation the CLI help and
+this document already own. The larger convergence of doctor's language and
+guidance surfaces stays with #2615 and #1614.
+
+Config parse errors stay redacted on this surface (RIPR-SPEC-0007): the
+`config` check's `evidence` keeps only the first line of the `toml` error, and no
+environment field above reproduces `ripr.toml` source text.
+
+`ripr cache status --json` (schema `0.2`) prints one object with
+`schema_version`, `cache_dir` (the directory as resolved from
+`RIPR_CACHE_DIR` or the workspace default), `real_cache_dir` (the resolved
+real directory when the configured cache path traverses a symlink or
+junction — as its leaf or through an ancestor component — otherwise
+`null`), `via_symlink` (`true` exactly when `real_cache_dir` is present),
+`status`, `entry_count`, `total_size_bytes`, `foreign_entry_count`, and
+`foreign_total_size_bytes`. `entry_count` and `total_size_bytes` cover only
+the recognized ripr cache layers — the recognized top-level layer
+directories, exactly the set `ripr cache clear` removes (schema `0.2`,
+#5987; earlier versions counted every regular file under the cache root). A
+regular file wearing a recognized layer name is disclosed as foreign, not
+owned: the clear planner accepts named layers only as directories and
+removes nothing in that state. Files anywhere else under the cache root —
+foreign layers, stray notes, stale-schema orphans — are disclosed
+separately as `foreign_entry_count` / `foreign_total_size_bytes`; clear
+preserves them. That `schema_version` versions this status report, not the
+on-disk cache layers (those carry their own versions in their directory
+names). `status` is `ok`, `not_found` (no cache directory yet; all four
+counts are `0`), `partial` (some directories or entries, including the
+cache directory itself, could not be read, so the counts are lower bounds),
+or `unavailable` (the inspected path is not a directory, is a broken
+symlink, or its metadata could not be read; all four counts are `0`). A
+cache path that traverses a symlink or junction is resolved to the real
+directory for inspection (#5989), matching the directory `ripr check` reads
+and writes through the alias; `cache clear` keeps its fail-closed symlink
+refusal for the leaf and for symlinked ancestors, and names the real path
+or offending component it protects.
 
 ## Matched intervention-study preregistration
 
@@ -456,6 +566,18 @@ the typed outcome and its `limitations[]` rather than infer completeness from
 `findings` or `probes`. For `unsupported_input` and
 `partial_with_limitations`, zero findings is explicitly not a clean result.
 
+`identity.config_identity` (#5988) is the fingerprint of the exact
+`ripr.toml` text loaded for the run. It is non-null exactly when a config
+file was actually loaded; a defaults-only run (no config file, or a bound
+`--candidate-tree` subject that must ignore the worktree config) keeps it
+`null`. Any change to the loaded config content therefore moves the identity
+block — the finding-affecting allowlist fields, and equally the mode /
+unchanged-test / enabled-language settings the `--write-artifact` identity
+gate records in separate fields (a narrow finding-affecting hash alone would
+let those finding-changing settings share one block). Two runs whose loaded
+config text differs never share an identity block, even when `input_identity`
+(the diff digest alone) is equal.
+
 `eol_only_churn` (#4952) is a churn-shape disclosure, not an incomplete-analysis
 limitation: a changed file's lines pair identical before/after text at the same
 positions, so the churn is line-ending-only and probes treat the text as
@@ -495,6 +617,47 @@ preserves the normal check envelope (`schema_version`, `tool`, `mode`, `root`,
 Consumers must not treat a limited `diff_scope_oversized` artifact as a clean
 or complete analysis. The zero summary and empty `findings` array mean analysis
 did not run far enough to classify probes, not that the diff has no findings.
+
+Every other post-argv-parse `ripr check --json` failure also writes a document
+to stdout before reporting the error on stderr (#6834): the same envelope as
+the scope guards above — same `schema_version` (`"0.2"`), same keys, same
+zeroed `summary`, same empty `findings`, same
+`downstream_consumable: false` — with the typed failure identity selecting
+`analysis_scope.run_status` / `basis` / `limitation` and
+`run_limitations[0].category` / `run_status` / `basis`, plus the matching
+`repair_route`. The identity vocabulary is closed:
+
+| Identity | Repair route | Meaning |
+|---|---|---|
+| `base_unresolvable` | `analysis/base-resolution` | The requested base revision does not resolve to a commit. |
+| `repository_root_unusable` | `analysis/repository-root` | The root is not a directory, is not inside a Git work tree, or is a repository Git cannot read. |
+| `config_invalid` | `analysis/config-load` | `ripr.toml` (or the candidate tree's config) failed to load or parse. |
+| `suppression_policy_invalid` | `analysis/suppression-policy` | An explicit `--suppression-policy` file is missing or malformed. |
+| `git_invocation_timeout` | `analysis/git-timeout` | A git invocation exceeded its cooperative deadline and was terminated. |
+| `analysis_failed` | `analysis/failure` | Honest fallback for any other failure: the run produced no findings, with no claim about which stage stopped. |
+
+The scope-guard identities (`diff_scope_oversized`, `repo_scope_oversized`)
+keep their existing documents byte for byte; they are not members of this
+vocabulary.
+
+Whether the analysis ran is implicit per identity, not a separate field.
+`suppression_policy_invalid` is the one identity where classification ran to
+completion — the policy applies to findings after they are built — while
+`base_unresolvable`, `repository_root_unusable`, `config_invalid`, and
+`git_invocation_timeout` mean the run produced no findings (input loading or
+the git call itself failed first). `analysis_failed` makes no stage claim
+either way; consumers must treat it as "no findings produced".
+
+`root` and `base` echo the caller-supplied invocation context, and
+`run_limitations[0].message` echoes the human diagnostic verbatim — exactly
+what the same run prints on stderr — except for `config_invalid`, whose
+message is the redacted config summary (path and parse location, no TOML
+source excerpt) per RIPR-SPEC-0007. No other caller-unsupplied value enters
+the document.
+
+Argv usage errors (an unknown flag, a missing value, two disagreeing output
+selections) stay prose-only: exit `2`, empty stdout, the cause on stderr.
+There is no successfully parsed invocation to echo, so no envelope exists.
 
 ```json
 {
@@ -1012,13 +1175,15 @@ The evidence-first fields are additive in schema `0.2`:
 - `related_tests[].miss` and `related_tests[].why` — (optional, additive,
   #5344) why this test would not notice the changed behavior being wrong.
   `miss` is a controlled `related_test_miss` value; `why` is one short
-  sentence for people. Both are omitted when the analyzer established no
-  miss, for example for an `exposed` finding's catching test. The
-  assertion-level values (`no_assertion`, `assertion_not_observing`,
-  `assertion_not_credited`) can appear under any class; the class-level values
-  (`no_call_path`, `weak_assertion`, `missing_input`,
-  `missing_exact_assertion`, `observation_unconfirmed`) appear only under
-  `no_static_path`, `weakly_exposed` and `reachable_unrevealed`. `no_call_path`: linked by name or file location only, no
+  sentence for people. Both are omitted when the analyzer recorded no
+  reason, for example for an `exposed` finding's catching test. A populated
+  `observation_unconfirmed` is an unknown, not an established miss. The
+  per-test values (`no_call_path` on a name-only row, `no_assertion`,
+  `assertion_not_observing`, `assertion_not_credited`) can appear under any
+  class (RIPR-SPEC-0224); the class-level values (`weak_assertion`,
+  `missing_input`, `missing_exact_assertion`, `observation_unconfirmed`)
+  appear only under `weakly_exposed` and `reachable_unrevealed`, and
+  `no_call_path` is also the fallback for rows that no per-test value already marks under `no_static_path`. `no_call_path`: linked by name or file location only, no
   call to the changed code. `no_assertion`: the test has no assertion ripr
   recognizes. `assertion_not_observing`: the test asserts, but none of its
   assertions observe the changed value; `oracle` then carries the first
@@ -1027,7 +1192,9 @@ The evidence-first fields are additive in schema `0.2`:
   that it runs as the standard macro. `weak_assertion`: the matched oracle is
   weak or smoke-only. `missing_input`: on a predicate probe, the oracle
   observes the behavior but no input reaches the boundary value in
-  `missing_discriminators` (the `left == right` entry).
+  `missing_discriminators` (the `left == right` entry); on a match-arm probe,
+  no related test's input selects the changed arm (the
+  `No related test call selects arm` entry, RIPR-SPEC-0229).
   `missing_exact_assertion`: no assertion pins the exact error variant or
   constructed field value named in `missing_discriminators`.
   `observation_unconfirmed`: the oracle has the right shape but ripr could not
@@ -1068,6 +1235,15 @@ The evidence-first fields are additive in schema `0.2`:
   - `unknown` — no strong oracle observed the changed sink (or a `<module>`
     owner with no usable token).
 
+  On a `weakly_exposed` finding, two `alignment_reason` values mark rows the
+  family-relevant assertion selection changed (RIPR-SPEC-0224, #5572), and the
+  gap ledger never delegates their repair card to an agent packet:
+  `no_family_relevant_assertion` (a related test's assertions all observe
+  another behavior family, so its row shows no oracle) and
+  `other_behavior_assertion_passed_over` (a row now shows a different
+  assertion than the strength-only pick, which can be equally strong).
+  `oracle_alignment` keeps what the selected assertions show.
+
   Example — an `exposed` finding aligned directly, and a `weakly_exposed`
   finding whose strong oracle is orthogonal:
 
@@ -1096,7 +1272,7 @@ The evidence-first fields are additive in schema `0.2`:
   actionable profile, SARIF results, GitHub annotations, and PR severe-gap
   counts exclude non-current findings while denominators keep everything;
   TS/JS/Python findings now resolve `candidate_current` from their
-  head-side probes and Perl stays the explicit unknown.
+  head-side probes, and Perl resolves it from the observed change (below).
   - `base_deleted` — the expression was removed on the candidate side. The
     retained evidence is base-side and the finding is not a candidate edit
     target; `probe.line` still records the projected new-side coordinate in
@@ -1106,14 +1282,23 @@ The evidence-first fields are additive in schema `0.2`:
     candidate file, but the producer cannot prove the exact candidate
     identity of the source; not a candidate edit target.
   - `unresolved_subject` — the producing surface does not resolve source
-    currentness (preview-language findings today); the explicit unknown, and
+    currentness (preview-language findings whose producer has no observed
+    change); the explicit unknown, and
     the backward-compatibility value when reading artifacts written before
     the field existed.
   For Rust diff findings the disposition is resolved from the diff evidence
-  that seeded the probe; repo-mode findings are `candidate_current` by
-  construction (they seed from the current tree). In this slice the field is
-  informational for consumers: gate and actionability policy follow in the
-  #3212 projection slice.
+  that seeded the probe. A Perl fact-packet finding is `candidate_current`
+  only when its source is on disk under the root after resolving symlinks
+  (its digest verified at ingestion; an unreadable source rejects the packet)
+  and the diff adds a line inside the packet change's range whose text
+  matches the source at that line;
+  otherwise it stays `unresolved_subject` (#6586). Like candidate-current
+  Python and TypeScript findings, such a Perl finding reaches SARIF results,
+  GitHub annotations, `finding_alignment` items and the diff badge's
+  exposure-gap count; repo-mode findings are `candidate_current` by
+  construction (they seed from the current tree). Beyond the
+  `is_candidate_actionable` filters, gate and actionability policy follow in
+  the #3212 projection slice.
 - `repair_placement` is an additive optional object for preview-language
   findings that can statically name a bounded test location and command before
   full repair-card projection. It currently appears for direct weak Python
@@ -1676,14 +1861,23 @@ JSON fields:
   language-qualified behavioral gap when the producer can name one without
   relying on line numbers alone. Python preview values use
   `gap:python:<path>:<owner>:<behavior_kind>:<probe_kind>:<normalized_discriminator>`.
-  Static-limit findings may omit this field until a non-actionable gap-state
-  projection exists.
+  Rust findings use the same shape with the `gap:rust:` language token, the
+  workspace-relative file, and the module-qualified owner
+  (`gap:rust:<path>:<owner>:<behavior_kind>:<probe_kind>:<normalized_discriminator>`,
+  #5268): the normalized discriminator is derived from the changed line
+  itself, so a comparison seam names the same equality boundary the
+  classifier's missing-discriminator statement renders. Static-limit
+  findings and probes with no owner identity may omit this field until a
+  non-actionable gap-state projection exists.
 - `canonical_gap_group_size` is the number of raw findings in the current
   report that share the same `canonical_gap_id`, or omitted when no canonical
   gap identity is assigned.
 - `canonical_gap` is an additive optional object that carries the identity
   parts used to derive `canonical_gap_id`: `id`, `language`, `file`, `owner`,
-  `behavior_kind`, `probe_kind`, and `normalized_discriminator`.
+  `behavior_kind`, `probe_kind`, and `normalized_discriminator`. The
+  normalized discriminator is an identity, not an establishment claim: a
+  producer-named missing discriminator keeps the typed
+  `missing_discriminator` refusal ahead of a populated gap.
 - `probe.owner` is an additive optional stable owner identifier emitted when a
   preview-language adapter populated a changed owner. Python preview owners use
   `python:<path>::<owner>`, for example
@@ -1714,18 +1908,25 @@ JSON fields:
   `rust_macro_wrapped_test_call_unresolved`, or
   `rust_macro_wrapped_assertion_unresolved`, or
   `rust_value_propagation_unresolved`, or
-  `python_transitive_reach_unresolved`.
+  `wrapper_error_binding_unresolved`, or
+  `python_transitive_reach_unresolved`, or
+  `rust_assertion_context_unresolved`.
 - `static_limitation` is an additive optional per-finding object emitted only
   when a finding with `static_limit_kind` also carries a complete structured
   limitation detail. Current Rust transitive-reach, integration public-API path,
   macro-reach, direct test macro-call, macro-wrapped assertion,
-  value-propagation, and Python same-class transitive-reach limitations
-  populate it from the same evidence lines rendered in human output. Fields are
+  value-propagation, wrapper-error-binding, and Python same-class transitive-reach
+  limitations populate it from the same evidence lines rendered in human output. Fields are
   `kind`, `last_established_edge`, `first_unresolved_edge`, `analyzer_route`,
   and `non_claim`. The object is absent for static limits that do not have all
   four detail fields; consumers should keep using `static_limit_kind` as the
   limitation discriminator and treat `static_limitation` as richer detail when
-  present.
+  present. The Rust wrapper-specific producer attaches
+  `wrapper_error_binding_unresolved` and its structured detail only to
+  `weakly_exposed` findings. A `reachable_unrevealed` finding with a
+  `no_assertion` consumer may retain secondary missing text about the unresolved
+  wrapper binding while omitting both optional fields; its primary guidance
+  remains the missing assertion.
 
 ### `preview_languages` (top-level additive advisory, RIPR-SPEC-0082)
 
@@ -1920,15 +2121,20 @@ requires no disclosure.
 
 - `scope_status` — always `"no_scope_provided"` for machine filtering
 - `category` — always `"no_scope_disclosure"` for machine filtering
-- `why` — advisory rationale, not a stable key. When a default base was resolved, it names the compared ref and empty range; without a resolved base it names an explicit `BASE` placeholder to replace with an existing ref. Consumers must use structured scope and base fields for decisions.
+- `why` — advisory rationale, not a stable key. When a default base was resolved, it names the compared ref and empty range (on a working-tree read, the merge-base-to-working-tree range rather than `<base>...HEAD`, RIPR-SPEC-0116); without a resolved base it names an explicit `BASE` placeholder to replace with an existing ref. Consumers must use structured scope and base fields for decisions.
 
 ### `unanalyzed_working_tree` (top-level additive boolean, RIPR-SPEC-0112)
 
 Added as an additive optional top-level boolean. Emitted (as `true`) only when
 ALL of the following are true:
 
-1. The analyzed diff was committed history: `ripr check --base <rev>`, or a
-   bare `ripr check` that resolved the default base (#3888).
+1. The analyzed diff was committed history: `ripr check --committed` (with
+   an explicit `--base <rev>` or the resolved default base). Since the
+   RIPR-SPEC-0116 amendment a dirty tree is otherwise analyzed as a working
+   tree, so without `--committed` this field fires when the only uncommitted
+   changes are untracked files (they never select the working tree), or when
+   the dirtiness probe could not run and the run fell back to committed
+   history.
 2. None of `--diff <file>`, `--worktree`, or `--candidate-tree` was supplied,
    and the format is not repo-scope.
 3. At least one file a language adapter reads (a source or test file) has
@@ -1938,8 +2144,8 @@ ALL of the following are true:
 
 Absent (not emitted) when `false`. Does not bump `schema_version`.
 
-This field closes the false-clean gap where `ripr check --base HEAD` (or a bare
-`ripr check` on the default branch) with an uncommitted `.rs` edit returns 0 probes and exit 0 — a result that is honest
+This field closes the false-clean gap where `ripr check --committed --base HEAD`
+with an uncommitted tracked `.rs` edit returns 0 probes and exit 0 — a result that is honest
 for the committed diff but misleading if the user assumes it covers their
 working-tree change. When `unanalyzed_working_tree: true` is present, the
 result is NOT a clean pass for the uncommitted changes.
@@ -1956,6 +2162,58 @@ edited README does not count), when `--diff <file>` or
 tracked edits in the analyzed diff. When the committed-content probe cannot
 run, the check fails with the git step named instead of analyzing mixed
 content.
+
+### `untracked_working_tree_source_paths` (top-level additive array, RIPR-SPEC-0116 amendment)
+
+Added as an additive optional top-level array of path strings. Emitted only
+when at least one routed source or test file is untracked in the live
+repository, on both committed-history and working-tree reads: committed
+history reads every file as committed, and the working-tree diff covers
+tracked files only, so in both cases the named files were not analyzed.
+Absent (not emitted) when the list is empty. Does not bump `schema_version`.
+
+This is the machine-readable form of the human and GitHub untracked-files
+notes (#5258, RIPR-SPEC-0112). Without it, a working-tree JSON report with
+zero findings reads as complete while routed files were silently excluded,
+because `unanalyzed_working_tree` stays absent on working-tree reads.
+
+Example:
+
+```json
+"untracked_working_tree_source_paths": ["src/new.rs"]
+```
+
+### `base_commit`, `merge_base_commit`, and `head` (top-level additive, RIPR-SPEC-0116 amendment)
+
+A run that diffs the live repository names the base and head it analyzed.
+Beside the existing `base` ref:
+
+- `base_commit` — full commit id of `base`. Absent when it could not be
+  resolved.
+- `merge_base_commit` — full commit id the diff started from, emitted only
+  when it differs from `base_commit` (both diff sources start from the merge
+  base of the base and `HEAD`).
+- `head.source` — `"commit"` when the diff ended at `HEAD` (committed
+  history) or `"working_tree"` when it ended at the working tree (staged and
+  unstaged tracked edits on top of `HEAD`; the dirty-tree default or
+  `--worktree`).
+- `head.commit` — full commit id of `HEAD`. Absent when `HEAD` is unborn or
+  could not be resolved.
+
+All three are absent for `--diff` file and stdin input (no revisions ripr can
+verify) and for `--candidate-tree` runs, whose trees are in
+`analysis_outcome.outcome.identity.git_candidate_subject`. Does not bump
+`schema_version`. The SARIF run `properties` carry the same `base`,
+`base_commit`, `merge_base_commit`, and `head` fields.
+
+```json
+"base": "origin/main",
+"base_commit": "50370181c7bf20f7b960045780ebe7a979357bf0",
+"head": {
+  "source": "working_tree",
+  "commit": "50370181c7bf20f7b960045780ebe7a979357bf0"
+}
+```
 
 ### `suppression_policy` and suppressed findings (top-level additive, #1441)
 
@@ -2132,13 +2390,13 @@ fixtures/ts_static_limit and fixtures/typescript_mocked_module_limit).
 - `unresolved_pytest_fixture`
 - `unsupported_syntax`
 - `cross_language_oracle_visibility_unresolved` — The changed Rust seam owner is FFI/binding-exposed; whether an external-language (e.g. TypeScript) test oracle discriminates this behavior is not statically known — verify the external oracle rather than adding a Rust test.
-- `rust_transitive_reach_unresolved` — (RIPR-SPEC-0114, additive) A test appears to call public API that may transitively reach the changed Rust owner through a pub->pub(crate) helper chain or similar internal call graph, but ripr cannot fully resolve the path (macros, generics, trait dispatch, or depth>5 stop the walk). Classification stays `no_static_path`; this is a named limitation, not a coverage claim.
+- `rust_transitive_reach_unresolved` — (RIPR-SPEC-0114, additive) A test appears to call public API that may transitively reach the changed Rust owner through a pub->pub(crate) helper chain or similar internal call graph, but ripr cannot fully resolve the path (macros, generics, trait dispatch, or depth>5 stop the walk). Classification stays `no_static_path`, or `weakly_exposed` when every related test only shares the owner's file or a name token (#7071); this is a named limitation, not a coverage claim.
 
-- `rust_integration_public_api_path_unresolved` -- (RIPR-SPEC-0118, additive) An integration test appears to call crate public API, or a test helper that calls crate public API, along a candidate path toward the changed Rust owner. RIPR cannot fully resolve that integration/public-API path, so classification stays `no_static_path`; this is a named limitation, not a reach, coverage, or oracle claim.
+- `rust_integration_public_api_path_unresolved` -- (RIPR-SPEC-0118, additive) An integration test appears to call crate public API, or a test helper that calls crate public API, along a candidate path toward the changed Rust owner. RIPR cannot fully resolve that integration/public-API path, so classification stays `no_static_path` (or `weakly_exposed` for a proximity-only finding, #7071); this is a named limitation, not a reach, coverage, or oracle claim.
 
-- `rust_macro_reach_unresolved` -- (RIPR-SPEC-0117, additive) A test appears to call a Rust entry point whose path toward the changed owner stops at a same-repo macro invocation. ripr does not expand macros, so classification stays `no_static_path`; this is a named limitation, not a coverage claim.
+- `rust_macro_reach_unresolved` -- (RIPR-SPEC-0117, additive) A test appears to call a Rust entry point whose path toward the changed owner stops at a same-repo macro invocation. ripr does not expand macros, so classification stays `no_static_path` (or `weakly_exposed` for a proximity-only finding, #7071); this is a named limitation, not a coverage claim.
 
-- `rust_macro_wrapped_test_call_unresolved` -- (RIPR-SPEC-0119, additive) A Rust test directly invokes a same-repo macro whose definition mentions the changed owner. ripr does not expand macros, so classification stays `no_static_path`; this is a named limitation, not a reach, coverage, or oracle claim.
+- `rust_macro_wrapped_test_call_unresolved` -- (RIPR-SPEC-0119, additive) A Rust test directly invokes a same-repo macro whose definition mentions the changed owner. ripr does not expand macros, so classification stays `no_static_path` (or `weakly_exposed` for a proximity-only finding, #7071); this is a named limitation, not a reach, coverage, or oracle claim.
 
 - `rust_macro_wrapped_assertion_unresolved` -- (RIPR-SPEC-0120, additive) A Rust test reaches the changed owner, but its assertion-like custom macro is not classified as an oracle. Classification stays `reachable_unrevealed`; this is a named limitation, not an oracle, coverage, or repair-packet claim.
 
@@ -2146,9 +2404,11 @@ fixtures/ts_static_limit and fixtures/typescript_mocked_module_limit).
 
 - `rust_subprocess_binary_reach_unresolved` -- (additive) An integration test invokes a Cargo-built binary, but ripr does not yet map that binary target back to the changed owner. Classification stays `no_static_path`; this is a named limitation, not a subprocess reach or receipt claim.
 
-- `wrapper_error_binding_unresolved` -- (additive, #3700) A wrapper error conversion (`callee(..).map_err(..)`) takes its error-variant identity from the converted callee, and ripr cannot establish that the boxed conversion preserves that variant. The seam stays below `exposed`; this is a named limitation, not a coverage or repair claim.
+- `wrapper_error_binding_unresolved` -- (additive, #3700) A wrapper error conversion (`callee(..).map_err(..)`) takes its error-variant identity from the converted callee, and ripr cannot establish that the boxed conversion preserves that variant. The wrapper-specific producer attaches this discriminator and structured detail to `weakly_exposed` findings. A `reachable_unrevealed` finding with a `no_assertion` consumer may retain secondary wrapper-binding missing text while omitting both optional fields. The seam stays below `exposed`; this is a named limitation, not a coverage or repair claim.
 
 - `python_transitive_reach_unresolved` -- (RIPR-SPEC-0201, additive) A Python test constructs or calls into the owner's class, and a bounded same-class `self.` / `cls.` path may reach the changed method, but the preview adapter does not fully trace that path. Classification stays `no_static_path`; this is a named limitation, not a related-test or coverage claim.
+
+- `rust_assertion_context_unresolved` -- (RIPR-SPEC-0240, additive) Every related `assert_eq!` ripr refused was refused for a limit of its own reading (an unparsed or unplaced file, an unidentified test, a feature `cfg`, a binding that only may rebind the macro). The `reachable_unrevealed` gap is withheld: classification is `static_unknown` with stop reason `gap_evidence_unresolved`; this is a named limitation, not a missing-test, coverage, or repair claim.
 
 Reserved `flow_sink` values:
 
@@ -2215,6 +2475,8 @@ while `call_effect` remains the fallback for other observable calls.
 - `builder_method`
 - `table_row`
 - `enum_variant`
+- `constant` (a qualified path whose spelling establishes a constant, such as
+  `u64::MAX` or `crate::KIB`; ambiguous all-caps paths stay `enum_variant`)
 - `return_value`
 - `unknown`
 
@@ -2229,6 +2491,7 @@ while `call_effect` remains the fallback for other observable calls.
 - `async_boundary_opaque`
 - `no_changed_rust_line`
 - `macro_reach_unresolved`
+- `gap_evidence_unresolved`
 - `transitive_reach_unresolved`
 - `infection_evidence_unknown`
 - `propagation_evidence_unknown`
@@ -2252,6 +2515,17 @@ while `call_effect` remains the fallback for other observable calls.
 - `missing_input`
 - `missing_exact_assertion`
 - `observation_unconfirmed`
+
+`next_action_class` values:
+
+- `run_command`
+- `inspect_details`
+- `choose_item`
+- `choose_attempt`
+- `satisfy_prerequisite`
+- `retry_current_subject`
+- `terminal_no_action`
+- `unsupported_or_limited`
 
 ## Badge Output
 
@@ -2340,7 +2614,10 @@ Field contract:
   `public_projection` object (RIPR-SPEC-0066) on repo-scoped public badges;
   `0.8` adds `analysis_complete` and typed `analysis_outcome` on diff-scoped
   badges. Repo-scoped badges emit both fields as `null` because they do not
-  have a diff completeness denominator.
+  have a diff completeness denominator. The `0.8` JSON keys are unchanged;
+  finding-exposure `counts.unsuppressed_exposure_gaps` excludes enabled
+  preview evidence (`language_status = "preview"`). That is a count-rule
+  clarification, not a new field.
 - `kind` — `"ripr"` or `"ripr_plus"`.
 - `scope` — `"diff"` for PR/diff artifacts, `"repo"` for public repo
   baseline artifacts.
@@ -2368,13 +2645,22 @@ Field contract:
   `"unknown"`), combined with the `label` to read as `ripr: <n> actionable`.
   It is a count or a named state, never a denominator or coverage fraction.
 - `counts.unsuppressed_exposure_gaps` — diff scope: unsuppressed
-  `weakly_exposed`, `reachable_unrevealed`, and `no_static_path` Findings;
-  repo public scope: unresolved actionable canonical repair items; seam-native
-  inventory scope: configured-visible headline-eligible seam classes.
-- `counts.unknowns` — diff scope: static unknown Finding classes; seam-native
-  inventory scope: configured-visible `opaque` seams. Canonical-actionable
-  public badge projection does not count unknown-only or limitation-only states
-  in the headline.
+  `weakly_exposed`, `reachable_unrevealed`, and `no_static_path` Findings
+  that are not `language_status = "preview"` (calibrated RIPR 0). Enabled
+  preview findings stay in `analyzed_findings` and check JSON; a zero here
+  is not evidence that no such Finding classes exist. Repo public scope:
+  unresolved actionable canonical repair items; seam-native inventory scope:
+  configured-visible headline-eligible seam classes.
+- `counts.unknowns` — diff scope: candidate-actionable static unknown Finding
+  classes, including enabled preview evidence. Default policy omits unknowns
+  from the RIPR 0 headline (`include_unknowns` is false), so a zero headline
+  with nonzero `unknowns` is not a preview inference: it is also the ordinary
+  Rust-unknown case. When `include_unknowns` is true, preview unknowns still
+  do not move the headline. Consumers must read Finding `language_status`
+  rather than inferring preview from `message` and `counts.unknowns` alone.
+  Seam-native inventory scope: configured-visible `opaque` seams.
+  Canonical-actionable public badge projection does not count unknown-only or
+  limitation-only states in the headline.
 - `counts.analyzed_findings` — number of Findings considered by the
   finding-exposure basis; `0` for canonical-actionable and seam-native repo
   badges.
@@ -2421,7 +2707,14 @@ Field contract:
   - `stale_age_secs` — age of the artifact relative to its source at
     evaluation time, in seconds; `null` when `generated_at` is unknown.
   - `source_report` — repo-relative path the badge was projected from, or
-    `null`.
+    `null`. On the native repo-badge stdout paths the producing run persists
+    the rendered artifact at the path it names inside the analyzed workspace
+    (`target/ripr/reports/repo-ripr-badge.json`,
+    `target/ripr/reports/repo-ripr-plus-badge.json`; #6610), so the pointer
+    resolves after the run. When the workspace cannot take the write, the
+    projection is emitted with `source_report: null` and resolves to the
+    `unknown` state instead of claiming a report the run did not produce.
+    A `--gap-ledger`-projected badge names the supplied ledger path.
 
 Shields projection:
 
@@ -2741,7 +3034,7 @@ Policy reports are advisory unless `--mode fail-on-new-warning` is used.
       "oracle_location": { "file": "tests/pricing.rs", "line": 44 }
     },
     "suggested_assertion": null,
-    "explain_command": "ripr explain --root . probe:src_lib.rs:predicate:bbaa2c25",
+    "explain_command": "ripr explain --root /work/repo --diff /work/repo/change.diff probe:src_lib.rs:predicate:bbaa2c25",
     "confidence": { "value": 0.75, "basis": "static_only" },
     "limitations": [
       {
@@ -2755,6 +3048,12 @@ Policy reports are advisory unless `--mode fail-on-new-warning` is used.
   "recommended_next_step": "Add below, equal, and above threshold tests."
 }
 ```
+
+`witness.explain_command` names the resolved repository root, not the spelling
+typed on the command line, so it analyzes the same repository when pasted from
+another directory (#3948). The scope follows the input: a diff or `--from`
+artifact file is printed as a resolved path, stdin stays `--diff -`, and a
+`--base` or `--worktree` scope is repeated as given.
 
 The context packet is intentionally smaller than check output. It is optimized
 for coding agents and editor commands. `witness` is additive and is omitted
@@ -2777,7 +3076,8 @@ introduced by RIPR-SPEC-0005. The artifact lands at
 
 ```json
 {
-  "schema_version": "0.1",
+  "schema_version": "0.2",
+  "artifact": { "...": "see Repo Exposure Report — producer identity envelope" },
   "scope": "repo",
   "seams": [
     {
@@ -2785,6 +3085,9 @@ introduced by RIPR-SPEC-0005. The artifact lands at
       "kind": "predicate_boundary",
       "file": "src/pricing.rs",
       "line": 88,
+      "column": 12,
+      "end_line": 88,
+      "end_column": 41,
       "owner": "src/pricing.rs::discounted_total",
       "expression": "amount >= discount_threshold",
       "required_discriminator": {
@@ -2801,9 +3104,26 @@ introduced by RIPR-SPEC-0005. The artifact lands at
 
 Field contract:
 
-- `schema_version` — currently `"0.1"`. Bumping requires updating this section,
+- `schema_version` — currently `"0.2"`. Bumping requires updating this section,
   the renderer (`crates/ripr/src/output/repo_seams.rs`), and any downstream
-  consumers in lockstep.
+  consumers in lockstep. `0.1` → `0.2`: seams gained the additive `column` /
+  `end_line` / `end_column` span coordinates (#5336). The top-level
+  `artifact` envelope below is additive within `0.2` and does not bump the
+  version, per the repo-exposure envelope (#2203) and gate-subject (#5474)
+  precedents.
+- `artifact` — additive producer identity envelope (#6609), the same shared
+  projection `repo-exposure-json` carries with two token differences:
+  `kind` is `"repo_seams"` and `analysis.format` / `analysis.command` name
+  `repo-seams-json` / `ripr check --format repo-seams-json`. It binds the
+  persisted inventory to its subject — producer tool/version, repository
+  head/root, worktree state, versioned `analysis.input_identity` (the
+  analysis format is part of the identity, so a seams artifact never shares
+  an input identity with an exposure artifact on the same tree),
+  `snapshot_identity`, and a `content_sha256` commitment over the exact
+  emitted bytes (placeholder canonicalization). `head` and `worktree` read
+  `unavailable` when the producer cannot resolve Git; the envelope is a
+  disclosure, not a verify-contract, and `ripr agent verify` does not
+  consume this artifact. The Markdown sibling does not carry the envelope.
 - `scope` — always `"repo"` for this artifact. Distinguishes the repo seam
   inventory from diff-scoped findings.
 - `seam_id` — 16-char lowercase hex. FNV-1a 64-bit hash of
@@ -2815,6 +3135,15 @@ Field contract:
 - `file` — repo-root-relative Unix-separator path (no leading `./`).
 - `line` — 1-based start line for human display only. Not part of the seam ID
   hash; `byte_offset` is the canonical position field internally.
+- `column`, `end_line`, `end_column` — 1-based parser-owned span geometry
+  (columns count Unicode scalar values from the line start plus one; the
+  end is exclusive),
+  matching cargo-mutants span columns for calibration joins. Present only when
+  span geometry was available; absent on legacy or span-less entries, which
+  consumers must treat as line-only. Match-arm seams are span-less by policy:
+  the parser records the `match`/`=>` token range while the seam describes a
+  wider construct, so no span is emitted rather than a misleading one. Not
+  part of the seam ID hash.
 - `owner` — fully-qualified module/symbol path of the enclosing function.
   Backslashes from native paths are normalized to forward slashes before
   hashing. Test functions (e.g., `#[test] fn` inside `#[cfg(test)] mod tests`)
@@ -3091,7 +3420,7 @@ Consumers must not treat limited artifacts as canonical actionable counts.
 
 ```json
 {
-  "schema_version": "0.3",
+  "schema_version": "0.4",
   "scope": "repo",
   "metrics": {
     "seams_total": 9355,
@@ -3114,6 +3443,9 @@ Consumers must not treat limited artifacts as canonical actionable counts.
       "kind": "predicate_boundary",
       "file": "src/pricing.rs",
       "line": 88,
+      "column": 12,
+      "end_line": 88,
+      "end_column": 41,
       "owner": "src/pricing.rs::discounted_total",
       "expression": "amount >= discount_threshold",
       "grip_class": "weakly_gripped",
@@ -3342,15 +3674,17 @@ Consumers must not treat limited artifacts as canonical actionable counts.
 
 Field contract:
 
-- `schema_version` — currently `"0.3"`. Bumping requires updating this
+- `schema_version` — currently `"0.4"`. Bumping requires updating this
   section, the renderer (`crates/ripr/src/output/repo_exposure.rs`), and
   any downstream consumers in lockstep. `0.1` → `0.2`: per-related-test
   entries gained `relation_reason` and `relation_confidence` fields
   (`analysis/related-test-precision-v1`). `0.2` -> `0.3`: seams gained
   the additive `evidence_record` projection (`RIPR-SPEC-0021`) while
-  preserving existing top-level seam fields. `relation_reason` is an
-  additive string enum within `0.3`; `helper_owner_call` extends the
-  existing relation taxonomy without changing the field shape.
+  preserving existing top-level seam fields. `0.3` → `0.4`: seams gained
+  the additive `column` / `end_line` / `end_column` span coordinates
+  (#5336). `relation_reason` is an additive string enum within `0.3`;
+  `helper_owner_call` extends the existing relation taxonomy without
+  changing the field shape.
 - `scope` — always `"repo"`.
 - `run_status` — always present; one of `"complete"` or
   `"seam_limit_applied"`. `"complete"` means the run analyzed all
@@ -3421,6 +3755,9 @@ Field contract:
   `strongly_gripped`, `weakly_gripped`, `ungripped`, `reachable_unrevealed`,
   `activation_unknown`, `propagation_unknown`, `observation_unknown`,
   `discrimination_unknown`, `opaque`, `intentional`, `suppressed`.
+- `seams[].column`, `seams[].end_line`, `seams[].end_column` — same span
+  contract as `repo-seams.json` (1-based, character columns, end-exclusive,
+  present only when geometry was available). Added in `0.4` (#5336).
 - `seams[].evidence` — per-stage `StageState` strings: `yes`, `weak`,
   `no`, `unknown`, `opaque`, `not_applicable`.
 - `seams[].related_tests_total` — number of related tests the analyzer
@@ -3682,6 +4019,7 @@ counts.
       "builder_method": 30,
       "table_row": 50,
       "enum_variant": 12,
+      "constant": 0,
       "return_value": 8,
       "unknown": 0
     },
@@ -4005,7 +4343,7 @@ runtime execution.
     "root": ".",
     "source": "repo-exposure-json",
     "repo_exposure_mode": "instant",
-    "repo_exposure_schema_version": "0.3",
+    "repo_exposure_schema_version": "0.4",
     "repo_exposure_generation": {
       "command": "target/debug/ripr check --root . --mode instant --format repo-exposure-json",
       "timeout_ms": 120000,
@@ -6936,7 +7274,10 @@ JSON shape:
   "status": "advisory",
   "inputs": {
     "before": "target/ripr/before.json",
-    "after": "target/ripr/after.json"
+    "after": "target/ripr/after.json",
+    "before_repository_head": "a93399797445cddd0dcbb4673061ccc07e78e975",
+    "after_repository_head": "a93399797445cddd0dcbb4673061ccc07e78e975",
+    "head_match": true
   },
   "before": {
     "seams_total": 15,
@@ -7004,7 +7345,10 @@ JSON shape:
       "missing_discriminators_reopened": [],
       "oracle_strength_delta": "weak -> strong",
       "related_test_delta": 1,
-      "no_movement_reason": null
+      "no_movement_reason": null,
+      "after_discriminate_state": "yes",
+      "after_missing_discriminators": [],
+      "after_open_legs": []
     }
   ],
   "unchanged": [],
@@ -7060,6 +7404,17 @@ JSON shape:
   }
 }
 ```
+
+`inputs.before_repository_head` and `inputs.after_repository_head` carry the
+repository head each compared snapshot reports (`artifact.repository.head`):
+`null` when an artifact carries no head (the `ripr pilot` snapshot shape).
+`inputs.head_match` is `true` when both artifacts carry a full head SHA and
+the heads are equal, `false` when both are present and differ, and `null`
+when the pair cannot be confirmed either way — `null` means "cannot
+confirm", never "confirmed equal". A `false` cross-head pair also carries the
+mismatch into the markdown receipt's Inputs head line and the review
+receipt's `reviewer_may_believe` section, so a JSON-consuming driver sees
+the mismatch in-band instead of only on stderr (#6031).
 
 For check-output snapshots, `seam_id` is the canonical gap ID. A Python or
 TypeScript preview gap that moves from `weakly_exposed` to `exposed` is rendered as
@@ -7160,6 +7515,18 @@ Field contract:
 - `related_test_delta` — count movement for related-test evidence.
 - `no_movement_reason` — explicit static reason for unchanged seams with no
   rendered evidence movement.
+- `after_missing_discriminators` — the after-side missing-discriminator list,
+  so consumers can tell a satisfied discriminator from a still-open one when
+  the class did not move. `null` when the after snapshot never recorded the
+  field: only an explicitly present list can establish satisfaction.
+- `after_discriminate_state` — the after-side discriminate leg state, or
+  `null` when the after side never recorded it. An empty missing list alone
+  never establishes satisfaction, because several seam kinds never name
+  missing discriminators while their discriminate leg stays weak.
+- `after_open_legs` — the after-side RIPR legs that are not `yes`, each with
+  its recorded state (for example `discriminate (weak)`); a leg absent from
+  the after record renders as `stage (not recorded)` — an unknown gate, not
+  a satisfied one.
 - `new[]` / `removed[]` — seam identity and grip class for seam IDs present in
   only one input.
 - `review_receipt` — an additive reviewer packet derived from the same
@@ -7263,7 +7630,10 @@ JSON shape:
       "missing_discriminators_reopened": [],
       "oracle_strength_delta": "weak -> strong",
       "related_test_delta": 1,
-      "no_movement_reason": null
+      "no_movement_reason": null,
+      "after_discriminate_state": "yes",
+      "after_missing_discriminators": [],
+      "after_open_legs": []
     }
   ],
   "unchanged_seams": [],
@@ -7330,8 +7700,9 @@ Field contract:
 - `changed_seams[]` / `unchanged_seams[]` carry the same additive
   evidence-record movement fields as `ripr outcome`: stage deltas,
   observed-value movement, missing-discriminator movement, oracle strength
-  movement, related-test count movement, `gap_movement`, and
-  `no_movement_reason`.
+  movement, related-test count movement, `gap_movement`,
+  `no_movement_reason`, `after_missing_discriminators`,
+  `after_discriminate_state`, and `after_open_legs`.
 - `new_gaps[]` / `resolved_gaps[]` - seam identity and static class for seam IDs
   present in only one snapshot.
 
@@ -7404,7 +7775,39 @@ Field contract:
   the attempt joins into `last_after_refusal.reason`. Operational failures after
   attempt selection exit `2`; stdout is empty when the failure precedes the
   verify render, and is the bare verify 0.3 document when it follows it (for
-  example a failed receipt publication).
+  example a failed receipt publication with the attempt still
+  receipt-eligible).
+
+  One post-verify failure shape is typed instead (#6033): when the edit cage
+  finished the attempt as not receipt-ready (verdict `violated` or
+  `incomparable`, or the head moved so the attempt is `stale`), the phase
+  prints the `repair_after_failure` document (`schema_version` `0.4`) rather
+  than the success-shaped verify document — `status: "advisory"` with a
+  gap-closed movement summary beside a terminal attempt is a green repair
+  story a stdout-only driver cannot trust:
+
+  ```json
+  {
+    "schema_version": "0.4",
+    "kind": "repair_after_failure",
+    "attempt_id": "<repair-attempt-id>",
+    "attempt_state": "failed",
+    "edit_cage_verdict": "violated",
+    "error": "repair attempt `<id>` is not receipt-ready: state `failed`, current true, verdict `violated`",
+    "narration": ["<named cause>", "<recovery>"]
+  }
+  ```
+
+  `attempt_state` uses the repair-attempt manifest's state vocabulary
+  (`failed`, `incomparable`, `stale`); `edit_cage_verdict` uses the
+  manifest's verdict vocabulary (`violated`, `incomparable`). The exit code
+  for this path stays `2` — the attempt is terminal and the recovery is a
+  new attempt. The refused phase also withdraws the shared workflow
+  artifacts it wrote (`after.repo-exposure.json`, `agent-verify.json`,
+  `analysis-outcome.json` under `target/ripr/workflow/`) when they did not
+  exist before the phase ran, so `ripr agent status` does not present them
+  as current loop artifacts beside the terminal attempt; artifacts an
+  earlier phase or attempt wrote stay untouched.
 
 ## Agent Verify Execute
 
@@ -7599,7 +8002,8 @@ JSON shape:
     "change": "improved",
     "evidence_delta": [
       "missing discriminator no longer reported: discount_threshold (equality boundary)"
-    ]
+    ],
+    "guidance_note": null
   },
   "test_changed": "discounted_total_boundary_discriminator",
   "verification": {
@@ -7687,6 +8091,15 @@ Field contract:
   `null` for one-sided new/resolved gaps.
 - `seam.grip_class` - one-sided grip class for `new` or `resolved` gaps, or
   `null` for matched seams.
+- `seam.guidance_note` - refined guidance for an `unchanged` seam whose
+  evidence moved, read from the verify row's `after_missing_discriminators`,
+  `after_discriminate_state`, and `after_open_legs`. Satisfaction needs both
+  an explicitly empty missing list and a `yes` discriminate leg; a recorded
+  weaker leg keeps targeted strengthen-the-oracle guidance, an unrecorded
+  discriminate state says satisfaction is unknown, and a still-missing list
+  names the first missing discriminator. The note is `null` for other
+  buckets, for true no-movement, and for verify documents that predate the
+  after-side signals.
 - `test_changed` - optional focused test the edit changed. `ripr agent receipt`
   takes it from `--test NAME`. The after phase of `ripr agent repair` sets it
   to the attempt's selected test file when the edit cage is compliant and
@@ -7705,7 +8118,13 @@ Field contract:
   guidance derived from the verify bucket. It does not claim runtime
   confirmation. When `status` is not `advisory`, `next_recommendation` instead
   states that the receipt is not review evidence, with the status, the
-  analysis-outcome reason, and the recovery.
+  analysis-outcome reason, and the recovery. For an `advisory` receipt over
+  an `unchanged` seam whose discriminators are satisfied but whose class
+  did not move, both `next_recommendation` and `next_action.recommended_action`
+  carry the refined `seam.guidance_note` plus an investigate-the-gate step
+  instead of the static add-discriminator lines; a still-weak discriminate
+  leg likewise replaces both lines with the note plus a strengthen-the-oracle
+  step.
 - `summary.receipt_state` - canonical receipt lifecycle state for the selected
   receipt. It is one of `receipt_missing`, `receipt_found`, `receipt_stale`,
   `receipt_gap_mismatch`, `receipt_movement_improved`,
@@ -7777,12 +8196,27 @@ Success payload (200-level result object, no `protocol_version`,
   NOT the immutable snapshot-handle contract reserved for #1602; the
   `riprAgent` capability advertises `snapshot_handles: false` until that
   contract lands. `null` when the snapshot carries no generation identity.
+- `seam_evidence_identity` — the current snapshot's seam evidence identity
+  (`{"snapshot_id": ...}`). Pass it as `evidence_identity` when continuing a
+  listed seam `canonical_id` through `ripr.collectContext` or
+  `ripr.collectEvidenceContext`; the seam routes reject a seam id cited
+  without it on a current snapshot (#6848).
 - `selected_count` / `omitted_count` / `total_count` — diagnostic-budget
   counts from the committed delivery selection.
 - `selected` — `[{canonical_id, document}]` for every delivered diagnostic
   (already bounded by the workspace item budget). `canonical_id` is the
-  diagnostic's budget identity (its `diagnostic_id`, gap, finding or seam id);
-  the diagnostic's own `data` carries the ids `ripr.collectContext` takes.
+  producer identity the continuation route resolves: the finding's probe id
+  (`data.finding_id`) for finding diagnostics, the seam id for seam
+  diagnostics, and the ledger-canonical gap id for gap-ledger diagnostics.
+  Every listed finding, seam, or gap canonical id is accepted by
+  `ripr.collectContext` (#6848): finding ids directly, seam ids together
+  with this envelope's `seam_evidence_identity` as `evidence_identity`,
+  gap-ledger ids through the ledger route. Producer-less disclosures (the
+  diff-scope guard) fall back to a deterministic `location:` id with no
+  `ripr.collectContext` continuation; their content is the workspace-status
+  limitation surface. The finding id follows the canonical group's current
+  primary, so a gap's listed id can change when a new primary probe rotates
+  in; the id listed by a given snapshot always resolves for that snapshot.
 - `omitted` — `[{canonical_id, reason}]` for withheld diagnostics, at most
   200 entries. `reason` is `profile_filtered`, `document_item_limit`,
   `workspace_item_limit`, or `serialized_byte_limit`.
@@ -7961,7 +8395,7 @@ JSON shape:
       "llm_guidance": {
         "prompt": "Write one focused Rust test for the missing equality boundary. Place it near tests/pricing.rs::applies_discount_above_threshold. Do not change production code. Preserve existing fixture style. Verify with ripr agent verify.",
         "command": "ripr agent brief --root . --seam-id 67fc764ba37d77bd --json > target/ripr/workflow/agent-brief.json",
-        "verify_command": "ripr agent verify --root . --before target/ripr/workflow/before.repo-exposure.json --after target/ripr/workflow/after.repo-exposure.json --json"
+        "verify_command": "ripr agent verify --root . --before target/ripr/workflow/before.repo-exposure.json --after target/ripr/workflow/after.repo-exposure.json --json > target/ripr/workflow/agent-verify.json"
       },
       "repair_card": {
         "gap_kind": "MissingBoundaryAssertion",
@@ -8090,8 +8524,10 @@ Field contract:
   optional `llm_guidance.analysis_outcome_command` writes
   `target/ripr/workflow/analysis-outcome.json` beside it before the card's
   receipt command runs, carrying the producing review's selected `--base`.
-  It does not rely on default branch discovery. These are Bash-style redirects,
-  anchored at `--root`;
+  It does not rely on default branch discovery. These are Bash-style redirects
+  that stay relative to the card's portable `--root`, so a reader pasting the
+  card from their own checkout writes where it analyzes, not to a path on the
+  machine that rendered it (#4000);
   before and after snapshots must already have been taken around the edit.
   Markdown carries the same outcome, verify and receipt chain. The outcome
   describes static completeness, not executed project tests. Limitation cards
@@ -9426,6 +9862,15 @@ Campaign 17 ledgers that only contain `reviewed` and `reason`, or no entry
 review object at all, remain valid inputs for baseline diff and shrink-only
 update.
 
+No binary command writes `owner` or `review_after` values: `baseline create`
+records them as `null` (with the default `reason` and the creation timestamp in
+`created_at`), and shrink-only `baseline update` preserves existing entries.
+Review ownership and deadlines are operator-set ledger content, set by editing
+the baseline ledger after creation. `ripr zero status` evaluates `review_after`
+only when the complete record (`owner`, `reason`, `created_at`, and
+`review_after`) is present, and classifies an incomparable deadline as
+`unknown`, not `current`.
+
 ## Gate Baseline Update
 
 `ripr baseline update --remove-resolved` refreshes a reviewed baseline ledger in
@@ -9629,13 +10074,33 @@ Field contract:
   as `null`.
 - `warnings[]` - malformed baseline entries, ambiguous matches, fallback
   matches, missing optional inputs, or unsupported schema versions.
+- `analysis_outcome`, `analysis_scope`, `run_limitations` - current-side
+  run-state disclosure forwarded verbatim when present, omitted otherwise.
+  These are the shared vocabulary positions the RIPR Zero
+  partial-denominator guard reads; complete runs carry none of them.
+  Present-but-malformed envelopes fail the delta as Invalid in zero-status
+  reading, including corrupt predicate-consumed members (non-boolean
+  `analysis_complete`, non-string or blank scope `run_status`, malformed
+  limitation entries, blank discriminators, entries without a usable
+  discriminator).
+- `current_gate_status` - the current gate decision's `status` verbatim.
+  Gate decisions carry no limitation envelope (a limited input is refused
+  as `config_error` with empty decisions), so this is the production-live
+  disclosure that a delta is built from an evaluation that did not
+  complete. Zero status withholds `achieved` over `config_error` deltas.
+  A present-but-malformed `status` (non-string or blank) rejects the
+  current input as unreadable instead of being discarded; absent stays
+  accepted for older inputs. A non-blank status outside the schema-closed
+  set is rejected as unknown for the same reason.
 - `limits_note` - advisory boundary text for generated CI summaries.
 
 Markdown should fit in a generated CI job summary. It should include the
 baseline path, status, bucket counts, top new policy-eligible gaps, top resolved
 baseline entries, warnings, and the advisory boundary. It must distinguish
 baseline debt from suppressions and acknowledged current findings from hidden
-success.
+success. It renders run-state disclosure lines when the current side carried
+an envelope, and names the current gate status only on failure
+(`config_error`).
 
 ## RIPR Zero Status Report
 
@@ -9789,8 +10254,12 @@ Field contract:
 - `ripr_zero.suppressed` - current findings hidden by suppression or
   configured-off severity while remaining visible in the status report.
 - `baseline.metadata.current`, `stale`, `missing_metadata`, and `unknown` -
-  baseline review metadata health counts. Missing metadata must not hide the
-  entry.
+  baseline review metadata health counts. `stale` includes past-due
+  `unix_ms:<millis>` and `YYYY-MM-DD` `review_after` values, and RFC3339
+  datetimes after conversion to a UTC calendar date. Impossible Gregorian dates,
+  a `T` suffix that is not RFC3339, and `*:60` values that are not `23:59:60`
+  UTC (including offset leap-second forms) count as `unknown`, not `current`.
+  Missing metadata must not hide the entry.
 - `debt_delta.*` - baseline movement buckets copied from the baseline debt
   delta report so summaries can show old debt, new debt, resolved debt,
   acknowledgements, suppressions, stale entries, invalid entries, and missing
@@ -12752,6 +13221,22 @@ Field contract:
   `defaulted`, or `will_create`. Checks with `next_command` provide the next
   safe setup or recovery command; they must not imply mutation, coverage,
   runtime proof, merge approval, or gate pass/fail.
+- Git recovery checks can also carry `recovery_commands[]`: ordered, standalone
+  Bash display commands produced separately from the legacy `next_command`
+  instruction. `preflight.recovery_commands` carries the commands for the first
+  check with a recovery instruction. The missing-base fetch uses `git -C` to
+  bind the selected root and precedes the rerun. Human Markdown pairs each step
+  through the shared PowerShell renderer; unavailable forms are disclosed.
+  The legacy `next_command` stays prose. Every missing-base fetch, in
+  `recovery_commands` and in `next_command`, names its destination
+  (`+refs/heads/<branch>:refs/remotes/origin/<branch>`), so it also works in a
+  single-branch or shallow checkout. When both refs are
+  missing, only the base recovery is surfaced; the rerun reveals the head.
+  These display strings are advisory, not typed execution authority. Existing
+  packets without this optional field retain their legacy presentation.
+  Optional `recovery_guidance` at the same check and preflight levels keeps
+  prerequisite instructions separate from the commands (for example, commit
+  PR work or select a head with changes before rerunning an empty diff).
 - `commands.regenerate_gap_ledger` is always present so missing, stale,
   wrong-root, malformed, and timeout states can point to a known refresh path.
 - `artifacts[]` records artifact id, label, path, `present` or `missing`
@@ -13059,14 +13544,21 @@ Field contract:
   also when status cannot choose honestly: an unreadable attempt manifest,
   several current awaiting attempts, several open seams, an unreadable
   `HEAD`, a complete pilot summary whose top seam recorded no repair start,
+  a complete pilot summary that ranked no seam because it withheld every
+  seam as a static limitation (`withheld_static_limitations_total` > 0),
   or a complete pilot summary that ranked no seam, recorded no repair card
   (`python_first_use` absent, `null`, or status `no_python_findings` or
   `no_repair_cards`) and routed the code to `ripr check`
   (`language_routes.state: required` with a recorded route command).
   A warning (`repair_attempt_unreadable`, `ambiguous_repair_attempts`,
   `multiple_open_repair_seams`, `repair_attempt_head_unknown`,
-  `pilot_found_no_repair_target`, `pilot_routed_to_check_no_repair_target`)
-  then names the choices. The last names the recorded check command and the
+  `pilot_found_no_repair_target`,
+  `pilot_withheld_static_limitations_no_repair_target`,
+  `pilot_routed_to_check_no_repair_target`) then names the choices. The
+  withheld warning names `target/ripr/pilot/repo-exposure.md`; when that
+  run's `repo-exposure.json` reports `run_status: seam_limit_applied` it
+  reads the count as "at least N" and names raising the seam limits and
+  rerunning pilot, since seams past the cut may hold gaps. The last names the recorded check command and the
   hand step (add or strengthen a test, then rerun that check) for an enabled
   route, the enable step (add the language to `[languages] enabled` in
   `ripr.toml`) for a route with `enabled: false`, and says to rerun pilot if
@@ -13141,6 +13633,12 @@ JSON shape:
     "reason": "…",
     "command": "ripr agent repair --root . --attempt … --phase after"
   },
+  "canonical_next_action": {
+    "schema_version": "canonical_next_action.v1",
+    "producer": "repair_attempt_status",
+    "action_class": "satisfy_prerequisite",
+    "stop": {"kind": "provide_input", "…": "…"}
+  },
   "test_run": null,
   "claim_boundary": ["status is read-only: …"],
   "limitations": ["…"],
@@ -13188,6 +13686,14 @@ Field contract:
   (an invocation spelling like `--root .` becomes the bound absolute root),
   so a pasted command resumes the selected attempt from any working
   directory; the report's own `root` field keeps the invocation spelling.
+  The arm is selected by the report's `canonical_next_action`
+  (`canonical_next_action.v1`, #6304), which carries the closed action class
+  (see the `next_action_class` values list), the exact subject/currentness
+  binding, and the typed prerequisite or stop behind the arm; it is `null`
+  exactly when the producer state cannot bind a subject. Status commands are
+  recorded lines rather than `CommandSpec`s, so the canonical decision is
+  never executable here — terminal classes name their receipt details, and
+  limited states name their bound.
 - `claim_boundary`, `limitations`, and `non_claims` carry the read-only
   non-claim, the retained-evidence non-claim (a finished result does not
   establish the repair is correct or that any project test ran), the
@@ -13565,7 +14071,8 @@ Field contract:
   `pilot-boundary-fixture`, `outcome-boundary-fixture`,
   `agent-verify-boundary-fixture`, `agent-receipt-boundary-fixture`,
   `repo-exposure-latency`, `lsp-cockpit`, `github-workflow-defaults`,
-  `vsix-packaging-path`, or `known-limits-docs`.
+  `vsix-packaging-path`, `extension-version-match`, `init-pin-version`, or
+  `known-limits-docs`.
 - `checks[].status` - `pass`, `warn`, `fail`, or `not_run`.
 - `checks[].required` - `true` for checks that must pass in the normal local
   readiness run. Release-only package and publish dry-run checks can be
@@ -14870,11 +15377,17 @@ Field contract:
   consistent with the structured workflow's `command_shell: "bash"`, and do
   not establish PowerShell recipe compatibility for themselves. Read the
   structured workflow for its shell contract before executing commands.
-  Explicit standalone per-seam CLI `agent packet` binds these `next` commands
-  to the selected repository root.
-  Its optional `next.analysis_outcome_command` writes the static outcome
+  Explicit standalone per-seam CLI `agent packet` and the repo-wide
+  `ripr pilot` packet (`agent-seam-packets.json`) bind these `next` commands
+  to the selected repository root, so even `--root .` prints an absolute
+  root and absolute redirects. Their embedded per-record `verify_command`
+  values bind the same root, and the typed verify spec is recovered against
+  it, so the concrete root never enters argv (#3948, #3999). Portable packets
+  keep the `--root .` form.
+  Their optional `next.analysis_outcome_command` writes the static outcome
   consumed by the receipt, between the after snapshot and verify steps.
-  Portable bulk/check-format wrappers omit this additive field and retain
+  The `ripr check --format agent-seam-packets-json` wrapper omits this
+  additive field and retains
   their repository-local recipe; they are not a complete foreign-CWD receipt
   workflow. GapRecord and editor routes are unchanged. Static receipt
   completeness does not establish project-test execution.
@@ -15177,11 +15690,11 @@ target/ripr/pilot/pilot-summary.json
 target/ripr/pilot/pilot-summary.md
 ```
 
-`pilot-summary.json` uses schema `0.2`:
+`pilot-summary.json` uses schema `0.3`:
 
 ```json
 {
-  "schema_version": "0.2",
+  "schema_version": "0.3",
   "tool": "ripr",
   "scope": "repo",
   "status": "complete",
@@ -15208,6 +15721,7 @@ target/ripr/pilot/pilot-summary.md
     "pilot_summary_md"
   ],
   "actionable_seams_total": 1,
+  "withheld_static_limitations_total": 0,
   "top_actionable_seams": [
     {
       "seam_id": "67fc764ba37d77bd",
@@ -15230,6 +15744,14 @@ target/ripr/pilot/pilot-summary.md
   "language_routes": {
     "state": "not_detected",
     "routes": []
+  },
+  "current_change": {
+    "state": "changed",
+    "base": "origin/main",
+    "reason": null,
+    "actionable_seams_in_change": 1,
+    "withheld_seams_in_change": 0,
+    "top_recommendation_in_change": true
   },
   "next": {
     "inspect_packet": "target/ripr/pilot/agent-seam-packets.json",
@@ -15297,7 +15819,9 @@ is populated:
 
 Pilot ranks Rust repo seams only. When the workspace also contains TypeScript,
 JavaScript, Python or Perl files, `language_routes` names each language and the
-command that analyzes it (#3906). With no Rust seams the state is `required`:
+command that analyzes it (#3906). The command names the absolute repository
+pilot analyzed, so it works when pasted from another directory (#4000). With no
+Rust seams the state is `required`:
 
 ```json
 {
@@ -15309,7 +15833,7 @@ command that analyzes it (#3906). With no Rust seams the state is `required`:
       "language_status": "preview",
       "enabled": false,
       "route": "check_diff_first",
-      "command": "ripr check --root .",
+      "command": "ripr check --root /work/repo",
       "guidance_category": "typescript_diff_first",
       "guidance": "TypeScript is analyzed diff-first; run 'ripr check --base origin/main' or '--diff <file>' to evaluate changed TypeScript behavior. Full-repo TypeScript exposure is not yet modeled (named limitation)."
     },
@@ -15327,12 +15851,52 @@ command that analyzes it (#3906). With no Rust seams the state is `required`:
 }
 ```
 
+`current_change` describes the current change: the base (resolved as `ripr
+check` resolves it) against the live working tree when it has uncommitted
+tracked changes, otherwise the committed `<base>...HEAD` diff. Untracked files
+are not part of it.
+Pilot ranks actionable seams whose span overlaps a changed new-side line of
+that diff ahead of the others, keeping the repo-wide order inside each group.
+`state` is `changed`, `no_change` (the diff loaded and is empty) or
+`unavailable` (the diff could not be loaded, for example outside a Git work
+tree; the ranking stays repo-wide and this is not evidence that nothing
+changed). `base` is the resolved base, or `null` when unavailable. `reason` is
+a short fixed phrase for an unavailable change (`not a Git work tree`, `no
+default base resolved`, `git is not on PATH`, `git timed out`, `git status
+failed`, `git diff failed`) and `null` otherwise. The terminal and Markdown "Inspected" block
+carries a matching scope line: `change-first (Rust seams on lines changed since
+<base> rank first)` for `changed`, `whole repository` for `no_change`, and
+`whole repository (current change unavailable: <reason>)` for `unavailable`.
+The change-first scope and the change counts cover Rust seam ranking only. A
+Python preview repair card shown as the top recommendation is still selected
+from the committed diff against the base, not from uncommitted edits.
+`actionable_seams_in_change`, `withheld_seams_in_change` and
+`top_recommendation_in_change` are `null` unless `state` is `changed`;
+`top_recommendation_in_change` is also `null` when no seam is ranked.
+`withheld_seams_in_change` counts the analyzed seams on changed lines that
+pilot withholds as static limitations (`opaque` or an `*_unknown` class),
+counted before the pilot seam budget drops them, so it can exceed
+`withheld_static_limitations_total`, which counts the seams left after the
+budget; a changed seam the budget dropped is not in `repo-exposure.json` until
+`RIPR_PILOT_SEAM_BUDGET` is raised. When
+`top_recommendation_in_change` is `false`, the terminal and Markdown say why no
+seam on the change ranks (pilot withholds them, they are already gripped,
+intentional or suppressed, the seam limit left seams unanalyzed, the change is
+in a file pilot's repo-wide ranking leaves out by design such as a Cargo build
+script (#6944; a reason drawn from analyzed seams also names such a file when the change includes one), or no seam pilot analyzed is on a changed line; a reason drawn from analyzed seams adds the seam-limit
+caveat when the inventory limit left seams unanalyzed, the change touches a
+Rust file and pilot could not classify the change's own files past the limit,
+from an error or its deadline; #6943), say the
+recommendation is elsewhere in the repo and name `ripr check --root <root>` for
+the change itself, adding `--worktree` when the diff came from the working tree
+(plain `ripr check` reads committed history only). The partial (timeout) summary carries no `current_change`.
+
 If analysis exceeds the pilot budget, `pilot-summary.json` is still written with
 `status: "partial"` and no ranked seams:
 
 ```json
 {
-  "schema_version": "0.2",
+  "schema_version": "0.3",
   "tool": "ripr",
   "scope": "repo",
   "status": "partial",
@@ -15358,6 +15922,7 @@ If analysis exceeds the pilot budget, `pilot-summary.json` is still written with
   ],
   "max_seams": 5,
   "actionable_seams_total": null,
+  "withheld_static_limitations_total": null,
   "top_actionable_seams": [],
   "next": {
     "retry_command": "ripr pilot --root . --out target/ripr/pilot --mode draft --max-seams 5 --timeout-ms 120000"
@@ -15367,7 +15932,9 @@ If analysis exceeds the pilot budget, `pilot-summary.json` is still written with
 
 Field contract:
 
-- `schema_version` — currently `"0.2"`.
+- `schema_version` — currently `"0.3"`. `0.3` withholds static limitations
+  from the ranking and adds `withheld_static_limitations_total` (#5497);
+  `actionable_seams_total` no longer counts `opaque` or `*_unknown` seams.
 - `scope` — always `"repo"`.
 - `status` — `"complete"` when repo exposure and agent seam packet artifacts
   were written, or `"partial"` when the command stopped at a diagnostic summary.
@@ -15386,16 +15953,32 @@ Field contract:
   summaries write only `pilot_summary_json` and `pilot_summary_md`.
 - `max_seams` — cap requested by `--max-seams`.
 - `actionable_seams_total` — number of seams considered actionable by the pilot
-  ranking policy, or `null` for partial summaries where analysis did not finish.
+  ranking policy (the gap classes below), or `null` for partial summaries where
+  analysis did not finish.
+- `withheld_static_limitations_total` — seams pilot did not rank because their
+  class is `opaque` or an `*_unknown` class: the classifier stopped on a stage
+  it could not establish, so the seam is a static limitation, not a gap. They
+  stay in `repo-exposure.json` with their evidence. `pilot-summary.md` and the
+  terminal disclose the count; when it is nonzero and nothing ranked, both say
+  the empty ranking is not a clean result. After a seam limit cut the
+  classified seams, the count covers the kept seams only: Markdown and the
+  terminal read it as "at least N", the terminal also names the limit, and
+  the closing line names raising `RIPR_PILOT_SEAM_BUDGET` and
+  `RIPR_REPO_EXPOSURE_SEAM_LIMIT` instead of "No gap to test", because the
+  cut seams were never classified. `null` for partial summaries.
 - `top_actionable_seams[]` — ranked seams using class order
-  `weakly_gripped`, `ungripped`, `reachable_unrevealed`, unknown-stage classes,
-  then `opaque`, with evidence tie-breakers for missing discriminator, related
+  `weakly_gripped`, `ungripped`, `reachable_unrevealed` (static limitations are
+  withheld, see above), with evidence tie-breakers for missing discriminator, related
   test, suggested assertion, and stable location. Within each class, each
   owning function's (file plus owner) first seam in the whole ranking comes
   before any function's second, so adjacent seams of one function cannot fill
   the list; a function already ranked in a higher class counts as having its
   first. `pilot-summary.md` names how many actionable seams each listed
-  function has beyond the ones shown, among the seams pilot analyzed.
+  function has beyond the ones shown, among the seams pilot analyzed. When a
+  seam limit cut the classified seams before ranking, the summary adds a
+  "Seam limit reached" line naming the outermost seam total (the inventory
+  total when both the inventory limit and the pilot budget cut), the
+  "Actionable seams" line reads "at least N", and these counts read "at least N".
 - `top_actionable_seams[].targeted_test_brief` — human-readable work order
   derived from the same fields as the agent seam packet. Placeholders are
   intentional; RIPR does not invent expected values.
@@ -15434,9 +16017,13 @@ Field contract:
   `ripr outcome` before/after receipt command, and `repair_command`: the
   `ripr agent repair --seam-id <id> --phase before` command for the top seam
   when its repair-packet eligibility flip holds, otherwise `null` (#3906).
-  When `language_routes.state` is `unanalyzed_only`, or when
-  `rust_excluded_from_scope` is present, `after_snapshot_command` and
-  `outcome_command` are `null`: there is no seam to snapshot or measure.
+  When `language_routes.state` is `unanalyzed_only`, when
+  `rust_excluded_from_scope` is present, or when nothing ranked because every
+  seam was withheld (`withheld_static_limitations_total` > 0) and no Python
+  repair card applies, `after_snapshot_command` and `outcome_command` are
+  `null`: there is no seam to snapshot or measure. Agent status reads the
+  run's `repo-exposure.json` for the withheld warning; when that file is
+  missing or unreadable it cannot rule out a seam limit and names raising it.
   Partial summaries include a retry command with a larger explicit timeout.
 
 The Markdown sibling prints the same summary, puts the top recommendation first,
@@ -15465,13 +16052,16 @@ under the built-in saved-workspace default. Clients or repo policy can pass
 Diff-scoped finding diagnostics may carry the same versioned producer witness
 as `ripr context --json`. The witness is placed in diagnostic `data.witness`
 and the copy-context action forwards it unchanged. Hover, context packets,
-and diagnostic data therefore share one typed fact set:
+and diagnostic data therefore share one typed fact set. The diagnostic's
+`explain_command` binds the workspace folder's absolute root and
+`--worktree`, never the language server's process directory (#3948); the
+normalized payload digest projects that root away:
 
 ```jsonc
 {
   "data": {
     "schema_version": "0.1",
-    "explain_command": "ripr explain --root . probe:pricing:88:error_path",
+    "explain_command": "ripr explain --root /work/repo --worktree probe:pricing:88:error_path",
     "witness": {
       "kind": "static_discriminator_gap",
       "probe_family": "error_path",
@@ -15495,7 +16085,7 @@ and diagnostic data therefore share one typed fact set:
         "oracle_location": { "file": "tests/pricing.rs", "line": 12 }
       },
       "suggested_assertion": null,
-      "explain_command": "ripr explain --root . probe:pricing:88:error_path",
+      "explain_command": "ripr explain --root /work/repo --worktree probe:pricing:88:error_path",
       "confidence": { "value": 0.75, "basis": "static_only" },
       "limitations": [
         {
@@ -16951,7 +17541,7 @@ JSON shape:
 
 ```jsonc
 {
-  "schema_version": "0.1",
+  "schema_version": "0.2",
   "scope": "repo",
   "status": "advisory",
   "metrics": {
@@ -16959,7 +17549,11 @@ JSON shape:
     "mutants_total": 8,
     "matched_total": 6,
     "ambiguous_file_line_total": 1,
+    "ambiguous_span_overlap_total": 0,
     "unmatched_mutants_total": 1,
+    "unmatched_reason_counts": {
+      "no_containing_seam": 1
+    },
     "static_without_runtime_total": 113,
     "runtime_outcome_counts": {
       "caught": 5,
@@ -17092,30 +17686,70 @@ JSON shape:
       ]
     }
   ],
-  "unmatched_mutants": [],
+  "ambiguous_span_overlap_matches": [],
+  "unmatched_mutants": [
+    {
+      "mutant_id": "src/display.rs:20:17: replace + with - in fmt",
+      "seam_id": null,
+      "file": "src/display.rs",
+      "line": 20,
+      "column": 17,
+      "end_line": 20,
+      "end_column": 18,
+      "mutation_operator": "-",
+      "runtime_outcome": "caught",
+      "duration": null,
+      "test_command": null,
+      "unmatched_reason": "no_containing_seam",
+      "line_seams": [
+        {
+          "seam_id": "8828427428828b64",
+          "seam_kind": "call_presence",
+          "file": "src/display.rs",
+          "line": 20,
+          "column": 19,
+          "end_line": 20,
+          "end_column": 37,
+          "seam_grip_class": "ungripped",
+          "oracle_kind": "unknown",
+          "oracle_strength": "unknown",
+          "observed_values": [],
+          "missing_discriminators": []
+        }
+      ]
+    }
+  ],
   "static_without_runtime_sample": []
 }
 ```
 
 Field contract:
 
-- `schema_version` — currently `"0.1"`.
+- `schema_version` — currently `"0.2"`. 0.2 added `span_containment`,
+  `ambiguous_span_overlap_*`, `unmatched_reason` and runtime span fields.
 - `status` — always `"advisory"`; this report does not block CI by default.
 - `metrics.static_seams_total` — count of seams imported from
   `repo-exposure.json`.
 - `metrics.mutants_total` — count of runtime mutation records imported from the
   supplied JSON.
 - `metrics.matched_total` — runtime records joined to a static seam.
-- `metrics.ambiguous_file_line_total` — runtime records whose normalized
-  file/line matched multiple static seams and were therefore not assigned to a
-  single seam.
+- `metrics.ambiguous_file_line_total` — runtime records the file/line
+  fallback could not assign: several candidates on the record's line (seams
+  without a span when the record has a span that no seam contains; every seam
+  on the line when the record has no complete span).
+- `metrics.ambiguous_span_overlap_total` — runtime records contained by two or
+  more innermost seam spans that are equal or cross, so no unique seam holds
+  the mutated range.
 - `metrics.unmatched_mutants_total` — runtime records that could not be joined
-  by `seam_id` or file/line.
+  by `seam_id`, span containment, or file/line.
+- `metrics.unmatched_reason_counts` — unmatched records keyed by
+  `unmatched_reason`.
 - `metrics.static_without_runtime_total` — static seams with no definitive or
   ambiguous runtime record in this import.
 - `metrics.runtime_outcome_counts` — counts keyed by normalized runtime outcome
   label from the imported data.
-- `metrics.join_method_counts` — counts for `seam_id` and `file_line` joins.
+- `metrics.join_method_counts` — counts for `seam_id`, `span_containment`,
+  and `file_line` joins.
 - `agreement.static_gap_and_runtime_signal` — static gap seams that also have at
   least one matched runtime gap signal in this import.
 - `agreement.static_gap_without_runtime_signal` — static gap seams with no
@@ -17145,7 +17779,21 @@ Field contract:
   static gap joined only to runtime-clean labels, or `no_runtime_data` when no
   usable runtime signal was available for the static gap in this import.
 - `matches[].join_method` — `seam_id` when the runtime record carries a matching
-  seam/probe ID; otherwise `file_line` when normalized path and line match.
+  seam/probe ID; otherwise `span_containment` when the runtime record carries a
+  complete cargo-mutants span and exactly one innermost seam span in the same
+  file contains it (half-open, compared as `(line, column)`, on any line of a
+  multi-line seam); otherwise `file_line` when no seam span contains the
+  record and normalized path and line match exactly one seam without a span.
+  Span-less seams never displace a containment match, and a seam span that
+  does not contain the record is never joined to it by sharing its line.
+  Runtime records without a complete span join by file and line over every
+  seam on the line. See RIPR-SPEC-0006 for the precedence.
+- `matches[].static.column`, `end_line`, `end_column` and the same fields on
+  runtime rows — 1-based character columns with an exclusive end, present
+  only when that side carries a complete span.
+- runtime rows' `span_status` — `"conflicting_runtime_location"` when merged
+  records for one mutant carried different complete spans, files or lines; the span
+  is dropped and the record is unmatched unless its `seam_id` joins it.
 - `matches[].static` — static seam evidence copied from `repo-exposure.json`:
   seam identity, class, strongest visible oracle kind/strength, observed values,
   and missing discriminators.
@@ -17157,13 +17805,25 @@ Field contract:
   `contradicts_static_clean`, or `no_runtime_data`. Runtime-inconclusive labels
   map to `no_runtime_data` because they provide no usable support or
   contradiction for the static claim.
-- `ambiguous_file_line_matches[]` — runtime records that matched multiple
-  static seams by normalized file/line. These records are intentionally not
-  assigned to `matches[]` without a stronger seam/probe ID.
-- `ambiguous_file_line_matches[].confidence_label` — always
+- `ambiguous_file_line_matches[]` — runtime records the file/line fallback
+  matched to several seams on their line. These records are intentionally not
+  assigned to `matches[]` without a stronger seam/probe ID or span.
+- `ambiguous_span_overlap_matches[]` — runtime records contained by equal or
+  crossing innermost seam spans, with the runtime span and every candidate
+  seam's span. No candidate is chosen by order, length or ID.
+- `ambiguous_file_line_matches[].confidence_label` and
+  `ambiguous_span_overlap_matches[].confidence_label` — always
   `ambiguous_runtime_join`; ambiguous joins do not raise or lower confidence for
   any candidate seam.
 - `unmatched_mutants[]` — runtime records that did not match a static seam.
+- `unmatched_mutants[].unmatched_reason` — `no_location` (no file or no
+  line), `conflicting_runtime_location` (merged duplicates disagreed on span,
+  file or line, so only a `seam_id` can join the record), `no_seam_on_line` (no seam
+  on the line and no seam span to compare), or `no_containing_seam` (complete
+  spans on both sides and none contains the record).
+- `unmatched_mutants[].line_seams` — for `no_containing_seam`, the seams that
+  start on the record's line, with their spans, so the refused same-line join
+  can be checked.
 - `static_without_runtime_sample[]` — capped sample of static seams with no
   definitive or ambiguous runtime data in this import. Use
   `static_without_runtime_total` for the full count.
@@ -17332,8 +17992,8 @@ JSON shape (schema version `0.1`):
     "why_not_actionable": "Seam inventory was capped; not all seams were analyzed in this run."
   },
   "local_reproduction_commands": [
-    "ripr check --base origin/main",
-    "ripr first-pr --root . --base origin/main --head HEAD",
+    "ripr check --root /work/repo --base origin/main",
+    "ripr first-pr --root /work/repo --base origin/main --head HEAD",
     "cargo test -p ripr error_path"
   ]
 }
@@ -17349,6 +18009,9 @@ line before `verify`.
 
 RIPR renders the `base` and `head` values as one literal Bash argument,
 quoting when needed, in the `ripr check` and `ripr first-pr` lines it builds.
+Those two lines name the absolute repository `ripr pr-summary` read, through
+`--root`, like the commands carried from start-here, so the list can be pasted
+from any directory without mixing repositories (#4000).
 The complete `selected.repair_command` and `selected.verify_command` strings
 are carried unchanged from start-here. `pr-summary` does not parse or
 validate their shell syntax. Review those commands before execution.
@@ -17423,7 +18086,7 @@ targeted-rerun receipt shape:
     "direct_call_names": ["discounted_total"]
   },
   "cache": {
-    "schema_version": "1.20",
+    "schema_version": "1.33",
     "reuse_state": "reused_file_facts",
     "file_fact_status": "hits_2_misses_0_corrupt_0_store_errors_0",
     "hits": 2,
@@ -17434,7 +18097,7 @@ targeted-rerun receipt shape:
     "recomputation_reasons": ["selected_test_scope_recomputed"],
     "invalidation_status": "not_available",
     "input_fingerprint": {
-      "schema_version": "1.32",
+      "schema_version": "1.49",
       "analyzer_version": "0.11.0+0123456789abcdef0123456789abcdef01234567",
       "workspace_root_hash": "…",
       "files_content_hash": "…",
@@ -17563,7 +18226,7 @@ the route also carries `verify_command_specs` (a JSON array of full
 `CommandSpec` objects) beside the legacy `verify_commands` strings, and
 `receipt_command_spec` (a single `CommandSpec` object) beside
 `receipt_command`. The typed specs are deduplicated by their semantic digest
-(sha256 over the serialized spec), so distinct invocations that reuse one
+(sha256 over the serialized spec with its human `display` emptied; #3999), so distinct invocations that reuse one
 command id all survive in first-occurrence order. `receipt_command_spec` is
 present only when the legacy string side also agrees on exactly one receipt
 route: records without `command_specs` keep the route legacy-string-only, and

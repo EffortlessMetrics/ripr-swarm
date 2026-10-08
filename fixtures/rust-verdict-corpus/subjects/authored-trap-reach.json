@@ -1,0 +1,101 @@
+{
+  "subject_id": "authored-trap-reach",
+  "origin": "authored",
+  "version_label": "authored 2026-10-07 for false-credit traps outside the test body: build reach, threads and value projections",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "Cargo.toml",
+      "sha256": "3b2c3edf0250961524ca406205e2ed73c5e3c279adf272493de4979e1d9ffbb2"
+    },
+    {
+      "path": "src/boosts.rs",
+      "sha256": "74370782caff7bbfc0915d1a7203df45b74b065a726333ee2c66116060f09d0d"
+    },
+    {
+      "path": "src/caps.rs",
+      "sha256": "e904548c5abe75ecc1371df089cd423519d99ea005eb2885558dc5e56a592b6c"
+    },
+    {
+      "path": "src/ceilings.rs",
+      "sha256": "afa1e83b0448246dde4bed97c2b837dfb4e523b0f56068f70f547ec486c83286"
+    },
+    {
+      "path": "src/charges.rs",
+      "sha256": "5ef663a5bb5701fac293b376868d62b654ceea4a4b59621754bd5358bee42a59"
+    },
+    {
+      "path": "src/dampers.rs",
+      "sha256": "607f536005b865b64278b63aa1b9186c5ea12a297ec76cd6337c55f5898bb807"
+    },
+    {
+      "path": "src/fines.rs",
+      "sha256": "11a04dfa3e4d9cd7884321f3446292dd9afd0bf254629284533e04ddf5078615"
+    },
+    {
+      "path": "src/fines_tests.rs",
+      "sha256": "7bd667c96df55aa13db56bc12bac123f1487060b899da237f208b4121bef0461"
+    },
+    {
+      "path": "src/glows.rs",
+      "sha256": "741cc020d986ae1fb149146fe0ab756ff3fc7d020e5f9ef6712c59de581b5da5"
+    },
+    {
+      "path": "src/hoists.rs",
+      "sha256": "c3453154a132b0c59f5fb5a80af72853051f9275cd8fb7abef8cc917525d7575"
+    },
+    {
+      "path": "src/levies.rs",
+      "sha256": "5c7c8d817aa3b4b134871c93d8885d419b71113eba7446cfd1d34bd74ee2c49a"
+    },
+    {
+      "path": "src/lib.rs",
+      "sha256": "909e8978cc759daafb425c2170d6a2eac249c2692205e94965975d873669d62e"
+    },
+    {
+      "path": "src/lifts.rs",
+      "sha256": "098a3523c53d1f68cebd9a956507267dc3f347e3625d050c942133396a0e1a5c"
+    },
+    {
+      "path": "src/mufflers.rs",
+      "sha256": "0e240a997c54cfd96266556e5315662c8ed7bc842991e1cc7778f0dc935430b1"
+    },
+    {
+      "path": "src/piles.rs",
+      "sha256": "f635fb13915230b7ef8f82661082f4d41b7c633913740f52e2e9c89c995485fd"
+    },
+    {
+      "path": "src/quotas.rs",
+      "sha256": "96c79da450d2e9077282519ec8f20d9c1d66525ce693b14f9b02cd7a6c37d08e"
+    },
+    {
+      "path": "src/ramps.rs",
+      "sha256": "ebccacbd68cf793d11fd9f3018d5103075a2284f2c85ebf983381e8669b71299"
+    },
+    {
+      "path": "src/shines.rs",
+      "sha256": "0ed22813f598ef2cfa3663c772b726e16f215384903872578d12ab7f44acc1b1"
+    },
+    {
+      "path": "src/spares.rs",
+      "sha256": "0923da262a24e5cc04c07083c11dd8e97aabdf33b571710c30eeba8f8c1ac897"
+    },
+    {
+      "path": "src/spares_tests.rs",
+      "sha256": "2955eef925f1456a91c32c54921f238adbefe90ce51ff39aa806724ca843faba"
+    },
+    {
+      "path": "src/stacks.rs",
+      "sha256": "8226e9f65e4caba7eb44931d58cd18767f26f8bff423e747a74bf544c47a1212"
+    },
+    {
+      "path": "tests/registered.rs",
+      "sha256": "3164deffe90364054cfb65c71a14d6341b50fc7d4163317680ed999adba2797d"
+    },
+    {
+      "path": "tests/unbuilt.rs",
+      "sha256": "8a1a673d02d84f1c346efbfc810dd49d3e0f30e48efa64488333a052054f41a5"
+    }
+  ]
+}

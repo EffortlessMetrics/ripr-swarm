@@ -12,7 +12,7 @@
 //! The card describes the work order and never marks itself complete:
 //! observed completion lives in the RepairAttempt/receipt authorities.
 
-use super::{FixInstructionState, FixInstructionSummary};
+use super::{CanonicalNextActionV1, FixInstructionState, FixInstructionSummary};
 
 /// Versioned card schema. Additive changes keep this version and add
 /// `#[serde(default)]` fields; breaking shape changes mint a new version.
@@ -427,8 +427,15 @@ pub struct RepairCardV1 {
     pub done_when: RepairCardDoneWhen,
     pub stop_conditions: Vec<String>,
     /// One next action as a typed command reference. Absent when the card is
-    /// stale, limited, unavailable, or has no ready route.
+    /// stale, limited, unavailable, or has no ready route. Projected from
+    /// [`CanonicalNextActionV1`]: `Some` exactly when the canonical decision
+    /// is executable, so the two can never disagree.
     pub next_action: Option<RepairCardCommandRef>,
+    /// The canonical next action (#6304) this card's `next_action` reference
+    /// is projected from. Additive within `repair_card.v1`: older readers
+    /// see `None`; the builder always mints `Some`.
+    #[serde(default)]
+    pub canonical_next_action: Option<CanonicalNextActionV1>,
     /// Producer-owned basis for the selected target (relation vocabulary).
     pub selected_basis: Option<String>,
     pub rejected_alternatives: Vec<RepairCardRejectedAlternative>,

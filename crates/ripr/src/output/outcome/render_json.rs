@@ -14,7 +14,15 @@ pub(crate) fn render_targeted_test_outcome_json(
         "status": "advisory",
         "inputs": {
             "before": report.before_path.as_str(),
-            "after": report.after_path.as_str()
+            "after": report.after_path.as_str(),
+            // #6031: the head/repository identity the two snapshots report,
+            // so a JSON-consuming driver sees a cross-head pair in-band
+            // instead of only on stderr. `null` heads mean the artifact
+            // carries no head (the `ripr pilot` snapshot shape); `null`
+            // `head_match` is "cannot confirm", never "confirmed equal".
+            "before_repository_head": report.heads.before_repository_head,
+            "after_repository_head": report.heads.after_repository_head,
+            "head_match": report.heads.head_match()
         },
         "before": report.before_counts,
         "after": report.after_counts,
@@ -109,7 +117,10 @@ fn targeted_test_outcome_movement_json(movement: &TargetedTestOutcomeMovement) -
         "missing_discriminators_reopened": movement.missing_discriminators_reopened,
         "oracle_strength_delta": movement.oracle_strength_delta.as_deref(),
         "related_test_delta": movement.related_test_delta,
-        "no_movement_reason": movement.no_movement_reason.as_deref()
+        "no_movement_reason": movement.no_movement_reason.as_deref(),
+        "after_missing_discriminators": movement.after_missing_discriminators,
+        "after_discriminate_state": movement.after_discriminate_state.as_deref(),
+        "after_open_legs": movement.after_open_legs
     })
 }
 
@@ -160,7 +171,10 @@ fn agent_verify_movement_json(movement: &TargetedTestOutcomeMovement) -> Value {
         "missing_discriminators_reopened": movement.missing_discriminators_reopened,
         "oracle_strength_delta": movement.oracle_strength_delta.as_deref(),
         "related_test_delta": movement.related_test_delta,
-        "no_movement_reason": movement.no_movement_reason.as_deref()
+        "no_movement_reason": movement.no_movement_reason.as_deref(),
+        "after_missing_discriminators": movement.after_missing_discriminators,
+        "after_discriminate_state": movement.after_discriminate_state.as_deref(),
+        "after_open_legs": movement.after_open_legs
     })
 }
 

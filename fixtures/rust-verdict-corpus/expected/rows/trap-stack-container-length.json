@@ -1,0 +1,22 @@
+{
+  "case_id": "trap-stack-container-length",
+  "subject_id": "authored-trap-reach",
+  "origin": "authored",
+  "anchor": "src/stacks.rs:2",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "assert_on_container_length_not_element",
+  "hard_case": true,
+  "truth": "not_discriminated",
+  "ideal_verdict": "gap",
+  "observed_verdict": "gap",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "reachable_unrevealed"
+  ],
+  "outcome": "ideal",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

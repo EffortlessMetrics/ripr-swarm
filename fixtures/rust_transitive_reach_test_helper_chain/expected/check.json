@@ -18,7 +18,7 @@
         "id": "probe:src_eval.rs:predicate:f66d616d",
         "family": "predicate",
         "delta": "control",
-        "file": "fixtures/rust_transitive_reach_test_helper_chain/input/src/eval.rs",
+        "file": "./src/eval.rs",
         "line": 3,
         "expression": "return value >= limit;"
        },
@@ -75,7 +75,7 @@
         "id": "probe:src_eval.rs:return_value:7334f366",
         "family": "return_value",
         "delta": "value",
-        "file": "fixtures/rust_transitive_reach_test_helper_chain/input/src/eval.rs",
+        "file": "./src/eval.rs",
         "line": 3,
         "expression": "return value >= limit;"
        },

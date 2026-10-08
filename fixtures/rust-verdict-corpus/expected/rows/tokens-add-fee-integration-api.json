@@ -1,0 +1,22 @@
+{
+  "case_id": "tokens-add-fee-integration-api",
+  "subject_id": "authored-tokens",
+  "origin": "authored",
+  "anchor": "src/lib.rs:10",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "integration_test_public_api_to_private_owner",
+  "hard_case": false,
+  "truth": "discriminated",
+  "ideal_verdict": "credited",
+  "observed_verdict": "limited",
+  "followed_retarget": false,
+  "changed_since_labeling": true,
+  "observed_classifications": [
+    "weakly_exposed"
+  ],
+  "outcome": "abstained",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

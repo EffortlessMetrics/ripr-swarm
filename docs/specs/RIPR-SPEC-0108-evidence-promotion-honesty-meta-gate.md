@@ -82,7 +82,8 @@ denominator or establish representative-project accuracy. Golden assertions
 pin a nonzero finding count and oracle fields so empty findings cannot pass
 even when report-level scope or limitations are retained.
 The typed `expected_related_test` assertion also pins the test's file, line,
-name and oracle fields on every selected finding. Deleting that JSON evidence
+name and oracle fields on every selected finding, with an optional
+`relation_reason` pin for reach-identity cases. Deleting that JSON evidence
 cannot pass by retaining top-level oracle fields and human prose.
 
 Oracle projection validation also accepts the renderer's anchored related-test
@@ -157,7 +158,7 @@ contains ` uses ` does not hide an otherwise valid oracle projection.
       `allowed_edit_surface`, and `forbidden_files`
     - `must_not_have_contradictory_packet_messaging`
     - `expected_oracle` with `kind` and `strength`
-    - `expected_related_test` with `name`, `file`, positive `line`, `kind` and `strength`
+    - `expected_related_test` with `name`, `file`, positive `line`, `kind` and `strength`, plus optional `relation_reason` (pins the related-test relation, e.g. `weak_token_substring` for a test-module-shadowed receiver, #6951)
     - `expected_class` with `class`
     - `maximum_class` with `class`
     - `expected_completeness` with `completeness`
@@ -463,6 +464,8 @@ gate-specific artifacts.
 | rust_macro_wrapped_test_call_named_limitation | rust | rust_macro_wrapped_test_call_limitation | direct_test_macro_call_named_not_silently_clean (also `must_not_report_clean` + `must_disclose_scope` + `must_emit_limitation: rust_macro_wrapped_test_call_unresolved` + `must_not_emit_repair_packet` + no verify/receipt commands + `must_disclose_witness` + `must_disclose_limitation_detail` + `expected_limitation_detail` + `expected_limitation_route: analysis/rust-macro-aware-reach` + `must_not_claim_no_tests_found`) |
 | rust_macro_wrapped_assertion_named_limitation | rust | rust_macro_wrapped_assertion_limitation | custom_assertion_macro_named_not_silently_clean (also `must_not_report_clean` + `must_disclose_scope` + `must_emit_limitation: rust_macro_wrapped_assertion_unresolved` + `must_not_emit_repair_packet` + no verify/receipt commands + `must_disclose_witness` + `must_disclose_limitation_detail` + `expected_limitation_detail` + `expected_limitation_route: analysis/rust-macro-assertion-oracle` + `must_not_claim_no_tests_found`) |
 | rust_same_method_other_type | rust | rust_adversarial_same_method_other_type | method_owner_same_name_different_impl_type_identity (also `expected_class=weakly_exposed`, `must_not_report_clean`, `must_disclose_scope`, and no repair packet or receipt command) |
+| rust_free_function_receiver_qualified_call | rust | rust_adversarial_free_function_receiver | free_function_receiver_qualified_call_not_direct_owner_call (also `expected_class=weakly_exposed`, `must_not_report_clean`, `must_disclose_scope`, and no repair packet or receipt command) |
+| rust_shared_error_variant_proximity_other_owner | rust | rust_adversarial_shared_error_variant_proximity | shared_error_variant_same_file_pin_on_other_owner_not_confirmed (also `expected_class=weakly_exposed`, `must_not_report_clean`, `must_disclose_scope`, and no repair packet or receipt command) |
 | perl_preview_card_advisory_no_repair_packet | perl | reports/perl-preview-advisory-no-packet.json | perl_preview_card_advisory_only (also `expected_class=weakly_exposed`, production-shaped `perl_preview_card.v1`, `must_not_report_clean`, `must_disclose_scope`, no `verify_command`/`receipt_command` delegation fields, no promotion, and no repair packet) |
 | scope_committed_diff_changed_rust_file | rust | boundary_gap | committed_diff_changed_file_scope_count (also `must_not_report_clean` + `must_disclose_scope` + `expected_changed_rust_files: 1` + no verify/receipt commands + no repair packet + `expected_class: weakly_exposed`) |
 | scope_no_scope_empty_not_clean | rust | reports/scope-no-scope-empty-not-clean.json | empty_result_no_scope_disclosure_not_clean (also `must_disclose_no_scope`) |
@@ -514,6 +517,8 @@ gate-specific artifacts.
 | ts_strong_oracle_control | typescript | typescript_strong_oracle |
 | ts_ava_t_is_exact_value | typescript | ts_runner_detect_ava_devdep (`expected_oracle=exact_value/strong`, `expected_class=exposed`, no repair packet or receipt command) |
 | ts_tape_equal_exact_value | typescript | typescript_tape_equal_oracle (`expected_oracle=exact_value/strong`, `expected_class=exposed`, no repair packet or receipt command) |
+| ts_node_expect_failure_no_credit | typescript | ts_node_expect_failure_no_credit (a Node `expectFailure` test is the only related test: `expected_class=no_static_path`, never promoted, no repair packet or receipt command) |
+| ts_node_ordinary_test_control | typescript | ts_node_ordinary_test_control (same test without `expectFailure`: `expected_oracle=exact_value/strong`, `expected_class=exposed`) |
 | ts_dynamic_expected_incomplete_packet | typescript | typescript_dynamic_assertion_unresolved (`expected_oracle=exact_value/strong`, `expected_class=weakly_exposed`, `maximum_class=weakly_exposed` because `clamp(-5, 0, 10)` does not reach the changed `value < min` boundary under the RIPR-SPEC-0027 boundary witness, no repair packet or receipt command) |
 | ts_same_method_owner_identity_positive_control | typescript | typescript_same_method_owner_identity_positive (`expected_oracle=exact_value/strong`, `expected_class=exposed`, no repair packet or receipt command) |
 | perl_sink_aligned_positive_control | perl | reports/perl_sink_aligned_positive_control.json (`expected_oracle=exact_value/strong`, `expected_class=exposed`, no repair packet or receipt command) |
@@ -556,6 +561,10 @@ ripr check --perl-facts fixtures/evidence-promotion-honesty-corpus/perl-packets/
   > fixtures/evidence-promotion-honesty-corpus/reports/<case>.json
 ```
 
+Run it in a checkout whose diff against `origin/main` is non-empty. On a
+clean checkout the command exits 2 with "analysis outcome NoScope requires
+every count to be zero". This note stands until that defect is fixed.
+
 The packet is the input (the tempting wrong relation or boundary is encoded
 there); the report is the byte-pinned consumer output the gate enforces.
 Packet fingerprints follow the `recompute_packet_fingerprint` recipe in
@@ -579,6 +588,12 @@ Rust family coverage for same-method-other-impl identity (#4760):
 |---|---|---|
 | same trait method name on a different impl type | `rust_same_method_other_type` | `weakly_exposed` (name-only; trait impl may be reached unseen) |
 | true owner constructed and observed | `rust_same_method_owner_type_positive_control` | `exposed` (`direct_owner_call`) |
+
+Rust family coverage for free-function receiver identity (#7006):
+
+| family | corpus case | expected state |
+|---|---|---|
+| receiver-qualified-only call against a free-function owner | `rust_free_function_receiver_qualified_call` | `weakly_exposed` (name-only; method-call syntax never resolves to a free function) |
 
 Positive controls (same-entity relations must still fire; preview/advisory
 per support policy, no gate, badge, or RIPR Zero role):
@@ -780,6 +795,14 @@ the gate has over-corrected or the fixture needs re-blessing
 | Dispatch | `xtask/src/dispatch.rs` |
 | CI routed | `.github/workflows/routed-rust.yml` |
 | CI fast | `.github/workflows/ci.yml` |
+
+## Later Amendment
+
+RIPR-SPEC-0235 (2026-10-04) states the classification rules behind the
+Perl corpus outcomes pinned here. On the same date a note was added under
+the Perl regeneration command: on a clean checkout the command exits 2
+with a NoScope error, so it must run with a non-empty diff against
+`origin/main` until that defect is fixed.
 
 ## Metrics
 

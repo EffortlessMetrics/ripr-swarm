@@ -11,6 +11,18 @@
   "findings": [
     {
       "id": "probe:src_lib.rs:return_value:6ea804bb",
+      "canonical_gap_id": "gap:rust:src/lib.rs:weight:return_value:return_value:input*3",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:weight:return_value:return_value:input*3",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "weight",
+        "behavior_kind": "return_value",
+        "probe_kind": "return_value",
+        "normalized_discriminator": "input*3"
+
+      },
       "classification": "reachable_unrevealed",
       "severity": "warning",
       "confidence": 0.79,
@@ -18,7 +30,7 @@
         "id": "probe:src_lib.rs:return_value:6ea804bb",
         "family": "return_value",
         "delta": "value",
-        "file": "fixtures/owner_return_pin_nested_test/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 2,
         "expression": "input * 3"
        },
@@ -33,8 +45,8 @@
       "flow_sinks": [
         {"kind":"return_value","text":"input * 3","line":2}
       ],
-      "evidence": ["Complete propagation witness reaches returned value: input * 3", "No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)", "No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach weight: inner, outer"],
-      "missing": ["No detected assertion observes the changed value, error, field, or effect", "No relevant oracle was detected", "No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)", "No strong discriminator was detected"],
+      "evidence": ["Complete propagation witness reaches returned value: input * 3", "No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)", "No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach weight: inner, outer", "assertion not credited: `assert_eq!` in inner at tests/weight_tests.rs:3: the test is declared inside a function body, which ripr does not model"],
+      "missing": ["No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)", "No strong discriminator was detected"],
       "assertion_texts": {
         "3": "assert_eq!(weight(4),12);"
       },
@@ -112,8 +124,8 @@
       "stop_reasons": [],
       "oracle_kind": "unknown",
       "oracle_strength": "none",
-      "recommended_next_step": "Establish that the test is collected and enabled, that the assertion runs on its executed path, and that it resolves to the intended standard macro, then check the changed returned value.",
-      "suggested_next_action": "Establish that the test is collected and enabled, that the assertion runs on its executed path, and that it resolves to the intended standard macro, then check the changed returned value.",
+      "recommended_next_step": "ripr did not credit the `assert_eq!` in inner at tests/weight_tests.rs:3; the \"not credited\" note says why. That shape can keep the assertion from checking the change, so this is not a static limit: make the check run on every default test run, as the standard `assert_eq!`, in a test expected to pass.",
+      "suggested_next_action": "ripr did not credit the `assert_eq!` in inner at tests/weight_tests.rs:3; the \"not credited\" note says why. That shape can keep the assertion from checking the change, so this is not a static limit: make the check run on every default test run, as the standard `assert_eq!`, in a test expected to pass.",
       "language": "rust",
       "source_currentness": "candidate_current"
     }

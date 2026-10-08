@@ -127,7 +127,6 @@ mod tests {
         let facts = RaRustSyntaxAdapter.summarize_file(Path::new("src/lib.rs"), source)?;
         Ok(FileData {
             path: facts.path,
-            calls: facts.calls,
             returns: facts.returns,
             literals: facts.literals,
             probe_shapes: facts.probe_shapes,
@@ -136,6 +135,8 @@ mod tests {
             unresolved_property_macros: facts.unresolved_property_macros,
             role_provenance: facts.role_provenance,
             source: facts.source,
+            item_scopes: facts.item_scopes,
+            macro_candidates: facts.macro_candidates,
         })
     }
 
@@ -164,9 +165,9 @@ mod tests {
         facts.used_lexical_fallback = true;
         assert!(declaration_shape(&facts, 3, "out: &Path,").is_none());
         facts.used_lexical_fallback = false;
-        facts.source = "struct Path;\nfn project(\n    out: &Path,\n".to_string();
+        facts.source = "struct Path;\nfn project(\n    out: &Path,\n".into();
         assert!(declaration_shape(&facts, 3, "out: &Path,").is_none());
-        facts.source.clear();
+        facts.source = std::sync::Arc::from("");
         assert!(declaration_shape(&facts, 3, "out: &Path,").is_none());
         Ok(())
     }
@@ -275,9 +276,9 @@ mod tests {
         facts.used_lexical_fallback = true;
         assert!(declaration_shape(&facts, 2, "value: u8,").is_none());
         facts.used_lexical_fallback = false;
-        facts.source = "struct Packet {\n    value: u8,\n".to_string();
+        facts.source = "struct Packet {\n    value: u8,\n".into();
         assert!(declaration_shape(&facts, 2, "value: u8,").is_none());
-        facts.source.clear();
+        facts.source = std::sync::Arc::from("");
         assert!(declaration_shape(&facts, 2, "value: u8,").is_none());
         Ok(())
     }
