@@ -694,6 +694,11 @@ impl McpServer {
         document: Value,
         uri: &str,
     ) -> Result<ReadResourceResponse, ErrorData> {
+        // Resources pretty-print their document text while tool payloads
+        // serialize compact (`bounded_tool_envelope`): the encodings differ
+        // by design, and tool/resource equivalence (#7145) is pinned over the
+        // parsed document, never over the wire bytes. Do not reformat either
+        // side to match the other.
         let text = serde_json::to_string_pretty(&document)
             .map_err(|_error| ErrorData::internal_error("serialize resource", None))?;
         let envelope = json_envelope(uri, text);
