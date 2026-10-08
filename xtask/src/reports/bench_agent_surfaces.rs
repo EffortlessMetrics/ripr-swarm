@@ -3918,6 +3918,57 @@ mod tests {
         );
     }
 
+    /// #7016 follow-up: the M4 Markdown receipt discloses the capped
+    /// population — reported-vs-emitted denominators, the bound-envelope
+    /// count, and run-limitation counts — so a dropped or misordered
+    /// placeholder fails here, not in a published receipt.
+    #[test]
+    fn m4_markdown_discloses_findings_bound_population() {
+        let capped = json!({
+            "summary": { "findings": 112 },
+            "analysis_outcome": { "analysis_complete": true, "outcome": { "limitations": [] } },
+            "run_limitations": [{
+                "category": "limited_findings_bound",
+                "run_status": "limited_findings_bound",
+                "basis": "check_findings_byte_budget",
+                "downstream_consumable": false,
+                "message": "rendered 2 of 112 findings",
+                "repair_route": "output/check-findings-budget",
+            }],
+            "findings": [
+                { "classification": "weakly_exposed" },
+                { "classification": "static_unknown", "stop_reasons": ["no related test file resolved"] },
+            ],
+        });
+        let uncapped = json!({
+            "summary": { "findings": 3 },
+            "analysis_outcome": { "analysis_complete": true, "outcome": { "limitations": [] } },
+            "findings": [
+                { "classification": "exposed" },
+                { "classification": "exposed" },
+                { "classification": "exposed" },
+            ],
+        });
+        let receipt = json!({
+            "status": "pass",
+            "identity": {},
+            "m4": { "tiny": actionability_metrics(&[capped, uncapped]) },
+        });
+        let markdown = receipt_markdown(&receipt, None);
+        assert!(
+            markdown.contains("findings_total 5 (reported 115)"),
+            "the M4 line discloses the emitted-vs-reported denominators:\n{markdown}"
+        );
+        assert!(
+            markdown.contains("findings_bound_envelopes 1"),
+            "the M4 line discloses the bound-envelope count:\n{markdown}"
+        );
+        assert!(
+            markdown.contains("max_run_limitations 1"),
+            "the M4 line discloses run-limitation counts:\n{markdown}"
+        );
+    }
+
     fn test_corpus(expects_findings: bool) -> Corpus {
         Corpus {
             id: CorpusId::Tiny,
