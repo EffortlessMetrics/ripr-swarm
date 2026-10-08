@@ -9620,6 +9620,7 @@ tests = [
   "crates/ripr/src/lsp/tests.rs::lsp_production_sources_have_no_stderr_degradation_fallback",
   "crates/ripr/src/lsp/tests.rs::framed_lsp_component_degradation_is_typed_logged_and_recovers",
   "crates/ripr/src/lsp/tests.rs::framed_lsp_gap_ledger_degradation_is_typed_logged_and_recovers",
+  "crates/ripr/tests/lsp_seam_degradation_spawn.rs::spawned_server_with_invalid_seam_limit_degrades_seam_inventory_through_production_refresh",
   "crates/ripr/src/lsp/diagnostics.rs::oversized_diff_error_converts_to_a_committed_limited_snapshot_with_one_warning",
   "crates/ripr/src/lsp/diagnostics.rs::repo_scope_and_wrapped_guard_errors_do_not_convert",
   "crates/ripr/src/lsp/tests.rs::oversized_diff_warning_snapshot_prepares_commits_and_publishes",
