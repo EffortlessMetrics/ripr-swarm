@@ -22,6 +22,7 @@ use crate::agent::artifact::git_output;
 use crate::agent::command_specs::{AgentArtifactRoute, agent_inspection_command_spec};
 use crate::agent::loop_commands::{bound_root, shell_arg};
 use crate::analysis::ClassifiedSeam;
+use crate::analysis::RepoSeam;
 use crate::analysis::repair_route::{
     RepairRouteReadiness, RepairTargetSelection, repair_packet_eligibility,
 };
@@ -603,28 +604,70 @@ fn witness_for_seam(
     ))
 }
 
+/// Select the finding that names this seam's canonical gap from an
+/// already-completed finding set, without projecting a witness. The
+/// owner-match rule is the single seam↔finding binding authority: consumers
+/// that already hold a completed analysis (the LSP snapshot, the MCP
+/// snapshot) bind the finding here instead of re-running the check pipeline,
+/// and no consumer may re-derive the match.
+///
+/// Two branches, in order. The content-hash branch binds a finding whose gap
+/// id is this seam's own canonical gap id with this seam's owner (exact
+/// identity; first match wins and ends the search). The producer branch
+/// binds a finding whose producer-structured gap (file, owner, probe family)
+/// names this seam — the identity producers actually emit on findings, which
+/// never carry the content-hash id (#7162) — and only when exactly one
+/// finding matches: sibling findings that share the shape stay ambiguous
+/// and bind nothing rather than crediting the seam with another seam's
+/// finding.
+///
+/// Binding is not projection: a bound finding does not always project a
+/// witness (a fully exposed finding is deliberately never relabeled as a
+/// gap), while the binding itself still holds — the MCP card binds its seam
+/// to its item exactly where the CLI binds its optional witness.
+pub(crate) fn finding_for_seam<'a>(
+    findings: &'a [crate::domain::Finding],
+    entry: &ClassifiedSeam,
+    canonical_gap_id: Option<&str>,
+) -> Option<&'a crate::domain::Finding> {
+    // The content-hash id is the headline-eligibility ticket, not the finding
+    // locator: only seams that carry one bind a finding, so the expensive
+    // analysis skip in `witness_for_seam` and the non-headline no-witness
+    // posture both hold on every branch.
+    let gap_id = canonical_gap_id?;
+    if let Some(hit) = findings.iter().find(|finding| {
+        finding
+            .canonical_gap
+            .as_ref()
+            .is_some_and(|gap| gap_names_seam(gap, gap_id, entry.seam.owner()))
+    }) {
+        return Some(hit);
+    }
+    let mut matches = findings.iter().filter(|finding| {
+        finding
+            .canonical_gap
+            .as_ref()
+            .is_some_and(|gap| producer_gap_names_seam(gap, &entry.seam))
+    });
+    let hit = matches.next()?;
+    if matches.next().is_some() {
+        return None;
+    }
+    Some(hit)
+}
+
 /// Project the witness for the finding that names this seam's canonical gap
-/// from an already-completed finding set. The owner-match rule is the single
-/// seam↔witness binding authority: consumers that already hold a completed
-/// analysis (the LSP snapshot, #4668) bind the witness here instead of
-/// re-running the check pipeline, and no consumer may re-derive the match.
+/// from an already-completed finding set: the shared [`finding_for_seam`]
+/// join, then the witness projection. Projection can still refuse a bound
+/// finding (a fully exposed finding projects no witness); the card then
+/// carries no witness — never another finding's.
 pub(crate) fn witness_from_findings(
     findings: &[crate::domain::Finding],
     entry: &ClassifiedSeam,
     canonical_gap_id: Option<&str>,
 ) -> Option<(String, DiagnosticWitness)> {
-    let gap_id = canonical_gap_id?;
-    findings
-        .iter()
-        .find(|finding| {
-            finding
-                .canonical_gap
-                .as_ref()
-                .is_some_and(|gap| gap_names_seam(gap, gap_id, entry.seam.owner()))
-        })
-        .and_then(|finding| {
-            DiagnosticWitness::from_finding(finding).map(|witness| (finding.id.clone(), witness))
-        })
+    let hit = finding_for_seam(findings, entry, canonical_gap_id)?;
+    DiagnosticWitness::from_finding(hit).map(|witness| (hit.id.clone(), witness))
 }
 
 /// A canonical gap id is content-derived and excludes the source location, so
@@ -633,6 +676,34 @@ pub(crate) fn witness_from_findings(
 /// must match this seam's owner.
 fn gap_names_seam(gap: &FindingCanonicalGap, gap_id: &str, owner: &str) -> bool {
     gap.id == gap_id && gap.owner == owner
+}
+
+/// The producer-structured half of the seam↔finding join: a finding's
+/// producer gap names this seam when its stable file, owner, and probe
+/// family all name the seam's own. Producers mint `gap:<lang>:…` finding
+/// identities from the same index facts seams carry (file, symbol owner,
+/// probe shape) but never the seam's content-hash id, so the content-hash
+/// branch alone can never bind a produced finding — this branch is the join
+/// that can (#7162). The owner comparison accepts the live rust-index symbol
+/// id spelling (`{file}::{qualified}`, which the Rust producer's
+/// `qualified_owner` strips to the gap owner at mint time) as well as the
+/// bare owner hand-built seams carry; a gap id shared with a sibling owner
+/// still never credits this seam.
+fn producer_gap_names_seam(gap: &FindingCanonicalGap, seam: &RepoSeam) -> bool {
+    let seam_file = crate::analysis::stable_path_text(seam.file());
+    if gap.file != seam_file {
+        return false;
+    }
+    let owner = seam.owner();
+    let owner_matches = gap.owner == owner
+        || owner
+            .strip_prefix(seam_file.as_str())
+            .and_then(|tail| tail.strip_prefix("::"))
+            == Some(gap.owner.as_str());
+    if !owner_matches {
+        return false;
+    }
+    crate::analysis::seam_kind_for_probe_family(&gap.probe_kind) == Some(seam.kind())
 }
 
 /// The portable workspace identity is producer-owned through the admitted
@@ -1037,6 +1108,90 @@ mod tests {
         Ok(())
     }
 
+    /// #7162: the producer-structured join names a seam by stable file, owner,
+    /// and probe family — never by id-string equality across the two schemes.
+    /// A live rust-index owner (`{file}::{qualified}`) and a bare hand-built
+    /// owner both match; a sibling owner, a foreign file, a foreign probe
+    /// family, and a partial file-segment prefix never do.
+    #[test]
+    fn producer_gap_names_seam_by_file_owner_and_kind() -> Result<(), String> {
+        fn gap_for(file: &str, owner: &str, probe_kind: &str) -> FindingCanonicalGap {
+            FindingCanonicalGap {
+                id: format!(
+                    "gap:rust:{file}:{owner}:predicate_boundary:{probe_kind}:amount==discount_threshold"
+                ),
+                language: "rust".to_string(),
+                file: file.to_string(),
+                owner: owner.to_string(),
+                behavior_kind: "predicate_boundary".to_string(),
+                probe_kind: probe_kind.to_string(),
+                normalized_discriminator: "amount==discount_threshold".to_string(),
+            }
+        }
+        fn seam_for(file: &str, owner: &str) -> RepoSeam {
+            RepoSeam::new(
+                file,
+                owner,
+                SeamKind::PredicateBoundary,
+                42,
+                88,
+                "amount > discount_threshold",
+                RequiredDiscriminator::BoundaryValue {
+                    description: "amount > discount_threshold".to_string(),
+                },
+                ExpectedSink::ReturnValue,
+            )
+        }
+        let gap = gap_for("src/lib.rs", "discounted_total", "predicate");
+        // The live shape: the seam carries the rust-index symbol id while the
+        // gap carries the qualified tail the producer stripped at mint time.
+        if !producer_gap_names_seam(
+            &gap,
+            &seam_for("src/lib.rs", "src/lib.rs::discounted_total"),
+        ) {
+            return Err("a live-shaped producer gap must name its seam".to_string());
+        }
+        // The hand-built shape: a bare owner on the same file still matches.
+        if !producer_gap_names_seam(&gap, &seam_for("src/lib.rs", "discounted_total")) {
+            return Err("a bare owner on the same file must name its seam".to_string());
+        }
+        // Every discriminating axis refuses on its own.
+        for (name, gap, seam) in [
+            (
+                "sibling owner",
+                gap_for("src/lib.rs", "other_total", "predicate"),
+                seam_for("src/lib.rs", "src/lib.rs::discounted_total"),
+            ),
+            (
+                "foreign file",
+                gap_for("src/other.rs", "discounted_total", "predicate"),
+                seam_for("src/lib.rs", "src/lib.rs::discounted_total"),
+            ),
+            (
+                "foreign probe family",
+                gap_for("src/lib.rs", "discounted_total", "return_value"),
+                seam_for("src/lib.rs", "src/lib.rs::discounted_total"),
+            ),
+            (
+                "unmapped probe family",
+                gap_for("src/lib.rs", "discounted_total", "static_unknown"),
+                seam_for("src/lib.rs", "src/lib.rs::discounted_total"),
+            ),
+            // An owner that starts with the file text but is not
+            // segment-qualified by it must not strip as a prefix.
+            (
+                "partial file segment",
+                gap_for("src/lib.rs", "discounted_total", "predicate"),
+                seam_for("src/lib.rs", "src/lib.rs2::discounted_total"),
+            ),
+        ] {
+            if producer_gap_names_seam(&gap, &seam) {
+                return Err(format!("a {name} must not name the seam"));
+            }
+        }
+        Ok(())
+    }
+
     /// #5268: the Rust producer now populates canonical gaps on diff
     /// findings, but a producer gap id (`gap:rust:...`) is a different
     /// identity scheme from the repo seam's content-hashed canonical gap id,
@@ -1127,6 +1282,187 @@ mod tests {
             return Err(format!(
                 "a producer-gap finding must not bind as the seam witness for gap id {seam_gap_id}"
             ));
+        }
+        Ok(())
+    }
+
+    /// One weakly-exposed producer-gap finding with an oracle row, so a bound
+    /// witness is observable and a wrong bind would fail its test. The gap id
+    /// is caller-chosen: producer-shaped ids exercise the structured branch,
+    /// the seam's own content-hash id the legacy branch.
+    fn producer_gap_finding(
+        id: &str,
+        gap_id: &str,
+        file: &str,
+        owner: &str,
+        probe_kind: &str,
+    ) -> crate::domain::Finding {
+        use crate::domain::{
+            ActivationEvidence, DeltaKind, ExposureClass, Finding, OracleKind, OracleStrength,
+            Probe, ProbeFamily, ProbeId, RelatedTest, RevealEvidence, RiprEvidence, SourceLocation,
+        };
+        Finding {
+            id: id.to_string(),
+            canonical_gap: Some(FindingCanonicalGap {
+                id: gap_id.to_string(),
+                language: "rust".to_string(),
+                file: file.to_string(),
+                owner: owner.to_string(),
+                behavior_kind: "predicate_boundary".to_string(),
+                probe_kind: probe_kind.to_string(),
+                normalized_discriminator: "amount==discount_threshold".to_string(),
+            }),
+            probe: Probe {
+                id: ProbeId(id.to_string()),
+                location: SourceLocation::new(file, 2, 5),
+                owner: None,
+                family: ProbeFamily::Predicate,
+                delta: DeltaKind::Control,
+                before: None,
+                after: None,
+                expression: "amount > discount_threshold".to_string(),
+                expected_sinks: Vec::new(),
+                required_oracles: Vec::new(),
+            },
+            class: ExposureClass::WeaklyExposed,
+            ripr: RiprEvidence {
+                reach: stage(StageState::Yes),
+                infect: stage(StageState::Weak),
+                propagate: stage(StageState::Yes),
+                reveal: RevealEvidence {
+                    observe: stage(StageState::Yes),
+                    discriminate: stage(StageState::Weak),
+                },
+            },
+            confidence: 0.5,
+            evidence: Vec::new(),
+            missing: Vec::new(),
+            flow_sinks: Vec::new(),
+            activation: ActivationEvidence::default(),
+            stop_reasons: Vec::new(),
+            related_tests_matched_total: Some(1),
+            related_tests: vec![RelatedTest {
+                name: "exact_boundary_gets_the_discount".to_string(),
+                file: std::path::PathBuf::from("tests/pricing.rs"),
+                line: 12,
+                oracle: Some("assert_eq!(discounted_total(100, 100), 90)".to_string()),
+                oracle_kind: OracleKind::ExactValue,
+                oracle_strength: OracleStrength::Strong,
+                relation_reason: None,
+                relation_confidence: None,
+                miss: None,
+            }],
+            recommended_next_step: None,
+            language: Some(crate::domain::LanguageId::Rust),
+            language_status: None,
+            owner_kind: None,
+            static_limit_kind: None,
+            changed_sink: None,
+            observed_sink: None,
+            oracle_alignment: None,
+            alignment_reason: None,
+            source_currentness: crate::domain::SourceCurrentness::CandidateCurrent,
+        }
+    }
+
+    /// #7162: a produced finding whose gap structurally names the seam binds
+    /// as its witness — the producer id scheme is the join key the
+    /// content-hash branch can never match. Two findings sharing the shape
+    /// stay ambiguous and bind nothing, and a content-hash match still ends
+    /// the search first.
+    #[test]
+    fn producer_gap_finding_binds_the_seam_witness_when_unique() -> Result<(), String> {
+        let entry = weakly_gripped_entry();
+        let seam_gap_id = crate::analysis::canonical_gap::canonical_gap_identity(&entry)
+            .ok_or_else(|| {
+                "the weakly gripped seam must carry a canonical gap identity".to_string()
+            })?
+            .id;
+        let producer_id = "gap:rust:src/pricing.rs:pricing::discounted_total:predicate_boundary:predicate:amount==discount_threshold";
+        if producer_id == seam_gap_id {
+            return Err("the producer id must differ from the content-hash id".to_string());
+        }
+        let finding = producer_gap_finding(
+            "finding:producer:1",
+            producer_id,
+            "src/pricing.rs",
+            "pricing::discounted_total",
+            "predicate",
+        );
+        let (bound_id, _) =
+            witness_from_findings(std::slice::from_ref(&finding), &entry, Some(&seam_gap_id))
+                .ok_or_else(|| "a uniquely matching producer finding must bind".to_string())?;
+        if bound_id != "finding:producer:1" {
+            return Err(format!("bound the wrong finding: {bound_id}"));
+        }
+        // A sibling finding sharing the shape makes the match ambiguous: no
+        // witness rather than another seam's instruction.
+        let twin = producer_gap_finding(
+            "finding:producer:2",
+            producer_id,
+            "src/pricing.rs",
+            "pricing::discounted_total",
+            "predicate",
+        );
+        if witness_from_findings(&[finding, twin], &entry, Some(&seam_gap_id)).is_some() {
+            return Err("ambiguous producer matches must bind no witness".to_string());
+        }
+        Ok(())
+    }
+
+    /// #7162 + #5268: a producer gap id shared with a sibling owner never
+    /// credits this seam — even when the file and probe family both match.
+    #[test]
+    fn producer_gap_with_sibling_owner_binds_no_witness() -> Result<(), String> {
+        let entry = weakly_gripped_entry();
+        let seam_gap_id = crate::analysis::canonical_gap::canonical_gap_identity(&entry)
+            .ok_or_else(|| {
+                "the weakly gripped seam must carry a canonical gap identity".to_string()
+            })?
+            .id;
+        let finding = producer_gap_finding(
+            "finding:sibling:1",
+            "gap:rust:src/pricing.rs:pricing::other_total:predicate_boundary:predicate:amount==discount_threshold",
+            "src/pricing.rs",
+            "pricing::other_total",
+            "predicate",
+        );
+        if witness_from_findings(std::slice::from_ref(&finding), &entry, Some(&seam_gap_id))
+            .is_some()
+        {
+            return Err("a sibling owner's producer gap must not bind".to_string());
+        }
+        Ok(())
+    }
+
+    /// #7162: branch order — a content-hash match ends the search even when a
+    /// producer-structured match also exists.
+    #[test]
+    fn content_hash_match_wins_over_producer_match() -> Result<(), String> {
+        let entry = weakly_gripped_entry();
+        let seam_gap_id = crate::analysis::canonical_gap::canonical_gap_identity(&entry)
+            .ok_or_else(|| {
+                "the weakly gripped seam must carry a canonical gap identity".to_string()
+            })?
+            .id;
+        let legacy = producer_gap_finding(
+            "finding:legacy:1",
+            &seam_gap_id,
+            "src/pricing.rs",
+            "pricing::discounted_total",
+            "predicate",
+        );
+        let produced = producer_gap_finding(
+            "finding:producer:1",
+            "gap:rust:src/pricing.rs:pricing::discounted_total:predicate_boundary:predicate:amount==discount_threshold",
+            "src/pricing.rs",
+            "pricing::discounted_total",
+            "predicate",
+        );
+        let (bound_id, _) = witness_from_findings(&[produced, legacy], &entry, Some(&seam_gap_id))
+            .ok_or_else(|| "a content-hash match must bind".to_string())?;
+        if bound_id != "finding:legacy:1" {
+            return Err(format!("the legacy match must win, bound {bound_id}"));
         }
         Ok(())
     }

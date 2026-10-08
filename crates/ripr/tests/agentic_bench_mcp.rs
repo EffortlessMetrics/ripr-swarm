@@ -14,6 +14,10 @@
 //! bound) and are guarded by contract audit instead of direct excitation.
 //! Every test returns `Result<(), String>`; failures name the step and the
 //! wire bytes that broke the contract.
+//!
+//! The file also hosts the MCP-stdio conformance tests (#7144 repair-card
+//! success vs the CLI card, #7145 tool/resource document equivalence),
+//! which reuse the B4 fixture and the session driver above.
 
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, HashMap};
@@ -310,6 +314,20 @@ impl McpSession {
         self.await_reply(id, timeout)
     }
 
+    /// One `resources/read` round trip. The journey tests never needed it;
+    /// the tool/resource equivalence conformance test (#7145) does, so the
+    /// session grows this one method mirroring `call` instead of a parallel
+    /// harness.
+    fn read_resource(&mut self, id: &str, uri: &str) -> Result<Value, String> {
+        self.send_value(&json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "method": "resources/read",
+            "params": { "uri": uri }
+        }))?;
+        self.await_reply(id, REPLY_TIMEOUT)
+    }
+
     /// Write a batch in immediate succession without awaiting between
     /// lines, then collect every reply. The transport admits one request
     /// at a time, so this proves pipelined bytes stay coherent rather
@@ -440,6 +458,91 @@ fn tool_failure(reply: &Value, context: &str) -> Result<String, String> {
         ));
     }
     Ok(code)
+}
+
+/// One successful resource read: no protocol error, the envelope echoes
+/// the requested URI as JSON, and the text parses. Returns the parsed
+/// document (mirrors the status tool==resource pin in `mcp_stdio.rs`).
+fn resource_document(reply: &Value, uri: &str, context: &str) -> Result<Value, String> {
+    if let Some(error) = reply.get("error") {
+        return Err(format!(
+            "{context}: expected a resource document for {uri:?}, got {error}"
+        ));
+    }
+    let echoed = as_str(reply, "/result/contents/0/uri", context)?;
+    if echoed != uri {
+        return Err(format!(
+            "{context}: resource envelope echoed {echoed:?}, want {uri:?}: {reply}"
+        ));
+    }
+    if as_str(reply, "/result/contents/0/mimeType", context)? != "application/json" {
+        return Err(format!("{context}: resource is not JSON: {reply}"));
+    }
+    let text = as_str(reply, "/result/contents/0/text", context)?;
+    serde_json::from_str(text)
+        .map_err(|error| format!("{context}: resource text is not JSON: {error}"))
+}
+
+/// Tool/resource document equality (#7145): the resource text parses to the
+/// exact document the tool returned. The wire encodings differ by design
+/// (resources pretty-print, tools serialize compact), so equality is over
+/// the parsed document — the same comparison the status pin makes.
+fn require_tool_resource_equal(
+    tool: &Value,
+    resource: &Value,
+    context: &str,
+) -> Result<(), String> {
+    if resource != tool {
+        let mut drift = json_diff_paths(tool, resource);
+        drift.truncate(8);
+        return Err(format!(
+            "{context}: tool and resource projected different documents at {}",
+            drift.join(", ")
+        ));
+    }
+    Ok(())
+}
+
+/// JSON pointer paths where two values differ, for failure messages only.
+fn json_diff_paths(left: &Value, right: &Value) -> Vec<String> {
+    fn walk(left: &Value, right: &Value, path: &str, output: &mut Vec<String>) {
+        if left == right {
+            return;
+        }
+        match (left, right) {
+            (Value::Object(left), Value::Object(right)) => {
+                let mut keys: Vec<&String> = left.keys().chain(right.keys()).collect();
+                keys.sort();
+                keys.dedup();
+                for key in keys {
+                    let child = if path.is_empty() {
+                        format!("/{key}")
+                    } else {
+                        format!("{path}/{key}")
+                    };
+                    match (left.get(key), right.get(key)) {
+                        (Some(left), Some(right)) => walk(left, right, &child, output),
+                        _ => output.push(child),
+                    }
+                }
+            }
+            (Value::Array(left), Value::Array(right)) if left.len() == right.len() => {
+                for (index, (left, right)) in left.iter().zip(right.iter()).enumerate() {
+                    walk(left, right, &format!("{path}/{index}"), output);
+                }
+            }
+            _ => output.push(if path.is_empty() {
+                "/".to_string()
+            } else {
+                path.to_string()
+            }),
+        }
+    }
+
+    let mut output = Vec::new();
+    walk(left, right, "", &mut output);
+    output.sort();
+    output
 }
 
 fn protocol_error_code(reply: &Value, context: &str) -> Result<i64, String> {
@@ -576,6 +679,94 @@ fn install_fixture(label: &str) -> Result<Fixture, String> {
         return Err("fixture lost its main branch".to_string());
     }
     Ok(Fixture { root })
+}
+
+/// B4 fixture: same crate shape as the B2 input tree, plus the equality
+/// boundary pinned by an existing test. main holds `>=`, journey narrows
+/// to `>`; `discounted_total(100, 100) == 90` discriminates the change.
+/// Inline (the manifest pins the B2 input/ tree by hash, so this scenario
+/// cannot live there). Shared by the B4 journey and the card/equivalence
+/// conformance tests (#7144, #7145), which need the same repair-ready item.
+fn install_b4_fixture(label: &str) -> Result<Fixture, String> {
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|error| format!("clock before Unix epoch: {error}"))?
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!(
+        "ripr-agentic-bench-mcp-{label}-{}-{stamp}-{}",
+        std::process::id(),
+        TEMP_COUNTER.fetch_add(1, Ordering::Relaxed)
+    ));
+    std::fs::create_dir_all(root.join("src")).map_err(|error| error.to_string())?;
+    std::fs::create_dir_all(root.join("tests")).map_err(|error| error.to_string())?;
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"mcp-journey-fixture\"\nversion = \"0.0.0\"\nedition = \"2024\"\n\n[lib]\nname = \"mcp_journey_fixture\"\npath = \"src/lib.rs\"\n\n[workspace]\n",
+    )
+    .map_err(|error| error.to_string())?;
+    std::fs::write(
+        root.join("src/lib.rs"),
+        "pub fn discounted_total(amount: i32, discount_threshold: i32) -> i32 {\n    if amount >= discount_threshold {\n        amount - 10\n    } else {\n        amount\n    }\n}\n",
+    )
+    .map_err(|error| error.to_string())?;
+    std::fs::write(
+        root.join("tests/pricing.rs"),
+        "use mcp_journey_fixture::discounted_total;\n\n#[test]\nfn below_threshold_has_no_discount() {\n    assert_eq!(discounted_total(50, 100), 50);\n}\n\n#[test]\nfn far_above_threshold_discounts() {\n    assert_eq!(discounted_total(10_000, 100), 9_990);\n}\n\n#[test]\nfn exact_boundary_gets_the_discount() {\n    assert_eq!(discounted_total(100, 100), 90);\n}\n",
+    )
+    .map_err(|error| error.to_string())?;
+    fixture_git_ok(&root, &["-c", "init.defaultBranch=main", "init", "-q"])
+        .map_err(|error| format!("fixture git init: {error}"))?;
+    fixture_git_ok(&root, &["config", "user.name", "ripr fixture"])
+        .map_err(|error| format!("fixture git config: {error}"))?;
+    fixture_git_ok(&root, &["config", "user.email", "fixture@ripr.invalid"])
+        .map_err(|error| format!("fixture git config: {error}"))?;
+    fixture_git_ok(&root, &["config", "core.autocrlf", "false"])
+        .map_err(|error| format!("fixture git config: {error}"))?;
+    commit_fixture(&root, "open boundary").map_err(|error| format!("base commit: {error}"))?;
+    fixture_git_ok(&root, &["checkout", "-q", "-b", "journey"])
+        .map_err(|error| format!("fixture git checkout: {error}"))?;
+    std::fs::write(
+        root.join("src/lib.rs"),
+        "pub fn discounted_total(amount: i32, discount_threshold: i32) -> i32 {\n    if amount > discount_threshold {\n        amount - 10\n    } else {\n        amount\n    }\n}\n",
+    )
+    .map_err(|error| error.to_string())?;
+    commit_fixture(&root, "closed boundary").map_err(|error| format!("journey commit: {error}"))?;
+    Ok(Fixture { root })
+}
+
+/// The listed `canonical_id` of the first item under one file suffix.
+fn canonical_for_file(list: &Value, suffix: &str, context: &str) -> Result<String, String> {
+    let items = at(list, "/items", context)?
+        .as_array()
+        .ok_or_else(|| format!("{context}: `/items` is not an array: {list}"))?;
+    items
+        .iter()
+        .find(|item| {
+            item.pointer("/file")
+                .and_then(Value::as_str)
+                .is_some_and(|file| file.ends_with(suffix))
+        })
+        .and_then(|item| item.pointer("/canonical_id").and_then(Value::as_str))
+        .map(str::to_string)
+        .ok_or_else(|| format!("{context}: no {suffix} item: {list}"))
+}
+
+/// Run `ripr agent card --json` for one seam and parse its stdout card.
+fn cli_repair_card(root: &Path, seam_id: &str) -> Result<Value, String> {
+    let output = Command::new(env!("CARGO_BIN_EXE_ripr"))
+        .args(["agent", "card", "--root"])
+        .arg(root)
+        .args(["--seam-id", seam_id, "--json"])
+        .output()
+        .map_err(|error| format!("spawn ripr agent card: {error}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "ripr agent card failed for {seam_id}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+    serde_json::from_slice(&output.stdout)
+        .map_err(|error| format!("agent card stdout is not JSON: {error}"))
 }
 
 fn sha256_hex(bytes: &[u8]) -> String {
@@ -1045,54 +1236,7 @@ fn b2_mcp_happy_path_journey() -> Result<(), String> {
 /// must not weaken the typed refusal.
 #[test]
 fn b4_mcp_rust_canonical_gap_reaches_the_repair_transaction() -> Result<(), String> {
-    // Inline fixture (the manifest pins the B2 input/ tree by hash, so this
-    // scenario cannot live there): same crate shape, plus the equality
-    // boundary pinned by an existing test. main holds `>=`, journey narrows
-    // to `>`; `discounted_total(100, 100) == 90` discriminates the change.
-    let stamp = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_err(|error| format!("clock before Unix epoch: {error}"))?
-        .as_nanos();
-    let root = std::env::temp_dir().join(format!(
-        "ripr-agentic-bench-mcp-b4-{}-{stamp}-{}",
-        std::process::id(),
-        TEMP_COUNTER.fetch_add(1, Ordering::Relaxed)
-    ));
-    std::fs::create_dir_all(root.join("src")).map_err(|error| error.to_string())?;
-    std::fs::create_dir_all(root.join("tests")).map_err(|error| error.to_string())?;
-    std::fs::write(
-        root.join("Cargo.toml"),
-        "[package]\nname = \"mcp-journey-fixture\"\nversion = \"0.0.0\"\nedition = \"2024\"\n\n[lib]\nname = \"mcp_journey_fixture\"\npath = \"src/lib.rs\"\n\n[workspace]\n",
-    )
-    .map_err(|error| error.to_string())?;
-    std::fs::write(
-        root.join("src/lib.rs"),
-        "pub fn discounted_total(amount: i32, discount_threshold: i32) -> i32 {\n    if amount >= discount_threshold {\n        amount - 10\n    } else {\n        amount\n    }\n}\n",
-    )
-    .map_err(|error| error.to_string())?;
-    std::fs::write(
-        root.join("tests/pricing.rs"),
-        "use mcp_journey_fixture::discounted_total;\n\n#[test]\nfn below_threshold_has_no_discount() {\n    assert_eq!(discounted_total(50, 100), 50);\n}\n\n#[test]\nfn far_above_threshold_discounts() {\n    assert_eq!(discounted_total(10_000, 100), 9_990);\n}\n\n#[test]\nfn exact_boundary_gets_the_discount() {\n    assert_eq!(discounted_total(100, 100), 90);\n}\n",
-    )
-    .map_err(|error| error.to_string())?;
-    fixture_git_ok(&root, &["-c", "init.defaultBranch=main", "init", "-q"])
-        .map_err(|error| format!("fixture git init: {error}"))?;
-    fixture_git_ok(&root, &["config", "user.name", "ripr fixture"])
-        .map_err(|error| format!("fixture git config: {error}"))?;
-    fixture_git_ok(&root, &["config", "user.email", "fixture@ripr.invalid"])
-        .map_err(|error| format!("fixture git config: {error}"))?;
-    fixture_git_ok(&root, &["config", "core.autocrlf", "false"])
-        .map_err(|error| format!("fixture git config: {error}"))?;
-    commit_fixture(&root, "open boundary").map_err(|error| format!("base commit: {error}"))?;
-    fixture_git_ok(&root, &["checkout", "-q", "-b", "journey"])
-        .map_err(|error| format!("fixture git checkout: {error}"))?;
-    std::fs::write(
-        root.join("src/lib.rs"),
-        "pub fn discounted_total(amount: i32, discount_threshold: i32) -> i32 {\n    if amount > discount_threshold {\n        amount - 10\n    } else {\n        amount\n    }\n}\n",
-    )
-    .map_err(|error| error.to_string())?;
-    commit_fixture(&root, "closed boundary").map_err(|error| format!("journey commit: {error}"))?;
-    let fixture = Fixture { root };
+    let fixture = install_b4_fixture("b4")?;
     let tree_before = snapshot_tree(&fixture.root)?;
     let mut session = McpSession::spawn(&fixture.root)?;
     session.initialize()?;
@@ -1613,5 +1757,290 @@ fn b3c_mcp_pipelined_coherence() -> Result<(), String> {
     }
 
     let _audit = session.finish(bound)?;
+    Ok(())
+}
+
+/// #7144: the repair-card success path over production stdio. On the B4
+/// (repair-ready) fixture, `ripr_get_repair_card` returns the versioned
+/// envelope carrying the shared `repair_card.v1` card, and that card is the
+/// same card `ripr agent card --json` mints for the same seam: the same
+/// `repair_card_id` semantic identity and the same document modulo the one
+/// documented transport difference (the next-action display binds the
+/// portable root `.` over MCP and the selected root on the CLI).
+#[test]
+fn mcp_repair_card_success_matches_the_cli_card() -> Result<(), String> {
+    let fixture = install_b4_fixture("card")?;
+    let mut session = McpSession::spawn(&fixture.root)?;
+    session.initialize()?;
+
+    // #5209: every tool below is resolved from `tools/list` — no literal
+    // tool name may reach the wire undiscovered.
+    let tools = session.list_tools("card-tools")?;
+    let status_tool = tool_named(&tools, "ripr_workspace_status")?;
+    let refresh_tool = tool_named(&tools, "ripr_refresh")?;
+    let list_tool = tool_named(&tools, "ripr_list_gaps")?;
+    let card_tool = tool_named(&tools, "ripr_get_repair_card")?;
+
+    let reply = session.call("card-status", &status_tool, json!({}))?;
+    let bound = response_bound(&tool_success(&reply, "card status")?.clone())?;
+
+    let reply = session.call("card-refresh", &refresh_tool, json!({}))?;
+    let refresh = tool_success(&reply, "card refresh")?.clone();
+    let (snapshot, _, total) = require_completed_refresh(&refresh)?;
+
+    let reply = session.call("card-list", &list_tool, json!({}))?;
+    let list = tool_success(&reply, "card list_gaps")?.clone();
+    require_consistent_counts(&list, &snapshot, total)?;
+    let canonical = canonical_for_file(&list, "src/lib.rs", "card list_gaps")?;
+
+    let reply = session.call("card-get", &card_tool, json!({ "canonical_id": canonical }))?;
+    let document = tool_success(&reply, "card get_repair_card")?.clone();
+    if as_str(&document, "/schema_version", "card get_repair_card")? != "ripr-mcp-repair-card-v1" {
+        return Err(format!(
+            "card get_repair_card: wrong envelope schema: {document}"
+        ));
+    }
+    if as_str(&document, "/snapshot_id", "card get_repair_card")? != snapshot {
+        return Err(format!(
+            "card get_repair_card: snapshot drifted: {document}"
+        ));
+    }
+    if as_str(&document, "/item/canonical_id", "card get_repair_card")? != canonical {
+        return Err(format!("card get_repair_card: item drifted: {document}"));
+    }
+    if as_str(&document, "/card/schema_version", "card get_repair_card")? != "repair_card.v1" {
+        return Err(format!(
+            "card get_repair_card: the card is not repair_card.v1: {document}"
+        ));
+    }
+    let card_id =
+        nonempty_str(&document, "/card/repair_card_id", "card get_repair_card")?.to_string();
+    let seam_id =
+        nonempty_str(&document, "/card/subject/seam_id", "card get_repair_card")?.to_string();
+
+    let audit = session.finish(bound)?;
+    if audit.frames == 0 {
+        return Err("card: session audit is empty".to_string());
+    }
+
+    // CLI parity on the same checkout: nothing was edited after the refresh,
+    // so the CLI binds the same head, currentness, witness, and attempt
+    // state the snapshot committed.
+    let cli = cli_repair_card(&fixture.root, &seam_id)?;
+    if as_str(&cli, "/schema_version", "cli card")? != "repair_card.v1" {
+        return Err(format!("cli card: the card is not repair_card.v1: {cli}"));
+    }
+    if as_str(&cli, "/repair_card_id", "cli card")? != card_id {
+        return Err(format!(
+            "cli card: repair_card_id drifted from the MCP card {card_id:?}: {cli}"
+        ));
+    }
+    let mcp_card = at(&document, "/card", "card get_repair_card")?;
+    require_cards_equal_modulo_display(mcp_card, &cli, &fixture.root)?;
+    Ok(())
+}
+
+/// The MCP card and the CLI card are the same document except the
+/// presentation-only next-action display, which binds the portable root `.`
+/// over MCP (ADR 0022 hashing posture) and the selected root on the CLI
+/// (#3999 paste binding). Both spellings are asserted before redaction so
+/// the redaction cannot hide a regression. A card with no bounded route
+/// (no instruction, `unsupported_or_limited`) carries no display on either
+/// surface; the agreement itself is the parity signal there.
+fn require_cards_equal_modulo_display(
+    mcp_card: &Value,
+    cli_card: &Value,
+    root: &Path,
+) -> Result<(), String> {
+    let mcp_display = mcp_card
+        .pointer("/next_action/display")
+        .and_then(Value::as_str);
+    let cli_display = cli_card
+        .pointer("/next_action/display")
+        .and_then(Value::as_str);
+    match (mcp_display, cli_display) {
+        (Some(mcp_display), Some(cli_display)) => {
+            if !mcp_display.contains("--root .") {
+                return Err(format!(
+                    "mcp card: next-action display does not bind the portable root: {mcp_display:?}"
+                ));
+            }
+            let root_display = root.to_string_lossy();
+            if !cli_display.contains(root_display.as_ref()) {
+                return Err(format!(
+                    "cli card: next-action display does not bind the selected root: {cli_display:?}"
+                ));
+            }
+        }
+        (None, None) => {}
+        (mcp_display, cli_display) => {
+            return Err(format!(
+                "mcp card and cli card disagree on next-action display presence: {mcp_display:?} vs {cli_display:?}"
+            ));
+        }
+    }
+    let mut mcp_redacted = mcp_card.clone();
+    let mut cli_redacted = cli_card.clone();
+    for pointer in ["/next_action/display", "/canonical_next_action"] {
+        for card in [&mut mcp_redacted, &mut cli_redacted] {
+            if let Some(slot) = card.pointer_mut(pointer) {
+                *slot = Value::String("redacted: root-bound presentation".to_string());
+            }
+        }
+    }
+    if mcp_redacted != cli_redacted {
+        let mut drift = json_diff_paths(&mcp_redacted, &cli_redacted);
+        drift.truncate(8);
+        return Err(format!(
+            "mcp card and cli card differ outside the root-bound display at {}",
+            drift.join(", ")
+        ));
+    }
+    // The canonical decision still agrees where it is load-bearing: the
+    // command identity behind the redacted presentation is identical.
+    for pointer in [
+        "/canonical_next_action/command/command_id",
+        "/canonical_next_action/action_class",
+    ] {
+        let mcp_value = mcp_card.pointer(pointer);
+        let cli_value = cli_card.pointer(pointer);
+        if mcp_value != cli_value {
+            return Err(format!(
+                "mcp card and cli card disagree at {pointer}: {mcp_value:?} vs {cli_value:?}"
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// #7145: tool/resource document equivalence over production stdio. After a
+/// post-refresh session on the B4 (repair-ready) fixture, each evidence
+/// resource returns the same document its tool does: gap, repair-attempt,
+/// receipt, and repair-card. The snapshot resource has no serving tool —
+/// only the `ripr://snapshot/{id}` route serves `snapshot_document` — so it
+/// is pinned by binding instead: the `ripr_list_gaps`-derived id reads back
+/// the same snapshot with the listed item in its index.
+#[test]
+fn mcp_tool_resource_documents_match_post_refresh() -> Result<(), String> {
+    let fixture = install_b4_fixture("equiv")?;
+    let mut session = McpSession::spawn(&fixture.root)?;
+    session.initialize()?;
+
+    // #5209: every tool below is resolved from `tools/list` — no literal
+    // tool name may reach the wire undiscovered.
+    let tools = session.list_tools("equiv-tools")?;
+    let status_tool = tool_named(&tools, "ripr_workspace_status")?;
+    let refresh_tool = tool_named(&tools, "ripr_refresh")?;
+    let list_tool = tool_named(&tools, "ripr_list_gaps")?;
+    let gap_tool = tool_named(&tools, "ripr_get_gap")?;
+    let prepare_tool = tool_named(&tools, "ripr_prepare_repair")?;
+    let attempt_tool = tool_named(&tools, "ripr_get_repair_attempt")?;
+    let receipt_tool = tool_named(&tools, "ripr_get_receipt_status")?;
+    let card_tool = tool_named(&tools, "ripr_get_repair_card")?;
+
+    let reply = session.call("equiv-status", &status_tool, json!({}))?;
+    let bound = response_bound(&tool_success(&reply, "equiv status")?.clone())?;
+
+    let reply = session.call("equiv-refresh", &refresh_tool, json!({}))?;
+    let refresh = tool_success(&reply, "equiv refresh")?.clone();
+    let (snapshot, _, total) = require_completed_refresh(&refresh)?;
+
+    let reply = session.call("equiv-list", &list_tool, json!({}))?;
+    let list = tool_success(&reply, "equiv list_gaps")?.clone();
+    require_consistent_counts(&list, &snapshot, total)?;
+    let listed_snapshot = as_str(&list, "/snapshot_id", "equiv list_gaps")?.to_string();
+    if listed_snapshot != snapshot {
+        return Err(format!(
+            "equiv list_gaps: binds {listed_snapshot:?}, want {snapshot:?}: {list}"
+        ));
+    }
+    let canonical = canonical_for_file(&list, "src/lib.rs", "equiv list_gaps")?;
+
+    // The snapshot resource binds the listed id: same snapshot, and the
+    // listed item is in its index.
+    let snapshot_uri = format!("ripr://snapshot/{listed_snapshot}");
+    let reply = session.read_resource("equiv-snapshot", &snapshot_uri)?;
+    let snapshot_doc = resource_document(&reply, &snapshot_uri, "equiv snapshot")?;
+    if as_str(&snapshot_doc, "/snapshot_id", "equiv snapshot")? != snapshot {
+        return Err(format!(
+            "equiv snapshot: resource binds the wrong snapshot: {snapshot_doc}"
+        ));
+    }
+    let index = at(&snapshot_doc, "/items", "equiv snapshot")?
+        .as_array()
+        .ok_or_else(|| format!("equiv snapshot: `/items` is not an array: {snapshot_doc}"))?;
+    if !index.iter().any(|item| {
+        item.pointer("/canonical_id").and_then(Value::as_str) == Some(canonical.as_str())
+    }) {
+        return Err(format!(
+            "equiv snapshot: index lost the listed item {canonical:?}: {snapshot_doc}"
+        ));
+    }
+
+    let reply = session.call(
+        "equiv-prepare",
+        &prepare_tool,
+        json!({ "canonical_id": canonical }),
+    )?;
+    let prepared = tool_success(&reply, "equiv prepare_repair")?.clone();
+    if !as_bool(&prepared, "/repair_packet_ready", "equiv prepare_repair")? {
+        return Err(format!(
+            "equiv prepare_repair: the B4 finding must be repair-ready: {prepared}"
+        ));
+    }
+    let attempt =
+        nonempty_str(&prepared, "/attempt/attempt_id", "equiv prepare_repair")?.to_string();
+
+    // Gap, attempt, receipt, card: each resource returns the tool's document.
+    // Tool and resource read back-to-back with no state change between them.
+    let reply = session.call("equiv-gap", &gap_tool, json!({ "canonical_id": canonical }))?;
+    let gap_tool_doc = tool_success(&reply, "equiv get_gap")?.clone();
+    let gap_uri = format!("ripr://gap/{canonical}");
+    let reply = session.read_resource("equiv-gap-resource", &gap_uri)?;
+    let gap_resource_doc = resource_document(&reply, &gap_uri, "equiv gap resource")?;
+    require_tool_resource_equal(&gap_tool_doc, &gap_resource_doc, "equiv gap")?;
+
+    let reply = session.call(
+        "equiv-attempt",
+        &attempt_tool,
+        json!({ "attempt_id": attempt }),
+    )?;
+    let attempt_tool_doc = tool_success(&reply, "equiv get_repair_attempt")?.clone();
+    let attempt_uri = format!("ripr://repair-attempt/{attempt}");
+    let reply = session.read_resource("equiv-attempt-resource", &attempt_uri)?;
+    let attempt_resource_doc =
+        resource_document(&reply, &attempt_uri, "equiv repair-attempt resource")?;
+    require_tool_resource_equal(
+        &attempt_tool_doc,
+        &attempt_resource_doc,
+        "equiv repair-attempt",
+    )?;
+
+    let reply = session.call(
+        "equiv-receipt",
+        &receipt_tool,
+        json!({ "receipt_id": attempt }),
+    )?;
+    let receipt_tool_doc = tool_success(&reply, "equiv get_receipt_status")?.clone();
+    let receipt_uri = format!("ripr://receipt/{attempt}");
+    let reply = session.read_resource("equiv-receipt-resource", &receipt_uri)?;
+    let receipt_resource_doc = resource_document(&reply, &receipt_uri, "equiv receipt resource")?;
+    require_tool_resource_equal(&receipt_tool_doc, &receipt_resource_doc, "equiv receipt")?;
+
+    let reply = session.call(
+        "equiv-card",
+        &card_tool,
+        json!({ "canonical_id": canonical }),
+    )?;
+    let card_tool_doc = tool_success(&reply, "equiv get_repair_card")?.clone();
+    let card_uri = format!("ripr://repair-card/{canonical}");
+    let reply = session.read_resource("equiv-card-resource", &card_uri)?;
+    let card_resource_doc = resource_document(&reply, &card_uri, "equiv repair-card resource")?;
+    require_tool_resource_equal(&card_tool_doc, &card_resource_doc, "equiv repair-card")?;
+
+    let audit = session.finish(bound)?;
+    if audit.frames == 0 {
+        return Err("equiv: session audit is empty".to_string());
+    }
     Ok(())
 }
