@@ -2662,9 +2662,21 @@ pub(crate) fn inventory_seams_from_index_bounded(
         let Some(facts) = index.files().get(file) else {
             continue;
         };
+        if facts.probe_shapes.is_empty() {
+            continue;
+        }
         let lookup = rust_index::FileOwnerLookup::new(facts.functions.iter());
-        for shape in &facts.probe_shapes {
-            if let Some(seam) = build_seam_from_shape(file, shape, &lookup) {
+        // One line index per file: span derivation reuses it for every shape
+        // instead of rescanning the source per seam.
+        let line_starts = build_line_starts(&facts.source);
+        let twins = rust_index::error_path_twins(&facts.probe_shapes, &facts.source);
+        for (shape, twin) in facts.probe_shapes.iter().zip(twins) {
+            if twin {
+                continue;
+            }
+            if let Some(seam) =
+                build_seam_from_shape(file, shape, &lookup, &facts.source, &line_starts)
+            {
                 collector.push(seam);
             }
         }
@@ -6830,6 +6842,39 @@ marker = "libtest_mimic::Trial"
         let bounded = inventory_seams_from_index_bounded(&paths, &index, Some(1))?;
         if bounded.seams != legacy[..1] {
             return Err("K=1 must retain exactly the legacy head seam".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn bounded_matches_legacy_on_error_path_twins() -> Result<(), String> {
+        // The bounded walker must drop the same error-path twin shapes the
+        // legacy walker drops; a bounded copy without the twin filter would
+        // retain seams the legacy oracle never emits.
+        let files = vec![(
+            PathBuf::from("src/err.rs"),
+            "pub fn load(flag: bool) -> Result<i32, String> {\n    if flag {\n        return Err(String::from(\"bad\"));\n    }\n    Ok(0)\n}\n",
+        )];
+        let index = index_from_files(&files)?;
+        let facts = index
+            .files()
+            .get(&files[0].0)
+            .ok_or("fixture file missing from index")?;
+        let twins =
+            crate::analysis::rust_index::error_path_twins(&facts.probe_shapes, &facts.source);
+        if !twins.contains(&true) {
+            return Err("fixture must yield at least one error-path twin".to_string());
+        }
+        let (_, legacy) = legacy_oracle(&files, &[0])?;
+        for limit in [None, Some(legacy.len()), Some(1)] {
+            let bounded = inventory_seams_from_index_bounded(&[files[0].0.clone()], &index, limit)?;
+            let expected: Vec<RepoSeam> = match limit {
+                None => legacy.clone(),
+                Some(k) => legacy.iter().take(k).cloned().collect(),
+            };
+            if bounded.seams != expected {
+                return Err(format!("limit {limit:?}: bounded must equal legacy oracle"));
+            }
         }
         Ok(())
     }
