@@ -28,6 +28,14 @@ use crate::analysis::syntax::parse_clean_source_file;
 use ra_ap_syntax::{AstNode, ast, ast::HasName};
 use std::collections::BTreeMap;
 
+/// The fixed disclosure a contradicted oracle carries in every evidence
+/// summary: stage summaries, related-test records, and the outcome
+/// receipt's contradiction detection all key on this exact prefix, so the
+/// analysis producer and the receipt consumer share one contract string
+/// instead of a token coincidence (#6026, #7007).
+pub(crate) const CONTRADICTION_DISCLOSURE: &str =
+    "assertion expected value contradicts static evaluation";
+
 /// What static evaluation can say about one related test's equality
 /// assertion against the seam owner's body.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -104,9 +112,7 @@ pub(super) fn exact_value_assertion_verdict(
 
 /// The one-line disclosure a receipt carries when the oracle is downgraded.
 pub(super) fn contradiction_summary(expected: &str, evaluated: i128) -> String {
-    format!(
-        "assertion expected value contradicts static evaluation (asserts {expected}, owner folds to {evaluated})"
-    )
+    format!("{CONTRADICTION_DISCLOSURE} (asserts {expected}, owner folds to {evaluated})")
 }
 
 /// Whether the test's own body binds `owner_name` with a `let` (a local
