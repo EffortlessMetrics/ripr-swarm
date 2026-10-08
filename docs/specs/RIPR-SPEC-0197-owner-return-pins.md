@@ -557,7 +557,10 @@ rule only for an assertion whose context was admitted.
    in the index, a non-primitive return, a binding that is not established — keeps the
    credit: a custom type can overload the operator, and an overloaded
    operator may carry side effects that assertions on other fields
-   observe (review of #7084). A sibling initializer of the same struct
+   observe (review of #7084). A `let` that rebinds a primitive-typed
+   parameter shadows it: the name is not established up front, and the
+   rebind must prove primitive itself (its own initializer may still
+   refer to the parameter's value before the rebind). A sibling initializer of the same struct
    literal is `g: a` (or
    the shorthand `a`). A related test binds `q` once, straight from a call
    to the owner (`let q = quote(..)`; a second `let q` may shadow it and

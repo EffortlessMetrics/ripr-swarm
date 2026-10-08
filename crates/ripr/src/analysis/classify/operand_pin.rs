@@ -200,16 +200,30 @@ fn operand_established_primitive(operand: &str, owner_body: &str, index: &RustIn
         return false;
     }
     let bindings = let_binding_expressions(&text);
-    let mut established: Vec<String> = owner_param_types(&text)
+    let primitive_params: Vec<String> = owner_param_types(&text)
         .into_iter()
         .filter(|(_, ty)| primitive_type_token(ty))
         .map(|(name, _)| name)
+        .collect();
+    // A parameter that a `let` rebinds is not established up front: the
+    // shadowing binding(s) must prove primitive too (review of #7084,
+    // `let shipping = Money::new(shipping)` over `shipping: u64`).
+    let mut established: Vec<String> = primitive_params
+        .iter()
+        .filter(|name| !bindings.iter().any(|(bound, _, _)| bound == *name))
+        .cloned()
         .collect();
     loop {
         let mut changed = false;
         for (name, _, _) in &bindings {
             if established.iter().any(|seen| seen == name) {
                 continue;
+            }
+            // A rebound primitive parameter is primitive before the rebind,
+            // so initializers may refer to it (`let n = n + 1;`).
+            let mut basis = established.clone();
+            if primitive_params.contains(name) {
+                basis.push(name.clone());
             }
             // Shadowing: a name is established only when every binding of it
             // proves, so the value at the literal is primitive whichever
@@ -220,7 +234,7 @@ fn operand_established_primitive(operand: &str, owner_body: &str, index: &RustIn
             let all = bindings.iter().filter(|(bound, _, _)| bound == name).all(
                 |(_, bound_expr, annotation)| match annotation {
                     Some(ty) => primitive_type_token(ty),
-                    None => expression_established(bound_expr, &established, index),
+                    None => expression_established(bound_expr, &basis, index),
                 },
             );
             if all {
@@ -1414,6 +1428,84 @@ mod tests {
                 &index,
             ),
             None
+        );
+    }
+
+    /// Graphite review of #7084: a `let` that rebinds a primitive-typed
+    /// parameter shadows it, so the binding must prove primitive instead of
+    /// the name staying established from the signature.
+    #[test]
+    fn a_rebound_primitive_parameter_keeps_the_credit() {
+        let owner = "pub fn quote(shipping: u64, quantity: u64) -> Quote {
+    let subtotal = quantity * 4;
+    let shipping = custom(subtotal);
+    Quote {
+        subtotal_cents: subtotal,
+        shipping_cents: shipping,
+        total_cents: subtotal + shipping,
+    }
+}";
+        let paired = test_with(&[
+            "let q = quote(499, 4);",
+            "assert_eq!(q.subtotal_cents, 16);",
+            "assert_eq!(q.total_cents, 16);",
+        ]);
+        let refs = vec![(&paired, RelationReason::DirectOwnerCall)];
+        let custom = index_with(&["fn custom(cents: u64) -> Money { Money(1) }"]);
+        let absent = RustIndex::default();
+
+        assert_eq!(
+            operand_only_pin(
+                "total_cents: subtotal + shipping",
+                "quote",
+                owner,
+                &refs,
+                &custom,
+            ),
+            None
+        );
+        assert_eq!(
+            operand_only_pin(
+                "total_cents: subtotal + shipping",
+                "quote",
+                owner,
+                &refs,
+                &absent,
+            ),
+            None
+        );
+    }
+
+    /// A rebound primitive parameter is primitive before the rebind, so its
+    /// own shadowing initializer may refer to it.
+    #[test]
+    fn a_rebound_parameter_established_by_its_own_binding() {
+        let owner = "pub fn quote(shipping: u64, quantity: u64) -> Quote {
+    let subtotal = quantity * 4;
+    let shipping = shipping + 1;
+    Quote {
+        subtotal_cents: subtotal,
+        shipping_cents: shipping,
+        total_cents: subtotal + shipping,
+    }
+}";
+        let paired = test_with(&[
+            "let q = quote(499, 4);",
+            "assert_eq!(q.subtotal_cents, 16);",
+            "assert_eq!(q.total_cents, 16);",
+        ]);
+        let refs = vec![(&paired, RelationReason::DirectOwnerCall)];
+        let index = RustIndex::default();
+
+        assert!(
+            operand_only_pin(
+                "total_cents: subtotal + shipping",
+                "quote",
+                owner,
+                &refs,
+                &index,
+            )
+            .is_some()
         );
     }
 

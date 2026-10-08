@@ -11794,6 +11794,8 @@ tests = [
   "crates/ripr/src/analysis/classify/operand_pin.rs::tests::a_literal_and_param_chain_proves_without_calls",
   "crates/ripr/src/analysis/classify/operand_pin.rs::tests::a_primitive_annotation_proves_the_binding",
   "crates/ripr/src/analysis/classify/operand_pin.rs::tests::a_non_primitive_annotation_keeps_the_credit",
+  "crates/ripr/src/analysis/classify/operand_pin.rs::tests::a_rebound_primitive_parameter_keeps_the_credit",
+  "crates/ripr/src/analysis/classify/operand_pin.rs::tests::a_rebound_parameter_established_by_its_own_binding",
   "crates/ripr/src/analysis/classify/operand_pin.rs::tests::a_reference_primitive_return_proves_the_operand",
   "crates/ripr/src/analysis/classify/operand_pin.rs::tests::an_arithmetic_mix_with_a_call_keeps_the_credit",
   "crates/ripr/src/analysis/classify/operand_pin.rs::tests::a_string_anywhere_in_the_owner_keeps_the_credit",
