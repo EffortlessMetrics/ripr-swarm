@@ -395,10 +395,14 @@ async fn drain_until_tracked_uris_cleared(
 /// After the empty publishes are observed, confirm the folder transition
 /// installed B. Status is not the capture window (#6981); it is a
 /// post-condition so a clear that never selects B cannot pass SETUP.
+/// Non-response traffic — including later `publishDiagnostics` — is
+/// retained on `drain` so a duplicate clear during this poll cannot
+/// vanish before the shutdown assertion.
 async fn assert_status_root_changed_to(
     client: &mut ShutdownClearClient,
     expected_root: &str,
     workspace_folders: &serde_json::Value,
+    drain: &mut Vec<serde_json::Value>,
 ) -> Result<(), String> {
     let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
     let mut last = serde_json::Value::Null;
@@ -431,6 +435,7 @@ async fn assert_status_root_changed_to(
             answer_server_request_if_needed(&mut client.writer, &message, workspace_folders)
                 .await?;
             if !is_awaited_response(&message, &[id]) {
+                drain.push(message);
                 continue;
             }
             if message.get("error").is_some() {
@@ -712,20 +717,30 @@ fn shutdown_after_root_change_publishes_no_duplicates() -> Result<(), String> {
                 &folders_result,
             )
             .await?;
+            let mut status_span = Vec::new();
             assert_status_root_changed_to(
                 &mut client,
                 &server_path_text(&root_b_path),
                 &folders_result,
+                &mut status_span,
             )
             .await?;
-            let shutdown_id = client.fire_shutdown().await?;
-            let shutdown_span = read_until_responses(&mut client.reader, &[shutdown_id]).await?;
-            let shutdown_publishes: Vec<(String, usize)> = shutdown_span
+            let post_clear_publishes: Vec<(String, usize)> = status_span
                 .iter()
                 .filter_map(publish_diagnostics_of)
+                .filter(|(uri, _)| tracked.contains(uri))
                 .collect();
-            let duplicates: Vec<(String, usize)> = shutdown_publishes
-                .into_iter()
+            if !post_clear_publishes.is_empty() {
+                return Err(format!(
+                    "root change republished tracked URIs after the empty capture: {post_clear_publishes:?}"
+                ));
+            }
+            let shutdown_id = client.fire_shutdown().await?;
+            let shutdown_span = read_until_responses(&mut client.reader, &[shutdown_id]).await?;
+            let duplicates: Vec<(String, usize)> = status_span
+                .iter()
+                .chain(shutdown_span.iter())
+                .filter_map(publish_diagnostics_of)
                 .filter(|(uri, _)| tracked.contains(uri))
                 .collect();
             if !duplicates.is_empty() {
