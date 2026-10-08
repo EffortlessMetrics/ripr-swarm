@@ -3407,6 +3407,13 @@ pub(crate) const GENERATED_CI_FIRST_ACTION_REPAIR: &str = "Safe next action: run
 /// run (`--base-ref main`). The GitHub expression that used to sit in the
 /// workflow shell is no longer the text (#6958).
 pub(crate) const GENERATED_CI_FIRST_PR_REPAIR: &str = "ripr first-pr --root . --base origin/main --head HEAD --gap-ledger target/ripr/reports/gap-decision-ledger.json --first-action target/ripr/reports/first-useful-action.json --review-comments target/ripr/review/comments.json --agent-packet target/ripr/workflow/agent-packet.json --gate-decision target/ripr/reports/gate-decision.json --receipts-dir target/ripr/receipts --out-dir target/ripr/reports";
+/// Receipt command for the generated-CI cockpit family. The unique fixture
+/// path is a placeholder because each live run uses a distinct directory;
+/// `duration_ms` is wall-clock across both producers (#6958).
+pub(crate) const GENERATED_CI_COCKPIT_COMMAND: &str = concat!(
+    "cargo run --quiet -p ripr -- init --ci github --dry-run",
+    " && cargo run --quiet -p ripr -- reports ci-summary --root <generated-ci-cockpit-fixture> --base-ref main",
+);
 pub(crate) const GENERATED_CI_FRONT_PANEL_REPAIR: &str = "Safe next action: run `ripr pr-review front-panel --root . --pr-guidance target/ripr/review/comments.json --out target/ripr/reports/pr-review-front-panel.json --out-md target/ripr/reports/pr-review-front-panel.md` after attaching at least one explicit input.";
 pub(crate) const GENERATED_CI_PACKET_INDEX_REPAIR: &str = "Regenerate command: `ripr reports index --root . --reports-dir target/ripr/reports --review-dir target/ripr/review --receipts-dir target/ripr/receipts --workflow-dir target/ripr/workflow --agent-dir target/ripr/agent --pilot-dir target/ripr/pilot --ci-dir target/ci --out target/ripr/reports/index.json --out-md target/ripr/reports/index.md`.";
 
@@ -3433,13 +3440,12 @@ pub(crate) fn dogfood_generated_ci_cockpit_run() -> Result<DogfoodGeneratedCiCoc
     .iter()
     .map(|value| (*value).to_string())
     .collect::<Vec<_>>();
-    let command = format!("cargo {}", args.join(" "));
     let started = Instant::now();
     let workflow = run_output_owned("cargo", &args)?;
     let summary = generated_ci_summary_for_cockpit()?;
     Ok(dogfood_generated_ci_cockpit_run_from_surfaces(
         "generated-pr-ci-review-workflow",
-        &command,
+        GENERATED_CI_COCKPIT_COMMAND,
         started.elapsed().as_millis(),
         &workflow,
         &summary,

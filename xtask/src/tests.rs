@@ -67,12 +67,13 @@ use super::{
     DogfoodUserSurfaceProjectionScenario, EVIDENCE_QUALITY_SCORECARD_AUDIT_REGENERATION_FAILED,
     EVIDENCE_QUALITY_TREND_PREVIOUS_ARTIFACT_UNAVAILABLE, EvidenceQualityScorecardInput,
     EvidenceQualityScorecardInputs, EvidenceQualityScorecardReport, EvidenceQualityTrendInputs,
-    EvidenceQualityTrendReport, FixKind, GENERATED_CI_FIRST_ACTION_REPAIR,
-    GENERATED_CI_FIRST_PR_REPAIR, GENERATED_CI_FRONT_PANEL_REPAIR,
-    GENERATED_CI_PACKET_INDEX_REPAIR, GhPrStatusPullRequest, GhPrStatusReview,
-    Lane1EvidenceAuditRepoExposureGeneration, Lane1EvidenceAuditRepoExposureOutcome,
-    LocalContextAllow, LocalMarkdownTarget, LspCockpitFixture, LspCockpitReport, MarkdownLink,
-    PYTHON_REAL_REPO_EVAL_REQUIRED_CASES, PYTHON_REAL_REPO_EVAL_REQUIRED_NO_ACTION_CASES,
+    EvidenceQualityTrendReport, FixKind, GENERATED_CI_COCKPIT_COMMAND,
+    GENERATED_CI_FIRST_ACTION_REPAIR, GENERATED_CI_FIRST_PR_REPAIR,
+    GENERATED_CI_FRONT_PANEL_REPAIR, GENERATED_CI_PACKET_INDEX_REPAIR, GhPrStatusPullRequest,
+    GhPrStatusReview, Lane1EvidenceAuditRepoExposureGeneration,
+    Lane1EvidenceAuditRepoExposureOutcome, LocalContextAllow, LocalMarkdownTarget,
+    LspCockpitFixture, LspCockpitReport, MarkdownLink, PYTHON_REAL_REPO_EVAL_REQUIRED_CASES,
+    PYTHON_REAL_REPO_EVAL_REQUIRED_NO_ACTION_CASES,
     PYTHON_REAL_REPO_EVAL_REQUIRED_STATIC_LIMIT_CASES, PrTriageCheck, PrTriageFinding,
     PrTriagePullRequest, REAL_REPAIR_ATTEMPTS_CORPUS, REAL_REPAIR_ATTEMPTS_REQUIRED_CASES,
     REPO_BADGE_ARTIFACT_DEFAULT_TIMEOUT_MS, REPO_BADGE_ARTIFACT_TIMEOUT_ENV,
@@ -13844,7 +13845,7 @@ fn dogfood_reports_are_advisory() -> Result<(), String> {
     };
     let generated_ci_run = DogfoodGeneratedCiCockpitRun {
         name: "generated-pr-ci-review-workflow".to_string(),
-        command: "cargo run --quiet -p ripr -- init --ci github --dry-run".to_string(),
+        command: GENERATED_CI_COCKPIT_COMMAND.to_string(),
         duration_ms: 10,
         start_here: true,
         repair_commands: 4,
@@ -20239,6 +20240,18 @@ fn dogfood_user_surface_projection_alignment_matches_surface_projection_source()
 
 #[test]
 fn dogfood_generated_ci_cockpit_receipts_are_checked() {
+    assert!(
+        GENERATED_CI_COCKPIT_COMMAND.contains("init --ci github --dry-run"),
+        "receipt must name the workflow producer: {GENERATED_CI_COCKPIT_COMMAND}"
+    );
+    assert!(
+        GENERATED_CI_COCKPIT_COMMAND.contains("reports ci-summary"),
+        "receipt must name the summary producer: {GENERATED_CI_COCKPIT_COMMAND}"
+    );
+    assert!(
+        GENERATED_CI_COCKPIT_COMMAND.contains("--base-ref main"),
+        "receipt must name the first-run ci-summary stimulus: {GENERATED_CI_COCKPIT_COMMAND}"
+    );
     let command = "cargo run --quiet -p ripr -- init --ci github --dry-run";
     let workflow = "\
 name: RIPR
