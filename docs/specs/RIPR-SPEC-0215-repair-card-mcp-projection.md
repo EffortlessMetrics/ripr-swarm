@@ -199,7 +199,9 @@ and without execution authority (ADR 0022):
   vocabulary, dispatch-edge rejections, and pre-refresh typed failures.
 - `crates/ripr/tests/mcp_sdk.rs`, `crates/ripr/tests/mcp_stdio.rs` —
   hosted wire interop controls, including the post-refresh
-  `get_repair_card_after_refresh_matches_cli_agent_card` success path.
+  `get_repair_card_after_refresh_matches_cli_agent_card` success path and
+  the `resource_reads_match_tools_after_refresh` card tool/resource
+  byte-equality control (#7145).
 
 ## Implementation Mapping
 

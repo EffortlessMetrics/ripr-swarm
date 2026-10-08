@@ -1400,3 +1400,205 @@ fn get_repair_card_after_refresh_matches_cli_agent_card() -> Result<(), String> 
     }
     Ok(())
 }
+
+fn read_resource_document(
+    session: &mut SequentialStdio,
+    id: &str,
+    uri: &str,
+    timeout: Duration,
+) -> Result<Value, String> {
+    let reply = session.call(id, "resources/read", json!({ "uri": uri }), timeout)?;
+    let text = reply
+        .pointer("/result/contents/0/text")
+        .and_then(Value::as_str)
+        .ok_or_else(|| format!("resource {uri} omitted JSON text: {reply}"))?;
+    serde_json::from_str(text)
+        .map_err(|error| format!("resource {uri} text is not JSON: {error}: {text}"))
+}
+
+/// After refresh on the B4 repair-ready fixture, every tool/resource pair
+/// returns the same document: `ripr_get_gap` with `ripr://gap/{id}`,
+/// `ripr_get_repair_attempt` with `ripr://repair-attempt/{id}`,
+/// `ripr_get_receipt_status` with `ripr://receipt/{id}`, and
+/// `ripr_get_repair_card` with `ripr://repair-card/{id}`. The snapshot
+/// resource has no tool twin, so it pins its envelope instead
+/// (`ripr-mcp-snapshot-v1`, identity, typed outcome). A drift in URI
+/// parsing, resource envelopes, or error mapping fails this control (#7145).
+#[test]
+fn resource_reads_match_tools_after_refresh() -> Result<(), String> {
+    const REFRESH_TIMEOUT: Duration = Duration::from_mins(3);
+    const REPLY_TIMEOUT: Duration = Duration::from_mins(1);
+    let root = install_b4_repair_ready_fixture()?;
+    let _guard = FixtureGuard { root: root.clone() };
+    let mut session = SequentialStdio::spawn(&root)?;
+    session.call("discover", "server/discover", json!({}), REPLY_TIMEOUT)?;
+
+    let refresh = session.call_tool("refresh", "ripr_refresh", json!({}), REFRESH_TIMEOUT)?;
+    let refresh = structured_tool_success(&refresh, "ripr_refresh")?;
+    if refresh
+        .pointer("/snapshot/finding_count")
+        .and_then(Value::as_u64)
+        .unwrap_or(0)
+        == 0
+    {
+        return Err(format!(
+            "B4 refresh must yield a gap before the equivalence control can run: {refresh}"
+        ));
+    }
+
+    let list = session.call_tool("list", "ripr_list_gaps", json!({}), REPLY_TIMEOUT)?;
+    let list = structured_tool_success(&list, "ripr_list_gaps")?;
+    let snapshot_id = list
+        .pointer("/snapshot_id")
+        .and_then(Value::as_str)
+        .ok_or_else(|| format!("ripr_list_gaps omitted snapshot_id: {list}"))?
+        .to_string();
+    let items = list
+        .pointer("/items")
+        .and_then(Value::as_array)
+        .ok_or_else(|| format!("ripr_list_gaps omitted items: {list}"))?;
+    let canonical_id = items
+        .iter()
+        .find(|item| {
+            item.pointer("/file")
+                .and_then(Value::as_str)
+                .is_some_and(|file| file.ends_with("src/lib.rs"))
+        })
+        .and_then(|item| item.pointer("/canonical_id").and_then(Value::as_str))
+        .ok_or_else(|| format!("B4 list_gaps has no src/lib.rs item: {list}"))?
+        .to_string();
+
+    // Snapshot: envelope pin (no tool twin exists).
+    let snapshot = read_resource_document(
+        &mut session,
+        "snapshot-resource",
+        &format!("ripr://snapshot/{snapshot_id}"),
+        REPLY_TIMEOUT,
+    )?;
+    if snapshot.pointer("/schema_version").and_then(Value::as_str) != Some("ripr-mcp-snapshot-v1") {
+        return Err(format!(
+            "snapshot resource lost ripr-mcp-snapshot-v1: {snapshot}"
+        ));
+    }
+    if snapshot.pointer("/snapshot_id").and_then(Value::as_str) != Some(snapshot_id.as_str()) {
+        return Err(format!("snapshot resource lost its identity: {snapshot}"));
+    }
+    if snapshot
+        .pointer("/outcome/kind")
+        .and_then(Value::as_str)
+        .is_none_or(str::is_empty)
+    {
+        return Err(format!(
+            "snapshot resource lost the typed outcome: {snapshot}"
+        ));
+    }
+
+    // Gap pair.
+    let gap_tool = session.call_tool(
+        "gap-tool",
+        "ripr_get_gap",
+        json!({ "canonical_id": canonical_id }),
+        REPLY_TIMEOUT,
+    )?;
+    let gap_tool = structured_tool_success(&gap_tool, "ripr_get_gap")?;
+    let gap_resource = read_resource_document(
+        &mut session,
+        "gap-resource",
+        &format!("ripr://gap/{canonical_id}"),
+        REPLY_TIMEOUT,
+    )?;
+    if gap_tool != gap_resource {
+        return Err(format!(
+            "gap tool and resource diverged:\ntool={gap_tool}\nresource={gap_resource}"
+        ));
+    }
+
+    // Card pair.
+    let card_tool = session.call_tool(
+        "card-tool",
+        "ripr_get_repair_card",
+        json!({ "canonical_id": canonical_id }),
+        REPLY_TIMEOUT,
+    )?;
+    let card_tool = structured_tool_success(&card_tool, "ripr_get_repair_card")?;
+    let card_resource = read_resource_document(
+        &mut session,
+        "card-resource",
+        &format!("ripr://repair-card/{canonical_id}"),
+        REPLY_TIMEOUT,
+    )?;
+    if card_tool != card_resource {
+        return Err(format!(
+            "repair-card tool and resource diverged:\ntool={card_tool}\nresource={card_resource}"
+        ));
+    }
+
+    // Attempt pair: prepare the B4 item, then read both routes.
+    let prepared = session.call_tool(
+        "prepare",
+        "ripr_prepare_repair",
+        json!({ "canonical_id": canonical_id }),
+        REPLY_TIMEOUT,
+    )?;
+    let prepared = structured_tool_success(&prepared, "ripr_prepare_repair")?;
+    let attempt_id = prepared
+        .pointer("/attempt/attempt_id")
+        .and_then(Value::as_str)
+        .ok_or_else(|| format!("B4 prepare must yield an attempt: {prepared}"))?
+        .to_string();
+    let attempt_tool = session.call_tool(
+        "attempt-tool",
+        "ripr_get_repair_attempt",
+        json!({ "attempt_id": attempt_id }),
+        REPLY_TIMEOUT,
+    )?;
+    let attempt_tool = structured_tool_success(&attempt_tool, "ripr_get_repair_attempt")?;
+    let attempt_resource = read_resource_document(
+        &mut session,
+        "attempt-resource",
+        &format!("ripr://repair-attempt/{attempt_id}"),
+        REPLY_TIMEOUT,
+    )?;
+    if attempt_tool != attempt_resource {
+        return Err(format!(
+            "repair-attempt tool and resource diverged:\ntool={attempt_tool}\nresource={attempt_resource}"
+        ));
+    }
+
+    // Receipt pair: session receipt ids are attempt-bound.
+    let receipt_tool = session.call_tool(
+        "receipt-tool",
+        "ripr_get_receipt_status",
+        json!({ "receipt_id": attempt_id }),
+        REPLY_TIMEOUT,
+    )?;
+    let receipt_tool = structured_tool_success(&receipt_tool, "ripr_get_receipt_status")?;
+    let receipt_resource = read_resource_document(
+        &mut session,
+        "receipt-resource",
+        &format!("ripr://receipt/{attempt_id}"),
+        REPLY_TIMEOUT,
+    )?;
+    if receipt_tool != receipt_resource {
+        return Err(format!(
+            "receipt tool and resource diverged:\ntool={receipt_tool}\nresource={receipt_resource}"
+        ));
+    }
+
+    // Miss mapping: unknown ids fail closed with typed data codes.
+    for (id, uri, kind) in [
+        ("gap-miss", "ripr://gap/no-such-item", "gap"),
+        (
+            "card-miss",
+            "ripr://repair-card/no-such-item",
+            "repair-card",
+        ),
+    ] {
+        let miss = session.call(id, "resources/read", json!({ "uri": uri }), REPLY_TIMEOUT)?;
+        let code = miss.pointer("/error/data/code").and_then(Value::as_str);
+        if code != Some("item_not_found") {
+            return Err(format!("{kind} resource miss lost item_not_found: {miss}"));
+        }
+    }
+    Ok(())
+}
