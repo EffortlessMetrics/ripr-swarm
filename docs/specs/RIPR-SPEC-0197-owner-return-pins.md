@@ -476,9 +476,11 @@ rule only for an assertion whose context was admitted.
      `check_tip::<T>(..)`, a method, or text inside a macro operand), and that
      call is on the test's eager path under the same rule-1 walk as an inline
      assertion: not inside a loop, branch, argument, deferred closure or
-     `async` block, after no root `return`, with no attribute. A directly
-     invoked closure and a `for` loop over a non-empty constant-row table
-     (#5328) are eager paths here exactly as for inline assertions. One eager
+     `async` block, after no root `return`, with no attribute. A `for` loop
+     over a non-empty constant-row table (#5328) is an eager path here
+     exactly as for inline assertions. A call inside any closure, even a
+     directly invoked one, is refused: the helper-assertion producer never
+     credits it to the test. One eager
      call is enough; further deferred calls neither add nor remove credit.
    - The call can only name the helper: exactly one `fn` of that name is
      visible anywhere in the file, and it is a direct item of the test's own
@@ -902,9 +904,9 @@ assertions. This repair shares the existing callback without that larger migrati
 ## Non-Goals
 
 - Rule 7 follows one hop into one same-module check helper. Helpers of
-  helpers, helpers called in a loop or table, cross-module and cross-file
-  helpers, generic helpers and helpers with early exits keep the rule-1
-  refusal. A helper's arguments are its parameters, whose values stay
+  helpers, helpers called in a closure or in a loop other than a non-empty
+  constant-row table, cross-module and cross-file helpers, generic helpers
+  and helpers with early exits keep the rule-1 refusal. A helper's arguments are its parameters, whose values stay
   unresolved (RIPR-SPEC-0229); rule 7 establishes execution and call identity
   only.
 

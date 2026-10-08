@@ -9,7 +9,7 @@
   changed predicate reads `exposed` too. The helper must be a plain,
   non-generic function defined once in the test's own `#[cfg(test)]`
   module, with no early exit, and the call must not sit in a branch,
-  deferred closure or loop (a `for` loop over a non-empty constant-row table
+  closure (even one invoked directly) or loop (a `for` loop over a non-empty constant-row table
   counts as running, as it does for an inline assertion); anything else,
   including helpers in `tests/*.rs` integration targets, stays refused (RIPR-SPEC-0197 rule 7, RIPR-SPEC-0186,
   [#6482](https://github.com/EffortlessMetrics/ripr-swarm/issues/6482)).

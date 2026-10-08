@@ -81,11 +81,6 @@ fn an_eagerly_called_local_check_helper_lends_its_assertion() -> Result<(), Stri
         ))?,
         (true, true)
     );
-    // A directly invoked closure is an eager path, as for the test's own.
-    assert_eq!(
-        helper_assertion_admitted(&module(HELPER, "(|| check_tip(40, 6, 46))();"))?,
-        (true, true)
-    );
     Ok(())
 }
 
@@ -174,6 +169,17 @@ fn only_a_plain_helper_that_runs_to_its_end_lends_its_assertion() -> Result<(), 
         format!(
             "    fn check_tip(b: u64, t: u64, want: u64) -> Option<()> {{ {assertion} Some(()) }}\n"
         ),
+        // An early exit from one match arm.
+        format!(
+            "    fn check_tip(b: u64, t: u64, want: u64) {{ match b {{ 40 => return, _ => {{}} }} {assertion} }}\n"
+        ),
+        // The assertion on one match arm or `if let` branch only.
+        format!(
+            "    fn check_tip(b: u64, t: u64, want: u64) {{ match b {{ 40 => {{}} _ => {{ {assertion} }} }} }}\n"
+        ),
+        format!(
+            "    fn check_tip(b: u64, t: u64, want: u64) {{ if let 40 = b {{ {assertion} }} }}\n"
+        ),
         // The assertion off the helper's own eager path.
         format!(
             "    fn check_tip(b: u64, t: u64, want: u64) {{ for _ in 0..b {{ {assertion} }} }}\n"
@@ -240,6 +246,31 @@ fn the_indexed_helper_assertion_is_the_admitted_one() -> Result<(), Box<dyn Erro
     let syntax = OwnerPinSyntax::default();
     assert!(syntax.admits_equality_assertion(&probe, test, assertion, &index));
     assert!(pin.admits(test, assertion, &index, &|_, _| false, &syntax));
+    Ok(())
+}
+
+/// The producer, not only the admission, decides credit: a constant-row table
+/// loop reaches `test.assertions`, while a call inside any closure, even one
+/// invoked directly, is never credited to the test, so the loan stays empty.
+#[test]
+fn only_producer_credited_helper_calls_lend_an_assertion() -> Result<(), String> {
+    let credited = |body: &str| -> Result<bool, String> {
+        let index = indexed(&module(HELPER, body))?;
+        let test = index
+            .tests()
+            .iter()
+            .find(|test| test.name == "tip_is_added")
+            .ok_or("premise: `tip_is_added` is indexed")?;
+        Ok(test
+            .assertions
+            .iter()
+            .any(|assertion| assertion.text == "assert_eq!(with_tip(b, t), want);"))
+    };
+    assert!(credited(CALLS)?, "control");
+    assert!(credited(
+        "for (b, t, w) in [(40, 6, 46)] { check_tip(b, t, w); }"
+    )?);
+    assert!(!credited("(|| check_tip(40, 6, 46))();")?);
     Ok(())
 }
 
