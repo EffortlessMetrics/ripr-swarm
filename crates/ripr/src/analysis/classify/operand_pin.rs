@@ -179,6 +179,11 @@ fn sibling_initializers<'a>(body: &'a str, expression: &str) -> Option<Vec<(&'a 
     let open = enclosing_open_brace(body, at)?;
     let close = matching_close_brace(body, open)?;
     let inner = &body[open + 1..close];
+    // Commas inside a string or comment (`note: "x, subtotal_cents: subtotal"`)
+    // would split into fabricated initializers, so such a literal is not read.
+    if inner.contains(['"', '\'']) || inner.contains("//") || inner.contains("/*") {
+        return None;
+    }
     let mut siblings = Vec::new();
     for item in top_level_items(inner) {
         let (name, value) = match item.split_once(':') {
@@ -891,6 +896,47 @@ mod tests {
         assert_eq!(second_result, None);
         assert!(other_field.is_some());
         assert!(in_fn.is_some());
+    }
+
+    /// Codex review of #7084: text inside a string or comment in the struct
+    /// literal is not an initializer.
+    #[test]
+    fn a_string_or_comment_in_the_literal_is_not_read() {
+        let paired = test_with(&[
+            "let q = quote(2_500, 4);",
+            "assert_eq!(q.subtotal_cents, 9_000);",
+            "assert_eq!(q.total_cents, 9_000);",
+        ]);
+        let owner_with = |extra: &str| {
+            format!(
+                "pub fn quote(unit: u64, quantity: u64) -> Quote {{
+    let subtotal = unit * quantity;
+    let shipping = 499;
+    Quote {{
+        subtotal_cents: displayed,{extra}
+        total_cents: subtotal + shipping,
+    }}
+}}"
+            )
+        };
+        let check = |owner: &str| {
+            operand_only_pin(
+                "total_cents: subtotal + shipping",
+                "quote",
+                owner,
+                &[(&paired, RelationReason::DirectOwnerCall)],
+            )
+        };
+
+        assert_eq!(
+            check(&owner_with(" note: \"x, subtotal_cents: subtotal, y\",")),
+            None
+        );
+        assert_eq!(
+            check(&owner_with(" // , subtotal_cents: subtotal,\n")),
+            None
+        );
+        assert!(check(OWNER).is_some());
     }
 
     #[test]
