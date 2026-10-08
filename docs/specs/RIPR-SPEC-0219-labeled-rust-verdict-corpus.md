@@ -203,7 +203,9 @@ summary counts that disagree with the findings list.
   paths, through any chain of links, or that does not resolve, is refused,
   and so is a submodule. Cargo resolves dependencies offline (`CARGO_NET_OFFLINE=true`),
   so a checkout's dependencies must already be in the cargo cache (`cargo
-  fetch`); the command adds no network access of its own, but a subject's
+  fetch`); authored subjects that pin a registry crate retain a hash-checked
+  `Cargo.lock`, which relabel copies and honors with `--locked`.
+  The command adds no network access of its own, but a subject's
   build scripts and tests run unsandboxed. `RUSTC` and `RUSTDOC` point at
   the rustup proxies, so doctests also run on the labeled toolchain; the
   caller's wrappers, `RUSTC_BOOTSTRAP`, and `RUSTFLAGS`-family variables are

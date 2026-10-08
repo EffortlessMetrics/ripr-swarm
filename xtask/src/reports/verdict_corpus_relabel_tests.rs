@@ -519,3 +519,93 @@ fn copy_checkout_refuses_a_chain_of_links_that_resolves_outside() -> Result<(), 
     );
     contained
 }
+
+/// Registry-pinned authored subjects keep a hash-checked lockfile so relabel
+/// copies it into the rebuilt tree.
+#[test]
+fn copy_tree_of_a_registry_subject_keeps_its_lockfile() -> Result<(), String> {
+    let corpus = load_corpus(&crate::dogfood::repo_rooted_fixture_path(CORPUS_DIR))?;
+    let mut missing = Vec::new();
+    for id in ["authored-spec-confirm", "authored-spec-harness"] {
+        let subject = corpus
+            .subjects
+            .iter()
+            .find(|subject| subject.subject_id == id)
+            .ok_or_else(|| format!("corpus has no subject `{id}`"))?;
+        if !subject
+            .retained_files
+            .iter()
+            .any(|file| file.path == "Cargo.lock")
+        {
+            missing.push(format!("`{id}` does not list Cargo.lock in retained_files"));
+        }
+        let from = crate::dogfood::repo_rooted_fixture_path(CORPUS_DIR)
+            .join("subjects")
+            .join(id);
+        let to =
+            std::env::temp_dir().join(format!("ripr-lockfile-rebuild-{id}-{}", std::process::id()));
+        match fs::remove_dir_all(&to) {
+            Ok(()) => {}
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+            Err(err) => return Err(err.to_string()),
+        }
+        copy_tree(&from, &to)?;
+        let present = to.join("Cargo.lock").is_file();
+        fs::remove_dir_all(&to).map_err(|err| err.to_string())?;
+        if !present {
+            missing.push(format!(
+                "rebuilt `{id}` has no Cargo.lock; relabel would float on host transitive versions"
+            ));
+        }
+    }
+    if missing.is_empty() {
+        Ok(())
+    } else {
+        Err(missing.join("; "))
+    }
+}
+
+#[test]
+fn copy_tree_of_a_path_only_subject_has_no_lockfile() -> Result<(), String> {
+    let from = crate::dogfood::repo_rooted_fixture_path(CORPUS_DIR)
+        .join("subjects")
+        .join("authored-pricing");
+    let to = std::env::temp_dir().join(format!("ripr-lockfile-nodep-{}", std::process::id()));
+    match fs::remove_dir_all(&to) {
+        Ok(()) => {}
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+        Err(err) => return Err(err.to_string()),
+    }
+    copy_tree(&from, &to)?;
+    let present = to.join("Cargo.lock").is_file();
+    fs::remove_dir_all(&to).map_err(|err| err.to_string())?;
+    if present {
+        return Err(
+            "rebuilt authored-pricing unexpectedly has Cargo.lock; path-only subjects stay unlocked"
+                .to_string(),
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn locked_test_args_passes_locked_only_when_the_tree_has_a_lockfile() -> Result<(), String> {
+    let base = std::env::temp_dir().join(format!("ripr-locked-args-{}", std::process::id()));
+    let with_lock = base.join("with-lock");
+    let without_lock = base.join("without-lock");
+    fs::create_dir_all(&with_lock).map_err(|err| err.to_string())?;
+    fs::create_dir_all(&without_lock).map_err(|err| err.to_string())?;
+    fs::write(with_lock.join("Cargo.lock"), "# pin\n").map_err(|err| err.to_string())?;
+    let command = strings(&["test", "-p", "harness", "--", "--exact"]);
+    let locked = locked_test_args(&with_lock, &command);
+    let unlocked = locked_test_args(&without_lock, &command);
+    let already = locked_test_args(&with_lock, &strings(&["test", "--locked", "--lib"]));
+    fs::remove_dir_all(&base).map_err(|err| err.to_string())?;
+    assert_eq!(
+        locked,
+        strings(&["test", "--locked", "-p", "harness", "--", "--exact"])
+    );
+    assert_eq!(unlocked, command);
+    assert_eq!(already, strings(&["test", "--locked", "--lib"]));
+    Ok(())
+}

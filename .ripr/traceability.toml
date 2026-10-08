@@ -12778,6 +12778,12 @@ tests = [
   "xtask/src/reports/verdict_corpus_relabel_tests.rs::labeled_toolchain_names_the_rustup_release",
   "xtask/src/reports/verdict_corpus_relabel_tests.rs::link_stays_inside_refuses_links_that_leave_the_copy",
   "xtask/src/reports/verdict_corpus_relabel_tests.rs::copy_checkout_refuses_a_chain_of_links_that_resolves_outside",
+  "xtask/src/reports/verdict_corpus_relabel_tests.rs::copy_tree_of_a_registry_subject_keeps_its_lockfile",
+  "xtask/src/reports/verdict_corpus_relabel_tests.rs::copy_tree_of_a_path_only_subject_has_no_lockfile",
+  "xtask/src/reports/verdict_corpus_relabel_tests.rs::locked_test_args_passes_locked_only_when_the_tree_has_a_lockfile",
+  "xtask/src/reports/verdict_corpus_tests.rs::validator_rejects_a_tampered_retained_lockfile",
+  "xtask/src/reports/verdict_corpus_tests.rs::validator_requires_a_lockfile_on_authored_registry_subjects",
+  "xtask/src/reports/verdict_corpus_tests.rs::manifest_pins_registry_crate_reads_version_pins_not_path_deps",
 ]
 fixtures = [
   "fixtures/rust-verdict-corpus",

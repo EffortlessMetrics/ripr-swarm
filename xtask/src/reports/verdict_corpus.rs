@@ -1513,7 +1513,56 @@ fn subject_violations(subject: &Subject, dir: &Path) -> Vec<String> {
         }
         Err(err) => violations.push(err),
     }
+    if subject.origin == SubjectOrigin::Authored {
+        let pins_registry = subject.retained_files.iter().any(|file| {
+            Path::new(&file.path)
+                .file_name()
+                .is_some_and(|name| name == "Cargo.toml")
+                && read(&root.join(stored_path(&file.path)))
+                    .is_ok_and(|text| manifest_pins_registry_crate(&text))
+        });
+        if pins_registry
+            && !subject
+                .retained_files
+                .iter()
+                .any(|file| file.path == "Cargo.lock")
+        {
+            violations.push(format!(
+                "authored subject `{id}` pins a registry crate but retains no Cargo.lock; list the lockfile so relabel can replay with --locked"
+            ));
+        }
+    }
     violations
+}
+
+/// True when a manifest pins a crates.io crate by version. Path-only
+/// workspace members do not float on the host registry, so they do not
+/// need a retained lockfile.
+pub(crate) fn manifest_pins_registry_crate(text: &str) -> bool {
+    let mut in_deps = false;
+    for line in text.lines() {
+        let line = line.trim();
+        if line.starts_with('[') {
+            let table = line.trim_start_matches('[').trim_end_matches(']');
+            in_deps = matches!(
+                table,
+                "dependencies" | "dev-dependencies" | "build-dependencies"
+            ) || table.starts_with("dependencies.")
+                || table.starts_with("dev-dependencies.")
+                || table.starts_with("build-dependencies.");
+            continue;
+        }
+        if !in_deps || line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        if line.contains("path") && !line.contains("version") {
+            continue;
+        }
+        if line.contains('=') {
+            return true;
+        }
+    }
+    false
 }
 
 /// Retained Rust sources are stored as `<name>.rs.txt` so the vendored

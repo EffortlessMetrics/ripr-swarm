@@ -549,6 +549,74 @@ fn validator_rejects_a_retained_file_whose_digest_moved() -> Result<(), String> 
     Ok(())
 }
 
+fn subject_by_id<'a>(raw: &'a mut Value, id: &str) -> Result<&'a mut Value, String> {
+    raw["subjects"]
+        .as_array_mut()
+        .and_then(|subjects| {
+            subjects
+                .iter_mut()
+                .find(|subject| subject["subject_id"] == json!(id))
+        })
+        .ok_or_else(|| format!("corpus has no subject `{id}`"))
+}
+
+#[test]
+fn validator_rejects_a_tampered_retained_lockfile() -> Result<(), String> {
+    let violations = tampered(|raw| {
+        if let Ok(subject) = subject_by_id(raw, "authored-spec-confirm")
+            && let Some(files) = subject["retained_files"].as_array_mut()
+            && let Some(lock) = files.iter_mut().find(|file| file["path"] == "Cargo.lock")
+        {
+            lock["sha256"] = json!("0".repeat(64));
+        }
+    })?;
+    assert!(
+        violations.iter().any(|v| {
+            v.contains("authored-spec-confirm")
+                && v.contains("Cargo.lock")
+                && v.contains("does not match its pinned sha256")
+        }),
+        "{violations:#?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn validator_requires_a_lockfile_on_authored_registry_subjects() -> Result<(), String> {
+    let violations = tampered(|raw| {
+        if let Ok(subject) = subject_by_id(raw, "authored-spec-confirm")
+            && let Some(files) = subject["retained_files"].as_array_mut()
+        {
+            files.retain(|file| file["path"] != "Cargo.lock");
+        }
+    })?;
+    assert!(
+        violations.iter().any(|v| {
+            v.contains("authored-spec-confirm")
+                && v.contains("pins a registry crate")
+                && v.contains("Cargo.lock")
+        }),
+        "{violations:#?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn manifest_pins_registry_crate_reads_version_pins_not_path_deps() {
+    assert!(manifest_pins_registry_crate(
+        "[package]\nname = \"confirm\"\n\n[dependencies]\nlog = \"=0.4.34\"\n"
+    ));
+    assert!(manifest_pins_registry_crate(
+        "[dev-dependencies]\nassert_cmd = \"=2.2.2\"\nlibtest-mimic = \"=0.8.2\"\n"
+    ));
+    assert!(!manifest_pins_registry_crate(
+        "[dependencies]\npricing = { path = \"../pricing\" }\n"
+    ));
+    assert!(!manifest_pins_registry_crate(
+        "[package]\nname = \"authored-pricing\"\n\n[dependencies]\n"
+    ));
+}
+
 #[test]
 fn validator_rejects_a_case_that_borrows_another_cases_diff() -> Result<(), String> {
     let violations = tampered(|raw| {

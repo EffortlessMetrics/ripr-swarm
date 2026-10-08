@@ -10,6 +10,10 @@
       "sha256": "54b5ffb379f21802aadcc62508851730ed6c7e93c7ae193a3f6fcd2efd485577"
     },
     {
+      "path": "Cargo.lock",
+      "sha256": "a3e1195fbb3e4c394185003d67f0cafc881277c08a67a65dfbf31df05e73e1d1"
+    },
+    {
       "path": "ripr.toml",
       "sha256": "a1eb0fae55e83b9daddec15e8fd400524669928aad1cfd5d4c369961cdf7328c"
     },
