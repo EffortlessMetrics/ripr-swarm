@@ -175,8 +175,9 @@ rule only for an assertion whose context was admitted.
    once, by an immutable `let v [: T] = <call>;`, is that call (#6974) when
    `v` appears nowhere else in the test but as a whole operand of
    `assert_eq!` assertions on later lines, and the assertion is the
-   statement right after the `let` (a statement between them could change
-   the value through a shared handle). A `mut` binding, a second binding, a
+   statement right after the `let` and the only statement on its line (a
+   statement between them, or one sharing the assertion's line, could
+   change the value through a shared handle). A `mut` binding, a second binding, a
    borrow, a method call or argument use of `v`, a use before the `let`,
    or an initializer with anything around the call leaves the assertion
    unpinned. An expected operand naming a `let` whose initializer mentions
@@ -197,7 +198,25 @@ rule only for an assertion whose context was admitted.
      workspace, the test must not bind the name (`let`, nested `fn`, the
      test's parameters, a `for`, closure or match-arm pattern, or a macro
      such as `let_assert!` that mentions it), and the test's file must not
-     rename an item to it (`use a::b as name`).
+     rename an item to it (`use a::b as name`). As for a path (below), the
+     owner must sit directly in a module ripr can place by parsing its
+     file, and neither the owner nor any enclosing inline module may carry
+     a `cfg` or `cfg_attr` attribute, outer or inner (#7082): a
+     complementary cfg may compile a same-named `static`, `const` or `use`
+     that the bare name reaches instead. Nor may the owner's file be
+     droppable by a cfg: a `cfg`, or a `cfg_attr` whose attributes name
+     `cfg`, `cfg_attr` or `path`, as an inner attribute at the top of the
+     owner's file or of any file on the chain that compiles it into its
+     crate, or on the out-of-line `mod name;` declaration of each step of
+     that chain, lets a same-named module replace the whole file. A
+     `cfg_attr` that only toggles lints or docs
+     (`#![cfg_attr(docsrs, feature(doc_cfg))]`) does not. An include edge,
+     an unresolved chain, or a non-root file with no recorded chain (ripr records none for a `#[path]` it cannot resolve,
+     such as one under `cfg_attr`) fails closed
+     (`a_cfg_gated_owner_is_not_reached_by_a_bare_call`,
+     `an_ancestor_file_a_cfg_may_drop_gates_the_owner`,
+     `a_cfg_attr_path_on_the_owners_declaration_gates_it_through_real_composition`).
+     The same file rule applies to a path call.
    - A path call `a::b::name(..)` (#6974) names the same free function only
      when the path resolves to exactly the module that declares the owner.
      There an explicit `fn name` takes the value name from every glob, and

@@ -135,6 +135,8 @@ struct PathCallMemo {
     /// Per (owner crate root, owner name): whether the crate may hold an
     /// item of the name ripr cannot see.
     hidden: BTreeMap<(PathBuf, String), bool>,
+    /// Per file: whether a `cfg` may drop the whole file (#7082).
+    file_gated: BTreeMap<PathBuf, bool>,
     /// Per (test crate root, path root): whether the test's crate may bind
     /// the root itself.
     test_crate_binds: BTreeMap<(PathBuf, String), bool>,
@@ -244,6 +246,52 @@ impl OwnerPinSyntax {
             .nesting
             .insert(key, nesting.clone());
         nesting
+    }
+
+    /// #7082: whether a `cfg` may drop `file` as a whole, kept per file: a
+    /// dropping inner attribute ([`has_cfg_that_may_drop`]) at the top of
+    /// the file or of any file on the chain that compiles it into its
+    /// crate, or a dropping attribute on any `mod` declaration on that
+    /// chain. A complementary cfg may then compile a same-named module in
+    /// its place. An include edge, an unresolved chain, an unparsable file,
+    /// or a non-root file with no recorded chain (ripr records no edge for
+    /// a `mod` whose `#[path]` it cannot resolve, such as one under
+    /// `cfg_attr`) fails closed. The root test is per file, not the
+    /// workspace-wide [`TargetRoots`] switch, so an unrelated unresolvable
+    /// module elsewhere keeps other owners pinned (#7104 review).
+    fn file_cfg_gated(&self, index: &RustIndex, file: &Path) -> bool {
+        if let Some(known) = self.path_memo.borrow().file_gated.get(file) {
+            return *known;
+        }
+        let roots = self.target_roots(index);
+        let inner_gated = |path: &Path| {
+            index.files().get(path).is_none_or(|facts| {
+                parse_clean_source_file(&facts.source)
+                    .is_none_or(|parse| has_cfg_that_may_drop(&parse.tree()))
+            })
+        };
+        let gated = inner_gated(file)
+            || index.files().get(file).is_none_or(|facts| {
+                let provenance = &facts.role_provenance;
+                (provenance.edges.is_empty()
+                    && target_root(file, index, &roots.src_dirs).as_deref() != Some(file))
+                    || provenance.earliest_unresolved_reason.is_some()
+                    || provenance.edges.iter().any(|edge| {
+                        edge.kind != SourceRoleProvenanceEdgeKind::Module
+                            || inner_gated(&edge.parent)
+                            || module_declaration_cfg_gated(
+                                index,
+                                &edge.parent,
+                                &edge.declaration,
+                                edge.line,
+                            )
+                    })
+            });
+        self.path_memo
+            .borrow_mut()
+            .file_gated
+            .insert(file.to_path_buf(), gated);
+        gated
     }
 
     /// #6974: whether the crate rooted at `owner_root` may hold an item
@@ -1444,8 +1492,15 @@ impl OwnerReturnPin {
             OwnerScope::new(self.name.as_str(), self.owner_start_line, &self.owner_file);
         let masked_body = mask_comments_and_strings(&test.body);
         match (&self.call, call) {
+            // #7082: a cfg on the owner or an enclosing module may compile
+            // a same-named `static`, `const` or `use` in its place, which
+            // the bare name then reaches instead.
             (PinCall::Bare, CallShape::Bare) => {
-                !test_body_shadows_owner(test, &self.name)
+                !syntax
+                    .item_nesting(index, &self.owner_file, &self.name, self.owner_start_line)
+                    .is_none_or(|owner| owner.cfg_gated)
+                    && !syntax.file_cfg_gated(index, &self.owner_file)
+                    && !test_body_shadows_owner(test, &self.name)
                     && !binds_outside_let(&masked_body, &self.name)
                     && !bound_by_macro(&masked_body, &self.name)
                     && test_source.is_some_and(|source| !file_renames_to(source, &self.name))
@@ -1620,6 +1675,7 @@ impl OwnerReturnPin {
         syntax
             .item_nesting(index, &self.owner_file, &self.name, self.owner_start_line)
             .is_some_and(|owner| !owner.cfg_gated && owner.modules == module)
+            && !syntax.file_cfg_gated(index, &self.owner_file)
             && !syntax.crate_may_hide_name(index, &owner_root, &self.name, roots)
     }
 
@@ -1870,6 +1926,104 @@ fn has_cfg_attr(node: &impl ast::HasAttrs) -> bool {
             attr.meta(),
             Some(ast::Meta::CfgMeta(_) | ast::Meta::CfgAttrMeta(_))
         )
+    })
+}
+
+/// #7082: whether the out-of-line `mod <name>;` that `declaration` names,
+/// with its `mod` token on `line` of `parent`, carries a `cfg` or
+/// `cfg_attr`. An unreadable parent or declaration, or no such declaration
+/// on that line, fails closed.
+fn module_declaration_cfg_gated(
+    index: &RustIndex,
+    parent: &Path,
+    declaration: &str,
+    line: usize,
+) -> bool {
+    let name = declaration
+        .split_whitespace()
+        .skip_while(|word| *word != "mod")
+        .nth(1)
+        .map(|word| word.trim_end_matches(';'));
+    let Some(name) = name.filter(|name| !name.is_empty()) else {
+        return true;
+    };
+    let name = name.strip_prefix("r#").unwrap_or(name);
+    let Some(facts) = index.files().get(parent) else {
+        return true;
+    };
+    let source = &facts.source;
+    let Some(parse) = parse_clean_source_file(source) else {
+        return true;
+    };
+    let line_of = |offset: u32| source[..offset as usize].matches('\n').count() + 1;
+    let mut on_line = parse
+        .tree()
+        .syntax()
+        .descendants()
+        .filter_map(ast::Module::cast)
+        .filter(|module| module.item_list().is_none())
+        .filter(|module| {
+            module
+                .mod_token()
+                .is_some_and(|token| line_of(token.text_range().start().into()) == line)
+                && module.name().is_some_and(|ident| {
+                    let text = ident.text().to_string();
+                    text.strip_prefix("r#").unwrap_or(&text) == name
+                })
+        })
+        .peekable();
+    on_line.peek().is_none() || on_line.any(|module| has_cfg_that_may_drop(&module))
+}
+
+/// #7082: whether `node` carries an attribute that may drop or relocate it
+/// under some cfg: a `cfg`, or a `cfg_attr` whose attributes name `cfg`,
+/// `cfg_attr` or `path`. `#![cfg_attr(docsrs, feature(doc_cfg))]` and other
+/// lint or doc toggles cannot, so they keep the pin (#7104 review).
+fn has_cfg_that_may_drop(node: &impl ast::HasAttrs) -> bool {
+    node.attrs().any(|attr| match attr.meta() {
+        Some(ast::Meta::CfgMeta(_)) => true,
+        Some(ast::Meta::CfgAttrMeta(meta)) => {
+            cfg_attr_payload_may_drop(&meta.syntax().text().to_string())
+        }
+        _ => false,
+    })
+}
+
+/// The attributes after a `cfg_attr(predicate, ..)`'s first top-level
+/// comma name `cfg`, `cfg_attr` or `path`; unreadable text fails closed.
+fn cfg_attr_payload_may_drop(text: &str) -> bool {
+    let Some(open) = text.find('(') else {
+        return true;
+    };
+    let inner = &text[open + 1..];
+    // Scan the masked text: a comma inside a predicate string must not
+    // select the payload boundary (#7104 review). Splitting the unmasked
+    // text at a string comma leaves a dangling quote whose masking then
+    // hides the real payload (`cfg_attr(mode = "a,b", cfg(..))` would
+    // admit a droppable owner). The masker preserves byte length and the
+    // matched comma is a literal `,` byte in both, so `at` slices the
+    // original soundly.
+    let masked_inner = mask_comments_and_strings(inner);
+    let mut depth = 0_i32;
+    let mut payload = None;
+    for (at, character) in masked_inner.char_indices() {
+        match character {
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => depth -= 1,
+            ',' if depth == 0 => {
+                payload = Some(&inner[at + 1..]);
+                break;
+            }
+            _ => {}
+        }
+    }
+    // Strings and comments are masked first, so `doc = "path"` names no
+    // `path` attribute.
+    payload.is_none_or(|payload| {
+        let payload = mask_comments_and_strings(payload);
+        ["cfg", "cfg_attr", "path"]
+            .iter()
+            .any(|word| contains_as_whole_word(&payload, word))
     })
 }
 
