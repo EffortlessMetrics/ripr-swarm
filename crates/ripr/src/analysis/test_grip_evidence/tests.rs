@@ -3898,6 +3898,281 @@ fn while_some_size_hint_upper_bound() {
     Ok(())
 }
 
+/// #6713 bytesize shape: a free `kb` beside the associated `ByteSize::kb`.
+/// `test_body` is the single inline test's body.
+fn free_kb_return_evidence(
+    test_body: &str,
+) -> Result<(TestGripEvidence, crate::analysis::seams::SeamGripClass), String> {
+    let prod_src = format!(
+        r#"
+pub const KB: u64 = 1_000;
+
+pub fn kb(size: impl Into<u64>) -> u64 {{
+    size.into() * KB
+}}
+
+#[derive(Debug, PartialEq)]
+pub struct ByteSize(pub u64);
+
+impl ByteSize {{
+    pub const fn kb(size: u64) -> ByteSize {{
+        ByteSize(size + KB)
+    }}
+}}
+
+#[cfg(test)]
+mod tests {{
+    use super::*;
+
+    #[test]
+    fn units() {{
+        {test_body}
+    }}
+}}
+"#
+    );
+    let files: Vec<(PathBuf, &str)> = vec![(PathBuf::from("src/lib.rs"), prod_src.as_str())];
+    let index = index_from_files(&files)?;
+    let seams = inventory_seams_from_index(&[PathBuf::from("src/lib.rs")], &index);
+    let free_kb = seams
+        .iter()
+        .find(|s| s.kind() == SeamKind::ReturnValue && s.expression() == "size.into() * KB")
+        .ok_or_else(|| "free kb return seam present".to_string())?;
+    let evidence = evidence_for_seam(free_kb, &index);
+    let class = crate::analysis::seam_classification::classify_seam(free_kb, &evidence);
+    Ok((evidence, class))
+}
+
+/// #6713: a test that only calls the associated `ByteSize::kb` neither
+/// calls nor activates the free `kb`, so the free function's return seam
+/// cannot read strongly gripped from it.
+#[test]
+fn given_free_fn_when_tests_call_only_same_named_associated_fn_then_not_strongly_gripped()
+-> Result<(), String> {
+    let (evidence, class) =
+        free_kb_return_evidence("assert_eq!(ByteSize::kb(1), ByteSize(1_000));")?;
+    let labels: Vec<_> = evidence
+        .related_tests
+        .iter()
+        .map(|g| (g.test_name.clone(), g.relation_reason))
+        .collect();
+    assert!(
+        labels
+            .iter()
+            .all(|(_, reason)| *reason != RelationReason::DirectOwnerCall),
+        "ByteSize::kb is not a call of the free kb: {labels:?}"
+    );
+    assert!(
+        evidence.observed_values.is_empty(),
+        "ByteSize::kb arguments are not the free kb's activation values: {:?}",
+        evidence.observed_values
+    );
+    assert_ne!(evidence.activate.state, StageState::Yes);
+    assert_ne!(
+        class,
+        crate::analysis::seams::SeamGripClass::StronglyGripped,
+        "{evidence:?}"
+    );
+    Ok(())
+}
+
+/// #6713 control: a bare `kb(1)` call keeps the direct relation and its
+/// activation value.
+#[test]
+fn given_free_fn_when_test_calls_it_bare_then_direct_owner_call_and_activated() -> Result<(), String>
+{
+    let (evidence, _class) = free_kb_return_evidence("assert_eq!(ByteSize::kb(1).0, kb(2));")?;
+    assert!(
+        evidence
+            .related_tests
+            .iter()
+            .any(|g| g.test_name == "units" && g.relation_reason == RelationReason::DirectOwnerCall),
+        "bare kb(2u64) is a direct call: {:?}",
+        evidence.related_tests
+    );
+    assert_eq!(evidence.activate.state, StageState::Yes);
+    assert!(
+        evidence
+            .observed_values
+            .iter()
+            .all(|fact| fact.value != "1")
+            && evidence
+                .observed_values
+                .iter()
+                .any(|fact| fact.value.starts_with('2')),
+        "only the same-line bare call's argument is an activation value: {:?}",
+        evidence.observed_values
+    );
+    Ok(())
+}
+
+/// #6713 review: a helper that calls only the associated
+/// `Widget::render_unit` is not a helper-owner edge of the free
+/// `render_unit`, so a test calling only the helper neither relates nor
+/// activates the free function. The control spells the free call in the
+/// helper and keeps both.
+#[test]
+fn given_free_fn_when_helper_calls_only_same_named_associated_fn_then_no_helper_owner_credit()
+-> Result<(), String> {
+    let helper_evidence =
+        |helper_body: &str| -> Result<(StageState, Vec<(String, RelationReason)>), String> {
+            let prod_src = r#"
+pub fn render_unit(size: u64) -> u64 {
+    size * 2
+}
+
+pub struct Widget;
+
+impl Widget {
+    pub fn render_unit(size: u64) -> u64 {
+        size + 1
+    }
+}
+"#;
+            let support = PathBuf::from("tests/support.rs");
+            let support_src =
+                format!("pub fn check_render_unit() -> u64 {{\n    {helper_body}\n}}\n");
+            let tests = PathBuf::from("tests/widget_tests.rs");
+            let tests_src = r#"
+use support::check_render_unit;
+
+#[test]
+fn renders_through_helper() {
+    assert_eq!(check_render_unit(), 11);
+}
+"#;
+            let index = index_from_files(&[
+                (PathBuf::from("src/widget.rs"), prod_src),
+                (support, support_src.as_str()),
+                (tests, tests_src),
+            ])?;
+            let seams = inventory_seams_from_index(&[PathBuf::from("src/widget.rs")], &index);
+            let free_render = seams
+                .iter()
+                .find(|s| s.kind() == SeamKind::ReturnValue && s.expression() == "size * 2")
+                .ok_or_else(|| "free render_unit return seam present".to_string())?;
+            let evidence = evidence_for_seam(free_render, &index);
+            let labels = evidence
+                .related_tests
+                .iter()
+                .map(|g| (g.test_name.clone(), g.relation_reason))
+                .collect::<Vec<_>>();
+            Ok((evidence.activate.state, labels))
+        };
+
+    let (activation, labels) = helper_evidence("Widget::render_unit(10)")?;
+    assert!(
+        labels.iter().all(|(_, reason)| !matches!(
+            reason,
+            RelationReason::DirectOwnerCall | RelationReason::HelperOwnerCall
+        )),
+        "a helper calling only Widget::render_unit is not an owner edge of the free fn: {labels:?}"
+    );
+    assert_ne!(
+        activation,
+        StageState::Yes,
+        "the associated call's arguments are not the free fn's activation values"
+    );
+
+    let (activation, labels) = helper_evidence("render_unit(10)")?;
+    assert!(
+        labels
+            .iter()
+            .any(|(_, reason)| *reason == RelationReason::HelperOwnerCall),
+        "a helper spelling the free call keeps the helper-owner relation: {labels:?}"
+    );
+    assert_eq!(activation, StageState::Yes);
+    Ok(())
+}
+
+/// #6713 review, grip mode: a nested `fn kb(..)` declaration in the test
+/// body defines the name, it does not call it, so it cannot restore the
+/// direct relation or the activation the associated-only call lost.
+#[test]
+fn given_free_fn_when_test_declares_same_named_fn_then_not_strongly_gripped() -> Result<(), String>
+{
+    let (evidence, class) = free_kb_return_evidence(
+        "fn kb(x: u64) -> u64 { x * 3 }\nassert_eq!(ByteSize::kb(1), ByteSize(1_000));",
+    )?;
+    assert!(
+        evidence
+            .related_tests
+            .iter()
+            .all(|g| g.relation_reason != RelationReason::DirectOwnerCall),
+        "a nested fn declaration is not a call of the free kb: {:?}",
+        evidence.related_tests
+    );
+    assert_ne!(evidence.activate.state, StageState::Yes);
+    assert_ne!(
+        class,
+        crate::analysis::seams::SeamGripClass::StronglyGripped,
+        "{evidence:?}"
+    );
+    Ok(())
+}
+
+/// #6713: a boundary test through a same-named associated function
+/// (`Gate::over(100, 100)`) does not pin the free `over`'s equality
+/// boundary; the control spells the free call.
+#[test]
+fn given_free_fn_boundary_when_only_same_named_associated_fn_hits_it_then_boundary_stays_missing()
+-> Result<(), String> {
+    let boundary_debt = |test_body: &str| -> Result<Vec<String>, String> {
+        let prod_src = format!(
+            r#"
+pub fn over(amount: u64, limit: u64) -> bool {{
+    amount >= limit
+}}
+
+pub struct Gate;
+
+impl Gate {{
+    pub fn over(amount: u64, limit: u64) -> bool {{
+        amount > limit
+    }}
+}}
+
+#[cfg(test)]
+mod tests {{
+    use super::*;
+
+    #[test]
+    fn gate() {{
+        {test_body}
+    }}
+}}
+"#
+        );
+        let files: Vec<(PathBuf, &str)> = vec![(PathBuf::from("src/lib.rs"), prod_src.as_str())];
+        let index = index_from_files(&files)?;
+        let seams = inventory_seams_from_index(&[PathBuf::from("src/lib.rs")], &index);
+        let boundary = seams
+            .iter()
+            .find(|s| {
+                s.kind() == SeamKind::PredicateBoundary && s.expression() == "amount >= limit"
+            })
+            .ok_or_else(|| "free over boundary seam present".to_string())?;
+        let evidence = evidence_for_seam(boundary, &index);
+        Ok(evidence
+            .missing_discriminators
+            .iter()
+            .map(|fact| fact.value.clone())
+            .collect())
+    };
+
+    let type_path_only = boundary_debt("assert!(!Gate::over(100, 100));")?;
+    assert!(
+        !type_path_only.is_empty(),
+        "Gate::over(100, 100) must not close the free over's boundary"
+    );
+    let free_call = boundary_debt("assert!(over(100, 100));")?;
+    assert!(
+        free_call.is_empty(),
+        "over(100, 100) closes the boundary: {free_call:?}"
+    );
+    Ok(())
+}
+
 /// #6732: compact grip relates a trait-path call (`Render::render(&-0.0f64)`)
 /// to the impl its argument selects, and only to that impl.
 #[test]

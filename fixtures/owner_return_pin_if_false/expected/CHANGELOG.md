@@ -167,3 +167,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — owner_return_pin_if_false (14)
+
+Reason:
+RIPR-SPEC-0197: #6713 makes value_facts_for_test and owner_call_parameter_values read a free fn's argument values from its own bare or module-qualified call site; this fixture's weight(4) is a genuine free call through a direct import, so the static source function-argument value (input = 4) now surfaces beside the existing assertion-argument source value. Verdict class unchanged: reachable_unrevealed, observation no, discriminator no.
+
+Command:
+`cargo xtask goldens bless owner_return_pin_if_false --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

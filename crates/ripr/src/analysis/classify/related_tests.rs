@@ -2809,6 +2809,16 @@ fn owner_call_relation_reason(
     let Some(owner) = owner_fn else {
         return RelationReason::DirectOwnerCall;
     };
+    // A module-level `fn` is never reached through a receiver or a type
+    // path: `ByteSize::kb(1)` calls the associated function, not the free
+    // `kb` beside it (#6713). Only a bare or module-qualified spelling is a
+    // call of the free function. Fails open when the impl context is not
+    // parser-established.
+    if owner.impl_context == FunctionImplContext::Free
+        && !test_calls_free_function(test, owner_name)
+    {
+        return RelationReason::WeakTokenSubstring;
+    }
     let Some(impl_type) = impl_self_type_name(&owner.id.0) else {
         // #7006: method-call syntax can never resolve to a free function,
         // so a receiver-qualified-only `other.owner(..)` match is the
@@ -2878,6 +2888,183 @@ fn owner_call_relation_reason(
     }
 }
 
+/// Whether the test spells a call of `name` that can reach a free function:
+/// bare `name(` or module-qualified `module::name(`. A receiver call
+/// (`value.name(`) and a type-path call (`Type::name(`, `Self::name(`,
+/// `<T as Trait>::name(`, `Type::<T>::name(`, `u64::name(`) reach an
+/// associated function instead (#6713). A qualifier is read as a type when
+/// it starts with an uppercase letter, is a primitive type, or ends in
+/// generic arguments; Rust module names are snake_case by convention, so
+/// `crate::`, `super::` and `dep::` stay free. Known limits: an uppercase
+/// module name loses the call, and a lowercase type alias keeps it.
+pub(in crate::analysis) fn test_calls_free_function(test: &TestSummary, name: &str) -> bool {
+    if name.is_empty() {
+        return false;
+    }
+    // Captured calls are single lines; the body is the fallback for a call
+    // the call facts did not capture. A `name(` token inside an opaque
+    // property macro is macro-internal syntax, not a call the test makes,
+    // so the fallback excludes those ranges exactly as
+    // [`body_contains_owner_call`] does (#6713 review). Every free-call
+    // spelling is checked, not only the first: a macro-internal occurrence
+    // must not hide a genuine bare call later in the body.
+    test.calls
+        .iter()
+        .any(|call| call.name == name && call_text_may_call_free_function(&call.text, name))
+        || {
+            let masked = mask_comments_and_strings(&test.body);
+            let opaque =
+                crate::analysis::extract::property_macros::opaque_property_macros(&test.body);
+            masked.match_indices(name).map(|(at, _)| at).any(|at| {
+                is_free_function_call_at(&masked, at, name)
+                    && !opaque.iter().any(|item| item.range.contains(&at))
+            })
+        }
+}
+
+/// Whether one captured call's raw source text spells a free-function call
+/// of `name`, with comments and strings masked first.
+pub(in crate::analysis) fn call_text_may_call_free_function(text: &str, name: &str) -> bool {
+    free_function_call_start_in(&mask_comments_and_strings(text), name).is_some()
+}
+
+/// The suffix of a captured call's raw source text that starts at its first
+/// free-function call of `name`, so an argument reader cannot take the
+/// arguments of a same-line `Type::name(..)` instead (#6713). Masking keeps
+/// byte offsets, so the masked match indexes the raw text.
+pub(in crate::analysis) fn free_function_call_text<'text>(
+    text: &'text str,
+    name: &str,
+) -> Option<&'text str> {
+    // Argument readers parse `name(` literally, so only a call spelled that
+    // way yields a span: a spaced or turbofish free call followed by a
+    // same-line `Type::name(..)` must not lend it that call's arguments.
+    let masked = mask_comments_and_strings(text);
+    let at = masked.match_indices(name).map(|(at, _)| at).find(|&at| {
+        masked[at + name.len()..].starts_with('(') && is_free_function_call_at(&masked, at, name)
+    })?;
+    text.get(at..)
+}
+
+/// The text a captured call named like `owner` contributes as an owner
+/// call: the whole line for an owner that may be reached through a path or
+/// receiver, the free-call suffix for a module-level `fn`, `None` when the
+/// line only calls a same-named associated function or method.
+pub(in crate::analysis) fn owner_call_text<'text>(
+    text: &'text str,
+    owner: &FunctionSummary,
+) -> Option<&'text str> {
+    if owner.impl_context == FunctionImplContext::Free {
+        free_function_call_text(text, &owner.name)
+    } else {
+        Some(text)
+    }
+}
+
+/// Primitive types whose lowercase name qualifies associated functions
+/// (`u64::max(`), so they never name a module.
+const PRIMITIVE_TYPE_QUALIFIERS: &[&str] = &[
+    "bool", "char", "f32", "f64", "i8", "i16", "i32", "i64", "i128", "isize", "str", "u8", "u16",
+    "u32", "u64", "u128", "usize",
+];
+
+/// Whether a call's `(` follows a name ending at `after_name`, across
+/// whitespace and an optional turbofish (`name::<T>(`).
+fn call_paren_follows(text: &str, after_name: usize) -> bool {
+    let bytes = text.as_bytes();
+    let skip_ws = |mut at: usize| {
+        while bytes.get(at).is_some_and(u8::is_ascii_whitespace) {
+            at += 1;
+        }
+        at
+    };
+    let mut at = skip_ws(after_name);
+    if bytes.get(at..at + 2) == Some(b"::") {
+        at = skip_ws(at + 2);
+        if bytes.get(at) != Some(&b'<') {
+            return false;
+        }
+        let mut depth = 0usize;
+        loop {
+            match bytes.get(at) {
+                Some(b'<') => depth += 1,
+                // `->` in a fn-pointer argument is not a closing bracket.
+                Some(b'>') if at > 0 && bytes[at - 1] == b'-' => {}
+                Some(b'>') => {
+                    depth -= 1;
+                    if depth == 0 {
+                        break;
+                    }
+                }
+                Some(_) => {}
+                None => return false,
+            }
+            at += 1;
+        }
+        at = skip_ws(at + 1);
+    }
+    bytes.get(at) == Some(&b'(')
+}
+
+#[cfg(test)]
+fn text_has_free_function_call(text: &str, name: &str) -> bool {
+    free_function_call_start_in(text, name).is_some()
+}
+
+/// Byte offset of the first free-function call of `name` in already-masked
+/// `text`.
+fn free_function_call_start_in(text: &str, name: &str) -> Option<usize> {
+    if name.is_empty() {
+        return None;
+    }
+    text.match_indices(name)
+        .map(|(at, _)| at)
+        .find(|&at| is_free_function_call_at(text, at, name))
+}
+
+/// Whether the occurrence of `name` starting at byte `at` of already-masked
+/// `text` is a call that can reach a free function (see
+/// [`test_calls_free_function`]).
+pub(in crate::analysis) fn is_free_function_call_at(text: &str, at: usize, name: &str) -> bool {
+    let bytes = text.as_bytes();
+    if name.is_empty() || text.get(at..).is_none_or(|rest| !rest.starts_with(name)) {
+        return false;
+    }
+    {
+        let after = at + name.len();
+        if !ident_boundary(bytes, at, after) || !call_paren_follows(text, after) {
+            return false;
+        }
+        let mut before = at;
+        // `r#name(` is the same identifier.
+        if before >= 2 && &bytes[before - 2..before] == b"r#" {
+            before -= 2;
+        }
+        while before > 0 && bytes[before - 1].is_ascii_whitespace() {
+            before -= 1;
+        }
+        // A receiver dot selects a method; the first dot of a range
+        // (`0..bound(x)`) does not — the call is a bare free call computing
+        // the bound, the same rule `receiver_dot_before` applies (#7006).
+        if before > 0 && bytes[before - 1] == b'.' && (before < 2 || bytes[before - 2] != b'.') {
+            return false;
+        }
+        // A nested `fn name(` declaration defines the name, it does not
+        // call it, so it never establishes a free call (#6713 review).
+        if ident_ending_at(text, before) == Some("fn") {
+            return false;
+        }
+        if before >= 2 && bytes[before - 2] == b':' && bytes[before - 1] == b':' {
+            // `Type::<T>::name` and `<T as Trait>::name` end the qualifier
+            // in `>`, which reads as no identifier: a type path.
+            return ident_ending_at(text, before - 2).is_some_and(|qualifier| {
+                !qualifier.starts_with(|c: char| c.is_ascii_uppercase())
+                    && !PRIMITIVE_TYPE_QUALIFIERS.contains(&qualifier)
+            });
+        }
+        true
+    }
+}
 /// Whether `owner` is established as a module-level free function: the
 /// parser-backed container fact says `Free` and the parameter list has no
 /// `self` receiver. The `Unknown` container (lexical fallback, stale
@@ -3823,6 +4010,253 @@ mod tests {
 
         assert_eq!(related.len(), 1);
         assert_eq!(related[0].1, RelationReason::WeakTokenSubstring);
+    }
+
+    /// #6713 bytesize shape: a free `kb` beside the associated
+    /// `ByteSize::kb`. Returns the free owner and the related-test reason
+    /// for one test body.
+    fn free_kb_relation(body: &str) -> Vec<RelationReason> {
+        let owner = free_function("src/lib.rs", "kb");
+        let mut method = impl_function("src/lib.rs", "kb", "impl ByteSize");
+        method.impl_context = FunctionImplContext::Impl {
+            self_type: "ByteSize".to_string(),
+        };
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions: vec![owner.clone(), method],
+            tests: vec![test_with_call(
+                "tests/units.rs",
+                "test_comparison",
+                body,
+                "kb",
+            )],
+            ..Default::default()
+        });
+        let probe = probe("src/lib.rs", "size.into() * KB");
+        find_related_tests(&probe, Some(&owner), &index, true, None, None)
+            .into_iter()
+            .map(|(_, reason)| reason)
+            .collect()
+    }
+
+    /// #6713: `ByteSize::kb(1000)` calls the associated function, never the
+    /// free `kb`, so it cannot be a direct owner call of the free function.
+    #[test]
+    fn given_free_fn_when_test_calls_same_named_type_path_then_name_only_relation() {
+        assert_eq!(
+            free_kb_relation("assert!(ByteSize::mb(1) == ByteSize::kb(1000));"),
+            vec![RelationReason::WeakTokenSubstring]
+        );
+        // A quoted or commented bare call is not a call.
+        assert_eq!(
+            free_kb_relation(
+                "// kb(1) is the free form\nassert_eq!(ByteSize::kb(1).to_string(), \"kb(1)\");"
+            ),
+            vec![RelationReason::WeakTokenSubstring]
+        );
+    }
+
+    /// #6713: a receiver call reaches a method, not the free function.
+    #[test]
+    fn given_free_fn_when_test_calls_same_named_method_then_name_only_relation() {
+        assert_eq!(
+            free_kb_relation("let size = Units;\nassert_eq!(size.kb(), 1000);"),
+            vec![RelationReason::WeakTokenSubstring]
+        );
+    }
+
+    /// #6713 review: a nested `fn kb(..)` declaration defines the name, it
+    /// does not call it, so it cannot restore the direct free-owner relation
+    /// over a same-named type-path call.
+    #[test]
+    fn given_free_fn_when_test_declares_same_named_fn_then_name_only_relation() {
+        // Reader level: the declaration is not a free call, a later real
+        // call still is.
+        assert!(!text_has_free_function_call(
+            "fn kb(x: u64) -> u64 { x }",
+            "kb"
+        ));
+        assert!(!text_has_free_function_call(
+            "fn  kb (x: u64) -> u64 { x }",
+            "kb"
+        ));
+        assert!(text_has_free_function_call(
+            "unsafe fn kb(x: u64) { }\nassert_eq!(kb(1), 1000);",
+            "kb"
+        ));
+        // Relation mode: declaration plus a type-path call stays weak.
+        assert_eq!(
+            free_kb_relation("fn kb(x: u64) -> u64 { x }\nassert_eq!(ByteSize::kb(1), 1000);"),
+            vec![RelationReason::WeakTokenSubstring]
+        );
+    }
+
+    /// #6713 review: a bare `name(` token inside an opaque property macro is
+    /// macro-internal syntax, not a call the test makes, so it cannot
+    /// restore the direct free-owner relation over a same-named type-path
+    /// call — the same exclusion `body_contains_owner_call` already applies.
+    #[test]
+    fn given_free_fn_when_bare_token_is_inside_opaque_property_macro_then_name_only_relation() {
+        let assertion_line = "assert_eq!(ByteSize::kb(2), 1000);";
+        let body = format!(
+            "{assertion_line}\nproptest!(|input in 0u8..10| {{ prop_assert_eq!(kb(input), 1000); }});"
+        );
+        // The captured call is the ordinary associated-call line; the bare
+        // token only exists inside the opaque macro range of the body.
+        let owner = free_function("src/lib.rs", "kb");
+        let mut method = impl_function("src/lib.rs", "kb", "impl ByteSize");
+        method.impl_context = FunctionImplContext::Impl {
+            self_type: "ByteSize".to_string(),
+        };
+        let mut test = test_with_call("tests/units.rs", "test_comparison", &body, "kb");
+        test.calls[0].text = assertion_line.to_string();
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions: vec![owner.clone(), method],
+            tests: vec![test],
+            ..Default::default()
+        });
+        let probe = probe("src/lib.rs", "size.into() * KB");
+        assert_eq!(
+            find_related_tests(&probe, Some(&owner), &index, true, None, None)
+                .into_iter()
+                .map(|(_, reason)| reason)
+                .collect::<Vec<_>>(),
+            vec![RelationReason::WeakTokenSubstring]
+        );
+    }
+
+    /// #6713 review: a macro-internal `kb(` token does not hide a genuine
+    /// bare call later in the body — every free-call spelling is checked
+    /// against the opaque ranges, so the later call keeps the direct
+    /// relation.
+    #[test]
+    fn given_free_fn_when_genuine_call_follows_macro_internal_token_then_direct_owner_call() {
+        let owner = free_function("src/lib.rs", "kb");
+        let mut method = impl_function("src/lib.rs", "kb", "impl ByteSize");
+        method.impl_context = FunctionImplContext::Impl {
+            self_type: "ByteSize".to_string(),
+        };
+        let body = "let _ = ByteSize::kb(1);\nproptest!(|input in 0u8..10| { prop_assert_eq!(kb(input), 1000); });\nassert_eq!(kb(2), 1000);";
+        let mut test = test_with_call("tests/units.rs", "test_comparison", body, "kb");
+        // No captured free-call fact: the captured line is the associated
+        // call, so the fallback must find the later genuine bare call.
+        test.calls[0].text = "let _ = ByteSize::kb(1);".to_string();
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions: vec![owner.clone(), method],
+            tests: vec![test],
+            ..Default::default()
+        });
+        let probe = probe("src/lib.rs", "size.into() * KB");
+        assert_eq!(
+            find_related_tests(&probe, Some(&owner), &index, true, None, None)
+                .into_iter()
+                .map(|(_, reason)| reason)
+                .collect::<Vec<_>>(),
+            vec![RelationReason::DirectOwnerCall]
+        );
+    }
+
+    /// #6713 controls: bare and module-qualified spellings call the free
+    /// function and stay direct.
+    #[test]
+    fn given_free_fn_when_test_calls_it_bare_or_through_a_module_then_direct_owner_call() {
+        for body in [
+            "assert_eq!(kb(1), 1000);",
+            "assert_eq!(bytesize::kb(1), 1000);",
+            "assert_eq!(crate::kb(1), 1000);",
+            "assert_eq!(super :: kb (1), 1000);",
+            "assert_eq!(ByteSize::kb(1).0, kb(1));",
+        ] {
+            assert_eq!(
+                free_kb_relation(body),
+                vec![RelationReason::DirectOwnerCall],
+                "{body}"
+            );
+        }
+    }
+
+    /// #6713: the type-path reader covers `Self`, generic and qualified-self
+    /// spellings, and a free function whose impl context the parser did not
+    /// establish keeps the old relation (fail open).
+    #[test]
+    fn free_function_call_reader_rejects_type_paths_and_receivers() {
+        for text in [
+            "Self::kb(1)",
+            "ByteSize::<u64>::kb(1)",
+            "<ByteSize as Units>::kb(1)",
+            "x.kb(1)",
+            "x . kb(1)",
+            "kbs(1)",
+            "as_kb(1)",
+            "kb",
+            "ByteSize::kb::<u32>(1)",
+            "kb::Unit",
+            "kb::<u32",
+            "u64::kb(1)",
+            "str :: kb(1)",
+        ] {
+            assert!(!text_has_free_function_call(text, "kb"), "{text}");
+        }
+        for text in [
+            "kb(1)",
+            "kb (1)",
+            "units::kb(1)",
+            "(kb)(1) + kb(2)",
+            "kb::<u32>(1)",
+            "units::kb :: <Vec<u8>> (1)",
+            "r#kb(1)",
+            "kb::<fn() -> u8>(f)",
+            // The first dot of a range is not a receiver dot (#7006 rule).
+            "(0..kb(1)).sum()",
+        ] {
+            assert!(text_has_free_function_call(text, "kb"), "{text}");
+        }
+
+        assert_eq!(
+            free_function_call_text("assert_eq!(ByteSize::kb(1).0, kb(2));", "kb"),
+            Some("kb(2));")
+        );
+        assert_eq!(
+            free_function_call_text(r#"note("kb(1)", ByteSize::kb(2), kb(3))"#, "kb"),
+            Some("kb(3))")
+        );
+        assert_eq!(free_function_call_text("ByteSize::kb(2)", "kb"), None);
+        // A spaced or turbofish free call has no `kb(` span of its own; the
+        // later `ByteSize::kb(9)` must not supply one.
+        assert_eq!(
+            free_function_call_text("kb (1) + ByteSize::kb(9)", "kb"),
+            None
+        );
+        assert_eq!(free_function_call_text("kb::<u8>(1) + x.kb(9)", "kb"), None);
+        assert_eq!(
+            free_function_call_text("kb::<u8>(1) + kb(2)", "kb"),
+            Some("kb(2)")
+        );
+
+        let mut owner = free_function("src/lib.rs", "kb");
+        owner.impl_context = FunctionImplContext::Unknown;
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions: vec![
+                owner.clone(),
+                impl_function("src/lib.rs", "kb", "impl ByteSize"),
+            ],
+            tests: vec![test_with_call(
+                "tests/units.rs",
+                "test_comparison",
+                "assert!(ByteSize::kb(1) < ByteSize::kib(1));",
+                "kb",
+            )],
+            ..Default::default()
+        });
+        let related = find_related_tests(
+            &probe("src/lib.rs", "size.into() * KB"),
+            Some(&owner),
+            &index,
+            true,
+            None,
+            None,
+        );
+        assert_eq!(related.len(), 1);
+        assert_eq!(related[0].1, RelationReason::DirectOwnerCall);
     }
 
     /// #4760: UFCS `WhileSome::size_hint(&it)` names the impl type.
