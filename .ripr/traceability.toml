@@ -8527,6 +8527,17 @@ tests = [
   "crates/ripr/tests/cli_smoke.rs::check_untracked_files_keep_committed_default_and_working_tree_reads_name_them",
   "crates/ripr/src/output/analyzed_revisions.rs::tests::labels_name_ref_short_commits_and_the_head_source",
   "crates/ripr/src/output/analyzed_revisions.rs::tests::labels_disclose_a_distinct_merge_base_and_unresolved_commits",
+  "crates/ripr/src/analysis/diff/load.rs::tests::worktree_load_without_merge_base_fails_closed_with_the_committed_diagnosis",
+  "crates/ripr/src/analysis/diff/load.rs::tests::worktree_load_with_unborn_head_names_head_not_a_merge_base",
+  "crates/ripr/tests/cli_smoke.rs::check_dirty_tree_without_merge_base_fails_closed_in_shallow_clone",
+  "crates/ripr/tests/cli_smoke.rs::check_dirty_tree_on_orphan_branch_fails_closed",
+  "crates/ripr/tests/cli_smoke.rs::check_dirty_tree_with_unborn_head_names_head",
+  "crates/ripr/src/analysis/diff/load.rs::tests::worktree_load_with_damaged_store_names_damage_not_unrelated_history",
+  "crates/ripr/tests/cli_smoke.rs::check_dirty_tree_with_damaged_store_names_damage",
+  "crates/ripr/src/analysis/diff/load.rs::tests::worktree_load_with_cyclic_replace_preserves_git_refusal",
+  "crates/ripr/tests/cli_smoke.rs::check_dirty_tree_with_cyclic_replace_preserves_git_refusal",
+  "crates/ripr/src/analysis/diff/load.rs::tests::worktree_load_with_deleted_head_tip_names_damage_not_ref_repair",
+  "crates/ripr/tests/cli_smoke.rs::check_dirty_tree_with_deleted_head_tip_names_damage",
 ]
 fixtures = []
 code = [
