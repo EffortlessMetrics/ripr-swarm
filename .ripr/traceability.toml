@@ -8534,6 +8534,8 @@ tests = [
   "crates/ripr/tests/cli_smoke.rs::check_dirty_tree_with_unborn_head_names_head",
   "crates/ripr/src/analysis/diff/load.rs::tests::worktree_load_with_damaged_store_names_damage_not_unrelated_history",
   "crates/ripr/tests/cli_smoke.rs::check_dirty_tree_with_damaged_store_names_damage",
+  "crates/ripr/src/analysis/diff/load.rs::tests::worktree_load_with_cyclic_replace_preserves_git_refusal",
+  "crates/ripr/tests/cli_smoke.rs::check_dirty_tree_with_cyclic_replace_preserves_git_refusal",
 ]
 fixtures = []
 code = [

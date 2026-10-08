@@ -275,30 +275,31 @@ fn worktree_diff_origin(
     Err(no_worktree_merge_base_error(
         root,
         base,
-        &output.stderr,
+        &output,
         git_timeout,
     ))
 }
 
 /// The fail-closed error when `git merge-base <base> HEAD` ran and found no
-/// origin for the working-tree diff (#7076). A damaged object store speaks
-/// first: `merge-base` walks history, so a missing shared object fails it
-/// while both tips still resolve, and that must keep the object-restoration
-/// repair, never the unrelated-histories `--base` repair, which cannot fix
-/// damage. A `HEAD` that provably resolves to no commit keeps the committed
-/// path's unknown-revision vocabulary (an unborn branch or a `HEAD` pointing
-/// at a missing branch); otherwise the cause and repair are
-/// [`no_merge_base_diagnosis`], shared with the committed path and the
-/// first-pr range preflight so all three name one cause.
+/// origin for the working-tree diff (#7076). The failure is classified before
+/// any cause is named, because a wrong actionable repair is worse than a
+/// missed advisory one: a damaged object store keeps the object-restoration
+/// repair; a `HEAD` that provably resolves to no commit keeps the committed
+/// path's unknown-revision vocabulary; and only Git's genuine no-merge-base
+/// result — exit 1 without a message — takes [`no_merge_base_diagnosis`],
+/// shared with the committed path and the first-pr range preflight. Any other
+/// nonzero failure (cyclic `refs/replace`, an unreadable ref) preserves Git's
+/// own bounded reason with the generic named-file repair instead of
+/// asserting unrelated histories, whose `--base` repair cannot fix it.
 fn no_worktree_merge_base_error(
     root: &Path,
     base: &str,
-    merge_base_stderr: &[u8],
+    merge_base: &std::process::Output,
     git_timeout: Option<Duration>,
 ) -> CoreError {
-    let stderr = String::from_utf8_lossy(merge_base_stderr);
+    let stderr = String::from_utf8_lossy(&merge_base.stderr);
     if git_stderr_names_object_damage(&stderr) {
-        let reason = git_reason_line(merge_base_stderr)
+        let reason = git_reason_line(&merge_base.stderr)
             .map(|reason| format!("{reason}. "))
             .unwrap_or_default();
         return CoreError::message(format!(
@@ -307,7 +308,7 @@ fn no_worktree_merge_base_error(
     }
     // Only a `rev-parse` that ran and answered "no" proves an unresolvable
     // HEAD; a probe that cannot complete proves nothing, so it keeps the
-    // no-merge-base diagnosis below rather than asserting an unborn branch.
+    // classifications below rather than asserting an unborn branch.
     let head_proven_unresolvable = matches!(
         crate::git::run_git_output_with_deadline(
             root,
@@ -321,6 +322,25 @@ fn no_worktree_merge_base_error(
             "the working-tree diff from `{base}` cannot start: HEAD does not resolve to a commit \
              (HEAD may be unborn or point at a missing branch; the analysis did not run). Commit \
              the working tree or check out an existing branch, then re-run."
+        ));
+    }
+    // Git's genuine no-merge-base result is exit 1 without a message — a
+    // shallow clone and unrelated histories both answer this way — where a
+    // refusal answers another nonzero exit with a `fatal:`/`error:` line
+    // (the same split the ref probes use in
+    // [`unreadable_repository_message`]).
+    let genuine_no_merge_base = merge_base.status.code() == Some(1)
+        && stderr.trim().is_empty()
+        && String::from_utf8_lossy(&merge_base.stdout)
+            .trim()
+            .is_empty();
+    if !genuine_no_merge_base {
+        let reason = git_reason_line(&merge_base.stderr)
+            .map(|reason| format!("{reason}. "))
+            .unwrap_or_default();
+        return CoreError::message(format!(
+            "the working-tree diff from `{base}` cannot start: \
+             {reason}{CORRECT_NAMED_REPOSITORY_FILE_REPAIR}"
         ));
     }
     let (diagnosis, _) = no_merge_base_diagnosis(root, base, "HEAD", git_timeout);
@@ -526,6 +546,12 @@ fn message_for_git_root_probe(probe: GitRootProbe, root: &Path) -> Option<String
 const OBJECT_DAMAGE_REPAIR: &str = "Git reports a damaged object store; run `git fsck`, restore \
     the missing objects (for example `git fetch`), then re-run.";
 
+/// The generic repair when Git failed for a reason that names repository
+/// state the user must correct, shared by the ref-probe failure text and the
+/// working-tree origin failure (#7076) so both name one repair.
+const CORRECT_NAMED_REPOSITORY_FILE_REPAIR: &str = "If Git names a config or ref file, correct or restore it (`.git/config`, `.git/packed-refs`); \
+     `git fsck` checks the object store only. Then re-run.";
+
 /// Whether a `fatal:`/`error:` line of Git's stderr reports a damaged object
 /// store. Anchored to those lines so a path or branch that merely contains
 /// "corrupt" does not read as damage.
@@ -613,8 +639,7 @@ fn unreadable_repository_message(root: &Path, output: &std::process::Output) -> 
         "Repair the object store: run `git fsck`, restore the missing objects (for example \
          `git fetch`), then re-run."
     } else {
-        "If Git names a config or ref file, correct or restore it (`.git/config`, \
-         `.git/packed-refs`); `git fsck` checks the object store only. Then re-run."
+        CORRECT_NAMED_REPOSITORY_FILE_REPAIR
     };
     Some(format!(
         "Git could not read the repository at `{}` (the analysis did not run): {reason}. \
@@ -3200,6 +3225,8 @@ mod tests {
         let dir = unique_fixture_root("worktree-damaged-store")?;
         ignore_remove_dir_all(&dir);
         init_git_repo(&dir, "main")?;
+        // The missing object below must stay a loose file, never packed.
+        run_git_checked(&dir, &["config", "gc.auto", "0"])?;
         fs::write(dir.join("a.txt"), "a\n")?;
         run_git_checked(&dir, &["add", "."])?;
         run_git_checked(&dir, &["commit", "-m", "A"])?;
@@ -3236,6 +3263,50 @@ mod tests {
         assert!(
             !err.contains("unrelated histories"),
             "damage must not be diagnosed as unrelated histories, got: {err}"
+        );
+
+        ignore_remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn worktree_load_with_cyclic_replace_preserves_git_refusal() -> std::io::Result<()> {
+        // #7076 review: only Git's genuine no-merge-base result (exit 1
+        // without a message) takes the unrelated-histories diagnosis. A
+        // refusal such as cyclic `refs/replace` (exit 128) must preserve
+        // Git's own reason with the named-file repair: no `--base` repair
+        // can fix a replace cycle.
+        let dir = unique_fixture_root("worktree-cyclic-replace")?;
+        ignore_remove_dir_all(&dir);
+        init_git_repo(&dir, "main")?;
+        fs::write(dir.join("a.txt"), "a\n")?;
+        run_git_checked(&dir, &["add", "."])?;
+        run_git_checked(&dir, &["commit", "-m", "A"])?;
+        run_git_checked(&dir, &["checkout", "--quiet", "-b", "feature"])?;
+        fs::write(dir.join("b.txt"), "b\n")?;
+        run_git_checked(&dir, &["add", "."])?;
+        run_git_checked(&dir, &["commit", "--quiet", "-m", "F"])?;
+        run_git_checked(&dir, &["checkout", "--quiet", "main"])?;
+        fs::write(dir.join("c.txt"), "c\n")?;
+        run_git_checked(&dir, &["add", "."])?;
+        run_git_checked(&dir, &["commit", "--quiet", "-m", "B"])?;
+        run_git_checked(&dir, &["checkout", "--quiet", "feature"])?;
+
+        let fork = run_git_checked(&dir, &["rev-parse", "main~1"])?;
+        let tip = run_git_checked(&dir, &["rev-parse", "feature"])?;
+        run_git_checked(&dir, &["replace", fork.trim(), tip.trim()])?;
+        run_git_checked(&dir, &["replace", tip.trim(), fork.trim()])?;
+        run_git_checked(&dir, &["merge-base", "main", "feature"])
+            .expect_err("cyclic replace refs must refuse merge-base");
+        let err = load_worktree_diff(&dir, Some("main"), None)
+            .expect_err("a refused merge-base has no worktree diff origin");
+        assert!(
+            err.contains("replace depth") && err.contains("correct or restore"),
+            "a refusal must preserve Git's reason with the named-file repair, got: {err}"
+        );
+        assert!(
+            !err.contains("unrelated histories"),
+            "a refusal must not be diagnosed as unrelated histories, got: {err}"
         );
 
         ignore_remove_dir_all(&dir);

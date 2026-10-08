@@ -5,5 +5,7 @@
   changes, so a shallow clone, an orphan branch, or an unborn HEAD could exit
   0 with findings on code the user never touched. The run now refuses with
   the committed path's cause and repair (the shallow-clone unshallow route,
-  the unrelated-histories `--base` route, or the unborn-HEAD route) and an
-  `analysis_failed` JSON refusal with no findings (#7076).
+  the unrelated-histories `--base` route, or the unborn-HEAD route), keeps
+  Git's own reason with the object-store or named-file repair when
+  `merge-base` itself is refused, and emits an `analysis_failed` JSON refusal
+  with no findings (#7076).
