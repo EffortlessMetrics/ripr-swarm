@@ -542,6 +542,54 @@ rule only for an assertion whose context was admitted.
    defeats (`RevealOutcome::owner_pin_credited`). The finding may then
    read `exposed`; no other family or oracle gains credit (the
    #6579 whole-object effect-observer gap is unchanged).
+7. Pins equal to an operand (#7077). An exact pin on a constructed field
+   cannot notice the field replaced by one of its operands when, for the
+   pinned input, the field equals that operand. The changed initializer is
+   `f: a <op> b` with two distinct plain identifier operands and one binary
+   operator, and both operands are established primitive, so the dropped
+   operator is a built-in one: a parameter of a primitive type, a `let`
+   annotated with one, a numeric or bool literal, an arithmetic
+   combination of established names and literals with the accepted operators
+   and `as` casts to primitives, or a call whose every same-named
+   function in the index declares one bare primitive return (optionally
+   behind one reference). Anything else — a string, char literal or block
+   comment anywhere in the owner body, a callee missing from or ambiguous
+   in the index, a non-primitive return, a binding that is not established — keeps the
+   credit: a custom type can overload the operator, and an overloaded
+   operator may carry side effects that assertions on other fields
+   observe (review of #7084). A `let` that rebinds a primitive-typed
+   parameter shadows it: the name is not established up front, and the
+   rebind must prove primitive itself (its own initializer may still
+   refer to the parameter's value before the rebind). A sibling initializer of the same struct
+   literal is `g: a` (or
+   the shorthand `a`). A related test binds `q` once, straight from a call
+   to the owner (`let q = quote(..)`; a second `let q` may shadow it and
+   refuses), and holds both `assert_eq!(q.f, v)` and `assert_eq!(q.g, v)`
+   with the same literal `v` (an integer with digit separators ignored, a
+   string, a char or a bool; a name or call may differ between the two
+   pins and refuses). For that input `f` equals `a`, so the mutant `f: a`
+   passes those pins. When every exact pin on `f` in every
+   related test is paired this way with the same sibling, the
+   field-construction finding's discriminate stage reads weak with the code
+   `field_pinned_equal_to_operand`, which names the operand the tests never
+   vary, and that summary is the finding's missing evidence. Other mutants
+   of the initializer (`a * b` to `a + b` with `b == 1`) may still be
+   caught; the downgrade claims only the dropped operand. Any other mention
+   of `f` in a related test (a pin with a custom message, another assertion
+   macro, a value read out of the result, a second receiver pinning another
+   value) keeps the credit. So does a related test that reaches the owner (it
+   names the owner, or is related by a direct or helper owner call) without
+   naming `f` (whole-struct equality, a snapshot, a helper that asserts), and a
+   pinning test with a condition, match, loop, closure, early exit or `?`,
+   where a pin may not run. A pinning test must hold only receiver bindings
+   that are a bare owner call (no chained transform such as
+   `.with_coupon(..)`) and assertions that call nothing and read receivers
+   through plain fields: a helper inside an assertion, a
+   whole-result check (`assert_eq!(q, expected)`, a method call, a helper
+   such as `check_quote(&q)`), a second owner result, an attribute such as
+   `#[cfg(..)]`, or the owner named in an assertion keeps the credit.
+   Anything else ripr cannot read (a nested expression, a repeated
+   initializer text) keeps it too.
 
 ### Bool-owner pins
 
@@ -1071,6 +1119,8 @@ assertions. This repair shares the existing callback without that larger migrati
   confirmation signals behind the family, oracle-kind and owner-binding
   defeats. `analyze_related_assertions` applies shared context before matching
   or credit and preserves refused assertions only as zero-oracle relations; `file_imports_own_item`; `::`-rooted `use` paths.
+- `crates/ripr/src/analysis/classify/operand_pin.rs`: rule 7's
+  operand-only pin, applied in `classifier/evidence.rs`.
 - `crates/ripr/src/analysis/classifier/evidence.rs`: establishes the pin
   once per probe and supplies the shared context-admission callback.
 - `crates/ripr/src/analysis/classifier/finding.rs` and `classify/decision.rs`:

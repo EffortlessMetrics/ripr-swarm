@@ -6,9 +6,10 @@ use crate::analysis::classify::{
     chain_forwards_to_observed_hops, chain_passes_effect_target_to_observed_hops, classify,
     confidence_score, contains_as_whole_word, current_path_witness,
     has_same_test_boundary_oracle_pairing, helper_only_reach,
-    infection_evidence_with_boundary_input, local_flow_sinks, oracle_crediting_relations,
-    owner_may_be_reached_unseen, package_prefix, propagation_evidence_with_witness, reach_evidence,
-    reveal_outcome, same_test_pairing_missing_summary, signature_parameters,
+    infection_evidence_with_boundary_input, local_flow_sinks, operand_only_pin,
+    oracle_crediting_relations, owner_may_be_reached_unseen, package_prefix,
+    propagation_evidence_with_witness, reach_evidence, reveal_outcome,
+    same_test_pairing_missing_summary, signature_parameters,
 };
 use crate::analysis::facts::{FunctionSummary, OracleFact, RustIndex, TestSummary};
 use crate::domain::*;
@@ -499,6 +500,25 @@ impl ClassifiedProbeEvidence {
                 Confidence::Medium,
                 "Discriminator unconfirmed: no field-value assertion observes the constructed field",
             )
+        } else {
+            discriminate
+        };
+        // #7077: an exact pin on the field is no discriminator when every
+        // test that pins it also pins a sibling field, bound to one operand,
+        // to the same value: the field equals that operand there. Both
+        // operands must be established primitive, so the dropped operator cannot
+        // be an overloaded call with side effects (#7084 review).
+        let discriminate = if matches!(context.probe.family, ProbeFamily::FieldConstruction)
+            && discriminate.state == StageState::Yes
+            && let Some(owner) = context.owner_fn
+            && let Some(pin) = operand_only_pin(
+                &context.probe.expression,
+                &owner.name,
+                owner.body.as_str(),
+                &context.related_tests,
+                context.index,
+            ) {
+            StageEvidence::new(StageState::Weak, Confidence::Medium, pin.summary())
         } else {
             discriminate
         };
