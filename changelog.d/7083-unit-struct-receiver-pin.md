@@ -11,6 +11,7 @@
   `IntoFuture::into_future(self)` runs first, so a wrong default passed the
   test while ripr read `exposed` (#7083).
 - The same holds for `Iterator`'s by-value comparisons (`eq`, `ne`, `lt`,
-  `le`, `gt`, `ge`, `cmp`, `partial_cmp`, `is_partitioned`): a trait default
-  of that name reached through an iterator type no longer reads `exposed`
-  (#7083).
+  `le`, `gt`, `ge`, `cmp`, `partial_cmp`): a trait default of that name
+  reached through an iterator type no longer reads `exposed` (#7083).
+  `is_partitioned` is excluded: it is still unstable on the supported
+  toolchain, so the name can only spell a custom default and stays credited.
