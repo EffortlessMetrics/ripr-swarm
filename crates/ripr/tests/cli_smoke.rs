@@ -4655,6 +4655,156 @@ fn agent_card_hands_off_one_seam_as_the_default_repair_card()
     Ok(())
 }
 
+/// #7179: nested same-kind spans bind the inner (most specific) seam only.
+/// `main` holds `(amount > 10) == flag`; the `journey` branch changes the
+/// inner comparison only (`> 20`). The extractor emits two predicate
+/// boundaries for one owner (outer lines 2..=3, inner line 2) and the
+/// analysis emits exactly one finding on the inner comparison — which
+/// containment alone would bind to both seams. The inner card carries the
+/// finding's witness; the outer card carries none.
+#[test]
+fn agent_card_nested_spans_bind_inner_witness_only() -> Result<(), Box<dyn std::error::Error>> {
+    let root = unique_temp_workspace("agent-card-nested-span");
+    let out_dir = unique_temp_workspace("agent-card-nested-span-pilot");
+    std::fs::create_dir_all(root.join("src"))?;
+    std::fs::create_dir_all(root.join("tests"))?;
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"nested_seam_fixture\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\n[lib]\nname = \"nested_seam_fixture\"\npath = \"src/lib.rs\"\n",
+    )?;
+    std::fs::write(
+        root.join("src/lib.rs"),
+        "pub fn check_flag(amount: i32, flag: bool) -> &'static str {\n    if (amount > 10)\n        == flag\n    {\n        \"yes\"\n    } else {\n        \"no\"\n    }\n}\n",
+    )?;
+    std::fs::write(
+        root.join("tests/check.rs"),
+        "use nested_seam_fixture::check_flag;\n\n#[test]\nfn below_threshold_is_no() {\n    assert_eq!(check_flag(5, false), \"no\");\n}\n",
+    )?;
+    run_git(&root, &["-c", "init.defaultBranch=main", "init", "-q"])?;
+    run_git(&root, &["config", "user.name", "ripr fixture"])?;
+    run_git(&root, &["config", "user.email", "fixture@ripr.invalid"])?;
+    run_git(&root, &["config", "core.autocrlf", "false"])?;
+    run_git(&root, &["add", "."])?;
+    run_git(&root, &["commit", "-qm", "base predicate"])?;
+    run_git(&root, &["checkout", "-q", "-b", "journey"])?;
+    std::fs::write(
+        root.join("src/lib.rs"),
+        "pub fn check_flag(amount: i32, flag: bool) -> &'static str {\n    if (amount > 20)\n        == flag\n    {\n        \"yes\"\n    } else {\n        \"no\"\n    }\n}\n",
+    )?;
+    run_git(&root, &["add", "."])?;
+    run_git(&root, &["commit", "-qm", "inner boundary only"])?;
+
+    let root_arg = root.display().to_string();
+    // Setup: the inner-only diff yields exactly one finding on the inner
+    // comparison — without that premise the bind assertions prove nothing.
+    let check = run_ripr(&["check", "--root", &root_arg, "--format", "json"]);
+    assert_success(&check);
+    let check_stdout = String::from_utf8_lossy(&check.stdout);
+    let check_json: serde_json::Value = serde_json::from_str(&check_stdout)?;
+    let findings = check_json["findings"]
+        .as_array()
+        .ok_or("check output omitted findings")?;
+    assert_eq!(findings.len(), 1, "one inner finding: {check_json}");
+    let finding = &findings[0];
+    assert_eq!(finding["probe"]["family"], "predicate", "{finding}");
+    assert_eq!(finding["probe"]["line"], 2, "{finding}");
+    assert_eq!(finding["probe"]["expression"], "amount > 20", "{finding}");
+    let finding_id = finding["id"]
+        .as_str()
+        .ok_or("the inner finding omitted its id")?
+        .to_string();
+
+    // Setup: two nested predicate boundaries for one owner; the test
+    // discovers their content-addressed ids instead of hardcoding them.
+    let pilot = run_ripr(&[
+        "pilot",
+        "--root",
+        &root_arg,
+        "--out",
+        &out_dir.display().to_string(),
+        "--mode",
+        "instant",
+    ]);
+    assert_success(&pilot);
+    let exposure: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(
+        out_dir.join("repo-exposure.json"),
+    )?)?;
+    let seams = exposure["seams"]
+        .as_array()
+        .ok_or("repo exposure omitted seams")?;
+    let boundaries: Vec<&serde_json::Value> = seams
+        .iter()
+        .filter(|seam| seam["kind"] == "predicate_boundary")
+        .collect();
+    assert_eq!(boundaries.len(), 2, "nested pair: {exposure}");
+    let mut inner_id = None;
+    let mut outer_id = None;
+    for seam in &boundaries {
+        let span = (seam["line"].as_u64(), seam["end_line"].as_u64());
+        let id = seam["seam_id"].as_str().ok_or("a seam omitted its id")?;
+        match span {
+            (Some(2), Some(2)) => inner_id = Some(id.to_string()),
+            (Some(2), Some(3)) => outer_id = Some(id.to_string()),
+            _ => return Err(format!("unexpected nested span {span:?}: {seam}").into()),
+        }
+    }
+    let (Some(inner_id), Some(outer_id)) = (inner_id, outer_id) else {
+        return Err(format!("nested spans must be lines 2..=2 and 2..=3: {exposure}").into());
+    };
+
+    // The inner seam's card carries the finding's witness.
+    let inner = run_ripr(&[
+        "agent",
+        "card",
+        "--root",
+        &root_arg,
+        "--seam-id",
+        &inner_id,
+        "--json",
+    ]);
+    assert_success(&inner);
+    let inner_json: serde_json::Value =
+        serde_json::from_str(&String::from_utf8_lossy(&inner.stdout))?;
+    let inner_fix = inner_json["detail_references"]
+        .as_array()
+        .ok_or("inner card omitted detail_references")?
+        .iter()
+        .find(|reference| reference["family"] == "fix_instruction")
+        .ok_or("inner card omitted its fix instruction")?;
+    assert_eq!(inner_fix["state"], "current", "{inner_json}");
+    assert!(
+        inner_fix["route"]
+            .as_str()
+            .is_some_and(|route| route.contains(&finding_id)),
+        "the inner witness must name the inner finding: {inner_json}"
+    );
+
+    // The outer seam never credits the inner finding's witness.
+    let outer = run_ripr(&[
+        "agent",
+        "card",
+        "--root",
+        &root_arg,
+        "--seam-id",
+        &outer_id,
+        "--json",
+    ]);
+    assert_success(&outer);
+    let outer_json: serde_json::Value =
+        serde_json::from_str(&String::from_utf8_lossy(&outer.stdout))?;
+    let outer_fix = outer_json["detail_references"]
+        .as_array()
+        .ok_or("outer card omitted detail_references")?
+        .iter()
+        .find(|reference| reference["family"] == "fix_instruction")
+        .ok_or("outer card omitted its fix instruction")?;
+    assert_eq!(outer_fix["state"], "unavailable", "{outer_json}");
+
+    std::fs::remove_dir_all(&out_dir)?;
+    std::fs::remove_dir_all(root)?;
+    Ok(())
+}
+
 /// #5005: the same seam at the same head mints the same `repair_card_id`
 /// and `complete_evidence_digest` from two equivalent checkout roots. The
 /// card content-hashes the canonical packet envelope; before the portable

@@ -35,6 +35,7 @@ pub(super) fn seam_repair_card(
         &snapshot.findings,
         entry,
         readiness.canonical_gap_id.as_deref(),
+        &snapshot.classified_seams,
     ) {
         Some((finding_id, witness)) => (Some(finding_id), Some(witness)),
         None => (None, None),
@@ -278,6 +279,283 @@ mod tests {
         }
         if !text.contains("Next action: none (route gate closed)") {
             return Err("a closed route gate must be named as closed".to_string());
+        }
+        Ok(())
+    }
+
+    /// #7179: a finding inside nested same-kind spans binds the inner seam's
+    /// editor card only — the snapshot's own classified seams are the
+    /// candidate set, so the outer seam's card carries no witness while the
+    /// inner card names the finding, exactly like the CLI handoff.
+    #[test]
+    fn nested_spans_bind_inner_editor_card_only() -> Result<(), String> {
+        use crate::analysis::seams::{
+            ExpectedSink, RepoSeam, RequiredDiscriminator, SeamGripClass, SeamKind, SeamSpan,
+        };
+        use crate::analysis::test_grip_evidence::{
+            RelatedTestGrip, RelationConfidence, RelationReason, TestGripEvidence,
+            TestTargetEvidence,
+        };
+        use crate::lsp::state::RefreshMetadata;
+
+        fn nested_entry(byte_offset: usize, expression: &str, span: SeamSpan) -> ClassifiedSeam {
+            let seam = RepoSeam::new(
+                "src/lib.rs",
+                "src/lib.rs::discounted_total",
+                SeamKind::PredicateBoundary,
+                byte_offset,
+                2,
+                expression,
+                RequiredDiscriminator::BoundaryValue {
+                    description: expression.to_string(),
+                },
+                ExpectedSink::ReturnValue,
+            )
+            .with_span(span);
+            let seam_id = seam.id().clone();
+            ClassifiedSeam {
+                seam,
+                evidence: TestGripEvidence {
+                    seam_id,
+                    related_tests: vec![std::sync::Arc::new(RelatedTestGrip {
+                        test_name: "below_threshold_has_no_discount".to_string(),
+                        file: std::path::PathBuf::from("tests/pricing.rs"),
+                        line: 120,
+                        test_target: Some(TestTargetEvidence::fixture(
+                            "below_threshold_has_no_discount",
+                            std::path::Path::new("tests/pricing.rs"),
+                            120,
+                        )),
+                        oracle_kind: crate::domain::OracleKind::ExactValue,
+                        oracle_strength: crate::domain::OracleStrength::Strong,
+                        evidence_summary: "exact value assertion".to_string(),
+                        relation_reason: RelationReason::DirectOwnerCall,
+                        relation_confidence: RelationConfidence::High,
+                    })],
+                    reach: crate::domain::StageEvidence::new(
+                        crate::domain::StageState::Yes,
+                        crate::domain::Confidence::Medium,
+                        "test stage",
+                    ),
+                    activate: crate::domain::StageEvidence::new(
+                        crate::domain::StageState::Yes,
+                        crate::domain::Confidence::Medium,
+                        "test stage",
+                    ),
+                    propagate: crate::domain::StageEvidence::new(
+                        crate::domain::StageState::Yes,
+                        crate::domain::Confidence::Medium,
+                        "test stage",
+                    ),
+                    observe: crate::domain::StageEvidence::new(
+                        crate::domain::StageState::Yes,
+                        crate::domain::Confidence::Medium,
+                        "test stage",
+                    ),
+                    discriminate: crate::domain::StageEvidence::new(
+                        crate::domain::StageState::No,
+                        crate::domain::Confidence::Medium,
+                        "test stage",
+                    ),
+                    observed_values: Vec::new(),
+                    missing_discriminators: Vec::new(),
+                    statically_contradicted_related_tests: 0,
+                    new_test_target: None,
+                },
+                class: SeamGripClass::WeaklyGripped,
+            }
+        }
+
+        let outer = nested_entry(
+            20,
+            "(amount > 20)\n        == flag",
+            SeamSpan {
+                start_line: 2,
+                start_column: 8,
+                end_line: 3,
+                end_column: 16,
+            },
+        );
+        let inner = nested_entry(
+            21,
+            "amount > 20",
+            SeamSpan {
+                start_line: 2,
+                start_column: 9,
+                end_line: 2,
+                end_column: 15,
+            },
+        );
+        let producer_id =
+            "gap:rust:src/lib.rs:discounted_total:predicate_boundary:predicate:amount==20";
+        // One weakly-exposed producer-gap finding with an oracle row, so a
+        // bound witness is observable and a wrong bind would fail this test.
+        // (`mcp::gaps::test_finding` is module-private; this is its shape.)
+        let mut finding = {
+            use crate::domain::{
+                ActivationEvidence, Confidence, DeltaKind, ExposureClass, Finding,
+                FindingCanonicalGap, OracleKind, OracleStrength, Probe, ProbeFamily, ProbeId,
+                RelatedTest, RevealEvidence, RiprEvidence, SourceLocation, StageEvidence,
+                StageState,
+            };
+            let stage = || StageEvidence::new(StageState::Unknown, Confidence::Unknown, "test");
+            Finding {
+                id: "finding:test:1".to_string(),
+                canonical_gap: Some(FindingCanonicalGap {
+                    id: producer_id.to_string(),
+                    language: "rust".to_string(),
+                    file: "src/lib.rs".to_string(),
+                    owner: "discounted_total".to_string(),
+                    behavior_kind: "predicate_boundary".to_string(),
+                    probe_kind: "predicate".to_string(),
+                    normalized_discriminator: "amount==20".to_string(),
+                }),
+                probe: Probe {
+                    id: ProbeId("probe:test:1".to_string()),
+                    location: SourceLocation::new("src/lib.rs", 2, 5),
+                    owner: None,
+                    family: ProbeFamily::Predicate,
+                    delta: DeltaKind::Control,
+                    before: None,
+                    after: Some("amount > 20".to_string()),
+                    expression: "amount > 20".to_string(),
+                    expected_sinks: Vec::new(),
+                    required_oracles: Vec::new(),
+                },
+                class: ExposureClass::WeaklyExposed,
+                ripr: RiprEvidence {
+                    reach: stage(),
+                    infect: stage(),
+                    propagate: stage(),
+                    reveal: RevealEvidence {
+                        observe: stage(),
+                        discriminate: stage(),
+                    },
+                },
+                confidence: 0.5,
+                evidence: Vec::new(),
+                missing: Vec::new(),
+                flow_sinks: Vec::new(),
+                activation: ActivationEvidence::default(),
+                stop_reasons: Vec::new(),
+                related_tests_matched_total: Some(1),
+                related_tests: vec![RelatedTest {
+                    name: "exact_boundary_gets_the_discount".to_string(),
+                    file: std::path::PathBuf::from("tests/pricing.rs"),
+                    line: 12,
+                    oracle: Some("assert_eq!(discounted_total(100, 100), 90)".to_string()),
+                    oracle_kind: OracleKind::ExactValue,
+                    oracle_strength: OracleStrength::Strong,
+                    relation_reason: None,
+                    relation_confidence: None,
+                    miss: None,
+                }],
+                recommended_next_step: None,
+                language: Some(crate::domain::LanguageId::Rust),
+                language_status: None,
+                owner_kind: None,
+                static_limit_kind: None,
+                changed_sink: None,
+                observed_sink: None,
+                oracle_alignment: None,
+                alignment_reason: None,
+                source_currentness: crate::domain::SourceCurrentness::CandidateCurrent,
+            }
+        };
+        finding.probe.location.line = 2;
+
+        // The editor card binds the live repository head and the working-tree
+        // currentness probe, so the snapshot roots at a committed fixture repo.
+        let root = std::env::temp_dir().join(format!(
+            "ripr-lsp-nested-card-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_err(|error| format!("clock error: {error}"))?
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&root)
+            .map_err(|error| format!("fixture directory failed: {error}"))?;
+        std::fs::write(root.join("README.md"), "nested fixture\n")
+            .map_err(|error| format!("fixture file failed: {error}"))?;
+        crate::testing::fixture_git::fixture_git_ok(&root, &["init", "-q"])?;
+        crate::testing::fixture_git::fixture_git_ok(
+            &root,
+            &["config", "user.name", "ripr fixture"],
+        )?;
+        crate::testing::fixture_git::fixture_git_ok(
+            &root,
+            &["config", "user.email", "fixture@ripr.invalid"],
+        )?;
+        crate::testing::fixture_git::fixture_git_ok(&root, &["add", "."])?;
+        crate::testing::fixture_git::fixture_git_ok(&root, &["commit", "-qm", "fixture"])?;
+        let snapshot = AnalysisSnapshot {
+            root: root.clone(),
+            rust_consumed_sources: Default::default(),
+            input_identity: None,
+            base: None,
+            mode: crate::app::Mode::Draft,
+            refresh: RefreshMetadata::default(),
+            findings: vec![finding],
+            analysis_outcome: None,
+            diagnostic_profile: crate::config::LspDiagnosticProfile::Full,
+            classified_seams: vec![outer, inner],
+            gap_artifacts: Vec::new(),
+            gap_artifact_rejections: Vec::new(),
+            harness_facts: super::super::state::HarnessFactsOnSnapshot::NotRegistered,
+            diagnostics_by_uri: std::collections::BTreeMap::new(),
+            diagnostic_uri_index: None,
+            delivery_selection: None,
+            seams_deferred: false,
+            partial_scope: None,
+            component_outcomes: Vec::new(),
+            out_of_scope_test_file_findings: 0,
+        };
+        let inner_card = seam_repair_card(&snapshot.classified_seams[1], &snapshot);
+        let outer_card = seam_repair_card(&snapshot.classified_seams[0], &snapshot);
+        crate::testing::fixture_git::remove_fixture_tree(&root)?;
+
+        let inner_card =
+            inner_card.ok_or_else(|| "the inner seam must project an editor card".to_string())?;
+        if inner_card.subject.finding_id.as_deref() != Some("finding:test:1") {
+            return Err(format!(
+                "the inner card must name the nested finding, got {:?}",
+                inner_card.subject.finding_id
+            ));
+        }
+        let outer_card =
+            outer_card.ok_or_else(|| "the outer seam must project an editor card".to_string())?;
+        if outer_card.subject.finding_id.is_some() {
+            return Err(format!(
+                "the outer card must name no finding, got {:?}",
+                outer_card.subject.finding_id
+            ));
+        }
+        for (name, card, expected) in [
+            (
+                "inner",
+                &inner_card,
+                crate::domain::RepairCardDetailState::Current,
+            ),
+            (
+                "outer",
+                &outer_card,
+                crate::domain::RepairCardDetailState::Unavailable,
+            ),
+        ] {
+            let fix = card
+                .detail_references
+                .iter()
+                .find(|reference| {
+                    reference.family == crate::domain::RepairCardDetailFamily::FixInstruction
+                })
+                .ok_or_else(|| format!("the {name} card omitted its fix instruction"))?;
+            if fix.state != expected {
+                return Err(format!(
+                    "the {name} fix instruction must be {expected:?}, got {:?}",
+                    fix.state
+                ));
+            }
         }
         Ok(())
     }

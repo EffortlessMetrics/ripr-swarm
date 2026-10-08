@@ -144,6 +144,7 @@ pub(crate) fn repair_card_for_entry(
     entry: &ClassifiedSeam,
     root: &Path,
     config: &RiprConfig,
+    candidate_seams: &[ClassifiedSeam],
 ) -> Result<RepairCardV1, AgentCardError> {
     let eligibility = repair_packet_eligibility(entry);
     let witness_pack = witness_for_seam(
@@ -151,6 +152,7 @@ pub(crate) fn repair_card_for_entry(
         config,
         entry,
         eligibility.readiness.canonical_gap_id.as_deref(),
+        candidate_seams,
     )
     .map_err(AgentCardError::witness_unavailable)?;
     let (finding_id, witness) = match witness_pack {
@@ -582,6 +584,7 @@ fn witness_for_seam(
     config: &RiprConfig,
     entry: &ClassifiedSeam,
     canonical_gap_id: Option<&str>,
+    candidate_seams: &[ClassifiedSeam],
 ) -> Result<Option<(String, DiagnosticWitness)>, String> {
     // The expensive workspace check only feeds the canonical-gap match; with
     // no gap id the match cannot bind, so skip the analysis entirely.
@@ -601,6 +604,7 @@ fn witness_for_seam(
         &output.findings,
         entry,
         canonical_gap_id,
+        candidate_seams,
     ))
 }
 
@@ -619,7 +623,9 @@ fn witness_for_seam(
 /// never carry the content-hash id (#7162) — and only when exactly one
 /// finding matches: sibling findings that share the shape stay ambiguous
 /// and bind nothing rather than crediting the seam with another seam's
-/// finding.
+/// finding. A match additionally requires this seam to be the most specific
+/// candidate naming the finding: a finding inside nested same-kind spans
+/// belongs to the inner seam alone, never the containing seam (#7179).
 ///
 /// Binding is not projection: a bound finding does not always project a
 /// witness (a fully exposed finding is deliberately never relabeled as a
@@ -629,6 +635,7 @@ pub(crate) fn finding_for_seam<'a>(
     findings: &'a [crate::domain::Finding],
     entry: &ClassifiedSeam,
     canonical_gap_id: Option<&str>,
+    candidate_seams: &[ClassifiedSeam],
 ) -> Option<&'a crate::domain::Finding> {
     // The content-hash id is the headline-eligibility ticket, not the finding
     // locator: only seams that carry one bind a finding, so the expensive
@@ -646,6 +653,12 @@ pub(crate) fn finding_for_seam<'a>(
     let mut matches = findings.iter().filter(|finding| {
         finding.canonical_gap.as_ref().is_some_and(|gap| {
             producer_gap_names_seam(gap, &entry.seam, finding.probe.location.line)
+                && seam_is_most_specific_for_finding(
+                    gap,
+                    &entry.seam,
+                    finding.probe.location.line,
+                    candidate_seams,
+                )
         })
     });
     let hit = matches.next()?;
@@ -664,8 +677,9 @@ pub(crate) fn witness_from_findings(
     findings: &[crate::domain::Finding],
     entry: &ClassifiedSeam,
     canonical_gap_id: Option<&str>,
+    candidate_seams: &[ClassifiedSeam],
 ) -> Option<(String, DiagnosticWitness)> {
-    let hit = finding_for_seam(findings, entry, canonical_gap_id)?;
+    let hit = finding_for_seam(findings, entry, canonical_gap_id, candidate_seams)?;
     DiagnosticWitness::from_finding(hit).map(|witness| (hit.id.clone(), witness))
 }
 
@@ -717,9 +731,10 @@ fn producer_gap_names_seam(gap: &FindingCanonicalGap, seam: &RepoSeam, probe_lin
 /// never names a seam. Same-line same-kind twins without spans still
 /// collide — a documented residual for finding-side refusal, not a silent
 /// promotion: the spanless twin keeps today's bind, it gains no new one.
-/// Nested same-kind spans (an inner comparison inside an outer multiline
-/// condition) also still collide: containment cannot pick most-specific
-/// without the candidate set (#7179).
+/// Nested same-kind spans also collide at this containment layer; the join
+/// resolves them by most-specific span in
+/// [`seam_is_most_specific_for_finding`], which has the candidate set
+/// containment alone cannot see (#7179).
 fn probe_line_names_seam(probe_line: usize, seam: &RepoSeam) -> bool {
     if probe_line == 0 {
         return false;
@@ -728,6 +743,36 @@ fn probe_line_names_seam(probe_line: usize, seam: &RepoSeam) -> bool {
         Some(span) => (span.start_line..=span.end_line).contains(&probe_line),
         None => seam.display_line() == probe_line,
     }
+}
+
+/// Whether `seam` is the most specific candidate naming this finding (#7179).
+/// A finding inside nested same-kind spans (an inner comparison inside an
+/// outer multiline condition) belongs to the inner seam alone: containment
+/// names every enclosing span, so the containing seam must not bind what a
+/// strictly nested candidate already names. Only strict span nesting refuses:
+/// a spanless seam keeps today's bind, an identical-span tie keeps both
+/// binds (the MCP fan-in refusal still drops that shared item), and a nested
+/// candidate that does not name this finding (a foreign file, owner, kind, or
+/// a probe line outside its span) is no competitor.
+fn seam_is_most_specific_for_finding(
+    gap: &FindingCanonicalGap,
+    seam: &RepoSeam,
+    probe_line: usize,
+    candidate_seams: &[ClassifiedSeam],
+) -> bool {
+    let Some(span) = seam.span() else {
+        return true;
+    };
+    !candidate_seams.iter().any(|candidate| {
+        let other = &candidate.seam;
+        let Some(other_span) = other.span() else {
+            return false;
+        };
+        let strictly_nested = other_span.start_line >= span.start_line
+            && other_span.end_line <= span.end_line
+            && (other_span.start_line, other_span.end_line) != (span.start_line, span.end_line);
+        strictly_nested && producer_gap_names_seam(gap, other, probe_line)
+    })
 }
 
 /// The portable workspace identity is producer-owned through the admitted
@@ -855,6 +900,54 @@ mod tests {
             },
             ExpectedSink::ReturnValue,
         ))
+    }
+
+    /// #7179: a nested same-kind pair — an outer multiline predicate
+    /// boundary spanning lines 2..=3 containing an inner boundary on line
+    /// 2, the shape a nested comparison (`if (amount > 20) == flag`)
+    /// extracts to. Same file/owner/kind; only the spans nest.
+    fn nested_boundary_entries() -> (ClassifiedSeam, ClassifiedSeam) {
+        let outer = weakly_gripped_entry_for_seam(
+            RepoSeam::new(
+                "src/pricing.rs",
+                "pricing::discounted_total",
+                SeamKind::PredicateBoundary,
+                20,
+                2,
+                "(amount > 20)\n        == flag",
+                RequiredDiscriminator::BoundaryValue {
+                    description: "(amount > 20) == flag".to_string(),
+                },
+                ExpectedSink::ReturnValue,
+            )
+            .with_span(crate::analysis::seams::SeamSpan {
+                start_line: 2,
+                start_column: 8,
+                end_line: 3,
+                end_column: 16,
+            }),
+        );
+        let inner = weakly_gripped_entry_for_seam(
+            RepoSeam::new(
+                "src/pricing.rs",
+                "pricing::discounted_total",
+                SeamKind::PredicateBoundary,
+                21,
+                2,
+                "amount > 20",
+                RequiredDiscriminator::BoundaryValue {
+                    description: "amount > 20".to_string(),
+                },
+                ExpectedSink::ReturnValue,
+            )
+            .with_span(crate::analysis::seams::SeamSpan {
+                start_line: 2,
+                start_column: 9,
+                end_line: 2,
+                end_column: 15,
+            }),
+        );
+        (outer, inner)
     }
 
     fn weakly_gripped_entry_for_seam(seam: RepoSeam) -> ClassifiedSeam {
@@ -1356,8 +1449,13 @@ mod tests {
             alignment_reason: None,
             source_currentness: crate::domain::SourceCurrentness::CandidateCurrent,
         };
-        if witness_from_findings(std::slice::from_ref(&finding), &entry, Some(&seam_gap_id))
-            .is_some()
+        if witness_from_findings(
+            std::slice::from_ref(&finding),
+            &entry,
+            Some(&seam_gap_id),
+            std::slice::from_ref(&entry),
+        )
+        .is_some()
         {
             return Err(format!(
                 "a producer-gap finding must not bind as the seam witness for gap id {seam_gap_id}"
@@ -1471,9 +1569,13 @@ mod tests {
         );
         // #7177: the probe line must fall on the seam (display line 88).
         finding.probe.location.line = entry.seam.display_line();
-        let (bound_id, _) =
-            witness_from_findings(std::slice::from_ref(&finding), &entry, Some(&seam_gap_id))
-                .ok_or_else(|| "a uniquely matching producer finding must bind".to_string())?;
+        let (bound_id, _) = witness_from_findings(
+            std::slice::from_ref(&finding),
+            &entry,
+            Some(&seam_gap_id),
+            std::slice::from_ref(&entry),
+        )
+        .ok_or_else(|| "a uniquely matching producer finding must bind".to_string())?;
         if bound_id != "finding:producer:1" {
             return Err(format!("bound the wrong finding: {bound_id}"));
         }
@@ -1487,7 +1589,14 @@ mod tests {
             "predicate",
         );
         twin.probe.location.line = entry.seam.display_line();
-        if witness_from_findings(&[finding, twin], &entry, Some(&seam_gap_id)).is_some() {
+        if witness_from_findings(
+            &[finding, twin],
+            &entry,
+            Some(&seam_gap_id),
+            std::slice::from_ref(&entry),
+        )
+        .is_some()
+        {
             return Err("ambiguous producer matches must bind no witness".to_string());
         }
         Ok(())
@@ -1510,8 +1619,13 @@ mod tests {
             "pricing::other_total",
             "predicate",
         );
-        if witness_from_findings(std::slice::from_ref(&finding), &entry, Some(&seam_gap_id))
-            .is_some()
+        if witness_from_findings(
+            std::slice::from_ref(&finding),
+            &entry,
+            Some(&seam_gap_id),
+            std::slice::from_ref(&entry),
+        )
+        .is_some()
         {
             return Err("a sibling owner's producer gap must not bind".to_string());
         }
@@ -1544,19 +1658,129 @@ mod tests {
             "predicate",
         );
         finding.probe.location.line = 12;
+        let twins = [first.clone(), second.clone()];
         if witness_from_findings(
             std::slice::from_ref(&finding),
             &second,
             Some(&second_gap_id),
+            &twins,
         )
         .is_none()
         {
             return Err("the seam at the finding line must bind".to_string());
         }
-        if witness_from_findings(std::slice::from_ref(&finding), &first, Some(&first_gap_id))
-            .is_some()
+        if witness_from_findings(
+            std::slice::from_ref(&finding),
+            &first,
+            Some(&first_gap_id),
+            &twins,
+        )
+        .is_some()
         {
             return Err("the twin seam off the finding line must not bind".to_string());
+        }
+        Ok(())
+    }
+
+    /// #7179: a finding inside nested same-kind spans binds the inner (most
+    /// specific) seam only. CLI, LSP, and MCP share this join, so the outer
+    /// seam never credits the inner finding's witness and the valid inner
+    /// bind is never lost to the MCP fan-in refusal.
+    #[test]
+    fn nested_spans_bind_inner_seam_only() -> Result<(), String> {
+        let (outer, inner) = nested_boundary_entries();
+        // Setup: containment alone names both spans — without the
+        // most-specific rule the outer bind below would succeed, so a green
+        // run proves the rule, not a fixture that never collided.
+        for (name, entry) in [("outer", &outer), ("inner", &inner)] {
+            let Some(span) = entry.seam.span() else {
+                return Err(format!("the {name} nested entry must carry a span"));
+            };
+            if !(span.start_line..=span.end_line).contains(&2) {
+                return Err(format!("the {name} nested span must contain line 2"));
+            }
+        }
+        let outer_gap_id = crate::analysis::canonical_gap::canonical_gap_identity(&outer)
+            .ok_or_else(|| "the outer seam must carry a canonical gap identity".to_string())?
+            .id;
+        let inner_gap_id = crate::analysis::canonical_gap::canonical_gap_identity(&inner)
+            .ok_or_else(|| "the inner seam must carry a canonical gap identity".to_string())?
+            .id;
+        let producer_id = "gap:rust:src/pricing.rs:pricing::discounted_total:predicate_boundary:predicate:amount==20";
+        if producer_id == outer_gap_id || producer_id == inner_gap_id {
+            return Err("the producer id must differ from both content-hash ids".to_string());
+        }
+        let mut finding = producer_gap_finding(
+            "finding:nested:1",
+            producer_id,
+            "src/pricing.rs",
+            "pricing::discounted_total",
+            "predicate",
+        );
+        finding.probe.location.line = 2;
+        let candidates = [outer.clone(), inner.clone()];
+        let (bound_id, _) = witness_from_findings(
+            std::slice::from_ref(&finding),
+            &inner,
+            Some(&inner_gap_id),
+            &candidates,
+        )
+        .ok_or_else(|| "the inner seam must bind the nested finding".to_string())?;
+        if bound_id != "finding:nested:1" {
+            return Err(format!("bound the wrong finding: {bound_id}"));
+        }
+        if witness_from_findings(
+            std::slice::from_ref(&finding),
+            &outer,
+            Some(&outer_gap_id),
+            &candidates,
+        )
+        .is_some()
+        {
+            return Err("the outer seam must not bind the inner finding".to_string());
+        }
+        Ok(())
+    }
+
+    /// #7179: an identical-span tie has no most-specific winner, so both
+    /// seams keep today's containment bind at this join — the documented
+    /// tie residual. The MCP fan-in refusal still drops that shared item
+    /// (`retain_unambiguous_item_bindings_drops_shared_items`); this test
+    /// pins the join half so a tie-behavior change fails loudly.
+    #[test]
+    fn identical_spans_keep_both_binds_for_mcp_refusal() -> Result<(), String> {
+        let (_, inner) = nested_boundary_entries();
+        let twin = weakly_gripped_entry_for_seam(inner.seam.clone());
+        let twin_gap_id = crate::analysis::canonical_gap::canonical_gap_identity(&twin)
+            .ok_or_else(|| "the twin seam must carry a canonical gap identity".to_string())?
+            .id;
+        let inner_gap_id = crate::analysis::canonical_gap::canonical_gap_identity(&inner)
+            .ok_or_else(|| "the inner seam must carry a canonical gap identity".to_string())?
+            .id;
+        let producer_id = "gap:rust:src/pricing.rs:pricing::discounted_total:predicate_boundary:predicate:amount==20";
+        let mut finding = producer_gap_finding(
+            "finding:tie:1",
+            producer_id,
+            "src/pricing.rs",
+            "pricing::discounted_total",
+            "predicate",
+        );
+        finding.probe.location.line = 2;
+        let candidates = [inner.clone(), twin.clone()];
+        for (name, entry, gap_id) in [
+            ("inner", &inner, &inner_gap_id),
+            ("twin", &twin, &twin_gap_id),
+        ] {
+            if witness_from_findings(
+                std::slice::from_ref(&finding),
+                entry,
+                Some(gap_id.as_str()),
+                &candidates,
+            )
+            .is_none()
+            {
+                return Err(format!("the {name} tied seam must keep its bind"));
+            }
         }
         Ok(())
     }
@@ -1585,8 +1809,13 @@ mod tests {
             "pricing::discounted_total",
             "predicate",
         );
-        let (bound_id, _) = witness_from_findings(&[produced, legacy], &entry, Some(&seam_gap_id))
-            .ok_or_else(|| "a content-hash match must bind".to_string())?;
+        let (bound_id, _) = witness_from_findings(
+            &[produced, legacy],
+            &entry,
+            Some(&seam_gap_id),
+            std::slice::from_ref(&entry),
+        )
+        .ok_or_else(|| "a content-hash match must bind".to_string())?;
         if bound_id != "finding:legacy:1" {
             return Err(format!("the legacy match must win, bound {bound_id}"));
         }

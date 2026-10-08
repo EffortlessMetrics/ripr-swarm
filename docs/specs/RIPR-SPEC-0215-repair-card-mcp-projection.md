@@ -192,15 +192,17 @@ and without execution authority (ADR 0022):
 - `crates/ripr/src/mcp/repair_card.rs::tests` — resource id parsing,
   fail-closed producer facts, the witness-bound shared card projection,
   refusal wire spellings, the shared-join binding rule (producer-shaped
-  binds, witnessless binds, unambiguous-claim retention), and the
-  owner-discrimination binding rule.
+  binds, witnessless binds, unambiguous-claim retention, nested-span
+  most-specific binds), and the owner-discrimination binding rule.
 - `crates/ripr/src/mcp/protocol.rs::tests` + `server_tests.rs` —
   descriptors, output schema, instructions, status surface lists, failure
   vocabulary, dispatch-edge rejections, and pre-refresh typed failures.
 - `crates/ripr/tests/mcp_sdk.rs`, `crates/ripr/tests/mcp_stdio.rs` —
   hosted wire interop controls, including the post-refresh
-  `get_repair_card_after_refresh_matches_cli_agent_card` success path and
-  the `resource_reads_match_tools_after_refresh` card tool/resource
+  `get_repair_card_after_refresh_matches_cli_agent_card` success path,
+  the `nested_spans_get_repair_card_binds_inner_seam` nested-span
+  most-specific bind (#7179), and the
+  `resource_reads_match_tools_after_refresh` card tool/resource
   parsed-document-equality control (#7145).
 
 ## Implementation Mapping

@@ -177,12 +177,12 @@ pub(crate) fn bind_snapshot_card_producers(
                 "retry with ripr_refresh; if the failure persists, run `ripr agent packet` in the repository",
             )
         })?;
-        for entry in inventory.classified {
-            let Some(item) = item_bound_by_seam(snapshot, &entry) else {
+        for entry in &inventory.classified {
+            let Some(item) = item_bound_by_seam(snapshot, entry, &inventory.classified) else {
                 continue;
             };
             let currentness = crate::app::repair_card_handoff::evidence_tree_currentness(
-                root, &entry,
+                root, entry,
             )
             .map_err(|error| {
                 AttemptFailure::new(
@@ -193,7 +193,7 @@ pub(crate) fn bind_snapshot_card_producers(
             })?;
             bindings.push(SeamCardBinding {
                 item_canonical_id: item.canonical_id.clone(),
-                seam: entry,
+                seam: entry.clone(),
                 currentness,
             });
         }
@@ -221,12 +221,17 @@ pub(crate) fn bind_snapshot_card_producers(
 /// credits this seam with another seam's item. Binding is not projection —
 /// the item binds even when the finding projects no witness, exactly like
 /// the CLI card whose witness is optional.
-fn item_bound_by_seam<'a>(snapshot: &'a Snapshot, entry: &ClassifiedSeam) -> Option<&'a GapItem> {
+fn item_bound_by_seam<'a>(
+    snapshot: &'a Snapshot,
+    entry: &ClassifiedSeam,
+    candidate_seams: &[ClassifiedSeam],
+) -> Option<&'a GapItem> {
     let readiness = repair_packet_eligibility(entry).readiness;
     let hit = finding_for_seam(
         &snapshot.findings,
         entry,
         readiness.canonical_gap_id.as_deref(),
+        candidate_seams,
     )?;
     snapshot.items.iter().find(|item| item.finding_id == hit.id)
 }
@@ -331,8 +336,15 @@ impl WorkspaceSession {
         // binding is honored only while this seam still binds this item. A
         // stale or owner-mismatched binding credits the seam with another
         // owner's item, so the read fails closed exactly like an unbound item
-        // instead of projecting a mis-attributed card.
-        let rebound = item_bound_by_seam(snapshot, entry);
+        // instead of projecting a mis-attributed card. The retained bindings
+        // are the read-time candidate set, so the most-specific-span rule
+        // (#7179) re-verifies under the same authority it bound under.
+        let rebound_candidates: Vec<ClassifiedSeam> = producers
+            .bindings
+            .iter()
+            .map(|retained| retained.seam.clone())
+            .collect();
+        let rebound = item_bound_by_seam(snapshot, entry, &rebound_candidates);
         if rebound.is_none_or(|bound| bound.canonical_id != item.canonical_id) {
             return Err(AttemptFailure::new(
                 CODE_SEAM_NOT_FOUND,
@@ -361,6 +373,7 @@ impl WorkspaceSession {
             &snapshot.findings,
             entry,
             readiness.canonical_gap_id.as_deref(),
+            &rebound_candidates,
         ) {
             Some((finding_id, witness)) => (Some(finding_id), Some(witness)),
             None => (None, None),
@@ -938,7 +951,7 @@ mod tests {
         let matched_output = output(std::slice::from_ref(&finding))?;
         let snapshot = Snapshot::from_output(&matched_output, Some("root:sha256:a"))
             .map_err(|failure| failure.detail)?;
-        let bound = item_bound_by_seam(&snapshot, &entry)
+        let bound = item_bound_by_seam(&snapshot, &entry, std::slice::from_ref(&entry))
             .ok_or_else(|| "owner-matching seam must bind its item at bind time".to_string())?;
         if bound.canonical_id != canonical_id {
             return Err(format!("bound the wrong item: {}", bound.canonical_id));
@@ -956,7 +969,7 @@ mod tests {
         let other_output = output(std::slice::from_ref(&other))?;
         let other_snapshot = Snapshot::from_output(&other_output, Some("root:sha256:a"))
             .map_err(|failure| failure.detail)?;
-        if item_bound_by_seam(&other_snapshot, &entry).is_some() {
+        if item_bound_by_seam(&other_snapshot, &entry, std::slice::from_ref(&entry)).is_some() {
             return Err("owner-mismatched seam must bind no item at bind time".to_string());
         }
         Ok(())
@@ -1029,7 +1042,7 @@ mod tests {
         let matched_output = output(std::slice::from_ref(&finding))?;
         let snapshot = Snapshot::from_output(&matched_output, Some("root:sha256:a"))
             .map_err(|failure| failure.detail)?;
-        let bound = item_bound_by_seam(&snapshot, &entry)
+        let bound = item_bound_by_seam(&snapshot, &entry, std::slice::from_ref(&entry))
             .ok_or_else(|| "producer-shaped seam must bind its item at bind time".to_string())?;
         if bound.canonical_id != producer_id {
             return Err(format!("bound the wrong item: {}", bound.canonical_id));
@@ -1047,7 +1060,7 @@ mod tests {
         let other_output = output(std::slice::from_ref(&other))?;
         let other_snapshot = Snapshot::from_output(&other_output, Some("root:sha256:a"))
             .map_err(|failure| failure.detail)?;
-        if item_bound_by_seam(&other_snapshot, &entry).is_some() {
+        if item_bound_by_seam(&other_snapshot, &entry, std::slice::from_ref(&entry)).is_some() {
             return Err("a sibling owner's gap must bind no item at bind time".to_string());
         }
         // Negative: twin findings sharing the shape are ambiguous and bind
@@ -1057,8 +1070,122 @@ mod tests {
         let twin_output = output(&[finding, twin])?;
         let twin_snapshot = Snapshot::from_output(&twin_output, Some("root:sha256:a"))
             .map_err(|failure| failure.detail)?;
-        if item_bound_by_seam(&twin_snapshot, &entry).is_some() {
+        if item_bound_by_seam(&twin_snapshot, &entry, std::slice::from_ref(&entry)).is_some() {
             return Err("ambiguous producer twins must bind no item at bind time".to_string());
+        }
+        Ok(())
+    }
+
+    /// #7179: a nested same-kind pair in the live shape — an outer
+    /// multiline predicate boundary spanning lines 2..=3 containing an
+    /// inner boundary on line 2, the shape a nested comparison extracts
+    /// to. Same file/owner/kind; only the spans nest.
+    fn nested_live_entries() -> (ClassifiedSeam, ClassifiedSeam) {
+        fn nested_entry(
+            byte_offset: usize,
+            expression: &str,
+            span: crate::analysis::seams::SeamSpan,
+        ) -> ClassifiedSeam {
+            let seam = RepoSeam::new(
+                "src/lib.rs",
+                "src/lib.rs::discounted_total",
+                SeamKind::PredicateBoundary,
+                byte_offset,
+                2,
+                expression,
+                RequiredDiscriminator::BoundaryValue {
+                    description: expression.to_string(),
+                },
+                ExpectedSink::ReturnValue,
+            )
+            .with_span(span);
+            let seam_id = seam.id().clone();
+            ClassifiedSeam {
+                seam,
+                evidence: TestGripEvidence {
+                    seam_id,
+                    related_tests: Vec::new(),
+                    reach: stage(crate::domain::StageState::Yes),
+                    activate: stage(crate::domain::StageState::Yes),
+                    propagate: stage(crate::domain::StageState::Yes),
+                    observe: stage(crate::domain::StageState::Yes),
+                    discriminate: stage(crate::domain::StageState::No),
+                    observed_values: Vec::new(),
+                    missing_discriminators: Vec::new(),
+                    statically_contradicted_related_tests: 0,
+                    new_test_target: None,
+                },
+                class: SeamGripClass::WeaklyGripped,
+            }
+        }
+        let outer = nested_entry(
+            20,
+            "(amount > 20)\n        == flag",
+            crate::analysis::seams::SeamSpan {
+                start_line: 2,
+                start_column: 8,
+                end_line: 3,
+                end_column: 16,
+            },
+        );
+        let inner = nested_entry(
+            21,
+            "amount > 20",
+            crate::analysis::seams::SeamSpan {
+                start_line: 2,
+                start_column: 9,
+                end_line: 2,
+                end_column: 15,
+            },
+        );
+        (outer, inner)
+    }
+
+    /// #7179: a finding inside nested same-kind spans binds the inner seam's
+    /// item only — the valid inner bind is never lost to the fan-in
+    /// refusal, and the outer seam never claims the inner finding's item.
+    #[test]
+    fn nested_spans_bind_inner_item_only() -> Result<(), String> {
+        let (outer, inner) = nested_live_entries();
+        let producer_id =
+            "gap:rust:src/lib.rs:discounted_total:predicate_boundary:predicate:amount==20";
+        for (name, entry) in [("outer", &outer), ("inner", &inner)] {
+            let seam_gap_id = repair_packet_eligibility(entry)
+                .readiness
+                .canonical_gap_id
+                .clone()
+                .ok_or_else(|| format!("the {name} seam must name a canonical gap"))?;
+            if producer_id == seam_gap_id {
+                return Err("the producer id must differ from the content-hash id".to_string());
+            }
+            let Some(span) = entry.seam.span() else {
+                return Err(format!("the {name} nested entry must carry a span"));
+            };
+            if !(span.start_line..=span.end_line).contains(&2) {
+                return Err(format!("the {name} nested span must contain line 2"));
+            }
+        }
+        let mut finding = super::super::gaps::test_finding()?;
+        let gap = finding
+            .canonical_gap
+            .as_mut()
+            .ok_or_else(|| "fixture finding must name a canonical gap".to_string())?;
+        gap.id = producer_id.to_string();
+        gap.file = "src/lib.rs".to_string();
+        gap.owner = "discounted_total".to_string();
+        gap.probe_kind = "predicate".to_string();
+        finding.probe.location.line = 2;
+        let matched_output = output(std::slice::from_ref(&finding))?;
+        let snapshot = Snapshot::from_output(&matched_output, Some("root:sha256:a"))
+            .map_err(|failure| failure.detail)?;
+        let candidates = [outer.clone(), inner.clone()];
+        let bound = item_bound_by_seam(&snapshot, &inner, &candidates)
+            .ok_or_else(|| "the inner seam must bind its item at bind time".to_string())?;
+        if bound.canonical_id != producer_id {
+            return Err(format!("bound the wrong item: {}", bound.canonical_id));
+        }
+        if item_bound_by_seam(&snapshot, &outer, &candidates).is_some() {
+            return Err("the outer seam must not bind the inner finding's item".to_string());
         }
         Ok(())
     }
@@ -1087,7 +1214,7 @@ mod tests {
         let matched_output = output(std::slice::from_ref(&finding))?;
         let snapshot = Snapshot::from_output(&matched_output, Some("root:sha256:a"))
             .map_err(|failure| failure.detail)?;
-        let bound = item_bound_by_seam(&snapshot, &entry)
+        let bound = item_bound_by_seam(&snapshot, &entry, std::slice::from_ref(&entry))
             .ok_or_else(|| "an exposed finding must still bind its item".to_string())?;
         if bound.canonical_id != producer_id {
             return Err(format!("bound the wrong item: {}", bound.canonical_id));
@@ -1097,6 +1224,7 @@ mod tests {
             &snapshot.findings,
             &entry,
             readiness.canonical_gap_id.as_deref(),
+            std::slice::from_ref(&entry),
         )
         .is_some()
         {

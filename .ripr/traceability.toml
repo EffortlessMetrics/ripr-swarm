@@ -11576,10 +11576,13 @@ tests = [
   "crates/ripr/src/app/repair_card_handoff.rs::tests::producer_gap_finding_binds_the_seam_witness_when_unique",
   "crates/ripr/src/app/repair_card_handoff.rs::tests::producer_gap_with_sibling_owner_binds_no_witness",
   "crates/ripr/src/app/repair_card_handoff.rs::tests::producer_finding_binds_only_the_twin_seam_at_its_line",
+  "crates/ripr/src/app/repair_card_handoff.rs::tests::nested_spans_bind_inner_seam_only",
+  "crates/ripr/src/app/repair_card_handoff.rs::tests::identical_spans_keep_both_binds_for_mcp_refusal",
   "crates/ripr/src/app/repair_card_handoff.rs::tests::content_hash_match_wins_over_producer_match",
   "crates/ripr/src/app/repair_card_handoff.rs::tests::packet_queue_omission_marks_canonical_packet_unavailable",
   "crates/ripr/src/app/repair_card_handoff.rs::tests::attempt_recorded_at_another_head_is_stale_not_current",
   "crates/ripr/tests/cli_smoke.rs::agent_card_readiness_agrees_with_repair_target_admission",
+  "crates/ripr/tests/cli_smoke.rs::agent_card_nested_spans_bind_inner_witness_only",
   "crates/ripr/src/cli/agent.rs::tests::agent_card_parses_seam_id_request",
   "crates/ripr/src/cli/agent.rs::tests::agent_card_requires_seam_id_and_rejects_unknown_arguments",
 ]
@@ -11699,6 +11702,7 @@ name = "repair card lsp projection"
 spec = "docs/specs/RIPR-SPEC-0198-repair-card-lsp-projection.md"
 tests = [
   "crates/ripr/src/lsp/repair_card.rs::tests::hover_lines_project_identity_state_next_action_and_detail_counts",
+  "crates/ripr/src/lsp/repair_card.rs::tests::nested_spans_bind_inner_editor_card_only",
   "crates/ripr/src/lsp/repair_card.rs::tests::unavailable_instruction_projects_no_route_and_no_next_action",
   "crates/ripr/src/lsp/repair_card.rs::tests::limited_route_gate_projects_closed_next_action_without_strengthening",
   "crates/ripr/src/lsp/repair_card.rs::tests::state_wire_name_serializes_without_reinterpretation",
@@ -12724,6 +12728,7 @@ tests = [
   "crates/ripr/src/mcp/repair_card.rs::tests::refusal_kinds_travel_under_their_pinned_wire_spellings",
   "crates/ripr/src/mcp/repair_card.rs::tests::seam_binding_requires_the_gap_owner_match",
   "crates/ripr/src/mcp/repair_card.rs::tests::producer_shaped_finding_binds_its_item_at_bind_time",
+  "crates/ripr/src/mcp/repair_card.rs::tests::nested_spans_bind_inner_item_only",
   "crates/ripr/src/mcp/repair_card.rs::tests::exposed_finding_binds_its_item_without_projecting_a_witness",
   "crates/ripr/src/mcp/repair_card.rs::tests::retain_unambiguous_item_bindings_drops_shared_items",
   "crates/ripr/src/mcp/protocol.rs::tests",
@@ -12732,6 +12737,7 @@ tests = [
   "crates/ripr/tests/mcp_sdk.rs",
   "crates/ripr/tests/mcp_stdio.rs",
   "crates/ripr/tests/mcp_stdio.rs::get_repair_card_after_refresh_matches_cli_agent_card",
+  "crates/ripr/tests/mcp_stdio.rs::nested_spans_get_repair_card_binds_inner_seam",
   "crates/ripr/tests/mcp_stdio.rs::resource_reads_match_tools_after_refresh",
 ]
 code = [

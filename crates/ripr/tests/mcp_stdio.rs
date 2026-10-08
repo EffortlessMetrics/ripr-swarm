@@ -1401,6 +1401,207 @@ fn get_repair_card_after_refresh_matches_cli_agent_card() -> Result<(), String> 
     Ok(())
 }
 
+/// #7179 nested-comparison fixture: main holds `(amount > 10) == flag`,
+/// the checked-out `journey` branch changes the inner comparison only
+/// (`> 20`). The extractor emits two nested predicate boundaries for one
+/// owner; the analysis emits exactly one finding on the inner comparison.
+fn install_nested_comparison_fixture() -> Result<PathBuf, String> {
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|error| format!("clock before Unix epoch: {error}"))?
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!(
+        "ripr-mcp-stdio-nested-span-{}-{stamp}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(root.join("src")).map_err(|error| error.to_string())?;
+    std::fs::create_dir_all(root.join("tests")).map_err(|error| error.to_string())?;
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"nested-span-fixture\"\nversion = \"0.0.0\"\nedition = \"2024\"\n\n[lib]\nname = \"nested_span_fixture\"\npath = \"src/lib.rs\"\n\n[workspace]\n",
+    )
+    .map_err(|error| error.to_string())?;
+    std::fs::write(
+        root.join("src/lib.rs"),
+        "pub fn check_flag(amount: i32, flag: bool) -> &'static str {\n    if (amount > 10)\n        == flag\n    {\n        \"yes\"\n    } else {\n        \"no\"\n    }\n}\n",
+    )
+    .map_err(|error| error.to_string())?;
+    std::fs::write(
+        root.join("tests/check.rs"),
+        "use nested_span_fixture::check_flag;\n\n#[test]\nfn below_threshold_is_no() {\n    assert_eq!(check_flag(5, false), \"no\");\n}\n",
+    )
+    .map_err(|error| error.to_string())?;
+    fixture_git_ok(&root, &["-c", "init.defaultBranch=main", "init", "-q"])?;
+    fixture_git_ok(&root, &["config", "user.name", "ripr fixture"])?;
+    fixture_git_ok(&root, &["config", "user.email", "fixture@ripr.invalid"])?;
+    fixture_git_ok(&root, &["config", "core.autocrlf", "false"])?;
+    commit_fixture(&root, "base predicate")?;
+    fixture_git_ok(&root, &["checkout", "-q", "-b", "journey"])?;
+    std::fs::write(
+        root.join("src/lib.rs"),
+        "pub fn check_flag(amount: i32, flag: bool) -> &'static str {\n    if (amount > 20)\n        == flag\n    {\n        \"yes\"\n    } else {\n        \"no\"\n    }\n}\n",
+    )
+    .map_err(|error| error.to_string())?;
+    commit_fixture(&root, "inner boundary only")?;
+    Ok(root)
+}
+
+/// Discover the nested pair's content-addressed seam ids through the pilot
+/// packet instead of hardcoding them: returns (inner, outer).
+fn nested_pair_seam_ids(root: &Path) -> Result<(String, String), String> {
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|error| format!("clock before Unix epoch: {error}"))?
+        .as_nanos();
+    let out_dir = std::env::temp_dir().join(format!(
+        "ripr-mcp-stdio-nested-span-pilot-{}-{stamp}",
+        std::process::id()
+    ));
+    let output = worktree_ripr()
+        .args([
+            "pilot",
+            "--root",
+            &root.display().to_string(),
+            "--out",
+            &out_dir.display().to_string(),
+            "--mode",
+            "instant",
+        ])
+        .output()
+        .map_err(|error| format!("spawn ripr pilot: {error}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "ripr pilot failed: status {:?}\nstdout:\n{}\nstderr:\n{}",
+            output.status.code(),
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+    let exposure: Value = serde_json::from_slice(
+        &std::fs::read(out_dir.join("repo-exposure.json")).map_err(|error| error.to_string())?,
+    )
+    .map_err(|error| format!("repo exposure is not JSON: {error}"))?;
+    let _ = std::fs::remove_dir_all(&out_dir);
+    let seams = exposure
+        .pointer("/seams")
+        .and_then(Value::as_array)
+        .ok_or_else(|| format!("repo exposure omitted seams: {exposure}"))?;
+    let mut inner_id = None;
+    let mut outer_id = None;
+    for seam in seams
+        .iter()
+        .filter(|seam| seam["kind"] == "predicate_boundary")
+    {
+        let span = (seam["line"].as_u64(), seam["end_line"].as_u64());
+        let id = seam["seam_id"]
+            .as_str()
+            .ok_or_else(|| format!("a nested seam omitted its id: {seam}"))?;
+        match span {
+            (Some(2), Some(2)) => inner_id = Some(id.to_string()),
+            (Some(2), Some(3)) => outer_id = Some(id.to_string()),
+            _ => {
+                return Err(format!("unexpected nested span {span:?}: {seam}"));
+            }
+        }
+    }
+    match (inner_id, outer_id) {
+        (Some(inner), Some(outer)) => Ok((inner, outer)),
+        _ => Err(format!(
+            "nested spans must be lines 2..=2 and 2..=3: {exposure}"
+        )),
+    }
+}
+
+/// #7179: after refresh on the nested-comparison fixture, the one item (the
+/// inner finding's) binds the inner seam's card — never dropped by the
+/// fan-in refusal, never credited to the outer seam. Before the
+/// most-specific-span rule both seams claimed the item, the refusal dropped
+/// both, and this read failed with `seam_not_found`.
+#[test]
+fn nested_spans_get_repair_card_binds_inner_seam() -> Result<(), String> {
+    const REFRESH_TIMEOUT: Duration = Duration::from_mins(3);
+    const REPLY_TIMEOUT: Duration = Duration::from_mins(1);
+    let root = install_nested_comparison_fixture()?;
+    let _guard = FixtureGuard { root: root.clone() };
+    let (inner_id, outer_id) = nested_pair_seam_ids(&root)?;
+    let mut session = SequentialStdio::spawn(&root)?;
+    session.call("discover", "server/discover", json!({}), REPLY_TIMEOUT)?;
+
+    let refresh = session.call_tool("refresh", "ripr_refresh", json!({}), REFRESH_TIMEOUT)?;
+    let refresh = structured_tool_success(&refresh, "ripr_refresh")?;
+    if refresh
+        .pointer("/snapshot/finding_count")
+        .and_then(Value::as_u64)
+        .unwrap_or(0)
+        != 1
+    {
+        return Err(format!(
+            "nested refresh must yield exactly one finding before the bind can run: {refresh}"
+        ));
+    }
+
+    let list = session.call_tool("list", "ripr_list_gaps", json!({}), REPLY_TIMEOUT)?;
+    let list = structured_tool_success(&list, "ripr_list_gaps")?;
+    let items = list
+        .pointer("/items")
+        .and_then(Value::as_array)
+        .ok_or_else(|| format!("ripr_list_gaps omitted items: {list}"))?;
+    if items.len() != 1 {
+        return Err(format!(
+            "nested refresh must yield exactly one gap item: {list}"
+        ));
+    }
+    let canonical_id = items[0]
+        .pointer("/canonical_id")
+        .and_then(Value::as_str)
+        .ok_or_else(|| format!("the nested item omitted its canonical id: {list}"))?
+        .to_string();
+
+    let card_reply = session.call_tool(
+        "card",
+        "ripr_get_repair_card",
+        json!({ "canonical_id": canonical_id }),
+        REPLY_TIMEOUT,
+    )?;
+    drop(session);
+    let document = structured_tool_success(&card_reply, "ripr_get_repair_card")?;
+    let mcp_card = document
+        .get("card")
+        .cloned()
+        .ok_or_else(|| format!("repair-card document omitted card: {document}"))?;
+    let bound_seam = mcp_card
+        .pointer("/subject/seam_id")
+        .and_then(Value::as_str)
+        .ok_or_else(|| format!("repair-card success path omitted subject.seam_id: {mcp_card}"))?;
+    if bound_seam == outer_id {
+        return Err(format!(
+            "the nested item must never bind the outer seam {outer_id}: {mcp_card}"
+        ));
+    }
+    if bound_seam != inner_id {
+        return Err(format!(
+            "the nested item must bind the inner seam {inner_id}, bound {bound_seam}: {mcp_card}"
+        ));
+    }
+
+    // The MCP card is the CLI card for the inner seam: same identity, same
+    // witness-bearing instruction.
+    let cli_card = run_cli_agent_card(&root, &inner_id)?;
+    let repair_card_id = mcp_card
+        .pointer("/repair_card_id")
+        .and_then(Value::as_str)
+        .filter(|id| !id.is_empty())
+        .ok_or_else(|| format!("repair-card success path omitted repair_card_id: {mcp_card}"))?;
+    if cli_card.pointer("/repair_card_id").and_then(Value::as_str) != Some(repair_card_id) {
+        return Err(format!(
+            "MCP card diverged from `ripr agent card` identity: mcp={repair_card_id} cli={}",
+            cli_card.pointer("/repair_card_id").unwrap_or(&Value::Null)
+        ));
+    }
+    Ok(())
+}
+
 fn read_resource_document(
     session: &mut SequentialStdio,
     id: &str,

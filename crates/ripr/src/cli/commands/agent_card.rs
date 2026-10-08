@@ -184,7 +184,12 @@ fn render_agent_card(options: &AgentCardOptions) -> Result<RepairCardV1, AgentCa
         ));
     }
 
-    crate::app::repair_card_handoff::repair_card_for_entry(entry, &options.root, &config)
+    crate::app::repair_card_handoff::repair_card_for_entry(
+        entry,
+        &options.root,
+        &config,
+        &classified,
+    )
 }
 
 /// The default human output: the card's typed fields, in card order,

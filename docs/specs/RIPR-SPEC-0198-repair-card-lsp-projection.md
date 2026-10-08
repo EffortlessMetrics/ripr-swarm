@@ -191,7 +191,9 @@ producer.
 ## Test Mapping
 
 - `crates/ripr/src/lsp/repair_card.rs` unit tests cover the hover-section
-  rendering contract over an assembled card fixture.
+  rendering contract over an assembled card fixture, and
+  `nested_spans_bind_inner_editor_card_only` covers the nested-span
+  most-specific bind through the snapshot's own classified seams (#7179).
 - `crates/ripr/src/lsp/tests.rs`
   `seam_code_actions_include_the_assembled_repair_card_in_a_git_workspace`,
   `seam_repair_card_binds_a_finding_witness_in_a_git_workspace`,
