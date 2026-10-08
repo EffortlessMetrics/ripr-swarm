@@ -2129,18 +2129,17 @@ mod tests {
         let seen = std::rc::Rc::new(std::cell::RefCell::new(None));
         let seen_b = std::rc::Rc::clone(&seen);
         after_next_manifest_commit(Box::new(move || {
-            let status = cache_b
-                .store_classified_seams_with_record_and_byte_limits(
-                    &key_b, &rival, None, 2, 1_000_000,
-                )
-                .expect("competing publish must return a status");
-            *seen_b.borrow_mut() = Some(status.label);
+            let status = cache_b.store_classified_seams_with_record_and_byte_limits(
+                &key_b, &rival, None, 2, 1_000_000,
+            );
+            *seen_b.borrow_mut() = Some(status.map(|status| status.label));
         }));
         let stored = cache
             .store_classified_seams_with_record_and_byte_limits(&key, &seams, None, 2, 1_000_000)?;
         assert_ne!(stored.label, PUBLICATION_BUSY_LABEL);
+        let seen_label = seen.borrow().clone().transpose()?;
         assert_eq!(
-            seen.borrow().as_deref(),
+            seen_label.as_deref(),
             Some(PUBLICATION_BUSY_LABEL),
             "the competing publish must have run inside the commit window and seen Busy"
         );
