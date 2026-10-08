@@ -1,4 +1,5 @@
 use crate::agent::loop_commands::shell_arg;
+use crate::app::test_stub::StubRouteDecision;
 use crate::app::{CheckDiffProvenance, CheckOutput, FindingDrillIn};
 use crate::config::RiprConfig;
 use crate::domain::{
@@ -287,16 +288,21 @@ pub(crate) fn render_human_triage(
                     .and_then(|ext| ext.to_str())
                     == Some("rs")
             {
-                // `--at` resolves against `--root`, so name the file
-                // relative to it, not as the checkout-relative display path.
-                let location = &finding.probe.location.file;
-                let relative = location.strip_prefix(&output.root).unwrap_or(location);
-                let file = display_path(relative);
-                let command = navigation
-                    .stub_command(file.trim_start_matches("./"), finding.probe.location.line);
-                out.push_str("Write a test for it:\n");
-                out.push_str(&format!("  {command}\n"));
-                super::push_powershell_variant(out, "  ", &command);
+                // #5471: only when the check pipeline ran the stub's own
+                // resolver for this finding and it produced a stub; a refusal
+                // prints its reason, and no decision prints nothing.
+                match navigation.stub_route_for(&finding.id) {
+                    Some(StubRouteDecision::Stub { file, line, kind }) => {
+                        let command = navigation.stub_command(file, *line, kind);
+                        out.push_str("Write a test for it:\n");
+                        out.push_str(&format!("  {command}\n"));
+                        super::push_powershell_variant(out, "  ", &command);
+                    }
+                    Some(StubRouteDecision::Refused { reason }) => {
+                        out.push_str(&format!("No test stub here: {reason}\n"));
+                    }
+                    None => {}
+                }
             }
         }
     }

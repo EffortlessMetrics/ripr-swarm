@@ -27,7 +27,7 @@ Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/error_variant_boxed_wrapper_downcast_witness/input --diff <cwd>/fixtures/error_variant_boxed_wrapper_downcast_witness/diff.patch --mode fast probe:src_lib.rs:error_path:c82815a4
   ripr context --root <cwd>/fixtures/error_variant_boxed_wrapper_downcast_witness/input --diff <cwd>/fixtures/error_variant_boxed_wrapper_downcast_witness/diff.patch --mode fast --at probe:src_lib.rs:error_path:c82815a4
 Write a test for it:
-  ripr agent stub --root <cwd>/fixtures/error_variant_boxed_wrapper_downcast_witness/input --at src/lib.rs:123
+  ripr agent stub --root <cwd>/fixtures/error_variant_boxed_wrapper_downcast_witness/input --at src/lib.rs:123 --kind error_path
 
 Hidden:
   15 lower-priority finding(s) omitted from default human output.

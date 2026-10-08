@@ -2430,6 +2430,31 @@ pub(crate) fn inventory_seams_from_index(
     if let Some(disclosure) = rust_index::module_composition_disclosure(index) {
         eprintln!("{disclosure}");
     }
+    seams_from_index_files(production_files, index)
+}
+
+/// The seams of one Rust file from a parse of that file alone, with no
+/// workspace index, test evidence, or classification (#5471). The seam
+/// fields (file, owner, kind, offset, expression) come from the file's own
+/// facts, so they and the seam ids match the workspace inventory's. A file
+/// that does not seed production findings has no seams here, as in the
+/// workspace inventory.
+pub(crate) fn file_seams_without_evidence_at_with_config(
+    root: &Path,
+    config: &RiprConfig,
+    file: &Path,
+) -> Result<Vec<RepoSeam>, String> {
+    let context = production_role_context(root, config, std::iter::once(file));
+    if !workspace::classify_with(file, &context).seeds_production_findings() {
+        return Ok(Vec::new());
+    }
+    let files = [file.to_path_buf()];
+    let index =
+        rust_index::build_index_with_test_harnesses(root, &files, harness_registrations(config))?;
+    Ok(seams_from_index_files(&files, &index))
+}
+
+fn seams_from_index_files(production_files: &[PathBuf], index: &RustIndex) -> Vec<RepoSeam> {
     let mut seams: Vec<RepoSeam> = Vec::new();
 
     // Iterate `production_files` in caller-given order, but the final
@@ -2540,6 +2565,27 @@ fn build_seam_from_shape(
         Some(span) => Some(seam.with_span(span)),
         None => Some(seam),
     }
+}
+
+/// The seam kind a `ripr check` finding's probe family names (#5471). Probe
+/// families and probe shapes share one vocabulary (`predicate`,
+/// `return_value`, `error_path`, `match_arm`, ...), so this is the shape
+/// mapping; every family a stub route prints maps to exactly one kind.
+/// `None` for `static_unknown` and unknown names.
+pub(crate) fn seam_kind_for_probe_family(family: &str) -> Option<SeamKind> {
+    [
+        ProbeShapeKind::Predicate,
+        ProbeShapeKind::ReturnValue,
+        ProbeShapeKind::ErrorPath,
+        ProbeShapeKind::CallDeletion,
+        ProbeShapeKind::FieldConstruction,
+        ProbeShapeKind::SideEffect,
+        ProbeShapeKind::MatchArm,
+        ProbeShapeKind::UnsafeBoundary,
+    ]
+    .into_iter()
+    .find(|kind| kind.as_str() == family)
+    .and_then(seam_kind_from_probe_shape)
 }
 
 fn seam_kind_from_probe_shape(kind: ProbeShapeKind) -> Option<SeamKind> {

@@ -27,7 +27,7 @@ Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/match_arm_tuple_derived_return_before_assertion/input --diff <cwd>/fixtures/match_arm_tuple_derived_return_before_assertion/diff.patch --mode fast probe:src_lib.rs:match_arm:802442a0
   ripr context --root <cwd>/fixtures/match_arm_tuple_derived_return_before_assertion/input --diff <cwd>/fixtures/match_arm_tuple_derived_return_before_assertion/diff.patch --mode fast --at probe:src_lib.rs:match_arm:802442a0
 Write a test for it:
-  ripr agent stub --root <cwd>/fixtures/match_arm_tuple_derived_return_before_assertion/input --at src/lib.rs:27
+  ripr agent stub --root <cwd>/fixtures/match_arm_tuple_derived_return_before_assertion/input --at src/lib.rs:27 --kind match_arm
 
 Hidden:
   All 1 omitted finding(s) are base-side evidence, not candidate edit targets.
