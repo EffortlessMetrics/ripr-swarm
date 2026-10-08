@@ -41,6 +41,7 @@ use std::path::PathBuf;
 use super::nesting::parse_clean_source_file;
 use super::ra::{include_literal_path, parse_rust_string_literal, path_target_from_attributes};
 use crate::analysis::facts::ModulePathTarget;
+use crate::analysis::facts::cfg_predicates::rust_ident_name;
 
 /// Std item-position macros whose expansion cannot declare a module.
 /// Compared after any `std::`/`core::` prefix is dropped.
@@ -192,8 +193,9 @@ pub(crate) fn rust_module_tree_scan(text: &str) -> RustModuleTreeScan {
                 // nothing but still always applies.
                 let default_applies = !always_applies
                     && !module.attrs().any(|attr| {
-                        attr.path()
-                            .is_some_and(|path| path.syntax().text() == "path")
+                        attr.path().is_some_and(|path| {
+                            rust_ident_name(&path.syntax().text().to_string()) == "path"
+                        })
                     });
                 scan.edges.push(RustModuleTreeEdge::UnresolvedPath {
                     inline,
@@ -398,7 +400,24 @@ fn introduced_path_literals(body: &[(SyntaxKind, String)], candidates: &mut Vec<
         (SyntaxKind::EQ, _),
         (SyntaxKind::STRING, value),
     ] = body
-        && key == "path"
+        && rust_ident_name(key) == "path"
+        && let Some(literal) = parse_rust_string_literal(value)
+    {
+        if !candidates.contains(&PathBuf::from(&literal)) {
+            candidates.push(PathBuf::from(literal));
+        }
+        return true;
+    }
+    // The lexer may also emit `r` `#` `path` as three tokens.
+    if let [
+        (SyntaxKind::IDENT, raw),
+        (SyntaxKind::POUND, _),
+        (SyntaxKind::IDENT, key),
+        (SyntaxKind::EQ, _),
+        (SyntaxKind::STRING, value),
+    ] = body
+        && raw == "r"
+        && rust_ident_name(key) == "path"
         && let Some(literal) = parse_rust_string_literal(value)
     {
         if !candidates.contains(&PathBuf::from(&literal)) {
@@ -456,6 +475,7 @@ mod tests {
             "mod plain;\n\
              #[cfg(test)]\nmod tests;\n\
              #[path = \"odd/place.rs\"]\nmod placed;\n\
+             #[r#path = \"odd/raw.rs\"]\nmod placed_raw;\n\
              pub mod outer { pub mod inner { mod leaf; } }\n\
              mod inline_only { fn f() {} }\n\
              include!(\"fragment.rs\");\n",
@@ -467,6 +487,7 @@ mod tests {
                 default(&[], "plain"),
                 default(&[], "tests"),
                 RustModuleTreeEdge::Path(PathBuf::from("odd/place.rs")),
+                RustModuleTreeEdge::Path(PathBuf::from("odd/raw.rs")),
                 default(&["outer", "inner"], "leaf"),
                 RustModuleTreeEdge::Include(PathBuf::from("fragment.rs")),
             ]
@@ -477,7 +498,9 @@ mod tests {
     fn scan_is_incomplete_for_edges_it_cannot_resolve() {
         for source in [
             "#[path = concat!(\"a\", \".rs\")]\nmod dynamic;\n",
+            "#[r#path = concat!(\"a\", \".rs\")]\nmod dynamic_raw;\n",
             "#[cfg_attr(unix, path = \"unix.rs\")]\nmod platform;\n",
+            "#[cfg_attr(unix, r#path = \"unix.rs\")]\nmod platform_raw;\n",
             "#[path = \"inline\"]\nmod inline { mod child; }\n",
             "mod outer { #[path = \"x.rs\"] mod child; }\n",
             "fn f() { mod hidden; }\n",

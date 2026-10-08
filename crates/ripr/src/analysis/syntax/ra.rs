@@ -845,8 +845,10 @@ pub(super) fn path_target_from_attributes(attributes: &[String]) -> ModulePathTa
     }
 }
 
-/// Returns the attribute's path name (`path` for `#[path = "..."]`), using the
-/// same whitespace-insensitive normalization as the test-attribute classifier.
+/// Returns the attribute's path name (`path` for `#[path = "..."]` and
+/// `#[r#path = "..."]`), using the same whitespace-insensitive normalization
+/// as the test-attribute classifier. The raw-identifier prefix is stripped so
+/// callers compare the ident rustc uses, not the source spelling.
 fn attribute_path_name(attribute: &str) -> Option<String> {
     let body = attribute.trim().strip_prefix("#[")?;
     let body = body.strip_prefix("![").unwrap_or(body);
@@ -858,6 +860,7 @@ fn attribute_path_name(attribute: &str) -> Option<String> {
         .filter(|character| !character.is_whitespace())
         .collect::<String>();
     let path = path.trim_start_matches("::");
+    let path = cfg_predicates::rust_ident_name(path);
     (!path.is_empty()).then_some(path.to_string())
 }
 
