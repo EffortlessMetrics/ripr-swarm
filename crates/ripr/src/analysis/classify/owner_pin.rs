@@ -254,9 +254,11 @@ impl OwnerPinSyntax {
     /// crate, or a dropping attribute on any `mod` declaration on that
     /// chain. A complementary cfg may then compile a same-named module in
     /// its place. An include edge, an unresolved chain, an unparsable file,
-    /// disabled target roots, or a non-root file with no recorded chain
-    /// (ripr records no edge for a `mod` whose `#[path]` it cannot
-    /// resolve, such as one under `cfg_attr`) fails closed.
+    /// or a non-root file with no recorded chain (ripr records no edge for
+    /// a `mod` whose `#[path]` it cannot resolve, such as one under
+    /// `cfg_attr`) fails closed. The root test is per file, not the
+    /// workspace-wide [`TargetRoots`] switch, so an unrelated unresolvable
+    /// module elsewhere keeps other owners pinned (#7104 review).
     fn file_cfg_gated(&self, index: &RustIndex, file: &Path) -> bool {
         if let Some(known) = self.path_memo.borrow().file_gated.get(file) {
             return *known;
@@ -268,11 +270,11 @@ impl OwnerPinSyntax {
                     .is_none_or(|parse| has_cfg_that_may_drop(&parse.tree()))
             })
         };
-        let gated = roots.disabled
-            || inner_gated(file)
+        let gated = inner_gated(file)
             || index.files().get(file).is_none_or(|facts| {
                 let provenance = &facts.role_provenance;
-                (provenance.edges.is_empty() && roots.root(file, index).as_deref() != Some(file))
+                (provenance.edges.is_empty()
+                    && target_root(file, index, &roots.src_dirs).as_deref() != Some(file))
                     || provenance.earliest_unresolved_reason.is_some()
                     || provenance.edges.iter().any(|edge| {
                         edge.kind != SourceRoleProvenanceEdgeKind::Module

@@ -211,8 +211,7 @@ rule only for an assertion whose context was admitted.
      that chain, lets a same-named module replace the whole file. A
      `cfg_attr` that only toggles lints or docs
      (`#![cfg_attr(docsrs, feature(doc_cfg))]`) does not. An include edge,
-     an unresolved chain, disabled target roots, or a non-root file with no
-     recorded chain (ripr records none for a `#[path]` it cannot resolve,
+     an unresolved chain, or a non-root file with no recorded chain (ripr records none for a `#[path]` it cannot resolve,
      such as one under `cfg_attr`) fails closed
      (`a_cfg_gated_owner_is_not_reached_by_a_bare_call`,
      `an_ancestor_file_a_cfg_may_drop_gates_the_owner`,

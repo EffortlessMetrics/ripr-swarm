@@ -1219,8 +1219,8 @@ fn a_cfg_attr_path_on_the_owners_declaration_gates_it_through_real_composition()
 -> Result<(), String> {
     // #7104 review: ripr records no module edge for a `#[path]` under
     // `cfg_attr`, so the owner's file has an empty chain; only a crate
-    // root may. The unresolved path also disables target roots, and each
-    // of the two refuses this on its own.
+    // root may. An unrelated unresolvable `#[path]` elsewhere leaves
+    // other owners pinned.
     let pinned = |label: &str, lib: &str| -> Result<Vec<String>, String> {
         let root = std::env::temp_dir().join(format!(
             "ripr-owner-pin-cfg-attr-path-{label}-{}",
@@ -1236,6 +1236,8 @@ fn a_cfg_attr_path_on_the_owners_declaration_gates_it_through_real_composition()
                 "src/scale.rs",
                 "pub fn weight(x: u32) -> u32 {\n    x * 3\n}\n",
             ),
+            ("src/sys.rs", "pub fn native() {}\n"),
+            ("src/sys_win.rs", "pub fn native() {}\n"),
             (
                 "src/alt_scale.rs",
                 "pub fn helper(_: u32) -> u32 {\n    12\n}\n#[allow(non_upper_case_globals)]\npub static weight: fn(u32) -> u32 = helper;\n",
@@ -1281,6 +1283,13 @@ fn a_cfg_attr_path_on_the_owners_declaration_gates_it_through_real_composition()
     // records.
     assert_eq!(
         pinned("plain", "pub mod scale;\n")?,
+        ["assert_eq!(weight(4), 12);"]
+    );
+    assert_eq!(
+        pinned(
+            "platform",
+            "pub mod scale;\n#[cfg_attr(windows, path = \"sys_win.rs\")]\nmod sys;\n"
+        )?,
         ["assert_eq!(weight(4), 12);"]
     );
     Ok(())
