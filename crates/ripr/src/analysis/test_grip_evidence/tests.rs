@@ -17841,6 +17841,167 @@ fn boundary_asserts_true_value() {
     Ok(())
 }
 
+/// #7007: the issue's exact composition — a consistent happy-path test
+/// keeps its strong oracle while the wrong-valued boundary assert stays in
+/// the evidence set. The contradiction must withhold the wrong test's
+/// call-site credit: its `5_000` argument completes the equality boundary
+/// only in the mutant's favor (`>=` -> `>` makes the assert pass), so
+/// counting it would close the gap the single-test fold already keeps open.
+#[test]
+fn wrongval_assert_beside_consistent_test_keeps_gap_open() -> Result<(), String> {
+    let (evidence, seam, _index) = wrongval_seam_evidence(
+        r#"
+#[test]
+fn happy_path_returns_undiscounted_total() {
+    assert_eq!(discounted_total(1_000, 5_000), 1_000);
+}
+
+#[test]
+fn boundary_asserts_flipped_value() {
+    assert_eq!(discounted_total(5_000, 5_000), 5_000);
+}
+"#,
+    )?;
+    let class = crate::analysis::seam_classification::classify_seam(&seam, &evidence);
+    if class == SeamGripClass::StronglyGripped {
+        return Err(
+            "the wrongval assert beside a consistent test must not close the gap".to_string(),
+        );
+    }
+    // The wrong test's 5_000 call argument must not count toward the seam's
+    // observed activation values: only the consistent test's 1_000 remains.
+    let observed = evidence
+        .observed_values
+        .iter()
+        .map(|fact| fact.value.replace('_', ""))
+        .collect::<Vec<_>>();
+    assert!(
+        !observed.iter().any(|value| value == "5000"),
+        "the contradicted test's 5_000 argument must not be credited as observed: {observed:?}"
+    );
+    assert!(
+        observed.iter().any(|value| value == "1000"),
+        "the consistent test's 1_000 argument keeps its activation credit: {observed:?}"
+    );
+    // The equality boundary the wrong test appeared to cover stays missing.
+    assert!(
+        evidence
+            .missing_discriminators
+            .iter()
+            .any(|fact| fact.value.contains("equality boundary")),
+        "the equality boundary must stay missing: {:?}",
+        evidence.missing_discriminators
+    );
+    let related = evidence
+        .related_tests
+        .iter()
+        .find(|test| test.test_name == "boundary_asserts_flipped_value")
+        .ok_or_else(|| "the wrongval test must stay related to the seam".to_string())?;
+    assert!(
+        related
+            .evidence_summary
+            .contains("contradicts static evaluation"),
+        "the composition must name the contradiction: {}",
+        related.evidence_summary
+    );
+    Ok(())
+}
+
+/// #7007 review: the per-test grip names only the test's BEST oracle, so a
+/// test carrying both a consistent strong assertion and a contradicted one
+/// renders no contradiction at all. The producer-owned count over the full
+/// assertion set is the completeness authority the receipt's gate reads.
+#[test]
+fn contradiction_count_counts_a_test_beside_its_best_oracle() -> Result<(), String> {
+    let (evidence, _seam, _index) = wrongval_seam_evidence(
+        r#"
+#[test]
+fn consistent_oracle_beside_a_flipped_assert() {
+    assert_eq!(discounted_total(5_000, 5_000), 3_500);
+    assert_eq!(discounted_total(1_000, 5_000), 999);
+}
+"#,
+    )?;
+    assert_eq!(
+        evidence.statically_contradicted_related_tests, 1,
+        "the producer count sees the contradicted assertion beside the strong one"
+    );
+    let related = evidence
+        .related_tests
+        .iter()
+        .find(|test| test.test_name == "consistent_oracle_beside_a_flipped_assert")
+        .ok_or_else(|| "the two-oracle test must stay related".to_string())?;
+    assert_eq!(
+        related.oracle_strength,
+        OracleStrength::Strong,
+        "the best oracle stays strong"
+    );
+    assert_eq!(
+        related.evidence_summary, "exact value assertion",
+        "the rendered summary carries no contradiction: this lossy channel is why the count exists"
+    );
+    Ok(())
+}
+
+/// #7007 review: a value-insensitive seam (ReturnValue) whose only related
+/// test carries a statically contradicted exact-value assertion gains no
+/// activation credit from that test's bare owner call — in the full path or
+/// the compact path. The baseline-failing call is the inverted repair
+/// attempt, not established activation.
+#[test]
+fn wrongval_only_test_grants_no_activation_credit_on_value_insensitive_seam() -> Result<(), String>
+{
+    let prod = PathBuf::from("src/main.rs");
+    let prod_src = r#"
+pub fn capped_charge(cents: u64) -> u64 {
+    cents * 2
+}
+"#;
+    let tests = PathBuf::from("tests/main_tests.rs");
+    let index = index_from_files(&[
+        (prod.clone(), prod_src),
+        (
+            tests,
+            r#"
+#[test]
+fn charge_asserts_flipped_value() {
+    assert_eq!(capped_charge(2_000), 4_001);
+}
+"#,
+        ),
+    ])?;
+    let seams = inventory_seams_from_index(&[prod], &index);
+    let seam = seams
+        .iter()
+        .find(|seam| seam.kind() == SeamKind::ReturnValue)
+        .ok_or_else(|| "expected a return value seam for the pure tail owner".to_string())?
+        .clone();
+    let evidence = evidence_for_seam(&seam, &index);
+    if evidence.activate.state == StageState::Yes {
+        return Err(format!(
+            "a contradicted-only test must not grant activation credit on a value-insensitive seam: {}",
+            evidence.activate.summary
+        ));
+    }
+    assert!(
+        evidence.activate.summary.contains("withheld"),
+        "the activation stage must disclose the withholding: {}",
+        evidence.activate.summary
+    );
+    let compact = compact_evidence_for_seam(&seam, &CompactGripContext::new(&index));
+    if compact.activate.state == StageState::Yes {
+        return Err(format!(
+            "the compact path must not grant activation credit either: {}",
+            compact.activate.summary
+        ));
+    }
+    assert_eq!(
+        evidence.statically_contradicted_related_tests, 1,
+        "the producer count names the contradicted test"
+    );
+    Ok(())
+}
+
 /// The limitation stays honest in the other direction: when the owner is not
 /// statically evaluable, the wrong-valued assert keeps today's credit and
 /// the gap closes. No fabrication either way.

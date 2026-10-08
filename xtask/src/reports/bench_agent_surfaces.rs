@@ -56,6 +56,12 @@ const STATIC_CLASSES: [&str; 7] = [
     "static_unknown",
 ];
 const UNKNOWN_CLASSES: [&str; 3] = ["infection_unknown", "propagation_unknown", "static_unknown"];
+// `run_status`/`category` the check renderer carries in top-level
+// `run_limitations[]` when the findings-array byte budget engages (#5203).
+// Mirrors `crates/ripr/src/output/json/report.rs::FINDINGS_BOUND_RUN_STATUS`,
+// which is `pub(crate)` to the product and unreachable from xtask; the bench
+// re-reads the wire string the same way the gate predicate does.
+const FINDINGS_BOUND_RUN_STATUS: &str = "limited_findings_bound";
 // Deterministically generated mid corpus layout (spec: 20 packages x 25 files).
 const MID_PACKAGES: usize = 20;
 const MID_SRC_FILES: usize = 20;
@@ -2343,6 +2349,10 @@ fn actionability_metrics(envelopes: &[Value]) -> Value {
     let mut repair_bearing_seen = false;
     let mut complete = true;
     let mut max_limitations: usize = 0;
+    let mut max_run_limitations: usize = 0;
+    let mut envelopes_findings_bound: u64 = 0;
+    let mut reported: u64 = 0;
+    let mut reported_known = true;
     let mut alignment_state = "alignment_absent";
     let mut raw_signals: Option<u64> = None;
     let mut canonical_items: Option<u64> = None;
@@ -2359,6 +2369,31 @@ fn actionability_metrics(envelopes: &[Value]) -> Value {
             .and_then(Value::as_array)
         {
             max_limitations = max_limitations.max(limitations.len());
+        }
+        // The emitted `findings` array can be a byte-budget prefix of the
+        // analyzed set (#5203); the cap is disclosed in top-level
+        // `run_limitations`, never in the analysis_outcome path above, so M4
+        // must read both (#7016).
+        if let Some(limitations) = envelope.get("run_limitations").and_then(Value::as_array) {
+            max_run_limitations = max_run_limitations.max(limitations.len());
+            if limitations.iter().any(|entry| {
+                entry.get("run_status").and_then(Value::as_str) == Some(FINDINGS_BOUND_RUN_STATUS)
+                    || entry.get("category").and_then(Value::as_str)
+                        == Some(FINDINGS_BOUND_RUN_STATUS)
+            }) {
+                envelopes_findings_bound += 1;
+            }
+        }
+        // Same pointer M1 reads per sample, so the pooled reported
+        // denominator reconciles with the M1 rows above it. Unknown when any
+        // pooled envelope omits it — never a fake zero.
+        if let Some(count) = envelope
+            .pointer("/summary/findings")
+            .and_then(Value::as_u64)
+        {
+            reported = reported.saturating_add(count);
+        } else {
+            reported_known = false;
         }
         if let Some(summary) = envelope.pointer("/finding_alignment/summary") {
             raw_signals = summary.get("raw_signals").and_then(Value::as_u64);
@@ -2439,6 +2474,10 @@ fn actionability_metrics(envelopes: &[Value]) -> Value {
         "state": state,
         "envelopes_pooled": envelopes.len(),
         "findings_total": total,
+        "findings_reported": if envelopes.is_empty() || !reported_known { json!(null) } else {
+            json!(reported)
+        },
+        "envelopes_findings_bound": envelopes_findings_bound,
         "class_histogram": Value::Object(classes),
         "actionable_intent_fraction": fraction(actionable_intent),
         "evidence_path_fraction": fraction(with_evidence_path),
@@ -2449,6 +2488,7 @@ fn actionability_metrics(envelopes: &[Value]) -> Value {
         "unknown_class_findings": unknown_total,
         "analysis_complete_all_envelopes": complete,
         "max_typed_limitations": max_limitations,
+        "max_run_limitations": max_run_limitations,
         "repair_readiness": {
             "findings_with_repair_packet_ready": if repair_bearing_seen { json!(repair_ready) } else {
                 json!("named_absence: check envelope carries no repair-bearing field on this run")
@@ -3074,8 +3114,10 @@ fn receipt_markdown(receipt: &Value, previous: Option<&Value>) -> String {
     if let Some(corpora) = receipt["m4"].as_object() {
         for (corpus, body) in corpora {
             out.push_str(&format!(
-                "- **{corpus}**: findings_total {}, classes {}, actionable_intent {}, evidence_path {}, related_tests {}, unknown_disclosed {} (of {} unknown-class), analysis_complete {}, max_limitations {}, alignment {}/{} ({})\n",
+                "- **{corpus}**: findings_total {} (reported {}), findings_bound_envelopes {}, classes {}, actionable_intent {}, evidence_path {}, related_tests {}, unknown_disclosed {} (of {} unknown-class), analysis_complete {}, max_limitations {}, max_run_limitations {}, alignment {}/{} ({})\n",
                 body["findings_total"],
+                body["findings_reported"],
+                body["envelopes_findings_bound"],
                 body["class_histogram"],
                 body["actionable_intent_fraction"],
                 body["evidence_path_fraction"],
@@ -3084,6 +3126,7 @@ fn receipt_markdown(receipt: &Value, previous: Option<&Value>) -> String {
                 body["unknown_class_findings"],
                 body["analysis_complete_all_envelopes"],
                 body["max_typed_limitations"],
+                body["max_run_limitations"],
                 body["finding_alignment"]["raw_signals"],
                 body["finding_alignment"]["canonical_items"],
                 body["finding_alignment"]["state"],
@@ -3782,6 +3825,147 @@ mod tests {
         assert_eq!(
             m4["repair_readiness"]["findings_with_repair_packet_ready"], 1,
             "readiness must be read wherever the renderer emits it"
+        );
+    }
+
+    /// #7016: M4 pools the emitted `findings` prefix, but a byte-budget-capped
+    /// envelope reports the analyzed total in `summary.findings` and discloses
+    /// the cap in top-level `run_limitations`. M4 must forward both — the
+    /// emitted-vs-reported denominator and the limitation — instead of
+    /// presenting the capped subset as complete.
+    #[test]
+    fn m4_discloses_findings_bound_population() {
+        let capped = json!({
+            "summary": { "findings": 112 },
+            "analysis_outcome": { "analysis_complete": true, "outcome": { "limitations": [] } },
+            "run_limitations": [{
+                "category": "limited_findings_bound",
+                "run_status": "limited_findings_bound",
+                "basis": "check_findings_byte_budget",
+                "downstream_consumable": false,
+                "message": "rendered 2 of 112 findings within the findings-array byte budget (default 1000000-byte budget; set RIPR_CHECK_FINDINGS_BYTES to override, =0 for the full set)",
+                "repair_route": "output/check-findings-budget",
+            }],
+            "findings": [
+                { "classification": "weakly_exposed" },
+                { "classification": "static_unknown", "stop_reasons": ["no related test file resolved"] },
+            ],
+        });
+        let uncapped = json!({
+            "summary": { "findings": 3 },
+            "analysis_outcome": { "analysis_complete": true, "outcome": { "limitations": [] } },
+            "findings": [
+                { "classification": "exposed" },
+                { "classification": "exposed" },
+                { "classification": "exposed" },
+            ],
+        });
+        let m4 = actionability_metrics(&[capped, uncapped]);
+        assert_eq!(
+            m4["findings_total"], 5,
+            "findings_total stays the emitted denominator"
+        );
+        assert_eq!(
+            m4["findings_reported"], 115,
+            "the reported denominator sums summary.findings"
+        );
+        assert_eq!(
+            m4["envelopes_findings_bound"], 1,
+            "only the capped envelope discloses the bound"
+        );
+        assert_eq!(
+            m4["max_run_limitations"], 1,
+            "top-level run_limitations must be read"
+        );
+        assert_eq!(
+            m4["max_typed_limitations"], 0,
+            "the analysis_outcome path is unchanged"
+        );
+        assert_eq!(
+            m4["analysis_complete_all_envelopes"], true,
+            "the analysis completed; only rendering is bounded"
+        );
+    }
+
+    /// #7016 control: an unbounded population reports equal denominators and
+    /// no bound, and a missing `summary.findings` reads as unknown (null),
+    /// never a fake zero.
+    #[test]
+    fn m4_reports_full_denominator_when_unbounded() {
+        let envelope = json!({
+            "summary": { "findings": 2 },
+            "analysis_outcome": { "analysis_complete": true, "outcome": { "limitations": [] } },
+            "findings": [
+                { "classification": "weakly_exposed" },
+                { "classification": "weakly_exposed" },
+            ],
+        });
+        let m4 = actionability_metrics(&[envelope]);
+        assert_eq!(m4["findings_total"], 2);
+        assert_eq!(m4["findings_reported"], 2);
+        assert_eq!(m4["envelopes_findings_bound"], 0);
+        assert_eq!(m4["max_run_limitations"], 0);
+
+        let no_summary = json!({
+            "analysis_outcome": { "analysis_complete": true, "outcome": { "limitations": [] } },
+            "findings": [{ "classification": "weakly_exposed" }],
+        });
+        let m4 = actionability_metrics(&[no_summary]);
+        assert_eq!(m4["findings_total"], 1);
+        assert!(
+            m4["findings_reported"].is_null(),
+            "unreported denominators stay null, never 0"
+        );
+    }
+
+    /// #7016 follow-up: the M4 Markdown receipt discloses the capped
+    /// population — reported-vs-emitted denominators, the bound-envelope
+    /// count, and run-limitation counts — so a dropped or misordered
+    /// placeholder fails here, not in a published receipt.
+    #[test]
+    fn m4_markdown_discloses_findings_bound_population() {
+        let capped = json!({
+            "summary": { "findings": 112 },
+            "analysis_outcome": { "analysis_complete": true, "outcome": { "limitations": [] } },
+            "run_limitations": [{
+                "category": "limited_findings_bound",
+                "run_status": "limited_findings_bound",
+                "basis": "check_findings_byte_budget",
+                "downstream_consumable": false,
+                "message": "rendered 2 of 112 findings",
+                "repair_route": "output/check-findings-budget",
+            }],
+            "findings": [
+                { "classification": "weakly_exposed" },
+                { "classification": "static_unknown", "stop_reasons": ["no related test file resolved"] },
+            ],
+        });
+        let uncapped = json!({
+            "summary": { "findings": 3 },
+            "analysis_outcome": { "analysis_complete": true, "outcome": { "limitations": [] } },
+            "findings": [
+                { "classification": "exposed" },
+                { "classification": "exposed" },
+                { "classification": "exposed" },
+            ],
+        });
+        let receipt = json!({
+            "status": "pass",
+            "identity": {},
+            "m4": { "tiny": actionability_metrics(&[capped, uncapped]) },
+        });
+        let markdown = receipt_markdown(&receipt, None);
+        assert!(
+            markdown.contains("findings_total 5 (reported 115)"),
+            "the M4 line discloses the emitted-vs-reported denominators:\n{markdown}"
+        );
+        assert!(
+            markdown.contains("findings_bound_envelopes 1"),
+            "the M4 line discloses the bound-envelope count:\n{markdown}"
+        );
+        assert!(
+            markdown.contains("max_run_limitations 1"),
+            "the M4 line discloses run-limitation counts:\n{markdown}"
         );
     }
 
