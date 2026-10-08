@@ -1,0 +1,22 @@
+{
+  "case_id": "spec0225-wv-expected-binding",
+  "subject_id": "authored-spec0225-5",
+  "origin": "authored",
+  "anchor": "src/lib.rs:11",
+  "behavior_family": "field_construction_whole_value",
+  "test_shape": "expected_value_in_separate_binding",
+  "hard_case": true,
+  "truth": "discriminated",
+  "ideal_verdict": "credited",
+  "observed_verdict": "gap",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "weakly_exposed"
+  ],
+  "outcome": "false_actionable",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

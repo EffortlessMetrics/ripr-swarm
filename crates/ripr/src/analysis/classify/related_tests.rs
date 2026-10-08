@@ -5,7 +5,7 @@ use crate::analysis::extract::{
     ShadowAuthority, fact_body_defines_callee_fn, fact_body_let_shadow_line,
     mask_comments_and_strings, test_body_defines_callee_fn, test_body_let_shadow_line,
 };
-use crate::analysis::facts::FunctionImplContext;
+use crate::analysis::facts::{FunctionContainer, FunctionImplContext};
 use crate::analysis::seam_cache::PathDependencySection;
 use crate::analysis::workspace::{PathDependencyAdjacency, PathDependencyGraphStatus};
 use crate::domain::{Probe, RelationConfidence, RelationReason};
@@ -958,8 +958,22 @@ fn find_related_tests_with_candidates<'a>(
             // A unique owner name, or a receiver resolved to this impl, is a
             // direct call. An impl method whose name has other workspace
             // definitions cannot be `direct_owner_call` until the receiver
-            // is bound to this impl (#4760).
-            owner_call_relation_reason(test, owner_fn, owner_name, indexed_same_name_count)
+            // is bound to this impl (#4760). A receiver whose type the
+            // test's own module shadows is name-only even when unique,
+            // whether the shadow is inline (#6951) or in an out-of-line
+            // parent module (#6950).
+            let test_source = index
+                .files()
+                .get(&test.file)
+                .map(|facts| facts.data().source.as_ref());
+            owner_call_relation_reason(
+                test,
+                owner_fn,
+                owner_name,
+                indexed_same_name_count,
+                test_source,
+                index,
+            )
         } else if helper_chain_reaches {
             // The test calls a function that reaches the owner through
             // the bounded helper-transfer chain (#3296).
@@ -2023,6 +2037,81 @@ fn ident_ending_at(text: &str, end_exclusive: usize) -> Option<&str> {
     (start < end).then(|| &text[start..end])
 }
 
+/// The primitive type a suffixed numeric literal names (`5f64`, `0xffu8`,
+/// `1_000usize`, `2e3f32`), or `None` for anything else. An unsuffixed
+/// literal gets its type from inference, which ripr does not run, so it stays
+/// unresolved and fails closed. In hex, octal and binary only an integer
+/// suffix counts: `0x1f32` is the integer `0x1f32`, not an `f32`.
+fn suffixed_numeric_literal_type(literal: &str) -> Option<&str> {
+    const INTEGER_SUFFIXES: [&str; 12] = [
+        "i128", "isize", "i16", "i32", "i64", "i8", "u128", "usize", "u16", "u32", "u64", "u8",
+    ];
+    const FLOAT_SUFFIXES: [&str; 2] = ["f32", "f64"];
+    if !literal.as_bytes().first().is_some_and(u8::is_ascii_digit) {
+        return None;
+    }
+    let radix_digits = |body: &str| -> Option<fn(u8) -> bool> {
+        let digits: fn(u8) -> bool = if body.starts_with("0x") {
+            |b| b.is_ascii_hexdigit()
+        } else if body.starts_with("0o") {
+            |b| (b'0'..=b'7').contains(&b)
+        } else if body.starts_with("0b") {
+            |b| b == b'0' || b == b'1'
+        } else {
+            return None;
+        };
+        Some(digits)
+    };
+    for suffix in INTEGER_SUFFIXES {
+        let Some(body) = literal.strip_suffix(suffix) else {
+            continue;
+        };
+        let valid = match radix_digits(body) {
+            Some(digits) => {
+                let rest = &body.as_bytes()[2..];
+                rest.iter().any(|&b| b != b'_') && rest.iter().all(|&b| b == b'_' || digits(b))
+            }
+            None => body.bytes().all(|b| b == b'_' || b.is_ascii_digit()),
+        };
+        if valid {
+            return Some(suffix);
+        }
+    }
+    for suffix in FLOAT_SUFFIXES {
+        let Some(body) = literal.strip_suffix(suffix) else {
+            continue;
+        };
+        if radix_digits(body).is_none() && is_decimal_float_body(body) {
+            return Some(suffix);
+        }
+    }
+    None
+}
+
+/// `1`, `1.5`, `1_0.2_5`, `2e3`, `1.5E-3`: a decimal literal body that a float
+/// suffix may follow. A trailing `.` (`1.f64`) is a field access, not a
+/// literal, so it is refused.
+fn is_decimal_float_body(body: &str) -> bool {
+    let digits = |part: &str| {
+        part.as_bytes().first().is_some_and(u8::is_ascii_digit)
+            && part.bytes().all(|b| b == b'_' || b.is_ascii_digit())
+    };
+    let (mantissa, exponent) = match body.find(['e', 'E']) {
+        Some(at) => (&body[..at], Some(&body[at + 1..])),
+        None => (body, None),
+    };
+    let mantissa_ok = match mantissa.split_once('.') {
+        Some((whole, fraction)) => digits(whole) && digits(fraction),
+        None => digits(mantissa),
+    };
+    let exponent_ok = exponent.is_none_or(|exp| {
+        let exp = exp.strip_prefix(['+', '-']).unwrap_or(exp);
+        exp.bytes().any(|b| b.is_ascii_digit())
+            && exp.bytes().all(|b| b == b'_' || b.is_ascii_digit())
+    });
+    mantissa_ok && exponent_ok
+}
+
 fn skip_ws_if_paren(text: &str, after_name: usize) -> bool {
     let bytes = text.as_bytes();
     let mut i = after_name;
@@ -2044,6 +2133,44 @@ pub(in crate::analysis) fn impl_self_type_name(owner_id: &str) -> Option<String>
         None => impl_body,
     };
     compact_impl_type_name(self_ty)
+}
+
+/// Trait of a trait-impl method owner from its symbol id
+/// (`src/lib.rs::impl Render for f64::render` → `Render`). `None` for
+/// inherent impls and free functions, and for a generic trait
+/// (`impl From<f64> for Meters`): its associated functions take the type
+/// parameter, not `Self`, as their argument, so `From::from(x)` cannot
+/// select one of its impls by `x`.
+pub(in crate::analysis) fn impl_trait_name(owner_id: &str) -> Option<String> {
+    let impl_rest = owner_id.split("::impl ").nth(1)?;
+    let impl_body = impl_rest.rsplit_once("::")?.0;
+    let (trait_ty, _) = impl_body.rsplit_once(" for ")?;
+    if trait_ty.contains('<') {
+        return None;
+    }
+    compact_impl_type_name(trait_ty)
+}
+
+/// The trait named by a trait-impl owner's symbol id, generic or not
+/// (`impl From<f64> for Meters::from` → `From`). `None` for inherent impls and
+/// free functions.
+fn owner_trait_name(owner_id: &str) -> Option<String> {
+    let impl_rest = owner_id.split("::impl ").nth(1)?;
+    let impl_body = impl_rest.rsplit_once("::")?.0;
+    let (trait_ty, _) = impl_body.rsplit_once(" for ")?;
+    compact_impl_type_name(trait_ty)
+}
+
+/// The trait a trait-path call to `owner` dispatches through, for
+/// [`method_call_resolves_to_impl`]. Only a method taking `self` is selected
+/// by its first argument: an associated function such as
+/// `FromF64::from_f64(2.5f64)` takes its `Self` from the expected return
+/// type, which ripr does not infer, so it gets no trait and fails closed.
+pub(in crate::analysis) fn owner_dispatch_trait(owner: &FunctionSummary) -> Option<String> {
+    if !owner.item.has_self_param {
+        return None;
+    }
+    impl_trait_name(&owner.id.0)
 }
 
 fn compact_impl_type_name(ty: &str) -> Option<String> {
@@ -2251,6 +2378,7 @@ fn text_resolves_method_to_type(
     text: &str,
     method: &str,
     impl_type: &str,
+    impl_trait: Option<&str>,
     body_for_lets: &str,
     whole_body: bool,
 ) -> bool {
@@ -2274,12 +2402,30 @@ fn text_resolves_method_to_type(
         };
         if ident_boundary(bytes, at, after) && skip_ws_if_paren(text, after) {
             if at >= 2 && bytes[at - 2] == b':' && bytes[at - 1] == b':' {
-                if ident_ending_at(text, at - 2).is_some_and(|ty| ty == impl_type) {
+                let qualifier = ident_ending_at(text, at - 2);
+                if qualifier.is_some_and(|ty| ty == impl_type) {
+                    return true;
+                }
+                // `<f64 as Render>::render(..)` names the impl outright;
+                // `Render::render(&-0.0f64)` dispatches on its first
+                // argument's type. A raw call line is unmasked, so a form
+                // quoted in a string or comment there must not count: only
+                // the masked body reads these.
+                if whole_body
+                    && (qualified_self_type_matches(text, at - 2, impl_type, impl_trait)
+                        || (impl_trait.is_some_and(|tr| qualifier == Some(tr))
+                            && first_argument_has_type(text, after, impl_type, body_for_lets)))
+                {
                     return true;
                 }
             } else if at > 0 && bytes[at - 1] == b'.' {
                 if let Some(recv) = ident_ending_at(text, at - 1) {
                     if recv == impl_type
+                        // `1.5f64.m()` reads only the fragment after the `.`
+                        // (`5f64`), which still carries the literal's suffix.
+                        // A raw call line is unmasked, so a literal quoted in
+                        // a string or comment there must not type a receiver.
+                        || (whole_body && suffixed_numeric_literal_type(recv) == Some(impl_type))
                         || let_binding_mentions_type(body_for_lets, recv, impl_type)
                     {
                         return true;
@@ -2294,6 +2440,123 @@ fn text_resolves_method_to_type(
         search = at + method.chars().next().map_or(1, char::len_utf8);
     }
     false
+}
+
+/// `<f64 as Render>::m(..)`: the qualified path ending at `colons` names
+/// `impl_type` as its self type and the owner's trait as its trait. Without a
+/// known trait (an inherent owner) the form cannot name this impl.
+fn qualified_self_type_matches(
+    text: &str,
+    colons: usize,
+    impl_type: &str,
+    impl_trait: Option<&str>,
+) -> bool {
+    let Some(impl_trait) = impl_trait else {
+        return false;
+    };
+    let bytes = text.as_bytes();
+    let mut close = colons;
+    while close > 0 && bytes[close - 1].is_ascii_whitespace() {
+        close -= 1;
+    }
+    let Some(close) = close.checked_sub(1) else {
+        return false;
+    };
+    if bytes[close] != b'>' {
+        return false;
+    }
+    let Some(open) = matching_open(bytes, close, b'<', b'>') else {
+        return false;
+    };
+    let Some((self_ty, trait_ty)) = text[open + 1..close].split_once(" as ") else {
+        return false;
+    };
+    // `<Wrapper<u16> as Render>` names one specialisation, but `impl_type`
+    // is the compact base name shared by `Wrapper<u8>`; fail closed.
+    !self_ty.contains('<')
+        && compact_impl_type_name(self_ty).as_deref() == Some(impl_type)
+        && compact_impl_type_name(trait_ty).as_deref() == Some(impl_trait)
+}
+
+/// Whether the first argument of the call whose name ends at `after_name`
+/// has type `impl_type`: a suffixed literal (`&-0.0f64`), a `let` binding
+/// typed as `impl_type`, or a struct, tuple-struct or variant literal
+/// (`&Site { .. }`, `&Site(1)`). Anything else fails closed.
+fn first_argument_has_type(
+    text: &str,
+    after_name: usize,
+    impl_type: &str,
+    body_for_lets: &str,
+) -> bool {
+    let bytes = text.as_bytes();
+    let mut open = after_name;
+    while open < bytes.len() && bytes[open].is_ascii_whitespace() {
+        open += 1;
+    }
+    if bytes.get(open) != Some(&b'(') {
+        return false;
+    }
+    let mut depth = 0usize;
+    let mut end = None;
+    for (index, &byte) in bytes.iter().enumerate().skip(open + 1) {
+        match byte {
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' if depth == 0 => {
+                end = Some(index);
+                break;
+            }
+            b')' | b']' | b'}' => depth -= 1,
+            b',' if depth == 0 => {
+                end = Some(index);
+                break;
+            }
+            _ => {}
+        }
+    }
+    let Some(end) = end else {
+        return false;
+    };
+    let arg = text[open + 1..end].trim();
+    let arg = arg.strip_prefix('&').map_or(arg, str::trim_start);
+    let arg = arg.strip_prefix("mut ").map_or(arg, str::trim_start);
+    let literal = arg.strip_prefix('-').map_or(arg, str::trim_start);
+    if let Some(ty) = suffixed_numeric_literal_type(literal) {
+        return ty == impl_type;
+    }
+    if !arg.is_empty() && arg.bytes().all(is_ident_byte) {
+        // A binding is typed by its annotation or, as an argument is, by a
+        // literal initializer; `let s = Site::new();` names no type.
+        return last_let_statement(body_for_lets, arg).is_some_and(|stmt| {
+            let Some(eq) = stmt.find('=') else {
+                return false;
+            };
+            match stmt[..eq].find(':') {
+                Some(_) => let_statement_type_head(stmt) == Some(impl_type),
+                None => literal_type_head(&stmt[eq + 1..]) == Some(impl_type),
+            }
+        });
+    }
+    literal_type_head(arg) == Some(impl_type)
+}
+
+/// Type named by a struct literal (`Site { .. }`), tuple-struct literal
+/// (`Site(1)`) or enum variant (`Shape::Circle(1)`) that is the whole of
+/// `expr`. An associated function or constant (`Site::new()`,
+/// `Site::with_cache()`, `Site::CACHE`) may have any declared type, which
+/// ripr does not look up, and a turbofish names a specialisation the compact
+/// impl type cannot tell apart, so both give `None`.
+fn literal_type_head(expr: &str) -> Option<&str> {
+    let expr = expr.trim();
+    let expr = expr.strip_suffix(';').map_or(expr, str::trim_end);
+    let literal = type_head(expr).is_some_and(|(segments, next)| match next {
+        Some(b'{') => true,
+        Some(b'(') => segments.last().is_some_and(|call| is_variant_name(call)),
+        _ => false,
+    });
+    if !literal || expr.contains("::<") || !initializer_is_one_head_expr(expr) {
+        return None;
+    }
+    initializer_type_head(expr)
 }
 
 /// Whether the bracketed receiver expression ending just before the `.` at
@@ -2371,6 +2634,11 @@ fn bracketed_expr_has_type(
             let inner = text[open + 1..close].trim();
             let inner = inner.strip_prefix('&').map_or(inner, str::trim_start);
             let inner = inner.strip_prefix("mut ").map_or(inner, str::trim_start);
+            // `(-0.0f64).m()` / `(&3u8).m()`: a suffixed literal names its type.
+            let literal = inner.strip_prefix('-').map_or(inner, str::trim_start);
+            if let Some(ty) = suffixed_numeric_literal_type(literal) {
+                return ty == impl_type;
+            }
             if !inner.is_empty() && inner.bytes().all(is_ident_byte) {
                 return inner == impl_type
                     || let_binding_mentions_type(body_for_lets, inner, impl_type);
@@ -2474,19 +2742,29 @@ fn matching_open(bytes: &[u8], close: usize, open_byte: u8, close_byte: u8) -> O
 /// Whether a test invokes `method` on a receiver bound to `impl_type`
 /// (constructor, type annotation, UFCS `Type::method`, or `Type { .. }.method`).
 /// Unresolved receivers fail closed (#4760).
-pub(in crate::analysis) fn method_call_resolves_to_impl_type(
+#[cfg(test)]
+fn method_call_resolves_to_impl_type(test: &TestSummary, method: &str, impl_type: &str) -> bool {
+    method_call_resolves_to_impl(test, method, impl_type, None)
+}
+
+/// Whether a test invokes `method` on a receiver bound to `impl_type`, as
+/// `method_call_resolves_to_impl_type` describes. With `impl_trait` from
+/// [`owner_dispatch_trait`] it also accepts a trait-qualified call on an argument of
+/// that type (`Render::render(&-0.0f64)`, `<f64 as Render>::render(&x)`).
+pub(in crate::analysis) fn method_call_resolves_to_impl(
     test: &TestSummary,
     method: &str,
     impl_type: &str,
+    impl_trait: Option<&str>,
 ) -> bool {
     if method.is_empty() || impl_type.is_empty() {
         return false;
     }
     let masked_body = mask_comments_and_strings(&test.body);
-    method_call_resolves_to_impl_type_in(test, &masked_body, method, impl_type)
+    method_call_resolves_to_impl_in(test, &masked_body, method, impl_type, impl_trait)
 }
 
-/// [`method_call_resolves_to_impl_type`] with the test body already masked
+/// [`method_call_resolves_to_impl`] with no trait and the test body already masked
 /// by `mask_comments_and_strings`, for callers that ask about one test many
 /// times.
 pub(in crate::analysis) fn method_call_resolves_to_impl_type_in(
@@ -2495,15 +2773,39 @@ pub(in crate::analysis) fn method_call_resolves_to_impl_type_in(
     method: &str,
     impl_type: &str,
 ) -> bool {
+    method_call_resolves_to_impl_in(test, masked_body, method, impl_type, None)
+}
+
+fn method_call_resolves_to_impl_in(
+    test: &TestSummary,
+    masked_body: &str,
+    method: &str,
+    impl_type: &str,
+    impl_trait: Option<&str>,
+) -> bool {
     if method.is_empty() || impl_type.is_empty() {
         return false;
     }
-    if text_resolves_method_to_type(masked_body, method, impl_type, masked_body, true) {
+    if text_resolves_method_to_type(
+        masked_body,
+        method,
+        impl_type,
+        impl_trait,
+        masked_body,
+        true,
+    ) {
         return true;
     }
     test.calls.iter().any(|call| {
         call.name == method
-            && text_resolves_method_to_type(&call.text, method, impl_type, masked_body, false)
+            && text_resolves_method_to_type(
+                &call.text,
+                method,
+                impl_type,
+                impl_trait,
+                masked_body,
+                false,
+            )
     })
 }
 
@@ -2512,21 +2814,418 @@ fn owner_call_relation_reason(
     owner_fn: Option<&FunctionSummary>,
     owner_name: &str,
     indexed_same_name_count: usize,
+    test_source: Option<&str>,
+    index: &RustIndex,
 ) -> RelationReason {
     let Some(owner) = owner_fn else {
         return RelationReason::DirectOwnerCall;
     };
+    // A module-level `fn` is never reached through a receiver or a type
+    // path: `ByteSize::kb(1)` calls the associated function, not the free
+    // `kb` beside it (#6713). Only a bare or module-qualified spelling is a
+    // call of the free function. Fails open when the impl context is not
+    // parser-established.
+    if owner.impl_context == FunctionImplContext::Free
+        && !test_calls_free_function(test, owner_name)
+    {
+        return RelationReason::WeakTokenSubstring;
+    }
     let Some(impl_type) = impl_self_type_name(&owner.id.0) else {
-        return RelationReason::DirectOwnerCall;
+        // #7006: method-call syntax can never resolve to a free function,
+        // so a receiver-qualified-only `other.owner(..)` match is the
+        // right string on the wrong receiver. Credit `direct_owner_call`
+        // only when some observed site spells a free-function call — bare
+        // `owner(` or path-qualified `path::owner(`; otherwise the
+        // name-only match demotes to `weak_token_substring`. The demotion
+        // applies ONLY to an established free function: trait-declaration
+        // methods share this branch (their ids carry no `::impl` segment)
+        // and impl-block methods never reach it (#3047).
+        if !is_established_free_function(owner) {
+            return RelationReason::DirectOwnerCall;
+        }
+        if free_function_call_spells_free_call(test, owner_name) {
+            return RelationReason::DirectOwnerCall;
+        }
+        return RelationReason::WeakTokenSubstring;
     };
+    // #6951: when the test's own module scope declares the owner's impl
+    // type, a bare receiver of that name binds the test-local shadow, not
+    // the production type — the same entity-identity refusal as the #6905
+    // owner pin. A shadowed receiver keeps a name-only relation instead of
+    // direct production reach, in both the unique-name and ambiguous-name
+    // branches. No source (or no shadow) preserves existing credit. The
+    // owner's own scope is not a shadow (#6957), so a same-file owner
+    // supplies its scope while a cross-file owner keeps the fail-closed
+    // single-file check; an out-of-line parent module declaring the type
+    // refuses the same way (#6950).
+    let owner_scope =
+        super::owner_pin::OwnerScope::new(owner.name.as_str(), owner.start_line, &owner.file);
+    if test_source.is_some_and(|source| {
+        super::owner_pin::test_module_shadows_type(
+            test,
+            source,
+            &impl_type,
+            owner_scope.in_file(&test.file),
+        )
+    }) || super::owner_pin::parent_chain_shadows_type(test, &impl_type, owner_scope, index)
+    {
+        return RelationReason::WeakTokenSubstring;
+    }
+    // #7053: a trait-impl owner is also shadowed by a same-named `trait`
+    // declared in the test's own module scope: `Render::render(..)` and
+    // `.render()` there name the test-local trait, so the production impl is
+    // never called. A trait the symbol id names (even a generic one) counts.
+    let owner_trait = owner_trait_name(&owner.id.0);
+    if let Some(trait_name) = owner_trait.as_deref()
+        && test_source.is_some_and(|source| {
+            super::owner_pin::test_module_shadows_trait(
+                test,
+                source,
+                trait_name,
+                owner_scope.in_file(&test.file),
+            )
+        })
+    {
+        return RelationReason::WeakTokenSubstring;
+    }
     if indexed_same_name_count <= 1 {
         return RelationReason::DirectOwnerCall;
     }
-    if method_call_resolves_to_impl_type(test, owner_name, &impl_type) {
+    let impl_trait = owner_dispatch_trait(owner);
+    if method_call_resolves_to_impl(test, owner_name, &impl_type, impl_trait.as_deref()) {
         RelationReason::DirectOwnerCall
     } else {
         RelationReason::WeakTokenSubstring
     }
+}
+
+/// Whether the test spells a call of `name` that can reach a free function:
+/// bare `name(` or module-qualified `module::name(`. A receiver call
+/// (`value.name(`) and a type-path call (`Type::name(`, `Self::name(`,
+/// `<T as Trait>::name(`, `Type::<T>::name(`, `u64::name(`) reach an
+/// associated function instead (#6713). A qualifier is read as a type when
+/// it starts with an uppercase letter, is a primitive type, or ends in
+/// generic arguments; Rust module names are snake_case by convention, so
+/// `crate::`, `super::` and `dep::` stay free. Known limits: an uppercase
+/// module name loses the call, and a lowercase type alias keeps it.
+pub(in crate::analysis) fn test_calls_free_function(test: &TestSummary, name: &str) -> bool {
+    if name.is_empty() {
+        return false;
+    }
+    // Captured calls are single lines; the body is the fallback for a call
+    // the call facts did not capture. A `name(` token inside an opaque
+    // property macro is macro-internal syntax, not a call the test makes,
+    // so the fallback excludes those ranges exactly as
+    // [`body_contains_owner_call`] does (#6713 review). Every free-call
+    // spelling is checked, not only the first: a macro-internal occurrence
+    // must not hide a genuine bare call later in the body.
+    test.calls
+        .iter()
+        .any(|call| call.name == name && call_text_may_call_free_function(&call.text, name))
+        || {
+            let masked = mask_comments_and_strings(&test.body);
+            let opaque =
+                crate::analysis::extract::property_macros::opaque_property_macros(&test.body);
+            masked.match_indices(name).map(|(at, _)| at).any(|at| {
+                is_free_function_call_at(&masked, at, name)
+                    && !opaque.iter().any(|item| item.range.contains(&at))
+            })
+        }
+}
+
+/// Whether one captured call's raw source text spells a free-function call
+/// of `name`, with comments and strings masked first.
+pub(in crate::analysis) fn call_text_may_call_free_function(text: &str, name: &str) -> bool {
+    free_function_call_start_in(&mask_comments_and_strings(text), name).is_some()
+}
+
+/// The suffix of a captured call's raw source text that starts at its first
+/// free-function call of `name`, so an argument reader cannot take the
+/// arguments of a same-line `Type::name(..)` instead (#6713). Masking keeps
+/// byte offsets, so the masked match indexes the raw text.
+pub(in crate::analysis) fn free_function_call_text<'text>(
+    text: &'text str,
+    name: &str,
+) -> Option<&'text str> {
+    // Argument readers parse `name(` literally, so only a call spelled that
+    // way yields a span: a spaced or turbofish free call followed by a
+    // same-line `Type::name(..)` must not lend it that call's arguments.
+    let masked = mask_comments_and_strings(text);
+    let at = masked.match_indices(name).map(|(at, _)| at).find(|&at| {
+        masked[at + name.len()..].starts_with('(') && is_free_function_call_at(&masked, at, name)
+    })?;
+    text.get(at..)
+}
+
+/// The text a captured call named like `owner` contributes as an owner
+/// call: the whole line for an owner that may be reached through a path or
+/// receiver, the free-call suffix for a module-level `fn`, `None` when the
+/// line only calls a same-named associated function or method.
+pub(in crate::analysis) fn owner_call_text<'text>(
+    text: &'text str,
+    owner: &FunctionSummary,
+) -> Option<&'text str> {
+    if owner.impl_context == FunctionImplContext::Free {
+        free_function_call_text(text, &owner.name)
+    } else {
+        Some(text)
+    }
+}
+
+/// Primitive types whose lowercase name qualifies associated functions
+/// (`u64::max(`), so they never name a module.
+const PRIMITIVE_TYPE_QUALIFIERS: &[&str] = &[
+    "bool", "char", "f32", "f64", "i8", "i16", "i32", "i64", "i128", "isize", "str", "u8", "u16",
+    "u32", "u64", "u128", "usize",
+];
+
+/// Whether a call's `(` follows a name ending at `after_name`, across
+/// whitespace and an optional turbofish (`name::<T>(`).
+fn call_paren_follows(text: &str, after_name: usize) -> bool {
+    let bytes = text.as_bytes();
+    let skip_ws = |mut at: usize| {
+        while bytes.get(at).is_some_and(u8::is_ascii_whitespace) {
+            at += 1;
+        }
+        at
+    };
+    let mut at = skip_ws(after_name);
+    if bytes.get(at..at + 2) == Some(b"::") {
+        at = skip_ws(at + 2);
+        if bytes.get(at) != Some(&b'<') {
+            return false;
+        }
+        let mut depth = 0usize;
+        loop {
+            match bytes.get(at) {
+                Some(b'<') => depth += 1,
+                // `->` in a fn-pointer argument is not a closing bracket.
+                Some(b'>') if at > 0 && bytes[at - 1] == b'-' => {}
+                Some(b'>') => {
+                    depth -= 1;
+                    if depth == 0 {
+                        break;
+                    }
+                }
+                Some(_) => {}
+                None => return false,
+            }
+            at += 1;
+        }
+        at = skip_ws(at + 1);
+    }
+    bytes.get(at) == Some(&b'(')
+}
+
+#[cfg(test)]
+fn text_has_free_function_call(text: &str, name: &str) -> bool {
+    free_function_call_start_in(text, name).is_some()
+}
+
+/// Byte offset of the first free-function call of `name` in already-masked
+/// `text`.
+fn free_function_call_start_in(text: &str, name: &str) -> Option<usize> {
+    if name.is_empty() {
+        return None;
+    }
+    text.match_indices(name)
+        .map(|(at, _)| at)
+        .find(|&at| is_free_function_call_at(text, at, name))
+}
+
+/// Whether the occurrence of `name` starting at byte `at` of already-masked
+/// `text` is a call that can reach a free function (see
+/// [`test_calls_free_function`]).
+pub(in crate::analysis) fn is_free_function_call_at(text: &str, at: usize, name: &str) -> bool {
+    let bytes = text.as_bytes();
+    if name.is_empty() || text.get(at..).is_none_or(|rest| !rest.starts_with(name)) {
+        return false;
+    }
+    {
+        let after = at + name.len();
+        if !ident_boundary(bytes, at, after) || !call_paren_follows(text, after) {
+            return false;
+        }
+        let mut before = at;
+        // `r#name(` is the same identifier.
+        if before >= 2 && &bytes[before - 2..before] == b"r#" {
+            before -= 2;
+        }
+        while before > 0 && bytes[before - 1].is_ascii_whitespace() {
+            before -= 1;
+        }
+        // A receiver dot selects a method; the first dot of a range
+        // (`0..bound(x)`) does not — the call is a bare free call computing
+        // the bound, the same rule `receiver_dot_before` applies (#7006).
+        if before > 0 && bytes[before - 1] == b'.' && (before < 2 || bytes[before - 2] != b'.') {
+            return false;
+        }
+        // A nested `fn name(` declaration defines the name, it does not
+        // call it, so it never establishes a free call (#6713 review).
+        if ident_ending_at(text, before) == Some("fn") {
+            return false;
+        }
+        if before >= 2 && bytes[before - 2] == b':' && bytes[before - 1] == b':' {
+            // `Type::<T>::name` and `<T as Trait>::name` end the qualifier
+            // in `>`, which reads as no identifier: a type path.
+            return ident_ending_at(text, before - 2).is_some_and(|qualifier| {
+                !qualifier.starts_with(|c: char| c.is_ascii_uppercase())
+                    && !PRIMITIVE_TYPE_QUALIFIERS.contains(&qualifier)
+            });
+        }
+        true
+    }
+}
+/// Whether `owner` is established as a module-level free function: the
+/// parser-backed container fact says `Free` and the parameter list has no
+/// `self` receiver. The `Unknown` container (lexical fallback, stale
+/// cache) fails closed — an unestablished owner keeps the credit — and so
+/// does every method container, including trait declarations, which share
+/// the `None` self-type branch with free functions (#7006).
+fn is_established_free_function(owner: &FunctionSummary) -> bool {
+    matches!(owner.item.container, FunctionContainer::Free) && !owner.item.has_self_param
+}
+
+/// Whether `test` invokes free-function `owner_name` through at least one
+/// call site that can resolve to a free function: a bare `owner(` spelling
+/// or a path-qualified `path::owner(` spelling, turbofish included. A
+/// receiver-qualified `expr.owner(` site is method-call syntax and can
+/// never resolve to a free function (#7006).
+///
+/// Both `calls_owner` authorities are consulted: the captured `calls`
+/// facts (whose `text` keeps the original source line) and the raw-body
+/// fallback. Either source showing one non-receiver site keeps the
+/// credit — only "receiver-qualified everywhere observed" demotes, so a
+/// bare spelling one authority misses cannot over-demote.
+fn free_function_call_spells_free_call(test: &TestSummary, owner_name: &str) -> bool {
+    if owner_name.is_empty() {
+        return true;
+    }
+    if test.calls.iter().any(|call| {
+        call.name == owner_name && text_has_non_receiver_call_site(&call.text, owner_name)
+    }) {
+        return true;
+    }
+    text_has_non_receiver_call_site(&test.body, owner_name)
+}
+
+/// Whether `text` spells at least one call site of `name` that is not
+/// receiver-qualified: the name at an identifier boundary, opening an
+/// argument list or turbofish, preceded by anything but a receiver dot.
+/// Comments and string contents are masked first so a mentioned spelling
+/// can neither keep nor cost the credit.
+fn text_has_non_receiver_call_site(text: &str, name: &str) -> bool {
+    if name.is_empty() {
+        return true;
+    }
+    let masked = mask_comments_and_strings(text);
+    let bytes = masked.as_bytes();
+    let mut search = 0usize;
+    while let Some(relative) = masked[search..].find(name) {
+        let at = search + relative;
+        let after = at + name.len();
+        // Step by the first char's width so a non-ASCII name never leaves
+        // `search` inside a multibyte char.
+        search = at + name.chars().next().map_or(1, char::len_utf8);
+        if !ident_boundary(bytes, at, after) || !call_suffix_follows(&masked, after) {
+            continue;
+        }
+        if fn_keyword_before(bytes, at) {
+            continue;
+        }
+        if !receiver_dot_before(bytes, at) {
+            return true;
+        }
+    }
+    false
+}
+
+/// Whether the name occurrence ending at `after` opens a call: an argument
+/// list `(` or a turbofish `::<...>(..)` with balanced brackets followed
+/// by `(`, either after optional whitespace. A bare turbofish
+/// `parse::<u8>` without a call is a function-item expression, not a
+/// call. The whitespace rule mirrors [`body_contains_owner_call`] exactly
+/// (Unicode `trim_start`), so every site that authority admits is
+/// classified here too.
+fn call_suffix_follows(text: &str, after: usize) -> bool {
+    let rest = text[after..].trim_start();
+    if rest.starts_with('(') {
+        return true;
+    }
+    let Some(turbo) = rest.strip_prefix("::") else {
+        return false;
+    };
+    let turbo = turbo.trim_start();
+    if !turbo.starts_with('<') {
+        return false;
+    }
+    // Scan balanced `<>` (the text is masked, so no strings intervene)
+    // and require the opening paren after the closing bracket.
+    let mut depth = 0usize;
+    for (index, byte) in turbo.bytes().enumerate() {
+        if byte == b'<' {
+            depth += 1;
+        } else if byte == b'>' {
+            depth = depth.saturating_sub(1);
+            if depth == 0 {
+                return turbo
+                    .get(index + 1..)
+                    .is_some_and(|tail| tail.trim_start().starts_with('('));
+            }
+        }
+    }
+    false
+}
+
+/// Whether the `.` before the name occurrence at `at` is a receiver dot.
+/// Rust permits trivia between the dot and the method name
+/// (`config. parse(..)`, masked comments), so the scan moves backward
+/// over whitespace first. Only a single `.` selects a method on its
+/// receiver; the second `.` of a range (`0..bound(x)`) leaves a bare call
+/// computing the bound, and any other preceding byte (path `::`, open
+/// bracket, operator, or start) spells a free-function call.
+fn receiver_dot_before(bytes: &[u8], at: usize) -> bool {
+    let mut cursor = at;
+    while let Some(previous) = cursor.checked_sub(1) {
+        match bytes.get(previous).copied() {
+            Some(byte) if byte.is_ascii_whitespace() => cursor = previous,
+            Some(b'.') => {
+                return previous
+                    .checked_sub(1)
+                    .and_then(|i| bytes.get(i).copied())
+                    .is_none_or(|before| before != b'.');
+            }
+            _ => return false,
+        }
+    }
+    false
+}
+
+/// Whether the name occurrence at `at` is declared, not called: a nested
+/// `fn name(..)` item satisfies the identifier-and-`(` shape but never
+/// invokes the owner. The `fn` keyword must sit directly before the name
+/// (modulo trivia) with a keyword boundary, so `my_fn(name)` and calls
+/// after a declaration still count.
+fn fn_keyword_before(bytes: &[u8], at: usize) -> bool {
+    let mut cursor = at;
+    while let Some(previous) = cursor.checked_sub(1) {
+        match bytes.get(previous).copied() {
+            Some(byte) if byte.is_ascii_whitespace() => cursor = previous,
+            _ => break,
+        }
+    }
+    let Some(end) = cursor.checked_sub(1) else {
+        return false;
+    };
+    // `end` is the last non-trivia byte; `fn` must end exactly there.
+    let is_fn = bytes.get(end).copied() == Some(b'n')
+        && end.checked_sub(1).and_then(|i| bytes.get(i).copied()) == Some(b'f');
+    if !is_fn {
+        return false;
+    }
+    end.checked_sub(2)
+        .and_then(|i| bytes.get(i).copied())
+        .is_none_or(|before| !before.is_ascii_alphanumeric() && before != b'_')
 }
 
 /// True when `body` mentions `owner_name` immediately followed by `(`.
@@ -2546,8 +3245,10 @@ fn owner_call_relation_reason(
 /// competing impls of one method name (`size_hint` on WhileSome vs
 /// Combinations) stay `calls_owner` here and are demoted from
 /// `direct_owner_call` by [`owner_call_relation_reason`] when the receiver
-/// is not resolved to this impl (#4760). Full `CallFact` receiver fields
-/// remain #3727.
+/// is not resolved to this impl (#4760). A receiver-qualified-only match
+/// against a free-function owner demotes the same way (#7006): method-call
+/// syntax can never resolve to a free function. Full `CallFact` receiver
+/// fields remain #3727.
 pub(in crate::analysis) fn body_contains_owner_call(body: &str, owner_name: &str) -> bool {
     if owner_name.is_empty() {
         return false;
@@ -2577,12 +3278,16 @@ pub(in crate::analysis) fn body_contains_owner_call(body: &str, owner_name: &str
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::analysis::facts::{FileFacts, FunctionSourceRole};
+    use crate::analysis::facts::{
+        FileFacts, FunctionContainer, FunctionSourceRole, SourceRoleProvenance,
+        SourceRoleProvenanceEdge, SourceRoleProvenanceEdgeKind,
+    };
     use crate::analysis::rust_index::{CallFact, OracleFact, extract_identifier_tokens};
     use crate::domain::{
         DeltaKind, OracleKind, OracleStrength, ProbeFamily, ProbeId, SourceLocation, SymbolId,
     };
     use std::path::{Path, PathBuf};
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
     fn opaque_declarations_do_not_supply_body_owner_calls() {
@@ -3071,7 +3776,10 @@ mod tests {
     /// relation on every method owner in the corpus.
     #[test]
     fn given_method_owner_when_test_calls_through_receiver_then_direct_owner_call() {
-        let owner = function("src/lib.rs", "apply");
+        // #7006: the owner here is genuinely a method owner (`Ledger::apply`,
+        // as the contract above states) — a free-function `apply` with only
+        // `ledger.apply(5)` to match now demotes to `weak_token_substring`.
+        let owner = impl_function("src/lib.rs", "apply", "impl Ledger");
         let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
             functions: vec![owner.clone()],
             tests: vec![TestSummary {
@@ -3101,6 +3809,32 @@ mod tests {
     fn impl_function(file: &str, name: &str, impl_segment: &str) -> FunctionSummary {
         let mut owner = function(file, name);
         owner.id = SymbolId(format!("{file}::{impl_segment}::{name}"));
+        owner.item.has_self_param = true;
+        owner
+    }
+
+    /// A parser-backed module-level free function: the only owner kind the
+    /// #7006 demotion applies to. (Named apart from the #4558
+    /// `free_function`, which establishes only the type-path authority.)
+    fn established_free_function(file: &str, name: &str) -> FunctionSummary {
+        let mut owner = function(file, name);
+        owner.item.container = FunctionContainer::Free;
+        owner.item.has_body = true;
+        owner.impl_context = FunctionImplContext::Free;
+        owner
+    }
+
+    /// A parser-backed trait-declaration method. Its id carries no `::impl`
+    /// segment — the free-function-like shape is deliberate: only the
+    /// container fact distinguishes it from a free function, and the #7006
+    /// demotion must not fire for it.
+    fn trait_function(file: &str, name: &str, trait_name: &str) -> FunctionSummary {
+        let mut owner = function(file, name);
+        owner.item.container = FunctionContainer::Trait {
+            trait_name: trait_name.to_string(),
+        };
+        owner.item.has_self_param = true;
+        owner.item.has_body = true;
         owner
     }
 
@@ -3122,6 +3856,213 @@ mod tests {
             impl_self_type_name("src/lib.rs::size_hint").as_deref(),
             None
         );
+    }
+
+    #[test]
+    fn impl_trait_name_reads_only_trait_impl_segments() {
+        let cases = [
+            ("src/lib.rs::impl Render for f64::render", Some("Render")),
+            (
+                "src/lib.rs::impl fmt::Display for Site<T>::fmt",
+                Some("Display"),
+            ),
+            (
+                "src/lib.rs::impl Iterator for WhileSome<I>::size_hint",
+                Some("Iterator"),
+            ),
+            ("src/lib.rs::impl From<f64> for Meters::from", None),
+            ("src/adaptors/mod.rs::impl WhileSome::size_hint", None),
+            ("src/lib.rs::size_hint", None),
+        ];
+        for (owner_id, expected) in cases {
+            assert_eq!(impl_trait_name(owner_id).as_deref(), expected, "{owner_id}");
+        }
+    }
+
+    /// #6732: two `render` impls. A test that calls the trait method through
+    /// its trait path on an `f64` argument reaches `impl Render for f64`
+    /// directly; the same call on a `u8` argument stays name-only.
+    #[test]
+    fn given_two_impls_when_test_calls_through_trait_path_then_argument_type_decides() {
+        let owner = impl_function("src/lib.rs", "render", "impl Render for f64");
+        let other = impl_function("src/lib.rs", "render", "impl Render for u8");
+        for (body, expected) in [
+            (
+                "assert_eq!(Render::render(&-0.0f64), \"-0.0\");",
+                RelationReason::DirectOwnerCall,
+            ),
+            (
+                "assert_eq!(<f64 as Render>::render(&z), \"-0.0\");",
+                RelationReason::DirectOwnerCall,
+            ),
+            (
+                "assert_eq!(Render::render(&3u8), \"3\");",
+                RelationReason::WeakTokenSubstring,
+            ),
+        ] {
+            let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+                functions: vec![owner.clone(), other.clone()],
+                tests: vec![test_with_call("tests/render.rs", "t", body, "render")],
+                ..Default::default()
+            });
+            let probe = probe("src/lib.rs", "return String::from(\"-0.0\");");
+
+            let related = find_related_tests(&probe, Some(&owner), &index, true, None, None);
+
+            assert_eq!(related.len(), 1, "{body}");
+            assert_eq!(related[0].1, expected, "{body}");
+        }
+        // The `&3u8` call that is name-only for the f64 impl reaches the u8 impl.
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions: vec![owner.clone(), other.clone()],
+            tests: vec![test_with_call(
+                "tests/render.rs",
+                "t",
+                "assert_eq!(Render::render(&3u8), \"3\");",
+                "render",
+            )],
+            ..Default::default()
+        });
+        let probe = probe("src/lib.rs", "format!(\"{self}\")");
+        let related = find_related_tests(&probe, Some(&other), &index, true, None, None);
+        assert_eq!(related.len(), 1);
+        assert_eq!(related[0].1, RelationReason::DirectOwnerCall);
+    }
+
+    /// (#6732 review) An associated function with no `self` takes its `Self`
+    /// from the expected return type: `let x: u8 = FromF64::from_f64(2.5f64)`
+    /// runs the u8 impl, so its `f64` argument must not select the f64 impl.
+    #[test]
+    fn given_trait_path_call_to_a_function_without_self_then_name_only_relation() {
+        let mut owner = impl_function("src/lib.rs", "from_f64", "impl FromF64 for f64");
+        owner.item.has_self_param = false;
+        let mut other = impl_function("src/lib.rs", "from_f64", "impl FromF64 for u8");
+        other.item.has_self_param = false;
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions: vec![owner.clone(), other],
+            tests: vec![test_with_call(
+                "tests/convert.rs",
+                "t",
+                "let x: u8 = FromF64::from_f64(2.5f64); assert_eq!(x, 2);",
+                "from_f64",
+            )],
+            ..Default::default()
+        });
+        let probe = probe("src/lib.rs", "n");
+
+        let related = find_related_tests(&probe, Some(&owner), &index, true, None, None);
+
+        assert_eq!(related.len(), 1);
+        assert_eq!(related[0].1, RelationReason::WeakTokenSubstring);
+    }
+
+    /// #6732: a trait-qualified call relates to `impl impl_trait for
+    /// impl_type` only when the qualifier is that trait and the first
+    /// argument's own syntax names the type. Another trait, a type path that
+    /// is not the trait, an untyped argument, or an inherent owner (no trait)
+    /// fail closed.
+    #[test]
+    fn trait_qualified_call_resolves_by_its_first_argument() {
+        let cases = [
+            ("Render::render(&-0.0f64);", Some("Render"), true),
+            ("crate::Render::render(&1.5f64);", Some("Render"), true),
+            ("Render::render( &mut 2f64 , 3);", Some("Render"), true),
+            (
+                "let z: f64 = -0.0; Render::render(&z);",
+                Some("Render"),
+                true,
+            ),
+            (
+                "let z = Wrap::new(1); Render::render(&z);",
+                Some("Render"),
+                false,
+            ),
+            ("Render::render(&Site::new());", Some("Render"), false),
+            ("<f64 as Render>::render(&z);", Some("Render"), true),
+            ("<f64 as crate::Render>::render(&z);", Some("Render"), true),
+            ("<u8 as Render>::render(&z);", Some("Render"), false),
+            ("<f64 as Show>::render(&z);", Some("Render"), false),
+            ("<f64 as Render>::render(&z);", None, false),
+            ("Show::render(&-0.0f64);", Some("Render"), false),
+            ("Codec::render(&-0.0f64);", None, false),
+            ("Render::render(&-0.0f32);", Some("Render"), false),
+            ("Render::render(&-0.0);", Some("Render"), false),
+            ("Render::render(&make(1f64));", Some("Render"), false),
+            ("Render::render(&(1f64, 2));", Some("Render"), false),
+            ("Render::render(", Some("Render"), false),
+            (
+                "let s = \"Render::render(&1f64)\"; other.render();",
+                Some("Render"),
+                false,
+            ),
+        ];
+        for (body, impl_trait, expected) in cases {
+            let summary = test("tests/render.rs", "t", body);
+            assert_eq!(
+                method_call_resolves_to_impl(&summary, "render", "f64", impl_trait),
+                expected,
+                "{body} with trait {impl_trait:?}"
+            );
+        }
+    }
+
+    /// #6732: a struct, tuple-struct or variant literal argument names its
+    /// type; an associated function or constant does not.
+    #[test]
+    fn trait_qualified_call_resolves_a_constructor_argument() {
+        for (body, expected) in [
+            ("Render::render(&Site::new());", false),
+            ("Render::render(&Site { x: 1 });", true),
+            ("Render::render(&Site::new().cache());", false),
+            ("Render::render(&Site::default());", false),
+            ("Render::render(&Site::CACHE);", false),
+            ("Render::render(&m::Site(1));", true),
+            ("Render::render(&Kind::Site(1));", false),
+            ("let s = Site::new(); Render::render(&s);", false),
+            ("let s: Site = Site::new(); Render::render(&s);", true),
+            ("let s = Site { x: 1 }; Render::render(&s);", true),
+            ("let s = Site { x: 1 }.cache(); Render::render(&s);", false),
+            ("Render::render(&Site(1));", true),
+            ("Render::render(&Site::with_cache());", false),
+            ("Render::render(&Site::from_parts(1));", false),
+            ("Render::render(&Site::new_empty());", false),
+            ("Render::render(&Site::<u8>::new());", false),
+            ("<Site<u16> as Render>::render(&s);", false),
+            ("<Site as Render>::render(&s);", true),
+            ("Render::render(&Cache::new());", false),
+        ] {
+            let summary = test("tests/render.rs", "t", body);
+            assert_eq!(
+                method_call_resolves_to_impl(&summary, "render", "Site", Some("Render")),
+                expected,
+                "{body}"
+            );
+        }
+    }
+
+    /// (#6732 review) A raw call line is unmasked: a trait-path form quoted
+    /// in a string or comment beside an unrelated `other.render()` must not
+    /// resolve the call to the impl it names.
+    #[test]
+    fn quoted_trait_path_call_on_a_raw_call_line_does_not_resolve() {
+        let cases = [
+            "let x = other.render(); // <f64 as Render>::render(&z)",
+            "let x = other.render(\"<f64 as Render>::render(\");",
+            "let x = other.render(); // Render::render(&1f64)",
+            "let x = other.render(); /* Render::render(&1f64) */",
+        ];
+        for line in cases {
+            let mut summary = test("tests/render.rs", "t", line);
+            summary.calls = vec![CallFact {
+                line: 1,
+                name: "render".to_string(),
+                text: line.to_string(),
+            }];
+            assert!(
+                !method_call_resolves_to_impl(&summary, "render", "f64", Some("Render")),
+                "{line}"
+            );
+        }
     }
 
     /// #4760: two impls of one trait method. A test that calls the method on
@@ -3202,6 +4143,253 @@ mod tests {
         assert_eq!(related[0].1, RelationReason::WeakTokenSubstring);
     }
 
+    /// #6713 bytesize shape: a free `kb` beside the associated
+    /// `ByteSize::kb`. Returns the free owner and the related-test reason
+    /// for one test body.
+    fn free_kb_relation(body: &str) -> Vec<RelationReason> {
+        let owner = free_function("src/lib.rs", "kb");
+        let mut method = impl_function("src/lib.rs", "kb", "impl ByteSize");
+        method.impl_context = FunctionImplContext::Impl {
+            self_type: "ByteSize".to_string(),
+        };
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions: vec![owner.clone(), method],
+            tests: vec![test_with_call(
+                "tests/units.rs",
+                "test_comparison",
+                body,
+                "kb",
+            )],
+            ..Default::default()
+        });
+        let probe = probe("src/lib.rs", "size.into() * KB");
+        find_related_tests(&probe, Some(&owner), &index, true, None, None)
+            .into_iter()
+            .map(|(_, reason)| reason)
+            .collect()
+    }
+
+    /// #6713: `ByteSize::kb(1000)` calls the associated function, never the
+    /// free `kb`, so it cannot be a direct owner call of the free function.
+    #[test]
+    fn given_free_fn_when_test_calls_same_named_type_path_then_name_only_relation() {
+        assert_eq!(
+            free_kb_relation("assert!(ByteSize::mb(1) == ByteSize::kb(1000));"),
+            vec![RelationReason::WeakTokenSubstring]
+        );
+        // A quoted or commented bare call is not a call.
+        assert_eq!(
+            free_kb_relation(
+                "// kb(1) is the free form\nassert_eq!(ByteSize::kb(1).to_string(), \"kb(1)\");"
+            ),
+            vec![RelationReason::WeakTokenSubstring]
+        );
+    }
+
+    /// #6713: a receiver call reaches a method, not the free function.
+    #[test]
+    fn given_free_fn_when_test_calls_same_named_method_then_name_only_relation() {
+        assert_eq!(
+            free_kb_relation("let size = Units;\nassert_eq!(size.kb(), 1000);"),
+            vec![RelationReason::WeakTokenSubstring]
+        );
+    }
+
+    /// #6713 review: a nested `fn kb(..)` declaration defines the name, it
+    /// does not call it, so it cannot restore the direct free-owner relation
+    /// over a same-named type-path call.
+    #[test]
+    fn given_free_fn_when_test_declares_same_named_fn_then_name_only_relation() {
+        // Reader level: the declaration is not a free call, a later real
+        // call still is.
+        assert!(!text_has_free_function_call(
+            "fn kb(x: u64) -> u64 { x }",
+            "kb"
+        ));
+        assert!(!text_has_free_function_call(
+            "fn  kb (x: u64) -> u64 { x }",
+            "kb"
+        ));
+        assert!(text_has_free_function_call(
+            "unsafe fn kb(x: u64) { }\nassert_eq!(kb(1), 1000);",
+            "kb"
+        ));
+        // Relation mode: declaration plus a type-path call stays weak.
+        assert_eq!(
+            free_kb_relation("fn kb(x: u64) -> u64 { x }\nassert_eq!(ByteSize::kb(1), 1000);"),
+            vec![RelationReason::WeakTokenSubstring]
+        );
+    }
+
+    /// #6713 review: a bare `name(` token inside an opaque property macro is
+    /// macro-internal syntax, not a call the test makes, so it cannot
+    /// restore the direct free-owner relation over a same-named type-path
+    /// call — the same exclusion `body_contains_owner_call` already applies.
+    #[test]
+    fn given_free_fn_when_bare_token_is_inside_opaque_property_macro_then_name_only_relation() {
+        let assertion_line = "assert_eq!(ByteSize::kb(2), 1000);";
+        let body = format!(
+            "{assertion_line}\nproptest!(|input in 0u8..10| {{ prop_assert_eq!(kb(input), 1000); }});"
+        );
+        // The captured call is the ordinary associated-call line; the bare
+        // token only exists inside the opaque macro range of the body.
+        let owner = free_function("src/lib.rs", "kb");
+        let mut method = impl_function("src/lib.rs", "kb", "impl ByteSize");
+        method.impl_context = FunctionImplContext::Impl {
+            self_type: "ByteSize".to_string(),
+        };
+        let mut test = test_with_call("tests/units.rs", "test_comparison", &body, "kb");
+        test.calls[0].text = assertion_line.to_string();
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions: vec![owner.clone(), method],
+            tests: vec![test],
+            ..Default::default()
+        });
+        let probe = probe("src/lib.rs", "size.into() * KB");
+        assert_eq!(
+            find_related_tests(&probe, Some(&owner), &index, true, None, None)
+                .into_iter()
+                .map(|(_, reason)| reason)
+                .collect::<Vec<_>>(),
+            vec![RelationReason::WeakTokenSubstring]
+        );
+    }
+
+    /// #6713 review: a macro-internal `kb(` token does not hide a genuine
+    /// bare call later in the body — every free-call spelling is checked
+    /// against the opaque ranges, so the later call keeps the direct
+    /// relation.
+    #[test]
+    fn given_free_fn_when_genuine_call_follows_macro_internal_token_then_direct_owner_call() {
+        let owner = free_function("src/lib.rs", "kb");
+        let mut method = impl_function("src/lib.rs", "kb", "impl ByteSize");
+        method.impl_context = FunctionImplContext::Impl {
+            self_type: "ByteSize".to_string(),
+        };
+        let body = "let _ = ByteSize::kb(1);\nproptest!(|input in 0u8..10| { prop_assert_eq!(kb(input), 1000); });\nassert_eq!(kb(2), 1000);";
+        let mut test = test_with_call("tests/units.rs", "test_comparison", body, "kb");
+        // No captured free-call fact: the captured line is the associated
+        // call, so the fallback must find the later genuine bare call.
+        test.calls[0].text = "let _ = ByteSize::kb(1);".to_string();
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions: vec![owner.clone(), method],
+            tests: vec![test],
+            ..Default::default()
+        });
+        let probe = probe("src/lib.rs", "size.into() * KB");
+        assert_eq!(
+            find_related_tests(&probe, Some(&owner), &index, true, None, None)
+                .into_iter()
+                .map(|(_, reason)| reason)
+                .collect::<Vec<_>>(),
+            vec![RelationReason::DirectOwnerCall]
+        );
+    }
+
+    /// #6713 controls: bare and module-qualified spellings call the free
+    /// function and stay direct.
+    #[test]
+    fn given_free_fn_when_test_calls_it_bare_or_through_a_module_then_direct_owner_call() {
+        for body in [
+            "assert_eq!(kb(1), 1000);",
+            "assert_eq!(bytesize::kb(1), 1000);",
+            "assert_eq!(crate::kb(1), 1000);",
+            "assert_eq!(super :: kb (1), 1000);",
+            "assert_eq!(ByteSize::kb(1).0, kb(1));",
+        ] {
+            assert_eq!(
+                free_kb_relation(body),
+                vec![RelationReason::DirectOwnerCall],
+                "{body}"
+            );
+        }
+    }
+
+    /// #6713: the type-path reader covers `Self`, generic and qualified-self
+    /// spellings, and a free function whose impl context the parser did not
+    /// establish keeps the old relation (fail open).
+    #[test]
+    fn free_function_call_reader_rejects_type_paths_and_receivers() {
+        for text in [
+            "Self::kb(1)",
+            "ByteSize::<u64>::kb(1)",
+            "<ByteSize as Units>::kb(1)",
+            "x.kb(1)",
+            "x . kb(1)",
+            "kbs(1)",
+            "as_kb(1)",
+            "kb",
+            "ByteSize::kb::<u32>(1)",
+            "kb::Unit",
+            "kb::<u32",
+            "u64::kb(1)",
+            "str :: kb(1)",
+        ] {
+            assert!(!text_has_free_function_call(text, "kb"), "{text}");
+        }
+        for text in [
+            "kb(1)",
+            "kb (1)",
+            "units::kb(1)",
+            "(kb)(1) + kb(2)",
+            "kb::<u32>(1)",
+            "units::kb :: <Vec<u8>> (1)",
+            "r#kb(1)",
+            "kb::<fn() -> u8>(f)",
+            // The first dot of a range is not a receiver dot (#7006 rule).
+            "(0..kb(1)).sum()",
+        ] {
+            assert!(text_has_free_function_call(text, "kb"), "{text}");
+        }
+
+        assert_eq!(
+            free_function_call_text("assert_eq!(ByteSize::kb(1).0, kb(2));", "kb"),
+            Some("kb(2));")
+        );
+        assert_eq!(
+            free_function_call_text(r#"note("kb(1)", ByteSize::kb(2), kb(3))"#, "kb"),
+            Some("kb(3))")
+        );
+        assert_eq!(free_function_call_text("ByteSize::kb(2)", "kb"), None);
+        // A spaced or turbofish free call has no `kb(` span of its own; the
+        // later `ByteSize::kb(9)` must not supply one.
+        assert_eq!(
+            free_function_call_text("kb (1) + ByteSize::kb(9)", "kb"),
+            None
+        );
+        assert_eq!(free_function_call_text("kb::<u8>(1) + x.kb(9)", "kb"), None);
+        assert_eq!(
+            free_function_call_text("kb::<u8>(1) + kb(2)", "kb"),
+            Some("kb(2)")
+        );
+
+        let mut owner = free_function("src/lib.rs", "kb");
+        owner.impl_context = FunctionImplContext::Unknown;
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions: vec![
+                owner.clone(),
+                impl_function("src/lib.rs", "kb", "impl ByteSize"),
+            ],
+            tests: vec![test_with_call(
+                "tests/units.rs",
+                "test_comparison",
+                "assert!(ByteSize::kb(1) < ByteSize::kib(1));",
+                "kb",
+            )],
+            ..Default::default()
+        });
+        let related = find_related_tests(
+            &probe("src/lib.rs", "size.into() * KB"),
+            Some(&owner),
+            &index,
+            true,
+            None,
+            None,
+        );
+        assert_eq!(related.len(), 1);
+        assert_eq!(related[0].1, RelationReason::DirectOwnerCall);
+    }
+
     /// #4760: UFCS `WhileSome::size_hint(&it)` names the impl type.
     #[test]
     fn given_two_impls_when_test_uses_owner_ufcs_then_direct_owner_call() {
@@ -3247,6 +4435,924 @@ mod tests {
 
         assert_eq!(related.len(), 1);
         assert_eq!(related[0].1, RelationReason::DirectOwnerCall);
+    }
+
+    /// #6951: a unique impl method whose type the test's own module
+    /// shadows. The test binds a test-local `Window` and calls its derived
+    /// `clone` — never the production owner — so the relation is name-only,
+    /// not `direct_owner_call`, even though the name is unique.
+    #[test]
+    fn given_unique_impl_method_when_test_module_shadows_type_then_name_only_relation() {
+        let owner = impl_function("src/lib.rs", "clone", "impl Clone for Window");
+        let mut shadow_test = test_with_call(
+            "src/lib.rs",
+            "a_clone_equals_its_original",
+            "let window = Window { start: 3, end: 9 };\nassert_eq!(window.clone(), window);",
+            "clone",
+        );
+        shadow_test.start_line = 23;
+        shadow_test.end_line = 26;
+        let mut index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions: vec![owner.clone()],
+            tests: vec![shadow_test],
+            ..Default::default()
+        });
+        with_source(&mut index, "src/lib.rs", SHADOWED_WINDOW_SOURCE);
+        let probe = probe("src/lib.rs", "start: self.start");
+
+        let related = find_related_tests(&probe, Some(&owner), &index, true, None, None);
+
+        assert_eq!(related.len(), 1, "the same-named call is still related");
+        assert_eq!(related[0].0.name, "a_clone_equals_its_original");
+        assert_eq!(
+            related[0].1,
+            RelationReason::WeakTokenSubstring,
+            "a receiver shadowed by the test module cannot be direct_owner_call"
+        );
+    }
+
+    /// #6951 preserve: the same unique-name shape without a shadowing
+    /// declaration keeps `direct_owner_call`. The file parses and the
+    /// receiver resolves to the production type.
+    #[test]
+    fn given_unique_impl_method_when_no_shadow_then_direct_owner_call() {
+        let owner = impl_function("src/lib.rs", "apply", "impl Ledger");
+        let mut ledger_test = test_with_call(
+            "src/lib.rs",
+            "changes_balance",
+            "let mut ledger = Ledger { balance: 0 };\nledger.apply(5);",
+            "apply",
+        );
+        ledger_test.start_line = 16;
+        ledger_test.end_line = 19;
+        let mut index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions: vec![owner.clone()],
+            tests: vec![ledger_test],
+            ..Default::default()
+        });
+        with_source(&mut index, "src/lib.rs", UNSHADOWED_LEDGER_SOURCE);
+        let probe = probe("src/lib.rs", "self.persist(amount * 9)");
+
+        let related = find_related_tests(&probe, Some(&owner), &index, true, None, None);
+
+        assert_eq!(related.len(), 1);
+        assert_eq!(related[0].1, RelationReason::DirectOwnerCall);
+    }
+
+    /// #6951 with ambiguity: two impls of one method, and the test module
+    /// shadows the owner's type. The receiver name matches, but it binds
+    /// the shadow — name-only, not `direct_owner_call`.
+    #[test]
+    fn given_two_impls_when_test_module_shadows_owner_type_then_name_only_relation() {
+        let owner = impl_function("src/lib.rs", "size_hint", "impl Iterator for WhileSome");
+        let other = impl_function("src/lib.rs", "size_hint", "impl Iterator for Combinations");
+        let mut shadow_test = test_with_call(
+            "src/lib.rs",
+            "while_some_size_hint_upper_bound",
+            "let it = WhileSome { inner: vec![Some(1)] };\nassert_eq!(it.size_hint().1, Some(1));",
+            "size_hint",
+        );
+        shadow_test.start_line = 16;
+        shadow_test.end_line = 19;
+        let mut index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions: vec![owner.clone(), other],
+            tests: vec![shadow_test],
+            ..Default::default()
+        });
+        with_source(&mut index, "src/lib.rs", SHADOWED_WHILE_SOME_SOURCE);
+        let probe = probe("src/lib.rs", "(0, self.iter.size_hint().1)");
+
+        let related = find_related_tests(&probe, Some(&owner), &index, true, None, None);
+
+        assert_eq!(related.len(), 1);
+        assert_eq!(
+            related[0].1,
+            RelationReason::WeakTokenSubstring,
+            "a shadowed receiver cannot be direct_owner_call even when the name resolves"
+        );
+    }
+
+    /// Fixture-shaped source for the unique-name shadow test: production
+    /// `Window` with a hand-written `Clone`, and `mod tests` declaring its
+    /// own same-name `Window`. The test fn spans lines 23-26.
+    const SHADOWED_WINDOW_SOURCE: &str = "pub struct Window {\n    start: u32,\n    end: u32,\n}\n\nimpl Clone for Window {\n    fn clone(&self) -> Self {\n        Window {\n            start: self.start,\n            end: self.end,\n        }\n    }\n}\n\n#[cfg(test)]\nmod tests {\n    struct Window {\n        start: u32,\n        end: u32,\n    }\n\n    #[test]\n    fn a_clone_equals_its_original() {\n        let window = Window { start: 3, end: 9 };\n        assert_eq!(window.clone(), window);\n    }\n}\n";
+
+    /// #7053 fixture: production `trait Render` with `f64` and `u8` impls,
+    /// plus a test module that either redeclares `Render` (`shadow`) or only
+    /// imports the production trait. Returns the source and the 1-based line
+    /// span of the test fn.
+    fn render_trait_source(shadow: bool, test_body: &str) -> (String, usize, usize) {
+        let mut source = String::from(
+            "pub trait Render { fn render(&self) -> String; }\nimpl Render for f64 { fn render(&self) -> String { String::new() } }\nimpl Render for u8 { fn render(&self) -> String { format!(\"{self}\") } }\n\n#[cfg(test)]\nmod tests {\n",
+        );
+        if shadow {
+            source.push_str("    trait Render { fn render(&self) -> String; }\n    impl Render for f64 { fn render(&self) -> String { String::new() } }\n");
+        } else {
+            source.push_str("    use super::Render;\n");
+        }
+        source.push_str("    #[test]\n");
+        let start = source.matches('\n').count() + 1;
+        source.push_str(&format!("    fn t() {{ {test_body} }}\n}}\n"));
+        let end = source.matches('\n').count();
+        (source, start, end)
+    }
+
+    fn render_trait_relation(
+        shadow: bool,
+        test_body: &str,
+        owner_segment: &str,
+        two_impls: bool,
+    ) -> RelationReason {
+        let (source, start, end) = render_trait_source(shadow, test_body);
+        let owner = impl_function("src/lib.rs", "render", owner_segment);
+        let mut test = test_with_call("src/lib.rs", "t", test_body, "render");
+        test.start_line = start;
+        test.end_line = end;
+        let mut functions = vec![owner.clone()];
+        if two_impls {
+            functions.push(impl_function("src/lib.rs", "render", "impl Render for u8"));
+        }
+        let mut index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions,
+            tests: vec![test],
+            ..Default::default()
+        });
+        with_source(&mut index, "src/lib.rs", &source);
+        let probe = probe("src/lib.rs", "String::new()");
+        let related = find_related_tests(&probe, Some(&owner), &index, true, None, None);
+        assert_eq!(related.len(), 1, "the same-named call is still related");
+        related[0].1
+    }
+
+    /// #7053: a test module that declares its own `trait Render` makes
+    /// `Render::render(..)` and `.render()` name the test-local trait, so the
+    /// production `impl Render for f64` is not reached, in the ambiguous and
+    /// the unique-name branch, for the path and the receiver form.
+    #[test]
+    fn given_test_module_redeclares_owner_trait_then_name_only_relation() {
+        for body in [
+            r#"assert_eq!(Render::render(&-0.0f64), "");"#,
+            r#"assert_eq!((-0.0f64).render(), "");"#,
+        ] {
+            for two_impls in [true, false] {
+                assert_eq!(
+                    render_trait_relation(true, body, "impl Render for f64", two_impls),
+                    RelationReason::WeakTokenSubstring,
+                    "shadowed trait must not be direct_owner_call: {body} two_impls={two_impls}"
+                );
+            }
+        }
+    }
+
+    /// #7053 control: the same tests with the production trait in scope (no
+    /// redeclaration) keep `direct_owner_call`, so the refusal is the shadow
+    /// and nothing else.
+    #[test]
+    fn given_test_module_imports_owner_trait_then_direct_owner_call() {
+        for body in [
+            r#"assert_eq!(Render::render(&-0.0f64), "");"#,
+            r#"assert_eq!((-0.0f64).render(), "");"#,
+        ] {
+            assert_eq!(
+                render_trait_relation(false, body, "impl Render for f64", true),
+                RelationReason::DirectOwnerCall,
+                "{body}"
+            );
+        }
+    }
+
+    /// #7053 precision: a `trait Render` that is not in the test's own module
+    /// scope (a sibling module, or only the file root's production trait)
+    /// shadows nothing, in both name branches.
+    #[test]
+    fn given_trait_declared_outside_the_test_scope_then_direct_owner_call() {
+        let body = r#"assert_eq!((-0.0f64).render(), "");"#;
+        let source = format!(
+            "pub trait Render {{ fn render(&self) -> String; }}\nimpl Render for f64 {{ fn render(&self) -> String {{ String::new() }} }}\n\nmod sibling {{\n    trait Render {{ fn render(&self) -> String; }}\n}}\n\n#[cfg(test)]\nmod tests {{\n    use super::Render;\n    #[test]\n    fn t() {{ {body} }}\n}}\n"
+        );
+        let end = source.matches('\n').count() - 1;
+        for two_impls in [true, false] {
+            let owner = impl_function("src/lib.rs", "render", "impl Render for f64");
+            let mut test = test_with_call("src/lib.rs", "t", body, "render");
+            test.start_line = end;
+            test.end_line = end;
+            let mut functions = vec![owner.clone()];
+            if two_impls {
+                functions.push(impl_function("src/lib.rs", "render", "impl Render for u8"));
+            }
+            let mut index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+                functions,
+                tests: vec![test],
+                ..Default::default()
+            });
+            with_source(&mut index, "src/lib.rs", &source);
+            let probe = probe("src/lib.rs", "String::new()");
+            let related = find_related_tests(&probe, Some(&owner), &index, true, None, None);
+            assert_eq!(related.len(), 1);
+            assert_eq!(
+                related[0].1,
+                RelationReason::DirectOwnerCall,
+                "two_impls={two_impls}"
+            );
+        }
+    }
+
+    /// #7053 review: a macro that declares `trait r#Render` shadows `Render`
+    /// (the raw prefix does not change the name).
+    #[test]
+    fn given_macro_declares_raw_identifier_owner_trait_then_name_only_relation() {
+        let body = "assert_eq!((-0.0f64).render(), \"\");";
+        let source = format!(
+            "pub trait Render {{ fn render(&self) -> String; }}\nimpl Render for f64 {{ fn render(&self) -> String {{ String::new() }} }}\n\n#[cfg(test)]\nmod tests {{\n    macro_rules! shadow {{ () => {{ trait r#Render {{ fn render(&self) -> String; }} }}; }}\n    shadow!();\n    #[test]\n    fn t() {{ {body} }}\n}}\n"
+        );
+        let line = source.matches('\n').count() - 1;
+        let owner = impl_function("src/lib.rs", "render", "impl Render for f64");
+        let mut test = test_with_call("src/lib.rs", "t", body, "render");
+        test.start_line = line;
+        test.end_line = line;
+        let mut index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions: vec![owner.clone()],
+            tests: vec![test],
+            ..Default::default()
+        });
+        with_source(&mut index, "src/lib.rs", &source);
+        let probe = probe("src/lib.rs", "String::new()");
+        let related = find_related_tests(&probe, Some(&owner), &index, true, None, None);
+        assert_eq!(related.len(), 1);
+        assert_eq!(related[0].1, RelationReason::WeakTokenSubstring);
+    }
+
+    /// #7053: a generic production trait (`impl Render<f64> for Meters`) is
+    /// shadowed by a test-local `trait Render<T>` just the same.
+    #[test]
+    fn given_test_module_redeclares_generic_owner_trait_then_name_only_relation() {
+        let source = "pub struct Meters(f64);\nimpl Render<f64> for Meters { fn render(&self) -> String { String::new() } }\n\n#[cfg(test)]\nmod tests {\n    trait Render<T> { fn render(&self) -> String; }\n    #[test]\n    fn t() { assert_eq!(Meters(1.0).render(), \"\"); }\n}\n";
+        let owner = impl_function("src/lib.rs", "render", "impl Render<f64> for Meters");
+        let mut test = test_with_call("src/lib.rs", "t", "Meters(1.0).render()", "render");
+        test.start_line = 7;
+        test.end_line = 8;
+        let mut index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions: vec![owner.clone()],
+            tests: vec![test],
+            ..Default::default()
+        });
+        with_source(&mut index, "src/lib.rs", source);
+        let probe = probe("src/lib.rs", "String::new()");
+        let related = find_related_tests(&probe, Some(&owner), &index, true, None, None);
+        assert_eq!(related.len(), 1);
+        assert_eq!(related[0].1, RelationReason::WeakTokenSubstring);
+    }
+
+    /// Same-file production `Ledger` with no test-module shadow. The test
+    /// fn spans lines 16-19.
+    const UNSHADOWED_LEDGER_SOURCE: &str = "pub struct Ledger {\n    balance: i32,\n}\n\nimpl Ledger {\n    pub fn apply(&mut self, amount: i32) {\n        self.balance += amount;\n    }\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    #[test]\n    fn changes_balance() {\n        let mut ledger = Ledger { balance: 0 };\n        ledger.apply(5);\n    }\n}\n";
+
+    /// Two-impl shape with the owner's type shadowed in `mod tests`. The
+    /// test fn spans lines 16-19.
+    const SHADOWED_WHILE_SOME_SOURCE: &str = "pub struct WhileSome {\n    inner: Vec<Option<u32>>,\n}\n\npub struct Combinations {\n    remaining: u32,\n}\n\n#[cfg(test)]\nmod tests {\n    struct WhileSome {\n        inner: Vec<Option<u32>>,\n    }\n\n    #[test]\n    fn while_some_size_hint_upper_bound() {\n        let it = WhileSome { inner: vec![Some(1)] };\n        assert_eq!(it.size_hint().1, Some(1));\n    }\n}\n";
+
+    /// #6950: production `Window` with a hand-written `Clone` (`fn clone`
+    /// on line 7) and an out-of-line `#[cfg(test)] mod helpers;` (`mod`
+    /// token on line 16).
+    const OUT_OF_LINE_LIB_SOURCE: &str = "pub struct Window {\n    start: u32,\n    end: u32,\n}\n\nimpl Clone for Window {\n    fn clone(&self) -> Self {\n        Window {\n            start: self.start,\n            end: self.end,\n        }\n    }\n}\n\n#[cfg(test)]\nmod helpers;\n";
+
+    /// #6950: the `helpers` parent module declares its own `Window` above
+    /// its `mod window_tests;` (`mod` token on line 6).
+    const OUT_OF_LINE_HELPERS_SOURCE: &str =
+        "pub struct Window {\n    start: u32,\n    end: u32,\n}\n\nmod window_tests;\n";
+
+    /// #6950 precision: the same `helpers` module without the shadow
+    /// (`mod` token on line 1).
+    const OUT_OF_LINE_HELPERS_PLAIN_SOURCE: &str = "mod window_tests;\n";
+
+    /// #6950 review: the `helpers` module rebinds the receiver with a
+    /// root-level `use ... as Window` (`mod` token on line 3).
+    const OUT_OF_LINE_HELPERS_RENAME_SOURCE: &str =
+        "use crate::other::Gauge as Window;\n\nmod window_tests;\n";
+
+    /// #6950 review: the same rebinding spelled with a raw identifier
+    /// (`r#Window` denotes `Window`; `mod` token on line 3).
+    const OUT_OF_LINE_HELPERS_RENAME_RAW_SOURCE: &str =
+        "use crate::other::Gauge as r#Window;\n\nmod window_tests;\n";
+
+    /// #6950 review precision: the `helpers` module plainly imports the
+    /// receiver, which may re-export production (`mod` token on line 3).
+    const OUT_OF_LINE_HELPERS_IMPORT_SOURCE: &str = "use crate::Window;\n\nmod window_tests;\n";
+
+    /// #6950: the nested child test binds `Window` (the `helpers` shadow)
+    /// and clones it. The test fn spans lines 4-7.
+    const OUT_OF_LINE_CHILD_SOURCE: &str = "use super::*;\n\n#[test]\nfn a_clone_equals_its_original() {\n    let window = Window { start: 3, end: 9 };\n    assert_eq!(window.clone(), window);\n}\n";
+
+    /// #6950: the nested out-of-line shape (production `clone` owner in
+    /// `src/lib.rs`, child test calling `clone`) and the test's relation
+    /// reason. `lib_source` is the owner's file content, `parents` are
+    /// additional indexed files, and `chain` is the test file's composed
+    /// provenance.
+    fn out_of_line_clone_relation(
+        lib_source: &str,
+        parents: &[(&str, &str)],
+        chain: SourceRoleProvenance,
+    ) -> RelationReason {
+        let mut owner = impl_function("src/lib.rs", "clone", "impl Clone for Window");
+        owner.start_line = 7;
+        let mut child_test = test_with_call(
+            "src/helpers/window_tests.rs",
+            "a_clone_equals_its_original",
+            "let window = Window { start: 3, end: 9 };\nassert_eq!(window.clone(), window);",
+            "clone",
+        );
+        child_test.start_line = 4;
+        child_test.end_line = 7;
+        let mut index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions: vec![owner.clone()],
+            tests: vec![child_test],
+            ..Default::default()
+        });
+        with_source(&mut index, "src/lib.rs", lib_source);
+        for (file, source) in parents {
+            with_source(&mut index, file, source);
+        }
+        with_source_provenance(
+            &mut index,
+            "src/helpers/window_tests.rs",
+            OUT_OF_LINE_CHILD_SOURCE,
+            chain,
+        );
+        let probe = probe("src/lib.rs", "start: self.start");
+        let related = find_related_tests(&probe, Some(&owner), &index, true, None, None);
+        assert_eq!(related.len(), 1, "the same-named call is still related");
+        related[0].1
+    }
+
+    /// The composed two-edge chain for the #6950 shape: `src/lib.rs`
+    /// declares `mod helpers;`, which declares `mod window_tests;`.
+    fn out_of_line_chain() -> SourceRoleProvenance {
+        SourceRoleProvenance {
+            edges: vec![
+                composed_module_edge("src/lib.rs", "src/helpers.rs", "helpers", 16, true),
+                composed_module_edge(
+                    "src/helpers.rs",
+                    "src/helpers/window_tests.rs",
+                    "window_tests",
+                    6,
+                    false,
+                ),
+            ],
+            earliest_unresolved_reason: None,
+        }
+    }
+
+    /// #6950 (the out-of-line analog of the #6951 shadow test): the
+    /// `helpers` parent module declares the receiver, so the nested child
+    /// test's call is name-only, not `direct_owner_call`, even though the
+    /// child file itself declares nothing.
+    #[test]
+    fn given_out_of_line_parent_shadow_when_test_calls_owner_method_then_name_only_relation() {
+        let reason = out_of_line_clone_relation(
+            OUT_OF_LINE_LIB_SOURCE,
+            &[("src/helpers.rs", OUT_OF_LINE_HELPERS_SOURCE)],
+            out_of_line_chain(),
+        );
+        assert_eq!(
+            reason,
+            RelationReason::WeakTokenSubstring,
+            "a parent-chain shadow cannot be direct_owner_call"
+        );
+    }
+
+    /// #6950 precision: the same nested layout without the parent shadow
+    /// keeps `direct_owner_call`. The production root stays exempt as the
+    /// owner's own scope.
+    #[test]
+    fn given_out_of_line_test_without_parent_shadow_when_test_calls_owner_then_direct() {
+        let reason = out_of_line_clone_relation(
+            OUT_OF_LINE_LIB_SOURCE,
+            &[("src/helpers.rs", OUT_OF_LINE_HELPERS_PLAIN_SOURCE)],
+            SourceRoleProvenance {
+                edges: vec![
+                    composed_module_edge("src/lib.rs", "src/helpers.rs", "helpers", 16, true),
+                    composed_module_edge(
+                        "src/helpers.rs",
+                        "src/helpers/window_tests.rs",
+                        "window_tests",
+                        1,
+                        false,
+                    ),
+                ],
+                earliest_unresolved_reason: None,
+            },
+        );
+        assert_eq!(reason, RelationReason::DirectOwnerCall);
+    }
+
+    /// #6950 review: a root-level `use ... as Window` in the parent
+    /// module rebinds the receiver to a different type, so the nested
+    /// child test's call is name-only, not `direct_owner_call`. The raw
+    /// spelling (`as r#Window`) rebinds the same name.
+    #[test]
+    fn given_parent_root_rename_when_test_calls_owner_method_then_name_only_relation() {
+        for helpers in [
+            OUT_OF_LINE_HELPERS_RENAME_SOURCE,
+            OUT_OF_LINE_HELPERS_RENAME_RAW_SOURCE,
+        ] {
+            let reason = out_of_line_clone_relation(
+                OUT_OF_LINE_LIB_SOURCE,
+                &[("src/helpers.rs", helpers)],
+                SourceRoleProvenance {
+                    edges: vec![
+                        composed_module_edge("src/lib.rs", "src/helpers.rs", "helpers", 16, true),
+                        composed_module_edge(
+                            "src/helpers.rs",
+                            "src/helpers/window_tests.rs",
+                            "window_tests",
+                            3,
+                            false,
+                        ),
+                    ],
+                    earliest_unresolved_reason: None,
+                },
+            );
+            assert_eq!(
+                reason,
+                RelationReason::WeakTokenSubstring,
+                "a parent-root rename names a different type than the owner: {helpers}"
+            );
+        }
+    }
+
+    /// #6950 review precision: a plain root-level `use` of the receiver in
+    /// the parent module may re-export production, so the nested child
+    /// keeps `direct_owner_call`.
+    #[test]
+    fn given_parent_root_plain_import_when_test_calls_owner_then_direct() {
+        let reason = out_of_line_clone_relation(
+            OUT_OF_LINE_LIB_SOURCE,
+            &[("src/helpers.rs", OUT_OF_LINE_HELPERS_IMPORT_SOURCE)],
+            SourceRoleProvenance {
+                edges: vec![
+                    composed_module_edge("src/lib.rs", "src/helpers.rs", "helpers", 16, true),
+                    composed_module_edge(
+                        "src/helpers.rs",
+                        "src/helpers/window_tests.rs",
+                        "window_tests",
+                        3,
+                        false,
+                    ),
+                ],
+                earliest_unresolved_reason: None,
+            },
+        );
+        assert_eq!(reason, RelationReason::DirectOwnerCall);
+    }
+
+    /// #6950 fail-closed: a parent chain ripr cannot resolve refuses
+    /// `direct_owner_call` rather than guessing the receiver. Each variant
+    /// carries no shadowing declaration, so the refusal comes from the
+    /// chain alone: an ambiguous parent, an `include!` edge (whose scope
+    /// needs site localization this check does not do), a missing parent
+    /// file, and an unparseable parent that textually declares the name.
+    #[test]
+    fn given_out_of_line_test_when_parent_chain_is_unresolvable_then_name_only_relation() {
+        let plain = OUT_OF_LINE_HELPERS_PLAIN_SOURCE;
+        let lib = "pub fn placeholder() {}\n";
+        let unparseable = "pub struct Window;\nmod window_tests;\nfn broken( {\n";
+        assert!(
+            crate::analysis::syntax::parse_clean_source_file(unparseable).is_none(),
+            "fixture: the parent must fail to parse"
+        );
+        let mut ambiguous = out_of_line_chain();
+        ambiguous.earliest_unresolved_reason = Some("rust_module_ambiguous_parent".to_string());
+        let no_parents: Vec<(&str, &str)> = vec![];
+        let variants = vec![
+            (
+                "ambiguous parent",
+                OUT_OF_LINE_LIB_SOURCE,
+                vec![("src/helpers.rs", plain)],
+                ambiguous,
+            ),
+            (
+                "ambiguous parent with no recorded edges",
+                OUT_OF_LINE_LIB_SOURCE,
+                vec![("src/helpers.rs", plain)],
+                SourceRoleProvenance {
+                    edges: vec![],
+                    earliest_unresolved_reason: Some("rust_module_ambiguous_parent".to_string()),
+                },
+            ),
+            (
+                "include edge",
+                lib,
+                no_parents.clone(),
+                SourceRoleProvenance {
+                    edges: vec![SourceRoleProvenanceEdge {
+                        kind: SourceRoleProvenanceEdgeKind::Include,
+                        parent: PathBuf::from("src/lib.rs"),
+                        child: PathBuf::from("src/helpers/window_tests.rs"),
+                        declaration: "include!(\"window_tests.rs\")".to_string(),
+                        line: 1,
+                        requires_test: false,
+                    }],
+                    earliest_unresolved_reason: None,
+                },
+            ),
+            (
+                "missing parent",
+                lib,
+                no_parents,
+                SourceRoleProvenance {
+                    edges: vec![composed_module_edge(
+                        "src/missing.rs",
+                        "src/helpers/window_tests.rs",
+                        "window_tests",
+                        1,
+                        false,
+                    )],
+                    earliest_unresolved_reason: None,
+                },
+            ),
+            (
+                "unparseable parent",
+                lib,
+                vec![("src/helpers.rs", unparseable)],
+                SourceRoleProvenance {
+                    edges: vec![composed_module_edge(
+                        "src/helpers.rs",
+                        "src/helpers/window_tests.rs",
+                        "window_tests",
+                        2,
+                        false,
+                    )],
+                    earliest_unresolved_reason: None,
+                },
+            ),
+        ];
+        for (label, lib_source, parents, chain) in variants {
+            assert_eq!(
+                out_of_line_clone_relation(lib_source, &parents, chain),
+                RelationReason::WeakTokenSubstring,
+                "{label}: an unresolvable parent chain cannot be direct_owner_call"
+            );
+        }
+    }
+
+    /// The empty-edges shape above runs through the real role-composition
+    /// producer here: two `#[path]` claimants on one child file holding the
+    /// test. The setup assertions pin what the producer actually records
+    /// for the contested child before the relation is checked.
+    #[test]
+    fn given_really_ambiguous_parent_when_test_calls_owner_method_then_name_only_relation()
+    -> Result<(), String> {
+        let root = temp_dir("out-of-line-ambiguous-parent")?;
+        write_manifest(&root)?;
+        let files = vec![
+            write(
+                &root,
+                "src/lib.rs",
+                "pub struct Stack {\n    items: Vec<u32>,\n}\n\nimpl Stack {\n    pub fn depth(&self) -> usize {\n        self.items.len() + 1\n    }\n}\n\nmod other;\n\n#[path = \"shared.rs\"]\nmod from_lib;\n",
+            )?,
+            write(
+                &root,
+                "src/other.rs",
+                "#[path = \"shared.rs\"]\nmod from_other;\n",
+            )?,
+            write(
+                &root,
+                "src/shared.rs",
+                "#[test]\nfn contested_depth_check() {\n    let stack = Stack { items: Vec::new() };\n    assert_eq!(stack.depth(), 1);\n}\n",
+            )?,
+        ];
+        let index = crate::analysis::facts::build_index(&root, &files)?;
+        let shared = index
+            .files()
+            .get(Path::new("src/shared.rs"))
+            .ok_or_else(|| "missing contested file facts".to_string())?;
+        assert!(
+            shared.role_provenance.edges.is_empty(),
+            "setup: the real producer records no edges for the contested child"
+        );
+        assert_eq!(
+            shared.role_provenance.earliest_unresolved_reason.as_deref(),
+            Some("rust_module_ambiguous_parent"),
+            "setup: the real producer names the ambiguous parent"
+        );
+        let owner = index
+            .functions()
+            .iter()
+            .find(|function| function.name == "depth")
+            .ok_or_else(|| "missing owner fact for depth".to_string())?;
+        assert_eq!(index.tests().len(), 1, "setup: one contested test");
+        let probe = probe("src/lib.rs", "self.items.len() + 1");
+        let related = find_related_tests(&probe, Some(owner), &index, true, None, None);
+        assert_eq!(related.len(), 1, "the same-named call is still related");
+        assert_eq!(
+            related[0].1,
+            RelationReason::WeakTokenSubstring,
+            "an unresolved parent chain cannot be direct_owner_call"
+        );
+        Ok(())
+    }
+
+    /// #7006: a free function can never be invoked through method-call
+    /// syntax, so a test that only calls `config.parse(..)` is name-only
+    /// against the free-function owner `parse` — never `direct_owner_call`.
+    #[test]
+    fn given_free_function_owner_when_test_only_calls_receiver_qualified_then_name_only_relation() {
+        let owner = established_free_function("src/lib.rs", "parse");
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions: vec![owner.clone()],
+            tests: vec![test_with_call(
+                "tests/config_parse.rs",
+                "config_strict_parse_reports_length",
+                "let config = Config { strict: true };\nlet input = \"hey\";\nassert_eq!(config.parse(input).1, Some(3));",
+                "parse",
+            )],
+            ..Default::default()
+        });
+        let probe = probe("src/lib.rs", "(0, Some(input.len()))");
+
+        let related = find_related_tests(&probe, Some(&owner), &index, true, None, None);
+
+        assert_eq!(related.len(), 1, "the same-named call is still related");
+        assert_eq!(related[0].0.name, "config_strict_parse_reports_length");
+        assert_eq!(
+            related[0].1,
+            RelationReason::WeakTokenSubstring,
+            "a receiver-qualified-only call site cannot invoke a free function"
+        );
+    }
+
+    /// #7006: the body-text fallback admits the same receiver-qualified
+    /// spelling when no `calls` fact captured it; the demotion applies on
+    /// that authority too.
+    #[test]
+    fn given_free_function_owner_when_body_only_calls_receiver_qualified_then_name_only_relation() {
+        let owner = established_free_function("src/lib.rs", "parse");
+        let mut test = test_with_call(
+            "tests/config_parse.rs",
+            "config_strict_parse_reports_length",
+            "let config = Config { strict: true };\nassert_eq!(config.parse(\"hey\").1, Some(3));",
+            "parse",
+        );
+        test.calls = Vec::new();
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions: vec![owner.clone()],
+            tests: vec![test],
+            ..Default::default()
+        });
+        let probe = probe("src/lib.rs", "(0, Some(input.len()))");
+
+        let related = find_related_tests(&probe, Some(&owner), &index, true, None, None);
+
+        assert_eq!(related.len(), 1, "the body-text match is still related");
+        assert_eq!(
+            related[0].1,
+            RelationReason::WeakTokenSubstring,
+            "a body-only receiver-qualified match cannot invoke a free function"
+        );
+    }
+
+    /// #7006 control: a bare `parse(` call keeps `direct_owner_call` — only
+    /// receiver-qualified-only sites demote.
+    #[test]
+    fn given_free_function_owner_when_test_calls_bare_then_direct_owner_call() {
+        let owner = established_free_function("src/lib.rs", "parse");
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions: vec![owner.clone()],
+            tests: vec![test_with_call(
+                "tests/config_parse.rs",
+                "free_parse_reports_length",
+                "let input = \"hey\";\nassert_eq!(parse(input).1, Some(3));",
+                "parse",
+            )],
+            ..Default::default()
+        });
+        let probe = probe("src/lib.rs", "(0, Some(input.len()))");
+
+        let related = find_related_tests(&probe, Some(&owner), &index, true, None, None);
+
+        assert_eq!(related.len(), 1);
+        assert_eq!(related[0].1, RelationReason::DirectOwnerCall);
+    }
+
+    /// #7006 control: a path-qualified `m::parse(` call keeps
+    /// `direct_owner_call` — path qualification still spells the free
+    /// function.
+    #[test]
+    fn given_free_function_owner_when_test_calls_path_qualified_then_direct_owner_call() {
+        let owner = established_free_function("src/lib.rs", "parse");
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions: vec![owner.clone()],
+            tests: vec![test_with_call(
+                "tests/config_parse.rs",
+                "qualified_parse_reports_length",
+                "let input = \"hey\";\nassert_eq!(m::parse(input).1, Some(3));",
+                "parse",
+            )],
+            ..Default::default()
+        });
+        let probe = probe("src/lib.rs", "(0, Some(input.len()))");
+
+        let related = find_related_tests(&probe, Some(&owner), &index, true, None, None);
+
+        assert_eq!(related.len(), 1);
+        assert_eq!(related[0].1, RelationReason::DirectOwnerCall);
+    }
+
+    /// #7006 control: method owners never enter the free-function branch —
+    /// the same receiver-qualified body that demotes against a free
+    /// function keeps `direct_owner_call` against `impl Config::parse`.
+    #[test]
+    fn given_method_owner_when_test_only_calls_receiver_qualified_then_direct_owner_call() {
+        let owner = impl_function("src/lib.rs", "parse", "impl Config");
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions: vec![owner.clone()],
+            tests: vec![test_with_call(
+                "tests/config_parse.rs",
+                "config_strict_parse_reports_length",
+                "let config = Config { strict: true };\nlet input = \"hey\";\nassert_eq!(config.parse(input).1, Some(3));",
+                "parse",
+            )],
+            ..Default::default()
+        });
+        let probe = probe("src/lib.rs", "(0, Some(input.len()))");
+
+        let related = find_related_tests(&probe, Some(&owner), &index, true, None, None);
+
+        assert_eq!(related.len(), 1);
+        assert_eq!(related[0].1, RelationReason::DirectOwnerCall);
+    }
+
+    /// #7006 control: a trait-declaration method shares the `None`
+    /// self-type branch with free functions (its id carries no `::impl`
+    /// segment), but it is a method owner — `a.try_get_int(3)` keeps
+    /// `direct_owner_call`. Guards the `owner_return_pin_trait_method`
+    /// golden.
+    #[test]
+    fn given_trait_owner_when_test_only_calls_receiver_qualified_then_direct_owner_call() {
+        let owner = trait_function("src/lib.rs", "try_get_int", "Buf");
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions: vec![owner.clone()],
+            tests: vec![test_with_call(
+                "tests/buf_tests.rs",
+                "try_get_int_sign_extends",
+                "let mut a = &bytes[..];\nassert_eq!(a.try_get_int(3), Ok(-1));",
+                "try_get_int",
+            )],
+            ..Default::default()
+        });
+        let probe = probe(
+            "src/lib.rs",
+            "Ok(sign_extend(self.try_get_uint(nbytes)?, nbytes))",
+        );
+
+        let related = find_related_tests(&probe, Some(&owner), &index, true, None, None);
+
+        assert_eq!(related.len(), 1);
+        assert_eq!(related[0].1, RelationReason::DirectOwnerCall);
+    }
+
+    /// #7006 control: an unestablished (`Unknown` container) owner fails
+    /// closed — the lexical fallback cannot tell a free function from a
+    /// trait declaration, so the credit stays `direct_owner_call`.
+    #[test]
+    fn given_unknown_container_owner_when_test_only_calls_receiver_qualified_then_direct_owner_call()
+     {
+        let owner = function("src/lib.rs", "parse");
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions: vec![owner.clone()],
+            tests: vec![test_with_call(
+                "tests/config_parse.rs",
+                "config_strict_parse_reports_length",
+                "let config = Config { strict: true };\nlet input = \"hey\";\nassert_eq!(config.parse(input).1, Some(3));",
+                "parse",
+            )],
+            ..Default::default()
+        });
+        let probe = probe("src/lib.rs", "(0, Some(input.len()))");
+
+        let related = find_related_tests(&probe, Some(&owner), &index, true, None, None);
+
+        assert_eq!(related.len(), 1);
+        assert_eq!(related[0].1, RelationReason::DirectOwnerCall);
+    }
+
+    /// #7006 control: a bare turbofish `parse::<u8>(` call is still a
+    /// direct free-function call — the `::` opens type arguments, not a
+    /// receiver.
+    #[test]
+    fn given_free_function_owner_when_test_calls_turbofish_then_direct_owner_call() {
+        let owner = established_free_function("src/lib.rs", "parse");
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions: vec![owner.clone()],
+            tests: vec![test_with_call(
+                "tests/config_parse.rs",
+                "turbofish_parse_reports_value",
+                "assert_eq!(parse::<u8>(\"7\"), 7);",
+                "parse",
+            )],
+            ..Default::default()
+        });
+        let probe = probe("src/lib.rs", "input.parse::<u8>()");
+
+        let related = find_related_tests(&probe, Some(&owner), &index, true, None, None);
+
+        assert_eq!(related.len(), 1);
+        assert_eq!(related[0].1, RelationReason::DirectOwnerCall);
+    }
+
+    /// #7006 control: `0..count_all(items)` computes the range bound with a
+    /// bare call — the second `.` of `..` is not a receiver dot.
+    #[test]
+    fn given_free_function_owner_when_call_computes_range_bound_then_direct_owner_call() {
+        let owner = established_free_function("src/lib.rs", "count_all");
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions: vec![owner.clone()],
+            tests: vec![test_with_call(
+                "tests/count_all.rs",
+                "range_over_counted_items",
+                "let total: usize = (0..count_all(items)).sum();",
+                "count_all",
+            )],
+            ..Default::default()
+        });
+        let probe = probe("src/lib.rs", "items.iter().count()");
+
+        let related = find_related_tests(&probe, Some(&owner), &index, true, None, None);
+
+        assert_eq!(related.len(), 1);
+        assert_eq!(related[0].1, RelationReason::DirectOwnerCall);
+    }
+
+    /// #7006 control: Rust permits trivia between the receiver dot and the
+    /// method name, so `config. parse(..)` is still a method call and must
+    /// not credit the free function.
+    #[test]
+    fn given_free_function_owner_when_receiver_dot_is_spaced_then_name_only_relation() {
+        let owner = established_free_function("src/lib.rs", "parse");
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions: vec![owner.clone()],
+            tests: vec![test_with_call(
+                "tests/config_parse.rs",
+                "spaced_receiver_parse_reports_value",
+                "assert_eq!(config. parse(\"7\"), 7);",
+                "parse",
+            )],
+            ..Default::default()
+        });
+        let probe = probe("src/lib.rs", "input.parse()");
+
+        let related = find_related_tests(&probe, Some(&owner), &index, true, None, None);
+
+        assert_eq!(related.len(), 1);
+        assert_eq!(related[0].1, RelationReason::WeakTokenSubstring);
+    }
+
+    /// #7006 control: an uncalled turbofish `parse::<u8>` is a
+    /// function-item expression, not a call — beside a same-named method
+    /// call it must not rescue direct credit.
+    #[test]
+    fn given_free_function_owner_when_turbofish_is_uncalled_then_name_only_relation() {
+        let owner = established_free_function("src/lib.rs", "parse");
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions: vec![owner.clone()],
+            tests: vec![test_with_call(
+                "tests/config_parse.rs",
+                "uncalled_turbofish_beside_method_call",
+                "let f = parse::<u8>; assert_eq!(config.parse(\"7\"), 7);",
+                "parse",
+            )],
+            ..Default::default()
+        });
+        let probe = probe("src/lib.rs", "input.parse()");
+
+        let related = find_related_tests(&probe, Some(&owner), &index, true, None, None);
+
+        assert_eq!(related.len(), 1);
+        assert_eq!(related[0].1, RelationReason::WeakTokenSubstring);
+    }
+
+    /// #7006 control: a nested `fn parse(..)` declaration satisfies the
+    /// identifier-and-`(` shape but never invokes the owner, so beside a
+    /// same-named method call the relation stays weak.
+    #[test]
+    fn given_free_function_owner_when_match_is_only_a_nested_fn_then_name_only_relation() {
+        let owner = established_free_function("src/lib.rs", "parse");
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions: vec![owner.clone()],
+            tests: vec![test_with_call(
+                "tests/config_parse.rs",
+                "nested_fn_beside_method_call",
+                "fn parse(x: &str) -> usize { x.len() } assert_eq!(config.parse(\"7\"), 7);",
+                "parse",
+            )],
+            ..Default::default()
+        });
+        let probe = probe("src/lib.rs", "input.parse()");
+
+        let related = find_related_tests(&probe, Some(&owner), &index, true, None, None);
+
+        assert_eq!(related.len(), 1);
+        assert_eq!(related[0].1, RelationReason::WeakTokenSubstring);
     }
 
     /// #2971 scope control: the same workspace as the positive control above,
@@ -4965,6 +7071,71 @@ fn crate_c_score_test() {
         );
     }
 
+    /// [`with_source`] with composed module provenance: `chain` is the
+    /// file's `role_provenance`, exactly as role composition records it.
+    fn with_source_provenance(
+        index: &mut RustIndex,
+        file: &str,
+        source: &str,
+        chain: SourceRoleProvenance,
+    ) {
+        index.insert_file_only(
+            PathBuf::from(file),
+            FileFacts {
+                source: source.into(),
+                role_provenance: chain,
+                ..FileFacts::default()
+            },
+        );
+    }
+
+    /// One composed out-of-line `mod` edge.
+    fn composed_module_edge(
+        parent: &str,
+        child: &str,
+        name: &str,
+        line: usize,
+        requires_test: bool,
+    ) -> SourceRoleProvenanceEdge {
+        SourceRoleProvenanceEdge {
+            kind: SourceRoleProvenanceEdgeKind::Module,
+            parent: PathBuf::from(parent),
+            child: PathBuf::from(child),
+            declaration: format!("mod {name};"),
+            line,
+            requires_test,
+        }
+    }
+
+    /// A scratch workspace root for [`crate::analysis::facts::build_index`],
+    /// mirroring the role-composition tests.
+    fn temp_dir(name: &str) -> Result<PathBuf, String> {
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|duration| duration.as_nanos())
+            .unwrap_or(0);
+        let dir = std::env::temp_dir().join(format!("ripr-related-tests-{name}-{stamp}"));
+        std::fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
+        Ok(dir)
+    }
+
+    fn write_manifest(root: &Path) -> Result<(), String> {
+        std::fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname='related-tests'\nversion='0.1.0'\nedition='2024'\n",
+        )
+        .map_err(|error| error.to_string())
+    }
+
+    fn write(root: &Path, relative: &str, source: &str) -> Result<PathBuf, String> {
+        let full = root.join(relative);
+        if let Some(parent) = full.parent() {
+            std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+        }
+        std::fs::write(&full, source).map_err(|error| error.to_string())?;
+        Ok(PathBuf::from(relative))
+    }
+
     /// #4558 review: the owner's crate brings a same-named type in from
     /// another crate (or globs one in), so `crate_a::...::LevelFilter` may
     /// not be the owner's type; and a quoted type path beside a real
@@ -5687,6 +7858,94 @@ let r = try_parse_summary(\"x\");",
                 method_call_resolves_to_impl_type(&summary, "build", "Site"),
                 expected,
                 "{body}"
+            );
+        }
+    }
+
+    // (#6732) A suffixed numeric literal names its primitive type, so
+    // `(-0.0f64).render()` resolves to `impl Render for f64` exactly as
+    // `let z: f64 = -0.0; z.render()` does. Unsuffixed literals, hex digits
+    // that only look like a float suffix, and other suffixes stay unresolved.
+    #[test]
+    fn suffixed_numeric_literal_receiver_resolves_to_its_primitive_type() {
+        let cases = [
+            ("assert_eq!((-0.0f64).render(), \"-0.0\");", "f64", true),
+            ("assert_eq!(1.5f64.render(), \"1.5\");", "f64", true),
+            ("(&3u8).render();", "u8", true),
+            ("(- 2i64).render();", "i64", true),
+            ("0xffu8.render();", "u8", true),
+            ("1_000usize.render();", "usize", true),
+            ("1.5e3f32.render();", "f32", true),
+            ("1e-3f64.render();", "f64", true),
+            ("(1.5f32).render();", "f64", false),
+            ("1.5.render();", "f64", false),
+            ("(-0.0).render();", "f64", false),
+            ("3.render();", "i32", false),
+            ("0x1f32.render();", "f32", false),
+            ("0x1f32.render();", "i32", false),
+            ("2u8.render();", "u16", false),
+            ("(make(1u8)).render();", "u8", false),
+            ("(1u8, 2u8).render();", "u8", false),
+        ];
+        for (body, impl_type, expected) in cases {
+            let summary = test("tests/render.rs", "t", body);
+            assert_eq!(
+                method_call_resolves_to_impl_type(&summary, "render", impl_type),
+                expected,
+                "{body} as {impl_type}"
+            );
+        }
+    }
+
+    // (#7019 review) A captured call line is raw: a suffixed literal quoted in
+    // a string or comment beside an unrelated `other.render()` must not
+    // resolve the call to the literal's primitive impl.
+    #[test]
+    fn quoted_suffixed_literal_on_a_raw_call_line_does_not_resolve() {
+        let cases = [
+            "let x = other.render(); println!(\"2u8.render()\");",
+            "let x = other.render(); // 2u8.render()",
+            "let x = other.render(); /* (2u8).render() */",
+        ];
+        for line in cases {
+            let mut summary = test("tests/render.rs", "t", line);
+            summary.calls = vec![CallFact {
+                line: 1,
+                name: "render".to_string(),
+                text: line.to_string(),
+            }];
+            assert!(
+                !method_call_resolves_to_impl_type(&summary, "render", "u8"),
+                "{line}"
+            );
+        }
+    }
+
+    #[test]
+    fn suffixed_numeric_literal_type_reads_only_well_formed_literals() {
+        let cases = [
+            ("5f64", Some("f64")),
+            ("1_0.2_5f32", Some("f32")),
+            ("2E+3f64", Some("f64")),
+            ("0o17u32", Some("u32")),
+            ("0b1010i8", Some("i8")),
+            ("12i128", Some("i128")),
+            ("12isize", Some("isize")),
+            ("1.5u8", None),
+            ("0xu8", None),
+            ("0b12u8", None),
+            ("1.f64", None),
+            ("1e f64", None),
+            ("1ef64", None),
+            ("f64", None),
+            ("x1f64", None),
+            ("12", None),
+        ];
+        for (literal, expected) in cases {
+            assert_eq!(
+                suffixed_numeric_literal_type(literal),
+                expected,
+                "{literal}"
             );
         }
     }

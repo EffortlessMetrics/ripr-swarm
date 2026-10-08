@@ -1,0 +1,52 @@
+{
+  "case_id": "serde-derive-rename-variant-lower",
+  "subject_id": "serde",
+  "diff": "cases/serde-derive-rename-variant-lower.diff",
+  "anchor": {
+    "file": "serde_derive/src/internals/case.rs",
+    "line": 60
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "match_arm",
+  "test_shape": "loop_assert_eq_table",
+  "hard_case": "table-driven test: assert_eq! inside `for ... in &[...]` over a tuple table",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test -p serde_derive --lib",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "str::to_ascii_uppercase(variant)",
+        "mutated_line": "LowerCase => str::to_ascii_uppercase(variant),",
+        "outcome": "tests_failed",
+        "failing_test": "internals::case::rename_variants",
+        "equivalence_review": "not equivalent: lowercase renames produce uppercase"
+      },
+      {
+        "replacement": "variant.to_owned()",
+        "mutated_line": "LowerCase => variant.to_owned(),",
+        "outcome": "tests_failed",
+        "failing_test": "internals::case::rename_variants",
+        "equivalence_review": "not equivalent: lowercase renames keep the original case"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "rename_variants compares every rule against an expected table, so both mutants fail. ripr's weakly_exposed gap is a false actionable verdict.",
+  "labeling_observation": {
+    "ripr_commit": "a7a089e",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

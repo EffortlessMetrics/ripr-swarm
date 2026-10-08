@@ -78,8 +78,8 @@ TypeScript repair packet (advisory)
 Next step
   TypeScript preview advisory: module initializer observer is missing context; add a direct `expect(IMPORTED_CONST).toBe(...)` or `expect(namespace.EXPORT).toEqual(...)` observer when safe, and keep helper-derived or dynamic initialization evidence advisory.
 Drill in:
-  ripr explain --root fixtures/typescript_adversarial_owner_identity_after_insertion/input --diff fixtures/typescript_adversarial_owner_identity_after_insertion/diff.patch --mode fast probe:src_pricing.ts:typescript_preview:fff3ea84
-  ripr context --root fixtures/typescript_adversarial_owner_identity_after_insertion/input --diff fixtures/typescript_adversarial_owner_identity_after_insertion/diff.patch --mode fast --at probe:src_pricing.ts:typescript_preview:fff3ea84
+  ripr explain --root <cwd>/fixtures/typescript_adversarial_owner_identity_after_insertion/input --diff <cwd>/fixtures/typescript_adversarial_owner_identity_after_insertion/diff.patch --mode fast probe:src_pricing.ts:typescript_preview:fff3ea84
+  ripr context --root <cwd>/fixtures/typescript_adversarial_owner_identity_after_insertion/input --diff <cwd>/fixtures/typescript_adversarial_owner_identity_after_insertion/diff.patch --mode fast --at probe:src_pricing.ts:typescript_preview:fff3ea84
 
 WARNING src/pricing.ts:14
   id: probe:src_pricing.ts:typescript_preview:bd772dc8
@@ -149,8 +149,8 @@ TypeScript repair packet (advisory)
 Next step
   TypeScript preview advisory: no test references the changed owner; add a test that calls the owner and asserts the changed behavior with `toBe` / `toEqual` before any repair packet is emitted.
 Drill in:
-  ripr explain --root fixtures/typescript_adversarial_owner_identity_after_insertion/input --diff fixtures/typescript_adversarial_owner_identity_after_insertion/diff.patch --mode fast probe:src_pricing.ts:typescript_preview:bd772dc8
-  ripr context --root fixtures/typescript_adversarial_owner_identity_after_insertion/input --diff fixtures/typescript_adversarial_owner_identity_after_insertion/diff.patch --mode fast --at probe:src_pricing.ts:typescript_preview:bd772dc8
+  ripr explain --root <cwd>/fixtures/typescript_adversarial_owner_identity_after_insertion/input --diff <cwd>/fixtures/typescript_adversarial_owner_identity_after_insertion/diff.patch --mode fast probe:src_pricing.ts:typescript_preview:bd772dc8
+  ripr context --root <cwd>/fixtures/typescript_adversarial_owner_identity_after_insertion/input --diff <cwd>/fixtures/typescript_adversarial_owner_identity_after_insertion/diff.patch --mode fast --at probe:src_pricing.ts:typescript_preview:bd772dc8
 
 
 Note: ripr found no static test path for any of the 2 changed expression(s) in this diff. Scope

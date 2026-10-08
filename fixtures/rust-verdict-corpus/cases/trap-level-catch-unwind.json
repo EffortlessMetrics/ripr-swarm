@@ -1,0 +1,58 @@
+{
+  "case_id": "trap-level-catch-unwind",
+  "subject_id": "authored-trap-kit",
+  "diff": "cases/trap-level-catch-unwind.diff",
+  "anchor": {
+    "file": "src/levels.rs",
+    "line": 4
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "match_arm",
+  "test_shape": "catch_unwind_is_ok_smoke",
+  "hard_case": "The test wraps the call in catch_unwind and checks only that it did not panic; the returned level is discarded.",
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "8",
+        "mutated_line": "\"high\" => 8,",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: replaces `3 * 3` with `8`, which changes the result, but no executed assertion observes it"
+      },
+      {
+        "replacement": "0",
+        "mutated_line": "\"high\" => 0,",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: replaces `3 * 3` with `0`, which changes the result, but no executed assertion observes it"
+      },
+      {
+        "replacement": "1",
+        "mutated_line": "\"high\" => 1,",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: replaces `3 * 3` with `1`, which changes the result, but no executed assertion observes it"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "high_parses asserts catch_unwind(|| parse_level(\"high\")).is_ok(). Any non-panicking value for the \"high\" arm passes. Adversarial shape (panic-swallowing smoke test).",
+  "labeling_observation": {
+    "ripr_commit": "6487826",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

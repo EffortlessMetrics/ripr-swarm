@@ -1,0 +1,9 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 0000000..1111111 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -1,3 +1,3 @@
+ pub fn audit_line(amount: u32) -> String {
+-    format!("audited {}", amount * 7)
++    format!("audited {}", amount * 8)
+ }

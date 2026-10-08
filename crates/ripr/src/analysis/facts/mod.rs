@@ -1,16 +1,22 @@
 mod build;
+pub(crate) use build::CachedRustIndex;
 use build::MissAttribution;
+#[cfg(test)]
+pub(crate) use build::streamed_source_bytes;
 pub(crate) use build::{RUST_SOURCE_NOT_UTF8_REASON, rust_source_text};
 pub(crate) mod cfg_predicates;
 pub(crate) mod drop_in;
 mod harness_registry;
 mod includes;
 mod index;
+mod macro_generated_tests;
+pub(crate) mod member_crates;
 mod model;
 mod parameterized_tests;
 mod role_composition;
 mod test_helpers;
 mod test_styles;
+pub(crate) use test_styles::BUILT_IN_TEST_ATTRIBUTE_PATHS;
 
 use std::path::{Path, PathBuf};
 
@@ -36,6 +42,13 @@ pub fn build_index_with_test_harnesses(
     })?;
     index_phase("index_test_styles", || {
         test_styles::normalize_index_test_styles(&mut index)?;
+        index.refresh_memberships()
+    })?;
+    // #5334: same-file macro_rules! test generators, expanded in one
+    // bounded shape. After the style normalizer, which rebuilds
+    // tests from parsed functions and has none for a generated test.
+    index_phase("index_macro_generated_tests", || {
+        macro_generated_tests::register_macro_generated_tests(&mut index);
         index.refresh_memberships()
     })?;
     // Composition runs strictly after the normalizer: the normalizer
@@ -80,6 +93,9 @@ pub(crate) fn parse_loaded_files_with_cache(
     Ok(cached.index)
 }
 
+/// Legacy retain-everything oracle for the streaming path (#4996): all
+/// production inventory builds stream from disk, so only tests use this.
+#[cfg(test)]
 pub(crate) fn build_index_from_loaded_files_with_cache_and_test_harnesses(
     root: &Path,
     files: &[(PathBuf, Vec<u8>)],
@@ -105,15 +121,32 @@ fn build_cached_index_with_test_harnesses(
     registrations: &[TestHarnessRegistration],
     attribution: MissAttribution,
 ) -> Result<build::CachedRustIndex, String> {
-    let mut cached = index_phase("index_cached_parse", || {
+    let cached = index_phase("index_cached_parse", || {
         build::build_index_from_loaded_files_with_cache(root, files, attribution)
     })?;
+    post_process_cached_index(cached, root, registrations)
+}
+
+/// Every post-parse phase, shared by the loaded and streaming builders so
+/// the two can never drift (#4996).
+fn post_process_cached_index(
+    mut cached: build::CachedRustIndex,
+    root: &Path,
+    registrations: &[TestHarnessRegistration],
+) -> Result<build::CachedRustIndex, String> {
     index_phase("index_parameterized_tests", || {
         parameterized_tests::promote_explicit_test_case_functions(&mut cached.index);
         cached.index.refresh_memberships()
     })?;
     index_phase("index_test_styles", || {
         test_styles::normalize_index_test_styles(&mut cached.index)?;
+        cached.index.refresh_memberships()
+    })?;
+    // #5334: same-file macro_rules! test generators, expanded in one
+    // bounded shape. After the style normalizer, which rebuilds
+    // tests from parsed functions and has none for a generated test.
+    index_phase("index_macro_generated_tests", || {
+        macro_generated_tests::register_macro_generated_tests(&mut cached.index);
         cached.index.refresh_memberships()
     })?;
     index_phase("index_role_composition", || {
@@ -140,10 +173,27 @@ fn build_cached_index_with_test_harnesses(
     Ok(cached)
 }
 
+/// Streaming twin of
+/// [`build_index_from_loaded_files_with_cache_and_test_harnesses`]
+/// (issue #4996): identical post-processing over an index built from
+/// on-demand reads, so production inventory never retains the whole raw
+/// source corpus.
+pub(crate) fn build_index_from_paths_with_cache_and_test_harnesses(
+    root: &Path,
+    paths: &[PathBuf],
+    registrations: &[TestHarnessRegistration],
+) -> Result<build::CachedRustIndex, String> {
+    let cached = index_phase("index_cached_parse", || {
+        build::build_index_from_paths_with_cache(root, paths, MissAttribution::Named)
+    })?;
+    post_process_cached_index(cached, root, registrations)
+}
+
 // The Cargo-validated file-wide harness evidence grant (#3608) is shared
 // by every role surface (diff seeding, seam inventory, LSP scope) so a
 // misdeclared registration degrades identically everywhere.
 pub(crate) use harness_registry::validated_file_wide_harness_targets;
+pub(crate) use test_styles::attributes_define_test;
 
 // Keep compilation-unit rebasing available at the facts facade for index consumers.
 pub(crate) use includes::compilation_unit_path_from_parents;

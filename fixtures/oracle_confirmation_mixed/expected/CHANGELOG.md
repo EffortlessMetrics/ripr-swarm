@@ -142,6 +142,8 @@ Updated:
 Reason:
 RIPR-SPEC-0224: a matched related test keeps its oracle kind and strength in full output and adds why it still misses; verdicts unchanged
 
+RIPR-SPEC-0122 #5312: human-full before: shows the same canonical span as after (the removed line is projected onto the probe expression span); classifications, stages, JSON, and ids unchanged
+
 Command:
 `cargo xtask goldens bless oracle_confirmation_mixed --reason "..."`
 
@@ -207,6 +209,19 @@ Updated:
 
 Reason:
 RIPR-SPEC-0002: merge of origin/main (#5268 canonical_gap for Rust and sibling updates) onto the #5996 workspace-relative location owner — expected files regenerate through the merged tree
+
+Command:
+`cargo xtask goldens bless oracle_confirmation_mixed --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — oracle_confirmation_mixed (16)
+
+Reason:
+RIPR-SPEC-0116: the check drill-in binds --root to the resolved repository (#3948); goldens carry the <cwd>/ placeholder
 
 Command:
 `cargo xtask goldens bless oracle_confirmation_mixed --reason "..."`

@@ -57,6 +57,13 @@ document should branch on `exit`, not on free-text `stop_states`.
   lexically, or a changed file whose language adapter is unavailable. The
   parser follows stable Rust, so a changed file using nightly-only syntax it
   cannot parse (guard patterns, never patterns) also makes the run partial.
+  With `--json`, every post-argv-parse `check` failure — the analysis errors
+  above, an unreadable config or suppression policy, a git timeout, or any
+  other failure the command can produce — also writes a machine-readable
+  refusal document to stdout naming the failure; the exit stays `2` and the
+  human prose stays on stderr. Only argv usage errors stay prose-only with
+  empty stdout. [docs/OUTPUT_SCHEMA.md](OUTPUT_SCHEMA.md) documents the
+  refusal shape and its `schema_version`.
 - **User error**: unknown command, missing required argument, or invalid
   config.
 - **Internal error**: a panic occurred (with a `ripr: internal error` message).

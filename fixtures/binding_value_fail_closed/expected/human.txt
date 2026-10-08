@@ -2,7 +2,7 @@ ripr static RIPR exposure analysis
 mode: fast
 root: fixtures/binding_value_fail_closed/input
 
-Summary: 3 probe(s), 0 exposed, 0 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 1 infection_unknown, 2 propagation_unknown, 0 static_unknown; 3 of 3 finding(s) unsuppressed
+Summary: 3 probe(s), 0 exposed, 0 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 3 infection_unknown, 0 propagation_unknown, 0 static_unknown; 3 of 3 finding(s) unsuppressed
 
 Analysis outcome: findings below (analysis complete; complete_with_findings).
   Counts: 1 changed file(s), 6 changed line(s), 3 candidate line(s), 3 probe(s), 3 finding(s).
@@ -12,7 +12,7 @@ Start here:
   Safe next action: inspect the named static limitation before treating this as repair-ready.
   File: ./src/lib.rs:2
   Static exposure: unknown (infection_unknown, warning, confidence 0.66)
-  Why unknown: the change reaches a sink but infection could not be determined statically
+  Why unknown: infection could not be determined statically, and no sink the change reaches was established
   Canonical gap: gap:rust:src/lib.rs:via_map_or_else:predicate_boundary:predicate:let_end=input.rfind_delim_.map_or_else_1_idx_idx
   Changed behavior: let end = input.rfind(delim).map_or_else(|| 1, |idx| idx);
   Missing discriminator (1 of 2): No detected boundary input for the changed predicate
@@ -20,18 +20,18 @@ Start here:
   Next step: Add a targeted boundary or negative-path test, or teach ripr about the fixture/builder in ripr.toml.
   Evidence: reach yes · infection unknown · propagation unknown · observation yes · discriminator not established
     - reach yes: Related tests appear to reach via_map_or_else: map_or_else_boundary_stays_unresolved
-    - infection unknown: Related tests pass no literal ripr can compare with the changed boundary [1] (inputs are strings, computed values or fixtures); activation/infection is unknown
+    - infection unknown: The only literals ripr reads in related tests are char literals ['x'], which ripr does not compare with the changed numeric boundary [1]; activation/infection…
     - 7 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
-  ripr explain --root fixtures/binding_value_fail_closed/input --diff fixtures/binding_value_fail_closed/diff.patch --mode fast probe:src_lib.rs:predicate:d9aa811b
-  ripr context --root fixtures/binding_value_fail_closed/input --diff fixtures/binding_value_fail_closed/diff.patch --mode fast --at probe:src_lib.rs:predicate:d9aa811b
+  ripr explain --root <cwd>/fixtures/binding_value_fail_closed/input --diff <cwd>/fixtures/binding_value_fail_closed/diff.patch --mode fast probe:src_lib.rs:predicate:d9aa811b
+  ripr context --root <cwd>/fixtures/binding_value_fail_closed/input --diff <cwd>/fixtures/binding_value_fail_closed/diff.patch --mode fast --at probe:src_lib.rs:predicate:d9aa811b
 Write a test for it:
-  ripr agent stub --root fixtures/binding_value_fail_closed/input --at src/lib.rs:2
+  ripr agent stub --root <cwd>/fixtures/binding_value_fail_closed/input --at src/lib.rs:2 --kind predicate
 
 Hidden:
   2 lower-priority finding(s) omitted from default human output.
-    - fixtures/binding_value_fail_closed/input/src/lib.rs:14 (propagation_unknown)
-    - fixtures/binding_value_fail_closed/input/src/lib.rs:25 (propagation_unknown)
+    - fixtures/binding_value_fail_closed/input/src/lib.rs:14 (infection_unknown)
+    - fixtures/binding_value_fail_closed/input/src/lib.rs:25 (infection_unknown)
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json

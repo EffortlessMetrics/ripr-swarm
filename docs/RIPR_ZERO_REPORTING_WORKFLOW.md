@@ -116,6 +116,15 @@ calendar dates (including February 31 and 29 February on a non-leap year) are
 `generated_at`. A supplied deadline that cannot be compared is counted as
 `unknown` and warned; it is not reported as `current`.
 
+No binary command writes `owner` or `review_after`: `baseline create` records
+them as `null` (with a default `reason` and the creation timestamp), and
+shrink-only `baseline update` preserves existing entries. Review ownership and
+deadlines are operator-set ledger content: set or refresh `review_after` by
+editing the baseline ledger, in either accepted format above. The deadline is
+evaluated only when `owner`, `reason`, `created_at`, and `review_after` are all
+present; a deadline set on an incomplete record still reports as
+`missing_metadata`, never as `stale` or `current`.
+
 Use shrink-only refreshes after focused tests move evidence:
 
 ```bash

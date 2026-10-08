@@ -1,0 +1,33 @@
+{
+  "subject_id": "authored-shop",
+  "origin": "authored",
+  "version_label": "authored 2026-10-04 for spec-defined cells",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "Cargo.toml",
+      "sha256": "91d5f96e536b694e40083c5b709034b5c31a3326c80099a1dc5bf034b3f6ef08"
+    },
+    {
+      "path": "orders/Cargo.toml",
+      "sha256": "7a5530fe8435d29cec9b4b2cd93822dc32f6cb7cb7adb25f68c36f797c3e0ebc"
+    },
+    {
+      "path": "orders/src/lib.rs",
+      "sha256": "92670c8e68b0df205dfc22c191890fd7e682da03aef4efb261745b4f109ce1d8"
+    },
+    {
+      "path": "orders/tests/orders.rs",
+      "sha256": "589df986bc4922b6bf7cc16cca9225d5fedb4c4f7997eaa1afa14fa7771a8594"
+    },
+    {
+      "path": "pricing/Cargo.toml",
+      "sha256": "5e9bf09105f8ce670c8cb550e396e287b566d6bc2c941385074982b8be3d4068"
+    },
+    {
+      "path": "pricing/src/lib.rs",
+      "sha256": "6271d8dba18d015fc4d9984ae95d2dc9d618903dad34ffd6ebe0f7283fe4f7d1"
+    }
+  ]
+}

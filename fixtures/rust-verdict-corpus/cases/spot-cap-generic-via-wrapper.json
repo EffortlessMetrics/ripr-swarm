@@ -1,0 +1,59 @@
+{
+  "case_id": "spot-cap-generic-via-wrapper",
+  "subject_id": "authored-spot",
+  "diff": "cases/spot-cap-generic-via-wrapper.diff",
+  "anchor": {
+    "file": "src/score.rs",
+    "line": 5
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "generic_helper_via_wrapper_exact_result",
+  "hard_case": "capped is generic and private, and the tests call only the capped_score wrapper; ripr relates them to capped by same_test_file only, does not pair the wrapper's exact pins with the boundary (same_test_pairing_missing), and reports propagation_unknown.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "if value < cap {",
+        "mutated_line": "if value < cap {",
+        "outcome": "tests_failed",
+        "failing_test": "score::tests::scores_above_the_cap_are_capped",
+        "equivalence_review": "not equivalent: a pinned value changes"
+      },
+      {
+        "replacement": "if value == cap {",
+        "mutated_line": "if value == cap {",
+        "outcome": "tests_failed",
+        "failing_test": "score::tests::scores_above_the_cap_are_capped",
+        "equivalence_review": "not equivalent: a pinned value changes"
+      },
+      {
+        "replacement": "if value != cap {",
+        "mutated_line": "if value != cap {",
+        "outcome": "tests_failed",
+        "failing_test": "score::tests::scores_above_the_cap_are_capped",
+        "equivalence_review": "not equivalent: a pinned value changes"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "scores_above_the_cap_are_capped pins 11, 10 and 3 through the wrapper, so flipping or replacing the comparison changes a pinned value (value >= cap is equivalent and not listed). Pattern from refuted pilot picks: strsim lib.rs:64, 99, 101, 121 (generic_hamming / generic_jaro reached through hamming / jaro).",
+  "labeling_observation": {
+    "ripr_commit": "b2f2a21",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "propagation_unknown"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

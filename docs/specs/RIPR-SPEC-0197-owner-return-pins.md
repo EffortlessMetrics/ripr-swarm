@@ -21,6 +21,10 @@ Linked issues:
   container fact, not parser-derived `CallFact`)
 - #6675 (a binary bitwise `|` tail is unconditional; closures and `||` stay refused)
 - #6692 (a hand-written `Clone` field pinned by `assert_eq!(recv.clone(), recv)` through derived equality)
+- #6957 (the owner's own enclosing module is not a shadow: nested
+  production declarations keep their pin)
+- #6950 (an out-of-line parent module declaring the receiver shadows it:
+  the parent chain refuses the pin and direct reach)
 - RIPR-SPEC-0219 verdict corpus: `assert!(owner(..))` on a bool owner read
   as a weak relational check (bool-owner pins below)
 
@@ -105,12 +109,83 @@ rule only for an assertion whose context was admitted.
    call in the binding's same live statement block. Both the binding and call
    must have an ordinary statement path to the test. Aliases, mutation, rebinding,
    conditional calls, deferred calls and nested closure chains are unknown.
+   A spawned thread's closure counts only where its panic reaches the test
+   thread (#6966): the plain closure is the only argument of
+   `std::thread::spawn(..)` chained directly into `.join().unwrap()` or
+   `.join().expect(..)`, or of `s.spawn(..)` where `s` is the sole parameter of
+   the nearest enclosing closure, that closure is the only argument of
+   `std::thread::scope(..)`, and the spawn is either a bare statement (the
+   scope re-raises an unjoined thread's panic) or carries the same join chain.
+   The closure `std::thread::scope` runs is itself on an ordinary path: it is
+   called once on the test thread and its panic propagates. A `::thread::`
+   path names an extern crate, so it never matches. Names are not
+   resolved, so the test's file refuses when it holds an item, alias or
+   binding named `std` or `thread`; an `extern crate thread;`; a `use` ending in `std` or `thread`
+   other than exactly `use std::thread;`, or a `self` in a `use` list under
+   a `std` or `thread` prefix; a glob `use` other than `use super::*;`
+   inside an inline module (at the top of an out-of-line module file it
+   globs a parent in another file);
+   `use`, `mod` or `extern` inside macro tokens; `include!`; or an item- or
+   statement-position macro other than a std statement macro (`println!`,
+   `assert_eq!` and the like). A `thread::` path also needs
+   `use std::thread;` directly in the test's own module. Residuals: a bare
+   scoped spawn followed by a diverging call in the scope body
+   (`std::process::exit`), an
+   attribute or derive macro that emits such an import, a cfg'd-off
+   `use std::thread;` beside an extern crate renamed `thread`, a `#![no_std]`
+   root aliasing `std` in another file, and a `#[macro_use]` macro from
+   another file that reuses a std statement-macro name (`assert_eq!`) to emit
+   one. Only a whole `use std::thread;` counts as the import; the same path
+   nested in a list (`use crate::fake::{std::thread};`) refuses. Detached threads, bound handles,
+   and joins whose result is dropped or converted (`.ok()`, `let _ =`) stay
+   unknown.
+   Constant-row tables (#5328): the body of an unlabeled `for` loop is on
+   the path when the loop's iterable is a non-empty array of constant rows,
+   so its first iteration runs. The array is written inline (`for r in [..]`,
+   `&[..]`) or bound once by a plain immutable, unattributed `let` in the
+   statement list that holds the loop, whose name (raw `r#` spelling
+   included) has no other token in the test (no shadowing, mutation, alias
+   or second use). No attribute may appear anywhere in the rows, since a
+   `#[cfg]` can remove every element. Every row leaf is a literal, a negated
+   literal, `None`, `Some`, `Ok` or `Err` (bare or called), a qualified path
+   whose segments are all CamelCase other than `Self`, without generic arguments (`Kind::Empty`,
+   `Status::Complete(5)`), or `vec![..]` whose tokens are literals and the
+   punctuation `[ ] ( ) , - &`; parentheses, references, tuples and nested
+   arrays of these are constant. A bare CamelCase name may be a `fn` or
+   `const` and is refused, as are calls, methods, SCREAMING_CASE consts,
+   ranges, indexes and repeat arrays (`[r; n]`), since they may be empty or
+   carry the owner's own output. A `break` or `continue` anywhere in the
+   loop before the assertion refuses it, as for `loop`. This admits the
+   assertion's execution only; every other rule still applies to it.
+   RIPR-SPEC-0186 says when a loop-bound argument is a boundary input.
    `?` in a root test remains supported (an error fails an ordinary Result
    test); `?` in a closure is refused because its result could be discarded.
    Exactly
    one compared operand is a complete call of the owner's name with nothing
    chained after it, and the other operand does not mention the owner's
    name (`assert_eq!(f(4), f(2) + f(2))` compares the owner with itself).
+   An `unsafe { .. }` block whose only content is that complete call (no
+   statement, nothing chained after the call or the block; comments around
+   the call are ignored) is the call:
+   calling an `unsafe fn` needs the block, and the block's value is the
+   call's value.
+   A compared operand that is a plain identifier the test binds exactly
+   once, by an immutable `let v [: T] = <call>;`, is that call (#6974) when
+   `v` appears nowhere else in the test but as a whole operand of
+   `assert_eq!` assertions on later lines, and the assertion is the
+   statement right after the `let` (a statement between them could change
+   the value through a shared handle). A `mut` binding, a second binding, a
+   borrow, a method call or argument use of `v`, a use before the `let`,
+   or an initializer with anything around the call leaves the assertion
+   unpinned. An expected operand naming a `let` whose initializer mentions
+   the owner, directly or through further `let`s, compares the owner with
+   itself and is refused, and so is one naming a value ripr cannot trace
+   to a simple `let` (`let (same, _) = (f(4), 0);`). This binding scan runs
+   only when the test names the owner outside the assertion under review;
+   with no other mention, no binding can hold an owner call, so an
+   unrelated `let (want, _) = (12, 0);` keeps the pin. Residual, shared with
+   the bare call on main: an item `const` or `static` initialized from a
+   `const fn` owner (`const W: u32 = crate::weight(4);`) is not followed.
 2. Call identity, from the parser's item-container fact on the owner
    (`FunctionFact.item`: free, local, inherent, trait impl, or trait, with
    the `self`-receiver and body flags; the lexical fallback leaves it
@@ -121,6 +196,38 @@ rule only for an assertion whose context was admitted.
      test's parameters, a `for`, closure or match-arm pattern, or a macro
      such as `let_assert!` that mentions it), and the test's file must not
      rename an item to it (`use a::b as name`).
+   - A path call `a::b::name(..)` (#6974) names the same free function only
+     when the path resolves to exactly the module that declares the owner.
+     There an explicit `fn name` takes the value name from every glob, and
+     any other item of the name (a `use .. as name`, a re-exported variant,
+     a tuple struct, a macro-emitted item) fails to compile, so imports and
+     types elsewhere cannot capture the path. Every segment is a plain
+     identifier not starting with an upper-case letter (no leading `::`, no
+     generic arguments, no `r#`), and the path is one of:
+     - `self::` or `super::`, followed by any run of `super` and then module
+       names, from a test in the owner's own file, resolved from the
+       test's inline modules without climbing out of the file;
+     - `crate::` and module names, from a test that composes under the
+       owner's crate root, when the owner's file is that root;
+     - an import name of the owner's library from the test's crate manifest
+       (`krate::name(..)` in an integration test), and module names, when
+       the owner's file is the library root. No workspace file may rename
+       another item to that name or spell it `r#name`, and the test's crate
+       may not bind it itself (a `mod`, `struct`, `enum`, `union`, `trait`
+       or `type` of the name, a `use` of the name, or any glob, in a file of
+       the test's crate).
+     The owner must sit directly in a module (not a fn body or an `impl`)
+     that ripr can place by parsing its file. Neither the owner nor any
+     enclosing inline module may carry a `cfg` or `cfg_attr` attribute,
+     outer or inner (`#![cfg(..)]` in the fn body or module): a
+     complementary cfg may compile a same-named `static`, `const`, `use` or
+     module in its place, so the path no longer has to reach the owner. Any `r#name` of the owner's
+     name in the workspace (a raw twin the uniqueness gate's name match
+     misses) and any macro invocation in the owner's crate whose input names
+     the owner (`twin!(name)` may emit a `fn name`
+     under a cfg that drops the owner; the assertion macros listed as
+     non-returning are exempt) refuse the path. A path to any other module,
+     including one that re-exports the owner, does not pin.
    - A method call `recv.name(..)` names only a function with a `self`
      receiver in an `impl` or `trait` block. `recv` must be a plain local
      binding, and every `let` that binds it must be a simple
@@ -132,12 +239,32 @@ rule only for an assertion whose context was admitted.
      inherent associated function of that name and declares `-> Self` (or
      `-> T`), or `Result`/`Option` of it followed by `?`, `.unwrap()` or
      `.expect(..)`; or a byte-slice expression (`&[..][..]`, `&b".."[..]`).
+     An inline receiver `T::f(..).name(..)` is typed exactly as
+     `let recv = T::f(..);` would be, so `Stack::new(1).depth()` pins
+     `Stack::depth` under the same constructor-signature rules.
      A name bound by any other pattern (a closure parameter, a `for` or
      match-arm pattern, a destructuring `let`, a nested `fn`, the test's
      parameters, a macro that mentions it) leaves the type unestablished. A
      named type must be a struct, enum or union declared in the workspace,
      and the test's file must not import it from outside the workspace,
-     rename another item to it, or declare a `type` alias of it.
+     rename another item to it, or declare a `type` alias of it. A type
+     declaration of the name in the test's own module scope shadows the
+     production type for that test (#6905), so it refuses the pin rather
+     than crediting the production method. A macro definition or invocation
+     in that scope whose text declares the name may emit the type, so it
+     shadows the same way (#6948 review). The owner's own enclosing module
+     is not a shadow (#6957): when the production declaration sits in an
+     enclosing non-root module, a binding of that name still names the
+     production type. A same-file test-module declaration alongside it, and
+     any test-file declaration for a cross-file owner, still refuses. A
+     declaration of the name at an out-of-line parent module's root
+     shadows the same way (#6950): the test file's composed parent chain
+     is its enclosing scope beyond its own file, except the parent root
+     holding a root-level owner, which is the production scope. A
+     root-level `use ... as <name>` rebinds the name to a different type
+     and shadows too; a plain root-level `use` may re-export production,
+     so only renames refuse. An unresolved chain, an `include!` edge, or
+     a missing or unparseable parent refuses rather than guessing.
    - The receiver type must dispatch to the owner: the inherent `impl`'s
      self type, the trait impl's self type, or, for a trait default method,
      a type with an `impl .. Trait for <type>` in the workspace. A trait
@@ -176,7 +303,16 @@ rule only for an assertion whose context was admitted.
    `return`, any pinned value came through it. Otherwise the changed
    expression must be one `Ok(..)` (or `Some(..)`) constructor, the only
    one in the body, every other `return` must build `Err(..)` (or `None`),
-   and the pinned value must itself be `Ok(..)` (or `Some(..)`). An owner
+   and the pinned value must itself be `Ok(..)` (or `Some(..)`). The mirror
+   case covers a changed early `return None;` (or `return Err(..);`): it
+   pins only when it is the body's one `return` of that value, every other
+   `return` and the tail build one `Some(..)` (or `Ok(..)`) call, the body
+   has no `?`, no `return` sits in a closure, `async`/`const` block or
+   nested `fn`, the changed value evaluates all of its parts (no `if`,
+   `match`, `&&`/`||` or skipping combinator, as for the tail), and
+   the pinned value is exactly `None` (or an `Err(..)` call). bytesize's
+   `as_whole_units` (`return None;` beside a `Some(self.0 / unit)` tail) is
+   the motivating shape. An owner
    body that invokes any macro outside a fixed non-returning set
    (`assert!`, `format!`, `panic!`, `vec!`, ...), however it is spaced
    (`ensure !(..)`), leaves the return paths unestablished.
@@ -200,6 +336,44 @@ rule only for an assertion whose context was admitted.
    import, a same-named function in the test's own package when the owner
    lives in another package, and the exact variant when the changed
    expression constructs an error variant.
+   An import is not foreign when its first segment names the owner's own
+   library from the test's crate, as the manifests declare it. The owner
+   file must compose (through its `mod` declarations) under its package's
+   default library root, `src/lib.rs`, with no `[lib] path` and `autolib`
+   not turned off. Then either the test is in the same package (the
+   `[lib]` name, else the package name), or the test's nearest manifest has
+   a `[dependencies]` or `[dev-dependencies]` entry (also spelled
+   `dev_dependencies`; `[target.*]` tables included) whose `path`, directly
+   or through `[workspace.dependencies]` for `workspace = true`, resolves to
+   the owner's package directory. A `package =` rename must name the
+   owner's package and imports under its key; without one the key must be
+   the package name and imports under the library name. Target tables are
+   read without their `cfg` predicates, so a name that any other entry
+   (in any table) binds to another package is ambiguous and stays foreign.
+   A `git` or
+   `registry` key, a `package.workspace`, a `[patch]` entry for the name or
+   any `[replace]` between the test and the root, and a `.cargo/config`
+   between either file and the analysis root that mentions the name or sets
+   `paths`, `[patch]`, `[source]` or `include` leave the import foreign
+   (configuration above the root or in `$CARGO_HOME` is not read). A test
+   in the owner's own package whose dependency key is the library name
+   also leaves the import foreign, and so does any sign that the library
+   may export another item under the callee's name: a `pub use` in a
+   library file that names the callee or globs, unless its path is rooted
+   at `crate`, `self` or `super` and passes only through modules the
+   library declares that no `use` or `extern crate` in it also binds,
+   checked for every path inside a brace group
+   (`use fastscore as fs; pub use self::fs::score;` and
+   `pub use self::{fs::score};` are refused, even beside an unrelated
+   `mod fs`); a library `const` or `static` of that name; an `include!` in
+   a library file or an unresolved include anywhere; or a file under the
+   package's `src/` whose crate root is not established. The same
+   own-crate reading serves every consumer of the same-name import defeat
+   (the reveal-side owner binding, RIPR-SPEC-0229 arm withholding and tuple
+   match observations), as the root package's names already did. So
+   `use pricing::score;` in a sibling member that depends on `pricing` by
+   path pins `score`, and the same line under a `pricing` key that names
+   another package does not.
 6. Clone field pins (#6692). A `field_construction` probe on field `f` of
    a hand-written `impl Clone for T` is confirmed by
    `assert_eq!(recv.clone(), recv)` (either operand order). The owner is
@@ -343,6 +517,15 @@ string literal is not a call or a reference. These rules hold for
   (`fixtures/owner_return_pin_identity_traps`): the associated-versus-free
   bare call, the overridden trait default, the early-exit input, and the
   test-local binding of the owner's name.
+- A fixture pins a test-module same-name shadow as non-exposed
+  (`fixtures/owner_return_pin_test_module_shadow`, #6905): the test's own
+  `Window` with a derived `Clone` runs instead of the changed owner, so the
+  clone field stays `weakly_exposed` with its struct-field gap.
+- A fixture pins an out-of-line parent-module same-name shadow as
+  non-exposed (`fixtures/owner_return_pin_out_of_line_test_module_shadow`,
+  #6950): the nested child test binds the parent module's own `Window`,
+  so the pin is refused and the relation stays name-only
+  (`weak_token_substring`).
 - Unit tests pin every gate with a positive and a discriminating negative.
 - Twenty matched fixtures keep effective and ineffective tests separate:
   - `owner_return_pin_direct`, `_called_closure`, `_token_direct`, and
@@ -409,6 +592,36 @@ string literal is not a call or a reference. These rules hold for
   `#[macro_use]` on any enclosing module, no out-of-line child module)
   refuses only tests inside that item; a glob import from a workspace member
   crate with indexed files is workspace-owned.
+- A crate-local binding reaches only tests compiled in the same crate. A
+  site is crate-local when it cannot leave the crate whose module tree holds
+  its file: a private `use` or glob, `#[macro_use] extern crate`,
+  `#![no_implicit_prelude]`, or a `macro_rules!` without `#[macro_export]`
+  (a `macro` 2.0 item without visibility). Its crate is the root reached
+  through resolved module edges, recognized only when that root is a Cargo
+  autodiscovered target (`src/lib.rs`, `src/main.rs`, `src/bin/*.rs`, and
+  `tests/*.rs`, `benches/*.rs`, `examples/*.rs`, `build.rs` beside an
+  indexed `src/`). humantime's `benches/datetime_format.rs`
+  (`#[macro_use] extern crate bencher;`) no longer refuses the library's
+  `tests/*.rs` assertions. An unresolved `#[macro_use] mod` may
+  `#[macro_export]` its macros, so it stays workspace-wide like exported
+  definitions. Exported definitions, `pub` imports, sites in
+  another macro's arguments, unparsed files, and any file or test whose
+  root is not recognized stay workspace-wide. So does any file another
+  crate can also compile: an `include!` fragment or a module below one (a
+  recorded include target, include edge, or include target as a module
+  parent), a non-root file under a `tests/*.rs` root (a shared
+  `tests/common/mod.rs` composes under its first owner only), and, while any
+  `include!` in the workspace is unresolved (ambiguous, cfg-conflicting,
+  capped, dynamic or unindexed), every file: an unresolved fragment and its
+  module children otherwise look like a crate root of their own. The same
+  holds while any `#[path]` is unresolvable (`cfg_attr`, non-literal), which
+  records no module edge for its target. A withheld file in the
+  dependent scope is routed by root only when its own path is a `src/lib.rs`,
+  `src/main.rs` or `src/bin/*.rs` root, so named mode matches the full
+  closure; every other withheld site stays workspace-wide. Limits: a
+  `[lib]`/`[[bin]]`/`[[test]]` `path` that moves a target is not read, so a
+  file at a default target path that some other target includes through
+  `#[path]` is still judged by its default root.
 - `use pretty_assertions::assert_eq;` (or `assert_ne`) under its own name
   counts as the standard assertion only when the importing file's nearest
   `Cargo.toml` inside the analysis root declares `pretty_assertions` as a
@@ -614,8 +827,11 @@ assertions. This repair shares the existing callback without that larger migrati
   are documented residuals.
 - A trait from outside the workspace that is also in scope and also names
   the method is not detected.
-- Qualified calls (`Type::name(..)`, `Trait::name(&mut recv, ..)`) do not
-  pin yet.
+- Type- and trait-qualified calls (`Type::name(..)`,
+  `Trait::name(&mut recv, ..)`) do not pin yet; module paths do (#6974).
+- A path call relies on the name's workspace uniqueness. Items that a
+  procedural or foreign macro generates are invisible to it, as they are
+  to the bare call.
 - A helper function the changed tail calls may itself ignore an argument
   on some inputs; the tail gate reads the tail's own syntax only.
 - Opaque macro expansion can synthesize a binding from fragments without a
@@ -649,8 +865,36 @@ assertions. This repair shares the existing callback without that larger migrati
   `macro_rules!` body, forward, free twin); receiver typing; slice-method
   names; inherent receivers; bare calls (associated twin, free twin, local
   binding, `for`/closure/parameter/macro bindings, `use .. as` renames);
-  the return-path gate, including conditionally evaluated tails and spaced
-  macros; plain `assert_eq!` against an owner-free value, `#[should_panic]`
+  the return-path gate, including conditionally evaluated tails, spaced
+  macros and the sole early `return None;`/`Err` source
+  (`an_early_return_is_pinned_when_it_is_the_only_source_of_its_value`,
+  `an_early_err_return_needs_to_be_the_only_err_source`,
+  `an_early_return_pin_admits_only_the_value_that_return_produces`);
+  inline constructor receivers
+  (`an_inline_constructor_types_the_receiver_like_a_binding`); module-path
+  calls and let-bound results (#6974:
+  `a_path_through_the_owners_own_crate_pins_the_owner`,
+  `a_path_that_may_leave_the_owners_crate_is_not_a_pin`,
+  `a_crate_relative_path_in_another_target_is_not_the_owners_crate`,
+  `the_owners_library_name_roots_a_path_from_another_crate`,
+  `a_result_bound_once_and_only_asserted_pins_like_the_call`,
+  `review_holes_in_path_and_let_bound_pins_stay_closed`,
+  `a_test_crate_binding_of_the_library_name_shadows_the_dependency`,
+  `a_rename_to_the_owners_name_or_a_type_of_it_defeats_every_path`,
+  `test_crate_bindings_of_the_root_are_read_from_that_crate_only`,
+  `a_path_must_resolve_to_the_owners_own_module`,
+  `rev3_review_false_pins_stay_closed`,
+  `an_integration_path_is_closed_to_raw_and_macro_shadows`,
+  `a_macro_that_may_emit_the_owners_name_defeats_every_path`,
+  `an_expected_binding_ripr_cannot_read_is_not_a_distinct_value`,
+  `a_bound_method_result_pins_like_the_method_call`,
+  `an_unreadable_expected_binding_is_scanned_only_beside_another_owner_call`,
+  `a_cfg_gated_owner_is_not_reached_by_a_path`); crate-local
+  bindings in another target
+  (`a_crate_local_binding_in_another_target_does_not_reach_the_test`,
+  `a_crate_local_site_another_crate_can_compile_stays_workspace_wide`,
+  `a_module_child_of_an_ambiguous_include_fragment_stays_workspace_wide`,
+  `a_withheld_crate_roots_private_glob_is_routed_by_root`); plain `assert_eq!` against an owner-free value, `#[should_panic]`
   and assertions outside the test body; by-value prelude method names;
   constructor signatures; macro-bound, aliased and parameter receivers;
   lexical fallback; the item-container fact.

@@ -49,16 +49,18 @@ pub use diff::records::{
     PathRecordError, StatusRecord, parse_git_path_records, parse_git_status_records,
 };
 pub(crate) use diff::{
-    load_diff, load_diff_range_with_deadline_core, load_diff_with_effective_base_core,
-    load_worktree_diff, load_worktree_diff_with_effective_base_core, no_merge_base_diagnosis,
-    parse_unified_diff, probe_working_tree_tracked_changes_within, resolve_base_commit,
-    resolve_effective_base, working_tree_has_tracked_changes,
+    AnalyzedRevisions, load_diff, load_diff_range_with_deadline_core,
+    load_diff_with_effective_base_core, load_worktree_diff,
+    load_worktree_diff_with_effective_base_core, no_merge_base_diagnosis, parse_unified_diff,
+    probe_working_tree_tracked_changes_within, resolve_base_commit, resolve_effective_base,
+    working_tree_has_tracked_changes, working_tree_has_uncommitted_changes,
 };
 /// Shared RIPR-SPEC-0084 default-base authority and pinned analysis-range
 /// diff assembly (#4003): the one named owner for badge input base/diff,
 /// consumed by the analysis route and the xtask badge route alike. Neither
 /// route may hardcode a base ref or rebuild the diff argv inline.
 pub use diff::{load_diff_range, resolve_default_base_commit};
+pub(crate) use facts::attributes_define_test;
 pub(crate) use facts::cfg_predicates;
 pub(crate) use facts::validated_file_wide_harness_targets;
 pub(crate) use generated_rust_corpus::{CorpusPayloadSize, analyzable_corpus_payload_size};
@@ -87,16 +89,20 @@ pub(crate) use seam_inventory::apply_pilot_seam_budget_inner;
 pub(crate) use seam_inventory::{
     ClassifiedSeamsReport, DEFAULT_REPO_EXPOSURE_SEAM_LIMIT, ScopedClassifiedSeamInventory,
     ScopedEvidenceConsumer, SeamLimitInfo, SeamLimitSource, TargetedTestInventoryError,
-    apply_pilot_seam_budget, inventory_changed_test_classified_seams_at_with_config_node,
+    apply_pilot_seam_budget, classify_seams_in_files_at_with_config, diff_only_rust_files,
+    file_seams_without_evidence_at_with_config,
+    inventory_changed_test_classified_seams_at_with_config_node,
     inventory_classified_seams_at_with_config, inventory_classified_seams_report_at_with_config,
     inventory_compact_classified_seams_at_with_config,
     inventory_diff_scoped_classified_seams_at_with_config,
     inventory_diff_scoped_streamed_seams_at_with_config, inventory_seams_at_with_config,
-    pilot_seam_budget, workspace_cache_key_at_with_config,
+    pilot_seam_budget, seam_kind_for_probe_family, workspace_cache_key_at_with_config,
 };
 pub(crate) use seams::{RepoSeam, RequiredDiscriminator};
 pub(crate) use syntax::fn_signature::{owner_fn_line_span, rust_source_parses_cleanly};
+pub(crate) use syntax::governed_cfg_test_modules;
 pub(crate) use syntax::parse_clean_source_file;
+pub(crate) use workspace::DiffOnlySource;
 pub(crate) use workspace::PathDependencyAdjacency;
 pub(crate) use workspace::SourceRoleContext;
 pub(crate) use workspace::apply_module_graph_evidence;
@@ -240,6 +246,7 @@ pub(crate) fn targeted_typescript_findings_for_scope(
         include_unchanged_tests: config.analysis().include_unchanged_tests().unwrap_or(true),
         resolve_tsconfig_paths: config.typescript().resolve_tsconfig_paths(),
         perl_facts_path: None,
+        perl_producer_failure: None,
         git_timeout: None,
         git_candidate: None,
         production_like_targets: Default::default(),
@@ -639,6 +646,16 @@ pub struct AnalysisOptions {
     /// limitation (no analysis). When `Some`, the adapter reads the packet
     /// and produces Findings + limitations from it.
     pub perl_facts_path: Option<PathBuf>,
+    /// Verbatim failure reason from a *configured, managed* Perl facts
+    /// exporter that was invoked and failed (spawn error, timeout, or
+    /// non-zero exit). Set only by the managed-producer funnel in
+    /// `app::check` (#6828). When `Some`, the Perl adapter fails closed with
+    /// this reason instead of the generic missing-packet reason, so the
+    /// `language_runs` record and the typed outcome limitation name the real
+    /// cause instead of re-advising a configuration the user already made.
+    /// A config that names a producer but has a broken exporter is a
+    /// materially different state from "no packet configured".
+    pub(crate) perl_producer_failure: Option<String>,
     /// Cooperative per-invocation git deadline for the diff-load path
     /// (#2303). `None` keeps every git invocation unbounded — the CLI
     /// behavior, byte-identical to the pre-#2303 path. Only the LSP refresh
@@ -817,6 +834,12 @@ pub enum LanguageRunStatus {
     /// The adapter could not run at all (e.g. required Cargo feature is off,
     /// or the producer binary is missing).
     Invalid,
+    /// A *configured* managed fact producer was invoked and failed (spawn
+    /// error, timeout, or non-zero exit). Distinct from `Unavailable`
+    /// (nothing configured) so the typed limitation and `language_runs`
+    /// reason carry the real exporter failure instead of re-advising a
+    /// configuration the user already made (#6828).
+    Failed,
 }
 
 impl LanguageRunStatus {
@@ -827,6 +850,7 @@ impl LanguageRunStatus {
             Self::Unavailable => "unavailable",
             Self::Partial => "partial",
             Self::Invalid => "invalid",
+            Self::Failed => "failed",
         }
     }
 }
@@ -871,10 +895,17 @@ pub struct AnalysisResult {
     /// add; they decide the uncommitted-edits note. Empty for every other
     /// mode.
     pub(crate) uncommitted_source_paths: Vec<String>,
-    /// The untracked subset of [`AnalysisResult::uncommitted_source_paths`]
-    /// (#5258): files neither the committed diff nor `--worktree` analyzes,
-    /// so the note can name the real repair (staging) instead of offering
-    /// `--worktree`. Empty when no untracked routed file exists.
+    /// The base and head commits a live-repository diff analyzed, for the
+    /// check header. `None` for diff-file/stdin inputs, repo-scope runs and
+    /// subject-materialized runs, whose revisions are not live refs.
+    pub(crate) analyzed_revisions: Option<diff::AnalyzedRevisions>,
+    /// Untracked routed files (#5258): on a committed-history run, the
+    /// untracked subset of [`AnalysisResult::uncommitted_source_paths`]; on
+    /// a working-tree run (RIPR-SPEC-0116), every untracked routed file,
+    /// because the working-tree diff covers tracked files only. Neither diff
+    /// analyzes them, so the note names the real repair (intent-to-add or
+    /// staging) instead of offering `--worktree`. Empty when no untracked
+    /// routed file exists.
     pub(crate) untracked_source_paths: Vec<String>,
     /// Crate-private numeric diagnostic origins for Rust findings (#4464).
     pub(crate) rust_diagnostic_origins: crate::analysis::diagnostic_origin::RustDiagnosticOrigins,
@@ -1371,6 +1402,7 @@ index 0000000..1111111 100644
             include_unchanged_tests: true,
             resolve_tsconfig_paths: false,
             perl_facts_path: None,
+            perl_producer_failure: None,
             git_timeout: None,
             git_candidate: None,
             resolved_subject_identity: None,
@@ -1394,6 +1426,7 @@ index 0000000..1111111 100644
             include_unchanged_tests: true,
             resolve_tsconfig_paths: false,
             perl_facts_path: None,
+            perl_producer_failure: None,
             git_timeout: None,
             git_candidate: None,
             resolved_subject_identity: None,
@@ -1449,6 +1482,7 @@ fn premium_customer_gets_discount() {
             include_unchanged_tests: true,
             resolve_tsconfig_paths: false,
             perl_facts_path: None,
+            perl_producer_failure: None,
             git_timeout: None,
             git_candidate: None,
             resolved_subject_identity: None,
@@ -1665,6 +1699,7 @@ fn test_with_predicate() {
             include_unchanged_tests: true,
             resolve_tsconfig_paths: false,
             perl_facts_path: None,
+            perl_producer_failure: None,
             git_timeout: None,
             git_candidate: None,
             resolved_subject_identity: None,
@@ -1735,6 +1770,7 @@ index 0000000..1111111 100644
             include_unchanged_tests: true,
             resolve_tsconfig_paths: false,
             perl_facts_path: None,
+            perl_producer_failure: None,
             git_timeout: None,
             git_candidate: None,
             resolved_subject_identity: None,
@@ -1755,6 +1791,7 @@ index 0000000..1111111 100644
             include_unchanged_tests: true,
             resolve_tsconfig_paths: false,
             perl_facts_path: None,
+            perl_producer_failure: None,
             git_timeout: None,
             git_candidate: None,
             resolved_subject_identity: None,
@@ -1802,6 +1839,7 @@ mod git_candidate_entry_tests {
             include_unchanged_tests: true,
             resolve_tsconfig_paths: false,
             perl_facts_path: None,
+            perl_producer_failure: None,
             git_timeout: None,
             git_candidate: None,
             resolved_subject_identity: None,

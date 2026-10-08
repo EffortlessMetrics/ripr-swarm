@@ -16,7 +16,7 @@ pub(crate) use report::{
     render_with_config,
 };
 
-pub(crate) use formatter::{array_field, escape, field, float_field, number_field};
+pub(crate) use formatter::{array_field, escape, escape_into, field, float_field, number_field};
 
 /// Renders a serializable JSON value with the repository's pretty-printing
 /// convention and a consistent contextual error message.
@@ -685,6 +685,7 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         };
 
         let rendered = render(&output);
@@ -813,6 +814,7 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         };
 
         let rendered = render(&output);
@@ -987,6 +989,7 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         };
 
         let rendered = render(&output);
@@ -1795,6 +1798,7 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         }
     }
 
@@ -1932,6 +1936,7 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         };
 
         let rendered = render(&output);
@@ -2046,6 +2051,7 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         }
     }
 
@@ -2073,6 +2079,7 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         };
 
         let rendered = render(&output);
@@ -2135,6 +2142,7 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         };
 
         let rendered = render(&output);
@@ -2174,6 +2182,7 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         };
 
         let rendered = render(&output);

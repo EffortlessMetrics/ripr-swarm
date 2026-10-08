@@ -421,6 +421,15 @@ are scoped or reviewed.
 
 ### Changed
 
+- **Breaking (JSON output).** `ripr doctor --json` schema `0.3` -> `0.4` removes
+  the top-level `sections` array. Its only mutator and only reader were
+  `#[cfg(test)]`, so every released document carried `"sections": []` and no
+  consumer could have read data from it; a client that reads `sections` (or
+  decodes into a closed struct that has one) must be updated before it accepts a
+  `0.4` document. Every `0.3` field keeps its meaning, every added field is
+  additive for a consumer that ignores unknown keys, and reverting the change
+  restores `0.3` exactly. The human `ripr doctor` screen is unchanged: same
+  wording, same ordering, same markers, same exit codes (#5214).
 - The install route is now timed as its own scoreboard metric,
   `first_run.install_seconds` with a rise rule that needs a committed baseline sample and a nightly first-run ingest before it can fail anything (#5311, #5983). The README, quickstart
   and install-channel notes state the measured source-build time of a 0.11
@@ -598,6 +607,19 @@ are scoped or reviewed.
 
 ### Added
 
+- `ripr doctor --json` (schema `0.4`) now carries the environment facts the
+  human doctor screen already printed: `detected_languages` (with each
+  language's tier, whether its adapter is compiled in, and whether the effective
+  config enables it), `unanalyzed_source_languages`, `preview_language_gaps`
+  (which `[languages] enabled` entry to add for a detected-but-skipped preview
+  language), `config_defaults`, `cache`, `test_surfaces`, and `perl_preview`
+  including the exporter's typed compatibility state. An agent or CI job reading
+  the machine form no longer concludes "nothing to report" where the terminal
+  printed a dozen lines of actionable environment state, and `detected_languages`
+  is deliberately distinct from the existing `languages` array, which stays "what
+  `ripr.toml` enables" (#5214).
+- `schemas/ripr/doctor.schema.json`: the doctor document now has a published
+  JSON Schema, and `docs/OUTPUT_SCHEMA.md` documents its shape (#5214).
 - Verdict corpus: authored subjects. Three small crates written for the
   corpus add 23 runtime-labeled cases covering the verdicts and probe
   families the real crates left empty: field construction, call deletion,

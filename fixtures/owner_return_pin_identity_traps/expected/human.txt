@@ -24,10 +24,9 @@ Start here:
     - 6 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
-  ripr explain --root fixtures/owner_return_pin_identity_traps/input --diff fixtures/owner_return_pin_identity_traps/diff.patch --mode fast probe:src_lib.rs:return_value:22c1d265
-  ripr context --root fixtures/owner_return_pin_identity_traps/input --diff fixtures/owner_return_pin_identity_traps/diff.patch --mode fast --at probe:src_lib.rs:return_value:22c1d265
-Write a test for it:
-  ripr agent stub --root fixtures/owner_return_pin_identity_traps/input --at src/lib.rs:21
+  ripr explain --root <cwd>/fixtures/owner_return_pin_identity_traps/input --diff <cwd>/fixtures/owner_return_pin_identity_traps/diff.patch --mode fast probe:src_lib.rs:return_value:22c1d265
+  ripr context --root <cwd>/fixtures/owner_return_pin_identity_traps/input --diff <cwd>/fixtures/owner_return_pin_identity_traps/diff.patch --mode fast --at probe:src_lib.rs:return_value:22c1d265
+No test stub here: the owner is a trait default method or nested function, sits in an impl local to a block or whose self type is not a plain path, sits behind a cfg a plain `cargo test` build may not enable, or takes a typed `self` receiver
 
 Hidden:
   3 lower-priority finding(s) omitted; 2 base-side evidence, not candidate edit targets.

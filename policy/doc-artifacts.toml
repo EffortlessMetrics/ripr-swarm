@@ -330,7 +330,7 @@ kind = "spec"
 path = "docs/specs/RIPR-SPEC-0087-typescript-preview-actionable-repair-packet.md"
 status = "proposed"
 owner = "product-swarm"
-standalone_reason = "PR 7 of the RIPR-SPEC-0085 TypeScript evidence-adapter wave: closes the repair_packet_ready false→true flip for TypeScript findings with provably complete, evidence-backed, non-dynamic repair packets; reuses the shared validate_agent_gap_record_packet validator; no separate proposal artifact."
+standalone_reason = "PR 7 of the RIPR-SPEC-0085 TypeScript evidence-adapter wave: closes the repair_packet_ready falseâ†’true flip for TypeScript findings with provably complete, evidence-backed, non-dynamic repair packets; reuses the shared validate_agent_gap_record_packet validator; no separate proposal artifact."
 
 [[artifact]]
 id = "RIPR-SPEC-0088"
@@ -394,7 +394,7 @@ kind = "spec"
 path = "docs/specs/RIPR-SPEC-0096-infect-propagate-fail-closed.md"
 status = "proposed"
 owner = "product-swarm"
-standalone_reason = "Honesty fixes for false-exposed probes in INFECT/PROPAGATE stages (parts A, B, C of #1219): wildcard discard → infection_unknown, swallowed call-chain tails → propagation_unknown, stdout macros → propagation_unknown; no new JSON fields, no schema bump; fixture-backed by 6 new fixtures (3 downgrade proofs + 3 controls proving no over-correction); part D (confidence aggregation) deferred."
+standalone_reason = "Honesty fixes for false-exposed probes in INFECT/PROPAGATE stages (parts A, B, C of #1219): wildcard discard â†’ infection_unknown, swallowed call-chain tails â†’ propagation_unknown, stdout macros â†’ propagation_unknown; no new JSON fields, no schema bump; fixture-backed by 6 new fixtures (3 downgrade proofs + 3 controls proving no over-correction); part D (confidence aggregation) deferred."
 
 [[artifact]]
 id = "RIPR-SPEC-0097"
@@ -410,7 +410,7 @@ kind = "spec"
 path = "docs/specs/RIPR-SPEC-0098-typescript-exposed-observation-guard.md"
 status = "accepted"
 owner = "product-swarm"
-standalone_reason = "Fail-closed fix for false-exposed TypeScript preview findings: downgrades exposed→weakly_exposed when a strong oracle exists but no assertion's observed_expression flows from the changed sub-expression; fixes console.log/#1235 repro; language_status stays Preview; no schema bump; 4 unit tests (2 downgrade proofs + 2 controls proving no over-correction)."
+standalone_reason = "Fail-closed fix for false-exposed TypeScript preview findings: downgrades exposedâ†’weakly_exposed when a strong oracle exists but no assertion's observed_expression flows from the changed sub-expression; fixes console.log/#1235 repro; language_status stays Preview; no schema bump; 4 unit tests (2 downgrade proofs + 2 controls proving no over-correction)."
 
 [[artifact]]
 id = "RIPR-SPEC-0099"
@@ -426,7 +426,7 @@ kind = "spec"
 path = "docs/specs/RIPR-SPEC-0100-lsp-related-test-codelens.md"
 status = "accepted"
 owner = "product-swarm"
-standalone_reason = "Advisory-only LSP codeLens above changed symbols citing the cached related-test count; display-only (never a diagnostic or gate); honesty rules: snapshot==None→empty Vec, N==0→'no related tests found', count from related_tests.len() only, preview prefix for TS/Python; new lsp/lens.rs pure-helper module; zero VS Code extension changes; 10 unit tests (8 fixture + 2 wiring/capability)."
+standalone_reason = "Advisory-only LSP codeLens above changed symbols citing the cached related-test count; display-only (never a diagnostic or gate); honesty rules: snapshot==Noneâ†’empty Vec, N==0â†’'no related tests found', count from related_tests.len() only, preview prefix for TS/Python; new lsp/lens.rs pure-helper module; zero VS Code extension changes; 10 unit tests (8 fixture + 2 wiring/capability)."
 
 [[artifact]]
 id = "RIPR-SPEC-0101"
@@ -466,7 +466,7 @@ kind = "spec"
 path = "docs/specs/RIPR-SPEC-0104-typescript-oracle-seam-family-match.md"
 status = "accepted"
 owner = "product-swarm"
-standalone_reason = "TypeScript honesty fix for issue #1246: assertion-level family↔oracle-kind filter (ts_oracle_kind_matches_seam + strongest_family_matching_oracle) so a cross-family Strong oracle (ExactErrorVariant on .toThrow) cannot promote a ReturnValue/Predicate seam to Exposed; SideEffect/CallDeletion families defer to RIPR-SPEC-0098 observation guard (two specs compose); 4 behavioral controls including single-test-both-assertions over-correction guard; mapping table unit test; no schema bump; no new class; TS stays preview."
+standalone_reason = "TypeScript honesty fix for issue #1246: assertion-level familyâ†”oracle-kind filter (ts_oracle_kind_matches_seam + strongest_family_matching_oracle) so a cross-family Strong oracle (ExactErrorVariant on .toThrow) cannot promote a ReturnValue/Predicate seam to Exposed; SideEffect/CallDeletion families defer to RIPR-SPEC-0098 observation guard (two specs compose); 4 behavioral controls including single-test-both-assertions over-correction guard; mapping table unit test; no schema bump; no new class; TS stays preview."
 
 [[artifact]]
 id = "RIPR-SPEC-0105"
@@ -474,7 +474,7 @@ kind = "spec"
 path = "docs/specs/RIPR-SPEC-0105-lsp-defer-seam-inventory.md"
 status = "accepted"
 owner = "product-swarm"
-standalone_reason = "LSP performance + disclosure fix for issue #1245 (cockpit dogfood gap #1): defer the expensive 336s cold / 31s warm full-repo seam inventory off the interactive did_open/did_save path; diff-scoped findings (33ms–11s) always produced; seams computed only on explicit ripr.refreshDiagnostics; disclosed via new seams_deferred run_status value (member of limited family); limited policy applied (severity downgrade + gap suppression); 4 unit controls; additive seams_deferred: bool field on AnalysisSnapshot; no schema_version bump; no version bump."
+standalone_reason = "LSP performance + disclosure fix for issue #1245 (cockpit dogfood gap #1): defer the expensive 336s cold / 31s warm full-repo seam inventory off the interactive did_open/did_save path; diff-scoped findings (33msâ€“11s) always produced; seams computed only on explicit ripr.refreshDiagnostics; disclosed via new seams_deferred run_status value (member of limited family); limited policy applied (severity downgrade + gap suppression); 4 unit controls; additive seams_deferred: bool field on AnalysisSnapshot; no schema_version bump; no version bump."
 
 [[artifact]]
 id = "RIPR-SPEC-0107"
@@ -506,7 +506,7 @@ kind = "spec"
 path = "docs/specs/RIPR-SPEC-0110-receipt-gap-cross-reference.md"
 status = "accepted"
 owner = "product-swarm"
-standalone_reason = "Receipt-gap cross-reference (closes #1123 PR 4): adds optional --ledger flag to ripr receipt check; cross-references receipt's canonical_gap_id against live gap set from parse_gap_records_json; orphan_receipt/receipt_gap_mismatch exit non-zero; ledger-absent → not_available (never receipt_ok, fail-closed honesty rule); provides the real producer for labels deferred by #1130 no-fake-zero guard; 4 unit controls + 1 CLI smoke; no schema bump; no version bump."
+standalone_reason = "Receipt-gap cross-reference (closes #1123 PR 4): adds optional --ledger flag to ripr receipt check; cross-references receipt's canonical_gap_id against live gap set from parse_gap_records_json; orphan_receipt/receipt_gap_mismatch exit non-zero; ledger-absent â†’ not_available (never receipt_ok, fail-closed honesty rule); provides the real producer for labels deferred by #1130 no-fake-zero guard; 4 unit controls + 1 CLI smoke; no schema bump; no version bump."
 
 [[artifact]]
 id = "RIPR-SPEC-0112"
@@ -554,7 +554,7 @@ kind = "spec"
 path = "docs/specs/RIPR-SPEC-0117-rust-macro-reach-limitation.md"
 status = "accepted"
 owner = "product-swarm"
-standalone_reason = "Rust macro-reach limitation (P3 macro-boundary slice, closes #1292 partially): when no_static_path has no related tests and the 0114 lexical transitive walk does not find a path, name a same-repo macro boundary as static_limit_kind=rust_macro_reach_unresolved only when the macro definition lexically mentions the changed owner; fail-closed (classification stays no_static_path, witness is not related_tests, no macro expansion, no repair packet, no schema_version bump)."
+standalone_reason = "Rust macro-reach limitation (P3 macro-boundary slice, closes #1292 partially): when no_static_path has no related tests and the 0114 lexical transitive walk does not find a path, name a same-repo macro boundary as static_limit_kind=rust_macro_reach_unresolved only when the macro definition lexically mentions the changed owner; fail-closed (classification stays no_static_path, witness is not related_tests, no general macro expansion (bounded same-file test generators are indexed, #5334), no repair packet, no schema_version bump)."
 
 [[artifact]]
 id = "RIPR-SPEC-0118"
@@ -586,7 +586,7 @@ kind = "spec"
 path = "docs/specs/RIPR-SPEC-0121-perl-lsp-swarm-scratch-gc-orphan-reaper-paths.md"
 status = "proposed"
 owner = "product-swarm"
-standalone_reason = "perl-lsp-swarm CI scratch-GC orphan-reaper path mismatch: spec-only — the fix lands in the perl-lsp-swarm repo (unreachable from this session), mirroring ripr-swarm scratch-gc.yml which sweeps inside each scratch subdir at -maxdepth 1 rather than scanning the parent at depth 1. No ripr product, schema, or classification change."
+standalone_reason = "perl-lsp-swarm CI scratch-GC orphan-reaper path mismatch: spec-only â€” the fix lands in the perl-lsp-swarm repo (unreachable from this session), mirroring ripr-swarm scratch-gc.yml which sweeps inside each scratch subdir at -maxdepth 1 rather than scanning the parent at depth 1. No ripr product, schema, or classification change."
 
 [[artifact]]
 id = "RIPR-SPEC-0122"
@@ -770,7 +770,7 @@ kind = "spec"
 path = "docs/specs/RIPR-SPEC-0161-immutable-candidate-qualification.md"
 status = "proposed"
 owner = "product-swarm"
-standalone_reason = "Issue #3279 R4 slice for #3237: the qualification corpus breaks the isolation claim on purpose — post-bind mutations, committed parity, identity echo, delete/rename shapes, fail-closed invalid inputs, a substitution removal experiment, and temp-state cleanup — and the two real defects it found (worktree config leaking into subject runs; ephemeral temp roots leaking into finding paths) are repaired at the producer/config seams, not in renderers."
+standalone_reason = "Issue #3279 R4 slice for #3237: the qualification corpus breaks the isolation claim on purpose â€” post-bind mutations, committed parity, identity echo, delete/rename shapes, fail-closed invalid inputs, a substitution removal experiment, and temp-state cleanup â€” and the two real defects it found (worktree config leaking into subject runs; ephemeral temp roots leaking into finding paths) are repaired at the producer/config seams, not in renderers."
 
 [[artifact]]
 id = "RIPR-SPEC-0165"
@@ -1075,14 +1075,14 @@ kind = "spec"
 path = "docs/specs/RIPR-SPEC-0207-installed-rust-journey-fixture.md"
 status = "proposed"
 owner = "test-infra"
-standalone_reason = "Issue #4516 records the installed Rust journey fixture: fixtures/blind_journey_installed_rust retains a digest-bound two-source Cargo repository (committed inclusive equality-boundary change, related test missing exactly the boundary, no-ignore variant, reproducible git identities) whose ten scripted installed_rust_* journeys execute through the unchanged RIPR-SPEC-0205 executor — positive row from a foreign CWD with decoy, second-root portable-identity repeat, and the no-ignore / cage / failing-test / skipped-verification / deleted-artifact / workspace-binary / interrupted-receipt controls each keeping its own derived non-positive terminal — while a dedicated check-fixture-contracts validator recomputes snapshot digests and cross-references the corpus; the real candidate-bound run stays residual on the frozen #1609 candidate and the #4510 harness."
+standalone_reason = "Issue #4516 records the installed Rust journey fixture: fixtures/blind_journey_installed_rust retains a digest-bound two-source Cargo repository (committed inclusive equality-boundary change, related test missing exactly the boundary, no-ignore variant, reproducible git identities) whose ten scripted installed_rust_* journeys execute through the unchanged RIPR-SPEC-0205 executor â€” positive row from a foreign CWD with decoy, second-root portable-identity repeat, and the no-ignore / cage / failing-test / skipped-verification / deleted-artifact / workspace-binary / interrupted-receipt controls each keeping its own derived non-positive terminal â€” while a dedicated check-fixture-contracts validator recomputes snapshot digests and cross-references the corpus; the real candidate-bound run stays residual on the frozen #1609 candidate and the #4510 harness."
 [[artifact]]
 id = "RIPR-SPEC-0209"
 kind = "spec"
 path = "docs/specs/RIPR-SPEC-0209-installed-python-journey-fixture.md"
 status = "proposed"
 owner = "test-infra"
-standalone_reason = "Issue #4518 records the installed Python journey fixture: fixtures/blind_journey_installed_python retains a digest-bound flat-layout package (pyproject.toml, pricing/__init__.py, pricing/core.py, tests/test_pricing.py; committed inclusive equality-boundary change, related test missing exactly the boundary, reproducible git identities) whose module-form python -m pytest verify command discriminates the bare-command import defect in the clean shape, and whose eleven scripted installed_python_* journeys execute through the unchanged RIPR-SPEC-0205 executor — positive row from a foreign CWD with decoy, and the bare-command / no-environment / cage / receipt-path-parity / failing-test / skipped-verification / deleted-artifact / historical-form / decoy-interpreter / interrupted-receipt controls each keeping its own derived non-positive terminal — while a dedicated check-fixture-contracts validator recomputes snapshot digests, pins the environment-binding invariant and cross-references the corpus; the real candidate-bound run stays residual on the frozen #1609 candidate and the #4510 harness."
+standalone_reason = "Issue #4518 records the installed Python journey fixture: fixtures/blind_journey_installed_python retains a digest-bound flat-layout package (pyproject.toml, pricing/__init__.py, pricing/core.py, tests/test_pricing.py; committed inclusive equality-boundary change, related test missing exactly the boundary, reproducible git identities) whose module-form python -m pytest verify command discriminates the bare-command import defect in the clean shape, and whose eleven scripted installed_python_* journeys execute through the unchanged RIPR-SPEC-0205 executor â€” positive row from a foreign CWD with decoy, and the bare-command / no-environment / cage / receipt-path-parity / failing-test / skipped-verification / deleted-artifact / historical-form / decoy-interpreter / interrupted-receipt controls each keeping its own derived non-positive terminal â€” while a dedicated check-fixture-contracts validator recomputes snapshot digests, pins the environment-binding invariant and cross-references the corpus; the real candidate-bound run stays residual on the frozen #1609 candidate and the #4510 harness."
 [[artifact]]
 id = "RIPR-SPEC-0201"
 kind = "spec"
@@ -1096,14 +1096,14 @@ kind = "spec"
 path = "docs/specs/RIPR-SPEC-0202-agent-card-typed-refusals.md"
 status = "proposed"
 owner = "product-agent"
-standalone_reason = "Issue #5007 records the agent card typed refusal envelope: every deliberate named refusal of the ripr agent card default handoff — seam_not_found, policy_omitted, witness_unavailable, identity_unnameable, budget_overflow — maps to exit code 3 and renders one versioned agent_card_refusal envelope (schema_version 0.1) on stderr under --json with the typed error.kind, the asked-for seam_id, the verbatim human prose as the non-authority message, and one typed remedy_route, reusing the existing 2/3 exit-code contract and the verify/verify-execute/repair typed-refusal precedent; operational failures stay exit 2, stdout stays empty on refusals, the no-witness card render stays a success path per RIPR-SPEC-0194 acceptance, and the closed kind set is pinned three ways by check-output-contracts. Renumbered from RIPR-SPEC-0201 after main landed the Python same-class transitive-reach limitation spec under that number first."
+standalone_reason = "Issue #5007 records the agent card typed refusal envelope: every deliberate named refusal of the ripr agent card default handoff â€” seam_not_found, policy_omitted, witness_unavailable, identity_unnameable, budget_overflow â€” maps to exit code 3 and renders one versioned agent_card_refusal envelope (schema_version 0.1) on stderr under --json with the typed error.kind, the asked-for seam_id, the verbatim human prose as the non-authority message, and one typed remedy_route, reusing the existing 2/3 exit-code contract and the verify/verify-execute/repair typed-refusal precedent; operational failures stay exit 2, stdout stays empty on refusals, the no-witness card render stays a success path per RIPR-SPEC-0194 acceptance, and the closed kind set is pinned three ways by check-output-contracts. Renumbered from RIPR-SPEC-0201 after main landed the Python same-class transitive-reach limitation spec under that number first."
 [[artifact]]
 id = "RIPR-SPEC-0203"
 kind = "spec"
 path = "docs/specs/RIPR-SPEC-0203-global-verbose-flag-contract.md"
 status = "proposed"
 owner = "product-cli"
-standalone_reason = "Issue #5009 records the global verbose flag contract: the -v/--verbose spelling accepted in any argv position is stripped by one owner (parse::extract_global_verbose) that removes every occurrence so a repeat is idempotent on the MCP route and every other command family, is documented on the ripr help --all reference with the stderr pipeline diagnostics it adds and the any-position contract, is guarded by a parity-style gate that mines the owner's accepted spellings from source and requires each to be disclosed, keeps the #4825 version and help --json fail-closed contracts unchanged, and treats a -v token as always the global flag — never another flag's value — with that arity-blind limitation disclosed on the same surface."
+standalone_reason = "Issue #5009 records the global verbose flag contract: the -v/--verbose spelling accepted in any argv position is stripped by one owner (parse::extract_global_verbose) that removes every occurrence so a repeat is idempotent on the MCP route and every other command family, is documented on the ripr help --all reference with the stderr pipeline diagnostics it adds and the any-position contract, is guarded by a parity-style gate that mines the owner's accepted spellings from source and requires each to be disclosed, keeps the #4825 version and help --json fail-closed contracts unchanged, and treats a -v token as always the global flag â€” never another flag's value â€” with that arity-blind limitation disclosed on the same surface."
 [[artifact]]
 id = "RIPR-SPEC-0204"
 kind = "spec"
@@ -1124,7 +1124,7 @@ kind = "spec"
 path = "docs/specs/RIPR-SPEC-0210-installed-typescript-journey-fixture.md"
 status = "proposed"
 owner = "test-infra"
-standalone_reason = "Issue #4519 records the installed TypeScript journey fixture: fixtures/blind_journey_installed_typescript retains a digest-bound npm/Vitest threshold-boundary repository (committed inclusive equality change, related test missing exactly the boundary, lockfile-backed runner selection, reproducible git identities) plus eight digest-bound negative snapshots (rebindable let, reassignment, shadowing, imported constant, object/namespace write, enum or computed initializer, nonliteral arithmetic, control-flow reach barrier) whose sixteen scripted installed_typescript_* journeys execute through the unchanged RIPR-SPEC-0205 executor — positive row from a foreign CWD with decoy naming the owner, equality input and executable vitest run command, second-root portable-identity repeat, and the fail-closed variants / failing-command / skipped-verification / cyclic-route / deleted-artifact / workspace-binary / interrupted-receipt controls each keeping its own derived non-positive terminal — while a dedicated check-fixture-contracts validator recomputes snapshot digests and cross-references the corpus; the real candidate-bound run stays residual on the frozen #1609 candidate and the #4510 harness."
+standalone_reason = "Issue #4519 records the installed TypeScript journey fixture: fixtures/blind_journey_installed_typescript retains a digest-bound npm/Vitest threshold-boundary repository (committed inclusive equality change, related test missing exactly the boundary, lockfile-backed runner selection, reproducible git identities) plus eight digest-bound negative snapshots (rebindable let, reassignment, shadowing, imported constant, object/namespace write, enum or computed initializer, nonliteral arithmetic, control-flow reach barrier) whose sixteen scripted installed_typescript_* journeys execute through the unchanged RIPR-SPEC-0205 executor â€” positive row from a foreign CWD with decoy naming the owner, equality input and executable vitest run command, second-root portable-identity repeat, and the fail-closed variants / failing-command / skipped-verification / cyclic-route / deleted-artifact / workspace-binary / interrupted-receipt controls each keeping its own derived non-positive terminal â€” while a dedicated check-fixture-contracts validator recomputes snapshot digests and cross-references the corpus; the real candidate-bound run stays residual on the frozen #1609 candidate and the #4510 harness."
 
 [[artifact]]
 id = "RIPR-SPEC-0211"
@@ -1164,7 +1164,7 @@ kind = "spec"
 path = "docs/specs/RIPR-SPEC-0215-repair-card-mcp-projection.md"
 status = "proposed"
 owner = "mcp"
-standalone_reason = "Issue #4668 records the MCP repair card projection on the ADR 0022 bounded read-only projection: ripr_get_repair_card and the ripr://repair-card/{canonical_item_id} resource template project the same versioned repair_card.v1 the CLI `ripr agent card` handoff (#4667) and the standard-LSP projection (RIPR-SPEC-0198) consume, assembled by the shared app::repair_card_handoff::assemble_repair_card authority from producer-bound facts — the MCP layer never re-derives readiness, identity, currentness, or route state; the analyzed repository head and the diff-scoped classified seam inventory (owner-discriminated bound to snapshot canonical items by the seam readiness canonical gap id plus the finding producer-recorded gap owner, each binding with its evidence-scope dirty-state currentness probe) bind at ripr_refresh commit time because the adapter never launches git per read, and any binding failure fails the whole attempt with analysis_failed so the snapshot commits complete or not at all; the durable attempt store is re-read live at card-read time through the shared inventory so the card attempt block matches `ripr agent status` at that moment; refusal kinds travel under their CLI-pinned wire spellings (seam_not_found, policy_omitted, witness_unavailable, identity_unnameable, budget_overflow) so one machine state names one refusal on every transport, the next-action display binds the portable root . (never the host-local path, never execution authority), and the card binds the analyzed head and commit-time currentness of its snapshot as disclosed limitations; MCP creates no durable attempt, projects no in-memory session transaction, loads no project-local policy, and never edits source, launches a process, or executes anything a returned route names."
+standalone_reason = "Issue #4668 records the MCP repair card projection on the ADR 0022 bounded read-only projection: ripr_get_repair_card and the ripr://repair-card/{canonical_item_id} resource template project the same versioned repair_card.v1 the CLI `ripr agent card` handoff (#4667) and the standard-LSP projection (RIPR-SPEC-0198) consume, assembled by the shared app::repair_card_handoff::assemble_repair_card authority from producer-bound facts â€” the MCP layer never re-derives readiness, identity, currentness, or route state; the analyzed repository head and the diff-scoped classified seam inventory (owner-discriminated bound to snapshot canonical items by the seam readiness canonical gap id plus the finding producer-recorded gap owner, each binding with its evidence-scope dirty-state currentness probe) bind at ripr_refresh commit time because the adapter never launches git per read, and any binding failure fails the whole attempt with analysis_failed so the snapshot commits complete or not at all; the durable attempt store is re-read live at card-read time through the shared inventory so the card attempt block matches `ripr agent status` at that moment; refusal kinds travel under their CLI-pinned wire spellings (seam_not_found, policy_omitted, witness_unavailable, identity_unnameable, budget_overflow) so one machine state names one refusal on every transport, the next-action display binds the portable root . (never the host-local path, never execution authority), and the card binds the analyzed head and commit-time currentness of its snapshot as disclosed limitations; MCP creates no durable attempt, projects no in-memory session transaction, loads no project-local policy, and never edits source, launches a process, or executes anything a returned route names."
 
 [[artifact]]
 id = "RIPR-SPEC-0216"
@@ -1211,7 +1211,7 @@ kind = "spec"
 path = "docs/specs/RIPR-SPEC-0220-vscode-shared-attempt-status.md"
 status = "proposed"
 owner = "editor"
-standalone_reason = "Issue #4643 records the VS Code slice of the #2928 editor shell: one typed adapter (`src/attemptStatus.ts`) parses the RIPR-SPEC-0217 `agent_attempt_status` DTO and attempt inventory as the sole editor authority — fail-closed on any document outside the pinned envelope or status-class vocabulary (a strengthening class such as `passed` is refused, never projected); deterministic active-attempt resolution (explicit selection wins, an unknown explicit id stays an exact query for the typed corrupt_or_unavailable result, a remembered per-root selection is honored only while it is still an inventory row and discarded when stale, several current attempts require an explicit quick pick whose dismissal presents nothing, and newest/first-folder/most-recently-modified heuristics do not exist); the selection persists in workspaceState across restart/deactivation while in-memory presentation is discarded on stop; class-to-tone presentation never strengthens (`finished_historical` remains a warning, `corrupt_or_unavailable` and `failed` are errors, only `finished_current` passes, failed reads render unavailable); untrusted workspaces refuse before any CLI invocation; and the command is read-only end to end with parity fixtures under `editors/vscode/test-fixtures/attempt-status/` whose suite fails if the adapter is removed."
+standalone_reason = "Issue #4643 records the VS Code slice of the #2928 editor shell: one typed adapter (`src/attemptStatus.ts`) parses the RIPR-SPEC-0217 `agent_attempt_status` DTO and attempt inventory as the sole editor authority â€” fail-closed on any document outside the pinned envelope or status-class vocabulary (a strengthening class such as `passed` is refused, never projected); deterministic active-attempt resolution (explicit selection wins, an unknown explicit id stays an exact query for the typed corrupt_or_unavailable result, a remembered per-root selection is honored only while it is still an inventory row and discarded when stale, several current attempts require an explicit quick pick whose dismissal presents nothing, and newest/first-folder/most-recently-modified heuristics do not exist); the selection persists in workspaceState across restart/deactivation while in-memory presentation is discarded on stop; class-to-tone presentation never strengthens (`finished_historical` remains a warning, `corrupt_or_unavailable` and `failed` are errors, only `finished_current` passes, failed reads render unavailable); untrusted workspaces refuse before any CLI invocation; and the command is read-only end to end with parity fixtures under `editors/vscode/test-fixtures/attempt-status/` whose suite fails if the adapter is removed."
 
 [[artifact]]
 id = "RIPR-SPEC-0222"
@@ -1235,7 +1235,7 @@ kind = "spec"
 path = "docs/specs/RIPR-SPEC-0232-issue-lifecycle-contract-plan-pilot.md"
 status = "proposed"
 owner = "test-infra"
-standalone_reason = "Issue #4931 runs the read-only contract/plan decision-boundary pilot (ISSUE-D3) as the second real-corpus consumer of the frozen RIPR-SPEC-0218 attempt contract, extending the sibling intake pilot (RIPR-SPEC-0223): exactly two REAL captured issue snapshots (#6225 architecture-sensitive versioned distribution-schema change requiring a draft spec, and #6180 narrow accepted-contract badge-label residual) traverse the contract/plan decision boundary with distinct author, adversary and root fixture identities — the contract case retains source-of-truth identity, spec-required rationale, RIPR-SPEC-draft behavior-draft identity, author role/config/result carrying no acceptance state, adversary inspected scope with missing failure/limited findings or bounded none_found, preserved open decisions, the root disposition in the closed fifteen-value vocabulary and an amended contract state landing at qualified_spec_required, while the narrow case routes directly to one PR with zero contract artifacts; both rows retain planning evidence (shape decision with recorded rejection rationale, work items with resolving dependency edges, acceptance rows covered or explicitly omitted with reasons, edit cages, semantic conflict resources, proof commands with denominators, stop conditions, non-goals, portfolio placement without a tracked selection/current-work mutation, root corrections and re-splits); the author can never accept its own contract, unresolved decisions stop the plan, campaigns and incoherent one-PR plans are rejected on the record, specs carry behavior rather than queues, plans carry work order rather than new behavior authority, fabricated retrieval bytes and drifted snapshots fail closed, cold-start reconstruction is byte-identical, and results flow through the unchanged #4929 counting law and scorecard without a parallel report; ten synthetic mechanics controls stay outside the two real rows, claiming decision-boundary traversal for two exact issues only — no implementation, no plan execution and no parent acceptance."
+standalone_reason = "Issue #4931 runs the read-only contract/plan decision-boundary pilot (ISSUE-D3) as the second real-corpus consumer of the frozen RIPR-SPEC-0218 attempt contract, extending the sibling intake pilot (RIPR-SPEC-0223): exactly two REAL captured issue snapshots (#6225 architecture-sensitive versioned distribution-schema change requiring a draft spec, and #6180 narrow accepted-contract badge-label residual) traverse the contract/plan decision boundary with distinct author, adversary and root fixture identities â€” the contract case retains source-of-truth identity, spec-required rationale, RIPR-SPEC-draft behavior-draft identity, author role/config/result carrying no acceptance state, adversary inspected scope with missing failure/limited findings or bounded none_found, preserved open decisions, the root disposition in the closed fifteen-value vocabulary and an amended contract state landing at qualified_spec_required, while the narrow case routes directly to one PR with zero contract artifacts; both rows retain planning evidence (shape decision with recorded rejection rationale, work items with resolving dependency edges, acceptance rows covered or explicitly omitted with reasons, edit cages, semantic conflict resources, proof commands with denominators, stop conditions, non-goals, portfolio placement without a tracked selection/current-work mutation, root corrections and re-splits); the author can never accept its own contract, unresolved decisions stop the plan, campaigns and incoherent one-PR plans are rejected on the record, specs carry behavior rather than queues, plans carry work order rather than new behavior authority, fabricated retrieval bytes and drifted snapshots fail closed, cold-start reconstruction is byte-identical, and results flow through the unchanged #4929 counting law and scorecard without a parallel report; ten synthetic mechanics controls stay outside the two real rows, claiming decision-boundary traversal for two exact issues only â€” no implementation, no plan execution and no parent acceptance."
 [[artifact]]
 id = "RIPR-SPEC-0234"
 kind = "spec"
@@ -1261,6 +1261,46 @@ owner = "product-analysis"
 standalone_reason = "Issue #6026 records the oracle-credit bound: a related test whose equality assertion statically contradicts the seam owner's constant fold keeps at most weak oracle strength, keeps the seam's gap open, and names the contradiction in the evidence summary, while a not-evaluable owner retains today's credit and its limitation honestly."
 
 [[artifact]]
+id = "RIPR-SPEC-0238"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0238-python-oracle-and-reach-rules.md"
+status = "proposed"
+owner = "product-analysis"
+standalone_reason = "Makes the Python adapter's assertion table, per-test oracle selection, error-path gate, reach order, static-limit precedence and verdict ladder normative, and closes order-dependent and substring-driven over-credit."
+
+[[artifact]]
+id = "RIPR-SPEC-0243"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0243-typescript-oracle-and-reach-rules.md"
+status = "proposed"
+owner = "product-analysis"
+standalone_reason = "Makes the TypeScript adapter's matcher table, verdict ladder, assertion collection and reach rules normative, and closes false exposed from name-only expect, substring observation guards, bare Error payloads and mocked owner dependencies."
+
+[[artifact]]
+id = "RIPR-SPEC-0235"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0235-perl-fact-packet-classification.md"
+status = "proposed"
+owner = "product-analysis"
+standalone_reason = "Defines the classification matrix ripr applies to ripr-perl-facts-v1 packet facts, binding oracles to their relation's test and capping each relation before the maximum is taken, so packets cannot produce false exposed or repair output on static_unknown."
+
+[[artifact]]
+id = "RIPR-SPEC-0236"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0236-seam-grip-classification-order.md"
+status = "proposed"
+owner = "product-analysis"
+standalone_reason = "Makes classify_seam's rule order normative, requires established activation for weakly_gripped (#5946), fills RIPR-SPEC-0230's opaque gaps, and lists each grip class's pilot, LSP, SARIF and headline consequences."
+
+[[artifact]]
+id = "RIPR-SPEC-0237"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0237-pilot-seam-ranking.md"
+status = "proposed"
+owner = "product-analysis"
+standalone_reason = "Makes ripr pilot's ranking normative: class order, rank key, one seam per owning function per round across classes (#6294), truncation and an Also in this function count over the same ranked set."
+
+[[artifact]]
 id = "RIPR-SPEC-0239"
 kind = "spec"
 path = "docs/specs/RIPR-SPEC-0239-ripr-plus-last-good-receipt.md"
@@ -1282,7 +1322,7 @@ kind = "spec"
 path = "docs/specs/RIPR-SPEC-0223-issue-lifecycle-intake-pilot.md"
 status = "proposed"
 owner = "test-infra"
-standalone_reason = "Issue #4930 runs the read-only intake pilot (ISSUE-D2) as the first real-corpus consumer of the frozen RIPR-SPEC-0218 attempt contract: exactly six REAL captured issue snapshots (#5439 narrow accepted-contract bug, #5440 duplicate of #5270, #5399 overlapping open PR #5408, #5373 needs-evidence, #2928 partially landed umbrella with merged child #4643/PR #5366 and open residuals, #5441 architecture/authority ambiguity against ADR 0017) are classified through the closed fifteen-value disposition vocabulary with an independent root disposition per row, immutable digest-bound issue/comments/timeline snapshots, provenance with capture timestamp and base main SHA, packet selected/omitted/overflow bytes measured or explicitly not_measured, triager candidates with root corrections retained verbatim, exact missing-evidence questions instead of guessed implementation, the movement law (bound-identity movement invalidates a row, unrelated movement does not), the selection law (no active.toml, label, age or title silently selects work; the packet projection reads only committed corpus fields), byte-identical cold-start reconstruction from the corpus alone, and a synthetic mechanics control corpus (false-duplicate correction, overlapping-PR pickup block, explicit not_measured bytes) kept outside the six real rows; results flow through the unchanged #4929 counting law and IssueLifecycleScorecardV1 projection without a parallel intake report, claiming read-only intake quality for six exact issues only — no triage universality, no duplicate-detection accuracy, no implementation or closeout claim."
+standalone_reason = "Issue #4930 runs the read-only intake pilot (ISSUE-D2) as the first real-corpus consumer of the frozen RIPR-SPEC-0218 attempt contract: exactly six REAL captured issue snapshots (#5439 narrow accepted-contract bug, #5440 duplicate of #5270, #5399 overlapping open PR #5408, #5373 needs-evidence, #2928 partially landed umbrella with merged child #4643/PR #5366 and open residuals, #5441 architecture/authority ambiguity against ADR 0017) are classified through the closed fifteen-value disposition vocabulary with an independent root disposition per row, immutable digest-bound issue/comments/timeline snapshots, provenance with capture timestamp and base main SHA, packet selected/omitted/overflow bytes measured or explicitly not_measured, triager candidates with root corrections retained verbatim, exact missing-evidence questions instead of guessed implementation, the movement law (bound-identity movement invalidates a row, unrelated movement does not), the selection law (no active.toml, label, age or title silently selects work; the packet projection reads only committed corpus fields), byte-identical cold-start reconstruction from the corpus alone, and a synthetic mechanics control corpus (false-duplicate correction, overlapping-PR pickup block, explicit not_measured bytes) kept outside the six real rows; results flow through the unchanged #4929 counting law and IssueLifecycleScorecardV1 projection without a parallel intake report, claiming read-only intake quality for six exact issues only â€” no triage universality, no duplicate-detection accuracy, no implementation or closeout claim."
 
 [[artifact]]
 id = "RIPR-SPEC-0225"
@@ -1331,3 +1371,19 @@ path = "docs/specs/RIPR-SPEC-0240-unknown-not-a-gap.md"
 status = "proposed"
 owner = "product-analysis"
 standalone_reason = "Records the gap-admission rule: a Rust reachable_unrevealed finding whose every refused related assert_eq! was refused for a limit of ripr's own reading becomes static_unknown with rust_assertion_context_unresolved, while refusals for shapes that runtime controls prove can keep an assertion from running stay gaps. Measured on the verdict corpus: false actionable on upstream cases 7/20 to 6/20 with no false silent or false exposed movement. Renumbered from RIPR-SPEC-0221 after #5425 landed that id, and from 0232 after the issue-lifecycle pilot landed it."
+
+[[artifact]]
+id = "RIPR-SPEC-0241"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0241-check-json-refusal-envelope.md"
+status = "proposed"
+owner = "product-analysis"
+standalone_reason = "Records the check --json refusal-envelope contract (#6834): a parsed-but-refused invocation emits a parseable envelope whose typed identity is carried in analysis_scope.run_status/basis/limitation and run_limitations[0].category/run_status/basis, with the repair route and the verbatim stderr diagnostic bound by test; caller-supplied root/base are echoed; argv usage errors stay prose-only; file-loaded config redacts only caller-unsupplied values."
+
+[[artifact]]
+id = "RIPR-SPEC-0242"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0242-canonical-next-action.md"
+status = "proposed"
+owner = "product-swarm"
+standalone_reason = "Issue #6304 records the canonical next action: typed producers project one CanonicalNextActionV1 from current state through a single selector authority with a closed action-class vocabulary, a gate-ordered selection law, typed stops, human/JSON projections, and one focused negative per gate; doctor/pilot/inventory renderer migration stays out of scope."

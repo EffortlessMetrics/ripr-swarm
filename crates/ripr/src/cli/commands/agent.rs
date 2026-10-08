@@ -621,7 +621,9 @@ fn resolve_agent_receipt_out_path(root: &Path, out: &Path) -> Result<PathBuf, St
     Ok(base.join(out))
 }
 
-fn run_agent_status(options: AgentStatusOptions) -> Result<(), String> {
+/// Shared with the task-first `ripr status` façade (#6305): both spellings
+/// build and render the same status services.
+pub(in crate::cli) fn run_agent_status(options: AgentStatusOptions) -> Result<(), String> {
     ensure_command_root(&options.root, "agent status")?;
 
     // The report inspects the fixed `target/ripr/workflow` and
@@ -735,7 +737,10 @@ pub(in crate::cli) fn run_before_repair_with_identity(
     run_agent_repair_with_identity(options, Some(identity))
 }
 
-fn run_agent_repair_with_identity(
+/// Shared with the task-first `ripr continue` façade (#6305): both
+/// spellings run the same after-phase service with the same refusal
+/// recording and artifact resolution.
+pub(in crate::cli) fn run_agent_repair_with_identity(
     options: AgentRepairOptions,
     identity: Option<&crate::app::repair_attempt::BeforeRepairAttemptIdentity>,
 ) -> Result<(), CommandError> {
@@ -2250,7 +2255,16 @@ fn before_phase_summary(packet: &str, packet_path: &str) -> Option<String> {
     if let Some(missing) = text("/missing_discriminators/0/value") {
         lines.push(format!("  missing discriminator: {missing}"));
     }
+    let inline_module_target = !crate::analysis::is_test_surface_path(test_file);
     match text("/recommended_test/name") {
+        // #5210: a production file is routed only as its inline test module,
+        // where the cage admits nothing but newly inserted test functions.
+        Some(name) if inline_module_target => lines.push(format!(
+            "  add one new test function (suggested `{name}`) inside the existing `#[cfg(test)]` module of {test_file}; leave production code, the module declaration, and existing tests unchanged"
+        )),
+        None if inline_module_target => lines.push(format!(
+            "  add one new test function inside the existing `#[cfg(test)]` module of {test_file}; leave production code, the module declaration, and existing tests unchanged"
+        )),
         Some(name) => lines.push(format!(
             "  edit one test file: {test_file} (suggested test `{name}`); leave production code unchanged"
         )),

@@ -1,0 +1,22 @@
+{
+  "case_id": "trap-pause-asserted-arm-control",
+  "subject_id": "authored-trap-kit",
+  "origin": "authored",
+  "anchor": "src/modes_checked.rs:9",
+  "behavior_family": "match_arm",
+  "test_shape": "asserted_arm_exact_value",
+  "hard_case": false,
+  "truth": "discriminated",
+  "ideal_verdict": "credited",
+  "observed_verdict": "credited",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

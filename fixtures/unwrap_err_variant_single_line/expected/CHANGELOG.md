@@ -357,3 +357,39 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — unwrap_err_variant_single_line (31)
+
+Reason:
+RIPR-SPEC-0116: the check drill-in binds --root to the resolved repository (#3948); goldens carry the <cwd>/ placeholder
+
+Command:
+`cargo xtask goldens bless unwrap_err_variant_single_line --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — unwrap_err_variant_single_line (32)
+
+Reason:
+RIPR-SPEC-0001: a builder-line group read through a function call (validate("aaaaaaaaaaaa")) computes its argument, so the single-line test no longer yields spurious builder_method values; classification and infection stay unchanged (Devin review on #6796)
+
+Command:
+`cargo xtask goldens bless unwrap_err_variant_single_line --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — unwrap_err_variant_single_line (33)
+
+Reason:
+RIPR-SPEC-0122 #5471: stub route printed only when the resolver yields a stub, with --kind; refusal or nothing otherwise (merge re-bless)
+
+Command:
+`cargo xtask goldens bless unwrap_err_variant_single_line --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

@@ -1,0 +1,22 @@
+{
+  "case_id": "mined-doctest-only-read-u16",
+  "subject_id": "authored-mined-wire",
+  "origin": "authored",
+  "anchor": "src/lib.rs:12",
+  "behavior_family": "return_value",
+  "test_shape": "doctest_only_oracle",
+  "hard_case": true,
+  "truth": "discriminated",
+  "ideal_verdict": "credited",
+  "observed_verdict": "gap",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "weakly_exposed"
+  ],
+  "outcome": "false_actionable",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

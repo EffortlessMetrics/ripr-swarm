@@ -24,10 +24,10 @@ Start here:
     - 6 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
-  ripr explain --root fixtures/wildcard_oracle_wildcard_original/input --diff fixtures/wildcard_oracle_wildcard_original/diff.patch --mode fast probe:src_lib.rs:return_value:519eff0d
-  ripr context --root fixtures/wildcard_oracle_wildcard_original/input --diff fixtures/wildcard_oracle_wildcard_original/diff.patch --mode fast --at probe:src_lib.rs:return_value:519eff0d
+  ripr explain --root <cwd>/fixtures/wildcard_oracle_wildcard_original/input --diff <cwd>/fixtures/wildcard_oracle_wildcard_original/diff.patch --mode fast probe:src_lib.rs:return_value:519eff0d
+  ripr context --root <cwd>/fixtures/wildcard_oracle_wildcard_original/input --diff <cwd>/fixtures/wildcard_oracle_wildcard_original/diff.patch --mode fast --at probe:src_lib.rs:return_value:519eff0d
 Write a test for it:
-  ripr agent stub --root fixtures/wildcard_oracle_wildcard_original/input --at src/lib.rs:2
+  ripr agent stub --root <cwd>/fixtures/wildcard_oracle_wildcard_original/input --at src/lib.rs:2 --kind return_value
 
 More:
   Full evidence: rerun with --format human-full

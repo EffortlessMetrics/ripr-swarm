@@ -38,10 +38,10 @@ Weakness
   - No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)
 
 Next step
-  ripr did not credit the `assert_eq!` in reports_read_failure at src/lib.rs:23; the "not credited" note says why. If that assertion does run as the standard macro, this is a static limit, not a missing test: confirm with a real mutation run. Otherwise move the check onto a path that always runs.
+  ripr did not credit the `assert_eq!` in reports_read_failure at src/lib.rs:23; the "not credited" note says why. That shape can keep the assertion from checking the change, so this is not a static limit: make the check run on every default test run, as the standard `assert_eq!`, in a test expected to pass.
 Drill in:
-  ripr explain --root fixtures/error_path_oracle_execution_false_branch/input --diff fixtures/error_path_oracle_execution_false_branch/diff.patch --mode fast probe:src_lib.rs:error_path:fedbf836
-  ripr context --root fixtures/error_path_oracle_execution_false_branch/input --diff fixtures/error_path_oracle_execution_false_branch/diff.patch --mode fast --at probe:src_lib.rs:error_path:fedbf836
+  ripr explain --root <cwd>/fixtures/error_path_oracle_execution_false_branch/input --diff <cwd>/fixtures/error_path_oracle_execution_false_branch/diff.patch --mode fast probe:src_lib.rs:error_path:fedbf836
+  ripr context --root <cwd>/fixtures/error_path_oracle_execution_false_branch/input --diff <cwd>/fixtures/error_path_oracle_execution_false_branch/diff.patch --mode fast --at probe:src_lib.rs:error_path:fedbf836
 
 NOTE ./src/lib.rs:5
   id: probe:src_lib.rs:static_unknown:afc04379
@@ -80,5 +80,5 @@ Stop reasons:
 Next step
   Escalate to real mutation testing or deep static analysis for this probe.
 Drill in:
-  ripr explain --root fixtures/error_path_oracle_execution_false_branch/input --diff fixtures/error_path_oracle_execution_false_branch/diff.patch --mode fast probe:src_lib.rs:static_unknown:afc04379
-  ripr context --root fixtures/error_path_oracle_execution_false_branch/input --diff fixtures/error_path_oracle_execution_false_branch/diff.patch --mode fast --at probe:src_lib.rs:static_unknown:afc04379
+  ripr explain --root <cwd>/fixtures/error_path_oracle_execution_false_branch/input --diff <cwd>/fixtures/error_path_oracle_execution_false_branch/diff.patch --mode fast probe:src_lib.rs:static_unknown:afc04379
+  ripr context --root <cwd>/fixtures/error_path_oracle_execution_false_branch/input --diff <cwd>/fixtures/error_path_oracle_execution_false_branch/diff.patch --mode fast --at probe:src_lib.rs:static_unknown:afc04379

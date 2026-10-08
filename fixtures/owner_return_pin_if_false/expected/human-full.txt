@@ -32,13 +32,14 @@ Evidence
   - local flow reaches returned value: input * 3 (line 2)
   - related test tests/weight_tests.rs:3 checks_weight uses none unknown oracle; misses: assertion not credited: ripr could not establish that it runs as the standard macro
   - source assertion argument value 12 at line 3
+  - source function argument value input = 4 at line 3
 
 Weakness
   - No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)
   - No strong discriminator was detected
 
 Next step
-  ripr did not credit the `assert_eq!` in checks_weight at tests/weight_tests.rs:3; the "not credited" note says why. If that assertion does run as the standard macro, this is a static limit, not a missing test: confirm with a real mutation run. Otherwise move the check onto a path that always runs.
+  ripr did not credit the `assert_eq!` in checks_weight at tests/weight_tests.rs:3; the "not credited" note says why. That shape can keep the assertion from checking the change, so this is not a static limit: make the check run on every default test run, as the standard `assert_eq!`, in a test expected to pass.
 Drill in:
-  ripr explain --root fixtures/owner_return_pin_if_false/input --diff fixtures/owner_return_pin_if_false/diff.patch --mode fast probe:src_lib.rs:return_value:6ea804bb
-  ripr context --root fixtures/owner_return_pin_if_false/input --diff fixtures/owner_return_pin_if_false/diff.patch --mode fast --at probe:src_lib.rs:return_value:6ea804bb
+  ripr explain --root <cwd>/fixtures/owner_return_pin_if_false/input --diff <cwd>/fixtures/owner_return_pin_if_false/diff.patch --mode fast probe:src_lib.rs:return_value:6ea804bb
+  ripr context --root <cwd>/fixtures/owner_return_pin_if_false/input --diff <cwd>/fixtures/owner_return_pin_if_false/diff.patch --mode fast --at probe:src_lib.rs:return_value:6ea804bb

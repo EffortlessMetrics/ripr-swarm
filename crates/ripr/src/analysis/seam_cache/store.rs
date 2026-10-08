@@ -4,6 +4,7 @@
 //! Shard membership is chosen from encoded bytes first; record count is only a
 //! secondary cap. Load/decode bounds remain the read-side sibling.
 
+use super::related_test_table::PrettyTableSizer;
 use super::{
     CACHE_ENVELOPE_DIGEST_DOMAIN, CLASSIFIED_SEAM_CACHE_STORE_IO_BUFFER_BYTES, CacheStoreStatus,
     CachedSeamLimitInfo, RepoSeamCacheKey, RepoSeamFactCache,
@@ -17,7 +18,7 @@ use crate::analysis::seam_classification::reset_classified_seam_clone_count;
 use serde::Serialize;
 use std::io::{self, Write};
 use std::ops::Range;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 #[cfg(test)]
 std::thread_local! {
@@ -28,6 +29,8 @@ std::thread_local! {
     static FAIL_AFTER_PARK: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     static AFTER_COMMIT_HOOK: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
         const { std::cell::RefCell::new(None) };
+    static PLAN_MODEL_MISMATCHES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static MODEL_SKEW: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// Run `hook` once right after the next sharded manifest commit, standing in for a
@@ -234,7 +237,7 @@ fn plan_shard_ranges(
     let mut start = 0;
     while start < seams.len() {
         let max_end = start.saturating_add(record_limit).min(seams.len());
-        match largest_fitting_end(
+        let planned = match modeled_fitting_end(
             key,
             seams,
             start,
@@ -243,6 +246,18 @@ fn plan_shard_ranges(
             conservative_shard_count,
             byte_ceiling,
         )? {
+            Some(end) => Some(end),
+            None => largest_fitting_end(
+                key,
+                seams,
+                start,
+                max_end,
+                ranges.len(),
+                conservative_shard_count,
+                byte_ceiling,
+            )?,
+        };
+        match planned {
             Some(end) => ranges.push(start..end),
             None => return Ok(ShardPlan::Oversized { index: start }),
         }
@@ -252,6 +267,57 @@ fn plan_shard_ranges(
             .ok_or_else(|| "classified cache shard planner lost the current range".to_string())?;
     }
     Ok(ShardPlan::Ranges(ranges))
+}
+
+/// The shard's end from [`PrettyTableSizer`]: one encode per seam instead of
+/// one per probe of a growing prefix (#5364). The modeled length of the
+/// chosen shard is checked against one real encode, bounded by the ceiling,
+/// so a shard can never exceed it. `None` sends the caller to the probing
+/// search: when the first seam alone does not fit, or when the model and the
+/// encode disagree.
+fn modeled_fitting_end(
+    key: &RepoSeamCacheKey,
+    seams: &[ClassifiedSeam],
+    start: usize,
+    max_end: usize,
+    shard_index: usize,
+    conservative_shard_count: usize,
+    byte_ceiling: usize,
+) -> Result<Option<usize>, String> {
+    let empty = borrowed_shard_envelope(key, shard_index, conservative_shard_count, &[]);
+    let Some(base) = checksummed_pretty_len_within(&empty, byte_ceiling)? else {
+        return Ok(None);
+    };
+    let mut sizer = PrettyTableSizer::default();
+    let mut end = start;
+    while end < max_end {
+        crate::analysis::cancellation::checkpoint()?;
+        let Some(seam) = seams.get(end) else {
+            break;
+        };
+        let measured = sizer.measure(seam)?;
+        if base.saturating_add(sizer.bytes_over_empty_with(&measured)) > byte_ceiling {
+            break;
+        }
+        sizer.add(measured)?;
+        end = end.saturating_add(1);
+    }
+    if end == start {
+        return Ok(None);
+    }
+    let modeled = base.saturating_add(sizer.bytes_over_empty());
+    #[cfg(test)]
+    let modeled = modeled.saturating_add(MODEL_SKEW.with(std::cell::Cell::get));
+    let Some(slice) = seams.get(start..end) else {
+        return Ok(None);
+    };
+    let envelope = borrowed_shard_envelope(key, shard_index, conservative_shard_count, slice);
+    if checksummed_pretty_len_within(&envelope, byte_ceiling)? == Some(modeled) {
+        return Ok(Some(end));
+    }
+    #[cfg(test)]
+    PLAN_MODEL_MISMATCHES.with(|count| count.set(count.get().saturating_add(1)));
+    Ok(None)
 }
 
 fn largest_fitting_end(
@@ -555,12 +621,50 @@ fn remove_replaced_generation_files(
             continue;
         }
         if let Ok(path) = resolve_sharded_cache_file(sharded_dir, &shard.file) {
+            if !has_no_symlinked_ancestor(sharded_dir, &path) {
+                continue;
+            }
             let _ = std::fs::remove_file(&path);
             if let Some(parent) = path.parent().filter(|parent| *parent != sharded_dir) {
                 let _ = std::fs::remove_dir(parent);
             }
         }
     }
+}
+
+/// True when `root` and no directory between it and `path` (exclusive) is a
+/// symlink, so a delete through `path` cannot leave the cache. An unreadable
+/// component counts as unsafe: cleanup is best effort, so it skips.
+fn has_no_symlinked_ancestor(root: &Path, path: &Path) -> bool {
+    let Ok(relative) = path.strip_prefix(root) else {
+        return false;
+    };
+    // The entry directory itself must be a real directory, or every descendant
+    // check below would run inside the symlink target.
+    match std::fs::symlink_metadata(root) {
+        Ok(meta) if meta.file_type().is_dir() => {}
+        _ => return false,
+    }
+    let mut current = root.to_path_buf();
+    let mut components = relative.components().peekable();
+    while let Some(component) = components.next() {
+        // Defense in depth: the caller resolves the path, but a `..` or root
+        // component must never reach a delete, including as the last component.
+        if !matches!(component, Component::Normal(_)) {
+            return false;
+        }
+        // The last component is the file itself; `remove_file` unlinks a symlink
+        // there without following it.
+        if components.peek().is_none() {
+            return true;
+        }
+        current.push(component);
+        match std::fs::symlink_metadata(&current) {
+            Ok(meta) if meta.file_type().is_dir() => {}
+            _ => return false,
+        }
+    }
+    true
 }
 
 struct UnpublishedGeneration {
@@ -712,14 +816,22 @@ fn checksummed_pretty_len<T: Serialize>(body: &T) -> Result<usize, String> {
 }
 
 fn checksummed_pretty_fits<T: Serialize>(body: &T, ceiling: usize) -> Result<bool, String> {
+    Ok(checksummed_pretty_len_within(body, ceiling)?.is_some())
+}
+
+/// The encoded length, or `None` once it passes `ceiling`, where encoding stops.
+fn checksummed_pretty_len_within<T: Serialize>(
+    body: &T,
+    ceiling: usize,
+) -> Result<Option<usize>, String> {
     let mut counter = CeilingCounter {
         count: 0,
         ceiling,
         exceeded: false,
     };
     match encode_checksummed_pretty_to_writer(body, placeholder_payload_digest(), &mut counter) {
-        Ok(()) => Ok(true),
-        Err(_) if counter.exceeded => Ok(false),
+        Ok(()) => Ok(Some(counter.count)),
+        Err(_) if counter.exceeded => Ok(None),
         Err(err) => Err(err),
     }
 }
@@ -1184,6 +1296,164 @@ mod tests {
         assert_eq!(
             checksummed_pretty_len(&borrowed_shard)?,
             owned_shard_bytes.len()
+        );
+        Ok(())
+    }
+
+    /// The probing search alone, as the planner ran before #5364: the oracle
+    /// for the modeled plan.
+    fn probed_shard_ranges(
+        key: &RepoSeamCacheKey,
+        seams: &[ClassifiedSeam],
+        record_limit: usize,
+        byte_ceiling: usize,
+    ) -> Result<Option<Vec<Range<usize>>>, String> {
+        let mut ranges = Vec::new();
+        let mut start = 0;
+        while start < seams.len() {
+            let max_end = start.saturating_add(record_limit).min(seams.len());
+            let Some(end) = largest_fitting_end(
+                key,
+                seams,
+                start,
+                max_end,
+                ranges.len(),
+                seams.len(),
+                byte_ceiling,
+            )?
+            else {
+                return Ok(None);
+            };
+            ranges.push(start..end);
+            start = end;
+        }
+        Ok(Some(ranges))
+    }
+
+    /// Seams whose related tests repeat across seams, sometimes within one
+    /// seam, and whose tables pass 10 and 100 entries, so later indices are
+    /// wider than earlier ones. Some seams have no related tests.
+    fn mixed_seams(count: usize, distinct_tests: usize, seed: u64) -> Vec<ClassifiedSeam> {
+        use super::super::related_test_table::tests::{related, seam};
+        use crate::domain::RelationReason;
+        let mut state = seed;
+        let mut next = move |bound: usize| {
+            state = state
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1_442_695_040_888_963_407);
+            usize::try_from(state >> 33).unwrap_or(0) % bound.max(1)
+        };
+        (0..count)
+            .map(|line| {
+                let tests = (0..next(6))
+                    .map(|_| {
+                        let name = format!("t{}", next(distinct_tests));
+                        let reason = if next(4) == 0 {
+                            RelationReason::DirectOwnerCall
+                        } else {
+                            RelationReason::SameModule
+                        };
+                        related(&name, reason)
+                    })
+                    .collect();
+                let mut classified = seam(line.saturating_add(1), tests);
+                classified.evidence.reach =
+                    StageEvidence::new(StageState::Yes, Confidence::High, "r".repeat(next(400)));
+                classified
+            })
+            .collect()
+    }
+
+    #[test]
+    fn modeled_shard_plan_matches_the_probing_search() -> Result<(), String> {
+        let key = empty_key();
+        PLAN_MODEL_MISMATCHES.with(|count| count.set(0));
+        let mut sharded_plans = 0;
+        for (count, distinct, seed) in [(40, 3, 1), (180, 150, 2), (300, 40, 3), (64, 1, 4)] {
+            let seams = mixed_seams(count, distinct, seed);
+            let whole = checksummed_pretty_len(&borrowed_shard_envelope(&key, 0, count, &seams))?;
+            for divisor in [2, 3, 7, 20] {
+                let ceiling = whole / divisor;
+                for record_limit in [5, 64, count] {
+                    let modeled = match plan_shard_ranges(&key, &seams, record_limit, ceiling)? {
+                        ShardPlan::Ranges(ranges) => Some(ranges),
+                        ShardPlan::Oversized { .. } => None,
+                    };
+                    let probed = probed_shard_ranges(&key, &seams, record_limit, ceiling)?;
+                    assert_eq!(
+                        modeled, probed,
+                        "{count} seams, {distinct} tests, ceiling {ceiling}, limit {record_limit}"
+                    );
+                    if modeled.as_ref().is_some_and(|ranges| ranges.len() > 1) {
+                        sharded_plans += 1;
+                    }
+                }
+            }
+        }
+        assert!(sharded_plans > 20, "only {sharded_plans} plans sharded");
+        assert_eq!(
+            PLAN_MODEL_MISMATCHES.with(std::cell::Cell::get),
+            0,
+            "the size model disagreed with a real encode"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn a_shard_that_lands_exactly_on_the_ceiling_keeps_its_last_seam() -> Result<(), String> {
+        let key = empty_key();
+        let seams = mixed_seams(30, 10, 6);
+        for k in [2, 5, 11] {
+            let prefix = seams
+                .get(..k)
+                .ok_or("the corpus is shorter than the prefix")?;
+            let exact = checksummed_pretty_len(&borrowed_shard_envelope(&key, 0, 30, prefix))?;
+            for (ceiling, first_end) in [(exact, k), (exact.saturating_sub(1), k - 1)] {
+                PLAN_MODEL_MISMATCHES.with(|count| count.set(0));
+                let ShardPlan::Ranges(ranges) = plan_shard_ranges(&key, &seams, 30, ceiling)?
+                else {
+                    return Err(format!("ceiling {ceiling} should shard"));
+                };
+                assert_eq!(
+                    ranges.first(),
+                    Some(&(0..first_end)),
+                    "prefix {k}, ceiling {ceiling}"
+                );
+                assert_eq!(
+                    Some(ranges),
+                    probed_shard_ranges(&key, &seams, 30, ceiling)?
+                );
+                assert_eq!(
+                    PLAN_MODEL_MISMATCHES.with(std::cell::Cell::get),
+                    0,
+                    "prefix {k}, ceiling {ceiling}: the size model disagreed with a real encode"
+                );
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn a_wrong_size_model_falls_back_to_the_probing_search() -> Result<(), String> {
+        let key = empty_key();
+        let seams = mixed_seams(60, 20, 5);
+        let whole = checksummed_pretty_len(&borrowed_shard_envelope(&key, 0, 60, &seams))?;
+        let ceiling = whole / 4;
+        let ShardPlan::Ranges(expected) = plan_shard_ranges(&key, &seams, 60, ceiling)? else {
+            return Err("the inventory should shard".to_string());
+        };
+        PLAN_MODEL_MISMATCHES.with(|count| count.set(0));
+        MODEL_SKEW.with(|skew| skew.set(1));
+        let skewed = plan_shard_ranges(&key, &seams, 60, ceiling);
+        MODEL_SKEW.with(|skew| skew.set(0));
+        let ShardPlan::Ranges(skewed) = skewed? else {
+            return Err("the skewed plan should still shard".to_string());
+        };
+        assert_eq!(skewed, expected);
+        assert_eq!(
+            PLAN_MODEL_MISMATCHES.with(std::cell::Cell::get),
+            expected.len(),
+            "every shard's modeled length must be checked and rejected"
         );
         Ok(())
     }
@@ -1878,6 +2148,83 @@ mod tests {
         }
         ignore_remove_dir_all(&dir);
         Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn replaced_generation_cleanup_does_not_follow_a_symlinked_generation_directory()
+    -> Result<(), String> {
+        let dir = isolated_dir("cleanup-symlink");
+        ignore_remove_dir_all(&dir);
+        let outside = isolated_dir("cleanup-symlink-outside");
+        ignore_remove_dir_all(&outside);
+        let real = dir.join("g1-1-0");
+        std::fs::create_dir_all(&real).map_err(|err| err.to_string())?;
+        std::fs::write(real.join("shard-00000.json"), b"old").map_err(|err| err.to_string())?;
+        std::fs::create_dir_all(&outside).map_err(|err| err.to_string())?;
+        std::fs::write(outside.join("victim.json"), b"must survive")
+            .map_err(|err| err.to_string())?;
+        std::os::unix::fs::symlink(&outside, dir.join("g2-2-0")).map_err(|err| err.to_string())?;
+        let refs = ["g1-1-0/shard-00000.json", "g2-2-0/victim.json"]
+            .iter()
+            .enumerate()
+            .map(|(index, file)| ShardedCacheShardRef {
+                index,
+                file: (*file).to_string(),
+                seams: 1,
+            })
+            .collect();
+        let previous = ShardedCacheManifest::new(empty_key(), 2, 2, refs, None, Vec::new());
+        remove_replaced_generation_files(&dir, &previous, "3-3-0");
+        assert!(
+            !real.join("shard-00000.json").exists(),
+            "a file in a real generation directory is still removed"
+        );
+        assert!(
+            outside.join("victim.json").exists(),
+            "a file reached through a symlinked generation directory must survive"
+        );
+        ignore_remove_dir_all(&dir);
+        ignore_remove_dir_all(&outside);
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn replaced_generation_cleanup_does_not_follow_a_symlinked_entry_directory()
+    -> Result<(), String> {
+        let base = isolated_dir("cleanup-symlink-root");
+        ignore_remove_dir_all(&base);
+        let outside = base.join("outside");
+        std::fs::create_dir_all(outside.join("g1-1-0")).map_err(|err| err.to_string())?;
+        std::fs::write(outside.join("g1-1-0/victim.json"), b"must survive")
+            .map_err(|err| err.to_string())?;
+        let entry = base.join("entry");
+        std::os::unix::fs::symlink(&outside, &entry).map_err(|err| err.to_string())?;
+        let refs = vec![ShardedCacheShardRef {
+            index: 0,
+            file: "g1-1-0/victim.json".to_string(),
+            seams: 1,
+        }];
+        let previous = ShardedCacheManifest::new(empty_key(), 2, 1, refs, None, Vec::new());
+        remove_replaced_generation_files(&entry, &previous, "3-3-0");
+        assert!(
+            outside.join("g1-1-0/victim.json").exists(),
+            "a symlinked entry directory must not be a delete root"
+        );
+        ignore_remove_dir_all(&base);
+        Ok(())
+    }
+
+    #[test]
+    fn symlink_guard_rejects_parent_and_root_components() {
+        let root = Path::new("/cache/sharded");
+        assert!(!has_no_symlinked_ancestor(root, &root.join("g1/../x.json")));
+        assert!(!has_no_symlinked_ancestor(root, &root.join("g1/..")));
+        assert!(!has_no_symlinked_ancestor(
+            root,
+            Path::new("/elsewhere/x.json")
+        ));
     }
 
     #[test]

@@ -1,0 +1,12 @@
+diff --git a/src/macros.rs b/src/macros.rs
+--- a/src/macros.rs
++++ b/src/macros.rs
+@@ -16,7 +16,7 @@
+ }
+ 
+ fn title() -> &'static str {
+-    "ripr"
++    concat!("ri", "pr")
+ }
+ 
+ pub fn banner() -> String {

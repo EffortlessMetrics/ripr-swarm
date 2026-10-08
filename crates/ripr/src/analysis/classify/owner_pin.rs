@@ -9,9 +9,10 @@
 //!    function, never an associated function or a trait method. A method
 //!    call `recv.name(..)` names a function with a `self` receiver, and only
 //!    when the receiver's type dispatches to the owner: the test binds the
-//!    receiver to a type ripr can read, that type reaches the owner's `impl`
-//!    or trait, and no other definition of `name` in the workspace could
-//!    take the call instead.
+//!    receiver to a type ripr can read, no type declaration in the test's
+//!    own module scope shadows that name, that type reaches the owner's
+//!    `impl` or trait, and no other definition of `name` in the workspace
+//!    could take the call instead.
 //! 2. The call's return value came through the changed expression. The
 //!    changed expression must be the owner's tail and must evaluate all of
 //!    its parts on every input (no closure, `&&`/`||`, branch, or skipping
@@ -38,21 +39,30 @@
 use super::super::rust_index::{FunctionSummary, OracleFact, RustIndex, TestSummary};
 use super::reveal::{
     assertion_comparison_operands, contains_as_whole_word, file_imports_foreign_callee_name,
-    file_imports_own_item, file_use_statements, use_statement_first_segment,
+    file_imports_own_item, file_use_statements, use_statement_binds_name,
+    use_statement_first_segment,
 };
 use crate::analysis::extract::{
     fact_body_defines_callee_fn, fact_body_let_shadow_line, mask_comments_and_strings,
     outer_assertion_condition, test_body_defines_callee_fn, test_body_let_shadow_line,
 };
 use crate::analysis::facts::drop_in::DropInManifests;
-use crate::analysis::facts::{FunctionContainer, SourceRoleProvenanceEdgeKind};
+use crate::analysis::facts::{
+    FileFactsView, FunctionContainer, ModulePathTarget, SourceRoleProvenanceEdgeKind,
+};
 use crate::analysis::syntax::fn_signature::{LocalTypeEquality, local_type_equality};
 use crate::analysis::syntax::{
-    AssertionContextRefusal, MacroBindingKind, MacroBindingSite, OwnerPinAssertions,
-    attribute_settles_test_outcome, empty_macro_binding_ambiguities, local_empty_macro_names,
-    macro_binding_scan, owner_pin_assertions, trusted_macro_binding_sites,
+    AssertionContextRefusal, GeneratedTestPins, MacroBindingCandidates, MacroBindingKind,
+    MacroBindingSite, OwnerPinAssertions, TRUSTED_MACRO_NAMES, attribute_settles_test_outcome,
+    empty_macro_binding_ambiguities, generated_test_pins, local_empty_macro_names,
+    macro_binding_scan, owner_pin_assertions, parse_clean_source_file, returns_leave_the_function,
+    trusted_macro_binding_sites,
 };
 use crate::domain::{Probe, ProbeFamily};
+use ra_ap_syntax::{
+    AstNode, SyntaxNode, TextRange,
+    ast::{self, HasModuleItem, HasName},
+};
 use rayon::prelude::*;
 use std::cell::{OnceCell, RefCell};
 use std::collections::{BTreeMap, BTreeSet};
@@ -63,6 +73,14 @@ pub(in crate::analysis) struct OwnerReturnPin {
     name: String,
     call: PinCall,
     path: ReturnPathGate,
+    /// Where the owner `fn` starts. It serves the #6957 exemption, where a
+    /// same-name type declaration in the owner's own enclosing module is the
+    /// production declaration, not a test-local shadow. It also places the
+    /// owner among its file's inline modules and crate root, which a
+    /// path-qualified call (`crate::m::name(..)`, `krate::name(..)`) must
+    /// reach (#6974).
+    owner_file: PathBuf,
+    owner_start_line: usize,
     /// The owner declares `-> bool`, so `assert!(owner(..))` pins its whole
     /// return value to `true` and `assert!(!owner(..))` to `false`.
     returns_bool: bool,
@@ -79,13 +97,47 @@ pub(in crate::analysis) struct OwnerPinSyntax {
     /// Definitions confined to one inline module or function body, keyed by
     /// file: they make a name ambiguous only for tests inside that scope.
     scoped_macro_bindings: RefCell<Option<ScopedMacroBindings>>,
+    /// Crate-local sites keyed by the recognized target root that holds
+    /// them: they make a name ambiguous only for tests in that crate.
+    crate_macro_bindings: RefCell<Option<CrateMacroBindings>>,
     /// Disclosure memo: the first workspace-wide site per refused name, so
     /// naming a refusal does not rescan every file once per finding.
-    workspace_macro_sites: RefCell<BTreeMap<String, Option<(PathBuf, MacroBindingSite)>>>,
+    workspace_macro_sites: RefCell<WorkspaceMacroSites>,
+    /// Disclosure memo: each test file's sites per refused name. A file's
+    /// sites depend only on the name and the index, and parsing the file
+    /// once per (probe, test, assertion) made a diff with many related tests
+    /// run for an hour.
+    test_file_macro_sites: RefCell<TestFileMacroSites>,
     by_file: RefCell<BTreeMap<PathBuf, OwnerPinAssertions>>,
     empty_macro_ambiguities: RefCell<BTreeMap<PathBuf, BTreeSet<String>>>,
+    /// Per file: the expansion-coordinate admission facts of the tests a
+    /// same-file `macro_rules!` generated (#5334).
+    generated: RefCell<BTreeMap<PathBuf, Vec<GeneratedTestPins>>>,
     resolved_modules: OnceCell<BTreeSet<(PathBuf, usize, String)>>,
+    /// Workspace-wide inputs to [`TargetRoots::root`], computed once.
+    target_roots: OnceCell<TargetRoots>,
+    /// #6974: path-call memos. A path-shaped assertion is read once per
+    /// probe, test and assertion, and each input below scans the workspace,
+    /// so every answer is kept for the run under the key it depends on.
+    path_memo: RefCell<PathCallMemo>,
     withheld: WithheldMacroBindings,
+}
+
+/// #6974: run-scoped answers for [`OwnerReturnPin::path_reaches_owner`].
+#[derive(Clone, Debug, Default)]
+struct PathCallMemo {
+    /// Per (owner file, owner start line, owner name, path prefix, test
+    /// file, test line): the verdict.
+    verdicts: BTreeMap<(PathBuf, usize, String, String, PathBuf, usize), bool>,
+    /// Per (file, fn name, start line): the inline modules enclosing that
+    /// item, or `None` when ripr cannot place it.
+    nesting: BTreeMap<(PathBuf, String, usize), Option<ItemNesting>>,
+    /// Per (owner crate root, owner name): whether the crate may hold an
+    /// item of the name ripr cannot see.
+    hidden: BTreeMap<(PathBuf, String), bool>,
+    /// Per (test crate root, path root): whether the test's crate may bind
+    /// the root itself.
+    test_crate_binds: BTreeMap<(PathBuf, String), bool>,
 }
 
 /// The macro bindings of files a narrowed diff index withheld (#5320).
@@ -97,11 +149,21 @@ pub(in crate::analysis) struct OwnerPinSyntax {
 pub(in crate::analysis) struct WithheldMacroBindings {
     /// Some withheld file may shadow any macro name.
     any_name: bool,
+    /// A crate-local site routed by root may shadow any macro name. The
+    /// trusted set stays per root, but a test file's local empty-macro names
+    /// are refused workspace-wide, as the full scan's empty-macro check
+    /// reads every indexed file without crate routing.
+    root_any_name: bool,
     /// Trusted macro names withheld files may shadow.
     trusted: BTreeSet<String>,
     /// The first withheld site per trusted name, so a refusal can still
     /// name where the binding is.
     sites: BTreeMap<String, (PathBuf, MacroBindingSite)>,
+    /// Crate-local sites in a withheld crate root file, keyed by that root:
+    /// as in the full scan, they reach only tests in the same crate.
+    by_root: CrateMacroBindings,
+    /// The first such site per trusted name and root, for disclosure.
+    root_sites: BTreeMap<(String, PathBuf), (PathBuf, MacroBindingSite)>,
 }
 
 impl WithheldMacroBindings {
@@ -118,9 +180,21 @@ impl WithheldMacroBindings {
             return true;
         }
         let drop_in_verified = |krate: &str| drop_ins.verified(path, krate);
+        let root = withheld_crate_root(path);
         for (name, site) in
             macro_binding_scan(source, packages, NON_RETURNING_MACROS, &drop_in_verified)
         {
+            if let Some(root) = root.as_ref().filter(|_| site.crate_local) {
+                self.root_any_name |= site.kind.binds_any_name();
+                self.by_root
+                    .entry(root.clone())
+                    .or_default()
+                    .insert(name.clone());
+                self.root_sites
+                    .entry((name, root.clone()))
+                    .or_insert_with(|| (path.to_path_buf(), site));
+                continue;
+            }
             self.any_name |= site.kind.binds_any_name();
             self.trusted.insert(name.clone());
             self.sites
@@ -131,7 +205,73 @@ impl WithheldMacroBindings {
     }
 }
 
+/// A withheld file is not indexed, so its module edges are unknown; only a
+/// file that is itself a `src/lib.rs`, `src/main.rs` or `src/bin/*.rs` crate
+/// root has a root known from its path, matching [`target_root`] for it.
+/// Any other withheld file keeps its sites workspace-wide (fails closed).
+fn withheld_crate_root(path: &Path) -> Option<PathBuf> {
+    let names: Vec<&str> = path
+        .iter()
+        .map(|part| part.to_str().unwrap_or_default())
+        .collect();
+    let recognized = matches!(
+        names.as_slice(),
+        [.., "src", "lib.rs" | "main.rs"] | [.., "src", "bin", _]
+    );
+    (recognized && path.extension().is_some_and(|extension| extension == "rs"))
+        .then(|| path.to_path_buf())
+}
+
 impl OwnerPinSyntax {
+    /// #6974: [`item_nesting`], kept per (file, name, line).
+    fn item_nesting(
+        &self,
+        index: &RustIndex,
+        file: &Path,
+        name: &str,
+        line: usize,
+    ) -> Option<ItemNesting> {
+        let key = (file.to_path_buf(), name.to_string(), line);
+        if let Some(known) = self.path_memo.borrow().nesting.get(&key) {
+            return known.clone();
+        }
+        let nesting = index
+            .files()
+            .get(file)
+            .and_then(|facts| item_nesting(&facts.source, name, line));
+        self.path_memo
+            .borrow_mut()
+            .nesting
+            .insert(key, nesting.clone());
+        nesting
+    }
+
+    /// #6974: whether the crate rooted at `owner_root` may hold an item
+    /// named `name` that ripr cannot see, kept per (root, name): a raw
+    /// `r#name` anywhere in the workspace, or a macro invocation in the
+    /// crate whose input names it (`twin!(name)` may emit a `fn name` under
+    /// a cfg that drops the owner).
+    fn crate_may_hide_name(
+        &self,
+        index: &RustIndex,
+        owner_root: &Path,
+        name: &str,
+        roots: &TargetRoots,
+    ) -> bool {
+        let key = (owner_root.to_path_buf(), name.to_string());
+        if let Some(known) = self.path_memo.borrow().hidden.get(&key) {
+            return *known;
+        }
+        let hidden = workspace_mentions_raw(index, name)
+            || index.files().iter().any(|(path, facts)| {
+                facts.source.contains(name)
+                    && roots.root(path, index).as_deref() == Some(owner_root)
+                    && bound_by_macro(&mask_comments_and_strings(&facts.source), name)
+            });
+        self.path_memo.borrow_mut().hidden.insert(key, hidden);
+        hidden
+    }
+
     /// Fold in the macro bindings of files the diff index withheld.
     pub(in crate::analysis) fn with_withheld(mut self, withheld: WithheldMacroBindings) -> Self {
         self.withheld = withheld;
@@ -177,27 +317,48 @@ impl OwnerPinSyntax {
             ));
         Some(match refusal {
             AssertionRefusal::Syntax(AssertionContextRefusal::MacroBinding(name)) => {
+                let resolved_modules = self.resolved_module_declarations(index);
                 let resolved = |path: &Path, line: usize, declaration: &str| {
-                    self.resolved_module_declarations(index).contains(&(
-                        path.to_path_buf(),
-                        line,
-                        declaration.to_string(),
-                    ))
+                    resolved_modules.contains(&(path.to_path_buf(), line, declaration.to_string()))
                 };
-                let workspace = self
-                    .workspace_macro_sites
-                    .borrow_mut()
-                    .entry(name.clone())
-                    .or_insert_with(|| {
-                        workspace_macro_binding_site(&name, index, &resolved)
+                let test_root = self.target_roots(index).root(&test.file, index);
+                let workspace =
+                    self.workspace_macro_sites
+                        .borrow_mut()
+                        .entry((name.clone(), test_root.clone()))
+                        .or_insert_with(|| {
+                            workspace_macro_binding_site(
+                                &name,
+                                test_root.as_deref(),
+                                index,
+                                self.target_roots(index),
+                                &resolved,
+                            )
                             .or_else(|| self.withheld.sites.get(&name).cloned())
-                    })
-                    .clone();
+                            .or_else(|| {
+                                self.withheld.root_sites.iter().find_map(
+                                    |((site_name, root), site)| {
+                                        (*site_name == name
+                                            && test_root
+                                                .as_ref()
+                                                .is_none_or(|test_root| test_root == root))
+                                        .then(|| site.clone())
+                                    },
+                                )
+                            })
+                        })
+                        .clone();
                 // A definition or `use` covering the test is a real
                 // rebinding; it outranks a workspace site that only may
                 // rebind the name, or the refusal would read as an analyzer
                 // limit (RIPR-SPEC-0240) for a macro that is really replaced.
-                let local = test_macro_binding_site(&name, test, index, &resolved);
+                let local = test_macro_binding_site(
+                    &name,
+                    test,
+                    index,
+                    &self.test_file_macro_sites,
+                    &resolved,
+                );
                 let site = if local.as_ref().is_some_and(|(_, site)| rebinds(site)) {
                     local
                 } else {
@@ -248,8 +409,19 @@ impl OwnerPinSyntax {
         };
         let mut ambiguous = self.ambiguous_macro_bindings.borrow_mut();
         let ambiguous = ambiguous.get_or_insert_with(|| {
-            let (mut global, scoped) = trusted_macro_sites_in(index, &module_resolved);
+            let (mut global, scoped, by_root) =
+                trusted_macro_sites_in(index, self.target_roots(index), &module_resolved);
             *self.scoped_macro_bindings.borrow_mut() = Some(scoped);
+            let mut by_root = by_root;
+            for (root, names) in &self.withheld.by_root {
+                by_root
+                    .entry(root.clone())
+                    .or_default()
+                    .extend(names.iter().cloned());
+            }
+            *self.crate_macro_bindings.borrow_mut() = Some(by_root);
+            // Withheld crate-root files' crate-local sites are routed by
+            // root below; every other withheld site is workspace-wide.
             global.extend(self.withheld.trusted.iter().cloned());
             global
         });
@@ -282,8 +454,7 @@ impl OwnerPinSyntax {
                     )
                 })
                 .chain(
-                    self.withheld
-                        .any_name
+                    (self.withheld.any_name || self.withheld.root_any_name)
                         .then(|| names.clone())
                         .into_iter()
                         .flatten(),
@@ -292,6 +463,7 @@ impl OwnerPinSyntax {
         });
         let mut ambiguous: BTreeSet<_> = ambiguous.union(empty_ambiguities).cloned().collect();
         ambiguous.extend(self.scoped_names_for(test));
+        ambiguous.extend(self.crate_names_for(test, index));
         let mut by_file = self.by_file.borrow_mut();
         for edge in &facts.role_provenance.edges {
             // Module composition already owns resolution. Include expansions
@@ -321,7 +493,7 @@ impl OwnerPinSyntax {
                 });
             }
         }
-        by_file
+        let file_refusal = by_file
             .entry(test.file.clone())
             .or_insert_with(|| owner_pin_assertions(&facts.source, NON_RETURNING_MACROS))
             .refusal(
@@ -329,14 +501,205 @@ impl OwnerPinSyntax {
                 &test.body,
                 (assertion.line, &assertion.text),
                 &ambiguous,
-            )
-            .map(AssertionRefusal::Syntax)
+            );
+        let file_refusal = file_refusal?;
+        // A generated test is not in the file's text: the same admission
+        // runs over its invocation's expansion, matched by name, attributes,
+        // body and assertion text in the expansion's own coordinates. A
+        // matched assertion carries the expansion's own verdict — admitted
+        // reads like the hand-written twin, and a refusal surfaces the
+        // expansion's reason, not the file text's "test not identified"
+        // (the invocation line holds no `fn`), so both twins refuse as the
+        // same kind.
+        let generated_verdicts = self
+            .generated
+            .borrow_mut()
+            .entry(test.file.clone())
+            .or_insert_with(|| generated_test_pins(&test.file, &facts.source, NON_RETURNING_MACROS))
+            .iter()
+            .filter(|invocation| {
+                invocation.start_line == test.start_line && invocation.end_line == test.end_line
+            })
+            .flat_map(|invocation| {
+                invocation
+                    .tests
+                    .iter()
+                    .filter(|local| {
+                        local.name == test.name
+                            && local.attrs == test.attrs
+                            && local.body == test.body
+                    })
+                    .map(move |local| (invocation, local))
+            })
+            .flat_map(|(invocation, local)| {
+                local
+                    .assertions
+                    .iter()
+                    .filter(|local_assertion| local_assertion.text == assertion.text)
+                    .map(|local_assertion| {
+                        invocation.pins.refusal(
+                            (local.start_line, local.end_line, &local.name),
+                            &local.body,
+                            (local_assertion.line, &local_assertion.text),
+                            &ambiguous,
+                        )
+                    })
+            })
+            .collect::<Vec<_>>();
+        if generated_verdicts.iter().any(|verdict| verdict.is_none()) {
+            return None;
+        }
+        if let Some(Some(generated_refusal)) = generated_verdicts.into_iter().next() {
+            return Some(AssertionRefusal::Syntax(generated_refusal));
+        }
+        Some(AssertionRefusal::Syntax(file_refusal))
     }
 }
 
 type ScopedMacroBindings = BTreeMap<PathBuf, Vec<(String, MacroBindingSite)>>;
+type CrateMacroBindings = BTreeMap<PathBuf, BTreeSet<String>>;
+/// Keyed by trusted name and the test's recognized root.
+type WorkspaceMacroSites = BTreeMap<(String, Option<PathBuf>), Option<(PathBuf, MacroBindingSite)>>;
+type TestFileMacroSites = BTreeMap<(String, PathBuf), Vec<(String, MacroBindingSite)>>;
+
+/// The crate root whose module tree holds `file`, when that root is one of
+/// Cargo's autodiscovered targets (`src/lib.rs`, `src/main.rs`,
+/// `src/bin/*.rs`, `tests/*.rs`, `benches/*.rs`, `examples/*.rs`,
+/// `build.rs`) and every module edge to it resolved. `None` keeps a
+/// binding workspace-wide: an unlinked file may belong to any crate.
+///
+/// A file another crate can also compile is never charged to one root:
+/// an `include!` fragment (its text lands in every includer, with or
+/// without a recorded edge), a shared integration-test helper whose
+/// provenance keeps only the first of several `tests/*.rs` owners, and
+/// every file while any `include!` is unresolved in the workspace: an
+/// ambiguous, cfg-conflicting, capped or unindexed include leaves its
+/// fragment, and the fragment's module children, looking like a root.
+#[derive(Clone, Debug)]
+struct TargetRoots {
+    /// An unresolved `include!`, or an unresolvable `#[path]` (which
+    /// records no module edge for its target), may compile any file into
+    /// another crate, so no file is charged to one root.
+    disabled: bool,
+    /// Every indexed `<package>/src` directory, for the `tests/`, `benches/`,
+    /// `examples/` and `build.rs` roots beside one.
+    src_dirs: BTreeSet<PathBuf>,
+    /// Per-file answers, so repeated admissions do not recompute them.
+    memo: RefCell<BTreeMap<PathBuf, Option<PathBuf>>>,
+}
+
+impl TargetRoots {
+    fn new(index: &RustIndex) -> Self {
+        // A lexical-fallback file records no module declarations, so its
+        // children get no edge either.
+        let disabled = !index.include_limitations.is_empty()
+            || index.files().iter().any(|(_, facts)| {
+                facts.used_lexical_fallback
+                    || facts
+                        .module_declarations
+                        .iter()
+                        .any(|declaration| declaration.path_target == ModulePathTarget::Unknown)
+            });
+        let src_dirs = index
+            .files()
+            .iter()
+            .flat_map(|(path, _)| path.ancestors().skip(1))
+            .filter(|directory| directory.file_name().is_some_and(|name| name == "src"))
+            .map(Path::to_path_buf)
+            .collect();
+        Self {
+            disabled,
+            src_dirs,
+            memo: RefCell::default(),
+        }
+    }
+
+    fn root(&self, file: &Path, index: &RustIndex) -> Option<PathBuf> {
+        if self.disabled {
+            return None;
+        }
+        if let Some(root) = self.memo.borrow().get(file) {
+            return root.clone();
+        }
+        let root = target_root(file, index, &self.src_dirs);
+        self.memo
+            .borrow_mut()
+            .insert(file.to_path_buf(), root.clone());
+        root
+    }
+}
+
+/// The crate root file `file` composes under: a recognized Cargo target root
+/// (`src/lib.rs`, `src/main.rs`, `src/bin/*.rs`, an integration test, bench,
+/// example or build script), or `None` when composition is unresolved, goes
+/// through `include!`, or ends at an unrecognized file.
+pub(super) fn target_root(
+    file: &Path,
+    index: &RustIndex,
+    src_dirs: &BTreeSet<PathBuf>,
+) -> Option<PathBuf> {
+    let facts = index.files().get(file)?;
+    let provenance = &facts.role_provenance;
+    if provenance.earliest_unresolved_reason.is_some()
+        || index.include_targets.contains(file)
+        || provenance.edges.iter().any(|edge| {
+            edge.kind == SourceRoleProvenanceEdgeKind::Include
+                || index.include_targets.contains(&edge.parent)
+        })
+    {
+        return None;
+    }
+    let root = provenance
+        .edges
+        .first()
+        .map_or_else(|| file.to_path_buf(), |edge| edge.parent.clone());
+    // `tests/common/mod.rs` (or `tests/common.rs`) declared by several
+    // integration-test roots composes under the first owner only.
+    if root != file
+        && root
+            .parent()
+            .and_then(Path::file_name)
+            .is_some_and(|directory| directory == "tests")
+    {
+        return None;
+    }
+    let names: Vec<&str> = root
+        .iter()
+        .map(|part| part.to_str().unwrap_or_default())
+        .collect();
+    let package_has_src = |package: &[&str]| {
+        let prefix: PathBuf = package.iter().chain(&["src"]).collect();
+        src_dirs.contains(&prefix)
+    };
+    let recognized = match names.as_slice() {
+        [.., "src", "lib.rs" | "main.rs"] | [.., "src", "bin", _] => true,
+        [package @ .., "tests" | "benches" | "examples", _] => package_has_src(package),
+        [package @ .., "build.rs"] => package_has_src(package),
+        _ => false,
+    };
+    (recognized && root.extension().is_some_and(|extension| extension == "rs")).then_some(root)
+}
 
 impl OwnerPinSyntax {
+    /// Workspace routing inputs, computed once per run.
+    fn target_roots(&self, index: &RustIndex) -> &TargetRoots {
+        self.target_roots.get_or_init(|| TargetRoots::new(index))
+    }
+
+    /// Trusted names a crate-local site makes ambiguous for `test`: those in
+    /// the test's own recognized root, or every one when that root is not
+    /// established.
+    fn crate_names_for(&self, test: &TestSummary, index: &RustIndex) -> Vec<String> {
+        let by_root = self.crate_macro_bindings.borrow();
+        let Some(by_root) = by_root.as_ref().filter(|by_root| !by_root.is_empty()) else {
+            return Vec::new();
+        };
+        match self.target_roots(index).root(&test.file, index) {
+            Some(root) => by_root.get(&root).into_iter().flatten().cloned().collect(),
+            None => by_root.values().flatten().cloned().collect(),
+        }
+    }
+
     /// Trusted names that a scoped definition or import makes ambiguous for
     /// `test`. Filled by the workspace scan in `refusal`.
     fn scoped_names_for(&self, test: &TestSummary) -> Vec<String> {
@@ -542,22 +905,69 @@ impl AssertionRefusal {
 /// rebind the name, wherever each sits.
 fn workspace_macro_binding_site(
     name: &str,
+    test_root: Option<&Path>,
     index: &RustIndex,
-    module_resolved: &dyn Fn(&Path, usize, &str) -> bool,
+    roots: &TargetRoots,
+    module_resolved: &(dyn Fn(&Path, usize, &str) -> bool + Sync),
 ) -> Option<(PathBuf, MacroBindingSite)> {
     if !NON_RETURNING_MACROS.contains(&name) {
         return None;
     }
-    let mut first = None;
-    for (path, facts) in index.files().iter() {
-        for (_, site) in macro_binding_sites(name, path, &facts.source, index, module_resolved) {
-            if site.scope.is_some() {
+    // Every file may be parsed for this one name, which was a quarter of a
+    // warm `ripr check` on ripr-swarm when run serially. Each file's answer
+    // is independent, so files are scanned on the rayon pool in path-ordered
+    // batches: the earliest file still wins, and a rebinding in an early
+    // batch still stops the scan before later files are parsed.
+    // Roots memoize in a `RefCell`, so they are resolved before the pool.
+    let files: Vec<_> = index
+        .files()
+        .iter()
+        .map(|(path, facts)| {
+            let root = test_root.and_then(|_| roots.root(path, index));
+            (path, facts, root)
+        })
+        .collect();
+    let scan = |(path, facts, root): &(&PathBuf, FileFactsView<'_>, Option<PathBuf>)| {
+        // The same rule as the decision: a crate-local site in another
+        // recognized root does not reach this test.
+        let reaches = |site: &MacroBindingSite| {
+            !site.crate_local
+                || test_root.is_none()
+                || root
+                    .as_ref()
+                    .is_none_or(|site_root| Some(site_root.as_path()) == test_root)
+        };
+        let mut first = None;
+        for (_, site) in macro_binding_sites(
+            name,
+            path,
+            &facts.source,
+            facts.macro_candidates.as_deref(),
+            index,
+            module_resolved,
+        ) {
+            if site.scope.is_some() || !reaches(&site) {
                 continue;
             }
             if rebinds(&site) {
-                return Some((path.clone(), site));
+                return (Some(site), first);
             }
-            first.get_or_insert_with(|| (path.clone(), site));
+            first.get_or_insert(site);
+        }
+        (None, first)
+    };
+    // Wide enough that one large file does not stall the pool for long.
+    let batch = rayon::current_num_threads().max(1) * 32;
+    let mut first = None;
+    for chunk in files.chunks(batch) {
+        let per_file: Vec<_> = chunk.par_iter().map(scan).collect();
+        for ((path, _, _), (rebinding, site)) in chunk.iter().zip(per_file) {
+            if let Some(site) = rebinding {
+                return Some(((*path).clone(), site));
+            }
+            if first.is_none() {
+                first = site.map(|site| ((*path).clone(), site));
+            }
         }
     }
     first
@@ -577,25 +987,43 @@ fn test_macro_binding_site(
     name: &str,
     test: &TestSummary,
     index: &RustIndex,
+    memo: &RefCell<TestFileMacroSites>,
     module_resolved: &dyn Fn(&Path, usize, &str) -> bool,
 ) -> Option<(PathBuf, MacroBindingSite)> {
     if !NON_RETURNING_MACROS.contains(&name) {
         return None;
     }
     let facts = index.files().get(&test.file)?;
-    macro_binding_sites(name, &test.file, &facts.source, index, module_resolved)
-        .into_iter()
+    memo.borrow_mut()
+        .entry((name.to_string(), test.file.clone()))
+        .or_insert_with(|| {
+            macro_binding_sites(
+                name,
+                &test.file,
+                &facts.source,
+                facts.macro_candidates.as_deref(),
+                index,
+                module_resolved,
+            )
+        })
+        .iter()
         .find(|(_, site)| site_covers(site, test))
-        .map(|(_, site)| (test.file.clone(), site))
+        .map(|(_, site)| (test.file.clone(), site.clone()))
 }
 
+/// `candidates` are the file's stored [`MacroBindingCandidates`]: a name
+/// they rule out has no site, so the file is not parsed for it.
 fn macro_binding_sites(
     name: &str,
     path: &Path,
     source: &str,
+    candidates: Option<&MacroBindingCandidates>,
     index: &RustIndex,
     module_resolved: &dyn Fn(&Path, usize, &str) -> bool,
 ) -> Vec<(String, MacroBindingSite)> {
+    if candidates.is_some_and(|candidates| !candidates.may_bind(name)) {
+        return Vec::new();
+    }
     trusted_macro_binding_sites(
         source,
         index.macro_scope_crates(),
@@ -614,12 +1042,19 @@ fn macro_binding_sites(
 /// scoped sites in source order.
 fn trusted_macro_sites_in(
     index: &RustIndex,
+    roots: &TargetRoots,
     module_resolved: &(dyn Fn(&Path, usize, &str) -> bool + Sync),
-) -> (BTreeSet<String>, ScopedMacroBindings) {
-    let scan = |files: &[(&PathBuf, &str)]| -> Vec<(PathBuf, String, MacroBindingSite)> {
+) -> (BTreeSet<String>, ScopedMacroBindings, CrateMacroBindings) {
+    type ScanFile<'a> = (&'a PathBuf, &'a str, Option<&'a MacroBindingCandidates>);
+    let scan = |files: &[ScanFile<'_>]| -> Vec<(PathBuf, String, MacroBindingSite)> {
         files
             .par_iter()
-            .flat_map_iter(|(path, source)| {
+            // A file whose stored candidates rule out every trusted name
+            // reports no site, so it is not parsed.
+            .filter(|(_, _, candidates)| {
+                candidates.is_none_or(MacroBindingCandidates::may_bind_any_trusted)
+            })
+            .flat_map_iter(|(path, source, _)| {
                 trusted_macro_binding_sites(
                     source,
                     index.macro_scope_crates(),
@@ -634,11 +1069,17 @@ fn trusted_macro_sites_in(
     };
     let mut global = BTreeSet::new();
     let mut scoped = ScopedMacroBindings::new();
+    // A crate-local site in a recognized target root other than the test's
+    // (a bench's `#[macro_use] extern crate bencher;`) is kept per root.
+    let mut by_root = CrateMacroBindings::new();
     let mut absorb = |sites: Vec<(PathBuf, String, MacroBindingSite)>,
                       global: &mut BTreeSet<String>| {
         for (path, name, site) in sites {
             if site.scope.is_some() {
                 scoped.entry(path).or_default().push((name, site));
+            } else if let Some(root) = site.crate_local.then(|| roots.root(&path, index)).flatten()
+            {
+                by_root.entry(root).or_default().insert(name);
             } else {
                 global.insert(name);
             }
@@ -652,13 +1093,16 @@ fn trusted_macro_sites_in(
     let (likely, rest): (Vec<_>, Vec<_>) = index
         .files()
         .iter()
-        .map(|(path, facts)| (path, facts.data().source.as_ref()))
-        .partition(|(_, source)| may_saturate_macro_ambiguity(source));
+        .map(|(path, facts)| {
+            let data = facts.data();
+            (path, data.source.as_ref(), data.macro_candidates.as_deref())
+        })
+        .partition(|(_, source, _)| may_saturate_macro_ambiguity(source));
     absorb(scan(&likely), &mut global);
     if global.len() < NON_RETURNING_MACROS.len() {
         absorb(scan(&rest), &mut global);
     }
-    (global, scoped)
+    (global, scoped, by_root)
 }
 
 /// Scan-order hint for the trusted-macro ambiguity scan, never its answer:
@@ -710,6 +1154,8 @@ enum ReturnPathGate {
     Any,
     /// The pinned value must start with this constructor.
     Head(&'static str),
+    /// The pinned value must be exactly this unit variant (`None`).
+    Exact(&'static str),
     /// #6692: a field of a hand-written `Clone::clone`'s returned struct
     /// literal. The pinned value must be the clone's own receiver
     /// (`assert_eq!(w.clone(), w)`), compared through a derived
@@ -792,6 +1238,8 @@ impl OwnerReturnPin {
             call,
             path,
             returns_bool,
+            owner_file: owner.file.clone(),
+            owner_start_line: owner.start_line,
             trait_scope_by_file: RefCell::default(),
         })
     }
@@ -871,6 +1319,8 @@ impl OwnerReturnPin {
             },
             path: ReturnPathGate::CloneReceiver,
             returns_bool: false,
+            owner_file: owner.file.clone(),
+            owner_start_line: owner.start_line,
             trait_scope_by_file: RefCell::default(),
         })
     }
@@ -911,6 +1361,20 @@ impl OwnerReturnPin {
             ) {
                 (Some(call), None) => (call, operands[1]),
                 (None, Some(call)) => (call, operands[0]),
+                // #6974: `let result = owner(..); assert_eq!(result, 7);`.
+                // Only a test that names the owner outside this assertion
+                // can bind its result.
+                (None, None) if owner_named_outside(test, &assertion.text, &self.name) => {
+                    let bound = |at: usize| {
+                        let_bound_owner_call(test, assertion, operands[at], &self.name)
+                            .and_then(|call| owner_call_shape(call, &self.name))
+                    };
+                    match (bound(0), bound(1)) {
+                        (Some(call), None) => (call, operands[1]),
+                        (None, Some(call)) => (call, operands[0]),
+                        _ => return false,
+                    }
+                }
                 _ => return false,
             }
         } else if self.returns_bool && is_plain_macro(&assertion.text, "assert") {
@@ -937,7 +1401,10 @@ impl OwnerReturnPin {
             return false;
         }
         // `assert_eq!(f(4), f(2) + f(2))` compares the owner with itself.
-        if contains_as_whole_word(&mask_comments_and_strings(expected), &self.name) {
+        if contains_as_whole_word(&mask_comments_and_strings(expected), &self.name)
+            || (owner_named_outside(test, &assertion.text, &self.name)
+                && expected_binding_calls_owner(test, expected, &self.name))
+        {
             return false;
         }
         match (&self.path, call) {
@@ -958,7 +1425,7 @@ impl OwnerReturnPin {
                     return false;
                 }
             }
-            (ReturnPathGate::CloneReceiver, CallShape::Bare) => return false,
+            (ReturnPathGate::CloneReceiver, CallShape::Bare | CallShape::Path(_)) => return false,
             (path, _) => {
                 if !path.admits(expected) {
                     return false;
@@ -969,6 +1436,12 @@ impl OwnerReturnPin {
             .files()
             .get(&test.file)
             .map(|facts| facts.data().source.as_ref());
+        // The single-file exemption resolves the owner's enclosing module
+        // in the test file's own parse (#6957), while the parent-chain walk
+        // resolves it in whichever chain file holds the owner (#6950); a
+        // cross-file owner keeps the fail-closed single-file check.
+        let owner_scope =
+            OwnerScope::new(self.name.as_str(), self.owner_start_line, &self.owner_file);
         let masked_body = mask_comments_and_strings(&test.body);
         match (&self.call, call) {
             (PinCall::Bare, CallShape::Bare) => {
@@ -977,19 +1450,45 @@ impl OwnerReturnPin {
                     && !bound_by_macro(&masked_body, &self.name)
                     && test_source.is_some_and(|source| !file_renames_to(source, &self.name))
             }
+            // #6974: a path names the owner without the bare name's scope,
+            // so a test-local binding of the name cannot capture it; the
+            // path itself must reach the owner.
+            (PinCall::Bare, CallShape::Path(prefix)) => test_source
+                .is_some_and(|source| self.path_reaches_owner(prefix, test, source, index, syntax)),
             (
                 PinCall::Method {
                     receivers,
                     trait_scope,
                 },
-                CallShape::Method(receiver),
+                CallShape::Method(_) | CallShape::Constructed(_),
             ) => {
-                if bound_by_macro(&masked_body, receiver) {
-                    return false;
-                }
-                let Some(receiver_type) =
-                    test_receiver_type(test, receiver, test_source, index, imports_foreign)
-                else {
+                let receiver_type = match call {
+                    CallShape::Method(receiver) => {
+                        if bound_by_macro(&masked_body, receiver) {
+                            return false;
+                        }
+                        test_receiver_type(
+                            test,
+                            receiver,
+                            test_source,
+                            index,
+                            imports_foreign,
+                            owner_scope,
+                        )
+                    }
+                    // An inline constructor types the receiver the same way
+                    // a `let receiver = Type::constructor(..);` binding does.
+                    CallShape::Constructed(receiver) => binding_type(
+                        &format!("= {receiver}"),
+                        test,
+                        test_source,
+                        index,
+                        imports_foreign,
+                        owner_scope,
+                    ),
+                    CallShape::Bare | CallShape::Path(_) => None,
+                };
+                let Some(receiver_type) = receiver_type else {
                     return false;
                 };
                 if !receivers.contains(&receiver_type) {
@@ -1008,6 +1507,168 @@ impl OwnerReturnPin {
             }
             _ => false,
         }
+    }
+
+    /// #6974: whether `prefix::name` can only name the owner. The path must
+    /// resolve to exactly the module that declares the owner. An explicit
+    /// `fn` there takes the value name from every glob, and any other item
+    /// of the name in the same module fails to compile, so a rename, a
+    /// re-export or a type elsewhere cannot capture the path. The path is:
+    /// - `self::`/`super::` from a test in the owner's own file, resolved
+    ///   from the test's inline modules without leaving the file;
+    /// - `crate::` from a test that composes under the owner's crate root,
+    ///   when the owner's file is that root; or
+    /// - an import name of the owner's library from the test's crate
+    ///   manifest (`krate::name(..)` in an integration test) that nothing
+    ///   renames or binds in the test's crate, when the owner's file is the
+    ///   library root.
+    ///
+    /// Any `r#name` in the workspace (a raw twin the name match misses) and
+    /// a macro invocation naming the owner in its crate (it may emit a
+    /// twin under another cfg) fail closed.
+    fn path_reaches_owner(
+        &self,
+        prefix: &str,
+        test: &TestSummary,
+        test_source: &str,
+        index: &RustIndex,
+        syntax: &OwnerPinSyntax,
+    ) -> bool {
+        let key = (
+            self.owner_file.clone(),
+            self.owner_start_line,
+            self.name.clone(),
+            prefix.to_string(),
+            test.file.clone(),
+            test.start_line,
+        );
+        if let Some(known) = syntax.path_memo.borrow().verdicts.get(&key) {
+            return *known;
+        }
+        let verdict = self.path_reaches_owner_uncached(prefix, test, test_source, index, syntax);
+        syntax.path_memo.borrow_mut().verdicts.insert(key, verdict);
+        verdict
+    }
+
+    fn path_reaches_owner_uncached(
+        &self,
+        prefix: &str,
+        test: &TestSummary,
+        test_source: &str,
+        index: &RustIndex,
+        syntax: &OwnerPinSyntax,
+    ) -> bool {
+        let segments: Vec<&str> = prefix.split("::").collect();
+        let Some((root, rest)) = segments.split_first() else {
+            return false;
+        };
+        let roots = syntax.target_roots(index);
+        let Some(owner_root) = roots.root(&self.owner_file, index) else {
+            return false;
+        };
+        let owner_is_root = self.owner_file == owner_root;
+        let mut module = match *root {
+            "self" | "super" => {
+                if test.file != self.owner_file {
+                    return false;
+                }
+                let Some(ItemNesting {
+                    modules: mut module,
+                    ..
+                }) = syntax.item_nesting(index, &test.file, &test.name, test.start_line)
+                else {
+                    return false;
+                };
+                if *root == "super" && module.pop().is_none() {
+                    return false;
+                }
+                module
+            }
+            "crate" => {
+                if !owner_is_root || roots.root(&test.file, index).as_ref() != Some(&owner_root) {
+                    return false;
+                }
+                Vec::new()
+            }
+            _ => {
+                if !owner_is_root
+                    || !self.library_root_names_owner(root, test, test_source, index, syntax)
+                {
+                    return false;
+                }
+                Vec::new()
+            }
+        };
+        let leading_supers = rest
+            .iter()
+            .take_while(|segment| **segment == "super")
+            .count();
+        if leading_supers > 0 && !matches!(*root, "self" | "super") {
+            return false;
+        }
+        for _ in 0..leading_supers {
+            if module.pop().is_none() {
+                return false;
+            }
+        }
+        for segment in &rest[leading_supers..] {
+            if matches!(*segment, "self" | "super" | "crate") {
+                return false;
+            }
+            module.push((*segment).to_string());
+        }
+        syntax
+            .item_nesting(index, &self.owner_file, &self.name, self.owner_start_line)
+            .is_some_and(|owner| !owner.cfg_gated && owner.modules == module)
+            && !syntax.crate_may_hide_name(index, &owner_root, &self.name, roots)
+    }
+
+    /// #6974: whether `root::` in `test` names the owner's library: an
+    /// import name of it in the test crate's manifest that no workspace
+    /// file renames another item to and the test's crate does not bind.
+    fn library_root_names_owner(
+        &self,
+        root: &str,
+        test: &TestSummary,
+        test_source: &str,
+        index: &RustIndex,
+        syntax: &OwnerPinSyntax,
+    ) -> bool {
+        let roots = syntax.target_roots(index);
+        let Some(owner_root) = roots.root(&self.owner_file, index) else {
+            return false;
+        };
+        if file_renames_to(test_source, root)
+            || !index
+                .member_crates
+                .import_names(&test.file, &owner_root)
+                .iter()
+                .any(|import| import == root)
+        {
+            return false;
+        }
+        let Some(test_root) = roots.root(&test.file, index) else {
+            return false;
+        };
+        let binds_key = (test_root, root.to_string());
+        let known = syntax
+            .path_memo
+            .borrow()
+            .test_crate_binds
+            .get(&binds_key)
+            .copied();
+        let binds = known.unwrap_or_else(|| {
+            let binds = workspace_renames_to(index, root)
+                || workspace_mentions_raw(index, root)
+                || test_crate_may_bind(&binds_key.0, root, index, roots);
+            syntax
+                .path_memo
+                .borrow_mut()
+                .test_crate_binds
+                .insert(binds_key.clone(), binds);
+            binds
+        });
+        !binds
     }
 
     fn trait_in_scope(
@@ -1036,6 +1697,7 @@ impl ReturnPathGate {
         match self {
             Self::Any => true,
             Self::Head(head) => constructor_call_span(expected.trim(), head).is_some(),
+            Self::Exact(value) => expected.trim() == *value,
             Self::CloneReceiver => false,
         }
     }
@@ -1045,12 +1707,38 @@ impl ReturnPathGate {
 enum CallShape<'a> {
     Bare,
     Method(&'a str),
+    /// `Type::constructor(..).name(..)`: the receiver is built inline.
+    Constructed(&'a str),
+    /// `a::b::name(..)`: a free-function call through a module path of
+    /// plain identifiers; holds the path before `::name` (#6974).
+    Path(&'a str),
 }
 
 /// The operand as a complete call of `name`: `name(..)` or `recv.name(..)`
 /// with a plain identifier receiver and nothing chained after the call.
 fn owner_call_shape<'a>(operand: &'a str, name: &str) -> Option<CallShape<'a>> {
     let operand = operand.trim();
+    if let Some(inner) = unsafe_block_value(operand) {
+        return owner_call_shape(inner, name);
+    }
+    if let Some(receiver) = constructed_receiver(operand, name) {
+        let call_start = receiver.len() + 1;
+        let masked = mask_comments_and_strings(operand);
+        let closing = matching_close(&masked, call_start + name.len(), b'(', b')')?;
+        return operand[closing + 1..]
+            .trim()
+            .is_empty()
+            .then_some(CallShape::Constructed(receiver));
+    }
+    if let Some(prefix) = path_call_prefix(operand, name) {
+        let opening = prefix.len() + "::".len() + name.len();
+        let masked = mask_comments_and_strings(operand);
+        let closing = matching_close(&masked, opening, b'(', b')')?;
+        return operand[closing + 1..]
+            .trim()
+            .is_empty()
+            .then_some(CallShape::Path(prefix));
+    }
     let call_start = if operand.starts_with(name) {
         0
     } else {
@@ -1079,6 +1767,195 @@ fn owner_call_shape<'a>(operand: &'a str, name: &str) -> Option<CallShape<'a>> {
     } else {
         CallShape::Method(&operand[..call_start - 1])
     })
+}
+
+/// #6974 review: whether the test's own crate may bind `root` before the
+/// extern prelude does: a `mod root`, a `use` binding `root`, or any glob
+/// in a file of the test's crate. A module or import of the name shadows
+/// the dependency, and a glob may bring one in.
+fn test_crate_may_bind(
+    test_root: &Path,
+    root: &str,
+    index: &RustIndex,
+    roots: &TargetRoots,
+) -> bool {
+    index.files().iter().any(|(path, facts)| {
+        roots.root(path, index).as_deref() == Some(test_root) && {
+            let masked = mask_comments_and_strings(&facts.source);
+            declared_module_names(&masked).contains(&root)
+                // A type, trait or alias of the root's name shadows the
+                // extern prelude too, turning `root::name` into an
+                // associated item (#6974 rev-4 review).
+                || declares_type(&masked, root)
+                || ["trait", "type"].iter().any(|keyword| {
+                    whole_word_offsets(&masked, keyword).into_iter().any(|offset| {
+                        starts_with_word(masked[offset + keyword.len()..].trim_start(), root)
+                    })
+                })
+                || file_use_statements(&facts.source).iter().any(|statement| {
+                    use_statement_binds_name(statement, root) || statement.contains('*')
+                })
+        }
+    })
+}
+
+/// #6974: the inline modules enclosing the one `fn name` item that starts
+/// on `line` (1-based) in `source`, outermost first, with `r#` dropped.
+/// `None` when the file does not parse, no single such item is found, or
+/// it sits anywhere but directly in a module (a fn body, an `impl`).
+/// Where a `fn` sits among its file's inline modules (#6974).
+#[derive(Clone, Debug)]
+struct ItemNesting {
+    /// The inline modules enclosing the `fn`, outermost first.
+    modules: Vec<String>,
+    /// Whether the `fn` or an enclosing inline module carries a `cfg` or
+    /// `cfg_attr` attribute. A complementary cfg may then compile a
+    /// same-named `static`, `const`, `use` or module in its place, so a path
+    /// to the module no longer has to reach the `fn` (#7061 review).
+    cfg_gated: bool,
+}
+
+fn item_nesting(source: &str, name: &str, line: usize) -> Option<ItemNesting> {
+    let parse = parse_clean_source_file(source)?;
+    let line_of = |offset: u32| source[..offset as usize].matches('\n').count() + 1;
+    let base = |text: String| text.strip_prefix("r#").map_or(text.clone(), str::to_string);
+    let wanted = name.strip_prefix("r#").unwrap_or(name);
+    let mut found = parse
+        .tree()
+        .syntax()
+        .descendants()
+        .filter_map(ast::Fn::cast)
+        .filter(|function| {
+            function
+                .name()
+                .is_some_and(|ident| base(ident.text().to_string()) == wanted)
+                && {
+                    let range = function.syntax().text_range();
+                    let start = line_of(range.start().into());
+                    let end = line_of(range.end().into());
+                    start <= line && line <= end
+                }
+        });
+    let function = found.next()?;
+    if found.next().is_some() {
+        return None;
+    }
+    let mut modules = Vec::new();
+    // An inner `#![cfg]` in the body gates the whole fn too.
+    let mut cfg_gated = has_cfg_attr(&function)
+        || function
+            .body()
+            .and_then(|body| body.stmt_list())
+            .is_some_and(|statements| has_cfg_attr(&statements));
+    for ancestor in function.syntax().ancestors().skip(1) {
+        if let Some(module) = ast::Module::cast(ancestor.clone()) {
+            cfg_gated |= has_cfg_attr(&module)
+                || module.item_list().is_some_and(|items| has_cfg_attr(&items));
+            modules.push(base(module.name()?.text().to_string()));
+        } else if !ast::ItemList::can_cast(ancestor.kind())
+            && !ast::SourceFile::can_cast(ancestor.kind())
+        {
+            return None;
+        }
+    }
+    modules.reverse();
+    Some(ItemNesting { modules, cfg_gated })
+}
+
+/// Whether `node` carries a `cfg` or `cfg_attr` attribute, outer or inner.
+fn has_cfg_attr(node: &impl ast::HasAttrs) -> bool {
+    // `cfg` and `cfg_attr` parse to their own metas, which have no `path`.
+    node.attrs().any(|attr| {
+        matches!(
+            attr.meta(),
+            Some(ast::Meta::CfgMeta(_) | ast::Meta::CfgAttrMeta(_))
+        )
+    })
+}
+
+/// #6974 review: whether any workspace file spells `r#name`, a raw
+/// identifier that word matches on `name` miss.
+fn workspace_mentions_raw(index: &RustIndex, name: &str) -> bool {
+    let raw = format!("r#{name}");
+    index.files().values().any(|facts| {
+        facts.source.contains(raw.as_str())
+            && whole_word_offsets(&mask_comments_and_strings(&facts.source), name)
+                .into_iter()
+                .any(|offset| offset >= 2 && facts.source.get(offset - 2..offset) == Some("r#"))
+    })
+}
+
+/// The module path before `::name(` when `operand` starts `a::b::name(`
+/// with every segment a plain identifier: no leading `::`, generics,
+/// whitespace or type-cased segment (`Type::name(..)` is an associated
+/// function, not a free one).
+fn path_call_prefix<'a>(operand: &'a str, name: &str) -> Option<&'a str> {
+    let mut end = 0;
+    loop {
+        let segment_end = end + operand[end..].find("::")?;
+        let segment = &operand[end..segment_end];
+        if !is_plain_identifier(segment)
+            || segment.starts_with(|character: char| character.is_ascii_uppercase())
+        {
+            return None;
+        }
+        end = segment_end + "::".len();
+        if operand[end..]
+            .strip_prefix(name)
+            .is_some_and(|after| after.starts_with('('))
+        {
+            return Some(&operand[..segment_end]);
+        }
+    }
+}
+
+/// The value expression of `unsafe { <expr> }` when `operand` is exactly that
+/// block and the block holds one expression and no statement. Calling an
+/// `unsafe fn` needs the block, and the block's value is the call's value.
+fn unsafe_block_value(operand: &str) -> Option<&str> {
+    let rest = operand.strip_prefix("unsafe")?;
+    let open = operand.len() - rest.trim_start().len();
+    if !operand[open..].starts_with('{') {
+        return None;
+    }
+    let masked = mask_comments_and_strings(operand);
+    let close = matching_close(&masked, open, b'{', b'}')?;
+    if !operand[close + 1..].trim().is_empty() || masked[open + 1..close].contains(';') {
+        return None;
+    }
+    // Trim by the masked text so a `// SAFETY:` or `/* .. */` comment around
+    // the call is not read as part of it. The call starts with its name and
+    // ends with `)`, neither of which masking touches.
+    let body = &masked[open + 1..close];
+    let start = body.len() - body.trim_start().len();
+    let end = body.trim_end().len();
+    (start < end).then(|| &operand[open + 1 + start..open + 1 + end])
+}
+
+/// The receiver of `Type::constructor(..).name(` when `operand` starts with
+/// one associated-function call on a capitalized type path and the method
+/// call follows it directly.
+fn constructed_receiver<'a>(operand: &'a str, name: &str) -> Option<&'a str> {
+    let separator = operand.find("::")?;
+    let type_name = &operand[..separator];
+    if !is_plain_identifier(type_name)
+        || !type_name.starts_with(|character: char| character.is_ascii_uppercase())
+    {
+        return None;
+    }
+    let call = &operand[separator + 2..];
+    let call_end =
+        call.find(|character: char| !(character.is_ascii_alphanumeric() || character == '_'))?;
+    if call_end == 0 || !call[call_end..].starts_with('(') {
+        return None;
+    }
+    let opening = separator + 2 + call_end;
+    let masked = mask_comments_and_strings(operand);
+    let closing = matching_close(&masked, opening, b'(', b')')?;
+    let after = &operand[closing + 1..];
+    let method = after.strip_prefix('.')?;
+    (method.starts_with(name) && method[name.len()..].starts_with('('))
+        .then_some(&operand[..=closing])
 }
 
 /// The span of `head(..)` when `text` is exactly one `head(..)` call.
@@ -1118,8 +1995,16 @@ fn return_path_gate(body: &str, expression: &str, changed_line: usize) -> Option
         (line_of(first)..=line_of(last)).contains(&changed_line)
     };
     let (after_semicolon, after_brace) = top_level_tail_starts(inner);
+    // Comments between the last statement and the tail (`// SAFETY: ..`
+    // before an `unsafe` block) are not part of the tail, so the tail is
+    // compared with comments and strings masked on both sides. Masking
+    // also hides string contents, so the unmasked tail must still end
+    // with the changed text (`Ok("a")` is not `Ok("b")`).
+    let masked_changed = collapse_whitespace(&mask_comments_and_strings(changed));
     let tail_is_changed = [after_semicolon, after_brace].into_iter().any(|start| {
-        collapse_whitespace(&inner_text[start..]) == changed
+        let tail = collapse_whitespace(&inner_text[start..]);
+        (tail == changed
+            || (collapse_whitespace(&inner[start..]) == masked_changed && tail.ends_with(changed)))
             && spans_changed_line(start, inner_text.len())
     });
     // `return <changed>;` as the final statement is also the tail.
@@ -1132,7 +2017,10 @@ fn return_path_gate(body: &str, expression: &str, changed_line: usize) -> Option
                 && spans_changed_line(start, end)
         });
     if !tail_is_changed && !final_return_is_changed {
-        return None;
+        if has_unbounded_macro(inner) {
+            return None;
+        }
+        return early_return_gate(body, inner, inner_text, changed, &spans_changed_line);
     }
     if has_unbounded_macro(inner) || evaluates_conditionally(&mask_comments_and_strings(changed)) {
         return None;
@@ -1165,6 +2053,58 @@ fn return_path_gate(body: &str, expression: &str, changed_line: usize) -> Option
             || starts_with_word(inner[offset + "return".len()..].trim_start(), other)
     });
     returns_agree.then_some(ReturnPathGate::Head(head))
+}
+
+/// An early `return None;` / `return Err(..);` is the only source of that
+/// value when every other exit builds the opposite constructor: each other
+/// `return` and the tail are one `Some(..)` / `Ok(..)` call, and no `?` can
+/// produce a second `None` / `Err`. A pin expecting that value then observes
+/// the changed return. A second return of the same value, a `?`, or any
+/// other exit shape leaves the source ambiguous.
+fn early_return_gate(
+    body: &str,
+    inner: &str,
+    inner_text: &str,
+    changed: &str,
+    spans_changed_line: &dyn Fn(usize, usize) -> bool,
+) -> Option<ReturnPathGate> {
+    let (gate, other, head) = if changed == "None" {
+        (ReturnPathGate::Exact("None"), "None", "Some")
+    } else if constructor_call_span(changed, "Err").is_some() {
+        (ReturnPathGate::Head("Err"), "Err", "Ok")
+    } else {
+        return None;
+    };
+    // `return Err(if .. { A } else { B })`: a pin on `A` never evaluates a
+    // changed `B`, as on the tail path.
+    if inner.contains('?')
+        || !returns_leave_the_function(body)
+        || evaluates_conditionally(&mask_comments_and_strings(changed))
+    {
+        return None;
+    }
+    let mut changed_returns = 0usize;
+    for offset in whole_word_offsets(inner, "return") {
+        let value_start = offset + "return".len();
+        let value_end = value_start + inner[value_start..].find(';')?;
+        let value = collapse_whitespace(&inner_text[value_start..value_end]);
+        let value = value.trim();
+        if starts_with_word(value, other) {
+            if value != changed || !spans_changed_line(offset, value_end) {
+                return None;
+            }
+            changed_returns += 1;
+        } else if constructor_call_span(value, head).is_none() {
+            return None;
+        }
+    }
+    let (after_semicolon, after_brace) = top_level_tail_starts(inner);
+    let tail = collapse_whitespace(&inner_text[after_semicolon.max(after_brace)..]);
+    let tail = tail.trim();
+    // The tail must itself build the opposite constructor: an empty tail
+    // after a trailing `if .. { .. } else { None }` hides a second source.
+    let tail_builds_head = constructor_call_span(tail, head).is_some();
+    (changed_returns == 1 && tail_builds_head).then_some(gate)
 }
 
 /// Whether `text` starts with the whole word `word`.
@@ -1217,37 +2157,10 @@ fn final_statement(masked: &str, end: usize) -> Option<(usize, usize)> {
 
 /// Macros that cannot return a value from the enclosing function. Any other
 /// macro in the owner body (`bail!`, `ensure!`, a crate's own macro) may
-/// hide a `return`, so the return paths are not established.
-const NON_RETURNING_MACROS: &[&str] = &[
-    "assert",
-    "assert_eq",
-    "assert_ne",
-    "cfg",
-    "column",
-    "concat",
-    "dbg",
-    "debug_assert",
-    "debug_assert_eq",
-    "debug_assert_ne",
-    "eprint",
-    "eprintln",
-    "file",
-    "format",
-    "format_args",
-    "line",
-    "matches",
-    "module_path",
-    "panic",
-    "print",
-    "println",
-    "stringify",
-    "todo",
-    "unimplemented",
-    "unreachable",
-    "vec",
-    "write",
-    "writeln",
-];
+/// hide a `return`, so the return paths are not established. The list is
+/// owned by the syntax scan, which also bounds the names a file's stored
+/// [`crate::analysis::syntax::MacroBindingCandidates`] can report.
+const NON_RETURNING_MACROS: &[&str] = TRUSTED_MACRO_NAMES;
 
 fn has_unbounded_macro(masked: &str) -> bool {
     macro_invocations(masked)
@@ -1614,6 +2527,230 @@ fn is_workspace_root(root: &str, index: &RustIndex) -> bool {
             .any(|name| name.replace('-', "_") == root)
 }
 
+/// Whether the library whose crate root is `owner_root` may export some other
+/// item named `name` than the owner, so that another crate's
+/// `use library::name;` could bind it. Fails closed (true) when:
+/// - an `include!` was unresolved anywhere, or a file under the package's
+///   `src/` has no established crate root (its exports are unread);
+/// - a library file uses `include!`, or declares a `const` or `static` named
+///   `name`;
+/// - a `pub use` in a library file names `name` or globs, and its path is
+///   rooted outside `crate`, `self` and `super` (`pub use fastscore::score;`)
+///   or passes through a segment that is not a `mod` the library declares
+///   (`use fastscore as fs; pub use self::fs::score;`).
+pub(super) fn library_may_export_other(index: &RustIndex, owner_root: &Path, name: &str) -> bool {
+    let Some(source_dir) = owner_root.parent() else {
+        return true;
+    };
+    if !index.include_limitations.is_empty() {
+        return true;
+    }
+    let src_dirs = BTreeSet::new();
+    let mut library = Vec::new();
+    for (path, facts) in index.files().iter() {
+        if !path.starts_with(source_dir) {
+            continue;
+        }
+        match target_root(path, index, &src_dirs) {
+            None => return true,
+            Some(root) if root == owner_root => {
+                let masked = mask_comments_and_strings(&facts.source);
+                let includes = whole_word_offsets(&masked, "include")
+                    .into_iter()
+                    .any(|offset| {
+                        masked[offset + "include".len()..]
+                            .trim_start()
+                            .starts_with('!')
+                    });
+                if includes || declares_value_named(&masked, name) {
+                    return true;
+                }
+                library.push(masked);
+            }
+            Some(_) => {}
+        }
+    }
+    // A module name some `use` or `extern crate` also binds may name that
+    // import instead (`pub use fastscore as fs;` beside an unrelated
+    // `mod fs`), so it does not count as a library module.
+    let modules: BTreeSet<&str> = library
+        .iter()
+        .flat_map(|masked| declared_module_names(masked))
+        .filter(|module| {
+            !library.iter().any(|masked| {
+                file_use_statements(masked)
+                    .iter()
+                    .any(|statement| use_statement_binds_name(statement, module))
+                    || binds_extern_crate(masked, module)
+            })
+        })
+        .collect();
+    index.files().iter().any(|(path, facts)| {
+        target_root(path, index, &src_dirs).as_deref() == Some(owner_root)
+            && public_use_statements(&facts.source)
+                .iter()
+                .any(|statement| {
+                    (contains_as_whole_word(statement, name) || statement.contains('*'))
+                        && !reexports_library_module(statement, &modules)
+                })
+    })
+}
+
+/// Whether a `pub use` path stays inside the library: rooted at `crate`,
+/// `self` or `super`, with every segment before an imported item or glob a
+/// module the library declares, including each path inside a brace group
+/// (`pub use self::{fs::score};` reaches through `fs`).
+fn reexports_library_module(statement: &str, modules: &BTreeSet<&str>) -> bool {
+    let Some(path) = statement.trim_start().strip_prefix("use") else {
+        return false;
+    };
+    let path = path.trim();
+    let root_end = path.find("::").unwrap_or(path.len());
+    matches!(path[..root_end].trim(), "crate" | "self" | "super")
+        && use_tree_stays_local(path[root_end..].trim_start_matches("::"), modules)
+}
+
+/// Whether every path in a use tree (the text after its `crate`/`self`/
+/// `super` root) passes only through `super` or declared library modules
+/// before its imported item, glob or brace group. An unbalanced group fails
+/// closed.
+fn use_tree_stays_local(tree: &str, modules: &BTreeSet<&str>) -> bool {
+    let tree = tree.trim();
+    let Some(open) = tree.find('{') else {
+        let mut segments: Vec<&str> = tree.split("::").map(str::trim).collect();
+        // The last segment is the imported item, glob or `x as y` binding.
+        segments.pop();
+        return segments
+            .iter()
+            .all(|segment| *segment == "super" || modules.contains(segment));
+    };
+    let Some(close) = tree.rfind('}').filter(|close| *close > open) else {
+        return false;
+    };
+    let prefix_local = tree[..open]
+        .split("::")
+        .map(str::trim)
+        .filter(|segment| !segment.is_empty())
+        .all(|segment| segment == "super" || modules.contains(segment));
+    prefix_local
+        && top_level_items(&tree[open + 1..close])
+            .iter()
+            .all(|item| use_tree_stays_local(item, modules))
+}
+
+/// The comma-separated items of a brace group's body, splitting only at
+/// depth zero.
+fn top_level_items(body: &str) -> Vec<&str> {
+    let mut items = Vec::new();
+    let mut depth = 0usize;
+    let mut start = 0;
+    for (offset, character) in body.char_indices() {
+        match character {
+            '{' => depth += 1,
+            '}' => depth = depth.saturating_sub(1),
+            ',' if depth == 0 => {
+                items.push(&body[start..offset]);
+                start = offset + 1;
+            }
+            _ => {}
+        }
+    }
+    items.push(&body[start..]);
+    items
+        .into_iter()
+        .map(str::trim)
+        .filter(|item| !item.is_empty())
+        .collect()
+}
+
+/// Whether masked source has `extern crate <name>` or `extern crate .. as
+/// <name>`.
+fn binds_extern_crate(masked: &str, name: &str) -> bool {
+    whole_word_offsets(masked, "extern")
+        .into_iter()
+        .any(|offset| {
+            let rest = masked[offset + "extern".len()..].trim_start();
+            let Some(rest) = rest.strip_prefix("crate") else {
+                return false;
+            };
+            let declaration = rest.split(';').next().unwrap_or_default();
+            let bound = declaration
+                .rsplit_once(" as ")
+                .map_or(declaration, |(_, alias)| alias)
+                .trim();
+            bound == name
+        })
+}
+
+/// Names of `mod <name>` declarations in masked source.
+fn declared_module_names(masked: &str) -> Vec<&str> {
+    whole_word_offsets(masked, "mod")
+        .into_iter()
+        .filter_map(|offset| {
+            let rest = masked[offset + 3..].trim_start();
+            let end = rest
+                .find(|character: char| !(character.is_ascii_alphanumeric() || character == '_'))
+                .unwrap_or(rest.len());
+            (end > 0).then(|| &rest[..end])
+        })
+        .collect()
+}
+
+/// Whether masked source declares a `const` or `static` (optionally `mut`)
+/// named `name`.
+fn declares_value_named(masked: &str, name: &str) -> bool {
+    ["const", "static"].iter().any(|keyword| {
+        whole_word_offsets(masked, keyword)
+            .into_iter()
+            .any(|offset| {
+                let rest = masked[offset + keyword.len()..].trim_start();
+                let rest = rest
+                    .strip_prefix("mut")
+                    .filter(|after| after.starts_with(char::is_whitespace))
+                    .map_or(rest, str::trim_start);
+                rest.strip_prefix(name).is_some_and(|after| {
+                    !after.starts_with(|character: char| {
+                        character.is_ascii_alphanumeric() || character == '_'
+                    })
+                })
+            })
+    })
+}
+
+/// The `use ..;` text of every `pub use` declaration in `source` (plain
+/// `pub` only: a `pub(crate)` or `pub(in ..)` import is not visible to
+/// another crate).
+fn public_use_statements(source: &str) -> Vec<&str> {
+    let masked = mask_comments_and_strings(source);
+    let bytes = masked.as_bytes();
+    let word = |at: usize, text: &str| {
+        masked[at..].starts_with(text)
+            && (at == 0 || !is_ident_byte(bytes[at - 1]))
+            && bytes
+                .get(at + text.len())
+                .is_none_or(|byte| !is_ident_byte(*byte))
+    };
+    let mut statements = Vec::new();
+    let mut at = 0;
+    while let Some(offset) = masked[at..].find("pub") {
+        let start = at + offset;
+        at = start + 3;
+        if !word(start, "pub") {
+            continue;
+        }
+        let use_at = at + (masked[at..].len() - masked[at..].trim_start().len());
+        if !word(use_at, "use") {
+            continue;
+        }
+        let Some(end) = masked[use_at..].find(';') else {
+            break;
+        };
+        statements.push(&source[use_at..use_at + end]);
+        at = use_at + end;
+    }
+    statements
+}
+
 /// Whether a workspace path may lead to some item named `base` other than
 /// its workspace declaration: a workspace `use` rooted outside the standard
 /// library and the workspace names `base` or globs (a re-export of a
@@ -1676,6 +2813,13 @@ fn declares_type(text: &str, name: &str) -> bool {
             .into_iter()
             .any(|offset| starts_with_word(text[offset + keyword.len()..].trim_start(), name))
     })
+}
+
+/// Whether masked text declares a `trait` named `name`.
+fn declares_trait(masked: &str, name: &str) -> bool {
+    whole_word_offsets(masked, "trait")
+        .into_iter()
+        .any(|offset| starts_with_word(masked[offset + "trait".len()..].trim_start(), name))
 }
 
 /// Whether any indexed file declares a trait named `name`.
@@ -2196,10 +3340,12 @@ fn test_receiver_type(
     test_source: Option<&str>,
     index: &RustIndex,
     imports_foreign: ForeignImport<'_>,
+    owner: OwnerScope<'_>,
 ) -> Option<ReceiverType> {
     let mut bound: Option<ReceiverType> = None;
     for binding in receiver_let_bindings(test, receiver)? {
-        let receiver_type = binding_type(binding, test, test_source, index, imports_foreign)?;
+        let receiver_type =
+            binding_type(binding, test, test_source, index, imports_foreign, owner)?;
         match &bound {
             None => bound = Some(receiver_type),
             Some(existing) if *existing == receiver_type => {}
@@ -2263,6 +3409,163 @@ fn receiver_let_bindings<'a>(test: &'a TestSummary, receiver: &str) -> Option<Ve
         bindings.push(&binding[name_at + receiver.len()..]);
     }
     Some(bindings)
+}
+
+/// #6974: the initializer of `operand` when it is a plain identifier the
+/// test binds exactly once, by an immutable `let operand [: T] = <init>;`,
+/// and uses nowhere else but as a whole operand of its own `assert_eq!`
+/// assertions after that `let`. Any other use (a `mut` binding, a borrow,
+/// a method call, an argument, a second binding, a use before the `let`)
+/// could change or replace the value, so it fails closed.
+fn let_bound_owner_call<'a>(
+    test: &'a TestSummary,
+    assertion: &OracleFact,
+    operand: &str,
+    name: &str,
+) -> Option<&'a str> {
+    let operand = operand.trim();
+    if !is_plain_identifier(operand) || operand == name || operand == "self" {
+        return None;
+    }
+    let bindings = receiver_let_bindings(test, operand)?;
+    let [binding] = bindings.as_slice() else {
+        return None;
+    };
+    let binding: &'a str = binding;
+    let masked = mask_comments_and_strings(&test.body);
+    let binding_at = binding.as_ptr() as usize - test.body.as_ptr() as usize;
+    let let_at = *whole_word_offsets(&masked[..binding_at], "let").last()?;
+    if contains_as_whole_word(&masked[let_at..binding_at], "mut") {
+        return None;
+    }
+    let let_line = test.start_line + masked[..let_at].matches('\n').count();
+    let uses = whole_word_offsets(&masked, operand).len();
+    let mut asserted = 0;
+    for other in &test.assertions {
+        if !(test.start_line..=test.end_line).contains(&other.line) {
+            continue;
+        }
+        let text = mask_comments_and_strings(&other.text);
+        let in_text = whole_word_offsets(&text, operand).len();
+        if in_text == 0 {
+            continue;
+        }
+        let whole_operand = is_plain_macro(&other.text, "assert_eq")
+            && assertion_comparison_operands(&other.text).is_some_and(|operands| {
+                operands
+                    .iter()
+                    .filter(|candidate| candidate.trim() == operand)
+                    .count()
+                    == 1
+                    && in_text == 1
+            });
+        if !whole_operand || other.line <= let_line {
+            return None;
+        }
+        asserted += in_text;
+    }
+    // The `let` pattern is the one use outside the assertions.
+    if uses != asserted + 1 {
+        return None;
+    }
+    // Only the assertion right after the `let` is admitted: any statement
+    // between them could change the value through a shared handle.
+    let after_semicolon =
+        binding_at + binding.len() + masked[binding_at + binding.len()..].find(';')? + 1;
+    let gap = masked[after_semicolon..].len() - masked[after_semicolon..].trim_start().len();
+    let next_at = after_semicolon + gap;
+    let next_line = test.start_line + masked[..next_at].matches('\n').count();
+    // The next statement must be an `assert_eq!` of the binding itself, not
+    // `assert_eqx();`, and it must be the only statement on its lines.
+    // Assertions carry a line but no column, so a second statement sharing
+    // the line (`assert_eq!(v, f()); touch(); assert_eq!(v, 12);`) could
+    // otherwise pass as the next one.
+    let rest = &masked[next_at..];
+    let end = rest.find(';')?;
+    let next = &rest[..end];
+    let after = &rest[end + 1..];
+    let tail_of_line = &after[..after.find('\n').unwrap_or(after.len())];
+    if !next.starts_with("assert_eq!")
+        || !contains_as_whole_word(next, operand)
+        || !tail_of_line.trim().is_empty()
+        || assertion.line != next_line
+    {
+        return None;
+    }
+    let initializer = binding.trim_start();
+    let initializer = match initializer.strip_prefix(':') {
+        Some(annotated) => &annotated[annotated.find('=')?..],
+        None => initializer,
+    };
+    let initializer = initializer.strip_prefix('=')?;
+    (!initializer.starts_with(['=', '>'])).then(|| initializer.trim())
+}
+
+/// #6974 review: whether the test body names the owner anywhere but the
+/// assertion under review. When it does not, no binding in the test can
+/// hold an owner call, so table-driven expected values (`#[case] want`,
+/// `for (x, want) in cases`) need no binding scan.
+fn owner_named_outside(test: &TestSummary, assertion: &str, name: &str) -> bool {
+    let in_body = whole_word_offsets(&mask_comments_and_strings(&test.body), name).len();
+    let in_assertion = whole_word_offsets(&mask_comments_and_strings(assertion), name).len();
+    in_body > in_assertion
+}
+
+/// #6974 review: whether an identifier in the expected operand is a test
+/// `let` whose initializer mentions the owner, directly or through further
+/// `let`s (`let s = f(2) * 1; assert_eq!(f(2), s);` and
+/// `let a = f(2); let b = a; assert_eq!(f(2), b);` compare the owner with
+/// itself).
+fn expected_binding_calls_owner(test: &TestSummary, expected: &str, name: &str) -> bool {
+    let masked_body = mask_comments_and_strings(&test.body);
+    let mut seen = BTreeSet::new();
+    let mut pending = vec![mask_comments_and_strings(expected)];
+    while let Some(text) = pending.pop() {
+        for word in text
+            .split(|character: char| !(character.is_ascii_alphanumeric() || character == '_'))
+            .filter(|word| is_plain_identifier(word) && *word != name)
+        {
+            if !seen.insert(word.to_string()) {
+                continue;
+            }
+            // A binding the scan cannot read (a pattern, a shadowed
+            // name) may hold an owner call: fail closed (#6974 review).
+            // A word the scan refuses only because a `let` annotation
+            // names it (`let w: Window = ..`) is a type, not a binding.
+            let Some(bindings) = receiver_let_bindings(test, word) else {
+                if binds_outside_let(&masked_body, word) || let_patterns_bind(&masked_body, word) {
+                    return true;
+                }
+                continue;
+            };
+            for binding in bindings {
+                let initializer = mask_comments_and_strings(binding);
+                if contains_as_whole_word(&initializer, name) {
+                    return true;
+                }
+                pending.push(initializer);
+            }
+        }
+    }
+    false
+}
+
+/// #6974 review: whether any `let` pattern in `masked` may bind `word`:
+/// the text after `let` up to its type annotation (a lone `:`), its `=`
+/// or its `;`, whichever comes first.
+fn let_patterns_bind(masked: &str, word: &str) -> bool {
+    whole_word_offsets(masked, "let").into_iter().any(|offset| {
+        let rest = &masked[offset + "let".len()..];
+        let bytes = rest.as_bytes();
+        let end = (0..bytes.len())
+            .find(|&at| match bytes[at] {
+                b'=' | b';' => true,
+                b':' => bytes.get(at + 1) != Some(&b':') && (at == 0 || bytes[at - 1] != b':'),
+                _ => false,
+            })
+            .unwrap_or(bytes.len());
+        contains_as_whole_word(&rest[..end], word)
+    })
 }
 
 /// Methods that may run the `clone` under test.
@@ -2586,6 +3889,7 @@ fn binding_type(
     test_source: Option<&str>,
     index: &RustIndex,
     imports_foreign: ForeignImport<'_>,
+    owner: OwnerScope<'_>,
 ) -> Option<ReceiverType> {
     let binding = binding.trim();
     let (annotation, initializer) = if let Some(rest) = binding.strip_prefix(':') {
@@ -2595,7 +3899,7 @@ fn binding_type(
         (None, binding.strip_prefix('=')?.trim())
     };
     if let Some(annotation) = annotation {
-        return named_or_slice(annotation, test, test_source, imports_foreign);
+        return named_or_slice(annotation, test, test_source, index, imports_foreign, owner);
     }
     if is_byte_slice_expression(initializer) {
         return Some(ReceiverType::ByteSlice);
@@ -2629,7 +3933,7 @@ fn binding_type(
     if !constructor {
         return None;
     }
-    named_or_slice(type_name, test, test_source, imports_foreign)
+    named_or_slice(type_name, test, test_source, index, imports_foreign, owner)
 }
 
 /// The initializer without a trailing `?`, `.unwrap()` or `.expect(..)`,
@@ -2700,7 +4004,7 @@ fn constructor_returns_self(
 }
 
 /// The return type a `fn` definition declares, whitespace-collapsed.
-fn declared_return_type(definition: &str) -> Option<String> {
+pub(super) fn declared_return_type(definition: &str) -> Option<String> {
     let masked = mask_comments_and_strings(definition);
     let params = masked.find('(')?;
     let params_close = matching_close(&masked, params, b'(', b')')?;
@@ -2714,7 +4018,9 @@ fn named_or_slice(
     type_text: &str,
     test: &TestSummary,
     test_source: Option<&str>,
+    index: &RustIndex,
     imports_foreign: ForeignImport<'_>,
+    owner: OwnerScope<'_>,
 ) -> Option<ReceiverType> {
     if is_byte_slice_type(type_text) {
         return Some(ReceiverType::ByteSlice);
@@ -2724,16 +4030,403 @@ fn named_or_slice(
         return None;
     }
     // A test file that imports the name from outside the workspace, renames
-    // another item to it, or aliases it binds a different type than the
-    // workspace declaration.
+    // another item to it, aliases it, or declares it in the test's own
+    // module scope — in its own file (#6905) or in an out-of-line parent
+    // module (#6950) — binds a different type than the workspace declaration.
     let source = test_source?;
     if imports_foreign(&test.file, base)
         || file_renames_to(source, base)
         || file_aliases_type(source, base)
+        || test_module_shadows_type(test, source, base, owner.in_file(&test.file))
+        || parent_chain_shadows_type(test, base, owner, index)
     {
         return None;
     }
     Some(ReceiverType::Named(base.to_string()))
+}
+
+/// The owner's identity, for the #6957 shadow exemption: the owner's own
+/// scope holds the production declaration, so it is not a test-local
+/// shadow. The single-file check resolves the scope in the test file's own
+/// parse only ([`OwnerScope::in_file`]); the parent-chain walk resolves it
+/// in whichever chain file holds the owner (#6950).
+#[derive(Clone, Copy)]
+pub(in crate::analysis) struct OwnerScope<'a> {
+    name: &'a str,
+    start_line: usize,
+    file: &'a Path,
+}
+
+impl<'a> OwnerScope<'a> {
+    /// The owner's total identity.
+    pub(in crate::analysis) fn new(name: &'a str, start_line: usize, file: &'a Path) -> Self {
+        Self {
+            name,
+            start_line,
+            file,
+        }
+    }
+
+    /// This scope when the owner lives in `test_file`, or `None` when a
+    /// cross-file owner keeps the fail-closed single-file check.
+    /// Related-test reach reuses the #6957 exemption through this (#6951).
+    pub(in crate::analysis) fn in_file(&self, test_file: &Path) -> Option<Self> {
+        (test_file == self.file).then_some(*self)
+    }
+}
+
+/// Whether the test's own inline-module scope declares the receiver type
+/// name (#6905): a `struct`, `enum`, `union` or `type` alias that is a
+/// direct item of an enclosing `mod` shadows the production type for the
+/// test, so a binding of that name names the test-local type, not the
+/// changed owner, and the pin is refused. Only direct items of enclosing
+/// inline modules count: a same-name declaration in a sibling module or at
+/// the file root (the production declaration itself, for same-file tests)
+/// does not shadow the test's view. Nor does one in the owner's own
+/// enclosing module (#6957): when the production declaration sits in an
+/// enclosing non-root module, that module is the owner's scope, not a
+/// shadow. A same-name declaration in any other enclosing module — the
+/// test's own `mod tests` included — still refuses. An explicit import
+/// naming the type in an inner scope would disambiguate, but this stays
+/// lexical and fails closed. A file that textually declares the name
+/// nowhere needs no parse; one that fails to parse fails closed.
+///
+/// Shared with related-test classification (#6951): a shadowed receiver
+/// type also refuses `direct_owner_call` reach credit, for the same
+/// entity-identity reason.
+pub(in crate::analysis) fn test_module_shadows_type(
+    test: &TestSummary,
+    source: &str,
+    base: &str,
+    owner: Option<OwnerScope<'_>>,
+) -> bool {
+    test_module_shadows_item(test, source, base, owner, ShadowKind::Type)
+}
+
+/// Whether the test's own inline-module scope declares a `trait` named like
+/// the owner's trait (#7053): inside that module `Render::render(..)` and
+/// `.render()` name the test-local trait and its impls, so a call there is
+/// no evidence about the production `impl Render for T`. Same scope rules
+/// as [`test_module_shadows_type`].
+pub(in crate::analysis) fn test_module_shadows_trait(
+    test: &TestSummary,
+    source: &str,
+    trait_name: &str,
+    owner: Option<OwnerScope<'_>>,
+) -> bool {
+    test_module_shadows_item(test, source, trait_name, owner, ShadowKind::Trait)
+}
+
+/// The kind of declaration a test-module shadow check looks for.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ShadowKind {
+    Type,
+    Trait,
+}
+
+fn test_module_shadows_item(
+    test: &TestSummary,
+    source: &str,
+    base: &str,
+    owner: Option<OwnerScope<'_>>,
+    kind: ShadowKind,
+) -> bool {
+    let masked = mask_comments_and_strings(source);
+    // `r#Window` denotes `Window`: a raw-identifier declaration shadows too.
+    let raw = format!("r#{base}");
+    let declared = match kind {
+        ShadowKind::Type => declares_type(&masked, base) || file_aliases_type(source, base),
+        ShadowKind::Trait => declares_trait(&masked, base),
+    };
+    if !declared && !masked.contains(raw.as_str()) {
+        return false;
+    }
+    let Some(parse) = parse_clean_source_file(source) else {
+        return true;
+    };
+    // 1-based file lines, matching `TestSummary`.
+    let line_of = |offset: u32| source[..offset as usize].matches('\n').count() + 1;
+    let root = parse.tree().syntax().clone();
+    let owner_module = owner.and_then(|owner| owner_enclosing_module(&root, source, owner));
+    // The owner's own module is the production declaration's scope, never a
+    // shadow; every other enclosing module still counts.
+    let counts = |module: &ast::Module| {
+        owner_module.is_none_or(|exempt| module.syntax().text_range() != exempt)
+    };
+    // Exact scope first: the test fn's own ancestor modules. Line spans can
+    // coincide for same-line siblings (`mod s { struct W; } #[test] fn t()
+    // {...}`), where byte-exact ancestry refuses nothing, so ancestry
+    // decides whenever the test fn resolves. Macro-shaped tests whose fn
+    // has no matching node keep the line-span fallback below.
+    let test_name = test.name.strip_prefix("r#").unwrap_or(&test.name);
+    let test_fns: Vec<_> = root
+        .descendants()
+        .filter_map(ast::Fn::cast)
+        .filter(|func| {
+            func.name().is_some_and(|name| {
+                let text = name.text().to_string();
+                text.strip_prefix("r#").unwrap_or(&text) == test_name
+            }) && {
+                let range = func.syntax().text_range();
+                let start: u32 = range.start().into();
+                let end: u32 = range.end().into();
+                line_of(start) <= test.end_line && test.start_line <= line_of(end)
+            }
+        })
+        .collect();
+    if !test_fns.is_empty() {
+        return test_fns.iter().any(|func| {
+            func.syntax()
+                .ancestors()
+                .filter_map(ast::Module::cast)
+                .filter(|module| counts(module))
+                .any(|module| {
+                    module.item_list().is_some_and(|items| {
+                        items
+                            .items()
+                            .any(|item| module_item_names(&item, base, kind))
+                    })
+                })
+        });
+    }
+    root.descendants()
+        .filter_map(ast::Module::cast)
+        .filter_map(|module| module.item_list().map(|items| (module, items)))
+        .any(|(module, items)| {
+            let range = module.syntax().text_range();
+            let start: u32 = range.start().into();
+            let end: u32 = range.end().into();
+            line_of(start) <= test.start_line
+                && test.end_line <= line_of(end)
+                && counts(&module)
+                && items
+                    .items()
+                    .any(|item| module_item_names(&item, base, kind))
+        })
+}
+
+/// Whether an out-of-line parent module of the test file declares the
+/// receiver type name (#6950): the parent chain through out-of-line `mod`
+/// declarations (the test file's composed role provenance) is the test's
+/// enclosing module scope beyond its own file. A `struct`, `enum`, `union`
+/// or `type` alias that is a direct item of a parent file's root shadows
+/// the production type for the test exactly as an enclosing inline
+/// declaration does (#6905), as does a root-level `use ... as <name>`
+/// rebinding, so a binding of that name names the test-local type and
+/// the pin is refused.
+///
+/// Only parent roots count: the module-declaration producer emits
+/// top-level declarations only, so a recorded edge's parent scope is the
+/// file root, and a sibling inline module is out of scope by the same
+/// precision rule as same-file siblings. The test file's own root stays
+/// exempt (the #6905 single-file behavior, via
+/// [`test_module_shadows_type`]); each parent root counts unless it is the
+/// owner's own scope — the file holding the owner with the owner at its
+/// root (the transposed #6957 exemption).
+///
+/// Shared with related-test classification like [`test_module_shadows_type`]:
+/// a shadowed receiver also refuses `direct_owner_call` reach credit.
+/// Fail-closed throughout: an unresolved chain
+/// (`rust_module_ambiguous_parent` and its siblings), an `include!` edge
+/// (whose scope needs site localization this lexical check does not do), a
+/// missing parent file, and an unparseable parent that textually declares
+/// the name all refuse rather than guess. A parent that textually declares
+/// the name nowhere needs no parse.
+pub(in crate::analysis) fn parent_chain_shadows_type(
+    test: &TestSummary,
+    base: &str,
+    owner: OwnerScope<'_>,
+    index: &RustIndex,
+) -> bool {
+    let Some(facts) = index.files().get(&test.file) else {
+        return false;
+    };
+    let chain = &facts.role_provenance;
+    // The reason leads: an immediately ambiguous parent composes to empty
+    // edges with the reason set, which is unresolved, not standalone.
+    if chain.earliest_unresolved_reason.is_some() {
+        return true;
+    }
+    if chain.edges.is_empty() {
+        return false;
+    }
+    chain.edges.iter().any(|edge| {
+        if edge.kind != SourceRoleProvenanceEdgeKind::Module {
+            return true;
+        }
+        let Some(parent) = index.files().get(&edge.parent) else {
+            return true;
+        };
+        parent_root_shadows_type(&parent.source, &edge.parent, base, owner)
+    })
+}
+
+/// Whether one parent file's root declares the receiver type name: the
+/// per-edge step of [`parent_chain_shadows_type`]. A root-level
+/// `use ... as <name>` rebinds the name to a different type and shadows
+/// too; a plain root-level `use` may re-export production, so only
+/// renames refuse. The owner's own root (the file holding a root-level
+/// owner) is the production declaration's scope, never a shadow; every
+/// other declaring root refuses.
+fn parent_root_shadows_type(
+    parent_source: &str,
+    parent_file: &Path,
+    base: &str,
+    owner: OwnerScope<'_>,
+) -> bool {
+    let masked = mask_comments_and_strings(parent_source);
+    // `r#Window` denotes `Window`: a raw-identifier declaration shadows too.
+    let raw = format!("r#{base}");
+    if !declares_type(&masked, base)
+        && !masked.contains(raw.as_str())
+        && !file_aliases_type(parent_source, base)
+        && !file_renames_to(parent_source, base)
+    {
+        return false;
+    }
+    let Some(parse) = parse_clean_source_file(parent_source) else {
+        return true;
+    };
+    let root = parse.tree().syntax().clone();
+    let root_items: Vec<ast::Item> = root.children().filter_map(ast::Item::cast).collect();
+    if !root_items
+        .iter()
+        .any(|item| module_item_names_type(item, base))
+        && !root_items.iter().any(|item| {
+            if !matches!(item, ast::Item::Use(_)) {
+                return false;
+            }
+            let text = item.syntax().text().to_string();
+            // `r#Window` denotes `Window`: a raw-identifier alias rebinds
+            // the name too.
+            file_renames_to(&text, base) || file_renames_to(&text, raw.as_str())
+        })
+    {
+        return false;
+    }
+    if owner.file == parent_file && owner_at_file_root(&root, parent_source, owner) {
+        return false;
+    }
+    true
+}
+
+/// The text range of the inline module directly enclosing the owner
+/// (#6957): for inline code the owner's own nearest enclosing `mod`
+/// is the `impl`'s module, and a same-name type declared there is the
+/// production declaration, not a shadow. `None` keeps the fail-closed
+/// shadow check: a root-level owner has no enclosing module, and an owner
+/// whose `fn` node does not resolve exactly once (macro-shaped, out-of-line
+/// or ambiguous) resolves to no scope. Byte-exact ancestry, not line spans,
+/// decides, so a same-line sibling module is never the owner's scope.
+fn owner_enclosing_module(
+    root: &SyntaxNode,
+    source: &str,
+    owner: OwnerScope<'_>,
+) -> Option<TextRange> {
+    resolve_owner_fn(root, source, owner)?
+        .syntax()
+        .ancestors()
+        .filter_map(ast::Module::cast)
+        .next()
+        .map(|module| module.syntax().text_range())
+}
+
+/// Whether the owner fn resolves in `source` at the file root: exactly one
+/// same-name `fn` spans the owner's start line, with no enclosing inline
+/// module (#6950). A parent-file root holding both the receiver type and a
+/// root-level owner is the production scope, not a shadow; an unresolvable
+/// owner resolves to no scope and keeps the fail-closed check.
+fn owner_at_file_root(root: &SyntaxNode, source: &str, owner: OwnerScope<'_>) -> bool {
+    resolve_owner_fn(root, source, owner).is_some_and(|found| {
+        found
+            .syntax()
+            .ancestors()
+            .filter_map(ast::Module::cast)
+            .next()
+            .is_none()
+    })
+}
+
+/// The owner's `fn` node in this file's parse: exactly one same-name `fn`
+/// spanning the owner's start line. Byte-exact ancestry, not line spans,
+/// decides, so a same-line sibling module is never the owner's scope; a
+/// nested same-name `fn` sharing the owner's start line resolves to no
+/// scope rather than the wrong one.
+fn resolve_owner_fn(root: &SyntaxNode, source: &str, owner: OwnerScope<'_>) -> Option<ast::Fn> {
+    // 1-based file lines, matching `FunctionSummary`.
+    let line_of = |offset: u32| source[..offset as usize].matches('\n').count() + 1;
+    let name = owner.name.strip_prefix("r#").unwrap_or(owner.name);
+    let mut owners = root.descendants().filter_map(ast::Fn::cast).filter(|func| {
+        func.name().is_some_and(|func_name| {
+            let text = func_name.text().to_string();
+            text.strip_prefix("r#").unwrap_or(&text) == name
+        }) && {
+            let range = func.syntax().text_range();
+            let start: u32 = range.start().into();
+            let end: u32 = range.end().into();
+            line_of(start) <= owner.start_line && owner.start_line <= line_of(end)
+        }
+    });
+    let found = owners.next()?;
+    owners.next().is_none().then_some(found)
+}
+
+/// Whether a direct module item declares `base` as the given kind: a type
+/// (see [`module_item_names_type`]) or, for [`ShadowKind::Trait`] (#7053), a
+/// `trait` item or a macro whose own text declares one.
+fn module_item_names(item: &ast::Item, base: &str, kind: ShadowKind) -> bool {
+    if kind == ShadowKind::Type {
+        return module_item_names_type(item, base);
+    }
+    let named = match item {
+        ast::Item::Trait(item) => item.name(),
+        _ => None,
+    };
+    if named.is_some_and(|name| {
+        let text = name.text().to_string();
+        text.strip_prefix("r#").unwrap_or(&text) == base
+    }) {
+        return true;
+    }
+    // A macro can declare the trait; its text decides, as for types.
+    matches!(
+        item,
+        ast::Item::MacroRules(_) | ast::Item::MacroDef(_) | ast::Item::MacroCall(_)
+    ) && {
+        let text = mask_comments_and_strings(&item.syntax().text().to_string());
+        declares_trait(&text, base) || declares_trait(&text, &format!("r#{base}"))
+    }
+}
+
+/// Whether a direct module item declares the type name `base` (`r#Window`
+/// denotes `Window`). A macro definition or invocation may emit the type
+/// (#6948 review): the parsed item is the macro, not the struct, enum,
+/// union or alias it generates, so a lexical declaration of the name inside
+/// the macro's own text fails closed.
+fn module_item_names_type(item: &ast::Item, base: &str) -> bool {
+    let name = match item {
+        ast::Item::Struct(item) => item.name(),
+        ast::Item::Enum(item) => item.name(),
+        ast::Item::Union(item) => item.name(),
+        ast::Item::TypeAlias(item) => item.name(),
+        _ => None,
+    };
+    if name.is_some_and(|name| {
+        let text = name.text().to_string();
+        text.strip_prefix("r#").unwrap_or(&text) == base
+    }) {
+        return true;
+    }
+    if !matches!(
+        item,
+        ast::Item::MacroRules(_) | ast::Item::MacroDef(_) | ast::Item::MacroCall(_)
+    ) {
+        return false;
+    }
+    let text = mask_comments_and_strings(&item.syntax().text().to_string());
+    declares_type(&text, base)
+        || declares_type(&text, &format!("r#{base}"))
+        || file_aliases_type(&text, base)
 }
 
 /// A trait's methods are callable with method syntax only while the trait

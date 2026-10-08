@@ -9,6 +9,7 @@ Created: 2026-06-18
 Linked issues:
 
 - [#1292](https://github.com/EffortlessMetrics/ripr-swarm/issues/1292)
+- [#7071](https://github.com/EffortlessMetrics/ripr-swarm/issues/7071) (proximity-only weak reach)
 
 Linked PRs:
 
@@ -19,7 +20,8 @@ Support-tier impact:
 - No tier change. `docs/status/SUPPORT_TIERS.md` remains unchanged. This spec
   adds one additive `static_limit_kind` value, `rust_macro_reach_unresolved`,
   and one additive `stop_reasons` value, `macro_reach_unresolved`.
-- Classification stays `no_static_path`. This is a named limitation, not a
+- Classification stays `no_static_path` (or `weakly_exposed` on the
+  proximity-only path below). This is a named limitation, not a
   coverage claim, test relation, repair packet, release-readiness claim, or
   macro-expansion engine.
 - No `schema_version` bump is required because `static_limit_kind` and
@@ -54,7 +56,8 @@ no_static_path + static_limit_kind: rust_macro_reach_unresolved
 ### Trigger condition
 
 After direct related-test classification returns `no_static_path` with no
-related tests, and after the RIPR-SPEC-0114 bounded transitive witness check
+related tests (or `weakly_exposed` with only proximity relations; see
+"Proximity-only weak reach" below), and after the RIPR-SPEC-0114 bounded transitive witness check
 does not find a lexical path, the Rust adapter may emit the macro-reach
 limitation when all of these are true:
 
@@ -92,9 +95,28 @@ Leave the finding exactly as before. Do not emit the limitation merely because a
 test file contains an unrelated macro, an external macro is invoked, or a macro
 definition does not mention the changed owner name.
 
+### Proximity-only weak reach (#7071)
+
+A `weakly_exposed` finding faces the same unresolved negative when its reach is
+`weak` and every related test is proximity-only (`same_test_file`,
+`same_module` or `weak_token_substring`): no test is seen calling the owner,
+only sharing its file or a name token. For that finding the Rust adapter runs
+the RIPR-SPEC-0114 transitive witness, then this macro witness, and names the
+first one found as above. The witness walks match names, as they do for
+`no_static_path`, so a same-named function elsewhere can name the limit; that
+costs a reported gap and never adds credit. Withheld dependent files are
+searched as for `no_static_path`, without the over-limit disclosure. The class
+stays `weakly_exposed`. The recommended next step names the witnessing test and
+entry symbol and says the limitation does not establish a missing test; the
+gap's missing-discriminator lines are dropped, and human output offers no
+test-writing route. A finding with any related test
+that calls the owner keeps reach established and gets no limit. The
+subprocess-binary and property-macro limits stay `no_static_path`-only.
+
 ### Fail-closed boundaries
 
-- Never change classification from `no_static_path`.
+- Never change classification from `no_static_path`, or from `weakly_exposed`
+  for a proximity-only finding.
 - Never add the witness to `related_tests`.
 - Never claim the test reaches, covers, tests, or exercises the changed owner.
 - Only same-repo `macro_rules!` definitions are considered.
@@ -107,11 +129,55 @@ definition does not mention the changed owner name.
   `rust_macro_wrapped_test_call_unresolved`; production-entry macro boundaries
   keep `rust_macro_reach_unresolved`.
 
+## Same-File Test Generators
+
+A test file can define a `macro_rules!` whose transcriber emits `#[test] fn`
+and invoke it once per case. Those tests are real, but the parser sees only
+opaque token trees, so they were never indexed and the code they call read as
+unreached: `ungripped` in repo exposure and `no_static_path` in diff mode,
+a false gap when the tests catch the mutant (#5334).
+
+ripr indexes such a test when the generator fits one bounded shape, and
+otherwise indexes nothing for it:
+
+- the definition is the only `macro_rules!` of that name in the file, sits
+  directly in the file or an inline module, and precedes the invocation, which
+  sits at item position in the same scope or a nested one; neither the
+  definition nor the invocation carries an attribute or sits under a cfg'd
+  module or file;
+- every arm up to the selected one has a matcher of comma-separated
+  `$name:fragment` metavariables only; the selected arm is the first whose
+  metavariable count matches the invocation's top-level arguments, and an
+  `ident`, `literal`, `block` or `tt` argument must have that shape;
+- the selected transcriber contains `#[test]`, no repetition and no call to
+  another macro defined in the file, and no argument invokes one;
+- no `use` in the file imports the generator's name (rustc rejects that
+  invocation as ambiguous), and the expansion carries no `cfg` other than
+  `cfg(test)` and no `cfg_attr`.
+
+Each metavariable is replaced by its argument's source text and `$crate` by
+`crate`; an `expr` or `literal` argument of more than one element (`-1`) is
+wrapped in parentheses. Substitution is textual and ignores hygiene, so a
+block or expression argument can name a binding the transcriber declares;
+such a test reads as its unhygienic text does. The expansion is
+parsed by the ordinary file-fact producer, and each `#[test]` function becomes
+a test of the invoking file with every line pinned to the invocation.
+Assertion admission (RIPR-SPEC-0197 owner pins and equality admission) runs
+over the expansion text with the same rules as a hand-written test, so a
+deferred or escaping assertion inside the transcriber is refused exactly as it
+would be written by hand.
+
+This is not macro expansion in general. Generators defined in another file,
+`#[macro_use]` imports, repetition and procedural macros stay unindexed, and
+reach through them keeps the limitations above. A generated test whose
+transcriber calls a helper macro from another file is indexed for reach, but
+an assertion inside that helper is refused like any untrusted macro.
+
 ## Wire Format
 
 | Field | Value when fires | Value when not fires |
 |---|---|---|
-| `classification` | `no_static_path` | unchanged |
+| `classification` | unchanged (`no_static_path`, or `weakly_exposed` on the proximity-only path) | unchanged |
 | `static_limit_kind` | `rust_macro_reach_unresolved` | omitted / unchanged |
 | `stop_reasons` | includes `macro_reach_unresolved` | unchanged |
 | `related_tests` | unchanged (witness is not added) | unchanged |
@@ -141,6 +207,12 @@ definition does not mention the changed owner name.
    integration-test witnesses, RIPR-SPEC-0118 refines the kind to
    `rust_integration_public_api_path_unresolved`; non-integration witnesses
    keep `rust_transitive_reach_unresolved`.
+5. **Proximity-only finding** (#7071): the only related test shares the
+   owner's file and calls `outer()`, which invokes `call_inner!`. Result:
+   `weakly_exposed` plus `static_limit_kind: rust_macro_reach_unresolved` and a
+   next step naming the witnessing test.
+6. **A test also calls the owner**: same shape plus a test calling `inner()`
+   directly. Reach is established, so the finding keeps its gap and no limit.
 
 ## Required Evidence
 
@@ -165,6 +237,17 @@ definition does not mention the changed owner name.
 - `crates/ripr/src/analysis/classify/transitive_reach.rs::tests::macro_witness_pointer_uses_may_language_and_no_coverage_claim`
 - `crates/ripr/src/analysis/classify/transitive_reach.rs::tests::macro_reach_limitation_detail_names_edges_route_and_non_claim`
 - `crates/ripr/src/output/human.rs::tests::human_output_surfaces_static_limitation_detail`
+- `crates/ripr/src/analysis/language/rust/proximity_reach_tests.rs::proximity_only_reach_through_a_macro_names_the_macro_limit`
+- `crates/ripr/src/analysis/language/rust/proximity_reach_tests.rs::a_test_calling_the_owner_keeps_the_gap_despite_a_macro_witness`
+- `crates/ripr/src/analysis/language/rust/proximity_reach_tests.rs::proximity_only_reach_without_a_witness_keeps_the_gap`
+- `crates/ripr/src/analysis/language/rust/proximity_reach_tests.rs::proximity_only_reach_through_a_helper_names_the_transitive_limit`
+- `crates/ripr/src/analysis/syntax/local_test_macros.rs::tests::expands_each_invocation_with_its_arguments_and_lines`
+- `crates/ripr/src/analysis/syntax/local_test_macros.rs::tests::repetition_shadowing_scope_and_order_refuse`
+- `crates/ripr/src/analysis/syntax/local_test_macros.rs::tests::arm_selection_follows_count_and_fragment_shape`
+- `crates/ripr/src/analysis/facts/macro_generated_tests.rs::tests::macro_generated_tests_are_indexed_at_their_invocations`
+- `crates/ripr/tests/macro_generated_tests.rs::a_macro_generated_test_reads_like_the_hand_written_test`
+- `crates/ripr/tests/macro_generated_tests.rs::refused_shapes_and_uninvoked_generators_add_no_test`
+- `crates/ripr/tests/macro_generated_tests.rs::a_deferred_assertion_in_a_generated_test_is_refused_like_a_hand_written_one`
 - `fixtures/rust_macro_reach_limitation/expected/check.json`
 - `cargo xtask check-evidence-promotion-honesty`
 
@@ -175,6 +258,9 @@ definition does not mention the changed owner name.
 | Static limit enum | `crates/ripr/src/domain/language.rs` |
 | Stop reason enum | `crates/ripr/src/domain/probe.rs` |
 | Macro witness producer | `crates/ripr/src/analysis/classify/transitive_reach.rs` |
+| Same-file test generator expansion | `crates/ripr/src/analysis/syntax/local_test_macros.rs` |
+| Generated test indexing | `crates/ripr/src/analysis/facts/macro_generated_tests.rs` |
+| Generated test assertion admission | `crates/ripr/src/analysis/classify/owner_pin.rs` |
 | Classifier export | `crates/ripr/src/analysis/classify/mod.rs` |
 | Diff/repo-mode wiring | `crates/ripr/src/analysis/language/rust/mod.rs` |
 | Human witness and limitation-detail projection | `crates/ripr/src/output/human/sections.rs` |

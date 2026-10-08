@@ -329,6 +329,7 @@ mod tests {
             include_unchanged_tests: true,
             resolve_tsconfig_paths: false,
             perl_facts_path: None,
+            perl_producer_failure: None,
             git_timeout: None,
             git_candidate: None,
             production_like_targets: Default::default(),
@@ -440,6 +441,8 @@ mod tests {
             unresolved_property_macros: Vec::new(),
             role_provenance: Default::default(),
             source: std::sync::Arc::from(source),
+            item_scopes: None,
+            macro_candidates: None,
         }
     }
 

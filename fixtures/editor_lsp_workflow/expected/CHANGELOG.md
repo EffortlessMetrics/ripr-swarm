@@ -410,3 +410,39 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — editor_lsp_workflow (15)
+
+Reason:
+RIPR-SPEC-0116: the check drill-in binds --root to the resolved repository (#3948); goldens carry the <cwd>/ placeholder
+
+Command:
+`cargo xtask goldens bless editor_lsp_workflow --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — editor_lsp_workflow (16)
+
+Reason:
+#4001: the LSP code-actions and hover goldens are pinned to production output (`lsp::tests::editor_lsp_workflow_lsp_goldens_match_production`); handoff commands carry `--root <root>` and `<root>/` redirects, and the hover page's missing-discriminator, suggested-test-shape and handoff sections are the production seam hover's lines verbatim
+
+Command:
+`cargo test -p ripr --lib editor_lsp_workflow_lsp_goldens_match_production`
+
+Updated:
+- `expected/lsp-code-actions.json`
+- `expected/lsp-hover.md`
+
+## Pending — editor_lsp_workflow (17)
+
+Reason:
+RIPR-SPEC-0122 #5471: stub route printed only when the resolver yields a stub, with --kind; refusal or nothing otherwise (merge re-bless)
+
+Command:
+`cargo xtask goldens bless editor_lsp_workflow --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

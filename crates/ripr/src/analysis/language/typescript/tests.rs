@@ -4563,6 +4563,7 @@ fn analyze_diff_returns_zero_findings_and_counts_accepted_files() -> Result<(), 
         include_unchanged_tests: false,
         resolve_tsconfig_paths: false,
         perl_facts_path: None,
+        perl_producer_failure: None,
         git_timeout: None,
         git_candidate: None,
         production_like_targets: Default::default(),
@@ -4616,6 +4617,7 @@ fn invalid_utf8_source_produces_no_finding_or_is_disclosed() -> Result<(), Strin
         include_unchanged_tests: false,
         resolve_tsconfig_paths: false,
         perl_facts_path: None,
+        perl_producer_failure: None,
         git_timeout: None,
         git_candidate: None,
         production_like_targets: Default::default(),
@@ -4649,6 +4651,7 @@ fn analyze_diff_splits_changed_files_into_typescript_and_javascript() -> Result<
         include_unchanged_tests: false,
         resolve_tsconfig_paths: false,
         perl_facts_path: None,
+        perl_producer_failure: None,
         git_timeout: None,
         git_candidate: None,
         production_like_targets: Default::default(),
@@ -4721,6 +4724,7 @@ fn analyze_diff_credits_cross_extension_related_test_oracle_for_mts_sources() ->
         include_unchanged_tests: false,
         resolve_tsconfig_paths: false,
         perl_facts_path: None,
+        perl_producer_failure: None,
         git_timeout: None,
         git_candidate: None,
         production_like_targets: Default::default(),
@@ -4824,6 +4828,7 @@ fn analyze_diff_credits_cross_extension_related_test_oracle_for_cts_sources() ->
         include_unchanged_tests: false,
         resolve_tsconfig_paths: false,
         perl_facts_path: None,
+        perl_producer_failure: None,
         git_timeout: None,
         git_candidate: None,
         production_like_targets: Default::default(),
@@ -4902,6 +4907,7 @@ fn analyze_diff_does_not_credit_related_test_from_a_different_modern_module() ->
         include_unchanged_tests: false,
         resolve_tsconfig_paths: false,
         perl_facts_path: None,
+        perl_producer_failure: None,
         git_timeout: None,
         git_candidate: None,
         production_like_targets: Default::default(),
@@ -4967,6 +4973,7 @@ fn analyze_diff_surfaces_over_limit_read_as_named_limitation() -> Result<(), Str
         include_unchanged_tests: false,
         resolve_tsconfig_paths: false,
         perl_facts_path: None,
+        perl_producer_failure: None,
         git_timeout: None,
         git_candidate: None,
         production_like_targets: Default::default(),
@@ -5160,6 +5167,7 @@ fn analyze_diff_does_not_count_excluded_or_generated_typescript_files() -> Resul
         include_unchanged_tests: false,
         resolve_tsconfig_paths: false,
         perl_facts_path: None,
+        perl_producer_failure: None,
         git_timeout: None,
         git_candidate: None,
         production_like_targets: Default::default(),
@@ -5261,6 +5269,7 @@ fn analyze_diff_surfaces_over_limit_tsconfig_read_as_named_limitation() -> Resul
         include_unchanged_tests: false,
         resolve_tsconfig_paths: true,
         perl_facts_path: None,
+        perl_producer_failure: None,
         git_timeout: None,
         git_candidate: None,
         production_like_targets: Default::default(),
@@ -5338,6 +5347,7 @@ fn analyze_diff_surfaces_absolute_base_url_as_named_limitation() -> Result<(), S
         include_unchanged_tests: false,
         resolve_tsconfig_paths: true,
         perl_facts_path: None,
+        perl_producer_failure: None,
         git_timeout: None,
         git_candidate: None,
         production_like_targets: Default::default(),
@@ -5384,6 +5394,7 @@ fn analyze_repo_discloses_partial_run_instead_of_silent_empty() -> Result<(), St
         include_unchanged_tests: false,
         resolve_tsconfig_paths: false,
         perl_facts_path: None,
+        perl_producer_failure: None,
         git_timeout: None,
         git_candidate: None,
         production_like_targets: Default::default(),
@@ -5431,6 +5442,7 @@ fn analyze_diff_dedups_colliding_probe_ids_for_identical_added_lines() -> Result
         include_unchanged_tests: false,
         resolve_tsconfig_paths: false,
         perl_facts_path: None,
+        perl_producer_failure: None,
         git_timeout: None,
         git_candidate: None,
         production_like_targets: Default::default(),
@@ -5517,6 +5529,7 @@ fn analyze_diff_keeps_single_occurrence_probe_ids_stable() -> Result<(), String>
         include_unchanged_tests: false,
         resolve_tsconfig_paths: false,
         perl_facts_path: None,
+        perl_producer_failure: None,
         git_timeout: None,
         git_candidate: None,
         production_like_targets: Default::default(),
@@ -10785,6 +10798,7 @@ fn delta5_verify_command_absent_from_missing_list_when_runner_resolved() -> Resu
         include_unchanged_tests: false,
         resolve_tsconfig_paths: false,
         perl_facts_path: None,
+        perl_producer_failure: None,
         git_timeout: None,
         git_candidate: None,
         production_like_targets: Default::default(),
@@ -10855,6 +10869,125 @@ fn delta5_verify_command_absent_from_missing_list_when_runner_resolved() -> Resu
     Ok(())
 }
 
+/// #6826 discriminating contrast: the ONLY framework evidence in the
+/// workspace is `"test": "node test/pricing.test.mjs"` — the zero-dependency
+/// node:test shape whose script carries neither the `node --test` nor the
+/// `node:test` marker. The old substring marker set failed detection closed
+/// (unresolved framework/runner, no verify command); the broadened detector
+/// must resolve `node_test` from the manifest so the finding carries
+/// `typescript_verify_command` and `verify_command` leaves
+/// `missing_actionability_fields`, with the unresolved limitations gone.
+#[test]
+fn node_direct_file_script_resolves_framework_hint_and_verify_command() -> Result<(), String> {
+    let root = ts_unique_tempdir("node-direct-script")?;
+
+    // Zero dependencies, no lockfile: the direct-invocation script is the
+    // sole package.json evidence.
+    ts_write_file(
+        &root.join("package.json"),
+        r#"{"name":"pricing","scripts":{"test":"node test/pricing.test.mjs"}}"#,
+    )?;
+
+    ts_write_file(
+        &root.join("src/pricing.ts"),
+        "export function applyDiscount(amount: number, threshold: number): number {\n  if (amount >= threshold) {\n    return amount - 10;\n  }\n  return amount;\n}\n",
+    )?;
+
+    ts_write_file(
+        &root.join("test/pricing.test.mjs"),
+        "import { test } from 'node:test';\nimport assert from 'node:assert';\nimport { applyDiscount } from '../src/pricing.ts';\ntest('applies discount above threshold', () => {\n  assert.equal(applyDiscount(100, 50), 90);\n});\n",
+    )?;
+
+    let adapter = TypeScriptAdapter;
+    let options = AnalysisOptions {
+        root: root.clone(),
+        base: None,
+        diff_file: None,
+        mode: crate::analysis::AnalysisMode::Draft,
+        include_unchanged_tests: false,
+        resolve_tsconfig_paths: false,
+        perl_facts_path: None,
+        perl_producer_failure: None,
+        git_timeout: None,
+        git_candidate: None,
+        production_like_targets: Default::default(),
+        test_harnesses: Vec::new(),
+        resolved_subject_identity: None,
+        open_rust_index_paths: Default::default(),
+    };
+    let policy = OraclePolicy::default();
+    let changed_files = vec![ChangedFile {
+        path: PathBuf::from("src/pricing.ts"),
+        added_lines: vec![crate::analysis::diff::ChangedLine {
+            line: 2,
+            new_side_line: 2,
+            text: "  if (amount >= threshold) {".to_string(),
+        }],
+        removed_lines: Vec::new(),
+    }];
+
+    let result = adapter.analyze_diff(&options, &policy, &changed_files);
+    let _ = std::fs::remove_dir_all(&root);
+    let result = result?;
+
+    if result.findings.is_empty() {
+        return Err(format!(
+            "expected at least one finding; got none (changed_files={})",
+            result.changed_files
+        ));
+    }
+    let evidence = &result.findings[0].evidence;
+
+    // Framework detection resolves from the direct-invocation script.
+    if !evidence
+        .iter()
+        .any(|ev| ev == "typescript_framework_hint: node_test")
+    {
+        return Err(format!(
+            "expected typescript_framework_hint: node_test from the direct node script; evidence={evidence:?}"
+        ));
+    }
+
+    // The blocking unresolved-hint limitations must be gone.
+    for limitation in [
+        "typescript_package_limitation: typescript_framework_hint_unresolved",
+        "typescript_package_limitation: typescript_runner_hint_unresolved",
+        "typescript_package_limitation: typescript_test_runner_unresolved",
+    ] {
+        if evidence.iter().any(|ev| ev == limitation) {
+            return Err(format!(
+                "detection resolved node_test but the blocking limitation {limitation} is still emitted; evidence={evidence:?}"
+            ));
+        }
+    }
+
+    // The verify command is derived from the framework mapping.
+    let verify = evidence
+        .iter()
+        .find(|ev| ev.starts_with("typescript_verify_command:"))
+        .ok_or_else(|| {
+            format!("expected a typescript_verify_command evidence line; evidence={evidence:?}")
+        })?;
+    if !verify.contains("node --test test/pricing.test.mjs") {
+        return Err(format!(
+            "expected the node --test verify command targeting the direct script's file, got: {verify:?}"
+        ));
+    }
+
+    // The emitted command must not be listed as missing two lines over.
+    if let Some(line) = evidence
+        .iter()
+        .find(|ev| ev.starts_with("missing_actionability_fields:"))
+        && line.contains("verify_command")
+    {
+        return Err(format!(
+            "missing_actionability_fields still lists verify_command while typescript_verify_command is present (self-contradiction): {line:?}"
+        ));
+    }
+
+    Ok(())
+}
+
 /// Control 2 (cockpit delta #5, issue #1245 — fail-closed):
 /// When the test runner is NOT resolved (no package.json, no framework), the
 /// emitted evidence MUST NOT carry `typescript_verify_command` and MUST still
@@ -10882,6 +11015,7 @@ fn delta5_verify_command_stays_in_missing_list_when_runner_unresolved() -> Resul
         include_unchanged_tests: false,
         resolve_tsconfig_paths: false,
         perl_facts_path: None,
+        perl_producer_failure: None,
         git_timeout: None,
         git_candidate: None,
         production_like_targets: Default::default(),
@@ -10982,6 +11116,7 @@ fn mocha_no_lockfile_emits_runner_unresolved_limitation() -> Result<(), String> 
         include_unchanged_tests: false,
         resolve_tsconfig_paths: false,
         perl_facts_path: None,
+        perl_producer_failure: None,
         git_timeout: None,
         git_candidate: None,
         production_like_targets: Default::default(),
@@ -13778,6 +13913,7 @@ fn ts_analysis_options(root: PathBuf) -> AnalysisOptions {
         include_unchanged_tests: false,
         resolve_tsconfig_paths: false,
         perl_facts_path: None,
+        perl_producer_failure: None,
         git_timeout: None,
         git_candidate: None,
         production_like_targets: Default::default(),

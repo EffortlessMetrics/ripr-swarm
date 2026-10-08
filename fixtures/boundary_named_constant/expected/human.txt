@@ -24,10 +24,10 @@ Start here:
     - 10 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
-  ripr explain --root fixtures/boundary_named_constant/input --diff fixtures/boundary_named_constant/diff.patch --mode fast probe:src_lib.rs:predicate:70700926
-  ripr context --root fixtures/boundary_named_constant/input --diff fixtures/boundary_named_constant/diff.patch --mode fast --at probe:src_lib.rs:predicate:70700926
+  ripr explain --root <cwd>/fixtures/boundary_named_constant/input --diff <cwd>/fixtures/boundary_named_constant/diff.patch --mode fast probe:src_lib.rs:predicate:70700926
+  ripr context --root <cwd>/fixtures/boundary_named_constant/input --diff <cwd>/fixtures/boundary_named_constant/diff.patch --mode fast --at probe:src_lib.rs:predicate:70700926
 Write a test for it:
-  ripr agent stub --root fixtures/boundary_named_constant/input --at src/lib.rs:30
+  ripr agent stub --root <cwd>/fixtures/boundary_named_constant/input --at src/lib.rs:30 --kind predicate
 
 Hidden:
   2 lower-priority finding(s) omitted from default human output.

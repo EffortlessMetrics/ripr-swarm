@@ -71,8 +71,8 @@ Python repair card (preview/advisory)
 Next step
   Python preview: strengthen the existing related test with a focused boundary assertion for missing discriminator `call `render` without `verbose``.
 Drill in:
-  ripr explain --root fixtures/python_adversarial_default_value_overridden/input --diff fixtures/python_adversarial_default_value_overridden/diff.patch --mode fast probe:src_render.py:python_preview:bc1138cb
-  ripr context --root fixtures/python_adversarial_default_value_overridden/input --diff fixtures/python_adversarial_default_value_overridden/diff.patch --mode fast --at probe:src_render.py:python_preview:bc1138cb
+  ripr explain --root <cwd>/fixtures/python_adversarial_default_value_overridden/input --diff <cwd>/fixtures/python_adversarial_default_value_overridden/diff.patch --mode fast probe:src_render.py:python_preview:bc1138cb
+  ripr context --root <cwd>/fixtures/python_adversarial_default_value_overridden/input --diff <cwd>/fixtures/python_adversarial_default_value_overridden/diff.patch --mode fast --at probe:src_render.py:python_preview:bc1138cb
 
 
 Note: 1 Python file analyzed under preview support — preview evidence is advisory and may be incomplete. Treat its findings as advisory, not Rust-grade.

@@ -3,8 +3,9 @@ use super::model::{
     ReceiptStatusCounts, TopLimitation, TopRepair, U64OrNotAvailable,
 };
 use super::util::value_path;
-use crate::agent::loop_commands::shell_arg;
+use crate::agent::loop_commands::{bound_root_path, root_path_display, shell_arg};
 use serde_json::{Value, json};
+use std::path::Path;
 
 /// Build the in-memory summary struct from parsed artifact values.
 ///
@@ -17,7 +18,56 @@ use serde_json::{Value, json};
 ///   When present, `verify_failed_receipts` is derived from its
 ///   `attempts[].verify_result` field. When absent, `verify_failed_receipts`
 ///   stays `not_available` (honest-absent rule: absence ≠ zero).
+///
+/// Without a selected root the reproduction commands it derives keep the
+/// portable `--root .` form; `ripr pr-summary` uses
+/// [`build_pr_evidence_summary_for_root`] so they name the repository it read.
 pub fn build_pr_evidence_summary(
+    start_here_value: Option<&Value>,
+    gap_ledger_value: Option<&Value>,
+    repo_exposure_value: Option<&Value>,
+    diff_report_value: Option<&Value>,
+    baseline_value: Option<&Value>,
+    attempt_ledger_value: Option<&Value>,
+) -> PrEvidenceSummaryJson {
+    build_summary(
+        None,
+        start_here_value,
+        gap_ledger_value,
+        repo_exposure_value,
+        diff_report_value,
+        baseline_value,
+        attempt_ledger_value,
+    )
+}
+
+/// [`build_pr_evidence_summary`] for the repository `ripr pr-summary` read.
+/// Its own reproduction commands (`ripr check`, `ripr first-pr`) name that
+/// repository, like the repair and verify commands it carries from
+/// `start-here.json`, so the list analyzes one repository wherever it is
+/// pasted (#4000).
+pub(crate) fn build_pr_evidence_summary_for_root(
+    root: &Path,
+    start_here_value: Option<&Value>,
+    gap_ledger_value: Option<&Value>,
+    repo_exposure_value: Option<&Value>,
+    diff_report_value: Option<&Value>,
+    baseline_value: Option<&Value>,
+    attempt_ledger_value: Option<&Value>,
+) -> PrEvidenceSummaryJson {
+    build_summary(
+        Some(root),
+        start_here_value,
+        gap_ledger_value,
+        repo_exposure_value,
+        diff_report_value,
+        baseline_value,
+        attempt_ledger_value,
+    )
+}
+
+fn build_summary(
+    root: Option<&Path>,
     start_here_value: Option<&Value>,
     gap_ledger_value: Option<&Value>,
     repo_exposure_value: Option<&Value>,
@@ -46,6 +96,7 @@ pub fn build_pr_evidence_summary(
         why_not_actionable: why_not_actionable_for_category(&entry.category),
     });
     let local_reproduction_commands = derive_local_reproduction_commands(
+        root,
         start_here_value,
         diff_report_value,
         top_repair
@@ -417,6 +468,7 @@ fn derive_top_repair(start_here_value: Option<&Value>) -> (Option<TopRepair>, Op
 }
 
 fn derive_local_reproduction_commands(
+    root: Option<&Path>,
     start_here_value: Option<&Value>,
     diff_report_value: Option<&Value>,
     repair_command: Option<&str>,
@@ -441,9 +493,18 @@ fn derive_local_reproduction_commands(
         .and_then(Value::as_str)
         .unwrap_or("HEAD");
 
-    commands.push(format!("ripr check{base_arg}"));
+    // The selected repository, resolved once (#4000); without one the
+    // commands keep the portable form that runs from the checkout root.
+    let root_arg = root.map_or_else(
+        || ".".to_string(),
+        |root| shell_arg(&root_path_display(&bound_root_path(root))),
+    );
+    match root {
+        Some(_) => commands.push(format!("ripr check --root {root_arg}{base_arg}")),
+        None => commands.push(format!("ripr check{base_arg}")),
+    }
     commands.push(format!(
-        "ripr first-pr --root .{base_arg} --head {}",
+        "ripr first-pr --root {root_arg}{base_arg} --head {}",
         shell_arg(head)
     ));
 
@@ -735,6 +796,40 @@ mod tests {
             (Ok(()), Err(cleanup_error)) => Err(cleanup_error),
             (Ok(()), Ok(())) => Ok(()),
         }
+    }
+
+    /// #4000: `ripr pr-summary --root <dir>` lists its own reproduction
+    /// commands for the repository it read, like the carried repair command,
+    /// so pasting the list from another directory analyzes one repository.
+    #[test]
+    fn root_bound_reproduction_commands_name_the_selected_repository() -> Result<(), String> {
+        use crate::agent::loop_commands::bound_root;
+        let diff = serde_json::json!({"base": "origin/main", "head": "HEAD"});
+        let summary = build_pr_evidence_summary_for_root(
+            std::path::Path::new("nested/my repo"),
+            None,
+            None,
+            None,
+            Some(&diff),
+            None,
+            None,
+        );
+        let resolved = bound_root("nested/my repo");
+        if !std::path::Path::new(&resolved).is_absolute() {
+            return Err(format!("bound root must be absolute: {resolved}"));
+        }
+        let root = shell_arg(&resolved);
+        let expected = vec![
+            format!("ripr check --root {root} --base origin/main"),
+            format!("ripr first-pr --root {root} --base origin/main --head HEAD"),
+        ];
+        if summary.local_reproduction_commands != expected {
+            return Err(format!(
+                "reproduction commands left the selected root: {:?}",
+                summary.local_reproduction_commands
+            ));
+        }
+        Ok(())
     }
 
     #[test]

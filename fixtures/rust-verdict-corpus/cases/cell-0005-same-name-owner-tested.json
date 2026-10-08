@@ -1,0 +1,52 @@
+{
+  "case_id": "cell-0005-same-name-owner-tested",
+  "subject_id": "authored-spec-confirm",
+  "diff": "cases/cell-0005-same-name-owner-tested.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 109
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "field_construction",
+  "test_shape": "same_name_owner_glob_import",
+  "hard_case": "Twin of cell-0005-same-name-owner-unreached: the edit is in retail::price_quote, which the glob-imported bare call does reach.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "total: 12 + items,",
+        "mutated_line": "total: 12 + items,",
+        "outcome": "tests_failed",
+        "failing_test": "tests::retail_quote_charges_twelve_each",
+        "equivalence_review": "not equivalent: retail_quote_charges_twelve_each fails on it"
+      },
+      {
+        "replacement": "total: 12 * items + 1,",
+        "mutated_line": "total: 12 * items + 1,",
+        "outcome": "tests_failed",
+        "failing_test": "tests::retail_quote_charges_twelve_each",
+        "equivalence_review": "not equivalent: retail_quote_charges_twelve_each fails on it"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "retail_quote_charges_twelve_each requires 36 and fails on both mutants. Spec cells: RIPR-SPEC-0005 constructor_field_owner_ambiguous (tested side).",
+  "labeling_observation": {
+    "ripr_commit": "128f794f6",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

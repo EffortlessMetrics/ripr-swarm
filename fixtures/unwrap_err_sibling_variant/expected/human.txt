@@ -24,10 +24,10 @@ Start here:
     - 7 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
-  ripr explain --root fixtures/unwrap_err_sibling_variant/input --diff fixtures/unwrap_err_sibling_variant/diff.patch --mode fast probe:src_lib.rs:return_value:e88897cd
-  ripr context --root fixtures/unwrap_err_sibling_variant/input --diff fixtures/unwrap_err_sibling_variant/diff.patch --mode fast --at probe:src_lib.rs:return_value:e88897cd
+  ripr explain --root <cwd>/fixtures/unwrap_err_sibling_variant/input --diff <cwd>/fixtures/unwrap_err_sibling_variant/diff.patch --mode fast probe:src_lib.rs:return_value:e88897cd
+  ripr context --root <cwd>/fixtures/unwrap_err_sibling_variant/input --diff <cwd>/fixtures/unwrap_err_sibling_variant/diff.patch --mode fast --at probe:src_lib.rs:return_value:e88897cd
 Write a test for it:
-  ripr agent stub --root fixtures/unwrap_err_sibling_variant/input --at src/lib.rs:11
+  ripr agent stub --root <cwd>/fixtures/unwrap_err_sibling_variant/input --at src/lib.rs:11 --kind return_value
 
 Hidden:
   1 lower-priority finding(s) omitted from default human output.

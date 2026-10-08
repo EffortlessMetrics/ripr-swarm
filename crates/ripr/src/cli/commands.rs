@@ -38,6 +38,8 @@ mod policy_commands;
 mod receipt_command;
 #[path = "commands/swarm/mod.rs"]
 mod swarm_command;
+#[path = "commands/task_first.rs"]
+mod task_first;
 
 pub(super) use agent::{agent, before_phase_stdout, run_before_repair_with_identity};
 pub(super) use context::context;
@@ -60,6 +62,9 @@ pub(super) use receipt_command::{RECEIPT_CHECK_HELP, RECEIPT_WRITE_HELP};
 // for `ripr cache status|clear` suggestions, so `cli::help` needs a path to
 // them. Removing this re-export must fail to compile.
 pub(super) use cache_command::{CACHE_CLEAR_HELP, CACHE_STATUS_HELP};
+pub(super) use task_first::{
+    CONTINUE_HELP, REPAIR_HELP, STATUS_HELP, continue_repair, repair, status,
+};
 
 pub(super) fn receipt(args: &[String]) -> Result<(), String> {
     receipt_command::run_receipt(args)
@@ -7865,11 +7870,22 @@ language = "rust"
     /// `-generated.rs:42`, a previously usable selector, with no `--`
     /// end-of-options escape to recover it. The token must reach selector
     /// handling, while a genuine typo still gets the suggestion.
+    ///
+    /// The selector is explained against an empty `--diff` so the test never
+    /// analyzes the host checkout's diff against its default branch, which on
+    /// a PR with a large Rust diff took over thirty minutes.
     #[test]
-    fn explain_keeps_dash_prefixed_file_line_selectors() {
+    fn explain_keeps_dash_prefixed_file_line_selectors() -> Result<(), String> {
+        let dir =
+            std::env::temp_dir().join(format!("ripr-explain-dash-selector-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).map_err(|error| format!("create {dir:?}: {error}"))?;
+        let diff = dir.join("empty.diff");
+        std::fs::write(&diff, "").map_err(|error| format!("write {diff:?}: {error}"))?;
+        let diff_arg = diff.to_string_lossy().into_owned();
         let unknown_argument_error =
             "unknown explain argument \"-generated.rs:42\". Run `ripr explain --help`.";
-        let result = explain(&args(&["-generated.rs:42"]));
+        let result = explain(&args(&["--diff", &diff_arg, "-generated.rs:42"]));
+        let _ = std::fs::remove_dir_all(&dir);
         assert_ne!(
             result,
             Err(unknown_argument_error.to_string()),
@@ -7888,6 +7904,7 @@ language = "rust"
                     .to_string()
             )
         );
+        Ok(())
     }
 
     /// Also pins that the `!value.starts_with('-')` guard on the positional

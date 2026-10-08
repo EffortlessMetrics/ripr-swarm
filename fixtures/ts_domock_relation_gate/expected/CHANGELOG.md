@@ -94,3 +94,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — ts_domock_relation_gate (9)
+
+Reason:
+RIPR-SPEC-0116: the check drill-in binds --root to the resolved repository (#3948); goldens carry the <cwd>/ placeholder
+
+Command:
+`cargo xtask goldens bless ts_domock_relation_gate --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

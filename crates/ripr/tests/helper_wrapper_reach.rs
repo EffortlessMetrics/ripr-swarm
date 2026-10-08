@@ -402,12 +402,19 @@ fn intermediate_hop_test_is_not_stopped_by_a_dropping_outer_wrapper() -> Result<
 
 // #6780 review round 2: activation binds the first scalar buried in a
 // compound wrapper argument, so `order_discount(std::cmp::max(10, 50))` or
-// `order_discount(10 * 2)` must not pair the `10 <= qty` boundary.
+// `order_discount(10 * 2)` must not pair the `10 <= qty` boundary. Where the
+// refusal lands differs after the #6796 unresolved-boundary authority:
+// `max(10, 50)` keeps infection yes and refuses at pairing, while the
+// computed `10 * 2` argument leaves the boundary unresolved, so the finding
+// abstains as `infection_unknown` before pairing is consulted.
 #[test]
 fn buried_scalar_in_a_wrapper_argument_does_not_pair() -> Result<(), String> {
-    for pin in [
-        "        assert_eq!(order_discount(std::cmp::max(10, 50)), 5);",
-        "        assert_eq!(order_discount(10 * 2), 5);",
+    for (pin, refuses_at_infection) in [
+        (
+            "        assert_eq!(order_discount(std::cmp::max(10, 50)), 5);",
+            false,
+        ),
+        ("        assert_eq!(order_discount(10 * 2), 5);", true),
     ] {
         let tests = format!("{pin}\n        assert_eq!(order_discount(3), 0);");
         let finding = predicate_finding(&bulk_source(FORWARDING, &tests), BULK_DIFF)?;
@@ -417,10 +424,17 @@ fn buried_scalar_in_a_wrapper_argument_does_not_pair() -> Result<(), String> {
             "{pin}: {finding}"
         );
         assert_ne!(finding["classification"], "exposed", "{pin}: {finding}");
-        assert!(
-            discriminate_summary(&finding).contains("same_test_pairing_missing"),
-            "{pin}: {finding}"
-        );
+        if refuses_at_infection {
+            assert_eq!(
+                finding["classification"], "infection_unknown",
+                "{pin}: {finding}"
+            );
+        } else {
+            assert!(
+                discriminate_summary(&finding).contains("same_test_pairing_missing"),
+                "{pin}: {finding}"
+            );
+        }
     }
     Ok(())
 }

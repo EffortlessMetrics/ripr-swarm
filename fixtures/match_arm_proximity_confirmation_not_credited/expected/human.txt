@@ -24,10 +24,10 @@ Start here:
     - 10 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
-  ripr explain --root fixtures/match_arm_proximity_confirmation_not_credited/input --diff fixtures/match_arm_proximity_confirmation_not_credited/diff.patch --mode fast probe:src_lib.rs:match_arm:9e71545f
-  ripr context --root fixtures/match_arm_proximity_confirmation_not_credited/input --diff fixtures/match_arm_proximity_confirmation_not_credited/diff.patch --mode fast --at probe:src_lib.rs:match_arm:9e71545f
+  ripr explain --root <cwd>/fixtures/match_arm_proximity_confirmation_not_credited/input --diff <cwd>/fixtures/match_arm_proximity_confirmation_not_credited/diff.patch --mode fast probe:src_lib.rs:match_arm:9e71545f
+  ripr context --root <cwd>/fixtures/match_arm_proximity_confirmation_not_credited/input --diff <cwd>/fixtures/match_arm_proximity_confirmation_not_credited/diff.patch --mode fast --at probe:src_lib.rs:match_arm:9e71545f
 Write a test for it:
-  ripr agent stub --root fixtures/match_arm_proximity_confirmation_not_credited/input --at src/lib.rs:23
+  ripr agent stub --root <cwd>/fixtures/match_arm_proximity_confirmation_not_credited/input --at src/lib.rs:23 --kind match_arm
 
 More:
   Full evidence: rerun with --format human-full

@@ -25,10 +25,10 @@ Start here:
     - 14 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
-  ripr explain --root fixtures/rust_transitive_reach_same_name_other_type/input --diff fixtures/rust_transitive_reach_same_name_other_type/diff.patch --mode fast probe:src_queue.rs:predicate:95e16c2d
-  ripr context --root fixtures/rust_transitive_reach_same_name_other_type/input --diff fixtures/rust_transitive_reach_same_name_other_type/diff.patch --mode fast --at probe:src_queue.rs:predicate:95e16c2d
+  ripr explain --root <cwd>/fixtures/rust_transitive_reach_same_name_other_type/input --diff <cwd>/fixtures/rust_transitive_reach_same_name_other_type/diff.patch --mode fast probe:src_queue.rs:predicate:95e16c2d
+  ripr context --root <cwd>/fixtures/rust_transitive_reach_same_name_other_type/input --diff <cwd>/fixtures/rust_transitive_reach_same_name_other_type/diff.patch --mode fast --at probe:src_queue.rs:predicate:95e16c2d
 Write a test for it:
-  ripr agent stub --root fixtures/rust_transitive_reach_same_name_other_type/input --at src/queue.rs:11
+  ripr agent stub --root <cwd>/fixtures/rust_transitive_reach_same_name_other_type/input --at src/queue.rs:11 --kind predicate
 
 More:
   Full evidence: rerun with --format human-full

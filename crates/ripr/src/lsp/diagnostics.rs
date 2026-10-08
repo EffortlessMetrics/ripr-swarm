@@ -1,8 +1,8 @@
 use super::component_outcome::{AnalysisComponent, ComponentOutcome};
 use super::config::LspAnalysisConfig;
 use super::gap_artifacts::{
-    GapArtifactKind, GapArtifactRejection, GapArtifactValidationContext, validate_gap_artifact,
-    validate_workspace_gap_artifact_report,
+    GapArtifactKind, GapArtifactRejection, GapArtifactValidationContext, bind_portable_command,
+    validate_gap_artifact, validate_workspace_gap_artifact_report,
 };
 use super::state::{AnalysisSnapshot, HarnessFactsOnSnapshot, RefreshMetadata};
 use super::uri::{
@@ -328,6 +328,11 @@ pub(super) struct FindingDiagnosticProjection<'a> {
     pub position_encoding: &'a PositionEncodingKind,
     pub origins: &'a crate::analysis::diagnostic_origin::RustDiagnosticOrigins,
     pub causal_projection: Option<&'a CausalDeltaArtifact>,
+    /// The session's drill-in route. When present, the witness's
+    /// `explain_command` names the workspace root and the session's diff
+    /// source instead of the domain's portable `--root .` (#3948): a client
+    /// runs it from wherever the editor's terminal happens to be.
+    pub navigation: Option<&'a crate::app::FindingNavigation>,
 }
 
 impl<'a> FindingDiagnosticProjection<'a> {
@@ -341,11 +346,20 @@ impl<'a> FindingDiagnosticProjection<'a> {
             position_encoding,
             origins,
             causal_projection: None,
+            navigation: None,
         }
     }
 
     fn with_causal(mut self, causal_projection: Option<&'a CausalDeltaArtifact>) -> Self {
         self.causal_projection = causal_projection;
+        self
+    }
+
+    pub(super) fn with_navigation(
+        mut self,
+        navigation: Option<&'a crate::app::FindingNavigation>,
+    ) -> Self {
+        self.navigation = navigation;
         self
     }
 }
@@ -394,6 +408,9 @@ pub(super) fn finding_diagnostics_by_uri_with_profile(
             projection.position_encoding,
             projection.origins,
         );
+        if let Some(navigation) = projection.navigation {
+            bind_witness_explain_command(&mut diagnostic, navigation, &primary.id);
+        }
         // Producer authority: reaching this point means the finding passed
         // `finding_is_visible_in_profile`. The delivery budget consumes this
         // explicit ordinary-finding signal after the more specific gap/seam
@@ -441,6 +458,34 @@ pub(super) fn finding_diagnostics_by_uri_with_profile(
         grouped.entry(uri).or_default().push(diagnostic);
     }
     Ok(grouped)
+}
+
+/// Replace the witness's portable `explain_command` with the session's
+/// drill-in route, in both places the diagnostic data carries it, so hover,
+/// code actions and the raw payload agree.
+fn bind_witness_explain_command(
+    diagnostic: &mut Diagnostic,
+    navigation: &crate::app::FindingNavigation,
+    finding_id: &str,
+) {
+    let Some(data) = diagnostic
+        .data
+        .as_mut()
+        .and_then(serde_json::Value::as_object_mut)
+    else {
+        return;
+    };
+    if !data.contains_key("explain_command") {
+        return;
+    }
+    let command = serde_json::Value::String(navigation.explain_command(finding_id));
+    if let Some(witness) = data
+        .get_mut("witness")
+        .and_then(serde_json::Value::as_object_mut)
+    {
+        witness.insert("explain_command".to_string(), command.clone());
+    }
+    data.insert("explain_command".to_string(), command);
 }
 
 pub(super) fn finding_is_visible_in_profile(
@@ -495,6 +540,26 @@ pub(super) fn normalized_diagnostic_payload_digest(
     digest.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
+fn project_bound_root(root: &Path, command: &str) -> String {
+    let bound = crate::agent::loop_commands::shell_arg(&crate::agent::loop_commands::bound_root(
+        &root.display().to_string(),
+    ));
+    let raw = crate::agent::loop_commands::bound_root(&root.display().to_string());
+    // The root argument first, then a redirect anchored under the root. The
+    // redirect is compared unquoted: one checkout's path may need quoting
+    // where another's does not, and both name the same artifact.
+    let projected = command.replace(&format!("--root {bound}"), "--root repo://");
+    let Some((body, tail)) = projected.rsplit_once(" > ") else {
+        return projected;
+    };
+    match super::gap_artifacts::shell_arg_token(tail)
+        .and_then(|target| target.strip_prefix(&format!("{raw}/")))
+    {
+        Some(artifact) => format!("{body} > repo://{artifact}"),
+        None => projected,
+    }
+}
+
 fn normalize_path_values(root: &Path, value: &mut serde_json::Value, key: Option<&str>) {
     match value {
         serde_json::Value::Object(object) => {
@@ -510,6 +575,14 @@ fn normalize_path_values(root: &Path, value: &mut serde_json::Value, key: Option
         serde_json::Value::String(string) => {
             if matches!(key, Some("file" | "gap_ledger")) {
                 *string = display_repo_path(root, Path::new(string)).to_string();
+            } else if matches!(
+                key,
+                Some("explain_command" | "verification_commands" | "receipt_command")
+            ) {
+                // The drill-in and gap verify/receipt commands name the
+                // checkout (#3948, #4001); equivalent checkouts must still
+                // share one cache identity.
+                *string = project_bound_root(root, string);
             } else if key == Some("uri")
                 && let Ok(uri) = string.parse::<Uri>()
                 && let Some(path) = path_from_file_uri(&uri)
@@ -1065,6 +1138,11 @@ pub(super) fn workspace_diagnostics_with_config_and_open_rust_paths_and_progress
     );
     let is_full_run = run_status == "full";
 
+    // The session analyzed the saved worktree (#3183), so the witness
+    // command replays that diff source against the workspace root, the same
+    // route `ripr.collectContext` ships (#5994).
+    let navigation =
+        crate::app::finding_navigation_with_worktree(&config.check_input(&root), None, false, true);
     let mut grouped = finding_diagnostics_by_uri_with_profile(
         &root,
         &findings,
@@ -1075,7 +1153,8 @@ pub(super) fn workspace_diagnostics_with_config_and_open_rust_paths_and_progress
             &config.position_encoding,
             &origins,
         )
-        .with_causal(causal_projection.as_ref()),
+        .with_causal(causal_projection.as_ref())
+        .with_navigation(Some(&navigation)),
     )?;
 
     let classified_seams = raw_seams
@@ -2382,10 +2461,18 @@ fn gap_record_diagnostic_data_with_causal(
         "repair_route": record.repair_route,
         "anchor": record.anchor,
         "evidence_ids": record.evidence_ids,
-        "verification_commands": record.verification_commands,
+        // #4001: copied commands name the selected workspace, not `.`.
+        "verification_commands": record
+            .verification_commands
+            .iter()
+            .filter_map(|command| bind_portable_command(root, command))
+            .collect::<Vec<_>>(),
         "regeneration_commands": record.regeneration_commands,
         "regeneration_command_specs": regeneration_command_specs,
-        "receipt_command": record.receipt_command,
+        "receipt_command": record
+            .receipt_command
+            .as_deref()
+            .and_then(|command| bind_portable_command(root, command)),
         "receipt": record.receipt,
         "authority_boundary": record.authority_boundary,
     });
@@ -2437,11 +2524,11 @@ fn non_empty(value: &str) -> Option<&str> {
     }
 }
 
-/// Per-class severity for seam diagnostics. WARNING for the headline-
-/// eligible classes (the agent should act); INFORMATION for `Opaque`
-/// (visible but advisory). `StronglyGripped`, `Intentional`, and
-/// `Suppressed` produce no diagnostic — `diagnostic_for_classified_seam`
-/// returns `None` for those.
+/// Per-class severity for seam diagnostics, owned by `SeverityConfig`:
+/// WARNING for gap classes (the agent should act); INFORMATION for static
+/// limitations (opaque and the `*_unknown` classes: visible but advisory,
+/// #6775). `StronglyGripped`, `Intentional`, and `Suppressed` produce no
+/// diagnostic — `diagnostic_for_classified_seam` returns `None` for those.
 pub(super) fn diagnostic_severity_for_grip_class(
     class: SeamGripClass,
 ) -> Option<DiagnosticSeverity> {
@@ -3925,6 +4012,77 @@ mod seam_diagnostic_tests {
         result
     }
 
+    /// #4001 controls 1, 8 and 11: a gap record's portable `--root .`
+    /// commands are projected with the selected workspace root, never the
+    /// server's working directory, and relocated checkouts keep one
+    /// normalized diagnostic identity.
+    #[test]
+    fn gap_diagnostic_commands_bind_the_selected_root_not_the_server_cwd() -> Result<(), String> {
+        let root_a = temp_gap_root()?;
+        // A path that needs quoting where `root_a` does not: the projection
+        // must still give both the same identity.
+        let root_b = temp_gap_root_named("relocated checkout")?;
+        let result = (|| {
+            let mut record = gap_record(true);
+            record.verification_commands = vec!["ripr agent verify --root . --json".to_string()];
+            record.receipt_command = Some(
+                "ripr agent receipt --root . --json > target/ripr/receipts/gap.json".to_string(),
+            );
+            let ledger = Path::new("target/ripr/reports/gap-decision-ledger.json");
+            let render = |root: &Path| {
+                let bound = crate::agent::loop_commands::bound_root(&root.to_string_lossy());
+                let data = gap_record_diagnostic_data_with_causal(root, ledger, &record, None);
+                (bound, data)
+            };
+            let (bound_a, data_a) = render(&root_a);
+            // Discriminator: the selected root is not the process CWD, so a
+            // projection that fell back to `.` or the CWD cannot pass.
+            let cwd = crate::agent::loop_commands::bound_root(".");
+            if bound_a == cwd {
+                return Err(format!("fixture root must differ from the CWD: {bound_a}"));
+            }
+            let arg_a = crate::agent::loop_commands::shell_arg(&bound_a);
+            let expected_verify = format!("ripr agent verify --root {arg_a} --json");
+            let expected_receipt = format!(
+                "ripr agent receipt --root {arg_a} --json > {}",
+                crate::agent::loop_commands::shell_arg(
+                    &crate::agent::loop_commands::anchored_redirect_target(
+                        &bound_a,
+                        "target/ripr/receipts/gap.json",
+                    )
+                )
+            );
+            if data_a["verification_commands"] != serde_json::json!([expected_verify])
+                || data_a["receipt_command"] != serde_json::json!(expected_receipt)
+            {
+                return Err(format!("commands did not bind the selected root: {data_a}"));
+            }
+
+            // Relocated checkout: a different display, the same identity.
+            let (_, data_b) = render(&root_b);
+            if data_a["receipt_command"] == data_b["receipt_command"] {
+                return Err("relocated checkouts must render distinct roots".to_string());
+            }
+            let diagnostic = |data: serde_json::Value| Diagnostic {
+                range: Range::default(),
+                message: "gap".to_string(),
+                data: Some(data),
+                ..Diagnostic::default()
+            };
+            let digest_a = normalized_diagnostic_payload_digest(&root_a, &[diagnostic(data_a)]);
+            let digest_b = normalized_diagnostic_payload_digest(&root_b, &[diagnostic(data_b)]);
+            if digest_a != digest_b {
+                return Err("relocated checkouts must share one diagnostic identity".to_string());
+            }
+            Ok(())
+        })();
+        fs::remove_dir_all(&root_a)
+            .map_err(|err| format!("remove temp root {} failed: {err}", root_a.display()))?;
+        fs::remove_dir_all(&root_b)
+            .map_err(|err| format!("remove temp root {} failed: {err}", root_b.display()))?;
+        result
+    }
+
     #[test]
     fn gap_diagnostic_projects_only_producer_owned_discriminator() -> Result<(), String> {
         let root = temp_gap_root()?;
@@ -4089,14 +4247,15 @@ mod seam_diagnostic_tests {
     }
 
     fn temp_gap_root() -> Result<PathBuf, String> {
+        temp_gap_root_named("ripr-lsp-gap-diagnostics")
+    }
+
+    fn temp_gap_root_named(name: &str) -> Result<PathBuf, String> {
         let stamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_err(|err| format!("system clock before UNIX_EPOCH: {err}"))?
             .as_nanos();
-        let root = std::env::temp_dir().join(format!(
-            "ripr-lsp-gap-diagnostics-{}-{stamp}",
-            std::process::id()
-        ));
+        let root = std::env::temp_dir().join(format!("{name}-{}-{stamp}", std::process::id()));
         fs::create_dir_all(root.join("target/ripr/reports"))
             .map_err(|err| format!("create temp root {} failed: {err}", root.display()))?;
         Ok(root)

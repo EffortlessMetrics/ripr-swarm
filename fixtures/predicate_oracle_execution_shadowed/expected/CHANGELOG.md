@@ -128,3 +128,55 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — predicate_oracle_execution_shadowed (11)
+
+Reason:
+RIPR-SPEC-0116: the check drill-in binds --root to the resolved repository (#3948); goldens carry the <cwd>/ placeholder
+
+Command:
+`cargo xtask goldens bless predicate_oracle_execution_shadowed --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — predicate_oracle_execution_shadowed (12)
+
+Reason:
+RIPR-SPEC-0122: a predicate's before is cut to the same span as its after (#6995)
+
+Command:
+`cargo xtask goldens bless predicate_oracle_execution_shadowed --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — predicate_oracle_execution_shadowed (13)
+
+Reason:
+RIPR-SPEC-0240: a non-limit assertion refusal no longer offers a static-limit reading (#6903)
+
+Command:
+`cargo xtask goldens bless predicate_oracle_execution_shadowed --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — predicate_oracle_execution_shadowed (14)
+
+Reason:
+RIPR-SPEC-0122 #5471: stub route printed only when the resolver yields a stub, with --kind; refusal or nothing otherwise (merge re-bless)
+
+Command:
+`cargo xtask goldens bless predicate_oracle_execution_shadowed --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

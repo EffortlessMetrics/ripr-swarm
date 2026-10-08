@@ -1,0 +1,22 @@
+{
+  "case_id": "old-tag-boxed-into-wrapper",
+  "subject_id": "authored-old-errors",
+  "origin": "authored",
+  "anchor": "src/errors.rs:59",
+  "behavior_family": "error_variant",
+  "test_shape": "boxed_into_wrapper_downcast_pin",
+  "hard_case": true,
+  "truth": "partially_discriminated",
+  "ideal_verdict": "gap",
+  "observed_verdict": "limited",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "weakly_exposed"
+  ],
+  "outcome": "abstained",
+  "contradictions": [],
+  "findings_scored": 2,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}
