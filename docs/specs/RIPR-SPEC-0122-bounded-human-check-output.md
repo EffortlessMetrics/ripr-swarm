@@ -241,6 +241,12 @@ line (a `--diff` patch that disagrees with the checkout, or a removed line). Onl
 default human format runs the resolver; JSON and `human-full` output are
 unchanged.
 
+When the file has seams but the function has none of the requested family,
+a direct `ripr agent stub --at FILE:LINE --kind FAMILY` refusal names
+`FAMILY`, rather than the internal seam kind (#6689). Its `nearest:`
+suggestions are filtered to that family before the five-entry limit is
+applied. If the file contains only other families, the suggestions are empty.
+
 The stub producer covers free functions and methods of inherent or trait
 impls at module level whose generics are lifetimes only; a trait-impl method
 is called as `<Type as Trait>::method(..)` (#5471). A changed field of the

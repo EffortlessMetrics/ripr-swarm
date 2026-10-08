@@ -661,7 +661,6 @@ fn bare_at_stubs_only_a_reported_gap() -> Result<(), String> {
     scratch.cleanup()
 }
 
-
 /// #6689 items 1–2: refusal hints keep the requested family and never route
 /// the caller to a nearer seam of another family.
 const KIND_REFUSAL_SOURCE: &str = "pub fn plain(n: u8) -> u8 {\n    if n > 3 { n } else { 0 }\n}\n\npub fn fallible(input: &str) -> Result<u8, E> {\n    if input.is_empty() {\n        return Err(E::Bad);\n    }\n    Ok(1)\n}\n\n#[derive(Debug, PartialEq)]\npub enum E { Bad }\n";

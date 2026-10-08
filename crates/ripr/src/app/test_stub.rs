@@ -115,6 +115,13 @@ pub(crate) fn resolve_test_stub(
     }
 }
 
+/// A validated probe-family spelling paired with its selection kind.
+#[derive(Clone, Copy)]
+struct AtKind<'a> {
+    family: &'a str,
+    seam_kind: SeamKind,
+}
+
 /// The one `--at FILE:LINE` resolver, shared by `ripr agent stub --at` and
 /// the route `ripr check` prints (#5471).
 ///
@@ -144,7 +151,12 @@ fn resolve_at_location(
     line: usize,
     kind: Option<&str>,
 ) -> Result<TestStubResolution, TestStubError> {
-    let kind = kind.and_then(analysis::seam_kind_for_probe_family);
+    let kind = kind.and_then(|family| {
+        analysis::seam_kind_for_probe_family(family).map(|seam_kind| AtKind {
+            family,
+            seam_kind,
+        })
+    });
     match (scoped_file(root, file), kind) {
         (Some(relative), Some(_)) => {
             let seams =
@@ -365,7 +377,7 @@ fn resolve_at(
     candidates: Vec<AtCandidate<'_>>,
     file: &str,
     line: usize,
-    kind: Option<SeamKind>,
+    kind: Option<AtKind<'_>>,
 ) -> Result<TestStubResolution, TestStubError> {
     // An empty list says nothing about its source; only the `--kind` path
     // gathers shape candidates, so without a kind it was a gap list.
@@ -421,7 +433,7 @@ fn resolve_at(
     // another kind's stub targets a different behavior (#6298) and its
     // refusal names the wrong blocker.
     if let Some(kind) = kind {
-        candidates.retain(|candidate| candidate.seam().kind() == kind);
+        candidates.retain(|candidate| candidate.seam().kind() == kind.seam_kind);
     }
     candidates.sort_by_key(|candidate| candidate.seam().display_line().abs_diff(line));
     // A single-file parse lists every seam, not only the reported gaps, so
@@ -475,6 +487,9 @@ fn resolve_at(
         return Ok(resolution);
     }
     let mut nearby = in_file;
+    if let Some(kind) = kind {
+        nearby.retain(|candidate| candidate.seam().kind() == kind.seam_kind);
+    }
     nearby.sort_by_key(|candidate| candidate.seam().display_line().abs_diff(line));
     let listed = nearby
         .iter()
@@ -488,7 +503,7 @@ fn resolve_at(
         })
         .collect::<Vec<_>>();
     let noun = match kind {
-        Some(kind) => format!("{} {noun}", kind.as_str()),
+        Some(kind) => format!("{} {noun}", kind.family),
         None => noun.to_string(),
     };
     Err(TestStubError::NotFound(format!(
