@@ -3167,7 +3167,19 @@ fn field_pin(
     line_text: &str,
     expression: &str,
 ) -> Option<OwnerReturnPin> {
-    let owner = owner(index, "clone");
+    field_pin_of(index, lib, "clone", line_text, expression)
+}
+
+/// A `field_construction` probe on the first line of owner `name` whose
+/// trimmed text is `line_text`.
+fn field_pin_of(
+    index: &RustIndex,
+    lib: &str,
+    name: &str,
+    line_text: &str,
+    expression: &str,
+) -> Option<OwnerReturnPin> {
+    let owner = owner(index, name);
     let line = lib
         .lines()
         .enumerate()
@@ -4569,6 +4581,461 @@ fn stored_macro_candidates_never_hide_a_site_in_this_crate() -> Result<(), Strin
     // Most files rule some name out; a vacuous pass would check none.
     assert!(checked > 150, "only {checked} files ruled a name out");
     Ok(())
+}
+
+/// RIPR-SPEC-0225: `build` returns a `Config` literal; `parse` returns it
+/// inside `Ok(..)` after a `?`.
+const CONFIG_LIB: &str = r#"#[derive(Debug, Clone, PartialEq)]
+pub struct Count(pub u32);
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Config {
+    pub retries: u32,
+    pub name: String,
+    pub count: Count,
+}
+
+pub fn build(n: u32) -> Config {
+    Config {
+        retries: n + 1,
+        name: "x".into(),
+        count: Count(n),
+    }
+}
+
+pub fn parse(s: &str) -> Result<Config, String> {
+    let n: u32 = s.parse().map_err(|_| String::from("bad"))?;
+    Ok(Config {
+        retries: n + 1,
+        name: "x".into(),
+        count: Count(n),
+    })
+}
+"#;
+
+/// The `retries` field pin of `owner` against `tests` (one test).
+fn whole_value_pin(
+    lib: &str,
+    owner_name: &str,
+    tests: &str,
+) -> (RustIndex, Option<OwnerReturnPin>) {
+    let index = index(&[(LIB, lib), (TESTS, tests)]);
+    let pin = field_pin_of(
+        &index,
+        lib,
+        owner_name,
+        "retries: n + 1,",
+        "retries: n + 1,",
+    );
+    (index, pin)
+}
+
+fn whole_value_admits(lib: &str, owner_name: &str, body: &str) -> bool {
+    let tests = format!("use demo::*;\n#[test]\nfn pins() {{\n{body}\n}}\n");
+    let (index, pin) = whole_value_pin(lib, owner_name, &tests);
+    assert!(
+        pin.is_some(),
+        "the whole-value field pin must establish: {lib}"
+    );
+    pin.is_some_and(|pin| !admitted_texts(&index, &pin).is_empty())
+}
+
+/// `CONFIG_LIB` plus a method owner returning a `Self { .. }` tail and an
+/// owner returning `Some(..)` against a declared `Option<Config>`.
+const CONFIG_VARIANTS_LIB: &str = r#"
+impl Config {
+    pub fn bumped(&self, n: u32) -> Self {
+        Self {
+            retries: n + 1,
+            name: "x".into(),
+            count: Count(n),
+        }
+    }
+}
+
+pub fn maybe(n: u32) -> Option<Config> {
+    Some(Config {
+        retries: n + 1,
+        name: "x".into(),
+        count: Count(n),
+    })
+}
+"#;
+
+/// #7066 review: the `Self { .. }` tail of a method resolves to the impl's
+/// type and pins through a typed receiver; a `Some(..)` tail pins only
+/// against `Some(..)` of the literal, not `Ok(..)` or the bare literal.
+#[test]
+fn a_whole_value_field_pin_reads_self_tails_methods_and_option_wrappers() {
+    let lib = format!("{CONFIG_LIB}{CONFIG_VARIANTS_LIB}");
+    let literal = r#"Config { retries: 4, name: "x".into(), count: Count(3) }"#;
+    let base = r#"let base = Config { retries: 0, name: "y".into(), count: Count(0) };"#;
+    assert!(whole_value_admits(
+        &lib,
+        "bumped",
+        &format!("{base}\nassert_eq!(base.bumped(3), {literal});")
+    ));
+    // The receiver must type as the impl's `Config`.
+    assert!(!whole_value_admits(
+        &lib,
+        "bumped",
+        &format!("let base = load();\nassert_eq!(base.bumped(3), {literal});")
+    ));
+    assert!(whole_value_admits(
+        &lib,
+        "maybe",
+        &format!("assert_eq!(maybe(3), Some({literal}));")
+    ));
+    for body in [
+        format!("assert_eq!(maybe(3), Ok({literal}));"),
+        format!("assert_eq!(maybe(3), {literal});"),
+    ] {
+        assert!(!whole_value_admits(&lib, "maybe", &body), "{body}");
+    }
+}
+
+/// RIPR-SPEC-0225 acceptance examples 1, 3 and 4: a whole-value literal
+/// that names the changed field with an independent value pins it,
+/// directly, through `Ok(..)` and through a once-used `let` of the owner
+/// call. (Examples 9, 11, 14 and 16 are verdict-corpus rows.)
+#[test]
+fn a_whole_value_literal_naming_the_field_pins_it() {
+    let literal = r#"Config { retries: 4, name: "x".into(), count: Count(3) }"#;
+    for body in [
+        format!("assert_eq!(build(3), {literal});"),
+        format!("assert_eq!({literal}, build(3));"),
+        format!("let c = build(3);\nassert_eq!(c, {literal});"),
+        format!("let c: Config = build(3);\nassert_eq!({literal}, c);"),
+        r#"assert_eq!(build(3), Config { retries: (4), name: String::from("x"), count: Count(3) });"#
+            .to_string(),
+    ] {
+        assert!(whole_value_admits(CONFIG_LIB, "build", &body), "{body}");
+    }
+    assert!(whole_value_admits(
+        CONFIG_LIB,
+        "parse",
+        &format!("assert_eq!(parse(\"3\"), Ok({literal}));")
+    ));
+}
+
+/// RIPR-SPEC-0225 "No credit" and acceptance examples 5-8, 10, 12, 13 and
+/// 15: a separate binding or helper, a functional update, another call,
+/// `assert_ne!`, a value copied from the result, a `let mut` or a second use
+/// of the binding, a mismatched wrapper, and a dependent expected value give
+/// no credit.
+#[test]
+fn a_whole_value_literal_without_an_independent_field_value_does_not_pin() {
+    let literal = r#"Config { retries: 4, name: "x".into(), count: Count(3) }"#;
+    for body in [
+        format!("let c = build(3);\nlet e = {literal};\nassert_eq!(c, e);"),
+        "assert_eq!(build(3), expected());".to_string(),
+        r#"assert_eq!(build(3), Config { name: "x".into(), ..Config::default() });"#.to_string(),
+        r#"assert_eq!(build(3), Config { retries: 4, ..base() });"#.to_string(),
+        format!("assert_eq!(other(3), {literal});"),
+        format!("assert_ne!(build(3), {literal});"),
+        r#"let c = build(3);
+assert_eq!(c, Config { retries: c.retries, name: "x".into(), count: Count(3) });"#
+            .to_string(),
+        format!("let mut c = build(3);\nc.retries = 4;\nassert_eq!(c, {literal});"),
+        format!("let mut c = build(3);\nassert_eq!(c, {literal});"),
+        format!("let c = build(3);\nlet r = c.retries;\nassert_eq!(c, {literal});\nlet _ = r;"),
+        format!("let c = build(3);\nlet c = build(4);\nassert_eq!(c, {literal});"),
+        format!("assert_eq!(build(3), Some({literal}));"),
+        "assert_eq!(build(3), Other { retries: 4 });".to_string(),
+        r#"assert_eq!(build(3), Config { retries, name: "x".into(), count: Count(3) });"#
+            .to_string(),
+        r#"assert_eq!(build(3), Config { retries: RETRIES, name: "x".into(), count: Count(3) });"#
+            .to_string(),
+        r#"assert_eq!(build(3), Config { retries: four(), name: "x".into(), count: Count(3) });"#
+            .to_string(),
+        r#"assert_eq!(build(3), Config { retries: 2 + 2, name: "x".into(), count: Count(3) });"#
+            .to_string(),
+        r#"assert_eq!(build(3), Config { retries: build(3).retries, name: "x".into(), count: Count(3) });"#
+            .to_string(),
+        r#"assert_eq!(build(3), Config { retries: "4".parse().unwrap(), name: "x".into(), count: Count(3) });"#
+            .to_string(),
+        r#"assert_eq!(build(3), Config { retries: 4, retries: 5, name: "x".into(), count: Count(3) });"#
+            .to_string(),
+    ] {
+        assert!(!whole_value_admits(CONFIG_LIB, "build", &body), "{body}");
+    }
+    assert!(!whole_value_admits(
+        CONFIG_LIB,
+        "parse",
+        &format!("assert_eq!(parse(\"3\"), {literal});")
+    ));
+    // Review: a CamelCase constant or fn is computed, and a `let` in an inner
+    // block leaves the operand naming an outer item.
+    let camel_const = CONFIG_LIB.to_string()
+        + "pub struct Limits;\nimpl Limits {\n    #[allow(non_upper_case_globals)]\n    pub const Max: u32 = 4;\n}\n";
+    assert!(!whole_value_admits(
+        &camel_const,
+        "build",
+        r#"assert_eq!(build(3), Config { retries: Limits::Max, name: "x".into(), count: Count(3) });"#
+    ));
+    assert!(!whole_value_admits(
+        CONFIG_LIB,
+        "build",
+        &format!("{{ let c = build(3); }}\nassert_eq!(c, {literal});")
+    ));
+    // #7066 review: a fn renamed to a CamelCase alias is still computed.
+    let helper = CONFIG_LIB.to_string() + "pub fn four() -> u32 {\n    4\n}\n";
+    assert!(!whole_value_admits(
+        &helper,
+        "build",
+        r#"use demo::four as Four;
+assert_eq!(build(3), Config { retries: Four(), name: "x".into(), count: Count(3) });"#
+    ));
+}
+
+/// RIPR-SPEC-0225 owner-side gates, acceptance example 2: a manual
+/// `PartialEq` on the type, a field type from outside the workspace, an attribute on the field, a second exit, a conditional field
+/// value, a mismatched declared return type, or a tail that is not the
+/// literal leaves the pin unestablished.
+#[test]
+fn a_whole_value_field_pin_needs_derived_equality_and_the_returned_literal() {
+    let manual_eq = CONFIG_LIB.replacen(
+        "#[derive(Debug, Clone, PartialEq)]\npub struct Config",
+        "#[derive(Debug, Clone)]\npub struct Config",
+        1,
+    ) + "impl PartialEq for Config {\n    fn eq(&self, o: &Self) -> bool { self.name == o.name }\n}\n";
+    let foreign_field = CONFIG_LIB.replace("pub retries: u32,", "pub retries: other::Retries,");
+    let attributed_field =
+        CONFIG_LIB.replace("pub retries: u32,", "#[eq(ignore)]\n    pub retries: u32,");
+    let early_return = CONFIG_LIB.replace(
+        "pub fn build(n: u32) -> Config {\n",
+        "pub fn build(n: u32) -> Config {\n    if n == 0 {\n        return build(1);\n    }\n",
+    );
+    let conditional = CONFIG_LIB.replace(
+        "pub fn build(n: u32) -> Config {\n    Config {\n        retries: n + 1,",
+        "pub fn build(n: u32) -> Config {\n    Config {\n        retries: if n > 9 { n } else { n + 1 },",
+    );
+    let bound_first = CONFIG_LIB
+        .replace(
+            "pub fn build(n: u32) -> Config {\n    Config {",
+            "pub fn build(n: u32) -> Config {\n    let c = Config {",
+        )
+        .replace(
+            "        count: Count(n),\n    }\n}\n\npub fn parse",
+            "        count: Count(n),\n    };\n    c\n}\n\npub fn parse",
+        );
+    let qualified_tail = CONFIG_LIB.replace(
+        "pub fn build(n: u32) -> Config {\n    Config {",
+        "pub fn build(n: u32) -> Config {\n    crate::Config {",
+    );
+    let boxed_return = CONFIG_LIB.replace(
+        "pub fn build(n: u32) -> Config {",
+        "pub fn build(n: u32) -> Box<Config> {",
+    );
+    for lib in [
+        manual_eq,
+        foreign_field,
+        attributed_field,
+        early_return,
+        bound_first,
+        qualified_tail,
+        boxed_return,
+    ] {
+        let tests = "use demo::*;\n#[test]\nfn pins() {\n    assert_eq!(build(3), Config { retries: 4, name: \"x\".into(), count: Count(3) });\n}\n";
+        let (_, pin) = whole_value_pin(&lib, "build", tests);
+        assert!(pin.is_none(), "{lib}");
+    }
+    let tests = "use demo::*;\n#[test]\nfn pins() {\n    assert_eq!(build(3), Config { retries: 4, name: \"x\".into(), count: Count(3) });\n}\n";
+    let index = index(&[(LIB, &conditional), (TESTS, tests)]);
+    assert!(
+        field_pin_of(
+            &index,
+            &conditional,
+            "build",
+            "retries: if n > 9 { n } else { n + 1 },",
+            "retries: if n > 9 { n } else { n + 1 },",
+        )
+        .is_none()
+    );
+    // Fixture control: the plain library establishes.
+    assert!(whole_value_pin(CONFIG_LIB, "build", tests).1.is_some());
+}
+
+/// #7066 review: the owner's file must name the workspace `Config` (a
+/// `use external::Config;` makes the literal another crate's type), a
+/// once-used binding must come before the assertion that reads it, and a
+/// pointer, `'static` or cast type is not a computed value item.
+#[test]
+fn whole_value_review_holes_stay_closed() {
+    let literal = r#"Config { retries: 4, name: "x".into(), count: Count(3) }"#;
+    let tests =
+        format!("use demo::*;\n#[test]\nfn pins() {{\n    assert_eq!(build(3), {literal});\n}}\n");
+    let foreign_import = CONFIG_LIB.replace(
+        "pub fn build(n: u32) -> Config {\n    Config {\n        retries: n + 1,\n        name: \"x\".into(),\n        count: Count(n),\n    }\n}\n",
+        "pub mod remote {\n    use external::{Config, Count};\n\n    pub fn build(n: u32) -> Config {\n    Config {\n        retries: n + 1,\n        name: \"x\".into(),\n        count: Count(n),\n    }\n}\n}\n",
+    );
+    assert_ne!(foreign_import, CONFIG_LIB, "fixture must move the owner");
+    assert!(
+        whole_value_pin(&foreign_import, "build", &tests)
+            .1
+            .is_none()
+    );
+    // Fixture control: the same module importing the workspace type pins.
+    let workspace_import = foreign_import.replace(
+        "use external::{Config, Count};",
+        "use crate::{Config, Count};",
+    );
+    assert!(
+        whole_value_pin(&workspace_import, "build", &tests)
+            .1
+            .is_some()
+    );
+
+    // A binding after the assertion is not the value the assertion reads.
+    assert!(!whole_value_admits(
+        CONFIG_LIB,
+        "build",
+        &format!("assert_eq!(current, {literal});\nlet current = build(3);")
+    ));
+    assert!(whole_value_admits(
+        CONFIG_LIB,
+        "build",
+        &format!("let current = build(3);\nassert_eq!(current, {literal});")
+    ));
+
+    // `*const Count`, `&'static Count` and a cast name the type, not a
+    // CamelCase value item; an import rename still does.
+    let typed = format!(
+        "{CONFIG_LIB}pub fn addr(p: *const Count) -> usize {{\n    p as usize\n}}\n\npub static ZERO: &'static Count = &Count(0);\n\npub fn widen(n: u8) -> u32 {{\n    n as Count\n}}\n"
+    );
+    assert!(whole_value_admits(
+        &typed,
+        "build",
+        &format!("assert_eq!(build(3), {literal});")
+    ));
+    let renamed = format!("{CONFIG_LIB}use crate::build as Count;\n");
+    let index = index(&[(LIB, &renamed)]);
+    assert!(camel_case_value_items(&index).contains("Count"));
+}
+
+/// #7066 review (second round): a cfg-elided binding, a qualified or
+/// test-side rebound expected type, and a workspace `Ok`/`Some` that is not
+/// the standard variant each refuse the whole-value pin.
+#[test]
+fn whole_value_identity_holes_stay_closed() {
+    let literal = r#"Config { retries: 4, name: "x".into(), count: Count(3) }"#;
+    // `#[cfg(any())] let c = ..;` leaves `c` naming an outer item.
+    assert!(!whole_value_admits(
+        CONFIG_LIB,
+        "build",
+        &format!("#[cfg(any())]\nlet current = build(3);\nassert_eq!(current, {literal});")
+    ));
+    // A qualified expected path may name another type.
+    assert!(!whole_value_admits(
+        CONFIG_LIB,
+        "build",
+        &format!("assert_eq!(build(3), external::{literal});")
+    ));
+    // The test file importing another `Config` rebinds the bare name.
+    let tests = format!(
+        "use demo::{{build, Count}};\nuse external::Config;\n#[test]\nfn pins() {{\n    assert_eq!(build(3), {literal});\n}}\n"
+    );
+    let (index, pin) = whole_value_pin(CONFIG_LIB, "build", &tests);
+    assert!(pin.is_some_and(|pin| admitted_texts(&index, &pin).is_empty()));
+    // Fixture control: the same test importing the workspace type pins.
+    let tests = tests.replace("use external::Config;", "use demo::Config;");
+    let (index, pin) = whole_value_pin(CONFIG_LIB, "build", &tests);
+    assert!(pin.is_some_and(|pin| !admitted_texts(&index, &pin).is_empty()));
+
+    // A bare CamelCase value the workspace never declares may be a local.
+    assert!(!whole_value_admits(
+        CONFIG_LIB,
+        "build",
+        "#[allow(non_snake_case)]\nlet Expected = 4;\nassert_eq!(build(3), Config { retries: Expected, name: \"x\".into(), count: Count(3) });"
+    ));
+    let names = declared_constructor_names(&index);
+    for name in ["Config", "Count", "None", "Ok"] {
+        assert!(names.contains(name), "{name}");
+    }
+    let lib = format!(
+        "{CONFIG_LIB}pub enum Mode {{\n    #[default]\n    Fast,\n    Slow(Count),\n    Exact = 3,\n}}\n"
+    );
+    let (mode_index, _) = whole_value_pin(&lib, "build", &tests);
+    let names = declared_constructor_names(&mode_index);
+    for name in ["Mode", "Fast", "Slow", "Exact"] {
+        assert!(names.contains(name), "{name}");
+    }
+    assert!(!names.contains("Expected"));
+
+    // A workspace `Ok` function or a `Some` variant is not the standard one.
+    let ok_body = format!("assert_eq!(parse(\"3\"), Ok({literal}));");
+    assert!(whole_value_admits(CONFIG_LIB, "parse", &ok_body));
+    for shadow in [
+        "#[allow(non_snake_case)]\npub fn Ok(c: Config) -> Result<Config, String> {\n    Result::Ok(c)\n}\n",
+        "pub enum Probe {\n    Ok(u8),\n    Fail,\n}\n",
+        "pub use other::Ok;\n",
+    ] {
+        let lib = format!("{CONFIG_LIB}{shadow}");
+        let (_, pin) = whole_value_pin(
+            &lib,
+            "parse",
+            &format!("use demo::*;\n#[test]\nfn pins() {{\n{ok_body}\n}}\n"),
+        );
+        assert!(pin.is_none(), "{shadow}");
+    }
+}
+
+/// The `name` field pin of `build` against `tests` (one test): the changed
+/// line is the `String` field initializer.
+fn string_field_pin(lib: &str, tests: &str) -> (RustIndex, Option<OwnerReturnPin>) {
+    let index = index(&[(LIB, lib), (TESTS, tests)]);
+    let pin = field_pin_of(
+        &index,
+        lib,
+        "build",
+        "name: render(retries),",
+        "name: render(retries),",
+    );
+    (index, pin)
+}
+
+fn string_field_admits(lib: &str, body: &str) -> bool {
+    let tests = format!("use demo::*;\n#[test]\nfn pins() {{\n{body}\n}}\n");
+    let (index, pin) = string_field_pin(lib, &tests);
+    assert!(pin.is_some(), "the string field pin must establish: {lib}");
+    pin.is_some_and(|pin| !admitted_texts(&index, &pin).is_empty())
+}
+
+const STRING_FIELD_LIB: &str = r#"#[derive(Debug, Clone, PartialEq)]
+pub struct Config {
+    pub retries: u32,
+    pub name: String,
+}
+
+pub fn build(retries: u32) -> Config {
+    Config {
+        retries,
+        name: render(retries),
+    }
+}
+
+pub fn render(retries: u32) -> String {
+    format!("cfg-{retries}")
+}
+"#;
+
+/// #7066 review (fourth round): a test file's `mod String` makes an expected
+/// `String::from(..)` the owner's own output, so both operands move together
+/// and the pin refuses the spelling; the standard conversion still pins.
+#[test]
+fn whole_value_string_from_refuses_a_workspace_string() {
+    let body = "assert_eq!(build(3), Config { retries: 3, name: String::from(\"3\") });";
+    // Control: the standard `String::from` carries an independent value.
+    assert!(string_field_admits(STRING_FIELD_LIB, body));
+
+    // The test file declaring `mod String` rebinds the conversion to a
+    // function that returns the owner's own name.
+    let shadowed_tests = format!(
+        "use demo::*;\n#[test]\nfn pins() {{\n{body}\n}}\nmod String {{\n    pub fn from(value: &str) -> std::string::String {{\n        demo::build(value.trim().parse().unwrap_or(0)).name\n    }}\n}}\n"
+    );
+    let (index, pin) = string_field_pin(STRING_FIELD_LIB, &shadowed_tests);
+    assert!(pin.is_some(), "the pin still establishes under the shadow");
+    assert!(pin.is_some_and(|pin| admitted_texts(&index, &pin).is_empty()));
 }
 
 /// #6974: the assertions a `weight` pin admits when `lib` (the crate root,

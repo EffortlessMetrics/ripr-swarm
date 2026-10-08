@@ -4352,6 +4352,48 @@
       ]
     },
     {
+      "id": "rust_owner_pin_whole_value_string_from_shadow",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/whole_value_string_from_shadow",
+      "vector": "owner_return_pin_whole_value_string_from_workspace_shadow",
+      "probe_family": "field_construction",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "expected_oracle",
+          "kind": "whole_object_equality",
+          "strength": "strong"
+        },
+        {
+          "type": "expected_related_test",
+          "name": "builds_config",
+          "file": "src/lib.rs",
+          "line": 33,
+          "kind": "whole_object_equality",
+          "strength": "strong",
+          "relation_reason": "direct_owner_call"
+        },
+        {
+          "type": "maximum_class",
+          "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
       "id": "rust_predicate_pairing_reassigned_binding",
       "language": "rust",
       "tier": "pure",

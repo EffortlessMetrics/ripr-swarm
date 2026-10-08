@@ -1521,10 +1521,25 @@ fn constructed_field_name(expression: &str) -> Option<&str> {
 /// Whether `assertion` reads `read` (`.field`) on a value the test got from
 /// calling `owner`: a direct `owner(..).field` chain, or a receiver the test
 /// body binds with `let [mut] recv = ..owner(..)..;`.
+///
+/// A read inside a struct literal's braces (`assert_eq!(c, Config { retries:
+/// c.retries, .. })`) copies the owner's value into the expected side, so
+/// the comparison cannot fail on it: it observes nothing (RIPR-SPEC-0225
+/// acceptance example 12). Any unclosed `{` before the read refuses it, a
+/// block or closure body too: that fails closed to a gap. So does a read in
+/// an `assert_eq!`/`assert_ne!` operand whose other operand is the whole
+/// result (`assert_eq!(c, Config::new(c.retries))`).
 fn reads_owner_result_field(body: &str, assertion: &str, read: &str, owner: &str) -> bool {
     let is_ident = |ch: char| ch.is_ascii_alphanumeric() || ch == '_';
     let owner_call = format!("{owner}(");
+    let masked = crate::analysis::extract::mask_comments_and_strings(assertion);
     assertion.match_indices(read).any(|(start, matched)| {
+        let braces = masked.get(..start).unwrap_or_default();
+        if braces.matches('{').count() > braces.matches('}').count()
+            || read_feeds_whole_result_comparison(body, assertion, &masked, start, owner)
+        {
+            return false;
+        }
         if assertion[start + matched.len()..]
             .chars()
             .next()
@@ -1542,6 +1557,110 @@ fn reads_owner_result_field(body: &str, assertion: &str, read: &str, owner: &str
         let receiver = &before[receiver_start..];
         !receiver.is_empty() && binds_from_owner_call(body, receiver, &owner_call)
     })
+}
+
+/// Whether the read at `start` sits in one operand of an `assert_eq!` or
+/// `assert_ne!` whose other operand is the owner's whole result: the bound
+/// receiver or the owner call itself. The read then only feeds the expected
+/// side (`assert_eq!(c, Config::new(c.retries))`), a tautology on the field
+/// whatever brackets carry it.
+fn read_feeds_whole_result_comparison(
+    body: &str,
+    assertion: &str,
+    masked: &str,
+    start: usize,
+    owner: &str,
+) -> bool {
+    let Some(open) = ["assert_eq!", "assert_ne!"]
+        .iter()
+        .filter_map(|name| {
+            let after = masked.find(name)? + name.len();
+            Some(after + masked[after..].find(['(', '['])? + 1)
+        })
+        .min()
+    else {
+        return false;
+    };
+    let mut operands = Vec::new();
+    let mut depth = 0usize;
+    // Generic arguments after a turbofish (`Config::<A, B>::new(..)`): their
+    // commas do not split operands.
+    let mut angle = 0usize;
+    let mut from = open;
+    for (offset, ch) in masked[open..].char_indices() {
+        let at = open + offset;
+        match ch {
+            '<' if angle > 0 || masked[..at].ends_with("::") => {
+                angle += 1;
+                depth += 1;
+            }
+            '>' if angle > 0 => {
+                angle -= 1;
+                depth = depth.saturating_sub(1);
+            }
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' if depth == 0 => {
+                operands.push(from..at);
+                break;
+            }
+            ')' | ']' | '}' => depth -= 1,
+            ',' if depth == 0 => {
+                operands.push(from..at);
+                from = at + 1;
+            }
+            _ => {}
+        }
+    }
+    let [left, right, ..] = operands.as_slice() else {
+        return false;
+    };
+    let other = if left.contains(&start) {
+        right
+    } else if right.contains(&start) {
+        left
+    } else {
+        return false;
+    };
+    let Some(other) = assertion.get(other.clone()) else {
+        return false;
+    };
+    let other = whole_value_operand(other);
+    if other.ends_with(')') {
+        return call_before_is_owner(other, owner);
+    }
+    !other.is_empty()
+        && other
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+        && binds_from_owner_call(body, other, &format!("{owner}("))
+}
+
+/// The value an operand compares, without the borrows, derefs, `.clone()`
+/// and one `Some(..)`/`Ok(..)` around it: `&mut Some(cfg.clone())` is `cfg`.
+fn whole_value_operand(operand: &str) -> &str {
+    let mut value = operand.trim();
+    loop {
+        let stripped = value
+            .strip_prefix("&mut ")
+            .or_else(|| value.strip_prefix('&'))
+            .or_else(|| value.strip_prefix('*'))
+            .or_else(|| value.strip_suffix(".clone()"))
+            .map(str::trim);
+        match stripped {
+            Some(next) => value = next,
+            None => break,
+        }
+    }
+    for wrapper in ["Some(", "Ok("] {
+        if let Some(inner) = value
+            .strip_prefix(wrapper)
+            .and_then(|rest| rest.strip_suffix(')'))
+            .filter(|inner| !inner.contains(['(', ')']) || inner.ends_with(')'))
+        {
+            return whole_value_operand(inner);
+        }
+    }
+    value
 }
 
 /// Whether the call whose `)` ends `before` is a call of `owner`: the
@@ -3186,6 +3305,41 @@ mod tests {
             "assert_eq!(Config::default_config(\"x\").retries, 3);"
         ));
         assert!(reads("assert_eq!(default_config(load(1)).retries, 3);"));
+        // RIPR-SPEC-0225 example 12: a read copied into the expected
+        // literal makes the comparison a tautology on that field.
+        assert!(!reads(
+            "assert_eq!(cfg, Config { retries: cfg.retries, name: \"x\".into() });"
+        ));
+        assert!(!reads(
+            "assert_eq!(cfg, Config { inner: Inner { n: cfg.retries } });"
+        ));
+        // The same tautology through a call's parentheses (#7066 review).
+        assert!(!reads(
+            "assert_eq!(cfg, Config::new(cfg.retries, \"x\".into()));"
+        ));
+        assert!(!reads("assert_eq!(cfg, expected_with(cfg.retries));"));
+        assert!(!reads("assert_ne!(expected_with(cfg.retries), &cfg);"));
+        assert!(!reads(
+            "assert_eq!(default_config(), expected_with(default_config().retries));"
+        ));
+        assert!(!reads("assert_eq!(cfg.clone(), Config::new(cfg.retries));"));
+        assert!(!reads(
+            "assert_eq!(Some(cfg), Some(Config::new(cfg.retries)));"
+        ));
+        assert!(!reads(
+            "assert_eq!(&mut cfg, Config::<u8, u8>::new(cfg.retries));"
+        ));
+        assert!(!reads("assert_eq![cfg, Config::new(cfg.retries)];"));
+        assert!(!reads(
+            "assert_eq!(Ok(default_config()), Config::new(default_config().retries));"
+        ));
+        // Compared with something other than the whole result, the read
+        // still observes the field.
+        assert!(reads("assert_eq!(cfg.retries, fallback.retries);"));
+        assert!(reads("assert_eq!(Some(cfg.retries), Some(3));"));
+        // A brace in a message string does not open a literal.
+        assert!(reads("assert_eq!(cfg.retries, 3, \"{}\", 1);"));
+        assert!(reads("assert_eq!(cfg.retries, 3, \"{\");"));
         assert!(!reads_owner_result_field(
             "let e = make();",
             "assert!(e.downcast_ref::<Box<dyn E>>().is_some());",
