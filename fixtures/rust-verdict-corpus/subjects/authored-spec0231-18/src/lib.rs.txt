@@ -1,0 +1,32 @@
+#[macro_export]
+macro_rules! ensure {
+    ($cond:expr) => {
+        if !$cond {
+            return Err(String::from("ensure failed"));
+        }
+    };
+}
+
+#[derive(Debug, PartialEq)]
+pub enum E {
+    Bad,
+    Big,
+}
+
+pub fn check(x: u32) -> Result<u32, E> {
+    if x > 10 {
+        return Err(E::Big);
+    }
+    Ok(x)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn check_accepts_five() -> Result<(), String> {
+        ensure!(matches!(check(5), Ok(_)));
+        Ok(())
+    }
+}

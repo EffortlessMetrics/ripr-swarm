@@ -1,0 +1,21 @@
+{
+  "subject_id": "authored-old-shell",
+  "origin": "authored",
+  "version_label": "authored 2026-10-04 for older spec-defined cells",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "Cargo.toml",
+      "sha256": "84fd671cfab993c3a40a4b4f0add9e6a61c4c208d482d26ad530015031774513"
+    },
+    {
+      "path": "src/main.rs",
+      "sha256": "aa1e36abe0d94aa5f42a6ed4b0e6ad121370bb671658034e471543cd67c9242b"
+    },
+    {
+      "path": "tests/shell.rs",
+      "sha256": "99531db6a077fbfd865e7b1902b1d2ec9d701506531bd477cf0001dfce5d40cb"
+    }
+  ]
+}

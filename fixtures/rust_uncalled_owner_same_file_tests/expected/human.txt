@@ -30,7 +30,7 @@ Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/rust_uncalled_owner_same_file_tests/input --diff <cwd>/fixtures/rust_uncalled_owner_same_file_tests/diff.patch --mode fast probe:src_lib.rs:return_value:672a64b9
   ripr context --root <cwd>/fixtures/rust_uncalled_owner_same_file_tests/input --diff <cwd>/fixtures/rust_uncalled_owner_same_file_tests/diff.patch --mode fast --at probe:src_lib.rs:return_value:672a64b9
 Write a test for it:
-  ripr agent stub --root <cwd>/fixtures/rust_uncalled_owner_same_file_tests/input --at src/lib.rs:6
+  ripr agent stub --root <cwd>/fixtures/rust_uncalled_owner_same_file_tests/input --at src/lib.rs:6 --kind return_value
 
 More:
   Full evidence: rerun with --format human-full

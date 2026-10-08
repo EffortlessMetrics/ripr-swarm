@@ -3,6 +3,7 @@ use super::arguments::{
     equality_assertion_arguments,
 };
 use crate::analysis::classify::{error_constructor_call_paths, rust_string_literals};
+use crate::analysis::extract::mask_comments_and_strings;
 
 /// Structural assertion-text shapes that supplement the parsed
 /// [`OracleKind`](crate::domain::OracleKind)
@@ -447,6 +448,484 @@ fn custom_assertion_helper_name(line: &str) -> Option<String> {
     } else {
         Some(name.to_ascii_lowercase())
     }
+}
+
+/// True when `line` is an `assert!`/`debug_assert!` whose whole condition is
+/// an exact-equality `.any()` membership check over an iterated collection
+/// (`assert!(lines.iter().any(|l| l == "audited 42"))`, #6991,
+/// RIPR-SPEC-0231 rule 7). Such an assertion fails for any wrong member
+/// value, so it pins an exact value exactly like `assert_eq!`.
+///
+/// The shape is deliberately narrow: the closure body must be one `==` of
+/// the bound element (bare, dereferenced, or field-selected, never a call)
+/// against a literal or const path, with no negation, no relational
+/// operator, and no `&&`/`||` widening. Anything wider stays weak: a
+/// missed promotion keeps a gap open, while a wrong one manufactures a
+/// false `exposed`.
+pub(super) fn is_exact_membership_any_assertion(line: &str) -> bool {
+    exact_membership_any_condition(line).is_some()
+}
+
+fn exact_membership_any_condition(line: &str) -> Option<()> {
+    let masked = mask_comments_and_strings(line);
+    let mut inner = strip_assert_condition(&masked)?;
+    // Peel redundant wrapping parens; a leading `!` or a trailing
+    // `&&`/`||` operand survives peeling and fails the shape below.
+    loop {
+        let trimmed = inner.trim();
+        if !trimmed.starts_with('(') {
+            inner = trimmed;
+            break;
+        }
+        let (_, close) = balanced_paren_span(trimmed, 0)?;
+        if close + 1 != trimmed.len() {
+            return None;
+        }
+        inner = trimmed[1..close].trim();
+    }
+    let any_dot = single_any_call(inner)?;
+    let receiver = inner.get(..any_dot)?.trim();
+    let (closure_start, closure_end, after_any) = any_closure_span(inner, any_dot)?;
+    if !inner.get(after_any..)?.trim().is_empty() {
+        return None;
+    }
+    collection_iteration_head(receiver)?;
+    let closure = inner.get(closure_start..closure_end)?;
+    let (param, body_masked) = exact_equality_closure(closure)?;
+    // Masking preserves byte layout, so the masked body's offset reads the
+    // original expected side (literals live only in the original text).
+    let body_offset = body_masked
+        .as_ptr()
+        .addr()
+        .checked_sub(masked.as_ptr().addr())?;
+    let body_original = line.get(body_offset..body_offset.checked_add(body_masked.len())?)?;
+    exact_membership_operands(body_masked, body_original, param)
+}
+
+/// The condition of a leading `assert!(`/`debug_assert!(` invocation: the
+/// text between its outer parens. Custom helpers and other macros never
+/// match, so they keep their existing later-step reading.
+fn strip_assert_condition(masked: &str) -> Option<&str> {
+    let trimmed = masked.trim();
+    let trimmed = trimmed.strip_suffix(';').unwrap_or(trimmed).trim();
+    let after_name = trimmed
+        .strip_prefix("debug_assert!")
+        .or_else(|| trimmed.strip_prefix("assert!"))?;
+    let after_paren = after_name.trim_start().strip_prefix('(')?;
+    after_paren.strip_suffix(')')
+}
+
+/// Byte span of the contents of the paren group opening at `open`.
+/// All delimiters are ASCII, so every returned index is a char boundary.
+fn balanced_paren_span(text: &str, open: usize) -> Option<(usize, usize)> {
+    if text.as_bytes().get(open) != Some(&b'(') {
+        return None;
+    }
+    let mut depth = 0usize;
+    for (index, byte) in text.bytes().enumerate().skip(open) {
+        match byte {
+            b'(' => depth += 1,
+            b')' => {
+                depth = depth.checked_sub(1)?;
+                if depth == 0 {
+                    return Some((open + 1, index));
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Offset of `.any` when the condition holds exactly one `.any(` call.
+/// String and comment contents are already masked, so a literal spelling
+/// `.any(` can never count.
+fn single_any_call(condition: &str) -> Option<usize> {
+    let mut found = None;
+    let bytes = condition.as_bytes();
+    let mut index = 0;
+    while index + 4 <= bytes.len() {
+        if bytes[index] == b'.'
+            && bytes.get(index + 1) == Some(&b'a')
+            && bytes.get(index + 2) == Some(&b'n')
+            && bytes.get(index + 3) == Some(&b'y')
+            && bytes.get(index + 4..).is_some_and(opens_call_paren)
+        {
+            if found.is_some() {
+                return None;
+            }
+            found = Some(index);
+            index += 4;
+        } else {
+            index += 1;
+        }
+    }
+    found
+}
+
+fn opens_call_paren(rest: &[u8]) -> bool {
+    rest.iter()
+        .find(|byte| !byte.is_ascii_whitespace())
+        .is_some_and(|byte| *byte == b'(')
+}
+
+/// Contents span of the `.any(...)` argument list plus the offset just
+/// past its closing paren, from the `.` offset.
+fn any_closure_span(condition: &str, any_dot: usize) -> Option<(usize, usize, usize)> {
+    let bytes = condition.as_bytes();
+    let mut open = any_dot.checked_add(4)?;
+    while bytes
+        .get(open)
+        .is_some_and(|byte| byte.is_ascii_whitespace())
+    {
+        open = open.checked_add(1)?;
+    }
+    if bytes.get(open) != Some(&b'(') {
+        return None;
+    }
+    let (start, end) = balanced_paren_span(condition, open)?;
+    Some((start, end, end.checked_add(1)?))
+}
+
+/// The collection expression when `receiver` ends in a no-argument
+/// `.iter()`/`.iter_mut()`/`.into_iter()` call over a call-free value path.
+/// Method chains with arguments, turbofish, and indexing never match: the
+/// receiver must read as iterating a held collection, not as computing one.
+fn collection_iteration_head(receiver: &str) -> Option<&str> {
+    let dot = receiver.rfind('.')?;
+    let head = receiver.get(..dot)?.trim();
+    let call: String = receiver
+        .get(dot + 1..)?
+        .chars()
+        .filter(|ch| !ch.is_whitespace())
+        .collect();
+    if !matches!(call.as_str(), "iter()" | "iter_mut()" | "into_iter()") {
+        return None;
+    }
+    if head.is_empty() || head.bytes().any(|byte| byte.is_ascii_whitespace()) {
+        return None;
+    }
+    for segment in head.split("::") {
+        if segment.is_empty() {
+            return None;
+        }
+        for part in segment.split('.') {
+            if part.is_empty() {
+                return None;
+            }
+            // Only bare `()` calls read a collection; `strip_suffix`
+            // leaves any argument list behind, which is never an ident.
+            let bare = part.strip_suffix("()").unwrap_or(part);
+            if bare.is_empty() || !is_ident_or_index(bare) {
+                return None;
+            }
+        }
+    }
+    Some(head)
+}
+
+fn is_ident_or_index(text: &str) -> bool {
+    if text.is_empty() {
+        return false;
+    }
+    if text.bytes().all(|byte| byte.is_ascii_digit()) {
+        return true;
+    }
+    let mut bytes = text.bytes();
+    bytes
+        .next()
+        .is_some_and(|first| first.is_ascii_alphabetic() || first == b'_')
+        && bytes.all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+}
+
+/// The bound parameter and masked body of a `|param| body` closure with a
+/// single identifier parameter. `move`, patterns, and multi-parameter
+/// closures never match. The body keeps its trailing layout (a masked
+/// literal is trailing spaces) so its span still addresses the original
+/// expected side.
+fn exact_equality_closure(closure: &str) -> Option<(&str, &str)> {
+    let after_first = closure.trim_start().strip_prefix('|')?;
+    let params_end = after_first.find('|')?;
+    let params = after_first.get(..params_end)?.trim();
+    if params.is_empty() || params == "_" {
+        return None;
+    }
+    // One parameter only; a second `|` or a comma outside any bracket
+    // pair means more. Commas nested in a type ascription (`&(u32, u32)`)
+    // still read as one parameter; angle-nested commas stay rejected
+    // (fail-closed residual: `<` also opens const-generic comparisons).
+    if params.bytes().any(|byte| byte == b'|') || has_top_level_comma(params) {
+        return None;
+    }
+    let name = params.split(':').next()?.trim();
+    if !is_path_ident(name) {
+        return None;
+    }
+    let body = after_first.get(params_end + 1..)?;
+    Some((name, body))
+}
+
+/// True when `params` holds a comma at nesting depth zero, outside any
+/// `()`, `[]`, or `{}` pair. A nested comma belongs to a type ascription,
+/// not to a second parameter.
+fn has_top_level_comma(params: &str) -> bool {
+    let mut depth = 0u32;
+    for byte in params.bytes() {
+        match byte {
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' => depth = depth.saturating_sub(1),
+            b',' if depth == 0 => return true,
+            _ => {}
+        }
+    }
+    false
+}
+
+/// True when the masked body is exactly `element == expected` with no
+/// other operator, and the original expected side is a literal or const
+/// path. The masked and original bodies share byte layout, so the caller
+/// may slice the original at masked offsets.
+fn exact_membership_operands(masked_body: &str, original_body: &str, param: &str) -> Option<()> {
+    if masked_body.contains("&&")
+        || masked_body.contains("||")
+        || masked_body.bytes().any(|byte| {
+            matches!(
+                byte,
+                b'!' | b'<'
+                    | b'>'
+                    | b'&'
+                    | b'|'
+                    | b'('
+                    | b')'
+                    | b'['
+                    | b']'
+                    | b'{'
+                    | b'}'
+                    | b'?'
+                    | b';'
+                    | b','
+            )
+        })
+    {
+        return None;
+    }
+    let mut equality = masked_body.match_indices("==");
+    let (offset, _) = equality.next()?;
+    if equality.next().is_some() {
+        return None;
+    }
+    let element = masked_body.get(..offset)?.trim();
+    let expected = original_body.get(offset + 2..)?.trim();
+    if element.is_empty() || expected.is_empty() {
+        return None;
+    }
+    if !element_accesses_param(element, param) {
+        return None;
+    }
+    if !is_pinned_expected_value(expected) {
+        return None;
+    }
+    Some(())
+}
+
+/// True when `element` is the closure parameter with only dereferences
+/// and field or tuple selections: `l`, `*l`, `l.total`. Any call,
+/// index, or foreign root never matches.
+fn element_accesses_param(element: &str, param: &str) -> bool {
+    let compact: String = element.chars().filter(|ch| !ch.is_whitespace()).collect();
+    let access = compact.trim_start_matches('*');
+    if access.is_empty() {
+        return false;
+    }
+    let mut fields = access.split('.');
+    if fields.next() != Some(param) {
+        return false;
+    }
+    fields.all(|field| !field.is_empty() && is_ident_or_index(field))
+}
+
+/// True when `expected` is a boolean, numeric, string, or character
+/// literal, or a path whose last segment reads as a constant or variant
+/// (`Config::LIMIT`, `Color::Red`, `None`). Calls, constructors,
+/// lowercase bindings, bare uppercase names, and operators never pin.
+fn is_pinned_expected_value(expected: &str) -> bool {
+    if matches!(expected, "true" | "false") {
+        return true;
+    }
+    if is_numeric_literal(expected) || is_string_literal(expected) || is_char_literal(expected) {
+        return true;
+    }
+    is_const_path(expected)
+}
+
+fn is_numeric_literal(expected: &str) -> bool {
+    let digits = expected.strip_prefix(['-', '+']).unwrap_or(expected);
+    let Some(first) = digits.bytes().next() else {
+        return false;
+    };
+    if !first.is_ascii_digit() {
+        return false;
+    }
+    if digits.contains("..") {
+        return false;
+    }
+    let (mantissa, exponent) = split_decimal_exponent(digits);
+    if !is_decimal_mantissa(mantissa) {
+        return false;
+    }
+    match exponent {
+        None => true,
+        Some(exp) => {
+            let exp = exp.strip_prefix(['-', '+']).unwrap_or(exp);
+            let mut bytes = exp.bytes();
+            matches!(bytes.next(), Some(b) if b.is_ascii_digit())
+                && bytes.all(|b| b.is_ascii_alphanumeric() || b == b'_')
+        }
+    }
+}
+
+/// Splits one optional `e`/`E` decimal exponent (`1e-3`, `1.5E+6`) from
+/// the mantissa. Radix-prefixed mantissas (`0x1E`) never split: the radix
+/// prefix owns the `e`.
+fn split_decimal_exponent(digits: &str) -> (&str, Option<&str>) {
+    let bytes = digits.as_bytes();
+    if bytes.len() > 2
+        && bytes[0] == b'0'
+        && matches!(bytes[1], b'x' | b'X' | b'o' | b'O' | b'b' | b'B')
+    {
+        return (digits, None);
+    }
+    match digits.find(['e', 'E']) {
+        Some(idx) => {
+            let (mantissa, rest) = digits.split_at(idx);
+            (mantissa, rest.get(1..))
+        }
+        None => (digits, None),
+    }
+}
+
+fn is_decimal_mantissa(mantissa: &str) -> bool {
+    let mut parts = mantissa.split('.');
+    let int = parts.next().unwrap_or_default();
+    if int.is_empty() || !int.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_') {
+        return false;
+    }
+    match parts.next() {
+        None => parts.next().is_none(),
+        Some(frac) => {
+            !frac.is_empty()
+                && frac.bytes().next().is_some_and(|b| b.is_ascii_digit())
+                && frac.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
+                && parts.next().is_none()
+        }
+    }
+}
+
+fn is_string_literal(expected: &str) -> bool {
+    let bytes = expected.as_bytes();
+    let mut index = 0;
+    if bytes.first().is_some_and(|b| matches!(b, b'b' | b'c'))
+        && bytes.get(1).is_some_and(|b| matches!(b, b'"' | b'r'))
+    {
+        index += 1;
+    }
+    let mut hashes = 0;
+    let mut raw = false;
+    if bytes.get(index) == Some(&b'r') {
+        raw = true;
+        index += 1;
+        while bytes.get(index) == Some(&b'#') {
+            hashes += 1;
+            index += 1;
+        }
+    }
+    if bytes.get(index) != Some(&b'"') {
+        return false;
+    }
+    index += 1;
+    if !raw {
+        while let Some(byte) = bytes.get(index) {
+            match byte {
+                b'\\' => index += 2,
+                b'"' => return bytes.len() == index + 1,
+                _ => index += 1,
+            }
+        }
+        return false;
+    }
+    while index < bytes.len() {
+        if bytes[index] == b'"' {
+            let mut closing = 0;
+            while bytes.get(index + 1 + closing) == Some(&b'#') {
+                closing += 1;
+            }
+            if closing == hashes {
+                return bytes.len() == index + 1 + hashes;
+            }
+        }
+        index += 1;
+    }
+    false
+}
+
+fn is_char_literal(expected: &str) -> bool {
+    let body = expected
+        .strip_prefix('\'')
+        .and_then(|rest| rest.strip_suffix('\''));
+    let Some(body) = body else {
+        return false;
+    };
+    if body.is_empty() || body.contains('\n') {
+        return false;
+    }
+    if let Some(escape) = body.strip_prefix('\\') {
+        if let Some(code) = escape
+            .strip_prefix("u{")
+            .and_then(|rest| rest.strip_suffix('}'))
+        {
+            return !code.is_empty()
+                && code.len() <= 6
+                && code.bytes().all(|b| b.is_ascii_hexdigit());
+        }
+        if let Some(hex) = escape.strip_prefix('x') {
+            return hex.len() == 2 && hex.bytes().all(|b| b.is_ascii_hexdigit());
+        }
+        return matches!(escape, "n" | "r" | "t" | "\\" | "0" | "'" | "\"");
+    }
+    body.chars().count() == 1
+}
+
+/// True when `expected` names a constant or variant that cannot be a
+/// local binding: a `::` path whose last segment starts uppercase
+/// (`Config::LIMIT`, `Color::Red`), or bare `None` (`let None = ..`
+/// never compiles, so no local can shadow it). A bare uppercase name
+/// (`EXPECTED`) may be a local assigned from dynamic data, so it never
+/// pins.
+fn is_const_path(expected: &str) -> bool {
+    if expected == "None" {
+        return true;
+    }
+    if expected.is_empty() || !expected.contains("::") {
+        return false;
+    }
+    let mut last = "";
+    for segment in expected.split("::") {
+        if segment.is_empty() || !is_path_ident(segment) {
+            return false;
+        }
+        last = segment;
+    }
+    last.bytes()
+        .next()
+        .is_some_and(|first| first.is_ascii_uppercase())
+}
+
+fn is_path_ident(text: &str) -> bool {
+    let mut bytes = text.bytes();
+    bytes
+        .next()
+        .is_some_and(|first| first.is_ascii_alphabetic() || first == b'_')
+        && bytes.all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
 }
 
 #[cfg(test)]

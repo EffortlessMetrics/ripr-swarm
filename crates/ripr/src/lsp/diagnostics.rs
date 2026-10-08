@@ -2524,11 +2524,11 @@ fn non_empty(value: &str) -> Option<&str> {
     }
 }
 
-/// Per-class severity for seam diagnostics. WARNING for the headline-
-/// eligible classes (the agent should act); INFORMATION for `Opaque`
-/// (visible but advisory). `StronglyGripped`, `Intentional`, and
-/// `Suppressed` produce no diagnostic — `diagnostic_for_classified_seam`
-/// returns `None` for those.
+/// Per-class severity for seam diagnostics, owned by `SeverityConfig`:
+/// WARNING for gap classes (the agent should act); INFORMATION for static
+/// limitations (opaque and the `*_unknown` classes: visible but advisory,
+/// #6775). `StronglyGripped`, `Intentional`, and `Suppressed` produce no
+/// diagnostic — `diagnostic_for_classified_seam` returns `None` for those.
 pub(super) fn diagnostic_severity_for_grip_class(
     class: SeamGripClass,
 ) -> Option<DiagnosticSeverity> {

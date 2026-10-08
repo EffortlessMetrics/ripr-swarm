@@ -254,6 +254,86 @@ the corpus counts. The summary is therefore a function of the rows: the dx
 scoreboard (`verdict-corpus:` sources) and the public proof receipt derive
 it from the committed rows, so parallel case PRs share no line.
 
+### Spec-example coverage
+
+The coverage unit is one numbered item (`1. `, `2. `, ...) written at the
+start of a line under a spec's `## Acceptance Examples` heading, up to the
+next second-level heading, outside fenced code. Its id is
+`RIPR-SPEC-NNNN#K`, where K is the item's own number.
+
+A case may carry an optional `spec_examples` array of those ids: the
+examples whose behavior its diff and runtime truth label. `validate`
+rejects an id that is not `RIPR-SPEC-NNNN#K` (K positive, no leading zero),
+a spec with no `docs/specs` file, a K that is not a numbered acceptance
+example of that spec, a citation of an out-of-scope spec, and an id cited
+twice by one case.
+
+`fixtures/rust-verdict-corpus/spec-coverage.toml`
+(`ripr_verdict_corpus_spec_coverage.v1`) is the ledger:
+
+- `[[spec]]` names every spec with at least one numbered acceptance
+  example, with `scope = "in"` or `scope = "out"`; an out-of-scope spec
+  needs a one-line `reason`. In scope means the examples describe Rust
+  analyzer verdict, oracle, probe or test-shape behavior that a corpus case
+  (a Rust diff plus runtime mutant truth) can label. Output formats, CLI,
+  editor, CI, agent, MCP, evaluation tooling, policy and non-Rust-language
+  specs are out.
+- `[[spec.waived]]` (`example`, `reason`) removes one example of an
+  in-scope spec from the denominator when no corpus case can label it, for
+  example a dead write where every mutant is equivalent
+  (RIPR-SPEC-0228 examples 10 and 11).
+- `[[unmeasured]]` (`id`, `reason`) lists in-scope specs whose acceptance
+  examples are prose, not numbered, reported as `unmeasured_specs` rather
+  than counted. The list is maintained by hand: nothing detects an in-scope
+  prose spec that is missing from it.
+- `floor` is the covered-example count the gate protects.
+
+`validate` fails when a spec with numbered examples is missing from the
+ledger (a new spec cannot leave the denominator silently), when the ledger
+names a spec that does not exist, scopes a spec with no numbered examples,
+lists as unmeasured a spec that now has numbered examples, waives an
+example that does not exist or without a reason, or waives an example a
+case covers, and when `floor` exceeds the coverable examples.
+
+Covered examples are the in-scope, non-waived examples at least one case
+cites. The report's `spec_example_coverage` section gives `coverage` as
+covered over in-scope examples minus waived, `accounted` as covered plus
+waived over in-scope examples, the in-scope, covered and waived example
+counts, the in-scope and out-of-scope spec counts, `unmeasured_specs`, and
+one row per in-scope spec with its in-scope examples, covered and waived
+counts, and uncovered example numbers. Waived examples are never folded
+into covered.
+
+`check` fails before running ripr when covered is below `floor`, naming the
+fall and the fix (restore the lost citation, or lower the floor with a
+reason when a case was deliberately retired). When covered is above `floor`
+it passes and prints that the floor can be raised. `validate` applies the
+same floor gate without running ripr; `report` prints the coverage without
+gating it. In CI the floor is enforced by the xtask unit test
+`committed_ledger_is_valid_and_meets_its_floor`, which the Rust gates
+workflow's workspace nextest run executes.
+
+Decisions:
+
+- The unit is the numbered acceptance example because it is the smallest
+  thing a spec already promises and names. Prose acceptance examples have
+  no stable identity, so they are listed, not counted.
+- Coverage counts citations, not verdict agreement. A covered example says
+  the corpus can measure that behavior; the verdict rates say whether ripr
+  gets it right. Folding the two would let a wrong verdict raise coverage.
+- The ledger names every spec with numbered examples, including
+  out-of-scope ones, so a new spec forces a scoping decision in review
+  instead of silently shrinking or growing the denominator. Rescoping a spec
+  out or adding a waiver shrinks the denominator without failing `check`;
+  only the ledger and golden-report diffs show it, so review owns that
+  decision. When unsure, a spec is scoped in, where it shows as uncovered
+  work.
+- Waivers are per example with a reason and are reported apart from
+  covered, so `accounted` can reach 1.0 while `coverage` stays honest.
+- The gate protects a committed count, not a rate, so adding a newly
+  scoped spec (which lowers the rate) passes while removing a citation
+  fails.
+
 ## Required Evidence
 
 - The committed corpus validates and contains both a `discriminated` and a
@@ -274,6 +354,13 @@ it from the committed rows, so parallel case PRs share no line.
   excerpt as authored therefore means renaming the subject and every case
   that names it, which review sees; the validator cannot detect a rename
   that also strips the license file.
+
+- Each spec-coverage validation rule rejects a tampered ledger or
+  citation, the numbered-example reader handles continued and indented
+  lines and specs without numbered items, and the floor gate fails below,
+  passes at, and invites a raise above the floor.
+- The committed ledger validates against `docs/specs` and its floor equals
+  the covered count.
 
 ## Non-Goals
 
@@ -419,10 +506,29 @@ Relabel tests live in `xtask/src/reports/verdict_corpus_relabel_tests.rs`:
 - `link_stays_inside_refuses_links_that_leave_the_copy`
 - `copy_checkout_refuses_a_chain_of_links_that_resolves_outside`
 
+Spec-example coverage tests live in
+`xtask/src/reports/verdict_corpus_coverage_tests.rs`:
+
+- `numbered_examples_read_only_top_level_items_under_acceptance_examples`
+- `numbered_examples_skip_tilde_and_long_fences_until_a_matching_close`
+- `spec_ids_come_from_the_spec_file_name`
+- `example_ids_accept_only_the_canonical_spelling`
+- `citations_of_malformed_unknown_or_unnumbered_examples_are_rejected`
+- `citing_an_out_of_scope_spec_is_rejected`
+- `an_example_both_waived_and_covered_is_rejected`
+- `ledger_must_name_every_spec_with_numbered_examples_and_only_real_ones`
+- `coverage_counts_cited_in_scope_examples_over_the_unwaived_ones`
+- `floor_gate_fails_below_passes_at_and_invites_a_raise_above`
+- `committed_ledger_is_valid_and_meets_its_floor`
+
 ## Implementation Mapping
 
 - `xtask/src/reports/verdict_corpus.rs` owns validation, materialization,
   scoring, and rendering.
+- `xtask/src/reports/verdict_corpus_coverage.rs` owns the numbered-example
+  reader, the spec-coverage ledger and citation law, the coverage metric,
+  and the floor gate.
+- `fixtures/rust-verdict-corpus/spec-coverage.toml` is the ledger.
 - `xtask/src/reports/verdict_corpus_relabel.rs` owns replaying runtime
   truth.
 - `fixtures/rust-verdict-corpus/` holds the corpus, retained upstream and
@@ -433,3 +539,6 @@ Relabel tests live in `xtask/src/reports/verdict_corpus_relabel_tests.rs`:
 - `verdict_corpus_false_verdict_rate`
 - `verdict_corpus_false_actionable_rate`
 - `verdict_corpus_contradiction_rate`
+- `verdict_corpus_spec_example_coverage` (dx-scoreboard
+  `trust.verdict_corpus_spec_example_coverage`, target 1.0, regression
+  margin 0)

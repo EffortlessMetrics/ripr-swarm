@@ -10,9 +10,11 @@ itoa, bytesize, rusqlite, strsim, atuin; semver and bytesize at two pins) under
 with license files (Rust sources stored as `.rs.txt`), small authored
 crates written to fill cells the real crates leave empty (`authored-pricing`,
 `authored-ledger` and `authored-config` for verdict and probe-family cells;
-`authored-accounts`, `authored-checkout`, `authored-tokens`, `authored-shop`
-and `authored-roles` for test shapes other RIPR specs define, each case naming
-its specs in its reasoning; one `authored-specNNNN-<k>` crate per acceptance
+`authored-accounts`, `authored-checkout`, `authored-tokens`, `authored-shop`,
+`authored-roles`, `authored-old-errors`, `authored-old-tool`,
+`authored-old-shell` and `authored-old-deps` for test shapes other RIPR specs
+define, each case naming its specs in its reasoning; one
+`authored-specNNNN-<k>` crate per acceptance
 example of RIPR-SPEC-0225 to 0228, isolated so no other example's test relates
 to its owner; eleven `authored-grid-*` crates crossing cargo-mutants operator
 classes with five test styles: exact pin, table-driven loop, property-style
@@ -63,6 +65,16 @@ counted; authored rates are reported apart from upstream rates; and every
 row must equal its expected row file and `expected/` holds nothing else
 (a leftover `expected/summary.json` is reported as stale).
 
+A case may cite the numbered spec acceptance examples it labels in
+`spec_examples` (`RIPR-SPEC-NNNN#K`). `spec-coverage.toml` scopes every spec
+with numbered acceptance examples in or out, waives in-scope examples no
+case can label (each with a reason), lists in-scope specs with prose
+examples as unmeasured, and records `floor`. The report's
+`spec_example_coverage` section gives covered over in-scope minus waived
+examples and the uncovered example numbers per spec; `validate` and `check`
+fail when covered falls below `floor`; in CI the xtask test
+`committed_ledger_is_valid_and_meets_its_floor` enforces it.
+
 ## Must Not
 
 - Run mutation testing, `cargo test`, or network access (`check` and
@@ -93,6 +105,12 @@ case. Read `target/ripr/reports/verdict-corpus/report.md`. A row
 marked `changed_since_labeling` must be re-checked against the full pinned
 checkout (for an authored crate, the stored crate itself) before the
 expected state is refreshed with `cargo xtask verdict-corpus bless`.
+
+When a new case labels a spec example, add its id to the case's
+`spec_examples` and re-bless; raise `floor` in
+`spec-coverage.toml` to the new covered count (`check` prints it). A new
+spec with numbered acceptance examples fails `validate` until it has a
+`[[spec]]` entry.
 
 ## Re-deriving truth
 

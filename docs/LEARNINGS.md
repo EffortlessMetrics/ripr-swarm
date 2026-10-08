@@ -3,6 +3,18 @@
 This log captures repo knowledge that should survive individual PRs and chat
 sessions. It is intentionally short and actionable.
 
+## 2026-10-04: Generated tests need indexing and admission in the expansion (#5334)
+
+Tests written through a same-file `macro_rules!` generator were invisible:
+the parser sees token trees, so an owner they fully test read `ungripped`
+(repo mode) or `no_static_path` (diff mode). Indexing them alone is not
+enough. Assertion admission (`classify/owner_pin.rs`) looks a test up in the
+file text by its lines, so a generated test's `assert_eq!` was refused and
+diff mode turned the old `no_static_path` into a `reachable_unrevealed` gap.
+Admission now reruns over the invocation's expansion. Two more traps: the
+test-style normalizer rebuilds tests from parsed functions, so generated
+tests must be registered after it; and wrapping a single-literal `expr`
+argument in parentheses hid the boundary value from activation.
 ## 2026-10-07: Call-path scans must treat non-ASCII as identifier text (#7062)
 
 `called_paths` walked bytes with an ASCII identifier set. `módulo` became
