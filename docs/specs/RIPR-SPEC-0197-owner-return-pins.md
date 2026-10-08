@@ -546,14 +546,26 @@ rule only for an assertion whose context was admitted.
    cannot notice the field replaced by one of its operands when, for the
    pinned input, the field equals that operand. The changed initializer is
    `f: a <op> b` with two distinct plain identifier operands and one binary
-   operator. A sibling initializer of the same struct literal is `g: a` (or
+   operator, and both operands are established primitive, so the dropped
+   operator is a built-in one: a parameter of a primitive type, a `let`
+   annotated with one, a numeric or bool literal, an arithmetic
+   combination of established names and literals with the accepted operators
+   and `as` casts to primitives, or a call whose every same-named
+   function in the index declares one bare primitive return (optionally
+   behind one reference). Anything else — a string, char literal or block
+   comment anywhere in the owner body, a callee missing from or ambiguous
+   in the index, a non-primitive return, a binding that is not established — keeps the
+   credit: a custom type can overload the operator, and an overloaded
+   operator may carry side effects that assertions on other fields
+   observe (review of #7084). A sibling initializer of the same struct
+   literal is `g: a` (or
    the shorthand `a`). A related test binds `q` once, straight from a call
    to the owner (`let q = quote(..)`; a second `let q` may shadow it and
    refuses), and holds both `assert_eq!(q.f, v)` and `assert_eq!(q.g, v)`
    with the same literal `v` (an integer with digit separators ignored, a
    string, a char or a bool; a name or call may differ between the two
    pins and refuses). For that input `f` equals `a`, so the mutant `f: a`
-   passes whatever the operator is. When every exact pin on `f` in every
+   passes those pins. When every exact pin on `f` in every
    related test is paired this way with the same sibling, the
    field-construction finding's discriminate stage reads weak with the code
    `field_pinned_equal_to_operand`, which names the operand the tests never

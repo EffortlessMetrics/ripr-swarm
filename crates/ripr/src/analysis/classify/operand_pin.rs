@@ -4,11 +4,14 @@
 //! `assert_eq!(q.total_cents, 9_000)`. When the same test also pins
 //! `q.subtotal_cents` (initialized from `subtotal`) to `9_000`, the field
 //! equals that operand for that input, so replacing the field with the
-//! operand alone passes the test, whatever the operator. When every test
-//! that pins the field is paired this way, the exact oracle does not
-//! discriminate the change.
+//! operand alone passes the test. Both operands must be established primitive,
+//! so the dropped operator is a built-in one: a custom type can overload
+//! it, and an overloaded operator may carry side effects that assertions
+//! on other fields observe (#7084 review). When every test that pins the
+//! field is paired this way, the exact oracle does not discriminate the
+//! change.
 
-use super::super::rust_index::TestSummary;
+use super::super::rust_index::{RustIndex, TestSummary};
 use crate::domain::{OracleKind, RelationReason};
 
 /// Token carried in the discriminate summary when [`operand_only_pin`] holds.
@@ -41,17 +44,26 @@ impl OperandOnlyPin {
 /// operand, and every exact pin on the field in every related test sits
 /// beside a pin of that sibling, on the same receiver, to the same literal.
 /// Each receiver must be bound once, straight from a call to `owner_name`.
-/// At least one related test must pin the field. Any mention of the field
-/// that is not such a pin (a custom message, another assertion macro, a
-/// binding read out of the result) returns `None`, as does anything else
-/// ripr cannot read, which leaves the finding as it was.
+/// At least one related test must pin the field. Both operands must be
+/// established primitive ([`operand_established_primitive`]): an accepted operator on
+/// an operand that is not established primitive may be overloaded, and dropping an overloaded
+/// operator call could skip side effects other assertions observe. Any
+/// mention of the field that is not such a pin (a custom message, another
+/// assertion macro, a binding read out of the result) returns `None`, as
+/// does anything else ripr cannot read, which leaves the finding as it was.
 pub(in crate::analysis) fn operand_only_pin(
     expression: &str,
     owner_name: &str,
     owner_body: &str,
     tests: &[(&TestSummary, RelationReason)],
+    index: &RustIndex,
 ) -> Option<OperandOnlyPin> {
     let (field, left, right) = binary_field_initializer(expression)?;
+    if !operand_established_primitive(left, owner_body, index)
+        || !operand_established_primitive(right, owner_body, index)
+    {
+        return None;
+    }
     let siblings = sibling_initializers(owner_body, expression)?;
     let mut tested = Vec::new();
     for (test, reason) in tests {
@@ -166,6 +178,325 @@ fn binary_field_initializer(expression: &str) -> Option<(&str, &str, &str)> {
     let binary = matches!(*operator, "+" | "-" | "*" | "/" | "%" | "|" | "^" | "&");
     (binary && is_identifier(name) && is_identifier(left) && is_identifier(right) && left != right)
         .then_some((name, *left, *right))
+}
+
+/// Whether `operand` is established to hold a built-in-operator value, so the
+/// dropped `<op>` of the initializer is a primitive operator with no call
+/// to skip. A custom type can overload any accepted operator (review of
+/// #7084), and an overloaded operator may carry side effects that
+/// assertions on other fields observe, so an operand that cannot be established
+/// primitive keeps the finding. Proof runs through the owner's own text: a
+/// parameter of a primitive type, or a `let` bound to a numeric or bool
+/// literal, to another established name, to an arithmetic combination of those,
+/// or to a call whose every same-named function in the index declares one
+/// bare primitive return. A string, char literal or block comment anywhere
+/// in the owner body, or anything else unreadable, proves nothing.
+fn operand_established_primitive(operand: &str, owner_body: &str, index: &RustIndex) -> bool {
+    // Comments are dropped first. A string, char literal or block comment
+    // could hide a binding or a type this proof would misread, so such an
+    // owner is not read at all.
+    let text = strip_line_comments(owner_body);
+    if text.contains(['"', '\'']) || text.contains("/*") {
+        return false;
+    }
+    let bindings = let_binding_expressions(&text);
+    let mut established: Vec<String> = owner_param_types(&text)
+        .into_iter()
+        .filter(|(_, ty)| primitive_type_token(ty))
+        .map(|(name, _)| name)
+        .collect();
+    loop {
+        let mut changed = false;
+        for (name, _, _) in &bindings {
+            if established.iter().any(|seen| seen == name) {
+                continue;
+            }
+            // Shadowing: a name is established only when every binding of it
+            // proves, so the value at the literal is primitive whichever
+            // binding produced it. The annotation owns the type when
+            // present: a primitive annotation proves the binding outright,
+            // a non-primitive one refuses it even when the initializer
+            // looks like a literal (`let s: Money = 499;`).
+            let all = bindings.iter().filter(|(bound, _, _)| bound == name).all(
+                |(_, bound_expr, annotation)| match annotation {
+                    Some(ty) => primitive_type_token(ty),
+                    None => expression_established(bound_expr, &established, index),
+                },
+            );
+            if all {
+                established.push(name.clone());
+                changed = true;
+            }
+        }
+        if !changed {
+            return established.iter().any(|seen| seen == operand);
+        }
+    }
+}
+
+/// Whether one binding initializer proves its name primitive. A typed
+/// binding with a primitive annotation proves it outright; the value forms
+/// are read by [`expression_established`].
+fn expression_established(expr: &str, established: &[String], index: &RustIndex) -> bool {
+    let expr = expr.trim();
+    if is_identifier(expr) {
+        return expr == "true" || expr == "false" || established.iter().any(|name| name == expr);
+    }
+    if let Some(callee) = call_callee(expr) {
+        return call_established_primitive(callee, index);
+    }
+    arithmetic_established(expr, established)
+}
+
+/// The last segment of a plain free call (`name(..)`, `a::b::name(..)`),
+/// when the whole expression is exactly that call. A method call, a
+/// turbofish, a chained transform or a type segment in the path (`Other::
+/// quote`) is not read.
+fn call_callee(expr: &str) -> Option<&str> {
+    let expr = expr.trim();
+    if expr.contains("::<") {
+        return None;
+    }
+    let open = expr.find('(')?;
+    if matching_paren(expr, open) != Some(expr.len() - 1) {
+        return None;
+    }
+    let callee = expr[..open].trim();
+    let name = match callee.rsplit_once("::") {
+        Some((path, name))
+            if path.split("::").all(|segment| {
+                segment
+                    .trim()
+                    .starts_with(|ch: char| ch.is_ascii_lowercase())
+            }) =>
+        {
+            name
+        }
+        Some(_) => return None,
+        None => callee,
+    };
+    is_identifier(name).then_some(name)
+}
+
+/// Whether every function named `callee` in the index declares one bare
+/// primitive return (optionally behind one reference). No such function,
+/// disagreeing returns, or any non-primitive return proves nothing: a call
+/// to a function outside the index (another crate) could return a type
+/// that overloads the operator.
+fn call_established_primitive(callee: &str, index: &RustIndex) -> bool {
+    let mut seen: Option<String> = None;
+    for function in index.functions().iter() {
+        if function.name != callee {
+            continue;
+        }
+        let Some(returns) = declared_return_type(function.body.as_str()) else {
+            return false;
+        };
+        match &seen {
+            Some(previous) if previous != returns => return false,
+            _ => seen = Some(returns.to_string()),
+        }
+    }
+    seen.is_some_and(|token| primitive_type_token(&token))
+}
+
+/// The declared return type text of a function whose `body` starts at its
+/// signature: the tokens between `->` and the body's `{` or `;`, with a
+/// `where` clause cut off. `None` when the signature shape is unreadable.
+fn declared_return_type(body: &str) -> Option<&str> {
+    let at = body.find("fn ")?;
+    let open = body[at..].find('(')? + at;
+    let close = matching_paren(body, open)?;
+    let rest = body[close + 1..].trim_start();
+    let rest = rest.strip_prefix("->")?.trim_start();
+    let end = rest.find(['{', ';']).unwrap_or(rest.len());
+    let token = rest[..end].trim();
+    let token = match token.find(" where ") {
+        Some(at) => token[..at].trim(),
+        None => token,
+    };
+    (!token.is_empty()).then_some(token)
+}
+
+/// Whether `text` is one bare primitive arithmetic type, optionally behind
+/// one reference. A generic parameter, a path or a compound type is not.
+fn primitive_type_token(text: &str) -> bool {
+    let text = text.trim();
+    let text = text.strip_prefix("&mut ").unwrap_or(text);
+    let text = text.strip_prefix('&').unwrap_or(text).trim();
+    matches!(
+        text,
+        "u8" | "u16"
+            | "u32"
+            | "u64"
+            | "u128"
+            | "usize"
+            | "i8"
+            | "i16"
+            | "i32"
+            | "i64"
+            | "i128"
+            | "isize"
+            | "f32"
+            | "f64"
+            | "bool"
+    )
+}
+
+/// `(name, initializer, annotation)` for each plain `let name = ..` of
+/// `text`, in order. The signature wrapper is cut first, so a `let` after
+/// the body's opening brace is read. A typed binding carries its
+/// annotation text; patterns other than a plain name, and
+/// initializer-less declarations, are not read.
+fn let_binding_expressions(text: &str) -> Vec<(String, String, Option<String>)> {
+    let inner = match text.find('{') {
+        Some(open) if text[..open].contains("fn ") => text[open + 1..]
+            .trim_end()
+            .strip_suffix('}')
+            .unwrap_or(&text[open + 1..]),
+        _ => text,
+    };
+    inner
+        .split(';')
+        .filter_map(|statement| {
+            let rest = statement.trim().strip_prefix("let ")?;
+            let (name, value) = rest.split_once('=')?;
+            let name = name.trim();
+            let name = match name.strip_prefix("mut ") {
+                Some(name) => name.trim(),
+                None => name,
+            };
+            let (name, annotation) = match name.split_once(':') {
+                Some((name, ty)) => (name.trim(), Some(ty.trim().to_string())),
+                None => (name, None),
+            };
+            is_identifier(name).then(|| (name.to_string(), value.trim().to_string(), annotation))
+        })
+        .collect()
+}
+
+/// `(name, type)` for each plain `name: Type` parameter of the function
+/// whose body text this is. `self`, patterns and unparsable items
+/// contribute nothing.
+fn owner_param_types(text: &str) -> Vec<(String, String)> {
+    let Some(at) = text.find("fn ") else {
+        return Vec::new();
+    };
+    let Some(open) = text[at..].find('(') else {
+        return Vec::new();
+    };
+    let open = open + at;
+    let Some(close) = matching_paren(text, open) else {
+        return Vec::new();
+    };
+    top_level_items(&text[open + 1..close])
+        .into_iter()
+        .filter_map(|item| {
+            let (name, ty) = item.split_once(':')?;
+            let name = name.trim();
+            let name = match name.strip_prefix("mut ") {
+                Some(name) => name.trim(),
+                None => name,
+            };
+            is_identifier(name).then(|| (name.to_string(), ty.trim().to_string()))
+        })
+        .collect()
+}
+
+/// `text` without the rest of any line holding a `//` comment.
+fn strip_line_comments(text: &str) -> String {
+    text.lines()
+        .map(|line| line.split_once("//").map_or(line, |(code, _)| code))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Whether `expr` is an arithmetic combination of established names, numeric or
+/// bool literals, and `as` casts to primitive types, using only the
+/// accepted operators (with unary `-`, `!`, `&`). A word directly followed
+/// by `(` is a call and proves nothing; any other character shape — a
+/// stray `.`, a path, an index, a macro — refuses.
+fn arithmetic_established(expr: &str, established: &[String]) -> bool {
+    let bytes = expr.as_bytes();
+    if !expr.is_ascii() {
+        return false;
+    }
+    let mut depth = 0i32;
+    let mut at = 0usize;
+    let mut expecting_cast = false;
+    while at < bytes.len() {
+        match bytes[at] {
+            byte if byte.is_ascii_whitespace() => at += 1,
+            b'0'..=b'9' => {
+                if expecting_cast {
+                    return false;
+                }
+                expecting_cast = false;
+                at += 1;
+                while at < bytes.len() && (bytes[at].is_ascii_alphanumeric() || bytes[at] == b'_') {
+                    at += 1;
+                }
+                // One fractional dot between digits is part of a float
+                // literal; any other `.` refuses.
+                if at < bytes.len() && bytes[at] == b'.' {
+                    if at + 1 < bytes.len()
+                        && bytes[at + 1].is_ascii_digit()
+                        && bytes[at - 1].is_ascii_digit()
+                    {
+                        at += 1;
+                        while at < bytes.len()
+                            && (bytes[at].is_ascii_alphanumeric() || bytes[at] == b'_')
+                        {
+                            at += 1;
+                        }
+                    } else {
+                        return false;
+                    }
+                }
+            }
+            byte if byte.is_ascii_alphabetic() || byte == b'_' => {
+                let start = at;
+                while at < bytes.len() && (bytes[at].is_ascii_alphanumeric() || bytes[at] == b'_') {
+                    at += 1;
+                }
+                let word = &expr[start..at];
+                if expecting_cast {
+                    if !primitive_type_token(word) {
+                        return false;
+                    }
+                    expecting_cast = false;
+                } else if word == "as" {
+                    expecting_cast = true;
+                } else if word != "true"
+                    && word != "false"
+                    && !established.iter().any(|name| name == word)
+                {
+                    return false;
+                }
+                if expr[at..].trim_start().starts_with('(') {
+                    return false;
+                }
+            }
+            b'(' => {
+                depth += 1;
+                expecting_cast = false;
+                at += 1;
+            }
+            b')' => {
+                depth -= 1;
+                if depth < 0 {
+                    return false;
+                }
+                at += 1;
+            }
+            b'+' | b'-' | b'*' | b'/' | b'%' | b'|' | b'^' | b'&' | b'!' => {
+                expecting_cast = false;
+                at += 1;
+            }
+            _ => return false,
+        }
+    }
+    depth == 0 && !expecting_cast
 }
 
 /// The other `field: operand` initializers of the struct literal that holds
@@ -485,9 +816,11 @@ fn is_identifier(text: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::analysis::facts::OracleFact;
-    use crate::analysis::rust_index::TestSummary;
-    use crate::domain::OracleStrength;
+    use crate::analysis::facts::{FunctionSourceRole, OracleFact, OwnedRustIndex};
+    use crate::analysis::rust_index::{FileFacts, FunctionFact};
+    use crate::domain::{OracleStrength, SymbolId};
+    use std::collections::BTreeMap;
+    use std::path::PathBuf;
 
     const OWNER: &str = "pub fn quote(unit: u64, quantity: u64) -> Quote {
     let subtotal = unit * quantity;
@@ -498,6 +831,56 @@ mod tests {
         total_cents: subtotal + shipping,
     }
 }";
+
+    /// An index holding one file whose functions carry `bodies` verbatim,
+    /// the way the parser producer records signatures in `body`.
+    fn index_with(bodies: &[&str]) -> RustIndex {
+        let path = PathBuf::from("src/lib.rs");
+        let functions: Vec<FunctionFact> = bodies
+            .iter()
+            .enumerate()
+            .map(|(offset, body)| FunctionFact {
+                id: SymbolId(format!("lib::{}::{offset}", fn_name_of(body))),
+                name: fn_name_of(body).to_string(),
+                file: path.clone(),
+                start_line: 1,
+                end_line: 1,
+                body: (*body).into(),
+                calls: Vec::new(),
+                returns: Vec::new(),
+                literals: Vec::new(),
+                source_role: FunctionSourceRole::Production,
+                attrs: Vec::new(),
+                impl_attrs: Vec::new(),
+                nested_fn_names: Vec::new(),
+                let_bindings: Vec::new(),
+                item: Default::default(),
+                impl_context: Default::default(),
+            })
+            .collect();
+        RustIndex::from_owned(OwnedRustIndex {
+            files: BTreeMap::from([(
+                path.clone(),
+                FileFacts {
+                    path: path.clone(),
+                    functions: functions.clone(),
+                    source: "".into(),
+                    ..FileFacts::default()
+                },
+            )]),
+            functions,
+            ..Default::default()
+        })
+    }
+
+    fn fn_name_of(body: &str) -> &str {
+        let at = body.find("fn ").unwrap_or(0);
+        let rest = &body[at + 3..];
+        let end = rest
+            .find(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_'))
+            .unwrap_or(rest.len());
+        &rest[..end]
+    }
 
     fn test_with(body_lines: &[&str]) -> TestSummary {
         TestSummary {
@@ -526,12 +909,23 @@ mod tests {
         }
     }
 
-    fn pin(tests: &[TestSummary]) -> Option<OperandOnlyPin> {
+    fn pin_with(index: &RustIndex, tests: &[TestSummary]) -> Option<OperandOnlyPin> {
         let refs = tests
             .iter()
             .map(|test| (test, RelationReason::DirectOwnerCall))
             .collect::<Vec<_>>();
-        operand_only_pin("total_cents: subtotal + shipping", "quote", OWNER, &refs)
+        operand_only_pin(
+            "total_cents: subtotal + shipping",
+            "quote",
+            OWNER,
+            &refs,
+            index,
+        )
+    }
+
+    fn pin(tests: &[TestSummary]) -> Option<OperandOnlyPin> {
+        let index = index_with(&["fn shipping_cents(cents: u64) -> u64 { 499 }"]);
+        pin_with(&index, tests)
     }
 
     #[test]
@@ -694,6 +1088,7 @@ mod tests {
         let unrelated = test_with(&["assert_eq!(discounted(10_000), 9_000);"]);
 
         assert_eq!(pin(&[paired.clone(), whole]), None);
+        let index = index_with(&["fn shipping_cents(cents: u64) -> u64 { 499 }"]);
         assert!(
             operand_only_pin(
                 "total_cents: subtotal + shipping",
@@ -703,6 +1098,7 @@ mod tests {
                     (&paired, RelationReason::DirectOwnerCall),
                     (&unrelated, RelationReason::SameModule),
                 ],
+                &index,
             )
             .is_some()
         );
@@ -757,6 +1153,7 @@ mod tests {
             "assert_eq!(q.total_cents, 9_000);",
         ]);
         let through_helper = test_with(&["assert_eq!(make_quote(), expected());"]);
+        let index = index_with(&["fn shipping_cents(cents: u64) -> u64 { 499 }"]);
         let check = |reason| {
             operand_only_pin(
                 "total_cents: subtotal + shipping",
@@ -766,6 +1163,7 @@ mod tests {
                     (&paired, RelationReason::DirectOwnerCall),
                     (&through_helper, reason),
                 ],
+                &index,
             )
         };
 
@@ -778,6 +1176,7 @@ mod tests {
                 (&paired, RelationReason::DirectOwnerCall),
                 (&hands_to_helper, RelationReason::DirectOwnerCall),
             ],
+            &index,
         );
 
         assert_eq!(check(RelationReason::HelperOwnerCall), None);
@@ -919,12 +1318,14 @@ mod tests {
 }}"
             )
         };
+        let index = index_with(&["fn shipping_cents(cents: u64) -> u64 { 499 }"]);
         let check = |owner: &str| {
             operand_only_pin(
                 "total_cents: subtotal + shipping",
                 "quote",
                 owner,
                 &[(&paired, RelationReason::DirectOwnerCall)],
+                &index,
             )
         };
 
@@ -937,6 +1338,298 @@ mod tests {
             None
         );
         assert!(check(OWNER).is_some());
+    }
+
+    /// Codex review of #7084: an operand of a custom type can overload the
+    /// operator, and an overloaded operator may carry side effects that
+    /// assertions on other fields observe, so its binding must prove a
+    /// primitive type before the downgrade.
+    #[test]
+    fn an_overloaded_operator_operand_keeps_the_credit() {
+        let owner = "pub fn quote(unit: u64, quantity: u64) -> Quote {
+    let subtotal = unit * quantity;
+    let shipping = shipping_money(subtotal);
+    Quote {
+        subtotal_cents: subtotal,
+        shipping_cents: shipping,
+        total_cents: subtotal + shipping,
+    }
+}";
+        let paired = test_with(&[
+            "let q = quote(2_500, 4);",
+            "assert_eq!(q.subtotal_cents, 9_000);",
+            "assert_eq!(q.total_cents, 9_000);",
+        ]);
+        let refs = vec![(&paired, RelationReason::DirectOwnerCall)];
+        let run = |index: &RustIndex| {
+            operand_only_pin(
+                "total_cents: subtotal + shipping",
+                "quote",
+                owner,
+                &refs,
+                index,
+            )
+        };
+
+        let custom = index_with(&["fn shipping_money(cents: u64) -> Money { Money(499) }"]);
+        assert_eq!(run(&custom), None);
+        let absent = RustIndex::default();
+        assert_eq!(run(&absent), None);
+        let disagreeing = index_with(&[
+            "fn shipping_money(cents: u64) -> u64 { 499 }",
+            "fn shipping_money(cents: u64) -> u32 { 499 }",
+        ]);
+        assert_eq!(run(&disagreeing), None);
+        let agreeing = index_with(&[
+            "fn shipping_money(cents: u64) -> u64 { 499 }",
+            "fn shipping_money(cents: u64) -> u64 { 500 }",
+        ]);
+        assert!(run(&agreeing).is_some());
+    }
+
+    /// A parameter of a custom type overloads the operator just the same.
+    #[test]
+    fn a_custom_typed_parameter_keeps_the_credit() {
+        let owner = "pub fn quote(subtotal: Money, shipping: Money) -> Quote {
+    Quote {
+        subtotal_cents: subtotal,
+        shipping_cents: shipping,
+        total_cents: subtotal + shipping,
+    }
+}";
+        let paired = test_with(&[
+            "let q = quote(Money(2_500), Money(4));",
+            "assert_eq!(q.subtotal_cents, 9_000);",
+            "assert_eq!(q.total_cents, 9_000);",
+        ]);
+        let refs = vec![(&paired, RelationReason::DirectOwnerCall)];
+        let index = RustIndex::default();
+
+        assert_eq!(
+            operand_only_pin(
+                "total_cents: subtotal + shipping",
+                "quote",
+                owner,
+                &refs,
+                &index,
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn a_non_primitive_callee_return_keeps_the_credit() {
+        let paired = test_with(&[
+            "let q = quote(2_500, 4);",
+            "assert_eq!(q.subtotal_cents, 9_000);",
+            "assert_eq!(q.total_cents, 9_000);",
+        ]);
+        let refs = vec![(&paired, RelationReason::DirectOwnerCall)];
+        let tier = index_with(&["fn shipping_cents(cents: u64) -> Tier { Tier::Gold }"]);
+        let result = index_with(&["fn shipping_cents(cents: u64) -> Result<u64, E> { Ok(499) }"]);
+
+        assert_eq!(
+            operand_only_pin(
+                "total_cents: subtotal + shipping",
+                "quote",
+                OWNER,
+                &refs,
+                &tier,
+            ),
+            None
+        );
+        assert_eq!(
+            operand_only_pin(
+                "total_cents: subtotal + shipping",
+                "quote",
+                OWNER,
+                &refs,
+                &result,
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn a_literal_and_param_chain_proves_without_calls() {
+        let owner = "pub fn quote(unit: u64, quantity: u64) -> Quote {
+    let subtotal = unit * quantity;
+    let shipping = 499;
+    Quote {
+        subtotal_cents: subtotal,
+        shipping_cents: shipping,
+        total_cents: subtotal + shipping,
+    }
+}";
+        let paired = test_with(&[
+            "let q = quote(2_500, 4);",
+            "assert_eq!(q.subtotal_cents, 9_000);",
+            "assert_eq!(q.total_cents, 9_000);",
+        ]);
+        let refs = vec![(&paired, RelationReason::DirectOwnerCall)];
+        let index = RustIndex::default();
+
+        assert!(
+            operand_only_pin(
+                "total_cents: subtotal + shipping",
+                "quote",
+                owner,
+                &refs,
+                &index,
+            )
+            .is_some()
+        );
+    }
+
+    #[test]
+    fn a_primitive_annotation_proves_the_binding() {
+        let owner = "pub fn quote(unit: u64, quantity: u64) -> Quote {
+    let subtotal = unit * quantity;
+    let shipping: u64 = opaque();
+    Quote {
+        subtotal_cents: subtotal,
+        shipping_cents: shipping,
+        total_cents: subtotal + shipping,
+    }
+}";
+        let paired = test_with(&[
+            "let q = quote(2_500, 4);",
+            "assert_eq!(q.subtotal_cents, 9_000);",
+            "assert_eq!(q.total_cents, 9_000);",
+        ]);
+        let refs = vec![(&paired, RelationReason::DirectOwnerCall)];
+        let index = RustIndex::default();
+
+        assert!(
+            operand_only_pin(
+                "total_cents: subtotal + shipping",
+                "quote",
+                owner,
+                &refs,
+                &index,
+            )
+            .is_some()
+        );
+    }
+
+    /// The annotation owns the type when present: `let s: Money = 499;`
+    /// binds a custom value even though the initializer reads as a literal.
+    #[test]
+    fn a_non_primitive_annotation_keeps_the_credit() {
+        let owner = "pub fn quote(unit: u64, quantity: u64) -> Quote {
+    let subtotal = unit * quantity;
+    let shipping: Money = 499;
+    Quote {
+        subtotal_cents: subtotal,
+        shipping_cents: shipping,
+        total_cents: subtotal + shipping,
+    }
+}";
+        let paired = test_with(&[
+            "let q = quote(2_500, 4);",
+            "assert_eq!(q.subtotal_cents, 9_000);",
+            "assert_eq!(q.total_cents, 9_000);",
+        ]);
+        let refs = vec![(&paired, RelationReason::DirectOwnerCall)];
+        let index = RustIndex::default();
+
+        assert_eq!(
+            operand_only_pin(
+                "total_cents: subtotal + shipping",
+                "quote",
+                owner,
+                &refs,
+                &index,
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn a_reference_primitive_return_proves_the_operand() {
+        let paired = test_with(&[
+            "let q = quote(2_500, 4);",
+            "assert_eq!(q.subtotal_cents, 9_000);",
+            "assert_eq!(q.total_cents, 9_000);",
+        ]);
+        let refs = vec![(&paired, RelationReason::DirectOwnerCall)];
+        let reference = index_with(&["fn shipping_cents(cents: u64) -> &u64 { &499 }"]);
+
+        assert!(
+            operand_only_pin(
+                "total_cents: subtotal + shipping",
+                "quote",
+                OWNER,
+                &refs,
+                &reference,
+            )
+            .is_some()
+        );
+    }
+
+    #[test]
+    fn an_arithmetic_mix_with_a_call_keeps_the_credit() {
+        let owner = "pub fn quote(unit: u64, quantity: u64) -> Quote {
+    let subtotal = unit * quantity;
+    let shipping = 1 + shipping_cents(subtotal);
+    Quote {
+        subtotal_cents: subtotal,
+        shipping_cents: shipping,
+        total_cents: subtotal + shipping,
+    }
+}";
+        let paired = test_with(&[
+            "let q = quote(2_500, 4);",
+            "assert_eq!(q.subtotal_cents, 9_000);",
+            "assert_eq!(q.total_cents, 9_000);",
+        ]);
+        let refs = vec![(&paired, RelationReason::DirectOwnerCall)];
+        let index = index_with(&["fn shipping_cents(cents: u64) -> u64 { 499 }"]);
+
+        assert_eq!(
+            operand_only_pin(
+                "total_cents: subtotal + shipping",
+                "quote",
+                owner,
+                &refs,
+                &index,
+            ),
+            None
+        );
+    }
+
+    /// A string anywhere in the owner body could hide a binding or a type
+    /// this proof would misread, so such an owner keeps the credit.
+    #[test]
+    fn a_string_anywhere_in_the_owner_keeps_the_credit() {
+        let owner = "pub fn quote(unit: u64, quantity: u64) -> Quote {
+    let note = format!(\"{}\", 499);
+    let subtotal = unit * quantity;
+    let shipping = 499;
+    Quote {
+        subtotal_cents: subtotal,
+        shipping_cents: shipping,
+        total_cents: subtotal + shipping,
+    }
+}";
+        let paired = test_with(&[
+            "let q = quote(2_500, 4);",
+            "assert_eq!(q.subtotal_cents, 9_000);",
+            "assert_eq!(q.total_cents, 9_000);",
+        ]);
+        let refs = vec![(&paired, RelationReason::DirectOwnerCall)];
+        let index = RustIndex::default();
+
+        assert_eq!(
+            operand_only_pin(
+                "total_cents: subtotal + shipping",
+                "quote",
+                owner,
+                &refs,
+                &index,
+            ),
+            None
+        );
     }
 
     #[test]

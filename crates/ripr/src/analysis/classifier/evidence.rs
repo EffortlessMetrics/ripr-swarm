@@ -505,7 +505,9 @@ impl ClassifiedProbeEvidence {
         };
         // #7077: an exact pin on the field is no discriminator when every
         // test that pins it also pins a sibling field, bound to one operand,
-        // to the same value: the field equals that operand there.
+        // to the same value: the field equals that operand there. Both
+        // operands must be established primitive, so the dropped operator cannot
+        // be an overloaded call with side effects (#7084 review).
         let discriminate = if matches!(context.probe.family, ProbeFamily::FieldConstruction)
             && discriminate.state == StageState::Yes
             && let Some(owner) = context.owner_fn
@@ -514,6 +516,7 @@ impl ClassifiedProbeEvidence {
                 &owner.name,
                 owner.body.as_str(),
                 &context.related_tests,
+                context.index,
             ) {
             StageEvidence::new(StageState::Weak, Confidence::Medium, pin.summary())
         } else {
