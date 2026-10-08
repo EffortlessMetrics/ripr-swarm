@@ -21,6 +21,7 @@ Linked plan:
 Linked issues:
 
 - #5513 (observer substrings grant medium `mock_expectation` credit)
+- #6991 (exact-equality `.any()` membership graded weak; rule 7)
 
 Linked PRs:
 
@@ -30,11 +31,15 @@ Linked PRs:
 Support-tier impact:
 
 - No tier change. The `oracle_kind` and `oracle_strength` that ripr reports
-  for a Rust related test stop overstating what the assertion pins. No finding
-  moves to a stronger class (gains credit) from this spec. Under the #5416
-  unknown-not-a-gap rule 3, a finding whose only strong oracle this spec
-  weakens may move from `static_unknown` back to its named gap. Claim
-  boundaries remain governed by [support tiers](../status/SUPPORT_TIERS.md).
+  for a Rust related test stop overstating what the assertion pins. Rules 1
+  to 6 move no finding to a stronger class. Rule 7 raises one narrowly
+  admitted shape from weak to strong; the grade is verdict-neutral on the
+  Rust verdict corpus (283 cases, zero rows moved), because reveal still
+  requires observation confirmation before a strong oracle reads `exposed`.
+  Under the #5416 unknown-not-a-gap rule 3, a finding whose only strong
+  oracle this spec weakens may move from `static_unknown` back to its named
+  gap. Claim boundaries remain governed by
+  [support tiers](../status/SUPPORT_TIERS.md).
 
 Policy impact:
 
@@ -128,15 +133,19 @@ pre-check to every whole irrefutable pattern, guarded or not.
 9. `mock_expectation` / medium
 10. exact custom helper as `exact_value` / strong
 11. other custom helper as `unknown`
-12. `<` or `>` anywhere in the operand text, `is_empty`, `contains` or a
+12. exact-equality `.any()` membership as `exact_value` / strong (rule 7)
+13. `<` or `>` anywhere in the operand text, `is_empty`, `contains` or a
     bare `assert!` as `relational_check` / weak
-13. otherwise `unknown`
+14. otherwise `unknown`
 
-This order is the existing behavior and is normative. The admission rules
-below change what a step admits. A rule that takes an assertion out of a
-step assigns the kind it states at that step's position, so the assertion
-does not fall through to a later step by accident. No rule raises a
-strength.
+This order is the existing behavior and is normative, with step 12 added
+by rule 7 (#6991); the former steps 12 and 13 are now steps 13 and 14.
+The admission rules below change what a step admits. A rule that takes an
+assertion out of a step assigns the kind it states at that step's
+position, so the assertion does not fall through to a later step by
+accident. Rules 1 to 6 never raise a strength. Rule 7 is the deliberate
+exception: it raises the one shape it admits from weak to strong, with
+the corpus evidence below.
 
 ### Admission rules
 
@@ -230,6 +239,53 @@ Two pattern terms are used below.
    `not` or `neq` segment, and at least two arguments (one for a
    `.assert_*` method call). An inequality-named helper is rule 1's case.
    Any other helper is step 11 `unknown`.
+7. **Exact-equality `.any()` membership is exact.** At the new step 12,
+   an `assert!` or `debug_assert!` whose whole condition (after message
+   arguments are removed, ignoring redundant wrapping parens) is exactly
+   `<receiver>.any(<closure>)` assigns `exact_value` / strong when every
+   guardrail below holds; anything wider falls through to step 13 weak.
+   The check fails for any wrong member value, so it pins an exact value
+   exactly like `assert_eq!` (#6991).
+   - The receiver ends in a no-argument `.iter()`, `.iter_mut()` or
+     `.into_iter()` call over a value path of identifiers, `::` segments,
+     field selections, and bare `()` calls: `lines`, `self.buf`,
+     `Config::ITEMS`. Receivers with call arguments, turbofish, indexing,
+     or operators never match, and neither does a bare `.any()` without
+     the iteration call.
+   - The closure has one identifier parameter (an optional type
+     annotation is ignored; commas nested in `()`, `[]`, or `{}` still
+     read as one parameter, while a comma nested only in `<>` stays
+     rejected): no `move`, no patterns, no second parameter. Its body
+     is exactly one `==` with nothing else: no
+     negation, no `<`, `>`, `!=`, `&&`, `||`, no second `==`, no
+     parens, brackets, blocks, method calls, or closures. String and
+     comment contents are masked before this reading, so an operator
+     lookalike inside a literal (`"a>b"`) neither defeats nor forges
+     the shape.
+   - The left side is the bound element only: the parameter, optionally
+     dereferenced (`*l`) or field-selected (`l.total`, `l.0`). Calls
+     (`l.len()`), indexing, and foreign roots never match.
+   - The right side is a boolean, numeric (with an optional `e`/`E`
+     decimal exponent: `1e-3`, `1.5E+6`), string, or character literal,
+     or a `::` path whose last segment starts uppercase
+     (`Config::LIMIT`, `Color::Red`), or bare `None`. Calls,
+     constructors (`Some(1)`), lowercase bindings, and signed or
+     borrowed constants never pin. A bare uppercase name (`EXPECTED`)
+     never pins either: it may be a local assigned from dynamic data
+     (`let EXPECTED = xs[0]`), which no name-only check can
+     distinguish from a constant; only a `::` path or `None` (which no
+     local binding can shadow) is unforgeable. An operand containing a
+     comment (`x == /* budget */ 7`) stays weak: the literal check
+     reads the unmasked operand, and comment-tolerant reading is a
+     fail-closed residual.
+   - A `.any()` shape inside a string literal, a negated condition, a
+     compound condition, or an `== true` comparison never matches.
+   - `.contains()` keeps its step 13 weak reading; it is out of scope.
+   - The grade is classification input, not confirmation: reveal's token
+     and effect-observer rules still decide whether a strong oracle
+     observes the changed sink, so an admitted assertion on an
+     unconfirmed probe keeps its gap (as `cell-0096-log-info-captured`
+     does until a confirmation rule covers captured-sink membership).
 
 ### Decisions
 
@@ -245,6 +301,13 @@ rejected alternative. Any can be reversed later without touching the rest.
    such as `events_sent` do observe an effect and keep their medium
    credit. Rejected: drop step 9's observer words entirely and keep only the
    mock call forms.
+3. **Rule 7 kind.** Adopted: `exact_value` / strong at a new step 12
+   before the bare-`assert!` catch-all, because the admitted check pins
+   an exact member value. Rejected: a new membership kind, because that
+   is a schema addition for a reading the existing vocabulary already
+   covers; and grading the shape `mock_expectation` or
+   `whole_object_equality` to borrow effect-family confirmation, because
+   the grade must describe the assertion, not smuggle a verdict.
 
 ## Required Evidence
 
@@ -259,6 +322,16 @@ rejected alternative. Any can be reversed later without touching the rest.
   `static_unknown` back to a named gap.
 - Under #5416, a test whose only assertion is `assert_ne!` no longer
   withholds a gap as `static_unknown`.
+- Rule 7: every acceptance example 27 onward reads the kind and strength
+  stated there, in JSON `related_tests[]`.
+- Rule 7 moves no verdict-corpus row: the full corpus before/after delta
+  is empty (283 cases), with zero new `false_exposed` rows, and
+  `cargo xtask check-evidence-promotion-honesty` passes. In particular
+  `cell-0096-log-info-captured` keeps its gap verdict while the
+  golden fixture `exact_any_membership_oracle` pins the fixed grade
+  (`exact_value` / strong in `related_tests[]`): the grade is fixed,
+  and the remaining gap is reveal observation confirmation, owned
+  outside this spec.
 
 ## Non-Goals
 
@@ -331,6 +404,44 @@ rejected alternative. Any can be reversed later without touching the rest.
     `assert!(matches!(items(), [..]))` and
     `assert!(matches!(items(), [rest @ ..]))`: `relational_check` / weak
     through the widened pre-check (today `exact_value` / strong at step 5).
+27. `assert!(lines.iter().any(|l| l == "audited 42"), "{lines:?}")`:
+    `exact_value` / strong (today `relational_check` / weak at the
+    catch-all; #6991). The twin `assert!(lines.contains(&id))` stays
+    `relational_check` / weak.
+28. `assert!(xs.iter().any(|x| x == Config::LIMIT))`,
+    `assert!(xs.iter().any(|x| x == None))`,
+    `assert!(counts.into_iter().any(|n| n == 42))`,
+    `debug_assert!(buf.iter_mut().any(|b| *b == 0xFF))`,
+    `assert!(vals.iter().any(|v| v == 0x1E))`,
+    `assert!(xs.iter().any(|x| x == 1e-3))`,
+    `assert!(xs.iter().any(|x| x == 1.5E+6))`,
+    `assert!(rows.iter().any(|r| r.total == 33))`,
+    `assert!(pairs.iter().any(|pair: &(u32, u32)| pair.0 == 7))`:
+    `exact_value` / strong. The literal forms `42`, `-1`, `'a'`,
+    `"a>b"`, `"a|b"`, `r#"raw"#` pin the same way. A bare uppercase
+    name (`EXPECTED_ID`) never pins: it may be a local.
+29. `assert!(xs.iter().any(|x| x > 1))`,
+    `assert!(xs.iter().any(|x| x != 1))`,
+    `assert!(!xs.iter().any(|x| x == 1))`,
+    `assert!(ready && xs.iter().any(|x| x == 1))`,
+    `assert!(xs.iter().any(|x| x == 1 || x == 2))`,
+    `assert!(xs.iter().any(|x| x == expected()))`,
+    `assert!(xs.iter().any(|x| x == other))`,
+    `assert!(ready.any(|x| x == 1))`,
+    `assert!(xs.any(|x| x == 1))`,
+    `assert!(xs.iter().any(|x| x.len() == 1))`,
+    `assert!(xs.iter().all(|x| x == 1))`,
+    `assert!(xs.iter().any(|x| x == Some(1)))`,
+    `assert!(ids.iter().any(|id| id == EXPECTED_ID))`,
+    `assert!(xs.iter().any(|x| x == Some))`,
+    `assert!(xs.iter().any(|x| x == 1e))`,
+    `assert!(pairs.iter().any(|pair: Pair<u32, u32>| pair.0 == 7))`,
+    `assert!(xs.iter().any(|x| x == /* budget */ 7))`,
+    `assert!(xs.iter().any(|a, b| a == b))`,
+    `assert!(xs.iter().any(move |x| x == 1))`,
+    `assert!(xs.iter().any(|x| { x == 1 }))`,
+    `assert!(x == ".any(|l| l == 1")`: `relational_check` / weak
+    (unchanged).
 
 ## Test Mapping
 
@@ -339,6 +450,15 @@ rejected alternative. Any can be reversed later without touching the rest.
   example 13.
 - Planned: one classifier unit test per acceptance example, and a fixture
   for example 1 showing the related test's reported kind and strength.
+- Rule 7: `exact_membership_any_assertion_admits_exact_equality` and
+  `exact_membership_any_assertion_rejects_non_exact_shapes` in
+  `classify.rs` pin examples 27 to 29 at the classifier; example 27 is
+  additionally pinned end to end by golden fixture
+  `exact_any_membership_oracle`, whose audit test reads `exact_value` /
+  strong in `related_tests[]` (weak on the pre-rule-7 binary) while the
+  finding keeps its `weakly_exposed` gap. Verdict-corpus case
+  `cell-0096-log-info-captured` exercises the same assertion shape but
+  pins only verdicts, not oracle grades.
 
 ## Implementation Mapping
 
@@ -346,7 +466,7 @@ rejected alternative. Any can be reversed later without touching the rest.
 - `crates/ripr/src/analysis/extract/oracles/scan.rs`: the RIPR-SPEC-0106
   upgrade, unchanged.
 - `crates/ripr/src/analysis/extract/oracles/patterns.rs`: token-level
-  matching for rules 1 to 6.
+  matching for rules 1 to 7.
 
 ## Metrics
 
