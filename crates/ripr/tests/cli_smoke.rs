@@ -21479,10 +21479,14 @@ fn agent_repair_after_phase_stdout_is_one_json_document() -> Result<(), Box<dyn 
     Ok(())
 }
 
-/// RC rehearsal: a focused test with a wrong expected value still moves the
-/// static grip to `improved`, because ripr never runs it. Every surface a cold
-/// agent reads (after-phase stderr, the stdout envelope's status report, and
-/// `agent status` in both forms) must say the test was not run.
+/// RC rehearsal: a focused test with a wrong expected value no longer moves
+/// the static grip (#7007): the asserted value statically contradicts the
+/// owner's fold (`asserts 1, owner folds to 90`), so the test's call-site
+/// credit is withheld and the seam's gap stays open instead of improving on
+/// the inverted discriminator's account. ripr never runs the test, and every
+/// surface a cold agent reads (after-phase stderr, the stdout envelope's
+/// status report, and `agent status` in both forms) must still say the test
+/// was not run.
 #[test]
 fn agent_repair_after_a_failing_test_says_the_test_was_not_run()
 -> Result<(), Box<dyn std::error::Error>> {
@@ -21497,9 +21501,12 @@ fn agent_repair_after_a_failing_test_says_the_test_was_not_run()
     assert_success(&after);
 
     let stderr = String::from_utf8_lossy(&after.stderr);
+    // #7007: the wrong-valued assert is statically contradicted, so its
+    // activation credit is withheld and the static movement stays unchanged
+    // — the gap the repair packet names is still open.
     assert!(
-        stderr.contains(", improved)"),
-        "precondition: static movement improved:\n{stderr}"
+        stderr.contains(", unchanged)"),
+        "precondition: static movement unchanged while the contradicted test remains:\n{stderr}"
     );
     assert!(
         stderr
