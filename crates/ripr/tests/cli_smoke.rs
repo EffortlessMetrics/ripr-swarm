@@ -13843,7 +13843,7 @@ fn pilot_snapshot_truncated_by_the_seam_budget_is_not_a_verify_baseline()
     let exposure_md = std::fs::read_to_string(root.join("target/ripr/pilot/repo-exposure.md"))?;
     assert_eq!(
         before["limitations"][0]["repair_route"],
-        "Remove or raise RIPR_PILOT_SEAM_BUDGET to render more seams in the pilot artifacts."
+        "Set RIPR_PILOT_SEAM_BUDGET=0 to disable the pilot artifact budget, or raise it to render more seams in the pilot artifacts."
     );
     assert_eq!(
         packets["limitations"][0]["repair_route"],
@@ -13856,7 +13856,7 @@ fn pilot_snapshot_truncated_by_the_seam_budget_is_not_a_verify_baseline()
         limit_line,
         Some(
             format!(
-                "> Partial scan: analyzed 1 of {} seams (seam_limit_applied; remove or raise RIPR_PILOT_SEAM_BUDGET to render more seams in the pilot artifacts).",
+                "> Partial scan: analyzed 1 of {} seams (seam_limit_applied; set RIPR_PILOT_SEAM_BUDGET=0 to disable the pilot artifact budget, or raise it to render more seams in the pilot artifacts).",
                 count(&full)
             )
             .as_str()
@@ -13950,6 +13950,36 @@ fn pilot_snapshot_truncated_by_the_seam_budget_is_not_a_verify_baseline()
         "{inventory_line}"
     );
 
+    // Lifting the inventory cap cannot lift a pilot artifact budget.
+    let wrong_control = run_command_with_env(
+        env!("CARGO_BIN_EXE_ripr"),
+        &root,
+        &["pilot", "--root", ".", "--mode", "draft"],
+        &[
+            ("RIPR_PILOT_SEAM_BUDGET", "1"),
+            ("RIPR_REPO_EXPOSURE_SEAM_LIMIT", "0"),
+        ],
+    )?;
+    assert_success(&wrong_control);
+    let wrong_control: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(
+        root.join("target/ripr/pilot/repo-exposure.json"),
+    )?)?;
+    assert_eq!(count(&wrong_control), 1, "{wrong_control}");
+    assert_eq!(
+        wrong_control["run_status"], "seam_limit_applied",
+        "{wrong_control}"
+    );
+    assert_eq!(
+        wrong_control["limitations"][0]["control"],
+        "RIPR_PILOT_SEAM_BUDGET",
+        "{wrong_control}"
+    );
+
+    assert_eq!(
+        wrong_control, before,
+        "lifting the wrong control must preserve the pilot cut"
+    );
+
     // Removing both caps recovers the full population in the same workspace.
     let recovered = run_command_with_env(
         env!("CARGO_BIN_EXE_ripr"),
@@ -13967,9 +13997,9 @@ fn pilot_snapshot_truncated_by_the_seam_budget_is_not_a_verify_baseline()
     assert_eq!(count(&recovered), full_total, "{recovered}");
     assert_eq!(recovered["run_status"], "complete", "{recovered}");
     assert!(
-        recovered["limitations"]
-            .as_array()
-            .is_none_or(Vec::is_empty),
+        recovered
+            .get("limitations")
+            .is_none_or(|value| value.as_array().is_some_and(Vec::is_empty)),
         "{recovered}"
     );
     let recovered_packets: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(
@@ -13977,6 +14007,12 @@ fn pilot_snapshot_truncated_by_the_seam_budget_is_not_a_verify_baseline()
     )?)?;
     assert_eq!(
         recovered_packets["run_status"], "complete",
+        "{recovered_packets}"
+    );
+    assert!(
+        recovered_packets
+            .get("limitations")
+            .is_none_or(|value| value.as_array().is_some_and(Vec::is_empty)),
         "{recovered_packets}"
     );
 

@@ -121,9 +121,9 @@ The renderer receives the identity of the cap that fired; a configured but
 inactive pilot budget must not relabel inventory guidance.
 
 For repo-exposure JSON, the default pilot repair route is
-`Set RIPR_PILOT_SEAM_BUDGET=0 to render all seams in the pilot artifacts.`;
+`Set RIPR_PILOT_SEAM_BUDGET=0 to disable the pilot artifact budget.`;
 the configured route is
-`Remove or raise RIPR_PILOT_SEAM_BUDGET to render more seams in the pilot artifacts.`.
+`Set RIPR_PILOT_SEAM_BUDGET=0 to disable the pilot artifact budget, or raise it to render more seams in the pilot artifacts.`.
 Markdown names the same control in its partial-scan disclosure.
 
 The `pilot-summary.json` and `pilot-summary.md` artifacts are NOT modified.

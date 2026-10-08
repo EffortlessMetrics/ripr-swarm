@@ -204,10 +204,10 @@ impl<'a> RepoExposureLimit<'a> {
                 "Remove or raise RIPR_REPO_EXPOSURE_SEAM_LIMIT to analyze more seams, or scope the run to a change with `ripr check --base <REV>` (or `ripr check --diff <PATH>`)."
             }
             (Self::PilotBudget(_), SeamLimitSource::Default) => {
-                "Set RIPR_PILOT_SEAM_BUDGET=0 to render all seams in the pilot artifacts."
+                "Set RIPR_PILOT_SEAM_BUDGET=0 to disable the pilot artifact budget."
             }
             (Self::PilotBudget(_), SeamLimitSource::Configured) => {
-                "Remove or raise RIPR_PILOT_SEAM_BUDGET to render more seams in the pilot artifacts."
+                "Set RIPR_PILOT_SEAM_BUDGET=0 to disable the pilot artifact budget, or raise it to render more seams in the pilot artifacts."
             }
         }
     }
@@ -221,10 +221,10 @@ impl<'a> RepoExposureLimit<'a> {
                 "remove or raise RIPR_REPO_EXPOSURE_SEAM_LIMIT to analyze more seams, or scope the run to a change with `ripr check --base <REV>` (or `ripr check --diff <PATH>`)"
             }
             (Self::PilotBudget(_), SeamLimitSource::Default) => {
-                "set RIPR_PILOT_SEAM_BUDGET=0 to render all seams in the pilot artifacts"
+                "set RIPR_PILOT_SEAM_BUDGET=0 to disable the pilot artifact budget"
             }
             (Self::PilotBudget(_), SeamLimitSource::Configured) => {
-                "remove or raise RIPR_PILOT_SEAM_BUDGET to render more seams in the pilot artifacts"
+                "set RIPR_PILOT_SEAM_BUDGET=0 to disable the pilot artifact budget, or raise it to render more seams in the pilot artifacts"
             }
         }
     }
@@ -1714,14 +1714,14 @@ mod tests {
             (
                 SeamLimitSource::Default,
                 "default",
-                "Set RIPR_PILOT_SEAM_BUDGET=0 to render all seams in the pilot artifacts.",
-                "> Partial scan: analyzed 1 of 3 seams (seam_limit_applied; set RIPR_PILOT_SEAM_BUDGET=0 to render all seams in the pilot artifacts).",
+                "Set RIPR_PILOT_SEAM_BUDGET=0 to disable the pilot artifact budget.",
+                "> Partial scan: analyzed 1 of 3 seams (seam_limit_applied; set RIPR_PILOT_SEAM_BUDGET=0 to disable the pilot artifact budget).",
             ),
             (
                 SeamLimitSource::Configured,
                 "configured",
-                "Remove or raise RIPR_PILOT_SEAM_BUDGET to render more seams in the pilot artifacts.",
-                "> Partial scan: analyzed 1 of 3 seams (seam_limit_applied; remove or raise RIPR_PILOT_SEAM_BUDGET to render more seams in the pilot artifacts).",
+                "Set RIPR_PILOT_SEAM_BUDGET=0 to disable the pilot artifact budget, or raise it to render more seams in the pilot artifacts.",
+                "> Partial scan: analyzed 1 of 3 seams (seam_limit_applied; set RIPR_PILOT_SEAM_BUDGET=0 to disable the pilot artifact budget, or raise it to render more seams in the pilot artifacts).",
             ),
         ] {
             let info = SeamLimitInfo {
