@@ -52,10 +52,10 @@ use crate::analysis::facts::{
 };
 use crate::analysis::syntax::fn_signature::{LocalTypeEquality, local_type_equality};
 use crate::analysis::syntax::{
-    AssertionContextRefusal, MacroBindingCandidates, MacroBindingKind, MacroBindingSite,
-    OwnerPinAssertions, TRUSTED_MACRO_NAMES, attribute_settles_test_outcome,
-    empty_macro_binding_ambiguities, local_empty_macro_names, macro_binding_scan,
-    owner_pin_assertions, parse_clean_source_file, returns_leave_the_function,
+    AssertionContextRefusal, GeneratedTestPins, MacroBindingCandidates, MacroBindingKind,
+    MacroBindingSite, OwnerPinAssertions, TRUSTED_MACRO_NAMES, attribute_settles_test_outcome,
+    empty_macro_binding_ambiguities, generated_test_pins, local_empty_macro_names,
+    macro_binding_scan, owner_pin_assertions, parse_clean_source_file, returns_leave_the_function,
     trusted_macro_binding_sites,
 };
 use crate::domain::{Probe, ProbeFamily};
@@ -110,6 +110,9 @@ pub(in crate::analysis) struct OwnerPinSyntax {
     test_file_macro_sites: RefCell<TestFileMacroSites>,
     by_file: RefCell<BTreeMap<PathBuf, OwnerPinAssertions>>,
     empty_macro_ambiguities: RefCell<BTreeMap<PathBuf, BTreeSet<String>>>,
+    /// Per file: the expansion-coordinate admission facts of the tests a
+    /// same-file `macro_rules!` generated (#5334).
+    generated: RefCell<BTreeMap<PathBuf, Vec<GeneratedTestPins>>>,
     resolved_modules: OnceCell<BTreeSet<(PathBuf, usize, String)>>,
     /// Workspace-wide inputs to [`TargetRoots::root`], computed once.
     target_roots: OnceCell<TargetRoots>,
@@ -132,6 +135,8 @@ struct PathCallMemo {
     /// Per (owner crate root, owner name): whether the crate may hold an
     /// item of the name ripr cannot see.
     hidden: BTreeMap<(PathBuf, String), bool>,
+    /// Per file: whether a `cfg` may drop the whole file (#7082).
+    file_gated: BTreeMap<PathBuf, bool>,
     /// Per (test crate root, path root): whether the test's crate may bind
     /// the root itself.
     test_crate_binds: BTreeMap<(PathBuf, String), bool>,
@@ -241,6 +246,52 @@ impl OwnerPinSyntax {
             .nesting
             .insert(key, nesting.clone());
         nesting
+    }
+
+    /// #7082: whether a `cfg` may drop `file` as a whole, kept per file: a
+    /// dropping inner attribute ([`has_cfg_that_may_drop`]) at the top of
+    /// the file or of any file on the chain that compiles it into its
+    /// crate, or a dropping attribute on any `mod` declaration on that
+    /// chain. A complementary cfg may then compile a same-named module in
+    /// its place. An include edge, an unresolved chain, an unparsable file,
+    /// or a non-root file with no recorded chain (ripr records no edge for
+    /// a `mod` whose `#[path]` it cannot resolve, such as one under
+    /// `cfg_attr`) fails closed. The root test is per file, not the
+    /// workspace-wide [`TargetRoots`] switch, so an unrelated unresolvable
+    /// module elsewhere keeps other owners pinned (#7104 review).
+    fn file_cfg_gated(&self, index: &RustIndex, file: &Path) -> bool {
+        if let Some(known) = self.path_memo.borrow().file_gated.get(file) {
+            return *known;
+        }
+        let roots = self.target_roots(index);
+        let inner_gated = |path: &Path| {
+            index.files().get(path).is_none_or(|facts| {
+                parse_clean_source_file(&facts.source)
+                    .is_none_or(|parse| has_cfg_that_may_drop(&parse.tree()))
+            })
+        };
+        let gated = inner_gated(file)
+            || index.files().get(file).is_none_or(|facts| {
+                let provenance = &facts.role_provenance;
+                (provenance.edges.is_empty()
+                    && target_root(file, index, &roots.src_dirs).as_deref() != Some(file))
+                    || provenance.earliest_unresolved_reason.is_some()
+                    || provenance.edges.iter().any(|edge| {
+                        edge.kind != SourceRoleProvenanceEdgeKind::Module
+                            || inner_gated(&edge.parent)
+                            || module_declaration_cfg_gated(
+                                index,
+                                &edge.parent,
+                                &edge.declaration,
+                                edge.line,
+                            )
+                    })
+            });
+        self.path_memo
+            .borrow_mut()
+            .file_gated
+            .insert(file.to_path_buf(), gated);
+        gated
     }
 
     /// #6974: whether the crate rooted at `owner_root` may hold an item
@@ -490,7 +541,7 @@ impl OwnerPinSyntax {
                 });
             }
         }
-        by_file
+        let file_refusal = by_file
             .entry(test.file.clone())
             .or_insert_with(|| owner_pin_assertions(&facts.source, NON_RETURNING_MACROS))
             .refusal(
@@ -498,8 +549,58 @@ impl OwnerPinSyntax {
                 &test.body,
                 (assertion.line, &assertion.text),
                 &ambiguous,
-            )
-            .map(AssertionRefusal::Syntax)
+            );
+        let file_refusal = file_refusal?;
+        // A generated test is not in the file's text: the same admission
+        // runs over its invocation's expansion, matched by name, attributes,
+        // body and assertion text in the expansion's own coordinates. A
+        // matched assertion carries the expansion's own verdict — admitted
+        // reads like the hand-written twin, and a refusal surfaces the
+        // expansion's reason, not the file text's "test not identified"
+        // (the invocation line holds no `fn`), so both twins refuse as the
+        // same kind.
+        let generated_verdicts = self
+            .generated
+            .borrow_mut()
+            .entry(test.file.clone())
+            .or_insert_with(|| generated_test_pins(&test.file, &facts.source, NON_RETURNING_MACROS))
+            .iter()
+            .filter(|invocation| {
+                invocation.start_line == test.start_line && invocation.end_line == test.end_line
+            })
+            .flat_map(|invocation| {
+                invocation
+                    .tests
+                    .iter()
+                    .filter(|local| {
+                        local.name == test.name
+                            && local.attrs == test.attrs
+                            && local.body == test.body
+                    })
+                    .map(move |local| (invocation, local))
+            })
+            .flat_map(|(invocation, local)| {
+                local
+                    .assertions
+                    .iter()
+                    .filter(|local_assertion| local_assertion.text == assertion.text)
+                    .map(|local_assertion| {
+                        invocation.pins.refusal(
+                            (local.start_line, local.end_line, &local.name),
+                            &local.body,
+                            (local_assertion.line, &local_assertion.text),
+                            &ambiguous,
+                        )
+                    })
+            })
+            .collect::<Vec<_>>();
+        if generated_verdicts.iter().any(|verdict| verdict.is_none()) {
+            return None;
+        }
+        if let Some(Some(generated_refusal)) = generated_verdicts.into_iter().next() {
+            return Some(AssertionRefusal::Syntax(generated_refusal));
+        }
+        Some(AssertionRefusal::Syntax(file_refusal))
     }
 }
 
@@ -1391,8 +1492,15 @@ impl OwnerReturnPin {
             OwnerScope::new(self.name.as_str(), self.owner_start_line, &self.owner_file);
         let masked_body = mask_comments_and_strings(&test.body);
         match (&self.call, call) {
+            // #7082: a cfg on the owner or an enclosing module may compile
+            // a same-named `static`, `const` or `use` in its place, which
+            // the bare name then reaches instead.
             (PinCall::Bare, CallShape::Bare) => {
-                !test_body_shadows_owner(test, &self.name)
+                !syntax
+                    .item_nesting(index, &self.owner_file, &self.name, self.owner_start_line)
+                    .is_none_or(|owner| owner.cfg_gated)
+                    && !syntax.file_cfg_gated(index, &self.owner_file)
+                    && !test_body_shadows_owner(test, &self.name)
                     && !binds_outside_let(&masked_body, &self.name)
                     && !bound_by_macro(&masked_body, &self.name)
                     && test_source.is_some_and(|source| !file_renames_to(source, &self.name))
@@ -1567,6 +1675,7 @@ impl OwnerReturnPin {
         syntax
             .item_nesting(index, &self.owner_file, &self.name, self.owner_start_line)
             .is_some_and(|owner| !owner.cfg_gated && owner.modules == module)
+            && !syntax.file_cfg_gated(index, &self.owner_file)
             && !syntax.crate_may_hide_name(index, &owner_root, &self.name, roots)
     }
 
@@ -1817,6 +1926,104 @@ fn has_cfg_attr(node: &impl ast::HasAttrs) -> bool {
             attr.meta(),
             Some(ast::Meta::CfgMeta(_) | ast::Meta::CfgAttrMeta(_))
         )
+    })
+}
+
+/// #7082: whether the out-of-line `mod <name>;` that `declaration` names,
+/// with its `mod` token on `line` of `parent`, carries a `cfg` or
+/// `cfg_attr`. An unreadable parent or declaration, or no such declaration
+/// on that line, fails closed.
+fn module_declaration_cfg_gated(
+    index: &RustIndex,
+    parent: &Path,
+    declaration: &str,
+    line: usize,
+) -> bool {
+    let name = declaration
+        .split_whitespace()
+        .skip_while(|word| *word != "mod")
+        .nth(1)
+        .map(|word| word.trim_end_matches(';'));
+    let Some(name) = name.filter(|name| !name.is_empty()) else {
+        return true;
+    };
+    let name = name.strip_prefix("r#").unwrap_or(name);
+    let Some(facts) = index.files().get(parent) else {
+        return true;
+    };
+    let source = &facts.source;
+    let Some(parse) = parse_clean_source_file(source) else {
+        return true;
+    };
+    let line_of = |offset: u32| source[..offset as usize].matches('\n').count() + 1;
+    let mut on_line = parse
+        .tree()
+        .syntax()
+        .descendants()
+        .filter_map(ast::Module::cast)
+        .filter(|module| module.item_list().is_none())
+        .filter(|module| {
+            module
+                .mod_token()
+                .is_some_and(|token| line_of(token.text_range().start().into()) == line)
+                && module.name().is_some_and(|ident| {
+                    let text = ident.text().to_string();
+                    text.strip_prefix("r#").unwrap_or(&text) == name
+                })
+        })
+        .peekable();
+    on_line.peek().is_none() || on_line.any(|module| has_cfg_that_may_drop(&module))
+}
+
+/// #7082: whether `node` carries an attribute that may drop or relocate it
+/// under some cfg: a `cfg`, or a `cfg_attr` whose attributes name `cfg`,
+/// `cfg_attr` or `path`. `#![cfg_attr(docsrs, feature(doc_cfg))]` and other
+/// lint or doc toggles cannot, so they keep the pin (#7104 review).
+fn has_cfg_that_may_drop(node: &impl ast::HasAttrs) -> bool {
+    node.attrs().any(|attr| match attr.meta() {
+        Some(ast::Meta::CfgMeta(_)) => true,
+        Some(ast::Meta::CfgAttrMeta(meta)) => {
+            cfg_attr_payload_may_drop(&meta.syntax().text().to_string())
+        }
+        _ => false,
+    })
+}
+
+/// The attributes after a `cfg_attr(predicate, ..)`'s first top-level
+/// comma name `cfg`, `cfg_attr` or `path`; unreadable text fails closed.
+fn cfg_attr_payload_may_drop(text: &str) -> bool {
+    let Some(open) = text.find('(') else {
+        return true;
+    };
+    let inner = &text[open + 1..];
+    // Scan the masked text: a comma inside a predicate string must not
+    // select the payload boundary (#7104 review). Splitting the unmasked
+    // text at a string comma leaves a dangling quote whose masking then
+    // hides the real payload (`cfg_attr(mode = "a,b", cfg(..))` would
+    // admit a droppable owner). The masker preserves byte length and the
+    // matched comma is a literal `,` byte in both, so `at` slices the
+    // original soundly.
+    let masked_inner = mask_comments_and_strings(inner);
+    let mut depth = 0_i32;
+    let mut payload = None;
+    for (at, character) in masked_inner.char_indices() {
+        match character {
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => depth -= 1,
+            ',' if depth == 0 => {
+                payload = Some(&inner[at + 1..]);
+                break;
+            }
+            _ => {}
+        }
+    }
+    // Strings and comments are masked first, so `doc = "path"` names no
+    // `path` attribute.
+    payload.is_none_or(|payload| {
+        let payload = mask_comments_and_strings(payload);
+        ["cfg", "cfg_attr", "path"]
+            .iter()
+            .any(|word| contains_as_whole_word(&payload, word))
     })
 }
 
@@ -2939,8 +3146,9 @@ fn bound_by_macro(masked: &str, name: &str) -> bool {
 }
 
 /// Whether the file renames some item to `name` (`use a::b as name;`), so
-/// `name` may not be the item it looks like.
-fn file_renames_to(source: &str, name: &str) -> bool {
+/// `name` may not be the item it looks like. Related-test reach shares the
+/// single-file rename refusal (#7067).
+pub(in crate::analysis) fn file_renames_to(source: &str, name: &str) -> bool {
     if !source.contains(name) {
         return false;
     }
@@ -4220,8 +4428,12 @@ fn named_or_slice(
     // module scope — in its own file (#6905) or in an out-of-line parent
     // module (#6950) — binds a different type than the workspace declaration.
     let source = test_source?;
+    // `r#Window` denotes `Window`: a raw-identifier alias rebinds the name
+    // too (#7067, mirroring the #7051 parent-root check).
+    let raw = format!("r#{base}");
     if imports_foreign(&test.file, base)
         || file_renames_to(source, base)
+        || file_renames_to(source, raw.as_str())
         || file_aliases_type(source, base)
         || test_module_shadows_type(test, source, base, owner.in_file(&test.file))
         || parent_chain_shadows_type(test, base, owner, index)
@@ -4424,10 +4636,39 @@ pub(in crate::analysis) fn parent_chain_shadows_type(
     owner: OwnerScope<'_>,
     index: &RustIndex,
 ) -> bool {
+    parent_chain_shadows_item(test, base, owner, index, ShadowKind::Type)
+}
+
+/// [`parent_chain_shadows_type`] for the owner's trait (#7087): a `trait`
+/// item, or a macro whose own text declares one, at the root of an
+/// out-of-line parent module of the test file names the test-local trait,
+/// so `Trait::method(..)` and `.method()` there never reach the production
+/// `impl Trait for T`. Same chain, fail-closed and owner-scope rules as the
+/// type check; declarations only, like [`test_module_shadows_trait`].
+pub(in crate::analysis) fn parent_chain_shadows_trait(
+    test: &TestSummary,
+    trait_name: &str,
+    owner: OwnerScope<'_>,
+    index: &RustIndex,
+) -> bool {
+    parent_chain_shadows_item(test, trait_name, owner, index, ShadowKind::Trait)
+}
+
+fn parent_chain_shadows_item(
+    test: &TestSummary,
+    base: &str,
+    owner: OwnerScope<'_>,
+    index: &RustIndex,
+    kind: ShadowKind,
+) -> bool {
     let Some(facts) = index.files().get(&test.file) else {
         return false;
     };
     let chain = &facts.role_provenance;
+    let owner_ancestors = match kind {
+        ShadowKind::Type => Vec::new(),
+        ShadowKind::Trait => owner_module_ancestors(owner, index),
+    };
     // The reason leads: an immediately ambiguous parent composes to empty
     // edges with the reason set, which is unresolved, not standalone.
     if chain.earliest_unresolved_reason.is_some() {
@@ -4443,31 +4684,47 @@ pub(in crate::analysis) fn parent_chain_shadows_type(
         let Some(parent) = index.files().get(&edge.parent) else {
             return true;
         };
-        parent_root_shadows_type(&parent.source, &edge.parent, base, owner)
+        parent_root_shadows_item(
+            &parent.source,
+            &edge.parent,
+            base,
+            owner,
+            kind,
+            &owner_ancestors,
+        )
     })
 }
 
 /// Whether one parent file's root declares the receiver type name: the
-/// per-edge step of [`parent_chain_shadows_type`]. A root-level
+/// per-edge step of [`parent_chain_shadows_type`] and
+/// [`parent_chain_shadows_trait`]. A root-level
 /// `use ... as <name>` rebinds the name to a different type and shadows
 /// too; a plain root-level `use` may re-export production, so only
 /// renames refuse. The owner's own root (the file holding a root-level
 /// owner) is the production declaration's scope, never a shadow; every
 /// other declaring root refuses.
-fn parent_root_shadows_type(
+fn parent_root_shadows_item(
     parent_source: &str,
     parent_file: &Path,
     base: &str,
     owner: OwnerScope<'_>,
+    kind: ShadowKind,
+    owner_ancestors: &[PathBuf],
 ) -> bool {
     let masked = mask_comments_and_strings(parent_source);
     // `r#Window` denotes `Window`: a raw-identifier declaration shadows too.
     let raw = format!("r#{base}");
-    if !declares_type(&masked, base)
-        && !masked.contains(raw.as_str())
-        && !file_aliases_type(parent_source, base)
-        && !file_renames_to(parent_source, base)
-    {
+    // Aliases and renames rebind a type name only; a trait is shadowed by a
+    // declaration (#7087), matching the in-file trait check (#7053).
+    let declared = match kind {
+        ShadowKind::Type => {
+            declares_type(&masked, base)
+                || file_aliases_type(parent_source, base)
+                || file_renames_to(parent_source, base)
+        }
+        ShadowKind::Trait => declares_trait(&masked, base),
+    };
+    if !declared && !masked.contains(raw.as_str()) {
         return false;
     }
     let Some(parse) = parse_clean_source_file(parent_source) else {
@@ -4477,9 +4734,9 @@ fn parent_root_shadows_type(
     let root_items: Vec<ast::Item> = root.children().filter_map(ast::Item::cast).collect();
     if !root_items
         .iter()
-        .any(|item| module_item_names_type(item, base))
+        .any(|item| module_item_names(item, base, kind))
         && !root_items.iter().any(|item| {
-            if !matches!(item, ast::Item::Use(_)) {
+            if kind == ShadowKind::Trait || !matches!(item, ast::Item::Use(_)) {
                 return false;
             }
             let text = item.syntax().text().to_string();
@@ -4493,7 +4750,36 @@ fn parent_root_shadows_type(
     if owner.file == parent_file && owner_at_file_root(&root, parent_source, owner) {
         return false;
     }
+    // A trait is commonly declared in an ancestor file of the file holding
+    // its impls (#7111): a declaring root on the owner's own module chain is
+    // the production declaration, not a shadow.
+    if owner_ancestors
+        .iter()
+        .any(|ancestor| ancestor == parent_file)
+    {
+        return false;
+    }
     true
+}
+
+/// The files whose module scope encloses the owner's file: the file itself
+/// (its root encloses every inline module in it) and the parents on its
+/// composed module chain. Empty when the owner file is not indexed, which
+/// keeps the fail-closed shadow check.
+fn owner_module_ancestors(owner: OwnerScope<'_>, index: &RustIndex) -> Vec<PathBuf> {
+    let Some(facts) = index.files().get(owner.file) else {
+        return Vec::new();
+    };
+    std::iter::once(owner.file.to_path_buf())
+        .chain(
+            facts
+                .role_provenance
+                .edges
+                .iter()
+                .filter(|edge| edge.kind == SourceRoleProvenanceEdgeKind::Module)
+                .map(|edge| edge.parent.clone()),
+        )
+        .collect()
 }
 
 /// The text range of the inline module directly enclosing the owner

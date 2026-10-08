@@ -1,0 +1,54 @@
+{
+  "case_id": "spec0231-oracle-err-underscore-binding",
+  "subject_id": "authored-spec0231-17",
+  "diff": "cases/spec0231-oracle-err-underscore-binding.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 9
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "error_return",
+  "test_shape": "matches_err_underscore_binding",
+  "hard_case": "Measured defect: ripr reports exact_value / strong (the spec's 'today'); the spec adopts broad_error / weak (rule 2).",
+  "truth": {
+    "state": "partially_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "return Err(E::Bad);",
+        "mutated_line": "return Err(E::Bad);",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: the error variant changes from Big to Bad; Err(_e) accepts any error"
+      },
+      {
+        "replacement": "return Ok(x);",
+        "mutated_line": "return Ok(x);",
+        "outcome": "tests_failed",
+        "failing_test": "tests::check_rejects_twenty",
+        "equivalence_review": "not equivalent: check(20) succeeds"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "Err(_e) only checks the error side. Spec cells: RIPR-SPEC-0231 example 17.",
+  "labeling_observation": {
+    "ripr_commit": "96c1a18e9",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0231#17"
+  ]
+}

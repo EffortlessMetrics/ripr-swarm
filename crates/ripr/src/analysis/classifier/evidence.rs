@@ -8,10 +8,10 @@ use crate::analysis::classify::{
     propagation_evidence_with_witness, reach_evidence, reveal_outcome,
     same_test_pairing_missing_summary, signature_parameters,
 };
-use crate::analysis::facts::{FunctionSummary, OracleFact, TestSummary};
+use crate::analysis::facts::{FunctionSummary, OracleFact, RustIndex, TestSummary};
 use crate::domain::*;
-use std::cell::RefCell;
-use std::collections::BTreeMap;
+use std::cell::{Cell, RefCell};
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 mod side_flip;
@@ -205,11 +205,16 @@ impl ClassifiedProbeEvidence {
             .owner_fn
             .map(owner_parameter_names)
             .unwrap_or_default();
-        // #5830: names of functions that transitively call the owner,
-        // computed once per probe and only when an assertion asks.
+        // #5830/#7024: names of functions that transitively call the owner,
+        // computed once per owner per run through the attached memo and only
+        // when an assertion asks. The memo answers under its borrow without
+        // cloning; unit-test contexts without a memo keep the per-probe cell.
         let owner_callers = std::cell::OnceCell::new();
         let expected_reaches_owner = |ty: Option<&str>, name: &str| {
             context.owner_fn.is_some_and(|owner| {
+                if let Some(memo) = context.owner_caller_names {
+                    return memo.caller_reaches(context.index, owner, ty, name);
+                }
                 owner_callers
                     .get_or_init(|| transitive_caller_names(owner, context.index))
                     .iter()
@@ -649,6 +654,84 @@ fn transitive_caller_names(
         frontier = next;
     }
     callers
+}
+
+/// Run-scoped memo for #5830 transitive caller walks (#7024), mirroring
+/// `TestValueFacts`. Entries are keyed by the owner's slot in the index the
+/// memo was first queried with; an owner that is not an element of that
+/// index, or a query against another index, is computed fresh and never
+/// cached, so a key can only ever name the same caller set.
+/// Caller sets by owner slot — the memo payload for `OwnerCallerNames`.
+type OwnerCallerSets = BTreeMap<usize, BTreeSet<(Option<String>, String)>>;
+
+#[derive(Clone, Debug, Default)]
+pub(in crate::analysis) struct OwnerCallerNames {
+    index_identity: Cell<Option<(usize, usize, u64)>>,
+    by_owner_slot: RefCell<OwnerCallerSets>,
+}
+
+impl OwnerCallerNames {
+    /// Whether a caller named `name` (optionally of type `ty`) reaches
+    /// `owner`: a cache hit scans the cached set under its borrow and never
+    /// clones. Misses walk once, then cache by move.
+    pub(in crate::analysis) fn caller_reaches(
+        &self,
+        index: &RustIndex,
+        owner: &FunctionSummary,
+        ty: Option<&str>,
+        name: &str,
+    ) -> bool {
+        let matches = |caller: &(Option<String>, String)| {
+            caller.1 == name && ty.is_none_or(|ty| caller.0.as_deref() == Some(ty))
+        };
+        let Some(slot) = self.slot_key(index, owner) else {
+            return transitive_caller_names(owner, index).iter().any(matches);
+        };
+        if let Some(cached) = self.by_owner_slot.borrow().get(&slot) {
+            return cached.iter().any(matches);
+        }
+        let callers = transitive_caller_names(owner, index);
+        let found = callers.iter().any(matches);
+        self.by_owner_slot.borrow_mut().insert(slot, callers);
+        found
+    }
+
+    /// `transitive_caller_names(owner, index)`, computed once per owner per run.
+    #[cfg(test)]
+    pub(in crate::analysis) fn callers_for(
+        &self,
+        index: &RustIndex,
+        owner: &FunctionSummary,
+    ) -> BTreeSet<(Option<String>, String)> {
+        let Some(slot) = self.slot_key(index, owner) else {
+            return transitive_caller_names(owner, index);
+        };
+        if let Some(cached) = self.by_owner_slot.borrow().get(&slot) {
+            return cached.clone();
+        }
+        let callers = transitive_caller_names(owner, index);
+        self.by_owner_slot
+            .borrow_mut()
+            .insert(slot, callers.clone());
+        callers
+    }
+
+    /// The cache cells, so tests can hold a shared borrow across a repeat
+    /// query: a hit only borrows, while a recompute's `borrow_mut` panics.
+    #[cfg(test)]
+    pub(in crate::analysis) fn slots_for_test(&self) -> &std::cell::RefCell<OwnerCallerSets> {
+        &self.by_owner_slot
+    }
+
+    fn slot_key(&self, index: &RustIndex, owner: &FunctionSummary) -> Option<usize> {
+        let identity = index.storage_identity();
+        match self.index_identity.get() {
+            None => self.index_identity.set(Some(identity)),
+            Some(bound) if bound != identity => return None,
+            Some(_) => {}
+        }
+        index.function_slot(owner)
+    }
 }
 
 /// Roots whose paths never name a workspace function.
@@ -1262,6 +1345,86 @@ mod tests {
             ["labelled", "matched", "pathed", "reference", "returned"],
             "a free owner is reached by a bare or crate-path call, never by a \
              method call or a type-qualified call of the same name"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn owner_caller_memo_agrees_with_the_walk_and_never_crosses_indexes() -> Result<(), String> {
+        use crate::analysis::rust_index::{RaRustSyntaxAdapter, RustSyntaxAdapter};
+        fn indexed_source(source: &str) -> Result<RustIndex, String> {
+            let path = PathBuf::from("src/lib.rs");
+            let facts = RaRustSyntaxAdapter.summarize_file(&path, source)?;
+            let functions = facts.functions.clone();
+            let mut index = RustIndex::default();
+            index.insert_file_only(path, facts);
+            index.extend_functions(functions);
+            Ok(index)
+        }
+        // Borrowed from the arena, like `resolve_owner_function` in
+        // production: a clone is not an arena element, so the memo's
+        // pointer-based slot key would never resolve and the test would
+        // exercise compute-fresh twice instead of a cache hit.
+        fn find_owner<'index>(
+            index: &'index RustIndex,
+            owner: &str,
+        ) -> Result<&'index FunctionSummary, String> {
+            index
+                .functions()
+                .iter()
+                .find(|function| function.id.0.ends_with(owner))
+                .ok_or_else(|| format!("owner {owner} indexed"))
+        }
+        let source = "pub fn tax(subtotal: i64) -> i64 { subtotal * 8 / 100 }\n\
+            pub fn reference(subtotal: i64) -> i64 { tax(subtotal) }\n";
+        let index = indexed_source(source)?;
+        let owner = find_owner(&index, "src/lib.rs::tax")?;
+        let memo = super::OwnerCallerNames::default();
+        let direct = super::transitive_caller_names(owner, &index);
+        assert!(!direct.is_empty(), "the fixture owner has callers");
+        assert_eq!(
+            memo.callers_for(&index, owner),
+            direct,
+            "the first memo query walks and caches"
+        );
+        assert_eq!(
+            memo.slots_for_test().borrow().len(),
+            1,
+            "the first query populated the cache"
+        );
+        // The repeat query must hit: a shared borrow is held across it, so
+        // a recompute's `borrow_mut` panics instead of silently re-walking.
+        {
+            let _guard = memo.slots_for_test().borrow();
+            assert_eq!(
+                memo.callers_for(&index, owner),
+                direct,
+                "the repeat query serves the cached set"
+            );
+        }
+        // The borrow-scoped predicate agrees with the walked set.
+        for (ty, caller) in &direct {
+            assert!(
+                memo.caller_reaches(&index, owner, ty.as_deref(), caller),
+                "the predicate finds walked caller {caller}"
+            );
+            assert!(
+                !memo.caller_reaches(&index, owner, Some("NotTheType"), caller),
+                "the predicate honors the type filter for {caller}"
+            );
+        }
+        assert!(
+            !memo.caller_reaches(&index, owner, None, "no_such_caller"),
+            "the predicate misses a name the walk never found"
+        );
+        let lonely_source = "pub fn tax(subtotal: i64) -> i64 { subtotal * 8 / 100 }\n";
+        let lonely_index = indexed_source(lonely_source)?;
+        let lonely_owner = find_owner(&lonely_index, "src/lib.rs::tax")?;
+        assert_eq!(
+            memo.callers_for(&lonely_index, lonely_owner),
+            super::transitive_caller_names(lonely_owner, &lonely_index),
+            "a query against another index computes fresh instead of \
+             serving the first index's cached set"
         );
         Ok(())
     }

@@ -12,11 +12,15 @@ name: PR Staleness Watchdog
 # dispatch `routed-rust.yml` on a dark head's branch, but routed-rust.yml now
 # admits pull requests only on the native Draft -> Ready transition
 # (`pull_request: types: [ready_for_review]`). A non-draft head with no
-# required check is therefore either a Ready-triggered run GitHub dropped or a
-# push made after Ready, and nothing visible to this sweep tells the two apart.
+# required check is therefore a Ready-triggered run GitHub dropped, a push made
+# after Ready, or a conflicting head with no merge ref (#7079). Nothing visible
+# to this sweep tells a dropped delivery from a post-Ready push, but the
+# mergeable_state column separates the conflicted mode from both: a `dirty` PR
+# has no merge ref, so no pull_request run can exist for it.
 # A post-Ready push has revoked its own admission and must not be qualified by
 # a lighter branch-head dispatch (no `pull_request`-scoped PR evidence): the
-# author returns the PR to Draft and marks it Ready again, which re-runs the
+# author merges main first when conflicted, then returns the PR to Draft and
+# marks it Ready again, which re-runs the
 # full Ready-triggered qualification and also recovers a dropped delivery.
 #
 # - Every 30 minutes, list open PRs and, for each head SHA, ask the checks
@@ -30,15 +34,16 @@ name: PR Staleness Watchdog
 #   (`event=pull_request`) routed-rust.yml run is reported as in flight, not
 #   dark: re-toggling Draft -> Ready would cancel that run
 #   (`cancel-in-progress` for pull_request) and restart the qualification.
-# - Dark heads are reported in the step summary with the remedy (Draft ->
-#   Ready). The watchdog never dispatches a workflow, so it needs no
+# - Dark heads are reported in the step summary with the remedy (merge main
+#   first when `mergeable_state` is `dirty`, then Draft -> Ready). The watchdog
+#   never dispatches a workflow, so it needs no
 #   `actions: write` and cannot create a duplicate or lighter required gate.
 # - Drafts are skipped (Draft iteration never carries the required check);
 #   fork PRs (head repo != this repository) are skipped, matching
 #   routed-rust.yml's own untrusted-PR guard.
 #
 # No PR comments are posted; each sweep's summary table (PR | head |
-# disposition) is the audit trail.
+# mergeable_state | disposition) is the audit trail.
 
 on:
   schedule:
@@ -82,20 +87,25 @@ jobs:
             echo "but has not reached its result job yet; leave it alone."
             echo "This sweep never dispatches. Remedy for a dark head: convert the PR to Draft,"
             echo "then mark it Ready for review again to run the Ready-triggered qualification."
+            echo "First check before re-toggling: merge conflicts (#7079). A conflicting (\`dirty\`)"
+            echo "PR has no merge ref, so no pull_request run can exist for it: merge main into"
+            echo "the branch first, and only then re-toggle Draft -> Ready."
             echo ""
-            echo "| PR | head | disposition |"
-            echo "| --- | --- | --- |"
+            echo "| PR | head | mergeable_state | disposition |"
+            echo "| --- | --- | --- | --- |"
           } >> "$GITHUB_STEP_SUMMARY"
 
           scanned=0 dark=0 in_progress=0
           while IFS=$'\t' read -r number head_sha head_ref head_repo draft; do
             [ -n "${number:-}" ] || continue
             scanned=$((scanned + 1))
+            mergeable_state="n/a"
             if [ "$draft" = "true" ]; then
               disposition="skip: draft"
             elif [ "$head_repo" != "$REPOSITORY" ]; then
               disposition="skip: fork/untrusted head (${head_repo:-deleted})"
             else
+              mergeable_state="$(gh api "repos/$REPOSITORY/pulls/$number" --jq '.mergeable_state // "unknown"')"
               count="$(gh api --paginate "repos/$REPOSITORY/commits/$head_sha/check-runs?per_page=100" --jq "[.check_runs[] | select(.name == \"$REQUIRED_CHECK\")] | length" | awk '{s+=$1} END{print s+0}')"
               if [ "$count" != "0" ]; then
                 disposition="covered ($count required check(s) on head)"
@@ -104,6 +114,10 @@ jobs:
                 if [ "$in_flight" != "0" ]; then
                   in_progress=$((in_progress + 1))
                   disposition="in flight ($in_flight Ready-triggered run(s) not yet at result; do not re-toggle)"
+                elif [ "$mergeable_state" = "dirty" ]; then
+                  dark=$((dark + 1))
+                  disposition="DARK (conflicted); merge main into \`$head_ref\`, then Draft -> Ready"
+                  echo "::warning title=Dark conflicted PR head::PR #$number head ${head_sha:0:8} is mergeable_state=dirty, so no pull_request run can exist (no merge ref); merge main into $head_ref first, then convert to Draft and mark Ready again."
                 else
                   dark=$((dark + 1))
                   disposition="DARK; needs Draft -> Ready (\`$head_ref\`)"
@@ -111,7 +125,7 @@ jobs:
                 fi
               fi
             fi
-            echo "| #$number | \`${head_sha:0:8}\` | $disposition |" >> "$GITHUB_STEP_SUMMARY"
+            echo "| #$number | \`${head_sha:0:8}\` | \`$mergeable_state\` | $disposition |" >> "$GITHUB_STEP_SUMMARY"
           done <<<"$prs"
 
           echo "" >> "$GITHUB_STEP_SUMMARY"

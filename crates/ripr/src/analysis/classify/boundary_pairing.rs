@@ -109,7 +109,7 @@ fn assertion_observes_boundary_owner_call(
     activation: &ActivationEvidence,
 ) -> bool {
     let subject = assertion_subject(operands);
-    let lists = owner_call_argument_lists(&subject, &owner.name);
+    let lists = owner_call_sites(&subject, owner);
     if lists
         .iter()
         .any(|arguments| argument_list_activates_boundary(probe, owner, test, arguments))
@@ -128,10 +128,12 @@ fn assertion_observes_boundary_owner_call(
     // identifier operand maps to a parameter. An unresolved operand (`let
     // amount = raw; amount >= threshold`) fail-closes to the whole argument
     // list. The call fact keeps the original text so it matches extracted
-    // calls.
+    // calls. For a free owner the counts read only bare or
+    // module-qualified spellings; a same-named `Type::name(..)` or
+    // `value.name(..)` call is never the owner's (#6713).
     lists.len() == 1
-        && owner_call_count(&assertion.text, &owner.name) == 1
-        && line_owner_call_count(test, assertion.line, &owner.name) <= 1
+        && owner_call_sites(&assertion.text, owner).len() == 1
+        && line_owner_call_count(test, assertion.line, owner) <= 1
         && owner_call_arguments_admit_activation_fallback(probe, owner, &lists[0])
         && activation_marks_boundary_call(
             activation,
@@ -144,8 +146,11 @@ fn assertion_observes_boundary_owner_call(
 }
 
 /// Owner calls the test's call facts record on one line, counting each
-/// distinct fact text once so per-line and per-call extraction agree.
-fn line_owner_call_count(test: &TestSummary, line: usize, name: &str) -> usize {
+/// distinct fact text once so per-line and per-call extraction agree. For
+/// a free owner a same-named `Type::name(..)` or `value.name(..)` spelling
+/// inside a fact text is not the owner's call (#6713).
+fn line_owner_call_count(test: &TestSummary, line: usize, owner: &FunctionSummary) -> usize {
+    let name = owner.name.as_str();
     let mut texts = test
         .calls
         .iter()
@@ -156,7 +161,7 @@ fn line_owner_call_count(test: &TestSummary, line: usize, name: &str) -> usize {
     texts.dedup();
     texts
         .into_iter()
-        .map(|text| owner_call_count(text, name).max(1))
+        .map(|text| owner_call_sites(text, owner).len().max(1))
         .sum()
 }
 
@@ -327,16 +332,16 @@ fn owner_call_activates_boundary(
     if call.name != owner.name {
         return false;
     }
-    if let Some(arguments) = call_arguments(&call.text, &call.name) {
-        if argument_list_activates_boundary(probe, owner, test, &arguments) {
+    let sites = owner_call_sites(&call.text, owner);
+    if let Some(arguments) = sites.first() {
+        if argument_list_activates_boundary(probe, owner, test, arguments) {
             return true;
         }
-        if !owner_call_arguments_admit_activation_fallback(probe, owner, &arguments) {
+        if !owner_call_arguments_admit_activation_fallback(probe, owner, arguments) {
             return false;
         }
     }
-    owner_call_count(&call.text, &owner.name) == 1
-        && activation_marks_boundary_call(activation, call)
+    sites.len() == 1 && activation_marks_boundary_call(activation, call)
 }
 
 fn argument_list_activates_boundary(
@@ -356,13 +361,34 @@ fn argument_list_activates_boundary(
     let left_index = parameter_index(&parameters, &left);
     let right_index = parameter_index(&parameters, &right);
     if let (Some(left_index), Some(right_index)) = (left_index, right_index) {
-        return values_overlap(
-            arg_values.get(left_index).map(Vec::as_slice).unwrap_or(&[]),
-            arg_values
-                .get(right_index)
-                .map(Vec::as_slice)
-                .unwrap_or(&[]),
-        );
+        let left_values = arg_values.get(left_index).map(Vec::as_slice).unwrap_or(&[]);
+        let right_values = arg_values
+            .get(right_index)
+            .map(Vec::as_slice)
+            .unwrap_or(&[]);
+        // Two columns of one constant-row table (#5328) meet only within one
+        // row: `[(100, 99), (99, 100)]` holds 100 in each column but never
+        // runs the call with both. A table column beside an rstest column is
+        // two independent dimensions: every case runs every row, so any
+        // overlap is reached.
+        let table_column = |index: usize| {
+            arguments.get(index).is_some_and(|argument| {
+                crate::analysis::syntax::constant_table_column(&test.body, argument.trim())
+                    .is_some()
+            })
+        };
+        if left_values.len() > 1
+            && right_values.len() > 1
+            && table_column(left_index)
+            && table_column(right_index)
+        {
+            return left_values.len() == right_values.len()
+                && left_values
+                    .iter()
+                    .zip(right_values)
+                    .any(|(left, right)| left == right);
+        }
+        return values_overlap(left_values, right_values);
     }
     if let Some(left_index) = left_index {
         let right_literals = extract_literals(&right);
@@ -396,11 +422,29 @@ fn assertion_subject(text: &str) -> String {
     text.to_string()
 }
 
+/// Argument lists of the calls in `text` that can be calls of `owner`. A
+/// module-level `fn` is called only by a bare or module-qualified spelling,
+/// never by a same-named `Type::name(..)` or `value.name(..)` (#6713).
+fn owner_call_sites(text: &str, owner: &FunctionSummary) -> Vec<Vec<String>> {
+    let lists = owner_call_argument_lists(text, &owner.name);
+    if owner.impl_context != crate::analysis::facts::FunctionImplContext::Free {
+        return lists.into_iter().map(|(_, arguments)| arguments).collect();
+    }
+    let masked = crate::analysis::extract::mask_comments_and_strings(text);
+    lists
+        .into_iter()
+        .filter(|(at, _)| super::related_tests::is_free_function_call_at(&masked, *at, &owner.name))
+        .map(|(_, arguments)| arguments)
+        .collect()
+}
+
 /// Owner calls in code only: a spelling inside a comment or string literal
 /// (`/* gate(10) */`, `"gate(10)"`) is not a call. Positions come from the
 /// length-preserving mask; arguments are read from the original text so
-/// string arguments (`classify("word")`) keep their values.
-fn owner_call_argument_lists(text: &str, name: &str) -> Vec<Vec<String>> {
+/// string arguments (`classify("word")`) keep their values. Each entry
+/// carries the byte offset where the call's name starts, so callers can
+/// re-check the call's spelling against the same mask.
+fn owner_call_argument_lists(text: &str, name: &str) -> Vec<(usize, Vec<String>)> {
     let needle = format!("{name}(");
     let masked = crate::analysis::extract::mask_comments_and_strings(text);
     let mut lists = Vec::new();
@@ -418,15 +462,11 @@ fn owner_call_argument_lists(text: &str, name: &str) -> Vec<Vec<String>> {
             }
         }
         if let Some(arguments) = call_arguments(text.get(abs..).unwrap_or(""), name) {
-            lists.push(arguments);
+            lists.push((abs, arguments));
         }
         from = abs + needle.len();
     }
     lists
-}
-
-fn owner_call_count(text: &str, name: &str) -> usize {
-    owner_call_argument_lists(text, name).len()
 }
 
 fn contains_ident(text: &str, name: &str) -> bool {
@@ -761,6 +801,50 @@ mod tests {
                 &ActivationEvidence::default(),
             ),
             "assert_eq!(gate(10), true) must pair"
+        );
+    }
+
+    /// #6713: `Gate::gate(10)` in the assertion is not the free `gate`;
+    /// the bare spelling on the same assertion is the control.
+    #[test]
+    fn same_named_type_path_call_does_not_pair_for_free_owner() {
+        let probe = predicate_probe("input >= 10");
+        let mut owner = gate_owner();
+        owner.impl_context = crate::analysis::facts::FunctionImplContext::Free;
+        let type_path = test_summary(
+            "type_path_boundary",
+            "let _ = gate(1); assert_eq!(Gate::gate(10), true);",
+            vec![
+                call("gate", "let _ = gate(1);"),
+                call("gate", "assert_eq!(Gate::gate(10), true);"),
+            ],
+            vec![exact("assert_eq!(Gate::gate(10), true);")],
+            &["1", "10"],
+        );
+        assert!(
+            !pairing_with_admitted_oracles(
+                &probe,
+                Some(&owner),
+                &[&type_path],
+                &ActivationEvidence::default(),
+            ),
+            "Gate::gate(10) must not pair for a free gate"
+        );
+        let bare = test_summary(
+            "bare_boundary",
+            "assert_eq!(Gate::gate(1), gate(10));",
+            vec![call("gate", "assert_eq!(Gate::gate(1), gate(10));")],
+            vec![exact("assert_eq!(Gate::gate(1), gate(10));")],
+            &["1", "10"],
+        );
+        assert!(
+            pairing_with_admitted_oracles(
+                &probe,
+                Some(&owner),
+                &[&bare],
+                &ActivationEvidence::default(),
+            ),
+            "the bare gate(10) beside Gate::gate(1) must pair"
         );
     }
 
@@ -1865,6 +1949,44 @@ mod tests {
         );
     }
 
+    /// #6713: a same-line receiver call `w.classify(..)` is not a second
+    /// call of a free `classify`, so the line still names the free owner
+    /// once and its activation `==` fact pairs. A non-free owner keeps
+    /// counting both calls and refuses the line-level fallback.
+    #[test]
+    fn free_owner_line_fallback_ignores_same_named_receiver_call() {
+        let probe = predicate_probe("final_label == \"alpha\"");
+        let line = "assert_eq!(classify(\"word\"), w.classify(\"x\"));";
+        let test = test_summary(
+            "word_label",
+            line,
+            vec![call("classify", line)],
+            vec![exact(line)],
+            &["word"],
+        );
+        let activation = ActivationEvidence {
+            observed_values: vec![ValueFact {
+                line: 1,
+                text: format!("{line} | helper hop"),
+                value: "final_label == \"alpha\"".to_string(),
+                context: ValueContext::FunctionArgument,
+            }],
+            missing_discriminators: Vec::new(),
+        };
+        let mut owner = gate_owner();
+        owner.name = "classify".to_string();
+        owner.impl_context = crate::analysis::facts::FunctionImplContext::Free;
+        assert!(
+            pairing_with_admitted_oracles(&probe, Some(&owner), &[&test], &activation),
+            "w.classify(..) is not a call of the free classify"
+        );
+        owner.impl_context = crate::analysis::facts::FunctionImplContext::Unknown;
+        assert!(
+            !pairing_with_admitted_oracles(&probe, Some(&owner), &[&test], &activation),
+            "an owner reachable through a receiver keeps both calls ambiguous"
+        );
+    }
+
     #[test]
     fn comments_and_strings_in_operands_do_not_pair() {
         let probe = predicate_probe("input >= 10");
@@ -1972,6 +2094,41 @@ mod tests {
             pairing_with_admitted_oracles(&probe, Some(&owner), &[&alone], &activation),
             "a line holding only the asserted owner call keeps the activation fallback"
         );
+    }
+
+    #[test]
+    fn table_columns_meet_within_a_row_and_rstest_cases_cross_every_row() {
+        let probe = predicate_probe("left == right");
+        let mut owner = gate_owner();
+        owner.body = "pub fn gate(left: u32, right: u32) -> bool { left == right }".into();
+        let call = |body: &str| test_summary("t", body, vec![], vec![], &[]);
+        let arguments = ["left".to_string(), "right".to_string()];
+        // One table, 100 in each column but never in the same row.
+        let across = call(
+            "fn t() {\n    for (left, right) in [(100, 99), (99, 100)] {\n        assert!(!gate(left, right));\n    }\n}",
+        );
+        assert!(!argument_list_activates_boundary(
+            &probe, &owner, &across, &arguments
+        ));
+        let within = call(
+            "fn t() {\n    for (left, right) in [(100, 99), (100, 100)] {\n        assert!(gate(left, right) == (left == right));\n    }\n}",
+        );
+        assert!(argument_list_activates_boundary(
+            &probe, &owner, &within, &arguments
+        ));
+        // An rstest case column beside a table column: each case runs every
+        // row, so `left = 100` meets the `right = 100` row.
+        let mut crossed = call(
+            "fn t(#[case] left: u32) {\n    for right in [99, 100] {\n        assert!(gate(left, right) == (left == right));\n    }\n}",
+        );
+        crossed.attrs = vec![
+            "#[rstest]".to_string(),
+            "#[case(100)]".to_string(),
+            "#[case(99)]".to_string(),
+        ];
+        assert!(argument_list_activates_boundary(
+            &probe, &owner, &crossed, &arguments
+        ));
     }
 
     fn predicate_probe(expression: &str) -> Probe {
