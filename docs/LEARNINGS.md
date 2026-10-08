@@ -3,6 +3,27 @@
 This log captures repo knowledge that should survive individual PRs and chat
 sessions. It is intentionally short and actionable.
 
+## 2026-10-08: A green PR head plus clean mergeability does not prove the squash result compiles (#7150)
+
+#6836 was reviewed and gated on an Oct-5 tree. By merge time main had changed
+the same file's callee signature and walker logic in disjoint hunks, so git
+auto-merged cleanly and the squash landed an inconsistent tree: E0061 at
+`seam_inventory.rs:2667` plus a silently dropped twin filter. PR-head CI
+cannot see the combined tree, and squash merges do not re-run CI.
+
+Durable rules:
+
+- Before merging a PR whose base is older than the files it touches, verify
+  the combined tree: merge current main into a scratch checkout and run at
+  least `cargo check` on the affected crates. `mergeable: MERGEABLE` answers
+  conflicts, not coherence.
+- A semantic mirror (bounded copy of a walker, second implementation of a
+  rule) must be re-compared against the CURRENT source at merge time, not the
+  reviewed base; the oracle fixtures that pinned the old tree may not cover
+  what main added (here: no twin case).
+- Reconciliation must include a compile check of the landed tree, not just a
+  content check of the squash.
+
 ## 2026-10-07: PowerShell string pipelines add BOMs and mojibake; verify bytes (#7091)
 
 Round-tripping a file through `Get-Content`/`Set-Content` or `>` redirection
