@@ -1677,3 +1677,48 @@ fn out_inside_a_sibling_corpus_expected_directory_is_refused() -> Result<(), Str
     refuse_any_expected_out(&root.join("reports"), &selected)?;
     Ok(())
 }
+
+fn corpus_args(words: &[&str]) -> Vec<String> {
+    words.iter().map(|word| (*word).to_string()).collect()
+}
+
+#[test]
+fn validate_spellings_parse_language_without_out_or_cases() -> Result<(), String> {
+    // Both advertised `validate --language` spellings parse to a language
+    // with no `--out`/`--cases`; the parser refuses the option forms, so
+    // the dispatch arm only branches on the coverage declaration.
+    for words in [
+        ["validate", "--language", "typescript"].as_slice(),
+        ["--language", "typescript", "validate"].as_slice(),
+    ] {
+        let parsed = parse_corpus_args(&corpus_args(words))?;
+        assert_eq!(parsed.sub, "validate");
+        assert_eq!(parsed.language.as_deref(), Some("typescript"));
+        assert!(parsed.out.is_none() && parsed.cases.is_none());
+    }
+    for words in [
+        ["validate", "--out", "reports"].as_slice(),
+        ["validate", "--cases", "a-case"].as_slice(),
+    ] {
+        let err = parse_corpus_args(&corpus_args(words))
+            .err()
+            .unwrap_or_default();
+        assert!(err.contains("takes only --language"), "{err}");
+    }
+    Ok(())
+}
+
+#[test]
+fn declared_validation_skips_coverage_without_a_ledger() -> Result<(), String> {
+    // The declared funnel is the single coverage-mode decision: the
+    // ledgerless copy validates structurally with no coverage attached.
+    // (The gated half needs the repo-relative specs tree, so the `validate`
+    // and `check-all` CLI runs prove it, not a unit test.)
+    let dir = crate::tests::temp_dir("verdict-declared-none");
+    crate::tests::copy_dir_recursive(&repo_corpus_dir(), &dir)?;
+    fs::remove_file(dir.join(coverage::LEDGER_FILE)).map_err(|err| err.to_string())?;
+    let (corpus, coverage) = validated_corpus_declared(&dir)?;
+    assert!(coverage.is_none());
+    assert!(!corpus.cases.is_empty());
+    Ok(())
+}
