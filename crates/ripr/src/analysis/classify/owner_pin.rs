@@ -6,7 +6,12 @@
 //! gate below fails closed when ripr cannot establish one:
 //!
 //! 1. The call names the owner. A bare `name(..)` names a module-level
-//!    function, never an associated function or a trait method. A method
+//!    function, never an associated function or a trait method — and the
+//!    test's binding of the name must resolve to it: no same-named
+//!    `static`, `const`, tuple struct or competing `use` in reach, an
+//!    explicit `use` or glob resolving to a module holding the owner
+//!    (directly or through one re-export), else the test beside the
+//!    owner. A method
 //!    call `recv.name(..)` names a function with a `self` receiver, and only
 //!    when the receiver's type dispatches to the owner: the test binds the
 //!    receiver to a type ripr can read, no type declaration in the test's
@@ -38,9 +43,9 @@
 
 use super::super::rust_index::{FunctionSummary, OracleFact, RustIndex, TestSummary};
 use super::reveal::{
-    assertion_comparison_operands, contains_as_whole_word, file_imports_foreign_callee_name,
-    file_imports_own_item, file_use_statements, use_statement_binds_name,
-    use_statement_first_segment,
+    UsePath, assertion_comparison_operands, contains_as_whole_word,
+    file_imports_foreign_callee_name, file_imports_own_item, file_use_statements,
+    flattened_use_paths, use_statement_binds_name, use_statement_first_segment,
 };
 use crate::analysis::extract::{
     fact_body_defines_callee_fn, fact_body_let_shadow_line, mask_comments_and_strings,
@@ -67,6 +72,7 @@ use rayon::prelude::*;
 use std::cell::{OnceCell, RefCell};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 
 /// The owner-side half of the pin, established once per probe.
 pub(in crate::analysis) struct OwnerReturnPin {
@@ -120,8 +126,21 @@ pub(in crate::analysis) struct OwnerPinSyntax {
     /// probe, test and assertion, and each input below scans the workspace,
     /// so every answer is kept for the run under the key it depends on.
     path_memo: RefCell<PathCallMemo>,
+    /// #7097: per-file module scopes (direct `use`s and value-taking
+    /// items), parsed once per run; `None` when the file does not parse.
+    file_scopes: RefCell<BTreeMap<PathBuf, Option<Rc<FileScopes>>>>,
+    /// #7097: bare-call binding verdicts per [`BareCallKey`].
+    bare_call_memo: RefCell<BTreeMap<BareCallKey, bool>>,
+    /// #7097: out-of-line module children per (parent file, `mod` name):
+    /// the composed child file, or `None` when declarations conflict.
+    /// Built once per run; the index is immutable.
+    mod_children: OnceCell<BTreeMap<(PathBuf, String), Option<PathBuf>>>,
     withheld: WithheldMacroBindings,
 }
+
+/// #7097: a bare-call binding verdict key: owner file, owner line, owner
+/// name, test file, test line.
+type BareCallKey = (PathBuf, usize, String, PathBuf, usize);
 
 /// #6974: run-scoped answers for [`OwnerReturnPin::path_reaches_owner`].
 #[derive(Clone, Debug, Default)]
@@ -1503,7 +1522,10 @@ impl OwnerReturnPin {
                     && !test_body_shadows_owner(test, &self.name)
                     && !binds_outside_let(&masked_body, &self.name)
                     && !bound_by_macro(&masked_body, &self.name)
-                    && test_source.is_some_and(|source| !file_renames_to(source, &self.name))
+                    && test_source.is_some_and(|source| {
+                        !file_renames_to(source, &self.name)
+                            && self.bare_call_reaches_owner(test, source, index, syntax)
+                    })
             }
             // #6974: a path names the owner without the bare name's scope,
             // so a test-local binding of the name cannot capture it; the
@@ -1725,6 +1747,328 @@ impl OwnerReturnPin {
             binds
         });
         !binds
+    }
+
+    /// #7097: whether the test's bare `name(..)` can only reach the
+    /// owner. The establish gate refused every other `fn` of the name, but
+    /// a same-named `static`, `const`, tuple struct or `use` still takes a
+    /// bare call: an item in the test's body or own module scope shadows
+    /// every import, an explicit `use` must name the owner's own path, a
+    /// glob must deliver the owner from a twin-free module, and with
+    /// neither the test must sit beside the owner. Anything unplaced
+    /// refuses.
+    fn bare_call_reaches_owner(
+        &self,
+        test: &TestSummary,
+        test_source: &str,
+        index: &RustIndex,
+        syntax: &OwnerPinSyntax,
+    ) -> bool {
+        let key = (
+            self.owner_file.clone(),
+            self.owner_start_line,
+            self.name.clone(),
+            test.file.clone(),
+            test.start_line,
+        );
+        if let Some(known) = syntax.bare_call_memo.borrow().get(&key) {
+            return *known;
+        }
+        let verdict = self.bare_call_reaches_owner_uncached(test, test_source, index, syntax);
+        syntax.bare_call_memo.borrow_mut().insert(key, verdict);
+        verdict
+    }
+
+    fn bare_call_reaches_owner_uncached(
+        &self,
+        test: &TestSummary,
+        test_source: &str,
+        index: &RustIndex,
+        syntax: &OwnerPinSyntax,
+    ) -> bool {
+        let Some(owner_inline) = syntax
+            .item_nesting(index, &self.owner_file, &self.name, self.owner_start_line)
+            .map(|nesting| nesting.modules)
+        else {
+            return false;
+        };
+        let Some(scopes) = syntax.file_scopes(index, &test.file) else {
+            return false;
+        };
+        let Some(scope) = scopes.scope_of_test(test_source, test) else {
+            return false;
+        };
+        // The body binds first: an item there shadows every import, an
+        // explicit `use` there shadows the module scope, and a glob there
+        // shadows the module scope too.
+        if body_defines_value_twin(&test.body, &self.name) {
+            return false;
+        }
+        let body_uses = flattened_use_paths(&test.body);
+        let (body_bindings, body_globs) = partition_name_uses(&body_uses, &self.name);
+        if !body_bindings.is_empty() {
+            let context = ScopeContext {
+                file: &test.file,
+                source: test_source,
+                stack: &scope.stack,
+            };
+            return body_bindings.len() == 1
+                && self.use_names_owner(body_bindings[0], context, &owner_inline, index, syntax);
+        }
+        if !body_globs.is_empty() {
+            let context = ScopeContext {
+                file: &test.file,
+                source: test_source,
+                stack: &scope.stack,
+            };
+            return body_globs
+                .iter()
+                .all(|glob| self.glob_delivers_owner(glob, context, &owner_inline, index, syntax));
+        }
+        // The test's own module scope: a twin item takes the call from a
+        // glob or lexical resolution, and an explicit `use` takes it from
+        // a glob. Ancestor items are invisible without a glob, which the
+        // glob rule below places.
+        if scope.has_twin(&self.name) {
+            return false;
+        }
+        let (bindings, globs) = partition_name_uses(&scope.uses, &self.name);
+        if !bindings.is_empty() {
+            let context = ScopeContext {
+                file: &test.file,
+                source: test_source,
+                stack: &scope.stack,
+            };
+            return bindings.len() == 1
+                && self.use_names_owner(bindings[0], context, &owner_inline, index, syntax);
+        }
+        if !globs.is_empty() {
+            let context = ScopeContext {
+                file: &test.file,
+                source: test_source,
+                stack: &scope.stack,
+            };
+            return globs
+                .iter()
+                .all(|glob| self.glob_delivers_owner(glob, context, &owner_inline, index, syntax));
+        }
+        // Neither: the owner is lexically visible only beside the test.
+        // Anywhere else the bare name is unresolved, the prelude, or a
+        // macro-emitted import ripr cannot see — never the owner.
+        test.file == self.owner_file && scope.stack == owner_inline
+    }
+
+    /// #7097: whether the binding `use_path` delivers the owner to
+    /// `scope`: its module prefix resolves, and that module holds the
+    /// owner with no twin — the owner itself, or one `use` hop
+    /// re-exporting it. A twin's path, a foreign crate, a bare crate
+    /// name, a renamed root, or a re-export chain past one hop refuses.
+    fn use_names_owner(
+        &self,
+        use_path: &UsePath,
+        scope: ScopeContext<'_>,
+        owner_inline: &[String],
+        index: &RustIndex,
+        syntax: &OwnerPinSyntax,
+    ) -> bool {
+        let Some((first, middle)) = split_binding_use(use_path, &self.name) else {
+            return false;
+        };
+        let Some((target_file, target_stack)) =
+            self.resolve_use_prefix(first, &middle, scope, index, syntax)
+        else {
+            return false;
+        };
+        self.resolved_module_delivers_owner(target_file, target_stack, owner_inline, index, syntax)
+    }
+
+    /// #7097: whether the binding `use_path` resolves exactly to the
+    /// owner's module from `scope`: no re-export hop, so one-hop
+    /// transport and twin checks end here and import cycles cannot
+    /// recurse.
+    fn use_resolves_to_owner_module(
+        &self,
+        use_path: &UsePath,
+        scope: ScopeContext<'_>,
+        owner_inline: &[String],
+        index: &RustIndex,
+        syntax: &OwnerPinSyntax,
+    ) -> bool {
+        let Some((first, middle)) = split_binding_use(use_path, &self.name) else {
+            return false;
+        };
+        self.resolve_use_prefix(first, &middle, scope, index, syntax)
+            .is_some_and(|(file, stack)| {
+                file == self.owner_file && stack.as_slice() == owner_inline
+            })
+    }
+
+    /// #7097: resolve a `use` path's module prefix to its (file, inline
+    /// stack): `self`/`super` walk from the scope, `crate` and the
+    /// owner's library crate name walk from the owner's crate root, each
+    /// step an inline child module or a composed out-of-line `mod`.
+    /// `None` when a step is foreign, renamed, ambiguous, or unplaced.
+    fn resolve_use_prefix(
+        &self,
+        first: &str,
+        segments: &[&str],
+        scope: ScopeContext<'_>,
+        index: &RustIndex,
+        syntax: &OwnerPinSyntax,
+    ) -> Option<(PathBuf, Vec<String>)> {
+        match first {
+            "self" | "super" => {
+                let (file, stack, rest) = pop_super_across_files(
+                    index,
+                    syntax,
+                    scope.file,
+                    scope.stack,
+                    first,
+                    segments,
+                )?;
+                resolve_module_path(index, syntax, &file, &stack, &rest)
+            }
+            "crate" => {
+                let root = composed_root(&self.owner_file, index);
+                if composed_root(scope.file, index) != root {
+                    return None;
+                }
+                resolve_module_path(index, syntax, &root, &[], segments)
+            }
+            _ => {
+                if !self.krate_root_names_owner_crate(first, scope.file, scope.source, index) {
+                    return None;
+                }
+                let root = composed_root(&self.owner_file, index);
+                resolve_module_path(index, syntax, &root, &[], segments)
+            }
+        }
+    }
+
+    /// #7097: whether a resolved module delivers the owner: it holds no
+    /// twin of the name, and either is the owner's own module or
+    /// transports one `use` resolving exactly to it.
+    fn resolved_module_delivers_owner(
+        &self,
+        target_file: PathBuf,
+        target_stack: Vec<String>,
+        owner_inline: &[String],
+        index: &RustIndex,
+        syntax: &OwnerPinSyntax,
+    ) -> bool {
+        let Some(target_source) = index
+            .files()
+            .get(&target_file)
+            .map(|facts| facts.data().source.clone())
+        else {
+            return false;
+        };
+        let Some(target_scopes) = syntax.file_scopes(index, &target_file) else {
+            return false;
+        };
+        let Some(target) = target_scopes.scope_with_stack(&target_stack) else {
+            return false;
+        };
+        if self.scope_has_twin_binding(
+            target,
+            &target_file,
+            &target_source,
+            owner_inline,
+            index,
+            syntax,
+        ) {
+            return false;
+        }
+        if target_file == self.owner_file && target_stack.as_slice() == owner_inline {
+            return true;
+        }
+        let context = ScopeContext {
+            file: &target_file,
+            source: &target_source,
+            stack: &target.stack,
+        };
+        let (transports, _) = partition_name_uses(&target.uses, &self.name);
+        transports.iter().any(|transport| {
+            self.use_resolves_to_owner_module(transport, context, owner_inline, index, syntax)
+        })
+    }
+
+    /// #7097: whether the glob `use_path` (`*`-terminated) delivers
+    /// the owner's binding to `scope`: its target module resolves and
+    /// holds the owner with no twin — the owner itself, or one `use` hop
+    /// re-exporting it. An unplaced glob refuses: it may import a twin,
+    /// and it can never import the workspace owner from a foreign crate.
+    fn glob_delivers_owner(
+        &self,
+        use_path: &UsePath,
+        scope: ScopeContext<'_>,
+        owner_inline: &[String],
+        index: &RustIndex,
+        syntax: &OwnerPinSyntax,
+    ) -> bool {
+        let Some((first, prefix)) = split_glob_prefix(&use_path.path) else {
+            return false;
+        };
+        let Some((target_file, target_stack)) =
+            self.resolve_use_prefix(first, &prefix, scope, index, syntax)
+        else {
+            return false;
+        };
+        self.resolved_module_delivers_owner(target_file, target_stack, owner_inline, index, syntax)
+    }
+
+    /// #7097: whether the first segment of a `use` path names the owner's
+    /// library crate from `scope_file`'s crate: a manifest import name, or
+    /// — in synthetic indexes without manifest authority — a workspace
+    /// package name. A rename to the segment refuses.
+    fn krate_root_names_owner_crate(
+        &self,
+        first: &str,
+        scope_file: &Path,
+        scope_source: &str,
+        index: &RustIndex,
+    ) -> bool {
+        if first.is_empty() || file_renames_to(scope_source, first) {
+            return false;
+        }
+        let owner_root = composed_root(&self.owner_file, index);
+        if index
+            .member_crates
+            .import_names(scope_file, &owner_root)
+            .iter()
+            .any(|name| name == first)
+        {
+            return true;
+        }
+        !index.member_crates.has_manifest_root() && crate_names_package(first, &index.package_names)
+    }
+
+    /// #7097: whether `scope` binds the owner's name to anything but the
+    /// owner: a twin item or macro, or a `use` resolving anywhere but
+    /// the owner's module. Globs need no hop here: a further glob only
+    /// matters beside an owner binding (an ambiguity error either way)
+    /// or without one (already refused).
+    fn scope_has_twin_binding(
+        &self,
+        scope: &ModuleScope,
+        scope_file: &Path,
+        scope_source: &str,
+        owner_inline: &[String],
+        index: &RustIndex,
+        syntax: &OwnerPinSyntax,
+    ) -> bool {
+        if scope.has_twin(&self.name) {
+            return true;
+        }
+        let context = ScopeContext {
+            file: scope_file,
+            source: scope_source,
+            stack: &scope.stack,
+        };
+        let (bindings, _) = partition_name_uses(&scope.uses, &self.name);
+        bindings.iter().any(|binding| {
+            !self.use_resolves_to_owner_module(binding, context, owner_inline, index, syntax)
+        })
     }
 
     fn trait_in_scope(
@@ -3167,6 +3511,592 @@ fn file_aliases_type(source: &str, name: &str) -> bool {
     whole_word_offsets(&masked, "type")
         .into_iter()
         .any(|offset| starts_with_word(masked[offset + "type".len()..].trim_start(), name))
+}
+
+/// #7097: one file's module scopes — the file top plus every inline
+/// module with a body — each with its direct `use`s and the items that
+/// can take a value call. A bare call resolves through the test's own
+/// scope only, so ancestor scopes are consulted solely as glob targets.
+#[derive(Clone, Debug, Default)]
+struct FileScopes {
+    scopes: Vec<ModuleScope>,
+    /// Every `fn` in the file, at any depth, for test-fn ancestry.
+    fns: Vec<ScopeFn>,
+}
+
+/// #7097: one `fn` item's name and byte span.
+#[derive(Clone, Debug)]
+struct ScopeFn {
+    name: String,
+    start: u32,
+    end: u32,
+}
+
+/// #7097: one module scope: its inline-module stack from the file top
+/// (empty at file top), its byte span, every direct `use` flattened,
+/// every direct value-taking item's name, and macro text that may emit
+/// or mention one.
+#[derive(Clone, Debug)]
+struct ModuleScope {
+    stack: Vec<String>,
+    start: u32,
+    end: u32,
+    uses: Vec<UsePath>,
+    twins: Vec<String>,
+    macro_args: Vec<String>,
+    macro_defs: Vec<String>,
+}
+
+impl OwnerPinSyntax {
+    /// #7097: out-of-line module children, built once per run from the
+    /// recorded module edges. Two children under one (parent, name) —
+    /// cfg'd alternatives — resolve to neither.
+    fn mod_children(&self, index: &RustIndex) -> &BTreeMap<(PathBuf, String), Option<PathBuf>> {
+        self.mod_children.get_or_init(|| {
+            let mut children: BTreeMap<(PathBuf, String), Option<PathBuf>> = BTreeMap::new();
+            for (child, facts) in index.files().iter() {
+                // Only the innermost edge names the direct parent: earlier
+                // edges are the ancestor chain, which every descendant
+                // repeats.
+                let Some(edge) = facts.role_provenance.edges.last() else {
+                    continue;
+                };
+                if edge.kind != SourceRoleProvenanceEdgeKind::Module {
+                    continue;
+                }
+                let Some(name) = module_declaration_name(&edge.declaration) else {
+                    continue;
+                };
+                children
+                    .entry((edge.parent.clone(), name))
+                    .and_modify(|slot| {
+                        if slot.as_ref() != Some(child) {
+                            *slot = None;
+                        }
+                    })
+                    .or_insert_with(|| Some(child.clone()));
+            }
+            children
+        })
+    }
+
+    /// #7097: `file`'s scope table, parsed once per run and shared:
+    /// lookups clone the `Rc`, never the table (#7176 review).
+    fn file_scopes(&self, index: &RustIndex, file: &Path) -> Option<Rc<FileScopes>> {
+        if let Some(known) = self.file_scopes.borrow().get(file) {
+            return known.clone();
+        }
+        let scopes = index
+            .files()
+            .get(file)
+            .and_then(|facts| build_file_scopes(&facts.source))
+            .map(Rc::new);
+        self.file_scopes
+            .borrow_mut()
+            .insert(file.to_path_buf(), scopes.clone());
+        scopes
+    }
+}
+
+/// #7097: the scope table of `source`, or `None` when it does not parse.
+fn build_file_scopes(source: &str) -> Option<FileScopes> {
+    let parse = parse_clean_source_file(source)?;
+    let tree = parse.tree();
+    let end: u32 = tree.syntax().text_range().end().into();
+    let mut scopes = FileScopes::default();
+    scopes.push_scope(tree.syntax(), Vec::new(), 0, end);
+    for func in tree.syntax().descendants().filter_map(ast::Fn::cast) {
+        if let Some(name) = func.name() {
+            let text = name.text().to_string();
+            let range = func.syntax().text_range();
+            let start: u32 = range.start().into();
+            let end: u32 = range.end().into();
+            scopes.fns.push(ScopeFn {
+                name: strip_raw(&text).to_string(),
+                start,
+                end,
+            });
+        }
+    }
+    Some(scopes)
+}
+
+impl FileScopes {
+    /// Record `container` (the file root or an inline module body) as one
+    /// scope, then recurse into its direct child modules.
+    fn push_scope(&mut self, container: &SyntaxNode, stack: Vec<String>, start: u32, end: u32) {
+        let mut scope = ModuleScope {
+            stack,
+            start,
+            end,
+            uses: Vec::new(),
+            twins: Vec::new(),
+            macro_args: Vec::new(),
+            macro_defs: Vec::new(),
+        };
+        let mut children = Vec::new();
+        for item in container.children().filter_map(ast::Item::cast) {
+            scope.absorb(&item);
+            if let ast::Item::Module(module) = &item
+                && let Some(body) = module.item_list()
+                && let Some(name) = module.name()
+            {
+                let text = name.text().to_string();
+                let mut stack = scope.stack.clone();
+                stack.push(strip_raw(&text).to_string());
+                let range = module.syntax().text_range();
+                let start: u32 = range.start().into();
+                let end: u32 = range.end().into();
+                children.push((body.syntax().clone(), stack, start, end));
+            }
+        }
+        self.scopes.push(scope);
+        for (container, stack, start, end) in children {
+            self.push_scope(&container, stack, start, end);
+        }
+    }
+
+    /// The test's own module scope: exact scope first, from the test
+    /// fn's own span — line spans coincide for same-line siblings (`mod
+    /// outer { mod nested { ... #[test] fn check() ... } }` on one line),
+    /// where the line alone resolves to the file top. A macro-generated
+    /// test has no matching `fn` node, so it keeps the line-span fallback
+    /// to the module its invocation expands in. Duplicate `fn` nodes are
+    /// already refused by assertion admission; here they fail closed.
+    fn scope_of_test(&self, source: &str, test: &TestSummary) -> Option<&ModuleScope> {
+        let wanted = strip_raw(&test.name);
+        let line_of = |offset: u32| {
+            source
+                .get(..offset as usize)
+                .map(|prefix| prefix.matches('\n').count() + 1)
+        };
+        let found: Vec<&ScopeFn> = self
+            .fns
+            .iter()
+            .filter(|func| {
+                func.name == wanted
+                    && line_of(func.start).is_some_and(|start| start <= test.end_line)
+                    && line_of(func.end).is_some_and(|end| test.start_line <= end)
+            })
+            .collect();
+        if let [func] = found.as_slice() {
+            let offset = func.start;
+            return self
+                .scopes
+                .iter()
+                .filter(|scope| scope.start <= offset && offset <= scope.end)
+                .max_by_key(|scope| scope.stack.len());
+        }
+        if found.is_empty() {
+            return self.scope_at(source, test.start_line);
+        }
+        None
+    }
+
+    /// The deepest scope containing `line` (1-based) in `source`: the
+    /// test's own module, or the file top.
+    fn scope_at(&self, source: &str, line: usize) -> Option<&ModuleScope> {
+        let mut offset = 0usize;
+        for _ in 1..line {
+            let Some(relative) = source.get(offset..)?.find('\n') else {
+                break;
+            };
+            offset = offset.saturating_add(relative + 1);
+        }
+        let offset = u32::try_from(offset).ok()?;
+        self.scopes
+            .iter()
+            .filter(|scope| scope.start <= offset && offset <= scope.end)
+            .max_by_key(|scope| scope.stack.len())
+    }
+
+    /// The scope with exactly `stack`, when the file declares it.
+    fn scope_with_stack(&self, stack: &[String]) -> Option<&ModuleScope> {
+        self.scopes.iter().find(|scope| scope.stack == stack)
+    }
+}
+
+impl ModuleScope {
+    /// One direct item: `use`s flatten, value-taking items record their
+    /// name, and macros record the text that may emit or mention one. A
+    /// direct `fn` is never a twin: the establish gate already refused
+    /// every other `fn` of the name, so a remaining one is the owner
+    /// itself. Type-only items (`mod`, `trait`, `type`, `enum`, `union`,
+    /// non-tuple `struct`) share no namespace with a value call.
+    fn absorb(&mut self, item: &ast::Item) {
+        match item {
+            ast::Item::Use(item) => {
+                self.uses
+                    .extend(flattened_use_paths(&item.syntax().text().to_string()));
+            }
+            ast::Item::Static(item) => self.twin_name(item.name()),
+            ast::Item::Const(item) => self.twin_name(item.name()),
+            ast::Item::Struct(item) => {
+                // Tuple and unit structs take the value namespace (a unit
+                // struct's constructor collides with an imported fn, E0255;
+                // braced structs do not conflict — both probed with rustc,
+                // #7176 review).
+                if matches!(
+                    item.kind(),
+                    ast::StructKind::Tuple(_) | ast::StructKind::Unit
+                ) {
+                    self.twin_name(item.name());
+                }
+            }
+            ast::Item::ExternBlock(block) => {
+                // Extern items hang under the EXTERN_ITEM_LIST node, not
+                // under the block itself (#7176 review).
+                if let Some(list) = block.extern_item_list() {
+                    for child in list.extern_items() {
+                        match &child {
+                            ast::ExternItem::Fn(item) => self.twin_name(item.name()),
+                            ast::ExternItem::Static(item) => self.twin_name(item.name()),
+                            _ => {}
+                        }
+                    }
+                }
+            }
+            // An invocation may emit the name from its arguments (`emit!(weight)`);
+            // only the token tree counts, never the macro's own name.
+            ast::Item::MacroCall(call) => {
+                if let Some(tree) = call.token_tree() {
+                    self.macro_args.push(tree.syntax().text().to_string());
+                }
+            }
+            // A definition may hardcode the twin; its text decides, as for
+            // types (#6948). The parse is error-free, so no item is unparsed.
+            ast::Item::MacroRules(rules) => {
+                self.macro_defs.push(rules.syntax().text().to_string());
+            }
+            ast::Item::MacroDef(def) => {
+                self.macro_defs.push(def.syntax().text().to_string());
+            }
+            _ => {}
+        }
+    }
+
+    fn twin_name(&mut self, name: Option<ast::Name>) {
+        if let Some(name) = name {
+            let text = name.text().to_string();
+            self.twins.push(strip_raw(&text).to_string());
+        }
+    }
+
+    /// Whether the scope holds a twin of `name`: a value-taking item, a
+    /// macro invocation mentioning it, or a macro definition spelling a
+    /// twin declaration of it.
+    fn has_twin(&self, name: &str) -> bool {
+        let name = strip_raw(name);
+        self.twins.iter().any(|twin| twin == name)
+            || self
+                .macro_args
+                .iter()
+                .any(|text| contains_as_whole_word(&mask_comments_and_strings(text), name))
+            || self
+                .macro_defs
+                .iter()
+                .any(|text| declares_value_twin(&mask_comments_and_strings(text), name))
+    }
+}
+
+/// #7097: where a `use` is read from: its file, that file's source,
+/// and the inline-module stack of the scope holding it.
+#[derive(Clone, Copy)]
+struct ScopeContext<'a> {
+    file: &'a Path,
+    source: &'a str,
+    stack: &'a [String],
+}
+
+/// #7097: the module name a `mod name;` declaration binds, or `None`
+/// when the declaration is unreadable.
+fn module_declaration_name(declaration: &str) -> Option<String> {
+    let mut words = declaration
+        .split_whitespace()
+        .skip_while(|word| *word != "mod");
+    words.next()?;
+    let name = words.next()?.trim_end_matches(';');
+    let name = strip_raw(name);
+    (!name.is_empty() && is_plain_identifier(name)).then(|| name.to_string())
+}
+
+/// Whether masked text declares a value-taking item of `name` outside a
+/// `fn`: a `static`/`const` (any form) or a tuple struct. Type-only
+/// items share no namespace with a value call.
+fn declares_value_twin(masked: &str, name: &str) -> bool {
+    let name = strip_raw(name);
+    ["static", "const"].iter().any(|keyword| {
+        whole_word_offsets(masked, keyword)
+            .into_iter()
+            .any(|offset| {
+                let rest = masked[offset + keyword.len()..].trim_start();
+                // `static mut name` carries a qualifier between the keyword
+                // and the name (#7176 review); `const` never does.
+                let rest = if *keyword == "static" {
+                    skip_mut_qualifier(rest)
+                } else {
+                    rest
+                };
+                strip_item_name(rest, name).is_some()
+            })
+    }) || whole_word_offsets(masked, "struct")
+        .into_iter()
+        .any(|offset| {
+            strip_item_name(masked[offset + "struct".len()..].trim_start(), name)
+                .and_then(skip_generics)
+                // Tuple structs take the call; unit structs collide with an
+                // imported fn (E0255, rustc-probed); braced structs share
+                // no namespace with the call (#7176 review).
+                .is_some_and(|after| after.starts_with('(') || after.starts_with(';'))
+        })
+}
+
+/// The text after a `mut` qualifier, when `rest` opens with one as a
+/// whole word. Anything else (including `mutx`) passes through.
+fn skip_mut_qualifier(rest: &str) -> &str {
+    let Some(after) = rest.strip_prefix("mut") else {
+        return rest;
+    };
+    if after.starts_with(|c: char| c.is_ascii_alphanumeric() || c == '_') {
+        return rest;
+    }
+    after.trim_start()
+}
+
+/// Whether the test body declares a value-taking item of `name`. A body
+/// `fn` or `let` is already refused (`test_body_shadows_owner`); a
+/// `static` (plain or `mut`), `const`, tuple or unit struct there shadows
+/// every import the same way. Items in a nested block or `fn` cannot reach
+/// the call, so counting them over-refuses (residual).
+fn body_defines_value_twin(body: &str, name: &str) -> bool {
+    declares_value_twin(&mask_comments_and_strings(body), name)
+}
+
+/// The text after an item name of `name` (raw marker dropped), or `None`
+/// when `rest` names something else.
+fn strip_item_name<'a>(rest: &'a str, name: &str) -> Option<&'a str> {
+    let rest = strip_raw(rest);
+    let after = rest.strip_prefix(name)?;
+    if after.starts_with(|character: char| character.is_ascii_alphanumeric() || character == '_') {
+        return None;
+    }
+    Some(after.trim_start())
+}
+
+/// The text after one `<...>` generic group, or `text` when it opens
+/// with none; `None` when the group never closes.
+fn skip_generics(text: &str) -> Option<&str> {
+    let Some(rest) = text.strip_prefix('<') else {
+        return Some(text);
+    };
+    let mut depth = 1u32;
+    for (offset, byte) in rest.bytes().enumerate() {
+        match byte {
+            b'<' => depth += 1,
+            b'>' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(rest[offset + 1..].trim_start());
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// #7097: the `use`s of `uses` that bind `name` explicitly, and the glob
+/// imports. A rename to the name (`use x::y as name`) binds it too, so
+/// it counts here; other aliases bind another name. The test file's own
+/// renames refuse file-wide already (`file_renames_to`).
+fn partition_name_uses<'a>(
+    uses: &'a [UsePath],
+    name: &str,
+) -> (Vec<&'a UsePath>, Vec<&'a UsePath>) {
+    let name = strip_raw(name);
+    let mut bindings = Vec::new();
+    let mut globs = Vec::new();
+    for use_path in uses {
+        if use_path.path.ends_with("::*") {
+            globs.push(use_path);
+            continue;
+        }
+        let binds = match use_path.alias.as_deref() {
+            Some(alias) => strip_raw(alias) == name,
+            None => use_path
+                .path
+                .rsplit("::")
+                .next()
+                .is_some_and(|terminal| strip_raw(terminal) == name),
+        };
+        if binds {
+            bindings.push(use_path);
+        }
+    }
+    (bindings, globs)
+}
+
+/// #7097: the crate root file `file` composes under: the outermost
+/// recorded module edge's parent, or the file itself. Unlike
+/// [`target_root`], this ignores the workspace-wide disabled switch and
+/// the recognized-target shape: the manifest authority
+/// (`import_names`) validates the root itself, and the assertion and
+/// file rules already refused include-composed and unresolved files
+/// before this gate runs — so an unrelated unresolvable module
+/// elsewhere keeps other owners pinned, as the file rule requires.
+fn composed_root(file: &Path, index: &RustIndex) -> PathBuf {
+    index
+        .files()
+        .get(file)
+        .and_then(|facts| {
+            facts
+                .role_provenance
+                .edges
+                .first()
+                .map(|edge| edge.parent.clone())
+        })
+        .unwrap_or_else(|| file.to_path_buf())
+}
+
+/// Whether a `use` root segment names a workspace package: the manifest
+/// name or its crate identifier (`foo-bar` imports as `foo_bar`).
+fn crate_names_package(segment: &str, packages: &BTreeSet<String>) -> bool {
+    packages
+        .iter()
+        .any(|name| name == segment || name.replace('-', "_") == segment)
+}
+
+/// An identifier with its raw marker dropped.
+fn strip_raw(text: &str) -> &str {
+    text.strip_prefix("r#").unwrap_or(text)
+}
+
+/// #7097: split a binding `use` path into its root segment and module
+/// segments (raw markers dropped): `demo::scale::weight` gives
+/// (`demo`, [`scale`]). `None` when the path binds another name, has a
+/// single segment (an extern crate in edition 2018+, never the owner
+/// fn), or renames another item to the name.
+fn split_binding_use<'a>(use_path: &'a UsePath, name: &str) -> Option<(&'a str, Vec<&'a str>)> {
+    if use_path
+        .alias
+        .as_deref()
+        .is_some_and(|alias| strip_raw(alias) != strip_raw(name))
+    {
+        return None;
+    }
+    let stripped = use_path.path.strip_prefix("::").unwrap_or(&use_path.path);
+    let segments: Vec<&str> = stripped.split("::").map(strip_raw).collect();
+    let [first, rest @ ..] = segments.as_slice() else {
+        return None;
+    };
+    let terminal = rest.last().copied()?;
+    if strip_raw(terminal) != strip_raw(name) {
+        return None;
+    }
+    Some((*first, rest[..rest.len() - 1].to_vec()))
+}
+
+/// #7097: split a glob `use` path into its root segment and full module
+/// prefix: `demo::scale::*` gives (`demo`, [`scale`]).
+fn split_glob_prefix(path: &str) -> Option<(&str, Vec<&str>)> {
+    let stripped = path.strip_prefix("::").unwrap_or(path);
+    let prefix = stripped.strip_suffix("::*")?;
+    let segments: Vec<&str> = prefix.split("::").map(strip_raw).collect();
+    let [first, rest @ ..] = segments.as_slice() else {
+        return None;
+    };
+    Some((*first, rest.to_vec()))
+}
+
+/// #7097: `pop_super`, climbing past the file top into the declaring
+/// parent through module edges: an out-of-line `tests.rs` at file-top
+/// stack `[]` climbs `super::` into the inline scope holding its `mod`
+/// declaration (#7176 review). Include edges never climb (a textual
+/// paste has no parent module). Each pop consumes one `super`, so the
+/// walk terminates.
+fn pop_super_across_files<'a>(
+    index: &RustIndex,
+    syntax: &OwnerPinSyntax,
+    file: &Path,
+    stack: &[String],
+    first: &str,
+    segments: &[&'a str],
+) -> Option<(PathBuf, Vec<String>, Vec<&'a str>)> {
+    let mut file = file.to_path_buf();
+    let mut module = stack.to_vec();
+    if first == "super" {
+        climb_one_level(index, syntax, &mut file, &mut module)?;
+    }
+    let supers = segments
+        .iter()
+        .take_while(|segment| **segment == "super")
+        .count();
+    for _ in 0..supers {
+        climb_one_level(index, syntax, &mut file, &mut module)?;
+    }
+    if segments[supers..]
+        .iter()
+        .any(|segment| matches!(*segment, "self" | "super" | "crate"))
+    {
+        return None;
+    }
+    Some((file, module, segments[supers..].to_vec()))
+}
+
+/// #7097: climb one `super` level: pop the inline stack, or — at the
+/// file top — continue from the inline scope holding this file's `mod`
+/// declaration in its declaring parent. Include edges never climb.
+fn climb_one_level(
+    index: &RustIndex,
+    syntax: &OwnerPinSyntax,
+    file: &mut PathBuf,
+    stack: &mut Vec<String>,
+) -> Option<()> {
+    if stack.pop().is_some() {
+        return Some(());
+    }
+    let facts = index.files().get(file.as_path())?;
+    let edge = facts.role_provenance.edges.last()?;
+    if edge.kind != SourceRoleProvenanceEdgeKind::Module {
+        return None;
+    }
+    let parent = index.files().get(&edge.parent)?;
+    let scopes = syntax.file_scopes(index, &edge.parent)?;
+    *stack = scopes
+        .scope_at(&parent.data().source, edge.line)?
+        .stack
+        .clone();
+    *file = edge.parent.clone();
+    Some(())
+}
+
+/// #7097: walk `segments` from (`file`, `stack`): each names an inline
+/// child module or a composed out-of-line `mod`. Returns the target's
+/// file and file-relative inline stack, or `None` when a step is
+/// unplaced or ambiguous. Each step consumes a segment, so module
+/// cycles cannot loop.
+fn resolve_module_path(
+    index: &RustIndex,
+    syntax: &OwnerPinSyntax,
+    file: &Path,
+    stack: &[String],
+    segments: &[&str],
+) -> Option<(PathBuf, Vec<String>)> {
+    let mut file = file.to_path_buf();
+    let mut stack = stack.to_vec();
+    for segment in segments {
+        let scopes = syntax.file_scopes(index, &file)?;
+        let mut child = stack.clone();
+        child.push(segment.to_string());
+        if scopes.scope_with_stack(&child).is_some() {
+            stack = child;
+            continue;
+        }
+        let key = (file.clone(), segment.to_string());
+        file = syntax.mod_children(index).get(&key)?.clone()?;
+        stack = Vec::new();
+    }
+    Some((file, stack))
 }
 
 /// Whether another workspace definition of the owner's name could take a

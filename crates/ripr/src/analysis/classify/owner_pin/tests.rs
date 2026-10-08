@@ -1444,7 +1444,6 @@ fn a_cfg_attr_path_on_the_owners_declaration_gates_it_through_real_composition()
             }
         }
         let index = crate::analysis::facts::build_index(&root, &paths);
-        let _ = std::fs::remove_dir_all(&root);
         let index = index?;
         let owner = index
             .functions()
@@ -1455,7 +1454,11 @@ fn a_cfg_attr_path_on_the_owners_declaration_gates_it_through_real_composition()
             .ok_or("the owner must be indexed from src/scale.rs")?;
         let pin = OwnerReturnPin::establish(&return_probe(owner, "x * 3"), owner, &index)
             .ok_or("the owner must establish")?;
-        Ok(admitted_texts(&index, &pin))
+        // The manifest authority reads the workspace from disk at admission
+        // time, as in production, so the scratch tree stays until after.
+        let admitted = admitted_texts(&index, &pin);
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(admitted)
     };
     assert!(
         pinned(
@@ -1493,6 +1496,446 @@ fn cfg_attr_payload_with_comma_in_predicate_string() {
         !cfg_attr_payload_may_drop("cfg_attr(mode = \"a,b\", allow(dead_code))"),
         "a non-dropping payload stays non-dropping with a string comma"
     );
+}
+
+/// #7097: the owner beside a same-named non-fn twin in another module.
+const TWIN_STATIC_LIB: &str = "pub mod scale {\n    pub fn weight(x: u32) -> u32 {\n        x * 3\n    }\n}\n\npub mod alt {\n    pub fn helper(_: u32) -> u32 {\n        12\n    }\n    #[allow(non_upper_case_globals)]\n    pub static weight: fn(u32) -> u32 = helper;\n}\n";
+const TWIN_CONST_LIB: &str = "pub mod scale {\n    pub fn weight(x: u32) -> u32 {\n        x * 3\n    }\n}\n\npub mod alt {\n    pub fn helper(_: u32) -> u32 {\n        12\n    }\n    #[allow(non_upper_case_globals)]\n    pub const weight: fn(u32) -> u32 = helper;\n}\n";
+const TWIN_STRUCT_LIB: &str = "pub mod scale {\n    pub fn weight(x: u32) -> u32 {\n        x * 3\n    }\n}\n\npub mod alt {\n    pub struct weight(pub u32);\n}\n";
+
+fn twin_admitted(lib: &str, tests: &str) -> Vec<String> {
+    let index = index(&[(LIB, lib), (TESTS, tests)]);
+    let pin = establish(&index, "weight", "x * 3");
+    assert!(
+        pin.is_some(),
+        "the fn owner must establish beside a non-fn twin"
+    );
+    let Some(pin) = pin else {
+        return Vec::new();
+    };
+    admitted_texts(&index, &pin)
+}
+
+fn weighs_test(prelude: &str) -> String {
+    format!("{prelude}\n#[test]\nfn weighs() {{\n    assert_eq!(weight(4), 12);\n}}\n")
+}
+
+#[test]
+fn a_bare_call_to_an_imported_same_named_twin_is_not_a_pin() {
+    // #7097: the issue's exact repro — `use demo::alt::weight;` imports the
+    // twin, so `weight(4)` never reaches `scale::weight`.
+    for lib in [TWIN_STATIC_LIB, TWIN_CONST_LIB, TWIN_STRUCT_LIB] {
+        for import in ["use demo::alt::weight;", "use demo::alt::{weight};"] {
+            assert!(
+                twin_admitted(lib, &weighs_test(import)).is_empty(),
+                "{import}"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_bare_call_beside_a_competing_import_is_not_a_pin() {
+    // #7097: a second import of the name — cfg'd or not — leaves the bare
+    // call's binding ambiguous (or a duplicate-import error).
+    for prelude in [
+        "use demo::scale::weight;\n#[cfg(feature = \"alt\")]\nuse demo::alt::weight;",
+        "#[cfg(not(feature = \"alt\"))]\nuse demo::scale::weight;\n#[cfg(feature = \"alt\")]\nuse demo::alt::weight;",
+        "use demo::scale::weight;\nuse demo::alt::weight;",
+    ] {
+        assert!(
+            twin_admitted(TWIN_STATIC_LIB, &weighs_test(prelude)).is_empty(),
+            "{prelude}"
+        );
+    }
+}
+
+#[test]
+fn a_same_named_item_in_the_test_file_is_not_the_owner() {
+    // #7097: a `static`/`const`/tuple-struct of the name in the test file
+    // takes the bare call, at file scope, in the test's module, or in its body.
+    for item in [
+        "#[allow(non_upper_case_globals)]\nstatic weight: fn(u32) -> u32 = helper;",
+        "#[allow(non_upper_case_globals)]\nconst weight: fn(u32) -> u32 = helper;",
+        "struct weight(u32);",
+    ] {
+        let file =
+            format!("{item}\n\n#[test]\nfn weighs() {{\n    assert_eq!(weight(4), 12);\n}}\n");
+        assert!(weight_admitted(&file).is_empty(), "file scope: {item}");
+        let module = format!(
+            "mod tests {{\n    {}\n    #[test]\n    fn weighs() {{\n        assert_eq!(weight(4), 12);\n    }}\n}}\n",
+            item.replace('\n', "\n    ")
+        );
+        assert!(weight_admitted(&module).is_empty(), "module scope: {item}");
+        let body = format!(
+            "use demo::weight;\n\n#[test]\nfn weighs() {{\n    {}\n    assert_eq!(weight(4), 12);\n}}\n",
+            item.replace('\n', "\n    ")
+        );
+        assert!(weight_admitted(&body).is_empty(), "body scope: {item}");
+    }
+}
+
+#[test]
+fn a_bare_call_through_the_owners_own_import_pins_beside_a_twin() {
+    // #7097 control: a twin elsewhere cannot capture an explicit import of
+    // the owner's own path.
+    for lib in [TWIN_STATIC_LIB, TWIN_CONST_LIB, TWIN_STRUCT_LIB] {
+        for import in [
+            "use demo::scale::weight;",
+            "use demo::scale::{weight};",
+            "use demo::{scale::weight};",
+        ] {
+            assert_eq!(
+                twin_admitted(lib, &weighs_test(import)).len(),
+                1,
+                "{import}"
+            );
+        }
+    }
+    // A one-hop re-export of the owner pins through the re-exporting
+    // module; a re-export of the twin, or a second hop, refuses.
+    let reexport = |target: &str| {
+        format!(
+            "pub mod scale {{\n    pub fn weight(x: u32) -> u32 {{\n        x * 3\n    }}\n}}\n\npub mod alt {{\n    pub fn helper(_: u32) -> u32 {{\n        12\n    }}\n    #[allow(non_upper_case_globals)]\n    pub static weight: fn(u32) -> u32 = helper;\n}}\n\npub use {target};\n"
+        )
+    };
+    assert_eq!(
+        twin_admitted(
+            &reexport("crate::scale::weight"),
+            &weighs_test("use demo::weight;")
+        )
+        .len(),
+        1
+    );
+    assert!(
+        twin_admitted(
+            &reexport("crate::alt::weight"),
+            &weighs_test("use demo::weight;")
+        )
+        .is_empty()
+    );
+    let two_hop = "pub mod scale {\n    pub fn weight(x: u32) -> u32 {\n        x * 3\n    }\n}\n\npub mod mid {\n    pub use crate::scale::weight;\n}\n\npub use crate::mid::weight;\n";
+    assert!(
+        twin_admitted(two_hop, &weighs_test("use demo::weight;")).is_empty(),
+        "a second re-export hop refuses"
+    );
+}
+
+#[test]
+fn a_bare_call_through_a_glob_pins_only_past_the_owners_module() {
+    // #7097: a glob of the owner's module delivers the owner; a glob of the
+    // twin's module, or of a module without the owner, does not pin.
+    assert_eq!(
+        twin_admitted(TWIN_STATIC_LIB, &weighs_test("use demo::scale::*;")).len(),
+        1
+    );
+    assert!(twin_admitted(TWIN_STATIC_LIB, &weighs_test("use demo::alt::*;")).is_empty());
+    assert!(
+        twin_admitted(TWIN_STATIC_LIB, &weighs_test("use demo::*;")).is_empty(),
+        "the crate root holds no `weight` to import"
+    );
+    // A rename to the name binds it too: a glob of a module renaming the
+    // twin refuses, while one renaming the owner transports it.
+    for (target, admitted) in [("super::alt::weight", 0), ("super::scale::weight", 1)] {
+        let lib = format!(
+            "pub mod scale {{\n    pub fn weight(x: u32) -> u32 {{\n        x * 3\n    }}\n}}\n\npub mod alt {{\n    pub fn helper(_: u32) -> u32 {{\n        12\n    }}\n    #[allow(non_upper_case_globals)]\n    pub static weight: fn(u32) -> u32 = helper;\n}}\n\npub mod mid {{\n    pub use {target} as weight;\n}}\n"
+        );
+        assert_eq!(
+            twin_admitted(&lib, &weighs_test("use demo::mid::*;")).len(),
+            admitted,
+            "{target}"
+        );
+    }
+    // A prelude glob delivers a re-exported owner, but not a
+    // re-exported twin.
+    for (target, admitted) in [("crate::scale::weight", 1), ("crate::alt::weight", 0)] {
+        let lib = format!(
+            "pub mod scale {{\n    pub fn weight(x: u32) -> u32 {{\n        x * 3\n    }}\n}}\n\npub mod alt {{\n    pub fn helper(_: u32) -> u32 {{\n        12\n    }}\n    #[allow(non_upper_case_globals)]\n    pub static weight: fn(u32) -> u32 = helper;\n}}\n\npub mod prelude {{\n    pub use {target};\n}}\n"
+        );
+        assert_eq!(
+            twin_admitted(&lib, &weighs_test("use demo::prelude::*;")).len(),
+            admitted,
+            "{target}"
+        );
+    }
+    // A nested `use super::*` transports the file-top import: the owner's
+    // own import pins, the twin's refuses.
+    for (import, admitted) in [
+        ("use demo::scale::weight;", 1),
+        ("use demo::alt::weight;", 0),
+    ] {
+        let tests = format!(
+            "{import}\nmod tests {{\n    use super::*;\n    #[test]\n    fn weighs() {{\n        assert_eq!(weight(4), 12);\n    }}\n}}\n"
+        );
+        assert_eq!(
+            twin_admitted(TWIN_STATIC_LIB, &tests).len(),
+            admitted,
+            "{import}"
+        );
+    }
+    // The unit-test shape: `use super::*` inside the owner's own module.
+    let lib = "pub mod scale {\n    pub fn weight(x: u32) -> u32 {\n        x * 3\n    }\n    mod tests {\n        use super::*;\n        #[test]\n        fn weighs() {\n            assert_eq!(weight(4), 12);\n        }\n    }\n}\n";
+    let index = index(&[(LIB, lib)]);
+    let pin = establish(&index, "weight", "x * 3");
+    assert!(pin.is_some(), "the nested owner must establish");
+    if let Some(pin) = pin {
+        assert_eq!(admitted_texts(&index, &pin).len(), 1);
+    }
+}
+
+#[test]
+fn a_bare_call_without_an_import_pins_only_in_the_owners_module() {
+    // #7097: a test beside the owner needs no import; anywhere else an
+    // unimported bare name is unresolved (or the prelude), never the owner.
+    let lib = "pub fn weight(x: u32) -> u32 {\n    x * 3\n}\n\n#[test]\nfn weighs() {\n    assert_eq!(weight(4), 12);\n}\n";
+    let index = index(&[(LIB, lib)]);
+    let pin = establish(&index, "weight", "x * 3");
+    assert!(pin.is_some(), "the file-top owner must establish");
+    if let Some(pin) = pin {
+        assert_eq!(admitted_texts(&index, &pin).len(), 1);
+    }
+    assert!(
+        weight_admitted("#[test]\nfn weighs() {\n    assert_eq!(weight(4), 12);\n}\n").is_empty()
+    );
+    // A foreign import binds a foreign item, not the owner.
+    assert!(
+        weight_admitted(
+            "use foreign::weight;\n\n#[test]\nfn weighs() {\n    assert_eq!(weight(4), 12);\n}\n"
+        )
+        .is_empty()
+    );
+}
+
+#[test]
+fn a_same_named_type_only_item_in_the_test_file_keeps_the_pin() {
+    // #7097 precision: items that cannot take a value call share no
+    // namespace with it, so the owner's import still pins. A braced
+    // struct beside an imported fn compiles and calls the fn
+    // (rustc-probed); an `enum weight` never injects `weight` into the
+    // module value namespace (rustc-probed).
+    for item in [
+        "mod weight {}",
+        "trait weight {}",
+        "type weight = u32;",
+        "enum weight { A }",
+        "union weight { x: u32 }",
+        "struct weight { x: u32 }",
+        "struct weight(u32);",
+    ] {
+        let tests = format!(
+            "use demo::weight;\n{item}\n\n#[test]\nfn weighs() {{\n    assert_eq!(weight(4), 12);\n}}\n"
+        );
+        // A tuple struct is callable, so it twins; the rest cannot take the call.
+        let expected = usize::from(!item.ends_with("(u32);"));
+        assert_eq!(weight_admitted(&tests).len(), expected, "{item}");
+    }
+}
+
+#[test]
+fn a_unit_struct_twin_refuses_the_bare_call() {
+    // #7176 review: a unit struct's constructor collides with an imported
+    // fn (E0255) and takes the value namespace (E0618, rustc-probed), so
+    // `weight(4)` beside one never calls the owner — in the module scope
+    // or the test body.
+    for tests in [
+        "use demo::weight;\nstruct weight;\n\n#[test]\nfn weighs() {\n    assert_eq!(weight(4), 12);\n}\n",
+        "use demo::weight;\n\n#[test]\nfn weighs() {\n    struct weight;\n    assert_eq!(weight(4), 12);\n}\n",
+    ] {
+        assert!(
+            weight_admitted(tests).is_empty(),
+            "a unit struct takes the call: {tests:?}"
+        );
+    }
+}
+
+fn establish_in(
+    index: &RustIndex,
+    file: &str,
+    name: &str,
+    expression: &str,
+) -> Option<OwnerReturnPin> {
+    let owner = index
+        .functions()
+        .iter()
+        .find(|function| function.name == name && function.file == Path::new(file))?;
+    OwnerReturnPin::establish(&return_probe(owner, expression), owner, index)
+}
+
+#[test]
+fn an_extern_twin_refuses_the_bare_call() {
+    // #7176 review: extern items hang under the block's item list. An
+    // extern fn of the name blocks the pin at establish time (a
+    // competing workspace definition); an extern static is not a
+    // function, so it must refuse at admission through the twin table.
+    let decl = "fn weight(x: u32) -> u32;";
+    let tests = format!(
+        "use demo::weight;\n\nextern \"C\" {{\n    {decl}\n}}\n\n#[test]\nfn weighs() {{\n    assert_eq!(weight(4), 12);\n}}\n"
+    );
+    let index = index(&[(LIB, WEIGHT_LIB), (TESTS, &tests)]);
+    assert!(
+        establish(&index, "weight", "x * 3").is_none(),
+        "an extern fn competes at establish time"
+    );
+    let decl = "static weight: fn(u32) -> u32;";
+    let tests = format!(
+        "use demo::weight;\n\nextern \"C\" {{\n    {decl}\n}}\n\n#[test]\nfn weighs() {{\n    assert_eq!(weight(4), 12);\n}}\n"
+    );
+    assert!(
+        weight_admitted(&tests).is_empty(),
+        "an extern static takes the call"
+    );
+}
+
+#[test]
+fn a_static_mut_twin_refuses_the_bare_call() {
+    // #7176 review: `static mut weight` carries a qualifier between the
+    // keyword and the name; it twins in the module scope and the body.
+    // A differently-named `mut` item (`mutual`) must not over-refuse.
+    for decl in [
+        "static mut weight: u32 = 4;",
+        "pub static mut weight: u32 = 4;",
+    ] {
+        let tests = format!(
+            "use demo::weight;\n{decl}\n\n#[test]\nfn weighs() {{\n    assert_eq!(weight(4), 12);\n}}\n"
+        );
+        assert!(
+            weight_admitted(&tests).is_empty(),
+            "a static mut takes the call: {decl}"
+        );
+    }
+    let body = "use demo::weight;\n\n#[test]\nfn weighs() {\n    static mut weight: u32 = 4;\n    assert_eq!(weight(4), 12);\n}\n";
+    assert!(weight_admitted(body).is_empty());
+    let other = "use demo::weight;\nstatic mutual: u32 = 4;\n\n#[test]\nfn weighs() {\n    assert_eq!(weight(4), 12);\n}\n";
+    assert_eq!(weight_admitted(other).len(), 1);
+}
+
+#[test]
+fn an_out_of_line_super_glob_pins_past_the_declaring_parent() {
+    // #7176 review: `use super::*;` at the top of an out-of-line
+    // `tests.rs` climbs into the inline scope holding its `mod`
+    // declaration; the owner's own module delivers the owner.
+    let scale = "pub fn weight(x: u32) -> u32 {\n    x * 3\n}\n\n#[cfg(test)]\nmod tests;\n";
+    let tests = "use super::*;\n\n#[test]\nfn weighs() {\n    assert_eq!(weight(4), 12);\n}\n";
+    let index = index_with_provenance(
+        &[
+            (LIB, "pub mod scale;\n"),
+            ("src/scale.rs", scale),
+            ("src/scale/tests.rs", tests),
+        ],
+        &[
+            (
+                "src/scale.rs",
+                SourceRoleProvenance {
+                    edges: vec![module_edge(LIB, "src/scale.rs", "scale", 1, false)],
+                    earliest_unresolved_reason: None,
+                },
+            ),
+            (
+                "src/scale/tests.rs",
+                SourceRoleProvenance {
+                    edges: vec![module_edge(
+                        "src/scale.rs",
+                        "src/scale/tests.rs",
+                        "tests",
+                        6,
+                        true,
+                    )],
+                    earliest_unresolved_reason: None,
+                },
+            ),
+        ],
+    );
+    let pin = establish_in(&index, "src/scale.rs", "weight", "x * 3");
+    assert!(pin.is_some(), "the out-of-line owner must establish");
+    if let Some(pin) = pin {
+        assert_eq!(admitted_texts(&index, &pin).len(), 1);
+    }
+}
+
+#[test]
+fn an_out_of_line_super_use_pins_past_the_declaring_parent() {
+    // #7176 review: the explicit-`use` twin of the glob control.
+    let scale = "pub fn weight(x: u32) -> u32 {\n    x * 3\n}\n\n#[cfg(test)]\nmod tests;\n";
+    let tests = "use super::weight;\n\n#[test]\nfn weighs() {\n    assert_eq!(weight(4), 12);\n}\n";
+    let index = index_with_provenance(
+        &[
+            (LIB, "pub mod scale;\n"),
+            ("src/scale.rs", scale),
+            ("src/scale/tests.rs", tests),
+        ],
+        &[
+            (
+                "src/scale.rs",
+                SourceRoleProvenance {
+                    edges: vec![module_edge(LIB, "src/scale.rs", "scale", 1, false)],
+                    earliest_unresolved_reason: None,
+                },
+            ),
+            (
+                "src/scale/tests.rs",
+                SourceRoleProvenance {
+                    edges: vec![module_edge(
+                        "src/scale.rs",
+                        "src/scale/tests.rs",
+                        "tests",
+                        6,
+                        true,
+                    )],
+                    earliest_unresolved_reason: None,
+                },
+            ),
+        ],
+    );
+    let pin = establish_in(&index, "src/scale.rs", "weight", "x * 3");
+    assert!(pin.is_some(), "the out-of-line owner must establish");
+    if let Some(pin) = pin {
+        assert_eq!(admitted_texts(&index, &pin).len(), 1);
+    }
+}
+
+#[test]
+fn an_out_of_line_super_glob_refuses_past_a_parent_twin() {
+    // #7176 review negative: the same layout with a twin beside the
+    // owner in the declaring parent refuses.
+    let scale = "pub fn weight(x: u32) -> u32 {\n    x * 3\n}\n\npub static weight: fn(u32) -> u32 = weight;\n\n#[cfg(test)]\nmod tests;\n";
+    let tests = "use super::*;\n\n#[test]\nfn weighs() {\n    assert_eq!(weight(4), 12);\n}\n";
+    let index = index_with_provenance(
+        &[
+            (LIB, "pub mod scale;\n"),
+            ("src/scale.rs", scale),
+            ("src/scale/tests.rs", tests),
+        ],
+        &[
+            (
+                "src/scale.rs",
+                SourceRoleProvenance {
+                    edges: vec![module_edge(LIB, "src/scale.rs", "scale", 1, false)],
+                    earliest_unresolved_reason: None,
+                },
+            ),
+            (
+                "src/scale/tests.rs",
+                SourceRoleProvenance {
+                    edges: vec![module_edge(
+                        "src/scale.rs",
+                        "src/scale/tests.rs",
+                        "tests",
+                        8,
+                        true,
+                    )],
+                    earliest_unresolved_reason: None,
+                },
+            ),
+        ],
+    );
+    let pin = establish_in(&index, "src/scale.rs", "weight", "x * 3");
+    assert!(pin.is_some(), "the out-of-line owner must establish");
+    if let Some(pin) = pin {
+        assert!(
+            admitted_texts(&index, &pin).is_empty(),
+            "a parent twin takes the globbed call"
+        );
+    }
 }
 
 const COUNTER_LIB: &str = "pub struct Counter {\n    n: usize,\n}\n\nimpl Counter {\n    pub fn new() -> Self {\n        Counter { n: 0 }\n    }\n\n    pub fn try_new(n: usize) -> Result<Self, String> {\n        Ok(Counter { n })\n    }\n\n    pub fn count(&self) -> usize {\n        self.n + 1\n    }\n\n    pub fn tally(&self) -> usize {\n        self.n + 1\n    }\n}\n";
