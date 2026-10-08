@@ -1,0 +1,58 @@
+{
+  "case_id": "old-tag-boxed-into-wrapper",
+  "subject_id": "authored-old-errors",
+  "diff": "cases/old-tag-boxed-into-wrapper.diff",
+  "anchor": {
+    "file": "src/errors.rs",
+    "line": 59
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "error_variant",
+  "test_shape": "boxed_into_wrapper_downcast_pin",
+  "hard_case": "The seam is the boxing map_err wrapper (Into::into before the rewrite, an explicit Box cast after); RIPR-SPEC-0106 keeps it below exposed with wrapper_error_binding_unresolved, and only the Blank variant is pinned through it, so a credit would overclaim.",
+  "truth": {
+    "state": "partially_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "parse_tag(raw).map_err(|_| \"tag\".into())",
+        "mutated_line": "parse_tag(raw).map_err(|_| \"tag\".into())",
+        "outcome": "tests_failed",
+        "failing_test": "errors::tests::blank_tag_downcasts_to_blank",
+        "equivalence_review": "not equivalent: the boxed error is a string, so the downcast to TagError fails"
+      },
+      {
+        "replacement": "Ok(parse_tag(raw).unwrap_or_default())",
+        "mutated_line": "Ok(parse_tag(raw).unwrap_or_default())",
+        "outcome": "tests_failed",
+        "failing_test": "errors::tests::blank_tag_downcasts_to_blank",
+        "equivalence_review": "not equivalent: a blank tag returns Ok(0) instead of an error"
+      },
+      {
+        "replacement": "parse_tag(raw).map_err(|_| Box::new(TagError::Blank) as Box<dyn Error>)",
+        "mutated_line": "parse_tag(raw).map_err(|_| Box::new(TagError::Blank) as Box<dyn Error>)",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: a spaced tag reports Blank instead of Spaced"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "blank_tag_downcasts_to_blank downcasts the boxed error and pins TagError::Blank, so boxing a string or swallowing the error fails it; no test loads a spaced tag, so boxing Blank for every error passes. Spec cells: RIPR-SPEC-0106 (boxed map_err(Into::into) wrapper).",
+  "labeling_observation": {
+    "ripr_commit": "e19e16c",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}
