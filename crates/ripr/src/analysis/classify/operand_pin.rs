@@ -338,12 +338,20 @@ fn only_bindings_and_field_reads(body: &str, receivers: &[&str], owner_name: &st
             // An assertion macro whose own parenthesis is the only bracket: a
             // helper inside it (`assert_eq!(make_quote(1_000, 1), ..)`,
             // `make_quote![..]`) or a helper named `assert_*` may run the
-            // owner and see the operand.
+            // owner and see the operand. Only the standard assertion macros
+            // are read; a custom `assert_quote_ok!(..)` may call the owner.
             let macro_name_len = statement
                 .find(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_'))
                 .unwrap_or(statement.len());
-            statement.starts_with("assert")
-                && statement[macro_name_len..].starts_with("!(")
+            matches!(
+                &statement[..macro_name_len],
+                "assert"
+                    | "assert_eq"
+                    | "assert_ne"
+                    | "debug_assert"
+                    | "debug_assert_eq"
+                    | "debug_assert_ne"
+            ) && statement[macro_name_len..].starts_with("!(")
                 && statement.matches(['(', '[', '{']).count() == 1
                 && whole_word_count(statement, owner_name) == 0
                 && !receivers
@@ -415,7 +423,18 @@ fn is_bare_owner_call(value: &str, owner_name: &str) -> bool {
         return false;
     }
     let callee = value[..open].trim();
-    callee == owner_name || callee.rsplit("::").next() == Some(owner_name)
+    // A path through modules only (`crate::quote`, `pricing::quote`); a type
+    // segment (`Other::quote`) names a different function.
+    callee
+        .rsplit_once("::")
+        .map_or(callee == owner_name, |(path, name)| {
+            name == owner_name
+                && path.split("::").all(|segment| {
+                    segment
+                        .trim()
+                        .starts_with(|ch: char| ch.is_ascii_lowercase())
+                })
+        })
 }
 
 /// The byte index of the `)` closing the `(` at `open`.
@@ -836,6 +855,22 @@ mod tests {
             "assert_eq!(q.total_cents, 9_000);",
             "assert_quote_total(1_000, 1);",
         ])]);
+        let custom_macro = pin(&[test_with(&[
+            "let q = quote(2_500, 4);",
+            "assert_eq!(q.subtotal_cents, 9_000);",
+            "assert_eq!(q.total_cents, 9_000);",
+            "assert_quote_ok!(1_000, 1);",
+        ])]);
+        let other_type = pin(&[test_with(&[
+            "let q = Other::quote(2_500, 4);",
+            "assert_eq!(q.subtotal_cents, 9_000);",
+            "assert_eq!(q.total_cents, 9_000);",
+        ])]);
+        let module_path = pin(&[test_with(&[
+            "let q = crate::quote(2_500, 4);",
+            "assert_eq!(q.subtotal_cents, 9_000);",
+            "assert_eq!(q.total_cents, 9_000);",
+        ])]);
         let bracket_macro = pin(&[test_with(&[
             "let q = quote(2_500, 4);",
             "assert_eq!(q.subtotal_cents, 9_000);",
@@ -850,6 +885,9 @@ mod tests {
         assert_eq!(transformed_next_line, None);
         assert_eq!(assert_named_helper, None);
         assert_eq!(bracket_macro, None);
+        assert_eq!(custom_macro, None);
+        assert_eq!(other_type, None);
+        assert!(module_path.is_some());
         assert_eq!(second_result, None);
         assert!(other_field.is_some());
         assert!(in_fn.is_some());
