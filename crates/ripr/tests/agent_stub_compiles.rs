@@ -729,7 +729,7 @@ fn kind_not_found_refusal_preserves_the_requested_probe_family() -> Result<(), S
     let stderr = String::from_utf8_lossy(&refused.stderr);
     assert!(
         stderr.starts_with(
-            "ripr: agent stub: no error_path seam ripr can stub is in the function at src/lib.rs:2; nearest: "
+            "ripr: agent stub: no error_path seam ripr can stub is in the function at src/lib.rs:2; nearest: ",
         ),
         "the refusal must echo the requested probe family: {stderr}"
     );
@@ -783,7 +783,7 @@ fn kind_nearest_hint_filters_before_the_cap_and_recovers_the_error_stub() -> Res
     assert!(text.contains("let actual = fallible(input);"), "{text}");
     assert!(
         text.contains(
-            "assert!(matches!(actual, Err(E::Bad { .. })), \"expected Err(E::Bad { .. })\");"
+            "assert!(matches!(actual, Err(E::Bad { .. })), \"expected Err(E::Bad {{ .. }})\");",
         ),
         "the control observes the error variant, not a nearby predicate: {text}"
     );
@@ -851,11 +851,13 @@ fn kind_nearest_hint_filters_before_the_cap_and_recovers_the_error_stub() -> Res
 
 #[test]
 fn kind_not_found_without_a_matching_family_suggests_no_other_seams() -> Result<(), String> {
-    const PLAIN_ONLY: &str =
-        "pub fn plain(n: u8) -> u8 {\n    if n > 3 { n } else { 0 }\n}\n";
+    const PLAIN_ONLY: &str = "pub fn plain(n: u8) -> u8 {\n    if n > 3 { n } else { 0 }\n}\n";
     let scratch = kind_refusal_crate(PLAIN_ONLY)?;
     let root = &scratch.directory;
-    for (kind, label) in [(Some("predicate"), "predicate-control"), (None, "bare-control")] {
+    for (kind, label) in [
+        (Some("predicate"), "predicate-control"),
+        (None, "bare-control"),
+    ] {
         let ready = run_bounded(
             kind_refusal_command(root, "src/lib.rs:2", kind),
             root,
@@ -897,7 +899,7 @@ fn kind_not_found_without_a_matching_family_suggests_no_other_seams() -> Result<
     );
     assert!(
         stderr.starts_with(
-            "ripr: agent stub: no error_path seam ripr can stub is in the function at src/lib.rs:2; nearest: "
+            "ripr: agent stub: no error_path seam ripr can stub is in the function at src/lib.rs:2; nearest: ",
         ),
         "{stderr}"
     );
