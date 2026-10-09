@@ -463,7 +463,7 @@ fn corpus_digest(dir: &Path) -> Result<String, String> {
         hasher.update(rel.as_bytes());
         hasher.update([0]);
         let len = u64::try_from(bytes.len())
-            .map_err(|_| format!("file `{rel}` is too large to digest"))?;
+            .map_err(|err| format!("file `{rel}` is too large to digest ({err})"))?;
         hasher.update(len.to_le_bytes());
         hasher.update(bytes);
     }
