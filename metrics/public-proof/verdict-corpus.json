@@ -9,25 +9,25 @@
   },
   "by_outcome": {
     "abstained": 117,
-    "false_actionable": 58,
+    "false_actionable": 57,
     "false_exposed": 9,
-    "ideal": 166
+    "ideal": 167
   },
   "by_observed_verdict": {
-    "credited": 57,
-    "gap": 176,
+    "credited": 58,
+    "gap": 175,
     "limited": 116,
     "silent": 1
   },
   "false_verdict_rate": {
-    "numerator": 67,
+    "numerator": 66,
     "denominator": 350,
-    "rate": "0.1914"
+    "rate": "0.1886"
   },
   "false_actionable_rate": {
-    "numerator": 58,
+    "numerator": 57,
     "denominator": 173,
-    "rate": "0.3353"
+    "rate": "0.3295"
   },
   "false_exposed_rate": {
     "numerator": 9,
@@ -40,9 +40,9 @@
     "rate": "0.0000"
   },
   "ideal_rate": {
-    "numerator": 166,
+    "numerator": 167,
     "denominator": 350,
-    "rate": "0.4743"
+    "rate": "0.4771"
   },
   "abstention_rate": {
     "numerator": 117,
@@ -61,20 +61,20 @@
     "authored": {
       "cases_total": 316,
       "by_observed_verdict": {
-        "credited": 52,
-        "gap": 172,
+        "credited": 53,
+        "gap": 171,
         "limited": 91,
         "silent": 1
       },
       "false_verdict_rate": {
-        "numerator": 65,
+        "numerator": 64,
         "denominator": 316,
-        "rate": "0.2057"
+        "rate": "0.2025"
       },
       "false_actionable_rate": {
-        "numerator": 56,
+        "numerator": 55,
         "denominator": 153,
-        "rate": "0.3660"
+        "rate": "0.3595"
       },
       "false_exposed_rate": {
         "numerator": 9,
@@ -87,9 +87,9 @@
         "rate": "0.0000"
       },
       "ideal_rate": {
-        "numerator": 159,
+        "numerator": 160,
         "denominator": 316,
-        "rate": "0.5032"
+        "rate": "0.5063"
       },
       "abstention_rate": {
         "numerator": 92,
@@ -751,13 +751,13 @@
       "hard_case": true,
       "truth": "discriminated",
       "ideal_verdict": "credited",
-      "observed_verdict": "gap",
+      "observed_verdict": "credited",
       "followed_retarget": false,
-      "changed_since_labeling": false,
+      "changed_since_labeling": true,
       "observed_classifications": [
-        "weakly_exposed"
+        "exposed"
       ],
-      "outcome": "false_actionable",
+      "outcome": "ideal",
       "contradictions": [],
       "findings_scored": 1,
       "findings_contradicted": 0,

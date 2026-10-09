@@ -10,8 +10,8 @@ pub(crate) use owner_pin::macro_binding_candidates;
 pub(crate) use owner_pin::{
     AssertionContextRefusal, HelperLoan, MacroBindingCandidates, MacroBindingKind,
     MacroBindingSite, OwnerPinAssertions, TRUSTED_MACRO_NAMES, attribute_settles_test_outcome,
-    constant_table_column, empty_macro_binding_ambiguities, local_empty_macro_names,
-    macro_binding_scan, owner_pin_assertions, returns_leave_the_function,
+    constant_table_column, empty_macro_binding_ambiguities, err_return_guard_key,
+    local_empty_macro_names, macro_binding_scan, owner_pin_assertions, returns_leave_the_function,
     trusted_macro_binding_sites,
 };
 pub(crate) mod ra;

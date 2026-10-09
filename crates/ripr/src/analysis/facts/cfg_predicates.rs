@@ -28,6 +28,12 @@
 //! The result intentionally says nothing about which Cargo features or
 //! targets are active; feature activation is not established statically.
 
+/// Identifier spelling with one optional raw-identifier prefix removed.
+/// `path` and `r#path` both yield `path`; other names are unchanged.
+pub(crate) fn rust_ident_name(spelling: &str) -> &str {
+    spelling.strip_prefix("r#").unwrap_or(spelling)
+}
+
 /// Closed classification of one source-visible configuration attribute's
 /// effect on an item's test-build requirement.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -544,12 +550,11 @@ fn cfg_attr_arguments_introduce_path(arguments: &[Token], depth: usize) -> bool 
         // Unreadable nesting could hide a `path` introduction: fail closed.
         return true;
     }
-    for part in split_top_level_commas(arguments).iter().skip(1) {
+    for part in split_top_level_commas(arguments).into_iter().skip(1) {
+        if introduced_attribute_is_path(part) {
+            return true;
+        }
         match part {
-            // `path = "..."` and the bare attribute name both introduce a
-            // `path` attribute; either makes the target conditional.
-            [Token::Word(name), Token::Punct('='), ..] if name == "path" => return true,
-            [Token::Word(name)] if name == "path" => return true,
             [
                 Token::Word(name),
                 Token::Punct('('),
@@ -565,6 +570,29 @@ fn cfg_attr_arguments_introduce_path(arguments: &[Token], depth: usize) -> bool 
         }
     }
     false
+}
+
+/// `path = "..."` / `path`, and the raw-identifier spellings `r#path = "..."` /
+/// `r#path`. The ASCII lexer splits `r#path` into `r`, `#`, `path`.
+fn introduced_attribute_is_path(part: &[Token]) -> bool {
+    match part {
+        [Token::Word(name), Token::Punct('='), ..] | [Token::Word(name)] => {
+            rust_ident_name(name) == "path"
+        }
+        [
+            Token::Word(raw),
+            Token::Punct('#'),
+            Token::Word(name),
+            Token::Punct('='),
+            ..,
+        ]
+        | [Token::Word(raw), Token::Punct('#'), Token::Word(name)]
+            if raw == "r" =>
+        {
+            rust_ident_name(name) == "path"
+        }
+        _ => false,
+    }
 }
 
 /// Recognizes a directly introduced `cfg(...)` attribute inside `cfg_attr`

@@ -549,6 +549,125 @@ fn validator_rejects_a_retained_file_whose_digest_moved() -> Result<(), String> 
     Ok(())
 }
 
+fn subject_by_id<'a>(raw: &'a mut Value, id: &str) -> Result<&'a mut Value, String> {
+    raw["subjects"]
+        .as_array_mut()
+        .and_then(|subjects| {
+            subjects
+                .iter_mut()
+                .find(|subject| subject["subject_id"] == json!(id))
+        })
+        .ok_or_else(|| format!("corpus has no subject `{id}`"))
+}
+
+#[test]
+fn validator_rejects_a_tampered_retained_lockfile() -> Result<(), String> {
+    let violations = tampered(|raw| {
+        if let Ok(subject) = subject_by_id(raw, "authored-spec-confirm")
+            && let Some(files) = subject["retained_files"].as_array_mut()
+            && let Some(lock) = files.iter_mut().find(|file| file["path"] == "Cargo.lock")
+        {
+            lock["sha256"] = json!("0".repeat(64));
+        }
+    })?;
+    assert!(
+        violations.iter().any(|v| {
+            v.contains("authored-spec-confirm")
+                && v.contains("Cargo.lock")
+                && v.contains("does not match its pinned sha256")
+        }),
+        "{violations:#?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn validator_requires_a_lockfile_on_authored_registry_subjects() -> Result<(), String> {
+    let violations = tampered(|raw| {
+        if let Ok(subject) = subject_by_id(raw, "authored-spec-confirm")
+            && let Some(files) = subject["retained_files"].as_array_mut()
+        {
+            files.retain(|file| file["path"] != "Cargo.lock");
+        }
+    })?;
+    assert!(
+        violations.iter().any(|v| {
+            v.contains("authored-spec-confirm")
+                && v.contains("pins a registry crate")
+                && v.contains("Cargo.lock")
+        }),
+        "{violations:#?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn manifest_pins_registry_crate_reads_version_pins_not_path_deps() {
+    assert_eq!(
+        manifest_pins_registry_crate(
+            "[package]\nname = \"confirm\"\n\n[dependencies]\nlog = \"=0.4.34\"\n"
+        ),
+        Ok(true)
+    );
+    assert_eq!(
+        manifest_pins_registry_crate(
+            "[dev-dependencies]\nassert_cmd = \"=2.2.2\"\nlibtest-mimic = \"=0.8.2\"\n"
+        ),
+        Ok(true)
+    );
+    assert_eq!(
+        manifest_pins_registry_crate("[dependencies]\nlog = { version = \"=0.4.34\" }\n"),
+        Ok(true)
+    );
+    assert_eq!(
+        manifest_pins_registry_crate("[target.'cfg(unix)'.dependencies]\nlibc = \"0.2\"\n"),
+        Ok(true)
+    );
+    assert_eq!(
+        manifest_pins_registry_crate("[dependencies]\npricing = { path = \"../pricing\" }\n"),
+        Ok(false)
+    );
+    assert_eq!(
+        manifest_pins_registry_crate("[package]\nname = \"authored-pricing\"\n\n[dependencies]\n"),
+        Ok(false)
+    );
+}
+
+#[test]
+fn manifest_pins_registry_crate_ignores_dotted_features_and_multiline_path_tables() {
+    assert_eq!(
+        manifest_pins_registry_crate("[dependencies.pricing]\nfeatures = [\"std\"]\n"),
+        Ok(false)
+    );
+    assert_eq!(
+        manifest_pins_registry_crate("[dependencies]\npricing = {\n  path = \"../pricing\"\n}\n"),
+        Ok(false)
+    );
+    assert_eq!(
+        manifest_pins_registry_crate(
+            "[dependencies]\nfoo = { git = \"https://example.com/foo.git\" }\n"
+        ),
+        Ok(false)
+    );
+    assert_eq!(
+        manifest_pins_registry_crate("[dependencies]\nfoo = { workspace = true }\n"),
+        Ok(false)
+    );
+    assert_eq!(
+        manifest_pins_registry_crate("[dependencies]\nfoo = { version = { workspace = true } }\n"),
+        Ok(false)
+    );
+}
+
+#[test]
+fn manifest_pins_registry_crate_fails_closed_on_invalid_toml() {
+    let result = manifest_pins_registry_crate("[dependencies\nlog = \"1\"\n");
+    assert!(
+        matches!(&result, Err(err) if err.contains("not valid TOML")),
+        "unclosed table must not look like a non-pin: {result:?}"
+    );
+}
+
 #[test]
 fn validator_rejects_a_case_that_borrows_another_cases_diff() -> Result<(), String> {
     let violations = tampered(|raw| {
@@ -990,25 +1109,71 @@ fn per_record_corpus(name: &str, case_ids: &[&str]) -> Result<PathBuf, String> {
 }
 
 #[test]
+fn in_file_name_order_sorts_a_shuffled_listing() {
+    let shuffled = [
+        "z-ord.json",
+        "m-ord.json",
+        "a-ord.json",
+        "y-ord.json",
+        "b-ord.json",
+        "n-ord.json",
+        "x-ord.json",
+        "c-ord.json",
+        "w-ord.json",
+        "v-ord.json",
+        "u-ord.json",
+        "t-ord.json",
+        "s-ord.json",
+        "h-ord.json",
+        "g-ord.json",
+        "f-ord.json",
+        "r-ord.json",
+        "q-ord.json",
+    ]
+    .into_iter()
+    .map(PathBuf::from)
+    .collect::<Vec<_>>();
+    let mut expected = shuffled.clone();
+    expected.sort();
+    assert_ne!(
+        shuffled, expected,
+        "fixture names must start unsorted so a missing sort is visible"
+    );
+    assert_eq!(in_file_name_order(shuffled), expected);
+}
+
+#[test]
 fn corpus_records_load_in_file_name_order_and_must_match_their_ids() -> Result<(), String> {
-    let dir = per_record_corpus("verdict-order", &["b-case", "a-case"])?;
+    // Enough mixed names that a missing sort in `in_file_name_order` still
+    // shows up on filesystems whose readdir is unsorted (#6945).
+    let ids = [
+        "z-ord", "m-ord", "a-ord", "y-ord", "b-ord", "n-ord", "x-ord", "c-ord", "w-ord", "v-ord",
+        "u-ord", "t-ord", "s-ord", "h-ord", "g-ord", "f-ord", "r-ord", "q-ord",
+    ];
+    let dir = per_record_corpus("verdict-order", &ids)?;
+    // NTFS and some other filesystems already return sorted names, so a
+    // readdir `assert_ne!` would fail even with the sort present. The
+    // shuffled-path helper is the filesystem-independent discriminator;
+    // load_corpus must still emit file-name order.
     let corpus = load_corpus(&dir)?;
-    let ids: Vec<&str> = corpus.cases.iter().map(|c| c.case_id.as_str()).collect();
-    assert_eq!(ids, ["a-case", "b-case"]);
+    let loaded: Vec<&str> = corpus.cases.iter().map(|c| c.case_id.as_str()).collect();
+    let mut expected = ids.to_vec();
+    expected.sort();
+    assert_eq!(loaded, expected);
     // A copied file that keeps the original id is refused, so two files can
     // never carry one id.
-    let mut copy: Value = serde_json::from_str(&read(&dir.join("cases/a-case.json"))?)
+    let mut copy: Value = serde_json::from_str(&read(&dir.join("cases/a-ord.json"))?)
         .map_err(|err| err.to_string())?;
-    copy["case_id"] = json!("b-case");
-    crate::tests::write(&dir.join("cases/c-case.json"), &format!("{copy:#}"));
+    copy["case_id"] = json!("z-ord");
+    crate::tests::write(&dir.join("cases/dup-case.json"), &format!("{copy:#}"));
     let err = load_corpus(&dir).err().unwrap_or_default();
     assert!(
-        err.contains("c-case.json") && err.contains("`b-case`"),
+        err.contains("dup-case.json") && err.contains("`z-ord`"),
         "{err}"
     );
     // A mistyped record name or a diff without its record would drop a case
     // silently; validate names both.
-    fs::remove_file(dir.join("cases/c-case.json")).map_err(|err| err.to_string())?;
+    fs::remove_file(dir.join("cases/dup-case.json")).map_err(|err| err.to_string())?;
     crate::tests::write(&dir.join("cases/d-case.JSON"), "{}\n");
     crate::tests::write(&dir.join("cases/e-case.diff"), "");
     fs::create_dir_all(dir.join("subjects/orphan")).map_err(|err| err.to_string())?;
@@ -1025,7 +1190,7 @@ fn corpus_records_load_in_file_name_order_and_must_match_their_ids() -> Result<(
         );
     }
     assert!(
-        !violations.iter().any(|v| v.starts_with("cases/a-case")),
+        !violations.iter().any(|v| v.starts_with("cases/a-ord")),
         "{violations:#?}"
     );
     Ok(())

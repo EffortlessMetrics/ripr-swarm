@@ -1089,11 +1089,25 @@ fn expected_computed_through_owner(
     owner: &str,
     reaches_owner: &dyn Fn(Option<&str>, &str) -> bool,
 ) -> bool {
-    if !text.contains("assert_eq!") {
-        return false;
-    }
-    let Some([left, right]) = assertion_comparison_operands(text) else {
-        return false;
+    // RIPR-SPEC-0197: `assert!(a == b)` and its Err-return guard twin
+    // compare the same operands an `assert_eq!` would.
+    // Selected the way the pin selects (#7094 follow-up): a guard reads its
+    // condition and a plain `assert!` its comparison, so an `assert_eq!`
+    // spelled in a message, comment or guard body cannot switch the reader.
+    let equality;
+    let reads_equality = crate::analysis::extract::err_return_guard_twin(text).is_some()
+        || super::owner_pin::is_plain_macro(text, "assert");
+    let [left, right] = if !reads_equality && text.contains("assert_eq!") {
+        let Some(operands) = assertion_comparison_operands(text) else {
+            return false;
+        };
+        operands
+    } else {
+        equality = super::owner_pin::equality_condition_operands(text);
+        let Some([left, right]) = &equality else {
+            return false;
+        };
+        [left.as_str(), right.as_str()]
     };
     let reaches = |operand: &str| {
         called_paths(operand)
@@ -7365,6 +7379,31 @@ return Err(\"typed pin\".into());
             "tax",
             &reaches
         ));
+        // RIPR-SPEC-0197: `assert!(a == b)` and an Err-return guard twin
+        // compare the same operands an `assert_eq!` would.
+        for text in [
+            "assert!(sub + tax(sub) == invoice(3, 100));",
+            "if invoice(3, 100) != sub + tax(sub) { return Err(..) }",
+            // An `assert_eq!` spelled in a message, comment or guard body
+            // does not switch the reader away from the compared operands.
+            "assert!(tax(300) == invoice(3, 100) - 300, \"assert_eq! equivalent\");",
+            "if tax(300) != invoice(3, 100) - 300 {\n    // was assert_eq!(tax(300), 24)\n    return Err(..)\n}",
+        ] {
+            assert!(
+                expected_computed_through_owner(text, "tax", &reaches),
+                "{text}"
+            );
+        }
+        for text in [
+            "assert!(tax(300) == 24);",
+            "if tax(300) != 24 { return Err(..) }",
+            "assert!(tax(300) >= invoice(3, 100));",
+        ] {
+            assert!(
+                !expected_computed_through_owner(text, "tax", &reaches),
+                "{text}"
+            );
+        }
         assert_eq!(constructed_field_name("storage,"), Some("storage"));
         assert_eq!(
             constructed_field_name("total_cents: shipping + subtotal,"),

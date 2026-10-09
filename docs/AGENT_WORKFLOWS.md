@@ -313,6 +313,12 @@ Its `run_command` runs only that test through the owning package's
 `--at` path that matches files with gaps in several crates is refused; pass
 the full path or the seam ID.
 
+When the file has seams but the selected function has none of the requested
+family, the not-found message names the requested `FAMILY`. Its `nearest:`
+list contains only seams of that family, filtered before the five-entry limit.
+A file with only other families offers no nearest entries. These not-found
+decisions keep exit 3 and empty stdout, including with `--json`.
+
 No `.ripr/goals/active.toml`, current-writer file, stage file or agent-liveness
 record selects ordinary work. Keep status changes evidence-bound and update an
 existing owned reconciliation comment rather than repeatedly appending copies.

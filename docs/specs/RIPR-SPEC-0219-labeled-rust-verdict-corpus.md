@@ -203,7 +203,9 @@ summary counts that disagree with the findings list.
   paths, through any chain of links, or that does not resolve, is refused,
   and so is a submodule. Cargo resolves dependencies offline (`CARGO_NET_OFFLINE=true`),
   so a checkout's dependencies must already be in the cargo cache (`cargo
-  fetch`); the command adds no network access of its own, but a subject's
+  fetch`); authored subjects that pin a registry crate retain a hash-checked
+  `Cargo.lock`, which relabel copies and honors with `--locked`.
+  The command adds no network access of its own, but a subject's
   build scripts and tests run unsandboxed. `RUSTC` and `RUSTDOC` point at
   the rustup proxies, so doctests also run on the labeled toolchain; the
   caller's wrappers, `RUSTC_BOOTSTRAP`, and `RUSTFLAGS`-family variables are
@@ -215,10 +217,16 @@ summary counts that disagree with the findings list.
   such a command too. `--sample` picks a deterministic subset, for the same
   set of checkouts, ordered by sha256 of the seed and case id, so a
   scheduled run can rotate seeds through the corpus; `--case` inspects only
-  the selected cases' checkouts. It writes `relabel.json` and never clones,
-  fetches, or edits the corpus. Subject trees live under a per-process
-  directory, so concurrent runs sharing a `--work-dir` do not clear each
-  other's trees.
+  the selected cases' checkouts. It writes `relabel.json`
+  (`schema_version` `ripr_verdict_corpus_relabel.v2`) recording `git_head`
+  (the enclosing checkout's HEAD, or null when git cannot name it) and
+  `corpus_digest` (sha256 of every regular file under `cases/` and
+  `subjects/`, in UTF-8 relative-path order; a non-UTF-8 name is refused so
+  a replacement character cannot hide another file) so the receipt
+  identifies the corpus state it replayed, and never clones, fetches, or
+  edits the corpus. Subject
+  trees live under a per-process directory, so concurrent runs sharing a
+  `--work-dir` do not clear each other's trees.
 
   Known limits: failing-test names match by `::` suffix across all test
   binaries; a binary that aborts (a stack overflow, `process::exit`) names
@@ -471,6 +479,7 @@ Tests live in `xtask/src/reports/verdict_corpus_tests.rs`:
 - `expected_report_rows_agree_with_corpus_labels`
 - `build_report_counts_rates_over_the_right_denominators`
 - `corpus_records_load_in_file_name_order_and_must_match_their_ids`
+- `in_file_name_order_sorts_a_shuffled_listing`
 - `split_moves_the_one_file_layout_into_records_without_loss`
 - `drift_names_moved_missing_and_stale_rows_and_a_subset_compares_only_its_rows`
 - `summary_derived_from_blessed_rows_equals_the_run_summary`
@@ -505,6 +514,9 @@ Relabel tests live in `xtask/src/reports/verdict_corpus_relabel_tests.rs`:
 - `labeled_toolchain_names_the_rustup_release`
 - `link_stays_inside_refuses_links_that_leave_the_copy`
 - `copy_checkout_refuses_a_chain_of_links_that_resolves_outside`
+- `relabel_receipt_records_git_head_and_corpus_digest`
+- `corpus_digest_refuses_non_utf8_names_instead_of_colliding_on_replacement`
+- `corpus_digest_keeps_backslash_names_distinct_from_nested_paths`
 
 Spec-example coverage tests live in
 `xtask/src/reports/verdict_corpus_coverage_tests.rs`:

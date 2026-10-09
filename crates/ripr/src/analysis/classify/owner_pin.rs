@@ -6,7 +6,12 @@
 //! gate below fails closed when ripr cannot establish one:
 //!
 //! 1. The call names the owner. A bare `name(..)` names a module-level
-//!    function, never an associated function or a trait method. A method
+//!    function, never an associated function or a trait method — and the
+//!    test's binding of the name must resolve to it: no same-named
+//!    `static`, `const`, tuple struct or competing `use` in reach, an
+//!    explicit `use` or glob resolving to a module holding the owner
+//!    (directly or through one re-export), else the test beside the
+//!    owner. A method
 //!    call `recv.name(..)` names a function with a `self` receiver, and only
 //!    when the receiver's type dispatches to the owner: the test binds the
 //!    receiver to a type ripr can read, no type declaration in the test's
@@ -38,13 +43,14 @@
 
 use super::super::rust_index::{FunctionSummary, OracleFact, RustIndex, TestSummary};
 use super::reveal::{
-    assertion_comparison_operands, contains_as_whole_word, file_imports_foreign_callee_name,
-    file_imports_own_item, file_use_statements, use_statement_binds_name,
-    use_statement_first_segment,
+    UsePath, assertion_comparison_operands, contains_as_whole_word,
+    file_imports_foreign_callee_name, file_imports_own_item, file_use_statements,
+    flattened_use_paths, use_statement_binds_name, use_statement_first_segment,
 };
 use crate::analysis::extract::{
-    fact_body_defines_callee_fn, fact_body_let_shadow_line, mask_comments_and_strings,
-    outer_assertion_condition, test_body_defines_callee_fn, test_body_let_shadow_line,
+    err_return_guard_twin, fact_body_defines_callee_fn, fact_body_let_shadow_line,
+    mask_comments_and_strings, outer_assertion_condition, test_body_defines_callee_fn,
+    test_body_let_shadow_line,
 };
 use crate::analysis::facts::drop_in::DropInManifests;
 use crate::analysis::facts::{
@@ -54,19 +60,20 @@ use crate::analysis::syntax::fn_signature::{LocalTypeEquality, local_type_equali
 use crate::analysis::syntax::{
     AssertionContextRefusal, GeneratedTestPins, HelperLoan, MacroBindingCandidates,
     MacroBindingKind, MacroBindingSite, OwnerPinAssertions, TRUSTED_MACRO_NAMES,
-    attribute_settles_test_outcome, empty_macro_binding_ambiguities, generated_test_pins,
-    local_empty_macro_names, macro_binding_scan, owner_pin_assertions, parse_clean_source_file,
-    returns_leave_the_function, trusted_macro_binding_sites,
+    attribute_settles_test_outcome, empty_macro_binding_ambiguities, err_return_guard_key,
+    generated_test_pins, local_empty_macro_names, macro_binding_scan, owner_pin_assertions,
+    parse_clean_source_file, returns_leave_the_function, trusted_macro_binding_sites,
 };
 use crate::domain::{Probe, ProbeFamily};
 use ra_ap_syntax::{
     AstNode, SyntaxNode, TextRange,
-    ast::{self, HasModuleItem, HasName},
+    ast::{self, HasArgList, HasGenericArgs, HasModuleItem, HasName},
 };
 use rayon::prelude::*;
 use std::cell::{OnceCell, RefCell};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 
 /// The owner-side half of the pin, established once per probe.
 pub(in crate::analysis) struct OwnerReturnPin {
@@ -120,8 +127,21 @@ pub(in crate::analysis) struct OwnerPinSyntax {
     /// probe, test and assertion, and each input below scans the workspace,
     /// so every answer is kept for the run under the key it depends on.
     path_memo: RefCell<PathCallMemo>,
+    /// #7097: per-file module scopes (direct `use`s and value-taking
+    /// items), parsed once per run; `None` when the file does not parse.
+    file_scopes: RefCell<BTreeMap<PathBuf, Option<Rc<FileScopes>>>>,
+    /// #7097: bare-call binding verdicts per [`BareCallKey`].
+    bare_call_memo: RefCell<BTreeMap<BareCallKey, bool>>,
+    /// #7097: out-of-line module children per (parent file, `mod` name):
+    /// the composed child file, or `None` when declarations conflict.
+    /// Built once per run; the index is immutable.
+    mod_children: OnceCell<BTreeMap<(PathBuf, String), Option<PathBuf>>>,
     withheld: WithheldMacroBindings,
 }
+
+/// #7097: a bare-call binding verdict key: owner file, owner line, owner
+/// name, test file, test line.
+type BareCallKey = (PathBuf, usize, String, PathBuf, usize);
 
 /// #6974: run-scoped answers for [`OwnerReturnPin::path_reaches_owner`].
 #[derive(Clone, Debug, Default)]
@@ -564,13 +584,20 @@ impl OwnerPinSyntax {
                 });
             }
         }
+        // A terminal Err-return guard is keyed by its condition; the oracle
+        // text may join continuation lines or elide the Err payload.
+        let guard_key = err_return_guard_twin(&assertion.text)
+            .map(|(condition, _)| err_return_guard_key(condition));
         let file_refusal = by_file
             .entry(test.file.clone())
             .or_insert_with(|| owner_pin_assertions(&facts.source, NON_RETURNING_MACROS))
             .refusal(
                 (test.start_line, test.end_line, &test.name),
                 &test.body,
-                (assertion.line, &assertion.text),
+                (
+                    assertion.line,
+                    guard_key.as_deref().unwrap_or(&assertion.text),
+                ),
                 &ambiguous,
             );
         let file_refusal = file_refusal?;
@@ -1251,6 +1278,34 @@ enum ReturnPathGate {
     /// `PartialEq`, so every field of the clone is compared with the
     /// original's.
     CloneReceiver,
+    /// RIPR-SPEC-0225: field `field` of the `type_name { .. }` literal the
+    /// owner returns (inside `wrapper(..)` when the owner returns
+    /// `Result`/`Option`). The pinned value must be a literal of that type,
+    /// in the same wrapper, naming the field with an independent value.
+    WholeValueField(WholeValueField),
+}
+
+/// The owner-side facts [`ReturnPathGate::WholeValueField`] checks a test's
+/// expected literal against.
+struct WholeValueField {
+    type_name: String,
+    field: String,
+    wrapper: Option<&'static str>,
+    /// The field is declared `String`, so `"x".into()` converts through the
+    /// standard library, not a workspace `From` impl.
+    field_is_string: bool,
+    /// CamelCase names the workspace gives a `const`, `static` or `fn`: an
+    /// expected value naming one may be computed, not a constructor.
+    computed_names: BTreeSet<String>,
+    /// Struct, enum, union and variant names the workspace declares, plus
+    /// the standard `None`/`Some`/`Ok`/`Err`: a bare CamelCase name outside
+    /// this set may be a test-local binding (`let Expected = ..;`).
+    constructor_names: BTreeSet<String>,
+    /// `String` may name a workspace item (`mod String`, a type, fn, const,
+    /// static, trait, macro or variant of that name, a rename to it, or a
+    /// non-std `use` of it), so an expected `String::from(..)` is not the
+    /// standard conversion and gives no credit (#7066 review).
+    string_from_may_be_rebound: bool,
 }
 
 impl OwnerReturnPin {
@@ -1263,7 +1318,13 @@ impl OwnerReturnPin {
         index: &RustIndex,
     ) -> Option<Self> {
         if matches!(probe.family, ProbeFamily::FieldConstruction) {
-            return Self::establish_clone_field(probe, owner, index);
+            // A `clone` owner is #6692's alone: which `Clone` impl a call
+            // runs is that path's question, not one this one asks.
+            return if owner.name == "clone" {
+                Self::establish_clone_field(probe, owner, index)
+            } else {
+                Self::establish_whole_value_field(probe, owner, index)
+            };
         }
         if !owner.item.has_body {
             return None;
@@ -1286,38 +1347,7 @@ impl OwnerReturnPin {
         let name = owner.name.as_str();
         let changed_line = probe.location.line.checked_sub(owner.start_line)?;
         let path = return_path_gate(&owner.body, &probe.expression, changed_line)?;
-        let call = match (&owner.item.container, owner.item.has_self_param) {
-            (FunctionContainer::Free, false) => PinCall::Bare,
-            (FunctionContainer::Inherent { self_ty }, true) => PinCall::Method {
-                receivers: vec![declared_receiver(self_ty, index)?],
-                trait_scope: None,
-            },
-            (
-                FunctionContainer::TraitImpl {
-                    trait_path,
-                    self_ty,
-                },
-                true,
-            ) => PinCall::Method {
-                receivers: vec![declared_receiver(self_ty, index)?],
-                trait_scope: Some(TraitScope {
-                    trait_name: path_base_name(trait_path)?.to_string(),
-                }),
-            },
-            (FunctionContainer::Trait { trait_name }, true) => {
-                let receivers = trait_impl_receivers(trait_name, index);
-                if receivers.is_empty() {
-                    return None;
-                }
-                PinCall::Method {
-                    receivers,
-                    trait_scope: Some(TraitScope {
-                        trait_name: trait_name.clone(),
-                    }),
-                }
-            }
-            _ => return None,
-        };
+        let call = pin_call(owner, index)?;
         let method = matches!(call, PinCall::Method { .. });
         if other_definition_competes(owner, index, method) {
             return None;
@@ -1414,6 +1444,96 @@ impl OwnerReturnPin {
         })
     }
 
+    /// RIPR-SPEC-0225: the owner-side gates for a `field_construction`
+    /// probe on a field of the struct literal the owner returns. The literal
+    /// (or `Ok(..)`/`Some(..)` around it, matching the declared return type)
+    /// is the owner's tail and only value exit, the changed line is one whole
+    /// field initializer of it that evaluates on every input, and `==` on the
+    /// literal's type compares that field by value (rules 3 and 4).
+    fn establish_whole_value_field(
+        probe: &Probe,
+        owner: &FunctionSummary,
+        index: &RustIndex,
+    ) -> Option<Self> {
+        if !owner.item.has_body
+            || index
+                .files()
+                .get(&owner.file)
+                .is_none_or(|facts| facts.used_lexical_fallback)
+        {
+            return None;
+        }
+        let changed_line = probe.location.line.checked_sub(owner.start_line)?;
+        let field = initialized_field_name(&probe.expression)?;
+        let tail = whole_value_tail(&owner.body, changed_line, field, &probe.expression)?;
+        let type_name = if tail.type_name == "Self" {
+            match &owner.item.container {
+                FunctionContainer::Inherent { self_ty }
+                | FunctionContainer::TraitImpl { self_ty, .. }
+                    if !self_ty.contains('<') =>
+                {
+                    path_base_name(self_ty)?.to_string()
+                }
+                _ => return None,
+            }
+        } else {
+            tail.type_name
+        };
+        let declared = declared_return_type(&owner.body)?;
+        let names_type = |ty: &str| ty == type_name || ty == "Self";
+        let declared_matches = match tail.wrapper {
+            None => names_type(&declared),
+            Some(wrapper) => {
+                let (path, arguments) = declared.split_once('<')?;
+                let arguments = arguments.strip_suffix('>')?;
+                let first = top_level_arguments(arguments).into_iter().next()?;
+                let container = if wrapper == "Ok" { "Result" } else { "Option" };
+                path_base_name(path) == Some(container)
+                    && !type_declared_in_workspace(container, index)
+                    && names_type(first.trim())
+            }
+        };
+        if !declared_matches || !field_compares_with_derived_equality(&type_name, field, index) {
+            return None;
+        }
+        // The owner's file must name the workspace declaration: a `use
+        // other::Config;` there makes the literal another crate's type.
+        let owner_source = &index.files().get(&owner.file)?.source;
+        if declaring_file_rebinds(owner_source, &type_name, true, index)
+            || tail
+                .wrapper
+                .is_some_and(|wrapper| wrapper_may_be_rebound(wrapper, index))
+        {
+            return None;
+        }
+        let field_is_string = derived_equality(&type_name, index).is_some_and(|(facts, _)| {
+            facts.fields.iter().any(|candidate| {
+                candidate.name.as_deref() == Some(field) && candidate.ty == "String"
+            })
+        });
+        let call = pin_call(owner, index)?;
+        if other_definition_competes(owner, index, matches!(call, PinCall::Method { .. })) {
+            return None;
+        }
+        Some(Self {
+            name: owner.name.clone(),
+            call,
+            path: ReturnPathGate::WholeValueField(WholeValueField {
+                type_name,
+                field: field.to_string(),
+                wrapper: tail.wrapper,
+                field_is_string,
+                computed_names: camel_case_value_items(index),
+                constructor_names: declared_constructor_names(index),
+                string_from_may_be_rebound: wrapper_may_be_rebound("String", index),
+            }),
+            returns_bool: false,
+            owner_file: owner.file.clone(),
+            owner_start_line: owner.start_line,
+            trait_scope_by_file: RefCell::default(),
+        })
+    }
+
     /// The test-side gates: whether `assertion` in `test` pins the owner's
     /// return value through a call that names the owner.
     pub(in crate::analysis) fn admits(
@@ -1435,7 +1555,18 @@ impl OwnerReturnPin {
             return false;
         }
         let condition;
-        let (call, expected) = if is_plain_macro(&assertion.text, "assert_eq") {
+        // RIPR-SPEC-0197: `assert!(owner(..) == v)` and its guard twin
+        // `if owner(..) != v { return Err(..) }` read like `assert_eq!`. A
+        // guard reads only its condition, never a macro inside its body,
+        // since the syntax gate admits the guard's path, not the body's.
+        let is_guard = err_return_guard_twin(&assertion.text).is_some();
+        let reads_assert_eq = !is_guard && is_plain_macro(&assertion.text, "assert_eq");
+        let equality = if reads_assert_eq {
+            None
+        } else {
+            equality_condition_operands(&assertion.text)
+        };
+        let (call, expected) = if reads_assert_eq {
             let Some(operands) = assertion_comparison_operands(&assertion.text) else {
                 return false;
             };
@@ -1461,12 +1592,33 @@ impl OwnerReturnPin {
                     match (bound(0), bound(1)) {
                         (Some(call), None) => (call, operands[1]),
                         (None, Some(call)) => (call, operands[0]),
+                        // RIPR-SPEC-0225 rule 1: `let c = owner(..);` named
+                        // only by its `let` and this comparison.
+                        (None, None) if matches!(self.path, ReturnPathGate::WholeValueField(_)) => {
+                            match (
+                                bound_owner_call(test, operands[0], &self.name),
+                                bound_owner_call(test, operands[1], &self.name),
+                            ) {
+                                (Some(call), None) => (call, operands[1]),
+                                (None, Some(call)) => (call, operands[0]),
+                                _ => return false,
+                            }
+                        }
                         _ => return false,
                     }
                 }
                 _ => return false,
             }
-        } else if self.returns_bool && is_plain_macro(&assertion.text, "assert") {
+        } else if let Some([left, right]) = &equality {
+            match (
+                owner_call_shape(left, &self.name),
+                owner_call_shape(right, &self.name),
+            ) {
+                (Some(call), None) => (call, right.as_str()),
+                (None, Some(call)) => (call, left.as_str()),
+                _ => return false,
+            }
+        } else if !is_guard && self.returns_bool && is_plain_macro(&assertion.text, "assert") {
             // `assert!(owner(..))` is `assert_eq!(owner(..), true)` and
             // `assert!(!owner(..))` is `assert_eq!(owner(..), false)`. The
             // message arguments never decide whether the test fails.
@@ -1536,6 +1688,15 @@ impl OwnerReturnPin {
                 }
             }
         }
+        // The expected literal's bare name must reach the workspace type in
+        // the test's file too (`use external::Config;` there makes it another).
+        if let ReturnPathGate::WholeValueField(gate) = &self.path
+            && index.files().get(&test.file).is_none_or(|facts| {
+                declaring_file_rebinds(&facts.source, &gate.type_name, true, index)
+            })
+        {
+            return false;
+        }
         let test_source = index
             .files()
             .get(&test.file)
@@ -1559,9 +1720,12 @@ impl OwnerReturnPin {
                     && !test_body_shadows_owner(test, &self.name)
                     && !binds_outside_let(&masked_body, &self.name)
                     && !bound_by_macro(&masked_body, &self.name)
-                    && test_source.is_some_and(|source| !file_renames_to(source, &self.name))
                     && helper.as_deref().is_none_or(|helper| {
                         helper_pins_owner_call(helper, &masked_body, &self.name)
+                    })
+                    && test_source.is_some_and(|source| {
+                        !file_renames_to(source, &self.name)
+                            && self.bare_call_reaches_owner(test, source, index, syntax)
                     })
             }
             // As for the clone receiver: a helper's parameters are not the
@@ -1793,6 +1957,328 @@ impl OwnerReturnPin {
         !binds
     }
 
+    /// #7097: whether the test's bare `name(..)` can only reach the
+    /// owner. The establish gate refused every other `fn` of the name, but
+    /// a same-named `static`, `const`, tuple struct or `use` still takes a
+    /// bare call: an item in the test's body or own module scope shadows
+    /// every import, an explicit `use` must name the owner's own path, a
+    /// glob must deliver the owner from a twin-free module, and with
+    /// neither the test must sit beside the owner. Anything unplaced
+    /// refuses.
+    fn bare_call_reaches_owner(
+        &self,
+        test: &TestSummary,
+        test_source: &str,
+        index: &RustIndex,
+        syntax: &OwnerPinSyntax,
+    ) -> bool {
+        let key = (
+            self.owner_file.clone(),
+            self.owner_start_line,
+            self.name.clone(),
+            test.file.clone(),
+            test.start_line,
+        );
+        if let Some(known) = syntax.bare_call_memo.borrow().get(&key) {
+            return *known;
+        }
+        let verdict = self.bare_call_reaches_owner_uncached(test, test_source, index, syntax);
+        syntax.bare_call_memo.borrow_mut().insert(key, verdict);
+        verdict
+    }
+
+    fn bare_call_reaches_owner_uncached(
+        &self,
+        test: &TestSummary,
+        test_source: &str,
+        index: &RustIndex,
+        syntax: &OwnerPinSyntax,
+    ) -> bool {
+        let Some(owner_inline) = syntax
+            .item_nesting(index, &self.owner_file, &self.name, self.owner_start_line)
+            .map(|nesting| nesting.modules)
+        else {
+            return false;
+        };
+        let Some(scopes) = syntax.file_scopes(index, &test.file) else {
+            return false;
+        };
+        let Some(scope) = scopes.scope_of_test(test_source, test) else {
+            return false;
+        };
+        // The body binds first: an item there shadows every import, an
+        // explicit `use` there shadows the module scope, and a glob there
+        // shadows the module scope too.
+        if body_defines_value_twin(&test.body, &self.name) {
+            return false;
+        }
+        let body_uses = flattened_use_paths(&test.body);
+        let (body_bindings, body_globs) = partition_name_uses(&body_uses, &self.name);
+        if !body_bindings.is_empty() {
+            let context = ScopeContext {
+                file: &test.file,
+                source: test_source,
+                stack: &scope.stack,
+            };
+            return body_bindings.len() == 1
+                && self.use_names_owner(body_bindings[0], context, &owner_inline, index, syntax);
+        }
+        if !body_globs.is_empty() {
+            let context = ScopeContext {
+                file: &test.file,
+                source: test_source,
+                stack: &scope.stack,
+            };
+            return body_globs
+                .iter()
+                .all(|glob| self.glob_delivers_owner(glob, context, &owner_inline, index, syntax));
+        }
+        // The test's own module scope: a twin item takes the call from a
+        // glob or lexical resolution, and an explicit `use` takes it from
+        // a glob. Ancestor items are invisible without a glob, which the
+        // glob rule below places.
+        if scope.has_twin(&self.name) {
+            return false;
+        }
+        let (bindings, globs) = partition_name_uses(&scope.uses, &self.name);
+        if !bindings.is_empty() {
+            let context = ScopeContext {
+                file: &test.file,
+                source: test_source,
+                stack: &scope.stack,
+            };
+            return bindings.len() == 1
+                && self.use_names_owner(bindings[0], context, &owner_inline, index, syntax);
+        }
+        if !globs.is_empty() {
+            let context = ScopeContext {
+                file: &test.file,
+                source: test_source,
+                stack: &scope.stack,
+            };
+            return globs
+                .iter()
+                .all(|glob| self.glob_delivers_owner(glob, context, &owner_inline, index, syntax));
+        }
+        // Neither: the owner is lexically visible only beside the test.
+        // Anywhere else the bare name is unresolved, the prelude, or a
+        // macro-emitted import ripr cannot see — never the owner.
+        test.file == self.owner_file && scope.stack == owner_inline
+    }
+
+    /// #7097: whether the binding `use_path` delivers the owner to
+    /// `scope`: its module prefix resolves, and that module holds the
+    /// owner with no twin — the owner itself, or one `use` hop
+    /// re-exporting it. A twin's path, a foreign crate, a bare crate
+    /// name, a renamed root, or a re-export chain past one hop refuses.
+    fn use_names_owner(
+        &self,
+        use_path: &UsePath,
+        scope: ScopeContext<'_>,
+        owner_inline: &[String],
+        index: &RustIndex,
+        syntax: &OwnerPinSyntax,
+    ) -> bool {
+        let Some((first, middle)) = split_binding_use(use_path, &self.name) else {
+            return false;
+        };
+        let Some((target_file, target_stack)) =
+            self.resolve_use_prefix(first, &middle, scope, index, syntax)
+        else {
+            return false;
+        };
+        self.resolved_module_delivers_owner(target_file, target_stack, owner_inline, index, syntax)
+    }
+
+    /// #7097: whether the binding `use_path` resolves exactly to the
+    /// owner's module from `scope`: no re-export hop, so one-hop
+    /// transport and twin checks end here and import cycles cannot
+    /// recurse.
+    fn use_resolves_to_owner_module(
+        &self,
+        use_path: &UsePath,
+        scope: ScopeContext<'_>,
+        owner_inline: &[String],
+        index: &RustIndex,
+        syntax: &OwnerPinSyntax,
+    ) -> bool {
+        let Some((first, middle)) = split_binding_use(use_path, &self.name) else {
+            return false;
+        };
+        self.resolve_use_prefix(first, &middle, scope, index, syntax)
+            .is_some_and(|(file, stack)| {
+                file == self.owner_file && stack.as_slice() == owner_inline
+            })
+    }
+
+    /// #7097: resolve a `use` path's module prefix to its (file, inline
+    /// stack): `self`/`super` walk from the scope, `crate` and the
+    /// owner's library crate name walk from the owner's crate root, each
+    /// step an inline child module or a composed out-of-line `mod`.
+    /// `None` when a step is foreign, renamed, ambiguous, or unplaced.
+    fn resolve_use_prefix(
+        &self,
+        first: &str,
+        segments: &[&str],
+        scope: ScopeContext<'_>,
+        index: &RustIndex,
+        syntax: &OwnerPinSyntax,
+    ) -> Option<(PathBuf, Vec<String>)> {
+        match first {
+            "self" | "super" => {
+                let (file, stack, rest) = pop_super_across_files(
+                    index,
+                    syntax,
+                    scope.file,
+                    scope.stack,
+                    first,
+                    segments,
+                )?;
+                resolve_module_path(index, syntax, &file, &stack, &rest)
+            }
+            "crate" => {
+                let root = composed_root(&self.owner_file, index);
+                if composed_root(scope.file, index) != root {
+                    return None;
+                }
+                resolve_module_path(index, syntax, &root, &[], segments)
+            }
+            _ => {
+                if !self.krate_root_names_owner_crate(first, scope.file, scope.source, index) {
+                    return None;
+                }
+                let root = composed_root(&self.owner_file, index);
+                resolve_module_path(index, syntax, &root, &[], segments)
+            }
+        }
+    }
+
+    /// #7097: whether a resolved module delivers the owner: it holds no
+    /// twin of the name, and either is the owner's own module or
+    /// transports one `use` resolving exactly to it.
+    fn resolved_module_delivers_owner(
+        &self,
+        target_file: PathBuf,
+        target_stack: Vec<String>,
+        owner_inline: &[String],
+        index: &RustIndex,
+        syntax: &OwnerPinSyntax,
+    ) -> bool {
+        let Some(target_source) = index
+            .files()
+            .get(&target_file)
+            .map(|facts| facts.data().source.clone())
+        else {
+            return false;
+        };
+        let Some(target_scopes) = syntax.file_scopes(index, &target_file) else {
+            return false;
+        };
+        let Some(target) = target_scopes.scope_with_stack(&target_stack) else {
+            return false;
+        };
+        if self.scope_has_twin_binding(
+            target,
+            &target_file,
+            &target_source,
+            owner_inline,
+            index,
+            syntax,
+        ) {
+            return false;
+        }
+        if target_file == self.owner_file && target_stack.as_slice() == owner_inline {
+            return true;
+        }
+        let context = ScopeContext {
+            file: &target_file,
+            source: &target_source,
+            stack: &target.stack,
+        };
+        let (transports, _) = partition_name_uses(&target.uses, &self.name);
+        transports.iter().any(|transport| {
+            self.use_resolves_to_owner_module(transport, context, owner_inline, index, syntax)
+        })
+    }
+
+    /// #7097: whether the glob `use_path` (`*`-terminated) delivers
+    /// the owner's binding to `scope`: its target module resolves and
+    /// holds the owner with no twin — the owner itself, or one `use` hop
+    /// re-exporting it. An unplaced glob refuses: it may import a twin,
+    /// and it can never import the workspace owner from a foreign crate.
+    fn glob_delivers_owner(
+        &self,
+        use_path: &UsePath,
+        scope: ScopeContext<'_>,
+        owner_inline: &[String],
+        index: &RustIndex,
+        syntax: &OwnerPinSyntax,
+    ) -> bool {
+        let Some((first, prefix)) = split_glob_prefix(&use_path.path) else {
+            return false;
+        };
+        let Some((target_file, target_stack)) =
+            self.resolve_use_prefix(first, &prefix, scope, index, syntax)
+        else {
+            return false;
+        };
+        self.resolved_module_delivers_owner(target_file, target_stack, owner_inline, index, syntax)
+    }
+
+    /// #7097: whether the first segment of a `use` path names the owner's
+    /// library crate from `scope_file`'s crate: a manifest import name, or
+    /// — in synthetic indexes without manifest authority — a workspace
+    /// package name. A rename to the segment refuses.
+    fn krate_root_names_owner_crate(
+        &self,
+        first: &str,
+        scope_file: &Path,
+        scope_source: &str,
+        index: &RustIndex,
+    ) -> bool {
+        if first.is_empty() || file_renames_to(scope_source, first) {
+            return false;
+        }
+        let owner_root = composed_root(&self.owner_file, index);
+        if index
+            .member_crates
+            .import_names(scope_file, &owner_root)
+            .iter()
+            .any(|name| name == first)
+        {
+            return true;
+        }
+        !index.member_crates.has_manifest_root() && crate_names_package(first, &index.package_names)
+    }
+
+    /// #7097: whether `scope` binds the owner's name to anything but the
+    /// owner: a twin item or macro, or a `use` resolving anywhere but
+    /// the owner's module. Globs need no hop here: a further glob only
+    /// matters beside an owner binding (an ambiguity error either way)
+    /// or without one (already refused).
+    fn scope_has_twin_binding(
+        &self,
+        scope: &ModuleScope,
+        scope_file: &Path,
+        scope_source: &str,
+        owner_inline: &[String],
+        index: &RustIndex,
+        syntax: &OwnerPinSyntax,
+    ) -> bool {
+        if scope.has_twin(&self.name) {
+            return true;
+        }
+        let context = ScopeContext {
+            file: scope_file,
+            source: scope_source,
+            stack: &scope.stack,
+        };
+        let (bindings, _) = partition_name_uses(&scope.uses, &self.name);
+        bindings.iter().any(|binding| {
+            !self.use_resolves_to_owner_module(binding, context, owner_inline, index, syntax)
+        })
+    }
+
     fn trait_in_scope(
         &self,
         test: &TestSummary,
@@ -1847,6 +2333,44 @@ fn whole_word_count(text: &str, name: &str) -> usize {
         .count()
 }
 
+/// How a test calls `owner`: a bare call for a free function, a method call
+/// on a receiver of one of the owner's `impl` types otherwise. `None` for a
+/// shape no pin reads (an associated function, a free fn with `self`).
+fn pin_call(owner: &FunctionSummary, index: &RustIndex) -> Option<PinCall> {
+    Some(match (&owner.item.container, owner.item.has_self_param) {
+        (FunctionContainer::Free, false) => PinCall::Bare,
+        (FunctionContainer::Inherent { self_ty }, true) => PinCall::Method {
+            receivers: vec![declared_receiver(self_ty, index)?],
+            trait_scope: None,
+        },
+        (
+            FunctionContainer::TraitImpl {
+                trait_path,
+                self_ty,
+            },
+            true,
+        ) => PinCall::Method {
+            receivers: vec![declared_receiver(self_ty, index)?],
+            trait_scope: Some(TraitScope {
+                trait_name: path_base_name(trait_path)?.to_string(),
+            }),
+        },
+        (FunctionContainer::Trait { trait_name }, true) => {
+            let receivers = trait_impl_receivers(trait_name, index);
+            if receivers.is_empty() {
+                return None;
+            }
+            PinCall::Method {
+                receivers,
+                trait_scope: Some(TraitScope {
+                    trait_name: trait_name.clone(),
+                }),
+            }
+        }
+        _ => return None,
+    })
+}
+
 impl ReturnPathGate {
     fn admits(&self, expected: &str) -> bool {
         match self {
@@ -1854,6 +2378,7 @@ impl ReturnPathGate {
             Self::Head(head) => constructor_call_span(expected.trim(), head).is_some(),
             Self::Exact(value) => expected.trim() == *value,
             Self::CloneReceiver => false,
+            Self::WholeValueField(gate) => gate.admits(expected),
         }
     }
 }
@@ -1922,6 +2447,73 @@ fn owner_call_shape<'a>(operand: &'a str, name: &str) -> Option<CallShape<'a>> {
     } else {
         CallShape::Method(&operand[..call_start - 1])
     })
+}
+
+/// RIPR-SPEC-0225 rule 1: the owner call an operand names through a local
+/// binding. The operand is a plain name that the test binds once, with
+/// `let name = <owner call>;` (an optional type annotation, never `mut`),
+/// and mentions nowhere else: any other use could borrow it mutably,
+/// shadow it, write through it or copy a field of it into the expected
+/// value. A macro that may bind the name refuses it too.
+fn bound_owner_call<'a>(
+    test: &'a TestSummary,
+    operand: &str,
+    owner: &str,
+) -> Option<CallShape<'a>> {
+    let name = operand.trim();
+    if !is_plain_identifier(name) || name == owner {
+        return None;
+    }
+    let masked = mask_comments_and_strings(&test.body);
+    let uses = whole_word_offsets(&masked, name);
+    let [first_use, _] = uses[..] else {
+        return None;
+    };
+    if bound_by_macro(&masked, name) {
+        return None;
+    }
+    let mut bindings = whole_word_offsets(&masked, "let")
+        .into_iter()
+        .filter_map(|start| {
+            // Only the test block's own statements: a `let` in an inner
+            // block goes out of scope, and the operand may then name an
+            // outer item.
+            let before = &masked[..start];
+            if before.matches('{').count() != before.matches('}').count() + 1 {
+                return None;
+            }
+            // An attribute (`#[cfg(..)] let c = ..;`) may compile the
+            // binding away, leaving the operand naming some outer item.
+            if before.trim_end().ends_with(']') {
+                return None;
+            }
+            // The binding is the name's first occurrence, so the
+            // assertion's use comes after it, not before a shadowing `let`.
+            let named = masked[start + 3..].trim_start();
+            if masked.len() - named.len() != first_use {
+                return None;
+            }
+            let rest = named.strip_prefix(name)?;
+            if rest.starts_with(|ch: char| ch.is_ascii_alphanumeric() || ch == '_') {
+                return None;
+            }
+            let rest = rest.trim_start();
+            // `let c = ..` or `let c: T = ..`; a type cannot hold `=`.
+            if !rest.starts_with(['=', ':']) {
+                return None;
+            }
+            let equals = masked.len() - rest.len() + rest.find('=')?;
+            if masked[equals + 1..].starts_with(['=', '>']) {
+                return None;
+            }
+            let end = equals + masked[equals..].find(';')?;
+            Some((equals, end))
+        });
+    let (Some((equals, end)), None) = (bindings.next(), bindings.next()) else {
+        return None;
+    };
+    let initializer = test.body.get(equals + 1..end)?;
+    owner_call_shape(initializer, owner)
 }
 
 /// #6974 review: whether the test's own crate may bind `root` before the
@@ -2568,6 +3160,447 @@ fn clone_tail_literal_spans(
         && field_text(&body[line_start..line_end]) == field_text(expression)
 }
 
+/// The struct literal an owner returns, as [`whole_value_tail`] reads it.
+struct WholeValueTail {
+    /// The literal's type as written: its last path segment, or `Self`.
+    type_name: String,
+    /// `Ok` or `Some` when the tail wraps the literal in that constructor.
+    wrapper: Option<&'static str>,
+}
+
+/// RIPR-SPEC-0225: the literal whose field `field` the changed line
+/// initializes, when that literal is the owner's tail value (directly, or as
+/// the one argument of a tail `Ok(..)`/`Some(..)`). The body may not
+/// `return`, nor hold a macro that may hide an exit, and `?` is allowed only
+/// around a wrapped tail, where it exits with `Err`/`None`, never the pinned
+/// constructor. The changed line must be the field's whole initializer, at
+/// the literal's top level, with a value evaluated on every input and no
+/// functional-update base in the literal. Fails closed on anything else.
+fn whole_value_tail(
+    body: &str,
+    changed_line: usize,
+    field: &str,
+    expression: &str,
+) -> Option<WholeValueTail> {
+    let masked = mask_comments_and_strings(body);
+    if has_unbounded_macro(&masked) || !whole_word_offsets(&masked, "return").is_empty() {
+        return None;
+    }
+    let parse = parse_clean_source_file(body)?;
+    let function = parse
+        .tree()
+        .syntax()
+        .descendants()
+        .find_map(ast::Fn::cast)?;
+    let block = function.body()?;
+    let mut tail = block.tail_expr()?;
+    while let ast::Expr::ParenExpr(inner) = &tail {
+        tail = inner.expr()?;
+    }
+    let (literal, wrapper) = match tail {
+        ast::Expr::RecordExpr(literal) => (literal, None),
+        ast::Expr::CallExpr(call) => {
+            let wrapper = match call.expr()?.syntax().text().to_string().as_str() {
+                "Ok" => "Ok",
+                "Some" => "Some",
+                _ => return None,
+            };
+            let mut arguments = call.arg_list()?.args();
+            let (Some(ast::Expr::RecordExpr(literal)), None) = (arguments.next(), arguments.next())
+            else {
+                return None;
+            };
+            (literal, Some(wrapper))
+        }
+        _ => return None,
+    };
+    if wrapper.is_none()
+        && block
+            .syntax()
+            .descendants()
+            .any(|node| ast::TryExpr::can_cast(node.kind()))
+    {
+        return None;
+    }
+    let path = literal.path()?;
+    // `Self::Variant { .. }` or `module::Type { .. }` names something other
+    // than the type the equality gates read.
+    if path.qualifier().is_some()
+        || path
+            .segments()
+            .any(|segment| segment.generic_arg_list().is_some())
+    {
+        return None;
+    }
+    let type_name = path.segment()?.name_ref()?.text().to_string();
+    let fields = literal.record_expr_field_list()?;
+    if fields.spread().is_some() || fields.dotdot_token().is_some() {
+        return None;
+    }
+    let mut named = fields.fields().filter(|candidate| {
+        candidate
+            .field_name()
+            .is_some_and(|name| name.text().trim_start_matches("r#") == field)
+    });
+    let (Some(initializer), None) = (named.next(), named.next()) else {
+        return None;
+    };
+    let range = initializer.syntax().text_range();
+    let line_of = |offset: usize| body[..offset].matches('\n').count();
+    let (first, last) = (
+        line_of(usize::from(range.start())),
+        line_of(usize::from(range.end())),
+    );
+    let value = initializer.expr()?;
+    let field_text = |text: &str| collapse_whitespace(text.trim().trim_end_matches(',').trim());
+    (first == changed_line
+        && last == changed_line
+        && field_text(&initializer.syntax().text().to_string()) == field_text(expression)
+        && !evaluates_conditionally(&mask_comments_and_strings(
+            &value.syntax().text().to_string(),
+        )))
+    .then_some(WholeValueTail { type_name, wrapper })
+}
+
+impl WholeValueField {
+    /// RIPR-SPEC-0225 rule 2: `expected` is a literal of the owner's type,
+    /// in the owner's wrapper, that names the field once, explicitly, with an
+    /// independent value ([`independent_value`]), and no functional-update
+    /// base anywhere in it.
+    fn admits(&self, expected: &str) -> bool {
+        let Some(parse) =
+            parse_clean_source_file(&format!("fn ripr_expected() {{ ({expected}); }}"))
+        else {
+            return false;
+        };
+        let Some(mut value) = parse
+            .tree()
+            .syntax()
+            .descendants()
+            .find_map(ast::ParenExpr::cast)
+            .and_then(|paren| paren.expr())
+        else {
+            return false;
+        };
+        if let Some(wrapper) = self.wrapper {
+            let ast::Expr::CallExpr(call) = value else {
+                return false;
+            };
+            if call
+                .expr()
+                .is_none_or(|callee| callee.syntax().text() != wrapper)
+            {
+                return false;
+            }
+            let Some(mut arguments) = call.arg_list().map(|list| list.args()) else {
+                return false;
+            };
+            let (Some(inner), None) = (arguments.next(), arguments.next()) else {
+                return false;
+            };
+            value = inner;
+        }
+        let ast::Expr::RecordExpr(literal) = value else {
+            return false;
+        };
+        if literal.syntax().descendants().any(|node| {
+            ast::RecordExprFieldList::cast(node)
+                .is_some_and(|list| list.spread().is_some() || list.dotdot_token().is_some())
+        }) {
+            return false;
+        }
+        // A bare name only: a qualified path (`external::Config`) may name
+        // another type whose equality with the owner's ignores the field.
+        let names_type = literal.path().is_some_and(|path| {
+            path.qualifier().is_none()
+                && path
+                    .segments()
+                    .all(|segment| segment.generic_arg_list().is_none())
+                && path
+                    .segment()
+                    .and_then(|segment| segment.name_ref())
+                    .is_some_and(|name| name.text() == self.type_name.as_str())
+        });
+        let Some(fields) = literal.record_expr_field_list() else {
+            return false;
+        };
+        let mut named = fields.fields().filter(|candidate| {
+            candidate
+                .field_name()
+                .is_some_and(|name| name.text().trim_start_matches("r#") == self.field)
+        });
+        let (Some(pinned), None) = (named.next(), named.next()) else {
+            return false;
+        };
+        // A shorthand `field` reads a local binding of that name.
+        names_type
+            && pinned.name_ref().is_some()
+            && pinned.expr().is_some_and(|value| {
+                independent_value(
+                    &value,
+                    self.field_is_string,
+                    self.string_from_may_be_rebound,
+                )
+            })
+            && !literal.syntax().descendants().any(|node| {
+                ast::NameRef::cast(node.clone())
+                    .is_some_and(|name| self.computed_names.contains(name.text()))
+                    // #7066 review: a bare CamelCase value the workspace never
+                    // declares as a type or variant may be a local binding.
+                    || ast::PathExpr::cast(node)
+                        .and_then(|path| path.path())
+                        .filter(|path| path.qualifier().is_none())
+                        .and_then(|path| path.segment()?.name_ref())
+                        .is_some_and(|name| {
+                            !self.constructor_names.contains(name.text())
+                        })
+            })
+    }
+}
+
+/// RIPR-SPEC-0225 rule 2: an expected value that cannot carry the owner's
+/// result: literals (negated too), tuples and arrays of them, unit and tuple
+/// variants or structs and struct literals named by a CamelCase path, and a
+/// string literal's `.to_string()`, `.to_owned()`, `String::from(..)`, or
+/// `.into()` when the field is a `String`. `String::from(..)` counts only
+/// when `String` names the standard type workspace-wide; a workspace
+/// `mod String` or rename makes the call an unknown function (#7066 review).
+/// A local binding, a constant, a workspace function or any other method can
+/// carry the owner's output (`retries: c.retries`, `RETRIES` from a
+/// `const fn`) and gives no credit.
+fn independent_value(
+    value: &ast::Expr,
+    string_field: bool,
+    string_from_may_be_rebound: bool,
+) -> bool {
+    let string_literal = |expr: Option<ast::Expr>| {
+        matches!(expr, Some(ast::Expr::Literal(literal))
+            if matches!(literal.kind(), ast::LiteralKind::String(_)))
+    };
+    match value {
+        ast::Expr::Literal(_) => true,
+        ast::Expr::PrefixExpr(prefix) => {
+            prefix.op_kind() == Some(ast::UnaryOp::Neg)
+                && matches!(prefix.expr(), Some(ast::Expr::Literal(_)))
+        }
+        ast::Expr::ParenExpr(inner) => inner.expr().is_some_and(|inner| {
+            independent_value(&inner, string_field, string_from_may_be_rebound)
+        }),
+        ast::Expr::TupleExpr(tuple) => tuple
+            .fields()
+            .all(|item| independent_value(&item, string_field, string_from_may_be_rebound)),
+        ast::Expr::ArrayExpr(items) => {
+            items.semicolon_token().is_none()
+                && items
+                    .exprs()
+                    .all(|item| independent_value(&item, string_field, string_from_may_be_rebound))
+        }
+        ast::Expr::PathExpr(path) => path.path().is_some_and(|path| constructor_path(&path)),
+        ast::Expr::CallExpr(call) => {
+            let Some(ast::Expr::PathExpr(callee)) = call.expr() else {
+                return false;
+            };
+            let Some(path) = callee.path() else {
+                return false;
+            };
+            let arguments = call.arg_list().map(|list| list.args().collect::<Vec<_>>());
+            if path.syntax().text() == "String::from" {
+                return !string_from_may_be_rebound
+                    && arguments.is_some_and(|arguments| {
+                        arguments.len() == 1 && string_literal(arguments.into_iter().next())
+                    });
+            }
+            constructor_path(&path)
+                && arguments.is_some_and(|arguments| {
+                    arguments
+                        .iter()
+                        .all(|argument| independent_value(argument, false, false))
+                })
+        }
+        ast::Expr::RecordExpr(literal) => {
+            literal.path().is_some_and(|path| constructor_path(&path))
+                && literal.record_expr_field_list().is_some_and(|fields| {
+                    fields.spread().is_none()
+                        && fields.dotdot_token().is_none()
+                        && fields.fields().all(|field| {
+                            field.name_ref().is_some()
+                                && field
+                                    .expr()
+                                    .is_some_and(|value| independent_value(&value, false, false))
+                        })
+                })
+        }
+        ast::Expr::MethodCallExpr(call) => {
+            let Some(method) = call.name_ref() else {
+                return false;
+            };
+            let method = method.text();
+            call.generic_arg_list().is_none()
+                && call
+                    .arg_list()
+                    .is_some_and(|list| list.args().next().is_none())
+                && (method == "to_string"
+                    || method == "to_owned"
+                    || (method == "into" && string_field))
+                && string_literal(call.receiver())
+        }
+        _ => false,
+    }
+}
+
+/// CamelCase names of `const`, `static` and `fn` items anywhere in the
+/// workspace, and CamelCase `use .. as` aliases (`use crate::four as Four;`
+/// names a fn). Naming lints only warn on them, so [`constructor_path`]'s
+/// case test alone cannot tell `Limits::Max` (a constant) from `Mode::Fast`.
+/// An alias of a real type or variant is refused too, which fails closed.
+fn camel_case_value_items(index: &RustIndex) -> BTreeSet<String> {
+    let mut names = BTreeSet::new();
+    for facts in index.files().values() {
+        let masked = mask_comments_and_strings(&facts.source);
+        for keyword in ["const", "static", "fn", "as"] {
+            for start in whole_word_offsets(&masked, keyword) {
+                // `*const T`, `&'static T` and a cast's `as T` name a type,
+                // not a value item; only an import's `as` renames.
+                let before = masked[..start].trim_end();
+                let names_type = match keyword {
+                    "const" => before.ends_with('*'),
+                    "static" => before.ends_with('\''),
+                    "as" => !in_import_item(&masked, start),
+                    _ => false,
+                };
+                if names_type {
+                    continue;
+                }
+                let rest = masked[start + keyword.len()..].trim_start();
+                let rest = rest.strip_prefix("mut ").map_or(rest, str::trim_start);
+                let name: String = rest
+                    .chars()
+                    .take_while(|ch| ch.is_ascii_alphanumeric() || *ch == '_')
+                    .collect();
+                if name.starts_with(|ch: char| ch.is_ascii_uppercase())
+                    && name.chars().any(|ch| ch.is_ascii_lowercase())
+                {
+                    names.insert(name);
+                }
+            }
+        }
+    }
+    names
+}
+
+/// Whether the `as` at `offset` of `masked` sits in a `use` or `extern
+/// crate` item: the item's keyword follows the previous `;` (or the file
+/// start), and only path tokens (`a::{b, c::*}`, earlier renames) lie
+/// between it and the `as`. A cast's operand has other tokens (`(`, `.`,
+/// `=`) or no import keyword at all.
+fn in_import_item(masked: &str, offset: usize) -> bool {
+    let statement_start = masked[..offset].rfind(';').map_or(0, |index| index + 1);
+    let statement = &masked[statement_start..offset];
+    let Some(keyword_end) = ["use", "crate"]
+        .iter()
+        .filter_map(|keyword| {
+            whole_word_offsets(statement, keyword)
+                .last()
+                .map(|start| start + keyword.len())
+        })
+        .max()
+    else {
+        return false;
+    };
+    // Raw (`r#async`) and non-ASCII identifiers are path tokens too.
+    statement[keyword_end..].chars().all(|ch| {
+        ch.is_alphanumeric()
+            || ch.is_whitespace()
+            || matches!(ch, '_' | '#' | ':' | '{' | '}' | ',' | '*')
+    })
+}
+
+/// #7066 review: the struct, enum and union names every indexed file
+/// declares, the variants of each `enum` (names that open an item at the
+/// body's top level), and the standard `None`, `Some`, `Ok` and `Err`.
+/// Lexical: a name missed here only withholds credit.
+fn declared_constructor_names(index: &RustIndex) -> BTreeSet<String> {
+    let mut names: BTreeSet<String> = ["None", "Some", "Ok", "Err"]
+        .into_iter()
+        .map(str::to_string)
+        .collect();
+    let ident = |text: &str| -> String {
+        text.trim_start()
+            .chars()
+            .take_while(|ch| ch.is_alphanumeric() || *ch == '_')
+            .collect()
+    };
+    for facts in index.files().values() {
+        let masked = mask_comments_and_strings(&facts.source);
+        for keyword in ["struct", "enum", "union"] {
+            for offset in whole_word_offsets(&masked, keyword) {
+                let rest = &masked[offset + keyword.len()..];
+                let name = ident(rest);
+                if name.is_empty() {
+                    continue;
+                }
+                names.insert(name);
+                if keyword != "enum" {
+                    continue;
+                }
+                let Some(open) = rest.find('{') else {
+                    continue;
+                };
+                let mut depth = 0usize;
+                let mut item_start = true;
+                for (at, ch) in rest[open..].char_indices() {
+                    match ch {
+                        '{' | '(' | '[' => {
+                            depth += 1;
+                            if depth == 1 {
+                                item_start = true;
+                            }
+                        }
+                        '}' | ')' | ']' => {
+                            depth = depth.saturating_sub(1);
+                            if depth == 0 {
+                                break;
+                            }
+                            // An attribute's `]` leaves the variant to come.
+                            if depth == 1 && ch == ']' {
+                                item_start = true;
+                            }
+                        }
+                        ',' if depth == 1 => item_start = true,
+                        '#' if depth == 1 => {}
+                        _ if depth == 1 && item_start && !ch.is_whitespace() => {
+                            let variant = ident(&rest[open + at..]);
+                            if !variant.is_empty() {
+                                names.insert(variant);
+                            }
+                            item_start = false;
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+    }
+    names
+}
+
+/// A path that names a variant or a struct: its last segment is CamelCase
+/// (`None`, `Some`, `Count`, `Mode::Fast`) and no segment has generic
+/// arguments. A SCREAMING_CASE constant may be computed (a `const fn` of the
+/// workspace) and does not qualify.
+fn constructor_path(path: &ast::Path) -> bool {
+    path.segments()
+        .all(|segment| segment.generic_arg_list().is_none())
+        && path
+            .segment()
+            .and_then(|segment| segment.name_ref())
+            .is_some_and(|name| {
+                let text = name.text();
+                text.starts_with(|ch: char| ch.is_ascii_uppercase())
+                    && text.chars().any(|ch| ch.is_ascii_lowercase())
+            })
+}
+
 /// The field a struct-literal initializer names: `start: self.start,` and
 /// the shorthand `start,` both name `start`.
 fn initialized_field_name(expression: &str) -> Option<&str> {
@@ -3059,6 +4092,70 @@ fn strip_type_arguments(self_ty: &str) -> &str {
     self_ty.split('<').next().unwrap_or(self_ty).trim()
 }
 
+/// #7066 review: whether `Ok` or `Some` may name something other than the
+/// standard variant anywhere in the workspace: a type, `fn`, `const`,
+/// `static`, `mod`, `trait` or macro of that name, a variant of a workspace
+/// `enum`, a rename to it, or a `use` naming it from outside `std`, `core`
+/// and `alloc`. Lexical and workspace-wide, so it fails closed.
+fn wrapper_may_be_rebound(wrapper: &str, index: &RustIndex) -> bool {
+    index.files().values().any(|facts| {
+        facts.source.contains(wrapper) && {
+            let masked = mask_comments_and_strings(&facts.source);
+            let declared_after = |keyword: &str| {
+                whole_word_offsets(&masked, keyword)
+                    .into_iter()
+                    .any(|offset| {
+                        let rest = masked[offset + keyword.len()..].trim_start();
+                        let rest = rest.strip_prefix('!').map_or(rest, str::trim_start);
+                        starts_with_word(rest, wrapper)
+                    })
+            };
+            declares_type(&masked, wrapper)
+                || [
+                    "fn",
+                    "const",
+                    "static",
+                    "mod",
+                    "trait",
+                    "type",
+                    "macro_rules",
+                ]
+                .into_iter()
+                .any(declared_after)
+                || whole_word_offsets(&masked, "enum")
+                    .into_iter()
+                    .any(|offset| {
+                        let Some(open) = masked[offset..].find('{').map(|at| offset + at) else {
+                            return true;
+                        };
+                        let mut depth = 0usize;
+                        let close = masked[open..].char_indices().find_map(|(at, ch)| {
+                            match ch {
+                                '{' => depth += 1,
+                                '}' => {
+                                    depth -= 1;
+                                    if depth == 0 {
+                                        return Some(open + at);
+                                    }
+                                }
+                                _ => {}
+                            }
+                            None
+                        });
+                        close.is_none_or(|close| {
+                            contains_as_whole_word(&masked[open..close], wrapper)
+                        })
+                    })
+                || file_renames_to(&facts.source, wrapper)
+                || file_use_statements(&facts.source).iter().any(|statement| {
+                    contains_as_whole_word(statement, wrapper)
+                        && use_statement_first_segment(statement)
+                            .is_none_or(|root| !STD_ROOTS.contains(&root))
+                })
+        }
+    })
+}
+
 /// Whether masked `text` declares a struct, enum or union named `name`.
 fn declares_type(text: &str, name: &str) -> bool {
     ["struct", "enum", "union"].iter().any(|keyword| {
@@ -3210,11 +4307,76 @@ fn is_bare_assert_eq_invocation(text: &str) -> bool {
         .is_some_and(|after_name| after_name.trim_start().starts_with('!'))
 }
 
+/// RIPR-SPEC-0197: the compared operands of a plain `assert!(lhs == rhs)`
+/// or of the assertion twin of a terminal Err-return guard
+/// `if lhs != rhs { return Err(..) }` (RIPR-SPEC-0154). The condition must
+/// be one top-level `==`; any other top-level comparison, `&&`, `||`, a
+/// closure or a negated condition refuses. Owned, since a guard's operands
+/// are read from its synthesized twin.
+pub(in crate::analysis) fn equality_condition_operands(text: &str) -> Option<[String; 2]> {
+    let condition = if is_plain_macro(text, "assert") {
+        outer_assertion_condition(text)?
+    } else {
+        let (condition, twin) = err_return_guard_twin(text)?;
+        // `if !a == b` is `(!a) == b`; never read it as `!(a == b)`.
+        if condition.starts_with('!') {
+            return None;
+        }
+        outer_assertion_condition(&twin)?
+    };
+    top_level_equality_operands(&condition)
+}
+
+/// The two sides of a condition's single top-level `==`, split outside
+/// parentheses, brackets, braces, comments and strings.
+fn top_level_equality_operands(condition: &str) -> Option<[String; 2]> {
+    let condition = condition.trim();
+    if condition.starts_with('!') {
+        return None;
+    }
+    let masked = mask_comments_and_strings(condition);
+    let bytes = masked.as_bytes();
+    let mut depth = 0usize;
+    let mut split = None;
+    let mut at = 0;
+    while let Some(&byte) = bytes.get(at) {
+        let next = bytes.get(at + 1).copied();
+        match byte {
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' => depth = depth.checked_sub(1)?,
+            _ if depth > 0 => {}
+            // `<`, `>`, `<=`, `>=`, `->`, `=>`, shifts, generics, closures
+            // and `||` all refuse.
+            b'<' | b'>' | b'|' => return None,
+            b'&' if next == Some(b'&') => return None,
+            b'!' if next == Some(b'=') => return None,
+            b'=' if next == Some(b'=') => {
+                if split.replace(at).is_some() {
+                    return None;
+                }
+                at += 2;
+                continue;
+            }
+            // An assignment or compound assignment is not a comparison.
+            b'=' => return None,
+            _ => {}
+        }
+        at += 1;
+    }
+    if depth != 0 {
+        return None;
+    }
+    let split = split?;
+    let left = condition.get(..split)?.trim();
+    let right = condition.get(split + 2..)?.trim();
+    (!left.is_empty() && !right.is_empty()).then(|| [left.to_string(), right.to_string()])
+}
+
 /// Whether `text` is one plain `assert_eq!` invocation: not
 /// `debug_assert_eq!` (compiled out in release tests), not a crate's own
 /// `*_assert_eq!`, not a path-qualified or repeated one.
 /// The text is exactly one unqualified invocation of `macro_name`.
-fn is_plain_macro(text: &str, macro_name: &str) -> bool {
+pub(in crate::analysis) fn is_plain_macro(text: &str, macro_name: &str) -> bool {
     let masked = mask_comments_and_strings(text);
     let invocations = macro_invocations(&masked);
     let [(name, _)] = invocations.as_slice() else {
@@ -3266,6 +4428,592 @@ fn file_aliases_type(source: &str, name: &str) -> bool {
     whole_word_offsets(&masked, "type")
         .into_iter()
         .any(|offset| starts_with_word(masked[offset + "type".len()..].trim_start(), name))
+}
+
+/// #7097: one file's module scopes — the file top plus every inline
+/// module with a body — each with its direct `use`s and the items that
+/// can take a value call. A bare call resolves through the test's own
+/// scope only, so ancestor scopes are consulted solely as glob targets.
+#[derive(Clone, Debug, Default)]
+struct FileScopes {
+    scopes: Vec<ModuleScope>,
+    /// Every `fn` in the file, at any depth, for test-fn ancestry.
+    fns: Vec<ScopeFn>,
+}
+
+/// #7097: one `fn` item's name and byte span.
+#[derive(Clone, Debug)]
+struct ScopeFn {
+    name: String,
+    start: u32,
+    end: u32,
+}
+
+/// #7097: one module scope: its inline-module stack from the file top
+/// (empty at file top), its byte span, every direct `use` flattened,
+/// every direct value-taking item's name, and macro text that may emit
+/// or mention one.
+#[derive(Clone, Debug)]
+struct ModuleScope {
+    stack: Vec<String>,
+    start: u32,
+    end: u32,
+    uses: Vec<UsePath>,
+    twins: Vec<String>,
+    macro_args: Vec<String>,
+    macro_defs: Vec<String>,
+}
+
+impl OwnerPinSyntax {
+    /// #7097: out-of-line module children, built once per run from the
+    /// recorded module edges. Two children under one (parent, name) —
+    /// cfg'd alternatives — resolve to neither.
+    fn mod_children(&self, index: &RustIndex) -> &BTreeMap<(PathBuf, String), Option<PathBuf>> {
+        self.mod_children.get_or_init(|| {
+            let mut children: BTreeMap<(PathBuf, String), Option<PathBuf>> = BTreeMap::new();
+            for (child, facts) in index.files().iter() {
+                // Only the innermost edge names the direct parent: earlier
+                // edges are the ancestor chain, which every descendant
+                // repeats.
+                let Some(edge) = facts.role_provenance.edges.last() else {
+                    continue;
+                };
+                if edge.kind != SourceRoleProvenanceEdgeKind::Module {
+                    continue;
+                }
+                let Some(name) = module_declaration_name(&edge.declaration) else {
+                    continue;
+                };
+                children
+                    .entry((edge.parent.clone(), name))
+                    .and_modify(|slot| {
+                        if slot.as_ref() != Some(child) {
+                            *slot = None;
+                        }
+                    })
+                    .or_insert_with(|| Some(child.clone()));
+            }
+            children
+        })
+    }
+
+    /// #7097: `file`'s scope table, parsed once per run and shared:
+    /// lookups clone the `Rc`, never the table (#7176 review).
+    fn file_scopes(&self, index: &RustIndex, file: &Path) -> Option<Rc<FileScopes>> {
+        if let Some(known) = self.file_scopes.borrow().get(file) {
+            return known.clone();
+        }
+        let scopes = index
+            .files()
+            .get(file)
+            .and_then(|facts| build_file_scopes(&facts.source))
+            .map(Rc::new);
+        self.file_scopes
+            .borrow_mut()
+            .insert(file.to_path_buf(), scopes.clone());
+        scopes
+    }
+}
+
+/// #7097: the scope table of `source`, or `None` when it does not parse.
+fn build_file_scopes(source: &str) -> Option<FileScopes> {
+    let parse = parse_clean_source_file(source)?;
+    let tree = parse.tree();
+    let end: u32 = tree.syntax().text_range().end().into();
+    let mut scopes = FileScopes::default();
+    scopes.push_scope(tree.syntax(), Vec::new(), 0, end);
+    for func in tree.syntax().descendants().filter_map(ast::Fn::cast) {
+        if let Some(name) = func.name() {
+            let text = name.text().to_string();
+            let range = func.syntax().text_range();
+            let start: u32 = range.start().into();
+            let end: u32 = range.end().into();
+            scopes.fns.push(ScopeFn {
+                name: strip_raw(&text).to_string(),
+                start,
+                end,
+            });
+        }
+    }
+    Some(scopes)
+}
+
+impl FileScopes {
+    /// Record `container` (the file root or an inline module body) as one
+    /// scope, then recurse into its direct child modules.
+    fn push_scope(&mut self, container: &SyntaxNode, stack: Vec<String>, start: u32, end: u32) {
+        let mut scope = ModuleScope {
+            stack,
+            start,
+            end,
+            uses: Vec::new(),
+            twins: Vec::new(),
+            macro_args: Vec::new(),
+            macro_defs: Vec::new(),
+        };
+        let mut children = Vec::new();
+        for item in container.children().filter_map(ast::Item::cast) {
+            scope.absorb(&item);
+            if let ast::Item::Module(module) = &item
+                && let Some(body) = module.item_list()
+                && let Some(name) = module.name()
+            {
+                let text = name.text().to_string();
+                let mut stack = scope.stack.clone();
+                stack.push(strip_raw(&text).to_string());
+                let range = module.syntax().text_range();
+                let start: u32 = range.start().into();
+                let end: u32 = range.end().into();
+                children.push((body.syntax().clone(), stack, start, end));
+            }
+        }
+        self.scopes.push(scope);
+        for (container, stack, start, end) in children {
+            self.push_scope(&container, stack, start, end);
+        }
+    }
+
+    /// The test's own module scope: exact scope first, from the test
+    /// fn's own span — line spans coincide for same-line siblings (`mod
+    /// outer { mod nested { ... #[test] fn check() ... } }` on one line),
+    /// where the line alone resolves to the file top. A macro-generated
+    /// test has no matching `fn` node, so it keeps the line-span fallback
+    /// to the module its invocation expands in. Duplicate `fn` nodes are
+    /// already refused by assertion admission; here they fail closed.
+    fn scope_of_test(&self, source: &str, test: &TestSummary) -> Option<&ModuleScope> {
+        let wanted = strip_raw(&test.name);
+        let line_of = |offset: u32| {
+            source
+                .get(..offset as usize)
+                .map(|prefix| prefix.matches('\n').count() + 1)
+        };
+        let found: Vec<&ScopeFn> = self
+            .fns
+            .iter()
+            .filter(|func| {
+                func.name == wanted
+                    && line_of(func.start).is_some_and(|start| start <= test.end_line)
+                    && line_of(func.end).is_some_and(|end| test.start_line <= end)
+            })
+            .collect();
+        if let [func] = found.as_slice() {
+            let offset = func.start;
+            return self
+                .scopes
+                .iter()
+                .filter(|scope| scope.start <= offset && offset <= scope.end)
+                .max_by_key(|scope| scope.stack.len());
+        }
+        if found.is_empty() {
+            return self.scope_at(source, test.start_line);
+        }
+        None
+    }
+
+    /// The deepest scope containing `line` (1-based) in `source`: the
+    /// test's own module, or the file top.
+    fn scope_at(&self, source: &str, line: usize) -> Option<&ModuleScope> {
+        let mut offset = 0usize;
+        for _ in 1..line {
+            let Some(relative) = source.get(offset..)?.find('\n') else {
+                break;
+            };
+            offset = offset.saturating_add(relative + 1);
+        }
+        let offset = u32::try_from(offset).ok()?;
+        self.scopes
+            .iter()
+            .filter(|scope| scope.start <= offset && offset <= scope.end)
+            .max_by_key(|scope| scope.stack.len())
+    }
+
+    /// The scope with exactly `stack`, when the file declares it.
+    fn scope_with_stack(&self, stack: &[String]) -> Option<&ModuleScope> {
+        self.scopes.iter().find(|scope| scope.stack == stack)
+    }
+}
+
+impl ModuleScope {
+    /// One direct item: `use`s flatten, value-taking items record their
+    /// name, and macros record the text that may emit or mention one. A
+    /// direct `fn` is never a twin: the establish gate already refused
+    /// every other `fn` of the name, so a remaining one is the owner
+    /// itself. Type-only items (`mod`, `trait`, `type`, `enum`, `union`,
+    /// non-tuple `struct`) share no namespace with a value call.
+    fn absorb(&mut self, item: &ast::Item) {
+        match item {
+            ast::Item::Use(item) => {
+                self.uses
+                    .extend(flattened_use_paths(&item.syntax().text().to_string()));
+            }
+            ast::Item::Static(item) => self.twin_name(item.name()),
+            ast::Item::Const(item) => self.twin_name(item.name()),
+            ast::Item::Struct(item) => {
+                // Tuple and unit structs take the value namespace (a unit
+                // struct's constructor collides with an imported fn, E0255;
+                // braced structs do not conflict — both probed with rustc,
+                // #7176 review).
+                if matches!(
+                    item.kind(),
+                    ast::StructKind::Tuple(_) | ast::StructKind::Unit
+                ) {
+                    self.twin_name(item.name());
+                }
+            }
+            ast::Item::ExternBlock(block) => {
+                // Extern items hang under the EXTERN_ITEM_LIST node, not
+                // under the block itself (#7176 review).
+                if let Some(list) = block.extern_item_list() {
+                    for child in list.extern_items() {
+                        match &child {
+                            ast::ExternItem::Fn(item) => self.twin_name(item.name()),
+                            ast::ExternItem::Static(item) => self.twin_name(item.name()),
+                            _ => {}
+                        }
+                    }
+                }
+            }
+            // An invocation may emit the name from its arguments (`emit!(weight)`);
+            // only the token tree counts, never the macro's own name.
+            ast::Item::MacroCall(call) => {
+                if let Some(tree) = call.token_tree() {
+                    self.macro_args.push(tree.syntax().text().to_string());
+                }
+            }
+            // A definition may hardcode the twin; its text decides, as for
+            // types (#6948). The parse is error-free, so no item is unparsed.
+            ast::Item::MacroRules(rules) => {
+                self.macro_defs.push(rules.syntax().text().to_string());
+            }
+            ast::Item::MacroDef(def) => {
+                self.macro_defs.push(def.syntax().text().to_string());
+            }
+            _ => {}
+        }
+    }
+
+    fn twin_name(&mut self, name: Option<ast::Name>) {
+        if let Some(name) = name {
+            let text = name.text().to_string();
+            self.twins.push(strip_raw(&text).to_string());
+        }
+    }
+
+    /// Whether the scope holds a twin of `name`: a value-taking item, a
+    /// macro invocation mentioning it, or a macro definition spelling a
+    /// twin declaration of it.
+    fn has_twin(&self, name: &str) -> bool {
+        let name = strip_raw(name);
+        self.twins.iter().any(|twin| twin == name)
+            || self
+                .macro_args
+                .iter()
+                .any(|text| contains_as_whole_word(&mask_comments_and_strings(text), name))
+            || self
+                .macro_defs
+                .iter()
+                .any(|text| declares_value_twin(&mask_comments_and_strings(text), name))
+    }
+}
+
+/// #7097: where a `use` is read from: its file, that file's source,
+/// and the inline-module stack of the scope holding it.
+#[derive(Clone, Copy)]
+struct ScopeContext<'a> {
+    file: &'a Path,
+    source: &'a str,
+    stack: &'a [String],
+}
+
+/// #7097: the module name a `mod name;` declaration binds, or `None`
+/// when the declaration is unreadable.
+fn module_declaration_name(declaration: &str) -> Option<String> {
+    let mut words = declaration
+        .split_whitespace()
+        .skip_while(|word| *word != "mod");
+    words.next()?;
+    let name = words.next()?.trim_end_matches(';');
+    let name = strip_raw(name);
+    (!name.is_empty() && is_plain_identifier(name)).then(|| name.to_string())
+}
+
+/// Whether masked text declares a value-taking item of `name` outside a
+/// `fn`: a `static`/`const` (any form) or a tuple struct. Type-only
+/// items share no namespace with a value call.
+fn declares_value_twin(masked: &str, name: &str) -> bool {
+    let name = strip_raw(name);
+    ["static", "const"].iter().any(|keyword| {
+        whole_word_offsets(masked, keyword)
+            .into_iter()
+            .any(|offset| {
+                let rest = masked[offset + keyword.len()..].trim_start();
+                // `static mut name` carries a qualifier between the keyword
+                // and the name (#7176 review); `const` never does.
+                let rest = if *keyword == "static" {
+                    skip_mut_qualifier(rest)
+                } else {
+                    rest
+                };
+                strip_item_name(rest, name).is_some()
+            })
+    }) || whole_word_offsets(masked, "struct")
+        .into_iter()
+        .any(|offset| {
+            strip_item_name(masked[offset + "struct".len()..].trim_start(), name)
+                .and_then(skip_generics)
+                // Tuple structs take the call; unit structs collide with an
+                // imported fn (E0255, rustc-probed); braced structs share
+                // no namespace with the call (#7176 review).
+                .is_some_and(|after| after.starts_with('(') || after.starts_with(';'))
+        })
+}
+
+/// The text after a `mut` qualifier, when `rest` opens with one as a
+/// whole word. Anything else (including `mutx`) passes through.
+fn skip_mut_qualifier(rest: &str) -> &str {
+    let Some(after) = rest.strip_prefix("mut") else {
+        return rest;
+    };
+    if after.starts_with(|c: char| c.is_ascii_alphanumeric() || c == '_') {
+        return rest;
+    }
+    after.trim_start()
+}
+
+/// Whether the test body declares a value-taking item of `name`. A body
+/// `fn` or `let` is already refused (`test_body_shadows_owner`); a
+/// `static` (plain or `mut`), `const`, tuple or unit struct there shadows
+/// every import the same way. Items in a nested block or `fn` cannot reach
+/// the call, so counting them over-refuses (residual).
+fn body_defines_value_twin(body: &str, name: &str) -> bool {
+    declares_value_twin(&mask_comments_and_strings(body), name)
+}
+
+/// The text after an item name of `name` (raw marker dropped), or `None`
+/// when `rest` names something else.
+fn strip_item_name<'a>(rest: &'a str, name: &str) -> Option<&'a str> {
+    let rest = strip_raw(rest);
+    let after = rest.strip_prefix(name)?;
+    if after.starts_with(|character: char| character.is_ascii_alphanumeric() || character == '_') {
+        return None;
+    }
+    Some(after.trim_start())
+}
+
+/// The text after one `<...>` generic group, or `text` when it opens
+/// with none; `None` when the group never closes.
+fn skip_generics(text: &str) -> Option<&str> {
+    let Some(rest) = text.strip_prefix('<') else {
+        return Some(text);
+    };
+    let mut depth = 1u32;
+    for (offset, byte) in rest.bytes().enumerate() {
+        match byte {
+            b'<' => depth += 1,
+            b'>' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(rest[offset + 1..].trim_start());
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// #7097: the `use`s of `uses` that bind `name` explicitly, and the glob
+/// imports. A rename to the name (`use x::y as name`) binds it too, so
+/// it counts here; other aliases bind another name. The test file's own
+/// renames refuse file-wide already (`file_renames_to`).
+fn partition_name_uses<'a>(
+    uses: &'a [UsePath],
+    name: &str,
+) -> (Vec<&'a UsePath>, Vec<&'a UsePath>) {
+    let name = strip_raw(name);
+    let mut bindings = Vec::new();
+    let mut globs = Vec::new();
+    for use_path in uses {
+        if use_path.path.ends_with("::*") {
+            globs.push(use_path);
+            continue;
+        }
+        let binds = match use_path.alias.as_deref() {
+            Some(alias) => strip_raw(alias) == name,
+            None => use_path
+                .path
+                .rsplit("::")
+                .next()
+                .is_some_and(|terminal| strip_raw(terminal) == name),
+        };
+        if binds {
+            bindings.push(use_path);
+        }
+    }
+    (bindings, globs)
+}
+
+/// #7097: the crate root file `file` composes under: the outermost
+/// recorded module edge's parent, or the file itself. Unlike
+/// [`target_root`], this ignores the workspace-wide disabled switch and
+/// the recognized-target shape: the manifest authority
+/// (`import_names`) validates the root itself, and the assertion and
+/// file rules already refused include-composed and unresolved files
+/// before this gate runs — so an unrelated unresolvable module
+/// elsewhere keeps other owners pinned, as the file rule requires.
+fn composed_root(file: &Path, index: &RustIndex) -> PathBuf {
+    index
+        .files()
+        .get(file)
+        .and_then(|facts| {
+            facts
+                .role_provenance
+                .edges
+                .first()
+                .map(|edge| edge.parent.clone())
+        })
+        .unwrap_or_else(|| file.to_path_buf())
+}
+
+/// Whether a `use` root segment names a workspace package: the manifest
+/// name or its crate identifier (`foo-bar` imports as `foo_bar`).
+fn crate_names_package(segment: &str, packages: &BTreeSet<String>) -> bool {
+    packages
+        .iter()
+        .any(|name| name == segment || name.replace('-', "_") == segment)
+}
+
+/// An identifier with its raw marker dropped.
+fn strip_raw(text: &str) -> &str {
+    text.strip_prefix("r#").unwrap_or(text)
+}
+
+/// #7097: split a binding `use` path into its root segment and module
+/// segments (raw markers dropped): `demo::scale::weight` gives
+/// (`demo`, [`scale`]). `None` when the path binds another name, has a
+/// single segment (an extern crate in edition 2018+, never the owner
+/// fn), or renames another item to the name.
+fn split_binding_use<'a>(use_path: &'a UsePath, name: &str) -> Option<(&'a str, Vec<&'a str>)> {
+    if use_path
+        .alias
+        .as_deref()
+        .is_some_and(|alias| strip_raw(alias) != strip_raw(name))
+    {
+        return None;
+    }
+    let stripped = use_path.path.strip_prefix("::").unwrap_or(&use_path.path);
+    let segments: Vec<&str> = stripped.split("::").map(strip_raw).collect();
+    let [first, rest @ ..] = segments.as_slice() else {
+        return None;
+    };
+    let terminal = rest.last().copied()?;
+    if strip_raw(terminal) != strip_raw(name) {
+        return None;
+    }
+    Some((*first, rest[..rest.len() - 1].to_vec()))
+}
+
+/// #7097: split a glob `use` path into its root segment and full module
+/// prefix: `demo::scale::*` gives (`demo`, [`scale`]).
+fn split_glob_prefix(path: &str) -> Option<(&str, Vec<&str>)> {
+    let stripped = path.strip_prefix("::").unwrap_or(path);
+    let prefix = stripped.strip_suffix("::*")?;
+    let segments: Vec<&str> = prefix.split("::").map(strip_raw).collect();
+    let [first, rest @ ..] = segments.as_slice() else {
+        return None;
+    };
+    Some((*first, rest.to_vec()))
+}
+
+/// #7097: `pop_super`, climbing past the file top into the declaring
+/// parent through module edges: an out-of-line `tests.rs` at file-top
+/// stack `[]` climbs `super::` into the inline scope holding its `mod`
+/// declaration (#7176 review). Include edges never climb (a textual
+/// paste has no parent module). Each pop consumes one `super`, so the
+/// walk terminates.
+fn pop_super_across_files<'a>(
+    index: &RustIndex,
+    syntax: &OwnerPinSyntax,
+    file: &Path,
+    stack: &[String],
+    first: &str,
+    segments: &[&'a str],
+) -> Option<(PathBuf, Vec<String>, Vec<&'a str>)> {
+    let mut file = file.to_path_buf();
+    let mut module = stack.to_vec();
+    if first == "super" {
+        climb_one_level(index, syntax, &mut file, &mut module)?;
+    }
+    let supers = segments
+        .iter()
+        .take_while(|segment| **segment == "super")
+        .count();
+    for _ in 0..supers {
+        climb_one_level(index, syntax, &mut file, &mut module)?;
+    }
+    if segments[supers..]
+        .iter()
+        .any(|segment| matches!(*segment, "self" | "super" | "crate"))
+    {
+        return None;
+    }
+    Some((file, module, segments[supers..].to_vec()))
+}
+
+/// #7097: climb one `super` level: pop the inline stack, or — at the
+/// file top — continue from the inline scope holding this file's `mod`
+/// declaration in its declaring parent. Include edges never climb.
+fn climb_one_level(
+    index: &RustIndex,
+    syntax: &OwnerPinSyntax,
+    file: &mut PathBuf,
+    stack: &mut Vec<String>,
+) -> Option<()> {
+    if stack.pop().is_some() {
+        return Some(());
+    }
+    let facts = index.files().get(file.as_path())?;
+    let edge = facts.role_provenance.edges.last()?;
+    if edge.kind != SourceRoleProvenanceEdgeKind::Module {
+        return None;
+    }
+    let parent = index.files().get(&edge.parent)?;
+    let scopes = syntax.file_scopes(index, &edge.parent)?;
+    *stack = scopes
+        .scope_at(&parent.data().source, edge.line)?
+        .stack
+        .clone();
+    *file = edge.parent.clone();
+    Some(())
+}
+
+/// #7097: walk `segments` from (`file`, `stack`): each names an inline
+/// child module or a composed out-of-line `mod`. Returns the target's
+/// file and file-relative inline stack, or `None` when a step is
+/// unplaced or ambiguous. Each step consumes a segment, so module
+/// cycles cannot loop.
+fn resolve_module_path(
+    index: &RustIndex,
+    syntax: &OwnerPinSyntax,
+    file: &Path,
+    stack: &[String],
+    segments: &[&str],
+) -> Option<(PathBuf, Vec<String>)> {
+    let mut file = file.to_path_buf();
+    let mut stack = stack.to_vec();
+    for segment in segments {
+        let scopes = syntax.file_scopes(index, &file)?;
+        let mut child = stack.clone();
+        child.push(segment.to_string());
+        if scopes.scope_with_stack(&child).is_some() {
+            stack = child;
+            continue;
+        }
+        let key = (file.clone(), segment.to_string());
+        file = syntax.mod_children(index).get(&key)?.clone()?;
+        stack = Vec::new();
+    }
+    Some((file, stack))
 }
 
 /// Whether another workspace definition of the owner's name could take a
@@ -3596,8 +5344,21 @@ fn test_receiver_type(
     imports_foreign: ForeignImport<'_>,
     owner: OwnerScope<'_>,
 ) -> Option<ReceiverType> {
+    let bindings = receiver_let_bindings(test, receiver)?;
+    if bindings.is_empty() {
+        // No `let` binds the receiver, so it is a path expression: a unit
+        // struct names its own value (`Unit.advance()`).
+        return binding_type(
+            &format!("= {receiver}"),
+            test,
+            test_source,
+            index,
+            imports_foreign,
+            owner,
+        );
+    }
     let mut bound: Option<ReceiverType> = None;
-    for binding in receiver_let_bindings(test, receiver)? {
+    for binding in bindings {
         let receiver_type =
             binding_type(binding, test, test_source, index, imports_foreign, owner)?;
         match &bound {
@@ -3689,7 +5450,11 @@ fn let_bound_owner_call<'a>(
     let masked = mask_comments_and_strings(&test.body);
     let binding_at = binding.as_ptr() as usize - test.body.as_ptr() as usize;
     let let_at = *whole_word_offsets(&masked[..binding_at], "let").last()?;
-    if contains_as_whole_word(&masked[let_at..binding_at], "mut") {
+    // #7066 review: an attribute (`#[cfg(any())] let total = ..;`) may
+    // compile the binding away, leaving the operand naming an outer item.
+    if contains_as_whole_word(&masked[let_at..binding_at], "mut")
+        || masked[..let_at].trim_end().ends_with(']')
+    {
         return None;
     }
     let let_line = test.start_line + masked[..let_at].matches('\n').count();
@@ -4159,6 +5924,29 @@ fn binding_type(
         return Some(ReceiverType::ByteSlice);
     }
     let (initializer, unwrapped) = strip_unwrap(initializer);
+    if !unwrapped
+        && !initializer.is_empty()
+        && initializer
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+    {
+        // `= Unit`: only a unit struct's own name is a value of that type.
+        // `named_or_slice` refuses a lower-case name anyway; checking first
+        // skips the workspace scan for every local-variable receiver.
+        if !initializer.starts_with(|character: char| character.is_ascii_uppercase())
+            || !unit_struct_value(initializer, &test.file, index)
+        {
+            return None;
+        }
+        return named_or_slice(
+            initializer,
+            test,
+            test_source,
+            index,
+            imports_foreign,
+            owner,
+        );
+    }
     let type_end = initializer
         .find(|character: char| !(character.is_ascii_alphanumeric() || character == '_'))?;
     let type_name = &initializer[..type_end];
@@ -4188,6 +5976,210 @@ fn binding_type(
         return None;
     }
     named_or_slice(type_name, test, test_source, index, imports_foreign, owner)
+}
+
+/// Whether the bare name `name`, spelled in `test_file`, evaluates to the
+/// workspace unit struct `name` (#7083). Reading what a bare name resolves
+/// to needs name resolution, so the rule admits only a shape where nothing
+/// else can supply the name:
+///
+/// - the workspace declares it exactly once, as a non-generic unit struct
+///   (`struct name;`), in the test's own file;
+/// - every other spelling of the name in the workspace is an `impl` header
+///   (`impl name {`, `impl Trait for name {`), a method call (`name.f(..)`)
+///   or a `let` initializer (`= name;`). An import, a type position, a raw
+///   identifier (`r#name`), a pattern, an enum variant, a macro argument or
+///   any `const`, `static`, `fn`, `type` or `as` rename refuses;
+/// - no workspace `macro_rules!` matcher takes an `ident` or `tt` fragment,
+///   which could declare the name from a spelling the scan reads as inert,
+///   and no file that defines a macro spells the name, since one `struct
+///   name;` in a macro body declares a type per invocation;
+/// - every workspace glob import is a `crate`, `self` or `super` path
+///   through declared workspace modules, so no glob brings in an outside
+///   item (directly or through a renamed or re-exported outside module);
+/// - the name is not a prelude value, and no workspace file uses `include!`
+///   or `#[path]` (either spelling, including raw `#[r#path]`), which
+///   splice in text the scan never reads.
+///
+/// Items a derive or attribute proc macro emits stay invisible, as for
+/// every other pin rule, as do items an out-of-workspace `macro_rules!`
+/// invocation emits (#7160).
+fn unit_struct_value(name: &str, test_file: &Path, index: &RustIndex) -> bool {
+    // A prelude value (`None`, `Some`, `Ok`, `Err`) is in scope without any
+    // import, so the struct may not be the item the test names.
+    if PRELUDE_VALUES.contains(&name) {
+        return false;
+    }
+    let modules = workspace_module_names(index);
+    let mut declared_in_test_file = 0usize;
+    for (file, facts) in index.files().iter() {
+        let masked = mask_comments_and_strings(&facts.source);
+        // A glob that reaches outside the workspace's modules, in any file,
+        // can bring the name to the test without spelling it.
+        if glob_reaches_outside(&masked, &modules) {
+            return false;
+        }
+        // `include!` and `#[path]` splice in text the index may never
+        // read, so no spelling scan covers them. The cheap filter matches
+        // the bare words: `# [ path` may carry whitespace, and rustc
+        // accepts the raw-identifier spelling `#[r#path = ..]` too
+        // (#7098 review).
+        if masked.contains("include") || masked.contains("path") {
+            let compact = without_rust_whitespace(&masked);
+            if compact.contains("include!")
+                || compact.contains("#[path")
+                || compact.contains("#[r#path")
+            {
+                return false;
+            }
+        }
+        // A macro may take the name as an `ident` or `tt` fragment, or emit
+        // `struct name;` more than once from one spelling in its body.
+        if masked.contains("macro_rules") {
+            let compact = without_rust_whitespace(&masked);
+            if compact.contains(":ident")
+                || compact.contains(":tt")
+                || !whole_word_offsets(&masked, name).is_empty()
+            {
+                return false;
+            }
+        }
+        if !facts.source.contains(name) {
+            continue;
+        }
+        for offset in whole_word_offsets(&masked, name) {
+            let before = masked[..offset].trim_end();
+            let after = masked[offset + name.len()..].trim_start();
+            let word_start = before
+                .rfind(|character: char| !(character.is_ascii_alphanumeric() || character == '_'))
+                .map_or(0, |position| position + 1);
+            let word = &before[word_start..];
+            let item_end = after.starts_with('{') || starts_with_word(after, "where");
+            let inert = match word {
+                "struct" if after.starts_with(';') && file.as_path() == test_file => {
+                    declared_in_test_file += 1;
+                    true
+                }
+                "impl" | "for" => item_end,
+                "" => {
+                    (after.starts_with('.') && !after.starts_with(".."))
+                        || (before.ends_with('=')
+                            && !before.ends_with("==")
+                            && !before.ends_with("!=")
+                            && !before.ends_with("<=")
+                            && !before.ends_with(">=")
+                            && after.starts_with(';'))
+                }
+                _ => false,
+            };
+            if !inert {
+                return false;
+            }
+        }
+    }
+    declared_in_test_file == 1
+}
+
+/// The prelude's value-namespace names a unit struct could share.
+const PRELUDE_VALUES: &[&str] = &["None", "Some", "Ok", "Err"];
+
+/// `text` without the characters rustc lexes as whitespace (Unicode
+/// `Pattern_White_Space`: `char::is_whitespace` plus the left-to-right and
+/// right-to-left marks).
+fn without_rust_whitespace(text: &str) -> String {
+    text.chars()
+        .filter(|character| {
+            !(character.is_whitespace() || matches!(character, '\u{200E}' | '\u{200F}'))
+        })
+        .collect()
+}
+
+/// Every name a workspace file declares with `mod`, less every name a `use`
+/// or `extern crate` anywhere in the workspace may introduce. Names are not
+/// resolved per crate or scope, so `use std::u32 as nums;` in one crate and
+/// `mod nums` in another must not let `use crate::nums::*` pass (#7098
+/// review): a segment that some import binds is never treated as a
+/// workspace module.
+fn workspace_module_names(index: &RustIndex) -> BTreeSet<String> {
+    let mut modules = BTreeSet::new();
+    let mut imported = BTreeSet::new();
+    for (_, facts) in index.files().iter() {
+        let masked = mask_comments_and_strings(&facts.source);
+        for offset in whole_word_offsets(&masked, "mod") {
+            let rest = masked[offset + "mod".len()..].trim_start();
+            let end = rest
+                .find(|character: char| !(character.is_ascii_alphanumeric() || character == '_'))
+                .unwrap_or(rest.len());
+            if end > 0 {
+                modules.insert(rest[..end].to_string());
+            }
+        }
+        for keyword in ["use", "extern"] {
+            for offset in whole_word_offsets(&masked, keyword) {
+                let rest = &masked[offset + keyword.len()..];
+                let Some(end) = rest.find(';') else {
+                    continue;
+                };
+                imported.extend(import_bound_names(&rest[..end]));
+            }
+        }
+    }
+    modules.retain(|module| !imported.contains(module));
+    modules
+}
+
+/// Every identifier in an import statement that is not followed by `::`
+/// (Rust whitespace allowed between): each name the statement may bind,
+/// whether a leaf, a group member or an `as` rename, plus harmless keywords.
+fn import_bound_names(statement: &str) -> Vec<String> {
+    let mut names = Vec::new();
+    let mut position = 0;
+    while position < statement.len() {
+        let rest = &statement[position..];
+        let length = rest
+            .find(|character: char| !(character.is_alphanumeric() || character == '_'))
+            .unwrap_or(rest.len());
+        if length == 0 {
+            position += rest.chars().next().map_or(1, char::len_utf8);
+            continue;
+        }
+        let word = &rest[..length];
+        let next = rest[length..].trim_start_matches(|character: char| {
+            character.is_whitespace() || matches!(character, '\u{200E}' | '\u{200F}')
+        });
+        if !next.starts_with("::") {
+            names.push(word.to_string());
+        }
+        position += length;
+    }
+    names
+}
+
+/// Whether `masked` holds a glob `use` that may reach items outside the
+/// workspace's own modules. Only a plain `crate::`, `self::` or `super::`
+/// path whose further segments are `super` or declared module names
+/// passes. A foreign root, a renamed or re-exported outside module
+/// (`use std::u32 as nums;` then `use crate::nums::*`), an enum's variants
+/// and a glob inside a `{..}` group all refuse.
+fn glob_reaches_outside(masked: &str, modules: &BTreeSet<String>) -> bool {
+    whole_word_offsets(masked, "use").into_iter().any(|start| {
+        let rest = &masked[start + "use".len()..];
+        let Some(end) = rest.find(';') else {
+            return false;
+        };
+        let statement = without_rust_whitespace(&rest[..end]);
+        if !statement.contains('*') {
+            return false;
+        }
+        let Some(path) = statement.trim_start_matches("::").strip_suffix("::*") else {
+            return true;
+        };
+        let mut segments = path.split("::");
+        let rooted = segments
+            .next()
+            .is_some_and(|root| matches!(root, "crate" | "self" | "super"));
+        !(rooted && segments.all(|segment| segment == "super" || modules.contains(segment)))
+    })
 }
 
 /// The initializer without a trailing `?`, `.unwrap()` or `.expect(..)`,
@@ -5055,11 +7047,15 @@ const BY_VALUE_PRELUDE_METHODS: &[&str] = &[
     "chain",
     "clamp",
     "cloned",
+    // Iterator's by-value comparisons (`self`) run before a trait's `&self`
+    // method of the same name (#7083 review).
+    "cmp",
     "collect",
     "copied",
     "count",
     "cycle",
     "enumerate",
+    "eq",
     "filter",
     "filter_map",
     "find",
@@ -5069,13 +7065,23 @@ const BY_VALUE_PRELUDE_METHODS: &[&str] = &[
     "fold",
     "for_each",
     "fuse",
+    "ge",
+    "gt",
     "inspect",
     "into",
     "into_iter",
+    // Edition 2024 prelude: `IntoFuture` for every `Future` (#7083).
+    "into_future",
+    // `Iterator::is_partitioned` is still unstable on the supported 1.95
+    // toolchain, so the name can only spell a custom default: listing it
+    // here would refuse a genuine discriminator (#7098 review). Do not
+    // re-add until the std method stabilizes.
     "is_sorted",
     "is_sorted_by",
     "is_sorted_by_key",
     "last",
+    "le",
+    "lt",
     "map",
     "map_while",
     "max",
@@ -5084,7 +7090,9 @@ const BY_VALUE_PRELUDE_METHODS: &[&str] = &[
     "min",
     "min_by",
     "min_by_key",
+    "ne",
     "nth",
+    "partial_cmp",
     "partition",
     "peekable",
     "position",

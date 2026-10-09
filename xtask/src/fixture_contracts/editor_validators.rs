@@ -144,41 +144,57 @@ fn validate_editor_commands_name_selected_root(
     Ok(())
 }
 
-/// Whether `text` holds `--root .` or `--root=.` as a whole argument: the
-/// dot is not the start of a longer path such as `./sub` or `.cache`, so any
-/// quote, bracket, separator or escape may follow it. A root inside a
-/// single-quoted option value (`--verify-command 'ripr check --root .'`) is
-/// recorded data, which the server leaves as is, not the copied command's root.
+/// Whether `text` holds `--root .`, `--root  .` (two spaces), `--root=.`, or
+/// a simply quoted `.` as a whole argument: the dot is not the start of a
+/// longer path such as `./sub` or `.cache`, so any quote, bracket, separator
+/// or escape may follow it. A root inside a quoted option value
+/// (`--verify-command 'ripr check --root .'`) is recorded data, which the
+/// server leaves as is, not the copied command's root.
 fn contains_portable_root_arg(text: &str) -> bool {
-    ["--root .", "--root=.", "--root '.'", "--root \".\""]
-        .iter()
-        .any(|form| {
-            text.match_indices(form).any(|(index, needle)| {
-                let whole = text[index + needle.len()..]
-                    .chars()
-                    .next()
-                    .is_none_or(|next| {
-                        !(next.is_alphanumeric() || matches!(next, '/' | '.' | '_' | '-'))
-                    });
-                whole && !inside_quoted_option_value(text, index)
-            })
+    [
+        "--root .",
+        "--root  .",
+        "--root=.",
+        "--root '.'",
+        "--root \".\"",
+    ]
+    .iter()
+    .any(|form| {
+        text.match_indices(form).any(|(index, needle)| {
+            let whole = text[index + needle.len()..]
+                .chars()
+                .next()
+                .is_none_or(|next| {
+                    !(next.is_alphanumeric() || matches!(next, '/' | '.' | '_' | '-'))
+                });
+            whole && !inside_quoted_option_value(text, index)
         })
+    })
 }
 
-/// Whether `index` falls inside a `'...'` span on its line that opens as the
-/// value of a `--flag` (`--flag '` or `--flag='`).
+/// Whether `index` falls inside a `'...'` or `"..."` span on its line that
+/// opens as the value of a `--flag` (`--flag '` / `--flag="`). Both quote
+/// kinds are tracked so an apostrophe inside a double-quoted value cannot
+/// hide a later top-level `--root .` (#7054).
 fn inside_quoted_option_value(text: &str, index: usize) -> bool {
     let line_start = text[..index].rfind('\n').map_or(0, |at| at + 1);
-    let mut open = None;
+    let mut quote = None;
+    let mut quote_at = None;
     for (offset, ch) in text[line_start..index].char_indices() {
-        if ch == '\'' {
-            open = match open {
-                Some(_) => None,
-                None => Some(line_start + offset),
-            };
+        match (quote, ch) {
+            (Some(active), value) if value == active => {
+                quote = None;
+                quote_at = None;
+            }
+            (Some(_), _) => {}
+            (None, '"' | '\'') => {
+                quote = Some(ch);
+                quote_at = Some(line_start + offset);
+            }
+            _ => {}
         }
     }
-    let Some(quote) = open else {
+    let Some(quote) = quote_at else {
         return false;
     };
     let before = text[line_start..quote].trim_end_matches([' ', '=']);
@@ -1758,6 +1774,8 @@ mod tests {
             "--root .\t--json",
             "--root .\r\n",
             "ripr agent verify --root=. --json",
+            "ripr agent verify --root  . --json",
+            "ripr agent verify --note=\"it's\" --root . --json",
         ] {
             assert!(contains_portable_root_arg(text), "{text:?}");
         }
@@ -1769,6 +1787,7 @@ mod tests {
             "ripr agent verify --root=./sub",
             "ripr receipt write --verify-command 'ripr check --root . --json' --root <root>",
             "ripr receipt write --verify-command='ripr check --root=.' --root <root>",
+            "ripr receipt write --verify-command \"ripr check --root . --json\" --root <root>",
         ] {
             assert!(!contains_portable_root_arg(text), "{text:?}");
         }

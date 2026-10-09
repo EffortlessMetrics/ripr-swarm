@@ -63,6 +63,10 @@ pub(in crate::analysis) struct WrapperEntryPairing<'a> {
 ///
 /// `wrapper_entry` carries the RIPR-SPEC-0159 chain when the owner is a
 /// helper reached through a wrapper; see [`WrapperEntryPairing`].
+#[allow(
+    clippy::too_many_arguments,
+    reason = "boundary pairing's admission callbacks plus the optional wrapper entry and #6482 helper loan"
+)]
 pub(in crate::analysis) fn has_same_test_boundary_oracle_pairing(
     probe: &Probe,
     owner_fn: Option<&FunctionSummary>,
@@ -105,6 +109,10 @@ pub(in crate::analysis) fn has_same_test_boundary_oracle_pairing(
     })
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "mirrors the grouped same-test pairing inputs plus the #6482 helper loan"
+)]
 fn test_pairs_boundary_input_with_oracle(
     probe: &Probe,
     owner: &FunctionSummary,
