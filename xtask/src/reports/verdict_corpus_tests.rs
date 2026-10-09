@@ -1174,7 +1174,7 @@ fn corpus_records_load_in_file_name_order_and_must_match_their_ids() -> Result<(
         );
     }
     assert!(
-        !violations.iter().any(|v| v.starts_with("cases/a-case")),
+        !violations.iter().any(|v| v.starts_with("cases/a-ord")),
         "{violations:#?}"
     );
     Ok(())
