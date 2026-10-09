@@ -2,6 +2,7 @@
 
 agent_card_refusal_kind|budget_overflow|ripr agent card typed refusal kind: the card builder, route gate, or budget refused to mint the card; fall back to the canonical packet.
 agent_card_refusal_kind|identity_unnameable|ripr agent card typed refusal kind: nothing on the seam names a portable workspace identity; retrieve the full packet instead.
+agent_card_refusal_kind|incomplete_inventory|ripr agent card typed refusal kind: the seam candidate inventory was truncated by the repo seam limit, so nested same-kind siblings may be missing; raise or clear the limit, or retrieve the full packet.
 agent_card_refusal_kind|policy_omitted|ripr agent card typed refusal kind: the seam's grip class is omitted from agent results by policy; check the agent brief policy config.
 agent_card_refusal_kind|seam_not_found|ripr agent card typed refusal kind: the requested seam id names no seam in the current inventory; re-list seams or correct the id.
 agent_card_refusal_kind|witness_unavailable|ripr agent card typed refusal kind: the witness analysis could not produce the seam's witness; rerun the analysis or pick another seam.

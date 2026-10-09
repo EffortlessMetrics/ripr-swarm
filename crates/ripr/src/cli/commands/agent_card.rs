@@ -10,8 +10,9 @@
 //!
 //! #5007 (RIPR-SPEC-0202): the adapter also owns the typed-refusal envelope.
 //! Every deliberate named refusal of the handoff — seam-not-found,
-//! policy-omitted, witness-unavailable, identity-unnameable, and
-//! budget-overflow — renders one versioned `agent_card_refusal` document on
+//! policy-omitted, witness-unavailable, identity-unnameable,
+//! budget-overflow, and incomplete-inventory — renders one versioned
+//! `agent_card_refusal` document on
 //! stderr under `--json` and maps to the decision exit code 3, so an
 //! orchestrator branches on the exit status and the typed `error.kind`
 //! alone. Human prose stays the non-authority rendering of the kind; the
@@ -141,7 +142,9 @@ fn refusal_remedy_route(
         AgentCardRefusalKind::WitnessUnavailable => {
             format!("ripr check --root {root} --json")
         }
-        AgentCardRefusalKind::IdentityUnnameable | AgentCardRefusalKind::BudgetOverflow => {
+        AgentCardRefusalKind::IdentityUnnameable
+        | AgentCardRefusalKind::BudgetOverflow
+        | AgentCardRefusalKind::IncompleteInventory => {
             crate::app::repair_card_handoff::bound_packet_command(root_path, seam_id)
         }
     }
@@ -149,9 +152,16 @@ fn refusal_remedy_route(
 
 fn render_agent_card(options: &AgentCardOptions) -> Result<RepairCardV1, AgentCardError> {
     let config = load_for_root(&options.root).map_err(AgentCardError::operational)?;
-    let (classified, _) =
+    let (classified, limit_info) =
         analysis::inventory_classified_seams_at_with_config(&options.root, &config)
             .map_err(AgentCardError::operational)?;
+    if let Some(refusal) = truncated_inventory_refusal(&limit_info, &options.seam_id) {
+        // #7179 review: a capped candidate inventory can omit a nested
+        // same-kind sibling, so most-specific selection could credit this
+        // outer seam with an inner seam's finding. The card refuses instead
+        // of binding against an incomplete candidate set.
+        return Err(refusal);
+    }
     let entry = classified
         .iter()
         .find(|entry| entry.seam.id().as_str() == options.seam_id)
@@ -184,7 +194,34 @@ fn render_agent_card(options: &AgentCardOptions) -> Result<RepairCardV1, AgentCa
         ));
     }
 
-    crate::app::repair_card_handoff::repair_card_for_entry(entry, &options.root, &config)
+    crate::app::repair_card_handoff::repair_card_for_entry(
+        entry,
+        &options.root,
+        &config,
+        &classified,
+    )
+}
+
+/// The typed refusal for a truncated seam candidate inventory: `Some` only
+/// when the repo seam limit cut the inventory, because the card's sibling
+/// join (#7179) needs every same-kind candidate to pick the most-specific
+/// span. `None` keeps the complete-inventory behavior byte-identical.
+fn truncated_inventory_refusal(
+    limit_info: &Option<crate::analysis::SeamLimitInfo>,
+    seam_id: &str,
+) -> Option<AgentCardError> {
+    limit_info.as_ref().map(|limit| {
+        AgentCardError::refusal(
+            AgentCardRefusalKind::IncompleteInventory,
+            format!(
+                "agent card seam_id {seam_id} was refused: the seam candidate inventory was \
+                 truncated by the repo seam limit ({} of {} seams analyzed), so nested same-kind \
+                 siblings may be missing and the card refuses to bind. Raise or clear \
+                 RIPR_REPO_EXPOSURE_SEAM_LIMIT and re-run, or retrieve the full packet.",
+                limit.analyzed, limit.total
+            ),
+        )
+    })
 }
 
 /// The default human output: the card's typed fields, in card order,
@@ -393,6 +430,11 @@ mod tests {
                 "budget_overflow",
                 "ripr agent packet --root ",
             ),
+            (
+                AgentCardRefusalKind::IncompleteInventory,
+                "incomplete_inventory",
+                "ripr agent packet --root ",
+            ),
         ] {
             let options = AgentCardOptions {
                 root: std::path::PathBuf::from("."),
@@ -434,13 +476,49 @@ mod tests {
             // the process working directory or a bare seam.
             if matches!(
                 expected_kind,
-                "policy_omitted" | "identity_unnameable" | "budget_overflow"
+                "policy_omitted"
+                    | "identity_unnameable"
+                    | "budget_overflow"
+                    | "incomplete_inventory"
             ) && !remedy.contains("--seam-id seam-a")
             {
                 return Err(format!(
                     "{expected_kind}: remedy must carry the asked-for seam id: {remedy}"
                 ));
             }
+        }
+        Ok(())
+    }
+
+    /// #7179 review: a truncated candidate inventory refuses the card with
+    /// the typed `incomplete_inventory` kind and names the governing limit;
+    /// a complete inventory keeps the existing behavior (no refusal).
+    #[test]
+    fn truncated_inventory_refuses_and_complete_inventory_does_not() -> Result<(), String> {
+        use crate::analysis::{SeamLimitInfo, SeamLimitSource};
+        if truncated_inventory_refusal(&None, "seam-a").is_some() {
+            return Err("a complete inventory must not refuse the card".to_string());
+        }
+        let limit = SeamLimitInfo {
+            analyzed: 1,
+            total: 4,
+            source: SeamLimitSource::Configured,
+        };
+        let Some(AgentCardError::Refusal { kind, message }) =
+            truncated_inventory_refusal(&Some(limit), "seam-a")
+        else {
+            return Err("a truncated inventory must refuse the card".to_string());
+        };
+        if kind != AgentCardRefusalKind::IncompleteInventory {
+            return Err(format!("wrong refusal kind: {:?}", kind));
+        }
+        if !message.contains("RIPR_REPO_EXPOSURE_SEAM_LIMIT")
+            || !message.contains("1 of 4")
+            || !message.contains("seam-a")
+        {
+            return Err(format!(
+                "refusal must name the limit and the seam: {message}"
+            ));
         }
         Ok(())
     }

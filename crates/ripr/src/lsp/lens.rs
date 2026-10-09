@@ -413,6 +413,7 @@ mod tests {
             analysis_outcome: None,
             diagnostic_profile: crate::config::LspDiagnosticProfile::Full,
             classified_seams: Vec::new(),
+            repair_card_candidate_seams: None,
             gap_artifacts: Vec::<ValidatedGapArtifact>::new(),
             gap_artifact_rejections: Vec::<GapArtifactRejection>::new(),
             harness_facts: super::super::state::HarnessFactsOnSnapshot::NotRegistered,

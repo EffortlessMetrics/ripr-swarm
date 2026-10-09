@@ -294,6 +294,24 @@ pub(crate) struct SeamSpan {
     pub(crate) end_column: usize,
 }
 
+impl SeamSpan {
+    pub(crate) fn start_point(&self) -> (usize, usize) {
+        (self.start_line, self.start_column)
+    }
+
+    pub(crate) fn end_point(&self) -> (usize, usize) {
+        (self.end_line, self.end_column)
+    }
+
+    /// Whether this span strictly encloses another span: this span covers the
+    /// other span, and the two spans are not identical (#7179).
+    pub(crate) fn strictly_encloses(&self, other: &SeamSpan) -> bool {
+        self != other
+            && self.start_point() <= other.start_point()
+            && other.end_point() <= self.end_point()
+    }
+}
+
 /// Line-start byte offsets for `source`, so callers deriving many spans
 /// from one file pay the scan once instead of once per shape.
 pub(crate) fn build_line_starts(source: &str) -> Vec<usize> {
@@ -533,6 +551,14 @@ impl RepoSeam {
     }
     pub(crate) fn owner_call(&self) -> &OwnerCallShape {
         &self.owner_call
+    }
+    /// Whether this seam strictly encloses another seam: both seams carry
+    /// parser spans and this seam's span strictly encloses the other's span (#7179).
+    pub(crate) fn strictly_encloses(&self, other: &RepoSeam) -> bool {
+        match (self.span(), other.span()) {
+            (Some(outer_span), Some(inner_span)) => outer_span.strictly_encloses(&inner_span),
+            _ => false,
+        }
     }
 }
 
@@ -1060,5 +1086,53 @@ mod tests {
         let shaped = seam.with_owner_call(OwnerCallShape::Free);
         assert_eq!(shaped.owner_call(), &OwnerCallShape::Free);
         Ok(())
+    }
+
+    #[test]
+    fn seam_span_strictly_encloses_proper_subsets_only() {
+        let outer = SeamSpan {
+            start_line: 2,
+            start_column: 1,
+            end_line: 4,
+            end_column: 10,
+        };
+        let inner = SeamSpan {
+            start_line: 2,
+            start_column: 5,
+            end_line: 2,
+            end_column: 11,
+        };
+        assert!(outer.strictly_encloses(&inner));
+        assert!(!inner.strictly_encloses(&outer));
+        assert!(!outer.strictly_encloses(&outer));
+
+        // Same line, column subset
+        let same_line_outer = SeamSpan {
+            start_line: 10,
+            start_column: 5,
+            end_line: 10,
+            end_column: 30,
+        };
+        let same_line_inner = SeamSpan {
+            start_line: 10,
+            start_column: 10,
+            end_line: 10,
+            end_column: 20,
+        };
+        assert!(same_line_outer.strictly_encloses(&same_line_inner));
+        assert!(!same_line_inner.strictly_encloses(&same_line_outer));
+
+        // Equal spans do not strictly enclose
+        assert!(!same_line_outer.strictly_encloses(&same_line_outer));
+
+        // Disjoint spans
+        let disjoint = SeamSpan {
+            start_line: 11,
+            start_column: 1,
+            end_line: 12,
+            end_column: 1,
+        };
+        assert!(!outer.strictly_encloses(&disjoint));
+        assert!(!disjoint.strictly_encloses(&outer));
     }
 }

@@ -1006,6 +1006,7 @@ fn backend_code_lens_handler_delegates_to_lens_helper() -> Result<(), String> {
         analysis_outcome: None,
         diagnostic_profile: crate::config::LspDiagnosticProfile::Full,
         classified_seams: Vec::new(),
+        repair_card_candidate_seams: None,
         gap_artifacts: Vec::new(),
         gap_artifact_rejections: Vec::new(),
         harness_facts: HarnessFactsOnSnapshot::NotRegistered,
@@ -4706,6 +4707,8 @@ fn repair_card_action_fails_closed_outside_a_git_workspace() -> Result<(), Strin
         Vec::new(),
     );
     snapshot.classified_seams = vec![seam.clone()];
+    // The card must fail closed on the git probe, not on missing candidates.
+    snapshot.repair_card_candidate_seams = Some(vec![seam.clone()]);
     let actions = code_action_response(
         &code_action_params_for(uri, diagnostic.range.start.line, vec![diagnostic])?,
         Some(&snapshot),
@@ -4752,6 +4755,7 @@ fn seam_code_actions_include_the_assembled_repair_card_in_a_git_workspace() -> R
         Vec::new(),
     );
     snapshot.classified_seams = vec![seam.clone()];
+    snapshot.repair_card_candidate_seams = Some(vec![seam.clone()]);
     let actions = code_action_response(
         &code_action_params_for(uri, diagnostic.range.start.line, vec![diagnostic])?,
         Some(&snapshot),
@@ -4881,6 +4885,7 @@ fn seam_repair_card_binds_a_finding_witness_in_a_git_workspace() -> Result<(), S
         vec![finding.clone()],
     );
     snapshot.classified_seams = vec![seam.clone()];
+    snapshot.repair_card_candidate_seams = Some(vec![seam.clone()]);
     let actions = code_action_response(
         &code_action_params_for(uri, diagnostic.range.start.line, vec![diagnostic])?,
         Some(&snapshot),
@@ -4928,6 +4933,216 @@ fn seam_repair_card_binds_a_finding_witness_in_a_git_workspace() -> Result<(), S
     Ok(())
 }
 
+/// #7179 review: the card join must match against the complete raw seam
+/// inventory, never the diagnostic projection. The projection here hides the
+/// non-surfaced inner twin while the surfaced outer stays; with the raw
+/// candidates the outer never acquires the inner finding's witness, the inner
+/// seam keeps its uniquely identified witness, and a snapshot without usable
+/// candidates (deferred, disabled, or truncated inventory) omits the card
+/// entirely instead of binding against an incomplete set.
+#[test]
+fn seam_repair_card_binds_only_through_the_complete_raw_candidates() -> Result<(), String> {
+    use crate::analysis::seams::{
+        ExpectedSink, RepoSeam, RequiredDiscriminator, SeamKind, SeamSpan,
+    };
+    use crate::analysis::test_grip_evidence::{
+        RelatedTestGrip, TestGripEvidence, TestTargetEvidence,
+    };
+
+    // One function, two same-kind predicate boundaries: the outer span
+    // strictly encloses the inner span and both contain the producer's probe
+    // line. Live rust-index owner spelling so the producer gap names both.
+    fn nested_card_seam(byte_offset: usize, span: SeamSpan) -> crate::analysis::ClassifiedSeam {
+        let seam = RepoSeam::new(
+            "src/pricing.rs",
+            "src/pricing.rs::discounted_total",
+            SeamKind::PredicateBoundary,
+            byte_offset,
+            2,
+            "amount > discount_threshold",
+            RequiredDiscriminator::BoundaryValue {
+                description: "amount > discount_threshold".to_string(),
+            },
+            ExpectedSink::ReturnValue,
+        )
+        .with_span(span);
+        let seam_id = seam.id().clone();
+        crate::analysis::ClassifiedSeam {
+            seam,
+            evidence: TestGripEvidence {
+                seam_id,
+                related_tests: vec![std::sync::Arc::new(RelatedTestGrip {
+                    test_name: "discounted_total_boundary".to_string(),
+                    file: PathBuf::from("tests/pricing.rs"),
+                    line: 12,
+                    test_target: Some(TestTargetEvidence::fixture(
+                        "discounted_total_boundary",
+                        Path::new("tests/pricing.rs"),
+                        12,
+                    )),
+                    oracle_kind: OracleKind::ExactValue,
+                    oracle_strength: OracleStrength::Strong,
+                    evidence_summary: "asserts the discounted total".to_string(),
+                    relation_reason: crate::domain::RelationReason::DirectOwnerCall,
+                    relation_confidence: crate::domain::RelationConfidence::High,
+                })],
+                reach: crate::domain::StageEvidence::new(
+                    crate::domain::StageState::Yes,
+                    crate::domain::Confidence::High,
+                    "related test calls owner",
+                ),
+                activate: crate::domain::StageEvidence::new(
+                    crate::domain::StageState::Yes,
+                    crate::domain::Confidence::High,
+                    "test reaches branch",
+                ),
+                propagate: crate::domain::StageEvidence::new(
+                    crate::domain::StageState::Yes,
+                    crate::domain::Confidence::Medium,
+                    "return value sink",
+                ),
+                observe: crate::domain::StageEvidence::new(
+                    crate::domain::StageState::Yes,
+                    crate::domain::Confidence::Medium,
+                    "exact assertion",
+                ),
+                discriminate: crate::domain::StageEvidence::new(
+                    crate::domain::StageState::No,
+                    crate::domain::Confidence::Medium,
+                    "boundary value missing",
+                ),
+                observed_values: Vec::new(),
+                missing_discriminators: Vec::new(),
+                statically_contradicted_related_tests: 0,
+                new_test_target: None,
+            },
+            class: crate::analysis::seams::SeamGripClass::WeaklyGripped,
+        }
+    }
+
+    let root = unique_lsp_test_root("repair-card-raw-candidates")?;
+    run_lsp_scope_git(root.path(), &["init"])?;
+    run_lsp_scope_git(
+        root.path(),
+        &["config", "user.email", "ripr@example.invalid"],
+    )?;
+    run_lsp_scope_git(root.path(), &["config", "user.name", "RIPR Test"])?;
+    std::fs::write(root.path().join("fixture.txt"), "fixture\n")
+        .map_err(|error| format!("write fixture file failed: {error}"))?;
+    run_lsp_scope_git(root.path(), &["add", "."])?;
+    run_lsp_scope_git(root.path(), &["commit", "-m", "base"])?;
+
+    let outer = nested_card_seam(
+        12,
+        SeamSpan {
+            start_line: 2,
+            start_column: 1,
+            end_line: 4,
+            end_column: 10,
+        },
+    );
+    let inner = nested_card_seam(
+        16,
+        SeamSpan {
+            start_line: 2,
+            start_column: 5,
+            end_line: 2,
+            end_column: 11,
+        },
+    );
+    // The finding's producer gap id is deliberately NOT the seam content-hash
+    // id, so the join must run the producer branch where the sibling
+    // most-specific selection lives.
+    let producer_gap_id = "gap:rust:src/pricing.rs:discounted_total:predicate_boundary:predicate:amount>discount_threshold";
+    let outer_canonical = repair_packet_eligibility(&outer)
+        .readiness
+        .canonical_gap_id
+        .clone()
+        .ok_or("fixture seam must own a canonical gap identity")?;
+    if outer_canonical == producer_gap_id {
+        return Err("the producer id must differ from the content-hash id".to_string());
+    }
+    let mut finding = sample_finding();
+    finding.probe.location.line = 2;
+    finding.canonical_gap = Some(crate::domain::FindingCanonicalGap {
+        id: producer_gap_id.to_string(),
+        language: "rust".to_string(),
+        file: "src/pricing.rs".to_string(),
+        owner: "discounted_total".to_string(),
+        behavior_kind: "predicate_boundary".to_string(),
+        probe_kind: "predicate".to_string(),
+        normalized_discriminator: "amount>discount_threshold".to_string(),
+    });
+
+    let uri = file_uri_for_path(&root.path().join("src/pricing.rs"))?;
+    let mut snapshot = sample_analysis_snapshot(
+        root.path().to_path_buf(),
+        uri,
+        Vec::new(),
+        vec![finding.clone()],
+    );
+    // The diagnostic projection hid the inner seam (its grip class is not
+    // surfaced); only the outer remained.
+    snapshot.classified_seams = vec![outer.clone()];
+    snapshot.repair_card_candidate_seams = Some(vec![outer.clone(), inner.clone()]);
+
+    let outer_card = super::repair_card::seam_repair_card(&outer, &snapshot)
+        .ok_or("the outer card must still assemble from a complete inventory")?;
+    if outer_card.subject.finding_id.is_some() {
+        return Err("the outer seam must never acquire the inner seam's witness".to_string());
+    }
+    let inner_card = super::repair_card::seam_repair_card(&inner, &snapshot)
+        .ok_or("the inner card must assemble")?;
+    if inner_card.subject.finding_id.as_deref() != Some(finding.id.as_str()) {
+        return Err("the uniquely most-specific inner seam must keep its witness".to_string());
+    }
+    // A snapshot without usable candidates (deferred, disabled, or truncated
+    // seam inventory) omits the card instead of binding against the projection.
+    snapshot.repair_card_candidate_seams = None;
+    if super::repair_card::seam_repair_card(&outer, &snapshot).is_some() {
+        return Err("no usable candidates must fail the card closed".to_string());
+    }
+    Ok(())
+}
+
+/// #7179 review: a full refresh carries the complete raw seam inventory for
+/// the repair-card sibling join (a superset of the diagnostic projection),
+/// and a deferred interactive refresh carries none.
+#[test]
+fn refresh_carries_repair_card_candidates_only_for_a_complete_inventory() -> Result<(), String> {
+    let fixture = boundary_gap_git_fixture_root("repair-card-candidates")?;
+    let root = fixture.path();
+    let config = boundary_gap_lsp_config(crate::config::RiprConfig::default());
+    let full = workspace_diagnostics_with_config(root, &config, false)?;
+    let candidates = full
+        .snapshot
+        .repair_card_candidate_seams
+        .as_ref()
+        .ok_or("a complete seam inventory must carry repair-card candidates")?;
+    if candidates.is_empty() {
+        return Err("the boundary-gap fixture must inventory at least one seam".to_string());
+    }
+    if full.snapshot.classified_seams.is_empty() {
+        return Err("the fixture must surface at least one seam diagnostic".to_string());
+    }
+    for seam in &full.snapshot.classified_seams {
+        if !candidates
+            .iter()
+            .any(|candidate| candidate.seam.id() == seam.seam.id())
+        {
+            return Err(format!(
+                "surfaced seam {} dropped from the raw candidates",
+                seam.seam.id().as_str()
+            ));
+        }
+    }
+    let deferred = workspace_diagnostics_with_config(root, &config, true)?;
+    if deferred.snapshot.repair_card_candidate_seams.is_some() {
+        return Err("a deferred seam inventory must carry no repair-card candidates".to_string());
+    }
+    Ok(())
+}
+
 /// #4668: a seam diagnostic the current snapshot no longer carries suppresses
 /// the repair card action with the rest of the seam surface — a stale card
 /// route is never offered as current.
@@ -4946,6 +5161,8 @@ fn repair_card_action_suppressed_for_stale_seam_diagnostic() -> Result<(), Strin
         Vec::new(),
     );
     snapshot.classified_seams = vec![seam.clone()];
+    // The suppression must come from staleness, not from missing candidates.
+    snapshot.repair_card_candidate_seams = Some(vec![seam.clone()]);
     let actions = code_action_response(
         &code_action_params_for(uri, diagnostic.range.start.line, vec![diagnostic])?,
         Some(&snapshot),
@@ -4989,6 +5206,7 @@ fn seam_hover_projects_bounded_repair_card_section_in_a_git_workspace() -> Resul
         Vec::new(),
     );
     snapshot.classified_seams = vec![seam.clone()];
+    snapshot.repair_card_candidate_seams = Some(vec![seam.clone()]);
     let markdown =
         match classified_seam_hover_response(&seam, &diagnostic, Some(&snapshot)).contents {
             HoverContents::Markup(markup) => markup.value,
@@ -12922,6 +13140,7 @@ fn sample_analysis_snapshot(
         analysis_outcome: None,
         diagnostic_profile: crate::config::LspDiagnosticProfile::Full,
         classified_seams: Vec::new(),
+        repair_card_candidate_seams: None,
         gap_artifacts: Vec::new(),
         gap_artifact_rejections: Vec::new(),
         harness_facts: HarnessFactsOnSnapshot::NotRegistered,
@@ -13320,6 +13539,10 @@ fn lsp_fixture_render(
     );
     snapshot.mode = Mode::Fast;
     snapshot.classified_seams = vec![seam.clone()];
+    // The fixture inventory is complete (one seam, no cap), so the raw
+    // candidate list equals the projection and the repair-card action keeps
+    // its pre-#7179-review golden behavior.
+    snapshot.repair_card_candidate_seams = Some(vec![seam.clone()]);
     let actions = code_action_response(
         &code_action_params_for(
             uri.clone(),
@@ -19409,6 +19632,7 @@ fn quarantine_workspace_diagnostics(
         analysis_outcome: None,
         diagnostic_profile: crate::config::LspDiagnosticProfile::Full,
         classified_seams: Vec::new(),
+        repair_card_candidate_seams: None,
         gap_artifacts: Vec::new(),
         gap_artifact_rejections: Vec::new(),
         harness_facts: HarnessFactsOnSnapshot::NotRegistered,
@@ -19980,6 +20204,7 @@ fn partition_workspace_diagnostics(
         analysis_outcome: None,
         diagnostic_profile: crate::config::LspDiagnosticProfile::Full,
         classified_seams: Vec::new(),
+        repair_card_candidate_seams: None,
         gap_artifacts: Vec::new(),
         gap_artifact_rejections: Vec::new(),
         harness_facts: HarnessFactsOnSnapshot::NotRegistered,
