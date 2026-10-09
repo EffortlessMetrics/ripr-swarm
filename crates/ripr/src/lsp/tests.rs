@@ -13460,6 +13460,10 @@ fn lsp_fixture_render(
     );
     snapshot.mode = Mode::Fast;
     snapshot.classified_seams = vec![seam.clone()];
+    // The fixture inventory is complete (one seam, no cap), so the raw
+    // candidate list equals the projection and the repair-card action keeps
+    // its pre-#7179-review golden behavior.
+    snapshot.repair_card_candidate_seams = Some(vec![seam.clone()]);
     let actions = code_action_response(
         &code_action_params_for(
             uri.clone(),
