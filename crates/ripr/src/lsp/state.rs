@@ -657,6 +657,17 @@ pub(super) struct AnalysisSnapshot {
     /// interactive open/save refresh (see RIPR-SPEC-0105). Use
     /// `seams_deferred` to distinguish "deferred" from "disabled".
     pub(super) classified_seams: Vec<ClassifiedSeam>,
+    /// The complete raw seam candidate list for the repair-card sibling join
+    /// (#7179), independent of the `classified_seams` diagnostic projection:
+    /// the projection drops non-surfaced grip classes, and a hidden nested
+    /// inner seam must still out-rank an enclosing surfaced outer seam, so
+    /// matching against the projection alone can credit an outer seam with an
+    /// inner seam's finding. `Some` only when the seam inventory actually ran
+    /// AND was not truncated by the repo seam limit — a truncated inventory
+    /// can omit a nested sibling entirely. `None` (deferred, disabled, or
+    /// truncated) fails the card projection closed instead of binding against
+    /// an incomplete candidate set.
+    pub(super) repair_card_candidate_seams: Option<Vec<ClassifiedSeam>>,
     pub(super) gap_artifacts: Vec<ValidatedGapArtifact>,
     pub(super) gap_artifact_rejections: Vec<GapArtifactRejection>,
     /// Harness registry facts (#3532, #3605): what each exact
@@ -2623,6 +2634,7 @@ mod tests {
             analysis_outcome: None,
             diagnostic_profile: LspDiagnosticProfile::Full,
             classified_seams: Vec::new(),
+            repair_card_candidate_seams: None,
             gap_artifacts: Vec::new(),
             gap_artifact_rejections: Vec::new(),
             harness_facts: HarnessFactsOnSnapshot::NotRegistered,
@@ -2657,6 +2669,7 @@ mod tests {
             analysis_outcome: None,
             diagnostic_profile: LspDiagnosticProfile::Full,
             classified_seams: Vec::new(),
+            repair_card_candidate_seams: None,
             gap_artifacts: Vec::new(),
             gap_artifact_rejections: Vec::new(),
             harness_facts: HarnessFactsOnSnapshot::NotRegistered,
@@ -2701,6 +2714,7 @@ mod tests {
             analysis_outcome: None,
             diagnostic_profile: LspDiagnosticProfile::Full,
             classified_seams: Vec::new(),
+            repair_card_candidate_seams: None,
             gap_artifacts: Vec::new(),
             gap_artifact_rejections: Vec::new(),
             harness_facts: HarnessFactsOnSnapshot::NotRegistered,

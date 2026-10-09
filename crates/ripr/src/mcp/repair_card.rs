@@ -62,6 +62,11 @@ pub(crate) const CODE_POLICY_OMITTED: &str = "policy_omitted";
 pub(crate) const CODE_WITNESS_UNAVAILABLE: &str = "witness_unavailable";
 pub(crate) const CODE_IDENTITY_UNNAMEABLE: &str = "identity_unnameable";
 pub(crate) const CODE_BUDGET_OVERFLOW: &str = "budget_overflow";
+/// Named for wire stability only: the card producer's diff-scoped inventory
+/// is uncapped by construction (every scoped seam is classified; the
+/// no-impact fast path declines on any owner name), so this slice never
+/// raises the truncated-inventory refusal.
+pub(crate) const CODE_INCOMPLETE_INVENTORY: &str = "incomplete_inventory";
 
 /// The repair-card producer facts bound when one bounded analysis attempt
 /// commits the snapshot. `ripr_refresh` is the only analysis the adapter ever
@@ -284,6 +289,9 @@ fn agent_card_failure(error: AgentCardError) -> AttemptFailure {
                 }
                 AgentCardRefusalKind::BudgetOverflow => {
                     "run `ripr agent packet --seam-id <seam> --json` in the repository for the unbounded packet"
+                }
+                AgentCardRefusalKind::IncompleteInventory => {
+                    "run `ripr agent packet --seam-id <seam> --json` in the repository for the full evidence packet"
                 }
             };
             AttemptFailure::new(kind.as_str(), message, recovery)
@@ -882,6 +890,16 @@ mod tests {
                     "card exceeded its budget".to_string(),
                 ),
                 CODE_BUDGET_OVERFLOW,
+            ),
+            (
+                AgentCardError::refusal(
+                    AgentCardRefusalKind::IncompleteInventory,
+                    "the candidate inventory was truncated".to_string(),
+                ),
+                // Wire stability only: the uncapped diff-scoped card path
+                // never raises this refusal, but a kind must map to the same
+                // machine state on every transport.
+                CODE_INCOMPLETE_INVENTORY,
             ),
             (
                 AgentCardError::operational("the producer could not complete".to_string()),

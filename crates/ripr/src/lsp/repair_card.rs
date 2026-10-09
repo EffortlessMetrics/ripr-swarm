@@ -31,11 +31,18 @@ pub(super) fn seam_repair_card(
     snapshot: &AnalysisSnapshot,
 ) -> Option<RepairCardV1> {
     let readiness = &repair_packet_eligibility(entry).readiness;
+    // The join needs the complete raw inventory, never the diagnostic
+    // projection: a non-surfaced inner class is still a same-kind sibling that
+    // must out-rank an enclosing surfaced outer seam (#7179). `None` means the
+    // inventory was deferred, disabled, or truncated by the repo seam limit —
+    // fail closed (omit the card) instead of binding against an incomplete
+    // candidate set.
+    let candidate_seams = snapshot.repair_card_candidate_seams.as_deref()?;
     let (finding_id, witness) = match witness_from_findings(
         &snapshot.findings,
         entry,
         readiness.canonical_gap_id.as_deref(),
-        &snapshot.classified_seams,
+        candidate_seams,
     ) {
         Some((finding_id, witness)) => (Some(finding_id), Some(witness)),
         None => (None, None),

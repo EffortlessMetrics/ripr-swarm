@@ -1092,9 +1092,10 @@ pub(super) fn workspace_diagnostics_with_config_and_open_rust_paths_and_progress
             .languages()
             .enabled()
             .contains(&LanguageId::Rust);
-    let (raw_seams, seam_outcome) = if defer_seam_inventory {
+    let (raw_seams, repair_card_candidate_seams, seam_outcome) = if defer_seam_inventory {
         (
             Vec::new(),
+            None,
             ComponentOutcome::deferred(
                 AnalysisComponent::SeamInventory,
                 "interactive_refresh_deferral",
@@ -1102,15 +1103,24 @@ pub(super) fn workspace_diagnostics_with_config_and_open_rust_paths_and_progress
             ),
         )
     } else if !seam_inventory_enabled {
-        (Vec::new(), seam_inventory_not_enabled_outcome(config))
+        (Vec::new(), None, seam_inventory_not_enabled_outcome(config))
     } else {
         match inventory_classified_seams_at_with_config(&root, config.repo_config()) {
-            Ok((seams, _)) => (
-                seams,
-                ComponentOutcome::complete(AnalysisComponent::SeamInventory),
-            ),
+            // #7179 review: the repair-card sibling join needs the complete
+            // raw inventory. A capped run can omit a nested same-kind sibling,
+            // so the card projection fails closed (`None`) instead of binding
+            // against an incomplete candidate set.
+            Ok((seams, limit_info)) => {
+                let repair_card_candidate_seams = limit_info.is_none().then(|| seams.clone());
+                (
+                    seams,
+                    repair_card_candidate_seams,
+                    ComponentOutcome::complete(AnalysisComponent::SeamInventory),
+                )
+            }
             Err(err) => (
                 Vec::new(),
+                None,
                 ComponentOutcome::failed(
                     AnalysisComponent::SeamInventory,
                     "seam_inventory_failed",
@@ -1237,6 +1247,7 @@ pub(super) fn workspace_diagnostics_with_config_and_open_rust_paths_and_progress
         analysis_outcome,
         diagnostic_profile: config.diagnostic_profile,
         classified_seams,
+        repair_card_candidate_seams,
         gap_artifacts: gap_artifact_report.artifacts,
         gap_artifact_rejections: gap_artifact_report.rejections,
         harness_facts,
@@ -1389,6 +1400,7 @@ fn git_timeout_limited_diagnostics(
         analysis_outcome: None,
         diagnostic_profile: config.diagnostic_profile,
         classified_seams: Vec::new(),
+        repair_card_candidate_seams: None,
         gap_artifacts: Vec::new(),
         gap_artifact_rejections: Vec::new(),
         // Limited runs disclose the run-status limitation instead of
@@ -1492,6 +1504,7 @@ pub(super) fn oversized_diff_limited_diagnostics(
         analysis_outcome: None,
         diagnostic_profile: config.diagnostic_profile,
         classified_seams: Vec::new(),
+        repair_card_candidate_seams: None,
         gap_artifacts: Vec::new(),
         gap_artifact_rejections: Vec::new(),
         // Limited runs disclose the run-status limitation instead of
@@ -5697,6 +5710,7 @@ mod delivery_tests {
             analysis_outcome: None,
             diagnostic_profile: LspDiagnosticProfile::Full,
             classified_seams: Vec::new(),
+            repair_card_candidate_seams: None,
             gap_artifacts: Vec::new(),
             gap_artifact_rejections: Vec::new(),
             harness_facts: HarnessFactsOnSnapshot::NotRegistered,

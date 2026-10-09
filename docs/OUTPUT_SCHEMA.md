@@ -193,13 +193,17 @@ Field contract:
   per-contract: additive changes keep this version, shape changes mint a new
   one.
 - `kind` — always `"agent_card_refusal"`.
-- `error.kind` — the typed refusal kind. The five values are
+- `error.kind` — the typed refusal kind. The six values are
   `seam_not_found` (re-list seams / correct the id),
   `policy_omitted` (check the `agent brief` policy config; the seam is a dead
   end), `witness_unavailable` (rerun the analysis or pick another seam),
-  `identity_unnameable` (retrieve the full packet instead), and
+  `identity_unnameable` (retrieve the full packet instead),
   `budget_overflow` (the builder, route gate, or budget refused the card;
-  fall back to the canonical packet). The set is closed and pinned by
+  fall back to the canonical packet), and `incomplete_inventory` (the seam
+  candidate inventory was truncated by the repo seam limit, so nested
+  same-kind siblings may be missing; raise or clear
+  `RIPR_REPO_EXPOSURE_SEAM_LIMIT`, or retrieve the full packet). The set is
+  closed and pinned by
   `cargo xtask check-output-contracts` against the owning enum, the registry,
   and the `## Enums` list below. Opposite-remedy pairs (`seam_not_found` vs
   `policy_omitted`) stay distinguishable by `error.kind` alone.
@@ -2504,6 +2508,7 @@ while `call_effect` remains the fallback for other observable calls.
 - `witness_unavailable`
 - `identity_unnameable`
 - `budget_overflow`
+- `incomplete_inventory`
 
 `related_test_miss` values:
 
