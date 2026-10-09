@@ -689,16 +689,41 @@ fn corpus_digest_refuses_non_utf8_names_instead_of_colliding_on_replacement() ->
     );
 
     let invalid_a = dir.join("cases").join(OsStr::from_bytes(&[0x80]));
-    fs::write(&invalid_a, b"a\n").map_err(|err| err.to_string())?;
+    if !write_non_utf8_name(&invalid_a, b"a\n")? {
+        // APFS/HFS+ reject non-UTF-8 names (EILSEQ); the U+FFFD digest
+        // already ran. Linux ext4 is the host that can create the files.
+        return Ok(());
+    }
     let err = corpus_identity(&dir).err().unwrap_or_default();
     assert!(err.contains("utf-8"), "{err}");
 
     fs::remove_file(&invalid_a).map_err(|err| err.to_string())?;
     let invalid_b = dir.join("cases").join(OsStr::from_bytes(&[0x81]));
-    fs::write(&invalid_b, b"b\n").map_err(|err| err.to_string())?;
+    if !write_non_utf8_name(&invalid_b, b"b\n")? {
+        return Ok(());
+    }
     let err = corpus_identity(&dir).err().unwrap_or_default();
     assert!(err.contains("utf-8"), "{err}");
     Ok(())
+}
+
+/// `true` when the filesystem stored the name. `false` when it refuses
+/// non-UTF-8 names. Other IO errors stay errors, so a full disk does not
+/// skip the refusal check. EILSEQ is 84 on Linux, 86 on *BSD, 92 on macOS.
+#[cfg(unix)]
+fn write_non_utf8_name(path: &Path, bytes: &[u8]) -> Result<bool, String> {
+    match fs::write(path, bytes) {
+        Ok(()) => Ok(true),
+        Err(err)
+            if matches!(
+                err.kind(),
+                std::io::ErrorKind::InvalidInput | std::io::ErrorKind::InvalidFilename
+            ) || matches!(err.raw_os_error(), Some(84 | 86 | 92)) =>
+        {
+            Ok(false)
+        }
+        Err(err) => Err(err.to_string()),
+    }
 }
 
 #[cfg(unix)]
