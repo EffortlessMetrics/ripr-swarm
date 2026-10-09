@@ -522,9 +522,12 @@ witness DTO.
 
 `subject_names_collection` used to accept any trailing operator after the
 first read method, and `capacity` was on the value-read list. That credited
-`assert_eq!(items.capacity() >= 1, true)`, `assert_eq!(items.is_empty() || true, true)`,
-and `assert_eq!(items.len() * 0, 0)` as observing a `items.push` mutation.
-Each of those assertions stays true under a value mutant or a deleted push.
+`assert_eq!(items.capacity() >= 1, true)` as observing an `items.push`
+mutation even though capacity does not constrain the pushed values, and
+credited `assert_eq!(items.is_empty() || true, true)` and
+`assert_eq!(items.len() * 0, 0)`, which stay true if the push is deleted.
+A `Vec::new()` fixture can make `capacity() >= 1` notice a deleted push;
+that is not a reason to treat capacity as a contents discriminator.
 
 The subject must be exactly the root, an index/slice of the root that ends
 there, or one value-read call that ends there. Drop `capacity`. Pin the three

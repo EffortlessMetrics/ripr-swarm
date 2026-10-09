@@ -527,8 +527,37 @@ fn remainder_after_delimited_group(text: &str) -> Option<&str> {
         return None;
     }
     let after_open = text.get(open.len_utf8()..)?;
-    let inner_len = balanced_inner(after_open)?.len();
-    after_open.get(inner_len.checked_add(open.len_utf8())?..)
+    let mut depth = 1usize;
+    let mut quote = None;
+    let mut escaped = false;
+    for (index, character) in after_open.char_indices() {
+        if let Some(q) = quote {
+            if escaped {
+                escaped = false;
+                continue;
+            }
+            if character == '\\' {
+                escaped = true;
+                continue;
+            }
+            if character == q {
+                quote = None;
+            }
+            continue;
+        }
+        match character {
+            '"' | '\'' => quote = Some(character),
+            '(' | '[' | '{' => depth = depth.saturating_add(1),
+            ')' | ']' | '}' => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    return after_open.get(index.checked_add(character.len_utf8())?..);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
 }
 
 fn is_collection_read_method(name: &str) -> bool {
@@ -1536,6 +1565,20 @@ mod tests {
         assert!(
             assertion_observes_direct_collection("assert!(items.is_empty());", "items"),
             "a bare is_empty() read must still observe the collection"
+        );
+        assert!(
+            assertion_observes_direct_collection(
+                "assert_eq!(items.contains(&\")\".to_string()), true);",
+                "items"
+            ),
+            "a value-read whose argument string holds a parenthesis must still observe the collection"
+        );
+        assert!(
+            !assertion_observes_direct_collection(
+                "assert_eq!(items.contains(&\")\".to_string()) || true, true);",
+                "items"
+            ),
+            "a trailing operator after a string-bearing value-read must still refuse"
         );
     }
 
