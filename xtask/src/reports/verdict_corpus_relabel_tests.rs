@@ -609,3 +609,136 @@ fn locked_test_args_passes_locked_only_when_the_tree_has_a_lockfile() -> Result<
     assert_eq!(already, strings(&["test", "--locked", "--lib"]));
     Ok(())
 }
+
+#[test]
+fn relabel_receipt_records_git_head_and_corpus_digest() -> Result<(), String> {
+    let dir = crate::tests::temp_dir("relabel-identity");
+    crate::tests::write(&dir.join("cases/a-case.json"), "{}\n");
+    crate::tests::write(&dir.join("subjects/s.json"), "{}\n");
+    let identity = corpus_identity(&dir)?;
+    assert!(
+        identity.corpus_digest.starts_with("sha256:")
+            && identity.corpus_digest.len() == "sha256:".len() + 64,
+        "{}",
+        identity.corpus_digest
+    );
+
+    crate::tests::write(&dir.join("cases/a-case.json"), "{\"moved\":true}\n");
+    let moved = corpus_identity(&dir)?;
+    assert_ne!(identity.corpus_digest, moved.corpus_digest);
+
+    crate::tests::write(&dir.join("corpus.json"), "{\"schema_version\":\"x\"}\n");
+    let header_only = corpus_identity(&dir)?;
+    assert_eq!(moved.corpus_digest, header_only.corpus_digest);
+
+    crate::tests::write(&dir.join("subjects/nested/src/lib.rs.txt"), "fn f() {}\n");
+    let nested = corpus_identity(&dir)?;
+    assert_ne!(moved.corpus_digest, nested.corpus_digest);
+
+    assert_eq!(git_head(Path::new("/no/such/ripr-relabel-identity")), None);
+
+    let corpus_dir = crate::dogfood::repo_rooted_fixture_path(CORPUS_DIR);
+    let repo = corpus_identity(&corpus_dir)?;
+    let head = run_output_owned(
+        "git",
+        &[
+            "-C".to_string(),
+            corpus_dir.to_string_lossy().into_owned(),
+            "rev-parse".to_string(),
+            "HEAD".to_string(),
+        ],
+    )?;
+    assert_eq!(repo.git_head.as_deref(), Some(head.trim()));
+    assert_ne!(repo.corpus_digest, nested.corpus_digest);
+
+    let receipt = Receipt {
+        schema_version: RELABEL_SCHEMA,
+        git_head: repo.git_head.clone(),
+        corpus_digest: repo.corpus_digest.clone(),
+        seed: "s".to_string(),
+        sample: None,
+        repeat: 1,
+        selected: 0,
+        not_replayed: Vec::new(),
+        drifted_cases: 0,
+        cases: Vec::new(),
+    };
+    let json = serde_json::to_value(&receipt).map_err(|err| err.to_string())?;
+    assert_eq!(json["schema_version"], RELABEL_SCHEMA);
+    assert_eq!(RELABEL_SCHEMA, "ripr_verdict_corpus_relabel.v2");
+    assert_eq!(json["git_head"], head.trim());
+    assert_eq!(json["corpus_digest"], repo.corpus_digest);
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn corpus_digest_refuses_non_utf8_names_instead_of_colliding_on_replacement() -> Result<(), String>
+{
+    use std::ffi::OsStr;
+    use std::os::unix::ffi::OsStrExt;
+
+    let dir = crate::tests::temp_dir("relabel-digest-utf8");
+    crate::tests::write(&dir.join("cases/a-case.json"), "{}\n");
+    crate::tests::write(&dir.join("subjects/\u{FFFD}.json"), "{}\n");
+    let ok = corpus_identity(&dir)?;
+    assert!(
+        ok.corpus_digest.starts_with("sha256:"),
+        "{}",
+        ok.corpus_digest
+    );
+
+    let invalid_a = dir.join("cases").join(OsStr::from_bytes(&[0x80]));
+    if !write_non_utf8_name(&invalid_a, b"a\n")? {
+        // APFS/HFS+ reject non-UTF-8 names (EILSEQ); the U+FFFD digest
+        // already ran. Linux ext4 is the host that can create the files.
+        return Ok(());
+    }
+    let err = corpus_identity(&dir).err().unwrap_or_default();
+    assert!(err.contains("utf-8"), "{err}");
+
+    fs::remove_file(&invalid_a).map_err(|err| err.to_string())?;
+    let invalid_b = dir.join("cases").join(OsStr::from_bytes(&[0x81]));
+    if !write_non_utf8_name(&invalid_b, b"b\n")? {
+        return Ok(());
+    }
+    let err = corpus_identity(&dir).err().unwrap_or_default();
+    assert!(err.contains("utf-8"), "{err}");
+    Ok(())
+}
+
+/// `true` when the filesystem stored the name. `false` when it refuses
+/// non-UTF-8 names. Other IO errors stay errors, so a full disk does not
+/// skip the refusal check. EILSEQ is 84 on Linux, 86 on *BSD, 92 on macOS.
+#[cfg(unix)]
+fn write_non_utf8_name(path: &Path, bytes: &[u8]) -> Result<bool, String> {
+    match fs::write(path, bytes) {
+        Ok(()) => Ok(true),
+        Err(err)
+            if matches!(
+                err.kind(),
+                std::io::ErrorKind::InvalidInput | std::io::ErrorKind::InvalidFilename
+            ) || matches!(err.raw_os_error(), Some(84 | 86 | 92)) =>
+        {
+            Ok(false)
+        }
+        Err(err) => Err(err.to_string()),
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn corpus_digest_keeps_backslash_names_distinct_from_nested_paths() -> Result<(), String> {
+    let dir = crate::tests::temp_dir("relabel-digest-slash");
+    crate::tests::write(&dir.join("cases/a\\b.json"), "slash\n");
+    crate::tests::write(&dir.join("cases/a/b.json"), "nested\n");
+    crate::tests::write(&dir.join("subjects/s.json"), "{}\n");
+    let both = corpus_identity(&dir)?;
+    crate::tests::write(&dir.join("cases/a/b.json"), "nested-changed\n");
+    let nested_changed = corpus_identity(&dir)?;
+    assert_ne!(both.corpus_digest, nested_changed.corpus_digest);
+    crate::tests::write(&dir.join("cases/a\\b.json"), "slash-changed\n");
+    let slash_changed = corpus_identity(&dir)?;
+    assert_ne!(nested_changed.corpus_digest, slash_changed.corpus_digest);
+    Ok(())
+}

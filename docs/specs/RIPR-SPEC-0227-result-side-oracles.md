@@ -319,7 +319,7 @@ Source: `check` as in Problem.
 - Existing: `fixtures/weak_error_oracle`, `fixtures/unwrap_err_generic_is_err`,
   `fixtures/strong_error_oracle`.
 - Verdict corpus: 11 cases `spec0227-*` in
-  `fixtures/rust-verdict-corpus/corpus.json` for acceptance examples 1-9, 12
+  `fixtures/rust-verdict-corpus/cases/` for acceptance examples 1-9, 12
   and 13, each naming its example in its reasoning and labeled with runtime
   mutant truth. Examples 10 and 11 are covered by the existing cases
   `checkout-withdraw-sibling-variant` and `accounts-parse-too-long-variant`.
