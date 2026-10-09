@@ -1102,7 +1102,7 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
             "target/ripr/reports/verdict-corpus/relabel.json or --out <dir>; run-owned trees under the system temp dir or --work-dir <dir>",
             false,
             false,
-            "Re-derives runtime truth for a deterministic sample of labeled cases: in a run-owned copy of each subject it runs the case's own `cargo test` command on the unedited tree, on the edit, and on every mutant's mutated_line, each --repeat times, and fails when an outcome, failing test, or derived truth drifts from the label, a mutant does not compile or changes nothing, repeated runs disagree, or the toolchain differs from the labeled one. Authored subjects replay offline; upstream excerpts replay only from full checkouts at the pinned commit under --checkouts. Never clones, fetches, or edits the corpus.",
+            "Re-derives runtime truth for a deterministic sample of labeled cases: in a run-owned copy of each subject it runs the case's own `cargo test` command on the unedited tree, on the edit, and on every mutant's mutated_line, each --repeat times, and fails when an outcome, failing test, or derived truth drifts from the label, a mutant does not compile or changes nothing, repeated runs disagree, or the toolchain differs from the labeled one. Authored subjects replay offline; upstream excerpts replay only from full checkouts at the pinned commit under --checkouts. Never clones, fetches, or edits the corpus. relabel.json (schema ripr_verdict_corpus_relabel.v2) records git HEAD and a sha256 digest of cases/ and subjects/.",
         ),
         command_entry(
             "test-oracle-report",

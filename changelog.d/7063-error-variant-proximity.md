@@ -7,3 +7,8 @@
 - A custom `MyErr::<E>(..)` constructor no longer reads as a `Result::Err`
   construction, and the cross-owner case is pinned in the RIPR-SPEC-0108
   honesty corpus (`rust_shared_error_variant_proximity_other_owner`).
+- An `Err(..)` spelled inside a string literal or comment, or after a
+  non-ASCII identifier character, no longer reads as an error construction.
+- A quote inside a comment no longer makes a line look string-unbalanced,
+  so the comment's `Err(..)` spelling cannot bind an error identity through
+  the unbalanced-fragment fallback (#7063 review).

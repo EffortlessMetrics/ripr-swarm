@@ -517,21 +517,42 @@ fn preflight_project_check(root: &Path) -> PreflightCheck {
 
 fn preflight_config_check(root: &Path) -> PreflightCheck {
     let config = root.join(CONFIG_FILE_NAME);
-    if config.is_file() {
-        PreflightCheck::ok(
-            "ripr_config",
-            "RIPR config",
-            format!("{CONFIG_FILE_NAME} was found."),
-        )
-        .with_path(human_path(&config))
-    } else {
-        PreflightCheck::defaulted(
-            "ripr_config",
-            "RIPR config",
-            format!("No {CONFIG_FILE_NAME} was found; built-in advisory defaults apply."),
-        )
-        .with_path(human_path(&config))
+    match std::fs::metadata(&config) {
+        Ok(meta) if meta.is_file() => match crate::bounded_input::read_to_string(&config) {
+            Ok(_) => PreflightCheck::ok(
+                "ripr_config",
+                "RIPR config",
+                format!("{CONFIG_FILE_NAME} was found."),
+            )
+            .with_path(human_path(&config)),
+            Err(_) => unreadable_ripr_config(&config),
+        },
+        Ok(_) => unreadable_ripr_config(&config),
+        Err(err)
+            if err.kind() == std::io::ErrorKind::NotFound
+                && !crate::config::config_present_at_root(root) =>
+        {
+            PreflightCheck::defaulted(
+                "ripr_config",
+                "RIPR config",
+                format!("No {CONFIG_FILE_NAME} was found; built-in advisory defaults apply."),
+            )
+            .with_path(human_path(&config))
+        }
+        Err(_) => unreadable_ripr_config(&config),
     }
+}
+
+fn unreadable_ripr_config(config: &Path) -> PreflightCheck {
+    PreflightCheck::needs_attention(
+        "ripr_config",
+        "RIPR config",
+        format!("{CONFIG_FILE_NAME} is present but unreadable."),
+        Some(format!(
+            "Replace the unreadable {CONFIG_FILE_NAME} with a readable file, then rerun first-pr."
+        )),
+    )
+    .with_path(human_path(config))
 }
 
 fn preflight_output_check(root: &Path, options: &FirstPrOptions) -> PreflightCheck {
@@ -569,5 +590,215 @@ fn preflight_output_check(root: &Path, options: &FirstPrOptions) -> PreflightChe
             recovery_commands: Vec::new(),
             recovery_guidance: None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A dangling `ripr.toml` is present but unreadable: first-pr preflight
+    /// must not claim built-in defaults, matching `load_for_root`.
+    #[cfg(unix)]
+    #[test]
+    fn dangling_ripr_toml_symlink_is_present_not_built_in_defaults() -> Result<(), String> {
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|error| format!("clock: {error}"))?
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "ripr-first-pr-preflight-dangling-{}-{stamp}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&root).map_err(|error| error.to_string())?;
+        struct Cleanup(std::path::PathBuf);
+        impl Drop for Cleanup {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.0);
+            }
+        }
+        let _cleanup = Cleanup(root.clone());
+
+        let absent = preflight_config_check(&root);
+        if absent.status != "defaulted" || !absent.message.contains("built-in advisory defaults") {
+            return Err(format!(
+                "an absent ripr.toml must stay defaulted built-in defaults: {} / {}",
+                absent.status, absent.message
+            ));
+        }
+
+        std::os::unix::fs::symlink("no-such-target.toml", root.join("ripr.toml"))
+            .map_err(|error| error.to_string())?;
+        let load_error = match crate::config::load_for_root(&root) {
+            Ok(_) => {
+                return Err("load_for_root must refuse a dangling ripr.toml".to_string());
+            }
+            Err(error) => error,
+        };
+        let check = preflight_config_check(&root);
+        if !load_error.contains("ripr.toml") {
+            return Err(format!(
+                "load_for_root must name ripr.toml for a dangling link: {load_error}"
+            ));
+        }
+        if check.status != "needs_attention" {
+            return Err(format!(
+                "a dangling ripr.toml must need attention, not {}: {}",
+                check.status, check.message
+            ));
+        }
+        if check.message.contains("built-in advisory defaults") {
+            return Err(format!(
+                "a dangling ripr.toml must not be described as built-in defaults: {}",
+                check.message
+            ));
+        }
+        if !check.message.contains("ripr.toml") || !check.message.contains("unreadable") {
+            return Err(format!(
+                "preflight must name ripr.toml as present but unreadable: {}",
+                check.message
+            ));
+        }
+        let path = check.path.as_deref().unwrap_or("");
+        if !path.contains("ripr.toml") {
+            return Err(format!(
+                "preflight must attach the ripr.toml path, not {path:?}"
+            ));
+        }
+        Ok(())
+    }
+
+    /// A chmod-000 regular `ripr.toml` is still a file, so `Path::is_file()`
+    /// is not a readability probe. Preflight must not mark it `ok` while
+    /// `load_for_root` cannot read it.
+    #[cfg(unix)]
+    #[test]
+    fn unreadable_regular_ripr_toml_is_present_not_ok() -> Result<(), String> {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|error| format!("clock: {error}"))?
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "ripr-first-pr-preflight-unreadable-{}-{stamp}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&root).map_err(|error| error.to_string())?;
+        struct Cleanup {
+            root: std::path::PathBuf,
+            file: std::path::PathBuf,
+        }
+        impl Drop for Cleanup {
+            fn drop(&mut self) {
+                let _ =
+                    std::fs::set_permissions(&self.file, std::fs::Permissions::from_mode(0o644));
+                let _ = std::fs::remove_dir_all(&self.root);
+            }
+        }
+        let config = root.join("ripr.toml");
+        std::fs::write(&config, "mode = \"advisory\"\n").map_err(|error| error.to_string())?;
+        let _cleanup = Cleanup {
+            root: root.clone(),
+            file: config.clone(),
+        };
+
+        let readable = preflight_config_check(&root);
+        if readable.status != "ok" {
+            return Err(format!(
+                "a readable ripr.toml must stay ok, not {}: {}",
+                readable.status, readable.message
+            ));
+        }
+
+        std::fs::set_permissions(&config, std::fs::Permissions::from_mode(0o000))
+            .map_err(|error| format!("chmod ripr.toml 000: {error}"))?;
+        let load_error = match crate::config::load_for_root(&root) {
+            Ok(_) => {
+                // A privileged process can still read mode 000. Skip rather
+                // than fail the production behavior that remains correct for
+                // unprivileged users.
+                return Ok(());
+            }
+            Err(error) => error,
+        };
+        if !load_error.contains("ripr.toml") {
+            return Err(format!(
+                "load_for_root must name ripr.toml for a chmod-000 file: {load_error}"
+            ));
+        }
+        let check = preflight_config_check(&root);
+        if check.status != "needs_attention" {
+            return Err(format!(
+                "an unreadable regular ripr.toml must need attention, not {}: {}",
+                check.status, check.message
+            ));
+        }
+        if check.message.contains("built-in advisory defaults") {
+            return Err(format!(
+                "an unreadable regular ripr.toml must not be described as built-in defaults: {}",
+                check.message
+            ));
+        }
+        if !check.message.contains("ripr.toml") || !check.message.contains("unreadable") {
+            return Err(format!(
+                "preflight must name ripr.toml as present but unreadable: {}",
+                check.message
+            ));
+        }
+        Ok(())
+    }
+
+    /// A FIFO named `ripr.toml` is present but not a regular file. Preflight
+    /// must not open it: `bounded_input::read_to_string` waits for a writer.
+    #[cfg(unix)]
+    #[test]
+    fn fifo_ripr_toml_is_present_not_ok_and_does_not_block() -> Result<(), String> {
+        use std::os::unix::fs::FileTypeExt as _;
+
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|error| format!("clock: {error}"))?
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "ripr-first-pr-preflight-fifo-{}-{stamp}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&root).map_err(|error| error.to_string())?;
+        struct Cleanup(std::path::PathBuf);
+        impl Drop for Cleanup {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.0);
+            }
+        }
+        let _cleanup = Cleanup(root.clone());
+        let config = root.join("ripr.toml");
+        let status = std::process::Command::new("mkfifo")
+            .arg(&config)
+            .status()
+            .map_err(|error| format!("mkfifo: {error}"))?;
+        if !status.success() {
+            return Err(format!("mkfifo failed: {status}"));
+        }
+        let file_type = std::fs::symlink_metadata(&config)
+            .map_err(|error| format!("inspect FIFO fixture: {error}"))?
+            .file_type();
+        if !file_type.is_fifo() {
+            return Err("fixture must be a FIFO named ripr.toml".to_string());
+        }
+        let check = preflight_config_check(&root);
+        if check.status != "needs_attention" {
+            return Err(format!(
+                "a FIFO ripr.toml must need attention, not {}: {}",
+                check.status, check.message
+            ));
+        }
+        if check.message.contains("built-in advisory defaults") {
+            return Err(format!(
+                "a FIFO ripr.toml must not be described as built-in defaults: {}",
+                check.message
+            ));
+        }
+        Ok(())
     }
 }

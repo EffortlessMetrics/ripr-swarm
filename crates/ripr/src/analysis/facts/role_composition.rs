@@ -1084,6 +1084,93 @@ mod tests {
         Ok(())
     }
 
+    /// `#[r#path]` is the same module-path attribute as `#[path]`. Default-layout
+    /// decoys stay production; the redirected file matches the plain-`#[path]`
+    /// control's composed role and parent chain (#7161).
+    #[test]
+    fn raw_identifier_path_attribute_module_matches_plain_path_control() -> Result<(), String> {
+        let root = temp_dir("raw-path-attribute")?;
+        write_manifest(&root)?;
+        let files = vec![
+            write(
+                &root,
+                "src/lib.rs",
+                "#[cfg(test)]\n#[path = \"support/plain.rs\"]\nmod plain;\n\
+                 #[cfg(test)]\n#[r#path = \"support/raw.rs\"]\nmod raw;\n",
+            )?,
+            write(
+                &root,
+                "src/support/plain.rs",
+                "pub fn plain_helper() -> i32 { 1 }\n",
+            )?,
+            write(
+                &root,
+                "src/support/raw.rs",
+                "pub fn raw_helper() -> i32 { 1 }\n",
+            )?,
+            write(&root, "src/plain.rs", "pub fn plain_decoy() -> i32 { 0 }\n")?,
+            write(&root, "src/raw.rs", "pub fn raw_decoy() -> i32 { 0 }\n")?,
+        ];
+
+        let index = crate::analysis::facts::build_index(&root, &files)
+            .map_err(|error| error.to_string())?;
+
+        assert_eq!(
+            role_of(&index, "src/support/plain.rs", "plain_helper")?,
+            FunctionSourceRole::CfgTestModule,
+            "fixture: the plain #[path] control must compose"
+        );
+        assert_eq!(
+            role_of(&index, "src/support/raw.rs", "raw_helper")?,
+            FunctionSourceRole::CfgTestModule,
+            "#[r#path] must compose the redirected file, not default-layout src/raw.rs"
+        );
+        assert_eq!(
+            role_of(&index, "src/plain.rs", "plain_decoy")?,
+            FunctionSourceRole::Production
+        );
+        assert_eq!(
+            role_of(&index, "src/raw.rs", "raw_decoy")?,
+            FunctionSourceRole::Production,
+            "default-layout decoy must not receive the composed grant"
+        );
+
+        let plain_provenance = &index
+            .files()
+            .at(Path::new("src/support/plain.rs"))
+            .data()
+            .role_provenance;
+        let raw_provenance = &index
+            .files()
+            .at(Path::new("src/support/raw.rs"))
+            .data()
+            .role_provenance;
+        assert!(plain_provenance.earliest_unresolved_reason.is_none());
+        assert_eq!(
+            raw_provenance.earliest_unresolved_reason,
+            plain_provenance.earliest_unresolved_reason
+        );
+        assert_eq!(plain_provenance.edges.len(), 1, "plain control chain");
+        assert_eq!(
+            raw_provenance.edges.len(),
+            plain_provenance.edges.len(),
+            "r#path chain length must match the plain #[path] control"
+        );
+        let plain_edge = &plain_provenance.edges[0];
+        let raw_edge = &raw_provenance.edges[0];
+        assert_eq!(plain_edge.kind, SourceRoleProvenanceEdgeKind::Module);
+        assert_eq!(raw_edge.kind, plain_edge.kind);
+        assert_eq!(plain_edge.parent, Path::new("src/lib.rs"));
+        assert_eq!(raw_edge.parent, plain_edge.parent);
+        assert_eq!(plain_edge.child, Path::new("src/support/plain.rs"));
+        assert_eq!(raw_edge.child, Path::new("src/support/raw.rs"));
+        assert!(plain_edge.requires_test);
+        assert_eq!(raw_edge.requires_test, plain_edge.requires_test);
+        assert_eq!(plain_edge.declaration, "mod plain;");
+        assert_eq!(raw_edge.declaration, "mod raw;");
+        Ok(())
+    }
+
     #[test]
     fn path_selected_parent_resolves_default_children_from_its_directory() -> Result<(), String> {
         let root = temp_dir("path-selected-child")?;

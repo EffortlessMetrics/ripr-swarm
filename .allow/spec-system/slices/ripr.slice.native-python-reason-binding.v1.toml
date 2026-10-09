@@ -1,0 +1,41 @@
+schema_version = "2.0"
+id = "ripr.slice.native-python-reason-binding.v1"
+generation = 1
+source_issue = "issue:7193"
+design_reference = "RIPR-SPEC-0028"
+change_class = "behavior_change"
+
+claim_boundary = """
+The retained ItsDangerous native receipt binds explicit per-subject skip reasons
+to its independently authored control variant and selected pytest JUnit case.
+Skip-method/class controls report pytest.skip and execute zero bodies; broken
+xfail reports pytest.xfail and executes its suppressed failure; active subjects
+report explicit null. Coherently swapped JSON/JUnit reasons are rejected.
+Historical source, native observations and analyzer metric exclusion remain
+unchanged. The checker binds known pytest serialization, not general XML.
+"""
+non_goals = [
+  "Python analyzer activation or classification changes",
+  "changing source, native observations, scorecard baselines or cache contracts",
+  "general XML validation or runtime replay",
+  "support-tier promotion, installed journeys or publication",
+]
+return_conditions = [
+  "Return if any of the 13 original native controls no longer validates.",
+  "Return if absent, unknown or swapped subject reasons validate.",
+  "Return if fixture correctness is represented as a current analyzer verdict.",
+]
+owned_seams = ["seam:ripr:fixtures:native-python-reason-binding"]
+shared_seams = ["seam:ripr:fixtures:python-real-repo-evals"]
+forbidden_seams = ["seam:ripr:python:test-activation-oracle-admission", "seam:ripr:fixtures:goldens"]
+
+[[requirement_delta]]
+requirement_id = "RIPR-SPEC-0028"
+requirement_generation = 1
+
+[implementation_claim]
+status = "implemented"
+[evidence]
+state = "outstanding"
+[support_claim]
+state = "unchanged"

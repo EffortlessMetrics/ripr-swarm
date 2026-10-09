@@ -272,6 +272,25 @@ slash-split rewrite dropped Windows drive-relative and rooted identities.
 Paths remain the limitation-path rule: they are identities, not prose. Do not
 add a second filesystem authority in a renderer or `lsp/diagnostics.rs`.
 
+## 2026-10-09: first-pr preflight and agent receipts still treated a dangling `ripr.toml` as absent (#6690)
+
+#5455 routed workspace status and the two Python repair config-profile sites
+through `config_present_at_root`. First-pr preflight still used
+`Path::is_file()`, and agent-receipt fingerprinting mapped `ErrorKind::NotFound`
+to `Ok(None)`, so a dangling `ripr.toml` looked like built-in defaults.
+
+Do not consult `config_present_at_root` first and treat `false` as absent:
+`symlink_metadata` `PermissionDenied` also returns false, which would map an
+unreadable lookup to built-in defaults. Read first; only a `NotFound` read
+consults presence to distinguish a dangling link from a missing file.
+`Path::is_file()` is also not readability: a chmod-000 regular file is still
+a file, so preflight must bounded-read before emitting `ok`. Stat the resolved
+target first: `bounded_input::read_to_string` opens FIFOs and can wait for a
+writer, so a FIFO named `ripr.toml` must be classified unreadable without
+opening. Keep a dangling-link control and a non-`NotFound` unreadable control
+at each leftover site. Chmod-000 tests skip when a privileged process can still
+read.
+
 ## 2026-10-04: `Path::is_file()` is not `ripr.toml` presence (#5404)
 
 `Path::is_file()` follows symlinks. After `load_for_root` started treating a

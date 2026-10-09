@@ -1429,6 +1429,12 @@ pub struct ProbeShapeFact {
     pub end_byte: usize,
     pub kind: ProbeShapeKind,
     pub text: SourceText,
+    /// A `call_deletion` shape whose value feeds a consumer (a condition, a
+    /// binding, an operand, an argument, a receiver or the function's
+    /// return). Repo scope asks the consumer's seam, not `call_presence`
+    /// (#6677). Omitted from the wire when false, so older payloads read
+    /// as unconsumed.
+    pub value_consumed: bool,
 }
 
 /// Cache payload mirrors of the fact structs. The wire carries [`WireText`]
@@ -1484,6 +1490,9 @@ pub(crate) struct ProbeShapeFactWire {
     pub end_byte: usize,
     pub kind: ProbeShapeKind,
     pub text: WireText,
+    /// Omitted when false, so payloads without it read as unconsumed (#6677).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub value_consumed: bool,
 }
 
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
@@ -1605,6 +1614,7 @@ impl ProbeShapeFactWire {
             end_byte: fact.end_byte,
             kind: fact.kind,
             text: WireText::attached(&fact.text, parent),
+            value_consumed: fact.value_consumed,
         }
     }
 
@@ -1620,6 +1630,7 @@ impl ProbeShapeFactWire {
             text: WireText::Inline {
                 text: fact.text.as_str().to_string(),
             },
+            value_consumed: fact.value_consumed,
         }
     }
 }
@@ -1705,6 +1716,7 @@ impl ProbeShapeFactWire {
             end_byte: self.end_byte,
             kind: self.kind,
             text: link_wire_text(self.text, source, "probe shape text")?,
+            value_consumed: self.value_consumed,
         })
     }
 }
@@ -1930,6 +1942,7 @@ mod tests {
             end_byte: 261,
             kind: ProbeShapeKind::Predicate,
             text: "x > 0".into(),
+            value_consumed: false,
         };
         assert_eq!(shape.start_line, 10);
         assert_eq!(shape.end_line, 12);
@@ -2047,6 +2060,7 @@ mod tests {
                 end_byte: 40,
                 kind: ProbeShapeKind::Predicate,
                 text: SourceText::shared_or_owned(&source, 27, "assert!(true)"),
+                value_consumed: false,
             }],
             used_lexical_fallback: false,
             module_declarations: Vec::new(),
@@ -2078,7 +2092,20 @@ mod tests {
             assert!(child.is_some_and(|arc| Arc::ptr_eq(arc, &decoded.source)));
         }
         assert_eq!(decoded, facts);
+        // An unconsumed shape omits the flag; a consumed one carries it
+        // through the wire (#6677).
+        assert!(wire_probe_flag_absent(&facts)?);
+        let mut consumed = facts.clone();
+        consumed.probe_shapes[0].value_consumed = true;
+        let decoded: FileFacts = serde_json::from_value(serde_json::to_value(&consumed)?)?;
+        assert!(decoded.probe_shapes[0].value_consumed);
         Ok(())
+    }
+
+    fn wire_probe_flag_absent(facts: &FileFacts) -> Result<bool, serde_json::Error> {
+        Ok(serde_json::to_value(facts)?["probe_shapes"][0]
+            .get("value_consumed")
+            .is_none())
     }
 
     /// #5415 step 3: file-level calls are derived from per-function calls,

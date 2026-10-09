@@ -1,0 +1,1 @@
+Pilot seam packets now disclose the cap that actually bounded their input. Inventory-only cuts name `RIPR_REPO_EXPOSURE_SEAM_LIMIT`; pilot cuts use the existing shared guidance for `RIPR_PILOT_SEAM_BUDGET`, without promising that disabling it also removes an inventory cut (#7186).

@@ -2160,6 +2160,22 @@ fn err_return_guard_assertion(line: &str) -> Option<String> {
     Some(format!("assert!({lhs} {negated} {rhs}\n)"))
 }
 
+/// A terminal Err-return guard's condition and its assertion twin, exactly
+/// when [`err_return_guard_assertion`] establishes the twin. The owner
+/// return pin (RIPR-SPEC-0197) reads the compared operands from the twin and
+/// keys the guard's execution path by the condition.
+pub(crate) fn err_return_guard_twin(text: &str) -> Option<(&str, String)> {
+    let text = text.trim();
+    let twin = err_return_guard_assertion(text)?;
+    let brace = terminal_guard_body_open(text).ok()??;
+    let condition = text[..brace].trim().strip_prefix("if")?;
+    // `if` must be the keyword, not the head of an identifier.
+    if !condition.starts_with(char::is_whitespace) {
+        return None;
+    }
+    Some((condition.trim(), twin))
+}
+
 /// Whether a condition carries a top-level `&&`/`||`: its
 /// correct negation is not a single `assert!` twin (#3284 fail-closed).
 fn has_top_level_boolean_operator(condition: &str) -> bool {

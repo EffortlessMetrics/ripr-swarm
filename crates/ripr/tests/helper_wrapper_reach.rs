@@ -429,6 +429,12 @@ fn buried_scalar_in_a_wrapper_argument_does_not_pair() -> Result<(), String> {
                 finding["classification"], "infection_unknown",
                 "{pin}: {finding}"
             );
+            assert!(
+                finding["ripr"]["infect"]["summary"]
+                    .as_str()
+                    .is_some_and(|summary| summary.contains("computed argument for `qty`")),
+                "{pin}: {finding}"
+            );
         } else {
             assert!(
                 discriminate_summary(&finding).contains("same_test_pairing_missing"),

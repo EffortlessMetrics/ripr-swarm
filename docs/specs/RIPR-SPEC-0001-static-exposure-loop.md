@@ -88,6 +88,10 @@ For a predicate probe, `exposed` also requires one test that both feeds a
 boundary input to the owner and holds a discriminating oracle on that call's
 result; otherwise the finding is at most `weakly_exposed` and names
 `same_test_pairing_missing` (#4828).
+For a field-construction probe whose every exact pin sits beside a pin of a
+sibling field, bound to one operand of the changed initializer, at the same
+value, the finding is at most `weakly_exposed` and names
+`field_pinned_equal_to_operand` (#7077, RIPR-SPEC-0197 rule 7).
 
 An unguarded whole wildcard pattern (`assert!(matches!(value, _))` or
 `assert_matches!(value, _)`) accepts every value. Its oracle is

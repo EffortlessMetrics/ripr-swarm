@@ -1521,10 +1521,25 @@ fn constructed_field_name(expression: &str) -> Option<&str> {
 /// Whether `assertion` reads `read` (`.field`) on a value the test got from
 /// calling `owner`: a direct `owner(..).field` chain, or a receiver the test
 /// body binds with `let [mut] recv = ..owner(..)..;`.
+///
+/// A read inside a struct literal's braces (`assert_eq!(c, Config { retries:
+/// c.retries, .. })`) copies the owner's value into the expected side, so
+/// the comparison cannot fail on it: it observes nothing (RIPR-SPEC-0225
+/// acceptance example 12). Any unclosed `{` before the read refuses it, a
+/// block or closure body too: that fails closed to a gap. So does a read in
+/// an `assert_eq!`/`assert_ne!` operand whose other operand is the whole
+/// result (`assert_eq!(c, Config::new(c.retries))`).
 fn reads_owner_result_field(body: &str, assertion: &str, read: &str, owner: &str) -> bool {
     let is_ident = |ch: char| ch.is_ascii_alphanumeric() || ch == '_';
     let owner_call = format!("{owner}(");
+    let masked = crate::analysis::extract::mask_comments_and_strings(assertion);
     assertion.match_indices(read).any(|(start, matched)| {
+        let braces = masked.get(..start).unwrap_or_default();
+        if braces.matches('{').count() > braces.matches('}').count()
+            || read_feeds_whole_result_comparison(body, assertion, &masked, start, owner)
+        {
+            return false;
+        }
         if assertion[start + matched.len()..]
             .chars()
             .next()
@@ -1540,8 +1555,394 @@ fn reads_owner_result_field(body: &str, assertion: &str, read: &str, owner: &str
             .rfind(|ch: char| !is_ident(ch))
             .map_or(0, |index| index + 1);
         let receiver = &before[receiver_start..];
-        !receiver.is_empty() && binds_from_owner_call(body, receiver, &owner_call)
+        !receiver.is_empty()
+            && binds_from_owner_call(body, receiver, &owner_call)
+            && !field_overwritten_before(body, assertion, receiver, &read[1..], &owner_call)
     })
+}
+
+/// Whether the owner's value of `field` no longer sits in `receiver` where
+/// `assertion` reads it (RIPR-SPEC-0005: field credit holds only before
+/// shadow or field overwrite). Comments and strings are masked, and only a
+/// `let` or assignment in the assertion's own block or an enclosing one
+/// counts. Walking back from the assertion, the nearest visible
+/// `let receiver` that sets `field` in a struct literal to a value not read
+/// from the receiver (`let q = Quote { total: 99, ..q };`) overwrites it; a
+/// struct update that leaves `field` to its `..receiver` base passes it
+/// through; and a visible `receiver.field = value` after the owner binding
+/// overwrites it. Anything else, including an assertion that is not found
+/// exactly once in the body, keeps the credit.
+fn field_overwritten_before(
+    body: &str,
+    assertion: &str,
+    receiver: &str,
+    field: &str,
+    owner_call: &str,
+) -> bool {
+    let mut found = body.match_indices(assertion).map(|(index, _)| index);
+    let (Some(position), None) = (found.next(), found.next()) else {
+        return false;
+    };
+    let masked = crate::analysis::extract::mask_comments_and_strings(body);
+    let Some(prefix) = masked.get(..position) else {
+        return false;
+    };
+    let tainted = receiver_derived_bindings(prefix, receiver, owner_call);
+    let fresh = |value: &str| {
+        !mentions_ident(value, receiver)
+            && !tainted.iter().any(|name| mentions_ident(value, name))
+            && !value.contains(owner_call)
+    };
+    let visible = |start: usize| visible_at(prefix, start);
+    for (start, initializer) in receiver_lets(prefix, receiver).into_iter().rev() {
+        if !visible(start) {
+            continue;
+        }
+        if let Some((fields, base)) = struct_literal_fields(initializer) {
+            match fields.iter().find(|(name, _)| *name == field) {
+                // A copied value is the owner's until a later assignment.
+                Some((_, value)) => {
+                    return value.is_some_and(fresh)
+                        || field_assigned(prefix, start, receiver, field, &fresh);
+                }
+                None if base == Some(receiver) => continue,
+                None => return false,
+            }
+        }
+        if initializer.contains(owner_call) {
+            return field_assigned(prefix, start, receiver, field, &fresh);
+        }
+        return false;
+    }
+    false
+}
+
+/// Names bound in `body` from the receiver or another owner call, directly
+/// or through another such name (`let t = q.total; let u = t;`,
+/// `t = q.total;`, `let base = bundle(3);`): a value built from them may be
+/// the owner's own field value.
+fn receiver_derived_bindings(body: &str, receiver: &str, owner_call: &str) -> Vec<String> {
+    let is_ident = |ch: char| ch.is_ascii_alphanumeric() || ch == '_';
+    fn binding(statement: &str) -> Option<(&str, &str)> {
+        let statement = statement.trim();
+        let statement = statement.strip_prefix("let ").unwrap_or(statement);
+        let (pattern, initializer) = statement.split_once('=')?;
+        if initializer.starts_with('=')
+            || pattern.ends_with(['!', '<', '>', '+', '-', '*', '/', '|', '&', '^', '%'])
+        {
+            return None;
+        }
+        Some((pattern, initializer))
+    }
+    // `let pattern = init;` and plain `name = value;` statements. A whole
+    // `let` statement is read again up to its `;` so a destructuring pattern
+    // (`let Quote { total, .. } = bundle(3);`) keeps its braced names.
+    let mut bindings: Vec<(&str, &str)> = body.split([';', '{', '}']).filter_map(binding).collect();
+    bindings.extend(
+        body.match_indices("let ")
+            .filter(|(start, _)| !body[..*start].chars().next_back().is_some_and(is_ident))
+            .filter_map(|(start, _)| binding(body[start..].split(';').next().unwrap_or_default())),
+    );
+    let mut tainted = vec![receiver.to_string()];
+    loop {
+        let before = tainted.len();
+        for (pattern, initializer) in &bindings {
+            if initializer.contains(owner_call)
+                || tainted.iter().any(|name| mentions_ident(initializer, name))
+            {
+                for name in pattern.split(|ch: char| !is_ident(ch)) {
+                    if !name.is_empty()
+                        && name != "mut"
+                        && name.starts_with(|ch: char| ch.is_ascii_lowercase() || ch == '_')
+                        && !tainted.iter().any(|known| known == name)
+                    {
+                        tainted.push(name.to_string());
+                    }
+                }
+            }
+        }
+        if tainted.len() == before {
+            break;
+        }
+    }
+    tainted.remove(0);
+    tainted
+}
+
+/// Whether a statement starting at `start` is still in scope at the end of
+/// `prefix`: no block it sits in has closed since.
+fn visible_at(prefix: &str, start: usize) -> bool {
+    let mut depth = 0isize;
+    for ch in prefix[start..].chars() {
+        match ch {
+            '{' => depth += 1,
+            '}' => {
+                depth -= 1;
+                if depth < 0 {
+                    return false;
+                }
+            }
+            _ => {}
+        }
+    }
+    true
+}
+
+fn mentions_ident(text: &str, name: &str) -> bool {
+    let is_ident = |ch: char| ch.is_ascii_alphanumeric() || ch == '_';
+    text.match_indices(name).any(|(start, matched)| {
+        !text[..start].chars().next_back().is_some_and(is_ident)
+            && !text[start + matched.len()..].starts_with(is_ident)
+    })
+}
+
+/// The index of the statement-ending `;` in `text`: the first one not nested
+/// inside `(`, `[` or `{` — an array length's `;` in `[u8; 4]` is part of
+/// the type, not the statement end — or the text's end when no such `;`
+/// exists.
+fn statement_semicolon(text: &str) -> usize {
+    let mut depth = 0usize;
+    for (index, ch) in text.char_indices() {
+        match ch {
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => {
+                depth = depth.saturating_sub(1);
+            }
+            ';' if depth == 0 => return index,
+            _ => {}
+        }
+    }
+    text.len()
+}
+
+/// The `let [mut] receiver [: Type] = initializer;` statements in `body`, in
+/// order, as (statement start, initializer).
+fn receiver_lets<'a>(body: &'a str, receiver: &str) -> Vec<(usize, &'a str)> {
+    let is_ident = |ch: char| ch.is_ascii_alphanumeric() || ch == '_';
+    body.match_indices("let ")
+        .filter(|(start, _)| !body[..*start].chars().next_back().is_some_and(is_ident))
+        .filter_map(|(start, _)| {
+            let rest = &body[start + 4..];
+            let statement = &rest[..statement_semicolon(rest)];
+            let rest = statement.trim_start();
+            let rest = rest.strip_prefix("mut ").unwrap_or(rest).trim_start();
+            let rest = rest.strip_prefix(receiver)?;
+            if rest.starts_with(is_ident) {
+                return None;
+            }
+            let (_, initializer) = rest.split_once('=')?;
+            let initializer = initializer.trim();
+            (!initializer.starts_with('=')).then_some((start, initializer))
+        })
+        .collect()
+}
+
+/// The fields (with their value, `None` for shorthand) and `..base` of a
+/// struct literal `Path { a: x, b, ..base }`; `None` for any other
+/// initializer.
+type StructLiteral<'a> = (Vec<(&'a str, Option<&'a str>)>, Option<&'a str>);
+
+fn struct_literal_fields(initializer: &str) -> Option<StructLiteral<'_>> {
+    let open = initializer.find('{')?;
+    let path = initializer[..open].trim();
+    // `Quote::<u8> { .. }`: drop the turbofish, whose arguments are type
+    // syntax only, however they are spelled (`(u8, Vec<u8>)`, `[u8; 4]`).
+    // The generic list must balance back to zero across the path (`->` in a
+    // `fn(..) -> ..` type is not a closing angle); an unbalanced shape fails
+    // open and keeps the credit.
+    let path = match path.find('<') {
+        Some(generics) if path.ends_with('>') => {
+            let mut depth = 0usize;
+            let mut previous = ' ';
+            for ch in path[generics..].chars() {
+                match ch {
+                    '<' => depth += 1,
+                    '>' if previous != '-' => depth = depth.saturating_sub(1),
+                    _ => {}
+                }
+                previous = ch;
+            }
+            if depth != 0 {
+                return None;
+            }
+            path[..generics].trim_end().trim_end_matches("::")
+        }
+        _ => path,
+    };
+    // `Quote { .. }` or a qualified `crate::Quote { .. }`: the last path
+    // segment names the type.
+    let type_name = path.rsplit("::").next().unwrap_or_default();
+    if path.is_empty()
+        || !type_name.starts_with(|ch: char| ch.is_ascii_uppercase())
+        || !path
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == ':')
+    {
+        return None;
+    }
+    let inner = initializer[open + 1..].strip_suffix('}')?;
+    let mut fields = Vec::new();
+    let mut base = None;
+    let mut depth = 0usize;
+    let mut entry_start = 0;
+    for (index, ch) in inner.char_indices().chain([(inner.len(), ',')]) {
+        match ch {
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => depth = depth.checked_sub(1)?,
+            ',' if depth == 0 => {
+                let entry = inner[entry_start..index].trim();
+                entry_start = index + 1;
+                if let Some(rest) = entry.strip_prefix("..") {
+                    base = Some(rest.trim());
+                } else if !entry.is_empty() {
+                    match entry.split_once(':') {
+                        Some((name, value)) => fields.push((name.trim(), Some(value.trim()))),
+                        None => fields.push((entry, None)),
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    Some((fields, base))
+}
+
+/// Whether `prefix`, after `from`, assigns `receiver.field = value` (not
+/// `==`, not a value read from the receiver) in a statement still in scope
+/// at its end.
+fn field_assigned(
+    prefix: &str,
+    from: usize,
+    receiver: &str,
+    field: &str,
+    fresh: &dyn Fn(&str) -> bool,
+) -> bool {
+    let target = format!("{receiver}.{field}");
+    prefix[from..]
+        .match_indices(&target)
+        .any(|(offset, matched)| {
+            let start = from + offset;
+            let before_ok = !prefix[..start]
+                .chars()
+                .next_back()
+                .is_some_and(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '.');
+            let rest = &prefix[start + matched.len()..];
+            if rest.starts_with(|ch: char| ch.is_ascii_alphanumeric() || ch == '_') {
+                return false;
+            }
+            let rest = rest.trim_start();
+            let Some(value) = rest
+                .strip_prefix('=')
+                .filter(|value| !value.starts_with('='))
+            else {
+                return false;
+            };
+            let value = value.split(';').next().unwrap_or_default();
+            before_ok && fresh(value) && visible_at(prefix, start)
+        })
+}
+/// Whether the read at `start` sits in one operand of an `assert_eq!` or
+/// `assert_ne!` whose other operand is the owner's whole result: the bound
+/// receiver or the owner call itself. The read then only feeds the expected
+/// side (`assert_eq!(c, Config::new(c.retries))`), a tautology on the field
+/// whatever brackets carry it.
+fn read_feeds_whole_result_comparison(
+    body: &str,
+    assertion: &str,
+    masked: &str,
+    start: usize,
+    owner: &str,
+) -> bool {
+    let Some(open) = ["assert_eq!", "assert_ne!"]
+        .iter()
+        .filter_map(|name| {
+            let after = masked.find(name)? + name.len();
+            Some(after + masked[after..].find(['(', '['])? + 1)
+        })
+        .min()
+    else {
+        return false;
+    };
+    let mut operands = Vec::new();
+    let mut depth = 0usize;
+    // Generic arguments after a turbofish (`Config::<A, B>::new(..)`): their
+    // commas do not split operands.
+    let mut angle = 0usize;
+    let mut from = open;
+    for (offset, ch) in masked[open..].char_indices() {
+        let at = open + offset;
+        match ch {
+            '<' if angle > 0 || masked[..at].ends_with("::") => {
+                angle += 1;
+                depth += 1;
+            }
+            '>' if angle > 0 => {
+                angle -= 1;
+                depth = depth.saturating_sub(1);
+            }
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' if depth == 0 => {
+                operands.push(from..at);
+                break;
+            }
+            ')' | ']' | '}' => depth -= 1,
+            ',' if depth == 0 => {
+                operands.push(from..at);
+                from = at + 1;
+            }
+            _ => {}
+        }
+    }
+    let [left, right, ..] = operands.as_slice() else {
+        return false;
+    };
+    let other = if left.contains(&start) {
+        right
+    } else if right.contains(&start) {
+        left
+    } else {
+        return false;
+    };
+    let Some(other) = assertion.get(other.clone()) else {
+        return false;
+    };
+    let other = whole_value_operand(other);
+    if other.ends_with(')') {
+        return call_before_is_owner(other, owner);
+    }
+    !other.is_empty()
+        && other
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+        && binds_from_owner_call(body, other, &format!("{owner}("))
+}
+
+/// The value an operand compares, without the borrows, derefs, `.clone()`
+/// and one `Some(..)`/`Ok(..)` around it: `&mut Some(cfg.clone())` is `cfg`.
+fn whole_value_operand(operand: &str) -> &str {
+    let mut value = operand.trim();
+    loop {
+        let stripped = value
+            .strip_prefix("&mut ")
+            .or_else(|| value.strip_prefix('&'))
+            .or_else(|| value.strip_prefix('*'))
+            .or_else(|| value.strip_suffix(".clone()"))
+            .map(str::trim);
+        match stripped {
+            Some(next) => value = next,
+            None => break,
+        }
+    }
+    for wrapper in ["Some(", "Ok("] {
+        if let Some(inner) = value
+            .strip_prefix(wrapper)
+            .and_then(|rest| rest.strip_suffix(')'))
+            .filter(|inner| !inner.contains(['(', ')']) || inner.ends_with(')'))
+        {
+            return whole_value_operand(inner);
+        }
+    }
+    value
 }
 
 /// Whether the call whose `)` ends `before` is a call of `owner`: the
@@ -3186,6 +3587,41 @@ mod tests {
             "assert_eq!(Config::default_config(\"x\").retries, 3);"
         ));
         assert!(reads("assert_eq!(default_config(load(1)).retries, 3);"));
+        // RIPR-SPEC-0225 example 12: a read copied into the expected
+        // literal makes the comparison a tautology on that field.
+        assert!(!reads(
+            "assert_eq!(cfg, Config { retries: cfg.retries, name: \"x\".into() });"
+        ));
+        assert!(!reads(
+            "assert_eq!(cfg, Config { inner: Inner { n: cfg.retries } });"
+        ));
+        // The same tautology through a call's parentheses (#7066 review).
+        assert!(!reads(
+            "assert_eq!(cfg, Config::new(cfg.retries, \"x\".into()));"
+        ));
+        assert!(!reads("assert_eq!(cfg, expected_with(cfg.retries));"));
+        assert!(!reads("assert_ne!(expected_with(cfg.retries), &cfg);"));
+        assert!(!reads(
+            "assert_eq!(default_config(), expected_with(default_config().retries));"
+        ));
+        assert!(!reads("assert_eq!(cfg.clone(), Config::new(cfg.retries));"));
+        assert!(!reads(
+            "assert_eq!(Some(cfg), Some(Config::new(cfg.retries)));"
+        ));
+        assert!(!reads(
+            "assert_eq!(&mut cfg, Config::<u8, u8>::new(cfg.retries));"
+        ));
+        assert!(!reads("assert_eq![cfg, Config::new(cfg.retries)];"));
+        assert!(!reads(
+            "assert_eq!(Ok(default_config()), Config::new(default_config().retries));"
+        ));
+        // Compared with something other than the whole result, the read
+        // still observes the field.
+        assert!(reads("assert_eq!(cfg.retries, fallback.retries);"));
+        assert!(reads("assert_eq!(Some(cfg.retries), Some(3));"));
+        // A brace in a message string does not open a literal.
+        assert!(reads("assert_eq!(cfg.retries, 3, \"{}\", 1);"));
+        assert!(reads("assert_eq!(cfg.retries, 3, \"{\");"));
         assert!(!reads_owner_result_field(
             "let e = make();",
             "assert!(e.downcast_ref::<Box<dyn E>>().is_some());",
@@ -3198,6 +3634,76 @@ mod tests {
             ".retries",
             "default_config"
         ));
+    }
+
+    #[test]
+    fn a_field_overwritten_before_the_assertion_is_not_the_owner_field() {
+        let reads = |body: &str, assertion: &str| {
+            reads_owner_result_field(body, assertion, ".total", "bundle")
+        };
+        let withheld = [
+            // RIPR-SPEC-0005: credit holds only before shadow or overwrite.
+            "let q = bundle(3);\n let q = Quote { total: 99, ..q };\n assert_eq!(q.total, 99);",
+            "let mut q = bundle(3);\n q.total = 99;\n assert_eq!(q.total, 99);",
+            "let q = Quote { total: 99, ..bundle(3) };\n assert_eq!(q.total, 99);",
+            "let q = bundle(3);\n let q = crate::Quote { total: 99, ..q };\n assert_eq!(q.total, 99);",
+            "let q = bundle(3);\n let q = Quote::<u8> { total: 99, ..q };\n assert_eq!(q.total, 99);",
+            // #7093 review: the turbofish's arguments are type syntax, however
+            // they are spelled - a tuple, an array, nested generics.
+            "let q = bundle(3);\n let q = Quote::<(u8, Vec<u8>)> { total: 99, ..q };\n assert_eq!(q.total, 99);",
+            "let q = bundle(3);\n let q = Quote::<[u8; 4]> { total: 99, ..q };\n assert_eq!(q.total, 99);",
+            "let q = bundle(3);\n let q = Quote::<Vec<Vec<u8>>> { total: 99, ..q };\n assert_eq!(q.total, 99);",
+            // An assignment after a pass-through update still overwrites.
+            "let q = bundle(3);\n let mut q = Quote { items: 4, ..q };\n q.total = 1;\n assert_eq!(q.total, 1);",
+            // So does one after a value copied back from the receiver.
+            "let q = bundle(3);\n let mut q = Quote { total: q.total, ..q };\n q.total = 99;\n assert_eq!(q.total, 99);",
+        ];
+        for body in withheld {
+            let assertion = body.rsplit('\n').next().unwrap_or_default().trim();
+            assert!(!reads(body, assertion), "{body}");
+        }
+        let credited = [
+            // A struct update that leaves the field to its base passes it
+            // through, as does a value read back from the receiver.
+            "let q = bundle(3);\n let q = Quote { items: 4, ..q };\n assert_eq!(q.total, 45);",
+            "let q = bundle(3);\n let q = Quote::<u8> { items: 4, ..q };\n assert_eq!(q.total, 45);",
+            "let q = bundle(3);\n let q = Quote::<(u8, Vec<u8>)> { items: 4, ..q };\n assert_eq!(q.total, 45);",
+            "let q = bundle(3);\n let q = Quote { total: q.total, ..q };\n assert_eq!(q.total, 45);",
+            "let q = bundle(3);\n let total = q.total;\n let q = Quote { total, ..q };\n assert_eq!(q.total, 45);",
+            "let mut q = bundle(3);\n q.total = q.total;\n assert_eq!(q.total, 45);",
+            // A value copied out of the receiver first is still the owner's.
+            "let q = bundle(3);\n let t = q.total;\n let q = Quote { total: t, ..q };\n assert_eq!(q.total, 45);",
+            "let mut q = bundle(3);\n let t = q.total;\n let u = t + 0;\n q.total = u;\n assert_eq!(q.total, 45);",
+            // Plain assignment and a second owner binding carry the value too.
+            "let mut q = bundle(3);\n let mut t = 0;\n t = q.total;\n q.total = t;\n assert_eq!(q.total, 45);",
+            "let base = bundle(3);\n let q = bundle(1);\n let q = Quote { total: base.total, ..q };\n assert_eq!(q.total, 45);",
+            // A destructuring `let` binds its braced names from the owner.
+            "let mut q = bundle(1);\n let Quote { total, .. } = bundle(3);\n q.total = total;\n assert_eq!(q.total, 45);",
+            "let mut q = bundle(1);\n let Quote { total: t, .. } = bundle(3);\n q.total = t;\n assert_eq!(q.total, 45);",
+            // A char literal quote does not hide a closing brace.
+            "let q = bundle(3);\n { let c = '\"'; let q = Quote { total: 1, ..q }; drop((c, q)); }\n assert_eq!(q.total, 45);",
+            // Only a statement still in scope at the assertion counts.
+            "let q = bundle(3);\n { let q = Quote { total: 1, ..q }; drop(q); }\n assert_eq!(q.total, 45);",
+            "let mut q = bundle(3);\n if false { q.total = 0; }\n assert_eq!(q.total, 45);",
+            "let q = bundle(3);\n let _f = |q: Quote| { let q = Quote { total: 0, ..q }; q };\n assert_eq!(q.total, 45);",
+            // Comments and strings are not code.
+            "let q = bundle(3);\n // let q = Quote { total: 0, ..q };\n assert_eq!(q.total, 45);",
+            "let q = bundle(3);\n let s = \"let q = Quote { total: 0 };\";\n assert_eq!(q.total, 45);",
+            "let mut q = bundle(3);\n // q.total = 0;\n assert_eq!(q.total, 45);",
+            // Reads before the overwrite, comparisons and other fields.
+            "let mut q = bundle(3);\n let ok = q.total == 45;\n assert_eq!(q.total, 45);",
+            "let mut q = bundle(3);\n q.total_cap = 1;\n assert_eq!(q.total, 45);",
+            // Ambiguous rebinding and positions keep today's credit.
+            "let q = bundle(3);\n let q = adjust(q);\n assert_eq!(q.total, 45);",
+        ];
+        for body in credited {
+            let assertion = body.rsplit('\n').next().unwrap_or_default().trim();
+            assert!(reads(body, assertion), "{body}");
+        }
+        let before = "let mut q = bundle(3);\n assert_eq!(q.total, 45);\n q.total = 1;";
+        assert!(reads(before, "assert_eq!(q.total, 45);"));
+        let twice = "let q = bundle(3);\n let q = Quote { total: 9, ..q };\n assert_eq!(q.total, 9);\n assert_eq!(q.total, 9);";
+        assert!(reads(twice, "assert_eq!(q.total, 9);"));
     }
 
     use super::*;

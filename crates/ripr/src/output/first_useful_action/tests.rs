@@ -2298,6 +2298,139 @@ fn one_screen_changed_behavior_skips_a_blank_seam_expression() -> Result<(), Str
     Ok(())
 }
 
+const NEUTRAL_REPAIR_START_WHY: &str = "The review card identifies missing discriminator `amount == discount_threshold` and names its repair start.";
+
+#[test]
+fn carried_repair_start_names_the_discriminator_without_inventing_reach() -> Result<(), String> {
+    let comments = exact_line_comments()?;
+    assert_eq!(
+        comments
+            .pointer("/comments/0/grip_class")
+            .and_then(Value::as_str),
+        Some("weakly_gripped")
+    );
+    assert_eq!(
+        comments
+            .pointer("/comments/0/llm_guidance/repair_command")
+            .and_then(Value::as_str),
+        Some(EXACT_LINE_REPAIR)
+    );
+    let expected_path = repo_root()?.join(
+        "fixtures/boundary_gap/expected/first-useful-action/repair-start/first-useful-action.json",
+    );
+    let mut expected: Value = serde_json::from_str(&read_file(&expected_path)?)
+        .map_err(|error| format!("parse canonical report: {error}"))?;
+    expected["why"] = Value::from(NEUTRAL_REPAIR_START_WHY);
+    let report = build_first_useful_action_report(guidance_only_input(&comments)?);
+    let actual: Value = serde_json::from_str(&render_first_useful_action_json(&report)?)
+        .map_err(|error| format!("parse actual report: {error}"))?;
+    assert_eq!(
+        actual, expected,
+        "only the independently authored rationale changes"
+    );
+    let markdown = render_first_useful_action_markdown(&report);
+    assert_eq!(
+        markdown.lines().find(|line| line.starts_with("- Why: ")),
+        Some(
+            "- Why: The review card identifies missing discriminator `amount == discount_threshold` and names its repair start.",
+        )
+    );
+    assert!(
+        !markdown.contains("a related test reaches this change"),
+        "{markdown}"
+    );
+    Ok(())
+}
+
+#[test]
+fn carried_exposure_card_keeps_the_neutral_repair_report() -> Result<(), String> {
+    let mut comments = exact_line_comments()?;
+    let card = comments
+        .pointer_mut("/comments/0")
+        .and_then(Value::as_object_mut)
+        .ok_or("canonical card missing")?;
+    // Exercise the supported exposure-vocabulary artifact shape.
+    card.remove("grip_class");
+    card.insert("classification".to_string(), Value::from("weakly_exposed"));
+
+    let expected_path = repo_root()?.join(
+        "fixtures/boundary_gap/expected/first-useful-action/repair-start/first-useful-action.json",
+    );
+    let mut expected: Value = serde_json::from_str(&read_file(&expected_path)?)
+        .map_err(|error| format!("parse canonical report: {error}"))?;
+    expected["why"] = Value::from(NEUTRAL_REPAIR_START_WHY);
+
+    let report = build_first_useful_action_report(guidance_only_input(&comments)?);
+    let actual: Value = serde_json::from_str(&render_first_useful_action_json(&report)?)
+        .map_err(|error| format!("parse exposure-card report: {error}"))?;
+    assert_eq!(actual, expected);
+    assert_eq!(
+        render_first_useful_action_markdown(&report)
+            .lines()
+            .find(|line| line.starts_with("- Why: ")),
+        Some(
+            "- Why: The review card identifies missing discriminator `amount == discount_threshold` and names its repair start.",
+        )
+    );
+    Ok(())
+}
+
+#[test]
+fn carried_ungripped_card_keeps_its_identity_commands_and_neutral_rationale() -> Result<(), String>
+{
+    let mut comments = exact_line_comments()?;
+    // Consumer-input control, not a live producer-admission claim.
+    comments["comments"][0]["grip_class"] = Value::from("ungripped");
+
+    let expected_path = repo_root()?.join(
+        "fixtures/boundary_gap/expected/first-useful-action/repair-start/first-useful-action.json",
+    );
+    let mut expected: Value = serde_json::from_str(&read_file(&expected_path)?)
+        .map_err(|error| format!("parse canonical report: {error}"))?;
+    expected["why"] = Value::from(NEUTRAL_REPAIR_START_WHY);
+    expected["selected"]["classification"] = Value::from("no_static_path");
+
+    // Predicate-boundary evidence strength retains its canonical value.
+    let report = build_first_useful_action_report(guidance_only_input(&comments)?);
+    let actual: Value = serde_json::from_str(&render_first_useful_action_json(&report)?)
+        .map_err(|error| format!("parse ungripped-card report: {error}"))?;
+    assert_eq!(actual, expected);
+    assert_eq!(
+        render_first_useful_action_markdown(&report)
+            .lines()
+            .find(|line| line.starts_with("- Why: ")),
+        Some(
+            "- Why: The review card identifies missing discriminator `amount == discount_threshold` and names its repair start.",
+        )
+    );
+    Ok(())
+}
+
+#[test]
+fn absent_or_blank_carried_command_keeps_the_missing_proof_route() -> Result<(), String> {
+    for blank in [false, true] {
+        let mut comments = exact_line_comments()?;
+        if blank {
+            comments["comments"][0]["llm_guidance"]["repair_command"] = Value::from("  ");
+        } else {
+            let card = comments
+                .pointer_mut("/comments/0")
+                .ok_or("canonical card missing")?;
+            remove_repair_command(card)?;
+        }
+        let report = build_first_useful_action_report(guidance_only_input(&comments)?);
+        let rendered = render_first_useful_action_json(&report)?;
+        let actual: Value = serde_json::from_str(&rendered)
+            .map_err(|error| format!("parse refusal report: {error}"))?;
+        assert_eq!(actual["status"], "missing_required_artifact");
+        assert_eq!(actual["action_kind"], "generate_missing_artifact");
+        assert!(actual["commands"].get("repair").is_none());
+        assert_no_repair_loop_command(&rendered);
+        assert!(!render_first_useful_action_markdown(&report).contains("## Start Repair"));
+    }
+    Ok(())
+}
+
 #[test]
 fn first_useful_action_matches_repair_start_fixture() -> Result<(), String> {
     let repo_root = repo_root()?;

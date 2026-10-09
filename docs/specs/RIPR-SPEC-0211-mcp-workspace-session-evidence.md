@@ -218,6 +218,12 @@ official SDK transport:
   equality, rejection arms, and the new fail-closed control proving a
   stock-shaped client receives typed `no_snapshot` failures (and the
   resource-miss mapping) before the first refresh.
+  `resource_reads_match_tools_after_refresh` pins gap tool/resource
+  parsed-document equality plus the snapshot envelope
+  (`ripr-mcp-snapshot-v1`, identity, typed outcome) after refresh
+  (#7145). Resource payloads are pretty-printed while tool payloads are
+  compact by design, so the control compares parsed documents, not
+  serialized bytes.
 - `cargo test -p ripr --lib mcp::transport` — bounded framing, typed-shape
   recovery, and the #5267 control: repeated pre-initialize violations each
   receive a correlated `-32602` answer, the session then completes a normal
