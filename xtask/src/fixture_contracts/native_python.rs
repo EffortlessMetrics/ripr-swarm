@@ -279,9 +279,6 @@ fn validate_row(row: &Value) -> Result<(), String> {
         if tests == 1 && name != "test_future_age" {
             return Err("native control must select the upstream future-age test".to_string());
         }
-        if suppressed && id["reason"] != "pytest.xfail" {
-            return Err("suppressed assertion must remain an expected failure".to_string());
-        }
         let start = xml.find(&needle).ok_or("missing native test identity")?;
         let rest = &xml[start..];
         let case = rest.split("<testcase ").next().unwrap_or(rest);
@@ -294,6 +291,24 @@ fn validate_row(row: &Value) -> Result<(), String> {
         };
         if id["outcome"] != outcome {
             return Err("native subject outcome contradicts JUnit".to_string());
+        }
+        let expected_reason = if disabled {
+            Some("pytest.skip")
+        } else if suppressed {
+            Some("pytest.xfail")
+        } else {
+            None
+        };
+        if let Some(reason) = expected_reason {
+            if id["reason"].as_str() != Some(reason)
+                || !case.contains(&format!("<skipped type=\"{reason}\" "))
+            {
+                return Err(format!(
+                    "native skipped subject must report {reason} in JSON and JUnit"
+                ));
+            }
+        } else if id.get("reason") != Some(&Value::Null) {
+            return Err("native active subject reason must be explicit null".to_string());
         }
     }
     if tests == 2
