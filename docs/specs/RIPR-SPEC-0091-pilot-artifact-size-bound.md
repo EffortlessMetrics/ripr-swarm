@@ -260,6 +260,8 @@ renderer retains its existing admission filter.
 
 ## Metrics
 
-- Gate: all 7 new tests pass (4 in `seam_inventory.rs`, 3 in `agent_seam_packets.rs`).
+- Gate: all 12 mapped tests pass: four inventory tests, four packet renderer
+  tests, two repo-exposure disclosure tests, one PR-summary consumer test,
+  and the built CLI cap/replay control.
 - Promote to accepted when a large-workspace pilot run confirms artifact sizes are
   bounded by the 2,000-seam default.
