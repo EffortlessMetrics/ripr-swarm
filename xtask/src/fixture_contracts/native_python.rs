@@ -440,8 +440,8 @@ mod tests {
         Ok(())
     }
     #[test]
-    fn native_skip_reasons_bind_registration_execution_and_failure_suppression() -> Result<(), String>
-    {
+    fn native_skip_reasons_bind_registration_execution_and_failure_suppression()
+    -> Result<(), String> {
         let root = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../fixtures/python-real-repo-evals/itsdangerous-future-age");
         let receipt = read_json(&root.join("evidence/native.json"))?;
@@ -469,7 +469,9 @@ mod tests {
                 .ok_or_else(|| format!("missing control: {implementation}/{variant}"))?;
             assert_eq!(row["registered"], serde_json::json!(registered));
             assert_eq!(row["executed"], serde_json::json!(executed));
-            let ids = row["test_ids"].as_array().ok_or("missing native subjects")?;
+            let ids = row["test_ids"]
+                .as_array()
+                .ok_or("missing native subjects")?;
             assert_eq!(ids.len(), registered);
             for id in ids {
                 assert_eq!(id.get("reason"), Some(&serde_json::json!(expected_reason)));
