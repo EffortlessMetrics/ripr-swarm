@@ -3,6 +3,7 @@
 //! change to only the `return` line of a multi-line `return`, or only its
 //! constructor line.
 
+use super::classify::parser_probe_shapes_for_changed_line;
 use super::diff::probes_for_file;
 use super::repo::probes_for_repo_file;
 use crate::analysis::diff::{ChangedFile, ChangedLine};
@@ -567,6 +568,189 @@ fn inventory_keeps_wrappers_that_add_error_behavior() -> Result<(), String> {
             (24, "Err(Error::Tail)"),
         ],
         "{seams:?}"
+    );
+    Ok(())
+}
+
+/// #6904: `return` / `return x.ok_or(V)?` inside a closure or async block
+/// leave that body. Repo inventory and diff selection must not treat them
+/// as the enclosing function's error-path.
+const NESTED_RETURN_SOURCE: &str = concat!(
+    "pub enum E { Bad, Other }\n",
+    "pub fn parse(x: Option<u8>, flag: bool) -> Result<u8, E> {\n",
+    "    let _c = |c: Option<u8>| -> Result<u8, E> {\n",
+    "        if c.is_none() { return Err(E::Bad); }\n",
+    "        return c.ok_or(E::Bad)?;\n",
+    "    };\n",
+    "    let _a = async {\n",
+    "        if flag { return Err(E::Bad); }\n",
+    "        return x.ok_or(E::Bad)?;\n",
+    "    };\n",
+    "    if flag { return Err(E::Other); }\n",
+    "    return x.ok_or(E::Other)?;\n",
+    "}\n",
+);
+
+fn line_of(source: &str, fragment: &str) -> Result<usize, String> {
+    source
+        .lines()
+        .position(|text| text.contains(fragment))
+        .map(|index| index + 1)
+        .ok_or_else(|| format!("fixture has no `{fragment}` line"))
+}
+
+fn diff_probes_in(source: &str, fragment: &str) -> Result<Vec<Probe>, String> {
+    let line = line_of(source, fragment)?;
+    let text = source
+        .lines()
+        .nth(line.saturating_sub(1))
+        .ok_or_else(|| format!("fixture has no line {line}"))?
+        .to_string();
+    let changed = ChangedFile {
+        path: PathBuf::from("src/lib.rs"),
+        added_lines: vec![ChangedLine {
+            line,
+            new_side_line: line,
+            text,
+        }],
+        removed_lines: Vec::new(),
+    };
+    Ok(probes_for_file(
+        Path::new("."),
+        &changed,
+        &index_of(source)?,
+    ))
+}
+
+#[test]
+fn repo_inventory_skips_return_ok_or_inside_closure_or_async() -> Result<(), String> {
+    let seams = inventory_seams_from_index(
+        &[PathBuf::from("src/lib.rs")],
+        &index_of(NESTED_RETURN_SOURCE)?,
+    );
+    let error_seams: Vec<(usize, &str)> = seams
+        .iter()
+        .filter(|seam| seam.kind() == SeamKind::ErrorVariant)
+        .map(|seam| (seam.display_line(), seam.expression()))
+        .collect();
+    let owner_ok_or = line_of(NESTED_RETURN_SOURCE, "return x.ok_or(E::Other)?")?;
+    let owner_err = line_of(NESTED_RETURN_SOURCE, "return Err(E::Other)")?;
+    assert!(
+        error_seams
+            .iter()
+            .any(|(line, expr)| *line == owner_ok_or && expr.contains("ok_or(E::Other)")),
+        "fn-level return ok_or must stay an error seam: {error_seams:?}"
+    );
+    assert!(
+        error_seams
+            .iter()
+            .any(|(line, expr)| *line == owner_err && expr.contains("E::Other")),
+        "fn-level return Err must stay an error seam: {error_seams:?}"
+    );
+    assert!(
+        error_seams
+            .iter()
+            .all(|(_, expr)| !expr.trim_start().starts_with("return") || !expr.contains("E::Bad")),
+        "nested return texts must not be owner error seams: {error_seams:?}"
+    );
+    assert!(
+        error_seams
+            .iter()
+            .all(|(_, expr)| !expr.contains("ok_or(E::Bad)")),
+        "nested return ok_or is the only ErrorPath producer and must stay out: {error_seams:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn diff_skips_return_error_path_inside_closure_or_async() -> Result<(), String> {
+    let path = PathBuf::from("src/lib.rs");
+    let index = index_of(NESTED_RETURN_SOURCE)?;
+    let closure_err = parser_probe_shapes_for_changed_line(
+        &index,
+        &path,
+        line_of(NESTED_RETURN_SOURCE, "c.is_none()")?,
+        "if c.is_none() { return Err(E::Bad); }",
+    );
+    let async_err = parser_probe_shapes_for_changed_line(
+        &index,
+        &path,
+        line_of(NESTED_RETURN_SOURCE, "if flag { return Err(E::Bad)")?,
+        "if flag { return Err(E::Bad); }",
+    );
+    let closure_ok_or = parser_probe_shapes_for_changed_line(
+        &index,
+        &path,
+        line_of(NESTED_RETURN_SOURCE, "return c.ok_or(E::Bad)?")?,
+        "return c.ok_or(E::Bad)?;",
+    );
+    let async_ok_or = parser_probe_shapes_for_changed_line(
+        &index,
+        &path,
+        line_of(NESTED_RETURN_SOURCE, "return x.ok_or(E::Bad)?")?,
+        "return x.ok_or(E::Bad)?;",
+    );
+    let owner_err = parser_probe_shapes_for_changed_line(
+        &index,
+        &path,
+        line_of(NESTED_RETURN_SOURCE, "return Err(E::Other)")?,
+        "if flag { return Err(E::Other); }",
+    );
+    let owner_ok_or = parser_probe_shapes_for_changed_line(
+        &index,
+        &path,
+        line_of(NESTED_RETURN_SOURCE, "return x.ok_or(E::Other)?")?,
+        "return x.ok_or(E::Other)?;",
+    );
+    for (label, shapes, owner) in [
+        ("closure return Err", &closure_err, false),
+        ("async return Err", &async_err, false),
+        ("closure return ok_or", &closure_ok_or, false),
+        ("async return ok_or", &async_ok_or, false),
+        ("fn return Err", &owner_err, true),
+        ("fn return ok_or", &owner_ok_or, true),
+    ] {
+        let error_texts: Vec<&str> = shapes
+            .iter()
+            .filter(|shape| shape.family == ProbeFamily::ErrorPath)
+            .map(|shape| shape.text)
+            .collect();
+        let return_owned = error_texts
+            .iter()
+            .any(|text| text.trim_start().starts_with("return"));
+        assert_eq!(
+            return_owned, owner,
+            "{label}: return-owned ErrorPath owner={owner}, texts={error_texts:?}"
+        );
+        if !owner {
+            assert!(
+                error_texts
+                    .iter()
+                    .all(|text| !text.contains("ok_or(E::Bad)")),
+                "{label}: nested ok_or must not be an ErrorPath: {error_texts:?}"
+            );
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn diff_probes_keep_fn_level_return_ok_or_and_drop_nested() -> Result<(), String> {
+    let nested = diff_probes_in(NESTED_RETURN_SOURCE, "return c.ok_or(E::Bad)?")?;
+    assert!(
+        nested
+            .iter()
+            .filter(|probe| probe.family == ProbeFamily::ErrorPath)
+            .all(|probe| !probe.expression.contains("ok_or(E::Bad)")),
+        "closure return ok_or must not seed a diff error_path: {nested:?}"
+    );
+    let owner = diff_probes_in(NESTED_RETURN_SOURCE, "return x.ok_or(E::Other)?")?;
+    assert!(
+        owner
+            .iter()
+            .any(|probe| probe.family == ProbeFamily::ErrorPath
+                && probe.expression.contains("ok_or(E::Other)")),
+        "fn-level return ok_or must seed a diff error_path: {owner:?}"
     );
     Ok(())
 }
