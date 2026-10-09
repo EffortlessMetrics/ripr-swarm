@@ -272,7 +272,7 @@ The diff changes `retries: n + 2` to `retries: n + 1` in `build`; `Config` deriv
   `fixtures/observation_unverified_field_construction`,
   `fixtures/rust_field_construction_token_coincidence`.
 - Verdict corpus: 17 cases `spec0225-*` in
-  `fixtures/rust-verdict-corpus/corpus.json`, one per buildable acceptance
+  `fixtures/rust-verdict-corpus/cases/`, one per buildable acceptance
   example, each naming its example in its reasoning and labeled with runtime
   mutant truth.
 - Honesty corpus: `rust_owner_pin_whole_value_string_from_shadow` in

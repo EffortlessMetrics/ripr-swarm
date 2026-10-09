@@ -609,3 +609,64 @@ fn locked_test_args_passes_locked_only_when_the_tree_has_a_lockfile() -> Result<
     assert_eq!(already, strings(&["test", "--locked", "--lib"]));
     Ok(())
 }
+
+#[test]
+fn relabel_receipt_records_git_head_and_corpus_digest() -> Result<(), String> {
+    let dir = crate::tests::temp_dir("relabel-identity");
+    crate::tests::write(&dir.join("cases/a-case.json"), "{}\n");
+    crate::tests::write(&dir.join("subjects/s.json"), "{}\n");
+    let identity = corpus_identity(&dir)?;
+    assert!(
+        identity.corpus_digest.starts_with("sha256:")
+            && identity.corpus_digest.len() == "sha256:".len() + 64,
+        "{}",
+        identity.corpus_digest
+    );
+
+    crate::tests::write(&dir.join("cases/a-case.json"), "{\"moved\":true}\n");
+    let moved = corpus_identity(&dir)?;
+    assert_ne!(identity.corpus_digest, moved.corpus_digest);
+
+    crate::tests::write(&dir.join("corpus.json"), "{\"schema_version\":\"x\"}\n");
+    let header_only = corpus_identity(&dir)?;
+    assert_eq!(moved.corpus_digest, header_only.corpus_digest);
+
+    crate::tests::write(&dir.join("subjects/nested/src/lib.rs.txt"), "fn f() {}\n");
+    let nested = corpus_identity(&dir)?;
+    assert_ne!(moved.corpus_digest, nested.corpus_digest);
+
+    assert_eq!(git_head(Path::new("/no/such/ripr-relabel-identity")), None);
+
+    let corpus_dir = crate::dogfood::repo_rooted_fixture_path(CORPUS_DIR);
+    let repo = corpus_identity(&corpus_dir)?;
+    let head = run_output_owned(
+        "git",
+        &[
+            "-C".to_string(),
+            corpus_dir.to_string_lossy().into_owned(),
+            "rev-parse".to_string(),
+            "HEAD".to_string(),
+        ],
+    )?;
+    assert_eq!(repo.git_head.as_deref(), Some(head.trim()));
+    assert_ne!(repo.corpus_digest, nested.corpus_digest);
+
+    let receipt = Receipt {
+        schema_version: RELABEL_SCHEMA,
+        git_head: repo.git_head.clone(),
+        corpus_digest: repo.corpus_digest.clone(),
+        seed: "s".to_string(),
+        sample: None,
+        repeat: 1,
+        selected: 0,
+        not_replayed: Vec::new(),
+        drifted_cases: 0,
+        cases: Vec::new(),
+    };
+    let json = serde_json::to_value(&receipt).map_err(|err| err.to_string())?;
+    assert_eq!(json["schema_version"], RELABEL_SCHEMA);
+    assert_eq!(RELABEL_SCHEMA, "ripr_verdict_corpus_relabel.v2");
+    assert_eq!(json["git_head"], head.trim());
+    assert_eq!(json["corpus_digest"], repo.corpus_digest);
+    Ok(())
+}

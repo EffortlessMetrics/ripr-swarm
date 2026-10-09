@@ -217,10 +217,14 @@ summary counts that disagree with the findings list.
   such a command too. `--sample` picks a deterministic subset, for the same
   set of checkouts, ordered by sha256 of the seed and case id, so a
   scheduled run can rotate seeds through the corpus; `--case` inspects only
-  the selected cases' checkouts. It writes `relabel.json` and never clones,
-  fetches, or edits the corpus. Subject trees live under a per-process
-  directory, so concurrent runs sharing a `--work-dir` do not clear each
-  other's trees.
+  the selected cases' checkouts. It writes `relabel.json`
+  (`schema_version` `ripr_verdict_corpus_relabel.v2`) recording `git_head`
+  (the enclosing checkout's HEAD, or null when git cannot name it) and
+  `corpus_digest` (sha256 of every regular file under `cases/` and
+  `subjects/`, in relative-path order) so the receipt identifies the corpus
+  state it replayed, and never clones, fetches, or edits the corpus. Subject
+  trees live under a per-process directory, so concurrent runs sharing a
+  `--work-dir` do not clear each other's trees.
 
   Known limits: failing-test names match by `::` suffix across all test
   binaries; a binary that aborts (a stack overflow, `process::exit`) names
@@ -507,6 +511,7 @@ Relabel tests live in `xtask/src/reports/verdict_corpus_relabel_tests.rs`:
 - `labeled_toolchain_names_the_rustup_release`
 - `link_stays_inside_refuses_links_that_leave_the_copy`
 - `copy_checkout_refuses_a_chain_of_links_that_resolves_outside`
+- `relabel_receipt_records_git_head_and_corpus_digest`
 
 Spec-example coverage tests live in
 `xtask/src/reports/verdict_corpus_coverage_tests.rs`:

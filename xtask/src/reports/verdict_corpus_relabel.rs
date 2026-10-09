@@ -25,12 +25,12 @@ use crate::normalize_path;
 use crate::run::{capture_output_measured, run_output_owned};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-const RELABEL_SCHEMA: &str = "ripr_verdict_corpus_relabel.v1";
+const RELABEL_SCHEMA: &str = "ripr_verdict_corpus_relabel.v2";
 const DEFAULT_OUT: &str = "target/ripr/reports/verdict-corpus";
 const DEFAULT_SEED: &str = "ripr-verdict-corpus";
 /// libtest options after `--` that list instead of running, or change the
@@ -408,6 +408,10 @@ pub(crate) struct CaseResult {
 #[derive(Debug, Serialize)]
 struct Receipt {
     schema_version: &'static str,
+    /// Enclosing checkout HEAD, or `null` when git cannot name it.
+    git_head: Option<String>,
+    /// `sha256:` digest of every regular file under `cases/` and `subjects/`.
+    corpus_digest: String,
     seed: String,
     sample: Option<usize>,
     repeat: usize,
@@ -415,6 +419,88 @@ struct Receipt {
     not_replayed: Vec<String>,
     drifted_cases: usize,
     cases: Vec<CaseResult>,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct CorpusIdentity {
+    git_head: Option<String>,
+    corpus_digest: String,
+}
+
+/// Identity of the corpus state this replay read: git HEAD when the corpus
+/// sits in a checkout, plus a digest of `cases/` and `subjects/` so dirty or
+/// checkout-less trees still name the bytes.
+fn corpus_identity(dir: &Path) -> Result<CorpusIdentity, String> {
+    Ok(CorpusIdentity {
+        git_head: git_head(dir),
+        corpus_digest: corpus_digest(dir)?,
+    })
+}
+
+fn git_head(dir: &Path) -> Option<String> {
+    let args = vec![
+        "-C".to_string(),
+        dir.to_string_lossy().into_owned(),
+        "rev-parse".to_string(),
+        "HEAD".to_string(),
+    ];
+    let head = run_output_owned("git", &args).ok()?;
+    let sha = head.trim();
+    if sha.is_empty() || sha.contains('\n') {
+        None
+    } else {
+        Some(sha.to_string())
+    }
+}
+
+fn corpus_digest(dir: &Path) -> Result<String, String> {
+    let mut files = BTreeMap::new();
+    for name in ["cases", "subjects"] {
+        collect_record_files(dir, &dir.join(name), &mut files)?;
+    }
+    let mut hasher = Sha256::new();
+    for (rel, bytes) in &files {
+        hasher.update(rel.as_bytes());
+        hasher.update([0]);
+        let len = u64::try_from(bytes.len())
+            .map_err(|_| format!("file `{rel}` is too large to digest"))?;
+        hasher.update(len.to_le_bytes());
+        hasher.update(bytes);
+    }
+    Ok(format!(
+        "sha256:{}",
+        hasher
+            .finalize()
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect::<String>()
+    ))
+}
+
+fn collect_record_files(
+    root: &Path,
+    current: &Path,
+    files: &mut BTreeMap<String, Vec<u8>>,
+) -> Result<(), String> {
+    let entries =
+        fs::read_dir(current).map_err(|err| format!("read {}: {err}", normalize_path(current)))?;
+    for entry in entries {
+        let path = entry
+            .map_err(|err| format!("read {}: {err}", normalize_path(current)))?
+            .path();
+        let meta = fs::symlink_metadata(&path)
+            .map_err(|err| format!("stat {}: {err}", normalize_path(&path)))?;
+        if meta.is_dir() {
+            collect_record_files(root, &path, files)?;
+        } else if meta.is_file() {
+            let rel = path.strip_prefix(root).unwrap_or(&path);
+            let key = rel.to_string_lossy().replace('\\', "/");
+            let bytes =
+                fs::read(&path).map_err(|err| format!("read {}: {err}", normalize_path(&path)))?;
+            files.insert(key, bytes);
+        }
+    }
+    Ok(())
 }
 
 /// Compare one mutant's repeated runs with its label and return each drift.
@@ -1013,6 +1099,7 @@ pub(crate) fn relabel(args: &[String]) -> Result<(), String> {
     let args = parse_args(args)?;
     let dir = Path::new(CORPUS_DIR);
     let (corpus, _coverage): (Corpus, _) = validated_corpus(dir)?;
+    let identity = corpus_identity(dir)?;
     let subject = |id: &str| corpus.subjects.iter().find(|s| s.subject_id == id);
 
     let mut not_replayed = Vec::new();
@@ -1100,6 +1187,8 @@ pub(crate) fn relabel(args: &[String]) -> Result<(), String> {
     let drifted_cases = results.iter().filter(|r| !r.drift.is_empty()).count();
     let receipt = Receipt {
         schema_version: RELABEL_SCHEMA,
+        git_head: identity.git_head,
+        corpus_digest: identity.corpus_digest,
         seed: args.seed.clone(),
         sample: args.sample,
         repeat: args.repeat,

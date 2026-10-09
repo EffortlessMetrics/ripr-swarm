@@ -1108,26 +1108,56 @@ fn per_record_corpus(name: &str, case_ids: &[&str]) -> Result<PathBuf, String> {
     Ok(dir)
 }
 
+fn json_record_stems(dir: &Path) -> Result<Vec<String>, String> {
+    let mut names = Vec::new();
+    for entry in fs::read_dir(dir).map_err(|err| err.to_string())? {
+        let path = entry.map_err(|err| err.to_string())?.path();
+        if path.is_file() && path.extension().is_some_and(|ext| ext == "json") {
+            let stem = path
+                .file_stem()
+                .and_then(|stem| stem.to_str())
+                .ok_or_else(|| format!("{} is not utf-8", normalize_path(&path)))?;
+            names.push(stem.to_string());
+        }
+    }
+    Ok(names)
+}
+
 #[test]
 fn corpus_records_load_in_file_name_order_and_must_match_their_ids() -> Result<(), String> {
-    let dir = per_record_corpus("verdict-order", &["b-case", "a-case"])?;
+    // Two names often already come back sorted from ext4; enough mixed names
+    // that unsorted readdir differs from lexicographic order, so dropping
+    // `paths.sort()` goes red (#6945).
+    let ids = [
+        "z-ord", "m-ord", "a-ord", "y-ord", "b-ord", "n-ord", "x-ord", "c-ord", "w-ord", "v-ord",
+        "u-ord", "t-ord", "s-ord", "h-ord", "g-ord", "f-ord", "r-ord", "q-ord",
+    ];
+    let dir = per_record_corpus("verdict-order", &ids)?;
+    let listing = json_record_stems(&dir.join("cases"))?;
+    let mut sorted = listing.clone();
+    sorted.sort();
+    assert_ne!(
+        listing, sorted,
+        "readdir already returned sorted names {listing:?}; the missing paths.sort() control is vacuous"
+    );
     let corpus = load_corpus(&dir)?;
-    let ids: Vec<&str> = corpus.cases.iter().map(|c| c.case_id.as_str()).collect();
-    assert_eq!(ids, ["a-case", "b-case"]);
+    let loaded: Vec<&str> = corpus.cases.iter().map(|c| c.case_id.as_str()).collect();
+    let expected: Vec<&str> = sorted.iter().map(String::as_str).collect();
+    assert_eq!(loaded, expected);
     // A copied file that keeps the original id is refused, so two files can
     // never carry one id.
-    let mut copy: Value = serde_json::from_str(&read(&dir.join("cases/a-case.json"))?)
+    let mut copy: Value = serde_json::from_str(&read(&dir.join("cases/a-ord.json"))?)
         .map_err(|err| err.to_string())?;
-    copy["case_id"] = json!("b-case");
-    crate::tests::write(&dir.join("cases/c-case.json"), &format!("{copy:#}"));
+    copy["case_id"] = json!("z-ord");
+    crate::tests::write(&dir.join("cases/dup-case.json"), &format!("{copy:#}"));
     let err = load_corpus(&dir).err().unwrap_or_default();
     assert!(
-        err.contains("c-case.json") && err.contains("`b-case`"),
+        err.contains("dup-case.json") && err.contains("`z-ord`"),
         "{err}"
     );
     // A mistyped record name or a diff without its record would drop a case
     // silently; validate names both.
-    fs::remove_file(dir.join("cases/c-case.json")).map_err(|err| err.to_string())?;
+    fs::remove_file(dir.join("cases/dup-case.json")).map_err(|err| err.to_string())?;
     crate::tests::write(&dir.join("cases/d-case.JSON"), "{}\n");
     crate::tests::write(&dir.join("cases/e-case.diff"), "");
     fs::create_dir_all(dir.join("subjects/orphan")).map_err(|err| err.to_string())?;
