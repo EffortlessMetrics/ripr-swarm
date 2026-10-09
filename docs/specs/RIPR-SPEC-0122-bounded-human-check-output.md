@@ -433,6 +433,9 @@ suggested write cannot fail on the same missing base.
 
 ## Test Mapping
 
+- `crates/ripr/tests/agent_stub_compiles.rs::kind_not_found_refusal_preserves_the_requested_probe_family`
+- `crates/ripr/tests/agent_stub_compiles.rs::kind_nearest_hint_filters_before_the_cap_and_recovers_the_error_stub`
+- `crates/ripr/tests/agent_stub_compiles.rs::kind_not_found_without_a_matching_family_suggests_no_other_seams`
 - `crates/ripr/src/output/human.rs::tests::bounded_human_output_caps_many_findings_and_reports_omitted_count`
 - `crates/ripr/src/output/human.rs::tests::terminal_safe_escapes_controls_and_bidi_but_keeps_lines_and_tabs`
 - `crates/ripr/tests/hostile_repos.rs::terminal_control_bytes_in_repo_text_never_reach_the_terminal`
@@ -489,6 +492,7 @@ suggested write cannot fail on the same missing base.
 | Finding digest renderer | `crates/ripr/src/output/human/sections.rs` |
 | Format dispatch | `crates/ripr/src/output/render.rs` |
 | Repo-scope warning and suppression-policy wording | `crates/ripr/src/cli/commands.rs` |
+| Kind-scoped agent-stub not-found guidance | `crates/ripr/src/app/test_stub.rs` |
 | CLI help | `crates/ripr/src/cli/help/core.rs` |
 | First-pr missing-packet recovery | `crates/ripr/src/output/first_pr.rs` |
 | First-pr command options | `crates/ripr/src/output/first_pr/options.rs` |

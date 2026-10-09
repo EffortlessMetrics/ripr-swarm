@@ -8789,6 +8789,9 @@ id = "RIPR-SPEC-0122"
 name = "bounded human check output"
 spec = "docs/specs/RIPR-SPEC-0122-bounded-human-check-output.md"
 tests = [
+  "crates/ripr/tests/agent_stub_compiles.rs::kind_not_found_refusal_preserves_the_requested_probe_family",
+  "crates/ripr/tests/agent_stub_compiles.rs::kind_nearest_hint_filters_before_the_cap_and_recovers_the_error_stub",
+  "crates/ripr/tests/agent_stub_compiles.rs::kind_not_found_without_a_matching_family_suggests_no_other_seams",
   "crates/ripr/tests/property_macro_quarantine.rs::property_mentions_respect_known_package_boundaries",
   "crates/ripr/src/output/human.rs::tests::terminal_safe_escapes_controls_and_bidi_but_keeps_lines_and_tabs",
   "crates/ripr/tests/hostile_repos.rs::terminal_control_bytes_in_repo_text_never_reach_the_terminal",
@@ -8882,6 +8885,7 @@ code = [
   "crates/ripr/src/output/human/triage.rs",
   "crates/ripr/src/output/render.rs",
   "crates/ripr/src/analysis/test_stub.rs",
+  "crates/ripr/src/app/test_stub.rs",
   "crates/ripr/src/analysis/syntax/fn_signature.rs",
   "xtask/src/main.rs",
 ]
