@@ -452,7 +452,12 @@ fn balanced_inner(after_open: &str) -> Option<&str> {
 
 fn first_call_argument(payload: &str) -> Option<String> {
     let mut depth = 0usize;
+    let mut quote = None;
+    let mut escaped = false;
     for (index, character) in payload.char_indices() {
+        if in_quoted_literal(&mut quote, &mut escaped, character) {
+            continue;
+        }
         match character {
             '(' | '[' | '{' => depth = depth.saturating_add(1),
             ')' | ']' | '}' => depth = depth.saturating_sub(1),
@@ -526,22 +531,10 @@ fn delimited_group_closer_index(after_open: &str) -> Option<usize> {
     let mut quote = None;
     let mut escaped = false;
     for (index, character) in after_open.char_indices() {
-        if let Some(q) = quote {
-            if escaped {
-                escaped = false;
-                continue;
-            }
-            if character == '\\' {
-                escaped = true;
-                continue;
-            }
-            if character == q {
-                quote = None;
-            }
+        if in_quoted_literal(&mut quote, &mut escaped, character) {
             continue;
         }
         match character {
-            '"' | '\'' => quote = Some(character),
             '(' | '[' | '{' => depth = depth.saturating_add(1),
             ')' | ']' | '}' => {
                 depth = depth.saturating_sub(1);
@@ -553,6 +546,29 @@ fn delimited_group_closer_index(after_open: &str) -> Option<usize> {
         }
     }
     None
+}
+
+/// True when `character` is inside a quoted literal and must not count as a delimiter.
+fn in_quoted_literal(quote: &mut Option<char>, escaped: &mut bool, character: char) -> bool {
+    if let Some(q) = *quote {
+        if *escaped {
+            *escaped = false;
+            return true;
+        }
+        if character == '\\' {
+            *escaped = true;
+            return true;
+        }
+        if character == q {
+            *quote = None;
+        }
+        return true;
+    }
+    if matches!(character, '"' | '\'') {
+        *quote = Some(character);
+        return true;
+    }
+    false
 }
 
 fn is_collection_read_method(name: &str) -> bool {
@@ -1574,6 +1590,20 @@ mod tests {
                 "items"
             ),
             "a trailing operator after a string-bearing value-read must still refuse"
+        );
+        assert!(
+            assertion_observes_direct_collection(
+                "assert_eq!(items.contains(&\"(\".to_string()), true);",
+                "items"
+            ),
+            "a value-read whose argument string holds an opening parenthesis must still observe the collection"
+        );
+        assert!(
+            !assertion_observes_direct_collection(
+                "assert_eq!(items.contains(&\"(\".to_string()) || true, true);",
+                "items"
+            ),
+            "a trailing operator after an opening-paren string value-read must still refuse"
         );
     }
 
