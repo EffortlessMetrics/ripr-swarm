@@ -221,8 +221,10 @@ summary counts that disagree with the findings list.
   (`schema_version` `ripr_verdict_corpus_relabel.v2`) recording `git_head`
   (the enclosing checkout's HEAD, or null when git cannot name it) and
   `corpus_digest` (sha256 of every regular file under `cases/` and
-  `subjects/`, in relative-path order) so the receipt identifies the corpus
-  state it replayed, and never clones, fetches, or edits the corpus. Subject
+  `subjects/`, in UTF-8 relative-path order; a non-UTF-8 name is refused so
+  a replacement character cannot hide another file) so the receipt
+  identifies the corpus state it replayed, and never clones, fetches, or
+  edits the corpus. Subject
   trees live under a per-process directory, so concurrent runs sharing a
   `--work-dir` do not clear each other's trees.
 
@@ -513,6 +515,8 @@ Relabel tests live in `xtask/src/reports/verdict_corpus_relabel_tests.rs`:
 - `link_stays_inside_refuses_links_that_leave_the_copy`
 - `copy_checkout_refuses_a_chain_of_links_that_resolves_outside`
 - `relabel_receipt_records_git_head_and_corpus_digest`
+- `corpus_digest_refuses_non_utf8_names_instead_of_colliding_on_replacement`
+- `corpus_digest_keeps_backslash_names_distinct_from_nested_paths`
 
 Spec-example coverage tests live in
 `xtask/src/reports/verdict_corpus_coverage_tests.rs`:

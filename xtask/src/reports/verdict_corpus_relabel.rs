@@ -27,7 +27,7 @@ use serde::Serialize;
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::time::Duration;
 
 const RELABEL_SCHEMA: &str = "ripr_verdict_corpus_relabel.v2";
@@ -477,6 +477,35 @@ fn corpus_digest(dir: &Path) -> Result<String, String> {
     ))
 }
 
+/// UTF-8 relative path with `/` separators from path components, not a
+/// lossy string replace. A non-UTF-8 name is refused so U+FFFD cannot hide
+/// another file; a Unix `\` in a component stays distinct from a directory.
+fn digest_rel_key(root: &Path, path: &Path) -> Result<String, String> {
+    let rel = path.strip_prefix(root).unwrap_or(path);
+    let mut parts = Vec::new();
+    for component in rel.components() {
+        match component {
+            Component::Normal(name) => {
+                let text = name.to_str().ok_or_else(|| {
+                    format!(
+                        "{} is not utf-8; refuse it so a replacement character cannot hide another file in corpus_digest",
+                        normalize_path(path)
+                    )
+                })?;
+                parts.push(text);
+            }
+            Component::CurDir => {}
+            other => {
+                return Err(format!(
+                    "{} is not a relative file under the corpus ({other:?})",
+                    normalize_path(path)
+                ));
+            }
+        }
+    }
+    Ok(parts.join("/"))
+}
+
 fn collect_record_files(
     root: &Path,
     current: &Path,
@@ -493,11 +522,14 @@ fn collect_record_files(
         if meta.is_dir() {
             collect_record_files(root, &path, files)?;
         } else if meta.is_file() {
-            let rel = path.strip_prefix(root).unwrap_or(&path);
-            let key = rel.to_string_lossy().replace('\\', "/");
+            let key = digest_rel_key(root, &path)?;
             let bytes =
                 fs::read(&path).map_err(|err| format!("read {}: {err}", normalize_path(&path)))?;
-            files.insert(key, bytes);
+            if files.insert(key.clone(), bytes).is_some() {
+                return Err(format!(
+                    "corpus digest key `{key}` appears twice; a path encoding collision would hide a file"
+                ));
+            }
         }
     }
     Ok(())

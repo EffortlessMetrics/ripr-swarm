@@ -670,3 +670,50 @@ fn relabel_receipt_records_git_head_and_corpus_digest() -> Result<(), String> {
     assert_eq!(json["corpus_digest"], repo.corpus_digest);
     Ok(())
 }
+
+#[cfg(unix)]
+#[test]
+fn corpus_digest_refuses_non_utf8_names_instead_of_colliding_on_replacement() -> Result<(), String>
+{
+    use std::ffi::OsStr;
+    use std::os::unix::ffi::OsStrExt;
+
+    let dir = crate::tests::temp_dir("relabel-digest-utf8");
+    crate::tests::write(&dir.join("cases/a-case.json"), "{}\n");
+    crate::tests::write(&dir.join("subjects/\u{FFFD}.json"), "{}\n");
+    let ok = corpus_identity(&dir)?;
+    assert!(
+        ok.corpus_digest.starts_with("sha256:"),
+        "{}",
+        ok.corpus_digest
+    );
+
+    let invalid_a = dir.join("cases").join(OsStr::from_bytes(&[0x80]));
+    fs::write(&invalid_a, b"a\n").map_err(|err| err.to_string())?;
+    let err = corpus_identity(&dir).err().unwrap_or_default();
+    assert!(err.contains("utf-8"), "{err}");
+
+    fs::remove_file(&invalid_a).map_err(|err| err.to_string())?;
+    let invalid_b = dir.join("cases").join(OsStr::from_bytes(&[0x81]));
+    fs::write(&invalid_b, b"b\n").map_err(|err| err.to_string())?;
+    let err = corpus_identity(&dir).err().unwrap_or_default();
+    assert!(err.contains("utf-8"), "{err}");
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn corpus_digest_keeps_backslash_names_distinct_from_nested_paths() -> Result<(), String> {
+    let dir = crate::tests::temp_dir("relabel-digest-slash");
+    crate::tests::write(&dir.join("cases/a\\b.json"), "slash\n");
+    crate::tests::write(&dir.join("cases/a/b.json"), "nested\n");
+    crate::tests::write(&dir.join("subjects/s.json"), "{}\n");
+    let both = corpus_identity(&dir)?;
+    crate::tests::write(&dir.join("cases/a/b.json"), "nested-changed\n");
+    let nested_changed = corpus_identity(&dir)?;
+    assert_ne!(both.corpus_digest, nested_changed.corpus_digest);
+    crate::tests::write(&dir.join("cases/a\\b.json"), "slash-changed\n");
+    let slash_changed = corpus_identity(&dir)?;
+    assert_ne!(nested_changed.corpus_digest, slash_changed.corpus_digest);
+    Ok(())
+}
