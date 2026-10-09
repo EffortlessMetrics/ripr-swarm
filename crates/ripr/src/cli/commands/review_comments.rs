@@ -2012,6 +2012,153 @@ mod tests {
         Ok(())
     }
 
+    /// Pair of `review_comments_canonical_deadline_cancellation_records_timeout`.
+    /// That test pins `DeadlineExceeded` → `limited_timeout` at this phase.
+    /// This one pins an ordinary inventory builder error at the same phase to
+    /// `failed`, so a regression that labels every `canonical_analysis` error
+    /// as a timeout cannot hide behind the timeout suite (#6804).
+    #[cfg(unix)]
+    #[test]
+    fn review_comments_ordinary_canonical_analysis_failure_records_failed() -> Result<(), String> {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let root = unique_command_test_dir("review-canonical-ordinary-failure");
+        std::fs::create_dir_all(root.join("src"))
+            .map_err(|error| format!("create canonical ordinary-failure fixture: {error}"))?;
+
+        struct Fixture {
+            root: PathBuf,
+            unreadable: PathBuf,
+        }
+        impl Drop for Fixture {
+            fn drop(&mut self) {
+                let _ = std::fs::set_permissions(
+                    &self.unreadable,
+                    std::fs::Permissions::from_mode(0o644),
+                );
+                let _ = std::fs::remove_dir_all(&self.root);
+            }
+        }
+
+        std::fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname = \"review_canonical_ordinary_failure\"\nversion = \"0.1.0\"\nedition = \"2024\"\n[workspace]\n",
+        )
+        .map_err(|error| format!("write canonical ordinary-failure manifest: {error}"))?;
+        std::fs::write(root.join("src/lib.rs"), "pub fn value() -> i32 { 1 }\n")
+            .map_err(|error| format!("write canonical ordinary-failure source: {error}"))?;
+        let unreadable = root.join("src/unreadable.rs");
+        std::fs::write(&unreadable, "pub fn unused() -> i32 { 0 }\n")
+            .map_err(|error| format!("write unreadable workspace source: {error}"))?;
+        let fixture = Fixture {
+            root: root.clone(),
+            unreadable: unreadable.clone(),
+        };
+        std::fs::set_permissions(&fixture.unreadable, std::fs::Permissions::from_mode(0o000))
+            .map_err(|error| format!("chmod unreadable workspace source: {error}"))?;
+
+        std::fs::metadata(&fixture.unreadable).map_err(|error| {
+            format!("census uses metadata; unreadable fixture must still be stattable: {error}")
+        })?;
+        if std::fs::read(&fixture.unreadable).is_ok() {
+            // A privileged process can still read mode 000. Skip rather than
+            // claim a pin this host cannot produce.
+            eprintln!(
+                "skipping ordinary canonical_analysis failure pin: chmod 000 remained readable"
+            );
+            return Ok(());
+        }
+
+        // The changed file stays readable so language_facts census and
+        // owner attribution complete. The sibling workspace file is still
+        // discovered, so canonical inventory's builder is the first read
+        // that fails. No injected clock; the failure is the chmod.
+        let out = fixture.root.join("target/ripr/review/comments.json");
+        let result = review_comments_with_diff_loader(
+            &args(&[
+                "--root",
+                &fixture.root.display().to_string(),
+                "--base",
+                "BASE",
+                "--head",
+                "HEAD",
+                "--out",
+                &out.display().to_string(),
+            ]),
+            |_root, _base, _head| {
+                Ok("diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1 +1 @@\n-pub fn value() -> i32 { 0 }\n+pub fn value() -> i32 { 1 }\n".to_string())
+            },
+        );
+        let error = match result {
+            Ok(()) => {
+                return Err(
+                    "ordinary canonical_analysis builder error completed instead of failing"
+                        .to_string(),
+                );
+            }
+            Err(error) => error,
+        };
+        if !error.contains("failed to read") || !error.contains("unreadable.rs") {
+            return Err(format!(
+                "canonical_analysis must surface the builder read error, got: {error}"
+            ));
+        }
+
+        let receipt_path = out.with_file_name("run-receipt.json");
+        let receipt: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(&receipt_path)
+                .map_err(|error| format!("read ordinary canonical failure receipt: {error}"))?,
+        )
+        .map_err(|error| format!("parse ordinary canonical failure receipt: {error}"))?;
+        if receipt.get("status").and_then(serde_json::Value::as_str) != Some("failed") {
+            return Err(format!(
+                "ordinary canonical_analysis failure must record status failed, not a timeout: {receipt}"
+            ));
+        }
+        if receipt
+            .get("active_phase")
+            .and_then(serde_json::Value::as_str)
+            != Some("canonical_analysis")
+        {
+            return Err(format!(
+                "ordinary builder error must stay on canonical_analysis: {receipt}"
+            ));
+        }
+        if receipt
+            .get("last_completed_phase")
+            .and_then(serde_json::Value::as_str)
+            != Some("language_facts")
+        {
+            return Err(format!(
+                "ordinary builder error must follow completed language_facts: {receipt}"
+            ));
+        }
+        if receipt["limitations"][0]["category"] != "analysis_failed" {
+            return Err(format!(
+                "ordinary failure limitation must stay analysis_failed: {receipt}"
+            ));
+        }
+        let Some(repair_route) = receipt["limitations"][0]["repair_route"].as_str() else {
+            return Err(format!(
+                "ordinary failure receipt must carry the builder error: {receipt}"
+            ));
+        };
+        if !repair_route.contains("failed to read") || !repair_route.contains("unreadable.rs") {
+            return Err(format!("receipt must carry the builder error: {receipt}"));
+        }
+        if repair_route != error {
+            return Err(format!(
+                "returned error and receipt repair_route diverged: {error} vs {repair_route}"
+            ));
+        }
+        if out.exists() || out.with_extension("md").exists() {
+            return Err(
+                "ordinary canonical_analysis failure published review artifacts".to_string(),
+            );
+        }
+        Ok(())
+    }
+
     #[test]
     fn review_comments_source_error_wins_over_later_clock_expiry() -> Result<(), String> {
         use std::sync::{
