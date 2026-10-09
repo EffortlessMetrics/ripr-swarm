@@ -13785,16 +13785,19 @@ fn pilot_snapshot_truncated_by_the_seam_budget_is_not_a_verify_baseline()
         env!("CARGO_BIN_EXE_ripr"),
         &root,
         &["pilot", "--root", ".", "--mode", "draft"],
-        &[("RIPR_PILOT_SEAM_BUDGET", "1")],
+        &[
+            ("RIPR_PILOT_SEAM_BUDGET", "1"),
+            ("RIPR_REPO_EXPOSURE_SEAM_LIMIT", "0"),
+        ],
     )?;
     assert_success(&pilot);
     let before: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(
         root.join("target/ripr/pilot/repo-exposure.json"),
     )?)?;
     // Precondition: the budget really truncated a larger inventory.
-    let check = run_command(
+    let check = run_command_with_env(
         env!("CARGO_BIN_EXE_ripr"),
-        Some(&root),
+        &root,
         &[
             "check",
             "--root",
@@ -13804,10 +13807,15 @@ fn pilot_snapshot_truncated_by_the_seam_budget_is_not_a_verify_baseline()
             "--format",
             "repo-exposure-json",
         ],
+        &[
+            ("RIPR_PILOT_SEAM_BUDGET", "0"),
+            ("RIPR_REPO_EXPOSURE_SEAM_LIMIT", "0"),
+        ],
     )?;
     assert_success(&check);
     let full: serde_json::Value = serde_json::from_slice(&check.stdout)?;
     let count = |doc: &serde_json::Value| {
+        assert!(doc["seams"].is_array(), "seams must be an array: {doc}");
         doc.get("seams")
             .and_then(serde_json::Value::as_array)
             .map_or(0, Vec::len)
@@ -13829,7 +13837,21 @@ fn pilot_snapshot_truncated_by_the_seam_budget_is_not_a_verify_baseline()
             artifact["run_status"], "seam_limit_applied",
             "{name}: {artifact}"
         );
-        let limit = &artifact["limitations"][0];
+        let limits = artifact["limitations"]
+            .as_array()
+            .ok_or("pilot limitations must be an array")?;
+        assert_eq!(limits.len(), 1, "{name}: {artifact}");
+        let limit = &limits[0];
+        assert_eq!(
+            limit
+                .as_object()
+                .ok_or("limitation must be an object")?
+                .len(),
+            6,
+            "{name}: {artifact}"
+        );
+        assert_eq!(limit["seams_analyzed"], 1, "{name}: {artifact}");
+        assert_eq!(limit["seams_total"], count(&full), "{name}: {artifact}");
         assert_eq!(
             limit["category"], "pilot_seam_budget_applied",
             "{name}: {artifact}"
@@ -13840,6 +13862,14 @@ fn pilot_snapshot_truncated_by_the_seam_budget_is_not_a_verify_baseline()
         );
         assert_eq!(limit["limit_source"], "configured", "{name}: {artifact}");
     }
+    let packet_count = |doc: &serde_json::Value| -> Result<usize, Box<dyn std::error::Error>> {
+        let packets = doc["packets"]
+            .as_array()
+            .ok_or("packets must be an array")?;
+        assert_eq!(doc["packets_total"], packets.len(), "{doc}");
+        Ok(packets.len())
+    };
+    assert!(packet_count(&packets)? > 0, "{packets}");
     let exposure_md = std::fs::read_to_string(root.join("target/ripr/pilot/repo-exposure.md"))?;
     assert_eq!(
         before["limitations"][0]["repair_route"],
@@ -13847,7 +13877,7 @@ fn pilot_snapshot_truncated_by_the_seam_budget_is_not_a_verify_baseline()
     );
     assert_eq!(
         packets["limitations"][0]["repair_route"],
-        "Remove or raise RIPR_PILOT_SEAM_BUDGET to render packets for more seams, or scope the run to a change with `ripr check --base <REV>` (or `ripr check --diff <PATH>`)."
+        "Set RIPR_PILOT_SEAM_BUDGET=0 to disable the pilot artifact budget, or raise it to render more seams in the pilot artifacts."
     );
     let limit_line = exposure_md
         .lines()
@@ -13908,6 +13938,24 @@ fn pilot_snapshot_truncated_by_the_seam_budget_is_not_a_verify_baseline()
         "{both}"
     );
 
+    let both_packets: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(
+        root.join("target/ripr/pilot/agent-seam-packets.json"),
+    )?)?;
+    assert_eq!(both_packets["run_status"], "seam_limit_applied");
+    assert_eq!(
+        both_packets["limitations"],
+        serde_json::json!([{
+            "category": "pilot_seam_budget_applied",
+            "seams_analyzed": 1,
+            "seams_total": 2,
+            "limit_source": "configured",
+            "control": "RIPR_PILOT_SEAM_BUDGET",
+            "repair_route": "Set RIPR_PILOT_SEAM_BUDGET=0 to disable the pilot artifact budget, or raise it to render more seams in the pilot artifacts.",
+        }]),
+        "{both_packets}"
+    );
+    assert_eq!(packet_count(&both_packets)?, packet_count(&packets)?);
+
     // A configured pilot budget that did not fire must not relabel an inventory cut.
     assert!(
         (3..999).contains(&full_total),
@@ -13926,7 +13974,47 @@ fn pilot_snapshot_truncated_by_the_seam_budget_is_not_a_verify_baseline()
     let inventory: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(
         root.join("target/ripr/pilot/repo-exposure.json"),
     )?)?;
-    // Pilot may append changed seams after the inventory cap (#6943).
+    // #7186: prove a real inventory-only cut reaches the packet consumer.
+    assert_eq!(count(&inventory), 2, "{inventory}");
+    let inventory_packets: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(
+        root.join("target/ripr/pilot/agent-seam-packets.json"),
+    )?)?;
+    let inventory_limit = inventory_packets["limitations"]
+        .as_array()
+        .ok_or("packet limitations must be an array")?;
+    assert_eq!(inventory_limit.len(), 1, "{inventory_packets}");
+    let limit = inventory_limit[0]
+        .as_object()
+        .ok_or("packet limitation must be an object")?;
+    assert_eq!(limit.len(), 6, "{inventory_packets}");
+    assert_eq!(
+        inventory_packets["run_status"], "seam_limit_applied",
+        "{inventory_packets}"
+    );
+    assert_eq!(
+        inventory_limit[0]["category"], "repo_seam_limit_applied",
+        "{inventory_packets}"
+    );
+    assert_eq!(
+        inventory_limit[0]["control"], "RIPR_REPO_EXPOSURE_SEAM_LIMIT",
+        "{inventory_packets}"
+    );
+    assert_eq!(inventory_limit[0]["limit_source"], "configured");
+    assert_eq!(inventory_limit[0]["seams_analyzed"], 2);
+    assert_eq!(inventory_limit[0]["seams_total"], full_total);
+    assert_eq!(
+        inventory_limit[0]["repair_route"],
+        "Remove or raise RIPR_REPO_EXPOSURE_SEAM_LIMIT to analyze more seams, or scope the run to a change with `ripr check --base <REV>` (or `ripr check --diff <PATH>`)."
+    );
+    let inventory_packet_count = inventory_packets["packets"]
+        .as_array()
+        .ok_or("packet population must be an array")?
+        .len();
+    assert!(inventory_packet_count > 0, "{inventory_packets}");
+    assert_eq!(
+        inventory_packets["packets_total"], inventory_packet_count,
+        "{inventory_packets}"
+    );
     assert_eq!(inventory["run_status"], "seam_limit_applied", "{inventory}");
     assert_eq!(
         inventory["limitations"][0]["category"], "repo_seam_limit_applied",
@@ -13948,6 +14036,30 @@ fn pilot_snapshot_truncated_by_the_seam_budget_is_not_a_verify_baseline()
     assert!(
         !inventory_line.contains("RIPR_PILOT_SEAM_BUDGET"),
         "{inventory_line}"
+    );
+
+    // Disabling the inactive pilot budget cannot recover inventory exclusions.
+    let wrong_pilot_control = run_command_with_env(
+        env!("CARGO_BIN_EXE_ripr"),
+        &root,
+        &["pilot", "--root", ".", "--mode", "draft"],
+        &[
+            ("RIPR_PILOT_SEAM_BUDGET", "0"),
+            ("RIPR_REPO_EXPOSURE_SEAM_LIMIT", "2"),
+        ],
+    )?;
+    assert_success(&wrong_pilot_control);
+    let still_inventory: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(
+        root.join("target/ripr/pilot/repo-exposure.json"),
+    )?)?;
+    let still_inventory_packets: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(root.join("target/ripr/pilot/agent-seam-packets.json"))?,
+    )?;
+    assert_eq!(still_inventory, inventory);
+    assert_eq!(still_inventory_packets, inventory_packets);
+    assert_eq!(
+        packet_count(&still_inventory_packets)?,
+        inventory_packet_count
     );
 
     // Lifting the inventory cap cannot lift a pilot artifact budget.
@@ -13977,6 +14089,18 @@ fn pilot_snapshot_truncated_by_the_seam_budget_is_not_a_verify_baseline()
     assert_eq!(
         wrong_control, before,
         "lifting the wrong control must preserve the pilot cut"
+    );
+
+    let wrong_control_packets: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(
+        root.join("target/ripr/pilot/agent-seam-packets.json"),
+    )?)?;
+    assert_eq!(
+        wrong_control_packets, packets,
+        "lifting the inventory control must preserve the pilot packet cut"
+    );
+    assert_eq!(
+        packet_count(&wrong_control_packets)?,
+        packet_count(&packets)?
     );
 
     // Removing both caps recovers the full population in the same workspace.
@@ -14015,18 +14139,75 @@ fn pilot_snapshot_truncated_by_the_seam_budget_is_not_a_verify_baseline()
         "{recovered_packets}"
     );
 
+    // Measure packet admission through the existing CLI consumer independently
+    // of seam cardinality: strongly gripped seams need no packet.
+    let full_packet_check = run_command_with_env(
+        env!("CARGO_BIN_EXE_ripr"),
+        &root,
+        &[
+            "check",
+            "--root",
+            ".",
+            "--mode",
+            "draft",
+            "--format",
+            "agent-seam-packets-json",
+        ],
+        &[
+            ("RIPR_PILOT_SEAM_BUDGET", "0"),
+            ("RIPR_REPO_EXPOSURE_SEAM_LIMIT", "0"),
+        ],
+    )?;
+    assert_success(&full_packet_check);
+    let full_packets: serde_json::Value = serde_json::from_slice(&full_packet_check.stdout)?;
+    assert_eq!(
+        packet_count(&recovered_packets)?,
+        packet_count(&full_packets)?
+    );
+    assert!(
+        packet_count(&recovered_packets)? > inventory_packet_count,
+        "the inventory cut must omit a visible packet: {recovered_packets}"
+    );
+    let repeated_inventory = run_command_with_env(
+        env!("CARGO_BIN_EXE_ripr"),
+        &root,
+        &["pilot", "--root", ".", "--mode", "draft"],
+        &[
+            ("RIPR_PILOT_SEAM_BUDGET", "999"),
+            ("RIPR_REPO_EXPOSURE_SEAM_LIMIT", "2"),
+        ],
+    )?;
+    assert_success(&repeated_inventory);
+    let repeated_inventory_packets: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(root.join("target/ripr/pilot/agent-seam-packets.json"))?,
+    )?;
+    assert_eq!(
+        repeated_inventory_packets, inventory_packets,
+        "inventory packet output must not reuse the uncapped state"
+    );
+
     // A later capped run must not reuse the uncapped disclosure or population.
     let repeated = run_command_with_env(
         env!("CARGO_BIN_EXE_ripr"),
         &root,
         &["pilot", "--root", ".", "--mode", "draft"],
-        &[("RIPR_PILOT_SEAM_BUDGET", "1")],
+        &[
+            ("RIPR_PILOT_SEAM_BUDGET", "1"),
+            ("RIPR_REPO_EXPOSURE_SEAM_LIMIT", "0"),
+        ],
     )?;
     assert_success(&repeated);
     let repeated: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(
         root.join("target/ripr/pilot/repo-exposure.json"),
     )?)?;
     assert_eq!(repeated, before, "capped output must be deterministic");
+    let repeated_packets: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(
+        root.join("target/ripr/pilot/agent-seam-packets.json"),
+    )?)?;
+    assert_eq!(
+        repeated_packets, packets,
+        "pilot packet output must be deterministic"
+    );
     std::fs::remove_dir_all(root)?;
     Ok(())
 }

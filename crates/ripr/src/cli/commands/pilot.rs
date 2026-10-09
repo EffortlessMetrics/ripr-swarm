@@ -359,7 +359,7 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
         &artifacts.agent_seam_packets_json,
         output::agent_seam_packets::render_agent_seam_packets_json_for_root(
             &classified,
-            limit_info.as_ref(),
+            repo_exposure_limit,
             causal_projection.as_ref(),
             &crate::agent::loop_commands::bound_root(&options.root.to_string_lossy()),
         ),

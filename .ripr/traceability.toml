@@ -6882,7 +6882,9 @@ tests = [
   "crates/ripr/src/analysis/seam_inventory.rs::tests::apply_pilot_seam_budget_inner_returns_none_when_at_or_below_limit",
   "crates/ripr/src/output/agent_seam_packets.rs::tests::no_limit_info_emits_run_status_complete",
   "crates/ripr/src/output/agent_seam_packets.rs::tests::limit_info_emits_run_status_seam_limit_applied_and_disclosure",
-  "crates/ripr/src/output/agent_seam_packets.rs::tests::limit_info_configured_source_emits_configured_repair_route"
+  "crates/ripr/src/output/agent_seam_packets.rs::tests::limit_info_configured_source_emits_configured_repair_route",
+  "crates/ripr/src/output/agent_seam_packets.rs::tests::packet_limit_disclosure_names_the_applied_cap",
+  "crates/ripr/tests/cli_smoke.rs::pilot_snapshot_truncated_by_the_seam_budget_is_not_a_verify_baseline"
 ]
 code = [
   "crates/ripr/src/analysis/seam_inventory.rs",
