@@ -455,7 +455,10 @@ fn first_call_argument(payload: &str) -> Option<String> {
     let mut quote = None;
     let mut escaped = false;
     for (index, character) in payload.char_indices() {
-        if in_quoted_literal(&mut quote, &mut escaped, character) {
+        let rest_after = payload
+            .get(index.saturating_add(character.len_utf8())..)
+            .unwrap_or("");
+        if in_quoted_literal(&mut quote, &mut escaped, character, rest_after) {
             continue;
         }
         match character {
@@ -531,7 +534,10 @@ fn delimited_group_closer_index(after_open: &str) -> Option<usize> {
     let mut quote = None;
     let mut escaped = false;
     for (index, character) in after_open.char_indices() {
-        if in_quoted_literal(&mut quote, &mut escaped, character) {
+        let rest_after = after_open
+            .get(index.saturating_add(character.len_utf8())..)
+            .unwrap_or("");
+        if in_quoted_literal(&mut quote, &mut escaped, character, rest_after) {
             continue;
         }
         match character {
@@ -549,7 +555,15 @@ fn delimited_group_closer_index(after_open: &str) -> Option<usize> {
 }
 
 /// True when `character` is inside a quoted literal and must not count as a delimiter.
-fn in_quoted_literal(quote: &mut Option<char>, escaped: &mut bool, character: char) -> bool {
+///
+/// A `'` starts a character literal only when lookahead shows `'\…'` or `'x'`.
+/// Lifetime ticks such as `'static` are not quotes.
+fn in_quoted_literal(
+    quote: &mut Option<char>,
+    escaped: &mut bool,
+    character: char,
+    rest_after: &str,
+) -> bool {
     if let Some(q) = *quote {
         if *escaped {
             *escaped = false;
@@ -564,11 +578,20 @@ fn in_quoted_literal(quote: &mut Option<char>, escaped: &mut bool, character: ch
         }
         return true;
     }
-    if matches!(character, '"' | '\'') {
+    if character == '"' || (character == '\'' && starts_char_literal(rest_after)) {
         *quote = Some(character);
         return true;
     }
     false
+}
+
+fn starts_char_literal(after_tick: &str) -> bool {
+    let mut chars = after_tick.chars();
+    match chars.next() {
+        Some('\\') => true,
+        Some(_) => chars.next() == Some('\''),
+        None => false,
+    }
 }
 
 fn is_collection_read_method(name: &str) -> bool {
@@ -1604,6 +1627,20 @@ mod tests {
                 "items"
             ),
             "a trailing operator after an opening-paren string value-read must still refuse"
+        );
+        assert!(
+            assertion_observes_direct_collection(
+                "assert_eq!(items, Vec::<&'static str>::new());",
+                "items"
+            ),
+            "a lifetime on the expected side must not prevent a whole-collection observer"
+        );
+        assert!(
+            assertion_observes_direct_collection(
+                "assert_eq!(items.contains(&')'), true);",
+                "items"
+            ),
+            "a char-literal value-read argument must still observe the collection"
         );
     }
 
