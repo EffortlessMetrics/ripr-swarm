@@ -11,7 +11,9 @@ use super::activation::{
     call_arguments, comparison_operands, function_parameters, owner_argument_values,
 };
 use super::helper_transfer::{HelperChain, chain_forwards_owner_result};
+use super::reveal::assertion_comparison_operands;
 use super::text::delimited_contents_at;
+use crate::analysis::syntax::HelperLoan;
 use crate::domain::*;
 
 /// Token carried in the discriminate summary when a predicate would otherwise
@@ -55,8 +57,16 @@ pub(in crate::analysis) struct WrapperEntryPairing<'a> {
 /// `assert!(owner(x))` on a bool owner discriminates its whole result even
 /// though the classifier reads a bare `assert!` as a weak relational check.
 ///
+/// `helper_loan` is the owner-pin admission's check helper an admitted
+/// assertion is borrowed from (#6482). Such an assertion pairs through the
+/// helper's calls in the test: see [`loan_pairs_boundary_call`].
+///
 /// `wrapper_entry` carries the RIPR-SPEC-0159 chain when the owner is a
 /// helper reached through a wrapper; see [`WrapperEntryPairing`].
+#[allow(
+    clippy::too_many_arguments,
+    reason = "boundary pairing's admission callbacks plus the optional wrapper entry and #6482 helper loan"
+)]
 pub(in crate::analysis) fn has_same_test_boundary_oracle_pairing(
     probe: &Probe,
     owner_fn: Option<&FunctionSummary>,
@@ -64,6 +74,7 @@ pub(in crate::analysis) fn has_same_test_boundary_oracle_pairing(
     activation: &ActivationEvidence,
     assertion_admitted: &dyn Fn(&TestSummary, &OracleFact) -> bool,
     owner_pinned: &dyn Fn(&TestSummary, &OracleFact) -> bool,
+    helper_loan: &dyn Fn(&TestSummary, &OracleFact) -> Option<HelperLoan>,
     wrapper_entry: Option<WrapperEntryPairing<'_>>,
 ) -> bool {
     if !matches!(probe.family, ProbeFamily::Predicate) {
@@ -93,10 +104,15 @@ pub(in crate::analysis) fn has_same_test_boundary_oracle_pairing(
             forwarding_entry,
             assertion_admitted,
             owner_pinned,
+            helper_loan,
         )
     })
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "mirrors the grouped same-test pairing inputs plus the #6482 helper loan"
+)]
 fn test_pairs_boundary_input_with_oracle(
     probe: &Probe,
     owner: &FunctionSummary,
@@ -105,6 +121,7 @@ fn test_pairs_boundary_input_with_oracle(
     forwarding_entry: Option<(&str, TestActivation<'_>)>,
     assertion_admitted: &dyn Fn(&TestSummary, &OracleFact) -> bool,
     owner_pinned: &dyn Fn(&TestSummary, &OracleFact) -> bool,
+    helper_loan: &dyn Fn(&TestSummary, &OracleFact) -> Option<HelperLoan>,
 ) -> bool {
     let bound_names = boundary_bound_locals(probe, owner, test, activation);
     // Computed at most once per test, and only when the entry path is live.
@@ -118,6 +135,15 @@ fn test_pairs_boundary_input_with_oracle(
         // Only the asserted operands observe anything: a call or binding
         // named in a message argument (`assert!(gate(50), "{got}")`) is
         // formatted, not checked, so it cannot pair with the boundary.
+        // An assertion credited from a check helper (outside the test's own
+        // lines) names the helper's parameters, which may share a name with
+        // a test local (`let input = 10; check(50, true)`): it pairs only
+        // through the owner-pin-approved loan's exact mapping (#6482).
+        if !(test.start_line..=test.end_line).contains(&assertion.line) {
+            return helper_loan(test, assertion).is_some_and(|loan| {
+                loan_pairs_boundary_call(owner, test, &loan, &assertion.text, activation)
+            });
+        }
         let operands = crate::analysis::extract::assertion_oracle_text(&assertion.text)
             .unwrap_or_else(|| assertion.text.clone());
         assertion_observes_boundary_owner_call(probe, owner, test, assertion, &operands, activation)
@@ -188,6 +214,198 @@ fn assertion_observes_boundary_entry_call(
             && owner_call_count(call_line, entry) == 1
             && owner_call_count(call_line, &owner.name) == 0
     })
+}
+
+/// #6482: a borrowed check-helper assertion pairs with a boundary input the
+/// test passes through that helper. In
+///
+/// ```text
+/// fn check_pass(score: u32, want: bool) { assert_eq!(passes(score), want); }
+/// #[test]
+/// fn pass_mark_is_fifty() { check_pass(50, true); check_pass(49, false); }
+/// ```
+///
+/// activation's `==` fact on the `check_pass(50, true)` line says that call
+/// carries the boundary into the owner, and the assertion compares exactly
+/// the owner call that receives it. Every condition fails closed:
+///
+/// - the helper calls the owner once, and that call is the asserted operand,
+///   so the boundary call is the compared one;
+/// - each of that call's arguments is one of the helper's own plain
+///   parameters, passed unchanged (`passes(score + 1)` maps nothing);
+/// - the activation fact sits on the line of an eager call to the helper
+///   that is the only call expression on its line, so it describes that
+///   call and that call runs;
+/// - that call passes only scalar literals, with no comment or string
+///   before it, and the fact's `parameter == value` matches the literal
+///   that call itself feeds that owner parameter through the helper, so a
+///   pooled fact from another file's same-line call through another helper
+///   cannot stand in for it.
+fn loan_pairs_boundary_call(
+    owner: &FunctionSummary,
+    test: &TestSummary,
+    loan: &HelperLoan,
+    assertion_text: &str,
+    activation: &ActivationEvidence,
+) -> bool {
+    if loan.parameters.is_empty() || owner_call_count(&loan.helper, &owner.name) != 1 {
+        return false;
+    }
+    // The owner call must be a whole compared operand: inside a block or
+    // closure operand the parameter may be rebound before the call.
+    let Some(compared) = assertion_comparison_operands(assertion_text) else {
+        return false;
+    };
+    let Some(call) = compared
+        .iter()
+        .map(|operand| operand.trim())
+        .find(|operand| operand.starts_with(&format!("{}(", owner.name)) && operand.ends_with(')'))
+    else {
+        return false;
+    };
+    let lists = owner_call_argument_lists(call, &owner.name);
+    let [(_, arguments)] = lists.as_slice() else {
+        return false;
+    };
+    if arguments.is_empty() {
+        return false;
+    }
+    // `passes(score)` and not `passes(score) || other(..)`: the parentheses
+    // opened after the name close at the operand's end.
+    if delimited_contents_at(call, owner.name.len())
+        .is_none_or(|contents| contents.len() + owner.name.len() + 2 != call.len())
+    {
+        return false;
+    }
+    if !arguments
+        .iter()
+        .all(|argument| loan.parameters.iter().any(|name| name == argument.trim()))
+    {
+        return false;
+    }
+    loan.call_lines.iter().any(|line| {
+        // Every call fact on the line is the helper call: a call buried in a
+        // macro (`assert!(passes(50) || true)`) or chained after it is
+        // another source of the line's `==` fact.
+        let mut on_line = test.calls.iter().filter(|call| call.line == *line);
+        let Some(helper_call) = on_line.next() else {
+            return false;
+        };
+        if helper_call.name != loan.name
+            || on_line.any(|call| call.name != loan.name || call.text != helper_call.text)
+        {
+            return false;
+        }
+        // Activation's facts are pooled across related tests and carry no
+        // file, so a fact on this line may describe another file's call
+        // through another helper. The call must therefore fix its own
+        // values (only scalar literals: `check_pass(n, true)` may bind `n`
+        // differently per test), and the fact must agree with the literal
+        // this call itself feeds the owner's parameter. A comment or string
+        // before the call could feed the argument parser foreign text.
+        let Some(literals) = loan_call_literals(&helper_call.text, &loan.name) else {
+            return false;
+        };
+        let fed = owner_parameter_literals(owner, arguments, loan, &literals);
+        if fed.is_empty() {
+            return false;
+        }
+        activation.observed_values.iter().any(|fact| {
+            fact.line == *line
+                && matches!(fact.context, ValueContext::FunctionArgument)
+                && !fact.text.is_empty()
+                && fact.text.contains(&helper_call.text)
+                && fact_matches_fed_literals(&fact.value, &fed)
+        })
+    })
+}
+
+/// Whether an activation value (`input == 10`, or a conjunction such as
+/// `y == 0 && x == 0`) consists only of `parameter == literal` terms, each
+/// naming an owner parameter and the very literal this call feeds it.
+fn fact_matches_fed_literals(value: &str, fed: &[(String, String)]) -> bool {
+    !value.contains("||")
+        && value.split(" && ").all(|term| {
+            term.split_once(" == ").is_some_and(|(parameter, literal)| {
+                fed.iter().any(|(name, fed)| {
+                    name == parameter.trim() && same_scalar_literal(fed, literal.trim())
+                })
+            })
+        })
+}
+
+/// Two literals that spell one value. Only plain decimal integers are read
+/// past their spelling (`10u32` and `10`, `1_000` and `1000`); a hex, octal,
+/// binary, float or other form must match exactly, since a partial reader
+/// would equate `0x10` with `0`.
+fn same_scalar_literal(fed: &str, literal: &str) -> bool {
+    fed == literal
+        || decimal_integer_value(fed)
+            .is_some_and(|value| Some(value) == decimal_integer_value(literal))
+}
+
+/// `-?digits` with `_` separators and an optional integer type suffix,
+/// as its canonical digits; `None` for any other spelling.
+fn decimal_integer_value(text: &str) -> Option<String> {
+    let (sign, rest) = text
+        .strip_prefix('-')
+        .map_or(("", text), |rest| ("-", rest));
+    let end = rest
+        .find(|ch: char| !(ch.is_ascii_digit() || ch == '_'))
+        .unwrap_or(rest.len());
+    let (digits, suffix) = rest.split_at(end);
+    let digits: String = digits.chars().filter(|ch| *ch != '_').collect();
+    let integer_suffix = [
+        "", "u8", "u16", "u32", "u64", "u128", "usize", "i8", "i16", "i32", "i64", "i128", "isize",
+    ];
+    (!digits.is_empty() && !rest.starts_with('_') && integer_suffix.contains(&suffix))
+        .then(|| format!("{sign}{digits}"))
+}
+
+/// The helper call's arguments when each is a whole scalar literal and no
+/// comment or string precedes the call on its line; `None` otherwise.
+fn loan_call_literals(text: &str, helper: &str) -> Option<Vec<String>> {
+    let prefix = &text[..text.find(&format!("{helper}("))?];
+    if text.contains("//") || text.contains("/*") || prefix.contains(['"', '\'']) {
+        return None;
+    }
+    let arguments = call_arguments(text, helper)?;
+    (!arguments.is_empty()
+        && arguments
+            .iter()
+            .all(|argument| argument_is_whole_scalar_literal(argument.trim())))
+    .then(|| {
+        arguments
+            .iter()
+            .map(|argument| argument.trim().to_string())
+            .collect()
+    })
+}
+
+/// `(owner parameter, literal)` for each owner parameter whose argument is a
+/// helper parameter the call fills with a literal. Empty when the owner's
+/// parameter list and its call's arguments do not line up one to one.
+fn owner_parameter_literals(
+    owner: &FunctionSummary,
+    owner_arguments: &[String],
+    loan: &HelperLoan,
+    literals: &[String],
+) -> Vec<(String, String)> {
+    let owner_parameters = function_parameters(owner);
+    if owner_parameters.len() != owner_arguments.len() || loan.parameters.len() != literals.len() {
+        return Vec::new();
+    }
+    owner_parameters
+        .into_iter()
+        .zip(owner_arguments)
+        .filter_map(|(parameter, argument)| {
+            let slot = loan
+                .parameters
+                .iter()
+                .position(|name| name == argument.trim())?;
+            Some((parameter, literals[slot].clone()))
+        })
+        .collect()
 }
 
 fn assertion_is_discriminating(assertion: &OracleFact) -> bool {
@@ -857,6 +1075,7 @@ mod tests {
             activation,
             &|_, _| true,
             &|_, _| false,
+            &|_, _| None,
             None,
         )
     }
@@ -2125,6 +2344,7 @@ mod tests {
                 activation,
                 &|_, _| true,
                 &|_, _| false,
+                &|_, _| None,
                 entry(chain, &|_| activation.clone()),
             )
         };
@@ -2164,6 +2384,7 @@ mod tests {
             &activation,
             &|_, _| true,
             &|_, _| false,
+            &|_, _| None,
             entry(Some(&wrapper_chain(FORWARDING_WRAPPER)), &|_| activation
                 .clone()),
         ));
@@ -2188,6 +2409,7 @@ mod tests {
             activation,
             &|_, _| true,
             &|_, _| false,
+            &|_, _| None,
             entry(Some(&wrapper_chain(wrapper_body)), &|_| activation.clone()),
         )
     }
@@ -2213,6 +2435,7 @@ mod tests {
             &transferred_boundary_row(1, line),
             &|_, _| true,
             &|_, _| false,
+            &|_, _| None,
             entry(Some(&wrapper_chain(FORWARDING_WRAPPER)), &|_| {
                 transferred_boundary_row(1, line)
             }),
@@ -2307,6 +2530,7 @@ mod tests {
             &run_wide,
             &|_, _| true,
             &|_, _| false,
+            &|_, _| None,
             entry(Some(&chain), &own_rows),
         ));
         // Control: the same far test pairs when its own rows hold the boundary.
@@ -2317,6 +2541,7 @@ mod tests {
             &run_wide,
             &|_, _| true,
             &|_, _| false,
+            &|_, _| None,
             entry(Some(&chain), &|_| transferred_boundary_row(2, line)),
         ));
     }
@@ -2534,6 +2759,302 @@ mod tests {
             expected_sinks: Vec::new(),
             required_oracles: Vec::new(),
         }
+    }
+
+    /// #6482: `fn check(input: u32, want: bool) { assert_eq!(gate(input),
+    /// want); }` called as `check(10, true)` on line 2 of the test.
+    fn loan_case(
+        helper: &str,
+        call_text: &str,
+        activation_line: usize,
+    ) -> (TestSummary, OracleFact, HelperLoan, ActivationEvidence) {
+        let assertion = OracleFact {
+            line: 9,
+            ..exact("assert_eq!(gate(input), want);")
+        };
+        let mut test = test_summary(
+            "through_helper",
+            call_text,
+            vec![CallFact {
+                line: 2,
+                ..call("check", call_text)
+            }],
+            vec![assertion.clone()],
+            &["10"],
+        );
+        test.calls.push(CallFact {
+            line: 9,
+            ..call("gate", "assert_eq!(gate(input), want);")
+        });
+        let loan = HelperLoan {
+            name: "check".to_string(),
+            helper: helper.to_string(),
+            parameters: vec!["input".to_string(), "want".to_string()],
+            call_lines: vec![2],
+        };
+        let activation = ActivationEvidence {
+            observed_values: vec![ValueFact {
+                line: activation_line,
+                text: format!("{call_text} | input"),
+                value: "input == 10".to_string(),
+                context: ValueContext::FunctionArgument,
+            }],
+            missing_discriminators: Vec::new(),
+        };
+        (test, assertion, loan, activation)
+    }
+
+    const CHECK: &str = "fn check(input: u32, want: bool) { assert_eq!(gate(input), want); }";
+
+    fn loan_pairs(
+        test: &TestSummary,
+        assertion: &OracleFact,
+        loan: &HelperLoan,
+        activation: &ActivationEvidence,
+    ) -> bool {
+        has_same_test_boundary_oracle_pairing(
+            &predicate_probe("input >= 10"),
+            Some(&gate_owner()),
+            &[test],
+            activation,
+            &|_, _| true,
+            &|_, _| false,
+            &|_, candidate| (candidate == assertion).then(|| loan.clone()),
+            None,
+        )
+    }
+
+    /// A borrowed assertion names the helper's parameter `got`; the test's
+    /// own `let got = gate(10);` is another binding. Neither the bound-name
+    /// nor the direct-call path may pair it, only an approved loan (#6482).
+    #[test]
+    fn a_borrowed_assertion_pairs_only_through_its_loan() {
+        let assertion = OracleFact {
+            line: 9,
+            ..exact("assert_eq!(got, true);")
+        };
+        let body = "let got = gate(10);\ncheck(gate(50));";
+        let test = test_summary(
+            "shared_name",
+            body,
+            vec![
+                CallFact {
+                    line: 1,
+                    ..call("gate", "let got = gate(10);")
+                },
+                CallFact {
+                    line: 2,
+                    ..call("check", "check(gate(50));")
+                },
+            ],
+            vec![assertion.clone()],
+            &["10", "50"],
+        );
+        let activation = ActivationEvidence {
+            observed_values: vec![ValueFact {
+                line: 1,
+                text: "let got = gate(10); | input".to_string(),
+                value: "input == 10".to_string(),
+                context: ValueContext::FunctionArgument,
+            }],
+            missing_discriminators: Vec::new(),
+        };
+        let pairs = |test: &TestSummary| {
+            has_same_test_boundary_oracle_pairing(
+                &predicate_probe("input >= 10"),
+                Some(&gate_owner()),
+                &[test],
+                &activation,
+                &|_, _| true,
+                &|_, _| false,
+                &|_, _| None,
+                None,
+            )
+        };
+        assert!(!pairs(&test));
+        // Control: the same assertion written in the test's own body pairs
+        // through the bound name.
+        let mut inline = test.clone();
+        inline.assertions[0].line = 3;
+        assert!(pairs(&inline), "control");
+    }
+
+    #[test]
+    fn a_borrowed_helper_assertion_pairs_through_the_boundary_call() {
+        let (test, assertion, loan, activation) = loan_case(CHECK, "check(10, true);", 2);
+        assert!(loan_pairs(&test, &assertion, &loan, &activation));
+        // Control: without the loan the helper's assertion names only the
+        // helper's parameter, so nothing pairs.
+        assert!(!has_same_test_boundary_oracle_pairing(
+            &predicate_probe("input >= 10"),
+            Some(&gate_owner()),
+            &[&test],
+            &activation,
+            &|_, _| true,
+            &|_, _| false,
+            &|_, _| None,
+            None,
+        ));
+    }
+
+    #[test]
+    fn a_borrowed_helper_assertion_pairs_only_on_an_exact_mapping() {
+        let (test, assertion, loan, activation) = loan_case(CHECK, "check(10, true);", 2);
+        // The boundary fact sits on another line than the helper's call.
+        let (_, _, _, elsewhere) = loan_case(CHECK, "check(10, true);", 3);
+        assert!(!loan_pairs(&test, &assertion, &loan, &elsewhere));
+        // The call is not one the admission saw as eager and alone on its
+        // line.
+        let unlisted = HelperLoan {
+            call_lines: Vec::new(),
+            ..loan.clone()
+        };
+        assert!(!loan_pairs(&test, &assertion, &unlisted, &activation));
+        // Parameters that cannot be mapped (a pattern or rebound name).
+        let unmapped = HelperLoan {
+            parameters: Vec::new(),
+            ..loan.clone()
+        };
+        assert!(!loan_pairs(&test, &assertion, &unmapped, &activation));
+        // A second owner call in the helper: the boundary may reach that one.
+        let twice = HelperLoan {
+            helper: "fn check(input: u32, want: bool) { let _ = gate(1); assert_eq!(gate(input), want); }"
+                .to_string(),
+            ..loan.clone()
+        };
+        assert!(!loan_pairs(&test, &assertion, &twice, &activation));
+        // A computed or partial operand is not the parameter passed on.
+        for text in [
+            "assert_eq!(gate(input + 1), want);",
+            "assert_eq!(gate(input) || other(), want);",
+            "assert_eq!({ let input = 1; gate(input) }, want);",
+        ] {
+            let computed = OracleFact {
+                line: 9,
+                ..exact(text)
+            };
+            let mut computed_test = test.clone();
+            computed_test.assertions = vec![computed.clone()];
+            assert!(
+                !loan_pairs(&computed_test, &computed, &loan, &activation),
+                "{text}"
+            );
+        }
+        // The test's call on that line names another function.
+        let mut other_call = test.clone();
+        other_call.calls[0].name = "other".to_string();
+        assert!(!loan_pairs(&other_call, &assertion, &loan, &activation));
+        // Another call shares the line (inside a macro the syntax scan
+        // cannot see into): the line's fact may describe that call.
+        let mut crowded = test.clone();
+        crowded.calls.push(CallFact {
+            line: 2,
+            ..call("gate", "assert!(gate(10) || true);")
+        });
+        assert!(!loan_pairs(&crowded, &assertion, &loan, &activation));
+        // A fact on the same line number that names another call (another
+        // file's test, pooled into one activation) is not this call's.
+        let mut foreign = activation.clone();
+        foreign.observed_values[0].text = "let _ = gate(10); | input".to_string();
+        assert!(!loan_pairs(&test, &assertion, &loan, &foreign));
+        let mut untexted = activation.clone();
+        untexted.observed_values[0].text = String::new();
+        assert!(!loan_pairs(&test, &assertion, &loan, &untexted));
+        // A zero-argument owner call maps no parameter.
+        let empty = OracleFact {
+            line: 9,
+            ..exact("assert_eq!(gate(), want);")
+        };
+        let mut empty_test = test.clone();
+        empty_test.assertions = vec![empty.clone()];
+        assert!(!loan_pairs(&empty_test, &empty, &loan, &activation));
+        // A helper call passing a local or computed input: another test's
+        // identical call on the same line may bind it to a different value,
+        // and its pooled fact would then pair this test's far input.
+        for call_text in [
+            "check(n, true);",
+            "check(LIMIT + 1, true);",
+            "check(n(), true);",
+        ] {
+            let (test, assertion, loan, activation) = loan_case(CHECK, call_text, 2);
+            assert!(
+                !loan_pairs(&test, &assertion, &loan, &activation),
+                "{call_text}"
+            );
+        }
+        // A comment or string before the call could feed the argument
+        // parser text that is not this call's.
+        for call_text in [
+            "/* check(10, true) */ check(n, true);",
+            "let _ = \"check(10, true)\"; check(n, true);",
+        ] {
+            let (test, assertion, loan, activation) = loan_case(CHECK, call_text, 2);
+            assert!(
+                !loan_pairs(&test, &assertion, &loan, &activation),
+                "{call_text}"
+            );
+        }
+        // A pooled fact for the same line and text whose value is not the
+        // literal this call feeds the owner (another file's `check` with its
+        // parameters swapped): `check(50, true)` feeds `input` 50, not 10.
+        let (fifty, fifty_assertion, fifty_loan, mut swapped) =
+            loan_case(CHECK, "check(50, true);", 2);
+        swapped.observed_values[0].value = "input == 10".to_string();
+        assert!(!loan_pairs(&fifty, &fifty_assertion, &fifty_loan, &swapped));
+        // A typed literal feeds the same value the direct path reads:
+        // `check(10u32, true)` pairs with `input == 10`, and `check(11u32,
+        // true)` does not.
+        let (typed, typed_assertion, typed_loan, typed_activation) =
+            loan_case(CHECK, "check(10u32, true);", 2);
+        assert!(loan_pairs(
+            &typed,
+            &typed_assertion,
+            &typed_loan,
+            &typed_activation
+        ));
+        let (eleven, eleven_assertion, eleven_loan, eleven_activation) =
+            loan_case(CHECK, "check(11u32, true);", 2);
+        assert!(!loan_pairs(
+            &eleven,
+            &eleven_assertion,
+            &eleven_loan,
+            &eleven_activation
+        ));
+        assert!(!same_scalar_literal("10", "ten"));
+        // Only decimal integers read past their spelling: `0x10` is 16, not
+        // the `0` a leading-digit reader would see.
+        let (hex, hex_assertion, hex_loan, mut hex_zero) =
+            loan_case(CHECK, "check(0x10, true);", 2);
+        hex_zero.observed_values[0].value = "input == 0".to_string();
+        assert!(!loan_pairs(&hex, &hex_assertion, &hex_loan, &hex_zero));
+        assert!(same_scalar_literal("0x10", "0x10"));
+        assert!(same_scalar_literal("1_000i64", "1000"));
+        assert!(same_scalar_literal("-10i32", "-10"));
+        for (fed, literal) in [
+            ("0x10", "0"),
+            ("0b1", "0"),
+            ("1.5", "1"),
+            ("1e3", "1"),
+            ("10u32", "-10"),
+        ] {
+            assert!(!same_scalar_literal(fed, literal), "{fed} vs {literal}");
+        }
+        // A conjunction pairs only when every term is a literal the call
+        // feeds (`gate(x, y)` reached with `check(0, 0)`).
+        let fed = [
+            ("x".to_string(), "0".to_string()),
+            ("y".to_string(), "0".to_string()),
+        ];
+        assert!(fact_matches_fed_literals("y == 0 && x == 0", &fed));
+        assert!(!fact_matches_fed_literals("y == 0 && x == 1", &fed));
+        assert!(!fact_matches_fed_literals("y == 0 || x == 0", &fed));
+        assert!(!fact_matches_fed_literals("y == 0 && x > 0", &fed));
+        assert!(!fact_matches_fed_literals("y == 0 && z == 0", &fed));
+        // The fact must name the owner parameter that literal reaches.
+        let mut renamed = activation.clone();
+        renamed.observed_values[0].value = "other == 10".to_string();
+        assert!(!loan_pairs(&test, &assertion, &loan, &renamed));
+        assert!(loan_pairs(&test, &assertion, &loan, &activation), "control");
     }
 
     fn gate_owner() -> FunctionSummary {

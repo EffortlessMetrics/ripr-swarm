@@ -58,11 +58,11 @@ use crate::analysis::facts::{
 };
 use crate::analysis::syntax::fn_signature::{LocalTypeEquality, local_type_equality};
 use crate::analysis::syntax::{
-    AssertionContextRefusal, GeneratedTestPins, MacroBindingCandidates, MacroBindingKind,
-    MacroBindingSite, OwnerPinAssertions, TRUSTED_MACRO_NAMES, attribute_settles_test_outcome,
-    empty_macro_binding_ambiguities, err_return_guard_key, generated_test_pins,
-    local_empty_macro_names, macro_binding_scan, owner_pin_assertions, parse_clean_source_file,
-    returns_leave_the_function, trusted_macro_binding_sites,
+    AssertionContextRefusal, GeneratedTestPins, HelperLoan, MacroBindingCandidates,
+    MacroBindingKind, MacroBindingSite, OwnerPinAssertions, TRUSTED_MACRO_NAMES,
+    attribute_settles_test_outcome, empty_macro_binding_ambiguities, err_return_guard_key,
+    generated_test_pins, local_empty_macro_names, macro_binding_scan, owner_pin_assertions,
+    parse_clean_source_file, returns_leave_the_function, trusted_macro_binding_sites,
 };
 use crate::domain::{Probe, ProbeFamily};
 use ra_ap_syntax::{
@@ -423,6 +423,7 @@ impl OwnerPinSyntax {
                 let local = test_macro_binding_site(
                     &name,
                     test,
+                    assertion.line,
                     index,
                     &self.test_file_macro_sites,
                     &resolved,
@@ -463,6 +464,28 @@ impl OwnerPinSyntax {
 
     fn admits(&self, test: &TestSummary, assertion: &OracleFact, index: &RustIndex) -> bool {
         self.refusal(test, assertion, index).is_none()
+    }
+
+    /// The test-local check helper an `assertion` this admission admits is
+    /// borrowed from (#6482); `None` for the test's own assertion or one it
+    /// refuses.
+    pub(in crate::analysis) fn helper_loan(
+        &self,
+        test: &TestSummary,
+        assertion: &OracleFact,
+        index: &RustIndex,
+    ) -> Option<HelperLoan> {
+        if !self.admits(test, assertion, index) {
+            return None;
+        }
+        self.by_file
+            .borrow()
+            .get(&test.file)?
+            .helper_loan(
+                (test.start_line, test.end_line, &test.name),
+                (assertion.line, &assertion.text),
+            )
+            .cloned()
     }
 
     fn refusal(
@@ -530,7 +553,7 @@ impl OwnerPinSyntax {
                 .collect()
         });
         let mut ambiguous: BTreeSet<_> = ambiguous.union(empty_ambiguities).cloned().collect();
-        ambiguous.extend(self.scoped_names_for(test));
+        ambiguous.extend(self.scoped_names_for(test, assertion.line));
         ambiguous.extend(self.crate_names_for(test, index));
         let mut by_file = self.by_file.borrow_mut();
         for edge in &facts.role_provenance.edges {
@@ -776,18 +799,35 @@ impl OwnerPinSyntax {
     }
 
     /// Trusted names that a scoped definition or import makes ambiguous for
-    /// `test`. Filled by the workspace scan in `refusal`.
-    fn scoped_names_for(&self, test: &TestSummary) -> Vec<String> {
+    /// `test`, or for the invocation at `assertion_line`: an assertion a
+    /// check helper lends (#6482) sits in the helper's body, whose scoped
+    /// bindings never overlap the test's span. Filled by the workspace scan
+    /// in `refusal`.
+    fn scoped_names_for(&self, test: &TestSummary, assertion_line: usize) -> Vec<String> {
         self.scoped_macro_bindings
             .borrow()
             .as_ref()
             .and_then(|scoped| scoped.get(&test.file))
             .into_iter()
             .flatten()
-            .filter(|(_, site)| site_covers(site, test))
+            .filter(|(_, site)| site_covers_assertion(site, test, assertion_line))
             .map(|(name, _)| name.clone())
             .collect()
     }
+}
+
+/// Whether a scoped site may reach the invocation at `assertion_line` in
+/// `test`: it overlaps the test, or (for an assertion a check helper lends,
+/// #6482) its scope holds the assertion's own line in the helper's body.
+fn site_covers_assertion(
+    site: &MacroBindingSite,
+    test: &TestSummary,
+    assertion_line: usize,
+) -> bool {
+    site_covers(site, test)
+        || site
+            .scope
+            .is_some_and(|(start, end)| (start..=end).contains(&assertion_line))
 }
 
 /// Whether a scoped site may reach `test`: any overlap of their line spans.
@@ -1061,6 +1101,7 @@ fn rebinds(site: &MacroBindingSite) -> bool {
 fn test_macro_binding_site(
     name: &str,
     test: &TestSummary,
+    assertion_line: usize,
     index: &RustIndex,
     memo: &RefCell<TestFileMacroSites>,
     module_resolved: &dyn Fn(&Path, usize, &str) -> bool,
@@ -1082,7 +1123,7 @@ fn test_macro_binding_site(
             )
         })
         .iter()
-        .find(|(_, site)| site_covers(site, test))
+        .find(|(_, site)| site_covers_assertion(site, test, assertion_line))
         .map(|(_, site)| (test.file.clone(), site.clone()))
 }
 
@@ -1503,11 +1544,6 @@ impl OwnerReturnPin {
         imports_foreign: ForeignImport<'_>,
         syntax: &OwnerPinSyntax,
     ) -> bool {
-        // The assertion must be the test's own: a harness trial's body is
-        // only its registration, and a helper's `let` bindings are not in it.
-        if !(test.start_line..=test.end_line).contains(&assertion.line) {
-            return false;
-        }
         // A `#[should_panic]` test passes when the values differ.
         if test
             .attrs
@@ -1542,8 +1578,13 @@ impl OwnerReturnPin {
                 (None, Some(call)) => (call, operands[0]),
                 // #6974: `let result = owner(..); assert_eq!(result, 7);`.
                 // Only a test that names the owner outside this assertion
-                // can bind its result.
-                (None, None) if owner_named_outside(test, &assertion.text, &self.name) => {
+                // can bind its result, and only in the test's own body: a
+                // borrowed helper assertion names the helper's parameters,
+                // not the test's bindings (#6482).
+                (None, None)
+                    if (test.start_line..=test.end_line).contains(&assertion.line)
+                        && owner_named_outside(test, &assertion.text, &self.name) =>
+                {
                     let bound = |at: usize| {
                         let_bound_owner_call(test, assertion, operands[at], &self.name)
                             .and_then(|call| owner_call_shape(call, &self.name))
@@ -1600,6 +1641,18 @@ impl OwnerReturnPin {
         if !syntax.admits(test, assertion, index) {
             return false;
         }
+        // The assertion must be the test's own, or an `assert_eq!` the
+        // shared admission borrows from a test-local check helper the test
+        // calls eagerly (#6482). A harness trial's body is only its
+        // registration, and an assertion attributed to it from anywhere else
+        // sees bindings that are not in it.
+        let helper = syntax
+            .helper_loan(test, assertion, index)
+            .map(|loan| loan.helper);
+        let in_body = (test.start_line..=test.end_line).contains(&assertion.line);
+        if in_body == helper.is_some() {
+            return false;
+        }
         // `assert_eq!(f(4), f(2) + f(2))` compares the owner with itself.
         if contains_as_whole_word(&mask_comments_and_strings(expected), &self.name)
             || (owner_named_outside(test, &assertion.text, &self.name)
@@ -1610,6 +1663,9 @@ impl OwnerReturnPin {
         match (&self.path, call) {
             // #6692: the clone must be compared with its own receiver, and
             // the test's file must not import some other `Clone`.
+            // The receiver's type is read from the test's own bindings,
+            // which do not bind a helper's parameters.
+            (ReturnPathGate::CloneReceiver, _) if helper.is_some() => return false,
             (ReturnPathGate::CloneReceiver, CallShape::Method(receiver)) => {
                 let independent = match &self.call {
                     PinCall::Method { receivers, .. } => receivers.iter().any(|receiver_type| {
@@ -1664,16 +1720,26 @@ impl OwnerReturnPin {
                     && !test_body_shadows_owner(test, &self.name)
                     && !binds_outside_let(&masked_body, &self.name)
                     && !bound_by_macro(&masked_body, &self.name)
+                    && helper.as_deref().is_none_or(|helper| {
+                        helper_pins_owner_call(helper, &masked_body, &self.name)
+                    })
                     && test_source.is_some_and(|source| {
                         !file_renames_to(source, &self.name)
                             && self.bare_call_reaches_owner(test, source, index, syntax)
                     })
             }
+            // As for the clone receiver: a helper's parameters are not the
+            // test's bindings.
+            (PinCall::Method { .. }, _) if helper.is_some() => false,
             // #6974: a path names the owner without the bare name's scope,
             // so a test-local binding of the name cannot capture it; the
             // path itself must reach the owner.
-            (PinCall::Bare, CallShape::Path(prefix)) => test_source
-                .is_some_and(|source| self.path_reaches_owner(prefix, test, source, index, syntax)),
+            (PinCall::Bare, CallShape::Path(prefix)) => {
+                helper.is_none()
+                    && test_source.is_some_and(|source| {
+                        self.path_reaches_owner(prefix, test, source, index, syntax)
+                    })
+            }
             (
                 PinCall::Method {
                     receivers,
@@ -2232,6 +2298,39 @@ impl OwnerReturnPin {
             .insert(test.file.clone(), in_scope);
         in_scope
     }
+}
+
+/// The bare-call identity gates applied to a borrowed check helper (#6482):
+/// the helper binds the owner's name nowhere (parameter, `let`, pattern,
+/// closure, nested `fn` or macro), and the calling test never names the
+/// owner, so no call-site argument can feed the owner's own value back in
+/// as the expected one (`check(4, weight(4))`).
+pub(in crate::analysis) fn helper_pins_owner_call(
+    helper: &str,
+    masked_test_body: &str,
+    name: &str,
+) -> bool {
+    let masked = mask_comments_and_strings(helper);
+    !binds_outside_let(&masked, name)
+        && !bound_by_macro(&masked, name)
+        && !test_body_defines_callee_fn(&masked, name)
+        && test_body_let_shadow_line(&masked, name).is_none()
+        && !contains_as_whole_word(masked_test_body, name)
+        && whole_word_count(&masked, name) == 1
+}
+
+/// How often `name` occurs as a whole identifier in `text`. A helper that
+/// names the owner anywhere besides its asserted call (`let e = owner(b);`,
+/// `let f = owner;`, `super::owner(b)`) may compare the owner with itself,
+/// and the test-body self-comparison scan never reads the helper.
+fn whole_word_count(text: &str, name: &str) -> usize {
+    let is_ident = |ch: Option<char>| ch.is_some_and(|ch| ch.is_alphanumeric() || ch == '_');
+    text.match_indices(name)
+        .filter(|(at, found)| {
+            !is_ident(text[..*at].chars().next_back())
+                && !is_ident(text[at + found.len()..].chars().next())
+        })
+        .count()
 }
 
 /// How a test calls `owner`: a bare call for a free function, a method call

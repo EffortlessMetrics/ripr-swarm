@@ -392,7 +392,10 @@ pub(crate) struct CachedSeamLimitInfo {
 /// (RIPR-SPEC-0225), so field findings gain credit; a field read copied into
 /// the expected literal stops clearing the missing field value. Old entries
 /// would keep the previous verdicts.
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.53";
+/// `1.54`: an `assert_eq!` in a test-local check helper the test calls
+/// eagerly is admitted as the test's own and pairs with a boundary input
+/// passed through that call (#6482); old entries keep it uncredited.
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.54";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -485,7 +488,8 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.53";
 /// `0.57`: same producer-owned contradiction count as full `1.51`.
 /// `0.58`: same consumed-call transition as full `1.52` (#6677).
 /// `0.59`: same whole-value field transition as full `1.53` (RIPR-SPEC-0225).
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.59";
+/// `0.60`: same check-helper transition as full `1.54` (#6482).
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.60";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -580,7 +584,8 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.59";
 /// `0.57`: same producer-owned contradiction count as full `1.51`.
 /// `0.58`: same consumed-call transition as full `1.52` (#6677).
 /// `0.59`: same whole-value field transition as full `1.53` (RIPR-SPEC-0225).
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.59";
+/// `0.60`: same check-helper transition as full `1.54` (#6482).
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.60";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -4203,7 +4208,8 @@ mod tests {
         // 1.50 -> 1.51: evidence carries the producer contradiction count.
         // 1.51 -> 1.52: consumed calls emit no call_presence seam (#6677).
         // 1.52 -> 1.53: whole-value field pins (RIPR-SPEC-0225).
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.53");
+        // 1.53 -> 1.54: check-helper assertions admitted and paired (#6482).
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.54");
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
         // for the sharded and compact envelopes.
@@ -4248,8 +4254,9 @@ mod tests {
         // 0.56 -> 0.57: same producer contradiction count as full 1.51.
         // 0.57 -> 0.58: same consumed-call transition as full 1.52 (#6677).
         // 0.58 -> 0.59: same RIPR-SPEC-0225 transition as full 1.53.
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.59");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.59");
+        // 0.59 -> 0.60: same #6482 transition as full 1.54.
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.60");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.60");
     }
 
     #[test]
