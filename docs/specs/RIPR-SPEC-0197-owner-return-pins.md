@@ -666,12 +666,16 @@ reads `assert_eq!` operands when:
 5. The guard's `return Err(..)` must be the prelude variant, not a shadow:
    a test file that binds the value name `Err` anywhere (a `fn`, `const`,
    `static` or struct constructor of the name, a pattern binding or
-   parameter, an import of the name or into the name, or any glob import,
-   which may carry it opaquely) refuses every guard twin in the file. A
-   shadowed `Err` can return `Ok` on the changed behavior, so the guard
-   passes exactly when it must not
-   (`fixtures/owner_return_pin_err_guard_shadowed_err`). The refusal is
-   file-wide and spells the whole name: coarser, and conservative — it
+   parameter, an import of the name or into the name, or a glob import the
+   file cannot see through) refuses every guard twin in the file. A glob
+   rooted at `super` inside an inline module or at `self` re-imports only
+   the file-local definitions the whole-file scan already refuses, so the
+   idiomatic `use super::*;` test module neither shadows nor withholds;
+   every other glob (`crate::..::*`, an external crate, a path that may
+   leave the file) stays opaque and refuses. A shadowed `Err` can return
+   `Ok` on the changed behavior, so the guard passes exactly when it must
+   not (`fixtures/owner_return_pin_err_guard_shadowed_err`). The refusal
+   is file-wide and spells the whole name: coarser, and conservative — it
    withholds credit, never mis-credits.
 
 Refused, conservatively: a guard with an `else` branch; `if !(a == b)`;

@@ -396,9 +396,15 @@ mod tests {
         );
         assert_eq!(mask_with_string_delimiter_quotes("/* \" */ live(1);").1, 0);
         assert_eq!(mask_with_string_delimiter_quotes("let q = '\"';").1, 0);
-        assert_eq!(mask_with_string_delimiter_quotes("let s = \"a\\\"b\";").1, 2);
+        assert_eq!(
+            mask_with_string_delimiter_quotes("let s = \"a\\\"b\";").1,
+            2
+        );
         assert_eq!(mask_with_string_delimiter_quotes("let r = r#\"x\"#;").1, 2);
-        assert_eq!(mask_with_string_delimiter_quotes("let s = \"a\"; let t = \"b\";").1, 4);
+        assert_eq!(
+            mask_with_string_delimiter_quotes("let s = \"a\"; let t = \"b\";").1,
+            4
+        );
         // A fragment closing a string begun on an earlier line counts its
         // lone delimiter, so the caller's fallback still fires for it.
         assert_eq!(mask_with_string_delimiter_quotes("second\", live(2))").1, 1);

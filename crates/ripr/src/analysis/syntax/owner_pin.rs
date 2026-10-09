@@ -1242,11 +1242,21 @@ fn terminal_err_return_guard_condition(guard: &ast::IfExpr) -> Option<ast::Expr>
 /// call of that name could resolve to the binding instead of the prelude:
 /// a `fn`, `const`, `static` or struct constructor of the name (an extern
 /// block's declaration parses as a `fn`), a pattern binding or parameter
-/// of the name, an explicit import of the name or into the name, or any
-/// glob import, which may carry the name opaquely. Enum and type
-/// declarations live in the type namespace and a `mod` in the module
-/// namespace, so none of them can capture a call; a `macro_rules!` of the
-/// name needs `!` and never intercepts one either.
+/// of the name, an explicit import of the name or into the name, or a glob
+/// import the file cannot see through. Enum and type declarations live in
+/// the type namespace and a `mod` in the module namespace, so none of them
+/// can capture a call; a `macro_rules!` of the name needs `!` and never
+/// intercepts one either.
+///
+/// A glob can only introduce the name behind this file's scan when it
+/// reaches outside the file. One rooted at `super` inside an inline module
+/// (the idiomatic `use super::*;` of a test module) re-imports exactly the
+/// file-local definitions the whole-file scan already refuses, and one
+/// rooted at `self` targets a module of this file; every other glob
+/// (`crate::..::*`, an external crate, a `super::sub::*` that may be an
+/// out-of-line module, a file-root `super::*` that reaches the parent
+/// file) stays opaque and refuses. Since a glob is not re-exported without
+/// `pub`, an in-file glob cannot relay an opaque glob's names inward.
 ///
 /// Bindings of inline modules, functions and blocks do not leak outward,
 /// but the answer is deliberately file-wide: it only refuses the Err-return
@@ -1266,12 +1276,10 @@ fn file_binds_value_name(root: &SyntaxNode, name: &str) -> bool {
             || ast::IdentPat::cast(node.clone()).is_some_and(|pattern| named(pattern.name()))
             || ast::UseTree::cast(node.clone()).is_some_and(|tree| {
                 if let Some(rename) = tree.rename() {
-                    return rename
-                        .name()
-                        .is_some_and(|rename| spells(rename.text()));
+                    return rename.name().is_some_and(|rename| spells(rename.text()));
                 }
                 if tree.star_token().is_some() {
-                    return true;
+                    return !glob_stays_within_the_file(&tree);
                 }
                 if tree.use_tree_list().is_some() {
                     // The nested trees are their own `UseTree` nodes; a
@@ -1288,6 +1296,32 @@ fn file_binds_value_name(root: &SyntaxNode, name: &str) -> bool {
                 })
             })
     })
+}
+
+/// Whether a glob import can only carry names this file's own scan covers:
+/// its path must be exactly `self` (a module of this file) or exactly
+/// `super` while the import sits inside at least one inline module, so
+/// `super` names an enclosing module of this file. A file-root `super::*`
+/// reaches the parent file, and any longer path may leave the file at its
+/// first non-`super` segment.
+fn glob_stays_within_the_file(glob: &ast::UseTree) -> bool {
+    let Some(path) = glob.path() else {
+        return false;
+    };
+    let segments: Vec<String> = path
+        .segments()
+        .filter_map(|segment| segment.name_ref().map(|name| name.text().to_string()))
+        .collect();
+    match segments.as_slice() {
+        [single] if single == "self" => true,
+        [single] if single == "super" => glob
+            .syntax()
+            .ancestors()
+            .skip(1)
+            .take_while(|node| !ast::SourceFile::can_cast(node.kind()))
+            .any(|node| ast::Module::cast(node).is_some_and(|module| module.item_list().is_some())),
+        _ => false,
+    }
 }
 
 /// Duplicate function identities are ambiguous: the second insert refuses

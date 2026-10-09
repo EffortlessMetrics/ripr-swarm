@@ -216,7 +216,7 @@ impl Counter for Unit {
 /// The kept-default library with its tests in the same file.
 fn kept_default_with_tests(body: &str) -> String {
     format!(
-        "{KEPT_DEFAULT_LIB}\n#[cfg(test)]\nmod tests {{\n    use super::*;\n\n    #[test]\n    fn advances() {{\n{body}\n    }}\n}}\n"
+        "{KEPT_DEFAULT_LIB}\n#[cfg(test)]\nmod wrapped {{\n    use super::*;\n\n    #[test]\n    fn advances() {{\n{body}\n    }}\n}}\n"
     )
 }
 
@@ -1665,7 +1665,7 @@ fn a_bare_call_through_a_glob_pins_only_past_the_owners_module() {
         ("use demo::alt::weight;", 0),
     ] {
         let tests = format!(
-            "{import}\nmod tests {{\n    use super::*;\n    #[test]\n    fn weighs() {{\n        assert_eq!(weight(4), 12);\n    }}\n}}\n"
+            "{import}\nmod wrapped {{\n    use super::*;\n    #[test]\n    fn weighs() {{\n        assert_eq!(weight(4), 12);\n    }}\n}}\n"
         );
         assert_eq!(
             twin_admitted(TWIN_STATIC_LIB, &tests).len(),
@@ -2641,7 +2641,7 @@ fn a_definition_confined_to_an_inline_module_refuses_only_tests_inside_it() {
     }
     // A test inside the confining module is refused; one after it is not.
     let inside = format!(
-        "use demo::weight;\nmod tests {{\n    use super::*;\n    {shadow}\n    #[test]\n    fn weighs() {{ assert_eq!(weight(4), 12); }}\n}}\n"
+        "use demo::weight;\nmod wrapped {{\n    use super::*;\n    {shadow}\n    #[test]\n    fn weighs() {{ assert_eq!(weight(4), 12); }}\n}}\n"
     );
     assert!(matches!(
         weight_refusal(&inside, &[]),
@@ -5972,10 +5972,11 @@ fn a_shadowed_err_refuses_the_err_return_guard_twin() {
     // guard's `return Err(..)` to an `Ok`, so a changed owner no longer
     // fails the test and the guard pins nothing. Every guard twin in a
     // file that binds the name is refused, never re-read.
-    let guard =
-        "    if weight(4) != 12 {\n        return Err(\"mismatch\".to_string());\n    }\n    Ok(())";
+    let guard = "    if weight(4) != 12 {\n        return Err(\"mismatch\".to_string());\n    }\n    Ok(())";
     let test_fn = |header: &str| {
-        format!("use demo::weight;\n\n{header}#[test]\nfn weighs() -> Result<(), String> {{\n{guard}\n}}\n")
+        format!(
+            "use demo::weight;\n\n{header}#[test]\nfn weighs() -> Result<(), String> {{\n{guard}\n}}\n"
+        )
     };
     let shadowed = [
         // The wrong implementation itself: a fn of the name returning Ok.
@@ -5984,19 +5985,32 @@ fn a_shadowed_err_refuses_the_err_return_guard_twin() {
         // value namespace too.
         test_fn("const Err: fn(&str) -> Result<(), String> = |_| Ok(());\n\n"),
         {
-            let body = "    let Err = |_: &str| -> Result<(), String> { Ok(()) };\n".to_string()
-                + guard;
-            format!("use demo::weight;\n\n#[test]\nfn weighs() -> Result<(), String> {{\n{body}\n}}\n")
+            let body =
+                "    let Err = |_: &str| -> Result<(), String> { Ok(()) };\n".to_string() + guard;
+            format!(
+                "use demo::weight;\n\n#[test]\nfn weighs() -> Result<(), String> {{\n{body}\n}}\n"
+            )
         },
-        // An explicit import of the name, and a glob that may carry it.
-        test_fn("mod shadow {\n    pub fn Err(_: &str) -> Result<(), String> { Ok(()) }\n}\nuse shadow::Err;\n\n"),
+        // An explicit import of the name, and a glob that reaches outside
+        // the file's own scan.
+        test_fn(
+            "mod shadow {\n    pub fn Err(_: &str) -> Result<(), String> { Ok(()) }\n}\nuse shadow::Err;\n\n",
+        ),
         test_fn("use std::io::prelude::*;\n\n"),
+        // A file-root `super::*` reaches the parent file, and a longer
+        // path may leave the file at an out-of-line module.
+        test_fn("use super::*;\n\n"),
+        {
+            format!(
+                "use demo::weight;\n\nmod wrapped {{\n    use super::sub::*;\n\n    #[test]\n    fn weighs() -> Result<(), String> {{\n{guard}\n    }}\n}}\n"
+            )
+        },
         // Bindings of an inline module do not leak outward, but the
         // refusal is deliberately file-wide: coarser and conservative.
         test_fn("mod shadow {\n    pub fn Err(_: &str) -> Result<(), String> { Ok(()) }\n}\n\n"),
     ];
-    for tests in shadowed {
-        assert_not_pinned(&tests, "if weight(4) != 12");
+    for tests in &shadowed {
+        assert_not_pinned(tests, "if weight(4) != 12");
     }
     // Without a binding of the name the same guard still pins: the twin
     // needs the shadow question only when the file can shadow.
@@ -6008,5 +6022,18 @@ fn a_shadowed_err_refuses_the_err_return_guard_twin() {
         .iter()
         .all(|(text, admitted)| *admitted && text.starts_with("if weight(4) != 12")),
         "the unshadowed guard must keep its credit"
+    );
+    // The idiomatic test-module glob stays within the file's own scan: it
+    // re-imports only the definitions the whole-file check already
+    // refuses, so it neither shadows nor withholds.
+    let globbed = format!(
+        "use demo::weight;\n\nmod wrapped {{\n    use super::*;\n\n    #[test]\n    fn weighs() -> Result<(), String> {{\n{guard}\n    }}\n}}\n"
+    );
+    let verdicts = weight_verdicts(&globbed, "if weight(4) != 12");
+    assert!(
+        verdicts
+            .iter()
+            .all(|(text, admitted)| *admitted && text.starts_with("if weight(4) != 12")),
+        "the in-file test glob must keep its credit: {verdicts:?}"
     );
 }

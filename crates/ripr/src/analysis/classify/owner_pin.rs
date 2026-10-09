@@ -61,9 +61,8 @@ use crate::analysis::syntax::{
     AssertionContextRefusal, GeneratedTestPins, MacroBindingCandidates, MacroBindingKind,
     MacroBindingSite, OwnerPinAssertions, TRUSTED_MACRO_NAMES, attribute_settles_test_outcome,
     empty_macro_binding_ambiguities, err_return_guard_key, generated_test_pins,
-    local_empty_macro_names,
-    macro_binding_scan, owner_pin_assertions, parse_clean_source_file, returns_leave_the_function,
-    trusted_macro_binding_sites,
+    local_empty_macro_names, macro_binding_scan, owner_pin_assertions, parse_clean_source_file,
+    returns_leave_the_function, trusted_macro_binding_sites,
 };
 use crate::domain::{Probe, ProbeFamily};
 use ra_ap_syntax::{
