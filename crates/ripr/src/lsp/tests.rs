@@ -7619,6 +7619,85 @@ fn unknown_stage_value_route_omits_suggested_assertion_action() -> Result<(), St
 }
 
 #[test]
+fn unknown_class_seam_omits_copy_agent_brief_and_keeps_packet() -> Result<(), String> {
+    use crate::analysis::seams::SeamGripClass;
+
+    let mut seam = sample_classified_seam();
+    seam.class = SeamGripClass::ActivationUnknown;
+    let diagnostic = diagnostic_for_classified_seam(Path::new("/workspace"), &seam)
+        .ok_or_else(|| "expected seam diagnostic".to_string())?;
+    let uri = test_uri("file:///workspace/src/pricing.rs")?;
+    let mut snapshot = sample_analysis_snapshot(
+        PathBuf::from("/workspace"),
+        uri,
+        vec![diagnostic.clone()],
+        Vec::new(),
+    );
+    snapshot.classified_seams = vec![seam];
+    let actions = code_action_response(
+        &code_action_params(vec![diagnostic])?,
+        Some(&snapshot),
+        &vscode_client_features()?,
+    );
+    let commands = code_action_commands(&actions)?;
+    if !commands
+        .iter()
+        .any(|(_, command, _)| command == COPY_AGENT_PACKET_COMMAND)
+    {
+        return Err(format!(
+            "unknown-class seam must keep the packet action: {commands:?}"
+        ));
+    }
+    if commands
+        .iter()
+        .any(|(_, command, _)| command == COPY_AGENT_BRIEF_COMMAND)
+    {
+        return Err(format!(
+            "unknown-class seam must omit the brief action: {commands:?}"
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn ordinary_seam_still_offers_copy_agent_brief() -> Result<(), String> {
+    let seam = sample_classified_seam();
+    let diagnostic = diagnostic_for_classified_seam(Path::new("/workspace"), &seam)
+        .ok_or_else(|| "expected seam diagnostic".to_string())?;
+    let uri = test_uri("file:///workspace/src/pricing.rs")?;
+    let mut snapshot = sample_analysis_snapshot(
+        PathBuf::from("/workspace"),
+        uri,
+        vec![diagnostic.clone()],
+        Vec::new(),
+    );
+    snapshot.classified_seams = vec![seam];
+    let actions = code_action_response(
+        &code_action_params(vec![diagnostic])?,
+        Some(&snapshot),
+        &vscode_client_features()?,
+    );
+    let commands = code_action_commands(&actions)?;
+    if !commands
+        .iter()
+        .any(|(_, command, _)| command == COPY_AGENT_BRIEF_COMMAND)
+    {
+        return Err(format!(
+            "ordinary gap-class seam must keep the brief action: {commands:?}"
+        ));
+    }
+    if !commands
+        .iter()
+        .any(|(_, command, _)| command == COPY_AGENT_PACKET_COMMAND)
+    {
+        return Err(format!(
+            "ordinary gap-class seam must keep the packet action: {commands:?}"
+        ));
+    }
+    Ok(())
+}
+
+#[test]
 fn seam_code_actions_keep_navigation_when_related_test_is_unresolved() -> Result<(), String> {
     use crate::analysis::test_grip_evidence::{
         RelatedTestGrip, RelationConfidence, RelationReason,
