@@ -32,6 +32,7 @@ use crate::agent::loop_commands::{
     WORKFLOW_BEFORE_SNAPSHOT_ARTIFACT, agent_receipt_command, agent_verify_command,
     check_analysis_outcome_command, check_repo_exposure_command, shell_arg,
 };
+use crate::analysis::ClassifiedSeam;
 use crate::analysis::canonical_gap::{CanonicalGapIdentity, canonical_gap_identities};
 use crate::analysis::repair_route::{
     NewTestKind, RepairTargetSelection, cross_language_test_target_unresolved,
@@ -41,9 +42,7 @@ use crate::analysis::seams::{
     ExpectedSink, OwnerCallShape, RequiredDiscriminator, SeamGripClass, SeamKind,
 };
 use crate::analysis::test_grip_evidence::{RelatedTestGrip, TestGripEvidence};
-use crate::analysis::ClassifiedSeam;
 use crate::analysis_outcome::AnalysisOutcome;
-use crate::output::repo_exposure::RepoExposureLimit;
 pub(crate) use crate::app::AGENT_SEAM_PACKET_SCHEMA_VERSION;
 use crate::app::analysis_outcome_artifact::analysis_outcome_projection;
 use crate::app::causal_projection::CausalDeltaArtifact;
@@ -61,6 +60,7 @@ use crate::output::receipt_lifecycle::{
     RECEIPT_GAP_MISMATCH, RECEIPT_MOVEMENT_IMPROVED, RECEIPT_MOVEMENT_UNCHANGED, RECEIPT_STALE,
     normalize_receipt_lifecycle_state, receipt_lifecycle_state_from_movement,
 };
+use crate::output::repo_exposure::RepoExposureLimit;
 use crate::repair_guidance::{
     AssertionBasis, AssertionGuidance, AssertionGuidanceView, AssertionKind, AssertionState,
     DiscriminatorAvailability, DiscriminatorState, GapRouteGuidanceFacts, GuidanceReason,
@@ -275,20 +275,14 @@ fn render_agent_seam_packets_json_with_root(
         let repair_route = limit.repair_route();
         out.push_str("  \"limitations\": [\n");
         out.push_str("    {\n");
-        out.push_str(&format!(
-            "      \"category\": \"{}\",\n",
-            limit.category()
-        ));
+        out.push_str(&format!("      \"category\": \"{}\",\n", limit.category()));
         out.push_str(&format!("      \"seams_analyzed\": {},\n", info.analyzed));
         out.push_str(&format!("      \"seams_total\": {},\n", info.total));
         out.push_str(&format!(
             "      \"limit_source\": \"{}\",\n",
             info.source.as_str()
         ));
-        out.push_str(&format!(
-            "      \"control\": \"{}\",\n",
-            limit.control()
-        ));
+        out.push_str(&format!("      \"control\": \"{}\",\n", limit.control()));
         out.push_str(&format!(
             "      \"repair_route\": \"{}\"\n",
             crate::output::json::escape(repair_route)
@@ -7131,7 +7125,9 @@ mod tests {
             serde_json::from_str(&json).map_err(|error| error.to_string())?;
         assert_eq!(doc["run_status"], "complete", "{doc}");
         assert!(doc.get("limitations").is_none(), "{doc}");
-        let packets = doc["packets"].as_array().ok_or("packets must be an array")?;
+        let packets = doc["packets"]
+            .as_array()
+            .ok_or("packets must be an array")?;
         assert_eq!(packets.len(), 1, "{doc}");
         assert_eq!(doc["packets_total"], packets.len(), "{doc}");
         Ok(())
@@ -7277,7 +7273,9 @@ mod tests {
                 }]),
                 "{doc}"
             );
-            let packets = doc["packets"].as_array().ok_or("packets must be an array")?;
+            let packets = doc["packets"]
+                .as_array()
+                .ok_or("packets must be an array")?;
             assert_eq!(packets.len(), 1, "{doc}");
             assert_eq!(doc["packets_total"], packets.len(), "{doc}");
         }
