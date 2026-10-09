@@ -1000,6 +1000,11 @@ pub(crate) fn owner_pin_assertions(source: &str, trusted: &[&str]) -> OwnerPinAs
     result.parsed = true;
     let lines = LineIndex::new(source);
     let empty_macros = local_empty_macros(parse.tree().syntax());
+    // A guard twin's discrimination assumes its `return Err(..)` is the
+    // prelude variant: only then does a changed owner fail the test. A file
+    // that binds the value name `Err` anywhere may route that return to an
+    // `Ok`, so its guards are never twin candidates (#7130 review).
+    let err_bound = file_binds_value_name(parse.tree().syntax(), "Err");
     for module in parse
         .tree()
         .syntax()
@@ -1089,7 +1094,7 @@ pub(crate) fn owner_pin_assertions(source: &str, trusted: &[&str]) -> OwnerPinAs
             token.text_range().start(),
             function.syntax().text_range().end(),
         );
-        let mut candidates = BTreeMap::<AssertionKey, Vec<ast::MacroCall>>::new();
+        let mut candidates = BTreeMap::<AssertionKey, Vec<SyntaxNode>>::new();
         for call in function
             .syntax()
             .descendants()
@@ -1110,7 +1115,35 @@ pub(crate) fn owner_pin_assertions(source: &str, trusted: &[&str]) -> OwnerPinAs
                 lines.line(range.start()),
                 slice_macro_call_text(source, range.start(), range.end()),
             );
-            candidates.entry(assertion).or_default().push(call);
+            candidates
+                .entry(assertion)
+                .or_default()
+                .push(call.syntax().clone());
+        }
+        // RIPR-SPEC-0197: a terminal Err-return guard is the assertion twin
+        // of its negated condition (RIPR-SPEC-0154), keyed by its `if` line
+        // and condition as [`err_return_guard_key`] spells it.
+        if !err_bound {
+            for guard in function
+                .syntax()
+                .descendants()
+                .filter_map(ast::IfExpr::cast)
+            {
+                let Some(condition) = terminal_err_return_guard_condition(&guard) else {
+                    continue;
+                };
+                let Some(if_token) = guard.if_token() else {
+                    continue;
+                };
+                let key = (
+                    lines.line(if_token.text_range().start()),
+                    err_return_guard_key(&condition.syntax().text().to_string()),
+                );
+                candidates
+                    .entry(key)
+                    .or_default()
+                    .push(guard.syntax().clone());
+            }
         }
         let macros = function
             .syntax()
@@ -1146,7 +1179,7 @@ pub(crate) fn owner_pin_assertions(source: &str, trusted: &[&str]) -> OwnerPinAs
                 // OracleFact has line/text, not an offset. No identical spelling
                 // on the same line may borrow another invocation's context.
                 let admitted = if calls.len() == 1 {
-                    eager_path(calls[0].syntax().clone(), &function, false, first_return)
+                    eager_path(calls[0].clone(), &function, false, first_return)
                         .map_err(AssertionContextRefusal::ConditionalPath)
                 } else {
                     Err(AssertionContextRefusal::DuplicateSpelling)
@@ -1169,6 +1202,126 @@ pub(crate) fn owner_pin_assertions(source: &str, trusted: &[&str]) -> OwnerPinAs
         .functions
         .retain(|key, _| identities.get(key) == Some(&1));
     result
+}
+
+/// The assertion key of a terminal Err-return guard: its condition with
+/// whitespace removed, so the parsed guard and the scanned oracle text
+/// (which may join continuation lines) name the same guard.
+pub(crate) fn err_return_guard_key(condition: &str) -> String {
+    let compact: String = condition.split_whitespace().collect();
+    format!("if {compact}")
+}
+
+/// The condition of `if <condition> { return Err(..); .. }` with no `else`:
+/// the first statement of the body returns an `Err(..)` call. Whether the
+/// condition has an assertion twin is the oracle scan's decision.
+fn terminal_err_return_guard_condition(guard: &ast::IfExpr) -> Option<ast::Expr> {
+    if guard.else_branch().is_some() {
+        return None;
+    }
+    let condition = guard.condition()?;
+    let body = guard.then_branch()?.stmt_list()?;
+    let first = match body.statements().next() {
+        Some(ast::Stmt::ExprStmt(statement)) => statement.expr()?,
+        Some(_) => return None,
+        None => body.tail_expr()?,
+    };
+    let ast::Expr::ReturnExpr(returned) = first else {
+        return None;
+    };
+    let ast::Expr::CallExpr(call) = returned.expr()? else {
+        return None;
+    };
+    let ast::Expr::PathExpr(callee) = call.expr()? else {
+        return None;
+    };
+    (callee.syntax().text() == "Err").then_some(condition)
+}
+
+/// Whether the file binds the value name `name` anywhere, so an unqualified
+/// call of that name could resolve to the binding instead of the prelude:
+/// a `fn`, `const`, `static` or struct constructor of the name (an extern
+/// block's declaration parses as a `fn`), a pattern binding or parameter
+/// of the name, an explicit import of the name or into the name, or a glob
+/// import the file cannot see through. Enum and type declarations live in
+/// the type namespace and a `mod` in the module namespace, so none of them
+/// can capture a call; a `macro_rules!` of the name needs `!` and never
+/// intercepts one either.
+///
+/// A glob can only introduce the name behind this file's scan when it
+/// reaches outside the file. One rooted at `super` inside an inline module
+/// (the idiomatic `use super::*;` of a test module) re-imports exactly the
+/// file-local definitions the whole-file scan already refuses, and one
+/// rooted at `self` targets a module of this file; every other glob
+/// (`crate::..::*`, an external crate, a `super::sub::*` that may be an
+/// out-of-line module, a file-root `super::*` that reaches the parent
+/// file) stays opaque and refuses. Since a glob is not re-exported without
+/// `pub`, an in-file glob cannot relay an opaque glob's names inward.
+///
+/// Bindings of inline modules, functions and blocks do not leak outward,
+/// but the answer is deliberately file-wide: it only refuses the Err-return
+/// guard twin, so a coarser no never mis-credits, and the parser-backed
+/// name equality keeps the whole-word rule (#7130 review: identity over
+/// token coincidence).
+fn file_binds_value_name(root: &SyntaxNode, name: &str) -> bool {
+    let spells = |text: &str| text.trim_start_matches("r#") == name;
+    root.descendants().any(|node| {
+        let named = |item_name: Option<ast::Name>| {
+            item_name.is_some_and(|item_name| spells(item_name.text()))
+        };
+        ast::Fn::cast(node.clone()).is_some_and(|item| named(item.name()))
+            || ast::Const::cast(node.clone()).is_some_and(|item| named(item.name()))
+            || ast::Static::cast(node.clone()).is_some_and(|item| named(item.name()))
+            || ast::Struct::cast(node.clone()).is_some_and(|item| named(item.name()))
+            || ast::IdentPat::cast(node.clone()).is_some_and(|pattern| named(pattern.name()))
+            || ast::UseTree::cast(node.clone()).is_some_and(|tree| {
+                if let Some(rename) = tree.rename() {
+                    return rename.name().is_some_and(|rename| spells(rename.text()));
+                }
+                if tree.star_token().is_some() {
+                    return !glob_stays_within_the_file(&tree);
+                }
+                if tree.use_tree_list().is_some() {
+                    // The nested trees are their own `UseTree` nodes; a
+                    // prefix path here names the imported module, not a
+                    // binding of the name.
+                    return false;
+                }
+                tree.path().is_some_and(|path| {
+                    path.segments().last().is_some_and(|segment| {
+                        segment
+                            .name_ref()
+                            .is_some_and(|name_ref| spells(name_ref.text()))
+                    })
+                })
+            })
+    })
+}
+
+/// Whether a glob import can only carry names this file's own scan covers:
+/// its path must be exactly `self` (a module of this file) or exactly
+/// `super` while the import sits inside at least one inline module, so
+/// `super` names an enclosing module of this file. A file-root `super::*`
+/// reaches the parent file, and any longer path may leave the file at its
+/// first non-`super` segment.
+fn glob_stays_within_the_file(glob: &ast::UseTree) -> bool {
+    let Some(path) = glob.path() else {
+        return false;
+    };
+    let segments: Vec<String> = path
+        .segments()
+        .filter_map(|segment| segment.name_ref().map(|name| name.text().to_string()))
+        .collect();
+    match segments.as_slice() {
+        [single] if single == "self" => true,
+        [single] if single == "super" => glob
+            .syntax()
+            .ancestors()
+            .skip(1)
+            .take_while(|node| !ast::SourceFile::can_cast(node.kind()))
+            .any(|node| ast::Module::cast(node).is_some_and(|module| module.item_list().is_some())),
+        _ => false,
+    }
 }
 
 /// Duplicate function identities are ambiguous: the second insert refuses

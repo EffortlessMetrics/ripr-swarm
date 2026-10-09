@@ -126,7 +126,26 @@ pub(crate) fn mask_comments_and_strings(text: &str) -> String {
 /// literal it masked in code (quote to closing quote, inclusive), so a
 /// caller can read char and byte literals back from the original text.
 pub(crate) fn mask_with_char_literals(text: &str) -> (String, Vec<(usize, usize)>) {
+    let (masked, char_literals, _) = scan(text);
+    (masked, char_literals)
+}
+
+/// [`mask_comments_and_strings`], plus how many `"` the same scan read as
+/// a string delimiter: an opening or closing quote of a plain or raw
+/// string. A quote inside a comment, a character literal or a string
+/// escape is content, never a delimiter, so it cannot make a line
+/// fragment look string-unbalanced (#7130 review: the unbalanced-fragment
+/// fallback of an identity reader must not fire on commented quotes).
+pub(crate) fn mask_with_string_delimiter_quotes(text: &str) -> (String, usize) {
+    let (masked, _, quotes) = scan(text);
+    (masked, quotes)
+}
+
+/// One pass over `text` producing the masked output, the byte ranges of
+/// the character literals it masked, and the string-delimiter quote count.
+fn scan(text: &str) -> (String, Vec<(usize, usize)>, usize) {
     let mut char_literals = Vec::new();
+    let mut string_quotes = 0usize;
     let bytes = text.as_bytes();
     let mut out = Vec::with_capacity(text.len());
     let mut state = MaskState::Code;
@@ -159,6 +178,7 @@ pub(crate) fn mask_with_char_literals(text: &str) -> (String, Vec<(usize, usize)
                     } else {
                         state = MaskState::Str;
                     }
+                    string_quotes += 1;
                     out.push(b' ');
                     index += 1;
                     continue;
@@ -225,6 +245,7 @@ pub(crate) fn mask_with_char_literals(text: &str) -> (String, Vec<(usize, usize)
                 }
                 if byte == b'"' {
                     state = MaskState::Code;
+                    string_quotes += 1;
                     out.push(b' ');
                     index += 1;
                     continue;
@@ -251,6 +272,7 @@ pub(crate) fn mask_with_char_literals(text: &str) -> (String, Vec<(usize, usize)
                     if closing == raw_hashes {
                         // Consume the closing quote and its hashes
                         // (closing + 1 bytes).
+                        string_quotes += 1;
                         out.extend(std::iter::repeat_n(b' ', closing + 1));
                         index += closing + 1;
                         state = MaskState::Code;
@@ -272,6 +294,7 @@ pub(crate) fn mask_with_char_literals(text: &str) -> (String, Vec<(usize, usize)
     (
         String::from_utf8(out).unwrap_or_else(|_| text.to_string()),
         char_literals,
+        string_quotes,
     )
 }
 
@@ -359,5 +382,31 @@ mod tests {
         let masked = mask_comments_and_strings(text);
         assert!(masked.contains("live(4);"), "{masked}");
         assert_eq!(masked.lines().count(), text.lines().count());
+    }
+
+    #[test]
+    fn string_delimiter_quotes_count_only_delimiters() {
+        // #7130 review: the delimiter count is what an unbalanced-fragment
+        // fallback keys on, so a quote inside a comment, a character
+        // literal, an escaped string byte or a raw string's hashes must
+        // not count; only true string delimiters do.
+        assert_eq!(
+            mask_with_string_delimiter_quotes("return Ok(0); // diagnostic \" Err(E::V)").1,
+            0
+        );
+        assert_eq!(mask_with_string_delimiter_quotes("/* \" */ live(1);").1, 0);
+        assert_eq!(mask_with_string_delimiter_quotes("let q = '\"';").1, 0);
+        assert_eq!(
+            mask_with_string_delimiter_quotes("let s = \"a\\\"b\";").1,
+            2
+        );
+        assert_eq!(mask_with_string_delimiter_quotes("let r = r#\"x\"#;").1, 2);
+        assert_eq!(
+            mask_with_string_delimiter_quotes("let s = \"a\"; let t = \"b\";").1,
+            4
+        );
+        // A fragment closing a string begun on an earlier line counts its
+        // lone delimiter, so the caller's fallback still fires for it.
+        assert_eq!(mask_with_string_delimiter_quotes("second\", live(2))").1, 1);
     }
 }

@@ -216,7 +216,7 @@ impl Counter for Unit {
 /// The kept-default library with its tests in the same file.
 fn kept_default_with_tests(body: &str) -> String {
     format!(
-        "{KEPT_DEFAULT_LIB}\n#[cfg(test)]\nmod tests {{\n    use super::*;\n\n    #[test]\n    fn advances() {{\n{body}\n    }}\n}}\n"
+        "{KEPT_DEFAULT_LIB}\n#[cfg(test)]\nmod wrapped {{\n    use super::*;\n\n    #[test]\n    fn advances() {{\n{body}\n    }}\n}}\n"
     )
 }
 
@@ -1665,7 +1665,7 @@ fn a_bare_call_through_a_glob_pins_only_past_the_owners_module() {
         ("use demo::alt::weight;", 0),
     ] {
         let tests = format!(
-            "{import}\nmod tests {{\n    use super::*;\n    #[test]\n    fn weighs() {{\n        assert_eq!(weight(4), 12);\n    }}\n}}\n"
+            "{import}\nmod wrapped {{\n    use super::*;\n    #[test]\n    fn weighs() {{\n        assert_eq!(weight(4), 12);\n    }}\n}}\n"
         );
         assert_eq!(
             twin_admitted(TWIN_STATIC_LIB, &tests).len(),
@@ -2641,7 +2641,7 @@ fn a_definition_confined_to_an_inline_module_refuses_only_tests_inside_it() {
     }
     // A test inside the confining module is refused; one after it is not.
     let inside = format!(
-        "use demo::weight;\nmod tests {{\n    use super::*;\n    {shadow}\n    #[test]\n    fn weighs() {{ assert_eq!(weight(4), 12); }}\n}}\n"
+        "use demo::weight;\nmod wrapped {{\n    use super::*;\n    {shadow}\n    #[test]\n    fn weighs() {{ assert_eq!(weight(4), 12); }}\n}}\n"
     );
     assert!(matches!(
         weight_refusal(&inside, &[]),
@@ -5724,4 +5724,316 @@ fn test_crate_bindings_of_the_root_are_read_from_that_crate_only() {
             "{files:?}"
         );
     }
+}
+
+/// One `#[test]` over `weight`, with `body` as its statements.
+fn weight_test(signature: &str, body: &str) -> String {
+    format!("use demo::weight;\n\n#[test]\nfn weighs(){signature} {{\n{body}\n}}\n")
+}
+
+/// Per assertion of the one `weight` test, whether the pin admits it,
+/// after asserting that an oracle naming `subject` was extracted, so a
+/// refusal is the pin's and not a missing fact's.
+fn weight_verdicts(tests: &str, subject: &str) -> Vec<(String, bool)> {
+    let index = index(&[(LIB, WEIGHT_LIB), (TESTS, tests)]);
+    let pin = establish(&index, "weight", "x * 3");
+    assert!(pin.is_some(), "the free owner must establish a pin");
+    let Some(pin) = pin else {
+        return Vec::new();
+    };
+    let verdicts = admitted(&index, &pin);
+    assert!(
+        verdicts.iter().any(|(text, _)| text.contains(subject)),
+        "no oracle names {subject}: {verdicts:?}"
+    );
+    verdicts
+}
+
+fn assert_not_pinned(tests: &str, subject: &str) {
+    let verdicts = weight_verdicts(tests, subject);
+    assert!(
+        verdicts.iter().all(|(_, admitted)| !admitted),
+        "{tests}: {verdicts:?}"
+    );
+}
+
+#[test]
+fn a_single_top_level_equality_in_assert_pins_like_assert_eq() {
+    // RIPR-SPEC-0197: `assert!(owner(..) == v)` fails exactly when
+    // `assert_eq!(owner(..), v)` does, on either side, message or not.
+    for assertion in [
+        "assert!(weight(4) == 12);",
+        "assert!(12 == weight(4));",
+        "assert!(weight(4) == 12, \"weight was {}\", 3);",
+    ] {
+        let tests = weight_test("", &format!("    {assertion}"));
+        assert_eq!(
+            weight_verdicts(&tests, "weight(4)"),
+            vec![(assertion.to_string(), true)],
+            "{assertion}"
+        );
+    }
+}
+
+#[test]
+fn an_err_return_guard_on_inequality_pins_its_assertion_twin() {
+    // RIPR-SPEC-0154 twin: `if owner(..) != v { return Err(..) }` is
+    // `assert!(owner(..) == v)` in a test returning `Result`.
+    for (body, subject) in [
+        (
+            "    if weight(4) != 12 {\n        return Err(format!(\"weight was {}\", weight(4)));\n    }\n    Ok(())",
+            "if weight(4) != 12",
+        ),
+        (
+            "    if 12 != weight(4) {\n        return Err(\"mismatch\".to_string());\n    }\n    Ok(())",
+            "if 12 != weight(4)",
+        ),
+    ] {
+        let verdicts = weight_verdicts(&weight_test(" -> Result<(), String>", body), subject);
+        assert_eq!(verdicts.len(), 1, "{body}: {verdicts:?}");
+        assert!(
+            verdicts
+                .iter()
+                .all(|(text, admitted)| *admitted && text.starts_with(subject)),
+            "{body}: {verdicts:?}"
+        );
+    }
+}
+
+#[test]
+fn only_a_lone_top_level_equality_reads_as_a_pin() {
+    let refused = [
+        // The twin of an `==` guard is `assert!(weight(4) != 12)`.
+        (
+            "    if weight(4) == 12 {\n        return Err(\"same\".to_string());\n    }\n    Ok(())",
+            "if weight(4) == 12",
+        ),
+        // `!a == b` is `(!a) == b`, never `!(a == b)`.
+        (
+            "    if !weight(4) == 12 {\n        return Err(\"same\".to_string());\n    }\n    Ok(())",
+            "if !weight(4) == 12",
+        ),
+        (
+            "    assert!(weight(4) >= 12);\n    Ok(())",
+            "weight(4) >= 12",
+        ),
+        (
+            "    assert!(weight(4) <= 12);\n    Ok(())",
+            "weight(4) <= 12",
+        ),
+        ("    assert!(weight(4) > 11);\n    Ok(())", "weight(4) > 11"),
+        ("    assert!(weight(4) < 13);\n    Ok(())", "weight(4) < 13"),
+        (
+            "    assert!(weight(4) != 13);\n    Ok(())",
+            "weight(4) != 13",
+        ),
+        (
+            "    assert!(weight(4) == 12 && weight(1) == 3);\n    Ok(())",
+            "&& weight(1)",
+        ),
+        (
+            "    assert!(weight(4) == 12 || weight(1) == 4);\n    Ok(())",
+            "|| weight(1)",
+        ),
+        // One `==` beside a top-level `&&`/`||` is not a lone equality.
+        (
+            "    let flag = true;\n    assert!(weight(4) == 12 && flag);\n    Ok(())",
+            "&& flag",
+        ),
+        (
+            "    let flag = true;\n    assert!(weight(4) == 13 || flag);\n    Ok(())",
+            "|| flag",
+        ),
+        (
+            "    assert!(!(weight(4) == 13));\n    Ok(())",
+            "!(weight(4) == 13)",
+        ),
+        (
+            "    assert!((weight(4) == 12) == true);\n    Ok(())",
+            "(weight(4) == 12) == true",
+        ),
+        (
+            "    assert!([weight(4) == 12][0]);\n    Ok(())",
+            "[weight(4) == 12]",
+        ),
+        (
+            "    assert!((|| weight(4))() == 12);\n    Ok(())",
+            "(|| weight(4))",
+        ),
+    ];
+    for (body, subject) in refused {
+        assert_not_pinned(&weight_test(" -> Result<(), String>", body), subject);
+    }
+}
+
+#[test]
+fn an_equality_whose_expected_side_names_the_owner_is_not_a_pin() {
+    for (body, subject) in [
+        (
+            "    assert!(weight(4) == weight(2) + weight(2));\n    Ok(())",
+            "weight(2) + weight(2)",
+        ),
+        (
+            "    assert!(2 * weight(2) == weight(4));\n    Ok(())",
+            "2 * weight(2)",
+        ),
+        (
+            "    if weight(4) != weight(2) + weight(2) {\n        return Err(\"mismatch\".to_string());\n    }\n    Ok(())",
+            "if weight(4) != weight(2)",
+        ),
+    ] {
+        assert_not_pinned(&weight_test(" -> Result<(), String>", body), subject);
+    }
+}
+
+#[test]
+fn equality_condition_operands_split_one_top_level_equality() {
+    assert_eq!(
+        equality_condition_operands("assert!(f(a == b, [1 == 2]) == \"x == y\", \"m == n\");"),
+        Some(["f(a == b, [1 == 2])".to_string(), "\"x == y\"".to_string()])
+    );
+    assert_eq!(
+        equality_condition_operands("if f(1) != 3 { return Err(..) }"),
+        Some(["f(1)".to_string(), "3".to_string()])
+    );
+    for refused in [
+        "assert!(f(1) == 3 && g());",
+        "assert!(f(1) == 3 || g());",
+        "assert!(f(1) == 3 && flag);",
+        "assert!(f(1) == 3 || flag);",
+        "assert!(flag || f(1) == 3);",
+        "assert!(f(1) == 3 as u8 > 2);",
+        "assert!(f(1) != 3);",
+        "assert!(f(1) < 3);",
+        "assert!(f(1) > 3);",
+        "assert!(f(1) <= 3);",
+        "assert!(f(1) >= 3);",
+        "assert!(f::<u8>() == 3);",
+        "assert!(!(f(1) == 3));",
+        "assert!(f(1) == 3 == true);",
+        "assert!(x = f(1) == 3);",
+        "assert!(f(1));",
+        "if f(1) == 3 { return Err(..) }",
+        "if !(f(1) == 3) { return Err(..) }",
+        "if !f(1) == 3 { return Err(..) }",
+        "if f(1) != 3 && g() { return Err(..) }",
+        "if f(1) != 3 { return Ok(()) }",
+        "if f(1) != 3 { log(); return Err(..) }",
+        "debug_assert!(f(1) == 3);",
+        "assert_eq!(f(1), 3);",
+    ] {
+        assert_eq!(equality_condition_operands(refused), None, "{refused}");
+    }
+}
+
+#[test]
+fn an_err_return_guard_pins_only_on_an_established_execution_path() {
+    for body in [
+        // A loop body may never run.
+        "    for _ in 0..0 {\n        if weight(4) != 12 {\n            return Err(\"mismatch\".to_string());\n        }\n    }\n    Ok(())",
+        // An earlier `return` may leave the test before the guard runs.
+        "    if weight(1) != 3 {\n        return Ok(());\n    }\n    if weight(4) != 12 {\n        return Err(\"mismatch\".to_string());\n    }\n    Ok(())",
+        // A closure nobody calls never runs it.
+        "    let check = || -> Result<(), String> {\n        if weight(4) != 12 {\n            return Err(\"mismatch\".to_string());\n        }\n        Ok(())\n    };\n    let _ = &check;\n    Ok(())",
+        // A closure that runs but whose `Err` is discarded: the guard's
+        // `return` leaves only the closure, so the test passes regardless.
+        // The syntax gate's closure-exit refusal covers these (#7094
+        // follow-up review).
+        "    let _ = (|| -> Result<(), String> {\n        if weight(4) != 12 {\n            return Err(\"mismatch\".to_string());\n        }\n        Ok(())\n    })();\n    Ok(())",
+        "    std::thread::scope(|_| -> Result<(), String> {\n        if weight(4) != 12 {\n            return Err(\"mismatch\".to_string());\n        }\n        Ok(())\n    });\n    Ok(())",
+        "    let _ = std::thread::spawn(|| -> Result<(), String> {\n        if weight(4) != 12 {\n            return Err(\"mismatch\".to_string());\n        }\n        Ok(())\n    })\n    .join()\n    .unwrap();\n    Ok(())",
+    ] {
+        assert_not_pinned(
+            &weight_test(" -> Result<(), String>", body),
+            "if weight(4) != 12",
+        );
+    }
+    // A guard reads only its condition: an `assert_eq!` inside its body runs
+    // only when the guard fires, and here it never does.
+    assert_not_pinned(
+        &weight_test(
+            " -> Result<(), String>",
+            "    if weight(4) != weight(4) {\n        return Err({\n            assert_eq!(weight(4), 12);\n            String::new()\n        });\n    }\n    Ok(())",
+        ),
+        "if weight(4) != weight(4)",
+    );
+    // `#[should_panic]` and `#[ignore]` settle the outcome.
+    for attribute in ["#[should_panic]", "#[ignore]"] {
+        let tests = format!(
+            "use demo::weight;\n\n#[test]\n{attribute}\nfn weighs() -> Result<(), String> {{\n    if weight(4) != 12 {{\n        return Err(\"mismatch\".to_string());\n    }}\n    Ok(())\n}}\n"
+        );
+        assert_not_pinned(&tests, "if weight(4) != 12");
+    }
+}
+
+#[test]
+fn a_shadowed_err_refuses_the_err_return_guard_twin() {
+    // #7130 review: a value binding of the name `Err` can route the
+    // guard's `return Err(..)` to an `Ok`, so a changed owner no longer
+    // fails the test and the guard pins nothing. Every guard twin in a
+    // file that binds the name is refused, never re-read.
+    let guard = "    if weight(4) != 12 {\n        return Err(\"mismatch\".to_string());\n    }\n    Ok(())";
+    let test_fn = |header: &str| {
+        format!(
+            "use demo::weight;\n\n{header}#[test]\nfn weighs() -> Result<(), String> {{\n{guard}\n}}\n"
+        )
+    };
+    let shadowed = [
+        // The wrong implementation itself: a fn of the name returning Ok.
+        test_fn("fn Err(_: &str) -> Result<(), String> { Ok(()) }\n\n"),
+        // A const constructor and a pattern binding spell the name in the
+        // value namespace too.
+        test_fn("const Err: fn(&str) -> Result<(), String> = |_| Ok(());\n\n"),
+        {
+            let body =
+                "    let Err = |_: &str| -> Result<(), String> { Ok(()) };\n".to_string() + guard;
+            format!(
+                "use demo::weight;\n\n#[test]\nfn weighs() -> Result<(), String> {{\n{body}\n}}\n"
+            )
+        },
+        // An explicit import of the name, and a glob that reaches outside
+        // the file's own scan.
+        test_fn(
+            "mod shadow {\n    pub fn Err(_: &str) -> Result<(), String> { Ok(()) }\n}\nuse shadow::Err;\n\n",
+        ),
+        test_fn("use std::io::prelude::*;\n\n"),
+        // A file-root `super::*` reaches the parent file, and a longer
+        // path may leave the file at an out-of-line module.
+        test_fn("use super::*;\n\n"),
+        {
+            format!(
+                "use demo::weight;\n\nmod wrapped {{\n    use super::sub::*;\n\n    #[test]\n    fn weighs() -> Result<(), String> {{\n{guard}\n    }}\n}}\n"
+            )
+        },
+        // Bindings of an inline module do not leak outward, but the
+        // refusal is deliberately file-wide: coarser and conservative.
+        test_fn("mod shadow {\n    pub fn Err(_: &str) -> Result<(), String> { Ok(()) }\n}\n\n"),
+    ];
+    for tests in &shadowed {
+        assert_not_pinned(tests, "if weight(4) != 12");
+    }
+    // Without a binding of the name the same guard still pins: the twin
+    // needs the shadow question only when the file can shadow.
+    assert!(
+        weight_verdicts(
+            &weight_test(" -> Result<(), String>", guard),
+            "if weight(4) != 12"
+        )
+        .iter()
+        .all(|(text, admitted)| *admitted && text.starts_with("if weight(4) != 12")),
+        "the unshadowed guard must keep its credit"
+    );
+    // The idiomatic test-module glob stays within the file's own scan: it
+    // re-imports only the definitions the whole-file check already
+    // refuses, so it neither shadows nor withholds.
+    let globbed = format!(
+        "use demo::weight;\n\nmod wrapped {{\n    use super::*;\n\n    #[test]\n    fn weighs() -> Result<(), String> {{\n{guard}\n    }}\n}}\n"
+    );
+    let verdicts = weight_verdicts(&globbed, "if weight(4) != 12");
+    assert!(
+        verdicts
+            .iter()
+            .all(|(text, admitted)| *admitted && text.starts_with("if weight(4) != 12")),
+        "the in-file test glob must keep its credit: {verdicts:?}"
+    );
 }

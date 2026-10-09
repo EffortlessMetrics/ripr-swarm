@@ -48,8 +48,9 @@ use super::reveal::{
     flattened_use_paths, use_statement_binds_name, use_statement_first_segment,
 };
 use crate::analysis::extract::{
-    fact_body_defines_callee_fn, fact_body_let_shadow_line, mask_comments_and_strings,
-    outer_assertion_condition, test_body_defines_callee_fn, test_body_let_shadow_line,
+    err_return_guard_twin, fact_body_defines_callee_fn, fact_body_let_shadow_line,
+    mask_comments_and_strings, outer_assertion_condition, test_body_defines_callee_fn,
+    test_body_let_shadow_line,
 };
 use crate::analysis::facts::drop_in::DropInManifests;
 use crate::analysis::facts::{
@@ -59,9 +60,9 @@ use crate::analysis::syntax::fn_signature::{LocalTypeEquality, local_type_equali
 use crate::analysis::syntax::{
     AssertionContextRefusal, GeneratedTestPins, MacroBindingCandidates, MacroBindingKind,
     MacroBindingSite, OwnerPinAssertions, TRUSTED_MACRO_NAMES, attribute_settles_test_outcome,
-    empty_macro_binding_ambiguities, generated_test_pins, local_empty_macro_names,
-    macro_binding_scan, owner_pin_assertions, parse_clean_source_file, returns_leave_the_function,
-    trusted_macro_binding_sites,
+    empty_macro_binding_ambiguities, err_return_guard_key, generated_test_pins,
+    local_empty_macro_names, macro_binding_scan, owner_pin_assertions, parse_clean_source_file,
+    returns_leave_the_function, trusted_macro_binding_sites,
 };
 use crate::domain::{Probe, ProbeFamily};
 use ra_ap_syntax::{
@@ -560,13 +561,20 @@ impl OwnerPinSyntax {
                 });
             }
         }
+        // A terminal Err-return guard is keyed by its condition; the oracle
+        // text may join continuation lines or elide the Err payload.
+        let guard_key = err_return_guard_twin(&assertion.text)
+            .map(|(condition, _)| err_return_guard_key(condition));
         let file_refusal = by_file
             .entry(test.file.clone())
             .or_insert_with(|| owner_pin_assertions(&facts.source, NON_RETURNING_MACROS))
             .refusal(
                 (test.start_line, test.end_line, &test.name),
                 &test.body,
-                (assertion.line, &assertion.text),
+                (
+                    assertion.line,
+                    guard_key.as_deref().unwrap_or(&assertion.text),
+                ),
                 &ambiguous,
             );
         let file_refusal = file_refusal?;
@@ -1511,7 +1519,18 @@ impl OwnerReturnPin {
             return false;
         }
         let condition;
-        let (call, expected) = if is_plain_macro(&assertion.text, "assert_eq") {
+        // RIPR-SPEC-0197: `assert!(owner(..) == v)` and its guard twin
+        // `if owner(..) != v { return Err(..) }` read like `assert_eq!`. A
+        // guard reads only its condition, never a macro inside its body,
+        // since the syntax gate admits the guard's path, not the body's.
+        let is_guard = err_return_guard_twin(&assertion.text).is_some();
+        let reads_assert_eq = !is_guard && is_plain_macro(&assertion.text, "assert_eq");
+        let equality = if reads_assert_eq {
+            None
+        } else {
+            equality_condition_operands(&assertion.text)
+        };
+        let (call, expected) = if reads_assert_eq {
             let Some(operands) = assertion_comparison_operands(&assertion.text) else {
                 return false;
             };
@@ -1549,7 +1568,16 @@ impl OwnerReturnPin {
                 }
                 _ => return false,
             }
-        } else if self.returns_bool && is_plain_macro(&assertion.text, "assert") {
+        } else if let Some([left, right]) = &equality {
+            match (
+                owner_call_shape(left, &self.name),
+                owner_call_shape(right, &self.name),
+            ) {
+                (Some(call), None) => (call, right.as_str()),
+                (None, Some(call)) => (call, left.as_str()),
+                _ => return false,
+            }
+        } else if !is_guard && self.returns_bool && is_plain_macro(&assertion.text, "assert") {
             // `assert!(owner(..))` is `assert_eq!(owner(..), true)` and
             // `assert!(!owner(..))` is `assert_eq!(owner(..), false)`. The
             // message arguments never decide whether the test fails.
@@ -4180,11 +4208,76 @@ fn is_bare_assert_eq_invocation(text: &str) -> bool {
         .is_some_and(|after_name| after_name.trim_start().starts_with('!'))
 }
 
+/// RIPR-SPEC-0197: the compared operands of a plain `assert!(lhs == rhs)`
+/// or of the assertion twin of a terminal Err-return guard
+/// `if lhs != rhs { return Err(..) }` (RIPR-SPEC-0154). The condition must
+/// be one top-level `==`; any other top-level comparison, `&&`, `||`, a
+/// closure or a negated condition refuses. Owned, since a guard's operands
+/// are read from its synthesized twin.
+pub(in crate::analysis) fn equality_condition_operands(text: &str) -> Option<[String; 2]> {
+    let condition = if is_plain_macro(text, "assert") {
+        outer_assertion_condition(text)?
+    } else {
+        let (condition, twin) = err_return_guard_twin(text)?;
+        // `if !a == b` is `(!a) == b`; never read it as `!(a == b)`.
+        if condition.starts_with('!') {
+            return None;
+        }
+        outer_assertion_condition(&twin)?
+    };
+    top_level_equality_operands(&condition)
+}
+
+/// The two sides of a condition's single top-level `==`, split outside
+/// parentheses, brackets, braces, comments and strings.
+fn top_level_equality_operands(condition: &str) -> Option<[String; 2]> {
+    let condition = condition.trim();
+    if condition.starts_with('!') {
+        return None;
+    }
+    let masked = mask_comments_and_strings(condition);
+    let bytes = masked.as_bytes();
+    let mut depth = 0usize;
+    let mut split = None;
+    let mut at = 0;
+    while let Some(&byte) = bytes.get(at) {
+        let next = bytes.get(at + 1).copied();
+        match byte {
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' => depth = depth.checked_sub(1)?,
+            _ if depth > 0 => {}
+            // `<`, `>`, `<=`, `>=`, `->`, `=>`, shifts, generics, closures
+            // and `||` all refuse.
+            b'<' | b'>' | b'|' => return None,
+            b'&' if next == Some(b'&') => return None,
+            b'!' if next == Some(b'=') => return None,
+            b'=' if next == Some(b'=') => {
+                if split.replace(at).is_some() {
+                    return None;
+                }
+                at += 2;
+                continue;
+            }
+            // An assignment or compound assignment is not a comparison.
+            b'=' => return None,
+            _ => {}
+        }
+        at += 1;
+    }
+    if depth != 0 {
+        return None;
+    }
+    let split = split?;
+    let left = condition.get(..split)?.trim();
+    let right = condition.get(split + 2..)?.trim();
+    (!left.is_empty() && !right.is_empty()).then(|| [left.to_string(), right.to_string()])
+}
+
 /// Whether `text` is one plain `assert_eq!` invocation: not
 /// `debug_assert_eq!` (compiled out in release tests), not a crate's own
 /// `*_assert_eq!`, not a path-qualified or repeated one.
 /// The text is exactly one unqualified invocation of `macro_name`.
-fn is_plain_macro(text: &str, macro_name: &str) -> bool {
+pub(in crate::analysis) fn is_plain_macro(text: &str, macro_name: &str) -> bool {
     let masked = mask_comments_and_strings(text);
     let invocations = macro_invocations(&masked);
     let [(name, _)] = invocations.as_slice() else {

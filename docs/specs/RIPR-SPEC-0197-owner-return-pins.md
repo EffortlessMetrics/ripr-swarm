@@ -637,6 +637,53 @@ not pair either. An owner call or binding spelled only inside a comment or
 string literal is not a call or a reference. These rules hold for
 `assert_eq!` as well.
 
+### Lone-equality pins
+
+`assert!(owner(..) == v)` fails exactly when `assert_eq!(owner(..), v)`
+does, and a terminal Err-return guard `if owner(..) != v { return Err(..) }`
+in a test returning `Result` is its assertion twin `assert!(owner(..) == v)`
+(RIPR-SPEC-0154). The pin reads the two operands of such an equality as it
+reads `assert_eq!` operands when:
+
+1. The assertion is one plain, unqualified `assert!`, or a terminal
+   Err-return guard whose twin RIPR-SPEC-0154 establishes.
+2. The condition holds exactly one top-level `==`: outside parentheses,
+   brackets, braces, comments and strings. A top-level `!=`, `<`, `>`,
+   `<=`, `>=`, `&&`, `||`, `=`, closure pipe or second `==` refuses, as
+   does a negated condition (`!(a == b)`, and a guard `if !a == b`, which
+   is `(!a) == b`). An `==` guard's twin is an inequality and pins nothing.
+3. Every other rule above holds unchanged: one side is the owner call shape
+   and the expected side does not name the owner, the self-computed
+   expected check (RIPR-SPEC-0035) reads the same operands, execution and
+   macro admission (the parser keys each terminal Err-return guard by its
+   `if` line and whitespace-free condition, with the same eager-path
+   gates), `#[should_panic]`, the test's line range and the return-path
+   gate. The #6974 let-bound result rule applies to `assert_eq!` only.
+4. A guard reads only its condition. A macro inside its body runs only
+   when the guard fires, so it is never the pinned assertion, and the
+   self-computed check selects its reader the same way: an `assert_eq!`
+   spelled in a message, comment or guard body does not switch it.
+5. The guard's `return Err(..)` must be the prelude variant, not a shadow:
+   a test file that binds the value name `Err` anywhere (a `fn`, `const`,
+   `static` or struct constructor of the name, a pattern binding or
+   parameter, an import of the name or into the name, or a glob import the
+   file cannot see through) refuses every guard twin in the file. A glob
+   rooted at `super` inside an inline module or at `self` re-imports only
+   the file-local definitions the whole-file scan already refuses, so the
+   idiomatic `use super::*;` test module neither shadows nor withholds;
+   every other glob (`crate::..::*`, an external crate, a path that may
+   leave the file) stays opaque and refuses. A shadowed `Err` can return
+   `Ok` on the changed behavior, so the guard passes exactly when it must
+   not (`fixtures/owner_return_pin_err_guard_shadowed_err`). The refusal
+   is file-wide and spells the whole name: coarser, and conservative — it
+   withholds credit, never mis-credits.
+
+Refused, conservatively: a guard with an `else` branch; `if !(a == b)`;
+a parenthesised `(a == b)`; a condition split across lines; a guard
+inside a closure, nested `fn` or async block, whose `return` leaves only
+that body; a second guard or assertion after a guard's `return`; and a
+guard in a file that binds the value name `Err`.
+
 ## Required Evidence
 
 - The bytes 7930d93 replay moves both `return_value` findings
@@ -951,7 +998,8 @@ assertions. This repair shares the existing callback without that larger migrati
 ## Non-Goals
 
 - Shared admission covers Rust `return_value`, `error_path` and `predicate`
-  evidence from bare `assert_eq!` invocations. Qualified assertion macros, other
+  evidence from bare `assert_eq!` invocations, a bool owner's `assert!` and
+  the lone-equality forms above. Qualified assertion macros, other
   oracle kinds/families and general control-flow or macro resolution retain
   their existing authorities; this is not a general execution-proof system.
 
