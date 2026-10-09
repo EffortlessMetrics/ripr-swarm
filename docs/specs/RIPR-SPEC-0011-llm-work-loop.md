@@ -120,7 +120,8 @@ Receipt provenance records:
 - `ripr_version`;
 - `repo_root`;
 - `config_fingerprint` when `ripr.toml` exists and can be read without running
-  analysis;
+  analysis; a present but unreadable `ripr.toml` (including a dangling
+  symlink) is an error, not a missing fingerprint;
 - `command_template_version`;
 - `generated_at`;
 - before, after, and verify artifact paths plus SHA-256 hashes;
@@ -658,6 +659,8 @@ it does not execute the command or grant edit authority.
 - `crates/ripr/src/output/agent_workflow.rs::tests::workflow_json_is_structured_and_advisory`
 - `crates/ripr/src/output/agent_workflow.rs::tests::workflow_markdown_lists_commands_and_boundaries`
 - `crates/ripr/src/output/agent_receipt.rs::tests::agent_receipt_json_selects_changed_seam`
+- `crates/ripr/src/cli/commands_agent_support.rs::tests::dangling_ripr_toml_symlink_is_present_not_built_in_defaults`
+- `crates/ripr/src/cli/commands_agent_support.rs::tests::unreadable_ripr_toml_lookup_is_not_built_in_defaults`
 - `crates/ripr/src/output/agent_receipt.rs::tests::agent_receipt_guidance_covers_improved_state`
 - `crates/ripr/src/output/agent_receipt.rs::tests::agent_receipt_guidance_covers_changed_state`
 - `crates/ripr/src/output/agent_receipt.rs::tests::agent_receipt_guidance_covers_regressed_state`
