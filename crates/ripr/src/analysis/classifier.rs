@@ -1402,6 +1402,81 @@ fn far_above_threshold_discounts() {
         );
     }
 
+    /// #7135: a trailing operator or `capacity` on a direct collection read
+    /// must not confirm the push. Ordinary `len()`, index, and whole-collection
+    /// assertions keep credit.
+    #[test]
+    fn direct_collection_trailing_operator_and_capacity_stay_weakly_exposed() {
+        for assertion in [
+            "assert_eq!(items.capacity() >= 1, true);",
+            "assert_eq!(items.is_empty() || true, true);",
+            "assert_eq!(items.len() * 0, 0);",
+        ] {
+            let finding = collection_push_finding(assertion);
+            assert_eq!(
+                finding.class,
+                ExposureClass::WeaklyExposed,
+                "{assertion} must fall back to weakly_exposed: {:?}",
+                finding.class
+            );
+            assert!(
+                finding
+                    .ripr
+                    .reveal
+                    .discriminate
+                    .summary
+                    .contains("observation_unverified"),
+                "{assertion} must not confirm the collection: {}",
+                finding.ripr.reveal.discriminate.summary
+            );
+        }
+
+        for assertion in [
+            "assert_eq!(items.len(), 1);",
+            "assert_eq!(items[0], 20);",
+            "assert_eq!(items, vec![20u32]);",
+        ] {
+            let finding = collection_push_finding(assertion);
+            assert!(
+                !finding
+                    .ripr
+                    .reveal
+                    .discriminate
+                    .summary
+                    .contains("observation_unverified"),
+                "{assertion} must keep collection credit: {}",
+                finding.ripr.reveal.discriminate.summary
+            );
+            assert_eq!(
+                finding.ripr.reveal.discriminate.state,
+                StageState::Yes,
+                "{assertion} must keep strong discrimination: {:?}",
+                finding.ripr.reveal.discriminate
+            );
+        }
+    }
+
+    fn collection_push_finding(assertion: &str) -> Finding {
+        let source = "pub fn record(items: &mut Vec<u32>, x: u32) {\n    items.push(x);\n}\n";
+        let tests = format!(
+            "use demo::record;\n#[test]\nfn observes() {{\n    let mut items = Vec::new();\n    record(&mut items, 20);\n    {assertion}\n}}\n"
+        );
+        let index = parser_backed_index(&[("src/lib.rs", source), ("tests/record.rs", &tests)]);
+        let probe = Probe {
+            id: ProbeId("probe:src_lib_rs:2:side_effect".to_string()),
+            location: SourceLocation::new("src/lib.rs", 2, 5),
+            owner: Some(SymbolId("src/lib.rs::record".to_string())),
+            family: ProbeFamily::SideEffect,
+            delta: DeltaKind::Effect,
+            before: Some("items.push(x + 1)".to_string()),
+            after: Some("items.push(x)".to_string()),
+            expression: "items.push(x)".to_string(),
+            expected_sinks: vec![],
+            required_oracles: vec![],
+        };
+        classify_probe(&probe, &index, true, None)
+    }
+
     #[test]
     fn given_boundary_predicate_when_equal_value_exists_then_activation_has_no_missing_boundary() {
         let function = FunctionSummary {

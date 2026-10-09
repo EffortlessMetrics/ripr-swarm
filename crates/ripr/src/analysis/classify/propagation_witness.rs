@@ -411,7 +411,10 @@ pub(in crate::analysis) fn is_direct_collection_state_write(
 /// True when the assertion's primary observed subject is `receiver`.
 ///
 /// `assert_eq!(items, expected)` observes `items`. `assert_eq!(other, items)`
-/// observes `other` and must not credit a token on the expected side.
+/// observes `other` and must not credit a token on the expected side. The
+/// subject must be exactly `receiver`, `receiver[..]` (or another index that
+/// ends there), or `receiver.<value-read>(..)`. A trailing operator after the
+/// first read, or `capacity`, does not observe the collection (#7135).
 pub(in crate::analysis) fn assertion_observes_direct_collection(
     assertion_text: &str,
     receiver: &str,
@@ -485,9 +488,27 @@ fn subject_names_collection(subject: &str, receiver: &str) -> bool {
         return false;
     };
     if rest.starts_with('[') {
-        return true;
+        return remainder_after_delimited_group(rest).is_some_and(|tail| tail.trim().is_empty());
     }
-    collection_read_method(rest).is_some_and(is_collection_read_method)
+    collection_value_read_ends(rest)
+}
+
+/// True when `rest` is exactly `.<value-read>(..)` with no trailing operator.
+fn collection_value_read_ends(rest: &str) -> bool {
+    let Some(method) = collection_read_method(rest) else {
+        return false;
+    };
+    if !is_collection_read_method(method) {
+        return false;
+    }
+    let Some(after_name) = rest
+        .strip_prefix('.')
+        .and_then(|text| text.get(method.len()..))
+        .map(str::trim_start)
+    else {
+        return false;
+    };
+    remainder_after_delimited_group(after_name).is_some_and(|tail| tail.trim().is_empty())
 }
 
 fn collection_read_method(rest: &str) -> Option<&str> {
@@ -498,6 +519,16 @@ fn collection_read_method(rest: &str) -> Option<&str> {
         .map(|(index, _)| index)
         .unwrap_or(rest.len());
     rest.get(..end).filter(|name| !name.is_empty())
+}
+
+fn remainder_after_delimited_group(text: &str) -> Option<&str> {
+    let open = text.chars().next()?;
+    if !matches!(open, '(' | '[' | '{') {
+        return None;
+    }
+    let after_open = text.get(open.len_utf8()..)?;
+    let inner_len = balanced_inner(after_open)?.len();
+    after_open.get(inner_len.checked_add(open.len_utf8())?..)
 }
 
 fn is_collection_read_method(name: &str) -> bool {
@@ -513,7 +544,6 @@ fn is_collection_read_method(name: &str) -> bool {
             | "as_slice"
             | "as_ref"
             | "to_vec"
-            | "capacity"
     )
 }
 
@@ -1462,6 +1492,51 @@ mod tests {
             "a quoted assert_eq! must not supply the collection observer"
         );
         Ok(())
+    }
+
+    /// #7135: a collection subject is only the root, an index/slice of the
+    /// root, or one value-read of the root, and it must end there. Trailing
+    /// operators and `capacity` are not discriminators.
+    #[test]
+    fn collection_subject_must_end_after_root_index_or_value_read() {
+        for assertion in [
+            "assert_eq!(items.capacity() >= 1, true);",
+            "assert_eq!(items.capacity(), 4);",
+            "assert_eq!(items.is_empty() || true, true);",
+            "assert_eq!(items.len() * 0, 0);",
+            "assert_eq!(items[0] + 1, 6);",
+            "assert_eq!(items.len().min(1), 1);",
+        ] {
+            assert!(
+                !assertion_observes_direct_collection(assertion, "items"),
+                "non-discriminating subject must not observe the collection: {assertion}"
+            );
+        }
+
+        assert!(
+            assertion_observes_direct_collection("assert_eq!(items.len(), 1);", "items"),
+            "an exact len() read must still observe the collection"
+        );
+        assert!(
+            assertion_observes_direct_collection("assert_eq!(items[0], 5);", "items"),
+            "an index into the collection must still observe it"
+        );
+        assert!(
+            assertion_observes_direct_collection("assert_eq!(items[..], expected);", "items"),
+            "a whole-slice read must still observe the collection"
+        );
+        assert!(
+            assertion_observes_direct_collection("assert_eq!(items, expected);", "items"),
+            "a whole-collection equality must still observe it"
+        );
+        assert!(
+            assertion_observes_direct_collection("assert_eq!(&items[..], expected);", "items"),
+            "a borrowed whole-slice read must still observe the collection"
+        );
+        assert!(
+            assertion_observes_direct_collection("assert!(items.is_empty());", "items"),
+            "a bare is_empty() read must still observe the collection"
+        );
     }
 
     #[test]

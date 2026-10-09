@@ -518,6 +518,23 @@ this family's `push` admission; sharing the `insert` method name must not
 rewrite that golden. Reuse `PropagationWitnessV1`; do not mint a second
 witness DTO.
 
+## 2026-10-09: A collection value-read with a trailing operator is not a discriminator (#7135)
+
+`subject_names_collection` used to accept any trailing operator after the
+first read method, and `capacity` was on the value-read list. That credited
+`assert_eq!(items.capacity() >= 1, true)`, `assert_eq!(items.is_empty() || true, true)`,
+and `assert_eq!(items.len() * 0, 0)` as observing a `items.push` mutation.
+Each of those assertions stays true under a value mutant or a deleted push.
+
+The subject must be exactly the root, an index/slice of the root that ends
+there, or one value-read call that ends there. Drop `capacity`. Pin the three
+refused shapes as should-stay-`weakly_exposed` controls; keep ordinary
+`len()`, index, and whole-collection equalities as the credit controls.
+
+This is cause 1 of #7135 only. A snapshot of the same collection, a twin that
+also ran the owner, and a right-hand-side owner call under `&&`/`||` are
+separate observers and were not taken here.
+
 ## 2026-09-29: Missing git and a missing cwd share `NotFound` (#4735)
 
 Spawning `git` with `current_dir` yields `ErrorKind::NotFound` both when the
