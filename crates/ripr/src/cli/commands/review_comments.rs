@@ -2061,12 +2061,13 @@ mod tests {
             format!("census uses metadata; unreadable fixture must still be stattable: {error}")
         })?;
         if std::fs::read(&fixture.unreadable).is_ok() {
-            // A privileged process can still read mode 000. Skip rather than
-            // claim a pin this host cannot produce.
-            eprintln!(
-                "skipping ordinary canonical_analysis failure pin: chmod 000 remained readable"
+            // Mode 000 that remains readable (typically euid 0) cannot
+            // produce the builder error. Passing here would be a
+            // zero-subject green for the receipt assertions below.
+            return Err(
+                "chmod 000 remained readable; this host cannot produce the ordinary-failure stimulus"
+                    .to_string(),
             );
-            return Ok(());
         }
 
         // The changed file stays readable so language_facts census and
