@@ -2,13 +2,15 @@
 //! RIPR-SPEC-0005 (and the agent-packet shape in
 //! `docs/OUTPUT_SCHEMA.md` § "Agent Seam Packets").
 //!
-//! Packets are emitted for actionable classes:
+//! Packets are emitted for queue-visible classes
+//! (`repair_packet_queue_visible`):
 //!
-//! - Headline-eligible classes (`Ungripped`, `WeaklyGripped`,
-//!   `ReachableUnrevealed`, the four `*_unknown` classes) emit a
-//!   `task: "write_targeted_test"` packet.
-//! - `Opaque` emits a conservative `task: "inspect_static_limitation"`
-//!   packet so the agent at least sees the static boundary.
+//! - Gap classes (`Ungripped`, `WeaklyGripped`, `ReachableUnrevealed`)
+//!   emit a `task: "write_targeted_test"` packet when the producer-owned
+//!   repair route is ready, else `task: "inspect_static_limitation"`.
+//! - Static limitations (the four `*_unknown` classes and `Opaque`) emit
+//!   a conservative `task: "inspect_static_limitation"` packet so the
+//!   agent at least sees the static boundary that hides evidence (#6775).
 //!
 //! `StronglyGripped`, `Intentional`, and `Suppressed` produce no
 //! packet — there is nothing for the agent to do.
@@ -156,11 +158,12 @@ fn push_analysis_outcome_projection(
     out.push_str(",\n");
 }
 
-/// Render every actionable `ClassifiedSeam` in `classified` as an agent
+/// Render every queue-visible `ClassifiedSeam` in `classified` as an agent
 /// packet, returning a JSON object with a `packets` array. Strongly-gripped,
-/// intentional, and suppressed seams are skipped. `Opaque` seams emit a
-/// conservative `inspect_static_limitation` packet so the agent at least
-/// sees the static boundary that hides evidence.
+/// intentional, and suppressed seams are skipped. Static-limitation seams
+/// (opaque and the `*_unknown` classes) emit a conservative
+/// `inspect_static_limitation` packet so the agent at least sees the static
+/// boundary that hides evidence.
 ///
 /// When `limit_info` is `Some`, the artifact carries a `limitations[]` block
 /// so consumers know the output is bounded and can opt out via the env var.
@@ -3643,6 +3646,7 @@ mod tests {
                 discriminate: stage(StageState::No),
                 observed_values: Vec::new(),
                 missing_discriminators: Vec::new(),
+                statically_contradicted_related_tests: 0,
                 new_test_target: None,
             },
             class,
@@ -3720,6 +3724,7 @@ mod tests {
                 flow_sink: None,
             }],
             new_test_target: None,
+            statically_contradicted_related_tests: 0,
         };
         ClassifiedSeam {
             seam,
@@ -3740,6 +3745,7 @@ mod tests {
             discriminate: stage(StageState::No),
             observed_values: Vec::new(),
             missing_discriminators: Vec::new(),
+            statically_contradicted_related_tests: 0,
             new_test_target: None,
         };
         ClassifiedSeam {
@@ -3761,6 +3767,7 @@ mod tests {
             discriminate: stage(StageState::Yes),
             observed_values: Vec::new(),
             missing_discriminators: Vec::new(),
+            statically_contradicted_related_tests: 0,
             new_test_target: None,
         };
         ClassifiedSeam {

@@ -1193,7 +1193,7 @@ fn insert_function(
 
 /// A libtest item cannot be nested in an executable body. Module/source
 /// attributes include inner attributes on ItemList, not only outer attrs.
-fn supported_item_context(item: &SyntaxNode) -> bool {
+pub(super) fn supported_item_context(item: &SyntaxNode) -> bool {
     item_context_refusal(item).is_none()
 }
 
@@ -1436,44 +1436,42 @@ fn conditional_construct(node: &SyntaxNode) -> &'static str {
 /// constructor, or `vec![..]` of literal tokens: it cannot call the owner,
 /// so an expected value in the row is never the owner's own output.
 fn constant_row_table(table: &ast::ForExpr, function: &ast::Fn) -> bool {
-    let Some(mut iterable) = table.iterable() else {
-        return false;
-    };
+    constant_row_array(table, function).is_some()
+}
+
+/// The constant-row array `table` iterates, per [`constant_row_table`].
+fn constant_row_array(table: &ast::ForExpr, function: &ast::Fn) -> Option<ast::ArrayExpr> {
+    let mut iterable = table.iterable()?;
     while let ast::Expr::RefExpr(reference) = &iterable {
         if reference.mut_token().is_some() || reference.raw_token().is_some() {
-            return false;
+            return None;
         }
-        let Some(inner) = reference.expr() else {
-            return false;
-        };
-        iterable = inner;
+        iterable = reference.expr()?;
     }
     match iterable {
-        ast::Expr::ArrayExpr(rows) => constant_rows(&rows),
+        ast::Expr::ArrayExpr(rows) => constant_rows(&rows).then_some(rows),
         ast::Expr::PathExpr(path) => {
-            let Some(name) = path
+            let name = path
                 .path()
                 .filter(|path| path.qualifier().is_none())
                 .and_then(|path| path.segment())
                 .and_then(|segment| segment.name_ref())
-                .map(|name| name.text().to_string())
-            else {
-                return false;
-            };
+                .map(|name| name.text().to_string())?;
             bound_constant_rows(table, function, &name)
         }
-        _ => false,
+        _ => None,
     }
 }
 
-fn bound_constant_rows(table: &ast::ForExpr, function: &ast::Fn, name: &str) -> bool {
-    let Some(scope) = table
+fn bound_constant_rows(
+    table: &ast::ForExpr,
+    function: &ast::Fn,
+    name: &str,
+) -> Option<ast::ArrayExpr> {
+    let scope = table
         .syntax()
         .ancestors()
-        .find(|node| ast::StmtList::can_cast(node.kind()))
-    else {
-        return false;
-    };
+        .find(|node| ast::StmtList::can_cast(node.kind()))?;
     // The binding and the loop's iterable are the name's only two tokens:
     // no shadowing, mutation, alias or second use can change the rows.
     if name.starts_with("r#")
@@ -1485,25 +1483,167 @@ fn bound_constant_rows(table: &ast::ForExpr, function: &ast::Fn, name: &str) -> 
             .count()
             != 2
     {
-        return false;
+        return None;
     }
-    scope.children().filter_map(ast::LetStmt::cast).any(|binding| {
-        binding.syntax().text_range().end() <= table.syntax().text_range().start()
-            && binding.let_else().is_none()
-            && !binding
-                .syntax()
-                .children()
-                .any(|node| ast::Attr::can_cast(node.kind()))
-            && matches!(
-                binding.pat(),
-                Some(ast::Pat::IdentPat(pattern))
-                    if pattern.mut_token().is_none()
-                        && pattern.ref_token().is_none()
-                        && pattern.at_token().is_none()
-                        && pattern.name().is_some_and(|bound| bound.text() == name)
+    scope
+        .children()
+        .filter_map(ast::LetStmt::cast)
+        .filter(|binding| {
+            binding.syntax().text_range().end() <= table.syntax().text_range().start()
+                && binding.let_else().is_none()
+                && !binding
+                    .syntax()
+                    .children()
+                    .any(|node| ast::Attr::can_cast(node.kind()))
+                && matches!(
+                    binding.pat(),
+                    Some(ast::Pat::IdentPat(pattern))
+                        if pattern.mut_token().is_none()
+                            && pattern.ref_token().is_none()
+                            && pattern.at_token().is_none()
+                            && pattern.name().is_some_and(|bound| bound.text() == name)
+                )
+        })
+        .find_map(|binding| match binding.initializer() {
+            Some(ast::Expr::ArrayExpr(rows)) if constant_rows(&rows) => Some(rows),
+            _ => None,
+        })
+}
+
+/// The values a constant-row table gives `name` (RIPR-SPEC-0186, #5328):
+/// one cell per row when `name`'s only binding in the test function
+/// `fn_text` is a plain identifier in the pattern of an unlabeled `for`
+/// over a constant-row table, either the whole pattern (`for x in [..]`) or
+/// one field of a flat tuple pattern (`for (x, want) in [..]`). Each row
+/// must be a tuple of the pattern's arity. `None` when any part is not
+/// established.
+pub(crate) fn constant_table_column(fn_text: &str, name: &str) -> Option<Vec<String>> {
+    // Most tests hold no `for` at all; skip the parse for them.
+    if !fn_text.contains("for") || !fn_text.contains(name) {
+        return None;
+    }
+    let parse = parse_clean_source_file(fn_text)?;
+    let function = parse
+        .tree()
+        .syntax()
+        .descendants()
+        .find_map(ast::Fn::cast)?;
+    let mut bindings = function
+        .syntax()
+        .descendants()
+        .filter(|node| node != function.syntax())
+        .filter_map(|node| ast::AnyHasName::cast(node).and_then(|named| named.name()))
+        .filter(|bound| bound.text() == name);
+    let bound = bindings.next()?;
+    if bindings.next().is_some() {
+        return None;
+    }
+    let pattern = ast::IdentPat::cast(bound.syntax().parent()?)?;
+    if pattern.mut_token().is_some()
+        || pattern.ref_token().is_some()
+        || pattern.at_token().is_some()
+    {
+        return None;
+    }
+    let parent = pattern.syntax().parent()?;
+    let (table, position) = if let Some(table) = ast::ForExpr::cast(parent.clone()) {
+        (table, None)
+    } else {
+        let tuple = ast::TuplePat::cast(parent)?;
+        let fields: Vec<_> = tuple.fields().collect();
+        if fields
+            .iter()
+            .any(|field| !matches!(field, ast::Pat::IdentPat(_) | ast::Pat::WildcardPat(_)))
+        {
+            return None;
+        }
+        let position = fields
+            .iter()
+            .position(|field| field.syntax() == pattern.syntax())?;
+        let table = ast::ForExpr::cast(tuple.syntax().parent()?)?;
+        (table, Some((position, fields.len())))
+    };
+    if table.pat().is_none_or(|pat| {
+        !pat.syntax()
+            .text_range()
+            .contains_range(pattern.syntax().text_range())
+    }) || table.label().is_some()
+    {
+        return None;
+    }
+    // Every row reaches the call only when nothing in the body leaves an
+    // iteration early or runs code for some rows alone:
+    // `{ assert_eq!(gate(cents), 99); break; }` runs the first row alone,
+    // and `if let Some(want) = want { assert_eq!(gate(cents), want) }` skips
+    // the `None` rows. Tokens, so control flow inside a macro counts too; a
+    // `|` may open a closure that never runs, and `&&` or `||` may skip the
+    // call on its right.
+    let body = table.loop_body()?;
+    if body
+        .syntax()
+        .descendants_with_tokens()
+        .filter_map(|element| element.into_token())
+        .any(|token| {
+            matches!(
+                token.text(),
+                "break"
+                    | "continue"
+                    | "return"
+                    | "if"
+                    | "match"
+                    | "while"
+                    | "loop"
+                    | "for"
+                    | "|"
+                    | "||"
+                    | "&&"
             )
-            && matches!(binding.initializer(), Some(ast::Expr::ArrayExpr(rows)) if constant_rows(&rows))
-    })
+        })
+    {
+        return None;
+    }
+    // The parser does not see bindings inside macro arguments, so a macro
+    // that names the column next to a closure, `let`, `for`, `fn` or match
+    // arm may rebind it there (`[50].map(|cents| gate(cents))`).
+    if function
+        .syntax()
+        .descendants()
+        .filter_map(ast::TokenTree::cast)
+        .any(|tree| {
+            let tokens: Vec<String> = tree
+                .syntax()
+                .descendants_with_tokens()
+                .filter_map(|element| element.into_token())
+                .map(|token| token.text().to_string())
+                .collect();
+            tokens
+                .iter()
+                .any(|token| token.trim_start_matches("r#") == name)
+                && tokens
+                    .iter()
+                    .any(|token| matches!(token.as_str(), "|" | "let" | "for" | "fn" | "=>"))
+        })
+    {
+        return None;
+    }
+    let rows = constant_row_array(&table, &function)?;
+    rows.exprs()
+        .map(|row| match position {
+            None => Some(row.syntax().text().to_string()),
+            Some((index, arity)) => {
+                let ast::Expr::TupleExpr(tuple) = row else {
+                    return None;
+                };
+                let cells: Vec<_> = tuple.fields().collect();
+                if cells.len() != arity {
+                    return None;
+                }
+                cells
+                    .get(index)
+                    .map(|cell| cell.syntax().text().to_string())
+            }
+        })
+        .collect()
 }
 
 fn constant_rows(rows: &ast::ArrayExpr) -> bool {

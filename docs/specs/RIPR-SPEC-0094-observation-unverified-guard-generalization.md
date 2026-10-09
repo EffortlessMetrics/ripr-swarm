@@ -12,6 +12,7 @@ Linked issues:
 - #4404
 - #4486
 - #6297
+- #7063
 
 Linked PRs:
 
@@ -414,8 +415,16 @@ Without this rule a same-file
 `Unit::Fortnight =>` arm of an unrelated `seconds` function `exposed`, and
 rewriting only that assertion moved the arm to `weakly_exposed`.
 
-The rule is scoped to match arms. A return-value token names the changed
-expression itself, and the #4486 same-file credit stays for other families.
+The rule covers match arms and, since #7063, an exact error variant. An
+`error_path` or `return_value` probe whose changed expression constructs
+`Err(E::Variant)` (including the turbofish form `Err::<T, E>(E::Variant)`)
+or returns it through `.ok_or(E::Variant)?` (the RIPR-SPEC-0106 identity
+owner, `changed_error_variant`) names a variant every function returning `E` shares, so a same-file
+`assert!(matches!(refund(20_000), Err(PayError::Limit)))` cannot confirm
+`deposit_cap`'s `return Err(PayError::Limit)` beside a test that calls
+`deposit_cap`. Its summary names the error variant instead of the arm. Any
+other return-value token names the changed expression itself, and the #4486
+same-file credit stays for other families.
 
 When the arm stays unconfirmed and such a test was withheld, the discriminator
 summary says that a test which only shares the file or module cannot confirm

@@ -1,0 +1,23 @@
+{
+  "case_id": "spec0231-oracle-assert-ne-struct-literal",
+  "subject_id": "authored-spec0231-14",
+  "origin": "authored",
+  "anchor": "src/lib.rs:7",
+  "behavior_family": "struct_literal_return",
+  "test_shape": "assert_ne_struct_literal",
+  "hard_case": true,
+  "truth": "partially_discriminated",
+  "ideal_verdict": "gap",
+  "observed_verdict": "gap",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "exposed",
+    "weakly_exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": [],
+  "findings_scored": 2,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

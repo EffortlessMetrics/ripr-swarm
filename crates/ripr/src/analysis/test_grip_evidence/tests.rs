@@ -1753,6 +1753,56 @@ fn given_whole_literal_or_later_shadow_when_test_hits_boundary_then_grip_closes(
     Ok(())
 }
 
+/// #6677: dropping `call_presence` for a consumed call must leave the
+/// consumer's own seam to carry the behavior. The shape is rust-hex's
+/// `serialize_upper`: a let-bound call feeding a tail call. An exact output
+/// assertion grips that tail; an `is_empty` check does not.
+#[test]
+fn given_consumed_call_when_consumer_tail_is_asserted_then_consumer_seam_carries_the_grip()
+-> Result<(), String> {
+    let prod_src = "pub fn upper_hex(data: &[u8]) -> String {\n    let s = encode_upper(data);\n    finish(&s)\n}\n";
+    for (assertion, expect_strong) in [
+        ("assert_eq!(upper_hex(&[1, 10]), \"010A\");", true),
+        ("assert!(!upper_hex(&[1, 10]).is_empty());", false),
+    ] {
+        let tests_src = format!("#[test]\nfn upper() {{ {assertion} }}\n");
+        let index = index_from_files(&[
+            (PathBuf::from("src/lib.rs"), prod_src),
+            (PathBuf::from("tests/hex.rs"), tests_src.as_str()),
+        ])?;
+        let seams = inventory_seams_from_index(&[PathBuf::from("src/lib.rs")], &index);
+        let consumed = seams.iter().find(|seam| {
+            seam.kind() == SeamKind::CallPresence
+                && seam.expression().trim() == "encode_upper(data)"
+        });
+        if let Some(seam) = consumed {
+            return Err(format!("consumed call kept a call_presence seam: {seam:?}"));
+        }
+        let consumer = seams
+            .iter()
+            .find(|seam| seam.kind() == SeamKind::ReturnValue)
+            .ok_or_else(|| format!("expected the tail's return_value seam, got {seams:?}"))?;
+        if consumer.expression().trim() != "finish(&s)" {
+            return Err(format!(
+                "fixture parsed the wrong consumer: `{}`",
+                consumer.expression()
+            ));
+        }
+        let evidence = evidence_for_seam(consumer, &index);
+        if evidence.related_tests.is_empty() {
+            return Err(format!("`{assertion}` should relate to the consumer seam"));
+        }
+        let class = crate::analysis::seam_classification::classify_seam(consumer, &evidence);
+        if (class == SeamGripClass::StronglyGripped) != expect_strong {
+            return Err(format!(
+                "`{assertion}` graded the consumer {}, expected strongly gripped: {expect_strong}",
+                class.as_str()
+            ));
+        }
+    }
+    Ok(())
+}
+
 #[test]
 fn given_boundary_seam_when_test_uses_equal_value_and_exact_assertion_then_discriminate_evidence_is_yes()
 -> Result<(), String> {
@@ -3898,6 +3948,281 @@ fn while_some_size_hint_upper_bound() {
     Ok(())
 }
 
+/// #6713 bytesize shape: a free `kb` beside the associated `ByteSize::kb`.
+/// `test_body` is the single inline test's body.
+fn free_kb_return_evidence(
+    test_body: &str,
+) -> Result<(TestGripEvidence, crate::analysis::seams::SeamGripClass), String> {
+    let prod_src = format!(
+        r#"
+pub const KB: u64 = 1_000;
+
+pub fn kb(size: impl Into<u64>) -> u64 {{
+    size.into() * KB
+}}
+
+#[derive(Debug, PartialEq)]
+pub struct ByteSize(pub u64);
+
+impl ByteSize {{
+    pub const fn kb(size: u64) -> ByteSize {{
+        ByteSize(size + KB)
+    }}
+}}
+
+#[cfg(test)]
+mod tests {{
+    use super::*;
+
+    #[test]
+    fn units() {{
+        {test_body}
+    }}
+}}
+"#
+    );
+    let files: Vec<(PathBuf, &str)> = vec![(PathBuf::from("src/lib.rs"), prod_src.as_str())];
+    let index = index_from_files(&files)?;
+    let seams = inventory_seams_from_index(&[PathBuf::from("src/lib.rs")], &index);
+    let free_kb = seams
+        .iter()
+        .find(|s| s.kind() == SeamKind::ReturnValue && s.expression() == "size.into() * KB")
+        .ok_or_else(|| "free kb return seam present".to_string())?;
+    let evidence = evidence_for_seam(free_kb, &index);
+    let class = crate::analysis::seam_classification::classify_seam(free_kb, &evidence);
+    Ok((evidence, class))
+}
+
+/// #6713: a test that only calls the associated `ByteSize::kb` neither
+/// calls nor activates the free `kb`, so the free function's return seam
+/// cannot read strongly gripped from it.
+#[test]
+fn given_free_fn_when_tests_call_only_same_named_associated_fn_then_not_strongly_gripped()
+-> Result<(), String> {
+    let (evidence, class) =
+        free_kb_return_evidence("assert_eq!(ByteSize::kb(1), ByteSize(1_000));")?;
+    let labels: Vec<_> = evidence
+        .related_tests
+        .iter()
+        .map(|g| (g.test_name.clone(), g.relation_reason))
+        .collect();
+    assert!(
+        labels
+            .iter()
+            .all(|(_, reason)| *reason != RelationReason::DirectOwnerCall),
+        "ByteSize::kb is not a call of the free kb: {labels:?}"
+    );
+    assert!(
+        evidence.observed_values.is_empty(),
+        "ByteSize::kb arguments are not the free kb's activation values: {:?}",
+        evidence.observed_values
+    );
+    assert_ne!(evidence.activate.state, StageState::Yes);
+    assert_ne!(
+        class,
+        crate::analysis::seams::SeamGripClass::StronglyGripped,
+        "{evidence:?}"
+    );
+    Ok(())
+}
+
+/// #6713 control: a bare `kb(1)` call keeps the direct relation and its
+/// activation value.
+#[test]
+fn given_free_fn_when_test_calls_it_bare_then_direct_owner_call_and_activated() -> Result<(), String>
+{
+    let (evidence, _class) = free_kb_return_evidence("assert_eq!(ByteSize::kb(1).0, kb(2));")?;
+    assert!(
+        evidence
+            .related_tests
+            .iter()
+            .any(|g| g.test_name == "units" && g.relation_reason == RelationReason::DirectOwnerCall),
+        "bare kb(2u64) is a direct call: {:?}",
+        evidence.related_tests
+    );
+    assert_eq!(evidence.activate.state, StageState::Yes);
+    assert!(
+        evidence
+            .observed_values
+            .iter()
+            .all(|fact| fact.value != "1")
+            && evidence
+                .observed_values
+                .iter()
+                .any(|fact| fact.value.starts_with('2')),
+        "only the same-line bare call's argument is an activation value: {:?}",
+        evidence.observed_values
+    );
+    Ok(())
+}
+
+/// #6713 review: a helper that calls only the associated
+/// `Widget::render_unit` is not a helper-owner edge of the free
+/// `render_unit`, so a test calling only the helper neither relates nor
+/// activates the free function. The control spells the free call in the
+/// helper and keeps both.
+#[test]
+fn given_free_fn_when_helper_calls_only_same_named_associated_fn_then_no_helper_owner_credit()
+-> Result<(), String> {
+    let helper_evidence =
+        |helper_body: &str| -> Result<(StageState, Vec<(String, RelationReason)>), String> {
+            let prod_src = r#"
+pub fn render_unit(size: u64) -> u64 {
+    size * 2
+}
+
+pub struct Widget;
+
+impl Widget {
+    pub fn render_unit(size: u64) -> u64 {
+        size + 1
+    }
+}
+"#;
+            let support = PathBuf::from("tests/support.rs");
+            let support_src =
+                format!("pub fn check_render_unit() -> u64 {{\n    {helper_body}\n}}\n");
+            let tests = PathBuf::from("tests/widget_tests.rs");
+            let tests_src = r#"
+use support::check_render_unit;
+
+#[test]
+fn renders_through_helper() {
+    assert_eq!(check_render_unit(), 11);
+}
+"#;
+            let index = index_from_files(&[
+                (PathBuf::from("src/widget.rs"), prod_src),
+                (support, support_src.as_str()),
+                (tests, tests_src),
+            ])?;
+            let seams = inventory_seams_from_index(&[PathBuf::from("src/widget.rs")], &index);
+            let free_render = seams
+                .iter()
+                .find(|s| s.kind() == SeamKind::ReturnValue && s.expression() == "size * 2")
+                .ok_or_else(|| "free render_unit return seam present".to_string())?;
+            let evidence = evidence_for_seam(free_render, &index);
+            let labels = evidence
+                .related_tests
+                .iter()
+                .map(|g| (g.test_name.clone(), g.relation_reason))
+                .collect::<Vec<_>>();
+            Ok((evidence.activate.state, labels))
+        };
+
+    let (activation, labels) = helper_evidence("Widget::render_unit(10)")?;
+    assert!(
+        labels.iter().all(|(_, reason)| !matches!(
+            reason,
+            RelationReason::DirectOwnerCall | RelationReason::HelperOwnerCall
+        )),
+        "a helper calling only Widget::render_unit is not an owner edge of the free fn: {labels:?}"
+    );
+    assert_ne!(
+        activation,
+        StageState::Yes,
+        "the associated call's arguments are not the free fn's activation values"
+    );
+
+    let (activation, labels) = helper_evidence("render_unit(10)")?;
+    assert!(
+        labels
+            .iter()
+            .any(|(_, reason)| *reason == RelationReason::HelperOwnerCall),
+        "a helper spelling the free call keeps the helper-owner relation: {labels:?}"
+    );
+    assert_eq!(activation, StageState::Yes);
+    Ok(())
+}
+
+/// #6713 review, grip mode: a nested `fn kb(..)` declaration in the test
+/// body defines the name, it does not call it, so it cannot restore the
+/// direct relation or the activation the associated-only call lost.
+#[test]
+fn given_free_fn_when_test_declares_same_named_fn_then_not_strongly_gripped() -> Result<(), String>
+{
+    let (evidence, class) = free_kb_return_evidence(
+        "fn kb(x: u64) -> u64 { x * 3 }\nassert_eq!(ByteSize::kb(1), ByteSize(1_000));",
+    )?;
+    assert!(
+        evidence
+            .related_tests
+            .iter()
+            .all(|g| g.relation_reason != RelationReason::DirectOwnerCall),
+        "a nested fn declaration is not a call of the free kb: {:?}",
+        evidence.related_tests
+    );
+    assert_ne!(evidence.activate.state, StageState::Yes);
+    assert_ne!(
+        class,
+        crate::analysis::seams::SeamGripClass::StronglyGripped,
+        "{evidence:?}"
+    );
+    Ok(())
+}
+
+/// #6713: a boundary test through a same-named associated function
+/// (`Gate::over(100, 100)`) does not pin the free `over`'s equality
+/// boundary; the control spells the free call.
+#[test]
+fn given_free_fn_boundary_when_only_same_named_associated_fn_hits_it_then_boundary_stays_missing()
+-> Result<(), String> {
+    let boundary_debt = |test_body: &str| -> Result<Vec<String>, String> {
+        let prod_src = format!(
+            r#"
+pub fn over(amount: u64, limit: u64) -> bool {{
+    amount >= limit
+}}
+
+pub struct Gate;
+
+impl Gate {{
+    pub fn over(amount: u64, limit: u64) -> bool {{
+        amount > limit
+    }}
+}}
+
+#[cfg(test)]
+mod tests {{
+    use super::*;
+
+    #[test]
+    fn gate() {{
+        {test_body}
+    }}
+}}
+"#
+        );
+        let files: Vec<(PathBuf, &str)> = vec![(PathBuf::from("src/lib.rs"), prod_src.as_str())];
+        let index = index_from_files(&files)?;
+        let seams = inventory_seams_from_index(&[PathBuf::from("src/lib.rs")], &index);
+        let boundary = seams
+            .iter()
+            .find(|s| {
+                s.kind() == SeamKind::PredicateBoundary && s.expression() == "amount >= limit"
+            })
+            .ok_or_else(|| "free over boundary seam present".to_string())?;
+        let evidence = evidence_for_seam(boundary, &index);
+        Ok(evidence
+            .missing_discriminators
+            .iter()
+            .map(|fact| fact.value.clone())
+            .collect())
+    };
+
+    let type_path_only = boundary_debt("assert!(!Gate::over(100, 100));")?;
+    assert!(
+        !type_path_only.is_empty(),
+        "Gate::over(100, 100) must not close the free over's boundary"
+    );
+    let free_call = boundary_debt("assert!(over(100, 100));")?;
+    assert!(
+        free_call.is_empty(),
+        "over(100, 100) closes the boundary: {free_call:?}"
+    );
+    Ok(())
+}
+
 /// #6732: compact grip relates a trait-path call (`Render::render(&-0.0f64)`)
 /// to the impl its argument selects, and only to that impl.
 #[test]
@@ -4232,18 +4557,18 @@ fn given_call_presence_when_assertion_mentions_only_generic_argument_token_then_
         "zq_quote_target_token"
     ));
     let prod_src = "pub fn zq_call_presence_owner(path: &std::path::Path) -> String { \
-                            zq_quote_target_token(&zq_render_target_token(path)) \
+                            zq_render_target_token(path); zq_quote_target_token(\"\") \
                         }\n\
                         fn zq_render_target_token(path: &std::path::Path) -> String { \
                             path.display().to_string() \
                         }\n\
                         fn zq_quote_target_token(input: &str) -> String { input.to_string() }\n\
                         pub fn zq_description_owner(description: &str) -> bool { \
-                            description.is_empty() \
+                            description.is_empty(); false \
                         }\n\
                         pub fn zq_variant_owner(variant: &str, arm: &str) -> String { \
                             let _arm = arm.clone(); \
-                            variant.to_string() \
+                            variant.to_string(); String::new() \
                         }\n\
                         pub fn zq_collect_source_owner(file: &str, source: &str, current_owner: &str, out: &mut Vec<String>) { \
                             collect_source_facts_from_expr(file, source, current_owner, out); \
@@ -4259,7 +4584,7 @@ fn given_call_presence_when_assertion_mentions_only_generic_argument_token_then_
                             pub evidence: String, \
                         }\n\
                         pub fn zq_probe_owner(context: &ZqContext) -> String { \
-                            zq_missing_evidence(&context.probe, &context.class, &context.evidence) \
+                            zq_missing_evidence(&context.probe, &context.class, &context.evidence); String::new() \
                         }\n\
                         fn zq_missing_evidence(probe: &str, class: &str, evidence: &str) -> String { \
                             format!(\"{probe}:{class}:{evidence}\") \
@@ -4478,7 +4803,8 @@ fn given_call_presence_when_direct_owner_call_uses_turbofish_then_activation_is_
     let prod = PathBuf::from("src/pipeline.rs");
     let prod_src = r#"
 pub fn render_pipeline<T: ToString>(input: T) -> String {
-    format_output(input.to_string())
+    format_output(input.to_string());
+    Default::default()
 }
 
 fn format_output(input: String) -> String {
@@ -4544,7 +4870,8 @@ fn given_call_presence_when_direct_owner_call_has_space_before_paren_then_activa
     let prod = PathBuf::from("src/pipeline.rs");
     let prod_src = r#"
 pub fn render_pipeline(input: String) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 fn format_output(input: String) -> String {
@@ -4609,7 +4936,7 @@ fn given_call_presence_when_assertion_mentions_short_specific_call_target_then_a
 -> Result<(), String> {
     let prod = PathBuf::from("src/agent_paths.rs");
     let prod_src = "pub fn zq_call_presence_owner(path: &std::path::Path) -> String { \
-                            zq_quote_target_token(&zq_render_target_token(path)) \
+                            zq_render_target_token(path); zq_quote_target_token(\"\") \
                         }\n\
                         fn zq_render_target_token(path: &std::path::Path) -> String { \
                             path.display().to_string() \
@@ -4671,7 +4998,8 @@ fn given_call_presence_when_same_file_wrapper_directly_calls_owner_then_activati
     let source = PathBuf::from("src/pipeline.rs");
     let source_src = r#"
 fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 fn exercise_pipeline() -> String {
@@ -4741,7 +5069,8 @@ struct Pipeline;
 
 impl Pipeline {
     fn render_pipeline(&self, input: &str) -> String {
-        input.trim().to_string()
+        input.trim().to_string();
+        Default::default()
     }
 }
 
@@ -4809,7 +5138,8 @@ struct Pipeline;
 
 impl Pipeline {
     fn render_pipeline(&self, input: &str) -> String {
-        input.trim().to_string()
+        input.trim().to_string();
+        Default::default()
     }
 }
 
@@ -4877,7 +5207,8 @@ fn given_call_presence_when_test_local_helper_directly_calls_owner_then_activati
     let prod = PathBuf::from("src/pipeline.rs");
     let prod_src = r#"
 pub fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 fn format_output(input: &str) -> String {
@@ -4943,7 +5274,8 @@ fn given_call_presence_when_helper_calls_owner_then_logs_then_activation_is_yes(
     let prod = PathBuf::from("src/pipeline.rs");
     let prod_src = r#"
 pub fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 fn format_output(input: &str) -> String {
@@ -5005,7 +5337,8 @@ fn given_call_presence_when_integration_test_calls_production_wrapper_then_activ
     let prod = PathBuf::from("src/pipeline.rs");
     let prod_src = r#"
 pub fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 pub fn exercise_pipeline() -> String {
@@ -5063,7 +5396,8 @@ fn given_call_presence_when_integration_test_calls_two_hop_production_wrapper_th
     let prod = PathBuf::from("src/pipeline.rs");
     let prod_src = r#"
 pub fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 pub fn build_pipeline(input: &str) -> String {
@@ -5133,7 +5467,8 @@ fn given_call_presence_when_two_hop_production_wrapper_reaches_multiple_owners_t
     let prod = PathBuf::from("src/loop_commands.rs");
     let prod_src = r#"
 pub fn quote_arg(value: &str) -> String {
-    value.replace(' ', "\\ ")
+    value.replace(' ', "\\ ");
+    Default::default()
 }
 
 pub fn normalize_arg(value: &str) -> String {
@@ -5200,7 +5535,8 @@ fn given_call_presence_when_production_wrapper_calls_same_owner_multiple_times_t
     let prod = PathBuf::from("src/loop_commands.rs");
     let prod_src = r#"
 pub fn shell_arg(value: &str) -> String {
-    value.replace(' ', "\\ ")
+    value.replace(' ', "\\ ");
+    Default::default()
 }
 
 pub fn agent_start_command(root: &str, packet: &str) -> String {
@@ -5259,7 +5595,8 @@ fn given_call_presence_when_production_wrapper_calls_multiple_owners_then_activa
     let prod = PathBuf::from("src/loop_commands.rs");
     let prod_src = r#"
 pub fn quote_arg(value: &str) -> String {
-    value.replace(' ', "\\ ")
+    value.replace(' ', "\\ ");
+    Default::default()
 }
 
 pub fn normalize_arg(value: &str) -> String {
@@ -5322,7 +5659,8 @@ fn given_call_presence_when_multi_owner_production_wrapper_has_target_affinity_t
     let prod = PathBuf::from("src/pipeline.rs");
     let prod_src = r#"
 pub fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 pub fn render_report(input: &str) -> String {
@@ -5390,7 +5728,8 @@ fn given_call_presence_when_unit_test_calls_same_file_target_affinity_wrapper_th
     let source = PathBuf::from("src/pipeline.rs");
     let source_src = r#"
 pub fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 pub fn render_report(input: &str) -> String {
@@ -5459,7 +5798,8 @@ fn given_call_presence_when_multi_owner_wrapper_asserts_other_target_then_activa
     let prod = PathBuf::from("src/pipeline.rs");
     let prod_src = r#"
 pub fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 pub fn render_report(input: &str) -> String {
@@ -5526,7 +5866,8 @@ fn given_call_presence_when_test_local_fanout_helper_asserts_other_target_then_a
     let prod = PathBuf::from("src/pipeline.rs");
     let prod_src = r#"
 pub fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 pub fn render_report(input: &str) -> String {
@@ -5593,7 +5934,8 @@ fn given_call_presence_when_production_wrapper_name_is_ambiguous_then_activation
     let pipeline = PathBuf::from("src/pipeline.rs");
     let pipeline_src = r#"
 pub fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 pub fn exercise_pipeline() -> String {
@@ -5664,7 +6006,8 @@ fn given_call_presence_when_module_qualified_ambiguous_production_wrapper_has_ta
     let pipeline = PathBuf::from("src/pipeline.rs");
     let pipeline_src = r#"
 pub fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 pub fn exercise_pipeline() -> String {
@@ -5738,7 +6081,8 @@ fn given_call_presence_when_aliased_module_wrapper_has_target_affinity_then_acti
     let pipeline = PathBuf::from("src/pipeline.rs");
     let pipeline_src = r#"
 pub fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 pub fn exercise_pipeline() -> String {
@@ -5814,7 +6158,8 @@ fn given_call_presence_when_a_module_alias_is_ambiguous_then_no_relation_is_cred
     let pipeline = PathBuf::from("src/pipeline.rs");
     let pipeline_src = r#"
 pub fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 pub fn exercise_pipeline() -> String {
@@ -5906,7 +6251,8 @@ fn given_call_presence_when_nested_test_module_rebinds_a_module_alias_then_each_
     let pipeline = PathBuf::from("src/pipeline.rs");
     let pipeline_src = r#"
 pub fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 pub fn exercise_pipeline() -> String {
@@ -5920,7 +6266,8 @@ fn format_output(input: &str) -> String {
     let report = PathBuf::from("src/report.rs");
     let report_src = r#"
 pub fn render_report(input: &str) -> String {
-    format_report(input)
+    format_report(input);
+    Default::default()
 }
 
 pub fn exercise_pipeline() -> String {
@@ -6044,7 +6391,8 @@ fn given_call_presence_when_bare_aliased_module_wrapper_has_target_affinity_then
     let pipeline = PathBuf::from("src/pipeline.rs");
     let pipeline_src = r#"
 pub fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 pub fn exercise_pipeline() -> String {
@@ -6125,7 +6473,8 @@ pub fn display_path(path: &Path) -> String {
 }
 
 pub fn shell_path(path: &Path) -> String {
-    shell_arg(&display_path(path))
+    shell_arg(&display_path(path));
+    Default::default()
 }
 
 pub fn shell_arg(value: &str) -> String {
@@ -6195,7 +6544,8 @@ fn given_call_presence_when_direct_imported_wrapper_has_target_affinity_then_act
     let classify = PathBuf::from("src/analysis/classify.rs");
     let classify_src = r#"
 pub fn reach_evidence(input: &str) -> String {
-    format_marker(input)
+    format_marker(input);
+    Default::default()
 }
 
 pub fn reveal_evidence(input: &str) -> String {
@@ -6271,7 +6621,8 @@ fn given_call_presence_when_crate_qualified_wrapper_has_target_affinity_then_act
     let classify = PathBuf::from("src/analysis/classify.rs");
     let classify_src = r#"
 pub fn reach_evidence(input: &str) -> String {
-    format_marker(input)
+    format_marker(input);
+    Default::default()
 }
 
 pub fn reveal_evidence(input: &str) -> String {
@@ -6345,7 +6696,8 @@ fn given_call_presence_when_crate_qualified_wrapper_asserts_other_target_then_ac
     let classify = PathBuf::from("src/analysis/classify.rs");
     let classify_src = r#"
 pub fn reach_evidence(input: &str) -> String {
-    format_marker(input)
+    format_marker(input);
+    Default::default()
 }
 
 pub fn reveal_evidence(input: &str) -> String {
@@ -6418,7 +6770,8 @@ fn given_call_presence_when_bare_qualified_wrapper_has_target_affinity_then_acti
     let classify = PathBuf::from("src/analysis/classify.rs");
     let classify_src = r#"
 pub fn reach_evidence(input: &str) -> String {
-    format_marker(input)
+    format_marker(input);
+    Default::default()
 }
 
 fn format_marker(input: &str) -> String {
@@ -6482,7 +6835,8 @@ fn given_call_presence_when_crate_qualified_owner_exists_only_in_other_package_t
     let alpha_owner = PathBuf::from("crates/alpha/src/analysis/other.rs");
     let alpha_owner_src = r#"
 pub fn reach_evidence(input: &str) -> String {
-    format_marker(input)
+    format_marker(input);
+    Default::default()
 }
 
 fn format_marker(input: &str) -> String {
@@ -6560,7 +6914,8 @@ fn given_call_presence_when_external_direct_import_matches_local_owner_name_then
     let classify = PathBuf::from("src/analysis/classify.rs");
     let classify_src = r#"
 pub fn reach_evidence(input: &str) -> String {
-    format_marker(input)
+    format_marker(input);
+    Default::default()
 }
 
 fn format_marker(input: &str) -> String {
@@ -6626,7 +6981,8 @@ fn given_call_presence_when_ambiguous_direct_import_owner_name_then_activation_s
     let classify = PathBuf::from("src/analysis/classify.rs");
     let classify_src = r#"
 pub fn reach_evidence(input: &str) -> String {
-    format_marker(input)
+    format_marker(input);
+    Default::default()
 }
 
 fn format_marker(input: &str) -> String {
@@ -6703,7 +7059,8 @@ fn given_call_presence_when_module_qualified_wrapper_asserts_other_target_then_a
     let pipeline = PathBuf::from("src/pipeline.rs");
     let pipeline_src = r#"
 pub fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 pub fn exercise_pipeline() -> String {
@@ -6776,7 +7133,8 @@ fn given_call_presence_when_aliased_module_wrapper_asserts_other_target_then_act
     let pipeline = PathBuf::from("src/pipeline.rs");
     let pipeline_src = r#"
 pub fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 pub fn exercise_pipeline() -> String {
@@ -6851,7 +7209,8 @@ fn given_call_presence_when_direct_imported_wrapper_asserts_other_target_then_ac
     let classify = PathBuf::from("src/analysis/classify.rs");
     let classify_src = r#"
 pub fn reach_evidence(input: &str) -> String {
-    format_marker(input)
+    format_marker(input);
+    Default::default()
 }
 
 pub fn reveal_evidence(input: &str) -> String {
@@ -6926,7 +7285,8 @@ fn given_call_presence_when_test_local_helper_shadows_production_wrapper_then_ac
     let prod = PathBuf::from("src/pipeline.rs");
     let prod_src = r#"
 pub fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 pub fn exercise_pipeline() -> String {
@@ -6981,7 +7341,8 @@ fn given_call_presence_when_test_local_helper_shadows_target_affinity_wrapper_th
     let source = PathBuf::from("src/pipeline.rs");
     let source_src = r#"
 pub fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 pub fn render_report(input: &str) -> String {
@@ -7052,7 +7413,8 @@ fn given_call_presence_when_unique_test_support_helper_calls_owner_then_activati
     let prod = PathBuf::from("src/pipeline.rs");
     let prod_src = r#"
 pub fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 fn format_output(input: &str) -> String {
@@ -7122,7 +7484,8 @@ fn given_call_presence_when_duplicate_test_support_helpers_share_owner_then_acti
     let prod = PathBuf::from("src/pipeline.rs");
     let prod_src = r#"
 pub fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 fn format_output(input: &str) -> String {
@@ -7196,7 +7559,8 @@ fn given_call_presence_when_test_support_helper_name_is_ambiguous_then_activatio
     let pipeline = PathBuf::from("src/pipeline.rs");
     let pipeline_src = r#"
 pub fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 fn format_output(input: &str) -> String {
@@ -7275,7 +7639,8 @@ fn given_call_presence_when_direct_imported_ambiguous_support_helper_calls_owner
     let pipeline = PathBuf::from("src/pipeline.rs");
     let pipeline_src = r#"
 pub fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 fn format_output(input: &str) -> String {
@@ -7361,7 +7726,8 @@ fn given_call_presence_when_aliased_direct_imported_support_helper_calls_owner_t
     let pipeline = PathBuf::from("src/pipeline.rs");
     let pipeline_src = r#"
 pub fn calculate(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 fn format_output(input: &str) -> String {
@@ -7371,7 +7737,8 @@ fn format_output(input: &str) -> String {
     let report = PathBuf::from("src/report.rs");
     let report_src = r#"
 pub fn summarize(input: &str) -> String {
-    format_report(input)
+    format_report(input);
+    Default::default()
 }
 
 fn format_report(input: &str) -> String {
@@ -7664,7 +8031,7 @@ fn wrong_binding_mutation_is_exposed_by_full_production_evidence_path() -> Resul
     let index = index_from_files(&[
         (
             PathBuf::from("src/pipeline.rs"),
-            "pub fn calculate(input: &str) -> String { input.to_string() }",
+            "pub fn calculate(input: &str) -> String { input.to_string(); Default::default() }",
         ),
         (
             PathBuf::from("src/report.rs"),
@@ -7701,7 +8068,8 @@ fn given_call_presence_when_direct_imported_support_helper_targets_other_owner_t
     let pipeline = PathBuf::from("src/pipeline.rs");
     let pipeline_src = r#"
 pub fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 fn format_output(input: &str) -> String {
@@ -7778,7 +8146,8 @@ fn given_call_presence_when_direct_imported_external_helper_then_activation_stay
     let pipeline = PathBuf::from("src/pipeline.rs");
     let pipeline_src = r#"
 pub fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 fn format_output(input: &str) -> String {
@@ -7832,7 +8201,8 @@ fn given_call_presence_when_block_local_direct_imported_helper_is_not_file_scope
     let pipeline = PathBuf::from("src/pipeline.rs");
     let pipeline_src = r#"
 pub fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 fn format_output(input: &str) -> String {
@@ -7922,7 +8292,8 @@ fn given_call_presence_when_ambiguous_support_helper_is_module_qualified_then_ac
     let pipeline = PathBuf::from("src/pipeline.rs");
     let pipeline_src = r#"
 pub fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 fn format_output(input: &str) -> String {
@@ -8006,7 +8377,8 @@ fn given_call_presence_when_qualified_support_helper_targets_other_owner_then_no
     let pipeline = PathBuf::from("src/pipeline.rs");
     let pipeline_src = r#"
 pub fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 fn format_output(input: &str) -> String {
@@ -8088,7 +8460,8 @@ fn given_call_presence_when_crate_qualified_support_helper_calls_owner_then_acti
     let pipeline = PathBuf::from("src/pipeline.rs");
     let pipeline_src = r#"
 pub fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 fn format_output(input: &str) -> String {
@@ -8172,7 +8545,8 @@ fn given_call_presence_when_super_qualified_support_helper_calls_owner_then_acti
     let pipeline = PathBuf::from("src/pipeline.rs");
     let pipeline_src = r#"
 pub fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 fn format_output(input: &str) -> String {
@@ -8346,7 +8720,8 @@ fn given_call_presence_when_test_local_helper_wraps_owner_call_in_option_then_ac
     let prod = PathBuf::from("src/pipeline.rs");
     let prod_src = r#"
 pub fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 fn format_output(input: &str) -> String {
@@ -8408,7 +8783,8 @@ fn given_call_presence_when_test_local_helper_wraps_owner_call_in_result_then_ac
     let prod = PathBuf::from("src/pipeline.rs");
     let prod_src = r#"
 pub fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 fn format_output(input: &str) -> String {
@@ -8470,7 +8846,8 @@ fn given_call_presence_when_test_local_helper_wraps_owner_call_in_result_turbofi
     let prod = PathBuf::from("src/pipeline.rs");
     let prod_src = r#"
 pub fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 fn format_output(input: &str) -> String {
@@ -8532,7 +8909,8 @@ fn given_call_presence_when_test_local_helper_wraps_owner_call_in_err_then_activ
     let prod = PathBuf::from("src/pipeline.rs");
     let prod_src = r#"
 pub fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 fn format_output(input: &str) -> String {
@@ -8594,7 +8972,8 @@ fn given_call_presence_when_test_local_helper_unwraps_owner_call_result_then_act
     let prod = PathBuf::from("src/pipeline.rs");
     let prod_src = r#"
 pub fn render_pipeline(input: &str) -> Result<String, ()> {
-    Ok(format_output(input))
+    Ok(format_output(input));
+    Default::default()
 }
 
 fn format_output(input: &str) -> String {
@@ -8656,7 +9035,8 @@ fn given_call_presence_when_test_local_helper_expects_owner_call_result_then_act
     let prod = PathBuf::from("src/pipeline.rs");
     let prod_src = r#"
 pub fn render_pipeline(input: &str) -> Result<String, ()> {
-    Ok(format_output(input))
+    Ok(format_output(input));
+    Default::default()
 }
 
 fn format_output(input: &str) -> String {
@@ -8718,7 +9098,8 @@ fn given_call_presence_when_test_local_helper_borrows_owner_call_result_then_act
     let prod = PathBuf::from("src/pipeline.rs");
     let prod_src = r#"
 pub fn render_pipeline(input: &str) -> Result<String, ()> {
-    Ok(format_output(input))
+    Ok(format_output(input));
+    Default::default()
 }
 
 fn format_output(input: &str) -> String {
@@ -8780,7 +9161,8 @@ fn given_call_presence_when_test_local_helper_trims_owner_call_result_then_activ
     let prod = PathBuf::from("src/pipeline.rs");
     let prod_src = r#"
 pub fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 fn format_output(input: &str) -> String {
@@ -8838,7 +9220,8 @@ fn given_call_presence_when_test_local_helper_uses_unknown_owner_call_chain_then
     let prod = PathBuf::from("src/pipeline.rs");
     let prod_src = r#"
 pub fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 fn format_output(input: &str) -> String {
@@ -8896,7 +9279,8 @@ fn given_call_presence_when_test_local_assertion_helper_calls_owner_then_activat
     let prod = PathBuf::from("src/pipeline.rs");
     let prod_src = r#"
 pub fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 fn format_output(input: &str) -> String {
@@ -8957,7 +9341,8 @@ fn given_call_presence_when_test_local_equality_helper_calls_owner_as_later_arg_
     let prod = PathBuf::from("src/pipeline.rs");
     let prod_src = r#"
 pub fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 fn format_output(input: &str) -> String {
@@ -9018,7 +9403,8 @@ fn given_call_presence_when_assert_message_arg_calls_owner_then_activation_stays
     let prod = PathBuf::from("src/pipeline.rs");
     let prod_src = r#"
 pub fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 fn format_output(input: &str) -> String {
@@ -9075,7 +9461,8 @@ fn given_call_presence_when_test_local_assert_macro_helper_calls_owner_then_acti
     let prod = PathBuf::from("src/pipeline.rs");
     let prod_src = r#"
 pub fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 fn format_output(input: &str) -> String {
@@ -9136,7 +9523,8 @@ fn given_call_presence_when_test_local_assert_macro_short_circuits_owner_then_ac
     let prod = PathBuf::from("src/pipeline.rs");
     let prod_src = r#"
 pub fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 fn format_output(input: &str) -> String {
@@ -9193,7 +9581,8 @@ fn given_call_presence_when_test_local_matches_macro_helper_calls_owner_then_act
     let prod = PathBuf::from("src/pipeline.rs");
     let prod_src = r#"
 pub fn render_pipeline(input: &str) -> bool {
-    is_alpha(input)
+    is_alpha(input);
+    Default::default()
 }
 
 fn is_alpha(input: &str) -> bool {
@@ -9250,7 +9639,8 @@ fn given_call_presence_when_test_local_matches_macro_short_circuits_owner_then_a
     let prod = PathBuf::from("src/pipeline.rs");
     let prod_src = r#"
 pub fn render_pipeline(input: &str) -> bool {
-    is_alpha(input)
+    is_alpha(input);
+    Default::default()
 }
 
 fn is_alpha(input: &str) -> bool {
@@ -9307,7 +9697,8 @@ fn given_call_presence_when_test_local_dbg_macro_helper_calls_owner_then_activat
     let prod = PathBuf::from("src/pipeline.rs");
     let prod_src = r#"
 pub fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 fn format_output(input: &str) -> String {
@@ -9365,7 +9756,8 @@ fn given_call_presence_when_test_local_dbg_macro_short_circuits_owner_then_activ
     let prod = PathBuf::from("src/pipeline.rs");
     let prod_src = r#"
 pub fn render_pipeline(input: &str) -> bool {
-    is_alpha(input)
+    is_alpha(input);
+    Default::default()
 }
 
 fn is_alpha(input: &str) -> bool {
@@ -9422,7 +9814,8 @@ fn given_call_presence_when_test_local_helper_wraps_owner_call_in_format_macro_t
     let prod = PathBuf::from("src/pipeline.rs");
     let prod_src = r#"
 pub fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 fn format_output(input: &str) -> String {
@@ -9480,7 +9873,8 @@ fn given_call_presence_when_test_local_helper_wraps_owner_call_in_format_args_ma
     let prod = PathBuf::from("src/pipeline.rs");
     let prod_src = r#"
 pub fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 fn format_output(input: &str) -> String {
@@ -9538,7 +9932,8 @@ fn given_call_presence_when_test_local_format_args_macro_short_circuits_owner_th
     let prod = PathBuf::from("src/pipeline.rs");
     let prod_src = r#"
 pub fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 fn format_output(input: &str) -> String {
@@ -9596,7 +9991,8 @@ fn given_call_presence_when_test_local_helper_wraps_owner_call_in_block_then_act
     let prod = PathBuf::from("src/pipeline.rs");
     let prod_src = r#"
 pub fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 fn format_output(input: &str) -> String {
@@ -9654,7 +10050,8 @@ fn given_call_presence_when_test_local_helper_conditionally_calls_owner_then_act
     let prod = PathBuf::from("src/pipeline.rs");
     let prod_src = r#"
 pub fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 fn format_output(input: &str) -> String {
@@ -9712,7 +10109,8 @@ fn given_call_presence_when_test_local_helper_wraps_owner_call_in_vec_macro_then
     let prod = PathBuf::from("src/pipeline.rs");
     let prod_src = r#"
 pub fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 fn format_output(input: &str) -> String {
@@ -9770,7 +10168,8 @@ fn given_call_presence_when_test_local_helper_wraps_owner_call_in_array_literal_
     let prod = PathBuf::from("src/pipeline.rs");
     let prod_src = r#"
 pub fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 fn format_output(input: &str) -> String {
@@ -9828,7 +10227,8 @@ fn given_call_presence_when_test_local_helper_wraps_owner_call_in_tuple_literal_
     let prod = PathBuf::from("src/pipeline.rs");
     let prod_src = r#"
 pub fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 fn format_output(input: &str) -> String {
@@ -9886,7 +10286,8 @@ fn given_call_presence_when_test_local_helper_wraps_owner_call_in_unknown_macro_
     let prod = PathBuf::from("src/pipeline.rs");
     let prod_src = r#"
 pub fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 fn format_output(input: &str) -> String {
@@ -9950,7 +10351,8 @@ fn given_call_presence_when_helper_wraps_owner_call_with_non_container_call_then
     let prod = PathBuf::from("src/pipeline.rs");
     let prod_src = r#"
 pub fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 fn format_output(input: &str) -> String {
@@ -10018,7 +10420,8 @@ fn given_call_presence_when_test_local_helper_wraps_owner_call_in_std_identity_t
         let prod = PathBuf::from("src/pipeline.rs");
         let prod_src = r#"
 pub fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 fn format_output(input: &str) -> String {
@@ -10080,7 +10483,8 @@ fn given_call_presence_when_test_local_helper_wraps_owner_call_in_local_identity
     let prod = PathBuf::from("src/pipeline.rs");
     let prod_src = r#"
 pub fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 fn format_output(input: &str) -> String {
@@ -10142,7 +10546,8 @@ fn given_call_presence_when_test_local_two_hop_helper_calls_owner_then_activatio
     let prod = PathBuf::from("src/pipeline.rs");
     let prod_src = r#"
 pub fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 fn format_output(input: &str) -> String {
@@ -10224,7 +10629,8 @@ fn missing_boundary_discriminator(rows: &[Vec<String>], parameter: &str) -> Opti
 }
 
 fn parameter_value_set(rows: &[Vec<String>], parameter: &str) -> Option<Vec<String>> {
-    let values = observed_parameter_values(rows, parameter);
+    observed_parameter_values(rows, parameter);
+    let values = rows.concat();
     if values.is_empty() { None } else { Some(values) }
 }
 
@@ -10314,7 +10720,10 @@ fn missing_discriminator_key(entry: &ClassifiedSeam) -> String {
 
 fn required_discriminator_text(discriminator: &RequiredDiscriminator) -> String {
     match discriminator {
-        RequiredDiscriminator::BoundaryValue { description } => description.clone(),
+        RequiredDiscriminator::BoundaryValue { description } => {
+            description.clone();
+            String::new()
+        }
         RequiredDiscriminator::ErrorVariant { variant } => variant.clone(),
     }
 }
@@ -10389,7 +10798,8 @@ fn looks_like_log_effect(text: &str) -> bool {
 fn looks_like_event_call_effect(text: &str) -> bool {
     [".publish(", ".emit("]
         .iter()
-        .any(|needle| text.contains(needle))
+        .any(|needle| text.contains(needle));
+    Default::default()
 }
 
 #[cfg(test)]
@@ -10447,7 +10857,8 @@ struct Pipeline;
 
 impl Pipeline {
     fn render_pipeline(&self, input: &str) -> String {
-        input.trim().to_string()
+        input.trim().to_string();
+        Default::default()
     }
 }
 
@@ -10514,7 +10925,8 @@ fn should_skip_pipeline(input: &str) -> bool {
 }
 
 fn render_pipeline(input: &str) -> bool {
-    format_output(input).is_empty()
+    format_output(input).is_empty();
+    Default::default()
 }
 
 fn format_output(input: &str) -> String {
@@ -10584,7 +10996,8 @@ fn looks_like_log_effect(text: &str) -> bool {
 fn looks_like_event_call_effect(text: &str) -> bool {
     [".publish(", ".emit("]
         .iter()
-        .any(|needle| text.contains(needle))
+        .any(|needle| text.contains(needle));
+    Default::default()
 }
 
 #[cfg(test)]
@@ -10661,7 +11074,8 @@ fn missing_boundary_discriminator(flow_sinks: &[FlowSinkFact]) -> Option<Missing
 fn first_visible_flow_sink(flow_sinks: &[FlowSinkFact]) -> Option<&FlowSinkFact> {
     flow_sinks
         .iter()
-        .find(|sink| sink.kind != FlowSinkKind::Unknown)
+        .find(|sink| sink.kind != FlowSinkKind::Unknown);
+    Default::default()
 }
 
 #[cfg(test)]
@@ -10714,7 +11128,8 @@ fn given_call_presence_when_same_file_wrapper_skips_owner_then_activation_stays_
     let source = PathBuf::from("src/pipeline.rs");
     let source_src = r#"
 fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 fn render_pipeline_fixture() -> String {
@@ -10776,7 +11191,8 @@ fn given_call_presence_when_same_file_unit_parent_qualified_wrapper_calls_owner_
     let source = PathBuf::from("src/pipeline.rs");
     let source_src = r#"
 fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 fn exercise_pipeline() -> String {
@@ -10841,7 +11257,8 @@ fn given_call_presence_when_same_file_unit_shadow_calls_wrapper_name_then_activa
     let source = PathBuf::from("src/pipeline.rs");
     let source_src = r#"
 fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 fn exercise_pipeline() -> String {
@@ -10910,7 +11327,8 @@ fn given_call_presence_when_test_calls_two_hop_production_wrapper_then_activatio
     let source = PathBuf::from("src/pipeline.rs");
     let source_src = r#"
 fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 fn exercise_pipeline() -> String {
@@ -10989,7 +11407,10 @@ fn parse_c_quoted_path(raw: &str) -> Option<String> {
     let ch = chars.next()?;
     match ch {
         '"' => Some(String::new()),
-        '\\' => Some(parse_c_escape(&mut chars).to_string()),
+        '\\' => {
+            parse_c_escape(&mut chars);
+            Some(String::new())
+        }
         _ => Some(ch.to_string()),
     }
 }
@@ -11064,7 +11485,8 @@ fn given_call_presence_when_test_calls_same_file_fanout_wrapper_then_activation_
     let source = PathBuf::from("src/pipeline.rs");
     let source_src = r#"
 fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 fn collect_pipeline_context() -> String {
@@ -11137,7 +11559,8 @@ fn given_call_presence_when_same_file_wrapper_extends_owner_call_then_activation
     let source = PathBuf::from("src/pipeline.rs");
     let source_src = r#"
 fn render_pipeline(input: &str) -> Option<String> {
-    Some(format_output(input))
+    Some(format_output(input));
+    Default::default()
 }
 
 fn collect_pipeline_outputs(input: &str) -> Vec<String> {
@@ -11198,7 +11621,8 @@ fn given_call_presence_when_same_file_wrapper_unwraps_or_defaults_owner_then_act
     let source = PathBuf::from("src/pipeline.rs");
     let source_src = r#"
 fn render_pipeline(input: &str) -> Option<String> {
-    Some(format_output(input))
+    Some(format_output(input));
+    Default::default()
 }
 
 fn collect_pipeline_output(input: &str) -> String {
@@ -15668,7 +16092,8 @@ fn normalize_beta(input: &str) -> String {
     let gamma = PathBuf::from("src/gamma.rs");
     let gamma_src = r#"
 pub fn compute_gamma(input: &str) -> String {
-    normalize_gamma(input)
+    normalize_gamma(input);
+    Default::default()
 }
 
 fn normalize_gamma(input: &str) -> String {
@@ -17563,6 +17988,167 @@ fn boundary_asserts_true_value() {
         .ok_or_else(|| "the control test must stay related".to_string())?;
     assert_eq!(related.oracle_strength, OracleStrength::Strong);
     assert_eq!(related.evidence_summary, "exact value assertion");
+    Ok(())
+}
+
+/// #7007: the issue's exact composition — a consistent happy-path test
+/// keeps its strong oracle while the wrong-valued boundary assert stays in
+/// the evidence set. The contradiction must withhold the wrong test's
+/// call-site credit: its `5_000` argument completes the equality boundary
+/// only in the mutant's favor (`>=` -> `>` makes the assert pass), so
+/// counting it would close the gap the single-test fold already keeps open.
+#[test]
+fn wrongval_assert_beside_consistent_test_keeps_gap_open() -> Result<(), String> {
+    let (evidence, seam, _index) = wrongval_seam_evidence(
+        r#"
+#[test]
+fn happy_path_returns_undiscounted_total() {
+    assert_eq!(discounted_total(1_000, 5_000), 1_000);
+}
+
+#[test]
+fn boundary_asserts_flipped_value() {
+    assert_eq!(discounted_total(5_000, 5_000), 5_000);
+}
+"#,
+    )?;
+    let class = crate::analysis::seam_classification::classify_seam(&seam, &evidence);
+    if class == SeamGripClass::StronglyGripped {
+        return Err(
+            "the wrongval assert beside a consistent test must not close the gap".to_string(),
+        );
+    }
+    // The wrong test's 5_000 call argument must not count toward the seam's
+    // observed activation values: only the consistent test's 1_000 remains.
+    let observed = evidence
+        .observed_values
+        .iter()
+        .map(|fact| fact.value.replace('_', ""))
+        .collect::<Vec<_>>();
+    assert!(
+        !observed.iter().any(|value| value == "5000"),
+        "the contradicted test's 5_000 argument must not be credited as observed: {observed:?}"
+    );
+    assert!(
+        observed.iter().any(|value| value == "1000"),
+        "the consistent test's 1_000 argument keeps its activation credit: {observed:?}"
+    );
+    // The equality boundary the wrong test appeared to cover stays missing.
+    assert!(
+        evidence
+            .missing_discriminators
+            .iter()
+            .any(|fact| fact.value.contains("equality boundary")),
+        "the equality boundary must stay missing: {:?}",
+        evidence.missing_discriminators
+    );
+    let related = evidence
+        .related_tests
+        .iter()
+        .find(|test| test.test_name == "boundary_asserts_flipped_value")
+        .ok_or_else(|| "the wrongval test must stay related to the seam".to_string())?;
+    assert!(
+        related
+            .evidence_summary
+            .contains("contradicts static evaluation"),
+        "the composition must name the contradiction: {}",
+        related.evidence_summary
+    );
+    Ok(())
+}
+
+/// #7007 review: the per-test grip names only the test's BEST oracle, so a
+/// test carrying both a consistent strong assertion and a contradicted one
+/// renders no contradiction at all. The producer-owned count over the full
+/// assertion set is the completeness authority the receipt's gate reads.
+#[test]
+fn contradiction_count_counts_a_test_beside_its_best_oracle() -> Result<(), String> {
+    let (evidence, _seam, _index) = wrongval_seam_evidence(
+        r#"
+#[test]
+fn consistent_oracle_beside_a_flipped_assert() {
+    assert_eq!(discounted_total(5_000, 5_000), 3_500);
+    assert_eq!(discounted_total(1_000, 5_000), 999);
+}
+"#,
+    )?;
+    assert_eq!(
+        evidence.statically_contradicted_related_tests, 1,
+        "the producer count sees the contradicted assertion beside the strong one"
+    );
+    let related = evidence
+        .related_tests
+        .iter()
+        .find(|test| test.test_name == "consistent_oracle_beside_a_flipped_assert")
+        .ok_or_else(|| "the two-oracle test must stay related".to_string())?;
+    assert_eq!(
+        related.oracle_strength,
+        OracleStrength::Strong,
+        "the best oracle stays strong"
+    );
+    assert_eq!(
+        related.evidence_summary, "exact value assertion",
+        "the rendered summary carries no contradiction: this lossy channel is why the count exists"
+    );
+    Ok(())
+}
+
+/// #7007 review: a value-insensitive seam (ReturnValue) whose only related
+/// test carries a statically contradicted exact-value assertion gains no
+/// activation credit from that test's bare owner call — in the full path or
+/// the compact path. The baseline-failing call is the inverted repair
+/// attempt, not established activation.
+#[test]
+fn wrongval_only_test_grants_no_activation_credit_on_value_insensitive_seam() -> Result<(), String>
+{
+    let prod = PathBuf::from("src/main.rs");
+    let prod_src = r#"
+pub fn capped_charge(cents: u64) -> u64 {
+    cents * 2
+}
+"#;
+    let tests = PathBuf::from("tests/main_tests.rs");
+    let index = index_from_files(&[
+        (prod.clone(), prod_src),
+        (
+            tests,
+            r#"
+#[test]
+fn charge_asserts_flipped_value() {
+    assert_eq!(capped_charge(2_000), 4_001);
+}
+"#,
+        ),
+    ])?;
+    let seams = inventory_seams_from_index(&[prod], &index);
+    let seam = seams
+        .iter()
+        .find(|seam| seam.kind() == SeamKind::ReturnValue)
+        .ok_or_else(|| "expected a return value seam for the pure tail owner".to_string())?
+        .clone();
+    let evidence = evidence_for_seam(&seam, &index);
+    if evidence.activate.state == StageState::Yes {
+        return Err(format!(
+            "a contradicted-only test must not grant activation credit on a value-insensitive seam: {}",
+            evidence.activate.summary
+        ));
+    }
+    assert!(
+        evidence.activate.summary.contains("withheld"),
+        "the activation stage must disclose the withholding: {}",
+        evidence.activate.summary
+    );
+    let compact = compact_evidence_for_seam(&seam, &CompactGripContext::new(&index));
+    if compact.activate.state == StageState::Yes {
+        return Err(format!(
+            "the compact path must not grant activation credit either: {}",
+            compact.activate.summary
+        ));
+    }
+    assert_eq!(
+        evidence.statically_contradicted_related_tests, 1,
+        "the producer count names the contradicted test"
+    );
     Ok(())
 }
 

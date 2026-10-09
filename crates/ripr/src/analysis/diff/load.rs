@@ -230,7 +230,7 @@ pub(crate) fn load_worktree_diff_with_effective_base_core(
 
     let base = resolve_effective_base_core(root, base, git_timeout)?;
 
-    let origin = worktree_diff_origin(root, &base, git_timeout);
+    let origin = worktree_diff_origin(root, &base, git_timeout)?;
     let text = run_git_diff(root, &origin, &["--submodule=short"], git_timeout)?;
     Ok(LoadedDiff {
         text,
@@ -238,21 +238,148 @@ pub(crate) fn load_worktree_diff_with_effective_base_core(
     })
 }
 
-/// The commit a `--worktree` diff starts from: the merge base of `base` and
+/// The commit a working-tree diff starts from: the merge base of `base` and
 /// `HEAD`, the same origin the committed `<base>...HEAD` form uses. Diffing
 /// from the base tip instead would report every commit the base gained after
 /// the branch forked, reversed, as a change in this branch, so a worktree
 /// re-check after a test edit would not cover the same PR changes as the
-/// check it is compared with. Without a merge base (a shallow clone, an
-/// unborn branch) the base tip stays the origin, as before.
-fn worktree_diff_origin(root: &Path, base: &str, git_timeout: Option<Duration>) -> String {
-    crate::git::run_git_output_with_deadline(root, &["merge-base", base, "HEAD"], git_timeout)
-        .ok()
-        .filter(|output| output.status.success())
-        .and_then(|output| String::from_utf8(output.stdout).ok())
-        .map(|commit| commit.trim().to_string())
-        .filter(|commit| !commit.is_empty())
-        .unwrap_or_else(|| base.to_string())
+/// check it is compared with.
+///
+/// Without a merge base (a shallow clone, unrelated histories, an unborn
+/// `HEAD`) there is no origin to diff from, so this fails closed with the
+/// same cause and repair the committed path reports (#7076) instead of
+/// diffing from the base tip: `git diff <base-tip>` exits 0 and reports the
+/// base tip's content reversed as local changes. A merge-base invocation that
+/// never ran (a spawn failure, timeout, cancellation) keeps its own error —
+/// an unanswered probe must not assert a cause — and a success that prints no
+/// commit names that state rather than inventing an origin.
+fn worktree_diff_origin(
+    root: &Path,
+    base: &str,
+    git_timeout: Option<Duration>,
+) -> Result<String, CoreError> {
+    let output =
+        crate::git::run_git_output_with_deadline(root, &["merge-base", base, "HEAD"], git_timeout)?;
+    if output.status.success() {
+        if let Ok(text) = String::from_utf8(output.stdout) {
+            let commit = text.trim();
+            if !commit.is_empty() {
+                return Ok(commit.to_string());
+            }
+        }
+        return Err(CoreError::message(format!(
+            "git merge-base `{base}` HEAD succeeded but printed no commit (the analysis did not \
+             run). Re-run the command."
+        )));
+    }
+    Err(no_worktree_merge_base_error(
+        root,
+        base,
+        &output,
+        git_timeout,
+    ))
+}
+
+/// The fail-closed error when the working-tree diff origin cannot be
+/// established because the object store is damaged: either `merge-base` said
+/// so itself, or `HEAD` resolves to a ref whose commit object is missing
+/// (#7076). Both keep the object-restoration repair with Git's own reason.
+fn worktree_damage_error(base: &str, merge_base_stderr: &[u8]) -> CoreError {
+    let reason = git_reason_line(merge_base_stderr)
+        .map(|reason| format!("{reason}. "))
+        .unwrap_or_default();
+    CoreError::message(format!(
+        "the working-tree diff from `{base}` cannot start: {reason}{OBJECT_DAMAGE_REPAIR}"
+    ))
+}
+
+/// Whether a `rev-parse --verify --quiet` probe ran and answered "no": exit
+/// 1 without a message. A refusal answers another nonzero exit with a
+/// `fatal:` line, and must not read as a missing ref or object (#7076).
+fn rev_parse_answered_no(output: &std::process::Output) -> bool {
+    output.status.code() == Some(1) && String::from_utf8_lossy(&output.stderr).trim().is_empty()
+}
+
+/// The fail-closed error when `git merge-base <base> HEAD` ran and found no
+/// origin for the working-tree diff (#7076). The failure is classified before
+/// any cause is named, because a wrong actionable repair is worse than a
+/// missed advisory one: a damaged object store keeps the object-restoration
+/// repair; a `HEAD` that provably resolves to no commit keeps the committed
+/// path's unknown-revision vocabulary; and only Git's genuine no-merge-base
+/// result — exit 1 without a message — takes [`no_merge_base_diagnosis`],
+/// shared with the committed path and the first-pr range preflight. Any other
+/// nonzero failure (cyclic `refs/replace`, an unreadable ref) preserves Git's
+/// own bounded reason with the generic named-file repair instead of
+/// asserting unrelated histories, whose `--base` repair cannot fix it.
+fn no_worktree_merge_base_error(
+    root: &Path,
+    base: &str,
+    merge_base: &std::process::Output,
+    git_timeout: Option<Duration>,
+) -> CoreError {
+    let stderr = String::from_utf8_lossy(&merge_base.stderr);
+    if git_stderr_names_object_damage(&stderr) {
+        return worktree_damage_error(base, &merge_base.stderr);
+    }
+    // A missing ref and a missing object both answer exit 1 without a
+    // message; a refusal (cyclic `refs/replace`, an unreadable ref database)
+    // answers another nonzero exit with a `fatal:` line, and must keep the
+    // classifications below instead of reading as unborn or damaged. A probe
+    // that cannot complete proves nothing either.
+    let head_ref = crate::git::run_git_output_with_deadline(
+        root,
+        &["rev-parse", "--verify", "--quiet", "HEAD"],
+        git_timeout,
+    );
+    if matches!(&head_ref, Ok(output) if rev_parse_answered_no(output)) {
+        return CoreError::message(format!(
+            "the working-tree diff from `{base}` cannot start: HEAD does not resolve to a commit \
+             (HEAD may be unborn or point at a missing branch; the analysis did not run). Commit \
+             the working tree or check out an existing branch, then re-run."
+        ));
+    }
+    // The ref resolves, but an unpeeled `rev-parse` returns the stored ID
+    // without reading the object: when the tip commit itself is missing,
+    // `merge-base` refuses with `Not a valid commit name`, which is object
+    // damage, not an unborn branch and not a named-file repair. The peel only
+    // runs when the ref resolves, so an unborn branch can never read as
+    // damage here.
+    let head_ref_resolves = matches!(&head_ref, Ok(output) if output.status.success());
+    let head_object_proven_missing = head_ref_resolves
+        && matches!(
+            crate::git::run_git_output_with_deadline(
+                root,
+                &["rev-parse", "--verify", "--quiet", "HEAD^{commit}"],
+                git_timeout,
+            ),
+            Ok(output) if rev_parse_answered_no(&output)
+        );
+    if head_object_proven_missing {
+        return worktree_damage_error(base, &merge_base.stderr);
+    }
+    // Git's genuine no-merge-base result is exit 1 without a message — a
+    // shallow clone and unrelated histories both answer this way — where a
+    // refusal answers another nonzero exit with a `fatal:`/`error:` line
+    // (the same split the ref probes use in
+    // [`unreadable_repository_message`]).
+    let genuine_no_merge_base = merge_base.status.code() == Some(1)
+        && stderr.trim().is_empty()
+        && String::from_utf8_lossy(&merge_base.stdout)
+            .trim()
+            .is_empty();
+    if !genuine_no_merge_base {
+        let reason = git_reason_line(&merge_base.stderr)
+            .map(|reason| format!("{reason}. "))
+            .unwrap_or_default();
+        return CoreError::message(format!(
+            "the working-tree diff from `{base}` cannot start: \
+             {reason}{CORRECT_NAMED_REPOSITORY_FILE_REPAIR}"
+        ));
+    }
+    let (diagnosis, _) = no_merge_base_diagnosis(root, base, "HEAD", git_timeout);
+    CoreError::message(format!(
+        "the working-tree diff from `{base}` has no merge base with `HEAD`: {diagnosis}"
+    ))
 }
 
 /// Resolve the base ref the diff will actually run against, which is also
@@ -446,6 +573,18 @@ fn message_for_git_root_probe(probe: GitRootProbe, root: &Path) -> Option<String
     }
 }
 
+/// The cause and repair when Git reports a damaged object store, shared by
+/// the committed-diff failure text and the working-tree origin failure
+/// (#7076) so both name one repair.
+const OBJECT_DAMAGE_REPAIR: &str = "Git reports a damaged object store; run `git fsck`, restore \
+    the missing objects (for example `git fetch`), then re-run.";
+
+/// The generic repair when Git failed for a reason that names repository
+/// state the user must correct, shared by the ref-probe failure text and the
+/// working-tree origin failure (#7076) so both name one repair.
+const CORRECT_NAMED_REPOSITORY_FILE_REPAIR: &str = "If Git names a config or ref file, correct or restore it (`.git/config`, `.git/packed-refs`); \
+     `git fsck` checks the object store only. Then re-run.";
+
 /// Whether a `fatal:`/`error:` line of Git's stderr reports a damaged object
 /// store. Anchored to those lines so a path or branch that merely contains
 /// "corrupt" does not read as damage.
@@ -533,8 +672,7 @@ fn unreadable_repository_message(root: &Path, output: &std::process::Output) -> 
         "Repair the object store: run `git fsck`, restore the missing objects (for example \
          `git fetch`), then re-run."
     } else {
-        "If Git names a config or ref file, correct or restore it (`.git/config`, \
-         `.git/packed-refs`); `git fsck` checks the object store only. Then re-run."
+        CORRECT_NAMED_REPOSITORY_FILE_REPAIR
     };
     Some(format!(
         "Git could not read the repository at `{}` (the analysis did not run): {reason}. \
@@ -1457,7 +1595,20 @@ fn run_git_diff_bytes(
             format!("refusing to diff `{range}`: a revision range cannot start with `-`").into(),
         );
     }
-    let mut args: Vec<&str> = vec!["-c", "core.quotePath=true", "diff"];
+    // `diff.orderFile=/dev/null` neutralizes ambient file ordering (#5325):
+    // a dangling user orderfile otherwise aborts the diff before any
+    // analysis runs, and a live one only reorders output the parser does
+    // not need ordered. An empty value is NOT an off switch — git fails
+    // reading orderfile `''` — while /dev/null holds no patterns on any
+    // platform git runs (verified on git-for-Windows 2.47.1, which maps it
+    // to NUL; the hostile-config test pins the behavior everywhere it runs).
+    let mut args: Vec<&str> = vec![
+        "-c",
+        "core.quotePath=true",
+        "-c",
+        "diff.orderFile=/dev/null",
+        "diff",
+    ];
     args.extend_from_slice(extra_args);
     // Analysis consumes source-coordinate patches, not human diff views.
     // Pin every caller, including worktree mode: helpers can suppress real
@@ -1510,9 +1661,7 @@ fn run_git_diff_bytes(
                 crate::terminal_text::terminal_safe(range.to_string())
             )
         } else if git_stderr_names_object_damage(stderr) {
-            " Git reports a damaged object store; run `git fsck`, restore the missing objects \
-             (for example `git fetch`), then re-run."
-                .to_string()
+            format!(" {OBJECT_DAMAGE_REPAIR}")
         } else {
             String::new()
         };
@@ -2984,6 +3133,272 @@ mod tests {
         assert!(
             err.contains("`origin/main`") && err.contains("does not resolve to a commit"),
             "expected the named non-resolution state, got: {err}"
+        );
+
+        ignore_remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn worktree_load_without_merge_base_fails_closed_with_the_committed_diagnosis()
+    -> std::io::Result<()> {
+        // #7076: the working-tree loader shared the committed path's states
+        // but not its guard. With no merge base it diffed from the base tip,
+        // and `git diff <base-tip>` exits 0, reporting the base tip's content
+        // reversed as local changes. Both states must now fail closed with
+        // the committed path's cause and repair.
+        let origin = unique_fixture_root("worktree-no-merge-base-origin")?;
+        init_git_repo(&origin, "main")?;
+        run_git_checked(&origin, &["checkout", "-b", "feat"])?;
+        fs::write(origin.join("lib.rs"), "pub fn f() -> bool { 1 > 0 }\n")?;
+        run_git_checked(&origin, &["add", "."])?;
+        run_git_checked(&origin, &["commit", "-m", "feat"])?;
+        run_git_checked(&origin, &["checkout", "main"])?;
+        fs::write(origin.join("README"), "moved on")?;
+        run_git_checked(&origin, &["commit", "-am", "main moves"])?;
+
+        let shallow = unique_fixture_path("worktree-no-merge-base-shallow");
+        let origin_url = format!("file://{}", origin.display());
+        let parent = shallow.parent().unwrap_or(Path::new("."));
+        let shallow_arg = shallow.to_string_lossy().to_string();
+        run_git_checked(
+            parent,
+            &[
+                "clone",
+                "-q",
+                "--depth",
+                "1",
+                "--branch",
+                "feat",
+                &origin_url,
+                &shallow_arg,
+            ],
+        )?;
+        run_git_checked(
+            &shallow,
+            &[
+                "fetch",
+                "-q",
+                "--depth",
+                "1",
+                "origin",
+                "main:refs/remotes/origin/main",
+            ],
+        )?;
+        let tip_diff = run_git_checked(&shallow, &["diff", "origin/main"])?;
+        assert!(
+            tip_diff.contains("lib.rs"),
+            "fixture precondition: the base-tip form exits 0 with base content reversed:\n{tip_diff}"
+        );
+        let err = load_worktree_diff(&shallow, Some("origin/main"), None)
+            .expect_err("a shallow clone has no worktree diff origin");
+        assert!(
+            err.contains("the working-tree diff from `origin/main` has no merge base")
+                && err.contains("shallow clone")
+                && err.contains("git fetch --unshallow")
+                && err.contains("fetch-depth: 0"),
+            "a shallow clone must name the worktree subject with its repair, got: {err}"
+        );
+
+        // A full clone with truly unrelated histories gets the other cause.
+        run_git_checked(&origin, &["checkout", "-q", "--orphan", "island"])?;
+        run_git_checked(&origin, &["commit", "-q", "-m", "island"])?;
+        let err = load_worktree_diff(&origin, Some("main"), None)
+            .expect_err("unrelated histories have no worktree diff origin");
+        assert!(
+            err.contains("unrelated histories") && !err.contains("shallow clone"),
+            "a full clone must not be diagnosed as shallow, got: {err}"
+        );
+        ignore_remove_dir_all(&shallow);
+        ignore_remove_dir_all(&origin);
+        Ok(())
+    }
+
+    #[test]
+    fn worktree_load_with_unborn_head_names_head_not_a_merge_base() -> std::io::Result<()> {
+        // #7076: an unborn HEAD has no merge base with anything, but the cause
+        // is the missing HEAD, not unrelated histories — no `--base` repair
+        // can help until the tree is committed or an existing branch is
+        // checked out.
+        let dir = unique_fixture_root("worktree-unborn-head")?;
+        ignore_remove_dir_all(&dir);
+        init_git_repo(&dir, "main")?;
+        fs::write(dir.join("lib.rs"), "pub fn f() -> bool { 1 > 0 }\n")?;
+        run_git_checked(&dir, &["add", "."])?;
+        run_git_checked(&dir, &["commit", "-m", "base"])?;
+        run_git_checked(&dir, &["checkout", "-q", "--orphan", "empty"])?;
+        fs::write(dir.join("lib.rs"), "pub fn f() -> bool { 1 >= 0 }\n")?;
+
+        let tip_diff = run_git_checked(&dir, &["diff", "main"])?;
+        assert!(
+            tip_diff.contains("lib.rs"),
+            "fixture precondition: the base-tip form exits 0 on an unborn HEAD:\n{tip_diff}"
+        );
+        let err = load_worktree_diff(&dir, Some("main"), None)
+            .expect_err("an unborn HEAD has no worktree diff origin");
+        assert!(
+            err.contains("HEAD does not resolve to a commit") && err.contains("unborn"),
+            "an unborn HEAD must be named as the cause, got: {err}"
+        );
+        assert!(
+            !err.contains("unrelated histories") && !err.contains("has no merge base"),
+            "an unborn HEAD must not be diagnosed as unrelated histories, got: {err}"
+        );
+
+        ignore_remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn worktree_load_with_damaged_store_names_damage_not_unrelated_history() -> std::io::Result<()>
+    {
+        // #7076 review: `merge-base` walks history, so a missing shared
+        // object fails it while both tips still resolve. That is damage, not
+        // unrelated histories: the `--base` repair cannot restore an object.
+        let dir = unique_fixture_root("worktree-damaged-store")?;
+        ignore_remove_dir_all(&dir);
+        init_git_repo(&dir, "main")?;
+        // The missing object below must stay a loose file, never packed.
+        run_git_checked(&dir, &["config", "gc.auto", "0"])?;
+        fs::write(dir.join("a.txt"), "a\n")?;
+        run_git_checked(&dir, &["add", "."])?;
+        run_git_checked(&dir, &["commit", "-m", "A"])?;
+        run_git_checked(&dir, &["checkout", "--quiet", "-b", "feature"])?;
+        fs::write(dir.join("b.txt"), "b\n")?;
+        run_git_checked(&dir, &["add", "."])?;
+        run_git_checked(&dir, &["commit", "--quiet", "-m", "F"])?;
+        run_git_checked(&dir, &["checkout", "--quiet", "main"])?;
+        fs::write(dir.join("c.txt"), "c\n")?;
+        run_git_checked(&dir, &["add", "."])?;
+        run_git_checked(&dir, &["commit", "--quiet", "-m", "B"])?;
+        run_git_checked(&dir, &["checkout", "--quiet", "feature"])?;
+
+        let fork = run_git_checked(&dir, &["rev-parse", "main~1"])?;
+        let fork = fork.trim();
+        let object = dir.join(".git/objects").join(&fork[..2]).join(&fork[2..]);
+        assert!(
+            object.is_file(),
+            "fixture precondition: the fork-point object must be loose at {}",
+            object.display()
+        );
+        fs::remove_file(&object)?;
+        let tip_diff = run_git_checked(&dir, &["diff", "main"])?;
+        assert!(
+            tip_diff.contains("b.txt"),
+            "fixture precondition: the base-tip form exits 0 on a damaged store:\n{tip_diff}"
+        );
+        let err = load_worktree_diff(&dir, Some("main"), None)
+            .expect_err("a damaged store has no worktree diff origin");
+        assert!(
+            err.contains("damaged object store") && err.contains("git fsck"),
+            "damage must keep the object-restoration repair, got: {err}"
+        );
+        assert!(
+            !err.contains("unrelated histories"),
+            "damage must not be diagnosed as unrelated histories, got: {err}"
+        );
+
+        ignore_remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn worktree_load_with_deleted_head_tip_names_damage_not_ref_repair() -> std::io::Result<()> {
+        // #7076 review: an unpeeled `rev-parse HEAD` returns the stored ID
+        // without reading the object, so a deleted tip commit still
+        // "resolves" while `merge-base` refuses with `Not a valid commit
+        // name`. That is object damage (restore the object), not an unborn
+        // branch and not a config/ref-file repair.
+        let dir = unique_fixture_root("worktree-deleted-head-tip")?;
+        ignore_remove_dir_all(&dir);
+        init_git_repo(&dir, "main")?;
+        // The missing object below must stay a loose file, never packed.
+        run_git_checked(&dir, &["config", "gc.auto", "0"])?;
+        fs::write(dir.join("a.txt"), "a\n")?;
+        run_git_checked(&dir, &["add", "."])?;
+        run_git_checked(&dir, &["commit", "-m", "A"])?;
+        run_git_checked(&dir, &["checkout", "--quiet", "-b", "feature"])?;
+        fs::write(dir.join("b.txt"), "b\n")?;
+        run_git_checked(&dir, &["add", "."])?;
+        run_git_checked(&dir, &["commit", "--quiet", "-m", "F"])?;
+        run_git_checked(&dir, &["checkout", "--quiet", "main"])?;
+        fs::write(dir.join("c.txt"), "c\n")?;
+        run_git_checked(&dir, &["add", "."])?;
+        run_git_checked(&dir, &["commit", "--quiet", "-m", "B"])?;
+        run_git_checked(&dir, &["checkout", "--quiet", "feature"])?;
+
+        let tip = run_git_checked(&dir, &["rev-parse", "feature"])?;
+        let tip = tip.trim();
+        let object = dir.join(".git/objects").join(&tip[..2]).join(&tip[2..]);
+        assert!(
+            object.is_file(),
+            "fixture precondition: the tip object must be loose at {}",
+            object.display()
+        );
+        fs::remove_file(&object)?;
+        let stale = run_git_checked(&dir, &["rev-parse", "--verify", "--quiet", "HEAD"])?;
+        assert_eq!(
+            stale.trim(),
+            tip,
+            "fixture precondition: the unpeeled ref still resolves to the stale ID"
+        );
+        run_git_checked(&dir, &["merge-base", "main", "feature"])
+            .expect_err("a deleted tip must refuse merge-base");
+        let err = load_worktree_diff(&dir, Some("main"), None)
+            .expect_err("a deleted tip has no worktree diff origin");
+        assert!(
+            err.contains("damaged object store") && err.contains("git fsck"),
+            "a deleted tip must keep the object-restoration repair, got: {err}"
+        );
+        assert!(
+            !err.contains("correct or restore")
+                && !err.contains("unrelated histories")
+                && !err.contains("does not resolve to a commit"),
+            "a deleted tip is damage, not a ref repair or an unborn branch, got: {err}"
+        );
+
+        ignore_remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn worktree_load_with_cyclic_replace_preserves_git_refusal() -> std::io::Result<()> {
+        // #7076 review: only Git's genuine no-merge-base result (exit 1
+        // without a message) takes the unrelated-histories diagnosis. A
+        // refusal such as cyclic `refs/replace` (exit 128) must preserve
+        // Git's own reason with the named-file repair: no `--base` repair
+        // can fix a replace cycle.
+        let dir = unique_fixture_root("worktree-cyclic-replace")?;
+        ignore_remove_dir_all(&dir);
+        init_git_repo(&dir, "main")?;
+        fs::write(dir.join("a.txt"), "a\n")?;
+        run_git_checked(&dir, &["add", "."])?;
+        run_git_checked(&dir, &["commit", "-m", "A"])?;
+        run_git_checked(&dir, &["checkout", "--quiet", "-b", "feature"])?;
+        fs::write(dir.join("b.txt"), "b\n")?;
+        run_git_checked(&dir, &["add", "."])?;
+        run_git_checked(&dir, &["commit", "--quiet", "-m", "F"])?;
+        run_git_checked(&dir, &["checkout", "--quiet", "main"])?;
+        fs::write(dir.join("c.txt"), "c\n")?;
+        run_git_checked(&dir, &["add", "."])?;
+        run_git_checked(&dir, &["commit", "--quiet", "-m", "B"])?;
+        run_git_checked(&dir, &["checkout", "--quiet", "feature"])?;
+
+        let fork = run_git_checked(&dir, &["rev-parse", "main~1"])?;
+        let tip = run_git_checked(&dir, &["rev-parse", "feature"])?;
+        run_git_checked(&dir, &["replace", fork.trim(), tip.trim()])?;
+        run_git_checked(&dir, &["replace", tip.trim(), fork.trim()])?;
+        run_git_checked(&dir, &["merge-base", "main", "feature"])
+            .expect_err("cyclic replace refs must refuse merge-base");
+        let err = load_worktree_diff(&dir, Some("main"), None)
+            .expect_err("a refused merge-base has no worktree diff origin");
+        assert!(
+            err.contains("replace depth") && err.contains("correct or restore"),
+            "a refusal must preserve Git's reason with the named-file repair, got: {err}"
+        );
+        assert!(
+            !err.contains("unrelated histories"),
+            "a refusal must not be diagnosed as unrelated histories, got: {err}"
         );
 
         ignore_remove_dir_all(&dir);

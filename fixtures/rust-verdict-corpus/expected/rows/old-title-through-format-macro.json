@@ -1,0 +1,22 @@
+{
+  "case_id": "old-title-through-format-macro",
+  "subject_id": "authored-old-errors",
+  "origin": "authored",
+  "anchor": "src/macros.rs:19",
+  "behavior_family": "return_value",
+  "test_shape": "owner_called_inside_std_format_macro",
+  "hard_case": true,
+  "truth": "discriminated",
+  "ideal_verdict": "credited",
+  "observed_verdict": "limited",
+  "followed_retarget": false,
+  "changed_since_labeling": true,
+  "observed_classifications": [
+    "propagation_unknown"
+  ],
+  "outcome": "abstained",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

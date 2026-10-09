@@ -1,0 +1,12 @@
+diff --git a/src/errors.rs b/src/errors.rs
+--- a/src/errors.rs
++++ b/src/errors.rs
+@@ -94,7 +94,7 @@
+         "" => Err(UnitError::Blank),
+         "k" => Ok(1_000),
+         "m" => Ok(1_000_000),
+-        _ => Err(UnitError::Unknown),
++        _ => Err(UnitError::Blank),
+     }
+ }
+ 
