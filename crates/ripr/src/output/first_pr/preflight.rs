@@ -600,10 +600,16 @@ mod tests {
             std::process::id()
         ));
         std::fs::create_dir_all(&root).map_err(|error| error.to_string())?;
+        struct Cleanup(std::path::PathBuf);
+        impl Drop for Cleanup {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.0);
+            }
+        }
+        let _cleanup = Cleanup(root.clone());
 
         let absent = preflight_config_check(&root);
         if absent.status != "defaulted" || !absent.message.contains("built-in advisory defaults") {
-            let _ = std::fs::remove_dir_all(&root);
             return Err(format!(
                 "an absent ripr.toml must stay defaulted built-in defaults: {} / {}",
                 absent.status, absent.message
@@ -614,13 +620,11 @@ mod tests {
             .map_err(|error| error.to_string())?;
         let load_error = match crate::config::load_for_root(&root) {
             Ok(_) => {
-                let _ = std::fs::remove_dir_all(&root);
                 return Err("load_for_root must refuse a dangling ripr.toml".to_string());
             }
             Err(error) => error,
         };
         let check = preflight_config_check(&root);
-        let _ = std::fs::remove_dir_all(&root);
         if !load_error.contains("ripr.toml") {
             return Err(format!(
                 "load_for_root must name ripr.toml for a dangling link: {load_error}"
