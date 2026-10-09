@@ -1,0 +1,13 @@
+diff --git a/src/sum.ts b/src/sum.ts
+index 0000000..1111111 100644
+--- a/src/sum.ts
++++ b/src/sum.ts
+@@ -1,7 +1,7 @@
+ export function sumAll(values: number[]): number {
+   let total = 0;
+   for (const v of values) {
+-    total += v;
++    total = total + v;
+   }
+   return total;
+ }

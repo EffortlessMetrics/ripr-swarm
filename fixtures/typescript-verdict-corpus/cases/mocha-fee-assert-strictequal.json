@@ -1,0 +1,52 @@
+{
+  "case_id": "mocha-fee-assert-strictequal",
+  "subject_id": "authored-ts-mocha-ledger",
+  "diff": "cases/mocha-fee-assert-strictequal.diff",
+  "anchor": {
+    "file": "src/fee.ts",
+    "line": 2
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value",
+  "test_shape": "mocha_chai_assert_strictequal_exact",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "npx mocha",
+    "toolchain": "node 22.22.0; mocha 12.0.3; chai 6.3.0; tsx 4.23.15 (tsx/cjs via .mocharc.json); typescript 5.9; @stryker-mutator/core 10.0.0 (command runner over `npx mocha`; @stryker-mutator/mocha-runner cannot load mocha 12)",
+    "mutants": [
+      {
+        "replacement": "return cents * 3 - 30;",
+        "mutated_line": "return cents * 3 - 30;",
+        "outcome": "tests_failed",
+        "failing_test": "fee charges a base plus three times the amount",
+        "equivalence_review": "not equivalent: fee(100) is 270"
+      },
+      {
+        "replacement": "return cents / 3 + 30;",
+        "mutated_line": "return cents / 3 + 30;",
+        "outcome": "tests_failed",
+        "failing_test": "fee charges a base plus three times the amount",
+        "equivalence_review": "not equivalent: fee(100) is 63.33..."
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "`30 + cents * 3` is reordered to `cents * 3 + 30`. chai's TDD `assert.strictEqual(fee(100), 330)` pins the exact value, so both arithmetic mutants fail. ripr reports `exposed` (oracle `assert.strictEqual(...)`, exact_value/strong).",
+  "labeling_observation": {
+    "ripr_commit": "1273096",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

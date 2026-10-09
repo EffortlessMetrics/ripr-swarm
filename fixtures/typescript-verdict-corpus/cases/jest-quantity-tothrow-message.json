@@ -1,0 +1,52 @@
+{
+  "case_id": "jest-quantity-tothrow-message",
+  "subject_id": "authored-ts-jest-checkout",
+  "diff": "cases/jest-quantity-tothrow-message.diff",
+  "anchor": {
+    "file": "src/quantity.ts",
+    "line": 3
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "error_path",
+  "test_shape": "jest_expect_tothrow_message",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "npx jest --ci --runInBand",
+    "toolchain": "node 22.22.0; jest 30.5.2, ts-jest 29.4.14, typescript 5.9; @stryker-mutator/core 10.0.0 (jest runner, mutate restricted to the anchor line)",
+    "mutants": [
+      {
+        "replacement": "throw new Error(\"\" + \"positive\");",
+        "mutated_line": "throw new Error(\"\" + \"positive\");",
+        "outcome": "tests_failed",
+        "failing_test": "zero quantity is refused with its reason",
+        "equivalence_review": "not equivalent: the failing test observes the difference"
+      },
+      {
+        "replacement": "throw new Error(\"quantity must be \" + \"\");",
+        "mutated_line": "throw new Error(\"quantity must be \" + \"\");",
+        "outcome": "tests_failed",
+        "failing_test": "zero quantity is refused with its reason",
+        "equivalence_review": "not equivalent: the failing test observes the difference"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "toThrow(\"quantity must be positive\") checks the message, so emptying either string part fails it. ripr reports exposed on the anchor, the ideal credit.",
+  "labeling_observation": {
+    "ripr_commit": "1273096",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

@@ -1,0 +1,66 @@
+{
+  "case_id": "mocha-bonus-boundary-pinned",
+  "subject_id": "authored-ts-mocha-ledger",
+  "diff": "cases/mocha-bonus-boundary-pinned.diff",
+  "anchor": {
+    "file": "src/bonus.ts",
+    "line": 2
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "mocha_chai_expect_to_equal_boundary_pinned",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "npx mocha",
+    "toolchain": "node 22.22.0; mocha 12.0.3; chai 6.3.0; tsx 4.23.15 (tsx/cjs via .mocharc.json); typescript 5.9; @stryker-mutator/core 10.0.0 (command runner over `npx mocha`; @stryker-mutator/mocha-runner cannot load mocha 12)",
+    "mutants": [
+      {
+        "replacement": "if (true) {",
+        "mutated_line": "if (true) {",
+        "outcome": "tests_failed",
+        "failing_test": "bonusPoints pays no bonus at exactly 500",
+        "equivalence_review": "not equivalent: spend 500 returns 25 instead of 0"
+      },
+      {
+        "replacement": "if (false) {",
+        "mutated_line": "if (false) {",
+        "outcome": "tests_failed",
+        "failing_test": "bonusPoints pays the bonus just above 500",
+        "equivalence_review": "not equivalent: spend 501 returns 0 instead of 25"
+      },
+      {
+        "replacement": "if (500 <= spend) {",
+        "mutated_line": "if (500 <= spend) {",
+        "outcome": "tests_failed",
+        "failing_test": "bonusPoints pays no bonus at exactly 500",
+        "equivalence_review": "not equivalent: differs at spend 500"
+      },
+      {
+        "replacement": "if (500 >= spend) {",
+        "mutated_line": "if (500 >= spend) {",
+        "outcome": "tests_failed",
+        "failing_test": "bonusPoints pays no bonus at exactly 500",
+        "equivalence_review": "not equivalent: inverts the predicate for every spend except 500"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "The rewrite `spend > 500` -> `500 < spend` is identical for every number. Two chai `expect(...).to.equal(...)` tests pin 500 -> 0 and 501 -> 25, so every boundary/conditional mutant fails a test. ripr reports `exposed` with both related tests as exact_value/strong, direct_owner_call.",
+  "labeling_observation": {
+    "ripr_commit": "1273096",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

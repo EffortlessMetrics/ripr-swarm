@@ -1,0 +1,52 @@
+{
+  "case_id": "jest-order-assert-in-then",
+  "subject_id": "authored-ts-jest-checkout",
+  "diff": "cases/jest-order-assert-in-then.diff",
+  "anchor": {
+    "file": "src/order.ts",
+    "line": 2
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value",
+  "test_shape": "jest_assertion_inside_returned_then",
+  "hard_case": "the only assertion sits inside a returned .then callback",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "npx jest --ci --runInBand",
+    "toolchain": "node 22.22.0; jest 30.5.2, ts-jest 29.4.14, typescript 5.9; @stryker-mutator/core 10.0.0 (jest runner, mutate restricted to the anchor line)",
+    "mutants": [
+      {
+        "replacement": "return items.reduce(() => undefined, 0);",
+        "mutated_line": "return items.reduce(() => undefined, 0);",
+        "outcome": "tests_failed",
+        "failing_test": "order total adds every item",
+        "equivalence_review": "not equivalent: the failing test observes the difference"
+      },
+      {
+        "replacement": "return items.reduce((sum, item) => item - sum, 0);",
+        "mutated_line": "return items.reduce((sum, item) => item - sum, 0);",
+        "outcome": "tests_failed",
+        "failing_test": "order total adds every item",
+        "equivalence_review": "not equivalent: the failing test observes the difference"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "The returned promise's .then callback asserts toBe(30), so both reduce mutants fail the test. ripr reports weakly_exposed on the anchor, a false actionable gap.",
+  "labeling_observation": {
+    "ripr_commit": "1273096",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

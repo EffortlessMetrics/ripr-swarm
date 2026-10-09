@@ -1,0 +1,12 @@
+diff --git a/src/pricing.ts b/src/pricing.ts
+--- a/src/pricing.ts
++++ b/src/pricing.ts
+@@ -45,7 +45,7 @@ export function parseQuantity(text: string): number {
+ }
+ 
+ export function chargeWithAudit(amountCents: number, rate: number): number {
+-  console.log("audit", amountCents * rate);
++  console.log("audit", amountCents * rate * 2);
+   return amountCents - Math.floor((amountCents * rate) / 100);
+ }
+ 

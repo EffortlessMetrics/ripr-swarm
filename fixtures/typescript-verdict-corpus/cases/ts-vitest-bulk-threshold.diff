@@ -1,0 +1,13 @@
+diff --git a/src/cart.ts b/src/cart.ts
+index 0000000..1111111 100644
+--- a/src/cart.ts
++++ b/src/cart.ts
+@@ -13,7 +13,7 @@
+ }
+ 
+ export function bulkDiscount(quantity: number): number {
+-  if (quantity >= 10) {
++  if (10 <= quantity) {
+     return 10;
+   }
+   return 0;

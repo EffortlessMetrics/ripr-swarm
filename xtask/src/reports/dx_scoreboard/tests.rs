@@ -2563,7 +2563,10 @@ fn verdict_corpus_sources_derive_each_rate_from_the_committed_rows() -> Result<(
             sample.detail
         );
     }
-    assert_eq!(seen, 5, "the five trust rates read the corpus rows");
+    assert_eq!(
+        seen, 8,
+        "the five Rust and three TypeScript trust rates read the corpus rows"
+    );
 
     // A corpus that cannot be read is not measured, never a perfect rate.
     let mut missing = config

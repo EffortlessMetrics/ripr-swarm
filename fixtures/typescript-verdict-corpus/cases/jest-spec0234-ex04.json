@@ -1,0 +1,44 @@
+{
+  "case_id": "jest-spec0234-ex04",
+  "subject_id": "authored-ts-jest-oracles",
+  "diff": "cases/jest-spec0234-ex04.diff",
+  "anchor": {
+    "file": "src/priceEx04.ts",
+    "line": 3
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "return_value",
+  "test_shape": "jest_call_without_assertion",
+  "hard_case": null,
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "npx jest --ci --runInBand",
+    "toolchain": "node 22.22.0; jest 30.5.2; ts-jest 29.4.14; typescript 5.9; @stryker-mutator/core 10.0.0",
+    "mutants": [
+      {
+        "replacement": "return amount - 20;",
+        "mutated_line": null,
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: the edit is the spec's behavior change (140 becomes 130 for amount 150)"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "The test calls priceEx04(150) with no assertion, so nothing can notice the changed return value and the edit survives. ripr reports weakly_exposed with oracle unknown (never reachable_unrevealed), a correct gap. (spec says today weakly_exposed, oracle unknown; ripr matches it) Spec cells: RIPR-SPEC-0243 example 4",
+  "labeling_observation": {
+    "ripr_commit": "1273096",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

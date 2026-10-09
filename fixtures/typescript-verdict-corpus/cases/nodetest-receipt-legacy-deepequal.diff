@@ -1,0 +1,12 @@
+diff --git a/src/receipt.ts b/src/receipt.ts
+index 0000000..1111111 100644
+--- a/src/receipt.ts
++++ b/src/receipt.ts
+@@ -6,6 +6,6 @@
+ export function receiptLine(count: number): ReceiptLine {
+   return {
+     count,
+-    label: "items: " + count,
++    label: `items: ${count}`,
+   };
+ }

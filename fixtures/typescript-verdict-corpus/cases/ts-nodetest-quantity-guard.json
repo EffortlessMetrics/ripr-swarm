@@ -1,0 +1,65 @@
+{
+  "case_id": "ts-nodetest-quantity-guard",
+  "subject_id": "authored-ts-nodetest-pricing",
+  "diff": "cases/ts-nodetest-quantity-guard.diff",
+  "anchor": {
+    "file": "src/pricing.ts",
+    "line": 41
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "error_guard_boundary",
+  "test_shape": "node_assert_throws_one_side",
+  "hard_case": null,
+  "truth": {
+    "state": "partially_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "node --experimental-strip-types --test \"test/*.test.ts\"",
+    "toolchain": "Node.js v22.22.0 (node:test, --experimental-strip-types), x86_64-linux",
+    "mutants": [
+      {
+        "replacement": "if (true) {",
+        "mutated_line": "if (true) {",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: the result no longer depends on the compared value"
+      },
+      {
+        "replacement": "if (false) {",
+        "mutated_line": "if (false) {",
+        "outcome": "tests_failed",
+        "failing_test": "zero quantity is rejected",
+        "equivalence_review": "not equivalent: the result no longer depends on the compared value"
+      },
+      {
+        "replacement": "if (0 > value) {",
+        "mutated_line": "if (0 > value) {",
+        "outcome": "tests_failed",
+        "failing_test": "zero quantity is rejected",
+        "equivalence_review": "not equivalent: the result differs at the boundary value"
+      },
+      {
+        "replacement": "if (0 < value) {",
+        "mutated_line": "if (0 < value) {",
+        "outcome": "tests_failed",
+        "failing_test": "zero quantity is rejected",
+        "equivalence_review": "not equivalent: the result differs at the boundary value"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "\"zero quantity is rejected\" feeds only 0 to assert.throws, a broad error-path oracle under RIPR-SPEC-0027: the `false`, `0 > value` and `0 < value` mutants accept 0 and fail the test, while `if (true)` also rejects every valid quantity and passes. ripr's weakly_exposed is the ideal gap.",
+  "labeling_observation": {
+    "ripr_commit": "1273096",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

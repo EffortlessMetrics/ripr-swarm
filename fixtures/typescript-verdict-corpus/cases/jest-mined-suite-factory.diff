@@ -1,0 +1,11 @@
+diff --git a/src/average.ts b/src/average.ts
+index 0000000..1111111 100644
+--- a/src/average.ts
++++ b/src/average.ts
+@@ -2,5 +2,5 @@
+   if (values.length === 0) {
+     return 0;
+   }
+-  return values.reduce((a, b) => a + b, 0) / values.length;
++  return values.reduce((a, b) => b + a, 0) / values.length;
+ }

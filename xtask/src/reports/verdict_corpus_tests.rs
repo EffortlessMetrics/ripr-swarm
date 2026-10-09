@@ -996,7 +996,7 @@ fn report_keeps_authored_rates_apart_from_upstream_rates() -> Result<(), String>
         report.false_actionable_rate.numerator
     );
     assert_eq!(report.rows[0].origin, SubjectOrigin::Authored);
-    let markdown = render_report_markdown(&report);
+    let markdown = render_report_markdown(&report, "rust");
     assert!(
         markdown.contains("| authored | 1 | 1/1 | 1/1 |"),
         "{markdown}"
@@ -1524,6 +1524,61 @@ fn summary_derived_from_blessed_rows_equals_the_run_summary() -> Result<(), Stri
     Ok(())
 }
 
+fn typescript_corpus_dir() -> PathBuf {
+    crate::dogfood::repo_rooted_fixture_path("fixtures/typescript-verdict-corpus")
+}
+
+#[test]
+fn committed_typescript_corpus_is_valid_and_its_rows_agree_with_its_labels() -> Result<(), String> {
+    let dir = typescript_corpus_dir();
+    let corpus = validated_corpus_without_coverage(&dir)?;
+    assert!(
+        corpus.cases.len() >= 40,
+        "typescript corpus shrank to {}",
+        corpus.cases.len()
+    );
+    assert!(
+        corpus
+            .subjects
+            .iter()
+            .all(|s| s.subject_id.starts_with("authored-ts-")),
+        "typescript subjects are authored-ts-<lib>-<name>"
+    );
+    for library in ["jest", "vitest", "mocha", "nodetest"] {
+        assert!(
+            corpus
+                .subjects
+                .iter()
+                .any(|s| s.subject_id.starts_with(&format!("authored-ts-{library}-"))),
+            "no {library} subject"
+        );
+    }
+    for truth in [TruthState::Discriminated, TruthState::NotDiscriminated] {
+        assert!(
+            corpus.cases.iter().any(|case| case.truth.state == truth),
+            "typescript corpus has no {} case",
+            truth.as_str()
+        );
+    }
+    let rows_dir = dir.join("expected").join(ROWS_DIR);
+    assert_eq!(files_under(&rows_dir)?.len(), corpus.cases.len());
+    for case in &corpus.cases {
+        let row: Value =
+            serde_json::from_str(&read(&rows_dir.join(format!("{}.json", case.case_id)))?)
+                .map_err(|err| err.to_string())?;
+        assert_eq!(row["truth"], json!(case.truth.state.as_str()));
+        let observed: Verdict =
+            serde_json::from_value(row["observed_verdict"].clone()).map_err(|e| e.to_string())?;
+        assert_eq!(
+            row["outcome"],
+            json!(score(case.truth.state, observed).as_str()),
+            "{}",
+            case.case_id
+        );
+    }
+    Ok(())
+}
+
 #[test]
 fn coverage_mode_follows_the_ledger_file() -> Result<(), String> {
     // The ledger declares coverage: no file, no gate. Presence alone decides,
@@ -1532,6 +1587,108 @@ fn coverage_mode_follows_the_ledger_file() -> Result<(), String> {
     assert_eq!(corpus_coverage_mode(&dir), CorpusCoverage::Ungated);
     crate::tests::write(&dir.join(coverage::LEDGER_FILE), "schema_version = \"x\"\n");
     assert_eq!(corpus_coverage_mode(&dir), CorpusCoverage::Gated);
+    Ok(())
+}
+
+#[test]
+fn language_names_its_own_corpus_directory_and_nothing_else() -> Result<(), String> {
+    let fixtures = crate::dogfood::repo_rooted_fixture_path("fixtures");
+    assert_eq!(
+        language_corpus_dir_in(&fixtures, "typescript")?,
+        fixtures.join("typescript-verdict-corpus")
+    );
+    assert_eq!(
+        language_corpus_dir_in(&fixtures, "rust")?,
+        fixtures.join("rust-verdict-corpus")
+    );
+    // The name is pasted into re-bless hints, so shell metacharacters,
+    // spaces and option-like names are refused before any path is built.
+    for bad in [
+        "..",
+        "",
+        "type/script",
+        "x;touch PWN",
+        "x y",
+        "$(id)",
+        "-rf",
+        "TypeScript",
+    ] {
+        let err = language_corpus_dir_in(&fixtures, bad)
+            .err()
+            .ok_or(format!("`{bad}` was accepted"))?;
+        assert!(err.contains("not a usable language name"), "{bad}: {err}");
+    }
+    let err = language_corpus_dir_in(&fixtures, "cobol")
+        .err()
+        .ok_or("a language with no corpus was accepted")?;
+    assert!(err.contains("names no corpus"), "{err}");
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn language_refuses_a_symlinked_corpus_directory() -> Result<(), String> {
+    let fixtures = crate::tests::temp_dir("verdict-language-symlink");
+    let elsewhere = crate::tests::temp_dir("verdict-language-symlink-target");
+    crate::tests::write(&elsewhere.join("corpus.json"), "{}\n");
+    crate::tests::write(&fixtures.join("go-verdict-corpus/corpus.json"), "{}\n");
+    std::os::unix::fs::symlink(&elsewhere, fixtures.join("perl-verdict-corpus"))
+        .map_err(|e| format!("symlink failed: {e}"))?;
+    let err = language_corpus_dir_in(&fixtures, "perl")
+        .err()
+        .ok_or("a symlinked corpus directory was accepted")?;
+    assert!(err.contains("is a symlink"), "{err}");
+    // A real directory beside it still resolves.
+    assert_eq!(
+        language_corpus_dir_in(&fixtures, "go")?,
+        fixtures.join("go-verdict-corpus")
+    );
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn split_refuses_symlinks_below_the_corpus_directory() -> Result<(), String> {
+    // #6686 review: split writes subjects/, cases/ and back to
+    // corpus.json, so a link at any of them would redirect writes
+    // outside the corpus. Each link is refused before anything is read.
+    let legacy = corpus_value(&repo_corpus_dir())?;
+    let elsewhere = crate::tests::temp_dir("verdict-split-symlink-target");
+    for name in ["subjects", "cases", "corpus.json"] {
+        let dir = crate::tests::temp_dir(&format!("verdict-split-symlink-{name}"));
+        if name == "corpus.json" {
+            std::os::unix::fs::symlink(elsewhere.join("corpus.json"), dir.join("corpus.json"))
+                .map_err(|err| format!("symlink failed: {err}"))?;
+        } else {
+            crate::tests::write(&dir.join("corpus.json"), &format!("{legacy:#}"));
+            std::os::unix::fs::symlink(&elsewhere, dir.join(name))
+                .map_err(|err| format!("symlink failed: {err}"))?;
+        }
+        let err = split(&dir)
+            .err()
+            .ok_or_else(|| format!("split followed a symlinked {name}"))?;
+        assert!(err.contains("is a symlink"), "{err}");
+    }
+    // A dangling record-level link fails `exists`, so only the write-time
+    // refusal stops split from creating the file the link names outside
+    // the corpus (#6686 review). The record directories exist, so the
+    // subjects and the other cases write normally and the run reaches the
+    // linked record.
+    let dir = crate::tests::temp_dir("verdict-split-symlink-record");
+    crate::tests::write(&dir.join("corpus.json"), &format!("{legacy:#}"));
+    fs::create_dir_all(dir.join("subjects")).map_err(|err| err.to_string())?;
+    fs::create_dir_all(dir.join("cases")).map_err(|err| err.to_string())?;
+    let case_id = legacy["cases"][0]["case_id"]
+        .as_str()
+        .ok_or("the legacy corpus has a first case id")?
+        .to_string();
+    let record = dir.join("cases").join(format!("{case_id}.json"));
+    std::os::unix::fs::symlink(elsewhere.join(format!("{case_id}.json")), &record)
+        .map_err(|err| format!("symlink failed: {err}"))?;
+    let err = split(&dir)
+        .err()
+        .ok_or("split wrote through a dangling record symlink")?;
+    assert!(err.contains("is a symlink"), "{err}");
     Ok(())
 }
 
@@ -1549,6 +1706,145 @@ fn ledgerless_corpus_validates_without_the_coverage_gate() -> Result<(), String>
 }
 
 #[test]
+fn only_a_rust_corpus_holds_labels_to_cargo_commands_and_rust_test_names() -> Result<(), String> {
+    for (name, rust) in [
+        ("rust-verdict-corpus", true),
+        ("copied-corpus", true),
+        ("Rust-verdict-corpus", true),
+        ("go-verdict-corpus", true),
+        ("typescript-verdict-corpus", false),
+    ] {
+        assert_eq!(
+            is_rust_corpus(&Path::new("fixtures").join(name)),
+            rust,
+            "{name}"
+        );
+    }
+    let dir = typescript_corpus_dir();
+    let raw = corpus_value(&dir)?;
+    let i = raw["cases"]
+        .as_array()
+        .and_then(|cases| {
+            cases
+                .iter()
+                .position(|case| case["truth"]["mutants"][0]["outcome"] == json!("tests_failed"))
+        })
+        .ok_or("no typescript case with a failing first mutant")?;
+    let validate_with = |title: &str| -> Result<Vec<String>, String> {
+        let mut raw = raw.clone();
+        raw["cases"][i]["truth"]["mutants"][0]["failing_test"] = json!(title);
+        let corpus: Corpus = serde_json::from_value(raw).map_err(|err| err.to_string())?;
+        Ok(validate(&corpus, &dir))
+    };
+    // A jest title has spaces and may have commas; its npx command is
+    // recorded, not replayed.
+    assert_eq!(
+        validate_with("rounds 1, 2 and 3 cents down")?,
+        Vec::<String>::new()
+    );
+    for bad in ["two\nlines", "first\rsecond", " padded", ""] {
+        assert!(
+            validate_with(bad)?
+                .iter()
+                .any(|v| v.contains("is not one test name")),
+            "{bad:?}"
+        );
+    }
+    // The same title on a Rust corpus is not one Rust test name.
+    let rust = tampered(|raw| {
+        raw["cases"][0]["truth"]["mutants"][0]["failing_test"] = json!("rounds 1, 2 and 3");
+    })?;
+    assert!(
+        rust.iter().any(|v| v.contains("is not one test name")),
+        "{rust:#?}"
+    );
+    Ok(())
+}
+
+fn args(list: &[&str]) -> Vec<String> {
+    list.iter().map(|arg| arg.to_string()).collect()
+}
+
+#[test]
+fn language_option_parses_in_any_position_and_refuses_misuse() -> Result<(), String> {
+    for given in [
+        args(&["--language", "typescript"]),
+        args(&["check", "--language", "typescript"]),
+        args(&["--language", "typescript", "check"]),
+    ] {
+        let parsed = parse_corpus_args(&given)?;
+        assert_eq!(parsed.sub, "check", "{given:?}");
+        assert_eq!(parsed.language.as_deref(), Some("typescript"), "{given:?}");
+    }
+    // A leading --language keeps the subcommand that follows it.
+    for sub in ["validate", "report", "bless", "split"] {
+        let parsed = parse_corpus_args(&args(&["--language", "typescript", sub]))?;
+        assert_eq!(parsed.sub, sub);
+        assert_eq!(parsed.language.as_deref(), Some("typescript"), "{sub}");
+    }
+    assert_eq!(parse_corpus_args(&[])?.sub, "check");
+    for (given, refusal) in [
+        (
+            args(&["check-all", "--language", "typescript"]),
+            "drop --language",
+        ),
+        (
+            args(&["check", "--language", "typescript", "--language", "rust"]),
+            "given twice",
+        ),
+        (
+            args(&["bless", "--language", "typescript", "--out", "x"]),
+            "takes only --language",
+        ),
+        (args(&["check", "--language"]), "needs a corpus language"),
+        (args(&["check", "bless"]), "unknown argument `bless`"),
+        (
+            args(&["--language", "typescript", "check-all"]),
+            "drop --language",
+        ),
+    ] {
+        let err = parse_corpus_args(&given)
+            .err()
+            .ok_or(format!("{given:?} was accepted"))?;
+        assert!(err.contains(refusal), "{given:?}: {err}");
+    }
+    Ok(())
+}
+
+#[test]
+fn a_report_and_its_rebless_hint_name_the_corpus_language() -> Result<(), String> {
+    let corpus = load_corpus(&typescript_corpus_dir())?;
+    let checks: Vec<(String, Value)> = corpus
+        .cases
+        .iter()
+        .map(|case| (case.case_id.clone(), json!({"findings": []})))
+        .collect();
+    let report = build_report(&corpus, &checks, &BTreeMap::new())?;
+    assert!(
+        render_report_markdown(&report, "typescript")
+            .starts_with("# TypeScript verdict corpus report\n"),
+        "typescript title"
+    );
+    assert!(
+        render_report_markdown(&report, "rust").starts_with("# Rust verdict corpus report\n"),
+        "rust title"
+    );
+    assert_eq!(language_flag("typescript"), " --language typescript");
+    assert_eq!(language_flag("rust"), "");
+    // A corpus directory found by check-all names the language in the hint;
+    // a name that would need shell quoting is refused instead of printed.
+    assert_eq!(
+        corpus_language(Path::new("fixtures/typescript-verdict-corpus"))?,
+        "typescript"
+    );
+    let err = corpus_language(Path::new("fixtures/x;touch PWN-verdict-corpus"))
+        .err()
+        .ok_or("a hostile corpus directory name was accepted")?;
+    assert!(err.contains("names no usable language"), "{err}");
+    Ok(())
+}
+
+#[test]
 fn present_but_invalid_ledger_still_fails() -> Result<(), String> {
     // Opting in is strict: a corrupt ledger is a loud failure, never a
     // silent fallback to the un-gated path.
@@ -1558,5 +1854,118 @@ fn present_but_invalid_ledger_still_fails() -> Result<(), String> {
     assert_eq!(corpus_coverage_mode(&dir), CorpusCoverage::Gated);
     let err = validated_corpus(&dir).err().unwrap_or_default();
     assert!(err.contains(coverage::LEDGER_FILE), "{err}");
+    Ok(())
+}
+
+#[test]
+fn out_inside_a_sibling_corpus_expected_directory_is_refused() -> Result<(), String> {
+    // `--language typescript --out <rust expected>` must fail: only `bless`
+    // writes expected state, for the selected corpus and every sibling.
+    let root = crate::tests::temp_dir("verdict-sibling-out");
+    let fixtures = root.join("fixtures");
+    for language in ["rust", "typescript"] {
+        crate::tests::write(
+            &fixtures.join(format!("{language}-verdict-corpus/corpus.json")),
+            "{}\n",
+        );
+    }
+    let selected = fixtures.join("typescript-verdict-corpus");
+    let sibling_expected = fixtures.join("rust-verdict-corpus/expected");
+    let err = refuse_any_expected_out(&sibling_expected, &selected)
+        .err()
+        .unwrap_or_default();
+    assert!(
+        err.contains("rust-verdict-corpus"),
+        "sibling expected dir must be named: {err}"
+    );
+    // The selected corpus keeps its own guard, and a neutral directory
+    // still passes.
+    let own_expected = selected.join("expected");
+    let err = refuse_any_expected_out(&own_expected, &selected)
+        .err()
+        .unwrap_or_default();
+    assert!(err.contains("typescript-verdict-corpus"), "{err}");
+    refuse_any_expected_out(&root.join("reports"), &selected)?;
+    Ok(())
+}
+
+#[test]
+fn a_sibling_that_names_no_usable_language_does_not_abort_the_guard() -> Result<(), String> {
+    // Discovery accepts `Bad`/`x;y` via safe_id but corpus_language refuses
+    // them; the shared --out guard must skip such siblings instead of
+    // aborting the selected corpus's run. Their errors still fail check-all
+    // through corpus_dirs/check_each.
+    let root = crate::tests::temp_dir("verdict-malformed-sibling");
+    let fixtures = root.join("fixtures");
+    for language in ["rust", "typescript", "Bad", "x;y"] {
+        crate::tests::write(
+            &fixtures.join(format!("{language}-verdict-corpus/corpus.json")),
+            "{}\n",
+        );
+    }
+    let selected = fixtures.join("typescript-verdict-corpus");
+    refuse_any_expected_out(&root.join("reports"), &selected)?;
+    // The valid sibling's guard still holds.
+    let sibling_expected = fixtures.join("rust-verdict-corpus/expected");
+    let err = refuse_any_expected_out(&sibling_expected, &selected)
+        .err()
+        .unwrap_or_default();
+    assert!(
+        err.contains("rust-verdict-corpus"),
+        "sibling expected dir must be named: {err}"
+    );
+    Ok(())
+}
+
+fn corpus_args(words: &[&str]) -> Vec<String> {
+    words.iter().map(|word| (*word).to_string()).collect()
+}
+
+#[test]
+fn validate_spellings_parse_language_without_out_or_cases() -> Result<(), String> {
+    // Both advertised `validate --language` spellings parse to a language
+    // with no `--out`/`--cases`; the parser refuses the option forms, so
+    // the dispatch arm only branches on the coverage declaration.
+    for words in [
+        ["validate", "--language", "typescript"].as_slice(),
+        ["--language", "typescript", "validate"].as_slice(),
+    ] {
+        let parsed = parse_corpus_args(&corpus_args(words))?;
+        assert_eq!(parsed.sub, "validate");
+        assert_eq!(parsed.language.as_deref(), Some("typescript"));
+        assert!(parsed.out.is_none() && parsed.cases.is_none());
+    }
+    for words in [
+        ["validate", "--out", "reports"].as_slice(),
+        ["validate", "--cases", "a-case"].as_slice(),
+    ] {
+        let err = parse_corpus_args(&corpus_args(words))
+            .err()
+            .unwrap_or_default();
+        assert!(err.contains("takes only --language"), "{err}");
+    }
+    Ok(())
+}
+
+#[test]
+fn declared_validation_keeps_the_rust_ledger_mandatory_and_discloses_only_non_rust()
+-> Result<(), String> {
+    // The declared funnel is the single coverage-mode decision: a non-Rust
+    // language validates structurally with no coverage attached, while the
+    // Rust corpus keeps its spec-example ledger mandatory (#6686 review) —
+    // deleting that ledger fails instead of dropping the coverage floor.
+    // (The gated half needs the repo-relative specs tree, so the `validate`
+    // and `check-all` CLI runs prove it, not a unit test.)
+    let rust = crate::tests::temp_dir("verdict-declared-rust-ledger");
+    crate::tests::copy_dir_recursive(&repo_corpus_dir(), &rust)?;
+    fs::remove_file(rust.join(coverage::LEDGER_FILE)).map_err(|err| err.to_string())?;
+    let err = validated_corpus_declared(&rust)
+        .err()
+        .ok_or("a Rust corpus without its spec-example ledger validated")?;
+    assert!(err.contains(coverage::LEDGER_FILE), "{err}");
+
+    let (corpus, coverage) = validated_corpus_declared(&typescript_corpus_dir())?;
+    assert!(coverage.is_none());
+    assert!(!corpus.cases.is_empty());
     Ok(())
 }

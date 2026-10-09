@@ -1,0 +1,52 @@
+{
+  "case_id": "nodetest-currency-throws-regex",
+  "subject_id": "authored-ts-nodetest-billing",
+  "diff": "cases/nodetest-currency-throws-regex.diff",
+  "anchor": {
+    "file": "src/currency.ts",
+    "line": 3
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "error_path",
+  "test_shape": "nodetest_assert_throws_regex_message",
+  "hard_case": "the regex matcher pins the full message but ripr grades every assert.throws as broad_error",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "node --import tsx --test test/*.test.ts",
+    "toolchain": "node 22.22.0; tsx 4.23.15; node:test + node:assert (built in); @stryker-mutator/core 10.0.0 (command runner)",
+    "mutants": [
+      {
+        "replacement": "throw new Error(\"\" + \"currency\");",
+        "mutated_line": "throw new Error(\"\" + \"currency\");",
+        "outcome": "tests_failed",
+        "failing_test": "unsupported currency names the problem",
+        "equivalence_review": "not equivalent: message becomes \"currency\""
+      },
+      {
+        "replacement": "throw new Error(\"unsupported \" + \"\");",
+        "mutated_line": "throw new Error(\"unsupported \" + \"\");",
+        "outcome": "tests_failed",
+        "failing_test": "unsupported currency names the problem",
+        "equivalence_review": "not equivalent: message becomes \"unsupported \""
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "The throw-message line is rewritten to concatenate the same message. `assert.throws(() => currencyCode(\"XYZ\"), /^Error: unsupported currency$/)` anchors the full message, so both string mutants failed. ripr reports `weakly_exposed` with broad_error/weak, because node:assert `throws` is always broad; this is a false gap against a discriminated truth.",
+  "labeling_observation": {
+    "ripr_commit": "1273096",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

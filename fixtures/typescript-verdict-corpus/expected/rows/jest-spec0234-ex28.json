@@ -1,0 +1,22 @@
+{
+  "case_id": "jest-spec0234-ex28",
+  "subject_id": "authored-ts-jest-monorepo",
+  "origin": "authored",
+  "anchor": "packages/a/src/lib.ts:3",
+  "behavior_family": "return_value",
+  "test_shape": "jest_workspace_package_import_tobe",
+  "hard_case": true,
+  "truth": "discriminated",
+  "ideal_verdict": "credited",
+  "observed_verdict": "credited",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

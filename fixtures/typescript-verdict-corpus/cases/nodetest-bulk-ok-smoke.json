@@ -1,0 +1,65 @@
+{
+  "case_id": "nodetest-bulk-ok-smoke",
+  "subject_id": "authored-ts-nodetest-billing",
+  "diff": "cases/nodetest-bulk-ok-smoke.diff",
+  "anchor": {
+    "file": "src/bulk.ts",
+    "line": 2
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "nodetest_assert_ok_smoke",
+  "hard_case": null,
+  "truth": {
+    "state": "partially_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "node --import tsx --test test/*.test.ts",
+    "toolchain": "node 22.22.0; tsx 4.23.15; node:test + node:assert (built in); @stryker-mutator/core 10.0.0 (command runner)",
+    "mutants": [
+      {
+        "replacement": "return true;",
+        "mutated_line": "return true;",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: returns true for quantity 5"
+      },
+      {
+        "replacement": "return false;",
+        "mutated_line": "return false;",
+        "outcome": "tests_failed",
+        "failing_test": "a large order is bulk",
+        "equivalence_review": "not equivalent: returns false for quantity 50"
+      },
+      {
+        "replacement": "return 10 < quantity;",
+        "mutated_line": "return 10 < quantity;",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: differs at quantity == 10"
+      },
+      {
+        "replacement": "return 10 > quantity;",
+        "mutated_line": "return 10 > quantity;",
+        "outcome": "tests_failed",
+        "failing_test": "a large order is bulk",
+        "equivalence_review": "not equivalent: inverts the predicate"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "`return quantity >= 10` rewritten to `return 10 <= quantity`. The only test is an `assert.ok(isBulkOrder(50))` smoke, which kills the always-false and inverted mutants but not `return true` or the off-by-one `10 < quantity`. ripr reports `weakly_exposed` (smoke_only/smoke, missing discriminator `10 == quantity`), the ideal gap verdict for partial truth.",
+  "labeling_observation": {
+    "ripr_commit": "1273096",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

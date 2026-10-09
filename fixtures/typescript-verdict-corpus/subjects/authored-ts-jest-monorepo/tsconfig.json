@@ -1,0 +1,12 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "commonjs",
+    "strict": true,
+    "esModuleInterop": true,
+    "types": ["jest", "node"],
+    "baseUrl": ".",
+    "paths": { "a": ["packages/a/src/lib.ts"] }
+  },
+  "include": ["packages"]
+}

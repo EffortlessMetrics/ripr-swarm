@@ -1206,6 +1206,14 @@ owner = "product-eval"
 standalone_reason = "Records the labeled Rust verdict corpus: one-line edits in pinned real crates labeled by running mutants against each crate's own tests, a fixed truth-to-verdict table, and cargo xtask verdict-corpus, which scores ripr's anchored verdicts and reports false-verdict and contradiction rates without running mutation testing or network access."
 
 [[artifact]]
+id = "RIPR-SPEC-0245"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0245-per-language-verdict-corpora.md"
+status = "proposed"
+owner = "product-eval"
+standalone_reason = "Lets the RIPR-SPEC-0219 verdict corpus commands act on one fixtures/<language>-verdict-corpus directory selected with --language, keeps the cargo-replay label rules to the Rust corpus, gives each language's committed rows their own regression gate, and defines the authored TypeScript corpus across jest, vitest, mocha with chai and node:test."
+
+[[artifact]]
 id = "RIPR-SPEC-0220"
 kind = "spec"
 path = "docs/specs/RIPR-SPEC-0220-vscode-shared-attempt-status.md"

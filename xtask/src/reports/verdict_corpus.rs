@@ -930,9 +930,12 @@ pub(crate) fn render_report_json(report: &Report) -> Result<String, String> {
         .map_err(|err| format!("render verdict corpus report: {err}"))
 }
 
-pub(crate) fn render_report_markdown(report: &Report) -> String {
+pub(crate) fn render_report_markdown(report: &Report, language: &str) -> String {
     let mut out = String::new();
-    out.push_str("# Rust verdict corpus report\n\n");
+    out.push_str(&format!(
+        "# {} verdict corpus report\n\n",
+        language_title(language)
+    ));
     out.push_str(&format!(
         "Spec: {}. Cases: {}.\n\n",
         report.spec, report.cases_total
@@ -1070,6 +1073,28 @@ fn is_one_test_name(name: &str) -> bool {
     plain(file) && item_ok && !line.is_empty() && line.bytes().all(|b| b.is_ascii_digit())
 }
 
+/// A test title outside Rust, such as a jest or `node:test` name, may hold
+/// spaces and commas, so the only shape it can be held to is one non-empty
+/// trimmed line.
+fn is_one_test_title(name: &str) -> bool {
+    !name.is_empty() && name == name.trim() && !name.contains(['\n', '\r'])
+}
+
+/// Whether a corpus directory keeps the Rust label rules: every directory
+/// except `<language>-verdict-corpus` for a listed non-Rust language, so a
+/// corpus copied anywhere else keeps the strictest rules.
+fn is_rust_corpus(dir: &Path) -> bool {
+    dir.file_name()
+        .and_then(|name| name.to_str())
+        .and_then(|name| name.strip_suffix(CORPUS_SUFFIX))
+        .is_none_or(|language| !NON_RUST_LANGUAGES.contains(&language))
+}
+
+/// Corpus languages whose labels record the command they ran instead of a
+/// replayable cargo command. Any other directory name keeps the Rust rules,
+/// so a misspelled or new language fails closed until it is listed here.
+const NON_RUST_LANGUAGES: [&str; 3] = ["typescript", "python", "perl"];
+
 /// The corpus as one JSON value: the `corpus.json` header with `subjects`
 /// and `cases` gathered from their per-record files in file-name order.
 pub(crate) fn corpus_value(dir: &Path) -> Result<Value, String> {
@@ -1165,7 +1190,25 @@ fn pretty<T: Serialize>(value: &T, what: &str) -> Result<String, String> {
 /// arrays resolves its conflict by keeping its own `corpus.json` and running
 /// this: records that already exist with the same content are skipped, and
 /// one that exists with different content is left alone and named.
+/// Mutating destinations under `dir` must be real files, never links:
+/// `split` writes `subjects/`, `cases/` and back to `corpus.json`, so a
+/// repository-controlled symlink at any of them would redirect writes
+/// outside the corpus. Missing entries are fine; links are refused.
+fn reject_nested_symlinks(dir: &Path) -> Result<(), String> {
+    for name in ["corpus.json", "subjects", "cases"] {
+        let path = dir.join(name);
+        if fs::symlink_metadata(&path).is_ok_and(|meta| meta.is_symlink()) {
+            return Err(format!(
+                "verdict-corpus split: {} is a symlink; refusing to write through it",
+                normalize_path(&path)
+            ));
+        }
+    }
+    Ok(())
+}
+
 fn split(dir: &Path) -> Result<(), String> {
+    reject_nested_symlinks(dir)?;
     let path = dir.join("corpus.json");
     let mut raw = parse_json(&path)?;
     let Some(fields) = raw.as_object_mut() else {
@@ -1196,6 +1239,16 @@ fn split(dir: &Path) -> Result<(), String> {
                 differing.push(normalize_path(&target));
             }
             return Ok(());
+        }
+        // A dangling record symlink fails `exists` above, so this write is
+        // the first thing that would follow the link and create the file it
+        // names, possibly outside the corpus (#6686 review). Refuse it like
+        // the directory-level links `reject_nested_symlinks` refuses.
+        if fs::symlink_metadata(&target).is_ok_and(|meta| meta.is_symlink()) {
+            return Err(format!(
+                "verdict-corpus split: {} is a symlink; refusing to write through it",
+                normalize_path(&target)
+            ));
         }
         fs::write(&target, text)
             .map_err(|err| format!("write {}: {err}", normalize_path(&target)))?;
@@ -1676,7 +1729,11 @@ pub(crate) fn case_violations(case: &Case, subject: &Subject, dir: &Path) -> Vec
             violations.push(format!("case `{id}` has an empty `{field}`"));
         }
     }
-    if !case.truth.test_command.trim().is_empty()
+    // `relabel` replays cargo test commands only, so only a Rust case must
+    // name one; another language's labels record the command they ran.
+    let rust = is_rust_corpus(dir);
+    if rust
+        && !case.truth.test_command.trim().is_empty()
         && let Err(err) = super::verdict_corpus_relabel::test_command_args(&case.truth.test_command)
     {
         violations.push(format!("case `{id}` cannot be replayed: {err}"));
@@ -1768,7 +1825,11 @@ pub(crate) fn case_violations(case: &Case, subject: &Subject, dir: &Path) -> Vec
             ));
         }
         if let Some(name) = &mutant.failing_test
-            && !is_one_test_name(name)
+            && !(if rust {
+                is_one_test_name(name)
+            } else {
+                is_one_test_title(name)
+            })
         {
             violations.push(format!(
                 "case `{id}` mutant `{}` failing_test `{name}` is not one test name; name one test that failed and put any other observations in equivalence_review",
@@ -2250,6 +2311,26 @@ fn corpus_coverage_mode(dir: &Path) -> CorpusCoverage {
     }
 }
 
+/// Validate one corpus honoring its coverage declaration: a ledgered corpus
+/// gates coverage, a ledgerless one validates structurally with disclosure.
+/// Every subcommand funnels through here so `--language` behaves the same
+/// for `validate`, `report`, `check` and `bless`. The Rust corpus is the
+/// exception: its spec-example ledger is mandatory (#6686 review), so a
+/// deleted or renamed ledger fails instead of silently dropping the
+/// coverage floor. Ledgerless operation is reserved for the non-Rust
+/// corpora that have not opted in yet.
+fn validated_corpus_declared(dir: &Path) -> Result<(Corpus, Option<SpecExampleCoverage>), String> {
+    if is_rust_corpus(dir) || corpus_coverage_mode(dir) == CorpusCoverage::Gated {
+        return validated_corpus(dir).map(|(corpus, coverage)| (corpus, Some(coverage)));
+    }
+    println!(
+        "verdict-corpus: {} has no {}; scoring rows without the spec-example coverage gate",
+        normalize_path(dir),
+        coverage::LEDGER_FILE
+    );
+    validated_corpus_without_coverage(dir).map(|corpus| (corpus, None))
+}
+
 /// `validated_corpus` without the coverage half, for a corpus that declares
 /// no ledger. Structural validation still applies; only the spec-example
 /// gate is skipped.
@@ -2386,18 +2467,32 @@ fn bless(expected_dir: &Path, report: &Report) -> Result<(), String> {
     Ok(())
 }
 
-fn write_report(out: &Path, report: &Report) -> Result<(), String> {
+/// How a report heading names a corpus language.
+fn language_title(language: &str) -> &str {
+    match language {
+        "rust" => "Rust",
+        "typescript" => "TypeScript",
+        "python" => "Python",
+        "perl" => "Perl",
+        other => other,
+    }
+}
+
+fn write_report(out: &Path, report: &Report, language: &str) -> Result<(), String> {
     fs::create_dir_all(out).map_err(|err| format!("create {}: {err}", normalize_path(out)))?;
     fs::write(out.join("report.json"), render_report_json(report)?)
         .map_err(|err| format!("write report.json: {err}"))?;
-    fs::write(out.join("report.md"), render_report_markdown(report))
-        .map_err(|err| format!("write report.md: {err}"))?;
+    fs::write(
+        out.join("report.md"),
+        render_report_markdown(report, language),
+    )
+    .map_err(|err| format!("write report.md: {err}"))?;
     Ok(())
 }
 
 /// Refuse an `--out` that is, or sits inside, the expected directory, in any
 /// spelling: only `bless` writes there.
-fn refuse_expected_out(out: &Path, expected_dir: &Path) -> Result<(), String> {
+fn refuse_expected_out(out: &Path, expected_dir: &Path, language: &str) -> Result<(), String> {
     // Canonicalize the deepest existing ancestor and re-append the rest, so
     // the guard creates nothing before it decides.
     let resolve = |p: &Path| {
@@ -2419,9 +2514,39 @@ fn refuse_expected_out(out: &Path, expected_dir: &Path) -> Result<(), String> {
     };
     if resolve(out)?.starts_with(resolve(expected_dir)?) {
         return Err(format!(
-            "verdict-corpus: --out {} is inside the expected directory; run `cargo xtask verdict-corpus bless` to re-bless deliberately when a verdict change is intended",
-            normalize_path(out)
+            "verdict-corpus: --out {} is inside the expected directory; run `cargo xtask verdict-corpus bless{}` to re-bless deliberately when a verdict change is intended",
+            normalize_path(out),
+            language_flag(language)
         ));
+    }
+    Ok(())
+}
+
+/// Refuse an `--out` inside ANY discovered corpus's expected directory, not
+/// just the selected one: with sibling corpora, `--language typescript
+/// --out fixtures/rust-verdict-corpus/expected` would otherwise pass the
+/// selected guard and let `write_report` pollute the sibling's blessed
+/// state, failing the next run on files only `bless` should write.
+fn refuse_any_expected_out(out: &Path, dir: &Path) -> Result<(), String> {
+    // The selected corpus is always guarded, even when sibling discovery
+    // fails or this corpus lives outside a fixtures tree.
+    refuse_expected_out(out, &dir.join("expected"), &corpus_language(dir)?)?;
+    let Some(fixtures) = dir.parent() else {
+        return Ok(());
+    };
+    let Ok(discovered) = corpus_dirs(fixtures) else {
+        return Ok(());
+    };
+    for sibling in discovered.into_iter().flatten() {
+        // A sibling that names no usable language cannot be checked,
+        // reported, or blessed, so there is no blessed state of its to
+        // protect; its error still fails check-all through corpus_dirs.
+        // Skipping it here keeps one malformed sibling from aborting every
+        // other corpus's run through this shared guard.
+        let Ok(language) = corpus_language(&sibling) else {
+            continue;
+        };
+        refuse_expected_out(out, &sibling.join("expected"), &language)?;
     }
     Ok(())
 }
@@ -2442,7 +2567,7 @@ fn corpus_language(dir: &Path) -> Result<String, String> {
         .map(|name| name.to_string_lossy().into_owned())
         .unwrap_or_default();
     let language = name.strip_suffix(CORPUS_SUFFIX).unwrap_or(&name);
-    if safe_id(language) {
+    if language_name(language) {
         Ok(language.to_string())
     } else {
         Err(format!(
@@ -2549,14 +2674,8 @@ fn score_corpus(
     cases: Option<&[String]>,
     out: Option<PathBuf>,
 ) -> Result<(), String> {
-    let (corpus, coverage) = validated_corpus(dir)?;
-    score_loaded_corpus(dir, corpus, Some(coverage), check, cases, out)
-}
-
-/// Score a corpus with no ledger: rows gate, coverage does not.
-fn score_corpus_without_coverage(dir: &Path) -> Result<(), String> {
-    let corpus = validated_corpus_without_coverage(dir)?;
-    score_loaded_corpus(dir, corpus, None, true, None, None)
+    let (corpus, coverage) = validated_corpus_declared(dir)?;
+    score_loaded_corpus(dir, corpus, coverage, check, cases, out)
 }
 
 fn score_loaded_corpus(
@@ -2580,10 +2699,10 @@ fn score_loaded_corpus(
         Some(out) => out,
         None => default_out(dir)?,
     };
-    refuse_expected_out(&out, &expected_dir)?;
+    refuse_any_expected_out(&out, dir)?;
     let mut report = run_corpus(dir, &corpus, &work_root(dir)?)?;
     report.spec_example_coverage = coverage;
-    write_report(&out, &report)?;
+    write_report(&out, &report, &corpus_language(dir)?)?;
     println!(
         "verdict-corpus: {} cases; false verdicts {} ({}/{}), contradictions {} ({}/{}); wrote {}",
         report.cases_total,
@@ -2619,34 +2738,108 @@ fn score_loaded_corpus(
         shown.push(format!("... and {} more", drift.len() - DRIFT_SHOWN));
     }
     Err(format!(
-        "verdict-corpus: the report drifted from {}:\n- {}\nRead {}. If the change is intended, re-bless {} (`cargo xtask verdict-corpus bless` for the Rust corpus) and state why each moved row changed in the PR.",
+        "verdict-corpus: the report drifted from {}:\n- {}\nRead {}. If the change is intended, re-bless {} (`cargo xtask verdict-corpus bless{}`) and state why each moved row changed in the PR.",
         normalize_path(&expected_dir),
         shown.join("\n- "),
         normalize_path(&out.join("report.md")),
-        normalize_path(&expected_dir)
+        normalize_path(&expected_dir),
+        language_flag(&corpus_language(dir)?)
     ))
 }
 
-pub(crate) fn verdict_corpus(args: &[String]) -> Result<(), String> {
-    let dir = Path::new(CORPUS_DIR);
-    if args.first().map(String::as_str) == Some("relabel") {
-        return super::verdict_corpus_relabel::relabel(&args[1..]);
+/// The `--language` argument a command for this corpus needs; empty for
+/// Rust, the default corpus.
+fn language_flag(language: &str) -> String {
+    if language == "rust" {
+        String::new()
+    } else {
+        format!(" --language {language}")
     }
-    let expected_dir = dir.join("expected");
+}
+
+/// A corpus language name: lowercase ASCII letters, digits, `-` and `_`.
+/// The name is pasted into re-bless commands, so it must need no shell
+/// quoting, and it is a directory component.
+fn language_name(language: &str) -> bool {
+    !language.is_empty()
+        && !language.starts_with('-')
+        && language
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-' || b == b'_')
+}
+
+/// The corpus `--language <language>` names: `fixtures/<language>-verdict-corpus`.
+/// The name must be usable as a directory component and the corpus must
+/// exist, so a typo fails here instead of as a missing `corpus.json`.
+pub(crate) fn language_corpus_dir(language: &str) -> Result<PathBuf, String> {
+    language_corpus_dir_in(Path::new(FIXTURES_DIR), language)
+}
+
+pub(crate) fn language_corpus_dir_in(fixtures: &Path, language: &str) -> Result<PathBuf, String> {
+    if !language_name(language) {
+        return Err(format!(
+            "verdict-corpus: --language `{language}` is not a usable language name"
+        ));
+    }
+    let dir = fixtures.join(format!("{language}{CORPUS_SUFFIX}"));
+    // bless and split rewrite files under this directory, so a symlink would
+    // let them write outside fixtures/; check-all refuses one the same way.
+    if fs::symlink_metadata(&dir).is_ok_and(|meta| meta.is_symlink()) {
+        return Err(format!(
+            "verdict-corpus: --language `{language}`: {} is a symlink; a corpus is one real directory",
+            normalize_path(&dir)
+        ));
+    }
+    if !dir.join("corpus.json").is_file() {
+        return Err(format!(
+            "verdict-corpus: --language `{language}` names no corpus; {} has no corpus.json",
+            normalize_path(&dir)
+        ));
+    }
+    Ok(dir)
+}
+
+/// The parsed arguments of a `verdict-corpus` command other than `relabel`.
+#[derive(Debug, PartialEq)]
+pub(crate) struct CorpusArgs {
+    pub(crate) sub: String,
+    pub(crate) language: Option<String>,
+    pub(crate) out: Option<PathBuf>,
+    pub(crate) cases: Option<Vec<String>>,
+}
+
+/// Parse `verdict-corpus` arguments without touching the filesystem. The
+/// subcommand may come before or after the options; with none, it is `check`.
+pub(crate) fn parse_corpus_args(args: &[String]) -> Result<CorpusArgs, String> {
     let mut iter = args.iter();
-    let sub = iter.next().map(String::as_str).unwrap_or("check");
-    let mut out = None;
-    let mut cases: Option<Vec<String>> = None;
+    let mut sub: Option<String> = None;
+    let mut parsed = CorpusArgs {
+        sub: String::new(),
+        language: None,
+        out: None,
+        cases: None,
+    };
     while let Some(arg) = iter.next() {
         match arg.as_str() {
+            "--language" => {
+                let language = iter
+                    .next()
+                    .ok_or("--language needs a corpus language, such as typescript")?;
+                if parsed.language.is_some() {
+                    return Err(
+                        "verdict-corpus: --language is given twice; name one corpus".to_string()
+                    );
+                }
+                parsed.language = Some(language.clone());
+            }
             "--out" => {
-                out = Some(PathBuf::from(iter.next().ok_or("--out needs a directory")?));
+                parsed.out = Some(PathBuf::from(iter.next().ok_or("--out needs a directory")?));
             }
             "--cases" => {
                 let list = iter
                     .next()
                     .ok_or("--cases needs comma-separated case ids")?;
-                cases = Some(
+                parsed.cases = Some(
                     list.split(',')
                         .map(str::trim)
                         .filter(|id| !id.is_empty())
@@ -2654,43 +2847,80 @@ pub(crate) fn verdict_corpus(args: &[String]) -> Result<(), String> {
                         .collect(),
                 );
             }
+            other if !other.starts_with("--") && sub.is_none() => sub = Some(other.to_string()),
             other => return Err(format!("verdict-corpus: unknown argument `{other}`")),
         }
     }
+    parsed.sub = sub.unwrap_or_else(|| "check".to_string());
+    let sub = parsed.sub.as_str();
+    if sub == "check-all" && parsed.language.is_some() {
+        return Err("verdict-corpus check-all checks every corpus; drop --language".to_string());
+    }
     let takes_options = matches!(sub, "report" | "check");
-    if !takes_options && (out.is_some() || cases.is_some()) {
+    if !takes_options && (parsed.out.is_some() || parsed.cases.is_some()) {
         return Err(format!(
-            "verdict-corpus {sub} takes no options; `--out` and `--cases` apply to report and check"
+            "verdict-corpus {sub} takes only --language; `--out` and `--cases` apply to report and check"
         ));
     }
+    Ok(parsed)
+}
+
+pub(crate) fn verdict_corpus(args: &[String]) -> Result<(), String> {
+    if args.first().map(String::as_str) == Some("relabel") {
+        return super::verdict_corpus_relabel::relabel(&args[1..]);
+    }
+    let CorpusArgs {
+        sub,
+        language,
+        out,
+        cases,
+    } = parse_corpus_args(args)?;
+    let sub = sub.as_str();
+    let dir_buf = match &language {
+        Some(language) => language_corpus_dir(language)?,
+        // The default corpus resolves through the same checks as a named
+        // one, so a symlinked rust-verdict-corpus is refused here too
+        // (#6686 review), not only an explicitly named corpus.
+        None => language_corpus_dir("rust")?,
+    };
+    let dir = dir_buf.as_path();
+    let expected_dir = dir.join("expected");
     match sub {
         "validate" => {
-            if args.len() > 1 {
-                return Err(
-                    "verdict-corpus validate takes no options; `--out` applies to report and check"
-                        .to_string(),
-                );
-            }
-            let (corpus, coverage) = validated_corpus(dir)?;
-            // The floor gate needs no ripr runs, so the cheap CI step that
-            // calls `validate` enforces it too.
-            let floor_note = coverage::floor_gate(&coverage)?;
-            println!(
-                "verdict-corpus: {} cases across {} subjects are valid; spec examples covered {}/{} (floor {})",
-                corpus.cases.len(),
-                corpus.subjects.len(),
-                coverage.coverage.numerator,
-                coverage.coverage.denominator,
-                coverage.floor
-            );
-            if let Some(note) = floor_note {
-                println!("{note}");
+            // Option shape is the parser's contract (`parse_corpus_args`
+            // already refuses `--out`/`--cases` here); only the coverage
+            // declaration branches.
+            let (corpus, coverage) = validated_corpus_declared(dir)?;
+            match coverage {
+                Some(coverage) => {
+                    // The floor gate needs no ripr runs, so the cheap CI step
+                    // that calls `validate` enforces it too.
+                    let floor_note = coverage::floor_gate(&coverage)?;
+                    println!(
+                        "verdict-corpus: {} cases across {} subjects are valid; spec examples covered {}/{} (floor {})",
+                        corpus.cases.len(),
+                        corpus.subjects.len(),
+                        coverage.coverage.numerator,
+                        coverage.coverage.denominator,
+                        coverage.floor
+                    );
+                    if let Some(note) = floor_note {
+                        println!("{note}");
+                    }
+                }
+                None => {
+                    println!(
+                        "verdict-corpus: {} cases across {} subjects are valid",
+                        corpus.cases.len(),
+                        corpus.subjects.len()
+                    );
+                }
             }
             Ok(())
         }
         "split" => split(dir),
         "bless" => {
-            let (corpus, _coverage) = validated_corpus(dir)?;
+            let (corpus, _coverage) = validated_corpus_declared(dir)?;
             let report = run_corpus(dir, &corpus, &work_root(dir)?)?;
             bless(&expected_dir, &report)?;
             println!(
@@ -2704,19 +2934,10 @@ pub(crate) fn verdict_corpus(args: &[String]) -> Result<(), String> {
         "check-all" => {
             // Every language's corpus scores its rows, found by name so a
             // new corpus is checked without a workflow change. Coverage is
-            // declared per corpus: a language without a ledger scores rows
-            // only, loudly, until it opts in.
+            // declared per corpus inside `score_corpus`: a language without
+            // a ledger scores rows only, loudly, until it opts in.
             let checked = check_each(corpus_dirs(Path::new(FIXTURES_DIR))?, |dir| {
-                if corpus_coverage_mode(dir) == CorpusCoverage::Gated {
-                    score_corpus(dir, true, None, None)
-                } else {
-                    println!(
-                        "verdict-corpus: {} has no {}; scoring rows without the spec-example coverage gate",
-                        normalize_path(dir),
-                        coverage::LEDGER_FILE
-                    );
-                    score_corpus_without_coverage(dir)
-                }
+                score_corpus(dir, true, None, None)
             })?;
             println!("verdict-corpus: {checked} corpora checked");
             Ok(())

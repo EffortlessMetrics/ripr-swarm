@@ -1,0 +1,45 @@
+{
+  "case_id": "jest-spec0234-ex32",
+  "subject_id": "authored-ts-jest-relations",
+  "diff": "cases/jest-spec0234-ex32.diff",
+  "anchor": {
+    "file": "src/priceUnrelatedMocked.ts",
+    "line": 5
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "return_value",
+  "test_shape": "jest_mock_unrelated_module_callee_tobe",
+  "hard_case": "the test jest.mock()s an unrelated module while the real callee runs",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "npx jest --ci",
+    "toolchain": "node 22.22.0; jest 30.5.2, ts-jest 29.4.14, typescript 5.9; @stryker-mutator/core 10.0.0",
+    "mutants": [
+      {
+        "replacement": "return fee32(amount - 20);",
+        "mutated_line": null,
+        "outcome": "tests_failed",
+        "failing_test": "priceUnrelatedMocked",
+        "equivalence_review": "not equivalent: behavior_change edit (the spec's diff); changes the returned/passed value for amount > 100"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "The test mocks `../src/unrelated32` while the real identity `fee32` runs, and pins `expect(priceUnrelatedMocked(150)).toBe(140)`; the edit makes it 130 and the test fails. ripr reports `exposed` with mocked_module and still emits `typescript_mock_only_observer`. (spec says today exposed with typescript_mock_only_observer; target drops it - still present). Spec cells: RIPR-SPEC-0243 example 32",
+  "labeling_observation": {
+    "ripr_commit": "1273096",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

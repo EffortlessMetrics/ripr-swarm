@@ -1,0 +1,9 @@
+diff --git a/src/notify.ts b/src/notify.ts
+index 0000000..1111111 100644
+--- a/src/notify.ts
++++ b/src/notify.ts
+@@ -1,3 +1,3 @@
+ export function announceShipment(id: number, send: (message: string) => void): void {
+-  send(`order ${id} shipped`);
++  send("order " + id + " shipped");
+ }

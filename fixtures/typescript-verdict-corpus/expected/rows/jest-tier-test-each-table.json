@@ -1,0 +1,22 @@
+{
+  "case_id": "jest-tier-test-each-table",
+  "subject_id": "authored-ts-jest-checkout",
+  "origin": "authored",
+  "anchor": "src/tier.ts:2",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "jest_test_each_table_boundary_pinned",
+  "hard_case": true,
+  "truth": "discriminated",
+  "ideal_verdict": "credited",
+  "observed_verdict": "gap",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "weakly_exposed"
+  ],
+  "outcome": "false_actionable",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

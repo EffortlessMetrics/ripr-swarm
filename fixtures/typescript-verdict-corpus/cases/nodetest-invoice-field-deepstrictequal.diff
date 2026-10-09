@@ -1,0 +1,13 @@
+diff --git a/src/invoice.ts b/src/invoice.ts
+index 0000000..1111111 100644
+--- a/src/invoice.ts
++++ b/src/invoice.ts
+@@ -7,7 +7,7 @@
+ export function buildInvoice(id: string, amount: number): Invoice {
+   return {
+     id,
+-    total: amount + 5,
++    total: 5 + amount,
+     currency: "EUR",
+   };
+ }

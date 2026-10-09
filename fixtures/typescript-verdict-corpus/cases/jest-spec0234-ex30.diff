@@ -1,0 +1,11 @@
+diff --git a/src/save.ts b/src/save.ts
+index 0000000..1111111 100644
+--- a/src/save.ts
++++ b/src/save.ts
+@@ -3,5 +3,5 @@
+ }
+ 
+ export function save(db: Db, v: number): void {
+-  db.write(v + 1);
++  db.write(v + 2);
+ }

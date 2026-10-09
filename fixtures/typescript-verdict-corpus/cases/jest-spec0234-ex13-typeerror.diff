@@ -1,0 +1,12 @@
+diff --git a/src/parseEx13t.ts b/src/parseEx13t.ts
+index 0000000..1111111 100644
+--- a/src/parseEx13t.ts
++++ b/src/parseEx13t.ts
+@@ -1,6 +1,6 @@
+ export function parseEx13t(s: string): string {
+   if (s === "") {
+-    throw new TypeError("empty");
++    throw new TypeError("blank");
+   }
+   return s;
+ }

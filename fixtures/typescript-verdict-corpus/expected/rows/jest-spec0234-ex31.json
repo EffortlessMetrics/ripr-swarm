@@ -1,0 +1,22 @@
+{
+  "case_id": "jest-spec0234-ex31",
+  "subject_id": "authored-ts-jest-relations",
+  "origin": "authored",
+  "anchor": "src/priceFeeMocked.ts:5",
+  "behavior_family": "return_value",
+  "test_shape": "jest_mock_factory_callee_tobe",
+  "hard_case": true,
+  "truth": "not_discriminated",
+  "ideal_verdict": "gap",
+  "observed_verdict": "credited",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "exposed"
+  ],
+  "outcome": "false_exposed",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

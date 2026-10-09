@@ -1,0 +1,44 @@
+{
+  "case_id": "jest-spec0234-ex15",
+  "subject_id": "authored-ts-jest-oracles",
+  "diff": "cases/jest-spec0234-ex15.diff",
+  "anchor": {
+    "file": "src/priceEx15.ts",
+    "line": 6
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "return_value",
+  "test_shape": "jest_expect_tothrow_unrelated_throw",
+  "hard_case": "the only strong assertion pins a throw the changed return line never touches",
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "npx jest --ci --runInBand",
+    "toolchain": "node 22.22.0; jest 30.5.2; ts-jest 29.4.14; typescript 5.9; @stryker-mutator/core 10.0.0",
+    "mutants": [
+      {
+        "replacement": "return amount - 20;",
+        "mutated_line": null,
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: the edit is the spec's behavior change (140 becomes 130 for amount 150)"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "Adapted for a green suite: the stored module adds a guard `if (amount > 120) { throw new Error(\"bad\"); }` before the base branch, so priceEx15(150) throws \"bad\" and the test snippet stays verbatim; the changed `return amount - 10` line (now line 6) is never reached by the test, so the edit survives. ripr reports class weakly_exposed while related_tests[0] reads exact_error_variant / strong (the display mismatch the spec files), a correct gap. (spec says today weakly_exposed, related_tests[0] exact_error_variant / strong; ripr matches it) Spec cells: RIPR-SPEC-0243 example 15",
+  "labeling_observation": {
+    "ripr_commit": "1273096",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

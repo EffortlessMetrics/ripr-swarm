@@ -1,0 +1,9 @@
+diff --git a/src/tax.ts b/src/tax.ts
+index 0000000..1111111 100644
+--- a/src/tax.ts
++++ b/src/tax.ts
+@@ -1,3 +1,3 @@
+ export function salesTax(amount: number): number {
+-  return amount * 0.2;
++  return 0.2 * amount;
+ }

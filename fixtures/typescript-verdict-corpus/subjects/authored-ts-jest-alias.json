@@ -1,0 +1,33 @@
+{
+  "subject_id": "authored-ts-jest-alias",
+  "origin": "authored",
+  "version_label": "authored@2026-10-04",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "jest.config.js",
+      "sha256": "b9ac36beb841293348a6ff28057d841a39ef13d3dd8f7d647f8d0afab2071108"
+    },
+    {
+      "path": "package.json",
+      "sha256": "5ed2ffa778d54d9704c7c497e0d598a9c27af51c7a5510b5923b3a5617e85a5d"
+    },
+    {
+      "path": "ripr.toml",
+      "sha256": "7a283b58801cad2a97a42946da481f0ef505de406375d670b1a595587690a7a4"
+    },
+    {
+      "path": "src/lib.ts",
+      "sha256": "63c7d5318ac14712d5a45e9eeadce2d07ed7a2d1af706abc4a0957c7a5016355"
+    },
+    {
+      "path": "tests/lib.test.ts",
+      "sha256": "3f81230930c74f55323d3940fcc3549a82c6542a7ab285fbe989bc78baff3e5b"
+    },
+    {
+      "path": "tsconfig.json",
+      "sha256": "2cc44b4f7a7e604b331f2782b8343dd922543ed2b34c067261e7fb8bd09d4839"
+    }
+  ]
+}

@@ -1,0 +1,22 @@
+{
+  "case_id": "mocha-bonus-boundary-pinned",
+  "subject_id": "authored-ts-mocha-ledger",
+  "origin": "authored",
+  "anchor": "src/bonus.ts:2",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "mocha_chai_expect_to_equal_boundary_pinned",
+  "hard_case": false,
+  "truth": "discriminated",
+  "ideal_verdict": "credited",
+  "observed_verdict": "credited",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

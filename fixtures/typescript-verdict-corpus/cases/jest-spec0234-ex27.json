@@ -1,0 +1,45 @@
+{
+  "case_id": "jest-spec0234-ex27",
+  "subject_id": "authored-ts-jest-relations",
+  "diff": "cases/jest-spec0234-ex27.diff",
+  "anchor": {
+    "file": "src/priceDynamic.ts",
+    "line": 3
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "return_value",
+  "test_shape": "jest_dynamic_import_member_tobe",
+  "hard_case": "owner reached only through `await import(...)` and a member call",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "npx jest --ci",
+    "toolchain": "node 22.22.0; jest 30.5.2, ts-jest 29.4.14, typescript 5.9; @stryker-mutator/core 10.0.0",
+    "mutants": [
+      {
+        "replacement": "return amount - 20;",
+        "mutated_line": null,
+        "outcome": "tests_failed",
+        "failing_test": "priceDynamic",
+        "equivalence_review": "not equivalent: behavior_change edit (the spec's diff); changes the returned/passed value for amount > 100"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "The test has no static import: `const m = await import(\"../src/priceDynamic\")` then `expect(m.priceDynamic(150)).toBe(140)`; the edit makes it 130 and the test fails. ripr reports `exposed` via `import_path_affinity` with an exact_value oracle. (matches spec: import_path_affinity, exposed). Spec cells: RIPR-SPEC-0243 example 27",
+  "labeling_observation": {
+    "ripr_commit": "1273096",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

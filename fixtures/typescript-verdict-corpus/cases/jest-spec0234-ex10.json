@@ -1,0 +1,45 @@
+{
+  "case_id": "jest-spec0234-ex10",
+  "subject_id": "authored-ts-jest-oracles",
+  "diff": "cases/jest-spec0234-ex10.diff",
+  "anchor": {
+    "file": "src/priceEx10.ts",
+    "line": 3
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "return_value",
+  "test_shape": "jest_expect_tobe_in_foreach_callback",
+  "hard_case": "the only assertion sits inside a forEach callback, which the adapter does not walk",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "npx jest --ci --runInBand",
+    "toolchain": "node 22.22.0; jest 30.5.2; ts-jest 29.4.14; typescript 5.9; @stryker-mutator/core 10.0.0",
+    "mutants": [
+      {
+        "replacement": "return amount - 20;",
+        "mutated_line": null,
+        "outcome": "tests_failed",
+        "failing_test": "priceEx10",
+        "equivalence_review": "not equivalent: the edit is the spec's behavior change (140 becomes 130 for amount 150)"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "The forEach callback runs expect(priceEx10(150)).toBe(140) at runtime, so the edit's 130 fails the test. ripr reports weakly_exposed with oracle unknown because nested callbacks are not collected, a gap verdict on a discriminated case (under-credit by design of the spec's non-goal). (spec says today weakly_exposed, oracle unknown; ripr matches it) Spec cells: RIPR-SPEC-0243 example 10",
+  "labeling_observation": {
+    "ripr_commit": "1273096",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

@@ -1,0 +1,44 @@
+{
+  "case_id": "ts-nodetest-quote-shipping-term",
+  "subject_id": "authored-ts-nodetest-pricing",
+  "diff": "cases/ts-nodetest-quote-shipping-term.diff",
+  "anchor": {
+    "file": "src/pricing.ts",
+    "line": 60
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "field_construction",
+  "test_shape": "node_assert_deep_equal_one_branch",
+  "hard_case": null,
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "node --experimental-strip-types --test \"test/*.test.ts\"",
+    "toolchain": "Node.js v22.22.0 (node:test, --experimental-strip-types), x86_64-linux",
+    "mutants": [
+      {
+        "replacement": "return { tier, totalCents: total };",
+        "mutated_line": null,
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: quote(1000, 0) totals 1000 instead of 1499"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "\"quote for a large bronze order\" compares the whole quote with assert.deepEqual from node:assert/strict, but for a 6000-cent order that ships free, so dropping the shipping term passes. ripr credits exposed, a false exposed verdict.",
+  "labeling_observation": {
+    "ripr_commit": "1273096",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

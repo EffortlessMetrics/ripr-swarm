@@ -253,6 +253,51 @@ runner_dependent = false
 source = "verdict-corpus:fixtures/rust-verdict-corpus#false_exposed_rate"
 pending_reason = "the rates are derived from fixtures/rust-verdict-corpus/expected/rows; restore the corpus from main; `cargo xtask verdict-corpus check` reports any drift"
 
+# TypeScript verdict corpus (RIPR-SPEC-0245). Every TypeScript case is
+# authored to cover a test-library oracle or reach rule (RIPR-SPEC-0243) under
+# jest, vitest, mocha with chai or node:test, so these describe those cells,
+# not real-world code. One more wrong case out of 62 discriminated (0.016) or
+# 39 not fully discriminated (0.026) exceeds the floor and regresses.
+
+[[metric]]
+id = "trust.verdict_corpus_typescript_false_actionable"
+board = "trust"
+title = "Authored TypeScript edits the project's tests fully catch that ripr still flags as a gap"
+unit = "ratio"
+direction = "lower_is_better"
+target = 0.05
+regression_pct = 0
+regression_floor = 0.01
+runner_dependent = false
+source = "verdict-corpus:fixtures/typescript-verdict-corpus#false_actionable_rate"
+pending_reason = "the rates are derived from fixtures/typescript-verdict-corpus/expected/rows; restore the corpus from main; `cargo xtask verdict-corpus check --language typescript` reports any drift"
+
+[[metric]]
+id = "trust.verdict_corpus_typescript_false_exposed"
+board = "trust"
+title = "Authored TypeScript edits the project's tests miss that ripr credits as caught"
+unit = "ratio"
+direction = "lower_is_better"
+target = 0
+regression_pct = 0
+regression_floor = 0
+runner_dependent = false
+source = "verdict-corpus:fixtures/typescript-verdict-corpus#false_exposed_rate"
+pending_reason = "the rates are derived from fixtures/typescript-verdict-corpus/expected/rows; restore the corpus from main; `cargo xtask verdict-corpus check --language typescript` reports any drift"
+
+[[metric]]
+id = "trust.verdict_corpus_typescript_false_silent"
+board = "trust"
+title = "Authored TypeScript edits the project's tests miss that ripr reports as fine"
+unit = "ratio"
+direction = "lower_is_better"
+target = 0
+regression_pct = 0
+regression_floor = 0
+runner_dependent = false
+source = "verdict-corpus:fixtures/typescript-verdict-corpus#false_silent_rate"
+pending_reason = "the rates are derived from fixtures/typescript-verdict-corpus/expected/rows; restore the corpus from main; `cargo xtask verdict-corpus check --language typescript` reports any drift"
+
 [[metric]]
 id = "trust.verdict_corpus_spec_example_coverage"
 board = "trust"

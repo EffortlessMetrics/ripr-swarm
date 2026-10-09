@@ -1,0 +1,51 @@
+{
+  "case_id": "jest-coupon-tothrow-broad",
+  "subject_id": "authored-ts-jest-checkout",
+  "diff": "cases/jest-coupon-tothrow-broad.diff",
+  "anchor": {
+    "file": "src/coupon.ts",
+    "line": 3
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "error_path",
+  "test_shape": "jest_expect_tothrow_no_argument",
+  "hard_case": null,
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "npx jest --ci --runInBand",
+    "toolchain": "node 22.22.0; jest 30.5.2, ts-jest 29.4.14, typescript 5.9; @stryker-mutator/core 10.0.0 (jest runner, mutate restricted to the anchor line)",
+    "mutants": [
+      {
+        "replacement": "throw new Error(\"\" + \"prefix\");",
+        "mutated_line": "throw new Error(\"\" + \"prefix\");",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: reachable inputs give a different result; no test exercises one"
+      },
+      {
+        "replacement": "throw new Error(\"unknown coupon \" + \"\");",
+        "mutated_line": "throw new Error(\"unknown coupon \" + \"\");",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: reachable inputs give a different result; no test exercises one"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "toThrow() with no argument accepts any error, so both message mutants pass. ripr reports weakly_exposed on the anchor, the ideal gap.",
+  "labeling_observation": {
+    "ripr_commit": "1273096",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

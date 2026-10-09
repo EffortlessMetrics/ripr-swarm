@@ -1,0 +1,52 @@
+{
+  "case_id": "nodetest-charge-rejects-message",
+  "subject_id": "authored-ts-nodetest-billing",
+  "diff": "cases/nodetest-charge-rejects-message.diff",
+  "anchor": {
+    "file": "src/charge.ts",
+    "line": 3
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "error_path",
+  "test_shape": "nodetest_assert_rejects_message_object",
+  "hard_case": "the { message } object pins the exact rejection message but ripr grades assert.rejects as broad_error",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "node --import tsx --test test/*.test.ts",
+    "toolchain": "node 22.22.0; tsx 4.23.15; node:test + node:assert (built in); @stryker-mutator/core 10.0.0 (command runner)",
+    "mutants": [
+      {
+        "replacement": "throw new Error(\"\" + \"positive\");",
+        "mutated_line": "throw new Error(\"\" + \"positive\");",
+        "outcome": "tests_failed",
+        "failing_test": "a non-positive charge rejects with its message",
+        "equivalence_review": "not equivalent: message becomes \"positive\""
+      },
+      {
+        "replacement": "throw new Error(\"charge must be \" + \"\");",
+        "mutated_line": "throw new Error(\"charge must be \" + \"\");",
+        "outcome": "tests_failed",
+        "failing_test": "a non-positive charge rejects with its message",
+        "equivalence_review": "not equivalent: message becomes \"charge must be \""
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "The async owner's throw-message line is rewritten to concatenate the same message. `await assert.rejects(chargeCard(-1), { message: \"charge must be positive\" })` compares the message exactly, so both mutants failed. ripr reports `weakly_exposed` with broad_error/weak (node:assert `rejects` is always broad, even with an all-literal message object), a false gap against a discriminated truth.",
+  "labeling_observation": {
+    "ripr_commit": "1273096",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}
