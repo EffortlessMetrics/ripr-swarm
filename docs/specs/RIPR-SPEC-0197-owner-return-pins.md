@@ -532,11 +532,22 @@ reads `assert_eq!` operands when:
    when the guard fires, so it is never the pinned assertion, and the
    self-computed check selects its reader the same way: an `assert_eq!`
    spelled in a message, comment or guard body does not switch it.
+5. The guard's `return Err(..)` must be the prelude variant, not a shadow:
+   a test file that binds the value name `Err` anywhere (a `fn`, `const`,
+   `static` or struct constructor of the name, a pattern binding or
+   parameter, an import of the name or into the name, or any glob import,
+   which may carry it opaquely) refuses every guard twin in the file. A
+   shadowed `Err` can return `Ok` on the changed behavior, so the guard
+   passes exactly when it must not
+   (`fixtures/owner_return_pin_err_guard_shadowed_err`). The refusal is
+   file-wide and spells the whole name: coarser, and conservative — it
+   withholds credit, never mis-credits.
 
 Refused, conservatively: a guard with an `else` branch; `if !(a == b)`;
 a parenthesised `(a == b)`; a condition split across lines; a guard
 inside a closure, nested `fn` or async block, whose `return` leaves only
-that body; and a second guard or assertion after a guard's `return`.
+that body; a second guard or assertion after a guard's `return`; and a
+guard in a file that binds the value name `Err`.
 
 ## Required Evidence
 

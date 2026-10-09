@@ -1,0 +1,34 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: fixtures/owner_return_pin_err_guard_shadowed_err/input
+
+Summary: 1 probe(s), 0 exposed, 1 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 1 of 1 finding(s) unsuppressed
+
+Analysis outcome: findings below (analysis complete; complete_with_findings).
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 probe(s), 1 finding(s).
+
+Start here:
+  State: a test gap to inspect or repair (top_gap)
+  Safe next action: inspect or repair the selected non-exposed gap; this is static advisory evidence only.
+  File: ./src/lib.rs:2
+  Static exposure: weak (weakly_exposed, warning, confidence 0.92)
+  Why weak: a related test reaches this change but does not observe the exact changed value
+  Canonical gap: gap:rust:src/lib.rs:weight:return_value:return_value:input*3
+  Changed behavior: input * 3
+  Missing discriminator: No strong discriminator was detected
+  Related test: tests/weight_tests.rs:8 checks_weight (assertion too weak to tell the old behavior from the new)
+  Next step: Replace broad assertions with exact equality or a property that constrains the changed returned value.
+  Evidence: reach yes · infection yes · propagation yes · observation yes · discriminator weak
+    - reach yes: Related tests appear to reach weight: checks_weight
+    - infection yes: Reachable tests can plausibly activate this changed behavior
+    - 6 more detail line(s) in --format human-full
+
+Next: drill into the top finding:
+  ripr explain --root <cwd>/fixtures/owner_return_pin_err_guard_shadowed_err/input --diff <cwd>/fixtures/owner_return_pin_err_guard_shadowed_err/diff.patch --mode fast probe:src_lib.rs:return_value:6ea804bb
+  ripr context --root <cwd>/fixtures/owner_return_pin_err_guard_shadowed_err/input --diff <cwd>/fixtures/owner_return_pin_err_guard_shadowed_err/diff.patch --mode fast --at probe:src_lib.rs:return_value:6ea804bb
+Write a test for it:
+  ripr agent stub --root <cwd>/fixtures/owner_return_pin_err_guard_shadowed_err/input --at src/lib.rs:2
+
+More:
+  Full evidence: rerun with --format human-full
+  Machine data: rerun with --format json

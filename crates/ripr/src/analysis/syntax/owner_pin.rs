@@ -1000,6 +1000,11 @@ pub(crate) fn owner_pin_assertions(source: &str, trusted: &[&str]) -> OwnerPinAs
     result.parsed = true;
     let lines = LineIndex::new(source);
     let empty_macros = local_empty_macros(parse.tree().syntax());
+    // A guard twin's discrimination assumes its `return Err(..)` is the
+    // prelude variant: only then does a changed owner fail the test. A file
+    // that binds the value name `Err` anywhere may route that return to an
+    // `Ok`, so its guards are never twin candidates (#7130 review).
+    let err_bound = file_binds_value_name(parse.tree().syntax(), "Err");
     for module in parse
         .tree()
         .syntax()
@@ -1118,25 +1123,27 @@ pub(crate) fn owner_pin_assertions(source: &str, trusted: &[&str]) -> OwnerPinAs
         // RIPR-SPEC-0197: a terminal Err-return guard is the assertion twin
         // of its negated condition (RIPR-SPEC-0154), keyed by its `if` line
         // and condition as [`err_return_guard_key`] spells it.
-        for guard in function
-            .syntax()
-            .descendants()
-            .filter_map(ast::IfExpr::cast)
-        {
-            let Some(condition) = terminal_err_return_guard_condition(&guard) else {
-                continue;
-            };
-            let Some(if_token) = guard.if_token() else {
-                continue;
-            };
-            let key = (
-                lines.line(if_token.text_range().start()),
-                err_return_guard_key(&condition.syntax().text().to_string()),
-            );
-            candidates
-                .entry(key)
-                .or_default()
-                .push(guard.syntax().clone());
+        if !err_bound {
+            for guard in function
+                .syntax()
+                .descendants()
+                .filter_map(ast::IfExpr::cast)
+            {
+                let Some(condition) = terminal_err_return_guard_condition(&guard) else {
+                    continue;
+                };
+                let Some(if_token) = guard.if_token() else {
+                    continue;
+                };
+                let key = (
+                    lines.line(if_token.text_range().start()),
+                    err_return_guard_key(&condition.syntax().text().to_string()),
+                );
+                candidates
+                    .entry(key)
+                    .or_default()
+                    .push(guard.syntax().clone());
+            }
         }
         let macros = function
             .syntax()
@@ -1229,6 +1236,58 @@ fn terminal_err_return_guard_condition(guard: &ast::IfExpr) -> Option<ast::Expr>
         return None;
     };
     (callee.syntax().text() == "Err").then_some(condition)
+}
+
+/// Whether the file binds the value name `name` anywhere, so an unqualified
+/// call of that name could resolve to the binding instead of the prelude:
+/// a `fn`, `const`, `static` or struct constructor of the name (an extern
+/// block's declaration parses as a `fn`), a pattern binding or parameter
+/// of the name, an explicit import of the name or into the name, or any
+/// glob import, which may carry the name opaquely. Enum and type
+/// declarations live in the type namespace and a `mod` in the module
+/// namespace, so none of them can capture a call; a `macro_rules!` of the
+/// name needs `!` and never intercepts one either.
+///
+/// Bindings of inline modules, functions and blocks do not leak outward,
+/// but the answer is deliberately file-wide: it only refuses the Err-return
+/// guard twin, so a coarser no never mis-credits, and the parser-backed
+/// name equality keeps the whole-word rule (#7130 review: identity over
+/// token coincidence).
+fn file_binds_value_name(root: &SyntaxNode, name: &str) -> bool {
+    let spells = |text: &str| text.trim_start_matches("r#") == name;
+    root.descendants().any(|node| {
+        let named = |item_name: Option<ast::Name>| {
+            item_name.is_some_and(|item_name| spells(item_name.text()))
+        };
+        ast::Fn::cast(node.clone()).is_some_and(|item| named(item.name()))
+            || ast::Const::cast(node.clone()).is_some_and(|item| named(item.name()))
+            || ast::Static::cast(node.clone()).is_some_and(|item| named(item.name()))
+            || ast::Struct::cast(node.clone()).is_some_and(|item| named(item.name()))
+            || ast::IdentPat::cast(node.clone()).is_some_and(|pattern| named(pattern.name()))
+            || ast::UseTree::cast(node.clone()).is_some_and(|tree| {
+                if let Some(rename) = tree.rename() {
+                    return rename
+                        .name()
+                        .is_some_and(|rename| spells(rename.text()));
+                }
+                if tree.star_token().is_some() {
+                    return true;
+                }
+                if tree.use_tree_list().is_some() {
+                    // The nested trees are their own `UseTree` nodes; a
+                    // prefix path here names the imported module, not a
+                    // binding of the name.
+                    return false;
+                }
+                tree.path().is_some_and(|path| {
+                    path.segments().last().is_some_and(|segment| {
+                        segment
+                            .name_ref()
+                            .is_some_and(|name_ref| spells(name_ref.text()))
+                    })
+                })
+            })
+    })
 }
 
 /// Duplicate function identities are ambiguous: the second insert refuses

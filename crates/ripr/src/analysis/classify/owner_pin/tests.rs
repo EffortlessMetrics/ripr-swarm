@@ -4571,3 +4571,48 @@ fn an_err_return_guard_pins_only_on_an_established_execution_path() {
         assert_not_pinned(&tests, "if weight(4) != 12");
     }
 }
+
+#[test]
+fn a_shadowed_err_refuses_the_err_return_guard_twin() {
+    // #7130 review: a value binding of the name `Err` can route the
+    // guard's `return Err(..)` to an `Ok`, so a changed owner no longer
+    // fails the test and the guard pins nothing. Every guard twin in a
+    // file that binds the name is refused, never re-read.
+    let guard =
+        "    if weight(4) != 12 {\n        return Err(\"mismatch\".to_string());\n    }\n    Ok(())";
+    let test_fn = |header: &str| {
+        format!("use demo::weight;\n\n{header}#[test]\nfn weighs() -> Result<(), String> {{\n{guard}\n}}\n")
+    };
+    let shadowed = [
+        // The wrong implementation itself: a fn of the name returning Ok.
+        test_fn("fn Err(_: &str) -> Result<(), String> { Ok(()) }\n\n"),
+        // A const constructor and a pattern binding spell the name in the
+        // value namespace too.
+        test_fn("const Err: fn(&str) -> Result<(), String> = |_| Ok(());\n\n"),
+        {
+            let body = "    let Err = |_: &str| -> Result<(), String> { Ok(()) };\n".to_string()
+                + guard;
+            format!("use demo::weight;\n\n#[test]\nfn weighs() -> Result<(), String> {{\n{body}\n}}\n")
+        },
+        // An explicit import of the name, and a glob that may carry it.
+        test_fn("mod shadow {\n    pub fn Err(_: &str) -> Result<(), String> { Ok(()) }\n}\nuse shadow::Err;\n\n"),
+        test_fn("use std::io::prelude::*;\n\n"),
+        // Bindings of an inline module do not leak outward, but the
+        // refusal is deliberately file-wide: coarser and conservative.
+        test_fn("mod shadow {\n    pub fn Err(_: &str) -> Result<(), String> { Ok(()) }\n}\n\n"),
+    ];
+    for tests in shadowed {
+        assert_not_pinned(&tests, "if weight(4) != 12");
+    }
+    // Without a binding of the name the same guard still pins: the twin
+    // needs the shadow question only when the file can shadow.
+    assert!(
+        weight_verdicts(
+            &weight_test(" -> Result<(), String>", guard),
+            "if weight(4) != 12"
+        )
+        .iter()
+        .all(|(text, admitted)| *admitted && text.starts_with("if weight(4) != 12")),
+        "the unshadowed guard must keep its credit"
+    );
+}

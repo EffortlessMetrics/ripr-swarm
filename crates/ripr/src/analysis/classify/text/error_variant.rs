@@ -1,5 +1,5 @@
 use super::{delimited_contents_at, enum_variant_values};
-use crate::analysis::extract::mask_comments_and_strings;
+use crate::analysis::extract::mask_with_string_delimiter_quotes;
 
 pub(in crate::analysis) fn exact_error_variant(text: &str) -> Option<String> {
     let open = match find_err_segment(text, "Err(") {
@@ -62,13 +62,15 @@ pub(in crate::analysis) fn changed_error_variant(text: &str) -> Option<String> {
 /// `Result::Err(..)` and `std::result::Result::Err(..)` still match.
 ///
 /// A fragment that opens or closes a string begun on another line (an odd
-/// count of unescaped `"`) would invert the mask, so it is searched as
-/// written, as before the mask existed.
+/// count of string-delimiter `"` — counted by the same scan the mask runs,
+/// so a quote inside a comment, a character literal or an escape is never
+/// one, #7130 review) would invert the mask, so it is searched as written.
 fn find_err_segment(text: &str, pattern: &str) -> Option<usize> {
-    let code = if has_unbalanced_string_quote(text) {
+    let (masked, delimiter_quotes) = mask_with_string_delimiter_quotes(text);
+    let code = if delimiter_quotes % 2 == 1 {
         text.to_string()
     } else {
-        mask_comments_and_strings(text)
+        masked
     };
     code.match_indices(pattern)
         .map(|(start, _)| start)
@@ -87,18 +89,6 @@ fn continues_identifier(ch: char) -> bool {
     ch.is_alphanumeric()
         || ch == '_'
         || (!ch.is_ascii() && !ch.is_whitespace() && !matches!(ch, '\u{200E}' | '\u{200F}'))
-}
-
-/// An odd count of `"` outside char literals (`'"'`) and escapes.
-fn has_unbalanced_string_quote(text: &str) -> bool {
-    let quotes = text
-        .replace("'\\\"'", "")
-        .replace("'\"'", "")
-        .replace("\\\\", "")
-        .replace("\\\"", "")
-        .matches('"')
-        .count();
-    quotes % 2 == 1
 }
 
 /// Whether `text` spells a `Result::Err` construction, `Err(..)` or
@@ -265,6 +255,11 @@ mod tests {
             "return Ok(0); // was Err(E::V)",
             "return Ok(\"Err::<(), E>(E::V)\");",
             "return Ok(0); /* Err(E::V) */",
+            // #7130 review: a quote inside a comment is no string
+            // delimiter, so it must not trip the unbalanced-fragment
+            // fallback and let the comment's spelling bind the identity.
+            "return Ok(0); // diagnostic \" Err(E::V)",
+            "/* \"note */ return Ok(0); /* Err(E::V) */",
         ] {
             assert!(!spells_result_err(text), "{text}");
             assert_eq!(exact_error_variant(text), None, "{text}");
