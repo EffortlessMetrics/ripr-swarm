@@ -424,4 +424,110 @@ mod tests {
         assert!(validate_environment(&stale_environment, &lock).is_err());
         Ok(())
     }
+
+    #[test]
+    fn native_skip_reasons_bind_registration_execution_and_failure_suppression()
+    -> Result<(), String> {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../fixtures/python-real-repo-evals/itsdangerous-future-age");
+        let receipt = read_json(&root.join("evidence/native.json"))?;
+        let rows = receipt["rows"].as_array().ok_or("missing native rows")?;
+        assert_eq!(rows.len(), 13);
+        // Independent answer key: registration, execution and suppression differ.
+        for (implementation, variant, registered, executed, expected_reason) in [
+            ("fixed", "effective", 1, 1, None),
+            ("broken", "effective", 1, 1, None),
+            ("fixed", "weak", 1, 1, None),
+            ("broken", "weak", 1, 1, None),
+            ("fixed", "skip-method", 1, 0, Some("pytest.skip")),
+            ("broken", "skip-method", 1, 0, Some("pytest.skip")),
+            ("fixed", "skip-class", 1, 0, Some("pytest.skip")),
+            ("broken", "skip-class", 1, 0, Some("pytest.skip")),
+            ("fixed", "xfail", 1, 1, None),
+            ("broken", "xfail", 1, 1, Some("pytest.xfail")),
+            ("fixed", "neighbors", 2, 2, None),
+            ("broken", "neighbors", 2, 2, None),
+            ("fixed", "full-file", 97, 97, None),
+        ] {
+            let row = rows
+                .iter()
+                .find(|row| row["implementation"] == implementation && row["variant"] == variant)
+                .ok_or_else(|| format!("missing control: {implementation}/{variant}"))?;
+            assert_eq!(row["registered"], serde_json::json!(registered));
+            assert_eq!(row["executed"], serde_json::json!(executed));
+            let ids = row["test_ids"]
+                .as_array()
+                .ok_or("missing native subjects")?;
+            assert_eq!(ids.len(), registered);
+            for id in ids {
+                assert_eq!(id.get("reason"), Some(&serde_json::json!(expected_reason)));
+            }
+            validate_row(row)?;
+            let label = format!("{implementation}/{variant}");
+            let last = ids
+                .len()
+                .checked_sub(1)
+                .ok_or("native control has no subjects")?;
+            for index in BTreeSet::from([0, last]) {
+                let mut missing = row.clone();
+                missing["test_ids"][index]
+                    .as_object_mut()
+                    .ok_or("native subject must be an object")?
+                    .remove("reason");
+                assert!(
+                    validate_row(&missing).is_err(),
+                    "{label}/{index}: missing reason must not count as explicit null"
+                );
+                for wrong in ["pytest.skip", "pytest.xfail", "unknown"] {
+                    if expected_reason == Some(wrong) {
+                        continue;
+                    }
+                    let mut changed = row.clone();
+                    changed["test_ids"][index]["reason"] = serde_json::json!(wrong);
+                    assert!(
+                        validate_row(&changed).is_err(),
+                        "{label}/{index}: reject JSON reason {wrong}"
+                    );
+                }
+            }
+            if let Some(reason) = expected_reason {
+                let mut missing = row.clone();
+                missing["test_ids"][0]["reason"] = Value::Null;
+                assert!(
+                    validate_row(&missing).is_err(),
+                    "{label}: skipped subject must name its reason"
+                );
+                let xml = row["junit_xml"].as_str().ok_or("missing native JUnit")?;
+                let original_type = format!("type=\"{reason}\"");
+                assert_eq!(xml.matches(&original_type).count(), 1);
+                let other = if reason == "pytest.skip" {
+                    "pytest.xfail"
+                } else {
+                    "pytest.skip"
+                };
+                for replacement in [
+                    String::new(),
+                    "type=\"unknown\"".to_string(),
+                    format!("type=\"{other}\""),
+                ] {
+                    let mut changed = row.clone();
+                    changed["junit_xml"] =
+                        serde_json::json!(xml.replace(&original_type, &replacement));
+                    assert!(
+                        validate_row(&changed).is_err(),
+                        "{label}: reject JUnit type {replacement}"
+                    );
+                }
+                let mut coherent_swap = row.clone();
+                coherent_swap["test_ids"][0]["reason"] = serde_json::json!(other);
+                coherent_swap["junit_xml"] =
+                    serde_json::json!(xml.replace(&original_type, &format!("type=\"{other}\"")));
+                assert!(
+                    validate_row(&coherent_swap).is_err(),
+                    "{label}: JSON/JUnit agreement cannot override the control answer key"
+                );
+            }
+        }
+        Ok(())
+    }
 }
