@@ -447,20 +447,7 @@ fn macro_payload<'a>(text: &'a str, name: &str) -> Option<&'a str> {
 }
 
 fn balanced_inner(after_open: &str) -> Option<&str> {
-    let mut depth = 1usize;
-    for (index, character) in after_open.char_indices() {
-        match character {
-            '(' | '[' | '{' => depth = depth.saturating_add(1),
-            ')' | ']' | '}' => {
-                depth = depth.saturating_sub(1);
-                if depth == 0 {
-                    return after_open.get(..index);
-                }
-            }
-            _ => {}
-        }
-    }
-    None
+    after_open.get(..delimited_group_closer_index(after_open)?)
 }
 
 fn first_call_argument(payload: &str) -> Option<String> {
@@ -527,6 +514,14 @@ fn remainder_after_delimited_group(text: &str) -> Option<&str> {
         return None;
     }
     let after_open = text.get(open.len_utf8()..)?;
+    let closer_at = delimited_group_closer_index(after_open)?;
+    let closer_len = after_open.get(closer_at..)?.chars().next()?.len_utf8();
+    after_open.get(closer_at.checked_add(closer_len)?..)
+}
+
+/// Byte index of the closer that returns depth to 0 in `after_open`.
+/// Quoted literals are scanned as units so a `)` inside a string is not a closer.
+fn delimited_group_closer_index(after_open: &str) -> Option<usize> {
     let mut depth = 1usize;
     let mut quote = None;
     let mut escaped = false;
@@ -551,7 +546,7 @@ fn remainder_after_delimited_group(text: &str) -> Option<&str> {
             ')' | ']' | '}' => {
                 depth = depth.saturating_sub(1);
                 if depth == 0 {
-                    return after_open.get(index.checked_add(character.len_utf8())?..);
+                    return Some(index);
                 }
             }
             _ => {}
