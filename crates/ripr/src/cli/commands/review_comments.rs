@@ -2023,8 +2023,7 @@ mod tests {
         use std::os::unix::fs::PermissionsExt as _;
 
         let root = unique_command_test_dir("review-canonical-ordinary-failure");
-        std::fs::create_dir_all(root.join("src"))
-            .map_err(|error| format!("create canonical ordinary-failure fixture: {error}"))?;
+        let unreadable = root.join("src/unreadable.rs");
 
         struct Fixture {
             root: PathBuf,
@@ -2039,21 +2038,22 @@ mod tests {
                 let _ = std::fs::remove_dir_all(&self.root);
             }
         }
+        let fixture = Fixture { root, unreadable };
 
+        std::fs::create_dir_all(fixture.root.join("src"))
+            .map_err(|error| format!("create canonical ordinary-failure fixture: {error}"))?;
         std::fs::write(
-            root.join("Cargo.toml"),
+            fixture.root.join("Cargo.toml"),
             "[package]\nname = \"review_canonical_ordinary_failure\"\nversion = \"0.1.0\"\nedition = \"2024\"\n[workspace]\n",
         )
         .map_err(|error| format!("write canonical ordinary-failure manifest: {error}"))?;
-        std::fs::write(root.join("src/lib.rs"), "pub fn value() -> i32 { 1 }\n")
-            .map_err(|error| format!("write canonical ordinary-failure source: {error}"))?;
-        let unreadable = root.join("src/unreadable.rs");
-        std::fs::write(&unreadable, "pub fn unused() -> i32 { 0 }\n")
+        std::fs::write(
+            fixture.root.join("src/lib.rs"),
+            "pub fn value() -> i32 { 1 }\n",
+        )
+        .map_err(|error| format!("write canonical ordinary-failure source: {error}"))?;
+        std::fs::write(&fixture.unreadable, "pub fn unused() -> i32 { 0 }\n")
             .map_err(|error| format!("write unreadable workspace source: {error}"))?;
-        let fixture = Fixture {
-            root: root.clone(),
-            unreadable: unreadable.clone(),
-        };
         std::fs::set_permissions(&fixture.unreadable, std::fs::Permissions::from_mode(0o000))
             .map_err(|error| format!("chmod unreadable workspace source: {error}"))?;
 
