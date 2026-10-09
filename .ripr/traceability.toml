@@ -324,6 +324,9 @@ id = "RIPR-SPEC-0005"
 name = "repo seam inventory and test grip"
 spec = "docs/specs/RIPR-SPEC-0005-repo-seam-inventory.md"
 tests = [
+  "crates/ripr/src/analysis/classify/activation.rs::tests::a_field_overwritten_before_the_assertion_is_not_the_owner_field",
+  "crates/ripr/src/analysis/classify/related_tests.rs::tests::a_test_import_of_a_same_name_twin_does_not_reach_the_owner",
+  "crates/ripr/src/analysis/classify/related_tests.rs::tests::enclosing_modules_names_the_inline_modules_around_a_line",
   "crates/ripr/tests/agent_command_journey.rs::standalone_packet_next_commands_stay_in_selected_root_from_foreign_cwd",
   "crates/ripr/src/output/evidence_record.rs::tests::bound_verify_keeps_its_typed_spec_for_punctuated_roots",
   "crates/ripr/tests/agent_command_journey.rs::prepared_packet_next_commands_stay_in_selected_root_from_foreign_cwd",

@@ -643,19 +643,22 @@ fn find_related_tests_with_candidates<'a>(
     // and Combinations). The uniqueness bypass above only gates *cross-crate*
     // package-prefix filtering; this count is the receiver-identity gate
     // (#4760) and uses whatever the index actually contains.
-    let indexed_same_name_count = if owner_name.is_empty() {
-        0
+    let indexed_same_name_ids: Vec<&str> = if owner_name.is_empty() {
+        Vec::new()
     } else {
         match candidates {
-            RelatedTestCandidates::Indexed(candidate_index) => {
-                candidate_index.function_indices(owner_name).len()
-            }
+            RelatedTestCandidates::Indexed(candidate_index) => candidate_index
+                .function_indices(owner_name)
+                .iter()
+                .map(|&function_index| index.functions().at(function_index).id.0.as_str())
+                .collect(),
             #[cfg(test)]
             RelatedTestCandidates::FullScan => index
                 .functions()
                 .iter()
                 .filter(|function| function.name == owner_name)
-                .count(),
+                .map(|function| function.id.0.as_str())
+                .collect(),
         }
     };
 
@@ -981,7 +984,7 @@ fn find_related_tests_with_candidates<'a>(
                 test,
                 owner_fn,
                 owner_name,
-                indexed_same_name_count,
+                &indexed_same_name_ids,
                 test_source,
                 index,
             )
@@ -2824,10 +2827,11 @@ fn owner_call_relation_reason(
     test: &TestSummary,
     owner_fn: Option<&FunctionSummary>,
     owner_name: &str,
-    indexed_same_name_count: usize,
+    same_name_ids: &[&str],
     test_source: Option<&str>,
     index: &RustIndex,
 ) -> RelationReason {
+    let indexed_same_name_count = same_name_ids.len();
     let Some(owner) = owner_fn else {
         return RelationReason::DirectOwnerCall;
     };
@@ -2887,10 +2891,29 @@ fn owner_call_relation_reason(
             }
             return RelationReason::DirectOwnerCall;
         }
-        if free_function_call_spells_free_call(test, owner_name) {
-            return RelationReason::DirectOwnerCall;
+        if !free_function_call_spells_free_call(test, owner_name) {
+            return RelationReason::WeakTokenSubstring;
         }
-        return RelationReason::WeakTokenSubstring;
+        // RIPR-SPEC-0005: a free function whose name another module also
+        // defines is not reached when the test's own `use` binds the bare
+        // name to that other module's twin.
+        if indexed_same_name_count > 1
+            && test_source
+                .and_then(|source| enclosing_modules(source, test.start_line))
+                .is_some_and(|module| {
+                    test_imports_same_name_twin(
+                        &test.body,
+                        &test.file,
+                        &module,
+                        &owner.id.0,
+                        owner_name,
+                        same_name_ids,
+                    )
+                })
+        {
+            return RelationReason::WeakTokenSubstring;
+        }
+        return RelationReason::DirectOwnerCall;
     };
     // #6951: when the test's own module scope declares the owner's impl
     // type, a bare receiver of that name binds the test-local shadow, not
@@ -2953,6 +2976,247 @@ fn owner_call_relation_reason(
     } else {
         RelationReason::WeakTokenSubstring
     }
+}
+
+/// Whether a `use` written directly in the test body binds `owner_name` to a
+/// same-name twin of the owner, so the test's bare `owner_name(..)` calls
+/// reach the twin (`use super::retail::*;` beside `wholesale::price_quote`).
+/// Comments and strings are masked. A block-level import shadows the module
+/// scope, and a named import beats a glob. The import path (after
+/// `super`/`self`/`crate`) must end in an inline module that exactly one
+/// indexed definition of `owner_name` sits in, and that definition is not
+/// the owner; the leading keywords are dropped, so that single match is
+/// what makes the path unambiguous. Fail-open: a path-qualified or method
+/// call of the name anywhere in the test, a module-level import, an import
+/// in a nested block, two globs, an import path no twin matches or the owner
+/// also matches (a re-export), and `use super::*` all keep the relation.
+/// The inline `mod` names enclosing 1-based `line` of `source`, outermost
+/// first; `None` when `line` is past the end of the source.
+fn enclosing_modules(source: &str, line: usize) -> Option<Vec<String>> {
+    let masked = mask_comments_and_strings(source);
+    let offset = if line <= 1 {
+        0
+    } else {
+        masked.match_indices('\n').nth(line - 2)?.0 + 1
+    };
+    // Rust identifiers may be non-ASCII (`mod módulo`), so the name runs to
+    // the previous non-identifier char boundary.
+    let is_ident = |ch: char| ch.is_alphanumeric() || ch == '_';
+    let mut stack: Vec<Option<String>> = Vec::new();
+    for (index, ch) in masked[..offset].char_indices() {
+        match ch {
+            '{' => {
+                let head = masked[..index].trim_end();
+                let name_start = head
+                    .char_indices()
+                    .rev()
+                    .find(|(_, ch)| !is_ident(*ch))
+                    .map_or(0, |(at, ch)| at + ch.len_utf8());
+                let name = &head[name_start..];
+                let keyword = head[..name_start].trim_end();
+                let is_mod = !name.is_empty()
+                    && keyword.ends_with("mod")
+                    && !keyword[..keyword.len() - 3]
+                        .chars()
+                        .next_back()
+                        .is_some_and(is_ident);
+                stack.push(is_mod.then(|| name.to_string()));
+            }
+            '}' => {
+                stack.pop();
+            }
+            _ => {}
+        }
+    }
+    Some(stack.into_iter().flatten().collect())
+}
+
+fn test_imports_same_name_twin(
+    body: &str,
+    test_file: &std::path::Path,
+    test_module: &[String],
+    owner_id: &str,
+    owner_name: &str,
+    same_name_ids: &[&str],
+) -> bool {
+    let body = mask_comments_and_strings(body);
+    let Some(body_open) = body.find('{') else {
+        return false;
+    };
+    let is_ident = |ch: char| ch.is_ascii_alphanumeric() || ch == '_';
+    // `use` at an identifier boundary followed by any Rust whitespace: a
+    // plain `use x;` and a line-wrapped import both count (#7093 review). A
+    // substring of a longer identifier (`unused`) is not the keyword.
+    let use_starts: Vec<usize> = {
+        let mut starts = Vec::new();
+        let mut from = 0usize;
+        while let Some(offset) = body[from..].find("use") {
+            let at = from + offset;
+            from = at + 3;
+            if body[..at].chars().next_back().is_some_and(is_ident)
+                || !body[at + 3..].starts_with(char::is_whitespace)
+            {
+                continue;
+            }
+            starts.push(at);
+        }
+        starts
+    };
+    // Any qualified or method mention of the name (a call, a fn pointer
+    // `super::wholesale::price_quote`, a turbofish) may reach the owner.
+    let use_spans: Vec<(usize, usize)> = use_starts
+        .iter()
+        .map(|&start| {
+            let end = body[start..]
+                .find(';')
+                .map_or(body.len(), |end| start + end);
+            (start, end)
+        })
+        .collect();
+    let only_bare_calls = body.match_indices(owner_name).all(|(start, matched)| {
+        if use_spans
+            .iter()
+            .any(|(from, to)| (*from..*to).contains(&start))
+            || body[..start].chars().next_back().is_some_and(is_ident)
+            || body[start + matched.len()..].starts_with(is_ident)
+        {
+            return true;
+        }
+        let before = body[..start].trim_end();
+        !before.ends_with("::") && !before.ends_with('.')
+    });
+    if !only_bare_calls {
+        return false;
+    }
+    let mut named = Vec::new();
+    let mut globs = Vec::new();
+    for &start in &use_starts {
+        if start <= body_open {
+            continue;
+        }
+        // An attributed import (`#[cfg(any())] use ..`, also behind a
+        // `pub`/`pub(crate)`) may be compiled out, so the name may still
+        // bind the owner: undecided.
+        let before = body[..start].trim_end();
+        if before.ends_with(']')
+            || before.ends_with(')')
+            || (before.ends_with("pub")
+                && !before[..before.len() - 3]
+                    .chars()
+                    .next_back()
+                    .is_some_and(is_ident))
+        {
+            return false;
+        }
+        let rest = &body[start + 3..];
+        let path_from = start + 3 + (rest.len() - rest.trim_start().len());
+        let Some(path) = body[path_from..].split(';').next() else {
+            continue;
+        };
+        // A brace list or a rename that names the owner (`{price_quote, Quote}`,
+        // `price_quote as wq`) may bind the owner itself: undecided.
+        if (path.contains('{') || path.contains(" as "))
+            && path.match_indices(owner_name).any(|(index, matched)| {
+                !path[..index].chars().next_back().is_some_and(is_ident)
+                    && !path[index + matched.len()..].starts_with(is_ident)
+            })
+        {
+            return false;
+        }
+        let path: String = path.chars().filter(|ch| !ch.is_whitespace()).collect();
+        let Some((module, leaf)) = path.rsplit_once("::") else {
+            continue;
+        };
+        if leaf != "*" && leaf != owner_name {
+            continue;
+        }
+        let depth = body[body_open..start]
+            .chars()
+            .fold(0isize, |depth, ch| match ch {
+                '{' => depth + 1,
+                '}' => depth - 1,
+                _ => depth,
+            });
+        if depth != 1 {
+            return false;
+        }
+        if leaf == "*" {
+            globs.push(module.to_string());
+        } else {
+            named.push(module.to_string());
+        }
+    }
+    let module = match (named.as_slice(), globs.as_slice()) {
+        ([module], _) | ([], [module]) => module,
+        _ => return false,
+    };
+    // Resolve the import against the test's own module: `crate` is the file
+    // root, `self` and a bare path are the test's module, and each `super`
+    // steps out one module.
+    let mut path_segments = module.split("::").peekable();
+    let mut base: Vec<&str> = test_module.iter().map(String::as_str).collect();
+    if path_segments.peek() == Some(&"crate") {
+        path_segments.next();
+        base.clear();
+    } else if path_segments.peek() == Some(&"self") {
+        path_segments.next();
+    } else {
+        while path_segments.peek() == Some(&"super") {
+            path_segments.next();
+            if base.pop().is_none() {
+                return false;
+            }
+        }
+    }
+    let imported: Vec<&str> = path_segments.collect();
+    let segments: Vec<&str> = base
+        .iter()
+        .copied()
+        .chain(imported.iter().copied())
+        .collect();
+    if imported.is_empty()
+        || imported
+            .iter()
+            .any(|segment| matches!(*segment, "super" | "self" | "crate"))
+        || segments
+            .iter()
+            .any(|segment| !segment.chars().all(is_ident))
+    {
+        return false;
+    }
+    // Every same-name definition must sit in the test's own file, and the
+    // import must name the twin's full in-file module path. A twin in another
+    // file or crate, a file-backed module, or a nested module of the same
+    // name may not be what the import binds, so the relation stays.
+    let in_file = |id: &str| -> Option<String> {
+        let (file, _) = id.split_once(".rs::")?;
+        Some(format!("{file}.rs"))
+    };
+    let test_file = test_file.to_string_lossy().replace('\\', "/");
+    let Some(file) = in_file(owner_id) else {
+        return false;
+    };
+    // `crate` names the file root only in a crate root file.
+    let crate_root = ["lib.rs", "main.rs"]
+        .iter()
+        .any(|root| file == *root || file.ends_with(&format!("/{root}")));
+    if module.starts_with("crate::") && !crate_root {
+        return false;
+    }
+    if !(test_file == file || test_file.ends_with(&format!("/{file}")))
+        || same_name_ids
+            .iter()
+            .any(|id| in_file(id).as_deref() != Some(file.as_str()))
+    {
+        return false;
+    }
+    // The twin must also be the only definition whose path ends in the
+    // resolved module path, and the owner's must not.
+    let suffix = format!("::{}::{owner_name}", segments.join("::"));
+    let twin = format!("{file}::{}::{owner_name}", segments.join("::"));
+    let mut matching = same_name_ids.iter().filter(|id| id.ends_with(&suffix));
+    matches!((matching.next(), matching.next()), (Some(only), None) if *only == twin)
+        && !owner_id.ends_with(&suffix)
 }
 
 /// Whether the test spells a call of `name` that can reach a free function:
@@ -3132,6 +3396,7 @@ pub(in crate::analysis) fn is_free_function_call_at(text: &str, at: usize, name:
         true
     }
 }
+
 /// Whether `owner` is established as a module-level free function: the
 /// parser-backed container fact says `Free` and the parameter list has no
 /// `self` receiver. The `Unknown` container (lexical fallback, stale
@@ -3344,6 +3609,238 @@ mod tests {
     };
     use std::path::{Path, PathBuf};
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn a_test_import_of_a_same_name_twin_does_not_reach_the_owner() {
+        let ids = [
+            "src/lib.rs::retail::price_quote",
+            "src/lib.rs::wholesale::price_quote",
+        ];
+        let owner = "src/lib.rs::wholesale::price_quote";
+        let lib = Path::new("src/lib.rs");
+        let tests = ["tests".to_string()];
+        let twin = |body: &str, owner: &str| {
+            test_imports_same_name_twin(body, lib, &tests, owner, "price_quote", &ids)
+        };
+        let glob = "fn t() {\n use super::retail::*;\n price_quote(3);\n}";
+        assert!(twin(glob, owner));
+        let named = "fn t() {\n use crate::retail::price_quote;\n price_quote(3);\n}";
+        assert!(twin(named, owner));
+        // #7093 review: any Rust whitespace may follow the `use` keyword, so
+        // a wrapped or tab-indented import still binds the twin.
+        assert!(twin(
+            "fn t() {\n use\n super::retail::*;\n price_quote(3);\n}",
+            owner
+        ));
+        assert!(twin(
+            "fn t() {\n use\t super::retail::*;\n price_quote(3);\n}",
+            owner
+        ));
+        assert!(twin(
+            "fn t() {\n use\n crate::retail::price_quote;\n price_quote(3);\n}",
+            owner
+        ));
+        // RIPR-SPEC-0005: the import naming the owner's own module reaches it.
+        assert!(!twin(glob, "src/lib.rs::retail::price_quote"));
+        // Fail-open shapes keep the relation: no import, a parent glob, a
+        // module no twin sits in (a re-export), a nested-block import, and
+        // an import that does not bind the name.
+        assert!(!twin("fn t() {\n price_quote(3);\n}", owner));
+        assert!(!twin(
+            "fn t() {\n use super::*;\n price_quote(3);\n}",
+            owner
+        ));
+        assert!(!twin(
+            "fn t() {\n use super::api::*;\n price_quote(3);\n}",
+            owner
+        ));
+        assert!(!twin(
+            "fn t() {\n { use super::retail::*; }\n price_quote(3);\n}",
+            owner
+        ));
+        assert!(!twin(
+            "fn t() {\n use super::retail::Quote;\n price_quote(3);\n}",
+            owner
+        ));
+        assert!(!twin(
+            "fn t() {\n #[cfg(any())]\n use super::retail::*;\n price_quote(3);\n}",
+            owner
+        ));
+        assert!(!twin(
+            "fn t() {\n #[cfg(any())] pub use super::retail::*;\n price_quote(3);\n}",
+            owner
+        ));
+        assert!(!twin(
+            "fn t() {\n #[cfg(any())] pub(crate) use super::retail::*;\n price_quote(3);\n}",
+            owner
+        ));
+        // A path-qualified or method call of the name keeps the relation.
+        assert!(!twin(
+            "fn t() {\n use super::retail::*;\n super::wholesale::price_quote(3);\n}",
+            owner
+        ));
+        assert!(!twin(
+            "fn t() {\n use super::retail::*;\n price_quote(1);\n wholesale::price_quote(3);\n}",
+            owner
+        ));
+        // A named import beats a glob; two named imports or two globs stay
+        // undecided.
+        assert!(!twin(
+            "fn t() {\n use super::wholesale::price_quote;\n use super::retail::*;\n price_quote(3);\n}",
+            owner
+        ));
+        assert!(twin(
+            "fn t() {\n use super::retail::price_quote;\n use super::wholesale::*;\n price_quote(3);\n}",
+            owner
+        ));
+        assert!(!twin(
+            "fn t() {\n use super::retail::*;\n use super::other::*;\n price_quote(3);\n}",
+            owner
+        ));
+        // A brace list or rename naming the owner leaves the import undecided.
+        assert!(!twin(
+            "fn t() {\n use super::wholesale::{price_quote, Quote};\n use super::retail::*;\n price_quote(3);\n}",
+            owner
+        ));
+        assert!(!twin(
+            "fn t() {\n use super::wholesale::price_quote as wq;\n use super::retail::*;\n price_quote(1);\n wq(3);\n}",
+            owner
+        ));
+        // A qualified non-call mention may reach the owner too.
+        assert!(!twin(
+            "fn t() {\n use super::retail::*;\n let f: fn(u32) -> Quote = super::wholesale::price_quote;\n f(3);\n}",
+            owner
+        ));
+        // Comments and strings are not imports.
+        assert!(!twin(
+            "fn t() {\n // use super::retail::*;\n price_quote(3);\n}",
+            owner
+        ));
+        assert!(!twin(
+            "fn t() {\n let s = \"use super::retail::*;\";\n price_quote(3);\n}",
+            owner
+        ));
+        // Two twins in modules with the same name stay undecided.
+        let nested = [
+            "src/lib.rs::a::retail::price_quote",
+            "src/lib.rs::b::retail::price_quote",
+            owner,
+        ];
+        assert!(!test_imports_same_name_twin(
+            glob,
+            lib,
+            &tests,
+            owner,
+            "price_quote",
+            &nested
+        ));
+        // The import binds a module of the test's own file, so a twin that
+        // only shares a path suffix (another crate, a file-backed owner, a
+        // nested module of the same name) or a test in another file keeps
+        // the relation.
+        let undecided = |test_file: &str, owner: &str, ids: &[&str]| {
+            !test_imports_same_name_twin(
+                glob,
+                Path::new(test_file),
+                &tests,
+                owner,
+                "price_quote",
+                ids,
+            )
+        };
+        assert!(undecided(
+            "crates/b/src/retail.rs",
+            "crates/b/src/retail.rs::price_quote",
+            &[
+                "crates/a/src/lib.rs::retail::price_quote",
+                "crates/b/src/retail.rs::price_quote"
+            ],
+        ));
+        assert!(undecided(
+            "src/lib.rs",
+            "src/retail.rs::price_quote",
+            &[
+                "src/lib.rs::legacy::retail::price_quote",
+                "src/retail.rs::price_quote"
+            ],
+        ));
+        assert!(undecided(
+            "src/lib.rs",
+            owner,
+            &["src/lib.rs::legacy::retail::price_quote", owner],
+        ));
+        assert!(undecided("tests/quote.rs", owner, &ids));
+        // `super::retail` from `pricing::tests` names `pricing::retail`.
+        assert!(undecided(
+            "src/lib.rs",
+            "src/lib.rs::pricing::retail::price_quote",
+            &[
+                "src/lib.rs::retail::price_quote",
+                "src/lib.rs::pricing::retail::price_quote"
+            ],
+        ));
+        assert!(!undecided("/work/repo/src/lib.rs", owner, &ids));
+        // The import resolves against the test's own module: `self` and a
+        // nested `super` name modules no twin sits in (a re-export), and a
+        // nested twin is reached through its parent.
+        let resolve = |body: &str, module: &[&str], ids: &[&str]| {
+            let module: Vec<String> = module.iter().map(|name| (*name).to_string()).collect();
+            test_imports_same_name_twin(body, lib, &module, owner, "price_quote", ids)
+        };
+        let self_glob = "fn t() {\n use self::retail::*;\n price_quote(3);\n}";
+        assert!(!resolve(self_glob, &["tests"], &ids));
+        assert!(!resolve(glob, &["pricing", "tests"], &ids));
+        assert!(resolve(
+            glob,
+            &["pricing", "tests"],
+            &["src/lib.rs::pricing::retail::price_quote", owner],
+        ));
+        assert!(!resolve(
+            "fn t() {\n use super::super::retail::*;\n price_quote(3);\n}",
+            &["tests"],
+            &ids
+        ));
+        // `crate` is the file root only in a crate root file.
+        let crate_glob = "fn t() {\n use crate::retail::*;\n price_quote(3);\n}";
+        assert!(!test_imports_same_name_twin(
+            crate_glob,
+            Path::new("src/calib.rs"),
+            &tests,
+            "src/calib.rs::wholesale::price_quote",
+            "price_quote",
+            &[
+                "src/calib.rs::retail::price_quote",
+                "src/calib.rs::wholesale::price_quote"
+            ],
+        ));
+        assert!(!test_imports_same_name_twin(
+            crate_glob,
+            Path::new("src/pricing.rs"),
+            &tests,
+            "src/pricing.rs::wholesale::price_quote",
+            "price_quote",
+            &[
+                "src/pricing.rs::retail::price_quote",
+                "src/pricing.rs::wholesale::price_quote"
+            ],
+        ));
+    }
+
+    #[test]
+    fn enclosing_modules_names_the_inline_modules_around_a_line() {
+        let source = "mod pricing {\n    // mod fake {\n    mod tests {\n        fn t() {}\n    }\n}\nfn after() {}\n";
+        assert_eq!(
+            enclosing_modules(source, 4),
+            Some(vec!["pricing".to_string(), "tests".to_string()])
+        );
+        assert_eq!(enclosing_modules(source, 7), Some(Vec::new()));
+        assert_eq!(enclosing_modules(source, 99), None);
+        let unicode = "mod módulo {\n    mod tests {\n        fn t() {}\n    }\n}\n";
+        assert_eq!(
+            enclosing_modules(unicode, 3),
+            Some(vec!["módulo".to_string(), "tests".to_string()])
+        );
+    }
 
     #[test]
     fn opaque_declarations_do_not_supply_body_owner_calls() {
