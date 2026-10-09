@@ -1,0 +1,8 @@
+[package]
+name = "whole_value_string_from_shadow_fixture"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+name = "whole_value_string_from_shadow_fixture"
+path = "src/lib.rs"

@@ -202,6 +202,25 @@ impl TestValueFacts {
     }
 }
 
+fn is_free(function: &FunctionSummary) -> bool {
+    function.impl_context == crate::analysis::facts::FunctionImplContext::Free
+}
+
+/// The part of a captured call line that is a call of the owner: the whole
+/// line, or for a module-level `fn` the suffix from its own bare or
+/// module-qualified call, never a same-line `Type::name(..)` (#6713).
+fn owner_name_call_text<'text>(
+    text: &'text str,
+    owner_name: &str,
+    free_owner: bool,
+) -> Option<&'text str> {
+    if free_owner && !owner_name.is_empty() {
+        super::related_tests::free_function_call_text(text, owner_name)
+    } else {
+        Some(text)
+    }
+}
+
 /// The value context of a qualified path token found in a test (#5357):
 /// `Constant` when the path's spelling establishes a constant, otherwise the
 /// historical `EnumVariant`.
@@ -218,11 +237,14 @@ fn value_facts_for_test(test: &TestSummary, owner_fn: Option<&FunctionSummary>) 
     let parameters = owner_fn.map(function_parameters).unwrap_or_default();
     let mut facts = Vec::new();
 
+    let free_owner = owner_fn.is_some_and(is_free);
     for call in test.body_calls() {
         if !owner_name.is_empty() && call.name != owner_name {
             continue;
         }
-        let Some(arguments) = call_arguments(&call.text, &call.name) else {
+        let Some(arguments) = owner_name_call_text(&call.text, owner_name, free_owner)
+            .and_then(|text| call_arguments(text, &call.name))
+        else {
             continue;
         };
         for (idx, argument) in arguments.iter().enumerate() {
@@ -320,7 +342,7 @@ fn observed_discriminator_values(
     else {
         return Vec::new();
     };
-    let call_values = call_values_for_owner(owner, &parameters, related_tests, helper_chain);
+    let call_values = call_values_for_owner(owner, &parameters, related_tests, helper_chain, index);
     let left_parameter = boundary_operand_parameter(owner, &parameters, &left);
     let right_parameter = boundary_operand_parameter(owner, &parameters, &right);
     // #3295: the operands resolve once per probe (initializer or
@@ -838,7 +860,7 @@ fn missing_boundary_discriminator(
     let parameters = function_parameters(owner);
     let (left, right) =
         oriented_comparison_operands(owner, &parameters, &probe.expression, probe.location.line)?;
-    let call_values = call_values_for_owner(owner, &parameters, related_tests, helper_chain);
+    let call_values = call_values_for_owner(owner, &parameters, related_tests, helper_chain, index);
     if call_values.is_empty() {
         // Every related call passes only computed arguments (#6672): the
         // inputs exist but none is readable, so the boundary is
@@ -1499,10 +1521,25 @@ fn constructed_field_name(expression: &str) -> Option<&str> {
 /// Whether `assertion` reads `read` (`.field`) on a value the test got from
 /// calling `owner`: a direct `owner(..).field` chain, or a receiver the test
 /// body binds with `let [mut] recv = ..owner(..)..;`.
+///
+/// A read inside a struct literal's braces (`assert_eq!(c, Config { retries:
+/// c.retries, .. })`) copies the owner's value into the expected side, so
+/// the comparison cannot fail on it: it observes nothing (RIPR-SPEC-0225
+/// acceptance example 12). Any unclosed `{` before the read refuses it, a
+/// block or closure body too: that fails closed to a gap. So does a read in
+/// an `assert_eq!`/`assert_ne!` operand whose other operand is the whole
+/// result (`assert_eq!(c, Config::new(c.retries))`).
 fn reads_owner_result_field(body: &str, assertion: &str, read: &str, owner: &str) -> bool {
     let is_ident = |ch: char| ch.is_ascii_alphanumeric() || ch == '_';
     let owner_call = format!("{owner}(");
+    let masked = crate::analysis::extract::mask_comments_and_strings(assertion);
     assertion.match_indices(read).any(|(start, matched)| {
+        let braces = masked.get(..start).unwrap_or_default();
+        if braces.matches('{').count() > braces.matches('}').count()
+            || read_feeds_whole_result_comparison(body, assertion, &masked, start, owner)
+        {
+            return false;
+        }
         if assertion[start + matched.len()..]
             .chars()
             .next()
@@ -1518,8 +1555,394 @@ fn reads_owner_result_field(body: &str, assertion: &str, read: &str, owner: &str
             .rfind(|ch: char| !is_ident(ch))
             .map_or(0, |index| index + 1);
         let receiver = &before[receiver_start..];
-        !receiver.is_empty() && binds_from_owner_call(body, receiver, &owner_call)
+        !receiver.is_empty()
+            && binds_from_owner_call(body, receiver, &owner_call)
+            && !field_overwritten_before(body, assertion, receiver, &read[1..], &owner_call)
     })
+}
+
+/// Whether the owner's value of `field` no longer sits in `receiver` where
+/// `assertion` reads it (RIPR-SPEC-0005: field credit holds only before
+/// shadow or field overwrite). Comments and strings are masked, and only a
+/// `let` or assignment in the assertion's own block or an enclosing one
+/// counts. Walking back from the assertion, the nearest visible
+/// `let receiver` that sets `field` in a struct literal to a value not read
+/// from the receiver (`let q = Quote { total: 99, ..q };`) overwrites it; a
+/// struct update that leaves `field` to its `..receiver` base passes it
+/// through; and a visible `receiver.field = value` after the owner binding
+/// overwrites it. Anything else, including an assertion that is not found
+/// exactly once in the body, keeps the credit.
+fn field_overwritten_before(
+    body: &str,
+    assertion: &str,
+    receiver: &str,
+    field: &str,
+    owner_call: &str,
+) -> bool {
+    let mut found = body.match_indices(assertion).map(|(index, _)| index);
+    let (Some(position), None) = (found.next(), found.next()) else {
+        return false;
+    };
+    let masked = crate::analysis::extract::mask_comments_and_strings(body);
+    let Some(prefix) = masked.get(..position) else {
+        return false;
+    };
+    let tainted = receiver_derived_bindings(prefix, receiver, owner_call);
+    let fresh = |value: &str| {
+        !mentions_ident(value, receiver)
+            && !tainted.iter().any(|name| mentions_ident(value, name))
+            && !value.contains(owner_call)
+    };
+    let visible = |start: usize| visible_at(prefix, start);
+    for (start, initializer) in receiver_lets(prefix, receiver).into_iter().rev() {
+        if !visible(start) {
+            continue;
+        }
+        if let Some((fields, base)) = struct_literal_fields(initializer) {
+            match fields.iter().find(|(name, _)| *name == field) {
+                // A copied value is the owner's until a later assignment.
+                Some((_, value)) => {
+                    return value.is_some_and(fresh)
+                        || field_assigned(prefix, start, receiver, field, &fresh);
+                }
+                None if base == Some(receiver) => continue,
+                None => return false,
+            }
+        }
+        if initializer.contains(owner_call) {
+            return field_assigned(prefix, start, receiver, field, &fresh);
+        }
+        return false;
+    }
+    false
+}
+
+/// Names bound in `body` from the receiver or another owner call, directly
+/// or through another such name (`let t = q.total; let u = t;`,
+/// `t = q.total;`, `let base = bundle(3);`): a value built from them may be
+/// the owner's own field value.
+fn receiver_derived_bindings(body: &str, receiver: &str, owner_call: &str) -> Vec<String> {
+    let is_ident = |ch: char| ch.is_ascii_alphanumeric() || ch == '_';
+    fn binding(statement: &str) -> Option<(&str, &str)> {
+        let statement = statement.trim();
+        let statement = statement.strip_prefix("let ").unwrap_or(statement);
+        let (pattern, initializer) = statement.split_once('=')?;
+        if initializer.starts_with('=')
+            || pattern.ends_with(['!', '<', '>', '+', '-', '*', '/', '|', '&', '^', '%'])
+        {
+            return None;
+        }
+        Some((pattern, initializer))
+    }
+    // `let pattern = init;` and plain `name = value;` statements. A whole
+    // `let` statement is read again up to its `;` so a destructuring pattern
+    // (`let Quote { total, .. } = bundle(3);`) keeps its braced names.
+    let mut bindings: Vec<(&str, &str)> = body.split([';', '{', '}']).filter_map(binding).collect();
+    bindings.extend(
+        body.match_indices("let ")
+            .filter(|(start, _)| !body[..*start].chars().next_back().is_some_and(is_ident))
+            .filter_map(|(start, _)| binding(body[start..].split(';').next().unwrap_or_default())),
+    );
+    let mut tainted = vec![receiver.to_string()];
+    loop {
+        let before = tainted.len();
+        for (pattern, initializer) in &bindings {
+            if initializer.contains(owner_call)
+                || tainted.iter().any(|name| mentions_ident(initializer, name))
+            {
+                for name in pattern.split(|ch: char| !is_ident(ch)) {
+                    if !name.is_empty()
+                        && name != "mut"
+                        && name.starts_with(|ch: char| ch.is_ascii_lowercase() || ch == '_')
+                        && !tainted.iter().any(|known| known == name)
+                    {
+                        tainted.push(name.to_string());
+                    }
+                }
+            }
+        }
+        if tainted.len() == before {
+            break;
+        }
+    }
+    tainted.remove(0);
+    tainted
+}
+
+/// Whether a statement starting at `start` is still in scope at the end of
+/// `prefix`: no block it sits in has closed since.
+fn visible_at(prefix: &str, start: usize) -> bool {
+    let mut depth = 0isize;
+    for ch in prefix[start..].chars() {
+        match ch {
+            '{' => depth += 1,
+            '}' => {
+                depth -= 1;
+                if depth < 0 {
+                    return false;
+                }
+            }
+            _ => {}
+        }
+    }
+    true
+}
+
+fn mentions_ident(text: &str, name: &str) -> bool {
+    let is_ident = |ch: char| ch.is_ascii_alphanumeric() || ch == '_';
+    text.match_indices(name).any(|(start, matched)| {
+        !text[..start].chars().next_back().is_some_and(is_ident)
+            && !text[start + matched.len()..].starts_with(is_ident)
+    })
+}
+
+/// The index of the statement-ending `;` in `text`: the first one not nested
+/// inside `(`, `[` or `{` — an array length's `;` in `[u8; 4]` is part of
+/// the type, not the statement end — or the text's end when no such `;`
+/// exists.
+fn statement_semicolon(text: &str) -> usize {
+    let mut depth = 0usize;
+    for (index, ch) in text.char_indices() {
+        match ch {
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => {
+                depth = depth.saturating_sub(1);
+            }
+            ';' if depth == 0 => return index,
+            _ => {}
+        }
+    }
+    text.len()
+}
+
+/// The `let [mut] receiver [: Type] = initializer;` statements in `body`, in
+/// order, as (statement start, initializer).
+fn receiver_lets<'a>(body: &'a str, receiver: &str) -> Vec<(usize, &'a str)> {
+    let is_ident = |ch: char| ch.is_ascii_alphanumeric() || ch == '_';
+    body.match_indices("let ")
+        .filter(|(start, _)| !body[..*start].chars().next_back().is_some_and(is_ident))
+        .filter_map(|(start, _)| {
+            let rest = &body[start + 4..];
+            let statement = &rest[..statement_semicolon(rest)];
+            let rest = statement.trim_start();
+            let rest = rest.strip_prefix("mut ").unwrap_or(rest).trim_start();
+            let rest = rest.strip_prefix(receiver)?;
+            if rest.starts_with(is_ident) {
+                return None;
+            }
+            let (_, initializer) = rest.split_once('=')?;
+            let initializer = initializer.trim();
+            (!initializer.starts_with('=')).then_some((start, initializer))
+        })
+        .collect()
+}
+
+/// The fields (with their value, `None` for shorthand) and `..base` of a
+/// struct literal `Path { a: x, b, ..base }`; `None` for any other
+/// initializer.
+type StructLiteral<'a> = (Vec<(&'a str, Option<&'a str>)>, Option<&'a str>);
+
+fn struct_literal_fields(initializer: &str) -> Option<StructLiteral<'_>> {
+    let open = initializer.find('{')?;
+    let path = initializer[..open].trim();
+    // `Quote::<u8> { .. }`: drop the turbofish, whose arguments are type
+    // syntax only, however they are spelled (`(u8, Vec<u8>)`, `[u8; 4]`).
+    // The generic list must balance back to zero across the path (`->` in a
+    // `fn(..) -> ..` type is not a closing angle); an unbalanced shape fails
+    // open and keeps the credit.
+    let path = match path.find('<') {
+        Some(generics) if path.ends_with('>') => {
+            let mut depth = 0usize;
+            let mut previous = ' ';
+            for ch in path[generics..].chars() {
+                match ch {
+                    '<' => depth += 1,
+                    '>' if previous != '-' => depth = depth.saturating_sub(1),
+                    _ => {}
+                }
+                previous = ch;
+            }
+            if depth != 0 {
+                return None;
+            }
+            path[..generics].trim_end().trim_end_matches("::")
+        }
+        _ => path,
+    };
+    // `Quote { .. }` or a qualified `crate::Quote { .. }`: the last path
+    // segment names the type.
+    let type_name = path.rsplit("::").next().unwrap_or_default();
+    if path.is_empty()
+        || !type_name.starts_with(|ch: char| ch.is_ascii_uppercase())
+        || !path
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == ':')
+    {
+        return None;
+    }
+    let inner = initializer[open + 1..].strip_suffix('}')?;
+    let mut fields = Vec::new();
+    let mut base = None;
+    let mut depth = 0usize;
+    let mut entry_start = 0;
+    for (index, ch) in inner.char_indices().chain([(inner.len(), ',')]) {
+        match ch {
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => depth = depth.checked_sub(1)?,
+            ',' if depth == 0 => {
+                let entry = inner[entry_start..index].trim();
+                entry_start = index + 1;
+                if let Some(rest) = entry.strip_prefix("..") {
+                    base = Some(rest.trim());
+                } else if !entry.is_empty() {
+                    match entry.split_once(':') {
+                        Some((name, value)) => fields.push((name.trim(), Some(value.trim()))),
+                        None => fields.push((entry, None)),
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    Some((fields, base))
+}
+
+/// Whether `prefix`, after `from`, assigns `receiver.field = value` (not
+/// `==`, not a value read from the receiver) in a statement still in scope
+/// at its end.
+fn field_assigned(
+    prefix: &str,
+    from: usize,
+    receiver: &str,
+    field: &str,
+    fresh: &dyn Fn(&str) -> bool,
+) -> bool {
+    let target = format!("{receiver}.{field}");
+    prefix[from..]
+        .match_indices(&target)
+        .any(|(offset, matched)| {
+            let start = from + offset;
+            let before_ok = !prefix[..start]
+                .chars()
+                .next_back()
+                .is_some_and(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '.');
+            let rest = &prefix[start + matched.len()..];
+            if rest.starts_with(|ch: char| ch.is_ascii_alphanumeric() || ch == '_') {
+                return false;
+            }
+            let rest = rest.trim_start();
+            let Some(value) = rest
+                .strip_prefix('=')
+                .filter(|value| !value.starts_with('='))
+            else {
+                return false;
+            };
+            let value = value.split(';').next().unwrap_or_default();
+            before_ok && fresh(value) && visible_at(prefix, start)
+        })
+}
+/// Whether the read at `start` sits in one operand of an `assert_eq!` or
+/// `assert_ne!` whose other operand is the owner's whole result: the bound
+/// receiver or the owner call itself. The read then only feeds the expected
+/// side (`assert_eq!(c, Config::new(c.retries))`), a tautology on the field
+/// whatever brackets carry it.
+fn read_feeds_whole_result_comparison(
+    body: &str,
+    assertion: &str,
+    masked: &str,
+    start: usize,
+    owner: &str,
+) -> bool {
+    let Some(open) = ["assert_eq!", "assert_ne!"]
+        .iter()
+        .filter_map(|name| {
+            let after = masked.find(name)? + name.len();
+            Some(after + masked[after..].find(['(', '['])? + 1)
+        })
+        .min()
+    else {
+        return false;
+    };
+    let mut operands = Vec::new();
+    let mut depth = 0usize;
+    // Generic arguments after a turbofish (`Config::<A, B>::new(..)`): their
+    // commas do not split operands.
+    let mut angle = 0usize;
+    let mut from = open;
+    for (offset, ch) in masked[open..].char_indices() {
+        let at = open + offset;
+        match ch {
+            '<' if angle > 0 || masked[..at].ends_with("::") => {
+                angle += 1;
+                depth += 1;
+            }
+            '>' if angle > 0 => {
+                angle -= 1;
+                depth = depth.saturating_sub(1);
+            }
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' if depth == 0 => {
+                operands.push(from..at);
+                break;
+            }
+            ')' | ']' | '}' => depth -= 1,
+            ',' if depth == 0 => {
+                operands.push(from..at);
+                from = at + 1;
+            }
+            _ => {}
+        }
+    }
+    let [left, right, ..] = operands.as_slice() else {
+        return false;
+    };
+    let other = if left.contains(&start) {
+        right
+    } else if right.contains(&start) {
+        left
+    } else {
+        return false;
+    };
+    let Some(other) = assertion.get(other.clone()) else {
+        return false;
+    };
+    let other = whole_value_operand(other);
+    if other.ends_with(')') {
+        return call_before_is_owner(other, owner);
+    }
+    !other.is_empty()
+        && other
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+        && binds_from_owner_call(body, other, &format!("{owner}("))
+}
+
+/// The value an operand compares, without the borrows, derefs, `.clone()`
+/// and one `Some(..)`/`Ok(..)` around it: `&mut Some(cfg.clone())` is `cfg`.
+fn whole_value_operand(operand: &str) -> &str {
+    let mut value = operand.trim();
+    loop {
+        let stripped = value
+            .strip_prefix("&mut ")
+            .or_else(|| value.strip_prefix('&'))
+            .or_else(|| value.strip_prefix('*'))
+            .or_else(|| value.strip_suffix(".clone()"))
+            .map(str::trim);
+        match stripped {
+            Some(next) => value = next,
+            None => break,
+        }
+    }
+    for wrapper in ["Some(", "Ok("] {
+        if let Some(inner) = value
+            .strip_prefix(wrapper)
+            .and_then(|rest| rest.strip_suffix(')'))
+            .filter(|inner| !inner.contains(['(', ')']) || inner.ends_with(')'))
+        {
+            return whole_value_operand(inner);
+        }
+    }
+    value
 }
 
 /// Whether the call whose `)` ends `before` is a call of `owner`: the
@@ -1579,7 +2002,21 @@ fn binds_from_owner_call(body: &str, receiver: &str, owner_call: &str) -> bool {
 fn owner_call_parameter_values(
     related_tests: &[&TestSummary],
     owner_name: &str,
+    free_owner: bool,
     parameters: &[String],
+) -> Vec<Vec<ParameterValue>> {
+    owner_call_parameter_values_where(related_tests, owner_name, free_owner, parameters, |_, _| {
+        true
+    })
+}
+
+/// `owner_call_parameter_values` over only the calls `keep` admits.
+fn owner_call_parameter_values_where(
+    related_tests: &[&TestSummary],
+    owner_name: &str,
+    free_owner: bool,
+    parameters: &[String],
+    keep: impl Fn(&TestSummary, &crate::analysis::facts::CallFact) -> bool,
 ) -> Vec<Vec<ParameterValue>> {
     let mut rows = Vec::new();
     if owner_name.is_empty() || parameters.is_empty() {
@@ -1587,28 +2024,74 @@ fn owner_call_parameter_values(
     }
     for test in related_tests {
         for call in test.body_calls() {
-            if call.name != owner_name {
+            if call.name != owner_name || !keep(test, call) {
                 continue;
             }
-            let Some(arguments) = call_arguments(&call.text, &call.name) else {
+            let Some(arguments) = owner_name_call_text(&call.text, owner_name, free_owner)
+                .and_then(|text| call_arguments(text, &call.name))
+            else {
                 continue;
             };
-            let row = arguments
+            // A constant-row `for` table (#5328) yields one value per row,
+            // and cells of the same row belong together: the call runs once
+            // per row, so it contributes one input row per table row. A
+            // single value spreads to every row only when it holds for all
+            // of them (a literal or `let`); an rstest `#[case]` column drops
+            // the cases it cannot read, so its slots no longer line up with
+            // rows and it keeps contributing its first value alone.
+            let cells = arguments
                 .iter()
                 .enumerate()
                 .filter_map(|(idx, argument)| {
-                    let parameter = parameters.get(idx)?;
-                    let value = owner_argument_values(test, argument).into_iter().next()?;
-                    Some(ParameterValue {
-                        parameter: parameter.clone(),
-                        value,
-                        line: call.line,
-                        text: call.text.clone(),
-                    })
+                    let values = owner_argument_values(test, argument);
+                    let table_column = !values.is_empty()
+                        && crate::analysis::syntax::constant_table_column(
+                            &test.body,
+                            argument.trim(),
+                        )
+                        .is_some();
+                    Some((parameters.get(idx)?, values, argument.trim(), table_column))
                 })
+                .filter(|(_, values, _, _)| !values.is_empty())
                 .collect::<Vec<_>>();
-            if !row.is_empty() {
-                rows.push(row);
+            let case_column = |argument: &str| {
+                !crate::analysis::value_resolution::test_case_bound_literals(test, argument)
+                    .is_empty()
+            };
+            let by_row = cells.iter().any(|(_, _, _, table)| *table)
+                && cells.iter().all(|(_, values, argument, table)| {
+                    *table || (values.len() == 1 && !case_column(argument))
+                });
+            let height = if by_row {
+                cells
+                    .iter()
+                    .map(|(_, values, _, _)| values.len())
+                    .max()
+                    .unwrap_or(0)
+            } else {
+                usize::from(!cells.is_empty())
+            };
+            for position in 0..height {
+                let row = cells
+                    .iter()
+                    .filter_map(|(parameter, values, _, _)| {
+                        let value = match values.len() {
+                            _ if !by_row => values.first(),
+                            1 => values.first(),
+                            len if len == height => values.get(position),
+                            _ => None,
+                        }?;
+                        Some(ParameterValue {
+                            parameter: (*parameter).clone(),
+                            value: value.clone(),
+                            line: call.line,
+                            text: call.text.clone(),
+                        })
+                    })
+                    .collect::<Vec<_>>();
+                if !row.is_empty() {
+                    rows.push(row);
+                }
             }
         }
     }
@@ -1626,20 +2109,22 @@ fn call_values_for_owner(
     parameters: &[String],
     related_tests: &[&TestSummary],
     helper_chain: Option<&super::helper_transfer::HelperChain>,
+    index: &crate::analysis::rust_index::RustIndex,
 ) -> Vec<Vec<ParameterValue>> {
     let parameters = if parameters.is_empty() {
         function_parameters(owner)
     } else {
         parameters.to_vec()
     };
-    let direct = owner_call_parameter_values(related_tests, &owner.name, &parameters);
+    let direct =
+        owner_call_parameter_values(related_tests, &owner.name, is_free(owner), &parameters);
     if !direct.is_empty() {
         return direct;
     }
     let Some(chain) = helper_chain else {
         return direct;
     };
-    helper_transferred_rows(&parameters, chain, related_tests)
+    helper_transferred_rows(&parameters, chain, related_tests, index)
 }
 
 /// Whether `argument` computes one deterministic value ripr cannot read
@@ -1647,9 +2132,11 @@ fn call_values_for_owner(
 /// variables are all bound to exact values (`is_exact`), constants
 /// (`LIMIT`), or none at all. Such a call sits at one definite input that
 /// may be the boundary, so the boundary is unresolved. A computation over
-/// a value ripr cannot bind (a loop variable in `can_retire(age + 1)`) is
-/// no more readable than that bare variable, which already yields no
-/// input row without unresolving the boundary, so it is not counted.
+/// a value ripr cannot bind (a variable of a range loop in
+/// `can_retire(age + 1)`) is no more readable than that bare variable,
+/// which already yields no input row without unresolving the boundary, so
+/// it is not counted. A constant-row table's loop variable is bound (#5328),
+/// so a computation over it unresolves the boundary like one over a `let`.
 fn deterministic_computed_argument(argument: &str, is_exact: impl Fn(&str) -> bool) -> bool {
     is_computed_value_expression(argument)
         && free_identifiers(argument)
@@ -1736,7 +2223,7 @@ fn free_identifiers(text: &str) -> Vec<String> {
 /// (`owner(x + 1)`). Such an argument yields no input row (it is not an exact
 /// value), yet the call may still sit on the boundary, so a boundary over
 /// one of these parameters is unresolved rather than missing (#6672).
-fn computed_input_parameters(
+pub(in crate::analysis) fn computed_input_parameters(
     owner: &FunctionSummary,
     parameters: &[String],
     related_tests: &[&TestSummary],
@@ -1782,8 +2269,13 @@ fn computed_input_parameters(
     // A hop argument computed from the caller's parameters is one exact
     // value per row only when the entry calls carry exact rows at all.
     if !entry_called
-        || owner_call_parameter_values(related_tests, &entry.caller.name, &entry_parameters)
-            .is_empty()
+        || owner_call_parameter_values(
+            related_tests,
+            &entry.caller.name,
+            is_free(&entry.caller),
+            &entry_parameters,
+        )
+        .is_empty()
     {
         return Vec::new();
     }
@@ -1822,13 +2314,29 @@ fn helper_transferred_rows(
     owner_parameters: &[String],
     chain: &super::helper_transfer::HelperChain,
     related_tests: &[&TestSummary],
+    index: &crate::analysis::rust_index::RustIndex,
 ) -> Vec<Vec<ParameterValue>> {
     let Some(entry) = chain.hops.last() else {
         return Vec::new();
     };
     let entry_parameters = function_parameters(&entry.caller);
-    let mut rows =
-        owner_call_parameter_values(related_tests, &entry.caller.name, &entry_parameters);
+    // #6780 Devin review: an entry call shadowed by a test-local closure or
+    // nested fn never reaches the helper, so it binds no row (the same
+    // shadow authority that denies its `helper_owner_call` relation).
+    let mut rows = owner_call_parameter_values_where(
+        related_tests,
+        &entry.caller.name,
+        is_free(&entry.caller),
+        &entry_parameters,
+        |test, call| {
+            !super::helper_transfer::test_call_is_shadowed(
+                index,
+                test,
+                &entry.caller.name,
+                call.line,
+            )
+        },
+    );
     if rows.is_empty() {
         return Vec::new();
     }
@@ -1846,6 +2354,18 @@ fn helper_transferred_rows(
         // M3 — the previous off-by-one silently dropped every row when
         // parameter names differed between hops).
         let caller_parameters = function_parameters(&hop.caller);
+        // #6780 review B1: a parameter the caller rebinds or assigns before
+        // the hop (`let qty = qty * 2;`) no longer holds the test's input,
+        // so the row stops instead of binding the stale value.
+        if hop.arguments.iter().any(|argument| {
+            let argument = argument.trim();
+            caller_parameters
+                .iter()
+                .any(|parameter| parameter == argument)
+                && super::helper_transfer::caller_rebinds_parameter(&hop.caller.body, argument)
+        }) {
+            return Vec::new();
+        }
         let mut bound_rows = Vec::new();
         for row in &rows {
             let mut bound = Vec::new();
@@ -2290,7 +2810,10 @@ fn owner_calls_passing_constant(
         .flat_map(|test| test.calls.iter())
         .filter(|call| call.name == owner.name)
         .filter_map(|call| {
-            let arguments = call_arguments(&call.text, &call.name)?;
+            // A free owner's arguments come from its own call site, never a
+            // same-line `Type::name(..)` (#6713).
+            let text = owner_name_call_text(&call.text, &owner.name, is_free(owner))?;
+            let arguments = call_arguments(text, &call.name)?;
             let argument = arguments.get(position)?;
             crate::analysis::value_resolution::argument_names_constant(argument, &constant.name)
                 .then(|| (call.line, call.text.clone()))
@@ -2486,6 +3009,23 @@ pub(in crate::analysis) fn owner_argument_values(
             .collect();
     if !let_bound.is_empty() {
         return let_bound;
+    }
+    // A `for` pattern over a constant-row table carries one value per row
+    // (#5328); a row whose cell is not a plain scalar yields nothing at all,
+    // since a partial column would hide the rows ripr cannot read.
+    if let Some(column) = crate::analysis::syntax::constant_table_column(&test.body, name) {
+        let scalars: Option<Vec<String>> = column
+            .iter()
+            .map(|cell| {
+                // The cell must be one whole scalar, as an rstest case is:
+                // `Some(1)` or `"1"` is not the value `1`.
+                let cell = cell.trim();
+                (!cell.starts_with(['"', '\''])
+                    && scalar_values(cell).as_slice() == [cell.to_string()])
+                .then(|| cell.to_string())
+            })
+            .collect();
+        return scalars.unwrap_or_default();
     }
     // An rstest `#[case]` parameter carries one value per case row.
     crate::analysis::value_resolution::test_case_bound_literals(test, name)
@@ -3047,6 +3587,41 @@ mod tests {
             "assert_eq!(Config::default_config(\"x\").retries, 3);"
         ));
         assert!(reads("assert_eq!(default_config(load(1)).retries, 3);"));
+        // RIPR-SPEC-0225 example 12: a read copied into the expected
+        // literal makes the comparison a tautology on that field.
+        assert!(!reads(
+            "assert_eq!(cfg, Config { retries: cfg.retries, name: \"x\".into() });"
+        ));
+        assert!(!reads(
+            "assert_eq!(cfg, Config { inner: Inner { n: cfg.retries } });"
+        ));
+        // The same tautology through a call's parentheses (#7066 review).
+        assert!(!reads(
+            "assert_eq!(cfg, Config::new(cfg.retries, \"x\".into()));"
+        ));
+        assert!(!reads("assert_eq!(cfg, expected_with(cfg.retries));"));
+        assert!(!reads("assert_ne!(expected_with(cfg.retries), &cfg);"));
+        assert!(!reads(
+            "assert_eq!(default_config(), expected_with(default_config().retries));"
+        ));
+        assert!(!reads("assert_eq!(cfg.clone(), Config::new(cfg.retries));"));
+        assert!(!reads(
+            "assert_eq!(Some(cfg), Some(Config::new(cfg.retries)));"
+        ));
+        assert!(!reads(
+            "assert_eq!(&mut cfg, Config::<u8, u8>::new(cfg.retries));"
+        ));
+        assert!(!reads("assert_eq![cfg, Config::new(cfg.retries)];"));
+        assert!(!reads(
+            "assert_eq!(Ok(default_config()), Config::new(default_config().retries));"
+        ));
+        // Compared with something other than the whole result, the read
+        // still observes the field.
+        assert!(reads("assert_eq!(cfg.retries, fallback.retries);"));
+        assert!(reads("assert_eq!(Some(cfg.retries), Some(3));"));
+        // A brace in a message string does not open a literal.
+        assert!(reads("assert_eq!(cfg.retries, 3, \"{}\", 1);"));
+        assert!(reads("assert_eq!(cfg.retries, 3, \"{\");"));
         assert!(!reads_owner_result_field(
             "let e = make();",
             "assert!(e.downcast_ref::<Box<dyn E>>().is_some());",
@@ -3059,6 +3634,76 @@ mod tests {
             ".retries",
             "default_config"
         ));
+    }
+
+    #[test]
+    fn a_field_overwritten_before_the_assertion_is_not_the_owner_field() {
+        let reads = |body: &str, assertion: &str| {
+            reads_owner_result_field(body, assertion, ".total", "bundle")
+        };
+        let withheld = [
+            // RIPR-SPEC-0005: credit holds only before shadow or overwrite.
+            "let q = bundle(3);\n let q = Quote { total: 99, ..q };\n assert_eq!(q.total, 99);",
+            "let mut q = bundle(3);\n q.total = 99;\n assert_eq!(q.total, 99);",
+            "let q = Quote { total: 99, ..bundle(3) };\n assert_eq!(q.total, 99);",
+            "let q = bundle(3);\n let q = crate::Quote { total: 99, ..q };\n assert_eq!(q.total, 99);",
+            "let q = bundle(3);\n let q = Quote::<u8> { total: 99, ..q };\n assert_eq!(q.total, 99);",
+            // #7093 review: the turbofish's arguments are type syntax, however
+            // they are spelled - a tuple, an array, nested generics.
+            "let q = bundle(3);\n let q = Quote::<(u8, Vec<u8>)> { total: 99, ..q };\n assert_eq!(q.total, 99);",
+            "let q = bundle(3);\n let q = Quote::<[u8; 4]> { total: 99, ..q };\n assert_eq!(q.total, 99);",
+            "let q = bundle(3);\n let q = Quote::<Vec<Vec<u8>>> { total: 99, ..q };\n assert_eq!(q.total, 99);",
+            // An assignment after a pass-through update still overwrites.
+            "let q = bundle(3);\n let mut q = Quote { items: 4, ..q };\n q.total = 1;\n assert_eq!(q.total, 1);",
+            // So does one after a value copied back from the receiver.
+            "let q = bundle(3);\n let mut q = Quote { total: q.total, ..q };\n q.total = 99;\n assert_eq!(q.total, 99);",
+        ];
+        for body in withheld {
+            let assertion = body.rsplit('\n').next().unwrap_or_default().trim();
+            assert!(!reads(body, assertion), "{body}");
+        }
+        let credited = [
+            // A struct update that leaves the field to its base passes it
+            // through, as does a value read back from the receiver.
+            "let q = bundle(3);\n let q = Quote { items: 4, ..q };\n assert_eq!(q.total, 45);",
+            "let q = bundle(3);\n let q = Quote::<u8> { items: 4, ..q };\n assert_eq!(q.total, 45);",
+            "let q = bundle(3);\n let q = Quote::<(u8, Vec<u8>)> { items: 4, ..q };\n assert_eq!(q.total, 45);",
+            "let q = bundle(3);\n let q = Quote { total: q.total, ..q };\n assert_eq!(q.total, 45);",
+            "let q = bundle(3);\n let total = q.total;\n let q = Quote { total, ..q };\n assert_eq!(q.total, 45);",
+            "let mut q = bundle(3);\n q.total = q.total;\n assert_eq!(q.total, 45);",
+            // A value copied out of the receiver first is still the owner's.
+            "let q = bundle(3);\n let t = q.total;\n let q = Quote { total: t, ..q };\n assert_eq!(q.total, 45);",
+            "let mut q = bundle(3);\n let t = q.total;\n let u = t + 0;\n q.total = u;\n assert_eq!(q.total, 45);",
+            // Plain assignment and a second owner binding carry the value too.
+            "let mut q = bundle(3);\n let mut t = 0;\n t = q.total;\n q.total = t;\n assert_eq!(q.total, 45);",
+            "let base = bundle(3);\n let q = bundle(1);\n let q = Quote { total: base.total, ..q };\n assert_eq!(q.total, 45);",
+            // A destructuring `let` binds its braced names from the owner.
+            "let mut q = bundle(1);\n let Quote { total, .. } = bundle(3);\n q.total = total;\n assert_eq!(q.total, 45);",
+            "let mut q = bundle(1);\n let Quote { total: t, .. } = bundle(3);\n q.total = t;\n assert_eq!(q.total, 45);",
+            // A char literal quote does not hide a closing brace.
+            "let q = bundle(3);\n { let c = '\"'; let q = Quote { total: 1, ..q }; drop((c, q)); }\n assert_eq!(q.total, 45);",
+            // Only a statement still in scope at the assertion counts.
+            "let q = bundle(3);\n { let q = Quote { total: 1, ..q }; drop(q); }\n assert_eq!(q.total, 45);",
+            "let mut q = bundle(3);\n if false { q.total = 0; }\n assert_eq!(q.total, 45);",
+            "let q = bundle(3);\n let _f = |q: Quote| { let q = Quote { total: 0, ..q }; q };\n assert_eq!(q.total, 45);",
+            // Comments and strings are not code.
+            "let q = bundle(3);\n // let q = Quote { total: 0, ..q };\n assert_eq!(q.total, 45);",
+            "let q = bundle(3);\n let s = \"let q = Quote { total: 0 };\";\n assert_eq!(q.total, 45);",
+            "let mut q = bundle(3);\n // q.total = 0;\n assert_eq!(q.total, 45);",
+            // Reads before the overwrite, comparisons and other fields.
+            "let mut q = bundle(3);\n let ok = q.total == 45;\n assert_eq!(q.total, 45);",
+            "let mut q = bundle(3);\n q.total_cap = 1;\n assert_eq!(q.total, 45);",
+            // Ambiguous rebinding and positions keep today's credit.
+            "let q = bundle(3);\n let q = adjust(q);\n assert_eq!(q.total, 45);",
+        ];
+        for body in credited {
+            let assertion = body.rsplit('\n').next().unwrap_or_default().trim();
+            assert!(reads(body, assertion), "{body}");
+        }
+        let before = "let mut q = bundle(3);\n assert_eq!(q.total, 45);\n q.total = 1;";
+        assert!(reads(before, "assert_eq!(q.total, 45);"));
+        let twice = "let q = bundle(3);\n let q = Quote { total: 9, ..q };\n assert_eq!(q.total, 9);\n assert_eq!(q.total, 9);";
+        assert!(reads(twice, "assert_eq!(q.total, 9);"));
     }
 
     use super::*;
@@ -4498,10 +5143,12 @@ assert_eq!(input.amount, 100);"#
             let_bindings: Vec::new(),
         };
 
-        assert!(owner_call_parameter_values(&[&test], "", &["amount".to_string()]).is_empty());
-        assert!(owner_call_parameter_values(&[&test], "score", &[]).is_empty());
+        assert!(
+            owner_call_parameter_values(&[&test], "", false, &["amount".to_string()]).is_empty()
+        );
+        assert!(owner_call_parameter_values(&[&test], "score", false, &[]).is_empty());
 
-        let rows = owner_call_parameter_values(&[&test], "score", &["amount".to_string()]);
+        let rows = owner_call_parameter_values(&[&test], "score", false, &["amount".to_string()]);
 
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0][0].value, "2");
@@ -4711,6 +5358,100 @@ assert_eq!(input.amount, 100);"#
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
         }
+    }
+
+    #[test]
+    fn a_constant_row_table_feeds_one_input_row_per_table_row() {
+        let body = "fn table() {\n    let cases = [(4_999, false), (5_000, true)];\n    for (cents, want) in cases {\n        assert_eq!(score(cents, 7), want);\n    }\n}";
+        let test = test_with_body_calls(body, &[(13, "score(cents, 7)")]);
+        assert_eq!(
+            owner_argument_values(&test, "cents"),
+            vec!["4_999".to_string(), "5_000".to_string()]
+        );
+        let rows = owner_call_parameter_values(
+            &[&test],
+            "score",
+            false,
+            &["amount".to_string(), "rate".to_string()],
+        );
+        let cells = rows
+            .iter()
+            .map(|row| {
+                row.iter()
+                    .map(|cell| format!("{} = {}", cell.parameter, cell.value))
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            cells,
+            vec![
+                vec!["amount = 4_999".to_string(), "rate = 7".to_string()],
+                vec!["amount = 5_000".to_string(), "rate = 7".to_string()],
+            ]
+        );
+        // A row cell ripr cannot read as one scalar drops the whole column:
+        // a partial column would hide the rows it cannot see.
+        for unreadable in [
+            "fn table() {\n    for (cents, want) in [(5_000, true), (\"x\", false)] {\n        assert_eq!(score(cents, 7), want);\n    }\n}",
+            "fn table() {\n    for (cents, want) in [(5_000, true), (Some(1), false)] {\n        assert_eq!(score(cents, 7), want);\n    }\n}",
+            // Not a table the loop is known to iterate.
+            "fn table() {\n    for (cents, want) in rows() {\n        assert_eq!(score(cents, 7), want);\n    }\n}",
+            // A second binding of the name.
+            "fn table() {\n    for (cents, want) in [(5_000, true)] {\n        for cents in [1] {\n            assert_eq!(score(cents, 7), want);\n        }\n    }\n}",
+            // A row of another arity.
+            "fn table() {\n    for (cents, want) in [(5_000, true), (1, false, 2)] {\n        assert_eq!(score(cents, 7), want);\n    }\n}",
+            // A nested pattern.
+            "fn table() {\n    for ((cents, _), want) in [((5_000, 1), true)] {\n        assert_eq!(score(cents, 7), want);\n    }\n}",
+            // A jump after the call: only the first row reaches it.
+            "fn table() {\n    for (cents, want) in [(4_999, false), (5_000, true)] {\n        assert_eq!(score(cents, 7), want);\n        break;\n    }\n}",
+            "fn table() {\n    for (cents, want) in [(4_999, false), (5_000, true)] {\n        assert_eq!(score(cents, 7), want);\n        return;\n    }\n}",
+            // A row-dependent branch skips the assertion for some rows.
+            "fn table() {\n    for (cents, want) in [(4_999, None), (5_000, Some(true))] {\n        if let Some(want) = want {\n            assert_eq!(score(cents, 7), want);\n        }\n    }\n}",
+            "fn table() {\n    for (cents, want) in [(4_999, false), (5_000, true)] {\n        match cents {\n            5_000 => assert_eq!(score(cents, 7), want),\n            _ => {}\n        }\n    }\n}",
+            // A short-circuit skips the call for some rows.
+            "fn table() {\n    for cents in [4_999, 5_000] {\n        let _ = cents != 5_000 && score(cents, 7);\n    }\n}",
+            // A closure inside the macro rebinds the name the parser cannot see.
+            "fn table() {\n    for (cents, want) in [(4_999, false), (5_000, true)] {\n        assert_eq!([1].map(|cents| score(cents, 7)), [want]);\n    }\n}",
+        ] {
+            let test = test_with_body_calls(unreadable, &[(12, "score(cents, 7)")]);
+            assert!(
+                owner_argument_values(&test, "cents").is_empty(),
+                "{unreadable}"
+            );
+        }
+        // An rstest column drops the cases it cannot read, so its values no
+        // longer line up with rows: `LOW` leaves `amount` one value, which
+        // must not be spread into a `(100, 100)` row no case runs.
+        let mut cases = test_with_body_calls(
+            "fn t(#[case] amount: u32, #[case] limit: u32, #[case] want: bool) {\n    assert_eq!(score(amount, limit), want);\n}",
+            &[(11, "score(amount, limit)")],
+        );
+        cases.attrs = vec![
+            "#[rstest]".to_string(),
+            "#[case(100, 7, true)]".to_string(),
+            "#[case(LOW, 100, false)]".to_string(),
+        ];
+        assert_eq!(owner_argument_values(&cases, "amount"), vec!["100"]);
+        assert_eq!(owner_argument_values(&cases, "limit"), vec!["7", "100"]);
+        let rows = owner_call_parameter_values(
+            &[&cases],
+            "score",
+            false,
+            &["amount".to_string(), "rate".to_string()],
+        );
+        assert_eq!(rows.len(), 1);
+        assert!(
+            rows[0]
+                .iter()
+                .all(|cell| cell.value != "100" || cell.parameter == "amount"),
+            "{rows:?}"
+        );
+        let whole = "fn table() {\n    for cents in [4_999, 5_000] {\n        assert!(score(cents, 7) > 0);\n    }\n}";
+        let test = test_with_body_calls(whole, &[(12, "score(cents, 7)")]);
+        assert_eq!(
+            owner_argument_values(&test, "cents"),
+            vec!["4_999".to_string(), "5_000".to_string()]
+        );
     }
 
     #[test]
@@ -5134,6 +5875,15 @@ assert_eq!(input.amount, 100);"#
         };
         let mut test = test_with_call("entry_boundary", "assert!(entry(9));");
         test.calls[0].name = "entry".to_string();
+        // The #6780 shadow authority fails closed unless the entry caller is
+        // unique in the workspace index, and a resolved chain always lives in
+        // that index, so the setup registers the chain's three functions.
+        let index = crate::analysis::rust_index::RustIndex::from_owned(
+            crate::analysis::facts::OwnedRustIndex {
+                functions: vec![owner.clone(), inner.clone(), entry.clone()],
+                ..Default::default()
+            },
+        );
         let run = |chain: &super::super::helper_transfer::HelperChain, test: &TestSummary| {
             activation_and_boundary_input(
                 &probe(ProbeFamily::Predicate, "10 <= amount"),
@@ -5141,7 +5891,7 @@ assert_eq!(input.amount, 100);"#
                 &[test],
                 &[],
                 Some(chain),
-                &crate::analysis::rust_index::RustIndex::default(),
+                &index,
                 false,
                 None,
             )

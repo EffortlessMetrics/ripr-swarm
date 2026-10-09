@@ -27,7 +27,7 @@ Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/predicate_pairing_mutably_borrowed_binding/input --diff <cwd>/fixtures/predicate_pairing_mutably_borrowed_binding/diff.patch --mode fast probe:src_lib.rs:predicate:fa1d51d0
   ripr context --root <cwd>/fixtures/predicate_pairing_mutably_borrowed_binding/input --diff <cwd>/fixtures/predicate_pairing_mutably_borrowed_binding/diff.patch --mode fast --at probe:src_lib.rs:predicate:fa1d51d0
 Write a test for it:
-  ripr agent stub --root <cwd>/fixtures/predicate_pairing_mutably_borrowed_binding/input --at src/lib.rs:2
+  ripr agent stub --root <cwd>/fixtures/predicate_pairing_mutably_borrowed_binding/input --at src/lib.rs:2 --kind predicate
 
 Hidden:
   1 lower-priority finding(s) omitted from default human output.

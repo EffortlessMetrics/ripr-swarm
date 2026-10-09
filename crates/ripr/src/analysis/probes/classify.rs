@@ -419,6 +419,7 @@ mod tests {
                             end_byte: 24,
                             kind: ProbeShapeKind::Predicate,
                             text: "if amount >= threshold {".into(),
+                            value_consumed: false,
                         },
                         ProbeShapeFact {
                             start_line: 7,
@@ -427,6 +428,7 @@ mod tests {
                             end_byte: 43,
                             kind: ProbeShapeKind::ErrorPath,
                             text: "Err(AuthError::Revoked)".into(),
+                            value_consumed: false,
                         },
                     ],
                     ..FileFacts::default()
@@ -455,6 +457,7 @@ mod tests {
                         end_byte: 24,
                         kind: ProbeShapeKind::Predicate,
                         text: "if amount >= threshold {".into(),
+                        value_consumed: false,
                     }],
                     ..FileFacts::default()
                 },
@@ -493,6 +496,7 @@ mod tests {
                             end_byte: function_start + 18,
                             kind: ProbeShapeKind::UnsafeBoundary,
                             text: "unsafe fn read_raw".into(),
+                            value_consumed: false,
                         },
                         ProbeShapeFact {
                             start_line: 2,
@@ -501,6 +505,7 @@ mod tests {
                             end_byte: block_start + 12,
                             kind: ProbeShapeKind::UnsafeBoundary,
                             text: "unsafe block".into(),
+                            value_consumed: false,
                         },
                         ProbeShapeFact {
                             start_line: 3,
@@ -509,6 +514,7 @@ mod tests {
                             end_byte: predicate_start + 13,
                             kind: ProbeShapeKind::Predicate,
                             text: "value < limit".into(),
+                            value_consumed: false,
                         },
                     ],
                     ..FileFacts::default()
@@ -555,6 +561,7 @@ mod tests {
                         end_byte: block_start + 12,
                         kind: ProbeShapeKind::UnsafeBoundary,
                         text: "unsafe block".into(),
+                        value_consumed: false,
                     }],
                     ..FileFacts::default()
                 },
@@ -592,6 +599,7 @@ mod tests {
                         end_byte: block_start + 12,
                         kind: ProbeShapeKind::UnsafeBoundary,
                         text: "unsafe block".into(),
+                        value_consumed: false,
                     }],
                     ..FileFacts::default()
                 },
@@ -630,6 +638,7 @@ mod tests {
                             end_byte: first + 6,
                             kind: ProbeShapeKind::CallDeletion,
                             text: "read()".into(),
+                            value_consumed: false,
                         },
                         ProbeShapeFact {
                             start_line: 3,
@@ -638,6 +647,7 @@ mod tests {
                             end_byte: second + 6,
                             kind: ProbeShapeKind::CallDeletion,
                             text: "read()".into(),
+                            value_consumed: false,
                         },
                     ],
                     ..FileFacts::default()
@@ -674,6 +684,7 @@ mod tests {
                             end_byte: 150,
                             kind: ProbeShapeKind::CallDeletion,
                             text: "watchdog_reason(\n    \"run-missing\",\n    receipt,\n)".into(),
+                            value_consumed: false,
                         },
                         ProbeShapeFact {
                             start_line: 10,
@@ -682,6 +693,7 @@ mod tests {
                             end_byte: 142,
                             kind: ProbeShapeKind::CallDeletion,
                             text: "with_reason(watchdog_reason(\"run-missing\", receipt))".into(),
+                            value_consumed: false,
                         },
                     ],
                     ..FileFacts::default()

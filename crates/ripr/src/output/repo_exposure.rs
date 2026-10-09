@@ -166,6 +166,70 @@ pub(crate) const REPO_EXPOSURE_SUMMARY_SCHEMA_VERSION: &str = "0.1";
 const MAX_RELATED_TESTS_PER_SEAM_JSON: usize = 8;
 const MAX_TOP_FILES_SUMMARY_JSON: usize = 25;
 
+/// The producer that actually limited this artifact's seam population.
+/// Default/configured describes the value's source, not the cap's identity.
+#[derive(Clone, Copy)]
+pub(crate) enum RepoExposureLimit<'a> {
+    Inventory(&'a SeamLimitInfo),
+    PilotBudget(&'a SeamLimitInfo),
+}
+
+impl<'a> RepoExposureLimit<'a> {
+    pub(crate) fn info(self) -> &'a SeamLimitInfo {
+        match self {
+            Self::Inventory(info) | Self::PilotBudget(info) => info,
+        }
+    }
+
+    pub(crate) fn category(self) -> &'static str {
+        match self {
+            Self::Inventory(_) => "repo_seam_limit_applied",
+            Self::PilotBudget(_) => "pilot_seam_budget_applied",
+        }
+    }
+
+    pub(crate) fn control(self) -> &'static str {
+        match self {
+            Self::Inventory(_) => "RIPR_REPO_EXPOSURE_SEAM_LIMIT",
+            Self::PilotBudget(_) => "RIPR_PILOT_SEAM_BUDGET",
+        }
+    }
+
+    pub(crate) fn repair_route(self) -> &'static str {
+        match (self, &self.info().source) {
+            (Self::Inventory(_), SeamLimitSource::Default) => {
+                "Set RIPR_REPO_EXPOSURE_SEAM_LIMIT=0 to analyze all seams, or scope the run to a change with `ripr check --base <REV>` (or `ripr check --diff <PATH>`)."
+            }
+            (Self::Inventory(_), SeamLimitSource::Configured) => {
+                "Remove or raise RIPR_REPO_EXPOSURE_SEAM_LIMIT to analyze more seams, or scope the run to a change with `ripr check --base <REV>` (or `ripr check --diff <PATH>`)."
+            }
+            (Self::PilotBudget(_), SeamLimitSource::Default) => {
+                "Set RIPR_PILOT_SEAM_BUDGET=0 to disable the pilot artifact budget."
+            }
+            (Self::PilotBudget(_), SeamLimitSource::Configured) => {
+                "Set RIPR_PILOT_SEAM_BUDGET=0 to disable the pilot artifact budget, or raise it to render more seams in the pilot artifacts."
+            }
+        }
+    }
+
+    fn markdown_repair_route(self) -> &'static str {
+        match (self, &self.info().source) {
+            (Self::Inventory(_), SeamLimitSource::Default) => {
+                "set RIPR_REPO_EXPOSURE_SEAM_LIMIT=0 to analyze all seams, or scope the run to a change with `ripr check --base <REV>` (or `ripr check --diff <PATH>`)"
+            }
+            (Self::Inventory(_), SeamLimitSource::Configured) => {
+                "remove or raise RIPR_REPO_EXPOSURE_SEAM_LIMIT to analyze more seams, or scope the run to a change with `ripr check --base <REV>` (or `ripr check --diff <PATH>`)"
+            }
+            (Self::PilotBudget(_), SeamLimitSource::Default) => {
+                "set RIPR_PILOT_SEAM_BUDGET=0 to disable the pilot artifact budget"
+            }
+            (Self::PilotBudget(_), SeamLimitSource::Configured) => {
+                "set RIPR_PILOT_SEAM_BUDGET=0 to disable the pilot artifact budget, or raise it to render more seams in the pilot artifacts"
+            }
+        }
+    }
+}
+
 /// Render the repo exposure JSON.
 #[cfg(test)]
 pub(crate) fn render_repo_exposure_json(
@@ -183,9 +247,26 @@ pub(crate) fn render_repo_exposure_json(
     )
 }
 
+#[cfg(test)]
 pub(crate) fn render_repo_exposure_json_with_generated_skip(
     classified: &[ClassifiedSeam],
     limit_info: Option<&SeamLimitInfo>,
+    ts_guidance: Option<&TsFullRepoGuidance>,
+    python_guidance: Option<&PythonRepoExposureGuidance>,
+    generated_skip: Option<&GeneratedRustSkip>,
+) -> String {
+    render_repo_exposure_json_with_limit(
+        classified,
+        limit_info.map(RepoExposureLimit::Inventory),
+        ts_guidance,
+        python_guidance,
+        generated_skip,
+    )
+}
+
+pub(crate) fn render_repo_exposure_json_with_limit(
+    classified: &[ClassifiedSeam],
+    limit_info: Option<RepoExposureLimit<'_>>,
     ts_guidance: Option<&TsFullRepoGuidance>,
     python_guidance: Option<&PythonRepoExposureGuidance>,
     generated_skip: Option<&GeneratedRustSkip>,
@@ -215,9 +296,9 @@ pub(crate) fn render_repo_exposure_json_with_generated_skip(
 /// each seam carries its evidence record. CLI callers use this writer path so
 /// the JSON schema stays unchanged while memory pressure scales with one seam
 /// record rather than the full artifact.
-pub(crate) fn write_repo_exposure_json<W: io::Write>(
+fn write_repo_exposure_json<W: io::Write>(
     classified: &[ClassifiedSeam],
-    limit_info: Option<&SeamLimitInfo>,
+    limit_info: Option<RepoExposureLimit<'_>>,
     ts_guidance: Option<&TsFullRepoGuidance>,
     python_guidance: Option<&PythonRepoExposureGuidance>,
     generated_skip: Option<&GeneratedRustSkip>,
@@ -274,7 +355,7 @@ pub(crate) fn write_repo_exposure_json_with_context<W: io::Write>(
     // (#6898).
     let hash_started = Instant::now();
     write_repo_exposure_json_document(
-        limit_info,
+        limit_info.map(RepoExposureLimit::Inventory),
         disclosures,
         Some(&placeholder),
         source_subject.as_ref(),
@@ -288,7 +369,7 @@ pub(crate) fn write_repo_exposure_json_with_context<W: io::Write>(
     metadata["content_sha256"] = serde_json::Value::String(content_sha256);
     let write_started = Instant::now();
     write_repo_exposure_json_document(
-        limit_info,
+        limit_info.map(RepoExposureLimit::Inventory),
         disclosures,
         Some(&metadata),
         source_subject.as_ref(),
@@ -432,7 +513,7 @@ struct RepoExposureJsonDisclosures<'a> {
 }
 
 fn write_repo_exposure_json_document<W: io::Write>(
-    limit_info: Option<&SeamLimitInfo>,
+    limit_info: Option<RepoExposureLimit<'_>>,
     disclosures: RepoExposureJsonDisclosures<'_>,
     artifact: Option<&serde_json::Value>,
     source_subject: Option<&serde_json::Value>,
@@ -488,21 +569,15 @@ fn write_repo_exposure_json_document<W: io::Write>(
     if has_limitations {
         writeln!(out, "  \"limitations\": [")?;
         let mut first = true;
-        if let Some(info) = limit_info {
-            let repair_route = match info.source {
-                SeamLimitSource::Default => {
-                    "Set RIPR_REPO_EXPOSURE_SEAM_LIMIT=0 to analyze all seams, or scope the run to a change with `ripr check --base <REV>` (or `ripr check --diff <PATH>`)."
-                }
-                SeamLimitSource::Configured => {
-                    "Remove or raise RIPR_REPO_EXPOSURE_SEAM_LIMIT to analyze more seams, or scope the run to a change with `ripr check --base <REV>` (or `ripr check --diff <PATH>`)."
-                }
-            };
+        if let Some(limit) = limit_info {
+            let info = limit.info();
+            let repair_route = limit.repair_route();
             writeln!(out, "    {{")?;
-            writeln!(out, "      \"category\": \"repo_seam_limit_applied\",")?;
+            writeln!(out, "      \"category\": \"{}\",", limit.category())?;
             writeln!(out, "      \"seams_analyzed\": {},", info.analyzed)?;
             writeln!(out, "      \"seams_total\": {},", info.total)?;
             writeln!(out, "      \"limit_source\": \"{}\",", info.source.as_str())?;
-            writeln!(out, "      \"control\": \"RIPR_REPO_EXPOSURE_SEAM_LIMIT\",")?;
+            writeln!(out, "      \"control\": \"{}\",", limit.control())?;
             writeln!(
                 out,
                 "      \"repair_route\": \"{}\"",
@@ -1055,6 +1130,22 @@ pub(crate) fn render_repo_exposure_md_with_generated_skip(
     python_guidance: Option<&PythonRepoExposureGuidance>,
     generated_skip: Option<&GeneratedRustSkip>,
 ) -> String {
+    render_repo_exposure_md_with_limit(
+        classified,
+        limit_info.map(RepoExposureLimit::Inventory),
+        ts_guidance,
+        python_guidance,
+        generated_skip,
+    )
+}
+
+pub(crate) fn render_repo_exposure_md_with_limit(
+    classified: &[ClassifiedSeam],
+    limit_info: Option<RepoExposureLimit<'_>>,
+    ts_guidance: Option<&TsFullRepoGuidance>,
+    python_guidance: Option<&PythonRepoExposureGuidance>,
+    generated_skip: Option<&GeneratedRustSkip>,
+) -> String {
     let metrics = ExposureMetrics::from(classified);
     let mut out = String::new();
     out.push_str("# ripr repo exposure report\n\n");
@@ -1086,15 +1177,9 @@ pub(crate) fn render_repo_exposure_md_with_generated_skip(
     if has_limitations {
         out.push_str("\n## Limitations\n\n");
         // Seam-limit disclosure: emit only when a real cap fired.
-        if let Some(info) = limit_info {
-            let control = match info.source {
-                SeamLimitSource::Default => {
-                    "set RIPR_REPO_EXPOSURE_SEAM_LIMIT=0 to analyze all seams, or scope the run to a change with `ripr check --base <REV>` (or `ripr check --diff <PATH>`)"
-                }
-                SeamLimitSource::Configured => {
-                    "remove or raise RIPR_REPO_EXPOSURE_SEAM_LIMIT to analyze more seams, or scope the run to a change with `ripr check --base <REV>` (or `ripr check --diff <PATH>`)"
-                }
-            };
+        if let Some(limit) = limit_info {
+            let info = limit.info();
+            let control = limit.markdown_repair_route();
             out.push_str(&format!(
                 "> Partial scan: analyzed {} of {} seams (seam_limit_applied; {}).\n\n",
                 info.analyzed, info.total, control,
@@ -1498,6 +1583,7 @@ mod tests {
                 flow_sink: None,
             }],
             new_test_target: None,
+            statically_contradicted_related_tests: 0,
         };
         ClassifiedSeam {
             seam,
@@ -1601,6 +1687,103 @@ mod tests {
             json.contains("\"control\": \"RIPR_REPO_EXPOSURE_SEAM_LIMIT\""),
             "control missing in:\n{json}"
         );
+    }
+
+    #[test]
+    fn pilot_limit_disclosure_names_the_applied_cap() -> Result<(), String> {
+        let classified = [weakly_gripped_classified()];
+        for (source, source_name, route, markdown_line) in [
+            (
+                SeamLimitSource::Default,
+                "default",
+                "Set RIPR_PILOT_SEAM_BUDGET=0 to disable the pilot artifact budget.",
+                "> Partial scan: analyzed 1 of 3 seams (seam_limit_applied; set RIPR_PILOT_SEAM_BUDGET=0 to disable the pilot artifact budget).",
+            ),
+            (
+                SeamLimitSource::Configured,
+                "configured",
+                "Set RIPR_PILOT_SEAM_BUDGET=0 to disable the pilot artifact budget, or raise it to render more seams in the pilot artifacts.",
+                "> Partial scan: analyzed 1 of 3 seams (seam_limit_applied; set RIPR_PILOT_SEAM_BUDGET=0 to disable the pilot artifact budget, or raise it to render more seams in the pilot artifacts).",
+            ),
+        ] {
+            let info = SeamLimitInfo {
+                analyzed: 1,
+                total: 3,
+                source,
+            };
+            let limit = Some(RepoExposureLimit::PilotBudget(&info));
+            let json = render_repo_exposure_json_with_limit(&classified, limit, None, None, None);
+            let artifact: Value = serde_json::from_str(&json)
+                .map_err(|err| format!("parse pilot disclosure failed: {err}\n{json}"))?;
+            assert_eq!(artifact["run_status"], "seam_limit_applied");
+            assert_eq!(artifact["seams"].as_array().map(Vec::len), Some(1));
+            assert_eq!(
+                artifact["limitations"],
+                json!([{
+                    "category": "pilot_seam_budget_applied",
+                    "seams_analyzed": 1,
+                    "seams_total": 3,
+                    "limit_source": source_name,
+                    "control": "RIPR_PILOT_SEAM_BUDGET",
+                    "repair_route": route,
+                }])
+            );
+            let md = render_repo_exposure_md_with_limit(&classified, limit, None, None, None);
+            assert_eq!(
+                md.lines().find(|line| line.starts_with("> Partial scan:")),
+                Some(markdown_line)
+            );
+        }
+        let json = render_repo_exposure_json_with_limit(&classified, None, None, None, None);
+        let artifact: Value = serde_json::from_str(&json)
+            .map_err(|err| format!("parse uncapped disclosure failed: {err}\n{json}"))?;
+        assert_eq!(artifact["run_status"], "complete");
+        assert_eq!(artifact["seams"].as_array().map(Vec::len), Some(1));
+        assert!(artifact.get("limitations").is_none());
+        let md = render_repo_exposure_md_with_limit(&classified, None, None, None, None);
+        assert!(!md.contains("> Partial scan:"));
+        Ok(())
+    }
+
+    #[test]
+    fn inventory_limit_routes_remain_unchanged() -> Result<(), String> {
+        let classified = [weakly_gripped_classified()];
+        for (source, route, markdown_line) in [
+            (
+                SeamLimitSource::Default,
+                "Set RIPR_REPO_EXPOSURE_SEAM_LIMIT=0 to analyze all seams, or scope the run to a change with `ripr check --base <REV>` (or `ripr check --diff <PATH>`).",
+                "> Partial scan: analyzed 1 of 3 seams (seam_limit_applied; set RIPR_REPO_EXPOSURE_SEAM_LIMIT=0 to analyze all seams, or scope the run to a change with `ripr check --base <REV>` (or `ripr check --diff <PATH>`)).",
+            ),
+            (
+                SeamLimitSource::Configured,
+                "Remove or raise RIPR_REPO_EXPOSURE_SEAM_LIMIT to analyze more seams, or scope the run to a change with `ripr check --base <REV>` (or `ripr check --diff <PATH>`).",
+                "> Partial scan: analyzed 1 of 3 seams (seam_limit_applied; remove or raise RIPR_REPO_EXPOSURE_SEAM_LIMIT to analyze more seams, or scope the run to a change with `ripr check --base <REV>` (or `ripr check --diff <PATH>`)).",
+            ),
+        ] {
+            let info = SeamLimitInfo {
+                analyzed: 1,
+                total: 3,
+                source,
+            };
+            let json = render_repo_exposure_json(&classified, Some(&info), None, None);
+            let artifact: Value = serde_json::from_str(&json)
+                .map_err(|err| format!("parse inventory disclosure failed: {err}\n{json}"))?;
+            assert_eq!(
+                artifact["limitations"][0]["category"],
+                "repo_seam_limit_applied"
+            );
+            assert_eq!(
+                artifact["limitations"][0]["control"],
+                "RIPR_REPO_EXPOSURE_SEAM_LIMIT"
+            );
+            assert_eq!(artifact["limitations"][0]["repair_route"], route);
+            let md = render_repo_exposure_md(&classified, Some(&info), None, None);
+            assert_eq!(
+                md.lines().find(|line| line.starts_with("> Partial scan:")),
+                Some(markdown_line)
+            );
+        }
+        Ok(())
     }
 
     #[test]

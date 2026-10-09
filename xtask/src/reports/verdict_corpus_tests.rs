@@ -549,6 +549,125 @@ fn validator_rejects_a_retained_file_whose_digest_moved() -> Result<(), String> 
     Ok(())
 }
 
+fn subject_by_id<'a>(raw: &'a mut Value, id: &str) -> Result<&'a mut Value, String> {
+    raw["subjects"]
+        .as_array_mut()
+        .and_then(|subjects| {
+            subjects
+                .iter_mut()
+                .find(|subject| subject["subject_id"] == json!(id))
+        })
+        .ok_or_else(|| format!("corpus has no subject `{id}`"))
+}
+
+#[test]
+fn validator_rejects_a_tampered_retained_lockfile() -> Result<(), String> {
+    let violations = tampered(|raw| {
+        if let Ok(subject) = subject_by_id(raw, "authored-spec-confirm")
+            && let Some(files) = subject["retained_files"].as_array_mut()
+            && let Some(lock) = files.iter_mut().find(|file| file["path"] == "Cargo.lock")
+        {
+            lock["sha256"] = json!("0".repeat(64));
+        }
+    })?;
+    assert!(
+        violations.iter().any(|v| {
+            v.contains("authored-spec-confirm")
+                && v.contains("Cargo.lock")
+                && v.contains("does not match its pinned sha256")
+        }),
+        "{violations:#?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn validator_requires_a_lockfile_on_authored_registry_subjects() -> Result<(), String> {
+    let violations = tampered(|raw| {
+        if let Ok(subject) = subject_by_id(raw, "authored-spec-confirm")
+            && let Some(files) = subject["retained_files"].as_array_mut()
+        {
+            files.retain(|file| file["path"] != "Cargo.lock");
+        }
+    })?;
+    assert!(
+        violations.iter().any(|v| {
+            v.contains("authored-spec-confirm")
+                && v.contains("pins a registry crate")
+                && v.contains("Cargo.lock")
+        }),
+        "{violations:#?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn manifest_pins_registry_crate_reads_version_pins_not_path_deps() {
+    assert_eq!(
+        manifest_pins_registry_crate(
+            "[package]\nname = \"confirm\"\n\n[dependencies]\nlog = \"=0.4.34\"\n"
+        ),
+        Ok(true)
+    );
+    assert_eq!(
+        manifest_pins_registry_crate(
+            "[dev-dependencies]\nassert_cmd = \"=2.2.2\"\nlibtest-mimic = \"=0.8.2\"\n"
+        ),
+        Ok(true)
+    );
+    assert_eq!(
+        manifest_pins_registry_crate("[dependencies]\nlog = { version = \"=0.4.34\" }\n"),
+        Ok(true)
+    );
+    assert_eq!(
+        manifest_pins_registry_crate("[target.'cfg(unix)'.dependencies]\nlibc = \"0.2\"\n"),
+        Ok(true)
+    );
+    assert_eq!(
+        manifest_pins_registry_crate("[dependencies]\npricing = { path = \"../pricing\" }\n"),
+        Ok(false)
+    );
+    assert_eq!(
+        manifest_pins_registry_crate("[package]\nname = \"authored-pricing\"\n\n[dependencies]\n"),
+        Ok(false)
+    );
+}
+
+#[test]
+fn manifest_pins_registry_crate_ignores_dotted_features_and_multiline_path_tables() {
+    assert_eq!(
+        manifest_pins_registry_crate("[dependencies.pricing]\nfeatures = [\"std\"]\n"),
+        Ok(false)
+    );
+    assert_eq!(
+        manifest_pins_registry_crate("[dependencies]\npricing = {\n  path = \"../pricing\"\n}\n"),
+        Ok(false)
+    );
+    assert_eq!(
+        manifest_pins_registry_crate(
+            "[dependencies]\nfoo = { git = \"https://example.com/foo.git\" }\n"
+        ),
+        Ok(false)
+    );
+    assert_eq!(
+        manifest_pins_registry_crate("[dependencies]\nfoo = { workspace = true }\n"),
+        Ok(false)
+    );
+    assert_eq!(
+        manifest_pins_registry_crate("[dependencies]\nfoo = { version = { workspace = true } }\n"),
+        Ok(false)
+    );
+}
+
+#[test]
+fn manifest_pins_registry_crate_fails_closed_on_invalid_toml() {
+    let result = manifest_pins_registry_crate("[dependencies\nlog = \"1\"\n");
+    assert!(
+        matches!(&result, Err(err) if err.contains("not valid TOML")),
+        "unclosed table must not look like a non-pin: {result:?}"
+    );
+}
+
 #[test]
 fn validator_rejects_a_case_that_borrows_another_cases_diff() -> Result<(), String> {
     let violations = tampered(|raw| {
@@ -1356,5 +1475,42 @@ fn summary_derived_from_blessed_rows_equals_the_run_summary() -> Result<(), Stri
         err.contains("missing rows") && err.contains("b-case"),
         "{err}"
     );
+    Ok(())
+}
+
+#[test]
+fn coverage_mode_follows_the_ledger_file() -> Result<(), String> {
+    // The ledger declares coverage: no file, no gate. Presence alone decides,
+    // so a present-but-unreadable ledger fails loudly instead of un-gating.
+    let dir = crate::tests::temp_dir("verdict-coverage-mode");
+    assert_eq!(corpus_coverage_mode(&dir), CorpusCoverage::Ungated);
+    crate::tests::write(&dir.join(coverage::LEDGER_FILE), "schema_version = \"x\"\n");
+    assert_eq!(corpus_coverage_mode(&dir), CorpusCoverage::Gated);
+    Ok(())
+}
+
+#[test]
+fn ledgerless_corpus_validates_without_the_coverage_gate() -> Result<(), String> {
+    // A language with cases but no spec ledger still passes structural
+    // validation; only the spec-example gate is skipped.
+    let dir = crate::tests::temp_dir("verdict-no-ledger");
+    crate::tests::copy_dir_recursive(&repo_corpus_dir(), &dir)?;
+    fs::remove_file(dir.join(coverage::LEDGER_FILE)).map_err(|err| err.to_string())?;
+    assert_eq!(corpus_coverage_mode(&dir), CorpusCoverage::Ungated);
+    let corpus = validated_corpus_without_coverage(&dir)?;
+    assert!(!corpus.cases.is_empty());
+    Ok(())
+}
+
+#[test]
+fn present_but_invalid_ledger_still_fails() -> Result<(), String> {
+    // Opting in is strict: a corrupt ledger is a loud failure, never a
+    // silent fallback to the un-gated path.
+    let dir = crate::tests::temp_dir("verdict-bad-ledger");
+    crate::tests::copy_dir_recursive(&repo_corpus_dir(), &dir)?;
+    crate::tests::write(&dir.join(coverage::LEDGER_FILE), "schema_version = 42\n");
+    assert_eq!(corpus_coverage_mode(&dir), CorpusCoverage::Gated);
+    let err = validated_corpus(&dir).err().unwrap_or_default();
+    assert!(err.contains(coverage::LEDGER_FILE), "{err}");
     Ok(())
 }

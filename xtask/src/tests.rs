@@ -67,12 +67,13 @@ use super::{
     DogfoodUserSurfaceProjectionScenario, EVIDENCE_QUALITY_SCORECARD_AUDIT_REGENERATION_FAILED,
     EVIDENCE_QUALITY_TREND_PREVIOUS_ARTIFACT_UNAVAILABLE, EvidenceQualityScorecardInput,
     EvidenceQualityScorecardInputs, EvidenceQualityScorecardReport, EvidenceQualityTrendInputs,
-    EvidenceQualityTrendReport, FixKind, GENERATED_CI_FIRST_ACTION_REPAIR,
-    GENERATED_CI_FIRST_PR_REPAIR, GENERATED_CI_FRONT_PANEL_REPAIR,
-    GENERATED_CI_PACKET_INDEX_REPAIR, GhPrStatusPullRequest, GhPrStatusReview,
-    Lane1EvidenceAuditRepoExposureGeneration, Lane1EvidenceAuditRepoExposureOutcome,
-    LocalContextAllow, LocalMarkdownTarget, LspCockpitFixture, LspCockpitReport, MarkdownLink,
-    PYTHON_REAL_REPO_EVAL_REQUIRED_CASES, PYTHON_REAL_REPO_EVAL_REQUIRED_NO_ACTION_CASES,
+    EvidenceQualityTrendReport, FixKind, GENERATED_CI_COCKPIT_COMMAND,
+    GENERATED_CI_FIRST_ACTION_REPAIR, GENERATED_CI_FIRST_PR_REPAIR,
+    GENERATED_CI_FRONT_PANEL_REPAIR, GENERATED_CI_PACKET_INDEX_REPAIR, GhPrStatusPullRequest,
+    GhPrStatusReview, Lane1EvidenceAuditRepoExposureGeneration,
+    Lane1EvidenceAuditRepoExposureOutcome, LocalContextAllow, LocalMarkdownTarget,
+    LspCockpitFixture, LspCockpitReport, MarkdownLink, PYTHON_REAL_REPO_EVAL_REQUIRED_CASES,
+    PYTHON_REAL_REPO_EVAL_REQUIRED_NO_ACTION_CASES,
     PYTHON_REAL_REPO_EVAL_REQUIRED_STATIC_LIMIT_CASES, PrTriageCheck, PrTriageFinding,
     PrTriagePullRequest, REAL_REPAIR_ATTEMPTS_CORPUS, REAL_REPAIR_ATTEMPTS_REQUIRED_CASES,
     REPO_BADGE_ARTIFACT_DEFAULT_TIMEOUT_MS, REPO_BADGE_ARTIFACT_TIMEOUT_ENV,
@@ -109,7 +110,7 @@ use super::{
     dogfood_finding_alignment_scenarios, dogfood_first_action_run, dogfood_first_action_scenarios,
     dogfood_first_pr_metrics, dogfood_first_pr_run, dogfood_first_pr_scenarios,
     dogfood_gate_adoption_run, dogfood_gate_adoption_scenarios, dogfood_gate_result,
-    dogfood_generated_ci_cockpit_run_from_workflow, dogfood_language_preview_run,
+    dogfood_generated_ci_cockpit_run_from_surfaces, dogfood_language_preview_run,
     dogfood_language_preview_scenarios, dogfood_pr_inline_comment_run,
     dogfood_pr_inline_comment_scenarios, dogfood_pr_review_front_panel_run,
     dogfood_pr_review_front_panel_scenarios, dogfood_push_python_quality_ratio_json,
@@ -11532,6 +11533,126 @@ fn executable_allowlist_accepts_live_100755_row() -> Result<(), String> {
 }
 
 #[test]
+fn text_encoding_detects_only_bom_prefix() -> Result<(), String> {
+    if !super::has_utf8_bom(&[0xEF, 0xBB, 0xBF, b'#']) {
+        return Err("a leading EF BB BF must be detected as a BOM".to_string());
+    }
+    if !super::has_utf8_bom(&[0xEF, 0xBB, 0xBF]) {
+        return Err("a BOM-only file must be detected as a BOM".to_string());
+    }
+    for clean in [
+        Vec::new(),
+        vec![0xEF, 0xBB],
+        b"# heading".to_vec(),
+        b"\x00\x01\x02".to_vec(),
+        [b'x', 0xEF, 0xBB, 0xBF].to_vec(),
+    ] {
+        if super::has_utf8_bom(&clean) {
+            return Err(format!("non-BOM prefix must pass: {clean:?}"));
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn text_encoding_violation_names_file_and_both_strip_commands() -> Result<(), String> {
+    let violation = super::text_encoding_violation("policy/process_allowlist.txt");
+    for required in [
+        "policy/process_allowlist.txt",
+        "UTF-8 BOM",
+        "strip (POSIX):",
+        "tail -c +4 'policy/process_allowlist.txt'",
+        "strip (PowerShell):",
+        "[IO.File]::ReadAllBytes",
+        "[IO.File]::WriteAllBytes",
+    ] {
+        if !violation.contains(required) {
+            return Err(format!(
+                "BOM violation must contain {required:?}: {violation:?}"
+            ));
+        }
+    }
+    // An apostrophe in the path must stay inside each shell's quoting:
+    // POSIX closes the quote around '\'' and PowerShell doubles it.
+    let quoted = super::text_encoding_violation("docs/it's.md");
+    for required in ["tail -c +4 'docs/it'\\''s.md'", "$p='docs/it''s.md'"] {
+        if !quoted.contains(required) {
+            return Err(format!(
+                "BOM violation must quote apostrophes ({required:?}): {quoted:?}"
+            ));
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn text_encoding_candidates_cover_issue_text_classes() -> Result<(), String> {
+    // The three #7091 BOM sites were .txt, .rs, and .md; extensionless
+    // tracked files (LICENSE files) are scanned fail-closed. Extension
+    // matching is case-insensitive: the tracked `Makefile.PL` fixture and
+    // any future `README.MD`-style path must be scanned too (#7154).
+    for candidate in [
+        "policy/process_allowlist.txt",
+        "crates/ripr/tests/agent_stub_compiles.rs",
+        "fixtures/rust-verdict-corpus/SPEC.md",
+        "Cargo.lock",
+        "LICENSE-MIT",
+        "editors/vscode/.vscodeignore",
+        "fixtures/perl_cpan_alpha/input/Makefile.PL",
+        "notes.TXT",
+    ] {
+        if !super::is_text_encoding_candidate(candidate) {
+            return Err(format!("text path must be scanned: {candidate}"));
+        }
+    }
+    for skipped in ["assets/logo.png", "fixtures/corpus.gz"] {
+        if super::is_text_encoding_candidate(skipped) {
+            return Err(format!("binary path must be skipped: {skipped}"));
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn text_encoding_clean_tree_passes() -> Result<(), String> {
+    with_repo_cwd(super::check_text_encoding)
+}
+
+#[test]
+fn text_encoding_reports_a_tracked_bom_file() -> Result<(), String> {
+    // The load-bearing direction: a tracked file starting with EF BB BF
+    // must fail the real check with the file named. Without this test,
+    // deleting the reporting branch leaves every other text-encoding
+    // test green (#7154).
+    with_temp_cwd("text-encoding-tracked-bom", |root| -> Result<(), String> {
+        badge_fixture_git(&["init", "--initial-branch=main", "--quiet"])?;
+        let mut bytes = vec![0xEF, 0xBB, 0xBF];
+        bytes.extend_from_slice(b"# heading\n");
+        std::fs::write(root.join("bom.md"), &bytes)
+            .map_err(|err| format!("failed to write BOM fixture: {err}"))?;
+        badge_fixture_git(&["add", "bom.md"])?;
+        // Setup assertion: enumeration must see the fixture before the
+        // check runs, so a git-layout failure cannot masquerade as a
+        // clean scan or a passing red test.
+        let listed = super::tracked_files()?;
+        if !listed.iter().any(|path| path == "bom.md") {
+            return Err(format!(
+                "BOM fixture must be git-tracked before the check runs: {listed:?}"
+            ));
+        }
+        let Err(err) = super::check_text_encoding() else {
+            return Err("a tracked BOM file must fail check_text_encoding".to_string());
+        };
+        if !err.contains("bom.md") || !err.contains("UTF-8 BOM") {
+            return Err(format!(
+                "BOM failure must name the file and the mark: {err}"
+            ));
+        }
+        Ok(())
+    })
+}
+
+#[test]
 fn shape_rewrite_notice_lists_rewritten_files() {
     assert_eq!(super::shape_rewrite_notice(&[]), None);
     let notice =
@@ -13844,7 +13965,7 @@ fn dogfood_reports_are_advisory() -> Result<(), String> {
     };
     let generated_ci_run = DogfoodGeneratedCiCockpitRun {
         name: "generated-pr-ci-review-workflow".to_string(),
-        command: "cargo run --quiet -p ripr -- init --ci github --dry-run".to_string(),
+        command: GENERATED_CI_COCKPIT_COMMAND.to_string(),
         duration_ms: 10,
         start_here: true,
         repair_commands: 4,
@@ -14460,11 +14581,12 @@ fn dogfood_reports_are_advisory() -> Result<(), String> {
     assert_eq!(dogfood_report_status(&json_inputs), "pass");
     // A failing family the #2411 exit list used to skip must still fail the
     // command, and through the same owner as the report status (#4309).
-    let failing_generated_ci_runs = [dogfood_generated_ci_cockpit_run_from_workflow(
+    let failing_generated_ci_runs = [dogfood_generated_ci_cockpit_run_from_surfaces(
         "generated-pr-ci-review-workflow",
         "cargo run --quiet -p ripr -- init --ci github --dry-run",
         10,
         "name: RIPR",
+        "",
     )];
     let failing_preview_projection_runs = DogfoodPreviewProjectionRuns {
         generated_ci_cockpit: &failing_generated_ci_runs,
@@ -20238,45 +20360,62 @@ fn dogfood_user_surface_projection_alignment_matches_surface_projection_source()
 
 #[test]
 fn dogfood_generated_ci_cockpit_receipts_are_checked() {
-    let workflow = format!(
-            "\
+    assert!(
+        GENERATED_CI_COCKPIT_COMMAND.contains("init --ci github --dry-run"),
+        "receipt must name the workflow producer: {GENERATED_CI_COCKPIT_COMMAND}"
+    );
+    assert!(
+        GENERATED_CI_COCKPIT_COMMAND.contains("reports ci-summary"),
+        "receipt must name the summary producer: {GENERATED_CI_COCKPIT_COMMAND}"
+    );
+    assert!(
+        GENERATED_CI_COCKPIT_COMMAND.contains("--base-ref main"),
+        "receipt must name the first-run ci-summary stimulus: {GENERATED_CI_COCKPIT_COMMAND}"
+    );
+    let command = "cargo run --quiet -p ripr -- init --ci github --dry-run";
+    let workflow = "\
 name: RIPR
 jobs:
   ripr:
-    continue-on-error: ${{{{ vars.RIPR_GATE_MODE == '' || vars.RIPR_GATE_MODE == 'visible-only' }}}}
+    continue-on-error: ${{ vars.RIPR_GATE_MODE == '' || vars.RIPR_GATE_MODE == 'visible-only' }}
     steps:
+      - name: Add RIPR advisory summary
+        if: always()
+        continue-on-error: true
+        run: |
+          ripr reports ci-summary --root . >> \"$GITHUB_STEP_SUMMARY\"
       - uses: actions/upload-artifact@v7
-      - run: |
-          echo '### Start here'
-          echo '- Open `target/ripr/reports/start-here.md` first when it exists.'
-          echo 'name: Render RIPR first-pr start-here'
-          echo 'cat target/ripr/reports/start-here.md'
-          echo 'RIPR is advisory static evidence.'
-          echo 'Gate authority: `ripr gate evaluate` remains the pass/fail source.'
-          echo '{GENERATED_CI_FIRST_ACTION_REPAIR}'
-          echo '{GENERATED_CI_FIRST_PR_REPAIR}'
-          echo '{GENERATED_CI_FRONT_PANEL_REPAIR}'
-          echo '{GENERATED_CI_PACKET_INDEX_REPAIR}'
-          echo '### Language preview grouping'
-          echo 'if [ -n \"$preview_languages\" ]; then'
-          echo 'Grouped preview evidence languages'
-          echo 'grouped_preview_languages=\"$grouped_preview_languages javascript\"'
-          echo 'preview-language groups are advisory presentation only; `ripr gate evaluate` remains pass/fail authority when explicitly configured.'
-          echo 'missing_preview_status'
-          echo 'static_limit_kinds'
-          echo 'actionability_states'
-          echo 'actionability_categories'
-          echo 'repair_packet_ready_entries'
-          echo 'gate_impact=\\`none\\`'
-          echo 'target/ripr/reports'
-"
-        );
+        with:
+          path: |
+            target/ripr/reports
+";
+    let summary = format!(
+        "\
+## RIPR advisory summary
 
-    let run = dogfood_generated_ci_cockpit_run_from_workflow(
+RIPR is advisory static evidence. It does not edit source, generate tests, or run mutation testing.
+
+### Start here
+- Open `target/ripr/reports/start-here.md` first when it exists.
+- Gate authority: `ripr gate evaluate` remains the pass/fail source only when `RIPR_GATE_MODE` is configured.
+- {GENERATED_CI_FIRST_ACTION_REPAIR}
+- {GENERATED_CI_FIRST_PR_REPAIR}
+- {GENERATED_CI_FRONT_PANEL_REPAIR}
+- {GENERATED_CI_PACKET_INDEX_REPAIR}
+
+### Language preview grouping
+- Grouped preview evidence languages: `javascript typescript`
+- Boundary: preview-language groups are advisory presentation only; `ripr gate evaluate` remains pass/fail authority when explicitly configured.
+- `typescript`: artifact_entries=`1`, preview_entries=`1`, missing_preview_status=`0`, static_limit_entries=`0`, classifications=`weakly_exposed=1`, static_limit_kinds=`none`, actionability_states=`actionable=1`, actionability_categories=`none`, repair_packet_ready=`1`, gate_impact=`none`
+"
+    );
+
+    let run = dogfood_generated_ci_cockpit_run_from_surfaces(
         "generated-pr-ci-review-workflow",
-        "cargo run --quiet -p ripr -- init --ci github --dry-run",
+        command,
         10,
-        &workflow,
+        workflow,
+        &summary,
     );
     assert!(run.errors.is_empty(), "{:?}", run.errors);
     assert!(run.start_here);
@@ -20286,12 +20425,8 @@ jobs:
     assert!(run.artifact_upload);
     assert_eq!(run.language_grouping_status, "checked");
 
-    let missing = dogfood_generated_ci_cockpit_run_from_workflow(
-        "missing",
-        "cargo run --quiet -p ripr -- init --ci github --dry-run",
-        10,
-        "name: RIPR",
-    );
+    let missing =
+        dogfood_generated_ci_cockpit_run_from_surfaces("missing", command, 10, "name: RIPR", "");
     assert!(
         missing
             .errors
@@ -20305,19 +20440,276 @@ jobs:
             .any(|error| error.contains("regeneration commands"))
     );
 
+    // Removing one ci-summary string must fail the scenario again (#6958).
+    let mutated = dogfood_generated_ci_cockpit_run_from_surfaces(
+        "missing-start-here-heading",
+        command,
+        10,
+        workflow,
+        &summary.replace("### Start here", "### Start elsewhere"),
+    );
+    assert!(
+        mutated
+            .errors
+            .iter()
+            .any(|error| error.contains("Start here")),
+        "{:?}",
+        mutated.errors
+    );
+    assert!(!mutated.start_here);
+
+    // Workflow text that still carries the retired shell cannot satisfy the
+    // summary properties.
+    let legacy = dogfood_generated_ci_cockpit_run_from_surfaces(
+        "legacy-workflow-text",
+        command,
+        10,
+        &format!("{workflow}{summary}"),
+        "",
+    );
+    assert!(
+        legacy
+            .errors
+            .iter()
+            .any(|error| error.contains("Start here")),
+        "{:?}",
+        legacy.errors
+    );
+    assert!(
+        legacy
+            .errors
+            .iter()
+            .any(|error| error.contains("regeneration commands")),
+        "{:?}",
+        legacy.errors
+    );
+
     // Generated CI names the PR range since #4260; the unscoped form it
     // replaced must not satisfy the first-pr repair command.
-    let unscoped = workflow.replace(
+    let unscoped = summary.replace(
         GENERATED_CI_FIRST_PR_REPAIR,
         "ripr first-pr --root . --gap-ledger target/ripr/reports/gap-decision-ledger.json --first-action target/ripr/reports/first-useful-action.json --review-comments target/ripr/review/comments.json --agent-packet target/ripr/workflow/agent-packet.json --gate-decision target/ripr/reports/gate-decision.json --receipts-dir target/ripr/receipts --out-dir target/ripr/reports",
     );
-    let stale = dogfood_generated_ci_cockpit_run_from_workflow(
+    let stale = dogfood_generated_ci_cockpit_run_from_surfaces(
         "unscoped-first-pr",
-        "cargo run --quiet -p ripr -- init --ci github --dry-run",
+        command,
         10,
+        workflow,
         &unscoped,
     );
     assert_eq!(stale.repair_commands, 3);
+
+    let names_elsewhere = summary.replace(
+        "- `typescript`: artifact_entries=`1`, preview_entries=`1`, missing_preview_status=`0`, static_limit_entries=`0`, classifications=`weakly_exposed=1`, static_limit_kinds=`none`, actionability_states=`actionable=1`, actionability_categories=`none`, repair_packet_ready=`1`, gate_impact=`none`",
+        "- `typescript`: configured preview/advisory; no language findings were emitted in this run; gate_impact=`none`.\nmissing_preview_status static_limit_kinds actionability_states",
+    );
+    let loose_metrics = dogfood_generated_ci_cockpit_run_from_surfaces(
+        "grouping-metrics-not-on-typescript-row",
+        command,
+        10,
+        workflow,
+        &names_elsewhere,
+    );
+    assert_eq!(loose_metrics.language_grouping_status, "missing");
+
+    let rust_only = dogfood_generated_ci_cockpit_run_from_surfaces(
+        "rust-only-no-grouping",
+        command,
+        10,
+        workflow,
+        &summary.replace("### Language preview grouping", "### No language preview"),
+    );
+    assert_eq!(rust_only.language_grouping_status, "missing");
+    assert!(
+        rust_only
+            .errors
+            .iter()
+            .any(|error| error.contains("preview-language grouping")),
+        "{:?}",
+        rust_only.errors
+    );
+
+    let disconnected = dogfood_generated_ci_cockpit_run_from_surfaces(
+        "summary-without-workflow-invoke",
+        command,
+        10,
+        &workflow.replace(
+            "ripr reports ci-summary --root . >> \"$GITHUB_STEP_SUMMARY\"",
+            "echo skipped",
+        ),
+        &summary,
+    );
+    assert!(
+        disconnected
+            .errors
+            .iter()
+            .any(|error| error.contains("invoke ripr reports ci-summary")),
+        "{:?}",
+        disconnected.errors
+    );
+
+    let moved_invoke = format!(
+        "{}      - name: Echo summary elsewhere\n        run: |\n          ripr reports ci-summary --root . >> \"$GITHUB_STEP_SUMMARY\"\n",
+        workflow.replace(
+            "          ripr reports ci-summary --root . >> \"$GITHUB_STEP_SUMMARY\"",
+            "          echo skipped",
+        )
+    );
+    let relocated = dogfood_generated_ci_cockpit_run_from_surfaces(
+        "invoke-outside-advisory-summary-step",
+        command,
+        10,
+        &moved_invoke,
+        &summary,
+    );
+    assert!(
+        relocated
+            .errors
+            .iter()
+            .any(|error| error.contains("Add RIPR advisory summary step")),
+        "{:?}",
+        relocated.errors
+    );
+
+    let echoed_invoke = workflow.replace(
+        "          ripr reports ci-summary --root . >> \"$GITHUB_STEP_SUMMARY\"",
+        "          echo 'ripr reports ci-summary --root . >> \"$GITHUB_STEP_SUMMARY\"'",
+    );
+    let echoed = dogfood_generated_ci_cockpit_run_from_surfaces(
+        "echoed-summary-invoke",
+        command,
+        10,
+        &echoed_invoke,
+        &summary,
+    );
+    assert!(
+        echoed
+            .errors
+            .iter()
+            .any(|error| error.contains("invoke ripr reports ci-summary")),
+        "{:?}",
+        echoed.errors
+    );
+
+    let commented_invoke = workflow.replace(
+        "          ripr reports ci-summary --root . >> \"$GITHUB_STEP_SUMMARY\"",
+        "          # ripr reports ci-summary --root . >> \"$GITHUB_STEP_SUMMARY\"",
+    );
+    let commented = dogfood_generated_ci_cockpit_run_from_surfaces(
+        "commented-summary-invoke",
+        command,
+        10,
+        &commented_invoke,
+        &summary,
+    );
+    assert!(
+        commented
+            .errors
+            .iter()
+            .any(|error| error.contains("invoke ripr reports ci-summary")),
+        "{:?}",
+        commented.errors
+    );
+
+    let early_exit_invoke = workflow.replace(
+        "          ripr reports ci-summary --root . >> \"$GITHUB_STEP_SUMMARY\"",
+        "          exit 0\n          ripr reports ci-summary --root . >> \"$GITHUB_STEP_SUMMARY\"",
+    );
+    let early_exit = dogfood_generated_ci_cockpit_run_from_surfaces(
+        "unreachable-summary-invoke",
+        command,
+        10,
+        &early_exit_invoke,
+        &summary,
+    );
+    assert!(
+        early_exit
+            .errors
+            .iter()
+            .any(|error| error.contains("invoke ripr reports ci-summary")),
+        "{:?}",
+        early_exit.errors
+    );
+
+    let early_exit_one_invoke = workflow.replace(
+        "          ripr reports ci-summary --root . >> \"$GITHUB_STEP_SUMMARY\"",
+        "          exit 1\n          ripr reports ci-summary --root . >> \"$GITHUB_STEP_SUMMARY\"",
+    );
+    let early_exit_one = dogfood_generated_ci_cockpit_run_from_surfaces(
+        "unreachable-summary-invoke-exit-1",
+        command,
+        10,
+        &early_exit_one_invoke,
+        &summary,
+    );
+    assert!(
+        early_exit_one
+            .errors
+            .iter()
+            .any(|error| error.contains("invoke ripr reports ci-summary")),
+        "{:?}",
+        early_exit_one.errors
+    );
+
+    let install_guard_invoke = workflow.replace(
+        "        run: |\n          ripr reports ci-summary --root . >> \"$GITHUB_STEP_SUMMARY\"",
+        "        run: |\n          if [ \"${RIPR_INSTALL_OUTCOME:-}\" != success ]; then\n            echo \"::error::not installed\"; exit 1\n          fi\n          ripr reports ci-summary --root . >> \"$GITHUB_STEP_SUMMARY\"",
+    );
+    let install_guard = dogfood_generated_ci_cockpit_run_from_surfaces(
+        "install-failure-exit-stays-conditional",
+        command,
+        10,
+        &install_guard_invoke,
+        &summary,
+    );
+    assert!(
+        install_guard
+            .errors
+            .iter()
+            .all(|error| !error.contains("invoke ripr reports ci-summary")),
+        "{:?}",
+        install_guard.errors
+    );
+
+    let blocking_summary_step = dogfood_generated_ci_cockpit_run_from_surfaces(
+        "summary-step-without-continue-on-error",
+        command,
+        10,
+        &workflow.replace(
+            "      - name: Add RIPR advisory summary\n        if: always()\n        continue-on-error: true",
+            "      - name: Add RIPR advisory summary\n        if: always()\n        continue-on-error: false",
+        ),
+        &summary,
+    );
+    assert!(
+        blocking_summary_step
+            .errors
+            .iter()
+            .any(|error| error.contains("continue-on-error: true")),
+        "{:?}",
+        blocking_summary_step.errors
+    );
+
+    let blocking_job = workflow.replace(
+        "continue-on-error: ${{ vars.RIPR_GATE_MODE == '' || vars.RIPR_GATE_MODE == 'visible-only' }}",
+        "continue-on-error: false",
+    );
+    let blocking = dogfood_generated_ci_cockpit_run_from_surfaces(
+        "blocking-job",
+        command,
+        10,
+        &blocking_job,
+        &summary,
+    );
+    assert!(!blocking.default_advisory);
+    assert!(
+        blocking
+            .errors
+            .iter()
+            .any(|error| error.contains("advisory by default")),
+        "{:?}",
+        blocking.errors
+    );
 }
 
 #[test]

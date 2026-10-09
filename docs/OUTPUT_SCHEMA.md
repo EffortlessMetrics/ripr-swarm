@@ -3688,18 +3688,25 @@ Field contract:
 - `scope` — always `"repo"`.
 - `run_status` — always present; one of `"complete"` or
   `"seam_limit_applied"`. `"complete"` means the run analyzed all
-  seams. `"seam_limit_applied"` means `RIPR_REPO_EXPOSURE_SEAM_LIMIT`
-  truncated the inventory. Consumers must read `run_status` before
+  seams. `"seam_limit_applied"` means the inventory cap or pilot artifact
+  budget truncated the reported population. Consumers must read `run_status` before
   treating counts as complete-repo totals. Added as an additive field
   within schema version `0.3` per RIPR-SPEC-0074.
 - `limitations[]` — present when repo exposure has a named run limitation or
   guidance disclosure. Consumers must branch on `category`.
-  - `category: "repo_seam_limit_applied"` appears when `run_status` is
-    `"seam_limit_applied"`. It carries `seams_analyzed`, `seams_total`,
+  - `category: "repo_seam_limit_applied"` identifies an inventory cut when
+    `run_status` is `"seam_limit_applied"`. It carries `seams_analyzed`, `seams_total`,
     `limit_source`, `control`, and `repair_route`. `limit_source` is
     `"default"` when the cap came from the built-in default
     (`DEFAULT_REPO_EXPOSURE_SEAM_LIMIT = 10_000`) and `"configured"` when
     `RIPR_REPO_EXPOSURE_SEAM_LIMIT` was explicitly set in the environment.
+    `control` and `repair_route` name that inventory control.
+  - `category: "pilot_seam_budget_applied"` identifies a pilot artifact
+    budget cut, with the same count/source fields and `control:
+    "RIPR_PILOT_SEAM_BUDGET"`. Its default is 2,000; a configured value
+    retains `limit_source: "configured"`. The repair route names the pilot
+    budget that actually fired, even when an inventory cap also applied.
+    An inactive pilot budget does not relabel an inventory limitation.
   - `category: "typescript_diff_first"` appears when a TS/JS-predominant
     workspace has TS/JS files, no Rust files, and zero classified seams.
     `run_status` remains `"complete"` because the Rust repo-exposure scan
@@ -3866,6 +3873,14 @@ Field contract:
   existing seam evidence, including related-test relation fields. The
   nested `related_tests` array is capped like the top-level array and keeps
   `related_tests_total`.
+- `seams[].evidence_record.statically_contradicted_related_tests` -
+  additive, present only when positive (RIPR-SPEC-0233, #7007). Producer
+  count of related tests whose exact-value assertion statically contradicts
+  the seam owner's fold, over the FULL related set - the capped
+  `related_tests` projection can omit a contradicted test and each entry
+  names only its best oracle, so a positive count here is the completeness
+  authority for outcome receipts: the gap cannot be reported closed while
+  it is positive, even when no rendered entry names the contradiction.
 - `seams[].evidence_record.related_tests[].oracle_semantics` - structured
   oracle-shape explanation with `observes`, `missing`, and nullable
   `upgrade_suggestion`. Weak, broad, smoke-only, and unknown oracle shapes
@@ -7497,7 +7512,9 @@ Field contract:
   `seams[].evidence_record` is present, the comparison prefers that shared
   evidence spine; otherwise it falls back to legacy repo-exposure seam fields.
 - `evidence_delta[]` — advisory hints such as missing discriminators no longer
-  reported, new observed values, or stronger related oracles. These hints are
+  reported, new observed values, stronger related oracles, or a contradicted
+  related test that remains in the after evidence set (RIPR-SPEC-0233; while
+  one remains, `gap_movement` is `improved`, never `closed`). These hints are
   based on the rendered static artifact and do not claim runtime confirmation.
 - `evidence_source` — `evidence_record`, `legacy_fields`, or a mixed transition
   label when before and after snapshots differ in available evidence source.
@@ -15149,12 +15166,25 @@ Field contract:
 - `scope` — always `"repo"`, including the one-seam `ripr agent packet`
   expansion. The one-seam command is a filtered view of the repo packet
   contract, not a second packet schema.
+- `run_status` — `"complete"` when neither cap bounded the pilot artifact,
+  or `"seam_limit_applied"` when the inventory cap or pilot artifact budget
+  fired. Packet admission remains independent of this status.
+- `limitations[]` — present for a pilot artifact cap, with one object carrying
+  `category`, `seams_analyzed`, `seams_total`, `limit_source`, `control` and
+  `repair_route`. An inventory-only cut names `"repo_seam_limit_applied"` and
+  `"RIPR_REPO_EXPOSURE_SEAM_LIMIT"`; a pilot cut names
+  `"pilot_seam_budget_applied"` and `"RIPR_PILOT_SEAM_BUDGET"`.
+  The existing repo-exposure cap authority supplies the same default/configured
+  repair routes. An inactive pilot budget cannot relabel the inventory cut.
+  When both fire, the pilot cut's total is the already-capped inventory; its
+  route describes lifting only the pilot budget. Full recovery requires
+  disabling every active cap. Uncapped output has no stale cap limitation.
 - `analysis_outcome_status` — the producer outcome projection state. It is
   `"complete"` or `"incomplete"` when a typed diff outcome is present,
   `"missing"` or `"invalid"` when a required producer artifact cannot be
   trusted, and `"not_applicable"` for repo-only or gap-ledger packets that do
   not have a diff denominator. This field is independent of `run_status`,
-  which only describes the agent packet seam budget.
+  which describes whether a cap bounded the packet rendering input.
 - `analysis_outcome_error` — optional bounded diagnostic for `missing` or
   `invalid` producer evidence. It is never converted into a clean packet.
 - `analysis_outcome` — `null` for `not_applicable`, `missing`, or `invalid`;
@@ -16677,7 +16707,7 @@ JSON shape:
     "cases": [
       {
         "name": "generated-pr-ci-review-workflow",
-        "command": "cargo run --quiet -p ripr -- init --ci github --dry-run",
+        "command": "cargo run --quiet -p ripr -- init --ci github --dry-run && cargo run --quiet -p ripr -- reports ci-summary --root <generated-ci-cockpit-fixture> --base-ref main",
         "duration_ms": 123,
         "start_here": true,
         "repair_commands": 4,
@@ -18086,7 +18116,7 @@ targeted-rerun receipt shape:
     "direct_call_names": ["discounted_total"]
   },
   "cache": {
-    "schema_version": "1.33",
+    "schema_version": "1.34",
     "reuse_state": "reused_file_facts",
     "file_fact_status": "hits_2_misses_0_corrupt_0_store_errors_0",
     "hits": 2,
@@ -18097,7 +18127,7 @@ targeted-rerun receipt shape:
     "recomputation_reasons": ["selected_test_scope_recomputed"],
     "invalidation_status": "not_available",
     "input_fingerprint": {
-      "schema_version": "1.47",
+      "schema_version": "1.53",
       "analyzer_version": "0.11.0+0123456789abcdef0123456789abcdef01234567",
       "workspace_root_hash": "…",
       "files_content_hash": "…",

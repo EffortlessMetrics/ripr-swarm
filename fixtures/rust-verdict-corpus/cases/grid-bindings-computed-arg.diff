@@ -1,0 +1,13 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 55be37b..5e44238 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -14,7 +14,7 @@ pub fn within_budget(spent: u32) -> bool {
+ }
+ 
+ fn is_bulk(qty: u32) -> bool {
+-    qty >= 10
++    10 <= qty
+ }
+ 
+ pub fn order_discount(qty: u32) -> u32 {

@@ -287,8 +287,14 @@ packet` remains the full-detail compatibility route. See
 [Output Schema](OUTPUT_SCHEMA.md) § "Repair card".
 
 To go from one `ripr check` finding to a test in one step, run
-`ripr agent stub --root . --at FILE:LINE` with the location the finding
-prints (or `--seam-id ID`). It prints a compiling `#[test]` placed in the
+`ripr agent stub --root . --at FILE:LINE --kind FAMILY` as the finding prints
+it (or `--seam-id ID`). `--kind` is the finding's probe family; only seams of
+that kind are tried, so it picks the seam the finding reported when its line
+holds several, and two separate seams of that kind on one line are refused
+with their seam IDs. With `--at` and `--kind` the stub
+is read from that one file's seams, without re-classifying them, and placed
+inline. A bare `--at` (no `--kind`) classifies that one file and tries only
+its reported gaps, so it never stubs a seam the tests already pin. It prints a compiling `#[test]` placed in the
 owner file's inline `#[cfg(test)]` module, a new inline module, or the
 proposed `tests/` file, calling the changed function with its real receiver
 and arguments and a boundary input when the changed comparison names one. A
@@ -306,6 +312,12 @@ Its `run_command` runs only that test through the owning package's
 `--manifest-path`, and is `null` when no Cargo package owns the file. A
 `--at` path that matches files with gaps in several crates is refused; pass
 the full path or the seam ID.
+
+When the file has seams but the selected function has none of the requested
+family, the not-found message names the requested `FAMILY`. Its `nearest:`
+list contains only seams of that family, filtered before the five-entry limit.
+A file with only other families offers no nearest entries. These not-found
+decisions keep exit 3 and empty stdout, including with `--json`.
 
 No `.ripr/goals/active.toml`, current-writer file, stage file or agent-liveness
 record selects ordinary work. Keep status changes evidence-bound and update an

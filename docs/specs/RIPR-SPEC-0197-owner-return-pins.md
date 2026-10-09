@@ -25,6 +25,8 @@ Linked issues:
   production declarations keep their pin)
 - #6950 (an out-of-line parent module declaring the receiver shadows it:
   the parent chain refuses the pin and direct reach)
+- #7067 (a single-file `use ... as <name>` rename rebinds the receiver in
+  either spelling: the raw form refuses the pin and direct reach too)
 - RIPR-SPEC-0219 verdict corpus: `assert!(owner(..))` on a bool owner read
   as a weak relational check (bool-owner pins below)
 
@@ -147,8 +149,8 @@ rule only for an assertion whose context was admitted.
    included) has no other token in the test (no shadowing, mutation, alias
    or second use). No attribute may appear anywhere in the rows, since a
    `#[cfg]` can remove every element. Every row leaf is a literal, a negated
-   literal, `None`, `Some(..)`, `Ok(..)`, `Err(..)`, a qualified path whose
-   segments are all CamelCase without generic arguments (`Kind::Empty`,
+   literal, `None`, `Some`, `Ok` or `Err` (bare or called), a qualified path
+   whose segments are all CamelCase other than `Self`, without generic arguments (`Kind::Empty`,
    `Status::Complete(5)`), or `vec![..]` whose tokens are literals and the
    punctuation `[ ] ( ) , - &`; parentheses, references, tuples and nested
    arrays of these are constant. A bare CamelCase name may be a `fn` or
@@ -156,8 +158,8 @@ rule only for an assertion whose context was admitted.
    ranges, indexes and repeat arrays (`[r; n]`), since they may be empty or
    carry the owner's own output. A `break` or `continue` anywhere in the
    loop before the assertion refuses it, as for `loop`. This admits the
-   assertion's execution only; every other rule still applies to it, and a
-   loop-bound argument is not a literal input for boundary pairing.
+   assertion's execution only; every other rule still applies to it.
+   RIPR-SPEC-0186 says when a loop-bound argument is a boundary input.
    `?` in a root test remains supported (an error fails an ordinary Result
    test); `?` in a closure is refused because its result could be discarded.
    Exactly
@@ -173,8 +175,9 @@ rule only for an assertion whose context was admitted.
    once, by an immutable `let v [: T] = <call>;`, is that call (#6974) when
    `v` appears nowhere else in the test but as a whole operand of
    `assert_eq!` assertions on later lines, and the assertion is the
-   statement right after the `let` (a statement between them could change
-   the value through a shared handle). A `mut` binding, a second binding, a
+   statement right after the `let` and the only statement on its line (a
+   statement between them, or one sharing the assertion's line, could
+   change the value through a shared handle). A `mut` binding, a second binding, a
    borrow, a method call or argument use of `v`, a use before the `let`,
    or an initializer with anything around the call leaves the assertion
    unpinned. An expected operand naming a `let` whose initializer mentions
@@ -195,7 +198,57 @@ rule only for an assertion whose context was admitted.
      workspace, the test must not bind the name (`let`, nested `fn`, the
      test's parameters, a `for`, closure or match-arm pattern, or a macro
      such as `let_assert!` that mentions it), and the test's file must not
-     rename an item to it (`use a::b as name`).
+     rename an item to it (`use a::b as name`). As for a path (below), the
+     owner must sit directly in a module ripr can place by parsing its
+     file, and neither the owner nor any enclosing inline module may carry
+     a `cfg` or `cfg_attr` attribute, outer or inner (#7082): a
+     complementary cfg may compile a same-named `static`, `const` or `use`
+     that the bare name reaches instead. Nor may the owner's file be
+     droppable by a cfg: a `cfg`, or a `cfg_attr` whose attributes name
+     `cfg`, `cfg_attr` or `path`, as an inner attribute at the top of the
+     owner's file or of any file on the chain that compiles it into its
+     crate, or on the out-of-line `mod name;` declaration of each step of
+     that chain, lets a same-named module replace the whole file. A
+     `cfg_attr` that only toggles lints or docs
+     (`#![cfg_attr(docsrs, feature(doc_cfg))]`) does not. An include edge,
+     an unresolved chain, or a non-root file with no recorded chain (ripr records none for a `#[path]` it cannot resolve,
+     such as one under `cfg_attr`) fails closed
+     (`a_cfg_gated_owner_is_not_reached_by_a_bare_call`,
+     `an_ancestor_file_a_cfg_may_drop_gates_the_owner`,
+     `a_cfg_attr_path_on_the_owners_declaration_gates_it_through_real_composition`).
+     The same file rule applies to a path call. The test's binding of the
+     name must resolve to the owner (#7097): a `static` (plain or `mut`),
+     `const`, tuple or unit struct, or extern item of the name in the test's
+     body or own module scope takes the call, so it refuses; an explicit `use` binding the
+     name must be the only one in its scope and resolve to a module
+     holding the owner — the owner's own path (`self`/`super` from the
+     scope, `crate` under the owner's root, or the owner's library crate
+     name from the manifest authority) or one `use` re-exporting it; a
+     glob must deliver the owner's binding from such a module holding no
+     twin (an item, a `use` to elsewhere, or a macro that may emit one);
+     and with neither `use` nor glob the test must sit in the owner's own
+     module. Type-only items (`mod`,
+     `trait`, `type`, `enum`, `union`, braced `struct`) share no
+     namespace with the call and keep the pin. A `super` at the top of an
+     out-of-line file climbs into the inline scope holding its `mod`
+     declaration in the declaring parent, so `use super::name` and
+     `use super::*` there resolve past it; include edges never climb.
+     Anything unplaced — a
+     foreign crate, an unresolved path, a re-export chain past one hop —
+     refuses
+     (`a_bare_call_to_an_imported_same_named_twin_is_not_a_pin`,
+     `a_bare_call_beside_a_competing_import_is_not_a_pin`,
+     `a_same_named_item_in_the_test_file_is_not_the_owner`,
+     `a_bare_call_through_the_owners_own_import_pins_beside_a_twin`,
+     `a_bare_call_through_a_glob_pins_only_past_the_owners_module`,
+     `a_bare_call_without_an_import_pins_only_in_the_owners_module`,
+     `a_same_named_type_only_item_in_the_test_file_keeps_the_pin`,
+     `a_unit_struct_twin_refuses_the_bare_call`,
+     `an_extern_twin_refuses_the_bare_call`,
+     `a_static_mut_twin_refuses_the_bare_call`,
+     `an_out_of_line_super_glob_pins_past_the_declaring_parent`,
+     `an_out_of_line_super_use_pins_past_the_declaring_parent`,
+     `an_out_of_line_super_glob_refuses_past_a_parent_twin`).
    - A path call `a::b::name(..)` (#6974) names the same free function only
      when the path resolves to exactly the module that declares the owner.
      There an explicit `fn name` takes the value name from every glob, and
@@ -238,7 +291,32 @@ rule only for an assertion whose context was admitted.
      `.expect(..)`, and any other `T::f(..)` only when `f` is `T`'s one
      inherent associated function of that name and declares `-> Self` (or
      `-> T`), or `Result`/`Option` of it followed by `?`, `.unwrap()` or
-     `.expect(..)`; or a byte-slice expression (`&[..][..]`, `&b".."[..]`).
+     `.expect(..)`; a unit struct's own name (`let recv = Unit;`); or a
+     byte-slice expression (`&[..][..]`, `&b".."[..]`). A receiver that no
+     `let` binds is a path expression: `Unit.advance()` is typed as
+     `let recv = Unit;` would be (#7083). Telling what a bare name resolves to
+     takes name resolution, so a bare name types its receiver only in a shape
+     where nothing else can supply the name. The workspace must declare it
+     exactly once, as a non-generic unit struct (`struct Unit;`), and in the
+     test's own file. Every other spelling of the name in the workspace must
+     be an `impl` header, a method call (`Unit.f(..)`) or a `let`
+     initializer (`= Unit;`). No workspace `macro_rules!` matcher may take an
+     `ident` or `tt` fragment, no file that defines a macro may spell the
+     name (one `struct Unit;` in a macro body declares a type per
+     invocation), every workspace glob import must be a `crate`,
+     `self` or `super` path through declared workspace modules that no
+     workspace `use` or `extern crate` also binds (so neither a foreign glob
+     nor `use std::u32 as nums;` with `use crate::nums::*` qualifies, even
+     beside an unrelated `mod nums`), no workspace file may use
+     `include!` or `#[path]` (either spelling, including raw `#[r#path]`),
+     and the name may not be a prelude value
+     (`None`, `Some`, `Ok`, `Err`). Review found that imports
+     (`use self::Kind::Unit`, a lower-case `pub use std::u32::MAX`
+     re-export), raw identifiers, macro input, `include!`, Unicode
+     whitespace inside a macro matcher and a prelude name can each put
+     another value under the name, so any of them refuses. Items a derive
+     or attribute proc macro emits stay invisible, as for every other rule,
+     as do items an out-of-workspace `macro_rules!` invocation emits (#7160).
      An inline receiver `T::f(..).name(..)` is typed exactly as
      `let recv = T::f(..);` would be, so `Stack::new(1).depth()` pins
      `Stack::depth` under the same constructor-signature rules.
@@ -247,7 +325,11 @@ rule only for an assertion whose context was admitted.
      parameters, a macro that mentions it) leaves the type unestablished. A
      named type must be a struct, enum or union declared in the workspace,
      and the test's file must not import it from outside the workspace,
-     rename another item to it, or declare a `type` alias of it. A type
+     rename another item to it, or declare a `type` alias of it. A rename
+     refuses in either spelling: `r#Window` denotes `Window`, so a
+     raw-identifier alias rebinds the same name (#7067). Related-test
+     reach shares the single-file rename refusal: a rebound receiver keeps
+     a name-only relation, never `direct_owner_call`. A type
      declaration of the name in the test's own module scope shadows the
      production type for that test (#6905), so it refuses the pin rather
      than crediting the production method. A macro definition or invocation
@@ -273,7 +355,8 @@ rule only for an assertion whose context was admitted.
      package, or its `::`-rooted form), or declares it. A byte-slice
      receiver never credits a name `&[u8]` itself resolves (slice methods,
      prelude and `std::io` trait methods). A named receiver never credits
-     a by-value prelude trait method name (`count`, `map`, `into`, ...):
+     a by-value prelude trait method name (`count`, `map`, `into`,
+     `into_future`, `Iterator`'s `eq`/`ne`/`cmp`/`partial_cmp`/`lt`/...):
      method lookup tries `T` before `&T`, so `Iterator::count(self)` takes
      `c.count()` before an inherent `count(&self)` whenever the type is an
      iterator, and ripr cannot see which std traits a type implements.
@@ -459,6 +542,54 @@ rule only for an assertion whose context was admitted.
    defeats (`RevealOutcome::owner_pin_credited`). The finding may then
    read `exposed`; no other family or oracle gains credit (the
    #6579 whole-object effect-observer gap is unchanged).
+7. Pins equal to an operand (#7077). An exact pin on a constructed field
+   cannot notice the field replaced by one of its operands when, for the
+   pinned input, the field equals that operand. The changed initializer is
+   `f: a <op> b` with two distinct plain identifier operands and one binary
+   operator, and both operands are established primitive, so the dropped
+   operator is a built-in one: a parameter of a primitive type, a `let`
+   annotated with one, a numeric or bool literal, an arithmetic
+   combination of established names and literals with the accepted operators
+   and `as` casts to primitives, or a call whose every same-named
+   function in the index declares one bare primitive return (optionally
+   behind one reference). Anything else — a string, char literal or block
+   comment anywhere in the owner body, a callee missing from or ambiguous
+   in the index, a non-primitive return, a binding that is not established — keeps the
+   credit: a custom type can overload the operator, and an overloaded
+   operator may carry side effects that assertions on other fields
+   observe (review of #7084). A `let` that rebinds a primitive-typed
+   parameter shadows it: the name is not established up front, and the
+   rebind must prove primitive itself (its own initializer may still
+   refer to the parameter's value before the rebind). A sibling initializer of the same struct
+   literal is `g: a` (or
+   the shorthand `a`). A related test binds `q` once, straight from a call
+   to the owner (`let q = quote(..)`; a second `let q` may shadow it and
+   refuses), and holds both `assert_eq!(q.f, v)` and `assert_eq!(q.g, v)`
+   with the same literal `v` (an integer with digit separators ignored, a
+   string, a char or a bool; a name or call may differ between the two
+   pins and refuses). For that input `f` equals `a`, so the mutant `f: a`
+   passes those pins. When every exact pin on `f` in every
+   related test is paired this way with the same sibling, the
+   field-construction finding's discriminate stage reads weak with the code
+   `field_pinned_equal_to_operand`, which names the operand the tests never
+   vary, and that summary is the finding's missing evidence. Other mutants
+   of the initializer (`a * b` to `a + b` with `b == 1`) may still be
+   caught; the downgrade claims only the dropped operand. Any other mention
+   of `f` in a related test (a pin with a custom message, another assertion
+   macro, a value read out of the result, a second receiver pinning another
+   value) keeps the credit. So does a related test that reaches the owner (it
+   names the owner, or is related by a direct or helper owner call) without
+   naming `f` (whole-struct equality, a snapshot, a helper that asserts), and a
+   pinning test with a condition, match, loop, closure, early exit or `?`,
+   where a pin may not run. A pinning test must hold only receiver bindings
+   that are a bare owner call (no chained transform such as
+   `.with_coupon(..)`) and assertions that call nothing and read receivers
+   through plain fields: a helper inside an assertion, a
+   whole-result check (`assert_eq!(q, expected)`, a method call, a helper
+   such as `check_quote(&q)`), a second owner result, an attribute such as
+   `#[cfg(..)]`, or the owner named in an assertion keeps the credit.
+   Anything else ripr cannot read (a nested expression, a repeated
+   initializer text) keeps it too.
 
 ### Bool-owner pins
 
@@ -568,6 +699,11 @@ guard in a file that binds the value name `Err`.
   non-exposed (`fixtures/owner_return_pin_out_of_line_test_module_shadow`,
   #6950): the nested child test binds the parent module's own `Window`,
   so the pin is refused and the relation stays name-only
+  (`weak_token_substring`).
+- A fixture pins a single-file raw-identifier rename as non-exposed
+  (`fixtures/owner_return_pin_single_file_raw_rename_shadow`, #7067):
+  the test binds the renamed item through the plain spelling, so the
+  pin is refused and the relation stays name-only
   (`weak_token_substring`).
 - Unit tests pin every gate with a positive and a discriminating negative.
 - Twenty matched fixtures keep effective and ineffective tests separate:
@@ -940,7 +1076,13 @@ assertions. This repair shares the existing callback without that larger migrati
   `a_module_child_of_an_ambiguous_include_fragment_stays_workspace_wide`,
   `a_withheld_crate_roots_private_glob_is_routed_by_root`); plain `assert_eq!` against an owner-free value, `#[should_panic]`
   and assertions outside the test body; by-value prelude method names;
-  constructor signatures; macro-bound, aliased and parameter receivers;
+  constructor signatures; unit-struct receivers
+  (`unit_struct_receiver_is_typed_by_its_own_name`,
+  `unit_struct_value_admits_only_spellings_nothing_else_can_bind`,
+  `edition_2024_into_future_is_a_by_value_prelude_method`,
+  `iterator_by_value_comparisons_are_prelude_methods`,
+  `unstable_is_partitioned_custom_default_is_admitted`);
+  macro-bound, aliased and parameter receivers;
   lexical fallback; the item-container fact.
 - Unit execution and macro context controls: `owner_pin_requires_an_executed_assertion_context`,
   `owner_pin_requires_unambiguous_standard_assert_eq`, `owner_pin_refuses_ambiguous_oracle_coordinates`,
@@ -980,6 +1122,21 @@ assertions. This repair shares the existing callback without that larger migrati
   call or binding only in a message argument or an operand comment, and a boundary call left
   unasserted on the assertion's line) against the rewrite and a `<`
   mutant; only the two `exposed` layouts fail on the mutant.
+  `unit_struct_receiver_matched_static_and_runtime_controls` (#7083) pins a
+  kept trait default through `Unit.advance()` and through `let unit = Unit;`,
+  and refuses an impl that overrides the default; only the two `exposed`
+  layouts fail on a `4 + self.step()` mutant.
+  `reexported_value_under_a_unit_struct_name_is_not_credited` imports a
+  `pub use std::u32::MAX;` re-export over a unit struct `MAX`, and
+  `aliased_outside_module_beside_a_same_named_module_is_not_credited` globs
+  `use std::u32 as nums;` beside an unrelated `mod nums`; in both the mutant
+  passes and the finding reads `weakly_exposed`.
+  `unstable_is_partitioned_custom_default_matched_controls` (#7098 review)
+  credits a custom `is_partitioned` default through a receiver that also
+  implements `Iterator` — the std method is still unstable on 1.95, so the
+  mutant fails; `raw_path_shadow_module_keeps_the_mutant_green` (#7098
+  review) loads a rival `Unit` from a `#[r#path]`-named non-`.rs` module,
+  and the mutant passes while the finding refuses.
 - Bool-owner unit tests: `a_bare_assert_pins_a_bool_owner_to_true_or_false`,
   `a_bare_assert_pins_nothing_on_a_non_bool_owner`,
   `a_bare_assert_keeps_the_owner_binding_defeats`; pairing unit test
@@ -1006,6 +1163,8 @@ assertions. This repair shares the existing callback without that larger migrati
   confirmation signals behind the family, oracle-kind and owner-binding
   defeats. `analyze_related_assertions` applies shared context before matching
   or credit and preserves refused assertions only as zero-oracle relations; `file_imports_own_item`; `::`-rooted `use` paths.
+- `crates/ripr/src/analysis/classify/operand_pin.rs`: rule 7's
+  operand-only pin, applied in `classifier/evidence.rs`.
 - `crates/ripr/src/analysis/classifier/evidence.rs`: establishes the pin
   once per probe and supplies the shared context-admission callback.
 - `crates/ripr/src/analysis/classifier/finding.rs` and `classify/decision.rs`:

@@ -417,6 +417,597 @@ fn written_stubs_compile_and_stop_at_their_own_todo() -> Result<(), String> {
     Ok(())
 }
 
+/// The `ripr` binary under test.
+fn ripr_command() -> Command {
+    Command::new(env!("CARGO_BIN_EXE_ripr"))
+}
+
+/// #5471: `ripr check` prints `Write a test for it:` only when the command
+/// it prints produces a stub. `src/lib.rs` holds seams that sort before the
+/// other files; `src/gated.rs` puts its owner behind a feature cfg a plain
+/// `cargo test` build may not enable, so its stub is refused; `src/zz.rs` is
+/// stubbable; `src/pair.rs` has two predicate seams on one line, which
+/// `--at` and `--kind` cannot tell apart; `src/parse.rs` changes a `?` whose
+/// function holds a stubbable predicate but no stubbable error variant.
+const ROUTE_LIB: &str = "pub mod gated;\npub mod pair;\npub mod parse;\npub mod zz;\n\npub fn price(amount: u32, threshold: u32) -> u32 {\n    if amount >= threshold { amount - 10 } else { amount }\n}\n\npub fn small(n: u32) -> bool {\n    n < 3\n}\n";
+const ROUTE_GATED: &str = "#[cfg(feature = \"extra\")] pub fn clamp(n: u32, max: u32) -> u32 {\n    if n > max { max } else { n }\n}\n";
+const ROUTE_PAIR: &str = "pub fn both(a: u32, b: u32) -> u32 {\n    if a > 10 && b > 20 { 1 } else { 0 }\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    #[test]\n    fn a_boundary() {\n        assert_eq!(both(9, 30), 0);\n        assert_eq!(both(10, 30), 0);\n        assert_eq!(both(11, 30), 1);\n    }\n}\n";
+const ROUTE_PARSE: &str = "pub fn read(s: &str) -> Result<u32, std::num::ParseIntError> {\n    let n: u32 = s.parse()?;\n    if n > 5 { Ok(n) } else { Ok(0) }\n}\n";
+const ROUTE_ZZ: &str =
+    "pub fn fee(n: u32, cap: u32) -> u32 {\n    if n >= cap { cap } else { n }\n}\n";
+
+fn route_crate(scratch: &Scratch) -> Result<(), String> {
+    let root = &scratch.directory;
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"stub_route\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )
+    .map_err(|error| error.to_string())?;
+    for (file, text) in [
+        ("src/lib.rs", ROUTE_LIB),
+        ("src/gated.rs", ROUTE_GATED),
+        ("src/pair.rs", ROUTE_PAIR),
+        ("src/parse.rs", ROUTE_PARSE),
+        ("src/zz.rs", ROUTE_ZZ),
+    ] {
+        std::fs::write(root.join(file), text).map_err(|error| error.to_string())?;
+    }
+    Ok(())
+}
+
+/// A one-line diff that changes `old` into line 2 of `file`.
+fn one_line_diff(scratch: &Scratch, file: &str, old: &str, new: &str) -> Result<PathBuf, String> {
+    let path = scratch
+        .directory
+        .join(format!("{}.diff", file.replace(['/', '.'], "_")));
+    std::fs::write(
+        &path,
+        format!(
+            "diff --git a/{file} b/{file}\n--- a/{file}\n+++ b/{file}\n@@ -2 +2 @@\n-{old}\n+{new}\n"
+        ),
+    )
+    .map_err(|error| error.to_string())?;
+    Ok(path)
+}
+
+fn check_human(root: &Path, diff: &Path) -> Result<String, String> {
+    let mut check = ripr_command();
+    check
+        .args(["check", "--root"])
+        .arg(root)
+        .arg("--diff")
+        .arg(diff);
+    let output = run_bounded(check, root, "check", Duration::from_mins(2))?;
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    if !output.status.success() {
+        return Err(format!(
+            "check failed: {stdout}{}",
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+    Ok(stdout)
+}
+
+/// The command `check` printed under `Write a test for it:`, as arguments
+/// after `ripr`.
+fn printed_stub_args(stdout: &str) -> Option<Vec<String>> {
+    let mut lines = stdout.lines();
+    lines.find(|line| *line == "Write a test for it:")?;
+    let command = lines.next()?.trim();
+    let mut words = command.split_whitespace();
+    (words.next() == Some("ripr")).then(|| words.map(str::to_string).collect())
+}
+
+#[test]
+fn check_prints_the_stub_route_only_when_the_printed_command_yields_a_stub() -> Result<(), String> {
+    let scratch = Scratch::new()?;
+    route_crate(&scratch)?;
+    let root = scratch.directory.clone();
+
+    // A refused location prints the refusal, never the route.
+    let gated = one_line_diff(
+        &scratch,
+        "src/gated.rs",
+        "    if n >= max { max } else { n }",
+        "    if n > max { max } else { n }",
+    )?;
+    let stdout = check_human(&root, &gated)?;
+    assert!(
+        stdout.contains("src/gated.rs:2"),
+        "the selected finding is the gated.rs change: {stdout}"
+    );
+    assert!(
+        !stdout.contains("Write a test for it:"),
+        "a refused stub must not be offered: {stdout}"
+    );
+    assert!(
+        stdout.contains("No test stub here: the owner is a trait default method or nested function, sits in an impl local to a block or whose self type is not a plain path, sits behind a cfg a plain `cargo test` build may not enable, or takes a typed `self` receiver\n"),
+        "the refusal reason is printed instead: {stdout}"
+    );
+
+    // Two seams of the finding's kind on its line: the route could stub the
+    // `a > 10` boundary the tests already pin, so no route is printed.
+    let pair = one_line_diff(
+        &scratch,
+        "src/pair.rs",
+        "    if a > 10 && b >= 20 { 1 } else { 0 }",
+        "    if a > 10 && b > 20 { 1 } else { 0 }",
+    )?;
+    let stdout = check_human(&root, &pair)?;
+    assert!(
+        stdout.contains("src/pair.rs:2"),
+        "the selected finding is the pair.rs change: {stdout}"
+    );
+    assert!(
+        !stdout.contains("Write a test for it:"),
+        "an ambiguous location must not be offered: {stdout}"
+    );
+
+    // An error_path finding never answers with the `n > 5` predicate stub on
+    // the next line: a seam of another kind does not speak for it.
+    let parse = one_line_diff(
+        &scratch,
+        "src/parse.rs",
+        "    let n: u32 = s.parse().unwrap_or(0);",
+        "    let n: u32 = s.parse()?;",
+    )?;
+    let stdout = check_human(&root, &parse)?;
+    assert!(
+        stdout.contains("src/parse.rs:2"),
+        "the selected finding is the parse.rs change: {stdout}"
+    );
+    assert!(
+        !stdout.contains("Write a test for it:") && !stdout.contains("No test stub here"),
+        "another kind's seam must not answer for the finding: {stdout}"
+    );
+
+    // A stale patch: its added line is not the disk's line 2, so the
+    // resolver (which reads the disk) would answer for other text.
+    let stale = one_line_diff(
+        &scratch,
+        "src/zz.rs",
+        "    if n >= cap { cap } else { n }",
+        "    if n > cap { cap } else { n }",
+    )?;
+    let stdout = check_human(&root, &stale)?;
+    assert!(stdout.contains("src/zz.rs:2"), "{stdout}");
+    assert!(
+        !stdout.contains("Write a test for it:") && !stdout.contains("No test stub here"),
+        "a patch that disagrees with the disk must not route: {stdout}"
+    );
+
+    // A stubbable location prints the route, and the printed command, run
+    // as printed, yields a stub through the same resolver.
+    let zz = one_line_diff(
+        &scratch,
+        "src/zz.rs",
+        "    if n > cap { cap } else { n }",
+        "    if n >= cap { cap } else { n }",
+    )?;
+    let stdout = check_human(&root, &zz)?;
+    assert!(!stdout.contains("No test stub here"), "{stdout}");
+    let args = printed_stub_args(&stdout)
+        .ok_or_else(|| format!("a stubbable gap prints the route: {stdout}"))?;
+    assert!(
+        args.iter().any(|arg| arg == "src/zz.rs:2"),
+        "the route names the finding location: {args:?}"
+    );
+    assert!(
+        args.windows(2)
+            .any(|pair| pair[0] == "--kind" && pair[1] == "predicate"),
+        "the route carries the finding's probe family: {args:?}"
+    );
+    // The full inventory, capped to one seam, holds only a `src/lib.rs`
+    // seam; the location-scoped resolver must not depend on it.
+    let mut stub = ripr_command();
+    stub.args(&args)
+        .arg("--json")
+        .env("RIPR_REPO_EXPOSURE_SEAM_LIMIT", "1");
+    let output = run_bounded(stub, &root, "stub", Duration::from_mins(2))?;
+    let stub_stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    assert!(
+        output.status.success(),
+        "the printed route must yield a stub: {stub_stdout}{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let document: serde_json::Value = serde_json::from_str(&stub_stdout)
+        .map_err(|error| format!("stub JSON: {error}: {stub_stdout}"))?;
+    assert_eq!(document["owner"], "src/zz.rs::fee", "{stub_stdout}");
+    assert_eq!(document["written"], false, "{stub_stdout}");
+    scratch.cleanup()
+}
+
+/// #5471: without `--kind` no `check` finding vouches for the location, so a
+/// bare `--at` keeps the gap filter: a seam the tests already pin is not
+/// stubbed, while an unpinned one in the same file still is.
+#[test]
+fn bare_at_stubs_only_a_reported_gap() -> Result<(), String> {
+    const PINNED: &str = "pub fn gate(a: u32) -> bool {\n    a > 10\n}\n\npub fn loose(b: u32) -> bool {\n    b > 20\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    #[test]\n    fn gate_boundary() {\n        assert_eq!(gate(10), false);\n        assert_eq!(gate(11), true);\n    }\n}\n";
+    let scratch = Scratch::new()?;
+    let root = scratch.directory.clone();
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"stub_bare\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )
+    .map_err(|error| error.to_string())?;
+    std::fs::write(root.join("src/lib.rs"), PINNED).map_err(|error| error.to_string())?;
+    let stub_at = |at: &str| -> Result<Output, String> {
+        let mut stub = ripr_command();
+        stub.args(["agent", "stub", "--root"])
+            .arg(&root)
+            .args(["--at", at, "--json"]);
+        run_bounded(stub, &root, "stub", Duration::from_mins(2))
+    };
+
+    let pinned = stub_at("src/lib.rs:2")?;
+    let stdout = String::from_utf8_lossy(&pinned.stdout).to_string();
+    let stderr = String::from_utf8_lossy(&pinned.stderr).to_string();
+    assert!(
+        !pinned.status.success(),
+        "a seam the tests pin is no gap to stub: {stdout}{stderr}"
+    );
+    assert!(stderr.contains("no reported gap"), "{stderr}");
+
+    let open = stub_at("src/lib.rs:6")?;
+    let stdout = String::from_utf8_lossy(&open.stdout).to_string();
+    assert!(
+        open.status.success(),
+        "an unpinned seam is still stubbed: {stdout}{}",
+        String::from_utf8_lossy(&open.stderr)
+    );
+    let document: serde_json::Value =
+        serde_json::from_str(&stdout).map_err(|error| format!("stub JSON: {error}: {stdout}"))?;
+    assert_eq!(document["owner"], "src/lib.rs::loose", "{stdout}");
+    scratch.cleanup()
+}
+
+/// #6689 items 1–2: refusal hints keep the requested family and never route
+/// the caller to a nearer seam of another family.
+const KIND_REFUSAL_SOURCE: &str = "pub fn plain(n: u8) -> u8 {\n    if n > 3 { n } else { 0 }\n}\n\npub fn fallible(input: &str) -> Result<u8, E> {\n    if input.is_empty() {\n        return Err(E::Bad);\n    }\n    Ok(1)\n}\n\n#[derive(Debug, PartialEq)]\npub enum E { Bad }\n";
+
+const KIND_NEAREST_SOURCE: &str = "pub fn plain(a: u8, b: u8, c: u8, d: u8, e: u8, f: u8) -> u8 {\n    if a > 1 && b > 2 && c > 3 && d > 4 && e > 5 && f > 6 { a } else { b }\n}\n\npub fn fallible(input: &str) -> Result<u8, E> {\n    if input.is_empty() {\n        return Err(E::Bad);\n    }\n    Ok(1)\n}\n\n#[derive(Debug, PartialEq)]\npub enum E { Bad }\n";
+
+fn kind_refusal_crate(source: &str) -> Result<Scratch, String> {
+    let scratch = Scratch::new()?;
+    std::fs::write(
+        scratch.directory.join("Cargo.toml"),
+        "[package]\nname = \"stub_kind_refusal\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )
+    .map_err(|error| error.to_string())?;
+    std::fs::write(scratch.directory.join("src/lib.rs"), source)
+        .map_err(|error| error.to_string())?;
+    Ok(scratch)
+}
+
+fn kind_refusal_command(root: &Path, at: &str, kind: Option<&str>) -> Command {
+    let mut stub = ripr_command();
+    stub.args(["agent", "stub", "--root"])
+        .arg(root)
+        .args(["--at", at, "--json"]);
+    if let Some(kind) = kind {
+        stub.args(["--kind", kind]);
+    }
+    stub
+}
+
+#[test]
+fn kind_not_found_refusal_preserves_the_requested_probe_family() -> Result<(), String> {
+    let scratch = kind_refusal_crate(KIND_REFUSAL_SOURCE)?;
+    let root = &scratch.directory;
+    assert_eq!(
+        KIND_REFUSAL_SOURCE.lines().nth(1),
+        Some("    if n > 3 { n } else { 0 }")
+    );
+    let predicate = run_bounded(
+        kind_refusal_command(root, "src/lib.rs:2", Some("predicate")),
+        root,
+        "predicate-control",
+        Duration::from_mins(2),
+    )?;
+    assert!(
+        predicate.status.success(),
+        "the wrong-family subject must be stubbable: {}{}",
+        String::from_utf8_lossy(&predicate.stdout),
+        String::from_utf8_lossy(&predicate.stderr)
+    );
+    let document: serde_json::Value =
+        serde_json::from_slice(&predicate.stdout).map_err(|error| error.to_string())?;
+    assert_eq!(document["state"], "ready");
+    assert_eq!(document["owner"], "src/lib.rs::plain");
+    assert_eq!(document["test_name"], "plain_boundary_discriminator");
+    assert_eq!(document["written"], false);
+
+    let refused = run_bounded(
+        kind_refusal_command(root, "src/lib.rs:2", Some("error_path")),
+        root,
+        "family-refusal",
+        Duration::from_mins(2),
+    )?;
+    assert_eq!(refused.status.code(), Some(3));
+    assert!(
+        refused.stdout.is_empty(),
+        "a not-found decision has no JSON"
+    );
+    let stderr = String::from_utf8_lossy(&refused.stderr);
+    assert!(
+        stderr.starts_with(
+            "ripr: agent stub: no error_path seam ripr can stub is in the function at src/lib.rs:2; nearest: ",
+        ),
+        "the refusal must echo the requested probe family: {stderr}"
+    );
+    assert!(
+        !stderr.contains("no error_variant "),
+        "the internal seam kind is not the requested family: {stderr}"
+    );
+    scratch.cleanup()
+}
+
+#[test]
+fn kind_nearest_hint_filters_before_the_cap_and_recovers_the_error_stub() -> Result<(), String> {
+    let scratch = kind_refusal_crate(KIND_NEAREST_SOURCE)?;
+    let root = &scratch.directory;
+    assert_eq!(
+        KIND_NEAREST_SOURCE.lines().nth(1),
+        Some("    if a > 1 && b > 2 && c > 3 && d > 4 && e > 5 && f > 6 { a } else { b }")
+    );
+    assert_eq!(
+        KIND_NEAREST_SOURCE.lines().nth(6),
+        Some("        return Err(E::Bad);")
+    );
+    // Six closer predicate seams make filtering after take(5) lose the
+    // matching seam. The ready error control also identifies the seam:
+    // a return-value seam shares line 7 and is not an error-path suggestion.
+    let direct = run_bounded(
+        kind_refusal_command(root, "src/lib.rs:7", Some("error_path")),
+        root,
+        "error-control",
+        Duration::from_mins(2),
+    )?;
+    assert!(
+        direct.status.success(),
+        "the matching subject must be stubbable: {}{}",
+        String::from_utf8_lossy(&direct.stdout),
+        String::from_utf8_lossy(&direct.stderr)
+    );
+    let control: serde_json::Value =
+        serde_json::from_slice(&direct.stdout).map_err(|error| error.to_string())?;
+    assert_eq!(control["state"], "ready");
+    assert_eq!(control["owner"], "src/lib.rs::fallible");
+    assert_eq!(control["test_name"], "fallible_exact_error_variant");
+    assert_eq!(control["written"], false);
+    let expected_id = control["seam_id"]
+        .as_str()
+        .filter(|id| !id.is_empty())
+        .ok_or_else(|| format!("the ready error control needs a seam ID: {control}"))?;
+    let text = control["text"]
+        .as_str()
+        .ok_or_else(|| format!("the ready error control needs test text: {control}"))?;
+    assert!(text.contains("let actual = fallible(input);"), "{text}");
+    assert!(
+        text.contains(
+            "assert!(matches!(actual, Err(E::Bad { .. })), \"expected Err(E::Bad {{ .. }})\");",
+        ),
+        "the control observes the error variant, not a nearby predicate: {text}"
+    );
+
+    let refused = run_bounded(
+        kind_refusal_command(root, "src/lib.rs:2", Some("error_path")),
+        root,
+        "nearest-refusal",
+        Duration::from_mins(2),
+    )?;
+    assert_eq!(refused.status.code(), Some(3));
+    assert!(
+        refused.stdout.is_empty(),
+        "a not-found decision has no JSON"
+    );
+    let stderr = String::from_utf8_lossy(&refused.stderr);
+    let (_, tail) = stderr
+        .split_once("; nearest: ")
+        .ok_or_else(|| format!("the refusal needs a nearest section: {stderr}"))?;
+    let (nearest, _) = tail
+        .split_once(". Run ")
+        .ok_or_else(|| format!("the refusal needs its follow-up route: {stderr}"))?;
+    assert_eq!(
+        nearest,
+        format!("src/lib.rs:7 (--seam-id {expected_id})"),
+        "only the matching error seam may be suggested: {stderr}"
+    );
+
+    // Follow the actual emitted location with the original family.
+    let (at, emitted_id) = nearest
+        .split_once(" (--seam-id ")
+        .ok_or_else(|| format!("the suggestion needs a location and seam ID: {nearest}"))?;
+    let emitted_id = emitted_id
+        .strip_suffix(')')
+        .ok_or_else(|| format!("the suggestion needs a complete seam ID: {nearest}"))?;
+    let recovered = run_bounded(
+        kind_refusal_command(root, at, Some("error_path")),
+        root,
+        "nearest-recovery",
+        Duration::from_mins(2),
+    )?;
+    assert!(
+        recovered.status.success(),
+        "the emitted location must recover with the same family: {}{}",
+        String::from_utf8_lossy(&recovered.stdout),
+        String::from_utf8_lossy(&recovered.stderr)
+    );
+    let recovered: serde_json::Value =
+        serde_json::from_slice(&recovered.stdout).map_err(|error| error.to_string())?;
+    assert_eq!(recovered["seam_id"], emitted_id);
+    assert_eq!(
+        recovered, control,
+        "recovery must select the same error stub"
+    );
+
+    let repeated = run_bounded(
+        kind_refusal_command(root, "src/lib.rs:2", Some("error_path")),
+        root,
+        "nearest-repeat",
+        Duration::from_mins(2),
+    )?;
+    assert_eq!(repeated.status.code(), Some(3));
+    assert_eq!(repeated.stdout, refused.stdout);
+    assert_eq!(repeated.stderr, refused.stderr);
+    assert_eq!(
+        std::fs::read_to_string(root.join("src/lib.rs")).map_err(|error| error.to_string())?,
+        KIND_NEAREST_SOURCE
+    );
+    scratch.cleanup()
+}
+
+#[test]
+fn kind_not_found_without_a_matching_family_suggests_no_other_seams() -> Result<(), String> {
+    const PLAIN_ONLY: &str = "pub fn plain(n: u8) -> u8 {\n    if n > 3 { n } else { 0 }\n}\n";
+    let scratch = kind_refusal_crate(PLAIN_ONLY)?;
+    let root = &scratch.directory;
+    for (kind, label) in [
+        (Some("predicate"), "predicate-control"),
+        (None, "bare-control"),
+    ] {
+        let ready = run_bounded(
+            kind_refusal_command(root, "src/lib.rs:2", kind),
+            root,
+            label,
+            Duration::from_mins(2),
+        )?;
+        assert!(
+            ready.status.success(),
+            "the plain seam remains available to its family and bare selectors: {}{}",
+            String::from_utf8_lossy(&ready.stdout),
+            String::from_utf8_lossy(&ready.stderr)
+        );
+        let document: serde_json::Value =
+            serde_json::from_slice(&ready.stdout).map_err(|error| error.to_string())?;
+        assert_eq!(document["state"], "ready");
+        assert_eq!(document["owner"], "src/lib.rs::plain");
+        assert_eq!(document["test_name"], "plain_boundary_discriminator");
+        assert_eq!(document["written"], false);
+    }
+
+    let refused = run_bounded(
+        kind_refusal_command(root, "src/lib.rs:2", Some("error_path")),
+        root,
+        "absent-family",
+        Duration::from_mins(2),
+    )?;
+    assert_eq!(refused.status.code(), Some(3));
+    assert!(
+        refused.stdout.is_empty(),
+        "a not-found decision has no JSON"
+    );
+    let stderr = String::from_utf8_lossy(&refused.stderr);
+    let (_, tail) = stderr
+        .split_once("; nearest: ")
+        .ok_or_else(|| format!("the refusal needs a nearest section: {stderr}"))?;
+    let (nearest, _) = tail
+        .split_once(". Run ")
+        .ok_or_else(|| format!("the refusal needs its follow-up route: {stderr}"))?;
+    assert_eq!(
+        nearest, "",
+        "a file with only other families must not offer their seams: {stderr}"
+    );
+    assert!(
+        stderr.starts_with(
+            "ripr: agent stub: no error_path seam ripr can stub is in the function at src/lib.rs:2; nearest: ",
+        ),
+        "{stderr}"
+    );
+    scratch.cleanup()
+}
+
+/// Clears inherited repository selectors so a hook or wrapper that exports
+/// them cannot redirect the fixture into the outer repository.
+fn isolate_from_outer_repo(command: &mut Command) -> &mut Command {
+    command
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .env_remove("GIT_COMMON_DIR")
+        .env_remove("GIT_INDEX_FILE")
+}
+
+/// Runs git in `repo`; its captured streams land in `scratch`, outside it.
+fn git(scratch: &Path, repo: &Path, args: &[&str]) -> Result<(), String> {
+    let mut git = Command::new("git");
+    isolate_from_outer_repo(&mut git)
+        .current_dir(repo)
+        .args([
+            "-c",
+            "user.name=RIPR test",
+            "-c",
+            "user.email=ripr@example.invalid",
+            "-c",
+            "commit.gpgsign=false",
+            "-c",
+            "core.hooksPath=/dev/null",
+        ])
+        .args(args);
+    let output = run_bounded(git, scratch, "git", Duration::from_secs(30))?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(format!(
+            "git {args:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ))
+    }
+}
+
+/// #5471: the stub resolver reads the file on disk. A committed-history
+/// check reads HEAD content for a file with uncommitted edits, so the route
+/// could stub an expression the finding never saw; it is not printed then.
+#[test]
+fn check_prints_no_stub_route_when_it_analyzed_other_bytes_than_the_disk() -> Result<(), String> {
+    let scratch = Scratch::new()?;
+    let streams = scratch.directory.clone();
+    let root = streams.join("repo");
+    std::fs::create_dir_all(root.join("src")).map_err(|error| error.to_string())?;
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"stub_snapshot\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )
+    .map_err(|error| error.to_string())?;
+    let lib = root.join("src/lib.rs");
+    let source = |op: &str| {
+        format!(
+            "pub fn fee(n: u32, cap: u32) -> u32 {{\n    if n {op} cap {{ cap }} else {{ n }}\n}}\n"
+        )
+    };
+    std::fs::write(&lib, source(">")).map_err(|error| error.to_string())?;
+    git(&streams, &root, &["init", "-q"])?;
+    git(&streams, &root, &["add", "."])?;
+    git(&streams, &root, &["commit", "-qm", "base"])?;
+    std::fs::write(&lib, source(">=")).map_err(|error| error.to_string())?;
+    git(&streams, &root, &["commit", "-qam", "change boundary"])?;
+    let check = |root: &Path, extra: &[&str]| -> Result<String, String> {
+        let mut check = ripr_command();
+        isolate_from_outer_repo(&mut check)
+            .args(["check", "--root"])
+            .arg(root)
+            .args(["--base", "HEAD~1"])
+            .args(extra);
+        let output = run_bounded(check, &streams, "check", Duration::from_mins(2))?;
+        Ok(String::from_utf8_lossy(&output.stdout).to_string())
+    };
+
+    // Clean tree: HEAD is the disk, so the route is offered.
+    let clean = check(&root, &[])?;
+    assert!(clean.contains("src/lib.rs:2"), "{clean}");
+    assert!(clean.contains("Write a test for it:"), "{clean}");
+
+    // An uncommitted edit with a forced committed-history read: HEAD was
+    // analyzed, the disk differs. `--committed` is load-bearing: the
+    // dirty-tree default would read the working tree (the disk) instead.
+    std::fs::write(&lib, source("<")).map_err(|error| error.to_string())?;
+    let dirty = check(&root, &["--committed"])?;
+    assert!(dirty.contains("src/lib.rs:2"), "{dirty}");
+    assert!(
+        !dirty.contains("Write a test for it:") && !dirty.contains("No test stub here"),
+        "a route over other bytes must not be offered: {dirty}"
+    );
+    scratch.cleanup()
+}
 /// #5453: a producer-admitted `new_integration_file` stub must compile under
 /// the cargo command the CLI prints, including a `crate::` parameter type and
 /// a crate-root `pub const` boundary. rustc-on-lib.rs cannot see this path.

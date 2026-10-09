@@ -1,0 +1,22 @@
+{
+  "case_id": "spec0231-oracle-some-range-pattern",
+  "subject_id": "authored-spec0231-25",
+  "origin": "authored",
+  "anchor": "src/lib.rs:3",
+  "behavior_family": "option_return",
+  "test_shape": "matches_some_range",
+  "hard_case": true,
+  "truth": "partially_discriminated",
+  "ideal_verdict": "gap",
+  "observed_verdict": "gap",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "weakly_exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

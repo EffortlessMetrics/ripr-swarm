@@ -1,0 +1,12 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 5d7c7e4..172c00f 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -1,6 +1,6 @@
+ pub fn send(events_sent: &mut Vec<u32>, id: u32) {
+     if id > 0 {
+-        events_sent.push(id);
++        events_sent.push(0 + id);
+     }
+ }
+ 

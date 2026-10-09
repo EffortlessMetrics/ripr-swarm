@@ -1,0 +1,22 @@
+{
+  "case_id": "old-net-self-equality",
+  "subject_id": "authored-old-errors",
+  "origin": "authored",
+  "anchor": "src/fees.rs:15",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "duplicative_self_equality",
+  "hard_case": false,
+  "truth": "not_discriminated",
+  "ideal_verdict": "gap",
+  "observed_verdict": "gap",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "weakly_exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

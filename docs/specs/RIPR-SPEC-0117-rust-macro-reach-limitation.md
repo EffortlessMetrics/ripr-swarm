@@ -129,6 +129,50 @@ subprocess-binary and property-macro limits stay `no_static_path`-only.
   `rust_macro_wrapped_test_call_unresolved`; production-entry macro boundaries
   keep `rust_macro_reach_unresolved`.
 
+## Same-File Test Generators
+
+A test file can define a `macro_rules!` whose transcriber emits `#[test] fn`
+and invoke it once per case. Those tests are real, but the parser sees only
+opaque token trees, so they were never indexed and the code they call read as
+unreached: `ungripped` in repo exposure and `no_static_path` in diff mode,
+a false gap when the tests catch the mutant (#5334).
+
+ripr indexes such a test when the generator fits one bounded shape, and
+otherwise indexes nothing for it:
+
+- the definition is the only `macro_rules!` of that name in the file, sits
+  directly in the file or an inline module, and precedes the invocation, which
+  sits at item position in the same scope or a nested one; neither the
+  definition nor the invocation carries an attribute or sits under a cfg'd
+  module or file;
+- every arm up to the selected one has a matcher of comma-separated
+  `$name:fragment` metavariables only; the selected arm is the first whose
+  metavariable count matches the invocation's top-level arguments, and an
+  `ident`, `literal`, `block` or `tt` argument must have that shape;
+- the selected transcriber contains `#[test]`, no repetition and no call to
+  another macro defined in the file, and no argument invokes one;
+- no `use` in the file imports the generator's name (rustc rejects that
+  invocation as ambiguous), and the expansion carries no `cfg` other than
+  `cfg(test)` and no `cfg_attr`.
+
+Each metavariable is replaced by its argument's source text and `$crate` by
+`crate`; an `expr` or `literal` argument of more than one element (`-1`) is
+wrapped in parentheses. Substitution is textual and ignores hygiene, so a
+block or expression argument can name a binding the transcriber declares;
+such a test reads as its unhygienic text does. The expansion is
+parsed by the ordinary file-fact producer, and each `#[test]` function becomes
+a test of the invoking file with every line pinned to the invocation.
+Assertion admission (RIPR-SPEC-0197 owner pins and equality admission) runs
+over the expansion text with the same rules as a hand-written test, so a
+deferred or escaping assertion inside the transcriber is refused exactly as it
+would be written by hand.
+
+This is not macro expansion in general. Generators defined in another file,
+`#[macro_use]` imports, repetition and procedural macros stay unindexed, and
+reach through them keeps the limitations above. A generated test whose
+transcriber calls a helper macro from another file is indexed for reach, but
+an assertion inside that helper is refused like any untrusted macro.
+
 ## Wire Format
 
 | Field | Value when fires | Value when not fires |
@@ -197,6 +241,13 @@ subprocess-binary and property-macro limits stay `no_static_path`-only.
 - `crates/ripr/src/analysis/language/rust/proximity_reach_tests.rs::a_test_calling_the_owner_keeps_the_gap_despite_a_macro_witness`
 - `crates/ripr/src/analysis/language/rust/proximity_reach_tests.rs::proximity_only_reach_without_a_witness_keeps_the_gap`
 - `crates/ripr/src/analysis/language/rust/proximity_reach_tests.rs::proximity_only_reach_through_a_helper_names_the_transitive_limit`
+- `crates/ripr/src/analysis/syntax/local_test_macros.rs::tests::expands_each_invocation_with_its_arguments_and_lines`
+- `crates/ripr/src/analysis/syntax/local_test_macros.rs::tests::repetition_shadowing_scope_and_order_refuse`
+- `crates/ripr/src/analysis/syntax/local_test_macros.rs::tests::arm_selection_follows_count_and_fragment_shape`
+- `crates/ripr/src/analysis/facts/macro_generated_tests.rs::tests::macro_generated_tests_are_indexed_at_their_invocations`
+- `crates/ripr/tests/macro_generated_tests.rs::a_macro_generated_test_reads_like_the_hand_written_test`
+- `crates/ripr/tests/macro_generated_tests.rs::refused_shapes_and_uninvoked_generators_add_no_test`
+- `crates/ripr/tests/macro_generated_tests.rs::a_deferred_assertion_in_a_generated_test_is_refused_like_a_hand_written_one`
 - `fixtures/rust_macro_reach_limitation/expected/check.json`
 - `cargo xtask check-evidence-promotion-honesty`
 
@@ -207,6 +258,9 @@ subprocess-binary and property-macro limits stay `no_static_path`-only.
 | Static limit enum | `crates/ripr/src/domain/language.rs` |
 | Stop reason enum | `crates/ripr/src/domain/probe.rs` |
 | Macro witness producer | `crates/ripr/src/analysis/classify/transitive_reach.rs` |
+| Same-file test generator expansion | `crates/ripr/src/analysis/syntax/local_test_macros.rs` |
+| Generated test indexing | `crates/ripr/src/analysis/facts/macro_generated_tests.rs` |
+| Generated test assertion admission | `crates/ripr/src/analysis/classify/owner_pin.rs` |
 | Classifier export | `crates/ripr/src/analysis/classify/mod.rs` |
 | Diff/repo-mode wiring | `crates/ripr/src/analysis/language/rust/mod.rs` |
 | Human witness and limitation-detail projection | `crates/ripr/src/output/human/sections.rs` |
