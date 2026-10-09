@@ -13926,7 +13926,47 @@ fn pilot_snapshot_truncated_by_the_seam_budget_is_not_a_verify_baseline()
     let inventory: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(
         root.join("target/ripr/pilot/repo-exposure.json"),
     )?)?;
-    // Pilot may append changed seams after the inventory cap (#6943).
+    // #7186: prove a real inventory-only cut reaches the packet consumer.
+    assert_eq!(count(&inventory), 2, "{inventory}");
+    let inventory_packets: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(
+        root.join("target/ripr/pilot/agent-seam-packets.json"),
+    )?)?;
+    let inventory_limit = inventory_packets["limitations"]
+        .as_array()
+        .ok_or("packet limitations must be an array")?;
+    assert_eq!(inventory_limit.len(), 1, "{inventory_packets}");
+    let limit = inventory_limit[0]
+        .as_object()
+        .ok_or("packet limitation must be an object")?;
+    assert_eq!(limit.len(), 6, "{inventory_packets}");
+    assert_eq!(
+        inventory_packets["run_status"], "seam_limit_applied",
+        "{inventory_packets}"
+    );
+    assert_eq!(
+        inventory_limit[0]["category"], "repo_seam_limit_applied",
+        "{inventory_packets}"
+    );
+    assert_eq!(
+        inventory_limit[0]["control"], "RIPR_REPO_EXPOSURE_SEAM_LIMIT",
+        "{inventory_packets}"
+    );
+    assert_eq!(inventory_limit[0]["limit_source"], "configured");
+    assert_eq!(inventory_limit[0]["seams_analyzed"], 2);
+    assert_eq!(inventory_limit[0]["seams_total"], full_total);
+    assert_eq!(
+        inventory_limit[0]["repair_route"],
+        "Remove or raise RIPR_REPO_EXPOSURE_SEAM_LIMIT to analyze more seams, or scope the run to a change with `ripr check --base <REV>` (or `ripr check --diff <PATH>`)."
+    );
+    let inventory_packet_count = inventory_packets["packets"]
+        .as_array()
+        .ok_or("packet population must be an array")?
+        .len();
+    assert!(inventory_packet_count > 0, "{inventory_packets}");
+    assert_eq!(
+        inventory_packets["packets_total"], inventory_packet_count,
+        "{inventory_packets}"
+    );
     assert_eq!(inventory["run_status"], "seam_limit_applied", "{inventory}");
     assert_eq!(
         inventory["limitations"][0]["category"], "repo_seam_limit_applied",
