@@ -1100,10 +1100,15 @@ pub(crate) fn corpus_value(dir: &Path) -> Result<Value, String> {
     Ok(header)
 }
 
-/// Every `<id>.json` directly under `root`, sorted by file name. A file whose
-/// `id_field` differs from its name is refused, so an id is unique by
-/// construction and a copied file cannot shadow another record.
-fn record_files(root: &Path, id_field: &str) -> Result<Vec<Value>, String> {
+/// File-name order for corpus records. Kept as a helper so a shuffled listing
+/// can prove the sort without depending on `read_dir` order (#6945).
+fn in_file_name_order(mut paths: Vec<PathBuf>) -> Vec<PathBuf> {
+    paths.sort();
+    paths
+}
+
+/// Every `<id>.json` directly under `root`, in file-name order.
+fn json_record_paths(root: &Path) -> Result<Vec<PathBuf>, String> {
     let mut paths = Vec::new();
     let entries =
         fs::read_dir(root).map_err(|err| format!("read {}: {err}", normalize_path(root)))?;
@@ -1115,7 +1120,14 @@ fn record_files(root: &Path, id_field: &str) -> Result<Vec<Value>, String> {
             paths.push(path);
         }
     }
-    paths.sort();
+    Ok(in_file_name_order(paths))
+}
+
+/// Every `<id>.json` directly under `root`, sorted by file name. A file whose
+/// `id_field` differs from its name is refused, so an id is unique by
+/// construction and a copied file cannot shadow another record.
+fn record_files(root: &Path, id_field: &str) -> Result<Vec<Value>, String> {
+    let paths = json_record_paths(root)?;
     let mut records = Vec::new();
     for path in paths {
         let record = parse_json(&path)?;

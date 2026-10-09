@@ -1108,41 +1108,57 @@ fn per_record_corpus(name: &str, case_ids: &[&str]) -> Result<PathBuf, String> {
     Ok(dir)
 }
 
-fn json_record_stems(dir: &Path) -> Result<Vec<String>, String> {
-    let mut names = Vec::new();
-    for entry in fs::read_dir(dir).map_err(|err| err.to_string())? {
-        let path = entry.map_err(|err| err.to_string())?.path();
-        if path.is_file() && path.extension().is_some_and(|ext| ext == "json") {
-            let stem = path
-                .file_stem()
-                .and_then(|stem| stem.to_str())
-                .ok_or_else(|| format!("{} is not utf-8", normalize_path(&path)))?;
-            names.push(stem.to_string());
-        }
-    }
-    Ok(names)
+#[test]
+fn in_file_name_order_sorts_a_shuffled_listing() {
+    let shuffled = [
+        "z-ord.json",
+        "m-ord.json",
+        "a-ord.json",
+        "y-ord.json",
+        "b-ord.json",
+        "n-ord.json",
+        "x-ord.json",
+        "c-ord.json",
+        "w-ord.json",
+        "v-ord.json",
+        "u-ord.json",
+        "t-ord.json",
+        "s-ord.json",
+        "h-ord.json",
+        "g-ord.json",
+        "f-ord.json",
+        "r-ord.json",
+        "q-ord.json",
+    ]
+    .into_iter()
+    .map(PathBuf::from)
+    .collect::<Vec<_>>();
+    let mut expected = shuffled.clone();
+    expected.sort();
+    assert_ne!(
+        shuffled, expected,
+        "fixture names must start unsorted so a missing sort is visible"
+    );
+    assert_eq!(in_file_name_order(shuffled), expected);
 }
 
 #[test]
 fn corpus_records_load_in_file_name_order_and_must_match_their_ids() -> Result<(), String> {
-    // Two names often already come back sorted from ext4; enough mixed names
-    // that unsorted readdir differs from lexicographic order, so dropping
-    // `paths.sort()` goes red (#6945).
+    // Enough mixed names that a missing sort in `in_file_name_order` still
+    // shows up on filesystems whose readdir is unsorted (#6945).
     let ids = [
         "z-ord", "m-ord", "a-ord", "y-ord", "b-ord", "n-ord", "x-ord", "c-ord", "w-ord", "v-ord",
         "u-ord", "t-ord", "s-ord", "h-ord", "g-ord", "f-ord", "r-ord", "q-ord",
     ];
     let dir = per_record_corpus("verdict-order", &ids)?;
-    let listing = json_record_stems(&dir.join("cases"))?;
-    let mut sorted = listing.clone();
-    sorted.sort();
-    assert_ne!(
-        listing, sorted,
-        "readdir already returned sorted names {listing:?}; the missing paths.sort() control is vacuous"
-    );
+    // NTFS and some other filesystems already return sorted names, so a
+    // readdir `assert_ne!` would fail even with the sort present. The
+    // shuffled-path helper is the filesystem-independent discriminator;
+    // load_corpus must still emit file-name order.
     let corpus = load_corpus(&dir)?;
     let loaded: Vec<&str> = corpus.cases.iter().map(|c| c.case_id.as_str()).collect();
-    let expected: Vec<&str> = sorted.iter().map(String::as_str).collect();
+    let mut expected = ids.to_vec();
+    expected.sort();
     assert_eq!(loaded, expected);
     // A copied file that keeps the original id is refused, so two files can
     // never carry one id.

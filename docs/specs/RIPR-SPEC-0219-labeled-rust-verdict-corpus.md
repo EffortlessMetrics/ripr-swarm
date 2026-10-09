@@ -477,6 +477,7 @@ Tests live in `xtask/src/reports/verdict_corpus_tests.rs`:
 - `expected_report_rows_agree_with_corpus_labels`
 - `build_report_counts_rates_over_the_right_denominators`
 - `corpus_records_load_in_file_name_order_and_must_match_their_ids`
+- `in_file_name_order_sorts_a_shuffled_listing`
 - `split_moves_the_one_file_layout_into_records_without_loss`
 - `drift_names_moved_missing_and_stale_rows_and_a_subset_compares_only_its_rows`
 - `summary_derived_from_blessed_rows_equals_the_run_summary`

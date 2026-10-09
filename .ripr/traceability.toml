@@ -12859,6 +12859,7 @@ tests = [
   "xtask/src/reports/verdict_corpus_coverage_tests.rs::floor_gate_fails_below_passes_at_and_invites_a_raise_above",
   "xtask/src/reports/verdict_corpus_coverage_tests.rs::committed_ledger_is_valid_and_meets_its_floor",
   "xtask/src/reports/verdict_corpus_tests.rs::corpus_records_load_in_file_name_order_and_must_match_their_ids",
+  "xtask/src/reports/verdict_corpus_tests.rs::in_file_name_order_sorts_a_shuffled_listing",
   "xtask/src/reports/verdict_corpus_tests.rs::split_moves_the_one_file_layout_into_records_without_loss",
   "xtask/src/reports/verdict_corpus_tests.rs::drift_names_moved_missing_and_stale_rows_and_a_subset_compares_only_its_rows",
   "xtask/src/reports/verdict_corpus_tests.rs::summary_derived_from_blessed_rows_equals_the_run_summary",
