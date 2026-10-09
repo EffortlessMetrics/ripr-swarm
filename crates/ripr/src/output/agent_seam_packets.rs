@@ -41,8 +41,9 @@ use crate::analysis::seams::{
     ExpectedSink, OwnerCallShape, RequiredDiscriminator, SeamGripClass, SeamKind,
 };
 use crate::analysis::test_grip_evidence::{RelatedTestGrip, TestGripEvidence};
-use crate::analysis::{ClassifiedSeam, SeamLimitInfo, SeamLimitSource};
+use crate::analysis::ClassifiedSeam;
 use crate::analysis_outcome::AnalysisOutcome;
+use crate::output::repo_exposure::RepoExposureLimit;
 pub(crate) use crate::app::AGENT_SEAM_PACKET_SCHEMA_VERSION;
 use crate::app::analysis_outcome_artifact::analysis_outcome_projection;
 use crate::app::causal_projection::CausalDeltaArtifact;
@@ -166,18 +167,18 @@ fn push_analysis_outcome_projection(
 /// boundary that hides evidence.
 ///
 /// When `limit_info` is `Some`, the artifact carries a `limitations[]` block
-/// so consumers know the output is bounded and can opt out via the env var.
+/// so consumers know which cap bounded the output and how to lift that cap.
 #[cfg(test)]
 pub(crate) fn render_agent_seam_packets_json(
     classified: &[ClassifiedSeam],
-    limit_info: Option<&SeamLimitInfo>,
+    limit_info: Option<RepoExposureLimit<'_>>,
 ) -> String {
     render_agent_seam_packets_json_with_causal(classified, limit_info, None)
 }
 
 pub(crate) fn render_agent_seam_packets_json_with_causal(
     classified: &[ClassifiedSeam],
-    limit_info: Option<&SeamLimitInfo>,
+    limit_info: Option<RepoExposureLimit<'_>>,
     causal_projection: Option<&CausalDeltaArtifact>,
 ) -> String {
     render_agent_seam_packets_json_with_causal_and_outcome(
@@ -191,7 +192,7 @@ pub(crate) fn render_agent_seam_packets_json_with_causal(
 
 pub(crate) fn render_agent_seam_packets_json_with_causal_and_outcome(
     classified: &[ClassifiedSeam],
-    limit_info: Option<&SeamLimitInfo>,
+    limit_info: Option<RepoExposureLimit<'_>>,
     causal_projection: Option<&CausalDeltaArtifact>,
     analysis_outcome: Option<&AnalysisOutcome>,
     analysis_outcome_required: bool,
@@ -212,7 +213,7 @@ pub(crate) fn render_agent_seam_packets_json_with_causal_and_outcome(
 /// snapshot to the wrong repository when pilot ran with `--root X` (#5324).
 pub(crate) fn render_agent_seam_packets_json_for_root(
     classified: &[ClassifiedSeam],
-    limit_info: Option<&SeamLimitInfo>,
+    limit_info: Option<RepoExposureLimit<'_>>,
     causal_projection: Option<&CausalDeltaArtifact>,
     root: &str,
 ) -> String {
@@ -241,7 +242,7 @@ pub(crate) enum PacketCommandContext<'a> {
 
 fn render_agent_seam_packets_json_with_root(
     classified: &[ClassifiedSeam],
-    limit_info: Option<&SeamLimitInfo>,
+    limit_info: Option<RepoExposureLimit<'_>>,
     causal_projection: Option<&CausalDeltaArtifact>,
     analysis_outcome: Option<&AnalysisOutcome>,
     analysis_outcome_required: bool,
@@ -263,31 +264,31 @@ fn render_agent_seam_packets_json_with_root(
     }
 
     // run_status mirrors the repo-exposure pattern: "complete" when nothing
-    // was capped, "seam_limit_applied" when the pilot budget fired.
+    // was capped, "seam_limit_applied" when either cap fired.
     match limit_info {
         None => out.push_str("  \"run_status\": \"complete\",\n"),
         Some(_) => out.push_str("  \"run_status\": \"seam_limit_applied\",\n"),
     }
 
-    if let Some(info) = limit_info {
-        let repair_route = match info.source {
-            SeamLimitSource::Default => {
-                "Set RIPR_PILOT_SEAM_BUDGET=0 to render packets for all seams, or scope the run to a change with `ripr check --base <REV>` (or `ripr check --diff <PATH>`)."
-            }
-            SeamLimitSource::Configured => {
-                "Remove or raise RIPR_PILOT_SEAM_BUDGET to render packets for more seams, or scope the run to a change with `ripr check --base <REV>` (or `ripr check --diff <PATH>`)."
-            }
-        };
+    if let Some(limit) = limit_info {
+        let info = limit.info();
+        let repair_route = limit.repair_route();
         out.push_str("  \"limitations\": [\n");
         out.push_str("    {\n");
-        out.push_str("      \"category\": \"pilot_seam_budget_applied\",\n");
+        out.push_str(&format!(
+            "      \"category\": \"{}\",\n",
+            limit.category()
+        ));
         out.push_str(&format!("      \"seams_analyzed\": {},\n", info.analyzed));
         out.push_str(&format!("      \"seams_total\": {},\n", info.total));
         out.push_str(&format!(
             "      \"limit_source\": \"{}\",\n",
             info.source.as_str()
         ));
-        out.push_str("      \"control\": \"RIPR_PILOT_SEAM_BUDGET\",\n");
+        out.push_str(&format!(
+            "      \"control\": \"{}\",\n",
+            limit.control()
+        ));
         out.push_str(&format!(
             "      \"repair_route\": \"{}\"\n",
             crate::output::json::escape(repair_route)
@@ -7124,16 +7125,16 @@ mod tests {
     // -- Pilot seam budget disclosure tests ----------------------------------
 
     #[test]
-    fn no_limit_info_emits_run_status_complete() {
+    fn no_limit_info_emits_run_status_complete() -> Result<(), String> {
         let json = render_agent_seam_packets_json(&[weakly_gripped_classified()], None);
-        assert!(
-            json.contains("\"run_status\": \"complete\""),
-            "expected run_status=complete when no limit_info: {json}"
-        );
-        assert!(
-            !json.contains("\"limitations\""),
-            "expected no limitations block when no limit_info: {json}"
-        );
+        let doc: serde_json::Value =
+            serde_json::from_str(&json).map_err(|error| error.to_string())?;
+        assert_eq!(doc["run_status"], "complete", "{doc}");
+        assert!(doc.get("limitations").is_none(), "{doc}");
+        let packets = doc["packets"].as_array().ok_or("packets must be an array")?;
+        assert_eq!(packets.len(), 1, "{doc}");
+        assert_eq!(doc["packets_total"], packets.len(), "{doc}");
+        Ok(())
     }
 
     #[test]
@@ -7144,8 +7145,10 @@ mod tests {
             total: 23_113,
             source: SeamLimitSource::Default,
         };
-        let json =
-            render_agent_seam_packets_json(&[weakly_gripped_classified()], Some(&limit_info));
+        let json = render_agent_seam_packets_json(
+            &[weakly_gripped_classified()],
+            Some(RepoExposureLimit::PilotBudget(&limit_info)),
+        );
         assert!(
             json.contains("\"run_status\": \"seam_limit_applied\""),
             "expected run_status=seam_limit_applied: {json}"
@@ -7177,22 +7180,108 @@ mod tests {
     }
 
     #[test]
-    fn limit_info_configured_source_emits_configured_repair_route() {
+    fn limit_info_configured_source_emits_configured_repair_route() -> Result<(), String> {
         use crate::analysis::{SeamLimitInfo, SeamLimitSource};
         let limit_info = SeamLimitInfo {
             analyzed: 500,
             total: 1_000,
             source: SeamLimitSource::Configured,
         };
-        let json = render_agent_seam_packets_json(&[], Some(&limit_info));
-        assert!(
-            json.contains("Remove or raise RIPR_PILOT_SEAM_BUDGET"),
-            "expected configured repair route in disclosure: {json}"
+        let json =
+            render_agent_seam_packets_json(&[], Some(RepoExposureLimit::PilotBudget(&limit_info)));
+        let doc: serde_json::Value =
+            serde_json::from_str(&json).map_err(|error| error.to_string())?;
+        assert_eq!(doc["run_status"], "seam_limit_applied", "{doc}");
+        assert_eq!(
+            doc["limitations"],
+            serde_json::json!([{
+                "category": "pilot_seam_budget_applied",
+                "seams_analyzed": 500,
+                "seams_total": 1_000,
+                "limit_source": "configured",
+                "control": "RIPR_PILOT_SEAM_BUDGET",
+                "repair_route": "Set RIPR_PILOT_SEAM_BUDGET=0 to disable the pilot artifact budget, or raise it to render more seams in the pilot artifacts.",
+            }]),
+            "{doc}"
         );
-        assert!(
-            json.contains("\"limit_source\": \"configured\""),
-            "expected limit_source=configured: {json}"
-        );
+        assert_eq!(doc["packets_total"], 0, "{doc}");
+        assert_eq!(doc["packets"], serde_json::json!([]), "{doc}");
+        Ok(())
+    }
+
+    // #7186: expected strings are authored independently of the shared
+    // authority; packet admission must not substitute its own denominator.
+    #[test]
+    fn packet_limit_disclosure_names_the_applied_cap() -> Result<(), String> {
+        use crate::analysis::{SeamLimitInfo, SeamLimitSource};
+
+        for (source, source_name, inventory, category, control, route) in [
+            (
+                SeamLimitSource::Default,
+                "default",
+                true,
+                "repo_seam_limit_applied",
+                "RIPR_REPO_EXPOSURE_SEAM_LIMIT",
+                "Set RIPR_REPO_EXPOSURE_SEAM_LIMIT=0 to analyze all seams, or scope the run to a change with `ripr check --base <REV>` (or `ripr check --diff <PATH>`).",
+            ),
+            (
+                SeamLimitSource::Configured,
+                "configured",
+                true,
+                "repo_seam_limit_applied",
+                "RIPR_REPO_EXPOSURE_SEAM_LIMIT",
+                "Remove or raise RIPR_REPO_EXPOSURE_SEAM_LIMIT to analyze more seams, or scope the run to a change with `ripr check --base <REV>` (or `ripr check --diff <PATH>`).",
+            ),
+            (
+                SeamLimitSource::Default,
+                "default",
+                false,
+                "pilot_seam_budget_applied",
+                "RIPR_PILOT_SEAM_BUDGET",
+                "Set RIPR_PILOT_SEAM_BUDGET=0 to disable the pilot artifact budget.",
+            ),
+            (
+                SeamLimitSource::Configured,
+                "configured",
+                false,
+                "pilot_seam_budget_applied",
+                "RIPR_PILOT_SEAM_BUDGET",
+                "Set RIPR_PILOT_SEAM_BUDGET=0 to disable the pilot artifact budget, or raise it to render more seams in the pilot artifacts.",
+            ),
+        ] {
+            let info = SeamLimitInfo {
+                analyzed: 2,
+                total: 9,
+                source,
+            };
+            let limit = if inventory {
+                RepoExposureLimit::Inventory(&info)
+            } else {
+                RepoExposureLimit::PilotBudget(&info)
+            };
+            let subjects = [weakly_gripped_classified(), strongly_gripped_classified()];
+            let rendered =
+                render_agent_seam_packets_json_for_root(&subjects, Some(limit), None, ".");
+            let doc: serde_json::Value =
+                serde_json::from_str(&rendered).map_err(|error| error.to_string())?;
+            assert_eq!(doc["run_status"], "seam_limit_applied", "{doc}");
+            assert_eq!(
+                doc["limitations"],
+                serde_json::json!([{
+                    "category": category,
+                    "seams_analyzed": 2,
+                    "seams_total": 9,
+                    "limit_source": source_name,
+                    "control": control,
+                    "repair_route": route,
+                }]),
+                "{doc}"
+            );
+            let packets = doc["packets"].as_array().ok_or("packets must be an array")?;
+            assert_eq!(packets.len(), 1, "{doc}");
+            assert_eq!(doc["packets_total"], packets.len(), "{doc}");
+        }
+        Ok(())
     }
 
     // RIPR-SPEC-0103 fixtures: error-seam exemplar kind-gate.

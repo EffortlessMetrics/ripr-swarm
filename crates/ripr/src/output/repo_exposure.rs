@@ -181,21 +181,21 @@ impl<'a> RepoExposureLimit<'a> {
         }
     }
 
-    fn category(self) -> &'static str {
+    pub(crate) fn category(self) -> &'static str {
         match self {
             Self::Inventory(_) => "repo_seam_limit_applied",
             Self::PilotBudget(_) => "pilot_seam_budget_applied",
         }
     }
 
-    fn control(self) -> &'static str {
+    pub(crate) fn control(self) -> &'static str {
         match self {
             Self::Inventory(_) => "RIPR_REPO_EXPOSURE_SEAM_LIMIT",
             Self::PilotBudget(_) => "RIPR_PILOT_SEAM_BUDGET",
         }
     }
 
-    fn repair_route(self) -> &'static str {
+    pub(crate) fn repair_route(self) -> &'static str {
         match (self, &self.info().source) {
             (Self::Inventory(_), SeamLimitSource::Default) => {
                 "Set RIPR_REPO_EXPOSURE_SEAM_LIMIT=0 to analyze all seams, or scope the run to a change with `ripr check --base <REV>` (or `ripr check --diff <PATH>`)."

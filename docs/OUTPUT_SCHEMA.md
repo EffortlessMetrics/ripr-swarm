@@ -15166,12 +15166,25 @@ Field contract:
 - `scope` — always `"repo"`, including the one-seam `ripr agent packet`
   expansion. The one-seam command is a filtered view of the repo packet
   contract, not a second packet schema.
+- `run_status` — `"complete"` when neither cap bounded the pilot artifact,
+  or `"seam_limit_applied"` when the inventory cap or pilot artifact budget
+  fired. Packet admission remains independent of this status.
+- `limitations[]` — present for a pilot artifact cap, with one object carrying
+  `category`, `seams_analyzed`, `seams_total`, `limit_source`, `control` and
+  `repair_route`. An inventory-only cut names `"repo_seam_limit_applied"` and
+  `"RIPR_REPO_EXPOSURE_SEAM_LIMIT"`; a pilot cut names
+  `"pilot_seam_budget_applied"` and `"RIPR_PILOT_SEAM_BUDGET"`.
+  The existing repo-exposure cap authority supplies the same default/configured
+  repair routes. An inactive pilot budget cannot relabel the inventory cut.
+  When both fire, the pilot cut's total is the already-capped inventory; its
+  route describes lifting only the pilot budget. Full recovery requires
+  disabling every active cap. Uncapped output has no stale cap limitation.
 - `analysis_outcome_status` — the producer outcome projection state. It is
   `"complete"` or `"incomplete"` when a typed diff outcome is present,
   `"missing"` or `"invalid"` when a required producer artifact cannot be
   trusted, and `"not_applicable"` for repo-only or gap-ledger packets that do
   not have a diff denominator. This field is independent of `run_status`,
-  which only describes the agent packet seam budget.
+  which describes whether a cap bounded the packet rendering input.
 - `analysis_outcome_error` — optional bounded diagnostic for `missing` or
   `invalid` producer evidence. It is never converted into a clean packet.
 - `analysis_outcome` — `null` for `not_applicable`, `missing`, or `invalid`;
