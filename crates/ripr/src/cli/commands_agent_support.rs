@@ -160,11 +160,15 @@ fn validate_agent_receipt_artifact_path(
 
 fn agent_receipt_config_fingerprint(root: &Path) -> Result<Option<String>, String> {
     let path = root.join(CONFIG_FILE_NAME);
-    if !crate::config::config_present_at_root(root) {
-        return Ok(None);
-    }
     match crate::bounded_input::read_to_string(&path) {
         Ok(text) => Ok(Some(config_fingerprint(&text))),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            if crate::config::config_present_at_root(root) {
+                Err(format!("read {} failed: {err}", path.display()))
+            } else {
+                Ok(None)
+            }
+        }
         Err(err) => Err(format!("read {} failed: {err}", path.display())),
     }
 }
@@ -731,6 +735,51 @@ mod tests {
             Err(error) if error.contains("ripr.toml") => Ok(()),
             Err(error) => Err(format!(
                 "a dangling ripr.toml must name ripr.toml when unread: {error}"
+            )),
+        }
+    }
+
+    /// A `PermissionDenied` lookup is not absence. Presence-first mapping of
+    /// `config_present_at_root == false` to `Ok(None)` would record built-in
+    /// defaults when `symlink_metadata` cannot even name the entry.
+    #[cfg(unix)]
+    #[test]
+    fn unreadable_ripr_toml_lookup_is_not_built_in_defaults() -> Result<(), String> {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let dir = ScratchDir::new("unreadable-config-lookup");
+        std::fs::write(dir.path.join("ripr.toml"), "mode = \"advisory\"\n")
+            .map_err(|error| error.to_string())?;
+        match agent_receipt_config_fingerprint(&dir.path)? {
+            Some(_) => {}
+            None => {
+                return Err(
+                    "a readable ripr.toml must fingerprint instead of recording absence"
+                        .to_string(),
+                );
+            }
+        }
+
+        struct RestoreMode(std::path::PathBuf);
+        impl Drop for RestoreMode {
+            fn drop(&mut self) {
+                let _ = std::fs::set_permissions(&self.0, std::fs::Permissions::from_mode(0o755));
+            }
+        }
+        let _restore = RestoreMode(dir.path.clone());
+        std::fs::set_permissions(&dir.path, std::fs::Permissions::from_mode(0o000))
+            .map_err(|error| format!("chmod root 000: {error}"))?;
+        match agent_receipt_config_fingerprint(&dir.path) {
+            Ok(None) => Err(
+                "an unreadable ripr.toml lookup must not fingerprint as absent built-in defaults"
+                    .to_string(),
+            ),
+            Ok(Some(fingerprint)) => Err(format!(
+                "an unreadable ripr.toml lookup must not fingerprint as readable: {fingerprint}"
+            )),
+            Err(error) if error.contains("ripr.toml") => Ok(()),
+            Err(error) => Err(format!(
+                "an unreadable ripr.toml lookup must name ripr.toml: {error}"
             )),
         }
     }

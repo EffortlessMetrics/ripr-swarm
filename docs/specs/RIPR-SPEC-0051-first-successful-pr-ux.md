@@ -487,7 +487,10 @@ Follow-up implementation should add or update:
   `crates/ripr/tests/generated_review_workflow.rs::generated_first_pr_artifact_commands_run_from_a_foreign_working_directory`;
 - a dangling `ripr.toml` symlink is present but unreadable in first-pr
   preflight, not built-in defaults:
-  `crates/ripr/src/output/first_pr/preflight.rs::tests::dangling_ripr_toml_symlink_is_present_not_built_in_defaults`.
+  `crates/ripr/src/output/first_pr/preflight.rs::tests::dangling_ripr_toml_symlink_is_present_not_built_in_defaults`;
+- a chmod-000 regular `ripr.toml` is present but unreadable in first-pr
+  preflight, not `ok`:
+  `crates/ripr/src/output/first_pr/preflight.rs::tests::unreadable_regular_ripr_toml_is_present_not_ok`.
 
 This spec PR does not add production code or output fields.
 

@@ -517,22 +517,25 @@ fn preflight_project_check(root: &Path) -> PreflightCheck {
 
 fn preflight_config_check(root: &Path) -> PreflightCheck {
     let config = root.join(CONFIG_FILE_NAME);
-    if !crate::config::config_present_at_root(root) {
-        PreflightCheck::defaulted(
-            "ripr_config",
-            "RIPR config",
-            format!("No {CONFIG_FILE_NAME} was found; built-in advisory defaults apply."),
-        )
-        .with_path(human_path(&config))
-    } else if config.is_file() {
-        PreflightCheck::ok(
+    match crate::bounded_input::read_to_string(&config) {
+        Ok(_) => PreflightCheck::ok(
             "ripr_config",
             "RIPR config",
             format!("{CONFIG_FILE_NAME} was found."),
         )
-        .with_path(human_path(&config))
-    } else {
-        PreflightCheck::needs_attention(
+        .with_path(human_path(&config)),
+        Err(err)
+            if err.kind() == std::io::ErrorKind::NotFound
+                && !crate::config::config_present_at_root(root) =>
+        {
+            PreflightCheck::defaulted(
+                "ripr_config",
+                "RIPR config",
+                format!("No {CONFIG_FILE_NAME} was found; built-in advisory defaults apply."),
+            )
+            .with_path(human_path(&config))
+        }
+        Err(_) => PreflightCheck::needs_attention(
             "ripr_config",
             "RIPR config",
             format!("{CONFIG_FILE_NAME} is present but unreadable."),
@@ -540,7 +543,7 @@ fn preflight_config_check(root: &Path) -> PreflightCheck {
                 "Replace the unreadable {CONFIG_FILE_NAME} with a readable file, then rerun first-pr."
             )),
         )
-        .with_path(human_path(&config))
+        .with_path(human_path(&config)),
     }
 }
 
@@ -652,6 +655,84 @@ mod tests {
         if !path.contains("ripr.toml") {
             return Err(format!(
                 "preflight must attach the ripr.toml path, not {path:?}"
+            ));
+        }
+        Ok(())
+    }
+
+    /// A chmod-000 regular `ripr.toml` is still a file, so `Path::is_file()`
+    /// is not a readability probe. Preflight must not mark it `ok` while
+    /// `load_for_root` cannot read it.
+    #[cfg(unix)]
+    #[test]
+    fn unreadable_regular_ripr_toml_is_present_not_ok() -> Result<(), String> {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|error| format!("clock: {error}"))?
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "ripr-first-pr-preflight-unreadable-{}-{stamp}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&root).map_err(|error| error.to_string())?;
+        struct Cleanup {
+            root: std::path::PathBuf,
+            file: std::path::PathBuf,
+        }
+        impl Drop for Cleanup {
+            fn drop(&mut self) {
+                let _ =
+                    std::fs::set_permissions(&self.file, std::fs::Permissions::from_mode(0o644));
+                let _ = std::fs::remove_dir_all(&self.root);
+            }
+        }
+        let config = root.join("ripr.toml");
+        std::fs::write(&config, "mode = \"advisory\"\n").map_err(|error| error.to_string())?;
+        let _cleanup = Cleanup {
+            root: root.clone(),
+            file: config.clone(),
+        };
+
+        let readable = preflight_config_check(&root);
+        if readable.status != "ok" {
+            return Err(format!(
+                "a readable ripr.toml must stay ok, not {}: {}",
+                readable.status, readable.message
+            ));
+        }
+
+        std::fs::set_permissions(&config, std::fs::Permissions::from_mode(0o000))
+            .map_err(|error| format!("chmod ripr.toml 000: {error}"))?;
+        let load_error = match crate::config::load_for_root(&root) {
+            Ok(_) => {
+                return Err("load_for_root must refuse a chmod-000 ripr.toml".to_string());
+            }
+            Err(error) => error,
+        };
+        if !load_error.contains("ripr.toml") {
+            return Err(format!(
+                "load_for_root must name ripr.toml for a chmod-000 file: {load_error}"
+            ));
+        }
+        let check = preflight_config_check(&root);
+        if check.status != "needs_attention" {
+            return Err(format!(
+                "an unreadable regular ripr.toml must need attention, not {}: {}",
+                check.status, check.message
+            ));
+        }
+        if check.message.contains("built-in advisory defaults") {
+            return Err(format!(
+                "an unreadable regular ripr.toml must not be described as built-in defaults: {}",
+                check.message
+            ));
+        }
+        if !check.message.contains("ripr.toml") || !check.message.contains("unreadable") {
+            return Err(format!(
+                "preflight must name ripr.toml as present but unreadable: {}",
+                check.message
             ));
         }
         Ok(())

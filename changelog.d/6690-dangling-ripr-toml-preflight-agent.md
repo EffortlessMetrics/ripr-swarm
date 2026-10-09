@@ -1,4 +1,4 @@
 <!-- section: Fixed -->
 - `ripr first-pr` preflight and agent-receipt config fingerprinting treat a
-  dangling `ripr.toml` symlink as present but unreadable, not as built-in
-  defaults (#6690).
+  present but unreadable `ripr.toml` (dangling symlink or unreadable lookup)
+  as unreadable, not as built-in defaults (#6690).

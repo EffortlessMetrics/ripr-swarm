@@ -277,9 +277,16 @@ add a second filesystem authority in a renderer or `lsp/diagnostics.rs`.
 #5455 routed workspace status and the two Python repair config-profile sites
 through `config_present_at_root`. First-pr preflight still used
 `Path::is_file()`, and agent-receipt fingerprinting mapped `ErrorKind::NotFound`
-to `Ok(None)`, so a dangling `ripr.toml` looked like built-in defaults. Call
-`config_present_at_root` before treating the file as missing. Keep a
-dangling-link control at each leftover site.
+to `Ok(None)`, so a dangling `ripr.toml` looked like built-in defaults.
+
+Do not consult `config_present_at_root` first and treat `false` as absent:
+`symlink_metadata` `PermissionDenied` also returns false, which would map an
+unreadable lookup to built-in defaults. Read first; only a `NotFound` read
+consults presence to distinguish a dangling link from a missing file.
+`Path::is_file()` is also not readability: a chmod-000 regular file is still
+a file, so preflight must bounded-read before emitting `ok`. Keep a
+dangling-link control and a non-`NotFound` unreadable control at each leftover
+site.
 
 ## 2026-10-04: `Path::is_file()` is not `ripr.toml` presence (#5404)
 

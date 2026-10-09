@@ -180,10 +180,11 @@ command;
 and a workspace with no such language gets neither.
 ```
 
-### Present dangling config is not built-in defaults
+### Present dangling or unreadable config is not built-in defaults
 
 ```text
 Given a workspace whose ripr.toml is a symlink to a missing file,
+or a regular file whose lookup or read fails with a non-absence error,
 when first-pr preflight or an agent-receipt config fingerprint runs,
 then the config is present but unreadable,
 and it is not described as using built-in defaults.
@@ -221,7 +222,9 @@ Current tests:
 - `crates/ripr/src/app/python_repair_binding.rs::tests::dangling_ripr_toml_symlink_is_subject_config_not_defaults`
 - `crates/ripr/src/app/python_repair_verification.rs::python_repair_verification_semantics::dangling_ripr_toml_symlink_is_subject_config_not_defaults`
 - `crates/ripr/src/output/first_pr/preflight.rs::tests::dangling_ripr_toml_symlink_is_present_not_built_in_defaults`
+- `crates/ripr/src/output/first_pr/preflight.rs::tests::unreadable_regular_ripr_toml_is_present_not_ok`
 - `crates/ripr/src/cli/commands_agent_support.rs::tests::dangling_ripr_toml_symlink_is_present_not_built_in_defaults`
+- `crates/ripr/src/cli/commands_agent_support.rs::tests::unreadable_ripr_toml_lookup_is_not_built_in_defaults`
 - `crates/ripr/src/config.rs::tests::config_file_sets_core_operational_defaults`
 - `crates/ripr/src/config.rs::tests::explicit_cli_mode_wins_over_config_mode`
 - `crates/ripr/src/config.rs::tests::config_mode_applies_when_cli_mode_is_not_explicit`
