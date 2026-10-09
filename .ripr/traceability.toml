@@ -2114,6 +2114,12 @@ id = "RIPR-SPEC-0020"
 name = "first useful action report"
 spec = "docs/specs/RIPR-SPEC-0020-first-useful-action-report.md"
 tests = [
+  "crates/ripr/src/output/first_useful_action/tests.rs::carried_repair_start_names_the_discriminator_without_inventing_reach",
+  "crates/ripr/src/output/first_useful_action/tests.rs::carried_exposure_card_keeps_the_neutral_repair_report",
+  "crates/ripr/src/output/first_useful_action/tests.rs::carried_ungripped_card_keeps_its_identity_commands_and_neutral_rationale",
+  "crates/ripr/src/output/first_useful_action/tests.rs::absent_or_blank_carried_command_keeps_the_missing_proof_route",
+  "crates/ripr/tests/agent_stub_compiles.rs::first_action_real_repair_card_uses_neutral_rationale_and_recovers",
+  "crates/ripr/tests/agent_stub_compiles.rs::first_action_real_callee_only_wrapper_keeps_its_refusal",
   "crates/ripr/src/cli/commands/agent_root_tests.rs::cli_receipt_first_action_reopens_literal_unix_root_and_refuses_decoy",
   "crates/ripr/tests/cli_smoke.rs::first_useful_action_corpus_pins_routing_cases",
   "crates/ripr/src/output/first_useful_action.rs::first_useful_action_matches_actionable_fixture",
@@ -2161,6 +2167,7 @@ fixtures = [
 ]
 code = [
   "crates/ripr/src/output/first_useful_action.rs",
+  "crates/ripr/src/output/gap_vocabulary.rs",
   "crates/ripr/src/cli/commands/agent.rs",
   "crates/ripr/src/cli/commands_agent_support.rs",
   "crates/ripr/src/output/mod.rs",

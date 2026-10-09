@@ -1282,14 +1282,50 @@ fn first_action_real_callee_only_wrapper_keeps_its_refusal() -> Result<(), Strin
             );
         }
     }
+    let wrapper_card = wrapper_guidance["comments"]
+        .as_array()
+        .and_then(|cards| cards.first())
+        .or_else(|| {
+            wrapper_guidance["summary_only"]
+                .as_array()
+                .and_then(|cards| cards.first())
+        })
+        .ok_or("producer must retain its genuine non-actionable wrapper card")?;
+    assert_eq!(wrapper_card["owner"], "src/lib.rs::parse_summary");
+    assert_eq!(wrapper_card["kind"], "return_value");
+    assert_eq!(wrapper_card["grip_class"], "ungripped");
+    assert_eq!(wrapper_card["seam"]["line"], 14);
+    assert_eq!(
+        wrapper_card["seam"]["expression"],
+        "try_parse_summary(raw).map_err(|error| error.to_string().into())"
+    );
+    let seam_id = wrapper_card["seam_id"]
+        .as_str()
+        .filter(|id| !id.is_empty())
+        .ok_or("the genuine wrapper card must carry its identity")?;
+    // Preserve the producer's global suppression evidence; this does
+    // not attribute a per-card suppression cause.
     let (action, markdown) = repair_start_action(&scratch, &wrapper_guidance, "callee-action")?;
     assert_eq!(action["schema_version"], "0.1");
     assert_eq!(action["kind"], "first_useful_action");
     assert!(action["commands"].get("repair").is_none(), "{action}");
-    assert!(
-        ["no_actionable_seam", "missing_required_artifact"]
-            .contains(&action["status"].as_str().ok_or("decision has no status")?),
-        "{action}"
+    assert_eq!(action["status"], "suppressed", "{action}");
+    assert_eq!(action["action_kind"], "no_action");
+    assert_eq!(action["fallback"]["kind"], "suppressed");
+    assert_eq!(action["why"], "The seam is suppressed or configured off.");
+    assert_eq!(action["selected"]["source"], "pr_guidance");
+    assert_eq!(action["selected"]["seam_id"], seam_id);
+    assert_eq!(action["selected"]["path"], "src/lib.rs");
+    assert_eq!(action["selected"]["line"], 14);
+    assert_eq!(action["selected"]["seam_kind"], "return_value");
+    assert_eq!(action["selected"]["classification"], "no_static_path");
+    assert_eq!(
+        action["selected"]["changed_behavior"],
+        "try_parse_summary(raw).map_err(|error| error.to_string().into())"
+    );
+    assert_eq!(
+        markdown.lines().find(|line| line.starts_with("- Why: ")),
+        Some("- Why: The seam is suppressed or configured off.")
     );
     assert!(!markdown.contains("## Start Repair"));
     scratch.cleanup()
