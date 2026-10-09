@@ -1671,9 +1671,13 @@ fn split_refuses_symlinks_below_the_corpus_directory() -> Result<(), String> {
     }
     // A dangling record-level link fails `exists`, so only the write-time
     // refusal stops split from creating the file the link names outside
-    // the corpus (#6686 review).
+    // the corpus (#6686 review). The record directories exist, so the
+    // subjects and the other cases write normally and the run reaches the
+    // linked record.
     let dir = crate::tests::temp_dir("verdict-split-symlink-record");
     crate::tests::write(&dir.join("corpus.json"), &format!("{legacy:#}"));
+    fs::create_dir_all(dir.join("subjects")).map_err(|err| err.to_string())?;
+    fs::create_dir_all(dir.join("cases")).map_err(|err| err.to_string())?;
     let case_id = legacy["cases"][0]["case_id"]
         .as_str()
         .ok_or("the legacy corpus has a first case id")?
