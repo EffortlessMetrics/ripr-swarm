@@ -942,7 +942,11 @@ fn repair_start_fixture(
     }
     let head =
         std::fs::read_to_string(root.join("src/lib.rs")).map_err(|error| error.to_string())?;
-    assert_eq!(head.matches(new).count(), 1, "fixture change must be unique");
+    assert_eq!(
+        head.matches(new).count(),
+        1,
+        "fixture change must be unique"
+    );
     std::fs::write(root.join("src/lib.rs"), head.replace(new, old))
         .map_err(|error| error.to_string())?;
     git(root, root, &["init", "-q"])?;
@@ -1071,7 +1075,10 @@ fn first_action_real_repair_card_uses_neutral_rationale_and_recovers() -> Result
     assert_eq!(card["grip_class"], "weakly_gripped");
     assert_eq!(card["gap_state"], "actionable");
     assert_eq!(card["seam"]["expression"], "amount >= discount_threshold");
-    assert_eq!(card["missing_discriminator"], "discount_threshold (equality boundary)");
+    assert_eq!(
+        card["missing_discriminator"],
+        "discount_threshold (equality boundary)"
+    );
     let repair = card["llm_guidance"]["repair_command"]
         .as_str()
         .filter(|command| !command.is_empty())
@@ -1200,8 +1207,16 @@ fn first_action_real_callee_only_wrapper_keeps_its_refusal() -> Result<(), Strin
         })
         .collect();
     assert_eq!(subjects.len(), 2, "genuine wrapper subjects: {document}");
-    assert!(subjects.iter().any(|f| f["probe"]["family"] == "error_path"));
-    assert!(subjects.iter().any(|f| f["probe"]["family"] == "return_value"));
+    assert!(
+        subjects
+            .iter()
+            .any(|f| f["probe"]["family"] == "error_path")
+    );
+    assert!(
+        subjects
+            .iter()
+            .any(|f| f["probe"]["family"] == "return_value")
+    );
     for finding in subjects {
         assert_eq!(finding["classification"], "weakly_exposed");
         assert_eq!(finding["ripr"]["reach"]["state"], "weak");
@@ -1247,7 +1262,9 @@ fn first_action_real_callee_only_wrapper_keeps_its_refusal() -> Result<(), Strin
                     test["name"].as_str().ok_or("related test has no name")?,
                     test["file"].as_str().ok_or("related test has no file")?,
                     test["line"].as_u64().ok_or("related test has no line")?,
-                    test["oracle"].as_str().ok_or("related test has no oracle")?,
+                    test["oracle"]
+                        .as_str()
+                        .ok_or("related test has no oracle")?,
                 ))
             })
             .collect::<Result<Vec<_>, _>>()?;

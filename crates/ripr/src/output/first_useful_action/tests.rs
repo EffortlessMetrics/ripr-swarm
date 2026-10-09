@@ -2298,9 +2298,7 @@ fn one_screen_changed_behavior_skips_a_blank_seam_expression() -> Result<(), Str
     Ok(())
 }
 
-
-const NEUTRAL_REPAIR_START_WHY: &str =
-    "The review card identifies missing discriminator `amount == discount_threshold` and names its repair start.";
+const NEUTRAL_REPAIR_START_WHY: &str = "The review card identifies missing discriminator `amount == discount_threshold` and names its repair start.";
 
 #[test]
 fn carried_repair_start_names_the_discriminator_without_inventing_reach() -> Result<(), String> {
@@ -2378,7 +2376,8 @@ fn carried_exposure_card_keeps_the_neutral_repair_report() -> Result<(), String>
 }
 
 #[test]
-fn carried_ungripped_card_keeps_its_identity_commands_and_neutral_rationale() -> Result<(), String> {
+fn carried_ungripped_card_keeps_its_identity_commands_and_neutral_rationale() -> Result<(), String>
+{
     let mut comments = exact_line_comments()?;
     // Consumer-input control, not a live producer-admission claim.
     comments["comments"][0]["grip_class"] = Value::from("ungripped");
