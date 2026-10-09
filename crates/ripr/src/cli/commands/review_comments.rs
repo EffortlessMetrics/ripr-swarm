@@ -2098,7 +2098,7 @@ mod tests {
             }
             Err(error) => error,
         };
-        if !error.contains("failed to read") || !error.contains("unreadable.rs") {
+        if !error.contains("read src/unreadable.rs failed") || error.contains("timed out") {
             return Err(format!(
                 "canonical_analysis must surface the builder read error, got: {error}"
             ));
@@ -2143,7 +2143,9 @@ mod tests {
                 "ordinary failure receipt must carry the builder error: {receipt}"
             ));
         };
-        if !repair_route.contains("failed to read") || !repair_route.contains("unreadable.rs") {
+        if !repair_route.contains("read src/unreadable.rs failed")
+            || repair_route.contains("timed out")
+        {
             return Err(format!("receipt must carry the builder error: {receipt}"));
         }
         if repair_route != error {
