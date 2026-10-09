@@ -476,25 +476,31 @@ mod tests {
             }
             validate_row(row)?;
             let label = format!("{implementation}/{variant}");
-            let mut missing = row.clone();
-            missing["test_ids"][0]
-                .as_object_mut()
-                .ok_or("native subject must be an object")?
-                .remove("reason");
-            assert!(
-                validate_row(&missing).is_err(),
-                "{label}: missing reason must not count as explicit null"
-            );
-            for wrong in ["pytest.skip", "pytest.xfail", "unknown"] {
-                if expected_reason == Some(wrong) {
-                    continue;
-                }
-                let mut changed = row.clone();
-                changed["test_ids"][0]["reason"] = serde_json::json!(wrong);
+            let last = ids
+                .len()
+                .checked_sub(1)
+                .ok_or("native control has no subjects")?;
+            for index in BTreeSet::from([0, last]) {
+                let mut missing = row.clone();
+                missing["test_ids"][index]
+                    .as_object_mut()
+                    .ok_or("native subject must be an object")?
+                    .remove("reason");
                 assert!(
-                    validate_row(&changed).is_err(),
-                    "{label}: reject JSON reason {wrong}"
+                    validate_row(&missing).is_err(),
+                    "{label}/{index}: missing reason must not count as explicit null"
                 );
+                for wrong in ["pytest.skip", "pytest.xfail", "unknown"] {
+                    if expected_reason == Some(wrong) {
+                        continue;
+                    }
+                    let mut changed = row.clone();
+                    changed["test_ids"][index]["reason"] = serde_json::json!(wrong);
+                    assert!(
+                        validate_row(&changed).is_err(),
+                        "{label}/{index}: reject JSON reason {wrong}"
+                    );
+                }
             }
             if let Some(reason) = expected_reason {
                 let mut missing = row.clone();
