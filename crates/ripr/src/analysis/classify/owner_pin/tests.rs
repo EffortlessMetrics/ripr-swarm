@@ -3,7 +3,7 @@ use crate::analysis::facts::{FunctionItemFact, SourceRoleProvenance, SourceRoleP
 use crate::analysis::rust_index::summarize_file;
 use crate::analysis::syntax::macro_binding_candidates;
 use crate::domain::{DeltaKind, ProbeId, SourceLocation, SymbolId};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 const LIB: &str = "src/lib.rs";
 const TESTS: &str = "tests/buf_tests.rs";
@@ -477,6 +477,33 @@ fn unit_struct_admission_memoizes_workspace_scans() {
     assert!(
         repeated < single * RATIO_BOUND,
         "{ASSERTIONS} shared-syntax admissions took {repeated:?}, more than {RATIO_BOUND}x one cold admission ({single:?}): the workspace scan is not memoized"
+    );
+}
+
+#[test]
+fn unit_struct_fact_collection_stops_at_the_first_refusal() {
+    // The refusal predicates are name-independent, so the scan stops once
+    // one holds and the caller refuses before reading `macro_files`. A
+    // later macro-defining file must never be scanned into the set, which
+    // pins the early stop structurally instead of by timing.
+    let index = index(&[
+        (
+            "src/a_refusing.rs",
+            "macro_rules! takes_name { ($t:tt) => {}; }\n",
+        ),
+        ("src/z_macro.rs", "macro_rules! later { () => {}; }\n"),
+    ]);
+    let facts = UnitStructFacts::collect(&index);
+    assert!(facts.refused(), "the `:tt` matcher must refuse every name");
+    let refusing = PathBuf::from("src/a_refusing.rs");
+    let later = PathBuf::from("src/z_macro.rs");
+    assert!(
+        facts.macro_files.contains(&refusing),
+        "the file that set the refusal must be recorded as macro-defining"
+    );
+    assert!(
+        !facts.macro_files.contains(&later),
+        "the scan must stop at the first refusal: the later macro file (scanned second in the sorted index) must not be recorded"
     );
 }
 

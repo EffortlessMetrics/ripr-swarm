@@ -5828,14 +5828,19 @@ struct UnitStructFacts {
     /// fragment, which could declare any name it is given.
     macro_takes_name: bool,
     /// Files whose masked source mentions `macro_rules!`: only these can
-    /// refuse a name by spelling it in a macro definition.
+    /// refuse a name by spelling it in a macro definition. Complete only
+    /// while [`Self::refused`] is false: the scan stops at the first
+    /// refusal verdict, and [`unit_struct_value`] reads this set only
+    /// after that gate.
     macro_files: BTreeSet<PathBuf>,
 }
 
 impl UnitStructFacts {
-    /// Scan the workspace once. The module-name set feeds the glob
-    /// verdict and is dropped; the predicates are the name-independent
-    /// halves of [`unit_struct_value`]'s per-file checks, unchanged.
+    /// Scan the workspace once, stopping at the first refusal verdict:
+    /// the predicates are name-independent, so no later file can change
+    /// one. The module-name set feeds the glob verdict and is dropped;
+    /// the predicates are the name-independent halves of
+    /// [`unit_struct_value`]'s per-file checks, unchanged.
     fn collect(index: &RustIndex) -> Self {
         let modules = workspace_module_names(index);
         let mut glob_outside = false;
@@ -5843,6 +5848,12 @@ impl UnitStructFacts {
         let mut macro_takes_name = false;
         let mut macro_files = BTreeSet::new();
         for (file, facts) in index.files().iter() {
+            // Once any refusal verdict holds, the remaining files cannot
+            // change it, and the caller refuses before reading
+            // `macro_files`; stop paying for their masking.
+            if glob_outside || spliced || macro_takes_name {
+                break;
+            }
             let masked = mask_comments_and_strings(&facts.source);
             // A glob that reaches outside the workspace's modules, in any
             // file, can bring the name to the test without spelling it.
