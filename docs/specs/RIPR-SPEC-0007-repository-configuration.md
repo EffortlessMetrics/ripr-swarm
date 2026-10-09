@@ -223,6 +223,7 @@ Current tests:
 - `crates/ripr/src/app/python_repair_verification.rs::python_repair_verification_semantics::dangling_ripr_toml_symlink_is_subject_config_not_defaults`
 - `crates/ripr/src/output/first_pr/preflight.rs::tests::dangling_ripr_toml_symlink_is_present_not_built_in_defaults`
 - `crates/ripr/src/output/first_pr/preflight.rs::tests::unreadable_regular_ripr_toml_is_present_not_ok`
+- `crates/ripr/src/output/first_pr/preflight.rs::tests::fifo_ripr_toml_is_present_not_ok_and_does_not_block`
 - `crates/ripr/src/cli/commands_agent_support.rs::tests::dangling_ripr_toml_symlink_is_present_not_built_in_defaults`
 - `crates/ripr/src/cli/commands_agent_support.rs::tests::unreadable_ripr_toml_lookup_is_not_built_in_defaults`
 - `crates/ripr/src/config.rs::tests::config_file_sets_core_operational_defaults`

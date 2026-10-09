@@ -284,9 +284,12 @@ Do not consult `config_present_at_root` first and treat `false` as absent:
 unreadable lookup to built-in defaults. Read first; only a `NotFound` read
 consults presence to distinguish a dangling link from a missing file.
 `Path::is_file()` is also not readability: a chmod-000 regular file is still
-a file, so preflight must bounded-read before emitting `ok`. Keep a
-dangling-link control and a non-`NotFound` unreadable control at each leftover
-site.
+a file, so preflight must bounded-read before emitting `ok`. Stat the resolved
+target first: `bounded_input::read_to_string` opens FIFOs and can wait for a
+writer, so a FIFO named `ripr.toml` must be classified unreadable without
+opening. Keep a dangling-link control and a non-`NotFound` unreadable control
+at each leftover site. Chmod-000 tests skip when a privileged process can still
+read.
 
 ## 2026-10-04: `Path::is_file()` is not `ripr.toml` presence (#5404)
 

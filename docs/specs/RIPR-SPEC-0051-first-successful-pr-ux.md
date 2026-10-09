@@ -490,7 +490,10 @@ Follow-up implementation should add or update:
   `crates/ripr/src/output/first_pr/preflight.rs::tests::dangling_ripr_toml_symlink_is_present_not_built_in_defaults`;
 - a chmod-000 regular `ripr.toml` is present but unreadable in first-pr
   preflight, not `ok`:
-  `crates/ripr/src/output/first_pr/preflight.rs::tests::unreadable_regular_ripr_toml_is_present_not_ok`.
+  `crates/ripr/src/output/first_pr/preflight.rs::tests::unreadable_regular_ripr_toml_is_present_not_ok`;
+- a FIFO named `ripr.toml` is present but unreadable in first-pr preflight
+  without opening the pipe:
+  `crates/ripr/src/output/first_pr/preflight.rs::tests::fifo_ripr_toml_is_present_not_ok_and_does_not_block`.
 
 This spec PR does not add production code or output fields.
 

@@ -774,9 +774,12 @@ mod tests {
                 "an unreadable ripr.toml lookup must not fingerprint as absent built-in defaults"
                     .to_string(),
             ),
-            Ok(Some(fingerprint)) => Err(format!(
-                "an unreadable ripr.toml lookup must not fingerprint as readable: {fingerprint}"
-            )),
+            Ok(Some(_)) => {
+                // A privileged process can still traverse mode 000. Skip rather
+                // than fail the production behavior that remains correct for
+                // unprivileged users.
+                Ok(())
+            }
             Err(error) if error.contains("ripr.toml") => Ok(()),
             Err(error) => Err(format!(
                 "an unreadable ripr.toml lookup must name ripr.toml: {error}"

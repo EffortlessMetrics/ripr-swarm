@@ -517,13 +517,17 @@ fn preflight_project_check(root: &Path) -> PreflightCheck {
 
 fn preflight_config_check(root: &Path) -> PreflightCheck {
     let config = root.join(CONFIG_FILE_NAME);
-    match crate::bounded_input::read_to_string(&config) {
-        Ok(_) => PreflightCheck::ok(
-            "ripr_config",
-            "RIPR config",
-            format!("{CONFIG_FILE_NAME} was found."),
-        )
-        .with_path(human_path(&config)),
+    match std::fs::metadata(&config) {
+        Ok(meta) if meta.is_file() => match crate::bounded_input::read_to_string(&config) {
+            Ok(_) => PreflightCheck::ok(
+                "ripr_config",
+                "RIPR config",
+                format!("{CONFIG_FILE_NAME} was found."),
+            )
+            .with_path(human_path(&config)),
+            Err(_) => unreadable_ripr_config(&config),
+        },
+        Ok(_) => unreadable_ripr_config(&config),
         Err(err)
             if err.kind() == std::io::ErrorKind::NotFound
                 && !crate::config::config_present_at_root(root) =>
@@ -535,16 +539,20 @@ fn preflight_config_check(root: &Path) -> PreflightCheck {
             )
             .with_path(human_path(&config))
         }
-        Err(_) => PreflightCheck::needs_attention(
-            "ripr_config",
-            "RIPR config",
-            format!("{CONFIG_FILE_NAME} is present but unreadable."),
-            Some(format!(
-                "Replace the unreadable {CONFIG_FILE_NAME} with a readable file, then rerun first-pr."
-            )),
-        )
-        .with_path(human_path(&config)),
+        Err(_) => unreadable_ripr_config(&config),
     }
+}
+
+fn unreadable_ripr_config(config: &Path) -> PreflightCheck {
+    PreflightCheck::needs_attention(
+        "ripr_config",
+        "RIPR config",
+        format!("{CONFIG_FILE_NAME} is present but unreadable."),
+        Some(format!(
+            "Replace the unreadable {CONFIG_FILE_NAME} with a readable file, then rerun first-pr."
+        )),
+    )
+    .with_path(human_path(config))
 }
 
 fn preflight_output_check(root: &Path, options: &FirstPrOptions) -> PreflightCheck {
@@ -707,7 +715,10 @@ mod tests {
             .map_err(|error| format!("chmod ripr.toml 000: {error}"))?;
         let load_error = match crate::config::load_for_root(&root) {
             Ok(_) => {
-                return Err("load_for_root must refuse a chmod-000 ripr.toml".to_string());
+                // A privileged process can still read mode 000. Skip rather
+                // than fail the production behavior that remains correct for
+                // unprivileged users.
+                return Ok(());
             }
             Err(error) => error,
         };
@@ -732,6 +743,59 @@ mod tests {
         if !check.message.contains("ripr.toml") || !check.message.contains("unreadable") {
             return Err(format!(
                 "preflight must name ripr.toml as present but unreadable: {}",
+                check.message
+            ));
+        }
+        Ok(())
+    }
+
+    /// A FIFO named `ripr.toml` is present but not a regular file. Preflight
+    /// must not open it: `bounded_input::read_to_string` waits for a writer.
+    #[cfg(unix)]
+    #[test]
+    fn fifo_ripr_toml_is_present_not_ok_and_does_not_block() -> Result<(), String> {
+        use std::os::unix::fs::FileTypeExt as _;
+
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|error| format!("clock: {error}"))?
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "ripr-first-pr-preflight-fifo-{}-{stamp}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&root).map_err(|error| error.to_string())?;
+        struct Cleanup(std::path::PathBuf);
+        impl Drop for Cleanup {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.0);
+            }
+        }
+        let _cleanup = Cleanup(root.clone());
+        let config = root.join("ripr.toml");
+        let status = std::process::Command::new("mkfifo")
+            .arg(&config)
+            .status()
+            .map_err(|error| format!("mkfifo: {error}"))?;
+        if !status.success() {
+            return Err(format!("mkfifo failed: {status}"));
+        }
+        let file_type = std::fs::symlink_metadata(&config)
+            .map_err(|error| format!("inspect FIFO fixture: {error}"))?
+            .file_type();
+        if !file_type.is_fifo() {
+            return Err("fixture must be a FIFO named ripr.toml".to_string());
+        }
+        let check = preflight_config_check(&root);
+        if check.status != "needs_attention" {
+            return Err(format!(
+                "a FIFO ripr.toml must need attention, not {}: {}",
+                check.status, check.message
+            ));
+        }
+        if check.message.contains("built-in advisory defaults") {
+            return Err(format!(
+                "a FIFO ripr.toml must not be described as built-in defaults: {}",
                 check.message
             ));
         }
