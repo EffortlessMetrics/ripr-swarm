@@ -265,6 +265,7 @@ the process can still write output:
 | Malformed artifact | Fail closed and name the artifact and parser error summary. |
 | Timeout | Emit advisory timeout packet with retry command and artifact paths. |
 | Missing git base | Explain the missing base and show the next safe command or config. |
+| Unreadable `ripr.toml` | Report the config as present but unreadable; do not say built-in defaults apply. |
 
 These states may appear in CI summaries and report packets. They must not be
 treated as waived, suppressed, improved, clean, or gate-passing states.
@@ -483,7 +484,10 @@ Follow-up implementation should add or update:
   no-action states;
 - a foreign-working-directory replay proving every generated artifact command
   reads and writes the selected root when pasted elsewhere (#3948, #4287):
-  `crates/ripr/tests/generated_review_workflow.rs::generated_first_pr_artifact_commands_run_from_a_foreign_working_directory`.
+  `crates/ripr/tests/generated_review_workflow.rs::generated_first_pr_artifact_commands_run_from_a_foreign_working_directory`;
+- a dangling `ripr.toml` symlink is present but unreadable in first-pr
+  preflight, not built-in defaults:
+  `crates/ripr/src/output/first_pr/preflight.rs::tests::dangling_ripr_toml_symlink_is_present_not_built_in_defaults`.
 
 This spec PR does not add production code or output fields.
 

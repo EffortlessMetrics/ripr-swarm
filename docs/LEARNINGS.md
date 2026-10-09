@@ -272,6 +272,15 @@ slash-split rewrite dropped Windows drive-relative and rooted identities.
 Paths remain the limitation-path rule: they are identities, not prose. Do not
 add a second filesystem authority in a renderer or `lsp/diagnostics.rs`.
 
+## 2026-10-09: first-pr preflight and agent receipts still treated a dangling `ripr.toml` as absent (#6690)
+
+#5455 routed workspace status and the two Python repair config-profile sites
+through `config_present_at_root`. First-pr preflight still used
+`Path::is_file()`, and agent-receipt fingerprinting mapped `ErrorKind::NotFound`
+to `Ok(None)`, so a dangling `ripr.toml` looked like built-in defaults. Call
+`config_present_at_root` before treating the file as missing. Keep a
+dangling-link control at each leftover site.
+
 ## 2026-10-04: `Path::is_file()` is not `ripr.toml` presence (#5404)
 
 `Path::is_file()` follows symlinks. After `load_for_root` started treating a

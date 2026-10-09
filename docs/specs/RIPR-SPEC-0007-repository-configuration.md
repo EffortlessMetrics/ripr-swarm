@@ -25,8 +25,9 @@ The configuration layer should:
 - use behavior-preserving defaults when the file is absent;
 - treat a present `ripr.toml` directory entry, including a dangling or
   self-referencing symlink, as present rather than as built-in defaults
-  (`load_for_root`, workspace-status presence, and Python repair
-  config-profile detection share that presence rule);
+  (`load_for_root`, workspace-status presence, Python repair
+  config-profile detection, first-pr preflight, and agent-receipt
+  config fingerprinting share that presence rule);
 - reject malformed config with actionable errors;
 - reject unknown keys so typos do not silently change policy;
 - keep explicit CLI options ahead of repository config;
@@ -179,6 +180,15 @@ command;
 and a workspace with no such language gets neither.
 ```
 
+### Present dangling config is not built-in defaults
+
+```text
+Given a workspace whose ripr.toml is a symlink to a missing file,
+when first-pr preflight or an agent-receipt config fingerprint runs,
+then the config is present but unreadable,
+and it is not described as using built-in defaults.
+```
+
 ### Doctor separates analysis readiness from source-build prerequisites
 
 ```text
@@ -210,6 +220,8 @@ Current tests:
 - `crates/ripr/src/workspace_status.rs::tests::dangling_ripr_toml_symlink_is_present_not_built_in_defaults`
 - `crates/ripr/src/app/python_repair_binding.rs::tests::dangling_ripr_toml_symlink_is_subject_config_not_defaults`
 - `crates/ripr/src/app/python_repair_verification.rs::python_repair_verification_semantics::dangling_ripr_toml_symlink_is_subject_config_not_defaults`
+- `crates/ripr/src/output/first_pr/preflight.rs::tests::dangling_ripr_toml_symlink_is_present_not_built_in_defaults`
+- `crates/ripr/src/cli/commands_agent_support.rs::tests::dangling_ripr_toml_symlink_is_present_not_built_in_defaults`
 - `crates/ripr/src/config.rs::tests::config_file_sets_core_operational_defaults`
 - `crates/ripr/src/config.rs::tests::explicit_cli_mode_wins_over_config_mode`
 - `crates/ripr/src/config.rs::tests::config_mode_applies_when_cli_mode_is_not_explicit`

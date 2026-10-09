@@ -160,9 +160,11 @@ fn validate_agent_receipt_artifact_path(
 
 fn agent_receipt_config_fingerprint(root: &Path) -> Result<Option<String>, String> {
     let path = root.join(CONFIG_FILE_NAME);
+    if !crate::config::config_present_at_root(root) {
+        return Ok(None);
+    }
     match crate::bounded_input::read_to_string(&path) {
         Ok(text) => Ok(Some(config_fingerprint(&text))),
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(None),
         Err(err) => Err(format!("read {} failed: {err}", path.display())),
     }
 }
@@ -689,5 +691,47 @@ mod tests {
             );
         }
         Ok(())
+    }
+
+    /// A dangling `ripr.toml` is present but unreadable: the receipt fingerprint
+    /// must fail closed rather than record the same `None` as a missing file.
+    #[cfg(unix)]
+    #[test]
+    fn dangling_ripr_toml_symlink_is_present_not_built_in_defaults() -> Result<(), String> {
+        let dir = ScratchDir::new("dangling-config");
+        match agent_receipt_config_fingerprint(&dir.path)? {
+            None => {}
+            Some(fingerprint) => {
+                return Err(format!(
+                    "an absent ripr.toml must record no fingerprint, not {fingerprint}"
+                ));
+            }
+        }
+
+        std::os::unix::fs::symlink("no-such-target.toml", dir.path.join("ripr.toml"))
+            .map_err(|error| error.to_string())?;
+        let load_error = match crate::config::load_for_root(&dir.path) {
+            Ok(_) => {
+                return Err("load_for_root must refuse a dangling ripr.toml".to_string());
+            }
+            Err(error) => error,
+        };
+        if !load_error.contains("ripr.toml") {
+            return Err(format!(
+                "load_for_root must name ripr.toml for a dangling link: {load_error}"
+            ));
+        }
+        match agent_receipt_config_fingerprint(&dir.path) {
+            Ok(None) => Err(
+                "a dangling ripr.toml must not fingerprint as absent built-in defaults".to_string(),
+            ),
+            Ok(Some(fingerprint)) => Err(format!(
+                "a dangling ripr.toml must not fingerprint as readable: {fingerprint}"
+            )),
+            Err(error) if error.contains("ripr.toml") => Ok(()),
+            Err(error) => Err(format!(
+                "a dangling ripr.toml must name ripr.toml when unread: {error}"
+            )),
+        }
     }
 }

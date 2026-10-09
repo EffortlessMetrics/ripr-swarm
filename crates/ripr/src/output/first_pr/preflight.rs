@@ -517,7 +517,14 @@ fn preflight_project_check(root: &Path) -> PreflightCheck {
 
 fn preflight_config_check(root: &Path) -> PreflightCheck {
     let config = root.join(CONFIG_FILE_NAME);
-    if config.is_file() {
+    if !crate::config::config_present_at_root(root) {
+        PreflightCheck::defaulted(
+            "ripr_config",
+            "RIPR config",
+            format!("No {CONFIG_FILE_NAME} was found; built-in advisory defaults apply."),
+        )
+        .with_path(human_path(&config))
+    } else if config.is_file() {
         PreflightCheck::ok(
             "ripr_config",
             "RIPR config",
@@ -525,10 +532,13 @@ fn preflight_config_check(root: &Path) -> PreflightCheck {
         )
         .with_path(human_path(&config))
     } else {
-        PreflightCheck::defaulted(
+        PreflightCheck::needs_attention(
             "ripr_config",
             "RIPR config",
-            format!("No {CONFIG_FILE_NAME} was found; built-in advisory defaults apply."),
+            format!("{CONFIG_FILE_NAME} is present but unreadable."),
+            Some(format!(
+                "Replace the unreadable {CONFIG_FILE_NAME} with a readable file, then rerun first-pr."
+            )),
         )
         .with_path(human_path(&config))
     }
@@ -569,5 +579,77 @@ fn preflight_output_check(root: &Path, options: &FirstPrOptions) -> PreflightChe
             recovery_commands: Vec::new(),
             recovery_guidance: None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A dangling `ripr.toml` is present but unreadable: first-pr preflight
+    /// must not claim built-in defaults, matching `load_for_root`.
+    #[cfg(unix)]
+    #[test]
+    fn dangling_ripr_toml_symlink_is_present_not_built_in_defaults() -> Result<(), String> {
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|error| format!("clock: {error}"))?
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "ripr-first-pr-preflight-dangling-{}-{stamp}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&root).map_err(|error| error.to_string())?;
+
+        let absent = preflight_config_check(&root);
+        if absent.status != "defaulted" || !absent.message.contains("built-in advisory defaults") {
+            let _ = std::fs::remove_dir_all(&root);
+            return Err(format!(
+                "an absent ripr.toml must stay defaulted built-in defaults: {} / {}",
+                absent.status, absent.message
+            ));
+        }
+
+        std::os::unix::fs::symlink("no-such-target.toml", root.join("ripr.toml"))
+            .map_err(|error| error.to_string())?;
+        let load_error = match crate::config::load_for_root(&root) {
+            Ok(_) => {
+                let _ = std::fs::remove_dir_all(&root);
+                return Err("load_for_root must refuse a dangling ripr.toml".to_string());
+            }
+            Err(error) => error,
+        };
+        let check = preflight_config_check(&root);
+        let _ = std::fs::remove_dir_all(&root);
+        if !load_error.contains("ripr.toml") {
+            return Err(format!(
+                "load_for_root must name ripr.toml for a dangling link: {load_error}"
+            ));
+        }
+        if check.status != "needs_attention" {
+            return Err(format!(
+                "a dangling ripr.toml must need attention, not {}: {}",
+                check.status, check.message
+            ));
+        }
+        if check.message.contains("built-in advisory defaults") {
+            return Err(format!(
+                "a dangling ripr.toml must not be described as built-in defaults: {}",
+                check.message
+            ));
+        }
+        if !check.message.contains("ripr.toml") || !check.message.contains("unreadable") {
+            return Err(format!(
+                "preflight must name ripr.toml as present but unreadable: {}",
+                check.message
+            ));
+        }
+        let path = check.path.as_deref().unwrap_or("");
+        if !path.contains("ripr.toml") {
+            return Err(format!(
+                "preflight must attach the ripr.toml path, not {path:?}"
+            ));
+        }
+        Ok(())
     }
 }
