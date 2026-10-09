@@ -21,13 +21,11 @@
 //! `static_unknown`), so no reverse lookup is offered and surfaces must not
 //! invent one.
 
-/// The canonical sentence consumer-facing surfaces quote when they describe
-/// the shared missing-discriminator *state*. `ripr check` renders it as the
-/// `WeaklyExposed` classification hint and `first_useful_action` quotes it in
-/// the repair-start rationale, so an agent matching on phrases sees one
-/// sentence, not a per-surface variant. Surfaces that name the specific
-/// missing value (for example the pilot `why` line) use
-/// [`MISSING_DISCRIMINATOR_LABEL`] instead; they do not rephrase the state.
+/// The canonical sentence for the shared missing-discriminator state.
+/// `ripr check` renders it as the `WeaklyExposed` classification hint.
+/// Surfaces that carry a specific missing value without reach evidence,
+/// such as the first-action repair start and pilot `why` line, use
+/// [`MISSING_DISCRIMINATOR_LABEL`] without inferring that a test reaches it.
 pub(crate) const MISSING_DISCRIMINATOR_SENTENCE: &str =
     "a related test reaches this change but does not observe the exact changed value";
 

@@ -917,6 +917,437 @@ fn kind_not_found_without_a_matching_family_suggests_no_other_seams() -> Result<
     scratch.cleanup()
 }
 
+// #7055 A1: this bridge consumes real review cards through first-action,
+// using this file's existing bounded process and exclusive scratch owners.
+fn repair_start_fixture(
+    fixture: &str,
+    test_file: &str,
+    old: &str,
+    new: &str,
+) -> Result<Scratch, String> {
+    let scratch = Scratch::new()?;
+    let root = &scratch.directory;
+    let source = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures")
+        .join(fixture)
+        .join("input");
+    std::fs::create_dir(root.join("tests")).map_err(|error| error.to_string())?;
+    for relative in ["Cargo.toml", "src/lib.rs", test_file] {
+        let mut text = std::fs::read_to_string(source.join(relative))
+            .map_err(|error| format!("read {fixture}/{relative}: {error}"))?;
+        if relative == "Cargo.toml" {
+            text.push_str("\n[workspace]\n");
+        }
+        std::fs::write(root.join(relative), text).map_err(|error| error.to_string())?;
+    }
+    let head =
+        std::fs::read_to_string(root.join("src/lib.rs")).map_err(|error| error.to_string())?;
+    assert_eq!(
+        head.matches(new).count(),
+        1,
+        "fixture change must be unique"
+    );
+    std::fs::write(root.join("src/lib.rs"), head.replace(new, old))
+        .map_err(|error| error.to_string())?;
+    git(root, root, &["init", "-q"])?;
+    git(root, root, &["add", "Cargo.toml", "src", "tests"])?;
+    git(root, root, &["commit", "-q", "-m", "base"])?;
+    std::fs::write(root.join("src/lib.rs"), head).map_err(|error| error.to_string())?;
+    git(root, root, &["add", "src/lib.rs"])?;
+    git(root, root, &["commit", "-q", "-m", "change"])?;
+    Ok(scratch)
+}
+
+fn repair_start_review(scratch: &Scratch) -> Result<serde_json::Value, String> {
+    let root = &scratch.directory;
+    let out = root.join("review.json");
+    let mut command = ripr_command();
+    isolate_from_outer_repo(&mut command)
+        .current_dir(root)
+        .env("RIPR_CACHE_DIR", root.join("fixture-cache"))
+        .args(["review-comments", "--root"])
+        .arg(root)
+        .args(["--base", "HEAD~1", "--head", "HEAD", "--out"])
+        .arg(&out);
+    let output = run_bounded(command, root, "review", Duration::from_mins(2))?;
+    assert!(
+        output.status.success(),
+        "review producer must complete: {}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    serde_json::from_slice(&read_bounded_stream(&out)?)
+        .map_err(|error| format!("parse real review cards: {error}"))
+}
+
+fn repair_start_action(
+    scratch: &Scratch,
+    guidance: &serde_json::Value,
+    label: &str,
+) -> Result<(serde_json::Value, String), String> {
+    let root = &scratch.directory;
+    let input = root.join("guidance.json");
+    let out = root.join("action.json");
+    let md = root.join("action.md");
+    // A successful no-op must not inherit an earlier report.
+    for path in [&out, &md] {
+        match std::fs::remove_file(path) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(format!("remove owned report {}: {error}", path.display())),
+        }
+    }
+    std::fs::write(
+        &input,
+        serde_json::to_vec(guidance).map_err(|error| error.to_string())?,
+    )
+    .map_err(|error| error.to_string())?;
+    let mut command = ripr_command();
+    isolate_from_outer_repo(&mut command)
+        .current_dir(root)
+        .env("RIPR_CACHE_DIR", root.join("fixture-cache"))
+        .args(["first-action", "--root"])
+        .arg(root)
+        .arg("--pr-guidance")
+        .arg(&input)
+        .arg("--out")
+        .arg(&out)
+        .arg("--out-md")
+        .arg(&md);
+    let output = run_bounded(command, root, label, Duration::from_mins(2))?;
+    assert!(
+        output.status.success(),
+        "first-action must render a decision: {}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report = serde_json::from_slice(&read_bounded_stream(&out)?)
+        .map_err(|error| format!("parse first-action decision: {error}"))?;
+    let markdown =
+        String::from_utf8(read_bounded_stream(&md)?).map_err(|error| error.to_string())?;
+    Ok((report, markdown))
+}
+
+/// Only the independently validated generation timestamp varies by call.
+fn repair_start_semantic_report(report: &serde_json::Value) -> Result<serde_json::Value, String> {
+    let generated = report["generated_at"]
+        .as_str()
+        .and_then(|value| value.strip_prefix("unix_ms:"))
+        .ok_or_else(|| format!("report needs its actual generation timestamp: {report}"))?;
+    let millis = generated
+        .parse::<u128>()
+        .map_err(|error| format!("invalid generation timestamp {generated}: {error}"))?;
+    assert!(
+        millis > 0,
+        "the report must carry an actual generation timestamp"
+    );
+    let mut semantic = report.clone();
+    semantic
+        .as_object_mut()
+        .ok_or("report must be an object")?
+        .remove("generated_at")
+        .ok_or("report must carry generated_at")?;
+    Ok(semantic)
+}
+
+#[test]
+fn first_action_real_repair_card_uses_neutral_rationale_and_recovers() -> Result<(), String> {
+    let scratch = repair_start_fixture(
+        "boundary_gap",
+        "tests/pricing.rs",
+        "amount > discount_threshold",
+        "amount >= discount_threshold",
+    )?;
+    let root = &scratch.directory;
+    let original = std::fs::read(root.join("src/lib.rs")).map_err(|error| error.to_string())?;
+    let guidance = repair_start_review(&scratch)?;
+    let cards = guidance["comments"]
+        .as_array()
+        .ok_or("producer has no comments array")?;
+    let card = cards
+        .iter()
+        .find(|card| {
+            card["owner"] == "src/lib.rs::discounted_total"
+                && card["kind"] == "predicate_boundary"
+                && card["seam"]["line"] == 2
+        })
+        .ok_or_else(|| format!("producer must emit the changed predicate card: {guidance}"))?;
+    assert_eq!(card["grip_class"], "weakly_gripped");
+    assert_eq!(card["gap_state"], "actionable");
+    assert_eq!(card["seam"]["expression"], "amount >= discount_threshold");
+    assert_eq!(
+        card["missing_discriminator"],
+        "discount_threshold (equality boundary)"
+    );
+    let repair = card["llm_guidance"]["repair_command"]
+        .as_str()
+        .filter(|command| !command.is_empty())
+        .ok_or_else(|| format!("real card must carry an admitted repair start: {card}"))?;
+
+    let (action, markdown) = repair_start_action(&scratch, &guidance, "action-first")?;
+    assert_eq!(action["status"], "actionable");
+    assert_eq!(action["action_kind"], "write_focused_test");
+    assert_eq!(action["selected"]["source"], "pr_guidance");
+    assert_eq!(action["selected"]["seam_id"], card["seam_id"]);
+    assert_eq!(action["selected"]["path"], "src/lib.rs");
+    assert_eq!(action["selected"]["line"], 2);
+    assert_eq!(action["selected"]["classification"], "weakly_exposed");
+    assert_eq!(
+        action["selected"]["changed_behavior"],
+        "amount >= discount_threshold"
+    );
+    assert_eq!(
+        action["selected"]["missing_discriminator"],
+        "discount_threshold (equality boundary)"
+    );
+    assert_eq!(action["commands"]["repair"], repair);
+    for field in ["analysis_outcome", "verify"] {
+        assert_eq!(
+            action["commands"][field],
+            card["llm_guidance"][format!("{field}_command")],
+            "carried {field} command"
+        );
+    }
+    assert_eq!(action["commands"]["receipt"], card["receipt_command"]);
+    // Independently authored literal; no production vocabulary/helper oracle.
+    assert_eq!(
+        action["why"],
+        "The review card identifies missing discriminator `discount_threshold (equality boundary)` and names its repair start."
+    );
+    assert_eq!(
+        markdown.lines().find(|line| line.starts_with("- Why: ")),
+        Some(
+            "- Why: The review card identifies missing discriminator `discount_threshold (equality boundary)` and names its repair start.",
+        )
+    );
+    assert!(
+        !markdown.contains("a related test reaches this change"),
+        "{markdown}"
+    );
+    let (repeated, repeated_md) = repair_start_action(&scratch, &guidance, "action-repeat")?;
+    assert_eq!(
+        repair_start_semantic_report(&repeated)?,
+        repair_start_semantic_report(&action)?,
+        "all fields except the validated timestamp must be deterministic"
+    );
+    assert_eq!(repeated_md, markdown);
+
+    // Consumer-input recovery controls, preserving the real card's identity.
+    for (blank, label) in [(false, "action-missing"), (true, "action-blank")] {
+        let mut missing = guidance.clone();
+        for bucket in ["comments", "summary_only"] {
+            if let Some(cards) = missing
+                .get_mut(bucket)
+                .and_then(serde_json::Value::as_array_mut)
+            {
+                for card in cards {
+                    if let Some(fields) = card["llm_guidance"].as_object_mut() {
+                        fields.remove("repair_command");
+                        if blank {
+                            fields.insert("repair_command".to_string(), serde_json::json!("  "));
+                        }
+                    }
+                }
+            }
+        }
+        let (refused, refused_md) = repair_start_action(&scratch, &missing, label)?;
+        assert_eq!(refused["status"], "missing_required_artifact");
+        assert_eq!(refused["action_kind"], "generate_missing_artifact");
+        assert!(refused["commands"].get("repair").is_none());
+        assert!(!refused_md.contains("## Start Repair"));
+    }
+    let (recovered, recovered_md) = repair_start_action(&scratch, &guidance, "action-recovery")?;
+    assert_eq!(
+        repair_start_semantic_report(&recovered)?,
+        repair_start_semantic_report(&action)?,
+        "restored evidence recovers every field except the validated timestamp"
+    );
+    assert_eq!(recovered_md, markdown);
+    assert_eq!(
+        std::fs::read(root.join("src/lib.rs")).map_err(|error| error.to_string())?,
+        original
+    );
+    scratch.cleanup()
+}
+
+#[test]
+fn first_action_real_callee_only_wrapper_keeps_its_refusal() -> Result<(), String> {
+    let scratch = repair_start_fixture(
+        "wrapper_seam_callee_call_attribution",
+        "tests/attribution.rs",
+        "try_parse_summary(raw).map_err(Into::into)",
+        "try_parse_summary(raw).map_err(|error| error.to_string().into())",
+    )?;
+    let root = &scratch.directory;
+    let mut check = ripr_command();
+    isolate_from_outer_repo(&mut check)
+        .current_dir(root)
+        .env("RIPR_CACHE_DIR", root.join("fixture-cache"))
+        .args(["check", "--root"])
+        .arg(root)
+        .args(["--base", "HEAD~1", "--mode", "draft", "--json"]);
+    let output = run_bounded(check, root, "callee-check", Duration::from_mins(2))?;
+    assert!(
+        output.status.success(),
+        "actual callee-only analysis must complete: {}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let document: serde_json::Value = serde_json::from_slice(&output.stdout)
+        .map_err(|error| format!("parse callee-only analysis: {error}"))?;
+    let findings = document["findings"]
+        .as_array()
+        .ok_or("check has no findings array")?;
+    let subjects: Vec<_> = findings
+        .iter()
+        .filter(|finding| {
+            finding["probe"]["line"] == 14
+                && finding["probe"]["expression"]
+                    == "try_parse_summary(raw).map_err(|error| error.to_string().into())"
+        })
+        .collect();
+    assert_eq!(subjects.len(), 2, "genuine wrapper subjects: {document}");
+    assert!(
+        subjects
+            .iter()
+            .any(|f| f["probe"]["family"] == "error_path")
+    );
+    assert!(
+        subjects
+            .iter()
+            .any(|f| f["probe"]["family"] == "return_value")
+    );
+    for finding in subjects {
+        assert_eq!(finding["classification"], "weakly_exposed");
+        assert_eq!(finding["ripr"]["reach"]["state"], "weak");
+        assert_eq!(
+            finding["static_limit_kind"],
+            "wrapper_error_binding_unresolved"
+        );
+        assert_eq!(finding["missing_discriminators"], serde_json::json!([]));
+        let related = finding["related_tests"]
+            .as_array()
+            .ok_or("subject has no related tests")?;
+        // The return-value probe emits one record per assertion. The
+        // before-shadow test has two; that test-level association does
+        // not prove its later shadowed assertion invokes the owner.
+        let mut expected = vec![
+            (
+                "calls_callee_before_shadow_binding",
+                "tests/attribution.rs",
+                13,
+                "assert_eq!(parsed.map(|n| n), Ok(3));",
+            ),
+            (
+                "observes_callee_outcome",
+                "tests/attribution.rs",
+                4,
+                "assert_eq!(parsed.map(|n| n), Ok(3));",
+            ),
+        ];
+        match finding["probe"]["family"].as_str() {
+            Some("error_path") => {}
+            Some("return_value") => expected.push((
+                "calls_callee_before_shadow_binding",
+                "tests/attribution.rs",
+                13,
+                "assert_eq!(ignored, Ok(5));",
+            )),
+            other => return Err(format!("unexpected wrapper family: {other:?}")),
+        }
+        let mut actual = related
+            .iter()
+            .map(|test| {
+                Ok::<_, String>((
+                    test["name"].as_str().ok_or("related test has no name")?,
+                    test["file"].as_str().ok_or("related test has no file")?,
+                    test["line"].as_u64().ok_or("related test has no line")?,
+                    test["oracle"]
+                        .as_str()
+                        .ok_or("related test has no oracle")?,
+                ))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        actual.sort_unstable();
+        expected.sort_unstable();
+        assert_eq!(
+            actual, expected,
+            "every genuine callee assertion record must match: {finding}"
+        );
+        for test in related {
+            assert_eq!(test["relation_reason"], "seam_callee_call");
+            assert_eq!(test["relation_confidence"], "medium");
+        }
+    }
+
+    let guidance = repair_start_review(&scratch)?;
+    // A genuine check Finding is not a RepoSeam card. Keep only actual
+    // wrapper cards in this consumer control; no card is invented if the
+    // producer refuses to render one.
+    let mut wrapper_guidance = guidance.clone();
+    for bucket in ["comments", "summary_only"] {
+        let cards = wrapper_guidance[bucket]
+            .as_array_mut()
+            .ok_or_else(|| format!("producer has no {bucket} array"))?;
+        cards.retain(|card| card["owner"] == "src/lib.rs::parse_summary");
+        for card in cards {
+            assert!(
+                card["llm_guidance"]["repair_command"]
+                    .as_str()
+                    .is_none_or(|command| command.trim().is_empty()),
+                "the currently limited wrapper must not carry a repair start: {card}"
+            );
+        }
+    }
+    let wrapper_card = wrapper_guidance["comments"]
+        .as_array()
+        .and_then(|cards| cards.first())
+        .or_else(|| {
+            wrapper_guidance["summary_only"]
+                .as_array()
+                .and_then(|cards| cards.first())
+        })
+        .ok_or("producer must retain its genuine non-actionable wrapper card")?;
+    assert_eq!(wrapper_card["owner"], "src/lib.rs::parse_summary");
+    assert_eq!(wrapper_card["kind"], "return_value");
+    assert_eq!(wrapper_card["grip_class"], "ungripped");
+    assert_eq!(wrapper_card["seam"]["line"], 14);
+    assert_eq!(
+        wrapper_card["seam"]["expression"],
+        "try_parse_summary(raw).map_err(|error| error.to_string().into())"
+    );
+    let seam_id = wrapper_card["seam_id"]
+        .as_str()
+        .filter(|id| !id.is_empty())
+        .ok_or("the genuine wrapper card must carry its identity")?;
+    // Preserve the producer's global suppression evidence; this does
+    // not attribute a per-card suppression cause.
+    let (action, markdown) = repair_start_action(&scratch, &wrapper_guidance, "callee-action")?;
+    assert_eq!(action["schema_version"], "0.1");
+    assert_eq!(action["kind"], "first_useful_action");
+    assert!(action["commands"].get("repair").is_none(), "{action}");
+    assert_eq!(action["status"], "suppressed", "{action}");
+    assert_eq!(action["action_kind"], "no_action");
+    assert_eq!(action["fallback"]["kind"], "suppressed");
+    assert_eq!(action["why"], "The seam is suppressed or configured off.");
+    assert_eq!(action["selected"]["source"], "pr_guidance");
+    assert_eq!(action["selected"]["seam_id"], seam_id);
+    assert_eq!(action["selected"]["path"], "src/lib.rs");
+    assert_eq!(action["selected"]["line"], 14);
+    assert_eq!(action["selected"]["seam_kind"], "return_value");
+    assert_eq!(action["selected"]["classification"], "no_static_path");
+    assert_eq!(
+        action["selected"]["changed_behavior"],
+        "try_parse_summary(raw).map_err(|error| error.to_string().into())"
+    );
+    assert_eq!(
+        markdown.lines().find(|line| line.starts_with("- Why: ")),
+        Some("- Why: The seam is suppressed or configured off.")
+    );
+    assert!(!markdown.contains("## Start Repair"));
+    scratch.cleanup()
+}
+
 /// Clears inherited repository selectors so a hook or wrapper that exports
 /// them cannot redirect the fixture into the outer repository.
 fn isolate_from_outer_repo(command: &mut Command) -> &mut Command {
