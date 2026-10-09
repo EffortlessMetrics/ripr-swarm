@@ -549,6 +549,125 @@ fn validator_rejects_a_retained_file_whose_digest_moved() -> Result<(), String> 
     Ok(())
 }
 
+fn subject_by_id<'a>(raw: &'a mut Value, id: &str) -> Result<&'a mut Value, String> {
+    raw["subjects"]
+        .as_array_mut()
+        .and_then(|subjects| {
+            subjects
+                .iter_mut()
+                .find(|subject| subject["subject_id"] == json!(id))
+        })
+        .ok_or_else(|| format!("corpus has no subject `{id}`"))
+}
+
+#[test]
+fn validator_rejects_a_tampered_retained_lockfile() -> Result<(), String> {
+    let violations = tampered(|raw| {
+        if let Ok(subject) = subject_by_id(raw, "authored-spec-confirm")
+            && let Some(files) = subject["retained_files"].as_array_mut()
+            && let Some(lock) = files.iter_mut().find(|file| file["path"] == "Cargo.lock")
+        {
+            lock["sha256"] = json!("0".repeat(64));
+        }
+    })?;
+    assert!(
+        violations.iter().any(|v| {
+            v.contains("authored-spec-confirm")
+                && v.contains("Cargo.lock")
+                && v.contains("does not match its pinned sha256")
+        }),
+        "{violations:#?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn validator_requires_a_lockfile_on_authored_registry_subjects() -> Result<(), String> {
+    let violations = tampered(|raw| {
+        if let Ok(subject) = subject_by_id(raw, "authored-spec-confirm")
+            && let Some(files) = subject["retained_files"].as_array_mut()
+        {
+            files.retain(|file| file["path"] != "Cargo.lock");
+        }
+    })?;
+    assert!(
+        violations.iter().any(|v| {
+            v.contains("authored-spec-confirm")
+                && v.contains("pins a registry crate")
+                && v.contains("Cargo.lock")
+        }),
+        "{violations:#?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn manifest_pins_registry_crate_reads_version_pins_not_path_deps() {
+    assert_eq!(
+        manifest_pins_registry_crate(
+            "[package]\nname = \"confirm\"\n\n[dependencies]\nlog = \"=0.4.34\"\n"
+        ),
+        Ok(true)
+    );
+    assert_eq!(
+        manifest_pins_registry_crate(
+            "[dev-dependencies]\nassert_cmd = \"=2.2.2\"\nlibtest-mimic = \"=0.8.2\"\n"
+        ),
+        Ok(true)
+    );
+    assert_eq!(
+        manifest_pins_registry_crate("[dependencies]\nlog = { version = \"=0.4.34\" }\n"),
+        Ok(true)
+    );
+    assert_eq!(
+        manifest_pins_registry_crate("[target.'cfg(unix)'.dependencies]\nlibc = \"0.2\"\n"),
+        Ok(true)
+    );
+    assert_eq!(
+        manifest_pins_registry_crate("[dependencies]\npricing = { path = \"../pricing\" }\n"),
+        Ok(false)
+    );
+    assert_eq!(
+        manifest_pins_registry_crate("[package]\nname = \"authored-pricing\"\n\n[dependencies]\n"),
+        Ok(false)
+    );
+}
+
+#[test]
+fn manifest_pins_registry_crate_ignores_dotted_features_and_multiline_path_tables() {
+    assert_eq!(
+        manifest_pins_registry_crate("[dependencies.pricing]\nfeatures = [\"std\"]\n"),
+        Ok(false)
+    );
+    assert_eq!(
+        manifest_pins_registry_crate("[dependencies]\npricing = {\n  path = \"../pricing\"\n}\n"),
+        Ok(false)
+    );
+    assert_eq!(
+        manifest_pins_registry_crate(
+            "[dependencies]\nfoo = { git = \"https://example.com/foo.git\" }\n"
+        ),
+        Ok(false)
+    );
+    assert_eq!(
+        manifest_pins_registry_crate("[dependencies]\nfoo = { workspace = true }\n"),
+        Ok(false)
+    );
+    assert_eq!(
+        manifest_pins_registry_crate("[dependencies]\nfoo = { version = { workspace = true } }\n"),
+        Ok(false)
+    );
+}
+
+#[test]
+fn manifest_pins_registry_crate_fails_closed_on_invalid_toml() {
+    let result = manifest_pins_registry_crate("[dependencies\nlog = \"1\"\n");
+    assert!(
+        matches!(&result, Err(err) if err.contains("not valid TOML")),
+        "unclosed table must not look like a non-pin: {result:?}"
+    );
+}
+
 #[test]
 fn validator_rejects_a_case_that_borrows_another_cases_diff() -> Result<(), String> {
     let violations = tampered(|raw| {

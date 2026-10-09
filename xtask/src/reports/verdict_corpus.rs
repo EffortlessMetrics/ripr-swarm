@@ -1513,7 +1513,95 @@ fn subject_violations(subject: &Subject, dir: &Path) -> Vec<String> {
         }
         Err(err) => violations.push(err),
     }
+    if subject.origin == SubjectOrigin::Authored {
+        let mut pins_registry = false;
+        for file in &subject.retained_files {
+            if Path::new(&file.path)
+                .file_name()
+                .is_none_or(|name| name != "Cargo.toml")
+            {
+                continue;
+            }
+            let Ok(text) = read(&root.join(stored_path(&file.path))) else {
+                continue;
+            };
+            match manifest_pins_registry_crate(&text) {
+                Ok(pin) => pins_registry |= pin,
+                Err(err) => {
+                    violations.push(format!("authored subject `{id}` Cargo.toml is {err}"));
+                }
+            }
+        }
+        if pins_registry
+            && !subject
+                .retained_files
+                .iter()
+                .any(|file| file.path == "Cargo.lock")
+        {
+            violations.push(format!(
+                "authored subject `{id}` pins a registry crate but retains no Cargo.lock; list the lockfile so relabel can replay with --locked"
+            ));
+        }
+    }
     violations
+}
+
+/// True when a manifest pins a crates.io crate by version. Path, git, and
+/// workspace-inherited deps do not float on the host registry, so they do
+/// not need a retained lockfile. Parse errors are returned instead of
+/// treated as "no pin"; a line scan would miss or over-credit TOML.
+pub(crate) fn manifest_pins_registry_crate(text: &str) -> Result<bool, String> {
+    let value: toml::Value =
+        toml::from_str(text).map_err(|err| format!("not valid TOML: {err}"))?;
+    let Some(root) = value.as_table() else {
+        return Err("root is not a table".to_string());
+    };
+    Ok(table_pins_registry(root))
+}
+
+fn table_pins_registry(table: &toml::Table) -> bool {
+    const DEP_KEYS: [&str; 3] = ["dependencies", "dev-dependencies", "build-dependencies"];
+    for key in DEP_KEYS {
+        if let Some(deps) = table.get(key).and_then(toml::Value::as_table)
+            && deps.values().any(dep_is_registry_pin)
+        {
+            return true;
+        }
+    }
+    if let Some(targets) = table.get("target").and_then(toml::Value::as_table) {
+        for spec in targets.values() {
+            if let Some(cfg) = spec.as_table()
+                && table_pins_registry(cfg)
+            {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+fn dep_is_registry_pin(value: &toml::Value) -> bool {
+    match value {
+        toml::Value::String(_) => true,
+        toml::Value::Table(dep) => registry_version_pin(dep),
+        _ => false,
+    }
+}
+
+fn registry_version_pin(dep: &toml::Table) -> bool {
+    if dep.contains_key("path") || dep.contains_key("git") {
+        return false;
+    }
+    if dep.get("workspace").and_then(toml::Value::as_bool) == Some(true) {
+        return false;
+    }
+    match dep.get("version") {
+        Some(toml::Value::String(_)) => true,
+        Some(toml::Value::Table(version)) => {
+            version.get("workspace").and_then(toml::Value::as_bool) != Some(true)
+        }
+        _ => false,
+    }
 }
 
 /// Retained Rust sources are stored as `<name>.rs.txt` so the vendored

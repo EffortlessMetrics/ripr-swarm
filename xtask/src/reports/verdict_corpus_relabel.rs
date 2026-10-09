@@ -12,6 +12,9 @@
 //! are excerpts, so they replay only from a full checkout at the pinned commit
 //! passed with `--checkouts`; this command never clones or fetches, and runs
 //! cargo offline, so fetch a checkout's dependencies (`cargo fetch`) first.
+//! Authored subjects that pin a registry crate retain a hash-checked
+//! `Cargo.lock`; relabel copies it and passes `--locked` so a drifted graph
+//! fails instead of floating on the host.
 //! It does not sandbox the subject's own build scripts or tests.
 
 use super::verdict_corpus::{
@@ -177,6 +180,26 @@ pub(crate) fn test_command_args(command: &str) -> Result<Vec<String>, String> {
         ));
     }
     Ok(rest)
+}
+
+/// Insert `--locked` after `test` when the rebuilt tree has a `Cargo.lock`.
+/// A drifted dependency graph then fails instead of resolving from the host.
+/// Subjects without a lockfile are unchanged: `--locked` would refuse them.
+pub(crate) fn locked_test_args(tree: &Path, command: &[String]) -> Vec<String> {
+    let mut args = command.to_vec();
+    if !tree.join("Cargo.lock").is_file() {
+        return args;
+    }
+    if args
+        .iter()
+        .take_while(|word| word.as_str() != "--")
+        .any(|word| word == "--locked")
+    {
+        return args;
+    }
+    let insert_at = usize::from(args.first().map(String::as_str) == Some("test"));
+    args.insert(insert_at, "--locked".to_string());
+    args
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -492,6 +515,7 @@ impl Runner<'_> {
         let target = std::path::absolute(&target)
             .map_err(|err| format!("resolve {}: {err}", normalize_path(&target)))?;
         let target = target.to_string_lossy().into_owned();
+        let command = locked_test_args(tree, command);
         let envs = [
             ("CARGO_TARGET_DIR", target.as_str()),
             ("CARGO_TERM_COLOR", "never"),
@@ -525,7 +549,7 @@ impl Runner<'_> {
         for _ in 0..self.args.repeat {
             let output = capture_output_measured(
                 "cargo",
-                command,
+                &command,
                 Some(tree),
                 &envs,
                 self.args.timeout,
