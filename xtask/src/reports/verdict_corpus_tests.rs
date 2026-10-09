@@ -1669,6 +1669,22 @@ fn split_refuses_symlinks_below_the_corpus_directory() -> Result<(), String> {
             .ok_or_else(|| format!("split followed a symlinked {name}"))?;
         assert!(err.contains("is a symlink"), "{err}");
     }
+    // A dangling record-level link fails `exists`, so only the write-time
+    // refusal stops split from creating the file the link names outside
+    // the corpus (#6686 review).
+    let dir = crate::tests::temp_dir("verdict-split-symlink-record");
+    crate::tests::write(&dir.join("corpus.json"), &format!("{legacy:#}"));
+    let case_id = legacy["cases"][0]["case_id"]
+        .as_str()
+        .ok_or("the legacy corpus has a first case id")?
+        .to_string();
+    let record = dir.join("cases").join(format!("{case_id}.json"));
+    std::os::unix::fs::symlink(elsewhere.join(format!("{case_id}.json")), &record)
+        .map_err(|err| format!("symlink failed: {err}"))?;
+    let err = split(&dir)
+        .err()
+        .ok_or("split wrote through a dangling record symlink")?;
+    assert!(err.contains("is a symlink"), "{err}");
     Ok(())
 }
 
@@ -1928,15 +1944,23 @@ fn validate_spellings_parse_language_without_out_or_cases() -> Result<(), String
 }
 
 #[test]
-fn declared_validation_skips_coverage_without_a_ledger() -> Result<(), String> {
-    // The declared funnel is the single coverage-mode decision: the
-    // ledgerless copy validates structurally with no coverage attached.
+fn declared_validation_keeps_the_rust_ledger_mandatory_and_discloses_only_non_rust()
+-> Result<(), String> {
+    // The declared funnel is the single coverage-mode decision: a non-Rust
+    // language validates structurally with no coverage attached, while the
+    // Rust corpus keeps its spec-example ledger mandatory (#6686 review) —
+    // deleting that ledger fails instead of dropping the coverage floor.
     // (The gated half needs the repo-relative specs tree, so the `validate`
     // and `check-all` CLI runs prove it, not a unit test.)
-    let dir = crate::tests::temp_dir("verdict-declared-none");
-    crate::tests::copy_dir_recursive(&repo_corpus_dir(), &dir)?;
-    fs::remove_file(dir.join(coverage::LEDGER_FILE)).map_err(|err| err.to_string())?;
-    let (corpus, coverage) = validated_corpus_declared(&dir)?;
+    let rust = crate::tests::temp_dir("verdict-declared-rust-ledger");
+    crate::tests::copy_dir_recursive(&repo_corpus_dir(), &rust)?;
+    fs::remove_file(rust.join(coverage::LEDGER_FILE)).map_err(|err| err.to_string())?;
+    let err = validated_corpus_declared(&rust)
+        .err()
+        .ok_or("a Rust corpus without its spec-example ledger validated")?;
+    assert!(err.contains(coverage::LEDGER_FILE), "{err}");
+
+    let (corpus, coverage) = validated_corpus_declared(&typescript_corpus_dir())?;
     assert!(coverage.is_none());
     assert!(!corpus.cases.is_empty());
     Ok(())

@@ -1240,6 +1240,16 @@ fn split(dir: &Path) -> Result<(), String> {
             }
             return Ok(());
         }
+        // A dangling record symlink fails `exists` above, so this write is
+        // the first thing that would follow the link and create the file it
+        // names, possibly outside the corpus (#6686 review). Refuse it like
+        // the directory-level links `reject_nested_symlinks` refuses.
+        if fs::symlink_metadata(&target).is_ok_and(|meta| meta.is_symlink()) {
+            return Err(format!(
+                "verdict-corpus split: {} is a symlink; refusing to write through it",
+                normalize_path(&target)
+            ));
+        }
         fs::write(&target, text)
             .map_err(|err| format!("write {}: {err}", normalize_path(&target)))?;
         written += 1;
@@ -2304,9 +2314,13 @@ fn corpus_coverage_mode(dir: &Path) -> CorpusCoverage {
 /// Validate one corpus honoring its coverage declaration: a ledgered corpus
 /// gates coverage, a ledgerless one validates structurally with disclosure.
 /// Every subcommand funnels through here so `--language` behaves the same
-/// for `validate`, `report`, `check` and `bless`.
+/// for `validate`, `report`, `check` and `bless`. The Rust corpus is the
+/// exception: its spec-example ledger is mandatory (#6686 review), so a
+/// deleted or renamed ledger fails instead of silently dropping the
+/// coverage floor. Ledgerless operation is reserved for the non-Rust
+/// corpora that have not opted in yet.
 fn validated_corpus_declared(dir: &Path) -> Result<(Corpus, Option<SpecExampleCoverage>), String> {
-    if corpus_coverage_mode(dir) == CorpusCoverage::Gated {
+    if is_rust_corpus(dir) || corpus_coverage_mode(dir) == CorpusCoverage::Gated {
         return validated_corpus(dir).map(|(corpus, coverage)| (corpus, Some(coverage)));
     }
     println!(
@@ -2864,7 +2878,10 @@ pub(crate) fn verdict_corpus(args: &[String]) -> Result<(), String> {
     let sub = sub.as_str();
     let dir_buf = match &language {
         Some(language) => language_corpus_dir(language)?,
-        None => PathBuf::from(CORPUS_DIR),
+        // The default corpus resolves through the same checks as a named
+        // one, so a symlinked rust-verdict-corpus is refused here too
+        // (#6686 review), not only an explicitly named corpus.
+        None => language_corpus_dir("rust")?,
     };
     let dir = dir_buf.as_path();
     let expected_dir = dir.join("expected");

@@ -848,13 +848,13 @@
       "runner_dependent": false,
       "samples": [
         {
-          "detail": "fixtures/typescript-verdict-corpus/expected/report.json false_actionable_rate: 27/62",
+          "detail": "fixtures/typescript-verdict-corpus false_actionable_rate: 27/62",
           "repo": null,
           "status": "below_target",
           "value": 0.4355
         }
       ],
-      "source": "file:fixtures/typescript-verdict-corpus/expected/report.json#false_actionable_rate",
+      "source": "verdict-corpus:fixtures/typescript-verdict-corpus#false_actionable_rate",
       "status": "below_target",
       "target": 0.05,
       "title": "Authored TypeScript edits the project's tests fully catch that ripr still flags as a gap",
@@ -874,13 +874,13 @@
       "runner_dependent": false,
       "samples": [
         {
-          "detail": "fixtures/typescript-verdict-corpus/expected/report.json false_exposed_rate: 9/39",
+          "detail": "fixtures/typescript-verdict-corpus false_exposed_rate: 9/39",
           "repo": null,
           "status": "below_target",
           "value": 0.2308
         }
       ],
-      "source": "file:fixtures/typescript-verdict-corpus/expected/report.json#false_exposed_rate",
+      "source": "verdict-corpus:fixtures/typescript-verdict-corpus#false_exposed_rate",
       "status": "below_target",
       "target": 0.0,
       "title": "Authored TypeScript edits the project's tests miss that ripr credits as caught",
@@ -900,13 +900,13 @@
       "runner_dependent": false,
       "samples": [
         {
-          "detail": "fixtures/typescript-verdict-corpus/expected/report.json false_silent_rate: 0/39",
+          "detail": "fixtures/typescript-verdict-corpus false_silent_rate: 0/39",
           "repo": null,
           "status": "meets_target",
           "value": 0.0
         }
       ],
-      "source": "file:fixtures/typescript-verdict-corpus/expected/report.json#false_silent_rate",
+      "source": "verdict-corpus:fixtures/typescript-verdict-corpus#false_silent_rate",
       "status": "meets_target",
       "target": 0.0,
       "title": "Authored TypeScript edits the project's tests miss that ripr reports as fine",
