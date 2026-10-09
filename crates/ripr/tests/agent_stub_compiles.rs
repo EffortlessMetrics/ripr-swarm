@@ -661,6 +661,262 @@ fn bare_at_stubs_only_a_reported_gap() -> Result<(), String> {
     scratch.cleanup()
 }
 
+/// #6689 items 1–2: refusal hints keep the requested family and never route
+/// the caller to a nearer seam of another family.
+const KIND_REFUSAL_SOURCE: &str = "pub fn plain(n: u8) -> u8 {\n    if n > 3 { n } else { 0 }\n}\n\npub fn fallible(input: &str) -> Result<u8, E> {\n    if input.is_empty() {\n        return Err(E::Bad);\n    }\n    Ok(1)\n}\n\n#[derive(Debug, PartialEq)]\npub enum E { Bad }\n";
+
+const KIND_NEAREST_SOURCE: &str = "pub fn plain(a: u8, b: u8, c: u8, d: u8, e: u8, f: u8) -> u8 {\n    if a > 1 && b > 2 && c > 3 && d > 4 && e > 5 && f > 6 { a } else { b }\n}\n\npub fn fallible(input: &str) -> Result<u8, E> {\n    if input.is_empty() {\n        return Err(E::Bad);\n    }\n    Ok(1)\n}\n\n#[derive(Debug, PartialEq)]\npub enum E { Bad }\n";
+
+fn kind_refusal_crate(source: &str) -> Result<Scratch, String> {
+    let scratch = Scratch::new()?;
+    std::fs::write(
+        scratch.directory.join("Cargo.toml"),
+        "[package]\nname = \"stub_kind_refusal\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )
+    .map_err(|error| error.to_string())?;
+    std::fs::write(scratch.directory.join("src/lib.rs"), source)
+        .map_err(|error| error.to_string())?;
+    Ok(scratch)
+}
+
+fn kind_refusal_command(root: &Path, at: &str, kind: Option<&str>) -> Command {
+    let mut stub = ripr_command();
+    stub.args(["agent", "stub", "--root"])
+        .arg(root)
+        .args(["--at", at, "--json"]);
+    if let Some(kind) = kind {
+        stub.args(["--kind", kind]);
+    }
+    stub
+}
+
+#[test]
+fn kind_not_found_refusal_preserves_the_requested_probe_family() -> Result<(), String> {
+    let scratch = kind_refusal_crate(KIND_REFUSAL_SOURCE)?;
+    let root = &scratch.directory;
+    assert_eq!(
+        KIND_REFUSAL_SOURCE.lines().nth(1),
+        Some("    if n > 3 { n } else { 0 }")
+    );
+    let predicate = run_bounded(
+        kind_refusal_command(root, "src/lib.rs:2", Some("predicate")),
+        root,
+        "predicate-control",
+        Duration::from_mins(2),
+    )?;
+    assert!(
+        predicate.status.success(),
+        "the wrong-family subject must be stubbable: {}{}",
+        String::from_utf8_lossy(&predicate.stdout),
+        String::from_utf8_lossy(&predicate.stderr)
+    );
+    let document: serde_json::Value =
+        serde_json::from_slice(&predicate.stdout).map_err(|error| error.to_string())?;
+    assert_eq!(document["state"], "ready");
+    assert_eq!(document["owner"], "src/lib.rs::plain");
+    assert_eq!(document["test_name"], "plain_boundary_discriminator");
+    assert_eq!(document["written"], false);
+
+    let refused = run_bounded(
+        kind_refusal_command(root, "src/lib.rs:2", Some("error_path")),
+        root,
+        "family-refusal",
+        Duration::from_mins(2),
+    )?;
+    assert_eq!(refused.status.code(), Some(3));
+    assert!(
+        refused.stdout.is_empty(),
+        "a not-found decision has no JSON"
+    );
+    let stderr = String::from_utf8_lossy(&refused.stderr);
+    assert!(
+        stderr.starts_with(
+            "ripr: agent stub: no error_path seam ripr can stub is in the function at src/lib.rs:2; nearest: ",
+        ),
+        "the refusal must echo the requested probe family: {stderr}"
+    );
+    assert!(
+        !stderr.contains("no error_variant "),
+        "the internal seam kind is not the requested family: {stderr}"
+    );
+    scratch.cleanup()
+}
+
+#[test]
+fn kind_nearest_hint_filters_before_the_cap_and_recovers_the_error_stub() -> Result<(), String> {
+    let scratch = kind_refusal_crate(KIND_NEAREST_SOURCE)?;
+    let root = &scratch.directory;
+    assert_eq!(
+        KIND_NEAREST_SOURCE.lines().nth(1),
+        Some("    if a > 1 && b > 2 && c > 3 && d > 4 && e > 5 && f > 6 { a } else { b }")
+    );
+    assert_eq!(
+        KIND_NEAREST_SOURCE.lines().nth(6),
+        Some("        return Err(E::Bad);")
+    );
+    // Six closer predicate seams make filtering after take(5) lose the
+    // matching seam. The ready error control also identifies the seam:
+    // a return-value seam shares line 7 and is not an error-path suggestion.
+    let direct = run_bounded(
+        kind_refusal_command(root, "src/lib.rs:7", Some("error_path")),
+        root,
+        "error-control",
+        Duration::from_mins(2),
+    )?;
+    assert!(
+        direct.status.success(),
+        "the matching subject must be stubbable: {}{}",
+        String::from_utf8_lossy(&direct.stdout),
+        String::from_utf8_lossy(&direct.stderr)
+    );
+    let control: serde_json::Value =
+        serde_json::from_slice(&direct.stdout).map_err(|error| error.to_string())?;
+    assert_eq!(control["state"], "ready");
+    assert_eq!(control["owner"], "src/lib.rs::fallible");
+    assert_eq!(control["test_name"], "fallible_exact_error_variant");
+    assert_eq!(control["written"], false);
+    let expected_id = control["seam_id"]
+        .as_str()
+        .filter(|id| !id.is_empty())
+        .ok_or_else(|| format!("the ready error control needs a seam ID: {control}"))?;
+    let text = control["text"]
+        .as_str()
+        .ok_or_else(|| format!("the ready error control needs test text: {control}"))?;
+    assert!(text.contains("let actual = fallible(input);"), "{text}");
+    assert!(
+        text.contains(
+            "assert!(matches!(actual, Err(E::Bad { .. })), \"expected Err(E::Bad {{ .. }})\");",
+        ),
+        "the control observes the error variant, not a nearby predicate: {text}"
+    );
+
+    let refused = run_bounded(
+        kind_refusal_command(root, "src/lib.rs:2", Some("error_path")),
+        root,
+        "nearest-refusal",
+        Duration::from_mins(2),
+    )?;
+    assert_eq!(refused.status.code(), Some(3));
+    assert!(
+        refused.stdout.is_empty(),
+        "a not-found decision has no JSON"
+    );
+    let stderr = String::from_utf8_lossy(&refused.stderr);
+    let (_, tail) = stderr
+        .split_once("; nearest: ")
+        .ok_or_else(|| format!("the refusal needs a nearest section: {stderr}"))?;
+    let (nearest, _) = tail
+        .split_once(". Run ")
+        .ok_or_else(|| format!("the refusal needs its follow-up route: {stderr}"))?;
+    assert_eq!(
+        nearest,
+        format!("src/lib.rs:7 (--seam-id {expected_id})"),
+        "only the matching error seam may be suggested: {stderr}"
+    );
+
+    // Follow the actual emitted location with the original family.
+    let (at, emitted_id) = nearest
+        .split_once(" (--seam-id ")
+        .ok_or_else(|| format!("the suggestion needs a location and seam ID: {nearest}"))?;
+    let emitted_id = emitted_id
+        .strip_suffix(')')
+        .ok_or_else(|| format!("the suggestion needs a complete seam ID: {nearest}"))?;
+    let recovered = run_bounded(
+        kind_refusal_command(root, at, Some("error_path")),
+        root,
+        "nearest-recovery",
+        Duration::from_mins(2),
+    )?;
+    assert!(
+        recovered.status.success(),
+        "the emitted location must recover with the same family: {}{}",
+        String::from_utf8_lossy(&recovered.stdout),
+        String::from_utf8_lossy(&recovered.stderr)
+    );
+    let recovered: serde_json::Value =
+        serde_json::from_slice(&recovered.stdout).map_err(|error| error.to_string())?;
+    assert_eq!(recovered["seam_id"], emitted_id);
+    assert_eq!(
+        recovered, control,
+        "recovery must select the same error stub"
+    );
+
+    let repeated = run_bounded(
+        kind_refusal_command(root, "src/lib.rs:2", Some("error_path")),
+        root,
+        "nearest-repeat",
+        Duration::from_mins(2),
+    )?;
+    assert_eq!(repeated.status.code(), Some(3));
+    assert_eq!(repeated.stdout, refused.stdout);
+    assert_eq!(repeated.stderr, refused.stderr);
+    assert_eq!(
+        std::fs::read_to_string(root.join("src/lib.rs")).map_err(|error| error.to_string())?,
+        KIND_NEAREST_SOURCE
+    );
+    scratch.cleanup()
+}
+
+#[test]
+fn kind_not_found_without_a_matching_family_suggests_no_other_seams() -> Result<(), String> {
+    const PLAIN_ONLY: &str = "pub fn plain(n: u8) -> u8 {\n    if n > 3 { n } else { 0 }\n}\n";
+    let scratch = kind_refusal_crate(PLAIN_ONLY)?;
+    let root = &scratch.directory;
+    for (kind, label) in [
+        (Some("predicate"), "predicate-control"),
+        (None, "bare-control"),
+    ] {
+        let ready = run_bounded(
+            kind_refusal_command(root, "src/lib.rs:2", kind),
+            root,
+            label,
+            Duration::from_mins(2),
+        )?;
+        assert!(
+            ready.status.success(),
+            "the plain seam remains available to its family and bare selectors: {}{}",
+            String::from_utf8_lossy(&ready.stdout),
+            String::from_utf8_lossy(&ready.stderr)
+        );
+        let document: serde_json::Value =
+            serde_json::from_slice(&ready.stdout).map_err(|error| error.to_string())?;
+        assert_eq!(document["state"], "ready");
+        assert_eq!(document["owner"], "src/lib.rs::plain");
+        assert_eq!(document["test_name"], "plain_boundary_discriminator");
+        assert_eq!(document["written"], false);
+    }
+
+    let refused = run_bounded(
+        kind_refusal_command(root, "src/lib.rs:2", Some("error_path")),
+        root,
+        "absent-family",
+        Duration::from_mins(2),
+    )?;
+    assert_eq!(refused.status.code(), Some(3));
+    assert!(
+        refused.stdout.is_empty(),
+        "a not-found decision has no JSON"
+    );
+    let stderr = String::from_utf8_lossy(&refused.stderr);
+    let (_, tail) = stderr
+        .split_once("; nearest: ")
+        .ok_or_else(|| format!("the refusal needs a nearest section: {stderr}"))?;
+    let (nearest, _) = tail
+        .split_once(". Run ")
+        .ok_or_else(|| format!("the refusal needs its follow-up route: {stderr}"))?;
+    assert_eq!(
+        nearest, "",
+        "a file with only other families must not offer their seams: {stderr}"
+    );
+    assert!(
+        stderr.starts_with(
+            "ripr: agent stub: no error_path seam ripr can stub is in the function at src/lib.rs:2; nearest: ",
+        ),
+        "{stderr}"
+    );
+    scratch.cleanup()
+}
+
 /// Clears inherited repository selectors so a hook or wrapper that exports
 /// them cannot redirect the fixture into the outer repository.
 fn isolate_from_outer_repo(command: &mut Command) -> &mut Command {
