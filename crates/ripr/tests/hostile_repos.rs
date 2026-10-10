@@ -785,6 +785,42 @@ fn damaged_git_state_names_the_cause_and_a_repair() -> Result<(), String> {
     Ok(())
 }
 
+/// A checkout whose `.git` is a gitfile pointing at a vanished gitdir is
+/// still a repository checkout; "run it from inside your repository" is the
+/// wrong repair (#6927).
+#[test]
+fn missing_gitfile_gitdir_names_worktree_or_submodule_repair() -> Result<(), String> {
+    let scratch = Scratch::new("missing-gitdir")?;
+    let root = scratch.path.join("checkout");
+    fs::create_dir(&root).map_err(|e| format!("mkdir failed: {e}"))?;
+    fs::write(root.join(".git"), "gitdir: vanished-admin\n")
+        .map_err(|e| format!("write failed: {e}"))?;
+    let ran = ripr(&root, &["check", "--root", ".", "--base", "main"], &[])?;
+    assert_sane(&ran, "missing gitdir")?;
+    if ran.code != Some(2) {
+        return Err(format!("expected a refusal\n{}", ran.stderr));
+    }
+    for needle in [
+        "gitdir",
+        "missing",
+        "git worktree repair",
+        "git submodule update --init",
+    ] {
+        if !ran.stderr.contains(needle) {
+            return Err(format!("missing `{needle}`\n{}", ran.stderr));
+        }
+    }
+    for wrong in [
+        "not inside a Git work tree",
+        "run it from inside your repository",
+    ] {
+        if ran.stderr.contains(wrong) {
+            return Err(format!("wrong cause `{wrong}`\n{}", ran.stderr));
+        }
+    }
+    Ok(())
+}
+
 /// Configuration Git inherits from the environment is not repository damage:
 /// the repair names the variable, not `.git/config`.
 #[test]
