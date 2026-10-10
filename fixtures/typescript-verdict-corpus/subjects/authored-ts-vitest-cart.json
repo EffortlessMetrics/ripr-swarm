@@ -7,7 +7,7 @@
   "retained_files": [
     {
       "path": "package.json",
-      "sha256": "2eb751753774aab7a0fd1dfdca6184b6dada8ba7545d22844807e09f832f2b22"
+      "sha256": "e06ef5051c7617e258221ce3b7fc075a1936aac34102a24937e5a9c60abea2e8"
     },
     {
       "path": "ripr.toml",
