@@ -778,7 +778,7 @@ impl UnavailableAdapterCoverage {
         relative: &Path,
         outcome: Option<&AnalysisOutcome>,
     ) -> Option<LanguageId> {
-        let language = crate::analysis::route(relative)?;
+        let language = route_unavailable_adapter_document(relative)?;
         if !limitation_covers_language(outcome, language) {
             return None;
         }
@@ -837,6 +837,32 @@ fn unavailable_adapter_paths_eq_impl(left: &str, right: &str, ignore_ascii_case:
     } else {
         left == right
     }
+}
+
+/// `analysis::route` matches extensions exactly (`py`, not `PY`). Windows
+/// URI identity still admits `ZPY/Pricing.PY` for Git's `zpy/pricing.py`,
+/// so named-path equality would otherwise never run. Fold only here; do
+/// not change the shared router.
+fn route_unavailable_adapter_document(relative: &Path) -> Option<LanguageId> {
+    route_unavailable_adapter_document_impl(relative, cfg!(windows))
+}
+
+fn route_unavailable_adapter_document_impl(
+    relative: &Path,
+    ignore_ascii_case: bool,
+) -> Option<LanguageId> {
+    if let Some(language) = crate::analysis::route(relative) {
+        return Some(language);
+    }
+    if !ignore_ascii_case {
+        return None;
+    }
+    let ext = relative.extension()?.to_str()?;
+    let folded = ext.to_ascii_lowercase();
+    if folded == ext {
+        return None;
+    }
+    crate::analysis::route(&relative.with_extension(folded))
 }
 
 impl AnalysisSnapshot {
@@ -3335,6 +3361,47 @@ mod tests {
         let mixed_literal = normalize_unavailable_adapter_path(Path::new("ZPY/Pricing_%.py"));
         if !unavailable_adapter_paths_eq_impl(&literal, &mixed_literal, true) {
             return Err("Windows must still bind mixed-case names that contain a literal %".into());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn route_unavailable_adapter_document_folds_extension_only_when_asked() -> Result<(), String> {
+        let exact = Path::new("zpy/pricing.py");
+        if route_unavailable_adapter_document_impl(exact, false) != Some(LanguageId::Python)
+            || route_unavailable_adapter_document_impl(exact, true) != Some(LanguageId::Python)
+        {
+            return Err("an exact lowercase extension must route in both modes".into());
+        }
+        let upper = Path::new("ZPY/Pricing.PY");
+        if crate::analysis::route(upper).is_some() {
+            return Err("the shared router must stay case-sensitive so this gap is real".into());
+        }
+        if route_unavailable_adapter_document_impl(upper, false).is_some() {
+            return Err("Linux must not route an uppercase extension".into());
+        }
+        if route_unavailable_adapter_document_impl(upper, true) != Some(LanguageId::Python) {
+            return Err("Windows must route an uppercase extension after ASCII fold".into());
+        }
+        if route_unavailable_adapter_document_impl(Path::new("notes.TXT"), true).is_some() {
+            return Err("folding must not invent a language for an unrelated extension".into());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn unavailable_adapter_named_path_uppercase_extension_follows_host() -> Result<(), String> {
+        let coverage = UnavailableAdapterCoverage {
+            named_paths: vec!["zpy/pricing.py".to_string()],
+            incomplete_languages: Vec::new(),
+        };
+        let outcome = python_unavailable_outcome()?;
+        let mixed = coverage.not_enabled_language(Path::new("ZPY/Pricing.PY"), Some(&outcome));
+        let expected = cfg!(windows).then_some(LanguageId::Python);
+        if mixed != expected {
+            return Err(format!(
+                "uppercase-extension identity must follow host file identity, got {mixed:?}"
+            ));
         }
         Ok(())
     }

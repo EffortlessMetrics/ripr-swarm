@@ -11,5 +11,6 @@
   Matching uses the same path-text authority on advisory samples and
   document relatives, so a literal `%` in the filename cannot revive the
   clean/served lie, and Windows named-path identity ignores ASCII case the
-  same way URI identity does, so Git casing versus editor URI casing cannot
-  revive it either (#7205).
+  same way URI identity does, including an uppercase extension such as
+  `.PY`, so Git casing versus editor URI casing cannot revive it either
+  (#7205). The shared `analysis::route` matcher stays case-sensitive.
