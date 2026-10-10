@@ -33,8 +33,8 @@ use super::seam_cache::{
 use super::seam_classification::SeamGripClassCounts;
 use super::seam_classification::{self, ClassifiedSeam};
 use super::seams::{
-    ExpectedSink, OwnerCallShape, RepoSeam, RequiredDiscriminator, SeamKind, build_line_starts,
-    byte_span_to_lines_with_starts,
+    CrlfPairPositions, ExpectedSink, OwnerCallShape, RepoSeam, RequiredDiscriminator, SeamKind,
+    build_line_starts, byte_span_to_lines_with_starts,
 };
 use super::test_grip_evidence;
 use super::workspace;
@@ -2497,14 +2497,20 @@ fn seams_from_index_files(production_files: &[PathBuf], index: &RustIndex) -> Ve
         // One line index per file: span derivation reuses it for every shape
         // instead of rescanning the source per seam.
         let line_starts = build_line_starts(&facts.source);
+        let crlf_pairs = CrlfPairPositions::build(&facts.source);
         let twins = rust_index::error_path_twins(&facts.probe_shapes, &facts.source);
         for (shape, twin) in facts.probe_shapes.iter().zip(twins) {
             if twin {
                 continue;
             }
-            let Some(seam) =
-                build_seam_from_shape(path, shape, &owners, &facts.source, &line_starts)
-            else {
+            let Some(seam) = build_seam_from_shape(
+                path,
+                shape,
+                &owners,
+                &facts.source,
+                &line_starts,
+                &crlf_pairs,
+            ) else {
                 continue;
             };
             seams.push(seam);
@@ -2669,14 +2675,20 @@ pub(crate) fn inventory_seams_from_index_bounded(
         // One line index per file: span derivation reuses it for every shape
         // instead of rescanning the source per seam.
         let line_starts = build_line_starts(&facts.source);
+        let crlf_pairs = CrlfPairPositions::build(&facts.source);
         let twins = rust_index::error_path_twins(&facts.probe_shapes, &facts.source);
         for (shape, twin) in facts.probe_shapes.iter().zip(twins) {
             if twin {
                 continue;
             }
-            if let Some(seam) =
-                build_seam_from_shape(file, shape, &lookup, &facts.source, &line_starts)
-            {
+            if let Some(seam) = build_seam_from_shape(
+                file,
+                shape,
+                &lookup,
+                &facts.source,
+                &line_starts,
+                &crlf_pairs,
+            ) {
                 collector.push(seam);
             }
         }
@@ -2704,6 +2716,7 @@ fn build_seam_from_shape(
     owners: &rust_index::FileOwnerLookup<'_>,
     source: &str,
     line_starts: &[usize],
+    crlf_pairs: &CrlfPairPositions,
 ) -> Option<RepoSeam> {
     let kind = seam_kind_from_probe_shape(shape.kind)?;
     // A call whose value feeds a consumer cannot be deleted without breaking
@@ -2741,7 +2754,7 @@ fn build_seam_from_shape(
         expression,
         required_discriminator,
         expected_sink,
-        source,
+        crlf_pairs,
     )
     .with_owner_call(owner_call);
     // Span geometry is additional precision: when derivation fails (stale or

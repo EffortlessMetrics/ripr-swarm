@@ -492,25 +492,31 @@ impl RepoSeam {
         )
     }
 
-    /// Construct a seam whose `byte_offset` was measured against `source`,
-    /// hashing the ID's local coordinate over the file's logical content
-    /// with CRLF pairs normalized to LF (#7203).
+    /// Construct a seam whose `byte_offset` was measured against the source
+    /// `crlf_pairs` was built from, hashing the ID's local coordinate over
+    /// the file's logical content with CRLF pairs normalized to LF (#7203).
     ///
-    /// The stored [`RepoSeam::byte_offset`] stays the raw offset into
-    /// `source`: rendering, span geometry and stub placement index the
-    /// actual file bytes. Only the ID reads the normalized coordinate — the
-    /// offset the seam would have in the same text with CRLF pairs spelled
-    /// LF — so a checkout's line-ending spelling (`core.autocrlf=true`)
-    /// cannot split one logical seam into `new`+`removed` across snapshots
+    /// The stored [`RepoSeam::byte_offset`] stays the raw offset into the
+    /// source: rendering, span geometry and stub placement index the actual
+    /// file bytes. Only the ID reads the normalized coordinate — the offset
+    /// the seam would have in the same text with CRLF pairs spelled LF — so
+    /// a checkout's line-ending spelling (`core.autocrlf=true`) cannot split
+    /// one logical seam into `new`+`removed` across snapshots
     /// (RIPR-SPEC-0005 § "Stable Seam ID Rules"). This is the
     /// local-coordinate counterpart of [`normalize_path`], and mirrors the
     /// input-identity normalization `normalize_workspace_file_bytes`
     /// applies since #3118: CRLF and LF spell the same line break, while a
     /// standalone CR is preserved so invalid text cannot collide with a
     /// valid LF input.
+    ///
+    /// `crlf_pairs` must be [`CrlfPairPositions::build`] over the same
+    /// source the offsets were measured against — the per-file table is
+    /// built once beside `build_line_starts` and reused for every seam,
+    /// keeping construction O(log pairs) per seam instead of a per-seam
+    /// prefix scan.
     #[expect(
         clippy::too_many_arguments,
-        reason = "The source-backed twin of `new`; it carries the same eight intrinsic fields plus the source the offset was measured against."
+        reason = "The source-backed twin of `new`; it carries the same eight intrinsic fields plus the offset table the source's line endings produce."
     )]
     pub(crate) fn new_in_source(
         file: impl AsRef<Path>,
@@ -521,9 +527,9 @@ impl RepoSeam {
         expression: impl Into<String>,
         required_discriminator: RequiredDiscriminator,
         expected_sink: ExpectedSink,
-        source: &str,
+        crlf_pairs: &CrlfPairPositions,
     ) -> Self {
-        let identity_offset = normalized_identity_byte_offset(source, byte_offset);
+        let identity_offset = crlf_pairs.normalized_identity_offset(byte_offset);
         RepoSeam::from_canonical_parts(
             file,
             owner,
@@ -628,26 +634,50 @@ fn normalize_path(p: &Path) -> String {
     s.strip_prefix("./").unwrap_or(&s).to_string()
 }
 
-/// The seam ID's local coordinate for a byte offset measured against raw
-/// `source`: the offset the same byte has after CRLF→LF normalization.
-///
-/// Each `\r\n` pair before the offset shifts it by one byte; an offset that
-/// points at the LF of a pair lands where that pair collapses. A standalone
-/// CR is preserved, mirroring `normalize_workspace_file_bytes` (#3118):
-/// only a CRLF pair spells the same line break as LF, so text holding a
-/// lone CR cannot be read as the LF spelling of different content (#7203).
-/// An offset beyond `source`'s length clamps to the normalized length
-/// instead of underflowing.
-fn normalized_identity_byte_offset(source: &str, byte_offset: usize) -> usize {
-    let bytes = source.as_bytes();
-    let bound = byte_offset.min(bytes.len());
-    let mut pairs = 0usize;
-    for index in 0..bound {
-        if bytes[index] == b'\r' && bytes.get(index + 1) == Some(&b'\n') {
-            pairs += 1;
+/// Byte positions of every CRLF pair in one source, ascending. Built once
+/// per source file (beside [`build_line_starts`]) and reused for every seam
+/// of that file, so identity normalization is one binary search per seam
+/// instead of a per-seam prefix scan over large sources.
+pub(crate) struct CrlfPairPositions {
+    positions: Vec<usize>,
+    source_len: usize,
+}
+
+impl CrlfPairPositions {
+    pub(crate) fn build(source: &str) -> Self {
+        let bytes = source.as_bytes();
+        let mut positions = Vec::new();
+        let mut index = 0;
+        while index + 1 < bytes.len() {
+            if bytes[index] == b'\r' && bytes[index + 1] == b'\n' {
+                positions.push(index);
+                index += 2;
+            } else {
+                index += 1;
+            }
+        }
+        Self {
+            positions,
+            source_len: bytes.len(),
         }
     }
-    bound - pairs
+
+    /// The seam ID's local coordinate for a raw `byte_offset` measured
+    /// against this source: the offset the same byte has after CRLF→LF
+    /// normalization (#7203).
+    ///
+    /// Each pair before the offset shifts it by one byte; an offset that
+    /// points at the LF of a pair lands where that pair collapses. A
+    /// standalone CR is preserved, mirroring
+    /// `normalize_workspace_file_bytes` (#3118): only a CRLF pair spells the
+    /// same line break as LF, so text holding a lone CR cannot be read as
+    /// the LF spelling of different content. An offset beyond the source's
+    /// length clamps to the normalized length instead of underflowing.
+    fn normalized_identity_offset(&self, byte_offset: usize) -> usize {
+        let bound = byte_offset.min(self.source_len);
+        let pairs_before = self.positions.partition_point(|position| *position < bound);
+        bound - pairs_before
+    }
 }
 
 /// FNV-1a 64-bit hash of the canonical seam fields, encoded as a 16-char
@@ -998,7 +1028,7 @@ mod tests {
                 description: "x >= 0".to_string(),
             },
             ExpectedSink::ReturnValue,
-            lf,
+            &CrlfPairPositions::build(lf),
         );
         let crlf_seam = RepoSeam::new_in_source(
             "src/pricing.rs",
@@ -1011,7 +1041,7 @@ mod tests {
                 description: "x >= 0".to_string(),
             },
             ExpectedSink::ReturnValue,
-            &crlf,
+            &CrlfPairPositions::build(&crlf),
         );
         // The fixture must exercise the shift: the CRLF spelling moves the
         // raw byte behind line 1's two-byte terminator.
@@ -1053,7 +1083,7 @@ mod tests {
                 description: "x >= 0".to_string(),
             },
             ExpectedSink::ReturnValue,
-            source,
+            &CrlfPairPositions::build(source),
         );
         let legacy = RepoSeam::new(
             "src/pricing.rs",
@@ -1078,20 +1108,25 @@ mod tests {
     /// with the LF spelling of different content.
     #[test]
     fn identity_offset_normalizes_crlf_pairs_and_preserves_standalone_cr() {
+        let normalize = |source: &str, offset: usize| {
+            CrlfPairPositions::build(source).normalized_identity_offset(offset)
+        };
         // "ab\r\ncd": the 'd' sits at raw 5, normalized 4 — behind one pair.
-        assert_eq!(normalized_identity_byte_offset("ab\r\ncd", 5), 4);
+        assert_eq!(normalize("ab\r\ncd", 5), 4);
         // LF-only coordinates pass through unchanged.
-        assert_eq!(normalized_identity_byte_offset("ab\ncd", 4), 4);
+        assert_eq!(normalize("ab\ncd", 4), 4);
         // A standalone CR is not a line break: nothing shifts.
-        assert_eq!(normalized_identity_byte_offset("ab\rcd", 4), 4);
+        assert_eq!(normalize("ab\rcd", 4), 4);
         // An offset pointing at the CR of a pair is still at the pair.
-        assert_eq!(normalized_identity_byte_offset("ab\r\ncd", 2), 2);
+        assert_eq!(normalize("ab\r\ncd", 2), 2);
         // An offset pointing at the LF of a pair lands where the pair
         // collapses to.
-        assert_eq!(normalized_identity_byte_offset("ab\r\ncd", 3), 2);
-        // An offset past the source end saturates to the present pairs.
-        assert_eq!(normalized_identity_byte_offset("ab\r\n", 100), 3);
-        assert_eq!(normalized_identity_byte_offset("", 0), 0);
+        assert_eq!(normalize("ab\r\ncd", 3), 2);
+        // Multiple pairs each shift once.
+        assert_eq!(normalize("a\r\nb\r\ncd", 7), 5);
+        // An offset past the source end saturates to the normalized length.
+        assert_eq!(normalize("ab\r\n", 100), 3);
+        assert_eq!(normalize("", 0), 0);
     }
 
     #[test]

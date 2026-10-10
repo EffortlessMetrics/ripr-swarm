@@ -102,8 +102,8 @@ findings carry canonical_gap_id and are compared by it. Check output whose
 findings carry no canonical_gap_id is refused rather than compared; repo
 exposure carries no Python or TypeScript seams, so preview findings without a
 canonical_gap_id have no comparable receipt. When head-identity verification
-matters, capture both snapshots with `ripr check --format repo-exposure-json`
-for both: check JSON carries no repository head. Its
+matters, capture both snapshots with `ripr check --format repo-exposure-json`,
+because check JSON carries no repository head. The
 review receipt summarizes what changed, what RIPR flagged before, which focused
 proof signals moved, what remains weak or unknown, and what reviewers should
 inspect or avoid inferring. It does not run analysis, edit source, generate
