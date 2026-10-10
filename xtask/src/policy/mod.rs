@@ -1,6 +1,5 @@
 mod allow_attributes;
 mod ci_lane_whitelist;
-pub(crate) mod ci_scratch;
 mod covered_by;
 mod dependency_expiry;
 pub(crate) mod distribution;

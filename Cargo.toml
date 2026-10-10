@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/ripr", "xtask"]
+members = ["crates/ripr", "xtask", "tools/repo-policy"]
 default-members = ["crates/ripr"]
 resolver = "2"
 

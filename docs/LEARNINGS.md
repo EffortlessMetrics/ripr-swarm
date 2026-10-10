@@ -2852,7 +2852,7 @@ Durable rules:
   first one is, so inventory the cleaners (other repositories and host
   services included) before calling it fixed.
 - Test the lock, not the story. The harness in
-  `xtask/src/policy/ci_scratch/tests.rs` runs the action's own script, and two
+  `tools/repo-policy/src/ci_scratch/tests.rs` runs the action's own script, and two
   negative controls (lock check removed; lock check replaced by an mtime test)
   must make the same harness fail. Also wait on the lock, not the PID, when
   simulating job death: in containers without a reaping init, `kill -0` keeps

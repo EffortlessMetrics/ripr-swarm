@@ -277,8 +277,8 @@ fn product_gate_definitions() -> Vec<ProductGateDefinition> {
             ProductGateId::AgentSkills,
             ProductGateRole::Required,
             policy.clone(),
-            "cargo xtask check-agent-skills",
-            "checked-in agent skills obey repository policy",
+            "cargo policy preflight",
+            "workflow policy and checked-in agent skills obey repository policy before the product build",
             "does not validate provider execution",
         ),
         gate(

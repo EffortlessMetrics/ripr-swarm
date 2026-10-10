@@ -13089,15 +13089,6 @@ pub(crate) fn compare_expected_text(
     }
 }
 
-pub(crate) fn json_summary_count(value: &Value, key: &str) -> usize {
-    value
-        .get("summary")
-        .and_then(|summary| summary.get(key))
-        .and_then(Value::as_u64)
-        .and_then(|count| usize::try_from(count).ok())
-        .unwrap_or(0)
-}
-
 pub(crate) fn one_line(text: &str) -> String {
     text.lines().map(str::trim).collect::<Vec<_>>().join(" ")
 }
@@ -17913,3 +17904,5 @@ pub(crate) fn dogfood_report_json(inputs: &DogfoodReportInputs<'_>) -> String {
     body.push_str("\n    ]\n  }\n}\n");
     body
 }
+
+pub(crate) use repo_policy::json_summary_count;
