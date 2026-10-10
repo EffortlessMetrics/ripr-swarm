@@ -153,6 +153,9 @@ fn withhold_helper_uniqueness_as_unknown(
     finding.recommended_next_step = Some(format!(
         "ripr cannot tell which `{entry}` a test calls because that name is not unique in the workspace, so it does not claim that no test reaches this change. Disambiguate the function, or add a test that calls a unique owner, only if none already does."
     ));
+    finding
+        .evidence
+        .retain(|line| !line.contains("No static test path"));
     finding.evidence.push(format!(
         "helper_chain_uniqueness: `{entry}` is not a unique function in the workspace; tests call that name"
     ));
@@ -373,6 +376,14 @@ mod tests {
             "{:?}",
             finding.stop_reasons
         );
+        assert!(
+            finding
+                .evidence
+                .iter()
+                .all(|line| !line.contains("No static test path")),
+            "{:?}",
+            finding.evidence
+        );
         let gloss = StopReason::HelperIdentityUnresolved.describe();
         assert!(
             gloss.contains("workspace function") && gloss.contains("not unique"),
@@ -444,8 +455,9 @@ mod tests {
             finding.recommended_next_step
         );
         let human = crate::output::human::render_finding(&finding);
-        assert!(human.contains("Evidence: reach unknown"), "{human}");
-        assert!(!human.contains("Evidence: reach no"), "{human}");
+        assert!(human.contains("reach unknown:"), "{human}");
+        assert!(!human.contains("reach no:"), "{human}");
+        assert!(!human.contains("No static test path"), "{human}");
         assert!(human.contains("helper_identity_unresolved"), "{human}");
         assert!(
             human.contains("which workspace function") && human.contains("not unique"),
