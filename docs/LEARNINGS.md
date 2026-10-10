@@ -13,8 +13,9 @@ other relation remains, classify as `static_unknown` naming the
 ambiguous entry. Keep `no_static_path` only when no test enters that
 name — a unique wrapper of a non-unique helper (`outer` → second
 `inner`) is the negative control (`helper_chain_controls`,
-`rust_transitive_reach_positive`). Do not credit `helper_owner_call`
-through the ambiguous name.
+`rust_transitive_reach_positive`). A receiver call of the same name
+(`req.parse()`) is not an entry; `Version::parse(...)` is. Do not
+credit `helper_owner_call` through the ambiguous name.
 
 ## 2026-10-08: A green PR head plus clean mergeability does not prove the squash result compiles (#7150)
 

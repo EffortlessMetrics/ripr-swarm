@@ -199,10 +199,34 @@ pub(crate) fn ambiguous_helper_entry_called_by_tests<'a>(
 
 fn tests_call_name(index: &RustIndex, name: &str) -> bool {
     !name.is_empty()
-        && index
-            .tests()
-            .iter()
-            .any(|test| test.calls.iter().any(|call| call.name == name))
+        && index.tests().iter().any(|test| {
+            test.calls
+                .iter()
+                .any(|call| call.name == name && test_call_invokes_named_entry(&call.text, name))
+        })
+}
+
+/// Whether a recorded test call invokes `callee_name` as a free function
+/// (`parse(...)`) or a path-qualified associated function
+/// (`Version::parse(...)`). A receiver call (`req.parse()`) shares the
+/// bare name but is not that entry (#7080 / identity, not token
+/// coincidence).
+fn test_call_invokes_named_entry(text: &str, callee_name: &str) -> bool {
+    let needle = format!("{callee_name}(");
+    let mut search = 0usize;
+    while let Some(relative) = text[search..].find(&needle) {
+        let at = search + relative;
+        let enters = match text[..at].chars().next_back() {
+            None => true,
+            Some('.') => false,
+            Some(before) => !before.is_ascii_alphanumeric() && before != '_',
+        };
+        if enters {
+            return true;
+        }
+        search = at + needle.chars().next().map_or(1, char::len_utf8);
+    }
+    false
 }
 
 /// Whether `callee_name` names exactly one function in the index (the
@@ -1241,7 +1265,13 @@ mod tests {
         let from_str = function("src/from_str.rs", "from_str", &[("parse", "parse(text)")]);
         let from_str_twin = function("src/other_from_str.rs", "from_str", &[]);
         let calling_from_str = index_with_tests(
-            vec![owner.clone(), parse.clone(), twin, from_str, from_str_twin],
+            vec![
+                owner.clone(),
+                parse.clone(),
+                twin.clone(),
+                from_str,
+                from_str_twin,
+            ],
             vec![with_test("from_str", "VersionReq::from_str(\">=1.0\")")],
         );
         let chain = resolve_chain("op", &calling_from_str, true, &[]);
@@ -1265,6 +1295,23 @@ mod tests {
             None,
             "a unique wrapper of a non-unique helper is not an ambiguous entry"
         );
+
+        let calling_receiver = index_with_tests(
+            vec![owner, parse, twin],
+            vec![with_test("parse", "req.parse()")],
+        );
+        let chain = resolve_chain("op", &calling_receiver, true, &[]);
+        assert_eq!(uniqueness_refusal_callee(&chain), Some("parse"));
+        assert_eq!(
+            ambiguous_helper_entry_called_by_tests(&chain, &calling_receiver),
+            None,
+            "a receiver call of the same name is not the ambiguous entry"
+        );
+        assert!(test_call_invokes_named_entry(
+            "Version::parse(\">=1.0\")",
+            "parse"
+        ));
+        assert!(!test_call_invokes_named_entry("req.parse()", "parse"));
     }
 
     #[test]

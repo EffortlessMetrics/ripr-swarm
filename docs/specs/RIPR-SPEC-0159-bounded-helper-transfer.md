@@ -52,12 +52,14 @@ can only hint that a caller "may lead here" without changing anything.
   collects only `let` statements, so `if let`/`while let`, match-arm,
   closure-parameter, `for` and macro-introduced bindings do not shadow on
   parser-backed files. That uniqueness refusal stays fail-closed for
-  relation and row transfer. When no other relation remains *and* a test
-  calls the ambiguous name (or a non-unique caller of it, such as
+  relation and row transfer.   When no other relation remains *and* a test
+  calls the ambiguous name as a free function or path-qualified
+  associated function (or a non-unique caller of it, such as
   `from_str` wrapping a non-unique `parse`), the finding is
   `static_unknown` naming that function, not `no_static_path` (#7080).
   A uniqueness stop that no test enters — including a unique wrapper of a
-  non-unique helper (`outer` wrapping a second `inner`) — stays
+  non-unique helper (`outer` wrapping a second `inner`), or a receiver
+  call that only shares the bare name (`req.parse()`) — stays
   `no_static_path`.
 - Hop propagation (#6780): for probe families observed through the
   owner's returned value (every family except `side_effect` and
@@ -178,7 +180,8 @@ instead of leaving a false `no_static_path` for 0114 to annotate.
 
 `analysis/classify/helper_transfer.rs` `tests`;
 `analysis/classifier.rs` (`given_helper_chain_refused_for_non_unique_entry_when_tests_call_it_then_static_unknown`,
-`given_helper_chain_refused_for_non_unique_callee_when_tests_call_a_unique_wrapper_then_no_static_path`);
+`given_helper_chain_refused_for_non_unique_callee_when_tests_call_a_unique_wrapper_then_no_static_path`,
+`given_helper_chain_refused_for_non_unique_entry_when_tests_only_call_a_receiver_then_no_static_path`);
 `analysis/classify/related_tests.rs` (the `HelperOwnerCall` relation
 branch); `analysis/classify/activation.rs` (transferred rows and the
 call operand); fixtures `helper_chain_{one_hop,multi_hop,controls}`;

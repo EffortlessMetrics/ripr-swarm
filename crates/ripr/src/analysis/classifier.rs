@@ -392,6 +392,39 @@ mod tests {
         );
     }
 
+    // #7080: `req.parse()` shares the bare name with the non-unique helper
+    // but is not that entry; hiding the gap as `static_unknown` would
+    // drop it from exposure review.
+    #[test]
+    fn given_helper_chain_refused_for_non_unique_entry_when_tests_only_call_a_receiver_then_no_static_path()
+     {
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions: vec![
+                function("src/op.rs", "op"),
+                function_with_calls("src/parse.rs", "parse", &[("op", "op(bytes)")]),
+                function("src/other.rs", "parse"),
+            ],
+            tests: vec![test_calling(
+                "tests/req.rs",
+                "parses_on_the_value",
+                "parse",
+                "req.parse()",
+            )],
+            ..Default::default()
+        });
+        let finding = classify_probe(&helper_probe("src/op.rs", "op"), &index, true, None);
+
+        assert_eq!(finding.class, ExposureClass::NoStaticPath);
+        assert!(
+            finding
+                .missing
+                .iter()
+                .any(|line| line.contains("No static test path")),
+            "{:?}",
+            finding.missing
+        );
+    }
+
     #[test]
     fn given_three_character_probe_token_in_test_name_when_owner_is_not_called_then_test_is_related()
      {
