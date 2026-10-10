@@ -443,8 +443,11 @@ jobs:
                       self.packet(listing)
 
               def test_windows_recovery_matches_published_slashes_and_keeps_literal(self):
-                  root, diff = r'D:\selector literal', r'D:\selector literal\fixture change.diff'
-                  expected = "ripr check --root 'D:/selector literal' --diff 'D:/selector literal/fixture change.diff' --json"
+                  # Inert Windows-shaped sentinels: no real drive or directory is accessed.
+                  drive = 'Q' + ':'
+                  root = drive + r'\synthetic-selector-fixture literal'
+                  diff = root + r'\fixture change.diff'
+                  expected = f"ripr check --root '{drive}/synthetic-selector-fixture literal' --diff '{drive}/synthetic-selector-fixture literal/fixture change.diff' --json"
                   self.assertEqual(self.ns['recovery_command'](root, diff, windows=True), expected)
                   stderr = ('No finding. Retry `' + expected + '`.').encode()
                   self.assertEqual(self.ns['printed_recovery'](stderr, root, diff, windows=True), expected)
@@ -483,7 +486,9 @@ jobs:
                   raw = text.split("$storage_tests = @'\n", 1)[1].split("\n          '@\n", 1)[0]
                   source = '\n'.join(line[10:] for line in raw.splitlines())
                   # Model Actions substitution before PowerShell/Python see this source.
-                  values = {'env.CARGO_TARGET_DIR': r'C:\Users\runneradmin\.cargo\bin\selector-subset-cache\target',
+                  # Preserve the drive/backslash/Users escape shape using an invented fixture account.
+                  target = 'Q' + ':' + r'\Users\synthetic-selector-fixture\.cargo\bin\selector-subset-cache\target'
+                  values = {'env.CARGO_TARGET_DIR': target,
                             'runner.os': 'Windows', "github.ref == 'refs/heads/main'": 'false'}
                   rendered = re.sub(r'\$\{\{(.*?)\}\}', lambda m: values[m[1].strip()], source)
                   compile(rendered, 'actions-rendered-storage-tests', 'exec')
