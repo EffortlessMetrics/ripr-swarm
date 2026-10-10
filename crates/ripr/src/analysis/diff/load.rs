@@ -646,7 +646,53 @@ const GIT_REASON_MAX_CHARS: usize = 300;
 /// where an absent ref answers exit 1 without a message. Without this a
 /// corrupt `packed-refs` read as a missing remote, and a bad `.git/config` as
 /// "not inside a Git work tree" (#6908).
+/// Gitfile line: `gitdir: <path>`, with optional trailing CR so a Windows
+/// gitfile parses the same as an LF one. Empty targets are not this case.
+fn parse_gitfile_gitdir(contents: &str) -> Option<&str> {
+    let line = contents.lines().next()?.trim_end_matches('\r');
+    let target = line.strip_prefix("gitdir:")?.trim();
+    if target.is_empty() {
+        return None;
+    }
+    Some(target)
+}
+
+/// A checkout whose `.git` is a gitfile pointing at a vanished gitdir
+/// (deleted worktree admin dir, or a submodule whose `.git/modules/<name>`
+/// was removed). Detected on disk, not by matching Git's stderr (#6927).
+/// A plain directory, an invalid gitfile, and a gitfile whose target still
+/// exists keep the work-tree or damaged-repo messages (#6908, #6911).
+fn missing_gitdir_target_message(root: &Path) -> Option<String> {
+    let gitfile = root.join(".git");
+    let meta = std::fs::symlink_metadata(&gitfile).ok()?;
+    if !meta.file_type().is_file() {
+        return None;
+    }
+    let contents = std::fs::read_to_string(&gitfile).ok()?;
+    let target = parse_gitfile_gitdir(&contents)?;
+    // `join` replaces the base when the gitdir is absolute, including a
+    // Windows drive-letter spelling, so relative and absolute gitfiles
+    // resolve against the gitfile's directory the way Git does.
+    let resolved = root.join(target);
+    match std::fs::symlink_metadata(&resolved) {
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+        _ => return None,
+    }
+    Some(format!(
+        "The checkout at `{}` points at a gitdir that is missing (`{}`) (the analysis \
+         did not run). Re-add the worktree (`git worktree repair`) or re-init the \
+         submodule (`git submodule update --init`), then re-run.",
+        crate::terminal_text::terminal_safe(root.display().to_string()),
+        crate::terminal_text::terminal_safe(resolved.display().to_string()),
+    ))
+}
+
 fn unreadable_repository_message(root: &Path, output: &std::process::Output) -> Option<String> {
+    // Disk check first: Git names a missing gitdir as "not a git repository"
+    // or "invalid gitfile", which #6911 left on the work-tree message.
+    if let Some(message) = missing_gitdir_target_message(root) {
+        return Some(message);
+    }
     if output.status.code() != Some(128) {
         return None;
     }
@@ -3529,6 +3575,162 @@ mod tests {
 
         ignore_remove_dir_all(&bare);
         ignore_remove_dir_all(&gitfile);
+        Ok(())
+    }
+
+    #[test]
+    fn parse_gitfile_gitdir_reads_lf_crlf_and_rejects_empty_or_invalid() {
+        assert_eq!(parse_gitfile_gitdir("gitdir: vanished\n"), Some("vanished"));
+        assert_eq!(
+            parse_gitfile_gitdir("gitdir: vanished\r\n"),
+            Some("vanished")
+        );
+        assert_eq!(
+            parse_gitfile_gitdir("gitdir: /abs/path\n"),
+            Some("/abs/path")
+        );
+        assert_eq!(
+            parse_gitfile_gitdir("gitdir: C:\\Users\\wt\\admin\n"),
+            Some("C:\\Users\\wt\\admin")
+        );
+        assert_eq!(parse_gitfile_gitdir("not a gitfile\n"), None);
+        assert_eq!(parse_gitfile_gitdir("gitdir:\n"), None);
+        assert_eq!(parse_gitfile_gitdir("gitdir:   \n"), None);
+        assert_eq!(parse_gitfile_gitdir(""), None);
+    }
+
+    #[test]
+    fn missing_gitdir_target_message_is_disk_only() -> std::io::Result<()> {
+        // Detection must not depend on Git having run or on a particular
+        // stderr wording: a gitfile whose target is missing is enough.
+        let root = unique_fixture_root("missing-gitdir-disk")?;
+        fs::write(root.join(".git"), "gitdir: vanished-admin\n")?;
+        let message = missing_gitdir_target_message(&root).unwrap_or_default();
+        assert!(
+            message.contains("git worktree repair")
+                && message.contains("git submodule update --init"),
+            "expected the missing-gitdir repair from the gitfile alone, got: {message}"
+        );
+        assert!(
+            !message.contains("not inside a Git work tree"),
+            "disk detection must not fall through to the work-tree message: {message}"
+        );
+
+        let plain = unique_fixture_root("missing-gitdir-disk-plain")?;
+        assert!(
+            missing_gitdir_target_message(&plain).is_none(),
+            "a directory without a gitfile is not this case"
+        );
+
+        ignore_remove_dir_all(&root);
+        ignore_remove_dir_all(&plain);
+        Ok(())
+    }
+
+    #[test]
+    fn missing_gitfile_gitdir_names_worktree_or_submodule_repair() -> std::io::Result<()> {
+        // #6927: a checkout whose `.git` is a gitfile pointing at a vanished
+        // gitdir is still a repository checkout. "run it from inside your
+        // repository" is the wrong repair. Detection is on disk (`.git` is a
+        // file, `gitdir:` target is missing), not Git's stderr wording.
+        let relative = unique_fixture_root("missing-gitdir-rel")?;
+        fs::write(relative.join(".git"), "gitdir: vanished-admin\n")?;
+
+        let absolute = unique_fixture_root("missing-gitdir-abs")?;
+        let missing_abs = unique_fixture_path("vanished-abs-admin");
+        assert!(
+            !missing_abs.exists(),
+            "absolute gitdir fixture must not exist before the probe"
+        );
+        fs::write(
+            absolute.join(".git"),
+            format!("gitdir: {}\n", missing_abs.display()),
+        )?;
+
+        let crlf = unique_fixture_root("missing-gitdir-crlf")?;
+        fs::write(crlf.join(".git"), "gitdir: vanished-crlf-admin\r\n")?;
+
+        for dir in [&relative, &absolute, &crlf] {
+            for base in [Some("origin/main"), None] {
+                let err = load_diff(dir, base, None, None)
+                    .expect_err("expected a refusal when the gitfile gitdir target is missing");
+                assert!(
+                    err.contains("gitdir") && err.contains("missing"),
+                    "expected the missing-gitdir cause for {base:?} in {}, got: {err}",
+                    dir.display()
+                );
+                assert!(
+                    err.contains("the analysis did not run"),
+                    "expected the did-not-run boundary for {base:?} in {}, got: {err}",
+                    dir.display()
+                );
+                assert!(
+                    err.contains("git worktree repair")
+                        && err.contains("git submodule update --init"),
+                    "expected the worktree/submodule repair for {base:?} in {}, got: {err}",
+                    dir.display()
+                );
+                assert!(
+                    !err.contains("not inside a Git work tree")
+                        && !err.contains("run it from inside your repository"),
+                    "generic work-tree advice must not be given for a missing gitdir in {}, got: {err}",
+                    dir.display()
+                );
+                assert!(
+                    !err.contains("does not resolve to a commit") && !err.contains("git fetch"),
+                    "ref-repair advice must not be given for a missing gitdir in {}, got: {err}",
+                    dir.display()
+                );
+            }
+        }
+
+        // Absolute spelling must appear as written on this host (Windows
+        // backslashes included), not as a POSIX rewrite.
+        let abs_err = load_diff(&absolute, Some("origin/main"), None, None)
+            .expect_err("absolute missing gitdir must refuse");
+        let abs_shown = crate::terminal_text::terminal_safe(missing_abs.display().to_string());
+        assert!(
+            abs_err.contains(&abs_shown),
+            "expected the native missing gitdir path `{abs_shown}` in: {abs_err}"
+        );
+
+        // Negative controls that do not depend on where the temp root lives:
+        // an invalid gitfile, and a gitfile whose target exists, stay on the
+        // work-tree message. A plain directory outside any checkout is the
+        // same arm and is pinned by
+        // `outside_a_work_tree_names_the_missing_repository_not_a_missing_ref`.
+        let invalid = unique_fixture_root("missing-gitdir-invalid")?;
+        fs::write(invalid.join(".git"), "not a gitfile\n")?;
+        let present_target = unique_fixture_root("missing-gitdir-present-target")?;
+        let existing_admin = unique_fixture_root("existing-admin-not-git")?;
+        fs::write(
+            present_target.join(".git"),
+            format!("gitdir: {}\n", existing_admin.display()),
+        )?;
+
+        for (dir, label) in [
+            (&invalid, "invalid gitfile"),
+            (&present_target, "gitfile whose gitdir exists"),
+        ] {
+            let err = load_diff(dir, Some("origin/main"), None, None)
+                .expect_err("expected a refusal outside a usable work tree");
+            assert!(
+                err.contains("not inside a Git work tree"),
+                "{label} must keep the work-tree message, got: {err}"
+            );
+            assert!(
+                !err.contains("git worktree repair")
+                    && !err.contains("git submodule update --init"),
+                "{label} must not take the missing-gitdir repair, got: {err}"
+            );
+        }
+
+        ignore_remove_dir_all(&relative);
+        ignore_remove_dir_all(&absolute);
+        ignore_remove_dir_all(&crlf);
+        ignore_remove_dir_all(&invalid);
+        ignore_remove_dir_all(&present_target);
+        ignore_remove_dir_all(&existing_admin);
         Ok(())
     }
 
