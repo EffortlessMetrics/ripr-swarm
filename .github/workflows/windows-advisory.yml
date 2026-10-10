@@ -335,6 +335,12 @@ jobs:
         run: |
           mkdir -p target; set +e; cargo clippy -p ripr --all-targets -- -D warnings 2>&1 | tee target/subset-clippy.log; pipe_status=("${PIPESTATUS[@]}"); printf '%s\n' "${pipe_status[0]}" > target/subset-clippy.status; if [ "${pipe_status[1]}" != "0" ]; then echo "subset evidence capture failed: tee exited ${pipe_status[1]} writing target/subset-clippy.log" >&2; exit 1; fi; exit 0
 
+      - name: Check selector storage boundaries without a product build
+        shell: pwsh
+        run: |
+          python tools/python/windows-selector-consumer/test_evidence.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
       # #5252/#5581: real stock-environment PowerShell recovery, not argv recording.
       - name: Produce and replay exact-head selector recovery (advisory)
         if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
@@ -353,7 +359,8 @@ jobs:
           out.mkdir(parents=True, exist_ok=True)
           end = time.monotonic() + 720
           receipt = {"schema_version": 1, "state": "INCOMPLETE", "cases": [], "controls": []}
-          staged_by_consumer = False
+          ownership = {"staged": False, "target": False}
+          payload_charge, immutable_handle = 0, None
           k = c.WinDLL("kernel32", use_last_error=True)
 
           class Security(c.Structure):
@@ -405,6 +412,58 @@ jobs:
               require(not path.exists(), "owned staged executable remains")
               cleanup["state"] = "REMOVED"
               return cleanup
+
+          def record_failure(receipt, kind, message):
+              if receipt.get("error"):
+                  receipt.setdefault("primary_error", receipt["error"])
+                  receipt.setdefault("primary_error_type", receipt["error_type"])
+              receipt.update(state="FAIL", error_type=kind, error=message)
+
+          def payload_allocation(binary, target):
+              require(binary.is_relative_to(target) and not binary.is_symlink(), "compiler artifact escaped owned target")
+              info = binary.stat()
+              aliases = [p for p in target.rglob("*") if p.is_file() and p.samefile(binary)]
+              require(len(aliases) == info.st_nlink and all(not p.is_symlink() for p in aliases), "unowned executable alias")
+              require(all(p.samefile(binary) for p in target.rglob("ripr*.exe")), "separate producer executable allocation")
+              return {"charged_bytes": info.st_size, "device": info.st_dev, "file_id": info.st_ino,
+                      "producer_aliases": [str(p) for p in aliases], "peak_payload_allocations": 1}
+
+          def stage_single_allocation(binary, staged, target, expected_digest, out, ownership):
+              require(not staged.exists() and not staged.is_symlink() and shutil.which("ripr") is None, "unexpected existing stock ripr occupant")
+              allocation = payload_allocation(binary, target)
+              require(binary.stat().st_dev == staged.parent.stat().st_dev, "cross-volume staging refused")
+              require(digest(binary) == expected_digest, "producer digest drift")
+              require(allocation["charged_bytes"] + sum(p.stat().st_size for p in out.glob("*") if p.is_file()) < 128 * 1024**2, "staging/evidence budget exceeded")
+              # Windows rename refuses an occupied destination. EXDEV/any failure is terminal;
+              # never use shutil.move, which silently copies across volumes.
+              os.rename(binary, staged)
+              ownership["staged"] = True
+              require((staged.stat().st_dev, staged.stat().st_ino) == (allocation["device"], allocation["file_id"]), "rename changed allocation identity")
+              # The stopped producer owns this exclusive target. Remove every mutable alias
+              # and all intermediates before admitting journeys; the stock file survives.
+              shutil.rmtree(target)
+              ownership["target"] = False
+              require(staged.stat().st_nlink == 1 and digest(staged) == expected_digest, "staged identity/digest drift")
+              return allocation
+
+          def finalize_evidence(receipt, out, fixture, payload_charge):
+              receipt["python"] = sys.version
+              receipt["total_deadline_seconds"] = 720
+              receipt["evidence_bytes"] = sum(p.stat().st_size for p in out.glob("*") if p.is_file())
+              receipt["charged_binary_and_staging_bytes"] = payload_charge
+              base_bytes = receipt["evidence_bytes"] + payload_charge + 16
+              if fixture is not None and fixture.exists():
+                  base_bytes += sum(p.stat().st_size for p in fixture.rglob("*") if p.is_file())
+              receipt["final_charged_bytes"] = 0
+              while True:
+                  # Charge both the pretty receipt and its compact copy in the wrapper log.
+                  retained = base_bytes + len(json.dumps(receipt, indent=2).encode()) + len(json.dumps(receipt).encode()) + 2
+                  if retained > 128 * 1024**2 and receipt.get("error_type") != "EvidenceBudget":
+                      record_failure(receipt, "EvidenceBudget", "final evidence/staging budget exceeded")
+                      continue
+                  if receipt["final_charged_bytes"] == retained:
+                      return receipt
+                  receipt["final_charged_bytes"] = retained
 
           def run(label, argv, cwd, seconds=30, memory=512 * 1024**2, output_cap=2 * 1024**2, active=2):
               require(time.monotonic() < end, "consumer total deadline exceeded")
@@ -544,7 +603,15 @@ jobs:
               status, stdout, _ = run("rustc-version", [rustc, "-Vv"], root)
               require(status == 0 and stdout.startswith(b"rustc 1.95.0 ") and "host: x86_64-pc-windows-msvc" in stdout.decode(), "Windows toolchain mismatch")
               receipt["rustc"] = stdout.decode()
-              status, stdout, _ = run("build", [cargo, "build", "-p", "ripr", "--bin", "ripr", "--locked", "-j", "2", "--message-format=json"],
+              stock_bin = Path(cargo).resolve().parent
+              require(str(stock_bin).lower() in [p.rstrip("\\/").lower() for p in os.environ["PATH"].split(os.pathsep)], "Cargo bin is not a stock PATH slot")
+              staged = stock_bin / "ripr.exe"
+              require(not staged.exists() and not staged.is_symlink() and shutil.which("ripr") is None, "unexpected existing stock ripr occupant")
+              target = stock_bin / ("selector-build-" + os.environ["GITHUB_RUN_ID"] + "-" + os.environ["GITHUB_RUN_ATTEMPT"])
+              target.mkdir()  # Exclusive ownership; never reuse mutable/cache output.
+              ownership["target"] = True
+              receipt["owned_producer_target"] = str(target)
+              status, stdout, _ = run("build", [cargo, "build", "-p", "ripr", "--bin", "ripr", "--locked", "-j", "2", "--target-dir", str(target), "--message-format=json"],
                                       root, seconds=600, memory=8 * 1024**3, output_cap=16 * 1024**2, active=0)
               require(status == 0, "exact-head CLI build failed")
               require(git_value("rev-parse", "HEAD") == actual_head and git_value("rev-parse", "HEAD^{tree}") == source_tree, "producer source moved")
@@ -558,19 +625,28 @@ jobs:
               require(Path(artifact["manifest_path"]).resolve() == root / "crates" / "ripr" / "Cargo.toml", "wrong producer manifest")
               binary = Path(artifact["executable"]).resolve()
               binary_digest = digest(binary)
-              stock_bin = Path(shutil.which("cargo")).resolve().parent
-              require(str(stock_bin).lower() in [p.rstrip("\\/").lower() for p in os.environ["PATH"].split(os.pathsep)], "Cargo bin is not a stock PATH slot")
-              staged = stock_bin / "ripr.exe"
-              require(not staged.exists() and shutil.which("ripr") is None, "unexpected existing stock ripr occupant")
-              require(2 * binary.stat().st_size + sum(p.stat().st_size for p in out.glob("*") if p.is_file()) < 128 * 1024**2, "staging/evidence budget exceeded")
-              staged_by_consumer = True  # Exact path was absent; this run owns even a partial copy.
-              shutil.copyfile(binary, staged)
+              # Until real aliases are verified, retain the conservative two-payload charge.
+              payload_charge = 2 * binary.stat().st_size
+              allocation = payload_allocation(binary, target)
+              payload_charge = allocation["charged_bytes"]
+              receipt["payload_allocation"] = stage_single_allocation(binary, staged, target, binary_digest, out, ownership)
+              immutable_handle = k.CreateFileW(str(staged), 0x80000000, 1, None, 3, 0x80, None)
+              require(immutable_handle not in (None, c.c_void_p(-1).value), "immutable executable handle failed")
+              require((staged.stat().st_dev, staged.stat().st_ino) == (allocation["device"], allocation["file_id"]), "locked allocation identity changed")
+              require(staged.stat().st_nlink == 1 and digest(staged) == binary_digest, "locked executable drift")
+              try:
+                  with staged.open("r+b"):
+                      pass
+              except PermissionError:
+                  receipt["immutable_executable"] = {"write_open_refused": True, "share_mode": "read_only"}
+              else:
+                  raise RuntimeError("immutable executable permits a writer")
               resolved = shutil.which("ripr")
               require(resolved, "staged candidate does not resolve")
               rejected("wrong-digest-before-launch", lambda: admit(actual_head, expected_head, digest(resolved), "0" * 64, resolved, staged))
               rejected("stale-source-receipt-before-launch", lambda: admit(actual_head, "0" * 40, digest(resolved), binary_digest, resolved, staged))
               admit(actual_head, expected_head, digest(resolved), binary_digest, resolved, staged)
-              receipt["producer"] = {"artifact": artifact, "bytes": binary.stat().st_size, "sha256": binary_digest,
+              receipt["producer"] = {"artifact": artifact, "bytes": payload_charge, "sha256": binary_digest,
                                      "stock_resolution": resolved, "staging_before_journey_admission": True}
               fixture = Path(os.environ["RUNNER_TEMP"]) / ("selector literal " + os.environ["GITHUB_RUN_ID"] + "-" + os.environ["GITHUB_RUN_ATTEMPT"])
               require(not fixture.exists(), "fixture collision")
@@ -655,31 +731,23 @@ jobs:
               require(status == 0 and packet(stdout, source, actual_id) == actual_id, "literal repeat changed selected fixture")
               receipt.update(state="PASS", actual_listed_id=actual_id, literal_replays=3, siblings_retried=["explain", "context"])
           except Exception as error:
-              receipt.update(state="FAIL", error_type=type(error).__name__, error=str(error))
+              record_failure(receipt, type(error).__name__, str(error))
           finally:
               try:
-                  receipt["staging_cleanup"] = remove_staged(globals().get("staged"), staged_by_consumer)
+                  if immutable_handle not in (None, c.c_void_p(-1).value):
+                      require(k.CloseHandle(immutable_handle), "immutable handle close failed")
+                  receipt["staging_cleanup"] = remove_staged(globals().get("staged"), ownership["staged"])
               except Exception as cleanup_error:
                   receipt["staging_cleanup"] = {"state": "FAILED", "error": str(cleanup_error)}
-                  if receipt.get("error"):
-                      receipt["primary_error"] = receipt["error"]
-                  receipt.update(state="FAIL", error_type="StagingCleanup", error=str(cleanup_error))
-              receipt["python"] = sys.version
-              receipt["total_deadline_seconds"] = 720
-              receipt["evidence_bytes"] = sum(p.stat().st_size for p in out.glob("*") if p.is_file())
-              receipt["charged_binary_and_staging_bytes"] = 2 * binary.stat().st_size if "binary" in globals() and binary.exists() else 0
-              base_bytes = receipt["evidence_bytes"] + receipt["charged_binary_and_staging_bytes"] + 16
-              if "fixture" in globals() and fixture.exists():
-                  base_bytes += sum(p.stat().st_size for p in fixture.rglob("*") if p.is_file())
-              receipt["final_charged_bytes"] = 0
-              for _ in range(6):
-                  # Charge both the pretty receipt and its compact copy in the wrapper log.
-                  retained = base_bytes + len(json.dumps(receipt, indent=2).encode()) + len(json.dumps(receipt).encode()) + 2
-                  if retained > 128 * 1024**2:
-                      receipt.update(state="FAIL", error_type="EvidenceBudget", error="final evidence/staging budget exceeded")
-                  if receipt["final_charged_bytes"] == retained:
-                      break
-                  receipt["final_charged_bytes"] = retained
+                  record_failure(receipt, "StagingCleanup", str(cleanup_error))
+              try:
+                  if ownership["target"]:
+                      shutil.rmtree(target)
+                  receipt["producer_cleanup"] = {"state": "REMOVED" if "target" in globals() and not target.exists() else "NOT_CREATED"}
+              except Exception as cleanup_error:
+                  receipt["producer_cleanup"] = {"state": "FAILED", "error": str(cleanup_error)}
+                  record_failure(receipt, "ProducerCleanup", str(cleanup_error))
+              finalize_evidence(receipt, out, globals().get("fixture"), payload_charge)
               (out / "receipt.json").write_bytes(json.dumps(receipt, indent=2).encode())
               print(json.dumps(receipt), flush=True)
           sys.exit(0 if receipt["state"] == "PASS" else 1)
@@ -756,12 +824,17 @@ jobs:
           if status != (0 if receipt["state"] == "PASS" else 1):
               raise SystemExit("selector native status disagrees with retained receipt")
           cleanup = receipt.get("staging_cleanup", {}).get("state")
+          producer_cleanup = receipt.get("producer_cleanup", {}).get("state")
+          if producer_cleanup not in ("NOT_CREATED", "REMOVED") or (receipt["state"] == "PASS" and producer_cleanup != "REMOVED"):
+              raise SystemExit("selector exclusive producer cleanup missing or failed")
           if cleanup not in ("NOT_CREATED", "REMOVED") or (receipt["state"] == "PASS" and cleanup != "REMOVED"):
               raise SystemExit("selector staged executable cleanup missing or failed")
           if receipt["state"] == "FAIL":
               if not receipt.get("error"):
                   raise SystemExit("selector FAIL has no retained failure")
           else:
+              if receipt.get("payload_allocation", {}).get("peak_payload_allocations") != 1 or not receipt.get("immutable_executable", {}).get("write_open_refused"):
+                  raise SystemExit("selector PASS lacks single immutable allocation")
               cases = {c["label"]: c for c in receipt.get("cases", [])}
               literal = ("explain-literal-replay", "context-literal-replay", "literal-repeat")
               retries = ("explain-actual-id", "context-actual-id")
