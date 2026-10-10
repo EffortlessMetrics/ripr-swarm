@@ -290,6 +290,7 @@ fn caller_invokes_named_entry(
 /// identity, not token coincidence). Comments and strings are masked
 /// first because `CallFact.text` is the original source line: a receiver
 /// on the same line as `"parse("` must not look like an entry.
+#[cfg(test)]
 fn test_call_invokes_named_entry(text: &str, callee_name: &str) -> bool {
     named_entry_self_type(text, callee_name).is_some()
 }
