@@ -35,10 +35,14 @@ a wrapper-local `parse`. A test-local `fn`/`let` of that name is not an
 entry, including on lexical-fallback files. A `fn parse()` item on
 `CallFact.text` is not a call (`property_macro_noop_named_test` names
 its test after the owner). Do not credit `helper_owner_call` through
-the ambiguous name. Bless only verdict-corpus rows `verdict-corpus check`
-actually moves: neighboring `semver-max-comparators` and the rusqlite
-`no_static_path` sibling stay as labeled, because they are not
-uniqueness-only refusals that tests enter.
+the ambiguous name. After the class rewrite, reach is `unknown` naming
+that identity limit — not `no` with a leftover no-path summary — and
+the stop reason is `helper_identity_unresolved`, not
+`static_probe_unknown`'s probe-shape gloss (#7272). Bless only
+verdict-corpus rows `verdict-corpus check` actually moves: neighboring
+`semver-max-comparators` and the rusqlite `no_static_path` sibling stay
+as labeled, because they are not uniqueness-only refusals that tests
+enter.
 
 ## 2026-10-08: A green PR head plus clean mergeability does not prove the squash result compiles (#7150)
 

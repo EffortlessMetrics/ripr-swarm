@@ -2496,6 +2496,7 @@ while `call_effect` remains the fallback for other observable calls.
 - `no_changed_rust_line`
 - `macro_reach_unresolved`
 - `gap_evidence_unresolved`
+- `helper_identity_unresolved`
 - `transitive_reach_unresolved`
 - `infection_evidence_unknown`
 - `propagation_evidence_unknown`

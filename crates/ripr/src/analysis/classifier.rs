@@ -104,7 +104,9 @@ pub(in crate::analysis) fn classify_probe_with_candidate_index(
 /// receiver/foreign path that only shares the bare name (`req.parse()`,
 /// `req.r#parse()`, `foreign::r#parse()`), or a type-qualified sibling of
 /// the uniqueness-stop hop (`B::parse` when the hop is `A::parse`), stays
-/// `no_static_path` (#7270 / #7268).
+/// `no_static_path` (#7270 / #7268). After the class rewrite, reach is an
+/// identity-unknown stage (not `no`) and the stop reason names callee
+/// identity rather than a missing probe shape (#7272).
 fn withhold_helper_uniqueness_as_unknown(
     finding: &mut Finding,
     chain: &HelperChain,
@@ -117,6 +119,13 @@ fn withhold_helper_uniqueness_as_unknown(
         return;
     };
     finding.class = ExposureClass::StaticUnknown;
+    finding.ripr.reach = StageEvidence::new(
+        StageState::Unknown,
+        Confidence::Low,
+        format!(
+            "ripr cannot tell which `{entry}` a test calls because that name is not unique in the workspace"
+        ),
+    );
     let ripr = &finding.ripr;
     finding.confidence = finding.confidence.min(confidence_score(
         &ripr.reach,
@@ -126,11 +135,16 @@ fn withhold_helper_uniqueness_as_unknown(
         &ripr.reveal.discriminate,
         &finding.class,
     ));
+    finding
+        .stop_reasons
+        .retain(|reason| *reason != StopReason::StaticProbeUnknown);
     if !finding
         .stop_reasons
-        .contains(&StopReason::StaticProbeUnknown)
+        .contains(&StopReason::HelperIdentityUnresolved)
     {
-        finding.stop_reasons.push(StopReason::StaticProbeUnknown);
+        finding
+            .stop_reasons
+            .push(StopReason::HelperIdentityUnresolved);
     }
     finding.missing = vec![format!(
         "helper chain abstains: `{entry}` is not a unique function in the workspace"
@@ -335,6 +349,38 @@ mod tests {
         })
     }
 
+    fn assert_uniqueness_unknown_identity_stage(finding: &Finding, entry: &str) {
+        assert_eq!(finding.class, ExposureClass::StaticUnknown);
+        assert_eq!(finding.ripr.reach.state, StageState::Unknown);
+        assert_ne!(finding.ripr.reach.state, StageState::No);
+        assert!(
+            finding.ripr.reach.summary.contains(&format!("`{entry}`"))
+                && finding.ripr.reach.summary.contains("not unique"),
+            "{}",
+            finding.ripr.reach.summary
+        );
+        assert!(
+            finding
+                .stop_reasons
+                .contains(&StopReason::HelperIdentityUnresolved),
+            "{:?}",
+            finding.stop_reasons
+        );
+        assert!(
+            !finding
+                .stop_reasons
+                .contains(&StopReason::StaticProbeUnknown),
+            "{:?}",
+            finding.stop_reasons
+        );
+        let gloss = StopReason::HelperIdentityUnresolved.describe();
+        assert!(
+            gloss.contains("workspace function") && gloss.contains("not unique"),
+            "{gloss}"
+        );
+        assert!(!gloss.contains("probe"), "{gloss}");
+    }
+
     fn helper_probe(file: &str, owner: &str) -> Probe {
         Probe {
             id: ProbeId(format!("probe:{file}:{owner}")),
@@ -370,7 +416,7 @@ mod tests {
         });
         let finding = classify_probe(&helper_probe("src/op.rs", "op"), &index, true, None);
 
-        assert_eq!(finding.class, ExposureClass::StaticUnknown);
+        assert_uniqueness_unknown_identity_stage(&finding, "parse");
         assert!(
             finding
                 .related_tests
@@ -396,6 +442,18 @@ mod tests {
                 }),
             "{:?}",
             finding.recommended_next_step
+        );
+        let human = crate::output::human::render_finding(&finding);
+        assert!(human.contains("Evidence: reach unknown"), "{human}");
+        assert!(!human.contains("Evidence: reach no"), "{human}");
+        assert!(human.contains("helper_identity_unresolved"), "{human}");
+        assert!(
+            human.contains("which workspace function") && human.contains("not unique"),
+            "{human}"
+        );
+        assert!(
+            !human.contains("no probe shape") && !human.contains("probe shape"),
+            "{human}"
         );
     }
 
@@ -425,6 +483,12 @@ mod tests {
         );
 
         assert_eq!(finding.class, ExposureClass::NoStaticPath);
+        assert_eq!(finding.ripr.reach.state, StageState::No);
+        assert!(
+            !finding
+                .stop_reasons
+                .contains(&StopReason::HelperIdentityUnresolved)
+        );
         assert!(
             finding
                 .missing
@@ -458,6 +522,7 @@ mod tests {
         let finding = classify_probe(&helper_probe("src/op.rs", "op"), &index, true, None);
 
         assert_eq!(finding.class, ExposureClass::NoStaticPath);
+        assert_eq!(finding.ripr.reach.state, StageState::No);
         assert!(
             finding
                 .missing
@@ -477,6 +542,12 @@ mod tests {
         let finding = classify_probe(&helper_probe("src/op.rs", "op"), &index, true, None);
 
         assert_eq!(finding.class, ExposureClass::NoStaticPath);
+        assert_eq!(finding.ripr.reach.state, StageState::No);
+        assert!(
+            !finding
+                .stop_reasons
+                .contains(&StopReason::HelperIdentityUnresolved)
+        );
         assert!(
             finding
                 .related_tests
@@ -510,6 +581,12 @@ mod tests {
         let finding = classify_probe(&helper_probe("src/op.rs", "op"), &index, true, None);
 
         assert_eq!(finding.class, ExposureClass::NoStaticPath);
+        assert_eq!(finding.ripr.reach.state, StageState::No);
+        assert!(
+            !finding
+                .stop_reasons
+                .contains(&StopReason::HelperIdentityUnresolved)
+        );
     }
 
     // #7270 / retain #7080: bare `r#parse(...)` is the same identifier as
@@ -519,7 +596,7 @@ mod tests {
         let index = uniqueness_parse_index(r#"r#parse(">=1.0")"#);
         let finding = classify_probe(&helper_probe("src/op.rs", "op"), &index, true, None);
 
-        assert_eq!(finding.class, ExposureClass::StaticUnknown);
+        assert_uniqueness_unknown_identity_stage(&finding, "parse");
         assert!(
             finding
                 .missing
@@ -772,6 +849,12 @@ mod tests {
         let finding = classify_probe(&helper_probe("src/op.rs", "op"), &index, true, None);
 
         assert_eq!(finding.class, ExposureClass::NoStaticPath);
+        assert_eq!(finding.ripr.reach.state, StageState::No);
+        assert!(
+            !finding
+                .stop_reasons
+                .contains(&StopReason::HelperIdentityUnresolved)
+        );
         assert!(
             finding
                 .related_tests
