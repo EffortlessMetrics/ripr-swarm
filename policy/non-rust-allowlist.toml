@@ -856,13 +856,3 @@ surface = "repo"
 classification = "fixture"
 reason = "Committed agent-as-user run harness output that docs/PUBLIC_PROOF.md is rendered from. It has no in-repo producer command, so it is edited by hand and not refreshed by public-proof."
 covered_by = ["cargo test -p xtask public_proof"]
-
-# Synthetic tests extract and execute the actual inline Actions owner; no product build.
-[[allow]]
-glob = "tools/python/windows-selector-consumer/test_evidence.py"
-kind = "workflow_consumer_test"
-owner = "ci/windows-selector-consumer"
-surface = "repo"
-classification = "tooling"
-reason = "Stdlib-only synthetic storage and refusal controls for the inline Windows selector consumer; native Windows acceptance remains separate (#5252/#5581)."
-covered_by = ["python tools/python/windows-selector-consumer/test_evidence.py", "cargo xtask check-file-policy"]
