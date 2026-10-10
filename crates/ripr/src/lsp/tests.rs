@@ -20484,12 +20484,19 @@ struct DisabledLanguageFixture {
 }
 
 fn disabled_language_fixture(name: &str) -> Result<DisabledLanguageFixture, String> {
+    disabled_language_fixture_with_changed_python(name, "pricing.py")
+}
+
+fn disabled_language_fixture_with_changed_python(
+    name: &str,
+    changed_python_name: &str,
+) -> Result<DisabledLanguageFixture, String> {
     let temp = unique_lsp_test_root(name)?;
     let root = temp.path().to_path_buf();
     std::fs::create_dir_all(root.join("src")).map_err(|err| format!("create src failed: {err}"))?;
     std::fs::create_dir_all(root.join("zpy")).map_err(|err| format!("create zpy failed: {err}"))?;
     let rust_path = root.join("src/main.rs");
-    let changed_python_path = root.join("zpy/pricing.py");
+    let changed_python_path = root.join("zpy").join(changed_python_name);
     let unchanged_python_path = root.join("zpy/helpers.py");
     std::fs::write(&rust_path, "fn selected() -> bool { true }\n")
         .map_err(|err| format!("write main.rs failed: {err}"))?;
@@ -20653,6 +20660,54 @@ async fn workspace_status_reports_disabled_language_document_not_analyzed() -> R
     {
         return Err(format!(
             "an opened unchanged python document must stay clean/served: {unchanged}"
+        ));
+    }
+    Ok(())
+}
+
+/// #7205: preview advisories keep a literal `%` in `sample_paths`. The
+/// opened-document relative path goes through `stable_path_text`, which
+/// encodes that `%` as `%25`. Both sides must still bind, or a complete
+/// listing revives the clean/served lie for that filename.
+#[tokio::test]
+async fn workspace_status_matches_disabled_language_path_with_literal_percent() -> Result<(), String>
+{
+    let fixture = disabled_language_fixture_with_changed_python(
+        "disabled-language-percent-path",
+        "pricing_%.py",
+    )?;
+    let (service, socket) = LspService::new(|client| Backend::new(client, fixture.root.clone()));
+    drop(socket);
+    let backend = service.inner();
+    backend
+        .did_open(quarantine_open_params(
+            &fixture.changed_python_uri,
+            "def price():\n    return 1\n",
+        ))
+        .await;
+    backend
+        .refresh_plan(disabled_language_workspace_diagnostics(
+            &fixture,
+            None,
+            python_disabled_adapter_coverage(&["zpy/pricing_%.py"], 1),
+        )?)
+        .ok_or_else(|| "expected committed snapshot".to_string())?;
+
+    let status = workspace_status_json(backend).await?;
+    let changed = open_document_entry(&status, fixture.changed_python_uri.as_str())?;
+    if changed["state"].as_str() == Some("clean")
+        || changed["line_local_diagnostics"].as_str() == Some("served")
+    {
+        return Err(format!(
+            "a disabled-language file whose name contains % must not claim clean/served: {changed}"
+        ));
+    }
+    if changed["state"].as_str() != Some("not_analyzed")
+        || changed["line_local_diagnostics"].as_str() != Some("not_analyzed")
+        || changed["not_analyzed_reason"].as_str() != Some("language_adapter_not_enabled")
+    {
+        return Err(format!(
+            "literal-% disabled-language row must stay not_analyzed with the new reason: {changed}"
         ));
     }
     Ok(())

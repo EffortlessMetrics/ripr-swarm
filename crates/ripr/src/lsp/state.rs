@@ -783,7 +783,15 @@ impl UnavailableAdapterCoverage {
             return None;
         }
         let normalized = normalize_unavailable_adapter_path(relative);
-        let named = self.named_paths.iter().any(|path| path == &normalized);
+        // Preview advisories store `sample_paths` as lossy `/`-separated
+        // producer text (`to_string_lossy`), so a literal `%` stays `%`.
+        // Document relatives go through `stable_path_text`, which reserves
+        // `%XX` and therefore encodes that `%` as `%25`. Encode both sides
+        // with the same helper so a complete listing still names the file.
+        let named = self
+            .named_paths
+            .iter()
+            .any(|path| normalize_unavailable_adapter_path(Path::new(path)) == normalized);
         let incomplete = self
             .incomplete_languages
             .iter()
@@ -3167,6 +3175,33 @@ mod tests {
             .is_some()
         {
             return Err("an unnamed python file must stay outside a complete listing".into());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn unavailable_adapter_named_path_matches_producer_literal_percent() -> Result<(), String> {
+        let coverage =
+            UnavailableAdapterCoverage::from_preview_advisories(&[PreviewLanguageAdvisory {
+                language: "python".to_string(),
+                file_count: 1,
+                sample_paths: vec!["zpy/pricing_%.py".to_string()],
+                javascript_file_count: 0,
+                enabled: false,
+            }]);
+        let outcome = python_unavailable_outcome()?;
+        if coverage.not_enabled_language(Path::new("zpy/pricing_%.py"), Some(&outcome))
+            != Some(LanguageId::Python)
+        {
+            return Err(
+                "a producer-raw % in the sample path must still bind the opened document".into(),
+            );
+        }
+        if coverage
+            .not_enabled_language(Path::new("zpy/pricing_%25.py"), Some(&outcome))
+            .is_some()
+        {
+            return Err("a distinct %25 filename must not match a literal-% sample".into());
         }
         Ok(())
     }
