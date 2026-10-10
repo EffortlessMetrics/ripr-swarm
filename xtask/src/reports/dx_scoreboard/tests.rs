@@ -2997,6 +2997,34 @@ fn a_complete_empty_workload_is_admitted() -> Result<(), String> {
     Ok(())
 }
 
+#[cfg(unix)]
+#[test]
+fn an_incomplete_check_document_cannot_clean_trust() -> Result<(), String> {
+    let warmup = complete_check_json(1).to_string();
+    let mut incomplete = complete_check_json(1);
+    incomplete["analysis_outcome"]["analysis_complete"] = json!(false);
+    incomplete["analysis_outcome"]["outcome"]["kind"] = json!("partial_with_limitations");
+    let (samples, contradictions, missing) = record_pair(
+        Ok(capture_stub_stdout(&warmup)?),
+        Ok(Some(capture_stub_stdout(&incomplete.to_string())?)),
+    );
+    let warm = speed_ms(&samples).ok_or("warm check sample missing")?;
+    assert!(
+        matches!(warm.outcome, SampleOutcome::Incomplete(_)),
+        "{:?}",
+        warm.outcome
+    );
+    assert!(
+        contradictions.is_none(),
+        "rejected analysis must not contribute a contradiction count: {contradictions:?}"
+    );
+    assert!(
+        missing.contains(&"warm check JSON"),
+        "rejected analysis must keep trust incomplete: {missing:?}"
+    );
+    Ok(())
+}
+
 #[test]
 fn truncated_findings_keep_speed_and_hold_trust() {
     let mut document = complete_check_json(1);

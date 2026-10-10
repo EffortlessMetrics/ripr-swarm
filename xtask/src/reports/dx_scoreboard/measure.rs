@@ -469,14 +469,21 @@ pub(crate) fn record_warm_check(
                 &measured,
                 complete,
             ));
-            match serde_json::from_str::<Value>(&measured.output.stdout) {
-                Ok(json) => match check_contradictions(&json) {
-                    Ok(found) => {
-                        *contradictions = Some(merge_contradictions(contradictions.take(), found));
-                    }
+            // Trust may scan only an admitted complete document. A rejected
+            // subject or incomplete analysis cannot contribute a clean zero.
+            if admission.is_complete() {
+                match serde_json::from_str::<Value>(&measured.output.stdout) {
+                    Ok(json) => match check_contradictions(&json) {
+                        Ok(found) => {
+                            *contradictions =
+                                Some(merge_contradictions(contradictions.take(), found));
+                        }
+                        Err(_) => missing_sources.push("warm check JSON"),
+                    },
                     Err(_) => missing_sources.push("warm check JSON"),
-                },
-                Err(_) => missing_sources.push("warm check JSON"),
+                }
+            } else {
+                missing_sources.push("warm check JSON");
             }
         }
     }
