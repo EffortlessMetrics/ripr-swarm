@@ -20,6 +20,7 @@ Linked issues:
 - #6482 (an assertion borrowed from a test-local check helper pairs through
   the helper's call)
 - #7004 (post-`let` mutation voids a bound boundary name)
+- #7042 item 4 (newline-split reassignment still voids)
 
 Linked PRs:
 
@@ -255,8 +256,12 @@ relation are out of scope.
 - Given `let mut got = gate(10); got = true; assert_eq!(got, true)`, or
   `got += 1` / `&mut got` in place of the reassignment, when the predicate
   is classified, then it does not pair: the binding no longer holds the
-  boundary call's result. Given `let mut got = gate(10);` with no later
-  mutation, then `assert_eq!(got, true)` still pairs.
+  boundary call's result. Given `got` then `= true;` on the next line, it
+  also does not pair (#7042 item 4). A `let` that exists only inside a
+  string or comment does not replace a real binding. Given
+  `let mut got = gate(10);` with no later mutation, then
+  `assert_eq!(got, true)` still pairs, including when the assertion is
+  wrapped across lines or the boundary argument is a quoted literal.
 
 ## Test Mapping
 
@@ -268,6 +273,7 @@ relation are out of scope.
 - `fixtures/predicate_pairing_reassigned_binding`
 - `fixtures/predicate_pairing_compound_assigned_binding`
 - `fixtures/predicate_pairing_mutably_borrowed_binding`
+- `fixtures/predicate_pairing_newline_split_reassigned_binding`
 - `crates/ripr/tests/owner_pin_execution.rs::predicate_pairing_cannot_reuse_refused_boundary_equalities`
 - `crates/ripr/tests/helper_wrapper_reach.rs`
 
