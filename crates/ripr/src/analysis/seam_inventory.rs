@@ -2729,7 +2729,10 @@ fn build_seam_from_shape(
     let required_discriminator = required_discriminator_for(kind, &expression);
     let expected_sink = expected_sink_for(kind);
     let owner_call = OwnerCallShape::from_function(owner_fact);
-    let seam = RepoSeam::new(
+    // The ID hashes the line-ending-normalized logical offset (#7203): a
+    // CRLF working tree and an LF checkout of the same commit must produce
+    // one seam ID. The stored offset stays raw for rendering and spans.
+    let seam = RepoSeam::new_in_source(
         path,
         owner,
         kind,
@@ -2738,6 +2741,7 @@ fn build_seam_from_shape(
         expression,
         required_discriminator,
         expected_sink,
+        source,
     )
     .with_owner_call(owner_call);
     // Span geometry is additional precision: when derivation fails (stale or
@@ -2979,6 +2983,89 @@ marker = "libtest_mimic::Trial"
             index.extend_functions(functions);
         }
         Ok(index)
+    }
+
+    /// #7203: the production inventory's seam IDs must not move when the
+    /// identical committed tree is checked out with CRLF working-tree
+    /// line endings instead of LF.
+    #[test]
+    fn inventory_seam_ids_are_stable_across_crlf_and_lf_line_endings() -> Result<(), String> {
+        // #7203: the same committed tree checked out with a CRLF working
+        // tree (`core.autocrlf=true`) must yield the same seam IDs as the
+        // LF spelling. `ripr outcome` joins snapshots by seam ID, so a
+        // byte-spelling shift reported a real test improvement as
+        // new+removed instead of closed (RIPR-SPEC-0005 § Stable Seam ID
+        // Rules: IDs must be stable across runs of the same logical code).
+        let lf = concat!(
+            "pub fn discounted_total(amount_cents: i64, discount_threshold_cents: i64) -> i64 {\n",
+            "    if amount_cents >= discount_threshold_cents {\n",
+            "        amount_cents - discount_threshold_cents\n",
+            "    } else {\n",
+            "        amount_cents\n",
+            "    }\n",
+            "}\n",
+        );
+        let crlf = lf.replace('\n', "\r\n");
+        let path = PathBuf::from("src/main.rs");
+        let lf_seams = inventory_seams_from_index(
+            std::slice::from_ref(&path),
+            &index_from_files(&[(path.clone(), lf)])?,
+        );
+        let crlf_seams = inventory_seams_from_index(
+            std::slice::from_ref(&path),
+            &index_from_files(&[(path.clone(), crlf.as_str())])?,
+        );
+        // The fixture must actually carry seams on both sides before the
+        // identity comparison can mean anything.
+        if lf_seams.is_empty() || crlf_seams.is_empty() {
+            return Err(format!(
+                "expected seams in both spellings, got lf={} crlf={}",
+                lf_seams.len(),
+                crlf_seams.len()
+            ));
+        }
+        if lf_seams.len() != crlf_seams.len() {
+            return Err(format!(
+                "line-ending spelling must not change the seam set: lf={} crlf={}",
+                lf_seams.len(),
+                crlf_seams.len()
+            ));
+        }
+        for (lf_seam, crlf_seam) in lf_seams.iter().zip(crlf_seams.iter()) {
+            if lf_seam.owner() != crlf_seam.owner()
+                || lf_seam.kind() != crlf_seam.kind()
+                || lf_seam.expression() != crlf_seam.expression()
+            {
+                return Err(format!(
+                    "spellings must pair the same logical seam: {:?} vs {:?}",
+                    (lf_seam.owner(), lf_seam.kind(), lf_seam.expression()),
+                    (crlf_seam.owner(), crlf_seam.kind(), crlf_seam.expression()),
+                ));
+            }
+            // Control that the fixture exercises the bug: the raw byte
+            // offsets genuinely shift with the spelling (the predicate sits
+            // behind line 1's terminator).
+            if lf_seam.byte_offset() >= crlf_seam.byte_offset() {
+                return Err(format!(
+                    "expected the CRLF spelling to shift the raw offset: lf={} crlf={}",
+                    lf_seam.byte_offset(),
+                    crlf_seam.byte_offset()
+                ));
+            }
+            if lf_seam.id() != crlf_seam.id() {
+                return Err(format!(
+                    "identical logical seam changed ID with line-ending spelling: \
+                     lf {} ({}) at byte {} vs crlf {} ({}) at byte {}",
+                    lf_seam.id().as_str(),
+                    lf_seam.owner(),
+                    lf_seam.byte_offset(),
+                    crlf_seam.id().as_str(),
+                    crlf_seam.owner(),
+                    crlf_seam.byte_offset(),
+                ));
+            }
+        }
+        Ok(())
     }
 
     /// #5357: the production inventory reads the owner's parser facts into
