@@ -557,6 +557,52 @@ mod tests {
     }
 
     #[test]
+    fn given_helper_chain_refused_when_tests_call_parse_after_match_then_static_unknown() {
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions: vec![
+                function("src/op.rs", "op"),
+                function_with_calls("src/parse.rs", "parse", &[("op", "op(bytes)")]),
+                function("src/other.rs", "parse"),
+            ],
+            tests: vec![test_calling(
+                "tests/req.rs",
+                "digit_after_wildcard",
+                "parse",
+                r#"match parse(">=1.0") { _ => {} }"#,
+            )],
+            ..Default::default()
+        });
+        let finding = classify_probe(&helper_probe("src/op.rs", "op"), &index, true, None);
+
+        assert_eq!(finding.class, ExposureClass::StaticUnknown);
+    }
+
+    #[test]
+    fn given_helper_chain_refused_when_tests_import_foreign_from_str_then_no_static_path() {
+        let mut imported = test_calling(
+            "tests/req.rs",
+            "from_json",
+            "from_str",
+            "from_str(\">=1.0\")",
+        );
+        imported.body = "use serde_json::from_str;\nfrom_str(\">=1.0\")".into();
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions: vec![
+                function("src/op.rs", "op"),
+                function_with_calls("src/parse.rs", "parse", &[("op", "op(bytes)")]),
+                function("src/other.rs", "parse"),
+                function_with_calls("src/from_str.rs", "from_str", &[("parse", "parse(text)")]),
+                function("src/other_from_str.rs", "from_str"),
+            ],
+            tests: vec![imported],
+            ..Default::default()
+        });
+        let finding = classify_probe(&helper_probe("src/op.rs", "op"), &index, true, None);
+
+        assert_eq!(finding.class, ExposureClass::NoStaticPath);
+    }
+
+    #[test]
     fn given_helper_chain_refused_when_tests_call_spaced_or_turbofish_parse_then_static_unknown() {
         for text in [r#"parse (">=1.0")"#, r#"parse::<&str>(">=1.0")"#] {
             let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {

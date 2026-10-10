@@ -205,6 +205,7 @@ fn tests_call_name(index: &RustIndex, name: &str) -> bool {
             test.calls.iter().any(|call| {
                 call.name == name
                     && call_is_workspace_entry(index, name, &call.text)
+                    && !test_imports_foreign_entry(index, test, name)
                     && !local_binding_shadows(
                         index,
                         LocalBindingSubject {
@@ -219,6 +220,28 @@ fn tests_call_name(index: &RustIndex, name: &str) -> bool {
                     )
             })
         })
+}
+
+/// Import identity only. Do not reuse `test_call_is_shadowed`: uniqueness
+/// would hide every #7080 entry.
+fn test_imports_foreign_entry(
+    index: &RustIndex,
+    test: &crate::analysis::facts::TestSummary,
+    name: &str,
+) -> bool {
+    let files = index.files();
+    let file_facts = files.get(&test.file);
+    let source: &str = match &file_facts {
+        Some(facts) => facts.source.as_ref(),
+        None => test.body.as_str(),
+    };
+    let renamed_import = super::reveal::flattened_use_paths(source)
+        .iter()
+        .any(|import| {
+            import.alias.as_deref() == Some(name) && import.path.rsplit("::").next() != Some(name)
+        });
+    renamed_import
+        || super::reveal::file_imports_foreign_callee_name(source, name, &index.package_names)
 }
 
 struct LocalBindingSubject<'a> {
@@ -326,11 +349,11 @@ fn named_entry_self_type(text: &str, callee_name: &str) -> Option<Option<String>
                 crate::analysis::extract::call_name_bounds_before_paren(&masked, i)
             && masked[start..end] == *callee_name
         {
+            let raw_before = masked[..start].chars().next_back();
             let prefix = masked[..start].trim_end();
-            let enters = match prefix.chars().next_back() {
-                None => true,
-                Some('.') => false,
-                Some(before) => !before.is_ascii_alphanumeric() && before != '_',
+            let enters = match raw_before {
+                Some(character) if character.is_ascii_alphanumeric() || character == '_' => false,
+                _ => !matches!(prefix.chars().next_back(), Some('.')),
             };
             if enters {
                 return Some(type_path_self_type(prefix));
@@ -1446,6 +1469,15 @@ mod tests {
             "parse"
         ));
         assert!(!test_call_invokes_named_entry("req.parse()", "parse"));
+        assert!(test_call_invokes_named_entry(
+            r#"match parse(">=1.0") { _ => {} }"#,
+            "parse"
+        ));
+        assert!(test_call_invokes_named_entry("return parse(x)", "parse"));
+        assert!(test_call_invokes_named_entry(
+            "if parse(x).is_err()",
+            "parse"
+        ));
         assert!(
             !test_call_invokes_named_entry("req. parse()", "parse"),
             "whitespace after a receiver dot is still a receiver call"
@@ -1580,6 +1612,25 @@ mod tests {
             ambiguous_helper_entry_called_by_tests(&chain, &calling_fallback),
             None,
             "a lexical-fallback local fn parse is not the workspace entry"
+        );
+
+        let mut imported = with_test("from_str", "from_str(\">=1.0\")");
+        imported.body = "use serde_json::from_str;\nfrom_str(\">=1.0\")".into();
+        let calling_imported = index_with_tests(
+            vec![
+                owner.clone(),
+                parse.clone(),
+                twin.clone(),
+                function("src/from_str.rs", "from_str", &[("parse", "parse(text)")]),
+                function("src/other_from_str.rs", "from_str", &[]),
+            ],
+            vec![imported],
+        );
+        let chain = resolve_chain("op", &calling_imported, true, &[]);
+        assert_eq!(
+            ambiguous_helper_entry_called_by_tests(&chain, &calling_imported),
+            None,
+            "a foreign import of from_str is not the workspace entry"
         );
 
         let mut local_parse = with_test("parse", "parse(\">=1.0\")");
