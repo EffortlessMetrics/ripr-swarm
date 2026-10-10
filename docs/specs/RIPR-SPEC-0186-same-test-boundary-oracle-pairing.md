@@ -257,9 +257,11 @@ relation are out of scope.
   `got += 1` / `&mut got` in place of the reassignment, when the predicate
   is classified, then it does not pair: the binding no longer holds the
   boundary call's result. Given `got` then `= true;` on the next line, it
-  also does not pair (#7042 item 4). Given `let mut got = gate(10);` with
-  no later mutation, then `assert_eq!(got, true)` still pairs, including
-  when the assertion is wrapped across lines.
+  also does not pair (#7042 item 4). A `let` that exists only inside a
+  string or comment does not replace a real binding. Given
+  `let mut got = gate(10);` with no later mutation, then
+  `assert_eq!(got, true)` still pairs, including when the assertion is
+  wrapped across lines or the boundary argument is a quoted literal.
 
 ## Test Mapping
 

@@ -501,17 +501,19 @@ fn boundary_bound_locals(
     // the assertion no longer observes the boundary call's result (#7004).
     // Mask the whole body, then scan `;` statements in order, so a
     // newline-split reassignment (`got\n= true;`) still voids (#7042 item 4).
-    // `let` detection and CallFact text stay on the original line so a
-    // quoted boundary argument (`gate("alpha")`) is still visible;
-    // only mutation looks at the mask. Line-start `let` keeps an
-    // unmutated binding inside a block pairing.
+    // `let` registration requires the masked line to still look like a
+    // `let`, so a string or comment line that merely contains
+    // `let got = gate(10);` cannot replace a real binding. CallFact text
+    // stays on the original line so a quoted boundary argument
+    // (`gate("alpha")`) is still visible; mutation walks the mask.
+    // Line-start `let` keeps an unmutated binding inside a block pairing.
     let masked = crate::analysis::extract::mask_comments_and_strings(&test.body);
     let masked_lines: Vec<&str> = masked.lines().collect();
     let mut last: Vec<(String, bool)> = Vec::new();
     let mut pending = String::new();
     for (offset, original_line) in test.body.lines().enumerate() {
         let masked_line = masked_lines.get(offset).copied().unwrap_or(original_line);
-        let bound = let_binding_name(original_line);
+        let bound = let_binding_name(masked_line).and_then(|_| let_binding_name(original_line));
         if let Some(name) = bound.as_deref() {
             let line_number = test.start_line + offset;
             let call = CallFact {
@@ -2120,6 +2122,50 @@ mod tests {
         assert!(
             pairing_with_admitted_oracles(&probe, Some(&owner), &[&bound], &activation),
             "gate(\"alpha\") must keep the let-bound call on the boundary; masking is only for mutation"
+        );
+    }
+
+    #[test]
+    fn string_interior_let_does_not_replace_a_real_binding() {
+        let probe = predicate_probe("input >= 10");
+        let owner = gate_owner();
+        let mut off_boundary = test_summary(
+            "string_let_false_credit",
+            "let got = gate(5);\nlet _s = \"\nlet got = gate(10);\n\";\nassert_eq!(got, true);",
+            vec![call("gate", "let got = gate(5);")],
+            vec![exact("assert_eq!(got, true);")],
+            &["5", "10"],
+        );
+        off_boundary.calls[0].line = 1;
+        off_boundary.assertions[0].line = 5;
+        off_boundary.end_line = 6;
+        assert!(
+            !pairing_with_admitted_oracles(
+                &probe,
+                Some(&owner),
+                &[&off_boundary],
+                &ActivationEvidence::default(),
+            ),
+            "a let that exists only inside a string must not promote an off-boundary binding"
+        );
+        let mut real_boundary = test_summary(
+            "string_let_no_clobber",
+            "let got = gate(10);\nlet _s = \"\nlet got = gate(5);\n\";\nassert_eq!(got, true);",
+            vec![call("gate", "let got = gate(10);")],
+            vec![exact("assert_eq!(got, true);")],
+            &["10", "5"],
+        );
+        real_boundary.calls[0].line = 1;
+        real_boundary.assertions[0].line = 5;
+        real_boundary.end_line = 6;
+        assert!(
+            pairing_with_admitted_oracles(
+                &probe,
+                Some(&owner),
+                &[&real_boundary],
+                &ActivationEvidence::default(),
+            ),
+            "a string-interior let must not clobber a real unmutated boundary binding"
         );
     }
 

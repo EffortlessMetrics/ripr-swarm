@@ -525,7 +525,10 @@ missed `got` then `= true;` on the next line (#7042 item 4): identifier and
 operator never shared a segment, so the later exact assertion kept pairing.
 Voiding now masks the whole body and walks `;` statements in order. Do not
 reintroduce a line-at-a-time mutation scan; unmutated bindings, including a
-`let` on its own line inside a block, must keep pairing.
+`let` on its own line inside a block, must keep pairing. Register a `let`
+only when the masked line still looks like one; `CallFact` text stays on the
+original line. Otherwise a string-interior `let got = gate(10);` can replace
+a real binding, while `gate("alpha")` must still pair.
 
 ## 2026-09-29: Whole-object equality is not an effect observer of a different collection (#4575)
 
