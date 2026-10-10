@@ -35,7 +35,8 @@ use super::refresh_scheduler::{
 };
 use super::state::{
     AnalysisAttemptState, AnalysisFailureKind, AnalysisSnapshot, DocumentStalenessReason,
-    DocumentStore, HarnessFactsOnSnapshot, RefreshMetadata, content_digest, format_duration,
+    DocumentStore, HarnessFactsOnSnapshot, RefreshMetadata, UnavailableAdapterCoverage,
+    content_digest, format_duration,
 };
 use super::uri::{encode_uri_path, file_uri_for_path, file_uris_match, path_from_file_uri};
 use super::{
@@ -1017,6 +1018,7 @@ fn backend_code_lens_handler_delegates_to_lens_helper() -> Result<(), String> {
         partial_scope: None,
         component_outcomes: Vec::new(),
         out_of_scope_test_file_findings: 0,
+        unavailable_adapter: super::state::UnavailableAdapterCoverage::default(),
     };
 
     // Call the pure code_lens_response directly to verify the handler→helper path.
@@ -13151,6 +13153,7 @@ fn sample_analysis_snapshot(
         partial_scope: None,
         component_outcomes: Vec::new(),
         out_of_scope_test_file_findings: 0,
+        unavailable_adapter: super::state::UnavailableAdapterCoverage::default(),
     }
 }
 
@@ -19643,6 +19646,7 @@ fn quarantine_workspace_diagnostics(
         partial_scope: None,
         component_outcomes: Vec::new(),
         out_of_scope_test_file_findings: 0,
+        unavailable_adapter: super::state::UnavailableAdapterCoverage::default(),
     };
     WorkspaceDiagnostics {
         snapshot,
@@ -20215,6 +20219,7 @@ fn partition_workspace_diagnostics(
         partial_scope,
         component_outcomes: Vec::new(),
         out_of_scope_test_file_findings: 0,
+        unavailable_adapter: super::state::UnavailableAdapterCoverage::default(),
     };
     WorkspaceDiagnostics {
         snapshot,
@@ -20309,6 +20314,636 @@ async fn workspace_status_reports_outside_partition_document_not_analyzed() -> R
         return Err(format!(
             "an opened unchanged document must stay clean/served: {unchanged}"
         ));
+    }
+    Ok(())
+}
+
+/// #5998 must keep its reason on a dirty buffer. `state` becomes
+/// `quarantined` and line-local diagnostics are withdrawn, but the
+/// partition reason and recovery stay so a consumer can still see why
+/// the saved file was never analyzed.
+#[tokio::test]
+async fn workspace_status_keeps_outside_partition_reason_when_quarantined() -> Result<(), String> {
+    let fixture = partition_fixture("outside-partition-quarantined")?;
+    let (service, socket) = LspService::new(|client| Backend::new(client, fixture.root.clone()));
+    drop(socket);
+    let backend = service.inner();
+    for (uri, text) in fixture.uris.iter().zip(PARTITION_TEXTS.iter()) {
+        backend.did_open(quarantine_open_params(uri, text)).await;
+    }
+    backend
+        .refresh_plan(partition_workspace_diagnostics(
+            &fixture,
+            false,
+            Some(partition_partial_scope()),
+        ))
+        .ok_or_else(|| "expected committed snapshot".to_string())?;
+    backend
+        .did_change(quarantine_change_params(
+            &fixture.uris[1],
+            2,
+            "fn beyond() -> bool { false }\n",
+        ))
+        .await;
+
+    let status = workspace_status_json(backend).await?;
+    let beyond = open_document_entry(&status, fixture.uris[1].as_str())?;
+    if beyond["state"].as_str() != Some("quarantined")
+        || beyond["line_local_diagnostics"].as_str() != Some("withdrawn")
+    {
+        return Err(format!(
+            "a dirty outside-partition document must be quarantined/withdrawn: {beyond}"
+        ));
+    }
+    if beyond["not_analyzed_reason"].as_str() != Some("outside_analyzed_partition") {
+        return Err(format!(
+            "quarantine must not clear the #5998 reason: {beyond}"
+        ));
+    }
+    let recovery = beyond["not_analyzed_recovery"]
+        .as_str()
+        .ok_or_else(|| format!("quarantined outside-partition must keep recovery: {beyond}"))?;
+    if !recovery.contains("RIPR_PARTIAL_DIFF_FILE_BUDGET") {
+        return Err(format!(
+            "quarantined #5998 recovery must name the budget: {recovery}"
+        ));
+    }
+    Ok(())
+}
+
+/// #7205: a dirty disabled-language document is quarantined; do not attach
+/// the new reason until the buffer is saved. That keeps #1970's dirty-state
+/// disclosure as the document row's primary status.
+#[tokio::test]
+async fn workspace_status_omits_disabled_language_reason_while_quarantined() -> Result<(), String> {
+    let fixture = disabled_language_fixture("disabled-language-quarantined")?;
+    let (service, socket) = LspService::new(|client| Backend::new(client, fixture.root.clone()));
+    drop(socket);
+    let backend = service.inner();
+    backend
+        .did_open(quarantine_open_params(
+            &fixture.changed_python_uri,
+            "def price():\n    return 1\n",
+        ))
+        .await;
+    backend
+        .refresh_plan(disabled_language_workspace_diagnostics(
+            &fixture,
+            None,
+            python_disabled_adapter_coverage(&["zpy/pricing.py"], 1),
+        )?)
+        .ok_or_else(|| "expected committed snapshot".to_string())?;
+    backend
+        .did_change(quarantine_change_params(
+            &fixture.changed_python_uri,
+            2,
+            "def price():\n    return 2\n",
+        ))
+        .await;
+
+    let status = workspace_status_json(backend).await?;
+    let changed = open_document_entry(&status, fixture.changed_python_uri.as_str())?;
+    if changed["state"].as_str() != Some("quarantined")
+        || changed["line_local_diagnostics"].as_str() != Some("withdrawn")
+    {
+        return Err(format!(
+            "a dirty disabled-language document must be quarantined/withdrawn: {changed}"
+        ));
+    }
+    if changed["not_analyzed_reason"].as_str() == Some("language_adapter_not_enabled") {
+        return Err(format!(
+            "quarantine must not attach the #7205 reason on a dirty buffer: {changed}"
+        ));
+    }
+    if !changed["not_analyzed_reason"].is_null() {
+        return Err(format!(
+            "quarantined disabled-language reason must stay null: {changed}"
+        ));
+    }
+    Ok(())
+}
+
+fn python_disabled_adapter_coverage(
+    sample_paths: &[&str],
+    file_count: usize,
+) -> UnavailableAdapterCoverage {
+    UnavailableAdapterCoverage::from_preview_advisories(&[
+        crate::analysis::PreviewLanguageAdvisory {
+            language: "python".to_string(),
+            file_count,
+            sample_paths: sample_paths
+                .iter()
+                .map(|path| (*path).to_string())
+                .collect(),
+            javascript_file_count: 0,
+            enabled: false,
+        },
+    ])
+}
+
+fn python_adapter_unavailable_outcome() -> Result<crate::analysis_outcome::AnalysisOutcome, String>
+{
+    use crate::analysis_outcome::{
+        AnalysisIdentity, AnalysisLimitation, AnalysisLimitationKind, AnalysisOutcome,
+        AnalysisOutcomeCounts, AnalysisOutcomeKind, AnalysisRecovery, AnalysisRecoveryKind,
+        AnalysisStage,
+    };
+    let limitation = AnalysisLimitation::new(
+        AnalysisLimitationKind::LanguageAdapterUnavailable,
+        AnalysisStage::LanguageAdapter,
+        AnalysisRecovery::new(
+            AnalysisRecoveryKind::EnableLanguage,
+            "Enable the python preview adapter and re-run the analysis.",
+        )?,
+    )
+    .with_affected_items(1)?
+    .with_detail(
+        "python changed 1 file(s), but the preview adapter was not enabled or available",
+    )?;
+    AnalysisOutcome::new(
+        AnalysisOutcomeKind::PartialWithLimitations,
+        AnalysisIdentity {
+            input_identity: Some("sha256:lsp-7205".to_string()),
+            ..AnalysisIdentity::default()
+        },
+        AnalysisOutcomeCounts {
+            changed_file_count: 3,
+            changed_line_count: 3,
+            ..AnalysisOutcomeCounts::default()
+        },
+        vec![limitation],
+    )
+}
+
+struct DisabledLanguageFixture {
+    _temp: TempLspRoot,
+    root: PathBuf,
+    rust_uri: tower_lsp_server::ls_types::Uri,
+    changed_python_uri: tower_lsp_server::ls_types::Uri,
+    unchanged_python_uri: tower_lsp_server::ls_types::Uri,
+}
+
+fn disabled_language_fixture(name: &str) -> Result<DisabledLanguageFixture, String> {
+    disabled_language_fixture_with_changed_python(name, "pricing.py")
+}
+
+fn disabled_language_fixture_with_changed_python(
+    name: &str,
+    changed_python_name: &str,
+) -> Result<DisabledLanguageFixture, String> {
+    let temp = unique_lsp_test_root(name)?;
+    let root = temp.path().to_path_buf();
+    std::fs::create_dir_all(root.join("src")).map_err(|err| format!("create src failed: {err}"))?;
+    std::fs::create_dir_all(root.join("zpy")).map_err(|err| format!("create zpy failed: {err}"))?;
+    let rust_path = root.join("src/main.rs");
+    let changed_python_path = root.join("zpy").join(changed_python_name);
+    let unchanged_python_path = root.join("zpy/helpers.py");
+    std::fs::write(&rust_path, "fn selected() -> bool { true }\n")
+        .map_err(|err| format!("write main.rs failed: {err}"))?;
+    std::fs::write(&changed_python_path, "def price():\n    return 1\n")
+        .map_err(|err| format!("write pricing.py failed: {err}"))?;
+    std::fs::write(&unchanged_python_path, "def helper():\n    return 0\n")
+        .map_err(|err| format!("write helpers.py failed: {err}"))?;
+    Ok(DisabledLanguageFixture {
+        rust_uri: file_uri_for_path(&rust_path)
+            .map_err(|err| format!("main.rs URI failed: {err}"))?,
+        changed_python_uri: file_uri_for_path(&changed_python_path)
+            .map_err(|err| format!("pricing.py URI failed: {err}"))?,
+        unchanged_python_uri: file_uri_for_path(&unchanged_python_path)
+            .map_err(|err| format!("helpers.py URI failed: {err}"))?,
+        _temp: temp,
+        root,
+    })
+}
+
+fn disabled_language_workspace_diagnostics(
+    fixture: &DisabledLanguageFixture,
+    partial_scope: Option<crate::analysis::PartialDiffScope>,
+    unavailable_adapter: UnavailableAdapterCoverage,
+) -> Result<WorkspaceDiagnostics, String> {
+    let finding = quarantine_finding("probe:selected:1:predicate", "src/main.rs");
+    let diagnostic = diagnostic_for_finding(&fixture.root, &finding);
+    let mut diagnostics_by_uri = BTreeMap::new();
+    diagnostics_by_uri.insert(fixture.rust_uri.clone(), vec![diagnostic.clone()]);
+    let input_identity = LspAnalysisInputIdentity::from_refresh_inputs(
+        fixture.root.clone(),
+        1,
+        &LspAnalysisConfig::default(),
+    );
+    let mut rust_consumed_sources =
+        crate::analysis::consumed_source::ConsumedRustSources::default();
+    rust_consumed_sources.record(
+        Path::new("src/main.rs"),
+        Some(b"fn selected() -> bool { true }\n"),
+    );
+    let snapshot = AnalysisSnapshot {
+        root: fixture.root.clone(),
+        rust_consumed_sources,
+        input_identity: Some(input_identity),
+        base: Some("origin/main".to_string()),
+        mode: Mode::Draft,
+        refresh: RefreshMetadata::generated_now(),
+        findings: vec![finding],
+        analysis_outcome: Some(python_adapter_unavailable_outcome()?),
+        diagnostic_profile: crate::config::LspDiagnosticProfile::Full,
+        classified_seams: Vec::new(),
+        repair_card_candidate_seams: None,
+        gap_artifacts: Vec::new(),
+        gap_artifact_rejections: Vec::new(),
+        harness_facts: HarnessFactsOnSnapshot::NotRegistered,
+        diagnostics_by_uri,
+        diagnostic_uri_index: None,
+        delivery_selection: None,
+        seams_deferred: false,
+        partial_scope,
+        component_outcomes: Vec::new(),
+        out_of_scope_test_file_findings: 0,
+        unavailable_adapter,
+    };
+    Ok(WorkspaceDiagnostics {
+        snapshot,
+        batches: vec![DiagnosticBatch {
+            uri: fixture.rust_uri.clone(),
+            diagnostics: vec![diagnostic],
+        }],
+    })
+}
+
+/// #7205: an opened changed document of a disabled language must not read
+/// as `clean`/`served` when the same snapshot names `language_adapter_unavailable`.
+/// The reason is a new token, not a reuse of #5998's `outside_analyzed_partition`.
+/// An unchanged file of that language stays clean when the producer named
+/// the changed paths completely.
+#[tokio::test]
+async fn workspace_status_reports_disabled_language_document_not_analyzed() -> Result<(), String> {
+    let fixture = disabled_language_fixture("disabled-language-status")?;
+    let (service, socket) = LspService::new(|client| Backend::new(client, fixture.root.clone()));
+    drop(socket);
+    let backend = service.inner();
+    backend
+        .did_open(quarantine_open_params(
+            &fixture.rust_uri,
+            "fn selected() -> bool { true }\n",
+        ))
+        .await;
+    backend
+        .did_open(quarantine_open_params(
+            &fixture.changed_python_uri,
+            "def price():\n    return 1\n",
+        ))
+        .await;
+    backend
+        .did_open(quarantine_open_params(
+            &fixture.unchanged_python_uri,
+            "def helper():\n    return 0\n",
+        ))
+        .await;
+    backend
+        .refresh_plan(disabled_language_workspace_diagnostics(
+            &fixture,
+            None,
+            python_disabled_adapter_coverage(&["zpy/pricing.py"], 1),
+        )?)
+        .ok_or_else(|| "expected committed snapshot".to_string())?;
+
+    let status = workspace_status_json(backend).await?;
+    let rust = open_document_entry(&status, fixture.rust_uri.as_str())?;
+    if rust["state"].as_str() != Some("clean")
+        || rust["line_local_diagnostics"].as_str() != Some("served")
+        || !rust["not_analyzed_reason"].is_null()
+    {
+        return Err(format!(
+            "analyzed rust document must stay clean/served: {rust}"
+        ));
+    }
+
+    let changed = open_document_entry(&status, fixture.changed_python_uri.as_str())?;
+    if changed["line_local_diagnostics"].as_str() == Some("served") {
+        return Err(format!(
+            "a changed disabled-language document must not claim served: {changed}"
+        ));
+    }
+    if changed["state"].as_str() == Some("clean") {
+        return Err(format!(
+            "a changed disabled-language document must not claim clean: {changed}"
+        ));
+    }
+    if changed["state"].as_str() != Some("not_analyzed")
+        || changed["line_local_diagnostics"].as_str() != Some("not_analyzed")
+    {
+        return Err(format!("unexpected disabled-language state: {changed}"));
+    }
+    if changed["not_analyzed_reason"].as_str() != Some("language_adapter_not_enabled") {
+        return Err(format!(
+            "the disabled-language state must use a new reason, not outside_analyzed_partition: {changed}"
+        ));
+    }
+    let recovery = changed["not_analyzed_recovery"]
+        .as_str()
+        .ok_or_else(|| format!("disabled-language state must carry a recovery: {changed}"))?;
+    if LanguageId::Python.is_available() {
+        for needle in ["[languages] enabled", "restart", "python"] {
+            if !recovery.contains(needle) {
+                return Err(format!("recovery must name {needle:?}: {recovery}"));
+            }
+        }
+    } else if recovery != LanguageId::Python.unavailable_adapter_recovery() {
+        return Err(format!(
+            "uncompiled python must reuse LanguageId recovery, got: {recovery}"
+        ));
+    }
+
+    let unchanged = open_document_entry(&status, fixture.unchanged_python_uri.as_str())?;
+    if unchanged["state"].as_str() != Some("clean")
+        || unchanged["line_local_diagnostics"].as_str() != Some("served")
+        || !unchanged["not_analyzed_reason"].is_null()
+    {
+        return Err(format!(
+            "an opened unchanged python document must stay clean/served: {unchanged}"
+        ));
+    }
+    Ok(())
+}
+
+/// #7205: preview advisories keep a literal `%` in `sample_paths`. The
+/// opened-document relative path goes through `stable_path_text`, which
+/// encodes that `%` as `%25`. Both sides must still bind, or a complete
+/// listing revives the clean/served lie for that filename.
+#[tokio::test]
+async fn workspace_status_matches_disabled_language_path_with_literal_percent() -> Result<(), String>
+{
+    let fixture = disabled_language_fixture_with_changed_python(
+        "disabled-language-percent-path",
+        "pricing_%.py",
+    )?;
+    let (service, socket) = LspService::new(|client| Backend::new(client, fixture.root.clone()));
+    drop(socket);
+    let backend = service.inner();
+    backend
+        .did_open(quarantine_open_params(
+            &fixture.changed_python_uri,
+            "def price():\n    return 1\n",
+        ))
+        .await;
+    backend
+        .refresh_plan(disabled_language_workspace_diagnostics(
+            &fixture,
+            None,
+            python_disabled_adapter_coverage(&["zpy/pricing_%.py"], 1),
+        )?)
+        .ok_or_else(|| "expected committed snapshot".to_string())?;
+
+    let status = workspace_status_json(backend).await?;
+    let changed = open_document_entry(&status, fixture.changed_python_uri.as_str())?;
+    if changed["state"].as_str() == Some("clean")
+        || changed["line_local_diagnostics"].as_str() == Some("served")
+    {
+        return Err(format!(
+            "a disabled-language file whose name contains % must not claim clean/served: {changed}"
+        ));
+    }
+    if changed["state"].as_str() != Some("not_analyzed")
+        || changed["line_local_diagnostics"].as_str() != Some("not_analyzed")
+        || changed["not_analyzed_reason"].as_str() != Some("language_adapter_not_enabled")
+    {
+        return Err(format!(
+            "literal-% disabled-language row must stay not_analyzed with the new reason: {changed}"
+        ));
+    }
+    Ok(())
+}
+
+/// #7205 vs #5998: when a budget stop already placed the disabled-language
+/// file outside the analyzed partition, keep the #5998 reason. Do not
+/// rewrite it to `language_adapter_not_enabled`.
+#[tokio::test]
+async fn workspace_status_keeps_outside_partition_reason_when_both_apply() -> Result<(), String> {
+    let fixture = disabled_language_fixture("disabled-language-partition-priority")?;
+    let (service, socket) = LspService::new(|client| Backend::new(client, fixture.root.clone()));
+    drop(socket);
+    let backend = service.inner();
+    backend
+        .did_open(quarantine_open_params(
+            &fixture.changed_python_uri,
+            "def price():\n    return 1\n",
+        ))
+        .await;
+    let partial_scope = crate::analysis::PartialDiffScope {
+        run_status: crate::analysis::PartialDiffScope::RUN_STATUS.to_string(),
+        diff_identity: "sha256:diff".to_string(),
+        file_budget: 1,
+        line_budget: 1,
+        budget_disclosures: Vec::new(),
+        selected_files: vec!["src/main.rs".to_string()],
+        unselected_files: vec!["zpy/pricing.py".to_string()],
+        selected_changed_lines: 1,
+        uninspected_files_lower_bound: 1,
+        uninspected_changed_lines_lower_bound: 1,
+        stop_reason: crate::analysis::PartialDiffStopReason::FileBudget,
+        next_file_changed_lines: Some(1),
+        partition_identity: "sha256:partition".to_string(),
+    };
+    backend
+        .refresh_plan(disabled_language_workspace_diagnostics(
+            &fixture,
+            Some(partial_scope),
+            python_disabled_adapter_coverage(&["zpy/pricing.py"], 1),
+        )?)
+        .ok_or_else(|| "expected committed snapshot".to_string())?;
+
+    let status = workspace_status_json(backend).await?;
+    let changed = open_document_entry(&status, fixture.changed_python_uri.as_str())?;
+    if changed["not_analyzed_reason"].as_str() != Some("outside_analyzed_partition") {
+        return Err(format!(
+            "budget-bound outside-partition must keep the #5998 reason: {changed}"
+        ));
+    }
+    if changed["not_analyzed_reason"].as_str() == Some("language_adapter_not_enabled") {
+        return Err(format!(
+            "must not rewrite #5998 onto language_adapter_not_enabled: {changed}"
+        ));
+    }
+    Ok(())
+}
+
+/// #7205: preview advisories cap `sample_paths` at 3. When the listing is
+/// shorter than `file_count`, unnamed opened documents of that language
+/// fail closed as `not_analyzed` rather than claiming `clean`/`served`.
+#[tokio::test]
+async fn workspace_status_fail_closes_unnamed_disabled_language_when_listing_is_incomplete()
+-> Result<(), String> {
+    let fixture = disabled_language_fixture("disabled-language-incomplete-listing")?;
+    let (service, socket) = LspService::new(|client| Backend::new(client, fixture.root.clone()));
+    drop(socket);
+    let backend = service.inner();
+    backend
+        .did_open(quarantine_open_params(
+            &fixture.unchanged_python_uri,
+            "def helper():\n    return 0\n",
+        ))
+        .await;
+    backend
+        .refresh_plan(disabled_language_workspace_diagnostics(
+            &fixture,
+            None,
+            python_disabled_adapter_coverage(&["zpy/pricing.py"], 4),
+        )?)
+        .ok_or_else(|| "expected committed snapshot".to_string())?;
+
+    let status = workspace_status_json(backend).await?;
+    let unnamed = open_document_entry(&status, fixture.unchanged_python_uri.as_str())?;
+    if unnamed["state"].as_str() == Some("clean")
+        || unnamed["line_local_diagnostics"].as_str() == Some("served")
+    {
+        return Err(format!(
+            "an incomplete disabled-language listing must not leave unnamed files clean/served: {unnamed}"
+        ));
+    }
+    if unnamed["not_analyzed_reason"].as_str() != Some("language_adapter_not_enabled") {
+        return Err(format!(
+            "incomplete listing must use language_adapter_not_enabled: {unnamed}"
+        ));
+    }
+    Ok(())
+}
+
+/// #7205: default features omit `lang-perl`, but the producer still emits a
+/// disabled Perl advisory. The document row must stay `not_analyzed` and
+/// must not tell the user that `[languages] enabled` is enough.
+#[tokio::test]
+async fn workspace_status_uncompiled_perl_recovery_does_not_claim_enablement() -> Result<(), String>
+{
+    let temp = unique_lsp_test_root("disabled-perl-status")?;
+    let root = temp.path().to_path_buf();
+    std::fs::write(root.join("pricing.pl"), "sub price { 1 }\n")
+        .map_err(|err| format!("write pricing.pl failed: {err}"))?;
+    let uri = file_uri_for_path(&root.join("pricing.pl"))
+        .map_err(|err| format!("pricing.pl URI failed: {err}"))?;
+    let (service, socket) = LspService::new(|client| Backend::new(client, root.clone()));
+    drop(socket);
+    let backend = service.inner();
+    backend
+        .did_open(quarantine_open_params(&uri, "sub price { 1 }\n"))
+        .await;
+
+    let limitation = {
+        use crate::analysis_outcome::{
+            AnalysisIdentity, AnalysisLimitation, AnalysisLimitationKind, AnalysisOutcome,
+            AnalysisOutcomeCounts, AnalysisOutcomeKind, AnalysisRecovery, AnalysisRecoveryKind,
+            AnalysisStage,
+        };
+        let limitation = AnalysisLimitation::new(
+            AnalysisLimitationKind::LanguageAdapterUnavailable,
+            AnalysisStage::LanguageAdapter,
+            AnalysisRecovery::new(
+                AnalysisRecoveryKind::EnableLanguage,
+                "Enable the perl preview adapter and re-run the analysis.",
+            )?,
+        )
+        .with_affected_items(1)?
+        .with_detail(
+            "perl changed 1 file(s), but the preview adapter was not enabled or available",
+        )?;
+        AnalysisOutcome::new(
+            AnalysisOutcomeKind::PartialWithLimitations,
+            AnalysisIdentity {
+                input_identity: Some("sha256:lsp-7205-perl".to_string()),
+                ..AnalysisIdentity::default()
+            },
+            AnalysisOutcomeCounts {
+                changed_file_count: 1,
+                changed_line_count: 1,
+                ..AnalysisOutcomeCounts::default()
+            },
+            vec![limitation],
+        )?
+    };
+    let snapshot = AnalysisSnapshot {
+        root: root.clone(),
+        rust_consumed_sources: Default::default(),
+        input_identity: Some(LspAnalysisInputIdentity::from_refresh_inputs(
+            root.clone(),
+            1,
+            &LspAnalysisConfig::default(),
+        )),
+        base: Some("origin/main".to_string()),
+        mode: Mode::Draft,
+        refresh: RefreshMetadata::generated_now(),
+        findings: Vec::new(),
+        analysis_outcome: Some(limitation),
+        diagnostic_profile: crate::config::LspDiagnosticProfile::Full,
+        classified_seams: Vec::new(),
+        repair_card_candidate_seams: None,
+        gap_artifacts: Vec::new(),
+        gap_artifact_rejections: Vec::new(),
+        harness_facts: HarnessFactsOnSnapshot::NotRegistered,
+        diagnostics_by_uri: BTreeMap::new(),
+        diagnostic_uri_index: None,
+        delivery_selection: None,
+        seams_deferred: false,
+        partial_scope: None,
+        component_outcomes: Vec::new(),
+        out_of_scope_test_file_findings: 0,
+        unavailable_adapter: UnavailableAdapterCoverage::from_preview_advisories(&[
+            crate::analysis::PreviewLanguageAdvisory {
+                language: "perl".to_string(),
+                file_count: 1,
+                sample_paths: vec!["pricing.pl".to_string()],
+                javascript_file_count: 0,
+                enabled: false,
+            },
+        ]),
+    };
+    backend
+        .refresh_plan(WorkspaceDiagnostics {
+            snapshot,
+            batches: Vec::new(),
+        })
+        .ok_or_else(|| "expected committed snapshot".to_string())?;
+
+    let status = workspace_status_json(backend).await?;
+    let changed = open_document_entry(&status, uri.as_str())?;
+    if changed["state"].as_str() != Some("not_analyzed")
+        || changed["line_local_diagnostics"].as_str() != Some("not_analyzed")
+        || changed["not_analyzed_reason"].as_str() != Some("language_adapter_not_enabled")
+    {
+        return Err(format!(
+            "perl disabled document must be not_analyzed: {changed}"
+        ));
+    }
+    let recovery = changed["not_analyzed_recovery"]
+        .as_str()
+        .ok_or_else(|| format!("perl disabled document must carry a recovery: {changed}"))?;
+    if LanguageId::Perl.is_available() {
+        let Some(prerequisite) = LanguageId::Perl.enable_prerequisite() else {
+            return Err(
+                "compiled-in Perl must own enable_prerequisite so workspace-status recovery can reuse it"
+                    .to_string(),
+            );
+        };
+        for needle in [
+            "[languages] enabled",
+            "restart",
+            "perl",
+            prerequisite.as_str(),
+        ] {
+            if !recovery.contains(needle) {
+                return Err(format!(
+                    "compiled-in perl recovery must name {needle:?}: {recovery}"
+                ));
+            }
+        }
+    } else {
+        if recovery != LanguageId::Perl.unavailable_adapter_recovery() {
+            return Err(format!(
+                "uncompiled perl must reuse LanguageId recovery, got: {recovery}"
+            ));
+        }
+        if recovery.contains("[languages] enabled") {
+            return Err(format!(
+                "uncompiled perl must not claim enablement is enough: {recovery}"
+            ));
+        }
     }
     Ok(())
 }

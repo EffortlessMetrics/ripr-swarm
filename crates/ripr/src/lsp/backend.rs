@@ -6204,6 +6204,12 @@ impl Backend {
     /// snapshot's analyzed partition is reported `not_analyzed` — never
     /// `clean`/`served` — with the budget raise and sidecar restart as the
     /// recovery, so "no diagnostics" can never read as "analyzed and clean".
+    ///
+    /// #7205: a changed document whose language is configured but not
+    /// enabled has the same honesty gap when no budget stop exists (the
+    /// selector skips disabled languages, so `partial_scope` is never
+    /// recorded). Those rows use a distinct `language_adapter_not_enabled`
+    /// reason so they cannot be mistaken for the #5998 partition case.
     fn open_document_statuses_json(
         &self,
         snapshot: Option<&AnalysisSnapshot>,
@@ -6216,22 +6222,34 @@ impl Backend {
             .values()
             .map(|state| {
                 let quarantined = state.is_quarantined();
-                let outside_partition = snapshot
-                    .and_then(|snapshot| {
-                        super::uri::file_uri_relative_to_root(&snapshot.root, &state.uri)
-                    })
-                    .is_some_and(|relative| {
-                        snapshot
-                            .and_then(|snapshot| snapshot.partial_scope.as_ref())
-                            .is_some_and(|scope| scope.changed_outside_partition(&relative))
+                let relative = snapshot.and_then(|snapshot| {
+                    super::uri::file_uri_relative_to_root(&snapshot.root, &state.uri)
+                });
+                let outside_partition = relative.as_ref().is_some_and(|relative| {
+                    snapshot
+                        .and_then(|snapshot| snapshot.partial_scope.as_ref())
+                        .is_some_and(|scope| scope.changed_outside_partition(relative))
+                });
+                // #5998 wins when both apply: a budget-bound partial run
+                // already named the file `outside_analyzed_partition`.
+                let adapter_language = (!outside_partition)
+                    .then_some(relative.as_ref())
+                    .flatten()
+                    .and_then(|relative| {
+                        snapshot.and_then(|snapshot| {
+                            snapshot
+                                .unavailable_adapter
+                                .not_enabled_language(relative, snapshot.analysis_outcome.as_ref())
+                        })
                     });
+                let not_analyzed = outside_partition || adapter_language.is_some();
                 serde_json::json!({
                     "uri": state.uri.as_str(),
                     "path": state.path.display().to_string(),
                     "version": state.version,
                     "state": if quarantined {
                         "quarantined"
-                    } else if outside_partition {
+                    } else if not_analyzed {
                         "not_analyzed"
                     } else {
                         "clean"
@@ -6239,21 +6257,34 @@ impl Backend {
                     "diagnostics_authority": "saved_workspace",
                     "line_local_diagnostics": if quarantined {
                         "withdrawn"
-                    } else if outside_partition {
+                    } else if not_analyzed {
                         "not_analyzed"
                     } else {
                         "served"
                     },
+                    // #5998 reason/recovery stay on a quarantined document:
+                    // `state`/`line_local_diagnostics` already say
+                    // quarantined/withdrawn. The new #7205 reason is gated
+                    // off while dirty so it cannot overwrite that disclosure.
                     "not_analyzed_reason": if outside_partition {
                         serde_json::Value::String("outside_analyzed_partition".to_string())
+                    } else if !quarantined && adapter_language.is_some() {
+                        serde_json::Value::String("language_adapter_not_enabled".to_string())
                     } else {
                         serde_json::Value::Null
                     },
-                    "not_analyzed_recovery": match (outside_partition, snapshot) {
-                        (true, Some(snapshot)) => serde_json::Value::String(
-                            outside_partition_recovery(snapshot.partial_scope.as_ref()),
-                        ),
-                        _ => serde_json::Value::Null,
+                    "not_analyzed_recovery": if outside_partition {
+                        snapshot
+                            .map(|snapshot| {
+                                serde_json::Value::String(outside_partition_recovery(
+                                    snapshot.partial_scope.as_ref(),
+                                ))
+                            })
+                            .unwrap_or(serde_json::Value::Null)
+                    } else if let (false, Some(language)) = (quarantined, adapter_language) {
+                        serde_json::Value::String(language_adapter_not_enabled_recovery(language))
+                    } else {
+                        serde_json::Value::Null
                     },
                     "staleness_reason": state
                         .quarantine
@@ -7078,6 +7109,120 @@ fn outside_partition_recovery(partial_scope: Option<&crate::analysis::PartialDif
     )
 }
 
+/// #7205: recovery for a changed document whose adapter was not enabled.
+/// Refreshing the session cannot enable a language the process did not
+/// load. When the adapter is compiled in, the route names `[languages]
+/// enabled` and the sidecar restart, then appends
+/// [`crate::domain::LanguageId::enable_prerequisite`] so compiled-in Perl
+/// does not claim enablement plus restart is sufficient. When it is not
+/// compiled in (Perl on the default build), enablement is not enough —
+/// reuse the shared
+/// [`crate::domain::LanguageId::unavailable_adapter_recovery`] text.
+fn language_adapter_not_enabled_recovery(language: crate::domain::LanguageId) -> String {
+    if !language.is_available() {
+        return language.unavailable_adapter_recovery();
+    }
+    let enablement = format!(
+        "add \"{}\" to [languages] enabled in ripr.toml, then restart the language server \
+         so the enabled adapter is read",
+        language.as_str()
+    );
+    match language.enable_prerequisite() {
+        Some(prerequisite) => format!("{enablement}; {prerequisite}"),
+        None => enablement,
+    }
+}
+
+#[cfg(test)]
+mod language_adapter_recovery_tests {
+    use super::language_adapter_not_enabled_recovery;
+    use crate::domain::LanguageId;
+
+    #[test]
+    fn compiled_in_preview_recovery_names_languages_enabled() -> Result<(), String> {
+        // rust-only (`--features lang-rust`) has no preview adapter compiled
+        // in; that lane is covered by the uncompiled-adapter sibling.
+        let Some(language) = LanguageId::ALL
+            .into_iter()
+            .find(|language| *language != LanguageId::Rust && language.is_available())
+        else {
+            return Ok(());
+        };
+        let recovery = language_adapter_not_enabled_recovery(language);
+        for needle in ["[languages] enabled", "restart", language.as_str()] {
+            if !recovery.contains(needle) {
+                return Err(format!(
+                    "compiled-in recovery must name {needle:?}: {recovery}"
+                ));
+            }
+        }
+        if let Some(prerequisite) = language.enable_prerequisite()
+            && !recovery.contains(&prerequisite)
+        {
+            return Err(format!(
+                "compiled-in recovery must append enable_prerequisite: {recovery}"
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn compiled_in_perl_recovery_names_fact_packet_prerequisite() -> Result<(), String> {
+        // Default and rust-only builds omit `lang-perl`; the uncompiled
+        // sibling covers that lane. `--all-features` compiles Perl in, and
+        // enablement plus restart is still not enough.
+        if !LanguageId::Perl.is_available() {
+            return Ok(());
+        }
+        let recovery = language_adapter_not_enabled_recovery(LanguageId::Perl);
+        let Some(prerequisite) = LanguageId::Perl.enable_prerequisite() else {
+            return Err(
+                "compiled-in Perl must own enable_prerequisite so LSP recovery can reuse it"
+                    .to_string(),
+            );
+        };
+        for needle in [
+            "[languages] enabled",
+            "restart",
+            "perl",
+            prerequisite.as_str(),
+        ] {
+            if !recovery.contains(needle) {
+                return Err(format!(
+                    "compiled-in perl recovery must name {needle:?}: {recovery}"
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn uncompiled_adapter_recovery_reuses_language_owner_text() -> Result<(), String> {
+        // `--all-features` compiles every adapter, so there is no uncompiled
+        // preview language to prove here; the compiled-in sibling covers that
+        // lane.
+        let Some(language) = LanguageId::ALL
+            .into_iter()
+            .find(|language| *language != LanguageId::Rust && !language.is_available())
+        else {
+            return Ok(());
+        };
+        let recovery = language_adapter_not_enabled_recovery(language);
+        let expected = language.unavailable_adapter_recovery();
+        if recovery != expected {
+            return Err(format!(
+                "uncompiled adapter must reuse LanguageId recovery, got {recovery:?} expected {expected:?}"
+            ));
+        }
+        if recovery.contains("[languages] enabled") {
+            return Err(format!(
+                "uncompiled adapter must not claim enablement is enough: {recovery}"
+            ));
+        }
+        Ok(())
+    }
+}
+
 fn workspace_status_run_status(snapshot: &AnalysisSnapshot) -> &'static str {
     super::diagnostics::derive_run_status_with_outcome(
         &snapshot.findings,
@@ -7665,6 +7810,7 @@ mod top_limitation_selection_tests {
             partial_scope,
             component_outcomes: Vec::new(),
             out_of_scope_test_file_findings: 0,
+            unavailable_adapter: crate::lsp::state::UnavailableAdapterCoverage::default(),
         }
     }
 
@@ -10302,6 +10448,7 @@ mod delivery_selection_parity_tests {
             partial_scope: None,
             component_outcomes: Vec::new(),
             out_of_scope_test_file_findings: 0,
+            unavailable_adapter: crate::lsp::state::UnavailableAdapterCoverage::default(),
         };
         WorkspaceDiagnostics { snapshot, batches }
     }
@@ -11282,6 +11429,7 @@ mod list_actionable_items_tests {
             partial_scope: None,
             component_outcomes: Vec::new(),
             out_of_scope_test_file_findings: 0,
+            unavailable_adapter: crate::lsp::state::UnavailableAdapterCoverage::default(),
         }
     }
 
