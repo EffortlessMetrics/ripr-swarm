@@ -35,7 +35,10 @@
 //! inheritance) and every test target cargo would compile. The `harness`
 //! flag is absent from metadata output by construction (verified on the
 //! pinned toolchain), so the flag premise still comes from parsing the
-//! owning package manifest. An unavailable probe — no cargo binary, a
+//! owning package manifest. Metadata does carry the per-target `test`
+//! flag: `[[test]] test = false` stays `kind = ["test"]` but `cargo test`
+//! skips it, so the inventory must not treat that target as
+//! `HarnessEnabled` (#7265). An unavailable probe — no cargo binary, a
 //! workspace cargo rejects, or an unreadable probe output — fails closed
 //! to `manifest_unavailable`: a registration grants nothing, never
 //! over-credits.
@@ -239,12 +242,15 @@ pub(crate) enum CargoHarnessVerdict {
     /// `harness` flag is `false`: the registration's premise holds.
     HarnessDisabled,
     /// The path is a known Cargo test target (explicit entry or package
-    /// autodiscovery) whose effective `harness` flag is `true`: the
-    /// libtest harness still collects the file, so the `harness = false`
-    /// premise of a custom-harness registration does not hold.
+    /// autodiscovery) whose effective `harness` flag is `true` and whose
+    /// metadata `test` flag is not `false`: the libtest harness still
+    /// collects the file, so the `harness = false` premise of a
+    /// custom-harness registration does not hold.
     HarnessEnabled,
-    /// The workspace's Cargo metadata declares no test target for this
-    /// path: nothing in the workspace compiles the file as a test.
+    /// The workspace's Cargo metadata declares no live test target for
+    /// this path: nothing in the workspace compiles the file as a test,
+    /// or every matching `kind = ["test"]` target has `test = false` so
+    /// `cargo test` skips it (#7265).
     NotDeclared,
     /// No premise about the target can be established: the metadata
     /// probe was unavailable (no cargo binary, a workspace cargo rejects,
@@ -264,6 +270,24 @@ pub(crate) struct ManifestInventory {
     metadata: MetadataState,
 }
 
+/// One `kind = ["test"]` metadata owner for a resolved source path
+/// (#3634, `test` flag since #7265).
+#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
+struct MetadataTestOwner {
+    manifest_dir: PathBuf,
+    name: String,
+    /// Cargo metadata's per-target `test` flag. `false` means `cargo test`
+    /// skips the target even though `kind` stays `["test"]`.
+    test_enabled: bool,
+}
+
+/// Lookup of one registration path against the metadata inventory.
+enum InventoryLookup {
+    Unavailable,
+    Missing,
+    Present(Vec<MetadataTestOwner>),
+}
+
 /// The lazily initialized `cargo metadata` view of the analyzed workspace
 /// (#3634). `Failed` records an unavailable probe so the whole batch
 /// fails closed instead of re-spawning per verdict.
@@ -274,8 +298,9 @@ enum MetadataState {
     Failed,
     /// Workspace test targets keyed by their lexically resolved source
     /// path; each entry lists the owning package manifest directories
-    /// with the cargo target name (#3637 review).
-    Loaded(BTreeMap<PathBuf, Vec<(PathBuf, String)>>),
+    /// with the cargo target name (#3637 review) and metadata `test` flag
+    /// (#7265).
+    Loaded(BTreeMap<PathBuf, Vec<MetadataTestOwner>>),
 }
 
 /// The memoized parse outcome for one owning manifest directory.
@@ -305,58 +330,43 @@ impl ManifestInventory {
     /// character classes, `[workspace.exclude]` (cargo treats exclude
     /// patterns as literal path prefixes; a wildcard component matches no
     /// member), `[workspace.dependencies]` inheritance, and dev- and
-    /// build-path dependencies. A target missing from the inventory is
-    /// `NotDeclared`; a target present in it resolves its `harness` flag
-    /// from the owning manifest's `[[test]]` entries (explicit `path`
-    /// spellings and name-only defaults alike), because metadata output
-    /// omits the `harness` field by construction. Conflicting flags
-    /// across owning manifests — the same path claimed by two packages —
-    /// are ambiguous and fail closed.
+    /// build-path dependencies. A target missing from the inventory, or
+    /// present only with metadata `test = false`, is `NotDeclared`:
+    /// `cargo test` does not collect it (#7265). A live target resolves
+    /// its `harness` flag from the owning manifest's `[[test]]` entries
+    /// (explicit `path` spellings and name-only defaults alike), because
+    /// metadata output omits the `harness` field by construction.
+    /// Conflicting flags across owning manifests — the same path claimed
+    /// by two packages — are ambiguous and fail closed. `required-features`
+    /// is a separate claim (#7266) and is not read here.
     pub(crate) fn verdict(
         &mut self,
         workspace_root: &Path,
         registration_target: &Path,
     ) -> CargoHarnessVerdict {
-        // The inventory keys are cargo's absolute source paths, so the
-        // anchored target must be resolved in the same terms. Two forms
-        // are tried: the as-given absolute path, and the real path
-        // behind any symlinks. Cargo echoes the path family it was
-        // given on Windows (a junction root yields alias-form keys,
-        // verified 1.95.0) but canonicalizes symlinks on Unix (#3637
-        // review, demonstrated by the Linux CI run of the alias pin), so one
-        // form alone cannot cover both hosts. Missing on both forms is
-        // the fail-closed NotDeclared.
-        let joined = workspace_root.join(registration_target);
-        let absolute = std::path::absolute(&joined).unwrap_or(joined);
-        let anchored = lexical(&normalize(&absolute));
-        self.ensure_workspace_metadata(workspace_root);
-        let owners = match &self.metadata {
-            MetadataState::Loaded(targets) => {
-                targets.get(&anchored).cloned().or_else(|| {
-                    // `fs::canonicalize` returns verbatim `\\?\`
-                    // paths on Windows; those can only match
-                    // verbatim keys cargo never echoes, so a miss
-                    // there is harmless — the alias-form lookup
-                    // above already covered the Windows behavior.
-                    let real = std::fs::canonicalize(&absolute).ok()?;
-                    targets.get(&lexical(&normalize(&real))).cloned()
-                })
-            }
-            // No metadata premise is available (probe failed or was never
-            // loadable): the registration grants nothing. Fail closed —
-            // under-credit, never over-credit (#3634).
-            MetadataState::Unloaded | MetadataState::Failed => {
+        let (anchored, lookup) = self.lookup_test_owners(workspace_root, registration_target);
+        let owners = match lookup {
+            InventoryLookup::Unavailable => {
                 return CargoHarnessVerdict::ManifestUnavailable;
             }
+            InventoryLookup::Missing => {
+                return CargoHarnessVerdict::NotDeclared;
+            }
+            InventoryLookup::Present(owners) => owners,
         };
-        let Some(owners) = owners else {
-            // Cargo's own target inventory has no test target for this
-            // path: nothing in the workspace compiles it as a test.
+        let live: Vec<MetadataTestOwner> = owners
+            .into_iter()
+            .filter(|owner| owner.test_enabled)
+            .collect();
+        if live.is_empty() {
+            // Metadata still lists `kind = ["test"]`, but every owner has
+            // `test = false`: cargo test skips the target, so libtest
+            // does not collect the file.
             return CargoHarnessVerdict::NotDeclared;
-        };
+        }
         let mut flags: Vec<bool> = Vec::new();
-        for (manifest_dir, target_name) in &owners {
-            match self.manifest_at(manifest_dir) {
+        for owner in &live {
+            match self.manifest_at(&owner.manifest_dir) {
                 OwnedManifest::Parsed { root, value } => {
                     for target in declared_test_targets_with_harness_from_value(&value, &root) {
                         // Identity, not tokens (#3637 review): a
@@ -370,7 +380,7 @@ impl ManifestInventory {
                         // contribute its flag to a live target that
                         // another entry owns.
                         let matched = match &target.name {
-                            Some(name) => name == target_name,
+                            Some(name) => name == owner.name,
                             None => target.path == anchored,
                         };
                         if matched {
@@ -404,6 +414,66 @@ impl ManifestInventory {
             // is not statically decidable here.
             CargoHarnessVerdict::ManifestUnavailable
         }
+    }
+
+    /// True only when cargo metadata lists this path as a test target
+    /// and every owning package has `test = false`. Unavailable metadata
+    /// and paths cargo does not list are not an established skip: root
+    /// autodiscovered `tests/<name>.rs` must not lose credit when the
+    /// probe is missing (#7125), and undeclared unbuilt files stay
+    /// #6965's drop.
+    pub(crate) fn cargo_test_collection_skipped(
+        &mut self,
+        workspace_root: &Path,
+        registration_target: &Path,
+    ) -> bool {
+        match self
+            .lookup_test_owners(workspace_root, registration_target)
+            .1
+        {
+            InventoryLookup::Present(owners) => owners.iter().all(|owner| !owner.test_enabled),
+            InventoryLookup::Unavailable | InventoryLookup::Missing => false,
+        }
+    }
+
+    /// Resolve the registration path against cargo's inventory keys.
+    /// Two forms are tried: the as-given absolute path, and the real
+    /// path behind any symlinks. Cargo echoes the path family it was
+    /// given on Windows (a junction root yields alias-form keys,
+    /// verified 1.95.0) but canonicalizes symlinks on Unix (#3637
+    /// review, demonstrated by the Linux CI run of the alias pin), so
+    /// one form alone cannot cover both hosts.
+    fn lookup_test_owners(
+        &mut self,
+        workspace_root: &Path,
+        registration_target: &Path,
+    ) -> (PathBuf, InventoryLookup) {
+        let joined = workspace_root.join(registration_target);
+        let absolute = std::path::absolute(&joined).unwrap_or(joined);
+        let anchored = lexical(&normalize(&absolute));
+        self.ensure_workspace_metadata(workspace_root);
+        let lookup = match &self.metadata {
+            MetadataState::Loaded(targets) => {
+                let owners = targets.get(&anchored).cloned().or_else(|| {
+                    // `fs::canonicalize` returns verbatim `\\?\`
+                    // paths on Windows; those can only match
+                    // verbatim keys cargo never echoes, so a miss
+                    // there is harmless — the alias-form lookup
+                    // above already covered the Windows behavior.
+                    let real = std::fs::canonicalize(&absolute).ok()?;
+                    targets.get(&lexical(&normalize(&real))).cloned()
+                });
+                match owners {
+                    Some(owners) => InventoryLookup::Present(owners),
+                    None => InventoryLookup::Missing,
+                }
+            }
+            // No metadata premise is available (probe failed or was never
+            // loadable): the registration grants nothing. Fail closed —
+            // under-credit, never over-credit (#3634).
+            MetadataState::Unloaded | MetadataState::Failed => InventoryLookup::Unavailable,
+        };
+        (anchored, lookup)
     }
 
     /// Initialize the metadata probe once per batch. A failed probe is
@@ -499,7 +569,7 @@ fn cargo_metadata_command(workspace_root: &Path) -> std::process::Command {
 /// every path.
 fn run_workspace_cargo_metadata(
     workspace_root: &Path,
-) -> Option<BTreeMap<PathBuf, Vec<(PathBuf, String)>>> {
+) -> Option<BTreeMap<PathBuf, Vec<MetadataTestOwner>>> {
     let manifest_path = workspace_root.join("Cargo.toml");
     if !manifest_path.is_file() {
         return None;
@@ -557,17 +627,18 @@ fn run_workspace_cargo_metadata(
 /// The workspace test-target inventory from parsed `cargo metadata`
 /// (#3634). With `--no-deps`, `packages` is exactly the workspace member
 /// set — cargo's own membership resolution. Each `kind: ["test"]` target
-/// contributes its lexically resolved `src_path` (cargo keeps declared
-/// `..` segments as spelled, so both sides resolve lexically) mapped to
-/// the owning package's manifest directory and the cargo target name —
-/// the name is the identity that ties a metadata target back to the
-/// manifest entry cargo retained, so a declaration cargo dropped from
-/// its inventory cannot contribute its flag to a live target (#3637
-/// review).
+/// contributes its lexically resolved `src_path` (Cargo 1.95 may
+/// normalize declared `..` segments in `src_path`; lexical collapse on
+/// both sides covers either spelling) mapped to the owning package's
+/// manifest directory, the cargo target name, and the metadata `test`
+/// flag (#7265). The name is the identity that ties a metadata target
+/// back to the manifest entry cargo retained, so a declaration cargo
+/// dropped from its inventory cannot contribute its flag to a live
+/// target (#3637 review). `required-features` is ignored here (#7266).
 fn workspace_test_target_owners(
     value: &serde_json::Value,
-) -> BTreeMap<PathBuf, Vec<(PathBuf, String)>> {
-    let mut owners: BTreeMap<PathBuf, Vec<(PathBuf, String)>> = BTreeMap::new();
+) -> BTreeMap<PathBuf, Vec<MetadataTestOwner>> {
+    let mut owners: BTreeMap<PathBuf, Vec<MetadataTestOwner>> = BTreeMap::new();
     let Some(packages) = value.get("packages").and_then(serde_json::Value::as_array) else {
         return owners;
     };
@@ -602,10 +673,18 @@ fn workspace_test_target_owners(
             let Some(name) = target.get("name").and_then(serde_json::Value::as_str) else {
                 continue;
             };
+            let test_enabled = target
+                .get("test")
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(true);
             owners
                 .entry(lexical(&normalize(Path::new(src_path))))
                 .or_default()
-                .push((manifest_dir.clone(), name.to_string()));
+                .push(MetadataTestOwner {
+                    manifest_dir: manifest_dir.clone(),
+                    name: name.to_string(),
+                    test_enabled,
+                });
         }
     }
     for entry in owners.values_mut() {
@@ -627,6 +706,11 @@ pub(crate) fn cargo_test_target_harness_verdict(
     registration_target: &Path,
 ) -> CargoHarnessVerdict {
     ManifestInventory::default().verdict(workspace_root, registration_target)
+}
+
+#[cfg(test)]
+fn cargo_test_target_collection_skipped(workspace_root: &Path, registration_target: &Path) -> bool {
+    ManifestInventory::default().cargo_test_collection_skipped(workspace_root, registration_target)
 }
 
 /// Crate-root paths declared by one manifest, relative to `manifest_dir`
@@ -1421,6 +1505,124 @@ mod harness_verdict {
         Ok(())
     }
 
+    /// #7265: cargo metadata still reports `kind = ["test"]` when
+    /// `[[test]] test = false`, but `cargo test` skips that target. The
+    /// inventory must not return `HarnessEnabled`. Omitted / `test = true`
+    /// keep collection. Autodiscovered `tests/<name>.rs` stays enabled so
+    /// `ManifestUnavailable` is not the skip signal (#7125).
+    #[test]
+    fn test_false_target_is_not_harness_enabled() -> Result<(), String> {
+        let dir = unique_workspace("test-false");
+        write_file(&dir, "Cargo.toml", "[workspace]\nmembers = ['pkg']\n")?;
+        write_member_package(
+            &dir,
+            "pkg",
+            "[package]\nname='p'\nversion='0.1.0'\nedition='2024'\n\n\
+             [[test]]\nname='gate'\ntest=false\n",
+        )?;
+        write_file(&dir, "pkg/tests/gate.rs", "")?;
+        write_file(&dir, "pkg/tests/live.rs", "")?;
+        let verdict = |relative: &str| cargo_test_target_harness_verdict(&dir, Path::new(relative));
+        let skipped =
+            |relative: &str| cargo_test_target_collection_skipped(&dir, Path::new(relative));
+
+        assert_ne!(
+            verdict("pkg/tests/gate.rs"),
+            CargoHarnessVerdict::HarnessEnabled,
+            "test=false must not count as libtest collection"
+        );
+        assert_eq!(
+            verdict("pkg/tests/gate.rs"),
+            CargoHarnessVerdict::NotDeclared,
+            "cargo test skips the target, so it is not a live collection unit"
+        );
+        assert!(
+            skipped("pkg/tests/gate.rs"),
+            "sibling query must establish the skip from metadata, not TOML path matching"
+        );
+
+        write_member_package(
+            &dir,
+            "pkg",
+            "[package]\nname='p'\nversion='0.1.0'\nedition='2024'\n\n\
+             [[test]]\nname='gate'\ntest=true\n",
+        )?;
+        assert_eq!(
+            verdict("pkg/tests/gate.rs"),
+            CargoHarnessVerdict::HarnessEnabled
+        );
+        assert!(!skipped("pkg/tests/gate.rs"));
+
+        write_member_package(
+            &dir,
+            "pkg",
+            "[package]\nname='p'\nversion='0.1.0'\nedition='2024'\n\n\
+             [[test]]\nname='gate'\n",
+        )?;
+        assert_eq!(
+            verdict("pkg/tests/gate.rs"),
+            CargoHarnessVerdict::HarnessEnabled
+        );
+        assert!(!skipped("pkg/tests/gate.rs"));
+
+        write_member_package(
+            &dir,
+            "pkg",
+            "[package]\nname='p'\nversion='0.1.0'\nedition='2024'\n",
+        )?;
+        assert_eq!(
+            verdict("pkg/tests/live.rs"),
+            CargoHarnessVerdict::HarnessEnabled,
+            "autodiscovered tests/<name>.rs stay harness-enabled"
+        );
+        assert!(
+            !skipped("pkg/tests/live.rs"),
+            "an autodiscovered target is not an established skip"
+        );
+        assert!(
+            !skipped("pkg/tests/missing.rs"),
+            "a path cargo does not list is not an established skip (#6965)"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+        Ok(())
+    }
+
+    /// #7265: `path = "tests/../tests/gate.rs"` with `test = false` still
+    /// skips. Cargo may normalize metadata `src_path`; the inventory keys
+    /// are lexically collapsed, so the skip is not a producer-local `..`
+    /// fold against raw TOML components.
+    #[test]
+    fn test_false_parent_path_spelling_is_not_harness_enabled() -> Result<(), String> {
+        let dir = unique_workspace("test-false-dotdot");
+        write_file(&dir, "Cargo.toml", "[workspace]\nmembers = ['pkg']\n")?;
+        write_member_package(
+            &dir,
+            "pkg",
+            "[package]\nname='p'\nversion='0.1.0'\nedition='2024'\n\n\
+             [[test]]\nname='gate'\npath='tests/../tests/gate.rs'\ntest=false\n",
+        )?;
+        write_file(&dir, "pkg/tests/gate.rs", "")?;
+        let verdict = |relative: &str| cargo_test_target_harness_verdict(&dir, Path::new(relative));
+        let skipped =
+            |relative: &str| cargo_test_target_collection_skipped(&dir, Path::new(relative));
+        assert_ne!(
+            verdict("pkg/tests/gate.rs"),
+            CargoHarnessVerdict::HarnessEnabled
+        );
+        assert_eq!(
+            verdict("pkg/tests/gate.rs"),
+            CargoHarnessVerdict::NotDeclared
+        );
+        assert!(skipped("pkg/tests/gate.rs"));
+        assert_eq!(
+            verdict("pkg/tests/../tests/gate.rs"),
+            CargoHarnessVerdict::NotDeclared
+        );
+        assert!(skipped("pkg/tests/../tests/gate.rs"));
+        let _ = std::fs::remove_dir_all(&dir);
+        Ok(())
+    }
+
     /// #3608: a virtual workspace manifest (no `[package]` table) declares no
     /// autodiscovered targets; cargo metadata succeeds on the empty member
     /// set and the inventory is empty.
@@ -1486,6 +1688,10 @@ mod harness_verdict {
         assert_eq!(
             verdict("pkg/tests/other.rs"),
             CargoHarnessVerdict::ManifestUnavailable
+        );
+        assert!(
+            !cargo_test_target_collection_skipped(&dir, Path::new("pkg/tests/other.rs")),
+            "unavailable metadata is not an established test=false skip (#7125)"
         );
         let _ = std::fs::remove_dir_all(&dir);
         Ok(())

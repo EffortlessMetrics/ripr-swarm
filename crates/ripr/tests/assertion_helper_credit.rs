@@ -441,8 +441,7 @@ fn harness_false_integration_helper_does_not_expose() -> Result<(), String> {
 fn test_false_integration_helper_does_not_expose() -> Result<(), String> {
     // A declared [[test]] with test = false is still a Cargo target, so
     // the #6965 drop keeps tests/gate.rs, but `cargo test` does not run
-    // it. ManifestInventory ignores metadata's test flag and returns
-    // HarnessEnabled; crediting that helper would promote an unrun test.
+    // it. ManifestInventory must not treat that target as HarnessEnabled.
     let finding = TempRepo::create_files(&[
         (
             "Cargo.toml",
@@ -456,6 +455,27 @@ fn test_false_integration_helper_does_not_expose() -> Result<(), String> {
         finding.class,
         ExposureClass::Exposed,
         "test=false is skipped by cargo test and must not become evidence: {finding:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn test_false_parent_path_spelling_helper_does_not_expose() -> Result<(), String> {
+    let finding = TempRepo::create_files(&[
+        (
+            "Cargo.toml",
+            package_manifest(
+                "\n[[test]]\nname = \"gate\"\npath = \"tests/../tests/gate.rs\"\ntest = false\n",
+            ),
+        ),
+        ("src/lib.rs", GATE.to_string()),
+        ("tests/gate.rs", integration_source(check_eq_helper())),
+    ])?
+    .predicate()?;
+    assert_ne!(
+        finding.class,
+        ExposureClass::Exposed,
+        "test=false with tests/../tests/gate.rs must still skip collection: {finding:?}"
     );
     Ok(())
 }
